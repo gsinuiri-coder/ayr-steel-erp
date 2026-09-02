@@ -1,0 +1,258 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BusinessLineCode,
+  Currency,
+  InventoryRefType,
+  ProductSource,
+  Prisma,
+  type Coil,
+} from '@prisma/client';
+import {
+  coilCode,
+  coilProductName,
+  coilSku,
+  coilTypeKey,
+  toDecimal,
+  toFixedString,
+  Unit,
+  type CoilDto,
+  type CoilQuery,
+} from '@ayr/shared';
+import { toSharedLineCode, toPrismaLineCode } from '../common/business-line-code';
+import { InventoryService } from '../inventory/inventory.service';
+import { PrismaService } from '../prisma/prisma.service';
+
+/** Datos mínimos para dar de alta una bobina. Los códigos se derivan aquí, no los trae el llamador. */
+export interface CreateCoilInput {
+  businessLineId: string;
+  supplierId: string;
+  purchaseId?: string;
+  purchaseItemId?: string;
+  finishId: string;
+  weightKg: string;
+  widthMm: string;
+  thicknessMm: string;
+  currency: Currency;
+  exchangeRate: string;
+  /** Costo por kg SIN IGV (D-038). */
+  unitCostPerKg: string;
+  refType: InventoryRefType;
+  refId?: string;
+  actorId: string;
+}
+
+/**
+ * Bobinas (RF-10..RF-14). El alta llega siempre desde una de las tres vías de Fase 2a
+ * (compra manual, XML de factura, planilla); no hay creación suelta por HTTP.
+ * Toda alta emite su entrada de kardex vía `InventoryService` (§3.2).
+ */
+@Injectable()
+export class CoilsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly inventory: InventoryService,
+  ) {}
+
+  /**
+   * Crea la bobina dentro de la transacción del llamador: el código correlativo
+   * (RF-13), el producto de catálogo para venta directa (D-037) y el movimiento de
+   * kardex tienen que entrar o fallar juntos.
+   */
+  async create(tx: Prisma.TransactionClient, input: CreateCoilInput): Promise<Coil> {
+    const [supplier, finish] = await Promise.all([
+      tx.supplier.findUnique({ where: { id: input.supplierId } }),
+      tx.finish.findUnique({ where: { id: input.finishId } }),
+    ]);
+    if (!supplier) throw new NotFoundException('Proveedor no encontrado');
+    if (!finish) throw new NotFoundException('Acabado no encontrado');
+
+    const weightKg = toDecimal(input.weightKg);
+    const unitCostPerKg = toDecimal(input.unitCostPerKg);
+    const exchangeRate = toDecimal(input.exchangeRate);
+    const totalCost = weightKg.times(unitCostPerKg);
+
+    const sequence = await this.nextSequence(tx, input.supplierId);
+    const typeKey = coilTypeKey(finish.code, input.thicknessMm);
+
+    const coil = await tx.coil.create({
+      data: {
+        code: coilCode({
+          supplierCode: supplier.code,
+          finishCode: finish.code,
+          thicknessMm: input.thicknessMm,
+          weightKg: input.weightKg,
+          sequence,
+        }),
+        typeKey,
+        businessLineId: input.businessLineId,
+        supplierId: input.supplierId,
+        purchaseId: input.purchaseId ?? null,
+        purchaseItemId: input.purchaseItemId ?? null,
+        finishId: input.finishId,
+        weightKg: toFixedString(weightKg, 'KG'),
+        widthMm: toFixedString(input.widthMm, 'MM'),
+        thicknessMm: toFixedString(input.thicknessMm, 'MM'),
+        currency: input.currency,
+        exchangeRate: toFixedString(exchangeRate, 'RATE'),
+        unitCostPerKg: toFixedString(unitCostPerKg, 'MONEY'),
+        totalCost: toFixedString(totalCost, 'MONEY'),
+        totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
+        createdById: input.actorId,
+      },
+    });
+
+    await this.ensureTradingProduct(tx, finish, input.thicknessMm);
+
+    await this.inventory.record(tx, {
+      businessLineId: input.businessLineId,
+      itemType: 'COIL',
+      itemId: coil.id,
+      type: 'IN',
+      qty: toFixedString(weightKg, 'KG'),
+      unit: Unit.KGM,
+      unitCost: toFixedString(unitCostPerKg, 'MONEY'),
+      refType: input.refType,
+      refId: input.refId,
+      actorId: input.actorId,
+    });
+
+    return coil;
+  }
+
+  /**
+   * Correlativo por proveedor del código RF-13. El `UPDATE ... RETURNING` toma el
+   * lock de la fila del proveedor, así que dos altas concurrentes del mismo proveedor
+   * reciben números distintos sin necesidad de una tabla de contadores aparte.
+   */
+  private async nextSequence(tx: Prisma.TransactionClient, supplierId: string): Promise<number> {
+    const rows = await tx.$queryRaw<{ coil_seq: number }[]>`
+      UPDATE "suppliers"
+      SET "coil_seq" = "coil_seq" + 1
+      WHERE "id" = ${supplierId}::uuid
+      RETURNING "coil_seq"
+    `;
+    const seq = rows[0]?.coil_seq;
+    if (seq === undefined) throw new NotFoundException('Proveedor no encontrado');
+    return seq;
+  }
+
+  /**
+   * D-037: la bobina sin transformar se vende como un producto de la línea `trading`
+   * con SKU `BOB{finishCode}{thicknessMm}`, uno por `typeKey`. Se crea al dar de alta
+   * la primera bobina de ese tipo; si ya existe, no se toca.
+   */
+  private async ensureTradingProduct(
+    tx: Prisma.TransactionClient,
+    finish: { code: string; name: string },
+    thicknessMm: string,
+  ): Promise<void> {
+    const trading = await tx.businessLine.findUnique({
+      where: { code: BusinessLineCode.TRADING },
+    });
+    if (!trading) return;
+
+    const sku = coilSku(finish.code, thicknessMm);
+    await tx.product.upsert({
+      where: { businessLineId_sku: { businessLineId: trading.id, sku } },
+      create: {
+        businessLineId: trading.id,
+        sku,
+        name: coilProductName(finish.name, thicknessMm),
+        unit: Unit.KGM,
+        source: ProductSource.PURCHASED,
+      },
+      update: {},
+    });
+  }
+
+  async findAll(query: CoilQuery): Promise<CoilDto[]> {
+    const coils = await this.prisma.coil.findMany({
+      where: {
+        businessLine: query.businessLine
+          ? { code: toPrismaLineCode(query.businessLine) }
+          : undefined,
+        finishId: query.finishId,
+        status: query.status,
+        supplierId: query.supplierId,
+        thicknessMm: query.thicknessMm ? toFixedString(query.thicknessMm, 'MM') : undefined,
+        ...(query.search
+          ? {
+              OR: [
+                { code: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+                { typeKey: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        businessLine: true,
+        supplier: { select: { name: true } },
+        finish: { select: { code: true, name: true } },
+        purchase: { select: { series: true, number: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    return this.toDtos(coils);
+  }
+
+  async findOne(id: string): Promise<CoilDto> {
+    const coil = await this.prisma.coil.findUnique({
+      where: { id },
+      include: {
+        businessLine: true,
+        supplier: { select: { name: true } },
+        finish: { select: { code: true, name: true } },
+        purchase: { select: { series: true, number: true } },
+      },
+    });
+    if (!coil) throw new NotFoundException('Bobina no encontrada');
+    const [dto] = await this.toDtos([coil]);
+    if (!dto) throw new NotFoundException('Bobina no encontrada');
+    return dto;
+  }
+
+  /** Adjunta a cada bobina sus kilos disponibles según el kardex (no según `weightKg`). */
+  private async toDtos(coils: CoilWithRelations[]): Promise<CoilDto[]> {
+    if (coils.length === 0) return [];
+    const balances = await this.prisma.inventoryBalance.findMany({
+      where: { itemType: 'COIL', itemId: { in: coils.map((c) => c.id) } },
+      select: { itemId: true, qty: true },
+    });
+    const available = new Map(balances.map((b) => [b.itemId, b.qty.toFixed(3)]));
+
+    return coils.map((c) => ({
+      id: c.id,
+      code: c.code,
+      typeKey: c.typeKey,
+      businessLine: toSharedLineCode(c.businessLine.code),
+      supplierId: c.supplierId,
+      supplierName: c.supplier.name,
+      purchaseId: c.purchaseId,
+      purchaseLabel: c.purchase ? `${c.purchase.series}-${c.purchase.number}` : null,
+      finishId: c.finishId,
+      finishCode: c.finish.code,
+      finishName: c.finish.name,
+      weightKg: c.weightKg.toFixed(3),
+      widthMm: c.widthMm.toFixed(2),
+      thicknessMm: c.thicknessMm.toFixed(2),
+      currency: c.currency,
+      exchangeRate: c.exchangeRate.toFixed(4),
+      unitCostPerKg: c.unitCostPerKg.toFixed(4),
+      totalCost: c.totalCost.toFixed(4),
+      totalCostPen: c.totalCostPen.toFixed(4),
+      status: c.status,
+      parentCoilId: c.parentCoilId,
+      availableKg: available.get(c.id) ?? '0.000',
+      createdAt: c.createdAt.toISOString(),
+      updatedAt: c.updatedAt.toISOString(),
+    }));
+  }
+}
+
+type CoilWithRelations = Coil & {
+  businessLine: { code: BusinessLineCode };
+  supplier: { name: string };
+  finish: { code: string; name: string };
+  purchase: { series: string; number: string } | null;
+};

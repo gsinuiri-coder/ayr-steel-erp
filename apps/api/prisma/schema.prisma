@@ -1,6 +1,8 @@
 // Schema v0 (Fase 0): identidad, sesiones y auditoría.
 // Fase 1 (D-034): maestros — líneas de negocio, acabados, catálogo, clientes,
 // proveedores, márgenes, tipo de cambio, e importación masiva genérica.
+// Fase 2a (D-041): kardex append-only (`inventory_movements`/`inventory_balances`),
+// compras con recepción y pagos parciales, y alta de bobinas por tres vías.
 // Regla D-003: dinero/kg/mm/tasas son siempre `Decimal @db.Decimal(p, s)` con
 // escala explícita (dinero 4, kg 3, mm 2, tasas/factores 4). Nunca `number`.
 
@@ -67,6 +69,92 @@ enum DocType {
 enum ImportEntity {
   PRODUCTS
   CUSTOMERS
+  COILS
+}
+
+/// Qué clase de ítem mueve el kardex (§3.2). Un producto de catálogo o una bobina.
+enum InventoryItemType {
+  PRODUCT
+  COIL
+}
+
+/// Sentido del movimiento de kardex (§3.3). `ADJUST` corrige cantidad sin cambiar el
+/// costo promedio; anular siempre es un movimiento inverso, nunca un DELETE.
+enum InventoryMovementType {
+  IN
+  OUT
+  ADJUST
+}
+
+/// Qué originó el movimiento de kardex. Los valores que Fase 2a no emite todavía
+/// quedan reservados para no migrar el enum en cada fase siguiente.
+enum InventoryRefType {
+  PURCHASE
+  SALE
+  PRODUCTION
+  /// Partido de bobina (RF-15, Fase 2b).
+  SPLIT
+  /// Merma (RF-17, D-040, Fase 2b). "SCRAP" por §0.1; la UI lo llama merma.
+  SCRAP
+  /// Corte tercerizado (RF-40/41, Fase 3).
+  CUTTING
+  /// Ajuste manual de inventario.
+  ADJUSTMENT
+  /// Carga inicial por importación de planilla (RF-12).
+  IMPORT
+}
+
+/// Tipo de compra (D-030). Determina qué formulario se usa y qué pasa al recibirla.
+enum PurchaseType {
+  COIL
+  FINISHED_GOOD
+  SERVICE
+  EXPENSE
+}
+
+/// Comprobante de compra según el catálogo 01 de SUNAT (D-030).
+enum PurchaseDocType {
+  FACTURA
+  BOLETA
+  NOTA_CREDITO
+  NOTA_DEBITO
+}
+
+/// Condición de pago de una compra (D-039).
+enum PaymentTerms {
+  CONTADO
+  CREDITO
+}
+
+/// Estado de una compra (D-030). `RECEIVED` es la que ya movió kardex.
+enum PurchaseStatus {
+  DRAFT
+  RECEIVED
+  CANCELLED
+}
+
+/// Naturaleza de una compra de servicio, para el prorrateo de costo futuro (D-030, RF-41).
+enum ServiceKind {
+  CUTTING
+  FREIGHT
+  OTHER
+}
+
+/// Medio de pago a proveedor (D-039).
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CHECK
+  DEPOSIT
+  OTHER
+}
+
+/// Estado de una bobina (RF-19). `CLOSED` no entra a producción; `CANCELLED` solo
+/// es alcanzable si no tuvo movimientos (RF-21).
+enum CoilStatus {
+  OPEN
+  CLOSED
+  CANCELLED
 }
 
 /// Estado de una fila dentro de un lote de importación.
@@ -144,8 +232,12 @@ model BusinessLine {
   createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  products        Product[]
-  pricingSettings PricingSetting?
+  products           Product[]
+  pricingSettings    PricingSetting?
+  inventoryMovements InventoryMovement[]
+  inventoryBalances  InventoryBalance[]
+  purchases          Purchase[]
+  coils              Coil[]
 
   @@map("business_lines")
 }
@@ -159,6 +251,9 @@ model Finish {
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  coils         Coil[]
+  purchaseItems PurchaseItem[]
 
   @@map("finishes")
 }
@@ -176,6 +271,8 @@ model Product {
   isActive       Boolean       @default(true) @map("is_active")
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  purchaseItems PurchaseItem[]
 
   @@unique([businessLineId, sku])
   @@index([businessLineId])
@@ -202,8 +299,12 @@ model Customer {
 
 /// Proveedores (RF-81, RF-83). `providesCuttingService` habilita el corte
 /// tercerizado (D-033/P-10); el costo por kg se ingresa al recibir, no aquí.
+/// `code` (3-6 letras, único) es el primer segmento del código de bobina (RF-13);
+/// `coilSeq` es el correlativo por proveedor de ese mismo código, incrementado de
+/// forma atómica (`UPDATE ... RETURNING`) para que dos altas concurrentes no colisionen.
 model Supplier {
   id                     String   @id @default(uuid()) @db.Uuid
+  code                   String   @unique @db.VarChar(6)
   docType                DocType  @map("doc_type")
   docNumber              String   @map("doc_number") @db.VarChar(20)
   name                   String   @db.VarChar(160)
@@ -212,9 +313,13 @@ model Supplier {
   phone                  String?  @db.VarChar(30)
   creditDays             Int      @default(0) @map("credit_days")
   providesCuttingService Boolean  @default(false) @map("provides_cutting_service")
+  coilSeq                Int      @default(0) @map("coil_seq")
   isActive               Boolean  @default(true) @map("is_active")
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  purchases Purchase[]
+  coils     Coil[]
 
   @@unique([docType, docNumber])
   @@map("suppliers")
@@ -222,12 +327,15 @@ model Supplier {
 
 /// Márgenes por línea de negocio (D-032/P-09). `marginPct`/`minMarginPct` son
 /// puntos porcentuales (15.5000 = 15.5%). Solo ADMINISTRADOR los edita.
+/// `overheadPerKg` (D-035/P-11) es el gasto indirecto de fábrica por kilo producido
+/// que se suma al costo de producción; en dinero de la línea, escala 4.
 model PricingSetting {
   id             String       @id @default(uuid()) @db.Uuid
   businessLineId String       @unique @map("business_line_id") @db.Uuid
   businessLine   BusinessLine @relation(fields: [businessLineId], references: [id])
   marginPct      Decimal      @map("margin_pct") @db.Decimal(7, 4)
   minMarginPct   Decimal      @map("min_margin_pct") @db.Decimal(7, 4)
+  overheadPerKg  Decimal      @default(0) @map("overhead_per_kg") @db.Decimal(18, 4)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -280,4 +388,196 @@ model ImportRow {
 
   @@index([batchId])
   @@map("import_rows")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 2a — Kardex (§3.2, D-028), compras (D-030) y bobinas (RF-10..RF-14)
+// ---------------------------------------------------------------------------
+
+/// Kardex append-only (§3.2, §3.3). NUNCA se actualiza ni se borra una fila: anular
+/// es emitir el movimiento inverso apuntando al original con `reversalOfId`.
+/// El único escritor es `InventoryService.record`; ningún módulo inserta aquí directo.
+model InventoryMovement {
+  id             BigInt                @id @default(autoincrement())
+  businessLineId String                @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine          @relation(fields: [businessLineId], references: [id])
+  itemType       InventoryItemType     @map("item_type")
+  itemId         String                @map("item_id") @db.Uuid
+  type           InventoryMovementType
+  /// Siempre positiva: el sentido lo da `type`. Escala kg (3) sirve también para unidades.
+  qty            Decimal               @db.Decimal(16, 3)
+  /// Unidad SUNAT catálogo 03 (KGM, NIU...). Ver `docs/referencias/ubl21-factura.md`.
+  unit           String                @db.VarChar(20)
+  unitCost       Decimal               @map("unit_cost") @db.Decimal(18, 4)
+  totalCost      Decimal               @map("total_cost") @db.Decimal(18, 4)
+  refType        InventoryRefType      @map("ref_type")
+  refId          String?               @map("ref_id") @db.VarChar(80)
+  reversalOfId   BigInt?               @map("reversal_of_id")
+  reversalOf     InventoryMovement?    @relation("MovementReversal", fields: [reversalOfId], references: [id])
+  reversals      InventoryMovement[]   @relation("MovementReversal")
+  actorId        String?               @map("actor_id") @db.Uuid
+  at             DateTime              @default(now()) @db.Timestamptz(3)
+
+  /// Un movimiento se anula una sola vez (Postgres permite varios NULL en un índice único).
+  @@unique([reversalOfId])
+  @@index([itemType, itemId, at])
+  @@index([businessLineId, at])
+  @@index([refType, refId])
+  @@map("inventory_movements")
+}
+
+/// Saldo vigente por ítem, con costo promedio ponderado (D-028). Se actualiza en la
+/// misma transacción que el movimiento que lo causa; es un caché derivado del kardex,
+/// nunca la fuente de verdad.
+model InventoryBalance {
+  id             String            @id @default(uuid()) @db.Uuid
+  businessLineId String            @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine      @relation(fields: [businessLineId], references: [id])
+  itemType       InventoryItemType @map("item_type")
+  itemId         String            @map("item_id") @db.Uuid
+  qty            Decimal           @db.Decimal(16, 3)
+  avgCost        Decimal           @map("avg_cost") @db.Decimal(18, 4)
+  unit           String            @db.VarChar(20)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([itemType, itemId])
+  @@index([businessLineId])
+  @@map("inventory_balances")
+}
+
+/// Compra a proveedor (D-030). `subtotal`/`igv`/`total` en la moneda del documento;
+/// `totalPen` es el equivalente en soles con el TC guardado (D-029). El costo que
+/// entra al kardex es el subtotal, sin IGV (D-038).
+model Purchase {
+  id                 String             @id @default(uuid()) @db.Uuid
+  supplierId         String             @map("supplier_id") @db.Uuid
+  supplier           Supplier           @relation(fields: [supplierId], references: [id])
+  businessLineId     String             @map("business_line_id") @db.Uuid
+  businessLine       BusinessLine       @relation(fields: [businessLineId], references: [id])
+  type               PurchaseType
+  docType            PurchaseDocType    @map("doc_type")
+  series             String             @db.VarChar(10)
+  number             String             @db.VarChar(20)
+  issueDate          DateTime           @map("issue_date") @db.Date
+  currency           Currency
+  exchangeRate       Decimal            @map("exchange_rate") @db.Decimal(10, 4)
+  exchangeRateSource ExchangeRateSource @map("exchange_rate_source")
+  subtotal           Decimal            @db.Decimal(18, 4)
+  igv                Decimal            @db.Decimal(18, 4)
+  total              Decimal            @db.Decimal(18, 4)
+  totalPen           Decimal            @map("total_pen") @db.Decimal(18, 4)
+  paymentTerms       PaymentTerms       @map("payment_terms")
+  creditDays         Int?               @map("credit_days")
+  dueDate            DateTime?          @map("due_date") @db.Date
+  status             PurchaseStatus     @default(DRAFT)
+  /// Solo en compras de tipo SERVICE (D-030): para el prorrateo de costo de Fase 3.
+  serviceKind        ServiceKind?       @map("service_kind")
+  /// Key en R2 del XML de la factura del proveedor cuando la compra nació de RF-11.
+  sourceXmlKey       String?            @map("source_xml_key") @db.VarChar(300)
+  notes              String?            @db.VarChar(500)
+  createdById        String             @map("created_by_id") @db.Uuid
+  receivedAt         DateTime?          @map("received_at") @db.Timestamptz(3)
+  cancelledAt        DateTime?          @map("cancelled_at") @db.Timestamptz(3)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  items    PurchaseItem[]
+  payments SupplierPayment[]
+  coils    Coil[]
+
+  /// Un mismo comprobante no se registra dos veces para el mismo proveedor.
+  @@unique([supplierId, docType, series, number])
+  @@index([businessLineId, issueDate])
+  @@index([supplierId, status])
+  @@map("purchases")
+}
+
+/// Línea de una compra. En compras COIL cada línea es una bobina y usa los campos
+/// `finishId`/`widthMm`/`thicknessMm` (`qty` son los kilos, `unitPrice` el precio/kg
+/// sin IGV). En FINISHED_GOOD apunta a un `productId` del catálogo. En SERVICE y
+/// EXPENSE es solo descripción y montos.
+model PurchaseItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  purchaseId  String   @map("purchase_id") @db.Uuid
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  lineNumber  Int      @map("line_number")
+  productId   String?  @map("product_id") @db.Uuid
+  product     Product? @relation(fields: [productId], references: [id])
+  description String   @db.VarChar(240)
+  qty         Decimal  @db.Decimal(16, 3)
+  unit        String   @db.VarChar(20)
+  /// Precio unitario SIN IGV (D-038).
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(18, 4)
+  subtotal    Decimal  @db.Decimal(18, 4)
+  igv         Decimal  @db.Decimal(18, 4)
+  total       Decimal  @db.Decimal(18, 4)
+  finishId    String?  @map("finish_id") @db.Uuid
+  finish      Finish?  @relation(fields: [finishId], references: [id])
+  widthMm     Decimal? @map("width_mm") @db.Decimal(8, 2)
+  thicknessMm Decimal? @map("thickness_mm") @db.Decimal(6, 2)
+
+  coil Coil?
+
+  @@unique([purchaseId, lineNumber])
+  @@index([purchaseId])
+  @@map("purchase_items")
+}
+
+/// Pago a proveedor imputado a una compra (D-039). Una compra admite N pagos
+/// parciales; el saldo se calcula (total − pagos), nunca se almacena.
+model SupplierPayment {
+  id           String        @id @default(uuid()) @db.Uuid
+  purchaseId   String        @map("purchase_id") @db.Uuid
+  purchase     Purchase      @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  date         DateTime      @db.Date
+  amount       Decimal       @db.Decimal(18, 4)
+  currency     Currency
+  exchangeRate Decimal       @map("exchange_rate") @db.Decimal(10, 4)
+  method       PaymentMethod
+  reference    String?       @db.VarChar(80)
+  createdById  String        @map("created_by_id") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([purchaseId])
+  @@map("supplier_payments")
+}
+
+/// Bobina de acero (RF-10..RF-14). `code` sigue RF-13
+/// (`{supplier.code}-{finishCode}-{thicknessMm}-{weightKg}-{correlativo}`) y `typeKey`
+/// sigue RF-14 (`{finishCode}-{thicknessMm}`, sin ancho). `unitCostPerKg` es sin IGV
+/// (D-038). `parentCoilId` queda siempre en null hasta el partido de Fase 2b (RF-15).
+model Coil {
+  id             String        @id @default(uuid()) @db.Uuid
+  code           String        @unique @db.VarChar(60)
+  typeKey        String        @map("type_key") @db.VarChar(40)
+  businessLineId String        @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine  @relation(fields: [businessLineId], references: [id])
+  supplierId     String        @map("supplier_id") @db.Uuid
+  supplier       Supplier      @relation(fields: [supplierId], references: [id])
+  purchaseId     String?       @map("purchase_id") @db.Uuid
+  purchase       Purchase?     @relation(fields: [purchaseId], references: [id])
+  purchaseItemId String?       @unique @map("purchase_item_id") @db.Uuid
+  purchaseItem   PurchaseItem? @relation(fields: [purchaseItemId], references: [id])
+  finishId       String        @map("finish_id") @db.Uuid
+  finish         Finish        @relation(fields: [finishId], references: [id])
+  weightKg       Decimal       @map("weight_kg") @db.Decimal(12, 3)
+  widthMm        Decimal       @map("width_mm") @db.Decimal(8, 2)
+  thicknessMm    Decimal       @map("thickness_mm") @db.Decimal(6, 2)
+  currency       Currency
+  exchangeRate   Decimal       @map("exchange_rate") @db.Decimal(10, 4)
+  unitCostPerKg  Decimal       @map("unit_cost_per_kg") @db.Decimal(18, 4)
+  totalCost      Decimal       @map("total_cost") @db.Decimal(18, 4)
+  totalCostPen   Decimal       @map("total_cost_pen") @db.Decimal(18, 4)
+  status         CoilStatus    @default(OPEN)
+  parentCoilId   String?       @map("parent_coil_id") @db.Uuid
+  parentCoil     Coil?         @relation("CoilSplit", fields: [parentCoilId], references: [id])
+  childCoils     Coil[]        @relation("CoilSplit")
+  createdById    String        @map("created_by_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([businessLineId, status])
+  @@index([typeKey])
+  @@index([supplierId])
+  @@map("coils")
 }

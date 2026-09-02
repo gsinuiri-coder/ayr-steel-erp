@@ -5,6 +5,7 @@ import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { BusinessLinesModule } from './business-lines/business-lines.module';
 import { CatalogModule } from './catalog/catalog.module';
+import { CoilsModule } from './coils/coils.module';
 import { AppThrottlerGuard } from './common/throttler.guard';
 import { ConfigModule } from './config/config.module';
 import { ENV, type Env } from './config/env';
@@ -14,9 +15,11 @@ import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
 import { FinishesModule } from './finishes/finishes.module';
 import { HealthController } from './health/health.controller';
 import { ImportsModule } from './imports/imports.module';
+import { InventoryModule } from './inventory/inventory.module';
 import { JobsModule } from './jobs/jobs.module';
 import { PricingModule } from './pricing/pricing.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PurchasesModule } from './purchases/purchases.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { UsersModule } from './users/users.module';
 
@@ -46,6 +49,9 @@ import { UsersModule } from './users/users.module';
     ExchangeRatesModule,
     DocumentsModule,
     ImportsModule,
+    InventoryModule,
+    CoilsModule,
+    PurchasesModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],

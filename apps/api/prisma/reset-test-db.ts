@@ -23,9 +23,12 @@ async function main(): Promise<void> {
 
   const prisma = new PrismaClient();
   try {
-    // SQL estático (sin entrada de usuario). audit_log tiene trigger anti-DELETE: TRUNCATE no lo dispara.
+    // SQL estático (sin entrada de usuario). `audit_log` e `inventory_movements` tienen
+    // trigger anti-UPDATE/DELETE: TRUNCATE no dispara triggers de fila, así que pasa.
     await prisma.$executeRawUnsafe(
-      'TRUNCATE TABLE "sessions", "audit_log", "users" RESTART IDENTITY CASCADE',
+      'TRUNCATE TABLE "inventory_movements", "inventory_balances", "supplier_payments", ' +
+        '"coils", "purchase_items", "purchases", "sessions", "audit_log", "users" ' +
+        'RESTART IDENTITY CASCADE',
     );
     console.warn('Base de pruebas vaciada');
   } finally {

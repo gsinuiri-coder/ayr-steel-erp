@@ -22,4 +22,15 @@ export const IMPORT_COLUMNS: Record<ImportEntity, { key: string; label: string }
     { key: 'phone', label: 'Teléfono' },
     { key: 'creditDays', label: 'Días de crédito' },
   ],
+  COILS: [
+    { key: 'businessLineCode', label: 'Línea' },
+    { key: 'supplierCode', label: 'Proveedor (código)' },
+    { key: 'finishCode', label: 'Acabado' },
+    { key: 'weightKg', label: 'Peso (kg)' },
+    { key: 'widthMm', label: 'Ancho (mm)' },
+    { key: 'thicknessMm', label: 'Espesor (mm)' },
+    { key: 'currency', label: 'Moneda (PEN/USD)' },
+    { key: 'unitCostPerKg', label: 'Costo por kg sin IGV' },
+    { key: 'exchangeRate', label: 'Tipo de cambio' },
+  ],
 };

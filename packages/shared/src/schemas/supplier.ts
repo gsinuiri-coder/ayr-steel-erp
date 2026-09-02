@@ -11,6 +11,8 @@ import {
 /** Proveedores (RF-81, RF-83), incluido si presta corte tercerizado (D-033/P-10). */
 export const supplierSchema = z.object({
   id: z.string().uuid(),
+  /** Código corto único, primer segmento del código de bobina (RF-13). */
+  code: z.string(),
   docType: z.enum(DOC_TYPES),
   docNumber: z.string(),
   name: z.string(),
@@ -25,8 +27,16 @@ export const supplierSchema = z.object({
 });
 export type SupplierDto = z.infer<typeof supplierSchema>;
 
+/** 3-6 letras, único: es el primer segmento del código de bobina (RF-13). */
+export const supplierCodeSchema = z
+  .string({ required_error: 'El código del proveedor es obligatorio' })
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3,6}$/, 'El código debe tener entre 3 y 6 letras, sin espacios ni números');
+
 export const createSupplierSchema = z
   .object({
+    code: supplierCodeSchema,
     docType: z.enum(DOC_TYPES, { errorMap: () => ({ message: 'Tipo de documento inválido' }) }),
     docNumber: z
       .string({ required_error: 'El número de documento es obligatorio' })
@@ -56,6 +66,7 @@ export type CreateSupplierInput = z.infer<typeof createSupplierSchema>;
 
 export const updateSupplierSchema = z
   .object({
+    code: supplierCodeSchema,
     name: partyNameSchema,
     address: partyOptionalText(240),
     email: partyEmailSchema,

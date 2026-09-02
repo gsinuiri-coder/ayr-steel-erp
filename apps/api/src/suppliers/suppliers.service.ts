@@ -31,6 +31,7 @@ export class SuppliersService {
       const supplier = await this.prisma.$transaction(async (tx) => {
         const created = await tx.supplier.create({
           data: {
+            code: input.code,
             docType: input.docType,
             docNumber: input.docNumber,
             name: input.name,
@@ -53,7 +54,9 @@ export class SuppliersService {
       return toDto(supplier);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('Ya existe un proveedor activo con ese documento');
+        throw new ConflictException(
+          'Ya existe un proveedor con ese documento o con ese código corto',
+        );
       }
       throw err;
     }
@@ -64,6 +67,7 @@ export class SuppliersService {
     if (!before) throw new NotFoundException('Proveedor no encontrado');
 
     const data: Prisma.SupplierUpdateInput = {};
+    if (input.code !== undefined) data.code = input.code;
     if (input.name !== undefined) data.name = input.name;
     if (input.address !== undefined) data.address = input.address;
     if (input.email !== undefined) data.email = input.email;
@@ -92,6 +96,7 @@ export class SuppliersService {
 function toDto(s: Supplier): SupplierDto {
   return {
     id: s.id,
+    code: s.code,
     docType: s.docType,
     docNumber: s.docNumber,
     name: s.name,
@@ -108,6 +113,7 @@ function toDto(s: Supplier): SupplierDto {
 
 function auditView(s: Supplier): Prisma.InputJsonObject {
   return {
+    code: s.code,
     docType: s.docType,
     docNumber: s.docNumber,
     name: s.name,

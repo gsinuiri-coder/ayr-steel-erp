@@ -13,6 +13,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CoilsImportAdapter } from './adapters/coils.adapter';
 import { CustomersImportAdapter } from './adapters/customers.adapter';
 import type { ImportAdapter, RowValidation } from './adapters/import-adapter.interface';
 import { ProductsImportAdapter } from './adapters/products.adapter';
@@ -59,8 +60,9 @@ export class ImportsService {
     private readonly audit: AuditService,
     productsAdapter: ProductsImportAdapter,
     customersAdapter: CustomersImportAdapter,
+    coilsAdapter: CoilsImportAdapter,
   ) {
-    const adapters: ImportAdapter[] = [productsAdapter, customersAdapter];
+    const adapters: ImportAdapter[] = [productsAdapter, customersAdapter, coilsAdapter];
     this.adapters = Object.fromEntries(adapters.map((a) => [a.entity, a])) as Record<
       ImportEntity,
       ImportAdapter
