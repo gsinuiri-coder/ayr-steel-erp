@@ -8,13 +8,17 @@ import {
   BUSINESS_LINES,
   COIL_STATUS_LABELS,
   COIL_STATUSES,
+  Role,
   type BusinessLine,
   type CoilDto,
   type CoilStatus,
   type FinishDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatMoney, formatQty } from '@/lib/format';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useSession } from '@/lib/session';
+import { RoleGate } from '@/components/role-gate';
+import { formatMoney, formatQty, isPositiveDecimal } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,11 +43,15 @@ const ALL = 'ALL';
 
 /** Inventario de bobinas por línea (RF-23), con filtros de acabado, espesor y estado. */
 export function BobinasView() {
+  const { user } = useSession();
+  const isAdmin = user.role === Role.ADMINISTRADOR;
   const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
   const [finishId, setFinishId] = useState<string>(ALL);
   const [thicknessMm, setThicknessMm] = useState('');
   const [status, setStatus] = useState<CoilStatus | typeof ALL>(ALL);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search);
+  const debouncedThickness = useDebouncedValue(thicknessMm);
 
   const finishes = useQuery({
     queryKey: ['finishes'],
@@ -53,9 +61,10 @@ export function BobinasView() {
   const params = new URLSearchParams();
   if (businessLine !== ALL) params.set('businessLine', businessLine);
   if (finishId !== ALL) params.set('finishId', finishId);
-  if (thicknessMm.trim()) params.set('thicknessMm', thicknessMm.trim());
+  // Se manda solo cuando ya es un decimal válido: a medio escribir el API responde 400.
+  if (isPositiveDecimal(debouncedThickness)) params.set('thicknessMm', debouncedThickness.trim());
   if (status !== ALL) params.set('status', status);
-  if (search.trim()) params.set('search', search.trim());
+  if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
   const queryString = params.toString();
 
   const coils = useQuery({
@@ -64,7 +73,7 @@ export function BobinasView() {
   });
 
   return (
-    <>
+    <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Bobinas</h1>
@@ -73,9 +82,11 @@ export function BobinasView() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" asChild>
-            <Link href="/bobinas/importar">Importar planilla</Link>
-          </Button>
+          {isAdmin && (
+            <Button variant="outline" asChild>
+              <Link href="/bobinas/importar">Importar planilla</Link>
+            </Button>
+          )}
           <Button variant="outline" asChild>
             <Link href="/bobinas/nueva-xml">Desde XML</Link>
           </Button>
@@ -120,6 +131,7 @@ export function BobinasView() {
         </Select>
 
         <Input
+          aria-label="Espesor en milímetros"
           placeholder="Espesor (mm)"
           className="w-36"
           inputMode="decimal"
@@ -149,6 +161,7 @@ export function BobinasView() {
         </Select>
 
         <Input
+          aria-label="Buscar bobinas por código"
           placeholder="Buscar por código…"
           className="max-w-xs"
           value={search}
@@ -201,7 +214,7 @@ export function BobinasView() {
                   {formatQty(c.availableKg, 'kg')}
                 </TableCell>
                 <TableCell className="text-right">
-                  {formatMoney(c.unitCostPerKg, c.currency)}
+                  {formatMoney(c.unitCostPerKg, c.currency, 4)}
                 </TableCell>
                 <TableCell>
                   <Badge variant={c.status === 'OPEN' ? 'secondary' : 'outline'}>
@@ -220,6 +233,6 @@ export function BobinasView() {
           </TableBody>
         </Table>
       </div>
-    </>
+    </RoleGate>
   );
 }

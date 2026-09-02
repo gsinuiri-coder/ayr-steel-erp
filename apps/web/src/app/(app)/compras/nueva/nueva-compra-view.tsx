@@ -2,8 +2,9 @@
 
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { PURCHASE_TYPE_LABELS, PURCHASE_TYPES, PurchaseType } from '@ayr/shared';
+import { PURCHASE_TYPE_LABELS, PURCHASE_TYPES, PurchaseType, Role } from '@ayr/shared';
 import { Button } from '@/components/ui/button';
+import { RoleGate } from '@/components/role-gate';
 import { defaultPurchaseValues, PurchaseForm } from '../purchase-form';
 
 function typeFromQuery(raw: string | null): PurchaseType {
@@ -19,7 +20,7 @@ export function NuevaCompraView() {
   const type = typeFromQuery(params.get('tipo'));
 
   return (
-    <>
+    <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div>
         <h1 className="text-2xl font-semibold">Nueva compra</h1>
         <p className="text-sm text-muted-foreground">
@@ -39,6 +40,6 @@ export function NuevaCompraView() {
       )}
 
       <PurchaseForm key={type} initialValues={defaultPurchaseValues(type)} />
-    </>
+    </RoleGate>
   );
 }

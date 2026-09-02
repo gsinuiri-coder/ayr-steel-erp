@@ -2,8 +2,14 @@
 
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { BUSINESS_LINE_LABELS, PURCHASE_TYPE_LABELS, type SupplierStatementDto } from '@ayr/shared';
+import {
+  BUSINESS_LINE_LABELS,
+  PURCHASE_TYPE_LABELS,
+  Role,
+  type SupplierStatementDto,
+} from '@ayr/shared';
 import { api } from '@/lib/api';
+import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,7 +39,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
   const s = statement.data;
 
   return (
-    <>
+    <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Estado de cuenta</h1>
@@ -94,6 +100,8 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
                     <span className="text-muted-foreground">Contado</span>
                   ) : p.overdueDays > 0 ? (
                     <Badge variant="destructive">Vencida hace {p.overdueDays} d</Badge>
+                  ) : p.overdueDays === 0 ? (
+                    <Badge variant="secondary">Vence hoy</Badge>
                   ) : (
                     <span className="text-muted-foreground">
                       Vence en {Math.abs(p.overdueDays)} d
@@ -112,6 +120,6 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
           </TableBody>
         </Table>
       </div>
-    </>
+    </RoleGate>
   );
 }

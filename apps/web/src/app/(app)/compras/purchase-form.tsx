@@ -29,7 +29,7 @@ import {
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatMoney, todayIso } from '@/lib/format';
+import { formatMoney, isPositiveDecimal, todayIso } from '@/lib/format';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -68,7 +68,7 @@ const itemSchema = z.object({
   thicknessMm: z.string().trim().optional(),
 });
 
-const formSchema = z.object({
+const baseFormSchema = z.object({
   type: z.enum(PURCHASE_TYPES),
   supplierId: z.string().uuid('Elige un proveedor'),
   businessLine: z.enum(BUSINESS_LINES),
@@ -94,9 +94,69 @@ const formSchema = z.object({
   serviceKind: z.enum(SERVICE_KINDS).optional(),
   notes: z.string().trim().max(500).optional(),
   sourceXmlKey: z.string().optional(),
-  items: z.array(itemSchema).min(1, 'La compra necesita al menos una línea'),
+  items: z
+    .array(itemSchema)
+    .min(1, 'La compra necesita al menos una línea')
+    .max(200, 'Una compra admite hasta 200 líneas'),
 });
-export type PurchaseFormValues = z.infer<typeof formSchema>;
+
+/**
+ * Espeja las reglas del `superRefine` de `createPurchaseSchema` (el API es el que manda,
+ * pero validarlas también acá pone el error en el campo exacto en vez de devolver un
+ * único mensaje de servidor tras cargar veinte bobinas).
+ */
+const formSchema = baseFormSchema.superRefine((d, ctx) => {
+  if (d.paymentTerms === 'CREDITO') {
+    const days = d.creditDays?.trim() ?? '';
+    if (!/^\d{1,3}$/.test(days) || Number(days) < 1 || Number(days) > 365) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['creditDays'],
+        message: 'Días de crédito: un entero entre 1 y 365',
+      });
+    }
+  }
+  if (d.type === PurchaseType.SERVICE && !d.serviceKind) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['serviceKind'],
+      message: 'Indica qué clase de servicio es',
+    });
+  }
+  d.items.forEach((item, index) => {
+    if (d.type === PurchaseType.COIL) {
+      if (!item.finishId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['items', index, 'finishId'],
+          message: 'Elige el acabado',
+        });
+      }
+      if (!isPositiveDecimal(item.widthMm ?? '')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['items', index, 'widthMm'],
+          message: 'Ancho en mm inválido',
+        });
+      }
+      if (!isPositiveDecimal(item.thicknessMm ?? '')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['items', index, 'thicknessMm'],
+          message: 'Espesor en mm inválido',
+        });
+      }
+    }
+    if (d.type === PurchaseType.FINISHED_GOOD && !item.productId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['items', index, 'productId'],
+        message: 'Elige el producto del catálogo',
+      });
+    }
+  });
+});
+export type PurchaseFormValues = z.infer<typeof baseFormSchema>;
 
 export function emptyItem(type: PurchaseType): PurchaseFormValues['items'][number] {
   return {
@@ -235,7 +295,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                     value={field.value}
                     onValueChange={(v) => {
                       field.onChange(v);
-                      form.setValue('items', [emptyItem(v as PurchaseType)]);
+                      items.replace([emptyItem(v as PurchaseType)]);
                     }}
                     disabled={lockType}
                   >
@@ -278,6 +338,14 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                         ))}
                     </SelectContent>
                   </Select>
+                  {suppliers.isPending && (
+                    <p className="text-xs text-muted-foreground">Cargando proveedores…</p>
+                  )}
+                  {suppliers.isError && (
+                    <p className="text-xs text-destructive">
+                      No se pudieron cargar los proveedores.
+                    </p>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}
@@ -288,7 +356,18 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Línea de negocio</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select
+                    value={field.value}
+                    onValueChange={(v) => {
+                      field.onChange(v);
+                      // El catálogo es por línea: un producto de la línea anterior daría 400.
+                      if (form.getValues('type') === PurchaseType.FINISHED_GOOD) {
+                        items.replace(
+                          items.fields.map(() => emptyItem(PurchaseType.FINISHED_GOOD)),
+                        );
+                      }
+                    }}
+                  >
                     <FormControl>
                       <SelectTrigger className="w-full">
                         <SelectValue />
@@ -489,6 +568,19 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 )}
               />
             )}
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem className="md:col-span-3">
+                  <FormLabel>Observaciones</FormLabel>
+                  <FormControl>
+                    <Input autoComplete="off" placeholder="Opcional" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </CardContent>
         </Card>
 
@@ -538,6 +630,11 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                               ))}
                           </SelectContent>
                         </Select>
+                        {products.isError && (
+                          <p className="text-xs text-destructive">
+                            No se pudo cargar el catálogo de la línea.
+                          </p>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -566,6 +663,11 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                               ))}
                           </SelectContent>
                         </Select>
+                        {finishes.isError && (
+                          <p className="text-xs text-destructive">
+                            No se pudieron cargar los acabados.
+                          </p>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -787,6 +889,7 @@ function toApiBody(values: PurchaseFormValues): Record<string, unknown> {
     exchangeRate: values.exchangeRate?.trim() ? values.exchangeRate.trim() : undefined,
     igvRate: values.igvRate,
     paymentTerms: values.paymentTerms,
+    // El superRefine ya garantizó que sea un entero de 1 a 365 cuando hay crédito.
     creditDays: values.creditDays?.trim() ? Number(values.creditDays) : undefined,
     serviceKind: values.type === PurchaseType.SERVICE ? values.serviceKind : undefined,
     sourceXmlKey: values.sourceXmlKey ?? undefined,

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
+  Role,
   BUSINESS_LINES,
   PURCHASE_STATUS_LABELS,
   PURCHASE_STATUSES,
@@ -16,6 +17,8 @@ import {
   type PurchaseType,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -52,13 +55,14 @@ export function ComprasView() {
   const [status, setStatus] = useState<PurchaseStatus | typeof ALL>(ALL);
   const [onlyWithBalance, setOnlyWithBalance] = useState(false);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search);
 
   const params = new URLSearchParams();
   if (businessLine !== ALL) params.set('businessLine', businessLine);
   if (type !== ALL) params.set('type', type);
   if (status !== ALL) params.set('status', status);
   if (onlyWithBalance) params.set('onlyWithBalance', 'true');
-  if (search.trim()) params.set('search', search.trim());
+  if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
   const queryString = params.toString();
 
   const purchases = useQuery({
@@ -67,7 +71,7 @@ export function ComprasView() {
   });
 
   return (
-    <>
+    <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Compras</h1>
@@ -140,6 +144,7 @@ export function ComprasView() {
 
         <Button
           variant={onlyWithBalance ? 'default' : 'outline'}
+          aria-pressed={onlyWithBalance}
           onClick={() => {
             setOnlyWithBalance((v) => !v);
           }}
@@ -148,6 +153,7 @@ export function ComprasView() {
         </Button>
 
         <Input
+          aria-label="Buscar compras"
           placeholder="Buscar por comprobante o proveedor…"
           className="max-w-xs"
           value={search}
@@ -221,6 +227,6 @@ export function ComprasView() {
           </TableBody>
         </Table>
       </div>
-    </>
+    </RoleGate>
   );
 }

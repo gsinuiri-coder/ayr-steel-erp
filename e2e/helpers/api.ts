@@ -29,6 +29,83 @@ export async function adminApi(baseURL: string): Promise<APIRequestContext> {
   return api;
 }
 
+/** GET al API con el contexto ya autenticado; falla con el cuerpo real si no es 2xx. */
+export async function getJson<T>(api: APIRequestContext, path: string): Promise<T> {
+  const res = await api.get(path);
+  if (!res.ok()) throw new Error(`GET ${path} falló: ${res.status()} ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+/** POST al API con el contexto ya autenticado; falla con el cuerpo real si no es 2xx. */
+export async function postJson<T>(
+  api: APIRequestContext,
+  path: string,
+  data?: unknown,
+): Promise<T> {
+  const res = await api.post(path, data === undefined ? undefined : { data });
+  if (!res.ok()) throw new Error(`POST ${path} falló: ${res.status()} ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+/** Letras mayúsculas al azar: los códigos de proveedor (RF-13) no admiten dígitos. */
+function randomLetters(length: number): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let out = '';
+  for (let i = 0; i < length; i += 1) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
+
+export interface CreatedSupplier {
+  id: string;
+  code: string;
+  docNumber: string;
+  name: string;
+  isActive: boolean;
+}
+
+/**
+ * Proveedor de prueba con código corto (RF-13) y RUC únicos. El código solo admite
+ * 3-6 letras, así que la marca de prueba va en el nombre y en el prefijo `EE`.
+ */
+export async function createSupplier(
+  api: APIRequestContext,
+  overrides: Partial<{ code: string; docNumber: string; name: string }> = {},
+): Promise<CreatedSupplier> {
+  const code = overrides.code ?? `EE${randomLetters(4)}`;
+  const docNumber = overrides.docNumber ?? `20${String(Date.now()).slice(-9)}`;
+  const name = overrides.name ?? `E2E Proveedor ${code}`;
+  return postJson<CreatedSupplier>(api, '/api/suppliers', {
+    code,
+    docType: 'RUC',
+    docNumber,
+    name,
+    creditDays: 0,
+    providesCuttingService: false,
+  });
+}
+
+export interface CreatedFinish {
+  id: string;
+  code: string;
+  name: string;
+}
+
+/** Acabado de prueba con código único (entra en el código RF-13 de cada bobina). */
+export async function createFinish(
+  api: APIRequestContext,
+  overrides: Partial<{ code: string; name: string }> = {},
+): Promise<CreatedFinish> {
+  const code = overrides.code ?? `E2E${randomLetters(4)}`;
+  const finish = await postJson<CreatedFinish>(api, '/api/finishes', {
+    code,
+    name: overrides.name ?? `Acabado E2E ${code}`,
+    densityFactor: '7.85',
+  });
+  return { id: finish.id, code: finish.code, name: finish.name };
+}
+
 export interface CreatedUser {
   id: string;
   email: string;

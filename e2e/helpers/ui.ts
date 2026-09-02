@@ -1,5 +1,19 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import type { CreatedUser } from './api';
+
+/**
+ * Elige una opción de un Select de shadcn/Radix: el disparador tiene rol `combobox` y
+ * las opciones se montan en un portal fuera del formulario, por eso la opción se busca
+ * en la página y no dentro del contenedor del campo.
+ */
+export async function selectOption(
+  page: Page,
+  combobox: Locator,
+  optionName: string,
+): Promise<void> {
+  await combobox.click();
+  await page.getByRole('option', { name: optionName }).click();
+}
 
 /**
  * Inicia sesión con un usuario efímero recién creado (contraseña temporal) y

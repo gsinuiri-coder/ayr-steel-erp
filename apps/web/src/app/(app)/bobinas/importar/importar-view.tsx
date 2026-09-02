@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { ImportEntity } from '@ayr/shared';
+import { ImportEntity, Role } from '@ayr/shared';
 import { Button } from '@/components/ui/button';
+import { RoleGate } from '@/components/role-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ImportDialog } from '@/components/imports/import-dialog';
 import { IMPORT_COLUMNS } from '@/components/imports/import-columns';
@@ -10,7 +11,7 @@ import { IMPORT_COLUMNS } from '@/components/imports/import-columns';
 /** RF-12: alta masiva de bobinas desde planilla, con revisión fila por fila. */
 export function ImportarBobinasView() {
   return (
-    <>
+    <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Importar bobinas</h1>
@@ -39,10 +40,10 @@ export function ImportarBobinasView() {
             kg va sin IGV (D-038). El tipo de cambio solo hace falta si la bobina está en dólares.
           </p>
           <div>
-            <ImportDialog entity={ImportEntity.COILS} invalidateQueryKey={['coils']} />
+            <ImportDialog entity={ImportEntity.COILS} invalidateQueryKey={['coils', 'inventory']} />
           </div>
         </CardContent>
       </Card>
-    </>
+    </RoleGate>
   );
 }

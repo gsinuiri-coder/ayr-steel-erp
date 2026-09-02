@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { PurchaseType, type InvoiceXmlPreviewDto } from '@ayr/shared';
+import { PurchaseType, Role, type InvoiceXmlPreviewDto } from '@ayr/shared';
 import { ApiError } from '@/lib/api';
+import { formatMoney } from '@/lib/format';
+import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,7 +45,7 @@ export function NuevaXmlView() {
   });
 
   return (
-    <>
+    <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div>
         <h1 className="text-2xl font-semibold">Bobinas desde XML</h1>
         <p className="text-sm text-muted-foreground">
@@ -60,6 +62,7 @@ export function NuevaXmlView() {
           <CardContent className="grid gap-3">
             <Input
               type="file"
+              aria-label="Archivo XML de la factura del proveedor"
               accept=".xml,text/xml,application/xml"
               disabled={upload.isPending}
               onChange={(e) => {
@@ -90,7 +93,10 @@ export function NuevaXmlView() {
         <>
           <div className="flex items-center justify-between gap-4">
             <p className="text-sm text-muted-foreground">
-              Leído del XML: {preview.series}-{preview.number} · {preview.supplierName}
+              Leído del XML: {preview.series}-{preview.number} · {preview.supplierName} · valor de
+              venta {formatMoney(preview.subtotal, preview.currency)} + IGV{' '}
+              {formatMoney(preview.igv, preview.currency)} ={' '}
+              {formatMoney(preview.total, preview.currency)}
             </p>
             <Button
               variant="outline"
@@ -109,7 +115,7 @@ export function NuevaXmlView() {
           />
         </>
       )}
-    </>
+    </RoleGate>
   );
 }
 

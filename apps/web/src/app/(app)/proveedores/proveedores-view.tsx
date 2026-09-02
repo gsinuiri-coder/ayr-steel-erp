@@ -142,9 +142,11 @@ export function ProveedoresView() {
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link href={`/proveedores/${s.id}/estado-cuenta`}>Estado de cuenta</Link>
-                  </Button>
+                  {isAdmin && (
+                    <Button variant="ghost" size="sm" asChild>
+                      <Link href={`/proveedores/${s.id}/estado-cuenta`}>Estado de cuenta</Link>
+                    </Button>
+                  )}
                   {isAdmin && (
                     <Button
                       variant="ghost"

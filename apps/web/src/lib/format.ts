@@ -1,26 +1,32 @@
-import type { Currency } from '@ayr/shared';
+import { Decimal, type Currency } from '@ayr/shared';
 
 /**
  * Formateo para mostrar. Los valores llegan del API como string con su escala fija
- * (D-003): acá solo se les da forma, **nunca** se opera con ellos como `number`.
+ * (D-003): acá solo se les da forma. El redondeo se hace con `Decimal`, nunca
+ * truncando la cadena, porque un `S/ 3.45` donde el costo real es `3.4567` le da al
+ * usuario una cuenta distinta al multiplicarlo por los kilos.
  */
 
 const SYMBOL: Record<Currency, string> = { PEN: 'S/', USD: 'US$' };
 
-/** `"1234.5600"` → `"S/ 1,234.56"`. Redondea a 2 decimales solo para la vista. */
-export function formatMoney(value: string, currency: Currency = 'PEN'): string {
-  const [intPart = '0', decPart = ''] = value.replace('-', '').split('.');
-  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const cents = `${decPart}00`.slice(0, 2);
-  const sign = value.startsWith('-') ? '-' : '';
-  return `${sign}${SYMBOL[currency]} ${grouped}.${cents}`;
+function group(intPart: string): string {
+  return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** `"1234.5678"` → `"S/ 1,234.57"`. `decimals` sube a 4 para precios unitarios. */
+export function formatMoney(value: string, currency: Currency = 'PEN', decimals = 2): string {
+  const rounded = new Decimal(value)
+    .toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP)
+    .toFixed(decimals);
+  const negative = rounded.startsWith('-');
+  const [intPart = '0', decPart = ''] = rounded.replace('-', '').split('.');
+  return `${negative ? '-' : ''}${SYMBOL[currency]} ${group(intPart)}${decPart ? `.${decPart}` : ''}`;
 }
 
 /** `"4500.000"` → `"4,500.000 kg"` (o la unidad que se pase). */
 export function formatQty(value: string, unit?: string): string {
   const [intPart = '0', decPart] = value.split('.');
-  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const body = decPart ? `${grouped}.${decPart}` : grouped;
+  const body = decPart ? `${group(intPart)}.${decPart}` : group(intPart);
   return unit ? `${body} ${unit}` : body;
 }
 
@@ -36,4 +42,9 @@ export function todayIso(): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** `true` si la cadena es un decimal válido y positivo, para no mandar basura al API. */
+export function isPositiveDecimal(value: string): boolean {
+  return /^\d+(\.\d+)?$/.test(value.trim()) && new Decimal(value.trim()).gt(0);
 }
