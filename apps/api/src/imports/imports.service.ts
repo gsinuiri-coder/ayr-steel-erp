@@ -18,6 +18,15 @@ import type { ImportAdapter, RowValidation } from './adapters/import-adapter.int
 import { ProductsImportAdapter } from './adapters/products.adapter';
 import { parseSpreadsheet } from './parse-spreadsheet';
 
+/**
+ * Nombre de archivo listo para ir en una key de R2 y en `file_name` (VARCHAR(200)):
+ * solo caracteres seguros, sin separadores de ruta, longitud acotada.
+ */
+function sanitizeFileName(name: string): string {
+  const safe = name.replace(/[^A-Za-z0-9._-]/g, '_').slice(-150);
+  return safe || 'archivo';
+}
+
 /** Marca como INVALID cualquier fila cuyo `dedupeKey` ya apareció antes en el mismo lote. */
 function markIntraBatchDuplicates(rows: RowValidation[], adapter: ImportAdapter): void {
   const seen = new Set<string>();
@@ -71,7 +80,8 @@ export class ImportsService {
   ): Promise<ImportBatchWithRowsDto> {
     const adapter = this.adapterFor(entity);
     const rawRows = parseSpreadsheet(file.buffer);
-    const key = `imports/${entity.toLowerCase()}/${randomUUID()}-${file.originalname}`;
+    const fileName = sanitizeFileName(file.originalname);
+    const key = `imports/${entity.toLowerCase()}/${randomUUID()}-${fileName}`;
     await this.storage.putObject(key, file.buffer, file.mimetype);
 
     // Secuencial (no Promise.all): cada validateRow puede consultar la DB y un archivo
@@ -88,7 +98,7 @@ export class ImportsService {
           data: {
             entity,
             fileKey: key,
-            fileName: file.originalname,
+            fileName,
             status: ImportBatchStatus.PARSED,
             createdById: actor.id,
           },
@@ -111,7 +121,7 @@ export class ImportsService {
           action: 'imports.upload',
           entity: 'import_batches',
           entityId: batch.id,
-          after: { entity, fileName: file.originalname, rows: rawRows.length },
+          after: { entity, fileName, rows: rawRows.length },
         });
         return batch.id;
       },
@@ -198,12 +208,13 @@ export class ImportsService {
         });
         confirmedCount += 1;
       } catch (err) {
+        const message =
+          err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
+            ? 'Choca con un registro ya creado por otra fila de este mismo archivo'
+            : 'No se pudo crear el registro';
         await this.prisma.importRow.update({
           where: { id: row.id },
-          data: {
-            status: ImportRowStatus.INVALID,
-            errors: [`No se pudo crear: ${err instanceof Error ? err.message : String(err)}`],
-          },
+          data: { status: ImportRowStatus.INVALID, errors: [message] },
         });
       }
     }

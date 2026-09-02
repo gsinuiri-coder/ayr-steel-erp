@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Role, type FinishDto } from '@ayr/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,7 @@ const FINISHES_QUERY_KEY = ['finishes'] as const;
 /** RF-25: catálogo de acabados de bobina, con su factor de densidad. */
 export function AcabadosView() {
   const { user } = useSession();
+  const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [dialog, setDialog] = useState<{ open: boolean; finish?: FinishDto; nonce: number }>({
     open: false,
@@ -35,6 +37,16 @@ export function AcabadosView() {
   const finishes = useQuery({
     queryKey: FINISHES_QUERY_KEY,
     queryFn: () => api<FinishDto[]>('/finishes'),
+  });
+
+  const toggleActive = useMutation({
+    mutationFn: (f: FinishDto) =>
+      api<FinishDto>(`/finishes/${f.id}`, { method: 'PATCH', body: { isActive: !f.isActive } }),
+    onSuccess: (updated) => {
+      toast.success(updated.isActive ? 'Acabado activado' : 'Acabado desactivado');
+      void queryClient.invalidateQueries({ queryKey: FINISHES_QUERY_KEY });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
   });
 
   return (
@@ -106,6 +118,16 @@ export function AcabadosView() {
                       }}
                     >
                       Editar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={toggleActive.isPending}
+                      onClick={() => {
+                        toggleActive.mutate(f);
+                      }}
+                    >
+                      {f.isActive ? 'Desactivar' : 'Activar'}
                     </Button>
                   </TableCell>
                 )}

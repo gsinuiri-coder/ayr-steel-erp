@@ -12,6 +12,13 @@ const secrets = {
   ADMIN_EMAIL: 'ci-admin@ayr.test',
   ADMIN_PASSWORD: `Ci-${randomBytes(12).toString('base64url')}`,
   SONAR_TOKEN: setup.SONAR_TOKEN ?? '',
+  // D-029/D-007 (Fase 1): el E2E de CI sube archivos a R2 y consulta apis.net.pe.
+  APIS_NET_PE_TOKEN: setup.APIS_NET_PE_TOKEN ?? '',
+  R2_ACCOUNT_ID: setup.R2_ACCOUNT_ID ?? '',
+  R2_ACCESS_KEY_ID: setup.R2_ACCESS_KEY_ID ?? '',
+  R2_SECRET_ACCESS_KEY: setup.R2_SECRET_ACCESS_KEY ?? '',
+  R2_BUCKET: setup.R2_BUCKET ?? '',
+  R2_ENDPOINT: setup.R2_ENDPOINT ?? '',
 };
 
 for (const [name, value] of Object.entries(secrets)) {

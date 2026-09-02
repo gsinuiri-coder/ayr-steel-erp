@@ -40,7 +40,17 @@ run('gcloud', [
   '--set-env-vars',
   `^|^NODE_ENV=production|WEB_ORIGIN=${webOrigin}|JOBS_ENABLED=true`,
   '--set-secrets',
-  'DATABASE_URL=DATABASE_URL:latest,DIRECT_URL=DIRECT_URL:latest,JWT_SECRET=JWT_SECRET:latest',
+  [
+    'DATABASE_URL=DATABASE_URL:latest',
+    'DIRECT_URL=DIRECT_URL:latest',
+    'JWT_SECRET=JWT_SECRET:latest',
+    'APIS_NET_PE_TOKEN=APIS_NET_PE_TOKEN:latest',
+    'R2_ACCOUNT_ID=R2_ACCOUNT_ID:latest',
+    'R2_ACCESS_KEY_ID=R2_ACCESS_KEY_ID:latest',
+    'R2_SECRET_ACCESS_KEY=R2_SECRET_ACCESS_KEY:latest',
+    'R2_BUCKET=R2_BUCKET:latest',
+    'R2_ENDPOINT=R2_ENDPOINT:latest',
+  ].join(','),
   '--quiet',
 ]);
 

@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, Role, type SupplierDto } from '@ayr/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,7 @@ const SUPPLIERS_QUERY_KEY = ['suppliers'] as const;
 /** RF-81/RF-83: proveedores, incluido si prestan corte tercerizado (D-033/P-10). */
 export function ProveedoresView() {
   const { user } = useSession();
+  const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [dialog, setDialog] = useState<{ open: boolean; supplier?: SupplierDto; nonce: number }>({
     open: false,
@@ -35,6 +37,16 @@ export function ProveedoresView() {
   const suppliers = useQuery({
     queryKey: SUPPLIERS_QUERY_KEY,
     queryFn: () => api<SupplierDto[]>('/suppliers'),
+  });
+
+  const toggleActive = useMutation({
+    mutationFn: (s: SupplierDto) =>
+      api<SupplierDto>(`/suppliers/${s.id}`, { method: 'PATCH', body: { isActive: !s.isActive } }),
+    onSuccess: (updated) => {
+      toast.success(updated.isActive ? 'Proveedor activado' : 'Proveedor desactivado');
+      void queryClient.invalidateQueries({ queryKey: SUPPLIERS_QUERY_KEY });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
   });
 
   return (
@@ -116,6 +128,16 @@ export function ProveedoresView() {
                       }}
                     >
                       Editar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={toggleActive.isPending}
+                      onClick={() => {
+                        toggleActive.mutate(s);
+                      }}
+                    >
+                      {s.isActive ? 'Desactivar' : 'Activar'}
                     </Button>
                   </TableCell>
                 )}

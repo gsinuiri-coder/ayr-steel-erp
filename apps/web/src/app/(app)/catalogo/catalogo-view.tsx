@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
   ImportEntity,
@@ -10,7 +11,7 @@ import {
   type BusinessLineDto,
   type ProductDto,
 } from '@ayr/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,7 @@ const CATALOG_QUERY_KEY = ['catalog'] as const;
 /** RF-50: catálogo por línea, en tabs. */
 export function CatalogoView() {
   const { user } = useSession();
+  const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [dialog, setDialog] = useState<{
     open: boolean;
@@ -52,6 +54,16 @@ export function CatalogoView() {
   const openDialog = (lineId: string, product?: ProductDto) => {
     setDialog((d) => ({ open: true, product, lineId, nonce: d.nonce + 1 }));
   };
+
+  const toggleActive = useMutation({
+    mutationFn: (p: ProductDto) =>
+      api<ProductDto>(`/catalog/${p.id}`, { method: 'PATCH', body: { isActive: !p.isActive } }),
+    onSuccess: (updated) => {
+      toast.success(updated.isActive ? 'Producto activado' : 'Producto desactivado');
+      void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+  });
 
   if (lines.isPending || products.isPending) {
     return <Skeleton className="h-64 w-full" />;
@@ -132,6 +144,16 @@ export function CatalogoView() {
                               }}
                             >
                               Editar
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={toggleActive.isPending}
+                              onClick={() => {
+                                toggleActive.mutate(p);
+                              }}
+                            >
+                              {p.isActive ? 'Desactivar' : 'Activar'}
                             </Button>
                           </TableCell>
                         )}

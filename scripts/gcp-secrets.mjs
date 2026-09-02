@@ -8,6 +8,13 @@ const secrets = {
   DATABASE_URL: neonConnectionString('production', { pooled: true }),
   DIRECT_URL: neonConnectionString('production', { pooled: false }),
   JWT_SECRET: setup.JWT_SECRET,
+  // D-029/D-007 (Fase 1): tipo de cambio SUNAT y storage R2 para `imports`.
+  APIS_NET_PE_TOKEN: setup.APIS_NET_PE_TOKEN ?? '',
+  R2_ACCOUNT_ID: setup.R2_ACCOUNT_ID ?? '',
+  R2_ACCESS_KEY_ID: setup.R2_ACCESS_KEY_ID ?? '',
+  R2_SECRET_ACCESS_KEY: setup.R2_SECRET_ACCESS_KEY ?? '',
+  R2_BUCKET: setup.R2_BUCKET ?? '',
+  R2_ENDPOINT: setup.R2_ENDPOINT ?? '',
 };
 
 run('gcloud', [

@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, ImportEntity, Role, type CustomerDto } from '@ayr/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,7 @@ const CUSTOMERS_QUERY_KEY = ['customers'] as const;
 /** RF-80/RF-82: clientes. */
 export function ClientesView() {
   const { user } = useSession();
+  const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [dialog, setDialog] = useState<{ open: boolean; customer?: CustomerDto; nonce: number }>({
     open: false,
@@ -36,6 +38,16 @@ export function ClientesView() {
   const customers = useQuery({
     queryKey: CUSTOMERS_QUERY_KEY,
     queryFn: () => api<CustomerDto[]>('/customers'),
+  });
+
+  const toggleActive = useMutation({
+    mutationFn: (c: CustomerDto) =>
+      api<CustomerDto>(`/customers/${c.id}`, { method: 'PATCH', body: { isActive: !c.isActive } }),
+    onSuccess: (updated) => {
+      toast.success(updated.isActive ? 'Cliente activado' : 'Cliente desactivado');
+      void queryClient.invalidateQueries({ queryKey: CUSTOMERS_QUERY_KEY });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
   });
 
   return (
@@ -117,6 +129,16 @@ export function ClientesView() {
                       }}
                     >
                       Editar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={toggleActive.isPending}
+                      onClick={() => {
+                        toggleActive.mutate(c);
+                      }}
+                    >
+                      {c.isActive ? 'Desactivar' : 'Activar'}
                     </Button>
                   </TableCell>
                 )}
