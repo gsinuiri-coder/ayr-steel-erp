@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { InventoryStrategy, type Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -25,7 +25,7 @@ interface RawBalance {
  */
 function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }) {
   const balances = new Map<string, { id: string; qty: string; avgCost: string; unit: string }>();
-  const movements: Record<string, unknown>[] = [];
+  const movements: FakeMovement[] = [];
   const executed: string[] = [];
 
   const tx = {
@@ -75,9 +75,23 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
     },
     inventoryMovement: {
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
-        movements.push(data);
-        return Promise.resolve({ id: BigInt(movements.length), ...data });
+        // Prisma devuelve `null` en las columnas opcionales que no se escribieron; sin
+        // esto el `reversalOfId` llegaría como `undefined` y la guarda anti-doble-reversa
+        // dispararía en el primer movimiento.
+        const row = { id: BigInt(movements.length + 1), reversalOfId: null, ...data };
+        movements.push(row);
+        return Promise.resolve(row);
       }),
+      findUnique: jest.fn(({ where }: { where: { id: bigint } }) =>
+        Promise.resolve(movements.find((m) => m.id === where.id) ?? null),
+      ),
+      findFirst: jest.fn(({ where }: { where: { reversalOfId?: bigint } }) =>
+        Promise.resolve(
+          movements.find(
+            (m) => where.reversalOfId !== undefined && m.reversalOfId === where.reversalOfId,
+          ) ?? null,
+        ),
+      ),
     },
   };
 
@@ -89,6 +103,9 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
     balanceOf: (itemType: string, itemId: string) => balances.get(`${itemType}:${itemId}`),
   };
 }
+
+/** Los movimientos falsos guardan strings; el servicio solo les pide `toString()`. */
+type FakeMovement = Record<string, unknown> & { id: bigint };
 
 function entry(overrides: Partial<RecordMovementInput> = {}): RecordMovementInput {
   return {
@@ -231,6 +248,170 @@ describe('InventoryService (§3.2, D-028)', () => {
       expect(lockQuery).toBeDefined();
       expect(fake.executed[0]).toContain('ON CONFLICT');
       expect(fake.executed[1]).toContain('FOR UPDATE');
+    });
+  });
+
+  describe('reverse (Fase 2b) — anulación por movimiento inverso', () => {
+    it('deja el saldo y el promedio exactamente como antes del movimiento anulado', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '100.000', unitCost: '10.0000' }));
+      await service.record(fake.tx, entry({ qty: '300.000', unitCost: '14.0000' }));
+      const out = await service.record(
+        fake.tx,
+        entry({ type: 'OUT', qty: '200.000', unitCost: undefined, refType: 'SCRAP' }),
+      );
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '200.000', avgCost: '13.0000' });
+
+      await service.reverse(fake.tx, out!.id, ACTOR, 'Merma mal registrada');
+
+      // Vuelve al saldo previo a la salida: 400 kg al promedio de 13.00.
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '400.000', avgCost: '13.0000' });
+    });
+
+    it('anular un ingreso saca su costo original, no el promedio vigente', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      const first = await service.record(fake.tx, entry({ qty: '100.000', unitCost: '10.0000' }));
+      await service.record(fake.tx, entry({ qty: '100.000', unitCost: '20.0000' }));
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '200.000', avgCost: '15.0000' });
+
+      await service.reverse(fake.tx, first!.id, ACTOR, 'Ingreso duplicado');
+
+      // Si la reversa hubiera salido al promedio (15), el saldo quedaría en 100 kg a
+      // 20 × 100 = 2000 pero valorizado en 1500: el promedio arrastraría el error.
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '100.000', avgCost: '20.0000' });
+      const reversal = fake.movements[2];
+      expect(reversal).toMatchObject({
+        type: 'OUT',
+        qty: '100.000',
+        unitCost: '10.0000',
+        totalCost: '1000.0000',
+        reversalOfId: first!.id,
+        notes: 'Ingreso duplicado',
+      });
+    });
+
+    it('no anula dos veces el mismo movimiento', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '500.000', unitCost: '10.0000' }));
+      const out = await service.record(
+        fake.tx,
+        entry({ type: 'OUT', qty: '100.000', unitCost: undefined, refType: 'SCRAP' }),
+      );
+
+      await service.reverse(fake.tx, out!.id, ACTOR, 'Primera anulación');
+      await expect(
+        service.reverse(fake.tx, out!.id, ACTOR, 'Segunda anulación'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '500.000' });
+    });
+
+    it('no anula un movimiento que ya es una anulación', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '500.000', unitCost: '10.0000' }));
+      const out = await service.record(
+        fake.tx,
+        entry({ type: 'OUT', qty: '100.000', unitCost: undefined, refType: 'SCRAP' }),
+      );
+      const reversal = await service.reverse(fake.tx, out!.id, ACTOR, 'Anulación');
+
+      await expect(
+        service.reverse(fake.tx, reversal.id, ACTOR, 'Anular la anulación'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rechaza anular un ingreso cuyos kilos ya no están en el saldo', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      const first = await service.record(fake.tx, entry({ qty: '100.000', unitCost: '10.0000' }));
+      await service.record(
+        fake.tx,
+        entry({ type: 'OUT', qty: '60.000', unitCost: undefined, refType: 'SALE' }),
+      );
+
+      await expect(service.reverse(fake.tx, first!.id, ACTOR, 'Tarde')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '40.000' });
+    });
+
+    it('secuencia IN-IN-OUT-reversa deja el promedio ponderado correcto', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '200.000', unitCost: '5.0000' }));
+      await service.record(fake.tx, entry({ qty: '200.000', unitCost: '9.0000' }));
+      // Promedio: (1000 + 1800) / 400 = 7.00
+      const out = await service.record(
+        fake.tx,
+        entry({ type: 'OUT', qty: '150.000', unitCost: undefined, refType: 'PRODUCTION' }),
+      );
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '250.000', avgCost: '7.0000' });
+
+      await service.reverse(fake.tx, out!.id, ACTOR, 'Producción anulada');
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '400.000', avgCost: '7.0000' });
+
+      // Y una entrada posterior sigue promediando sobre la base correcta.
+      await service.record(fake.tx, entry({ qty: '100.000', unitCost: '12.0000' }));
+      // (400×7 + 100×12) / 500 = 4000 / 500 = 8.00
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '500.000', avgCost: '8.0000' });
+    });
+  });
+
+  describe('adjustCost (D-043) — costo sin cantidad', () => {
+    it('sube el promedio sin tocar el saldo y guarda el delta por kilo', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '1000.000', unitCost: '5.0000' }));
+
+      const adjust = await service.adjustCost(fake.tx, {
+        businessLineId: STOCK_LINE.id,
+        itemType: 'COIL',
+        itemId: ITEM,
+        unit: 'KGM',
+        amountPen: '500.0000',
+        refType: 'PURCHASE',
+        notes: 'Flete F001-1 (D-043)',
+        actorId: ACTOR,
+      });
+
+      // 5000 + 500 = 5500 sobre 1000 kg → 5.50/kg, con la cantidad intacta.
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '1000.000', avgCost: '5.5000' });
+      expect(adjust).toMatchObject({
+        type: 'ADJUST',
+        qty: '1000.000',
+        unitCost: '0.5000',
+        totalCost: '500.0000',
+      });
+    });
+
+    it('no hace nada si el ítem no tiene saldo', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      const adjust = await service.adjustCost(fake.tx, {
+        businessLineId: STOCK_LINE.id,
+        itemType: 'COIL',
+        itemId: ITEM,
+        unit: 'KGM',
+        amountPen: '500.0000',
+        refType: 'PURCHASE',
+        actorId: ACTOR,
+      });
+
+      expect(adjust).toBeNull();
+      expect(fake.movements).toHaveLength(0);
+    });
+
+    it('anular el ajuste devuelve el promedio a donde estaba', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '1000.000', unitCost: '5.0000' }));
+      const adjust = await service.adjustCost(fake.tx, {
+        businessLineId: STOCK_LINE.id,
+        itemType: 'COIL',
+        itemId: ITEM,
+        unit: 'KGM',
+        amountPen: '500.0000',
+        refType: 'PURCHASE',
+        actorId: ACTOR,
+      });
+      expect(fake.balanceOf('COIL', ITEM)?.avgCost).toBe('5.5000');
+
+      await service.reverse(fake.tx, adjust!.id, ACTOR, 'Flete anulado');
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '1000.000', avgCost: '5.0000' });
     });
   });
 });

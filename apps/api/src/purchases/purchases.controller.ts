@@ -14,10 +14,12 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import {
+  cancelPurchaseSchema,
   createPurchaseSchema,
   createSupplierPaymentSchema,
   purchaseQuerySchema,
   Role,
+  type CancelPurchaseInput,
   type CreatePurchaseInput,
   type CreateSupplierPaymentInput,
   type InvoiceXmlPreviewDto,
@@ -121,7 +123,8 @@ export class PurchasesController {
   cancel(
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(cancelPurchaseSchema)) body: CancelPurchaseInput,
   ): Promise<PurchaseDto> {
-    return this.purchases.cancel(actor, id);
+    return this.purchases.cancel(actor, id, body.reason);
   }
 }

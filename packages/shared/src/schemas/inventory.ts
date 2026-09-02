@@ -25,7 +25,11 @@ export const inventoryMovementSchema = z.object({
   totalCost: z.string(),
   refType: z.enum(INVENTORY_REF_TYPES),
   refId: z.string().nullable(),
+  /** Motivo escrito por el usuario en una merma, una anulación o un ajuste de costo. */
+  notes: z.string().nullable(),
   reversalOfId: z.string().nullable(),
+  /** Id del movimiento que anula a este, si ya fue revertido (RF-18, RF-21). */
+  reversedById: z.string().nullable(),
   actorId: z.string().uuid().nullable(),
   actorName: z.string().nullable(),
   at: z.string(),
@@ -70,6 +74,37 @@ export const inventoryQuerySchema = z.object({
     .optional(),
 });
 export type InventoryQuery = z.infer<typeof inventoryQuerySchema>;
+
+/**
+ * Inventario valorizado de una línea (RF-51, base de RF-90). Las bobinas se agrupan
+ * por `typeKey` (RF-14: acabado + espesor, sin ancho) porque un partido cambia el
+ * ancho pero no el material; los productos de catálogo van uno por SKU.
+ * Todo el valorizado va en soles (D-042).
+ */
+export const inventorySummaryRowSchema = z.object({
+  /** `typeKey` de la bobina o SKU del producto: identifica la fila y agrupa. */
+  key: z.string(),
+  itemType: z.enum(INVENTORY_ITEM_TYPES),
+  name: z.string(),
+  qty: z.string(),
+  unit: z.string(),
+  /** Costo promedio ponderado en soles del grupo (valor total / cantidad). */
+  avgCostPen: z.string(),
+  totalValuePen: z.string(),
+  /** Cuántas bobinas hay detrás de la fila; siempre 1 en un producto de catálogo. */
+  itemCount: z.number().int(),
+  /** Id del ítem cuando la fila es un solo ítem (producto), para enlazar al kardex. */
+  itemId: z.string().uuid().nullable(),
+});
+export type InventorySummaryRowDto = z.infer<typeof inventorySummaryRowSchema>;
+
+export const inventorySummarySchema = z.object({
+  businessLine: z.enum(BUSINESS_LINES),
+  coils: z.array(inventorySummaryRowSchema),
+  products: z.array(inventorySummaryRowSchema),
+  totalValuePen: z.string(),
+});
+export type InventorySummaryDto = z.infer<typeof inventorySummarySchema>;
 
 /** Cantidades de kardex: siempre positivas; el sentido lo da el tipo de movimiento. */
 export const inventoryQtySchema = decimalStringSchema('KG', { positive: true });

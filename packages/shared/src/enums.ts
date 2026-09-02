@@ -281,10 +281,12 @@ export const PURCHASE_STATUS_LABELS: Record<PurchaseStatus, string> = {
   CANCELLED: 'Anulada',
 };
 
-/** Naturaleza de una compra de servicio, para el prorrateo de costo futuro (RF-41). */
+/** Naturaleza de una compra de servicio (RF-41, D-043). */
 export const ServiceKind = {
   CUTTING: 'CUTTING',
   FREIGHT: 'FREIGHT',
+  CUSTOMS: 'CUSTOMS',
+  INSURANCE: 'INSURANCE',
   OTHER: 'OTHER',
 } as const;
 export type ServiceKind = (typeof ServiceKind)[keyof typeof ServiceKind];
@@ -292,8 +294,20 @@ export const SERVICE_KINDS = Object.values(ServiceKind) as [ServiceKind, ...Serv
 export const SERVICE_KIND_LABELS: Record<ServiceKind, string> = {
   CUTTING: 'Corte tercerizado',
   FREIGHT: 'Flete',
+  CUSTOMS: 'Aduanas',
+  INSURANCE: 'Seguro',
   OTHER: 'Otro servicio',
 };
+
+/**
+ * Servicios que se pueden imputar al costo de una compra de bobinas (landed cost,
+ * D-043). `CUTTING` prorratea por otro criterio y es de Fase 3; `OTHER` no se imputa.
+ */
+export const LANDED_COST_SERVICE_KINDS: readonly ServiceKind[] = [
+  ServiceKind.FREIGHT,
+  ServiceKind.CUSTOMS,
+  ServiceKind.INSURANCE,
+];
 
 /** Medio de pago a proveedor (D-039). */
 export const PaymentMethod = {
@@ -325,6 +339,21 @@ export const COIL_STATUS_LABELS: Record<CoilStatus, string> = {
   OPEN: 'Abierta',
   CLOSED: 'Cerrada',
   CANCELLED: 'Anulada',
+};
+
+/** Estado de un partido de bobina (RF-15/RF-16). */
+export const CoilSplitStatus = {
+  ACTIVE: 'ACTIVE',
+  REVERTED: 'REVERTED',
+} as const;
+export type CoilSplitStatus = (typeof CoilSplitStatus)[keyof typeof CoilSplitStatus];
+export const COIL_SPLIT_STATUSES = Object.values(CoilSplitStatus) as [
+  CoilSplitStatus,
+  ...CoilSplitStatus[],
+];
+export const COIL_SPLIT_STATUS_LABELS: Record<CoilSplitStatus, string> = {
+  ACTIVE: 'Vigente',
+  REVERTED: 'Revertido',
 };
 
 /**

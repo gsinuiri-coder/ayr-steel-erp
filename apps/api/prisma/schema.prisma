@@ -3,6 +3,9 @@
 // proveedores, márgenes, tipo de cambio, e importación masiva genérica.
 // Fase 2a (D-041): kardex append-only (`inventory_movements`/`inventory_balances`),
 // compras con recepción y pagos parciales, y alta de bobinas por tres vías.
+// Fase 2b (D-041): reversa de movimientos, partido de bobina (`coil_splits`), merma,
+// cierre/edición/anulación de bobina, anulación de compra recibida y landed cost
+// (`purchases.related_purchase_id`, D-043).
 // Regla D-003: dinero/kg/mm/tasas son siempre `Decimal @db.Decimal(p, s)` con
 // escala explícita (dinero 4, kg 3, mm 2, tasas/factores 4). Nunca `number`.
 
@@ -78,8 +81,9 @@ enum InventoryItemType {
   COIL
 }
 
-/// Sentido del movimiento de kardex (§3.3). `ADJUST` corrige cantidad sin cambiar el
-/// costo promedio; anular siempre es un movimiento inverso, nunca un DELETE.
+/// Sentido del movimiento de kardex (§3.3). `ADJUST` corrige el **costo** sin mover la
+/// cantidad (landed cost, D-043): su `qty` son los kilos afectados y su `unitCost` el
+/// delta por kilo. Anular siempre es un movimiento inverso, nunca un DELETE.
 enum InventoryMovementType {
   IN
   OUT
@@ -133,10 +137,14 @@ enum PurchaseStatus {
   CANCELLED
 }
 
-/// Naturaleza de una compra de servicio, para el prorrateo de costo futuro (D-030, RF-41).
+/// Naturaleza de una compra de servicio (D-030, RF-41). `FREIGHT`, `CUSTOMS` e
+/// `INSURANCE` son los que se pueden imputar al costo de una compra de bobinas
+/// (landed cost, D-043); `CUTTING` prorratea distinto y es de Fase 3.
 enum ServiceKind {
   CUTTING
   FREIGHT
+  CUSTOMS
+  INSURANCE
   OTHER
 }
 
@@ -150,11 +158,18 @@ enum PaymentMethod {
 }
 
 /// Estado de una bobina (RF-19). `CLOSED` no entra a producción; `CANCELLED` solo
-/// es alcanzable si no tuvo movimientos (RF-21).
+/// es alcanzable si no tuvo movimientos aparte del ingreso inicial (RF-21).
 enum CoilStatus {
   OPEN
   CLOSED
   CANCELLED
+}
+
+/// Estado de un partido de bobina (RF-15/RF-16). Revertir no borra la fila: la marca
+/// `REVERTED` y emite las reversas de kardex, igual que el resto de anulaciones.
+enum CoilSplitStatus {
+  ACTIVE
+  REVERTED
 }
 
 /// Estado de una fila dentro de un lote de importación.
@@ -187,19 +202,19 @@ model User {
 
 /// Sesiones con refresh token (D-010). Revocar = `revokedAt` no nulo.
 model Session {
-  id               String    @id @default(uuid()) @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(128)
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash  String    @unique @map("refresh_token_hash") @db.VarChar(128)
   /// Hash anterior: se acepta unos segundos tras rotar para tolerar refresh concurrentes (dos pestañas).
-  previousTokenHash String?  @unique @map("previous_token_hash") @db.VarChar(128)
-  rotatedAt        DateTime? @map("rotated_at") @db.Timestamptz(3)
-  userAgent        String?   @map("user_agent") @db.VarChar(512)
-  ip               String?   @db.VarChar(64)
-  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
-  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
-  lastUsedAt       DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  previousTokenHash String?   @unique @map("previous_token_hash") @db.VarChar(128)
+  rotatedAt         DateTime? @map("rotated_at") @db.Timestamptz(3)
+  userAgent         String?   @map("user_agent") @db.VarChar(512)
+  ip                String?   @db.VarChar(64)
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  lastUsedAt        DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([userId])
   @@index([expiresAt])
@@ -281,17 +296,17 @@ model Product {
 
 /// Clientes (RF-80, RF-82). Baja lógica: `isActive`, nunca `DELETE`.
 model Customer {
-  id             String   @id @default(uuid()) @db.Uuid
-  docType        DocType  @map("doc_type")
-  docNumber      String   @map("doc_number") @db.VarChar(20)
-  name           String   @db.VarChar(160)
-  address        String?  @db.VarChar(240)
-  email          String?  @db.VarChar(160)
-  phone          String?  @db.VarChar(30)
-  creditDays     Int      @default(0) @map("credit_days")
-  isActive       Boolean  @default(true) @map("is_active")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id         String   @id @default(uuid()) @db.Uuid
+  docType    DocType  @map("doc_type")
+  docNumber  String   @map("doc_number") @db.VarChar(20)
+  name       String   @db.VarChar(160)
+  address    String?  @db.VarChar(240)
+  email      String?  @db.VarChar(160)
+  phone      String?  @db.VarChar(30)
+  creditDays Int      @default(0) @map("credit_days")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([docType, docNumber])
   @@map("customers")
@@ -412,6 +427,9 @@ model InventoryMovement {
   totalCost      Decimal               @map("total_cost") @db.Decimal(18, 4)
   refType        InventoryRefType      @map("ref_type")
   refId          String?               @map("ref_id") @db.VarChar(80)
+  /// Motivo escrito por el usuario: merma (RF-17), anulación (RF-18, RF-21) o ajuste
+  /// de costo (D-043). El kardex lo muestra tal cual; no participa de ningún cálculo.
+  notes          String?               @db.VarChar(240)
   reversalOfId   BigInt?               @map("reversal_of_id")
   reversalOf     InventoryMovement?    @relation("MovementReversal", fields: [reversalOfId], references: [id])
   reversals      InventoryMovement[]   @relation("MovementReversal")
@@ -470,8 +488,14 @@ model Purchase {
   creditDays         Int?               @map("credit_days")
   dueDate            DateTime?          @map("due_date") @db.Date
   status             PurchaseStatus     @default(DRAFT)
-  /// Solo en compras de tipo SERVICE (D-030): para el prorrateo de costo de Fase 3.
+  /// Solo en compras de tipo SERVICE (D-030): decide si el servicio se puede imputar
+  /// al costo de una compra de bobinas (D-043) o al de un corte tercerizado (Fase 3).
   serviceKind        ServiceKind?       @map("service_kind")
+  /// Landed cost (D-043): compra `COIL` a la que se imputa esta compra de servicio.
+  /// Solo con `serviceKind` FREIGHT/CUSTOMS/INSURANCE. Se prorratea al recibirla.
+  relatedPurchaseId  String?            @map("related_purchase_id") @db.Uuid
+  relatedPurchase    Purchase?          @relation("LandedCost", fields: [relatedPurchaseId], references: [id])
+  landedCostServices Purchase[]         @relation("LandedCost")
   /// Key en R2 del XML de la factura del proveedor cuando la compra nació de RF-11.
   sourceXmlKey       String?            @map("source_xml_key") @db.VarChar(300)
   notes              String?            @db.VarChar(500)
@@ -489,6 +513,7 @@ model Purchase {
   @@unique([supplierId, docType, series, number])
   @@index([businessLineId, issueDate])
   @@index([supplierId, status])
+  @@index([relatedPurchaseId])
   @@map("purchases")
 }
 
@@ -545,7 +570,8 @@ model SupplierPayment {
 /// Bobina de acero (RF-10..RF-14). `code` sigue RF-13
 /// (`{supplier.code}-{finishCode}-{thicknessMm}-{weightKg}-{correlativo}`) y `typeKey`
 /// sigue RF-14 (`{finishCode}-{thicknessMm}`, sin ancho). `unitCostPerKg` es sin IGV
-/// (D-038). `parentCoilId` queda siempre en null hasta el partido de Fase 2b (RF-15).
+/// (D-038) y en Fase 2b lo puede subir el landed cost (D-043). `parentCoilId`/`splitId`
+/// apuntan a la madre y al partido que creó la bobina hija (RF-15).
 model Coil {
   id             String        @id @default(uuid()) @db.Uuid
   code           String        @unique @db.VarChar(60)
@@ -570,8 +596,14 @@ model Coil {
   totalCostPen   Decimal       @map("total_cost_pen") @db.Decimal(18, 4)
   status         CoilStatus    @default(OPEN)
   parentCoilId   String?       @map("parent_coil_id") @db.Uuid
-  parentCoil     Coil?         @relation("CoilSplit", fields: [parentCoilId], references: [id])
-  childCoils     Coil[]        @relation("CoilSplit")
+  parentCoil     Coil?         @relation("CoilParent", fields: [parentCoilId], references: [id])
+  childCoils     Coil[]        @relation("CoilParent")
+  /// Partido que creó esta bobina hija (RF-15). Null en una bobina de compra.
+  splitId        String?       @map("split_id") @db.Uuid
+  split          CoilSplit?    @relation("SplitChildren", fields: [splitId], references: [id])
+  splitsAsParent CoilSplit[]   @relation("SplitParent")
+  /// Observaciones editables mientras la bobina está abierta (RF-20).
+  notes          String?       @db.VarChar(500)
   createdById    String        @map("created_by_id") @db.Uuid
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -579,5 +611,37 @@ model Coil {
   @@index([businessLineId, status])
   @@index([typeKey])
   @@index([supplierId])
+  @@index([parentCoilId])
+  @@index([splitId])
   @@map("coils")
+}
+
+/// Partido de bobina (RF-15). Agrupa la salida de la madre y las entradas de las hijas
+/// para poder revertirlo entero (RF-16): los movimientos de kardex del partido llevan
+/// `refType=SPLIT` y `refId` = este id.
+///
+/// El peso se prorratea **por ancho** sobre `Σ anchos de hijas + kerfLossMm`, así que
+/// la merma de corte se lleva su parte del peso y la suma cierra exactamente contra
+/// `splitWeightKg`. La madre conserva su ancho: lo que se parte es una porción del
+/// largo del rollo, no el ancho de la bobina física.
+model CoilSplit {
+  id            String          @id @default(uuid()) @db.Uuid
+  parentCoilId  String          @map("parent_coil_id") @db.Uuid
+  parentCoil    Coil            @relation("SplitParent", fields: [parentCoilId], references: [id])
+  /// Kilos de la madre que entran al partido (salida `OUT` de kardex).
+  splitWeightKg Decimal         @map("split_weight_kg") @db.Decimal(12, 3)
+  /// Merma de corte declarada, en mm de ancho.
+  kerfLossMm    Decimal         @map("kerf_loss_mm") @db.Decimal(8, 2)
+  /// Kilos que se lleva esa merma; `splitWeightKg` − Σ pesos de hijas.
+  kerfLossKg    Decimal         @map("kerf_loss_kg") @db.Decimal(12, 3)
+  status        CoilSplitStatus @default(ACTIVE)
+  createdById   String          @map("created_by_id") @db.Uuid
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  revertedById  String?         @map("reverted_by_id") @db.Uuid
+  revertedAt    DateTime?       @map("reverted_at") @db.Timestamptz(3)
+
+  children Coil[] @relation("SplitChildren")
+
+  @@index([parentCoilId])
+  @@map("coil_splits")
 }

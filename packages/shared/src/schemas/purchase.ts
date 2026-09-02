@@ -4,6 +4,7 @@ import {
   BUSINESS_LINES,
   CURRENCIES,
   EXCHANGE_RATE_SOURCES,
+  LANDED_COST_SERVICE_KINDS,
   PAYMENT_METHODS,
   PAYMENT_TERMS,
   PURCHASE_DOC_TYPES,
@@ -93,6 +94,20 @@ export const purchaseSchema = z.object({
   dueDate: z.string().nullable(),
   status: z.enum(PURCHASE_STATUSES),
   serviceKind: z.enum(SERVICE_KINDS).nullable(),
+  /** Landed cost (D-043): compra `COIL` a la que se imputa esta compra de servicio. */
+  relatedPurchaseId: z.string().uuid().nullable(),
+  relatedPurchaseLabel: z.string().nullable(),
+  /** Servicios (flete, aduanas, seguro) ya imputados a esta compra de bobinas. */
+  landedCostServices: z.array(
+    z.object({
+      purchaseId: z.string().uuid(),
+      documentLabel: z.string(),
+      serviceKind: z.enum(SERVICE_KINDS),
+      status: z.enum(PURCHASE_STATUSES),
+      /** Monto imputado al kardex, sin IGV y en soles (D-038, D-042). */
+      amountPen: z.string(),
+    }),
+  ),
   sourceXmlKey: z.string().nullable(),
   notes: z.string().nullable(),
   /** Suma de pagos aplicados y saldo pendiente (D-039); calculados, no almacenados. */
@@ -173,6 +188,12 @@ export const createPurchaseSchema = z
     }),
     creditDays: z.number().int().min(0).max(365).optional(),
     serviceKind: z.enum(SERVICE_KINDS).optional(),
+    /**
+     * Landed cost (D-043): compra `COIL` a la que se imputa esta compra de servicio.
+     * Solo con `serviceKind` FREIGHT/CUSTOMS/INSURANCE; el API valida además que la
+     * compra apuntada exista, sea de tipo `COIL` y no esté anulada.
+     */
+    relatedPurchaseId: z.string().uuid().optional(),
     /** Solo una key emitida por `POST /purchases/xml/preview`, nunca una ruta arbitraria de R2. */
     sourceXmlKey: z
       .string()
@@ -201,6 +222,21 @@ export const createPurchaseSchema = z
         path: ['serviceKind'],
         message: 'Indica qué clase de servicio es',
       });
+    }
+    if (d.relatedPurchaseId) {
+      if (d.type !== PurchaseType.SERVICE) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relatedPurchaseId'],
+          message: 'Solo una compra de servicio se imputa al costo de otra compra',
+        });
+      } else if (!d.serviceKind || !LANDED_COST_SERVICE_KINDS.includes(d.serviceKind)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relatedPurchaseId'],
+          message: 'Solo flete, aduanas o seguro se imputan al costo de las bobinas (D-043)',
+        });
+      }
     }
     d.items.forEach((item, index) => {
       if (d.type === PurchaseType.COIL) {
@@ -300,6 +336,20 @@ export const invoiceXmlPreviewSchema = z.object({
   warnings: z.array(z.string()),
 });
 export type InvoiceXmlPreviewDto = z.infer<typeof invoiceXmlPreviewSchema>;
+
+/**
+ * Anular una compra. Si ya fue recibida, el API revierte sus movimientos de kardex
+ * (Fase 2b) y exige que ninguna bobina ni producto de la compra tenga movimientos
+ * posteriores; el motivo queda en el kardex y en la auditoría.
+ */
+export const cancelPurchaseSchema = z.object({
+  reason: z
+    .string({ required_error: 'El motivo es obligatorio' })
+    .trim()
+    .min(3, 'Explica el motivo en al menos 3 caracteres')
+    .max(240, 'Máximo 240 caracteres'),
+});
+export type CancelPurchaseInput = z.infer<typeof cancelPurchaseSchema>;
 
 /** Pago parcial o total de una compra (D-039). */
 export const createSupplierPaymentSchema = z.object({

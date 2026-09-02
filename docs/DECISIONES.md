@@ -179,3 +179,41 @@ El patrón de correos vive en un único módulo (`apps/api/prisma/e2e-users.ts`)
 ### RF-15 recuperado
 
 El docx original saltaba de RF-14 a RF-16, y D-031 (P-08) ya había señalado a RF-15 entre los requisitos faltantes sin recuperarlo. Por el contenido de RF-16 ("revertir un partido, devolviendo peso y ancho a la madre") el hueco solo puede ser el partido en sí: **RF-15 — Partir una bobina en hijas por ancho, conservando trazabilidad a la madre.** Se implementa en Fase 2b; el campo `coils.parentCoilId` se crea ya en 2a (siempre `null` por ahora) para no migrar dos veces la tabla.
+
+### D-043 — Landed cost: flete, aduana y seguro entran al costo de la bobina
+
+**Fecha:** 2026-09-04. Cierra P-12.
+
+**Contexto.** Una importación de bobinas llega con varias facturas: la del proveedor del acero (compra `COIL`) y las del agente de carga, la agencia de aduanas y el seguro (compras `SERVICE`). Hasta ahora cada una vivía sola: la `COIL` movía kardex y las `SERVICE` solo generaban cuenta por pagar (D-030).
+
+**Problema.** El costo promedio del acero salía por debajo del real. Ese promedio alimenta el precio sugerido (D-032) y el costo de producción (D-035), así que el error se propaga a toda la cadena comercial: se vende con un margen aparente que no existe.
+
+**Alternativas.** (a) Dejarlo como gasto del período y absorberlo con el `overheadPerKg` de D-035 — pero ese overhead es fábrica, no compra, y un flete de importación es diez veces un flete local: promediarlo desfigura ambos. (b) Pedir el flete estimado al registrar la compra `COIL` — obliga a adivinar antes de tener la factura y a recostear igual cuando llega la real. (c) Vincular la compra de servicio a la de bobinas y prorratear al recibirla.
+
+**Decisión.** (c). `purchases.relatedPurchaseId` apunta de la compra `SERVICE` a la compra `COIL`. El vínculo solo se admite si el `serviceKind` es `FREIGHT`, `CUSTOMS` o `INSURANCE` (`CUTTING` prorratea distinto y es de Fase 3; `OTHER` no se imputa) y si la compra vinculada es de tipo `COIL` y no está anulada; el proveedor puede ser otro, porque el flete rara vez lo factura el mismo que el acero. Al **recibir** la compra de servicio se toma su subtotal (sin IGV, D-038), se convierte a soles con su propio `exchangeRate` (D-042) y se reparte **por kilo** entre las bobinas de la compra vinculada que todavía tengan saldo: cada una recibe un movimiento `ADJUST` que no cambia la cantidad y sube el `avgCost` del saldo, y se actualiza su `unitCostPerKg`.
+
+**Por qué por kg y no por valor.** El servicio se contrata y se cobra por peso transportado o nacionalizado; prorratear por valor cargaría más costo de flete al acero más caro aunque ocupe el mismo espacio y pese lo mismo. Si alguna vez aparece un servicio que se cobra sobre el valor CIF (algunos seguros), se agrega el criterio como campo de la compra; no se cambia el default.
+
+**Consecuencias.** El `ADJUST` es el primer movimiento de kardex que mueve costo sin mover cantidad, así que `InventoryService` gana un método propio (`adjustCost`) en vez de forzar `record`. Una compra de servicio ya prorrateada no se puede volver a prorratear ni desvincular sin anularla (su anulación revierte los `ADJUST` con `reverse`). Si una bobina de la compra vinculada ya se consumió del todo, no recibe imputación: ese costo ya salió del inventario y reescribirlo tocaría movimientos pasados. Es un **default por recomendación del agente** (§5, P-12): el dueño puede pedir volver a tratar el flete como gasto antes de Fase 3, y el cambio sería dejar de crear el vínculo, sin migrar nada.
+
+### D-044 — RF-22 (cancelar plan de corte) es de Fase 3
+
+**Fecha:** 2026-09-04
+
+**Contexto.** §3.7 listaba RF-22 dentro de Fase 2b junto con el resto de anulaciones de bobina.
+
+**Decisión.** RF-22 se implementa en Fase 3, con el plan de corte tercerizado (RF-40..42).
+
+**Consecuencias.** En 2b no existe todavía la entidad "plan de corte": no hay nada que cancelar, y adelantar un endpoint sin comportamiento solo agregaría superficie. §4.2 lo deja anotado al lado del requisito. El resto de anulaciones de 2b (RF-18, RF-21 y la anulación de compra recibida) no dependen de esto.
+
+### D-045 — Editar moneda o tipo de cambio de una bobina recuesta el ingreso
+
+**Fecha:** 2026-09-04
+
+**Contexto.** RF-20 pide editar los datos de una bobina "incluida su moneda y tipo de cambio". Con D-042 el kardex guarda el costo ya convertido a soles, así que cambiar la moneda o el TC cambia el costo con el que la bobina entró al inventario.
+
+**Problema.** El promedio ponderado de D-028 es acumulativo: el `avgCost` de hoy es función de todos los movimientos anteriores en orden. Si la bobina ya tuvo una salida, un partido o una merma, esas operaciones se valorizaron con el costo viejo. Reescribir el ingreso hacia atrás dejaría el kardex contando una historia que nunca ocurrió, y el trigger de la base lo impide de todos modos (§3.2, append-only).
+
+**Decisión.** El cambio de moneda, tipo de cambio o costo unitario solo se admite si la bobina **no tiene movimientos posteriores** a su `IN` inicial. Cuando se admite, no se hace `UPDATE` del movimiento: se emite la reversa del `IN` original (`reverse`) y un `IN` nuevo al costo corregido, ambos en la misma transacción. Los campos que no tocan el kardex (ancho, notas) se editan mientras la bobina esté `OPEN`, sin condiciones extra.
+
+**Consecuencias.** El kardex de la bobina muestra las tres filas (ingreso, reversa, reingreso), que es exactamente la trazabilidad que pide RF-95: se ve qué se corrigió, cuándo y quién. Si la bobina ya se movió, la corrección queda bloqueada con un mensaje que nombra el movimiento que la bloquea; la salida en ese caso es anular primero la operación posterior. Solo ADMINISTRADOR puede editar moneda/TC (§3.4); SUPERVISOR_PLANTA edita el resto.

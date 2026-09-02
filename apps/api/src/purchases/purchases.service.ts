@@ -7,21 +7,27 @@ import {
 } from '@nestjs/common';
 import {
   BusinessLineCode,
+  CoilStatus,
   Currency,
   ExchangeRateSource,
   InventoryStrategy,
   Prisma,
   PurchaseStatus,
   PurchaseType,
+  type InventoryItemType,
   type Purchase,
   type PurchaseItem,
+  type ServiceKind,
   type SupplierPayment,
 } from '@prisma/client';
 import {
   Decimal,
+  LANDED_COST_SERVICE_KINDS,
+  SERVICE_KIND_LABELS,
   STOCK_PURCHASE_TYPES,
   toDecimal,
   toFixedString,
+  Unit,
   type CreatePurchaseInput,
   type CreateSupplierPaymentInput,
   type InvoiceXmlPreviewDto,
@@ -39,6 +45,7 @@ import { StorageService } from '../documents/storage.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { prorateByWeight } from './landed-cost';
 import { parseInvoiceXml } from './invoice-xml';
 import {
   computeDueDate,
@@ -149,6 +156,7 @@ export class PurchasesService {
     }
 
     await this.assertItemsAreConsistent(input, businessLine.id);
+    await this.assertLandedCostLinkIsValid(input);
 
     const { rate, source } = await this.resolveExchangeRate(input);
     const totals = computeTotals(input);
@@ -176,6 +184,8 @@ export class PurchasesService {
             creditDays: input.paymentTerms === 'CREDITO' ? (input.creditDays ?? null) : null,
             dueDate: dueDate ? new Date(`${dueDate}T00:00:00.000Z`) : null,
             serviceKind: input.type === PurchaseType.SERVICE ? (input.serviceKind ?? null) : null,
+            relatedPurchaseId:
+              input.type === PurchaseType.SERVICE ? (input.relatedPurchaseId ?? null) : null,
             sourceXmlKey: input.sourceXmlKey ?? null,
             notes: input.notes ?? null,
             createdById: actor.id,
@@ -292,13 +302,21 @@ export class PurchasesService {
           // SERVICE y EXPENSE no mueven inventario (D-030): solo generan cuenta por pagar.
         }
 
+        // Landed cost (D-043): un flete, una aduana o un seguro vinculados a una compra
+        // de bobinas reparten su costo sin IGV entre esas bobinas al recibirse.
+        const landed = await this.applyLandedCost(tx, purchase, actor);
+
         await this.audit.write(tx, {
           actorId: actor.id,
           action: 'purchases.receive',
           entity: 'purchases',
           entityId: purchase.id,
           before: { status: purchase.status },
-          after: { status: PurchaseStatus.RECEIVED, items: purchase.items.length },
+          after: {
+            status: PurchaseStatus.RECEIVED,
+            items: purchase.items.length,
+            ...(landed ? { landedCost: landed } : {}),
+          },
         });
       },
       { timeout: 30_000 },
@@ -307,8 +325,13 @@ export class PurchasesService {
     return this.findOne(id);
   }
 
-  /** Anular una compra solo mientras no haya movido inventario (recepción es de ida). */
-  async cancel(actor: RequestUser, id: string): Promise<PurchaseDto> {
+  /**
+   * Anular una compra. En `DRAFT` es solo un cambio de estado; una compra ya recibida
+   * revierte además todos sus movimientos de kardex (Fase 2b) y anula las bobinas que
+   * creó. Se bloquea si algo de lo que entró con esa compra ya se movió después:
+   * revertir el ingreso de kilos que ya salieron dejaría el saldo en negativo.
+   */
+  async cancel(actor: RequestUser, id: string, reason: string): Promise<PurchaseDto> {
     const purchase = await this.prisma.purchase.findUnique({
       where: { id },
       include: { payments: true },
@@ -317,30 +340,248 @@ export class PurchasesService {
     if (purchase.status === PurchaseStatus.CANCELLED) {
       throw new BadRequestException('La compra ya está anulada');
     }
-    if (purchase.status === PurchaseStatus.RECEIVED) {
+    if (purchase.payments.length > 0) {
       throw new BadRequestException(
-        'La compra ya fue recibida y movió inventario: anularla es parte de Fase 2b',
+        'La compra tiene pagos registrados: anula primero los pagos al proveedor',
       );
     }
-    if (purchase.payments.length > 0) {
-      throw new BadRequestException('La compra tiene pagos registrados: no se puede anular');
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        // El cambio de estado va primero y condicionado al estado leído: dos anulaciones
+        // simultáneas no pueden revertir los mismos movimientos dos veces.
+        const claimed = await tx.purchase.updateMany({
+          where: { id, status: purchase.status },
+          data: { status: PurchaseStatus.CANCELLED, cancelledAt: new Date() },
+        });
+        if (claimed.count === 0) {
+          throw new ConflictException('La compra cambió de estado por otra operación');
+        }
+
+        if (purchase.status === PurchaseStatus.RECEIVED) {
+          const movements = await tx.inventoryMovement.findMany({
+            where: { refType: 'PURCHASE', refId: id },
+            orderBy: { id: 'asc' },
+          });
+          await this.assertNothingMovedAfter(tx, movements);
+
+          // Del más nuevo al más viejo: si una compra generó un ingreso y luego un
+          // ajuste de costo sobre el mismo ítem, el ajuste tiene que deshacerse primero.
+          for (const movement of [...movements].reverse()) {
+            await this.inventory.reverse(tx, movement.id, actor.id, reason);
+            if (movement.type === 'ADJUST' && movement.itemType === 'COIL') {
+              // El kardex ya volvió atrás; el costo del documento de la bobina también
+              // tiene que hacerlo, o quedaría mostrando un landed cost que ya no existe.
+              await this.bumpCoilDocumentCost(
+                tx,
+                movement.itemId,
+                toDecimal(movement.totalCost.toString()).negated(),
+                toDecimal(movement.qty.toString()),
+              );
+            }
+          }
+
+          await tx.coil.updateMany({
+            where: { purchaseId: id, status: { not: CoilStatus.CANCELLED } },
+            data: { status: CoilStatus.CANCELLED },
+          });
+        }
+
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'purchases.cancel',
+          entity: 'purchases',
+          entityId: id,
+          before: { status: purchase.status },
+          after: { status: PurchaseStatus.CANCELLED, reason },
+        });
+      },
+      { timeout: 30_000 },
+    );
+    return this.findOne(id);
+  }
+
+  /**
+   * Corta la anulación si algún ítem que entró con la compra tiene movimientos ajenos a
+   * ella (una venta, un partido, una merma, un landed cost de otra compra). El mensaje
+   * nombra el ítem y qué lo movió: sin eso el usuario solo sabe que no puede y no por qué.
+   */
+  private async assertNothingMovedAfter(
+    tx: Prisma.TransactionClient,
+    movements: { id: bigint; itemType: InventoryItemType; itemId: string }[],
+  ): Promise<void> {
+    if (movements.length === 0) return;
+    const ownIds = new Set(movements.map((m) => m.id));
+
+    // "Posterior" se mide por ítem y contra el ÚLTIMO movimiento que esta compra le
+    // hizo, no contra el conjunto entero. Anular un flete (D-043) no puede quedar
+    // bloqueado por el ingreso de la bobina, que es anterior a su propio ajuste.
+    const lastOwnId = new Map<string, bigint>();
+    for (const m of movements) {
+      const current = lastOwnId.get(m.itemId);
+      if (current === undefined || m.id > current) lastOwnId.set(m.itemId, m.id);
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.purchase.update({
-        where: { id },
-        data: { status: PurchaseStatus.CANCELLED, cancelledAt: new Date() },
-      });
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'purchases.cancel',
-        entity: 'purchases',
-        entityId: id,
-        before: { status: purchase.status },
-        after: { status: PurchaseStatus.CANCELLED },
-      });
+    const later = await tx.inventoryMovement.findMany({
+      where: {
+        OR: [...lastOwnId].map(([itemId, id]) => ({ itemId, id: { gt: id } })),
+      },
+      orderBy: { id: 'asc' },
+      take: 5,
     });
-    return this.findOne(id);
+    const blocking = later.filter((m) => !ownIds.has(m.id));
+    if (blocking.length === 0) return;
+
+    const labels = await this.resolveMovementLabels(tx, blocking);
+    const detail = blocking
+      .map((m) => `${labels.get(m.itemId) ?? m.itemId} (${m.refType})`)
+      .join(', ');
+    throw new BadRequestException(
+      `No se puede anular la compra: ${detail} ya tiene movimientos posteriores. Anúlalos primero.`,
+    );
+  }
+
+  private async resolveMovementLabels(
+    tx: Prisma.TransactionClient,
+    movements: { itemType: InventoryItemType; itemId: string }[],
+  ): Promise<Map<string, string>> {
+    const coilIds = movements.filter((m) => m.itemType === 'COIL').map((m) => m.itemId);
+    const productIds = movements.filter((m) => m.itemType === 'PRODUCT').map((m) => m.itemId);
+    const [coils, products] = await Promise.all([
+      coilIds.length
+        ? tx.coil.findMany({ where: { id: { in: coilIds } }, select: { id: true, code: true } })
+        : Promise.resolve([]),
+      productIds.length
+        ? tx.product.findMany({
+            where: { id: { in: productIds } },
+            select: { id: true, sku: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    return new Map([
+      ...coils.map((c) => [c.id, c.code] as const),
+      ...products.map((p) => [p.id, p.sku] as const),
+    ]);
+  }
+
+  /**
+   * D-043. Reparte el costo sin IGV de una compra de servicio, ya convertido a soles,
+   * entre las bobinas con saldo de la compra `COIL` vinculada, **por kilo**. Cada
+   * bobina recibe un `ADJUST` de costo (no de cantidad) y ve subir su `unitCostPerKg`.
+   * Devuelve `null` cuando la compra no es un servicio imputable.
+   */
+  private async applyLandedCost(
+    tx: Prisma.TransactionClient,
+    purchase: Purchase,
+    actor: RequestUser,
+  ): Promise<{ amountPen: string; coils: number } | null> {
+    if (purchase.type !== PurchaseType.SERVICE || !purchase.relatedPurchaseId) return null;
+    if (!purchase.serviceKind || !LANDED_COST_SERVICE_KINDS.includes(purchase.serviceKind)) {
+      return null;
+    }
+
+    const related = await tx.purchase.findUnique({
+      where: { id: purchase.relatedPurchaseId },
+      select: { id: true, status: true, series: true, number: true },
+    });
+    if (!related) throw new NotFoundException('La compra de bobinas vinculada no existe');
+    if (related.status !== PurchaseStatus.RECEIVED) {
+      throw new BadRequestException(
+        `La compra ${related.series}-${related.number} todavía no fue recibida: recíbela antes de imputarle el ${SERVICE_KIND_LABELS[purchase.serviceKind].toLowerCase()}`,
+      );
+    }
+
+    const coils = await tx.coil.findMany({
+      where: { purchaseId: related.id, status: { not: CoilStatus.CANCELLED } },
+      select: {
+        id: true,
+        code: true,
+        businessLineId: true,
+        exchangeRate: true,
+        unitCostPerKg: true,
+      },
+      orderBy: { code: 'asc' },
+    });
+    const balances = await tx.inventoryBalance.findMany({
+      where: { itemType: 'COIL', itemId: { in: coils.map((c) => c.id) } },
+      select: { itemId: true, qty: true },
+    });
+    const availableKg = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    // Una bobina ya consumida no recibe imputación: su costo salió del inventario y
+    // reescribirlo tocaría movimientos pasados (D-043).
+    const targets = coils.filter((c) => (availableKg.get(c.id) ?? new Decimal(0)).gt(0));
+    if (targets.length === 0) {
+      throw new BadRequestException(
+        `Las bobinas de la compra ${related.series}-${related.number} ya no tienen saldo: no hay dónde imputar este costo`,
+      );
+    }
+
+    const amountPen = toDecimal(purchase.subtotal.toString()).times(
+      purchase.exchangeRate.toString(),
+    );
+    const shares = prorateByWeight(
+      amountPen,
+      targets.map((c) => ({ id: c.id, qtyKg: availableKg.get(c.id) ?? new Decimal(0) })),
+    );
+    const noteLabel = `${SERVICE_KIND_LABELS[purchase.serviceKind]} ${purchase.series}-${purchase.number} (D-043)`;
+
+    for (const share of shares) {
+      const coil = targets.find((c) => c.id === share.id);
+      const qty = availableKg.get(share.id);
+      if (!coil || !qty || qty.lte(0) || share.amountPen.isZero()) continue;
+
+      await this.inventory.adjustCost(tx, {
+        businessLineId: coil.businessLineId,
+        itemType: 'COIL',
+        itemId: coil.id,
+        unit: Unit.KGM,
+        amountPen: toFixedString(share.amountPen, 'MONEY'),
+        refType: 'PURCHASE',
+        refId: purchase.id,
+        notes: noteLabel,
+        actorId: actor.id,
+      });
+
+      await this.bumpCoilDocumentCost(tx, coil.id, share.amountPen, qty);
+    }
+
+    return { amountPen: toFixedString(amountPen, 'MONEY'), coils: targets.length };
+  }
+
+  /**
+   * Mueve el costo del **documento** de una bobina (`unitCostPerKg` y sus totales) por
+   * el mismo monto que se le imputó al kardex. El kardex va en soles (D-042) y el
+   * documento en la moneda de la bobina (D-038), así que el delta se divide por su
+   * tipo de cambio. `amountPen` negativo deshace la imputación.
+   */
+  private async bumpCoilDocumentCost(
+    tx: Prisma.TransactionClient,
+    coilId: string,
+    amountPen: Decimal,
+    qtyKg: Decimal,
+  ): Promise<void> {
+    if (qtyKg.lte(0) || amountPen.isZero()) return;
+    const coil = await tx.coil.findUnique({
+      where: { id: coilId },
+      select: { weightKg: true, exchangeRate: true, unitCostPerKg: true },
+    });
+    if (!coil) return;
+
+    const exchangeRate = toDecimal(coil.exchangeRate.toString());
+    const deltaPerKg = amountPen.div(qtyKg).div(exchangeRate);
+    const newUnitCost = Decimal.max(
+      toDecimal(coil.unitCostPerKg.toString()).plus(deltaPerKg),
+      new Decimal(0),
+    );
+    const totalCost = toDecimal(coil.weightKg.toString()).times(newUnitCost);
+    await tx.coil.update({
+      where: { id: coilId },
+      data: {
+        unitCostPerKg: toFixedString(newUnitCost, 'MONEY'),
+        totalCost: toFixedString(totalCost, 'MONEY'),
+        totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
+      },
+    });
   }
 
   /** Pago parcial o total (D-039). El saldo se recalcula, nunca se almacena. */
@@ -552,6 +793,28 @@ export class PurchasesService {
     }
   }
 
+  /**
+   * D-043: el vínculo de landed cost solo vale hacia una compra `COIL` viva. El schema
+   * Zod ya cortó los `serviceKind` que no se imputan; acá se valida lo que necesita la
+   * base de datos delante.
+   */
+  private async assertLandedCostLinkIsValid(input: CreatePurchaseInput): Promise<void> {
+    if (!input.relatedPurchaseId) return;
+    const related = await this.prisma.purchase.findUnique({
+      where: { id: input.relatedPurchaseId },
+      select: { id: true, type: true, status: true },
+    });
+    if (!related) throw new NotFoundException('La compra de bobinas vinculada no existe');
+    if (related.type !== PurchaseType.COIL) {
+      throw new BadRequestException(
+        'El costo de un servicio solo se imputa a una compra de bobinas (D-043)',
+      );
+    }
+    if (related.status === PurchaseStatus.CANCELLED) {
+      throw new BadRequestException('La compra de bobinas vinculada está anulada');
+    }
+  }
+
   private async resolveExchangeRate(
     input: CreatePurchaseInput,
   ): Promise<{ rate: Decimal; source: ExchangeRateSource }> {
@@ -587,12 +850,36 @@ const PURCHASE_RELATIONS = {
   supplier: { select: { name: true, code: true } },
   businessLine: { select: { code: true } },
   payments: { orderBy: { date: 'asc' } },
+  relatedPurchase: { select: { series: true, number: true } },
+  // Servicios (flete, aduanas, seguro) imputados a esta compra de bobinas (D-043).
+  landedCostServices: {
+    select: {
+      id: true,
+      series: true,
+      number: true,
+      serviceKind: true,
+      status: true,
+      subtotal: true,
+      exchangeRate: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  },
 } satisfies Prisma.PurchaseInclude;
 
 type PurchaseWithRelations = Purchase & {
   supplier: { name: string; code: string };
   businessLine: { code: BusinessLineCode };
   payments: SupplierPayment[];
+  relatedPurchase: { series: string; number: string } | null;
+  landedCostServices: {
+    id: string;
+    series: string;
+    number: string;
+    serviceKind: ServiceKind | null;
+    status: PurchaseStatus;
+    subtotal: Prisma.Decimal;
+    exchangeRate: Prisma.Decimal;
+  }[];
 };
 
 function toListDto(p: PurchaseWithRelations): PurchaseListItemDto {
@@ -620,6 +907,29 @@ function toListDto(p: PurchaseWithRelations): PurchaseListItemDto {
     dueDate: p.dueDate ? p.dueDate.toISOString().slice(0, 10) : null,
     status: p.status,
     serviceKind: p.serviceKind,
+    relatedPurchaseId: p.relatedPurchaseId,
+    relatedPurchaseLabel: p.relatedPurchase
+      ? `${p.relatedPurchase.series}-${p.relatedPurchase.number}`
+      : null,
+    // `flatMap` en vez de `filter` + `map`: así TypeScript estrecha `serviceKind` sin
+    // una aserción, que es lo que un servicio nunca debería necesitar acá.
+    landedCostServices: p.landedCostServices.flatMap((s) =>
+      s.serviceKind === null
+        ? []
+        : [
+            {
+              purchaseId: s.id,
+              documentLabel: `${s.series}-${s.number}`,
+              serviceKind: s.serviceKind,
+              status: s.status,
+              // Sin IGV (D-038) y en soles (D-042): lo que entró al kardex.
+              amountPen: toFixedString(
+                toDecimal(s.subtotal.toString()).times(s.exchangeRate.toString()),
+                'MONEY',
+              ),
+            },
+          ],
+    ),
     sourceXmlKey: p.sourceXmlKey,
     notes: p.notes,
     paidAmount: toFixedString(paidAmount(p, p.payments), 'MONEY'),

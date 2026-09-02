@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   BusinessLineCode,
   Currency,
@@ -17,6 +17,7 @@ import {
   Unit,
   type CoilDto,
   type CoilQuery,
+  type CoilSplitDto,
 } from '@ayr/shared';
 import { toSharedLineCode, toPrismaLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
@@ -39,6 +40,16 @@ export interface CreateCoilInput {
   refType: InventoryRefType;
   refId?: string;
   actorId: string;
+  /** Bobina madre y partido que la originaron (RF-15). */
+  parentCoilId?: string;
+  splitId?: string;
+  /**
+   * Costo en soles con el que la bobina entra al kardex, cuando no es simplemente
+   * `unitCostPerKg × exchangeRate`. Lo usa el partido: las hijas entran al costo
+   * promedio vigente de la madre, que ya puede incluir landed cost (D-043).
+   */
+  kardexUnitCostPen?: string;
+  notes?: string;
 }
 
 /**
@@ -97,13 +108,16 @@ export class CoilsService {
         unitCostPerKg: toFixedString(unitCostPerKg, 'MONEY'),
         totalCost: toFixedString(totalCost, 'MONEY'),
         totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
+        parentCoilId: input.parentCoilId ?? null,
+        splitId: input.splitId ?? null,
+        notes: input.notes ?? null,
         createdById: input.actorId,
       },
     });
 
     await this.ensureTradingProduct(tx, finish, input.thicknessMm);
 
-    await this.inventory.record(tx, {
+    const movement = await this.inventory.record(tx, {
       businessLineId: input.businessLineId,
       itemType: 'COIL',
       itemId: coil.id,
@@ -112,11 +126,21 @@ export class CoilsService {
       unit: Unit.KGM,
       // El kardex se lleva siempre en soles (D-042). La bobina conserva su moneda y su
       // tipo de cambio para el documento; el promedio ponderado necesita una sola escala.
-      unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY'),
+      unitCost: toFixedString(
+        input.kardexUnitCostPen ?? unitCostPerKg.times(exchangeRate),
+        'MONEY',
+      ),
       refType: input.refType,
       refId: input.refId,
       actorId: input.actorId,
     });
+    if (!movement) {
+      // Solo pasaría en una línea `NOOP` (§2.2), donde una bobina no tiene sentido:
+      // sin este corte quedaría una fila de bobina con saldo cero para siempre.
+      throw new BadRequestException(
+        'La línea de negocio de la bobina no lleva inventario: no puede tener bobinas',
+      );
+    }
 
     return coil;
   }
@@ -186,12 +210,7 @@ export class CoilsService {
             }
           : {}),
       },
-      include: {
-        businessLine: true,
-        supplier: { select: { name: true } },
-        finish: { select: { code: true, name: true } },
-        purchase: { select: { series: true, number: true } },
-      },
+      include: COIL_RELATIONS,
       orderBy: { createdAt: 'desc' },
       take: 500,
     });
@@ -201,17 +220,68 @@ export class CoilsService {
   async findOne(id: string): Promise<CoilDto> {
     const coil = await this.prisma.coil.findUnique({
       where: { id },
-      include: {
-        businessLine: true,
-        supplier: { select: { name: true } },
-        finish: { select: { code: true, name: true } },
-        purchase: { select: { series: true, number: true } },
-      },
+      include: COIL_RELATIONS,
     });
     if (!coil) throw new NotFoundException('Bobina no encontrada');
     const [dto] = await this.toDtos([coil]);
     if (!dto) throw new NotFoundException('Bobina no encontrada');
     return dto;
+  }
+
+  /** Bobinas hijas nacidas de partidos de esta bobina (RF-15), incluidas las revertidas. */
+  async findChildren(parentCoilId: string): Promise<CoilDto[]> {
+    const coils = await this.prisma.coil.findMany({
+      where: { parentCoilId },
+      include: COIL_RELATIONS,
+      orderBy: { createdAt: 'asc' },
+    });
+    return this.toDtos(coils);
+  }
+
+  /** Partidos de una bobina (RF-15/RF-16), con sus hijas, para la vista de detalle. */
+  async findSplits(parentCoilId: string): Promise<CoilSplitDto[]> {
+    const splits = await this.prisma.coilSplit.findMany({
+      where: { parentCoilId },
+      include: {
+        parentCoil: { select: { code: true } },
+        children: {
+          select: { id: true, code: true, widthMm: true, weightKg: true, status: true },
+          orderBy: { code: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const actorNames = await this.resolveActorNames(splits.map((s) => s.createdById));
+
+    return splits.map((s) => ({
+      id: s.id,
+      parentCoilId: s.parentCoilId,
+      parentCoilCode: s.parentCoil.code,
+      splitWeightKg: s.splitWeightKg.toFixed(3),
+      kerfLossMm: s.kerfLossMm.toFixed(2),
+      kerfLossKg: s.kerfLossKg.toFixed(3),
+      status: s.status,
+      createdAt: s.createdAt.toISOString(),
+      createdByName: actorNames.get(s.createdById) ?? null,
+      revertedAt: s.revertedAt ? s.revertedAt.toISOString() : null,
+      children: s.children.map((c) => ({
+        id: c.id,
+        code: c.code,
+        widthMm: c.widthMm.toFixed(2),
+        weightKg: c.weightKg.toFixed(3),
+        status: c.status,
+      })),
+    }));
+  }
+
+  private async resolveActorNames(ids: string[]): Promise<Map<string, string>> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return new Map();
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: unique } },
+      select: { id: true, name: true },
+    });
+    return new Map(users.map((u) => [u.id, u.name]));
   }
 
   /** Adjunta a cada bobina sus kilos disponibles según el kardex (no según `weightKg`). */
@@ -245,6 +315,9 @@ export class CoilsService {
       totalCostPen: c.totalCostPen.toFixed(4),
       status: c.status,
       parentCoilId: c.parentCoilId,
+      parentCoilCode: c.parentCoil?.code ?? null,
+      splitId: c.splitId,
+      notes: c.notes,
       availableKg: available.get(c.id) ?? '0.000',
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
@@ -252,9 +325,19 @@ export class CoilsService {
   }
 }
 
+/** Relaciones que necesita `toDtos`. Una sola definición para lista y detalle. */
+export const COIL_RELATIONS = {
+  businessLine: true,
+  supplier: { select: { name: true } },
+  finish: { select: { code: true, name: true } },
+  purchase: { select: { series: true, number: true } },
+  parentCoil: { select: { code: true } },
+} satisfies Prisma.CoilInclude;
+
 type CoilWithRelations = Coil & {
   businessLine: { code: BusinessLineCode };
   supplier: { name: string };
   finish: { code: string; name: string };
   purchase: { series: string; number: string } | null;
+  parentCoil: { code: string } | null;
 };
