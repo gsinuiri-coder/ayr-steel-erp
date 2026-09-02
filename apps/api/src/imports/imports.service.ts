@@ -186,7 +186,11 @@ export class ImportsService {
     for (const row of validRows) {
       try {
         await this.prisma.$transaction(async (tx) => {
-          const entityId = await adapter.createEntity(tx, row.data as Record<string, unknown>, actor.id);
+          const entityId = await adapter.createEntity(
+            tx,
+            row.data as Record<string, unknown>,
+            actor.id,
+          );
           await tx.importRow.update({
             where: { id: row.id },
             data: { status: ImportRowStatus.CONFIRMED, createdEntityId: entityId },
@@ -205,7 +209,10 @@ export class ImportsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.importBatch.update({ where: { id: batchId }, data: { status: ImportBatchStatus.CONFIRMED } });
+      await tx.importBatch.update({
+        where: { id: batchId },
+        data: { status: ImportBatchStatus.CONFIRMED },
+      });
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'imports.confirm',
