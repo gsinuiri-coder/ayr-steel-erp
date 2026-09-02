@@ -97,3 +97,71 @@ El patrón de correos vive en un único módulo (`apps/api/prisma/e2e-users.ts`)
 **P-09 (D-032) — idem, la recomendación original era lista de precios por producto.** Mantener una lista de precios manual por producto exige mantenimiento constante y no refleja el costo real de kardex. Se prefirió un precio _sugerido_ calculado (costo promedio ponderado × (1 + margen% de la línea)), con margen y margen mínimo configurables solo por ADMINISTRADOR en `pricing_settings`. El vendedor ve el sugerido, puede subirlo libremente, y si intenta bajarlo del margen mínimo el guard exige rol ADMINISTRADOR. Esto reemplaza la idea de "lista fija" por un piso dinámico; se implementa en el módulo `pricing` de Fase 1 aunque su consumo real (cotizaciones) es de Fase 5.
 
 **P-07 (D-030) — el módulo de compras se especifica ahora, se construye en Fase 2.** La reorganización de fases (D-034) mueve "bobinas" a Fase 2 junto con "compras", porque toda entrada de bobina o producto terminado a inventario debería nacer de una compra recibida (trazabilidad de costo real para el kardex de D-028). Registrar la decisión ahora evita que Fase 2 tenga que reabrir preguntas de diseño ya resueltas aquí.
+
+## D-035..D-041 — Arranque de Fase 2 (compras, bobinas, kardex)
+
+**Fecha:** 2026-09-03
+
+### D-035 — Costo de producción (cierra P-11)
+
+**Contexto.** Al modelar el kardex hay que decidir con qué costo entra un producto terminado que la empresa fabrica. Si solo se cuenta la materia prima, el costo promedio de un perfil de drywall queda por debajo de lo que realmente costó producirlo, y el precio sugerido de D-032 (costo × (1 + margen%)) hereda ese error.
+
+**Alternativas evaluadas.** (a) Solo materia prima: simple pero subvalúa el inventario y el precio piso. (b) Costeo por absorción real con centros de costo y prorrateo de gastos indirectos: correcto contablemente, pero exige un módulo de contabilidad de costos que §0.3 excluye de v1. (c) Materia prima + servicios directos + un overhead unitario configurable.
+
+**Decisión.** (c). El costo de una corrida de producción = costo promedio del kardex de la materia prima consumida + los servicios directos imputados a esa corrida (corte tercerizado por RF-41, flete) + `overheadPerKg` × kilos producidos. `overheadPerKg` es un campo `Decimal` nuevo en `pricing_settings`, por línea de negocio, editable solo por ADMINISTRADOR igual que el margen.
+
+**Consecuencias.** El overhead es un número que el dueño calibra a mano (gasto de fábrica mensual ÷ kilos producidos al mes); no pretende ser exacto, sí razonable y auditable. Vive en `pricing_settings` porque es la misma tabla que ya gobierna el precio, y ambos parámetros se tocan juntos. Se implementa el campo en Fase 2a (migración); su consumo real llega en Fase 4 (producción).
+
+### D-036 — Alcance cerrado de reportes (cierra P-08 en su segunda mitad)
+
+**Contexto.** D-031 supuso que §4.8 del docx original eran "reportes" y creó RF-90..RF-94 con una lista tentativa que incluía un reporte de compras y un requisito genérico de exportación.
+
+**Decisión.** Los reportes de v1 son exactamente cinco: inventario valorizado por línea, kardex por producto/bobina, ventas por período, cuentas por pagar por proveedor y cola de producción. §4.8 se reescribe con esa lista y se elimina todo RF de reportes fuera de ella (cae el reporte de compras como reporte propio y el RF de exportación genérica).
+
+**Consecuencias.** Exportar a Excel/CSV pasa a ser una propiedad de cada reporte, no un requisito separado; se decidirá por reporte en Fase 7. El reporte de compras por período no desaparece del negocio: la lista central de `/compras` (D-030) ya es filtrable por línea, tipo, proveedor y fecha, y cubre esa necesidad sin un reporte aparte. La cola de producción, que era una vista (RF-37), queda además como reporte consultable.
+
+### D-037 — SKU de bobina para venta directa (supersede D-027)
+
+**Contexto.** D-027 fijó el SKU `BOB-{finishCode}-{thicknessMm}-{widthMm}` para el producto de `trading` que representa la bobina vendida sin transformar. Al modelar `coils` en Fase 2a apareció el choque: RF-14 exige un `typeKey` que agrupa por acabado y espesor **ignorando el ancho**, y el ancho de una bobina cambia con cada partido (RF-15).
+
+**Problema.** Con el ancho dentro del SKU, cada ancho comprado o resultante de un partido crearía un producto distinto en el catálogo de `trading`, y partir una bobina cambiaría el producto al que pertenece su stock. Además, comercialmente el ancho no cambia qué material se está vendiendo: se vende acero de tal acabado y tal espesor, por kilo.
+
+**Decisión.** El SKU es `BOB{finishCode}{thicknessMm}`, sin ancho y sin separadores, uno por `typeKey`. Ejemplo: acabado `GALV` de 0.50 mm → `BOBGALV0.50`. D-027 queda marcada SUPERSEDIDA en §0.2.
+
+**Consecuencias.** El SKU coincide exactamente con el `typeKey` de RF-14, así que el inventario de bobinas y el catálogo de `trading` agrupan por el mismo criterio y no hay que traducir entre ambos. La venta sigue registrando en el kardex qué bobina concreta se descontó (`itemType=COIL`, `itemId`), que es donde vive la trazabilidad física. Sin guiones porque el resto de códigos de bobina (RF-13) sí los usa y conviene que un `BOB...` no se confunda con un `code` de bobina individual.
+
+### D-038 — El costo de kardex de una bobina es el valor de compra sin IGV
+
+**Contexto.** Una factura de compra peruana trae el valor de venta gravado, el IGV (18 %) y el importe total. Hay que decidir cuál de los tres alimenta el `unitCost` del movimiento de entrada.
+
+**Decisión.** El valor **sin IGV**. La compra guarda `subtotal`, `igv` y `total` por separado; el movimiento de kardex se valoriza con el subtotal (dividido entre los kilos, para el `unitCostPerKg`). La cuenta por pagar, en cambio, se lleva por el `total` con IGV, que es lo que efectivamente se le debe al proveedor.
+
+**Consecuencias.** El IGV de compra es crédito fiscal recuperable, no costo del material: incluirlo inflaría el costo promedio en 18 % y, por D-032, también el precio sugerido. Cuando el comprobante viene en USD se guarda además `totalPen` con el TC del día (D-029), y el costo del kardex se lleva en la moneda del documento con su `exchangeRate` para poder reexpresar.
+
+### D-039 — Cuentas por pagar con pagos parciales
+
+**Contexto.** D-030 dejó "cuenta por pagar → pagos" sin especificar la cardinalidad.
+
+**Decisión.** Una compra tiene N pagos (`supplier_payments`: fecha, monto, moneda, tipo de cambio, método, referencia). El saldo de la compra = total − suma de pagos aplicados, calculado, no almacenado. El estado de cuenta por proveedor (`/proveedores/[id]/estado-cuenta`) lista sus compras con saldo distinto de cero, su antigüedad y el total adeudado.
+
+**Consecuencias.** El saldo se calcula en cada consulta en vez de mantenerse como columna, para que no pueda desincronizarse; si el volumen lo exige más adelante se agrega un índice o una vista materializada. Un pago en moneda distinta a la de la compra guarda su propio `exchangeRate` para poder convertir sin reescribir la compra. Anular un pago se resuelve en Fase 2b junto con el resto de anulaciones.
+
+### D-040 — La merma es un movimiento de kardex
+
+**Contexto.** RF-17/RF-18 piden registrar y anular merma sobre una bobina.
+
+**Decisión.** La merma es un movimiento `OUT` con `refType=SCRAP` (identificador en inglés por §0.1; "merma" es solo la etiqueta de UI), valorizado al costo promedio vigente del ítem en el momento de registrarla. Anularla emite un movimiento `IN` inverso con `reversalOfId` apuntando al original. Nunca se borra la fila (regla dura 2 de `CLAUDE.md`, §3.2).
+
+**Consecuencias.** No hace falta lógica especial de valorización: la merma sale al mismo promedio que cualquier otra salida, así el valorizado por línea (RF-90) sigue cuadrando solo. Se implementa en Fase 2b; en 2a solo se deja el `refType` reservado en el enum.
+
+### D-041 — Fase 2 se ejecuta en dos sesiones (2a y 2b)
+
+**Contexto.** El alcance de Fase 2 (§3.7, D-034) es compras completas + bobinas completas + kardex: tres módulos de API, tres o cuatro secciones de web, y un cierre que exige revisión, auditoría de seguridad, E2E, deploy a producción y `pnpm e2e:prod`.
+
+**Decisión.** Se parte por dependencia técnica. **2a**: kardex base (`inventory_movements`, `inventory_balances`, `InventoryService.record` como único escritor), módulo `purchases` con sus cuatro tipos y pagos parciales, y alta de bobinas por las tres vías (manual, XML UBL 2.1, planilla). **2b**: partido (RF-15/16), merma (RF-17/18), cierre (RF-19), edición (RF-20), anulación (RF-21/22) y las vistas de inventario de bobinas por línea (RF-23).
+
+**Consecuencias.** §3.7 pasa a tener filas `2a` y `2b`; las fases 3 en adelante no cambian. 2b no puede empezar antes de 2a porque todo lo suyo opera sobre bobinas ya dadas de alta y sobre el kardex. Cada mitad cierra con su propio handoff, deploy y E2E en producción, así que el proyecto nunca queda con una fase a medio desplegar.
+
+### RF-15 recuperado
+
+El docx original saltaba de RF-14 a RF-16, y D-031 (P-08) ya había señalado a RF-15 entre los requisitos faltantes sin recuperarlo. Por el contenido de RF-16 ("revertir un partido, devolviendo peso y ancho a la madre") el hueco solo puede ser el partido en sí: **RF-15 — Partir una bobina en hijas por ancho, conservando trazabilidad a la madre.** Se implementa en Fase 2b; el campo `coils.parentCoilId` se crea ya en 2a (siempre `null` por ahora) para no migrar dos veces la tabla.
