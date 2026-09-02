@@ -36,6 +36,7 @@
 | D-018 | 2026-09-02 | Reset de DB de pruebas = `prisma migrate deploy` + `TRUNCATE` (`apps/api/prisma/reset-test-db.ts`), con bloqueo si la conexión apunta a `production`. Nunca `migrate reset`.                          | Prisma bloquea `migrate reset` invocado por agentes; el truncate es más seguro.    |
 | D-019 | 2026-09-02 | Deploy web: build remoto en Vercel desde la raíz del monorepo con `rootDirectory=apps/web` (proyecto `ayr-steel-erp-web`, ligado al repo GitHub → auto-deploy en push a `main`).                      | `vercel build` local falla en Windows (symlinks).                                  |
 | D-020 | 2026-09-02 | Auth: access token JWT 15 min con `sid`; el guard consulta la sesión en cada request (una lectura indexada) para que revocar sea inmediato (RF-03). Refresh 7 días, rotado en cada uso.               | Simplicidad y revocación inmediata sobre rendimiento marginal.                     |
+| D-021 | 2026-09-02 | SonarCloud analiza desde CI (`sonarqube-scan-action`, con cobertura lcov del API); Automatic Analysis del proyecto desactivado. Semgrep OSS solo si `SONAR_TOKEN` está vacío.                         | Ambos modos a la vez fallan; CI permite cobertura y bloquear el pipeline.          |
 
 ### 0.3 Alcance de esta versión (v1 "lista para cliente")
 

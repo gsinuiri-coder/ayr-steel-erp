@@ -3,7 +3,7 @@
 ## 1. Resumen
 
 Fase 0 según `docs/ARQUITECTURA.md` §3.7: monorepo, auth, CI, deploy y monitores. Se entregó todo el alcance de código con lint/typecheck/23 unit/7 E2E en verde en local, web desplegado en Vercel, base de producción migrada y sembrada, monitor del web en UptimeRobot.
-No cerrado: el API no está en Cloud Run porque el proyecto GCP no tiene facturación (B-01, acción humana). CI corre por primera vez con el push de este cierre.
+No cerrado: el API no está en Cloud Run porque el proyecto GCP no tiene facturación (B-01, acción humana). CI en verde (calidad, SonarCloud, E2E contra Neon `ci`) en la corrida 33660853547.
 
 ## 2. Hecho
 
@@ -27,13 +27,13 @@ No cerrado: el API no está en Cloud Run porque el proyecto GCP no tiene factura
 - D-017 — Versiones fijadas sin `^` (NestJS 11.2, Next 15.5, Prisma 6.19, TS 5.9, ESLint 9, Zod 3.25, Jest 29).
 - D-018 — Reset de DB de pruebas = `migrate deploy` + `TRUNCATE` con `ALLOW_DB_RESET=1`; nunca `migrate reset`.
 - D-019 — Deploy web con build remoto en Vercel, `rootDirectory=apps/web`, auto-deploy en push a `main`.
+- D-021 — SonarCloud desde CI con cobertura; Automatic Analysis desactivado.
 - D-020 — Access token 15 min con `sid` y validación de sesión por request; refresh 7 días rotado.
 
 ## 4. Bloqueos / pendientes
 
 - **B-01 (acción humana):** el proyecto GCP `ayr-steel-erp` no tiene cuenta de facturación; Cloud Run/Cloud Build/Secret Manager no se pueden habilitar. Hay dos cuentas de facturación abiertas en la cuenta del dueño. Al vincular una, el resto es automático (ver §5). Hasta entonces el web de producción apunta a `API_URL=https://api-pendiente.invalid` y el login en prod falla.
 - Pendiente derivado de B-01: monitor UptimeRobot del API y verificación Playwright del login en producción (`E2E_BASE_URL`).
-- Primera corrida de CI: se dispara con el push de este cierre; revisar con `gh run watch`.
 - Hallazgos bajos aplazados a Fase 7: pinear acciones de GitHub a SHA, CSP/Permissions-Policy en el web, job de limpieza de `sessions` expiradas.
 
 ## 5. Cómo verificar

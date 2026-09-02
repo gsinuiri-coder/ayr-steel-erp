@@ -4,16 +4,16 @@
 
 ## Estado general
 
-| Fase                                        | Estado                       | Cierre                            |
-| ------------------------------------------- | ---------------------------- | --------------------------------- |
-| 0 — Bootstrap                               | 🟡 Casi cerrada (2026-09-02) | Login E2E verde en prod, CI verde |
-| 1 — Líneas, acabados, catálogo, importación | ⚪ Pendiente                 | —                                 |
-| 2 — Bobinas + kardex                        | ⚪ Pendiente                 | —                                 |
-| 3 — Corte tercerizado + flejes              | ⚪ Pendiente                 | —                                 |
-| 4 — Producción + `/planta`                  | ⚪ Pendiente                 | —                                 |
-| 5 — Cotizaciones y ventas                   | ⚪ Pendiente                 | —                                 |
-| 6 — Facturación Nubefact                    | ⚪ Pendiente                 | —                                 |
-| 7 — Auditoría, reportes, UAT                | ⚪ Pendiente                 | —                                 |
+| Fase                                        | Estado                                | Cierre                            |
+| ------------------------------------------- | ------------------------------------- | --------------------------------- |
+| 0 — Bootstrap                               | 🟡 CI verde; falta API en prod (B-01) | Login E2E verde en prod, CI verde |
+| 1 — Líneas, acabados, catálogo, importación | ⚪ Pendiente                          | —                                 |
+| 2 — Bobinas + kardex                        | ⚪ Pendiente                          | —                                 |
+| 3 — Corte tercerizado + flejes              | ⚪ Pendiente                          | —                                 |
+| 4 — Producción + `/planta`                  | ⚪ Pendiente                          | —                                 |
+| 5 — Cotizaciones y ventas                   | ⚪ Pendiente                          | —                                 |
+| 6 — Facturación Nubefact                    | ⚪ Pendiente                          | —                                 |
+| 7 — Auditoría, reportes, UAT                | ⚪ Pendiente                          | —                                 |
 
 ## Fase 0 — detalle
 
@@ -27,7 +27,7 @@
 | 6   | Auth D-010 + CRUD usuarios + GET /health                     | ✅ revisado por `revisor` y `auditor-seguridad`; hallazgos corregidos                                       |
 | 7   | Web: login, cambio de contraseña, sidebar por rol, /usuarios | ✅                                                                                                          |
 | 8   | Tests unit (Jest) + E2E Playwright                           | ✅ 23 unit; 7 E2E verdes en local (api+web contra Neon `dev`)                                               |
-| 9   | CI GitHub Actions + SonarCloud/Semgrep                       | 🟡 workflow y secrets listos; primera corrida al hacer push                                                 |
+| 9   | CI GitHub Actions + SonarCloud/Semgrep                       | ✅ corrida 33660853547 verde: calidad, SonarCloud, E2E (Neon `ci`)                                          |
 | 10  | Deploy Cloud Run + Vercel, login verificado en prod          | 🔴 Web en Vercel OK; imagen Docker del API probada en local; Cloud Run bloqueado por facturación GCP (B-01) |
 | 11  | UptimeRobot (API /health, Web /)                             | 🟡 monitor Web creado; API pendiente del deploy                                                             |
 | 12  | Subagentes revisor, auditor-seguridad, qa                    | ✅ `.claude/agents/`; ejecutados sobre Fase 0                                                               |
@@ -63,4 +63,5 @@ Mientras tanto el web de producción (https://ayr-steel-erp-web.vercel.app) tien
 - Prisma bloquea `migrate reset` cuando lo invoca un agente. El reset de pruebas es `apps/api/prisma/reset-test-db.ts` (D-018).
 - `vercel build` local falla en Windows por symlinks; el deploy es con build remoto (D-019). El proyecto Vercel está ligado al repo GitHub: cada push a `main` despliega el web.
 - Hallazgos de revisión pendientes (bajos): pinear acciones de GitHub a SHA, CSP en el web, job de limpieza de `sessions` expiradas, `Permissions-Policy`. Registrados aquí para Fase 7 (hardening).
+- SonarCloud: en `.env.setup` `SONAR_ORG` y `SONAR_PROJECT_KEY` venían intercambiados (corregido: org `gsinuiri-coder`, key `gsinuiri-coder_ayr-steel-erp`). El proyecto tenía Automatic Analysis activo; se desactivó por API para que el análisis lo haga CI con cobertura (D-021).
 - Los subagentes de `.claude/agents/` solo aparecen en el selector tras reiniciar la sesión de Claude Code; en esta sesión se ejecutaron como `general-purpose` con la definición como prompt.
