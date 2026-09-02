@@ -10,6 +10,7 @@ import {
   Palette,
   Percent,
   ReceiptText,
+  ShoppingCart,
   Truck,
   Users,
   UsersRound,
@@ -54,7 +55,12 @@ export const NAV: NavGroup[] = [
         href: '/bobinas',
         icon: Boxes,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-        soon: true,
+      },
+      {
+        title: 'Compras',
+        href: '/compras',
+        icon: ShoppingCart,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
       {
         title: 'Producción',

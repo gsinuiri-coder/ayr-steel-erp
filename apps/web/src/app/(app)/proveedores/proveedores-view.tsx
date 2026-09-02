@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, Role, type SupplierDto } from '@ayr/shared';
@@ -43,7 +44,11 @@ export function ProveedoresView() {
   const filtered = suppliers.data?.filter((s) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
-    return s.name.toLowerCase().includes(q) || s.docNumber.toLowerCase().includes(q);
+    return (
+      s.name.toLowerCase().includes(q) ||
+      s.docNumber.toLowerCase().includes(q) ||
+      s.code.toLowerCase().includes(q)
+    );
   });
 
   const toggleActive = useMutation({
@@ -89,33 +94,35 @@ export function ProveedoresView() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Código</TableHead>
               <TableHead>Documento</TableHead>
               <TableHead>Nombre</TableHead>
               <TableHead>Corte tercerizado</TableHead>
               <TableHead>Días de crédito</TableHead>
               <TableHead>Estado</TableHead>
-              {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
+              <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {suppliers.isPending &&
               [0, 1, 2].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
             {suppliers.isError && (
               <TableRow>
-                <TableCell colSpan={6} className="text-destructive">
+                <TableCell colSpan={7} className="text-destructive">
                   No se pudieron cargar los proveedores.
                 </TableCell>
               </TableRow>
             )}
             {filtered?.map((s) => (
               <TableRow key={s.id} data-state={s.isActive ? undefined : 'inactive'}>
-                <TableCell className="font-medium">
+                <TableCell className="font-mono font-medium">{s.code}</TableCell>
+                <TableCell>
                   {DOC_TYPE_LABELS[s.docType]} {s.docNumber}
                 </TableCell>
                 <TableCell>{s.name}</TableCell>
@@ -134,8 +141,11 @@ export function ProveedoresView() {
                     <Badge variant="outline">Inactivo</Badge>
                   )}
                 </TableCell>
-                {isAdmin && (
-                  <TableCell className="text-right">
+                <TableCell className="text-right">
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link href={`/proveedores/${s.id}/estado-cuenta`}>Estado de cuenta</Link>
+                  </Button>
+                  {isAdmin && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -145,6 +155,8 @@ export function ProveedoresView() {
                     >
                       Editar
                     </Button>
+                  )}
+                  {isAdmin && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -155,13 +167,13 @@ export function ProveedoresView() {
                     >
                       {s.isActive ? 'Desactivar' : 'Activar'}
                     </Button>
-                  </TableCell>
-                )}
+                  )}
+                </TableCell>
               </TableRow>
             ))}
             {filtered?.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   {search
                     ? 'Ningún proveedor coincide con la búsqueda.'
                     : 'No hay proveedores registrados.'}

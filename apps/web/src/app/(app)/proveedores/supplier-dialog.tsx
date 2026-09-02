@@ -36,6 +36,11 @@ import {
 const SUPPLIERS_QUERY_KEY = ['suppliers'] as const;
 
 const formSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{3,6}$/, 'Entre 3 y 6 letras, sin espacios ni números'),
   docType: z.enum(DOC_TYPES),
   docNumber: z.string().trim().min(1, 'Obligatorio').max(20),
   name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(160),
@@ -59,6 +64,7 @@ export function SupplierDialog({ open, supplier, onOpenChange }: Props) {
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      code: supplier?.code ?? '',
       docType: supplier?.docType ?? 'RUC',
       docNumber: supplier?.docNumber ?? '',
       name: supplier?.name ?? '',
@@ -155,6 +161,31 @@ export function SupplierDialog({ open, supplier, onOpenChange }: Props) {
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name="code"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Código corto</FormLabel>
+                  <FormControl>
+                    <Input
+                      autoComplete="off"
+                      placeholder="Ej: ACERO"
+                      maxLength={6}
+                      {...field}
+                      onChange={(e) => {
+                        field.onChange(e.target.value.toUpperCase());
+                      }}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    3 a 6 letras. Es el primer segmento del código de cada bobina de este proveedor
+                    (RF-13).
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name="name"
