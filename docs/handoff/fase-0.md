@@ -2,62 +2,66 @@
 
 ## 1. Resumen
 
-Fase 0 según `docs/ARQUITECTURA.md` §3.7: monorepo, auth, CI, deploy y monitores. Se entregó todo el alcance de código con lint/typecheck/23 unit/7 E2E en verde en local, web desplegado en Vercel, base de producción migrada y sembrada, monitor del web en UptimeRobot.
-No cerrado: el API no está en Cloud Run porque el proyecto GCP no tiene facturación (B-01, acción humana). CI en verde (calidad, SonarCloud, E2E contra Neon `ci`) en la corrida 33660853547.
+Fase 0 según `docs/ARQUITECTURA.md` §3.7 (monorepo, auth, CI, deploy y monitores): **cerrada**. Todo el alcance está entregado, desplegado y verificado contra producción, no solo en local.
+Estado: `pnpm turbo lint typecheck test` sale 0; CI verde en `main`; API en Cloud Run y web en Vercel funcionando; los cuatro escenarios de autenticación pasan contra la URL de producción; dos monitores activos en UptimeRobot.
+No queda ningún bloqueo abierto. B-01 (facturación GCP) la resolvió el dueño y el resto se completó de forma autónoma.
 
 ## 2. Hecho
 
 1. `CLAUDE.md` — reglas de idioma, stack, Decimal (D-003), kardex (§3.2), comandos, protocolo de cierre.
 2. `docs/PROGRESO.md`, `docs/DECISIONES.md`, `docs/handoff/`.
 3. Monorepo pnpm + Turborepo: `apps/api` (NestJS 11, Prisma 6, pg-boss, config Zod en `apps/api/src/config/env.ts`), `apps/web` (Next 15, Tailwind 4, shadcn 4, TanStack Query, RHF, Zod), `packages/shared` (enums, schemas Zod, `decimal.ts`), `packages/eslint-config`.
-4. Prisma v0: `apps/api/prisma/schema.prisma` (User, Session, AuditLog, enums Role/BusinessLine); migraciones `20260902160054_init` y `20260902170000_refresh_grace_and_audit_append_only` (trigger que hace inmutable `audit_log`).
-5. Neon: ramas `dev` y `ci` creadas desde `production`; migraciones y seed aplicados en `dev` y en `production` (`pnpm db:prod`).
-6. Auth D-010: `apps/api/src/auth/` (login, refresh con rotación y gracia de 30 s, logout público, cambio de contraseña, guard global con `mustChangePassword`, guard por rol); `apps/api/src/users/` (CRUD solo ADMINISTRADOR, protección del último admin, auditoría transaccional); `GET /health`; rate limit por IP+email (`apps/api/src/common/throttler.guard.ts`).
-7. Web: `apps/web/src/app/login`, `(app)/cambiar-contrasena`, `(app)/usuarios`, sidebar por rol (`components/app-sidebar.tsx`, `lib/nav.ts`), `middleware.ts`, rewrite `/api/*` (D-015).
-8. Tests: `apps/api/src/**/*.spec.ts` (23), `e2e/tests/auth.spec.ts` y `usuarios.spec.ts` (7) con `playwright.config.ts` y `e2e/global-setup.ts`.
-9. CI: `.github/workflows/ci.yml` (lint, typecheck, unit, E2E contra Neon `ci`, SonarCloud si hay token / Semgrep si no). Secrets subidos con `pnpm secrets:gh` (credenciales de admin exclusivas de CI).
-10. Deploy: `Dockerfile` probado en local (`/health` ok con DB y pg-boss); `scripts/deploy-api.mjs`; web en https://ayr-steel-erp-web.vercel.app (`scripts/deploy-web.mjs`, build remoto, proyecto ligado a GitHub).
-11. UptimeRobot (API v3): monitor "AYR Steel ERP - Web" creado; el del API se crea con `pnpm monitors --api-url ...` tras el deploy.
-12. Subagentes `.claude/agents/{revisor,auditor-seguridad,qa}.md` y comando `.claude/commands/handoff.md`. Revisor y auditor ejecutados; hallazgos bloqueantes/altos/medios corregidos (Dockerfile, logout tras expiración, rate limit tras proxy, race de refresh, transacciones de auditoría, overrides de dependencias, etc.).
+4. Prisma v0: `apps/api/prisma/schema.prisma` (User, Session, AuditLog, enums Role/BusinessLine); migraciones `20260902160054_init` y `20260902170000_refresh_grace_and_audit_append_only` (esta última añade la gracia de rotación del refresh token y el trigger que hace inmutable `audit_log`). Ambas aplicadas en `dev`, `ci` y `production`.
+5. Neon: ramas `dev` y `ci` creadas desde `production`; seed del administrador en `dev` y `production`.
+6. Auth D-010: `apps/api/src/auth/` (login, refresh con rotación y gracia de 30 s, logout público que funciona con el access token ya expirado, cambio de contraseña, guard global que además bloquea al usuario con contraseña temporal pendiente, guard por rol); `apps/api/src/users/` (CRUD solo ADMINISTRADOR, protección del último administrador activo, auditoría en la misma transacción que la mutación); `GET /health`; rate limit por IP+email (`apps/api/src/common/throttler.guard.ts`).
+7. Web: `apps/web/src/app/login`, `(app)/cambiar-contrasena`, `(app)/usuarios`, sidebar por rol (`components/app-sidebar.tsx`, `lib/nav.ts`), `middleware.ts`, y el proxy same-origin `/api/*` como Route Handler (`app/api/[...path]/route.ts`, D-022).
+8. Tests: `apps/api/src/**/*.spec.ts` (23 unit), `e2e/tests/auth.spec.ts` y `usuarios.spec.ts` (7 E2E) con `playwright.config.ts`, `e2e/global-setup.ts` y el flujo de producción `scripts/e2e-prod.mjs` (D-024).
+9. CI: `.github/workflows/ci.yml` (lint, typecheck, unit, E2E contra Neon `ci`, SonarCloud con cobertura / Semgrep si no hay token). Secrets con `pnpm secrets:gh`, con credenciales de administrador exclusivas de CI, distintas de las de producción.
+10. Deploy: API en Cloud Run (`scripts/deploy-api.mjs`, `Dockerfile` multi-stage con usuario no root) y web en Vercel (`scripts/deploy-web.mjs`, build remoto, proyecto ligado a GitHub para auto-deploy en push a `main`).
+11. UptimeRobot: monitores "AYR Steel ERP - API /health" (tipo KEYWORD sobre `"status":"ok"`) y "AYR Steel ERP - Web", ambos UP, con alerta al correo configurado.
+12. Subagentes `.claude/agents/{revisor,auditor-seguridad,qa}.md` y comando `.claude/commands/handoff.md`. Revisor y auditor ejecutados sobre toda la fase; se corrigieron el bloqueante y los hallazgos altos y medios (ver §3 y `docs/PROGRESO.md`).
 
 ## 3. Decisiones tomadas
 
-- D-015 — Web consume el API por rewrite same-origin `/api/*`; cookies httpOnly Lax sin `domain`.
-- D-016 — Rama de producción de Neon se llama `production` (corrige D-005).
+- D-015 — El web consume el API por proxy same-origin `/api/*` (mecanismo actualizado por D-022).
+- D-016 — La rama de producción de Neon se llama `production`, no `main` (corrige D-005).
 - D-017 — Versiones fijadas sin `^` (NestJS 11.2, Next 15.5, Prisma 6.19, TS 5.9, ESLint 9, Zod 3.25, Jest 29).
-- D-018 — Reset de DB de pruebas = `migrate deploy` + `TRUNCATE` con `ALLOW_DB_RESET=1`; nunca `migrate reset`.
-- D-019 — Deploy web con build remoto en Vercel, `rootDirectory=apps/web`, auto-deploy en push a `main`.
-- D-021 — SonarCloud desde CI con cobertura; Automatic Analysis desactivado.
-- D-020 — Access token 15 min con `sid` y validación de sesión por request; refresh 7 días rotado.
+- D-018 — Reset de la base de pruebas = `migrate deploy` + `TRUNCATE` con `ALLOW_DB_RESET=1`; nunca `migrate reset`.
+- D-019 — Deploy del web con build remoto en Vercel, `rootDirectory=apps/web`, auto-deploy en push a `main`.
+- D-020 — Access token de 15 min con `sid` y validación de la sesión en cada request; refresh de 7 días, rotado en cada uso.
+- D-021 — SonarCloud analiza desde CI con cobertura; Automatic Analysis desactivado.
+- D-022 — El proxy `/api/*` es un Route Handler, no un `rewrites()` de Next (Vercel bloquea rewrites hacia el dominio por defecto de Cloud Run).
+- D-023 — IAM explícito para la service account de Compute (Cloud Build + Secret Manager); `roles/editor` no basta.
+- D-024 — Los E2E de escritura contra producción corren con un administrador efímero y limpian los usuarios de prueba al terminar.
 
 ## 4. Bloqueos / pendientes
 
-- **B-01 (acción humana):** el proyecto GCP `ayr-steel-erp` no tiene cuenta de facturación; Cloud Run/Cloud Build/Secret Manager no se pueden habilitar. Hay dos cuentas de facturación abiertas en la cuenta del dueño. Al vincular una, el resto es automático (ver §5). Hasta entonces el web de producción apunta a `API_URL=https://api-pendiente.invalid` y el login en prod falla.
-- Pendiente derivado de B-01: monitor UptimeRobot del API y verificación Playwright del login en producción (`E2E_BASE_URL`).
-- Hallazgos bajos aplazados a Fase 7: pinear acciones de GitHub a SHA, CSP/Permissions-Policy en el web, job de limpieza de `sessions` expiradas.
+Ninguno abierto.
+
+Aplazado a Fase 7 (hardening), son hallazgos de severidad baja de la auditoría: pinear las acciones de GitHub a SHA, añadir CSP y `Permissions-Policy` en el web, y un job que limpie las sesiones expiradas.
 
 ## 5. Cómo verificar
 
 ```
 pnpm install && pnpm env:local
-pnpm build && pnpm lint && pnpm typecheck && pnpm test
-pnpm e2e                                   # api+web locales contra Neon dev (7 tests)
-gh run list --limit 3 && gh run watch      # CI
-curl -s https://ayr-steel-erp-web.vercel.app/login -o /dev/null -w "%{http_code}\n"
+pnpm turbo lint typecheck test              # exit 0
+pnpm e2e                                    # api+web locales contra Neon dev (7 tests)
+pnpm e2e:prod                               # 6 escenarios de auth contra producción (D-024)
+gh run list --limit 3                       # CI en main
+curl -s https://ayr-steel-erp-api-2ompzrgnfq-uc.a.run.app/health
+curl -s https://ayr-steel-erp-web.vercel.app/api/health
 ```
 
-Cuando el dueño vincule facturación (`gcloud billing projects link ayr-steel-erp --billing-account=<ID>`):
+Producción:
 
-```
-pnpm secrets:gcp
-pnpm deploy:api --web-origin https://ayr-steel-erp-web.vercel.app
-pnpm deploy:web --api-url https://<url-cloud-run>
-pnpm monitors --api-url https://<url-cloud-run> --web-url https://ayr-steel-erp-web.vercel.app
-set E2E_BASE_URL=https://ayr-steel-erp-web.vercel.app && pnpm e2e
-```
+- Web: https://ayr-steel-erp-web.vercel.app
+- API: https://ayr-steel-erp-api-2ompzrgnfq-uc.a.run.app
+- DB: Neon rama `production`, migrada, con el administrador sembrado y cambio de contraseña obligatorio en su primer ingreso.
 
-Producción: web https://ayr-steel-erp-web.vercel.app · API pendiente · DB Neon `production` (migrada, admin sembrado con cambio de contraseña obligatorio).
+Para redesplegar tras un cambio: el web sale solo con el push a `main`; el API con `pnpm deploy:api --web-origin https://ayr-steel-erp-web.vercel.app`. Si se añade una migración, aplicarla a producción con `pnpm db:prod` antes de desplegar el API.
 
 ## 6. Siguiente sesión
 
-Fase 1 (§3.7): líneas de negocio, acabados (RF-25), catálogo por línea (RF-50) e importación desde planilla (RF-52). Primera tarea concreta: modelar `business_lines`, `finishes` (con factor de densidad, `Decimal @db.Decimal(10,4)`) y `products` en `schema.prisma` siguiendo §3.3, con migración, módulos NestJS `business-lines`/`finishes`/`catalog` y páginas web correspondientes; antes, si B-01 ya está resuelto, ejecutar los comandos de §5 para cerrar Fase 0 con login E2E verde en prod.
+Fase 1 (§3.7): líneas de negocio, acabados (RF-25), catálogo por línea (RF-50) e importación desde planilla (RF-52).
+
+Primera tarea concreta: modelar en `schema.prisma` las entidades `business_lines`, `finishes` (con su factor de densidad como `Decimal @db.Decimal` con escala explícita, según §3.3) y `products` (con `businessLineId` obligatorio), crear la migración y aplicarla a `dev`; luego los módulos NestJS `business-lines`, `finishes` y `catalog`, y sus páginas web. Recordar la regla del kardex (§3.2) al llegar a inventario en Fase 2: ningún módulo escribe stock directamente.

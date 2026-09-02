@@ -26,7 +26,8 @@
     "deploy:api": "node scripts/deploy-api.mjs",
     "deploy:web": "node scripts/deploy-web.mjs",
     "monitors": "node scripts/uptimerobot.mjs",
-    "db:prod": "node scripts/db-prod.mjs"
+    "db:prod": "node scripts/db-prod.mjs",
+    "e2e:prod": "node scripts/e2e-prod.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

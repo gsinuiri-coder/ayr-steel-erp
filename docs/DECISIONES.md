@@ -59,3 +59,27 @@ NestJS 11.2 (existe 12 pero el alcance pide 11), Next 15.5 (existe 16), Prisma 6
 Todas las llamadas son idempotentes (`add-iam-policy-binding` no duplica si el binding ya existe), así que correr el script varias veces es seguro.
 
 **Consecuencias.** Un proyecto GCP nuevo con facturación recién vinculada debería poder desplegar con `pnpm deploy:api` sin pasos manuales de IAM. Si Google cambia qué rol usa por defecto para builds de Cloud Run en el futuro, revisar este script primero.
+
+## D-024 — E2E de escritura contra producción con administrador efímero
+
+**Fecha:** 2026-09-02
+
+**Contexto.** El cierre de Fase 0 exige que los cuatro escenarios de autenticación pasen contra la URL de producción, no solo en local/CI: login correcto, login fallido, usuario desactivado no entra y cambio de rol invalida la sesión (RF-01, RF-03). Los dos últimos necesitan crear un usuario, desactivarlo y cambiarle el rol vía API; hasta ahora se auto-excluían en producción (`test.skip(isProduction)`) y allí solo corrían los tres de solo lectura.
+
+**Problema.** Correrlos en producción choca con dos cosas:
+
+1. El administrador real (`ADMIN_EMAIL`) se siembra con `mustChangePassword = true`, y el `AuthGuard` le bloquea todo salvo `/auth/me`, `/auth/change-password` y `/auth/logout`. Usarlo obligaría a consumir su cambio de contraseña obligatorio, es decir, alterar la cuenta del dueño.
+2. Los usuarios se dan de baja de forma lógica (nunca `DELETE`), así que cada corrida dejaría cuentas `e2e-...` visibles en `/usuarios` para el cliente.
+
+**Alternativas descartadas.** (a) Dejar solo los tres tests de lectura en producción: no cumple el criterio de cierre y deja RF-03 sin verificar donde importa. (b) Usar la cuenta real cambiándole la contraseña: modifica una credencial del dueño desde un test. (c) Un administrador de pruebas permanente en producción: una cuenta privilegiada extra viva de forma indefinida.
+
+**Decisión.** `pnpm e2e:prod` (`scripts/e2e-prod.mjs`) orquesta la corrida:
+
+1. genera una contraseña aleatoria que solo vive en memoria y en el entorno del proceso hijo;
+2. crea el administrador efímero `e2e-admin@ayr.test` con `mustChangePassword = false` (`apps/api/prisma/e2e-admin.ts`, exige `ALLOW_E2E_ADMIN=1`);
+3. corre `e2e/tests/auth.spec.ts` con `E2E_ALLOW_WRITES=1`, que es lo que levanta el `test.skip` de los escenarios de escritura;
+4. en `finally` —también si los tests fallan— borra todo usuario que cumpla el patrón `e2e-...@ayr.test` (`apps/api/prisma/cleanup-e2e-users.ts`, exige `ALLOW_E2E_CLEANUP=1`).
+
+El patrón de correos vive en un único módulo (`apps/api/prisma/e2e-users.ts`) que comparten la creación y la limpieza, y la limpieza vuelve a filtrar en código lo que ya filtró en SQL: si ambos criterios divergieran, aborta en vez de borrar de más. Crear el admin efímero con un correo fuera del patrón también falla de entrada, porque la limpieza no lo alcanzaría.
+
+**Consecuencias.** Las sesiones de los usuarios borrados caen por `onDelete: Cascade`. `audit_log` **no** se toca: es append-only (RF-95) y sus filas quedan como registro de lo ocurrido aunque el usuario ya no exista — tras la primera corrida verificada quedaron en producción `users.create=3`, `users.deactivate=1` y `users.role.change=1`, que es justamente la evidencia de que RF-03 se probó de verdad. La cuenta del dueño no se usa ni se modifica. `pnpm e2e` (local) y CI no cambian: allí no hay `E2E_BASE_URL`, así que los escenarios de escritura siguen corriendo siempre.

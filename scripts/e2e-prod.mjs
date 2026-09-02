@@ -1,0 +1,76 @@
+// Corre los E2E de autenticación contra producción (Vercel + Cloud Run), incluidos
+// los escenarios que crean datos (RF-03: usuario desactivado, cambio de rol).
+//
+// Para no tocar la cuenta real del dueño, crea un ADMINISTRADOR efímero con
+// contraseña aleatoria, corre la suite y lo borra junto con los usuarios que la
+// suite haya creado — pase lo que pase (también si los tests fallan).
+//
+// Uso: pnpm e2e:prod [--base-url https://...]
+import { randomBytes } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
+
+const DEFAULT_BASE_URL = 'https://ayr-steel-erp-web.vercel.app';
+const E2E_ADMIN_EMAIL = 'e2e-admin@ayr.test';
+
+const idx = process.argv.indexOf('--base-url');
+const baseUrl = idx > -1 ? process.argv[idx + 1] : DEFAULT_BASE_URL;
+
+readEnvFile(); // valida que .env.setup exista antes de tocar producción
+
+const apiDir = resolve(ROOT, 'apps/api');
+const dbEnv = {
+  DATABASE_URL: neonConnectionString('production', { pooled: true }),
+  DIRECT_URL: neonConnectionString('production', { pooled: false }),
+};
+// Contraseña efímera: solo vive en memoria y en el proceso hijo.
+const password = `E2E-${randomBytes(18).toString('base64url')}`;
+
+/** Ejecuta un paso y devuelve su código de salida (sin volcar el entorno al log). */
+function run(cwd, command, args, extraEnv = {}) {
+  const res = spawnSync(command, args, {
+    cwd,
+    env: { ...process.env, ...dbEnv, ...extraEnv },
+    stdio: 'inherit',
+    shell: true, // `pnpm` es un .cmd en Windows y spawn sin shell falla con EINVAL
+  });
+  return res.status ?? 1;
+}
+
+const cleanup = () =>
+  run(apiDir, 'pnpm', ['exec', 'tsx', 'prisma/cleanup-e2e-users.ts'], {
+    ALLOW_E2E_CLEANUP: '1',
+  });
+
+console.log(`E2E contra ${baseUrl} (admin efímero ${E2E_ADMIN_EMAIL})`);
+
+const created = run(apiDir, 'pnpm', ['exec', 'tsx', 'prisma/e2e-admin.ts'], {
+  ALLOW_E2E_ADMIN: '1',
+  E2E_ADMIN_EMAIL,
+  E2E_ADMIN_PASSWORD: password,
+});
+if (created !== 0) {
+  cleanup();
+  throw new Error('No se pudo crear el admin efímero de E2E');
+}
+
+let testStatus = 1;
+try {
+  testStatus = run(ROOT, 'pnpm', ['exec', 'playwright', 'test', 'e2e/tests/auth.spec.ts'], {
+    E2E_BASE_URL: baseUrl,
+    E2E_ALLOW_WRITES: '1',
+    E2E_ADMIN_EMAIL,
+    E2E_ADMIN_PASSWORD: password,
+  });
+} finally {
+  const cleaned = cleanup();
+  if (cleaned !== 0) {
+    console.error(
+      'ATENCIÓN: la limpieza de usuarios de E2E falló; revisar /usuarios en producción',
+    );
+    process.exitCode = 1;
+  }
+}
+
+process.exitCode = testStatus === 0 ? (process.exitCode ?? 0) : testStatus;

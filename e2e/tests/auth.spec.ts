@@ -2,6 +2,11 @@ import { expect, test } from '@playwright/test';
 import { adminApi, adminCredentials, createUser } from '../helpers/api';
 
 const isProduction = !!process.env.E2E_BASE_URL;
+/**
+ * Contra producción los escenarios que crean datos solo corren si se piden de forma
+ * explícita (`pnpm e2e:prod`), que además crea el administrador efímero y limpia al final.
+ */
+const skipWrites = isProduction && process.env.E2E_ALLOW_WRITES !== '1';
 
 async function login(page: import('@playwright/test').Page, email: string, password: string) {
   await page.goto('/login');
@@ -40,7 +45,7 @@ test.describe('Autenticación (RF-01, RF-03)', () => {
   });
 
   test('usuario desactivado no puede iniciar sesión', async ({ page, baseURL }) => {
-    test.skip(isProduction, 'Crea datos: solo local/CI');
+    test.skip(skipWrites, 'Crea datos: en produccion solo con pnpm e2e:prod');
     const api = await adminApi(baseURL!);
     const user = await createUser(api, 'VENDEDOR');
     const res = await api.delete(`/api/users/${user.id}`);
@@ -52,7 +57,7 @@ test.describe('Autenticación (RF-01, RF-03)', () => {
   });
 
   test('cambiar el rol de un usuario invalida su sesión abierta', async ({ page, baseURL }) => {
-    test.skip(isProduction, 'Crea datos: solo local/CI');
+    test.skip(skipWrites, 'Crea datos: en produccion solo con pnpm e2e:prod');
     const api = await adminApi(baseURL!);
     const user = await createUser(api, 'VENDEDOR');
 
@@ -78,7 +83,7 @@ test.describe('Autenticación (RF-01, RF-03)', () => {
     page,
     baseURL,
   }) => {
-    test.skip(isProduction, 'Crea datos: solo local/CI');
+    test.skip(skipWrites, 'Crea datos: en produccion solo con pnpm e2e:prod');
     const api = await adminApi(baseURL!);
     const user = await createUser(api, 'SUPERVISOR_PLANTA');
 
