@@ -11,14 +11,22 @@ import argon2 from 'argon2';
 const prisma = new PrismaClient();
 
 /** Las cinco líneas de negocio (§2.2). `services` es la única `NOOP` (sin kardex). */
-const BUSINESS_LINES: { code: BusinessLineCode; name: string; inventoryStrategy: InventoryStrategy }[] = [
+const BUSINESS_LINES: {
+  code: BusinessLineCode;
+  name: string;
+  inventoryStrategy: InventoryStrategy;
+}[] = [
   { code: BusinessLineCode.DRYWALL, name: 'Drywall', inventoryStrategy: InventoryStrategy.STOCK },
   {
     code: BusinessLineCode.METALLIC_ROOFING,
     name: 'Metallic Roofing',
     inventoryStrategy: InventoryStrategy.STOCK,
   },
-  { code: BusinessLineCode.ROOFING, name: 'Roofing (UPVC)', inventoryStrategy: InventoryStrategy.STOCK },
+  {
+    code: BusinessLineCode.ROOFING,
+    name: 'Roofing (UPVC)',
+    inventoryStrategy: InventoryStrategy.STOCK,
+  },
   { code: BusinessLineCode.TRADING, name: 'Trading', inventoryStrategy: InventoryStrategy.STOCK },
   { code: BusinessLineCode.SERVICES, name: 'Services', inventoryStrategy: InventoryStrategy.NOOP },
 ];
