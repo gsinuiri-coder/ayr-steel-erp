@@ -110,7 +110,9 @@ export class CoilsService {
       type: 'IN',
       qty: toFixedString(weightKg, 'KG'),
       unit: Unit.KGM,
-      unitCost: toFixedString(unitCostPerKg, 'MONEY'),
+      // El kardex se lleva siempre en soles (D-042). La bobina conserva su moneda y su
+      // tipo de cambio para el documento; el promedio ponderado necesita una sola escala.
+      unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY'),
       refType: input.refType,
       refId: input.refId,
       actorId: input.actorId,
@@ -174,7 +176,7 @@ export class CoilsService {
         finishId: query.finishId,
         status: query.status,
         supplierId: query.supplierId,
-        thicknessMm: query.thicknessMm ? toFixedString(query.thicknessMm, 'MM') : undefined,
+        thicknessMm: query.thicknessMm,
         ...(query.search
           ? {
               OR: [

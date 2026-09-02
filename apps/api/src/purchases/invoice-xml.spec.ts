@@ -90,6 +90,13 @@ describe('parseInvoiceXml (RF-11, UBL 2.1)', () => {
       expect(parsed.total).toBe('16530.0000');
     });
 
+    it('avisa cuando los precios unitarios no reproducen el valor de venta del comprobante', () => {
+      // La línea 2 redondea el precio a 1.2632: 3300 × 1.2632 = 4168.56 contra los
+      // 4168.4746 que declara el XML. El ERP recalcula desde el precio, así que el
+      // usuario tiene que ver la diferencia antes de confirmar la cuenta por pagar.
+      expect(parsed.warnings.some((w) => w.includes('recalculado desde los precios'))).toBe(true);
+    });
+
     it('tolera una línea sin código de producto del proveedor', () => {
       expect(parsed.lines[0]?.sellerItemCode).toBe('GAL-050-1220');
       expect(parsed.lines[1]?.sellerItemCode).toBeNull();

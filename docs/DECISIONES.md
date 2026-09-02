@@ -162,6 +162,20 @@ El patrón de correos vive en un único módulo (`apps/api/prisma/e2e-users.ts`)
 
 **Consecuencias.** §3.7 pasa a tener filas `2a` y `2b`; las fases 3 en adelante no cambian. 2b no puede empezar antes de 2a porque todo lo suyo opera sobre bobinas ya dadas de alta y sobre el kardex. Cada mitad cierra con su propio handoff, deploy y E2E en producción, así que el proyecto nunca queda con una fase a medio desplegar.
 
+### D-042 — El kardex se lleva en soles
+
+**Fecha:** 2026-09-03
+
+**Contexto.** D-038 fijó que el costo que entra al kardex es el valor de compra sin IGV, pero no dijo en qué moneda. La primera implementación guardaba el costo en la moneda del documento, porque es lo que trae la factura del proveedor.
+
+**Problema (hallazgo del `revisor`).** `inventory_movements` e `inventory_balances` no tienen columna de moneda. Comprar el mismo producto una vez en USD y otra en PEN mezclaba dos escalas en el mismo promedio ponderado (D-028), y `GET /inventory/balances` sumaba dólares con soles en el valorizado por línea (RF-90). El error no salta a la vista: los números siguen "cuadrando", solo que no significan nada.
+
+**Alternativas.** (a) Agregar `currency` al movimiento y al saldo: obliga a llevar un promedio por moneda y a decidir en qué moneda se valoriza el inventario igual. (b) Convertir a soles al registrar el movimiento.
+
+**Decisión.** (b). El costo del movimiento se guarda ya multiplicado por el `exchangeRate` de la operación (`unitCostPerKg × exchangeRate` en bobinas, `unitPrice × purchase.exchangeRate` en producto terminado). La compra y la bobina conservan su moneda original, su `exchangeRate` y su total en la moneda del documento: nada se pierde, y el reporte de compras sigue mostrando la factura tal como la emitió el proveedor.
+
+**Consecuencias.** El costo promedio, el inventario valorizado y el precio sugerido de D-032 quedan todos en soles, que es la moneda funcional del negocio. Un tipo de cambio corregido después no reescribe movimientos ya registrados (misma regla que D-029). Si alguna vez hace falta el inventario valorizado en dólares, se convierte al TC del día de la consulta, no se reescribe el kardex.
+
 ### RF-15 recuperado
 
 El docx original saltaba de RF-14 a RF-16, y D-031 (P-08) ya había señalado a RF-15 entre los requisitos faltantes sin recuperarlo. Por el contenido de RF-16 ("revertir un partido, devolviendo peso y ancho a la madre") el hueco solo puede ser el partido en sí: **RF-15 — Partir una bobina en hijas por ancho, conservando trazabilidad a la madre.** Se implementa en Fase 2b; el campo `coils.parentCoilId` se crea ya en 2a (siempre `null` por ahora) para no migrar dos veces la tabla.

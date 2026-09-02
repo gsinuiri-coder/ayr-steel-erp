@@ -12,6 +12,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import {
   createPurchaseSchema,
   createSupplierPaymentSchema,
@@ -35,11 +36,14 @@ import { PurchasesService } from './purchases.service';
 const MAX_XML_BYTES = 2 * 1024 * 1024;
 
 /**
- * Compras (D-030). Lectura para cualquier rol autenticado; registrar, recibir, pagar
- * y anular es de ADMINISTRADOR y SUPERVISOR_PLANTA (§3.4: el supervisor maneja
- * bobinas e inventario, y la recepción es justamente eso).
+ * Compras (D-030). Todo el módulo queda fuera del alcance de VENDEDOR (§3.4): expone
+ * costos de compra y cuentas por pagar, que no son parte de su trabajo. Registrar y
+ * recibir es de ADMINISTRADOR y SUPERVISOR_PLANTA (el supervisor maneja bobinas e
+ * inventario, y la recepción es justamente eso); pagar, anular y el estado de cuenta
+ * del proveedor son solo de ADMINISTRADOR.
  */
 @Controller('purchases')
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
 export class PurchasesController {
   constructor(private readonly purchases: PurchasesService) {}
 
@@ -51,6 +55,7 @@ export class PurchasesController {
   }
 
   @Get('suppliers/:supplierId/statement')
+  @Roles(Role.ADMINISTRADOR)
   statement(@Param('supplierId', ParseUUIDPipe) supplierId: string): Promise<SupplierStatementDto> {
     return this.purchases.supplierStatement(supplierId);
   }
@@ -62,8 +67,16 @@ export class PurchasesController {
 
   /** RF-11: sube el XML de la factura del proveedor y devuelve la compra prellenada. */
   @Post('xml/preview')
-  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_XML_BYTES } }))
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_XML_BYTES, files: 1 },
+      fileFilter: (_req, file, cb) => {
+        const isXml = /.xml$/i.test(file.originalname) || /xml/i.test(file.mimetype);
+        cb(isXml ? null : new BadRequestException('Solo se admite un archivo .xml'), isXml);
+      },
+    }),
+  )
   previewXml(
     @CurrentUser() actor: RequestUser,
     @UploadedFile() file?: Express.Multer.File,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { decimalStringSchema } from '../decimal';
 import { BUSINESS_LINES, COIL_STATUSES, CURRENCIES } from '../enums';
 
 /**
@@ -41,7 +42,7 @@ export type CoilDto = z.infer<typeof coilSchema>;
 export const coilQuerySchema = z.object({
   businessLine: z.enum(BUSINESS_LINES).optional(),
   finishId: z.string().uuid().optional(),
-  thicknessMm: z.string().optional(),
+  thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
   status: z.enum(COIL_STATUSES).optional(),
   supplierId: z.string().uuid().optional(),
   search: z.string().trim().max(80).optional(),

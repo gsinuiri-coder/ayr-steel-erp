@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type ImportRow } from '@prisma/client';
 import {
   ImportBatchStatus,
@@ -52,6 +52,7 @@ export interface UploadedFile {
 /** Importación masiva genérica (RF-52, base de RF-12/RF-71). Ver `adapters/`. */
 @Injectable()
 export class ImportsService {
+  private readonly logger = new Logger(ImportsService.name);
   private readonly adapters: Record<ImportEntity, ImportAdapter>;
 
   constructor(
@@ -210,6 +211,9 @@ export class ImportsService {
         });
         confirmedCount += 1;
       } catch (err) {
+        // El mensaje que ve el usuario es genérico a propósito (no filtra detalles de
+        // Prisma), pero el error real tiene que quedar en el log para poder diagnosticar.
+        this.logger.error(`Fila ${row.rowNumber} del lote ${batchId} falló al confirmarse`, err);
         const message =
           err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
             ? 'Choca con un registro ya creado por otra fila de este mismo archivo'

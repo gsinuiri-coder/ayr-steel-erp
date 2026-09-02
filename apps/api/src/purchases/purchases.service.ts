@@ -9,6 +9,7 @@ import {
   BusinessLineCode,
   Currency,
   ExchangeRateSource,
+  InventoryStrategy,
   Prisma,
   PurchaseStatus,
   PurchaseType,
@@ -18,7 +19,7 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
-  money,
+  STOCK_PURCHASE_TYPES,
   toDecimal,
   toFixedString,
   type CreatePurchaseInput,
@@ -39,8 +40,15 @@ import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { parseInvoiceXml } from './invoice-xml';
-
-const HUNDRED = new Decimal(100);
+import {
+  computeDueDate,
+  computeTotals,
+  daysBetween,
+  paidAmount,
+  purchaseBalance,
+  startOfDayUtc,
+  toPurchaseCurrency,
+} from './purchase-math';
 
 /** Compras a proveedor (D-030): registro → recepción → cuenta por pagar → pagos. */
 @Injectable()
@@ -129,6 +137,16 @@ export class PurchasesService {
     if (!supplier) throw new NotFoundException('Proveedor no encontrado');
     if (!supplier.isActive) throw new BadRequestException('El proveedor está desactivado');
     if (!businessLine) throw new NotFoundException('Línea de negocio no encontrada');
+    if (
+      STOCK_PURCHASE_TYPES.includes(input.type) &&
+      businessLine.inventoryStrategy === InventoryStrategy.NOOP
+    ) {
+      // Sin esto la recepción crearía bobinas o productos y el kardex los ignoraría en
+      // silencio (§2.2: `services` es NOOP), dejando stock fantasma con saldo cero.
+      throw new BadRequestException(
+        `La línea "${input.businessLine}" no lleva inventario: no admite compras de ${input.type === PurchaseType.COIL ? 'bobinas' : 'producto terminado'}`,
+      );
+    }
 
     await this.assertItemsAreConsistent(input, businessLine.id);
 
@@ -223,6 +241,17 @@ export class PurchasesService {
 
     await this.prisma.$transaction(
       async (tx) => {
+        // El cambio de estado va PRIMERO y condicionado a que siga en DRAFT: toma el lock
+        // de la fila y hace que dos recepciones simultáneas no dupliquen movimientos de
+        // kardex (la segunda ve 0 filas afectadas y aborta sin escribir nada).
+        const claimed = await tx.purchase.updateMany({
+          where: { id: purchase.id, status: PurchaseStatus.DRAFT },
+          data: { status: PurchaseStatus.RECEIVED, receivedAt: new Date() },
+        });
+        if (claimed.count === 0) {
+          throw new ConflictException('La compra ya fue recibida o anulada por otra operación');
+        }
+
         for (const item of purchase.items) {
           if (purchase.type === PurchaseType.COIL) {
             await this.coils.create(tx, {
@@ -249,7 +278,12 @@ export class PurchasesService {
               type: 'IN',
               qty: item.qty.toFixed(3),
               unit: item.unit,
-              unitCost: item.unitPrice.toFixed(4),
+              // El kardex se lleva siempre en soles (D-042): una compra en USD y otra en
+              // PEN del mismo producto tienen que promediar sobre la misma escala.
+              unitCost: toFixedString(
+                toDecimal(item.unitPrice.toString()).times(purchase.exchangeRate.toString()),
+                'MONEY',
+              ),
               refType: 'PURCHASE',
               refId: purchase.id,
               actorId: actor.id,
@@ -258,10 +292,6 @@ export class PurchasesService {
           // SERVICE y EXPENSE no mueven inventario (D-030): solo generan cuenta por pagar.
         }
 
-        await tx.purchase.update({
-          where: { id: purchase.id },
-          data: { status: PurchaseStatus.RECEIVED, receivedAt: new Date() },
-        });
         await this.audit.write(tx, {
           actorId: actor.id,
           action: 'purchases.receive',
@@ -328,9 +358,13 @@ export class PurchasesService {
       throw new BadRequestException('La compra está anulada');
     }
 
+    // El tipo de cambio que convierte el pago es siempre el de la moneda extranjera en
+    // juego, no el de la moneda del pago: pagar S/ contra una factura en USD sin este
+    // ajuste resolvería un TC de 1.0000 y cancelaría el saldo con la cifra equivocada.
+    const rateCurrency = input.currency === Currency.PEN ? purchase.currency : input.currency;
     const rate = input.exchangeRate
       ? toDecimal(input.exchangeRate)
-      : (await this.rateFor(input.date, input.currency)).rate;
+      : (await this.rateFor(input.date, rateCurrency)).rate;
 
     const applied = toPurchaseCurrency(
       toDecimal(input.amount),
@@ -338,14 +372,25 @@ export class PurchasesService {
       purchase.currency,
       rate,
     );
-    const balance = purchaseBalance(purchase, purchase.payments);
-    if (applied.gt(balance)) {
-      throw new BadRequestException(
-        `El pago excede el saldo pendiente (${balance.toFixed(2)} ${purchase.currency})`,
-      );
-    }
 
     await this.prisma.$transaction(async (tx) => {
+      // Bloquea la compra y recalcula el saldo dentro de la transacción: dos pagos
+      // concurrentes que por separado caben en el saldo no pueden sobrepagarla.
+      await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${purchaseId}::uuid FOR UPDATE`;
+      const current = await tx.purchase.findUniqueOrThrow({
+        where: { id: purchaseId },
+        include: { payments: true },
+      });
+      if (current.status === PurchaseStatus.CANCELLED) {
+        throw new BadRequestException('La compra está anulada');
+      }
+      const balance = purchaseBalance(current, current.payments);
+      if (applied.gt(balance)) {
+        throw new BadRequestException(
+          `El pago excede el saldo pendiente (${balance.toFixed(2)} ${current.currency})`,
+        );
+      }
+
       const payment = await tx.supplierPayment.create({
         data: {
           purchaseId,
@@ -527,113 +572,6 @@ export class PurchasesService {
     const dto = await this.exchangeRates.getRate(date, currency);
     return { rate: toDecimal(dto.sell), source: dto.source };
   }
-}
-
-// ---------------------------------------------------------------------------
-// Cálculo de totales y saldos
-// ---------------------------------------------------------------------------
-
-interface ComputedItem {
-  productId?: string;
-  description: string;
-  qty: Decimal;
-  unit: string;
-  unitPrice: Decimal;
-  subtotal: Decimal;
-  igv: Decimal;
-  total: Decimal;
-  finishId?: string;
-  widthMm?: string;
-  thicknessMm?: string;
-}
-
-/**
- * Totales de la compra. Se redondea a escala dinero línea por línea y recién después
- * se suma, para que la cabecera siempre cuadre con el detalle que se muestra.
- */
-function computeTotals(input: CreatePurchaseInput): {
-  items: ComputedItem[];
-  subtotal: Decimal;
-  igv: Decimal;
-  total: Decimal;
-} {
-  const igvRate = toDecimal(input.igvRate).div(HUNDRED);
-  const items = input.items.map((item) => {
-    const qty = toDecimal(item.qty);
-    const unitPrice = toDecimal(item.unitPrice);
-    const subtotal = money(qty.times(unitPrice));
-    const igv = money(subtotal.times(igvRate));
-    return {
-      productId: item.productId,
-      description: item.description,
-      qty,
-      unit: item.unit,
-      unitPrice,
-      subtotal,
-      igv,
-      total: subtotal.plus(igv),
-      finishId: item.finishId,
-      widthMm: item.widthMm,
-      thicknessMm: item.thicknessMm,
-    } satisfies ComputedItem;
-  });
-
-  const subtotal = items.reduce((acc, i) => acc.plus(i.subtotal), new Decimal(0));
-  const igv = items.reduce((acc, i) => acc.plus(i.igv), new Decimal(0));
-  return { items, subtotal, igv, total: subtotal.plus(igv) };
-}
-
-function computeDueDate(input: CreatePurchaseInput): string | null {
-  if (input.paymentTerms !== 'CREDITO' || !input.creditDays) return null;
-  const due = new Date(`${input.issueDate}T00:00:00.000Z`);
-  due.setUTCDate(due.getUTCDate() + input.creditDays);
-  return due.toISOString().slice(0, 10);
-}
-
-/** Convierte el monto de un pago a la moneda de la compra (D-039). */
-function toPurchaseCurrency(
-  amount: Decimal,
-  paymentCurrency: Currency,
-  purchaseCurrency: Currency,
-  rate: Decimal,
-): Decimal {
-  if (paymentCurrency === purchaseCurrency) return amount;
-  if (paymentCurrency === Currency.PEN) return money(amount.div(rate));
-  return money(amount.times(rate));
-}
-
-function purchaseBalance(
-  purchase: { total: Prisma.Decimal; currency: Currency },
-  payments: { amount: Prisma.Decimal; currency: Currency; exchangeRate: Prisma.Decimal }[],
-): Decimal {
-  const paid = payments.reduce(
-    (acc, p) =>
-      acc.plus(
-        toPurchaseCurrency(
-          toDecimal(p.amount.toString()),
-          p.currency,
-          purchase.currency,
-          toDecimal(p.exchangeRate.toString()),
-        ),
-      ),
-    new Decimal(0),
-  );
-  return money(toDecimal(purchase.total.toString()).minus(paid));
-}
-
-function paidAmount(
-  purchase: { total: Prisma.Decimal; currency: Currency },
-  payments: { amount: Prisma.Decimal; currency: Currency; exchangeRate: Prisma.Decimal }[],
-): Decimal {
-  return money(toDecimal(purchase.total.toString()).minus(purchaseBalance(purchase, payments)));
-}
-
-function startOfDayUtc(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
-
-function daysBetween(from: Date, to: Date): number {
-  return Math.round((to.getTime() - from.getTime()) / 86_400_000);
 }
 
 function requireField<T>(value: T | null | undefined, message: string): T {

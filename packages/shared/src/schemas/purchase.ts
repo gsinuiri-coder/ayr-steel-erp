@@ -163,15 +163,29 @@ export const createPurchaseSchema = z
     /** Opcional: si no viene, el API resuelve el TC SUNAT del día (D-029). */
     exchangeRate: decimalStringSchema('RATE', { positive: true }).optional(),
     /** Puntos porcentuales de IGV aplicados a todas las líneas (18 estándar, 0 exonerado). */
-    igvRate: decimalStringSchema('RATE').default('18.0000'),
+    igvRate: decimalStringSchema('RATE')
+      .refine((v) => Number.parseFloat(v) >= 0 && Number.parseFloat(v) <= 100, {
+        message: 'El IGV debe estar entre 0 y 100',
+      })
+      .default('18.0000'),
     paymentTerms: z.enum(PAYMENT_TERMS, {
       errorMap: () => ({ message: 'Condición de pago inválida' }),
     }),
     creditDays: z.number().int().min(0).max(365).optional(),
     serviceKind: z.enum(SERVICE_KINDS).optional(),
-    sourceXmlKey: z.string().trim().max(300).optional(),
+    /** Solo una key emitida por `POST /purchases/xml/preview`, nunca una ruta arbitraria de R2. */
+    sourceXmlKey: z
+      .string()
+      .trim()
+      .regex(/^purchases\/xml\/[0-9a-f-]{36}-[A-Za-z0-9._-]{1,150}$/, 'Referencia de XML inválida')
+      .optional(),
     notes: z.string().trim().max(500).optional(),
-    items: z.array(purchaseItemInputSchema).min(1, 'La compra necesita al menos una línea'),
+    items: z
+      .array(purchaseItemInputSchema)
+      .min(1, 'La compra necesita al menos una línea')
+      // La recepción itera línea por línea creando bobinas dentro de una transacción con
+      // locks: una compra desmedida alargaría esa transacción y bloquearía el kardex.
+      .max(200, 'Una compra admite hasta 200 líneas'),
   })
   .superRefine((d, ctx) => {
     if (d.paymentTerms === 'CREDITO' && (d.creditDays === undefined || d.creditDays <= 0)) {

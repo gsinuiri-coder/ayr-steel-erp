@@ -17,6 +17,9 @@ import { Currency, Decimal, toDecimal, toFixedString, type PurchaseDocType } fro
 /** Tamaño máximo del XML aceptado. Una factura real no llega ni a 1 MB. */
 const MAX_XML_BYTES = 2 * 1024 * 1024;
 
+/** Diferencia máxima que se considera redondeo del emisor y no un descuadre real. */
+const TOLERANCE = new Decimal('0.05');
+
 /** Catálogo 01 de SUNAT → tipo de comprobante del ERP. */
 const DOC_TYPE_BY_CATALOG_01: Record<string, PurchaseDocType> = {
   '01': 'FACTURA',
@@ -161,9 +164,30 @@ export function parseInvoiceXml(buffer: Buffer): ParsedInvoice {
   );
   const total = decimalOr(text(monetary?.PayableAmount), subtotal.plus(igv));
 
-  if (!total.minus(subtotal.plus(igv)).abs().lte(new Decimal('0.05'))) {
+  if (!total.minus(subtotal.plus(igv)).abs().lte(TOLERANCE)) {
     warnings.push(
       'El total del XML no cuadra con la suma de valor de venta más IGV: revisa el detalle',
+    );
+  }
+
+  // El ERP recalcula los totales desde cantidad × precio unitario (`computeTotals`). Si el
+  // XML no trae precios que reproduzcan su propio valor de venta —por redondeo o por
+  // descuentos de línea— la cuenta por pagar saldría distinta de la factura real.
+  const fromUnitPrices = lines.reduce(
+    (acc, l) => acc.plus(toDecimal(l.qty).times(toDecimal(l.unitPrice))),
+    new Decimal(0),
+  );
+  if (!fromUnitPrices.minus(subtotal).abs().lte(TOLERANCE)) {
+    warnings.push(
+      `El valor de venta recalculado desde los precios unitarios (${fromUnitPrices.toFixed(2)}) ` +
+        `no coincide con el del comprobante (${subtotal.toFixed(2)}): ajusta los precios antes de confirmar`,
+    );
+  }
+
+  const declaredRates = collectLineIgvRates(doc);
+  if (declaredRates.size > 1) {
+    warnings.push(
+      `El comprobante mezcla tasas de IGV (${[...declaredRates].join(', ')}%): el ERP aplica una sola tasa a toda la compra, revisa línea por línea`,
     );
   }
 
@@ -242,6 +266,20 @@ function readPaymentTerms(
   const dueDate =
     installmentDates[0] ?? (/^\d{4}-\d{2}-\d{2}$/.test(headerDueDate) ? headerDueDate : null);
   return { terms: isCredit || dueDate ? 'CREDITO' : 'CONTADO', dueDate };
+}
+
+/** Tasas de IGV distintas declaradas en las líneas (una factura mixta trae más de una). */
+function collectLineIgvRates(doc: XmlNode): Set<string> {
+  const rates = new Set<string>();
+  for (const tag of ['InvoiceLine', 'CreditNoteLine', 'DebitNoteLine']) {
+    for (const raw of asArray(doc[tag])) {
+      const percent = text(
+        pick(asNode(raw) ?? {}, ['TaxTotal', 'TaxSubtotal', 'TaxCategory', 'Percent']),
+      );
+      if (percent) rates.add(toFixedString(percent, 'RATE'));
+    }
+  }
+  return rates;
 }
 
 /**
@@ -323,7 +361,8 @@ function splitDocumentId(id: string): { series: string; number: string } {
   if (!series || !number) {
     throw new BadRequestException(`El XML no trae una serie-número válida (leído: "${id}")`);
   }
-  return { series: series.toUpperCase(), number: String(Number(number)) };
+  // Sin pasar por `Number`: un correlativo de más de 15 dígitos perdería precisión.
+  return { series: series.toUpperCase(), number: number.replace(/^0+/, '') || '0' };
 }
 
 function daysBetween(fromIso: string, toIso: string): number | null {

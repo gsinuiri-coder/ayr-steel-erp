@@ -15,6 +15,7 @@ interface RawBalance {
   id: string;
   qty: { toString: () => string };
   avg_cost: { toString: () => string };
+  unit: string;
 }
 
 /**
@@ -23,7 +24,7 @@ interface RawBalance {
  * `INSERT ... ON CONFLICT` y el `SELECT ... FOR UPDATE`), sin depender de Postgres.
  */
 function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }) {
-  const balances = new Map<string, { id: string; qty: string; avgCost: string }>();
+  const balances = new Map<string, { id: string; qty: string; avgCost: string; unit: string }>();
   const movements: Record<string, unknown>[] = [];
   const executed: string[] = [];
 
@@ -33,10 +34,15 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
     },
     $executeRaw: jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
       executed.push(strings.join('?'));
-      const [, , itemType, itemId] = values as string[];
+      const [, , itemType, itemId, unit] = values as string[];
       const key = `${itemType}:${itemId}`;
       if (!balances.has(key)) {
-        balances.set(key, { id: `bal-${balances.size + 1}`, qty: '0', avgCost: '0' });
+        balances.set(key, {
+          id: `bal-${balances.size + 1}`,
+          qty: '0',
+          avgCost: '0',
+          unit: unit ?? 'KGM',
+        });
       }
       return Promise.resolve(1);
     }),
@@ -49,6 +55,7 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
         id: found.id,
         qty: { toString: () => found.qty },
         avg_cost: { toString: () => found.avgCost },
+        unit: found.unit,
       };
       return Promise.resolve([row]);
     }),
@@ -57,8 +64,9 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
         ({ where, data }: { where: { id: string }; data: Record<string, string> }) => {
           for (const balance of balances.values()) {
             if (balance.id === where.id) {
-              balance.qty = data.qty;
-              balance.avgCost = data.avgCost;
+              balance.qty = data.qty ?? balance.qty;
+              balance.avgCost = data.avgCost ?? balance.avgCost;
+              balance.unit = data.unit ?? balance.unit;
             }
           }
           return Promise.resolve({});

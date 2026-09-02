@@ -1,4 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, type Supplier } from '@prisma/client';
 import type { CreateSupplierInput, SupplierDto, UpdateSupplierInput } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -65,6 +70,17 @@ export class SuppliersService {
   async update(actor: RequestUser, id: string, input: UpdateSupplierInput): Promise<SupplierDto> {
     const before = await this.prisma.supplier.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Proveedor no encontrado');
+
+    if (input.code !== undefined && input.code !== before.code) {
+      // El código ya quedó congelado dentro del `code` RF-13 de cada bobina: cambiarlo
+      // dejaría códigos de bobina que no corresponden a ningún proveedor.
+      const coils = await this.prisma.coil.count({ where: { supplierId: id } });
+      if (coils > 0) {
+        throw new BadRequestException(
+          'El proveedor ya tiene bobinas registradas: su código corto no se puede cambiar',
+        );
+      }
+    }
 
     const data: Prisma.SupplierUpdateInput = {};
     if (input.code !== undefined) data.code = input.code;

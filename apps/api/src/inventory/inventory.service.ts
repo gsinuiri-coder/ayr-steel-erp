@@ -43,6 +43,7 @@ interface BalanceRow {
   id: string;
   qty: Decimal;
   avgCost: Decimal;
+  unit: string;
 }
 
 /**
@@ -74,6 +75,14 @@ export class InventoryService {
     }
 
     const balance = await this.lockBalance(tx, input);
+
+    if (balance.unit !== input.unit && !balance.qty.isZero()) {
+      // Mezclar unidades en el mismo saldo (kilos con unidades) haría del promedio y del
+      // valorizado un número sin significado.
+      throw new BadRequestException(
+        `El ítem ya tiene saldo en ${balance.unit}: no se puede mover en ${input.unit}`,
+      );
+    }
 
     let unitCost: Decimal;
     let newQty: Decimal;
@@ -154,9 +163,9 @@ export class InventoryService {
     `;
 
     const rows = await tx.$queryRaw<
-      { id: string; qty: Prisma.Decimal; avg_cost: Prisma.Decimal }[]
+      { id: string; qty: Prisma.Decimal; avg_cost: Prisma.Decimal; unit: string }[]
     >`
-      SELECT "id", "qty", "avg_cost"
+      SELECT "id", "qty", "avg_cost", "unit"
       FROM "inventory_balances"
       WHERE "item_type" = ${input.itemType}::"InventoryItemType"
         AND "item_id" = ${input.itemId}::uuid
@@ -169,21 +178,7 @@ export class InventoryService {
       id: row.id,
       qty: toDecimal(row.qty.toString()),
       avgCost: toDecimal(row.avg_cost.toString()),
-    };
-  }
-
-  /** Saldo vigente de un ítem, o `null` si nunca tuvo movimientos. */
-  async getBalance(
-    itemType: InventoryItemType,
-    itemId: string,
-  ): Promise<{ qty: Decimal; avgCost: Decimal } | null> {
-    const balance = await this.prisma.inventoryBalance.findUnique({
-      where: { itemType_itemId: { itemType, itemId } },
-    });
-    if (!balance) return null;
-    return {
-      qty: toDecimal(balance.qty.toString()),
-      avgCost: toDecimal(balance.avgCost.toString()),
+      unit: row.unit,
     };
   }
 
@@ -199,6 +194,7 @@ export class InventoryService {
       },
       include: { businessLine: true },
       orderBy: { updatedAt: 'desc' },
+      take: 1000,
     });
 
     const labels = await this.resolveItemLabels(balances);
@@ -228,6 +224,8 @@ export class InventoryService {
    * cronológico; en un listado mezclado ese saldo no tiene sentido y va en `null`.
    */
   async findMovements(query: InventoryQuery): Promise<InventoryMovementDto[]> {
+    const singleItem = Boolean(query.itemId && query.itemType);
+
     const movements = await this.prisma.inventoryMovement.findMany({
       where: {
         itemType: query.itemType,
@@ -241,11 +239,15 @@ export class InventoryService {
         },
       },
       include: { businessLine: true },
-      orderBy: [{ at: 'asc' }, { id: 'asc' }],
-      take: 2000,
+      // El kardex de un ítem concreto se lee completo y en orden cronológico, porque el
+      // saldo corrido solo se puede calcular desde el primer movimiento. El listado
+      // mezclado, en cambio, se recorta a los más RECIENTES: cortar por los más antiguos
+      // mostraba justo lo contrario de lo que dice la vista.
+      orderBy: singleItem ? [{ at: 'asc' }, { id: 'asc' }] : [{ at: 'desc' }, { id: 'desc' }],
+      take: singleItem ? 10_000 : 500,
     });
+    if (!singleItem) movements.reverse();
 
-    const singleItem = Boolean(query.itemId && query.itemType);
     const labels = await this.resolveItemLabels(movements);
     const actors = await this.resolveActorNames(movements);
 
