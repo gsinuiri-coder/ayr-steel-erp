@@ -8,7 +8,8 @@
 | -------------------------------------------- | ----------------------- | -------------------------------------------------------- |
 | 0 — Bootstrap                                | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                        |
 | 1 — Maestros, catálogo, precios, importación | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción |
-| 2 — Compras + bobinas + kardex               | ⚪ Pendiente            | —                                                        |
+| 2a — Kardex + compras + alta de bobinas      | 🟡 En curso             | —                                                        |
+| 2b — Partido, merma, cierre, anulación       | ⚪ Pendiente            | —                                                        |
 | 3 — Corte tercerizado + flejes               | ⚪ Pendiente            | —                                                        |
 | 4 — Producción + `/planta`                   | ⚪ Pendiente            | —                                                        |
 | 5 — Cotizaciones y ventas                    | ⚪ Pendiente            | —                                                        |
@@ -47,7 +48,7 @@
 | 8   | E2E de Fase 1 contra producción                                                                                         | ✅ `pnpm e2e:prod` corre ahora `auth.spec.ts` + `fase1.spec.ts` (11/11); cada test revierte lo que crea/cambia    |
 | 9   | Cierre: handoff, decisiones, commit, push                                                                               | ✅ `docs/handoff/fase-1.md`                                                                                       |
 
-**Hallazgos de seguridad corregidos en esta fase:** `xlsx@0.18.5` tenía 2 CVE high sin parche en npm (prototype pollution, ReDoS) → reemplazado por el build oficial `0.20.3` de `cdn.sheetjs.com`; el nombre de archivo subido en `imports` se saneaba antes de ir a la key de R2 y a la columna `file_name`; los errores de Prisma ya no se exponen crudos en el preview de importación.
+**Hallazgos de seguridad corregidos en Fase 1:** `xlsx@0.18.5` tenía 2 CVE high sin parche en npm (prototype pollution, ReDoS) → reemplazado por el build oficial `0.20.3` de `cdn.sheetjs.com`; el nombre de archivo subido en `imports` se saneaba antes de ir a la key de R2 y a la columna `file_name`; los errores de Prisma ya no se exponen crudos en el preview de importación.
 
 **E2E de Fase 1 contra producción (D-024, extendido).** `e2e/tests/fase1.spec.ts` ahora corre contra producción bajo el mismo gate `E2E_ALLOW_WRITES=1` que `auth.spec.ts`, orquestado por el mismo `pnpm e2e:prod` (que ahora ejecuta ambos specs en una sola corrida con el mismo admin efímero). A diferencia de los usuarios (borrados por `cleanup-e2e-users.ts`), estos tests tocan entidades reales (`finishes`, `products`, `pricing_settings`) que no tienen borrado físico: cada test revierte lo suyo en un `finally` —el acabado y los productos creados quedan `isActive:false` (identificables por su código/SKU con prefijo `E2E`/`SKU-`/`IMP-`), y el margen de Drywall vuelve exactamente al valor que tenía antes del test—, así que corre limpio pase lo que pase. Verificado a mano tras la corrida: `pricing` de Drywall en `20.0000`/`10.0000` (el valor sembrado) y las 4 entidades de prueba en `isActive:false`.
 
@@ -55,6 +56,38 @@
 
 - `parse-spreadsheet.ts` aplica el límite de 2000 filas después de que SheetJS ya descomprimió el archivo completo en memoria; un `.xlsx` diseñado como zip bomb podría agotar memoria antes del chequeo. Mitigación futura: acotar el tamaño descomprimido o mover el parseo a un worker con límite de memoria.
 - El `ContentType` guardado en R2 para el archivo de origen es el `mimetype` que declara el cliente, no uno derivado del contenido real. Hoy no hay endpoint que sirva ese objeto de vuelta, así que no es explotable; si se agrega un endpoint de descarga, fijar el `ContentType` según el tipo detectado por el parser.
+
+## Fase 2a — detalle
+
+| #   | Entregable                                                                                | Estado                                                                                                                                                  |
+| --- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Decisiones D-035..D-042, RF-15, §4.8 reescrita (RF-90..94), §3.7 partida en 2a/2b         | ✅ `docs/ARQUITECTURA.md` §0.2, `docs/DECISIONES.md`                                                                                                        |
+| 2   | Referencia UBL 2.1 + catálogos SUNAT 01/03/06                                             | ✅ `docs/referencias/ubl21-factura.md` (subagente `investigador` vía `agy`)                                                                                 |
+| 3   | Prisma: `inventory_movements`, `inventory_balances`, `purchases`, `purchase_items`, `supplier_payments`, `coils`; `suppliers.code`/`coilSeq`; `pricing_settings.overheadPerKg` | ✅ migración `20260903120000_fase2a_kardex_compras_bobinas`, aplicada en `dev`                                                                              |
+| 4   | Kardex: `InventoryService.record` como único escritor, promedio ponderado, NOOP explícito | ✅ trigger append-only y `CHECK qty > 0` en la base; saldo bloqueado con `FOR UPDATE`                                                                       |
+| 5   | Compras: 4 tipos, recepción, pagos parciales, saldo y estado de cuenta                    | ✅ `apps/api/src/purchases/`; aritmética separada en `purchase-math.ts`                                                                                     |
+| 6   | Bobinas: código RF-13, typeKey RF-14, SKU D-037, alta por compra / XML / planilla          | ✅ `apps/api/src/coils/`, `invoice-xml.ts`, `imports/adapters/coils.adapter.ts`                                                                             |
+| 7   | Web: `/compras`, `/compras/nueva`, `/compras/[id]`, `/proveedores/[id]/estado-cuenta`, `/bobinas`, `/bobinas/nueva-xml`, `/bobinas/importar` | ✅                                                                                                                                                          |
+| 8   | Tests unit (kardex, códigos de bobina, parser XML, aritmética de compras)                 | ✅ 83 unit en verde                                                                                                                                         |
+| 9   | Revisión de `revisor` y `auditor-seguridad`                                               | ✅ 1 bloqueante + 4 altos corregidos; ver abajo                                                                                                             |
+| 10  | E2E de Fase 2a                                                                             | 🟡 en curso                                                                                                                                                 |
+| 11  | Deploy y migración en `production`                                                        | ⚪ pendiente                                                                                                                                                |
+| 12  | Cierre: handoff, commit, push                                                             | ⚪ pendiente                                                                                                                                                |
+
+**Hallazgos corregidos en esta fase (revisor + auditor-seguridad).**
+
+- **Bloqueante.** Un pago en soles contra una compra en dólares resolvía el tipo de cambio de la moneda del *pago* (PEN → 1.0000) en vez de la de la compra, así que S/ 500 cancelaban USD 500 y el pago quedaba persistido con ese TC. Corregido: el TC se resuelve siempre contra la moneda extranjera en juego.
+- **Alto.** El kardex guardaba el costo en la moneda del documento y no tiene columna de moneda: comprar el mismo ítem en USD y en PEN mezclaba dos escalas en el promedio ponderado y el valorizado sumaba monedas distintas. Corregido con **D-042** (el kardex se lleva en soles).
+- **Alto.** `receive` y `addPayment` validaban estado y saldo *fuera* de la transacción: dos recepciones simultáneas duplicaban movimientos de kardex y dos pagos simultáneos podían sobrepagar. Corregido con un `updateMany` condicionado a `DRAFT` y un `SELECT ... FOR UPDATE` respectivamente.
+- **Alto.** Una compra `COIL`/`FINISHED_GOOD` sobre la línea `services` (NOOP) creaba bobinas cuyo movimiento el kardex descartaba en silencio. Ahora se rechaza al registrar la compra.
+- **Alto (preexistente, fuera del diff de la fase).** El tracker del rate limit tomaba el primer salto de `X-Forwarded-For`, que el cliente controla y que Cloud Run *añade* en vez de reemplazar: rotando esa cabecera se anulaba el límite de 10/min de `/auth/login`. Ahora usa `req.ip` (Express con `trust proxy`) y, en el login, el correo. **Queda pendiente para Fase 7** el bloqueo temporal de cuenta tras N intentos fallidos, que el auditor recomendó junto con esto.
+- **Medios/bajos corregidos:** el listado mezclado de movimientos cortaba por los más antiguos presentándolos como recientes; `thicknessMm` e `igvRate` sin validar daban 500 o totales absurdos; `sourceXmlKey` aceptaba cualquier ruta de R2; el saldo nunca llegaba a cero con pagos en otra moneda; el kardex admitía mezclar unidades en un mismo saldo; el código corto del proveedor se podía cambiar con bobinas ya emitidas; `imports` tragaba el error real al confirmar una fila; se avisa cuando el XML mezcla tasas de IGV o cuando sus precios unitarios no reproducen su propio valor de venta. Roles: compras y bobinas salen del alcance de VENDEDOR (exponen costos y cuentas por pagar) y el estado de cuenta queda solo para ADMINISTRADOR; la subida de XML gana throttle propio, filtro de extensión y tope de 200 líneas por compra.
+
+**Diferido a Fase 2b o posterior (anotado por el revisor, no es un bug):**
+
+- `receive` hace N+1 dentro de la transacción (proveedor, acabado y línea de negocio se consultan por cada línea) mientras mantiene el lock del correlativo del proveedor. Con compras de pocas líneas no es un problema; conviene precargar antes del bucle cuando 2b agregue más operaciones sobre bobinas.
+- `previewFromXml` sube el XML a R2 antes de que el usuario confirme: cada preview abandonado deja un objeto huérfano bajo `purchases/xml/`. Necesita una regla de expiración en R2 o un job de limpieza (va junto con la limpieza de `imports/` ya anotada para Fase 7).
+- Anular una compra ya recibida y revertir sus movimientos es de Fase 2b: hoy `cancel` solo acepta compras en `DRAFT` y sin pagos.
 
 ## Bloqueos
 
