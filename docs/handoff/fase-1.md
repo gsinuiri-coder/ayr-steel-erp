@@ -3,7 +3,7 @@
 ## 1. Resumen
 
 Fase 1 según `docs/ARQUITECTURA.md` §3.7 (D-034): **cerrada**. Se entregaron líneas de negocio (solo lectura), acabados, catálogo por línea, clientes, proveedores, márgenes de precio, tipo de cambio (apis.net.pe con fallback manual) y un módulo genérico de importación masiva desde planilla (adaptadores para productos y clientes).
-Estado: `pnpm turbo lint typecheck test` en verde; 35 unit + 12 E2E (Fase 0 + Fase 1) en verde local; CI en `main` verde en las dos últimas corridas (33682260101 y 33682674374). Migración aplicada y seed corrido en Neon `production`; API redesplegado en Cloud Run; `pnpm e2e:prod` (6/6) verde tras el deploy.
+Estado: `pnpm turbo lint typecheck test` en verde; 35 unit + 12 E2E (Fase 0 + Fase 1) en verde local; CI en `main` verde en las tres últimas corridas (33682260101, 33682674374, 33683077599). Migración aplicada y seed corrido en Neon `production`; API redesplegado en Cloud Run; `pnpm e2e:prod` corre ahora `auth.spec.ts` + `fase1.spec.ts` en una sola corrida (11/11 verde) contra producción, cada test de Fase 1 revierte lo que crea/cambia en un `finally` — verificado a mano tras la corrida que el margen de Drywall volvió a 20 %/10 % y las 4 entidades de prueba quedaron `isActive:false`.
 Revisado por `revisor` y `auditor-seguridad`: se corrigieron los hallazgos altos (baja lógica ausente en la UI, `xlsx` con CVEs) y varios medios/bajos; quedan dos hallazgos bajos diferidos a Fase 7 (documentados abajo).
 
 ## 2. Hecho
@@ -14,9 +14,9 @@ Revisado por `revisor` y `auditor-seguridad`: se corrigieron los hallazgos altos
 4. **API** — módulos `business-lines` (solo lectura), `finishes`, `catalog`, `customers`, `suppliers`, `pricing`, `exchange-rates`, `documents` (R2), `imports` (genérico + adaptadores `products`/`customers`) en `apps/api/src/*`. Todas las mutaciones van con `@Roles(Role.ADMINISTRADOR)` y auditoría en la misma transacción; lectura abierta a cualquier rol autenticado.
 5. **Importación (RF-52)** — `apps/api/src/imports/`: sube el archivo a R2, lo parsea (xlsx o csv, tolerante a tildes/mayúsculas en encabezados), valida fila por fila contra el adaptador de la entidad, detecta duplicados dentro del propio archivo, permite editar filas inválidas y confirma solo las válidas (cada una en su propia transacción).
 6. **Web** — `/lineas`, `/acabados`, `/catalogo` (tabs por línea + importar), `/clientes`, `/proveedores` (con `providesCuttingService`), `/configuracion/margenes`, `/configuracion/tipo-cambio`. Todas con baja lógica (Activar/Desactivar) y búsqueda por nombre/documento donde aplica (RF-84). `components/imports/import-dialog.tsx` es el importador genérico reutilizado por catálogo y clientes.
-7. **Tests** — `apps/api/src/{pricing,exchange-rates}/*.spec.ts` (fórmula de precio sugerido, margen mínimo, caché/fallback de TC). `e2e/tests/fase1.spec.ts`: crear acabado, crear producto, importar con fila mala → corregir → confirmar, cambiar margen como admin, vendedor sin acceso a `/configuracion`.
+7. **Tests** — `apps/api/src/{pricing,exchange-rates}/*.spec.ts` (fórmula de precio sugerido, margen mínimo, caché/fallback de TC). `e2e/tests/fase1.spec.ts`: crear acabado, crear producto, importar con fila mala → corregir → confirmar, cambiar margen como admin, vendedor sin acceso a `/configuracion`. Corre en local/CI siempre, y contra producción bajo `E2E_ALLOW_WRITES=1` (mismo gate que `auth.spec.ts`, D-024) — cada test revierte lo que crea/cambia en un `finally` (`finishes`/`products` quedan `isActive:false`, `pricing_settings.marginPct` vuelve al valor previo).
 8. **Seguridad** — revisor y auditor-seguridad corrieron sobre el diff completo; hallazgos corregidos: baja lógica ausente en 4 vistas, `xlsx@0.18.5` (2 CVE high) reemplazado por el build oficial `0.20.3` de `cdn.sheetjs.com`, nombre de archivo saneado antes de ir a R2/DB, mensajes de error de Prisma ya no se filtran crudos al preview de importación.
-9. **Deploy** — `pnpm db:prod`, `pnpm secrets:gcp`, `pnpm secrets:gh`, `pnpm deploy:api --web-origin https://ayr-steel-erp-web.vercel.app`; web redesplegado automáticamente por el push a `main` (proyecto Vercel ligado al repo). `pnpm e2e:prod` verde tras el deploy.
+9. **Deploy** — `pnpm db:prod`, `pnpm secrets:gcp`, `pnpm secrets:gh`, `pnpm deploy:api --web-origin https://ayr-steel-erp-web.vercel.app`; web redesplegado automáticamente por el push a `main` (proyecto Vercel ligado al repo). `pnpm e2e:prod` (11/11, auth + fase1) verde tras el deploy.
 
 ## 3. Decisiones tomadas
 
@@ -41,13 +41,15 @@ Ninguno abierto que requiera al dueño. Diferido a Fase 7 (hardening), riesgo ba
 - El `ContentType` guardado en R2 para el archivo de import es el que declara el cliente, no uno derivado del contenido; no es explotable hoy porque no hay endpoint que sirva ese objeto de vuelta.
 - El bucket R2 de CI es el mismo que el de producción; quedan objetos de prueba con prefijo `imports/...` tras cada corrida de CI.
 
+**`ADMIN_PASSWORD` de `.env.setup` ya no sirve contra producción** — el dueño la cambió al completar `mustChangePassword` en su primer ingreso (Fase 0). Nunca intentar loguearse como el admin real contra producción para verificar algo: siempre un administrador efímero (patrón D-024, el que ya usa `pnpm e2e:prod`).
+
 ## 5. Cómo verificar
 
 ```
 pnpm install && pnpm env:local
 pnpm turbo lint typecheck test              # exit 0 (35 unit)
 pnpm e2e                                    # 12 E2E locales contra Neon dev
-pnpm e2e:prod                               # 6 escenarios de auth contra producción (D-024)
+pnpm e2e:prod                               # auth (6) + fase1 (5) contra producción, 11/11 (D-024)
 gh run list --limit 3                       # CI en main
 pnpm audit --prod --audit-level=high        # sin vulnerabilidades
 curl -s https://ayr-steel-erp-api-2ompzrgnfq-uc.a.run.app/health

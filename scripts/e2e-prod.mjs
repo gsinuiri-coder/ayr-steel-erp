@@ -1,9 +1,13 @@
-// Corre los E2E de autenticación contra producción (Vercel + Cloud Run), incluidos
-// los escenarios que crean datos (RF-03: usuario desactivado, cambio de rol).
+// Corre los E2E de autenticación (auth.spec.ts) y de Fase 1 (fase1.spec.ts) contra
+// producción (Vercel + Cloud Run), incluidos los escenarios que crean datos (RF-03:
+// usuario desactivado, cambio de rol; Fase 1: acabado, producto, importación,
+// margen).
 //
 // Para no tocar la cuenta real del dueño, crea un ADMINISTRADOR efímero con
 // contraseña aleatoria, corre la suite y lo borra junto con los usuarios que la
-// suite haya creado — pase lo que pase (también si los tests fallan).
+// suite haya creado — pase lo que pase (también si los tests fallan). Cada test de
+// Fase 1 revierte por su cuenta lo que creó/cambió en `finishes`/`products`/
+// `pricing_settings` (ver `e2e/tests/fase1.spec.ts`).
 //
 // Uso: pnpm e2e:prod [--base-url https://...]
 import { randomBytes } from 'node:crypto';
@@ -57,12 +61,17 @@ if (created !== 0) {
 
 let testStatus = 1;
 try {
-  testStatus = run(ROOT, 'pnpm', ['exec', 'playwright', 'test', 'e2e/tests/auth.spec.ts'], {
-    E2E_BASE_URL: baseUrl,
-    E2E_ALLOW_WRITES: '1',
-    E2E_ADMIN_EMAIL,
-    E2E_ADMIN_PASSWORD: password,
-  });
+  testStatus = run(
+    ROOT,
+    'pnpm',
+    ['exec', 'playwright', 'test', 'e2e/tests/auth.spec.ts', 'e2e/tests/fase1.spec.ts'],
+    {
+      E2E_BASE_URL: baseUrl,
+      E2E_ALLOW_WRITES: '1',
+      E2E_ADMIN_EMAIL,
+      E2E_ADMIN_PASSWORD: password,
+    },
+  );
 } finally {
   const cleaned = cleanup();
   if (cleaned !== 0) {
