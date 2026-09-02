@@ -1,0 +1,82 @@
+// Schema v0 (Fase 0): solo identidad, sesiones y auditoría. Nada de dominio.
+// Regla D-003: cuando entren dinero/kg/mm serán `Decimal @db.Decimal(p, s)` con
+// escala explícita (dinero 4, kg 3, mm 2). En v0 no aplica ninguna columna Decimal.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+/// Roles del sistema (RF-02). Espejo de `Role` en @ayr/shared.
+enum Role {
+  ADMINISTRADOR
+  SUPERVISOR_PLANTA
+  VENDEDOR
+}
+
+/// Líneas de negocio (§2.2). Espejo de `BusinessLine` en @ayr/shared.
+/// Se declara en v0 para que el enum exista desde la primera migración.
+enum BusinessLine {
+  DRYWALL          @map("drywall")
+  METALLIC_ROOFING @map("metallic-roofing")
+  ROOFING          @map("roofing")
+  TRADING          @map("trading")
+  SERVICES         @map("services")
+}
+
+model User {
+  id                 String    @id @default(uuid()) @db.Uuid
+  email              String    @unique @db.VarChar(160)
+  name               String    @db.VarChar(120)
+  passwordHash       String    @map("password_hash")
+  role               Role
+  active             Boolean   @default(true)
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sessions           Session[]
+
+  @@map("users")
+}
+
+/// Sesiones con refresh token (D-010). Revocar = `revokedAt` no nulo.
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(128)
+  /// Hash anterior: se acepta unos segundos tras rotar para tolerar refresh concurrentes (dos pestañas).
+  previousTokenHash String?  @unique @map("previous_token_hash") @db.VarChar(128)
+  rotatedAt        DateTime? @map("rotated_at") @db.Timestamptz(3)
+  userAgent        String?   @map("user_agent") @db.VarChar(512)
+  ip               String?   @db.VarChar(64)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
+  lastUsedAt       DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Auditoría append-only (§3.3, RF-95). Nunca se actualiza ni se borra.
+model AuditLog {
+  id       BigInt   @id @default(autoincrement())
+  actorId  String?  @map("actor_id") @db.Uuid
+  action   String   @db.VarChar(80)
+  entity   String   @db.VarChar(80)
+  entityId String?  @map("entity_id") @db.VarChar(80)
+  before   Json?
+  after    Json?
+  at       DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([entity, entityId])
+  @@index([actorId, at])
+  @@map("audit_log")
+}

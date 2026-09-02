@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "Bash(pnpm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(gcloud:*)",
+      "Bash(vercel:*)",
+      "Bash(neonctl:*)",
+      "Bash(agy:*)",
+      "Bash(curl:*)",
+      "Read(**)",
+      "Edit(**)",
+      "Write(**)",
+      "mcp__playwright__*",
+      "mcp__context7__*"
+    ],
+    "deny": ["Bash(rm -rf /*)", "Bash(git push --force*)", "Read(./.env*)"]
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "ayr-steel-erp",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.13.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml,css}\"",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install --with-deps chromium",
+    "db:migrate": "pnpm --filter @ayr/api db:migrate",
+    "db:deploy": "pnpm --filter @ayr/api db:deploy",
+    "db:seed": "pnpm --filter @ayr/api db:seed",
+    "db:reset": "pnpm --filter @ayr/api db:reset",
+    "env:local": "node scripts/write-local-env.mjs",
+    "secrets:gh": "node scripts/gh-secrets.mjs",
+    "secrets:gcp": "node scripts/gcp-secrets.mjs",
+    "deploy:api": "node scripts/deploy-api.mjs",
+    "deploy:web": "node scripts/deploy-web.mjs",
+    "monitors": "node scripts/uptimerobot.mjs",
+    "db:prod": "node scripts/db-prod.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "prettier": "3.9.6",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": ">=8.5.18",
+      "deepmerge-ts": ">=8.0.0"
+    }
+  }
+}

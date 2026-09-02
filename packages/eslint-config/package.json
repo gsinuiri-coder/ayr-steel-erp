@@ -1,0 +1,23 @@
+{
+  "name": "@ayr/eslint-config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./base.mjs": "./base.mjs",
+    "./nest.mjs": "./nest.mjs",
+    "./next.mjs": "./next.mjs"
+  },
+  "dependencies": {
+    "@eslint/js": "9.39.5",
+    "@next/eslint-plugin-next": "15.5.25",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "6.1.1",
+    "globals": "17.12.0",
+    "typescript-eslint": "8.69.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9",
+    "typescript": "^5"
+  }
+}

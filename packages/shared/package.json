@@ -1,0 +1,26 @@
+{
+  "name": "@ayr/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "echo sin-tests-en-shared"
+  },
+  "dependencies": {
+    "decimal.js": "10.6.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@ayr/eslint-config": "workspace:*",
+    "eslint": "9.39.5",
+    "typescript": "5.9.3"
+  }
+}

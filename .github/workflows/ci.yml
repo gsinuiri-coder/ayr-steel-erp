@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 24
+  PNPM_VERSION: 9.13.2
+
+jobs:
+  calidad:
+    name: Lint, typecheck y unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ayr/shared build
+      - run: pnpm --filter @ayr/api db:generate
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm --filter @ayr/api test:cov
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-api
+          path: apps/api/coverage/lcov.info
+          if-no-files-found: ignore
+
+  e2e:
+    name: E2E Playwright (Neon ci)
+    runs-on: ubuntu-latest
+    needs: calidad
+    # La rama Neon `ci` se resetea en cada corrida: solo una corrida a la vez.
+    concurrency:
+      group: neon-ci-branch
+      cancel-in-progress: false
+    env:
+      DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.CI_DIRECT_URL }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      E2E_ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      CI: true
+      ALLOW_DB_RESET: '1'
+      THROTTLE_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ayr/shared build
+      - run: pnpm --filter @ayr/api db:generate
+      - run: pnpm --filter @ayr/api build
+      - run: pnpm --filter @ayr/web build
+        env:
+          API_URL: http://localhost:3000
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
+
+  analisis:
+    name: Análisis estático (SonarCloud o Semgrep)
+    runs-on: ubuntu-latest
+    needs: calidad
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-api
+          path: apps/api/coverage
+        continue-on-error: true
+      - name: SonarCloud
+        if: ${{ env.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Semgrep OSS (fallback D-011)
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: |
+          pipx install semgrep
+          semgrep scan --config p/ci --config p/typescript --config p/secrets --error --exclude node_modules --exclude .next --exclude dist
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

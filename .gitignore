@@ -1,0 +1,35 @@
+# dependencias y builds
+node_modules/
+dist/
+.next/
+out/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# entornos y credenciales (nunca commitear)
+.env
+.env.*
+.env.setup
+!.env.example
+.neon
+.vercel/
+.gcloud/
+
+# tests
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# sistema
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Claude Code (local)
+.claude/settings.local.json
+
+.vercel
