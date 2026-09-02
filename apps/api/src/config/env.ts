@@ -33,6 +33,14 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+  /** Tipo de cambio SUNAT (D-029). Vacío = solo fallback manual (bloqueo B-02, ver PROGRESO.md). */
+  APIS_NET_PE_TOKEN: z.string().default(''),
+  /** Storage R2 (D-007) para los archivos de `imports`. Vacío en entornos que no importan planillas. */
+  R2_ACCOUNT_ID: z.string().default(''),
+  R2_ACCESS_KEY_ID: z.string().default(''),
+  R2_SECRET_ACCESS_KEY: z.string().default(''),
+  R2_BUCKET: z.string().default(''),
+  R2_ENDPOINT: z.string().default(''),
 });
 
 export type Env = z.infer<typeof envSchema> & {

@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import { z } from 'zod';
 
 /**
  * Helper Decimal (D-003): dinero, kg y mm NUNCA se operan con `number`.
@@ -12,6 +13,9 @@ export const SCALE = {
   MONEY: 4,
   KG: 3,
   MM: 2,
+  /** Factores y tasas que no son dinero/kg/mm pero igual deben ser Decimal (D-003):
+   *  factor de densidad de acabado, margen%, tipo de cambio. */
+  RATE: 4,
 } as const;
 export type ScaleKey = keyof typeof SCALE;
 
@@ -34,6 +38,7 @@ export function roundTo(value: DecimalInput, scale: ScaleKey): Decimal {
 export const money = (v: DecimalInput): Decimal => roundTo(v, 'MONEY');
 export const kg = (v: DecimalInput): Decimal => roundTo(v, 'KG');
 export const mm = (v: DecimalInput): Decimal => roundTo(v, 'MM');
+export const rate = (v: DecimalInput): Decimal => roundTo(v, 'RATE');
 
 /** Serializa para transporte/persistencia con la escala fija (string, nunca number). */
 export function toFixedString(value: DecimalInput, scale: ScaleKey): string {
@@ -45,3 +50,16 @@ export const sum = (values: DecimalInput[]): Decimal =>
 
 export const isZero = (v: DecimalInput): boolean => toDecimal(v).isZero();
 export const isPositive = (v: DecimalInput): boolean => toDecimal(v).gt(0);
+
+/**
+ * Schema Zod para un campo Decimal serializado como string (D-003: nunca `number`).
+ * Normaliza a la escala fija y valida que sea un decimal real antes de redondear.
+ */
+export function decimalStringSchema(scale: ScaleKey, opts: { positive?: boolean } = {}) {
+  return z
+    .string({ required_error: 'Este valor es obligatorio' })
+    .trim()
+    .refine((v) => /^-?\d+(\.\d+)?$/.test(v), 'Debe ser un número decimal (ej: 12.5)')
+    .transform((v) => toFixedString(v, scale))
+    .refine((v) => !opts.positive || toDecimal(v).gt(0), 'Debe ser mayor a cero');
+}

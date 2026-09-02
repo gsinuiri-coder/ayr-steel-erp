@@ -1,6 +1,8 @@
-// Schema v0 (Fase 0): solo identidad, sesiones y auditoría. Nada de dominio.
-// Regla D-003: cuando entren dinero/kg/mm serán `Decimal @db.Decimal(p, s)` con
-// escala explícita (dinero 4, kg 3, mm 2). En v0 no aplica ninguna columna Decimal.
+// Schema v0 (Fase 0): identidad, sesiones y auditoría.
+// Fase 1 (D-034): maestros — líneas de negocio, acabados, catálogo, clientes,
+// proveedores, márgenes, tipo de cambio, e importación masiva genérica.
+// Regla D-003: dinero/kg/mm/tasas son siempre `Decimal @db.Decimal(p, s)` con
+// escala explícita (dinero 4, kg 3, mm 2, tasas/factores 4). Nunca `number`.
 
 generator client {
   provider = "prisma-client-js"
@@ -19,14 +21,65 @@ enum Role {
   VENDEDOR
 }
 
-/// Líneas de negocio (§2.2). Espejo de `BusinessLine` en @ayr/shared.
-/// Se declara en v0 para que el enum exista desde la primera migración.
-enum BusinessLine {
+/// Identificador de línea de negocio (§2.2). Espejo de `BusinessLine` en @ayr/shared.
+/// Se declara en v0 para que el enum exista desde la primera migración; en Fase 1
+/// pasa a ser el `code` único de la tabla `business_lines` (modelo `BusinessLine`).
+enum BusinessLineCode {
   DRYWALL          @map("drywall")
   METALLIC_ROOFING @map("metallic-roofing")
   ROOFING          @map("roofing")
   TRADING          @map("trading")
   SERVICES         @map("services")
+}
+
+/// Estrategia de inventario de una línea de negocio (§2.2). `services` es `NOOP`.
+enum InventoryStrategy {
+  STOCK
+  NOOP
+}
+
+/// Moneda de compras y ventas (D-029/P-06).
+enum Currency {
+  PEN
+  USD
+}
+
+/// Origen del tipo de cambio cacheado en `exchange_rates` (D-029).
+enum ExchangeRateSource {
+  API
+  MANUAL
+}
+
+/// Origen de un producto del catálogo (§4.5).
+enum ProductSource {
+  MANUFACTURED
+  PURCHASED
+}
+
+/// Tipo de documento de identidad/tributario de un cliente o proveedor (RF-80/RF-81).
+enum DocType {
+  DNI
+  RUC
+  CE
+}
+
+/// Entidad destino de un lote de importación masiva (RF-52, base de RF-12/RF-71).
+enum ImportEntity {
+  PRODUCTS
+  CUSTOMERS
+}
+
+/// Estado de una fila dentro de un lote de importación.
+enum ImportRowStatus {
+  VALID
+  INVALID
+  CONFIRMED
+}
+
+/// Estado de un lote de importación completo.
+enum ImportBatchStatus {
+  PARSED
+  CONFIRMED
 }
 
 model User {
@@ -79,4 +132,152 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([actorId, at])
   @@map("audit_log")
+}
+
+/// Líneas de negocio (§2.2). Fila sembrada por la migración; el módulo API solo
+/// las lee (no hay alta/baja de líneas de negocio, `code` es un dominio fijo).
+model BusinessLine {
+  id                String            @id @default(uuid()) @db.Uuid
+  code              BusinessLineCode  @unique
+  name              String            @db.VarChar(80)
+  inventoryStrategy InventoryStrategy @map("inventory_strategy")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  products        Product[]
+  pricingSettings PricingSetting?
+
+  @@map("business_lines")
+}
+
+/// Acabados de bobina (RF-25), con su factor de densidad (Decimal 10,4).
+model Finish {
+  id            String   @id @default(uuid()) @db.Uuid
+  code          String   @unique @db.VarChar(20)
+  name          String   @db.VarChar(120)
+  densityFactor Decimal  @map("density_factor") @db.Decimal(10, 4)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("finishes")
+}
+
+/// Catálogo de productos por línea (RF-50). El SKU es único dentro de su línea,
+/// no globalmente (dos líneas pueden reusar el mismo código de SKU).
+model Product {
+  id             String        @id @default(uuid()) @db.Uuid
+  businessLineId String        @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine  @relation(fields: [businessLineId], references: [id])
+  sku            String        @db.VarChar(40)
+  name           String        @db.VarChar(160)
+  unit           String        @db.VarChar(20)
+  source         ProductSource
+  isActive       Boolean       @default(true) @map("is_active")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([businessLineId, sku])
+  @@index([businessLineId])
+  @@map("products")
+}
+
+/// Clientes (RF-80, RF-82). Baja lógica: `isActive`, nunca `DELETE`.
+model Customer {
+  id             String   @id @default(uuid()) @db.Uuid
+  docType        DocType  @map("doc_type")
+  docNumber      String   @map("doc_number") @db.VarChar(20)
+  name           String   @db.VarChar(160)
+  address        String?  @db.VarChar(240)
+  email          String?  @db.VarChar(160)
+  phone          String?  @db.VarChar(30)
+  creditDays     Int      @default(0) @map("credit_days")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([docType, docNumber])
+  @@map("customers")
+}
+
+/// Proveedores (RF-81, RF-83). `providesCuttingService` habilita el corte
+/// tercerizado (D-033/P-10); el costo por kg se ingresa al recibir, no aquí.
+model Supplier {
+  id                     String   @id @default(uuid()) @db.Uuid
+  docType                DocType  @map("doc_type")
+  docNumber              String   @map("doc_number") @db.VarChar(20)
+  name                   String   @db.VarChar(160)
+  address                String?  @db.VarChar(240)
+  email                  String?  @db.VarChar(160)
+  phone                  String?  @db.VarChar(30)
+  creditDays             Int      @default(0) @map("credit_days")
+  providesCuttingService Boolean  @default(false) @map("provides_cutting_service")
+  isActive               Boolean  @default(true) @map("is_active")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([docType, docNumber])
+  @@map("suppliers")
+}
+
+/// Márgenes por línea de negocio (D-032/P-09). `marginPct`/`minMarginPct` son
+/// puntos porcentuales (15.5000 = 15.5%). Solo ADMINISTRADOR los edita.
+model PricingSetting {
+  id             String       @id @default(uuid()) @db.Uuid
+  businessLineId String       @unique @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine @relation(fields: [businessLineId], references: [id])
+  marginPct      Decimal      @map("margin_pct") @db.Decimal(7, 4)
+  minMarginPct   Decimal      @map("min_margin_pct") @db.Decimal(7, 4)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("pricing_settings")
+}
+
+/// Tipo de cambio del día (D-029/P-06): caché de apis.net.pe o registro manual
+/// cuando la API externa no responde (`source = MANUAL`).
+model ExchangeRate {
+  id        String             @id @default(uuid()) @db.Uuid
+  date      DateTime           @db.Date
+  currency  Currency
+  buy       Decimal            @db.Decimal(10, 4)
+  sell      Decimal            @db.Decimal(10, 4)
+  source    ExchangeRateSource
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([date, currency])
+  @@map("exchange_rates")
+}
+
+/// Lote de importación masiva desde planilla (RF-52; base de RF-12/RF-71).
+/// El archivo original vive en R2 (`fileKey`); las filas parseadas en `ImportRow`.
+model ImportBatch {
+  id          String            @id @default(uuid()) @db.Uuid
+  entity      ImportEntity
+  fileKey     String            @map("file_key") @db.VarChar(300)
+  fileName    String            @map("file_name") @db.VarChar(200)
+  status      ImportBatchStatus @default(PARSED)
+  createdById String            @map("created_by_id") @db.Uuid
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  rows ImportRow[]
+
+  @@map("import_batches")
+}
+
+/// Una fila de un lote de importación, con sus errores de validación (si los
+/// tiene) y, tras confirmar, el id de la entidad que creó.
+model ImportRow {
+  id              String          @id @default(uuid()) @db.Uuid
+  batchId         String          @map("batch_id") @db.Uuid
+  batch           ImportBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  rowNumber       Int             @map("row_number")
+  data            Json
+  errors          Json?
+  status          ImportRowStatus @default(VALID)
+  createdEntityId String?         @map("created_entity_id") @db.Uuid
+
+  @@index([batchId])
+  @@map("import_rows")
 }

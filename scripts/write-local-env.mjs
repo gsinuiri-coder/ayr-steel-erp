@@ -22,6 +22,12 @@ const apiEnv = [
   `ADMIN_EMAIL=${setup.ADMIN_EMAIL}`,
   `ADMIN_PASSWORD=${setup.ADMIN_PASSWORD}`,
   'JOBS_ENABLED=true',
+  `APIS_NET_PE_TOKEN=${setup.APIS_NET_PE_TOKEN ?? ''}`,
+  `R2_ACCOUNT_ID=${setup.R2_ACCOUNT_ID ?? ''}`,
+  `R2_ACCESS_KEY_ID=${setup.R2_ACCESS_KEY_ID ?? ''}`,
+  `R2_SECRET_ACCESS_KEY=${setup.R2_SECRET_ACCESS_KEY ?? ''}`,
+  `R2_BUCKET=${setup.R2_BUCKET ?? ''}`,
+  `R2_ENDPOINT=${setup.R2_ENDPOINT ?? ''}`,
   '',
 ].join('\n');
 writeFileSync(resolve(ROOT, 'apps/api/.env'), apiEnv);
