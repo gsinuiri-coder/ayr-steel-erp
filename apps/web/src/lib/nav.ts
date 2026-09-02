@@ -1,5 +1,19 @@
 import type { LucideIcon } from 'lucide-react';
-import { Boxes, Factory, FileText, Home, ReceiptText, Users } from 'lucide-react';
+import {
+  Banknote,
+  Boxes,
+  Factory,
+  FileText,
+  Home,
+  Layers,
+  PackageSearch,
+  Palette,
+  Percent,
+  ReceiptText,
+  Truck,
+  Users,
+  UsersRound,
+} from 'lucide-react';
 import { Role } from '@ayr/shared';
 
 export interface NavItem {
@@ -25,6 +39,14 @@ export const NAV: NavGroup[] = [
     items: [{ title: 'Inicio', href: '/', icon: Home, roles: ALL }],
   },
   {
+    label: 'Catálogo',
+    items: [
+      { title: 'Líneas', href: '/lineas', icon: Layers, roles: ALL },
+      { title: 'Acabados', href: '/acabados', icon: Palette, roles: ALL },
+      { title: 'Catálogo', href: '/catalogo', icon: PackageSearch, roles: ALL },
+    ],
+  },
+  {
     label: 'Planta',
     items: [
       {
@@ -41,11 +63,23 @@ export const NAV: NavGroup[] = [
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
         soon: true,
       },
+      {
+        title: 'Proveedores',
+        href: '/proveedores',
+        icon: Truck,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
     ],
   },
   {
     label: 'Comercial',
     items: [
+      {
+        title: 'Clientes',
+        href: '/clientes',
+        icon: UsersRound,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
       {
         title: 'Cotizaciones',
         href: '/cotizaciones',
@@ -64,7 +98,21 @@ export const NAV: NavGroup[] = [
   },
   {
     label: 'Administración',
-    items: [{ title: 'Usuarios', href: '/usuarios', icon: Users, roles: [Role.ADMINISTRADOR] }],
+    items: [
+      { title: 'Usuarios', href: '/usuarios', icon: Users, roles: [Role.ADMINISTRADOR] },
+      {
+        title: 'Márgenes',
+        href: '/configuracion/margenes',
+        icon: Percent,
+        roles: [Role.ADMINISTRADOR],
+      },
+      {
+        title: 'Tipo de cambio',
+        href: '/configuracion/tipo-cambio',
+        icon: Banknote,
+        roles: [Role.ADMINISTRADOR],
+      },
+    ],
   },
 ];
 

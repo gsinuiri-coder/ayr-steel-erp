@@ -1,0 +1,148 @@
+'use client';
+
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { DOC_TYPE_LABELS, ImportEntity, Role, type CustomerDto } from '@ayr/shared';
+import { api } from '@/lib/api';
+import { useSession } from '@/lib/session';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { ImportDialog } from '@/components/imports/import-dialog';
+import { CustomerDialog } from './customer-dialog';
+
+const CUSTOMERS_QUERY_KEY = ['customers'] as const;
+
+/** RF-80/RF-82: clientes. */
+export function ClientesView() {
+  const { user } = useSession();
+  const isAdmin = user.role === Role.ADMINISTRADOR;
+  const [dialog, setDialog] = useState<{ open: boolean; customer?: CustomerDto; nonce: number }>({
+    open: false,
+    nonce: 0,
+  });
+  const openDialog = (customer?: CustomerDto) => {
+    setDialog((d) => ({ open: true, customer, nonce: d.nonce + 1 }));
+  };
+
+  const customers = useQuery({
+    queryKey: CUSTOMERS_QUERY_KEY,
+    queryFn: () => api<CustomerDto[]>('/customers'),
+  });
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Clientes</h1>
+          <p className="text-sm text-muted-foreground">Alta, edición y baja de clientes (RF-80).</p>
+        </div>
+        <div className="flex gap-2">
+          {isAdmin && (
+            <ImportDialog
+              entity={ImportEntity.CUSTOMERS}
+              invalidateQueryKey={CUSTOMERS_QUERY_KEY}
+            />
+          )}
+          {isAdmin && (
+            <Button
+              onClick={() => {
+                openDialog();
+              }}
+            >
+              Nuevo cliente
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Documento</TableHead>
+              <TableHead>Nombre</TableHead>
+              <TableHead>Contacto</TableHead>
+              <TableHead>Días de crédito</TableHead>
+              <TableHead>Estado</TableHead>
+              {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {customers.isPending &&
+              [0, 1, 2].map((i) => (
+                <TableRow key={i}>
+                  <TableCell colSpan={6}>
+                    <Skeleton className="h-5 w-full" />
+                  </TableCell>
+                </TableRow>
+              ))}
+            {customers.isError && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-destructive">
+                  No se pudieron cargar los clientes.
+                </TableCell>
+              </TableRow>
+            )}
+            {customers.data?.map((c) => (
+              <TableRow key={c.id} data-state={c.isActive ? undefined : 'inactive'}>
+                <TableCell className="font-medium">
+                  {DOC_TYPE_LABELS[c.docType]} {c.docNumber}
+                </TableCell>
+                <TableCell>{c.name}</TableCell>
+                <TableCell className="text-muted-foreground">{c.email ?? c.phone ?? '—'}</TableCell>
+                <TableCell>{c.creditDays}</TableCell>
+                <TableCell>
+                  {c.isActive ? (
+                    <Badge variant="secondary">Activo</Badge>
+                  ) : (
+                    <Badge variant="outline">Inactivo</Badge>
+                  )}
+                </TableCell>
+                {isAdmin && (
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        openDialog(c);
+                      }}
+                    >
+                      Editar
+                    </Button>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+            {customers.data?.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  No hay clientes registrados.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {isAdmin && (
+        <CustomerDialog
+          key={`${dialog.customer?.id ?? 'nuevo'}-${dialog.nonce}`}
+          open={dialog.open}
+          customer={dialog.customer}
+          onOpenChange={(open) => {
+            setDialog((d) => ({ ...d, open }));
+          }}
+        />
+      )}
+    </>
+  );
+}
