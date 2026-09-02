@@ -1,13 +1,19 @@
-// Corre los E2E de autenticación (auth.spec.ts) y de Fase 1 (fase1.spec.ts) contra
-// producción (Vercel + Cloud Run), incluidos los escenarios que crean datos (RF-03:
-// usuario desactivado, cambio de rol; Fase 1: acabado, producto, importación,
-// margen).
+// Corre los E2E de autenticación (auth.spec.ts), de Fase 1 (fase1.spec.ts) y de
+// Fase 2a (fase2a.spec.ts) contra producción (Vercel + Cloud Run), incluidos los
+// escenarios que crean datos (RF-03: usuario desactivado, cambio de rol; Fase 1:
+// acabado, producto, importación, margen; Fase 2a: compras, bobinas y kardex).
 //
 // Para no tocar la cuenta real del dueño, crea un ADMINISTRADOR efímero con
 // contraseña aleatoria, corre la suite y lo borra junto con los usuarios que la
 // suite haya creado — pase lo que pase (también si los tests fallan). Cada test de
 // Fase 1 revierte por su cuenta lo que creó/cambió en `finishes`/`products`/
 // `pricing_settings` (ver `e2e/tests/fase1.spec.ts`).
+//
+// Fase 2a solo revierte lo que el modelo permite revertir: proveedores, acabados y
+// productos quedan desactivados y la compra creada desde XML queda anulada, pero una
+// compra ya recibida (y sus bobinas y movimientos de kardex) no se puede deshacer
+// hasta Fase 2b — el kardex es append-only por diseño (§3.2). Todo eso queda bajo
+// proveedores desactivados y con nombres `E2E …`, identificable a simple vista.
 //
 // Uso: pnpm e2e:prod [--base-url https://...]
 import { randomBytes } from 'node:crypto';
@@ -64,7 +70,14 @@ try {
   testStatus = run(
     ROOT,
     'pnpm',
-    ['exec', 'playwright', 'test', 'e2e/tests/auth.spec.ts', 'e2e/tests/fase1.spec.ts'],
+    [
+      'exec',
+      'playwright',
+      'test',
+      'e2e/tests/auth.spec.ts',
+      'e2e/tests/fase1.spec.ts',
+      'e2e/tests/fase2a.spec.ts',
+    ],
     {
       E2E_BASE_URL: baseUrl,
       E2E_ALLOW_WRITES: '1',

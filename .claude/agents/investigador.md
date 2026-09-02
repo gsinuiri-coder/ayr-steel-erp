@@ -25,6 +25,7 @@ cuando el hilo principal te lo pida explícitamente y te dé la ruta.
    - La salida es JSONL: quédate con el texto de los eventos de asistente e ignora la telemetría.
    - Si una invocación falla, reintenta una vez con la pregunta reformulada. Si falla 3 veces
      en total, dilo en el reporte como bloqueo y sigue con el resto (regla dura 8 de `CLAUDE.md`).
+
 3. Contrasta lo que devuelve `agy` contra las fuentes que él mismo cite. Si algo no tiene
    fuente identificable (norma, documento oficial, RFC, docs del proveedor), márcalo como
    **no verificado** en vez de presentarlo como hecho.

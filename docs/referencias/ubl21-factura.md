@@ -11,18 +11,18 @@ otros PSE/OSE peruanos).
 
 ## 1. Namespaces del elemento raíz `Invoice`
 
-| Prefijo | URI | Notas |
-|---|---|---|
-| (default) | `urn:oasis:names:specification:ubl:schema:xsd:Invoice-2` | Namespace del elemento raíz `Invoice` mismo (sin prefijo). |
-| `cbc` | `urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2` | Elementos simples: IDs, fechas, montos. |
-| `cac` | `urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2` | Elementos compuestos/agrupaciones: partes, impuestos, líneas. |
-| `ext` | `urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2` | Contenedor de extensiones (ahí vive la firma digital). |
-| `ds` | `http://www.w3.org/2000/09/xmldsig#` | XML-DSig, firma digital (W3C, no es de UBL). |
-| `qdt` | `urn:oasis:names:specification:ubl:schema:xsd:QualifiedDatatypes-2` | Opcional, generado por algunas librerías (ej. Greenter). |
-| `udt` | `urn:un:unece:uncefact:data:specification:UnqualifiedDataTypesSchemaModule:2` | Opcional. |
-| `ccts` | `urn:un:unece:uncefact:documentation:2` | Opcional. |
-| `sac` | `urn:sunat:names:specification:ubl:peru:schema:xsd:SunatAggregateComponents-1` | Extensiones peruanas heredadas de UBL 2.0; en UBL 2.1 casi todo migró a `cac`/`cbc` estándar, pero algunas librerías lo siguen declarando (retenciones, resúmenes diarios). |
-| `xsi` | `http://www.w3.org/2001/XMLSchema-instance` | Estándar W3C. |
+| Prefijo   | URI                                                                            | Notas                                                                                                                                                                       |
+| --------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (default) | `urn:oasis:names:specification:ubl:schema:xsd:Invoice-2`                       | Namespace del elemento raíz `Invoice` mismo (sin prefijo).                                                                                                                  |
+| `cbc`     | `urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2`         | Elementos simples: IDs, fechas, montos.                                                                                                                                     |
+| `cac`     | `urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2`     | Elementos compuestos/agrupaciones: partes, impuestos, líneas.                                                                                                               |
+| `ext`     | `urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2`     | Contenedor de extensiones (ahí vive la firma digital).                                                                                                                      |
+| `ds`      | `http://www.w3.org/2000/09/xmldsig#`                                           | XML-DSig, firma digital (W3C, no es de UBL).                                                                                                                                |
+| `qdt`     | `urn:oasis:names:specification:ubl:schema:xsd:QualifiedDatatypes-2`            | Opcional, generado por algunas librerías (ej. Greenter).                                                                                                                    |
+| `udt`     | `urn:un:unece:uncefact:data:specification:UnqualifiedDataTypesSchemaModule:2`  | Opcional.                                                                                                                                                                   |
+| `ccts`    | `urn:un:unece:uncefact:documentation:2`                                        | Opcional.                                                                                                                                                                   |
+| `sac`     | `urn:sunat:names:specification:ubl:peru:schema:xsd:SunatAggregateComponents-1` | Extensiones peruanas heredadas de UBL 2.0; en UBL 2.1 casi todo migró a `cac`/`cbc` estándar, pero algunas librerías lo siguen declarando (retenciones, resúmenes diarios). |
+| `xsi`     | `http://www.w3.org/2001/XMLSchema-instance`                                    | Estándar W3C.                                                                                                                                                               |
 
 Solo los 5 primeros (default, `cbc`, `cac`, `ext`, `ds`) son estrictamente necesarios para leer una
 factura. Los demás pueden faltar o variar de prefijo entre PSE/OSE — de ahí la recomendación de la
@@ -32,19 +32,19 @@ sección 5 de parsear ignorando el prefijo declarado (`local-name()`).
 
 Todas las rutas son desde el elemento raíz `Invoice` (equivalentes a `/Invoice/...`).
 
-| Dato | XPath | Notas |
-|---|---|---|
-| RUC del emisor (proveedor) | `cac:AccountingSupplierParty/cac:Party/cac:PartyIdentification/cbc:ID` | Atributo `@schemeID="6"` (RUC, catálogo 06). |
-| Razón social del emisor | `cac:AccountingSupplierParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName` | |
-| Nombre comercial del emisor (opcional) | `cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name` | Puede no existir. |
-| Doc. de identidad del receptor (nuestra empresa) | `cac:AccountingCustomerParty/cac:Party/cac:PartyIdentification/cbc:ID` | Atributo `@schemeID` con código de catálogo 06 (6=RUC, 1=DNI, etc.). |
-| Razón social / nombre del receptor | `cac:AccountingCustomerParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName` | |
-| Serie-número del comprobante | `cbc:ID` | Ver §2.1 — formato `SSSS-NNNNNNNN`. |
-| Tipo de documento (catálogo 01) | `cbc:InvoiceTypeCode` | Ver §2.2. |
-| Fecha de emisión | `cbc:IssueDate` | Formato `YYYY-MM-DD`. |
-| Hora de emisión | `cbc:IssueTime` | Formato `HH:mm:ss`; obligatorio en factura/boleta. |
-| Fecha de vencimiento (cabecera) | `cbc:DueDate` | Formato `YYYY-MM-DD`. Presente sobre todo en ventas al crédito; en crédito con varias cuotas, la fecha de vencimiento real de cada cuota vive en `cac:PaymentTerms/cbc:PaymentDueDate` (ver §2.4) — **no confíes solo en `cbc:DueDate` de cabecera si hay `PaymentTerms` con cuotas**. |
-| Moneda del documento | `cbc:DocumentCurrencyCode` | `PEN`, `USD`, `EUR`. Atributo típico `listID="ISO 4217 Alpha"`. |
+| Dato                                             | XPath                                                                             | Notas                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RUC del emisor (proveedor)                       | `cac:AccountingSupplierParty/cac:Party/cac:PartyIdentification/cbc:ID`            | Atributo `@schemeID="6"` (RUC, catálogo 06).                                                                                                                                                                                                                                           |
+| Razón social del emisor                          | `cac:AccountingSupplierParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName` |                                                                                                                                                                                                                                                                                        |
+| Nombre comercial del emisor (opcional)           | `cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name`                    | Puede no existir.                                                                                                                                                                                                                                                                      |
+| Doc. de identidad del receptor (nuestra empresa) | `cac:AccountingCustomerParty/cac:Party/cac:PartyIdentification/cbc:ID`            | Atributo `@schemeID` con código de catálogo 06 (6=RUC, 1=DNI, etc.).                                                                                                                                                                                                                   |
+| Razón social / nombre del receptor               | `cac:AccountingCustomerParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName` |                                                                                                                                                                                                                                                                                        |
+| Serie-número del comprobante                     | `cbc:ID`                                                                          | Ver §2.1 — formato `SSSS-NNNNNNNN`.                                                                                                                                                                                                                                                    |
+| Tipo de documento (catálogo 01)                  | `cbc:InvoiceTypeCode`                                                             | Ver §2.2.                                                                                                                                                                                                                                                                              |
+| Fecha de emisión                                 | `cbc:IssueDate`                                                                   | Formato `YYYY-MM-DD`.                                                                                                                                                                                                                                                                  |
+| Hora de emisión                                  | `cbc:IssueTime`                                                                   | Formato `HH:mm:ss`; obligatorio en factura/boleta.                                                                                                                                                                                                                                     |
+| Fecha de vencimiento (cabecera)                  | `cbc:DueDate`                                                                     | Formato `YYYY-MM-DD`. Presente sobre todo en ventas al crédito; en crédito con varias cuotas, la fecha de vencimiento real de cada cuota vive en `cac:PaymentTerms/cbc:PaymentDueDate` (ver §2.4) — **no confíes solo en `cbc:DueDate` de cabecera si hay `PaymentTerms` con cuotas**. |
+| Moneda del documento                             | `cbc:DocumentCurrencyCode`                                                        | `PEN`, `USD`, `EUR`. Atributo típico `listID="ISO 4217 Alpha"`.                                                                                                                                                                                                                        |
 
 ### 2.1 Serie y número (`cbc:ID`)
 
@@ -75,27 +75,27 @@ Todas las rutas son desde el elemento raíz `Invoice` (equivalentes a `/Invoice/
 
 **Catálogo 01 — Tipo de documento (código SUNAT)**
 
-| Código | Descripción |
-|---|---|
-| 01 | Factura |
-| 02 | Recibo por Honorarios |
-| 03 | Boleta de Venta |
-| 04 | Liquidación de compra |
-| 05 | Boletos de Transporte Aéreo (Compañías de Aviación) |
-| 06 | Carta de porte aéreo (transporte de carga aérea) |
-| 07 | Nota de Crédito |
-| 08 | Nota de Débito |
-| 09 | Guía de Remisión — Remitente |
-| 12 | Ticket o cinta emitido por máquina registradora |
-| 13 | Documentos emitidos por bancos, instituciones financieras y crediticias |
-| 14 | Recibo por servicios públicos (luz, agua, teléfono) |
-| 16 | Boleto de viaje — transporte público interprovincial |
-| 20 | Comprobante de Retención |
-| 31 | Guía de Remisión — Transportista |
-| 40 | Comprobante de Percepción |
-| 41 | Comprobante de Percepción — Venta interna |
-| 71 | Guía de remisión remitente complementaria |
-| 72 | Guía de remisión transportista complementaria |
+| Código | Descripción                                                             |
+| ------ | ----------------------------------------------------------------------- |
+| 01     | Factura                                                                 |
+| 02     | Recibo por Honorarios                                                   |
+| 03     | Boleta de Venta                                                         |
+| 04     | Liquidación de compra                                                   |
+| 05     | Boletos de Transporte Aéreo (Compañías de Aviación)                     |
+| 06     | Carta de porte aéreo (transporte de carga aérea)                        |
+| 07     | Nota de Crédito                                                         |
+| 08     | Nota de Débito                                                          |
+| 09     | Guía de Remisión — Remitente                                            |
+| 12     | Ticket o cinta emitido por máquina registradora                         |
+| 13     | Documentos emitidos por bancos, instituciones financieras y crediticias |
+| 14     | Recibo por servicios públicos (luz, agua, teléfono)                     |
+| 16     | Boleto de viaje — transporte público interprovincial                    |
+| 20     | Comprobante de Retención                                                |
+| 31     | Guía de Remisión — Transportista                                        |
+| 40     | Comprobante de Percepción                                               |
+| 41     | Comprobante de Percepción — Venta interna                               |
+| 71     | Guía de remisión remitente complementaria                               |
+| 72     | Guía de remisión transportista complementaria                           |
 
 Nota importante: `07` (Nota de Crédito) y `08` (Nota de Débito) usan sus propios elementos raíz
 (`<CreditNote>` y `<DebitNote>`, no `<Invoice>`), con rutas equivalentes bajo `/CreditNote/cbc:ID` o
@@ -186,23 +186,23 @@ indirecta razonable pero no una cita directa de la norma.
 
 Rutas relativas a cada nodo `cac:InvoiceLine` (hay uno por cada línea/ítem de la factura).
 
-| Dato | XPath relativo | Notas |
-|---|---|---|
-| Número de línea | `cbc:ID` | Correlativo 1, 2, 3... |
-| Cantidad | `cbc:InvoicedQuantity` | Texto numérico — **leer como string**. |
-| Unidad de medida (catálogo 03) | `cbc:InvoicedQuantity/@unitCode` | Ej. `KGM`, `NIU`, `TNE`. Ver §4.2. |
-| Descripción del ítem | `cac:Item/cbc:Description` | |
-| Código del producto (proveedor) | `cac:Item/cac:SellersItemIdentification/cbc:ID` | Puede no existir. |
-| Precio unitario SIN IGV | `cac:Price/cbc:PriceAmount` | Atributo `@currencyID`. |
-| Precio unitario CON IGV (o valor referencial) | `cac:PricingReference/cac:AlternativeConditionPrice/cbc:PriceAmount` | **Ojo**: `AlternativeConditionPrice` vive dentro de `cac:PricingReference`, no directo bajo `InvoiceLine`. |
-| Tipo del precio alternativo (catálogo 16) | `cac:PricingReference/cac:AlternativeConditionPrice/cbc:PriceTypeCode` | `01` = precio unitario incluye IGV; `02` = valor referencial en operaciones no onerosas/gratuitas. |
-| Valor de venta de la línea (sin IGV) | `cbc:LineExtensionAmount` | Ya neto de descuentos de línea si los hay. |
-| IGV total de la línea | `cac:TaxTotal/cbc:TaxAmount` | Suma de impuestos de la línea (normalmente solo IGV). |
-| Base imponible de la línea (subtotal del `TaxSubtotal`) | `cac:TaxTotal/cac:TaxSubtotal/cbc:TaxableAmount` | |
-| Monto IGV del `TaxSubtotal` | `cac:TaxTotal/cac:TaxSubtotal/cbc:TaxAmount` | |
-| Porcentaje del IGV (ej. 18.00) | `cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:Percent` | |
-| Código de tipo de afectación IGV (catálogo 07) | `cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:TaxExemptionReasonCode` | `10` = Gravado - Operación Onerosa; `20` = Exonerado; `30` = Inafecto; `11`-`17` = Gravado - Retiro. |
-| Código de esquema de impuesto (catálogo 05) | `cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cac:TaxScheme/cbc:ID` | `1000` = IGV. Sirve para filtrar y aislar el IGV si hubiera ISC/ICBPER mezclados. |
+| Dato                                                    | XPath relativo                                                            | Notas                                                                                                      |
+| ------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Número de línea                                         | `cbc:ID`                                                                  | Correlativo 1, 2, 3...                                                                                     |
+| Cantidad                                                | `cbc:InvoicedQuantity`                                                    | Texto numérico — **leer como string**.                                                                     |
+| Unidad de medida (catálogo 03)                          | `cbc:InvoicedQuantity/@unitCode`                                          | Ej. `KGM`, `NIU`, `TNE`. Ver §4.2.                                                                         |
+| Descripción del ítem                                    | `cac:Item/cbc:Description`                                                |                                                                                                            |
+| Código del producto (proveedor)                         | `cac:Item/cac:SellersItemIdentification/cbc:ID`                           | Puede no existir.                                                                                          |
+| Precio unitario SIN IGV                                 | `cac:Price/cbc:PriceAmount`                                               | Atributo `@currencyID`.                                                                                    |
+| Precio unitario CON IGV (o valor referencial)           | `cac:PricingReference/cac:AlternativeConditionPrice/cbc:PriceAmount`      | **Ojo**: `AlternativeConditionPrice` vive dentro de `cac:PricingReference`, no directo bajo `InvoiceLine`. |
+| Tipo del precio alternativo (catálogo 16)               | `cac:PricingReference/cac:AlternativeConditionPrice/cbc:PriceTypeCode`    | `01` = precio unitario incluye IGV; `02` = valor referencial en operaciones no onerosas/gratuitas.         |
+| Valor de venta de la línea (sin IGV)                    | `cbc:LineExtensionAmount`                                                 | Ya neto de descuentos de línea si los hay.                                                                 |
+| IGV total de la línea                                   | `cac:TaxTotal/cbc:TaxAmount`                                              | Suma de impuestos de la línea (normalmente solo IGV).                                                      |
+| Base imponible de la línea (subtotal del `TaxSubtotal`) | `cac:TaxTotal/cac:TaxSubtotal/cbc:TaxableAmount`                          |                                                                                                            |
+| Monto IGV del `TaxSubtotal`                             | `cac:TaxTotal/cac:TaxSubtotal/cbc:TaxAmount`                              |                                                                                                            |
+| Porcentaje del IGV (ej. 18.00)                          | `cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:Percent`                |                                                                                                            |
+| Código de tipo de afectación IGV (catálogo 07)          | `cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:TaxExemptionReasonCode` | `10` = Gravado - Operación Onerosa; `20` = Exonerado; `30` = Inafecto; `11`-`17` = Gravado - Retiro.       |
+| Código de esquema de impuesto (catálogo 05)             | `cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cac:TaxScheme/cbc:ID`       | `1000` = IGV. Sirve para filtrar y aislar el IGV si hubiera ISC/ICBPER mezclados.                          |
 
 ### 3.1 Estructura de ejemplo de una línea (con IGV gravado 18%)
 
@@ -249,17 +249,18 @@ Rutas relativas a cada nodo `cac:InvoiceLine` (hay uno por cada línea/ítem de 
 
 Rutas desde `Invoice`:
 
-| Dato | XPath | Notas |
-|---|---|---|
-| Valor de venta (gravado, base sin impuestos) | `cac:LegalMonetaryTotal/cbc:LineExtensionAmount` | |
-| Importe total con impuestos | `cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount` | |
-| Total de descuentos globales | `cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount` | Solo si hay `cac:AllowanceCharge` de cabecera. |
-| Total de cargos globales | `cac:LegalMonetaryTotal/cbc:ChargeTotalAmount` | |
-| Importe total a pagar | `cac:LegalMonetaryTotal/cbc:PayableAmount` | Este es el que debe cuadrar con la suma de `cac:PaymentTerms`. |
-| Total IGV (y otros tributos) a nivel documento | `cac:TaxTotal/cbc:TaxAmount` | Suma de todos los tributos (IGV + ISC + ICBPER si aplica). Para aislar solo IGV, filtrar por `cac:TaxSubtotal/cac:TaxCategory/cac:TaxScheme/cbc:ID = '1000'`. |
-| Descuentos/cargos globales (detalle) | `cac:AllowanceCharge` (hijo directo de `Invoice`, 0 o más) | Ver abajo. |
+| Dato                                           | XPath                                                      | Notas                                                                                                                                                         |
+| ---------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Valor de venta (gravado, base sin impuestos)   | `cac:LegalMonetaryTotal/cbc:LineExtensionAmount`           |                                                                                                                                                               |
+| Importe total con impuestos                    | `cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount`            |                                                                                                                                                               |
+| Total de descuentos globales                   | `cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount`          | Solo si hay `cac:AllowanceCharge` de cabecera.                                                                                                                |
+| Total de cargos globales                       | `cac:LegalMonetaryTotal/cbc:ChargeTotalAmount`             |                                                                                                                                                               |
+| Importe total a pagar                          | `cac:LegalMonetaryTotal/cbc:PayableAmount`                 | Este es el que debe cuadrar con la suma de `cac:PaymentTerms`.                                                                                                |
+| Total IGV (y otros tributos) a nivel documento | `cac:TaxTotal/cbc:TaxAmount`                               | Suma de todos los tributos (IGV + ISC + ICBPER si aplica). Para aislar solo IGV, filtrar por `cac:TaxSubtotal/cac:TaxCategory/cac:TaxScheme/cbc:ID = '1000'`. |
+| Descuentos/cargos globales (detalle)           | `cac:AllowanceCharge` (hijo directo de `Invoice`, 0 o más) | Ver abajo.                                                                                                                                                    |
 
 `cac:AllowanceCharge` de cabecera:
+
 - `cbc:ChargeIndicator`: `false` = descuento, `true` = cargo.
 - `cbc:AllowanceChargeReasonCode`: código del catálogo 53 SUNAT (ej. `02`/`03` para descuentos que
   afectan/no afectan base imponible; `47`/`50` para cargos).
@@ -271,21 +272,21 @@ completa oficial).
 
 ### 4.1 Catálogo 06 — Tipo de documento de identidad
 
-| Código | Descripción |
-|---|---|
-| 0 | Doc. tributario no domiciliado sin RUC |
-| 1 | Documento Nacional de Identidad (DNI) |
-| 4 | Carné de extranjería |
-| 6 | Registro Único de Contribuyentes (RUC) |
-| 7 | Pasaporte |
-| A | Cédula Diplomática de Identidad |
-| B | Doc. de identidad país de residencia — no domiciliado |
-| C | Tax Identification Number (TIN) — doc. tributario personas naturales |
-| D | Identification Number (IN) — doc. tributario personas jurídicas |
-| E | TAM — Tarjeta Andina de Migración |
-| F | Permiso Temporal de Permanencia (PTP) |
-| G | Salvoconducto |
-| H | Carné de Permiso Temporal de Permanencia (CPP) |
+| Código | Descripción                                                          |
+| ------ | -------------------------------------------------------------------- |
+| 0      | Doc. tributario no domiciliado sin RUC                               |
+| 1      | Documento Nacional de Identidad (DNI)                                |
+| 4      | Carné de extranjería                                                 |
+| 6      | Registro Único de Contribuyentes (RUC)                               |
+| 7      | Pasaporte                                                            |
+| A      | Cédula Diplomática de Identidad                                      |
+| B      | Doc. de identidad país de residencia — no domiciliado                |
+| C      | Tax Identification Number (TIN) — doc. tributario personas naturales |
+| D      | Identification Number (IN) — doc. tributario personas jurídicas      |
+| E      | TAM — Tarjeta Andina de Migración                                    |
+| F      | Permiso Temporal de Permanencia (PTP)                                |
+| G      | Salvoconducto                                                        |
+| H      | Carné de Permiso Temporal de Permanencia (CPP)                       |
 
 **NO verificado contra la publicación oficial de SUNAT** (Anexo N.° 8, resoluciones de superintendencia).
 `agy` no logró abrir directamente `cpe.sunat.gob.pe` ni un PDF/Excel oficial en sus búsquedas; esta lista
@@ -297,19 +298,19 @@ validaciones estrictas sobre este catálogo conviene confirmarlo contra el Anexo
 
 Basado en UN/ECE Recommendation 20.
 
-| Código | Descripción | Uso típico |
-|---|---|---|
-| KGM | Kilogramo | Venta de acero por peso (bobinas, planchas). |
-| NIU | Unidad | Código estándar peruano para "unidad" de un bien físico — **es el que se usa normalmente, no `ZZ` ni `U`**. |
-| TNE | Tonelada métrica | Venta mayorista de acero. |
-| MTR | Metro | Tubos, perfiles, barras vendidos por longitud. |
-| MTK | Metro cuadrado | Planchas/bobinas vendidas por superficie. |
-| MTQ | Metro cúbico | Volumen. |
-| GRM | Gramo | Poco común en acero, más en insumos menores. |
-| ZZ | Servicio / mutuamente definido | Reservado para **servicios** (ej. corte, maquila), no para bienes. |
-| BX | Caja | Pernos, clavos, insumos en caja. |
-| SET | Juego / conjunto | Kits, ensamblajes. |
-| C62 | Pieza / uno | Alternativa a `NIU`, más común en contexto aduanero (importación/exportación). |
+| Código | Descripción                    | Uso típico                                                                                                  |
+| ------ | ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| KGM    | Kilogramo                      | Venta de acero por peso (bobinas, planchas).                                                                |
+| NIU    | Unidad                         | Código estándar peruano para "unidad" de un bien físico — **es el que se usa normalmente, no `ZZ` ni `U`**. |
+| TNE    | Tonelada métrica               | Venta mayorista de acero.                                                                                   |
+| MTR    | Metro                          | Tubos, perfiles, barras vendidos por longitud.                                                              |
+| MTK    | Metro cuadrado                 | Planchas/bobinas vendidas por superficie.                                                                   |
+| MTQ    | Metro cúbico                   | Volumen.                                                                                                    |
+| GRM    | Gramo                          | Poco común en acero, más en insumos menores.                                                                |
+| ZZ     | Servicio / mutuamente definido | Reservado para **servicios** (ej. corte, maquila), no para bienes.                                          |
+| BX     | Caja                           | Pernos, clavos, insumos en caja.                                                                            |
+| SET    | Juego / conjunto               | Kits, ensamblajes.                                                                                          |
+| C62    | Pieza / uno                    | Alternativa a `NIU`, más común en contexto aduanero (importación/exportación).                              |
 
 Importante: **`U` no es un código válido** del catálogo 03 SUNAT — es solo una abreviatura comercial que
 algunos ERPs imprimen en el PDF, pero el XML siempre debe traer un código real (`NIU`, `KGM`, etc.); si el
@@ -402,13 +403,13 @@ cual).
 
 **Alternativas evaluadas** (según lo que reportó `agy`, no verificado con benchmarks propios):
 
-| Librería | Seguridad ante XML no confiable | Namespaces / XPath | Uso recomendado |
-|---|---|---|---|
-| `fast-xml-parser` | Buena por diseño (no procesa DTD); requiere fijar `processEntities: false` explícito. | Aplana con `removeNSPrefix`, no ofrece XPath real (solo JSON). | **Recomendada** — rápida, sin dependencias nativas, control fino de tipos string. |
-| `xml2js` (sobre `sax-js`) | Buena — el parser SAX subyacente ignora DTD/entidades externas por diseño. | Namespaces quedan como texto (`cbc:ID`), sin XPath. | Alternativa válida si se prefiere su forma de mapear a arrays; más lenta y verbosa que `fast-xml-parser`. |
-| `libxmljs2` | Riesgosa si no se configura con cuidado — bindings a `libxml2` en C, con historial de vulnerabilidades (buffer overflows, XXE); la opción `noent: true` de hecho *habilita* sustitución de entidades. | Soporte completo de XPath real y validación XSD. | Solo si se necesita XPath/XSD real y se audita la configuración cuidadosamente; no es la primera opción para XML no confiable. |
-| `@xmldom/xmldom` | Riesgosa — múltiples CVEs recientes (2021-2024) relacionados con XXE y manejo de CDATA/memoria. | Emula DOM del navegador. | Evitar para XML no confiable. |
-| `sax` (`sax-js`) | La más segura (parser de streaming puro, sin DTD). | Solo eventos de bajo nivel, sin árbol ni XPath. | Útil para archivos muy grandes, pero mucho más trabajo de desarrollo para este caso. |
+| Librería                  | Seguridad ante XML no confiable                                                                                                                                                                       | Namespaces / XPath                                             | Uso recomendado                                                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `fast-xml-parser`         | Buena por diseño (no procesa DTD); requiere fijar `processEntities: false` explícito.                                                                                                                 | Aplana con `removeNSPrefix`, no ofrece XPath real (solo JSON). | **Recomendada** — rápida, sin dependencias nativas, control fino de tipos string.                                              |
+| `xml2js` (sobre `sax-js`) | Buena — el parser SAX subyacente ignora DTD/entidades externas por diseño.                                                                                                                            | Namespaces quedan como texto (`cbc:ID`), sin XPath.            | Alternativa válida si se prefiere su forma de mapear a arrays; más lenta y verbosa que `fast-xml-parser`.                      |
+| `libxmljs2`               | Riesgosa si no se configura con cuidado — bindings a `libxml2` en C, con historial de vulnerabilidades (buffer overflows, XXE); la opción `noent: true` de hecho _habilita_ sustitución de entidades. | Soporte completo de XPath real y validación XSD.               | Solo si se necesita XPath/XSD real y se audita la configuración cuidadosamente; no es la primera opción para XML no confiable. |
+| `@xmldom/xmldom`          | Riesgosa — múltiples CVEs recientes (2021-2024) relacionados con XXE y manejo de CDATA/memoria.                                                                                                       | Emula DOM del navegador.                                       | Evitar para XML no confiable.                                                                                                  |
+| `sax` (`sax-js`)          | La más segura (parser de streaming puro, sin DTD).                                                                                                                                                    | Solo eventos de bajo nivel, sin árbol ni XPath.                | Útil para archivos muy grandes, pero mucho más trabajo de desarrollo para este caso.                                           |
 
 **NO verificado independientemente por el investigador**: los CVEs y vulnerabilidades históricas
 mencionadas arriba (`@xmldom/xmldom`, `libxmljs2`, el CVE citado de `fast-xml-parser`) provienen de la
@@ -586,14 +587,14 @@ de bobinas de acero como ejemplo de dominio.
 - No se abrió directamente `cpe.sunat.gob.pe` ni se descargó el Anexo N.° 8 oficial (catálogos 01, 03, 05,
   06, 07, 16, 51, 53) — las tablas de este documento vienen del conocimiento entrenado de `agy`,
   contrastado por el investigador contra su propio conocimiento general de UBL/SUNAT, pero no contra el
-  documento fuente. Antes de usar estas tablas para *rechazar* comprobantes (validación estricta), conviene
+  documento fuente. Antes de usar estas tablas para _rechazar_ comprobantes (validación estricta), conviene
   bajar el Anexo 8 real y confirmarlas.
 - El número exacto de la Resolución de Superintendencia que originó el uso obligatorio de `PaymentTerms`
   para contado/crédito (citada como "N° 193-2020/SUNAT") no se verificó contra el texto de la norma.
   Tratar el número como orientativo, no confirmado.
   - Los CVEs/vulnerabilidades históricas citadas para `fast-xml-parser`, `@xmldom/xmldom` y `libxmljs2`
-  (sección 5.3) no se verificaron contra NVD/GitHub Advisories — son afirmaciones de `agy`, razonables
-  pero no confirmadas con el identificador exacto.
+    (sección 5.3) no se verificaron contra NVD/GitHub Advisories — son afirmaciones de `agy`, razonables
+    pero no confirmadas con el identificador exacto.
 - Ninguna de las 8 consultas a `agy` falló las 3 veces (una consulta falló una vez por permisos al intentar
   ejecutar código de prueba; se reformuló para pedir respuesta solo por conocimiento/búsqueda web y
   respondió correctamente en el reintento) — no hay bloqueos duros que impidan avanzar con la

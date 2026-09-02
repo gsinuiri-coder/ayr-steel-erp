@@ -188,6 +188,13 @@ async function deactivateTrail(
 test.describe('Fase 2a — compras, bobinas y kardex', () => {
   test.skip(skipWrites, 'Crea datos: en produccion solo con E2E_ALLOW_WRITES=1');
 
+  // Cada escenario recorre un flujo largo (alta de usuario, primer ingreso, formulario
+  // de varias líneas y recepción). El timeout global de 45 s queda corto, sobre todo en
+  // local, donde `next dev` compila cada ruta la primera vez que se visita.
+  test.beforeEach(() => {
+    test.setTimeout(120_000);
+  });
+
   test('una compra de bobinas recién recibida crea las 2 bobinas y su kardex en soles (RF-10, RF-13, D-038)', async ({
     page,
     baseURL,
@@ -237,6 +244,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await expect(page.getByText('S/ 36,580.00')).toBeVisible();
 
       await page.getByRole('button', { name: 'Registrar compra' }).click();
+      await expect(page.getByText('Compra registrada')).toBeVisible();
       purchaseId = await waitForPurchaseId(page);
 
       // La compra nace en borrador y todavía no tocó el stock (D-030).
@@ -395,6 +403,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await page.getByLabel('Espesor (mm)').nth(1).fill('1.5');
 
       await page.getByRole('button', { name: 'Confirmar compra y bobinas' }).click();
+      await expect(page.getByText('Compra registrada')).toBeVisible();
       purchaseId = await waitForPurchaseId(page);
 
       await expect(page.getByRole('heading', { name: `Factura F001-${number}` })).toBeVisible();
