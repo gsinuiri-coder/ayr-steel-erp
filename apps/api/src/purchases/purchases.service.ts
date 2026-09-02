@@ -79,7 +79,8 @@ export class PurchasesService {
       );
     }
 
-    const safeName = file.originalname.replace(/[^A-Za-z0-9._-]/g, '_').slice(-150) || 'factura.xml';
+    const safeName =
+      file.originalname.replace(/[^A-Za-z0-9._-]/g, '_').slice(-150) || 'factura.xml';
     const sourceXmlKey = `purchases/xml/${randomUUID()}-${safeName}`;
     await this.storage.putObject(sourceXmlKey, file.buffer, 'application/xml');
 
@@ -392,7 +393,9 @@ export class PurchasesService {
                 { number: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
                 { series: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
                 {
-                  supplier: { name: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+                  supplier: {
+                    name: { contains: query.search, mode: Prisma.QueryMode.insensitive },
+                  },
                 },
               ],
             }
@@ -474,7 +477,9 @@ export class PurchasesService {
     businessLineId: string,
   ): Promise<void> {
     if (input.type === PurchaseType.COIL) {
-      const finishIds = [...new Set(input.items.map((i) => i.finishId).filter(Boolean))] as string[];
+      const finishIds = [
+        ...new Set(input.items.map((i) => i.finishId).filter(Boolean)),
+      ] as string[];
       const finishes = await this.prisma.finish.findMany({
         where: { id: { in: finishIds }, isActive: true },
         select: { id: true },

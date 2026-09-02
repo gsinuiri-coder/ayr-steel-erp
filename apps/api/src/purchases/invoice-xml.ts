@@ -132,7 +132,8 @@ export function parseInvoiceXml(buffer: Buffer): ParsedInvoice {
   const supplierName =
     text(pick(supplierParty, ['PartyLegalEntity', 'RegistrationName'])) ||
     text(pick(supplierParty, ['PartyName', 'Name']));
-  if (!supplierDocNumber) warnings.push('El XML no trae el RUC del emisor: elige el proveedor a mano');
+  if (!supplierDocNumber)
+    warnings.push('El XML no trae el RUC del emisor: elige el proveedor a mano');
 
   const issueDate = text(doc.IssueDate);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) {
@@ -141,9 +142,7 @@ export function parseInvoiceXml(buffer: Buffer): ParsedInvoice {
 
   const payment = readPaymentTerms(doc, text(doc.DueDate));
   const creditDays =
-    payment.terms === 'CREDITO' && payment.dueDate
-      ? daysBetween(issueDate, payment.dueDate)
-      : null;
+    payment.terms === 'CREDITO' && payment.dueDate ? daysBetween(issueDate, payment.dueDate) : null;
   if (payment.terms === 'CREDITO' && creditDays === null) {
     warnings.push('La factura es al crédito pero no trae fecha de vencimiento: indícala a mano');
   }
@@ -163,7 +162,9 @@ export function parseInvoiceXml(buffer: Buffer): ParsedInvoice {
   const total = decimalOr(text(monetary?.PayableAmount), subtotal.plus(igv));
 
   if (!total.minus(subtotal.plus(igv)).abs().lte(new Decimal('0.05'))) {
-    warnings.push('El total del XML no cuadra con la suma de valor de venta más IGV: revisa el detalle');
+    warnings.push(
+      'El total del XML no cuadra con la suma de valor de venta más IGV: revisa el detalle',
+    );
   }
 
   return {
@@ -201,8 +202,7 @@ function readLines(doc: XmlNode, lineTag: string, qtyTag: string): ParsedInvoice
     const priceAmount = text(pick(line, ['Price', 'PriceAmount']));
     const qtyDecimal = toDecimal(qty);
     // Si el XML no trae precio unitario, se deriva del valor de venta de la línea.
-    const unitPrice =
-      priceAmount || (qtyDecimal.gt(0) ? subtotal.div(qtyDecimal).toFixed(6) : '0');
+    const unitPrice = priceAmount || (qtyDecimal.gt(0) ? subtotal.div(qtyDecimal).toFixed(6) : '0');
 
     return {
       lineNumber: Number(text(line.ID)) || index + 1,
@@ -240,8 +240,7 @@ function readPaymentTerms(
     .sort();
 
   const dueDate =
-    installmentDates[0] ??
-    (/^\d{4}-\d{2}-\d{2}$/.test(headerDueDate) ? headerDueDate : null);
+    installmentDates[0] ?? (/^\d{4}-\d{2}-\d{2}$/.test(headerDueDate) ? headerDueDate : null);
   return { terms: isCredit || dueDate ? 'CREDITO' : 'CONTADO', dueDate };
 }
 

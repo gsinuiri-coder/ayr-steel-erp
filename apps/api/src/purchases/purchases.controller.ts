@@ -51,9 +51,7 @@ export class PurchasesController {
   }
 
   @Get('suppliers/:supplierId/statement')
-  statement(
-    @Param('supplierId', ParseUUIDPipe) supplierId: string,
-  ): Promise<SupplierStatementDto> {
+  statement(@Param('supplierId', ParseUUIDPipe) supplierId: string): Promise<SupplierStatementDto> {
     return this.purchases.supplierStatement(supplierId);
   }
 

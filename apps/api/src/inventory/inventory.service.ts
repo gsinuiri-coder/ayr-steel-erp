@@ -153,7 +153,9 @@ export class InventoryService {
       ON CONFLICT ("item_type", "item_id") DO NOTHING
     `;
 
-    const rows = await tx.$queryRaw<{ id: string; qty: Prisma.Decimal; avg_cost: Prisma.Decimal }[]>`
+    const rows = await tx.$queryRaw<
+      { id: string; qty: Prisma.Decimal; avg_cost: Prisma.Decimal }[]
+    >`
       SELECT "id", "qty", "avg_cost"
       FROM "inventory_balances"
       WHERE "item_type" = ${input.itemType}::"InventoryItemType"
@@ -325,7 +327,9 @@ export class InventoryService {
     return labels;
   }
 
-  private async resolveActorNames(rows: { actorId: string | null }[]): Promise<Map<string, string>> {
+  private async resolveActorNames(
+    rows: { actorId: string | null }[],
+  ): Promise<Map<string, string>> {
     const ids = [...new Set(rows.map((r) => r.actorId).filter((id): id is string => Boolean(id)))];
     if (!ids.length) return new Map();
     const users = await this.prisma.user.findMany({
