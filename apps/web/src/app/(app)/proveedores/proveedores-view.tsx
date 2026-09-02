@@ -8,6 +8,7 @@ import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -21,7 +22,7 @@ import { SupplierDialog } from './supplier-dialog';
 
 const SUPPLIERS_QUERY_KEY = ['suppliers'] as const;
 
-/** RF-81/RF-83: proveedores, incluido si prestan corte tercerizado (D-033/P-10). */
+/** RF-81/RF-83/RF-84: proveedores, incluido si prestan corte tercerizado (D-033/P-10). */
 export function ProveedoresView() {
   const { user } = useSession();
   const queryClient = useQueryClient();
@@ -33,10 +34,16 @@ export function ProveedoresView() {
   const openDialog = (supplier?: SupplierDto) => {
     setDialog((d) => ({ open: true, supplier, nonce: d.nonce + 1 }));
   };
+  const [search, setSearch] = useState('');
 
   const suppliers = useQuery({
     queryKey: SUPPLIERS_QUERY_KEY,
     queryFn: () => api<SupplierDto[]>('/suppliers'),
+  });
+  const filtered = suppliers.data?.filter((s) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return s.name.toLowerCase().includes(q) || s.docNumber.toLowerCase().includes(q);
   });
 
   const toggleActive = useMutation({
@@ -69,6 +76,15 @@ export function ProveedoresView() {
         )}
       </div>
 
+      <Input
+        placeholder="Buscar por nombre o número de documento…"
+        className="max-w-sm"
+        value={search}
+        onChange={(e) => {
+          setSearch(e.target.value);
+        }}
+      />
+
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
@@ -97,7 +113,7 @@ export function ProveedoresView() {
                 </TableCell>
               </TableRow>
             )}
-            {suppliers.data?.map((s) => (
+            {filtered?.map((s) => (
               <TableRow key={s.id} data-state={s.isActive ? undefined : 'inactive'}>
                 <TableCell className="font-medium">
                   {DOC_TYPE_LABELS[s.docType]} {s.docNumber}
@@ -143,10 +159,12 @@ export function ProveedoresView() {
                 )}
               </TableRow>
             ))}
-            {suppliers.data?.length === 0 && (
+            {filtered?.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground">
-                  No hay proveedores registrados.
+                  {search
+                    ? 'Ningún proveedor coincide con la búsqueda.'
+                    : 'No hay proveedores registrados.'}
                 </TableCell>
               </TableRow>
             )}
