@@ -14,7 +14,7 @@ import {
   type InventoryMovementDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatMoneyOrDash, formatQty } from '@/lib/format';
+import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -156,7 +156,7 @@ export function KardexView() {
                 <TableCell className="text-right">
                   {/* Un ADJUST no mueve cantidad: su `qty` son los kilos sobre los que se
                       repartió el costo, mostrarlo como movimiento confundiría el saldo. */}
-                  {m.type === 'ADJUST' ? '—' : formatQty(m.qty, m.unit)}
+                  {m.type === 'ADJUST' ? '—' : formatQty(m.qty, unitSymbol(m.unit))}
                 </TableCell>
                 <TableCell className="text-right">
                   {formatMoneyOrDash(m.unitCost, 'PEN', 4)}
@@ -164,7 +164,7 @@ export function KardexView() {
                 <TableCell className="text-right">{formatMoneyOrDash(m.totalCost)}</TableCell>
                 {singleItem && (
                   <TableCell className="text-right font-medium">
-                    {m.balanceQty ? formatQty(m.balanceQty, m.unit) : '—'}
+                    {m.balanceQty ? formatQty(m.balanceQty, unitSymbol(m.unit)) : '—'}
                   </TableCell>
                 )}
                 {singleItem && (

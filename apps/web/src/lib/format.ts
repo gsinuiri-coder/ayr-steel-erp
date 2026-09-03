@@ -36,6 +36,24 @@ export function formatMoneyOrDash(
   return value === null ? '—' : formatMoney(value, currency, decimals);
 }
 
+/**
+ * Símbolo corto de una unidad SUNAT (catálogo 03) para mostrar junto a una cantidad.
+ * El API devuelve el código (`KGM`, `NIU`…), pero en pantalla conviven con los kilos
+ * que las tarjetas de bobina escriben a mano: sin este mapa, la misma magnitud se ve
+ * como `KGM` en una tabla y como `kg` dos centímetros más arriba.
+ */
+const UNIT_SYMBOL: Record<string, string> = {
+  KGM: 'kg',
+  NIU: 'u',
+  MTR: 'm',
+  TNE: 't',
+  ZZ: '',
+};
+
+export function unitSymbol(unit: string): string {
+  return UNIT_SYMBOL[unit] ?? unit;
+}
+
 /** `"4500.000"` → `"4,500.000 kg"` (o la unidad que se pase). */
 export function formatQty(value: string, unit?: string): string {
   const [intPart = '0', decPart] = value.split('.');

@@ -498,7 +498,9 @@ export class InventoryService {
       } else {
         groups.set(`${b.itemType}:${key}`, {
           itemType: b.itemType,
-          name: b.itemType === 'COIL' ? (label?.name ?? key) : (label?.name ?? ''),
+          // En bobinas la clave ya ES el `typeKey`; repetirlo como descripción dejaría
+          // dos columnas iguales, así que se desarma en algo legible.
+          name: b.itemType === 'COIL' ? describeTypeKey(key) : (label?.name ?? ''),
           unit: b.unit,
           ids: [b.itemId],
           qty,
@@ -704,4 +706,11 @@ export class InventoryService {
 
 function labelKey(itemType: InventoryItemType, itemId: string): string {
   return `${itemType}:${itemId}`;
+}
+
+/** `"GALV-0.50"` → `"Acabado GALV · 0.50 mm"` (RF-14). Sin consultar nada más. */
+function describeTypeKey(typeKey: string): string {
+  const separator = typeKey.lastIndexOf('-');
+  if (separator <= 0) return typeKey;
+  return `Acabado ${typeKey.slice(0, separator)} · ${typeKey.slice(separator + 1)} mm`;
 }

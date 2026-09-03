@@ -15,7 +15,7 @@ import {
   type InventoryMovementDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatDate, formatMoney, formatQty } from '@/lib/format';
+import { formatDate, formatMoney, formatQty, unitSymbol } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
@@ -342,10 +342,10 @@ export function BobinaDetalleView({ id }: { id: string }) {
                   </TableCell>
                   <TableCell>{m.refType}</TableCell>
                   <TableCell className="text-right">
-                    {m.type === 'ADJUST' ? '—' : formatQty(m.qty, m.unit)}
+                    {m.type === 'ADJUST' ? '—' : formatQty(m.qty, unitSymbol(m.unit))}
                   </TableCell>
                   <TableCell className="text-right">
-                    {m.balanceQty ? formatQty(m.balanceQty, m.unit) : '—'}
+                    {m.balanceQty ? formatQty(m.balanceQty, unitSymbol(m.unit)) : '—'}
                   </TableCell>
                   <TableCell className="max-w-xs truncate text-muted-foreground">
                     {m.notes ?? ''}

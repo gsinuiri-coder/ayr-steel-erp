@@ -13,7 +13,7 @@ import {
   type InventorySummaryRowDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatMoneyOrDash, formatQty } from '@/lib/format';
+import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -163,7 +163,9 @@ function SummaryTable({
                 </TableCell>
                 <TableCell>{row.name}</TableCell>
                 <TableCell className="text-right">{row.itemCount}</TableCell>
-                <TableCell className="text-right">{formatQty(row.qty, row.unit)}</TableCell>
+                <TableCell className="text-right">
+                  {formatQty(row.qty, unitSymbol(row.unit))}
+                </TableCell>
                 <TableCell className="text-right">
                   {formatMoneyOrDash(row.avgCostPen, 'PEN', 4)}
                 </TableCell>
