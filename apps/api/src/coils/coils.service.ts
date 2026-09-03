@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   BusinessLineCode,
+  CoilKind,
   Currency,
   InventoryRefType,
   ProductSource,
@@ -43,6 +44,10 @@ export interface CreateCoilInput {
   /** Bobina madre y partido que la originaron (RF-15). */
   parentCoilId?: string;
   splitId?: string;
+  /** `STRIP` cuando la crea un partido interno o una recepción de corte (D-049). */
+  kind?: CoilKind;
+  /** Fila de recepción de corte tercerizado que originó este fleje (RF-41, D-049). */
+  cuttingOrderCoilId?: string;
   /**
    * Costo en soles con el que la bobina entra al kardex, cuando no es simplemente
    * `unitCostPerKg × exchangeRate`. Lo usa el partido: las hijas entran al costo
@@ -132,6 +137,8 @@ export class CoilsService {
         totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
         parentCoilId: input.parentCoilId ?? null,
         splitId: input.splitId ?? null,
+        kind: input.kind ?? CoilKind.COIL,
+        cuttingOrderCoilId: input.cuttingOrderCoilId ?? null,
         notes: input.notes ?? null,
         createdById: input.actorId,
       },
@@ -260,6 +267,7 @@ export class CoilsService {
         status: query.status,
         supplierId: query.supplierId,
         thicknessMm: query.thicknessMm,
+        kind: query.kind,
         ...(query.search
           ? {
               OR: [
@@ -356,6 +364,7 @@ export class CoilsService {
       id: c.id,
       code: c.code,
       typeKey: c.typeKey,
+      kind: c.kind,
       businessLine: toSharedLineCode(c.businessLine.code),
       supplierId: c.supplierId,
       supplierName: c.supplier.name,

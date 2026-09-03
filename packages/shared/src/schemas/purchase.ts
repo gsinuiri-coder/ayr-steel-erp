@@ -97,6 +97,9 @@ export const purchaseSchema = z.object({
   /** Landed cost (D-043): compra `COIL` a la que se imputa esta compra de servicio. */
   relatedPurchaseId: z.string().uuid().nullable(),
   relatedPurchaseLabel: z.string().nullable(),
+  /** Costo de corte (RF-41): orden de corte a la que se imputa esta compra de servicio. */
+  relatedCuttingOrderId: z.string().uuid().nullable(),
+  relatedCuttingOrderLabel: z.string().nullable(),
   /** Servicios (flete, aduanas, seguro) ya imputados a esta compra de bobinas. */
   landedCostServices: z.array(
     z.object({
@@ -194,6 +197,12 @@ export const createPurchaseSchema = z
      * compra apuntada exista, sea de tipo `COIL` y no esté anulada.
      */
     relatedPurchaseId: z.string().uuid().optional(),
+    /**
+     * Costo de corte tercerizado (RF-41): orden de corte a la que se imputa esta compra
+     * de servicio. Solo con `serviceKind = CUTTING`; el API valida además que la orden
+     * exista y no esté totalmente anulada.
+     */
+    relatedCuttingOrderId: z.string().uuid().optional(),
     /** Solo una key emitida por `POST /purchases/xml/preview`, nunca una ruta arbitraria de R2. */
     sourceXmlKey: z
       .string()
@@ -235,6 +244,23 @@ export const createPurchaseSchema = z
           code: z.ZodIssueCode.custom,
           path: ['relatedPurchaseId'],
           message: 'Solo flete, aduanas o seguro se imputan al costo de las bobinas (D-043)',
+        });
+      }
+      if (d.relatedCuttingOrderId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relatedCuttingOrderId'],
+          message:
+            'Un servicio se imputa a una compra de bobinas o a una orden de corte, no a las dos',
+        });
+      }
+    }
+    if (d.relatedCuttingOrderId) {
+      if (d.type !== PurchaseType.SERVICE || d.serviceKind !== 'CUTTING') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relatedCuttingOrderId'],
+          message: 'Solo un servicio de corte tercerizado se imputa a una orden de corte (RF-41)',
         });
       }
     }

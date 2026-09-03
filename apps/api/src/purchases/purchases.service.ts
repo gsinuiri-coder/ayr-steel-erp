@@ -10,15 +10,16 @@ import {
   BusinessLineCode,
   CoilStatus,
   Currency,
+  CuttingOrderStatus,
   ExchangeRateSource,
   InventoryStrategy,
   Prisma,
   PurchaseStatus,
   PurchaseType,
+  ServiceKind,
   type InventoryItemType,
   type Purchase,
   type PurchaseItem,
-  type ServiceKind,
   type SupplierPayment,
 } from '@prisma/client';
 import {
@@ -160,6 +161,7 @@ export class PurchasesService {
 
     await this.assertItemsAreConsistent(input, businessLine.id);
     await this.assertLandedCostLinkIsValid(actor, input, businessLine.id);
+    await this.assertCuttingOrderLinkIsValid(actor, input, businessLine.id);
 
     const { rate, source } = await this.resolveExchangeRate(input);
     const totals = computeTotals(input);
@@ -189,6 +191,8 @@ export class PurchasesService {
             serviceKind: input.type === PurchaseType.SERVICE ? (input.serviceKind ?? null) : null,
             relatedPurchaseId:
               input.type === PurchaseType.SERVICE ? (input.relatedPurchaseId ?? null) : null,
+            relatedCuttingOrderId:
+              input.type === PurchaseType.SERVICE ? (input.relatedCuttingOrderId ?? null) : null,
             sourceXmlKey: input.sourceXmlKey ?? null,
             notes: input.notes ?? null,
             createdById: actor.id,
@@ -308,6 +312,10 @@ export class PurchasesService {
         // Landed cost (D-043): un flete, una aduana o un seguro vinculados a una compra
         // de bobinas reparten su costo sin IGV entre esas bobinas al recibirse.
         const landed = await this.applyLandedCost(tx, purchase, actor);
+        // Costo de corte tercerizado (RF-41): igual que el landed cost, pero prorrateado
+        // entre los flejes ya recibidos de la orden de corte vinculada, sin importar si
+        // esta compra llega antes o después de la recepción física (D-033).
+        const cuttingCost = await this.applyCuttingOrderCost(tx, purchase, actor);
 
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -319,6 +327,7 @@ export class PurchasesService {
             status: PurchaseStatus.RECEIVED,
             items: purchase.items.length,
             ...(landed ? { landedCost: landed } : {}),
+            ...(cuttingCost ? { cuttingCost } : {}),
           },
         });
       },
@@ -623,6 +632,120 @@ export class PurchasesService {
   }
 
   /**
+   * RF-41. Reparte el costo sin IGV de una compra de servicio `CUTTING`, ya convertido a
+   * soles, entre los flejes **recibidos** de la orden de corte vinculada que todavía
+   * tengan saldo, por kilo — misma mecánica que `applyLandedCost` (D-043), incluido el
+   * `refType='PURCHASE'` para que `cancel` la revierta igual que un landed cost. No
+   * importa si esta compra se registra antes o después de la recepción física (D-033):
+   * cada vez que se recibe, reparte entre lo que exista en ese momento.
+   */
+  private async applyCuttingOrderCost(
+    tx: Prisma.TransactionClient,
+    purchase: Purchase,
+    actor: RequestUser,
+  ): Promise<{ amountPen: string; strips: number; imputed: boolean } | null> {
+    if (purchase.type !== PurchaseType.SERVICE || !purchase.relatedCuttingOrderId) return null;
+    if (purchase.serviceKind !== ServiceKind.CUTTING) return null;
+
+    const order = await tx.cuttingOrder.findUnique({
+      where: { id: purchase.relatedCuttingOrderId },
+      select: { id: true, status: true },
+    });
+    if (!order) throw new NotFoundException('La orden de corte vinculada no existe');
+    if (order.status === CuttingOrderStatus.CANCELLED) {
+      throw new BadRequestException(
+        'La orden de corte vinculada está anulada: registra el corte sin vincularlo a ella',
+      );
+    }
+
+    const strips = await tx.coil.findMany({
+      where: {
+        cuttingOrderCoil: { cuttingOrderId: order.id },
+        status: { not: CoilStatus.CANCELLED },
+      },
+      select: { id: true, code: true, businessLineId: true },
+      orderBy: { code: 'asc' },
+    });
+    if (strips.length === 0) return { amountPen: '0.0000', strips: 0, imputed: false };
+
+    // Mismo cuidado que `applyLandedCost`: bloquear antes de leer saldos evita que un
+    // consumo concurrente deje el costo del documento inflado sin movimiento detrás.
+    await tx.$queryRaw`
+      SELECT "id" FROM "coils" WHERE "id" = ANY(${strips.map((s) => s.id)}::uuid[]) FOR UPDATE
+    `;
+
+    const balances = await tx.inventoryBalance.findMany({
+      where: { itemType: 'COIL', itemId: { in: strips.map((s) => s.id) } },
+      select: { itemId: true, qty: true },
+    });
+    const availableKg = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const targets = strips.filter((s) => (availableKg.get(s.id) ?? new Decimal(0)).gt(0));
+    if (targets.length === 0) {
+      // La deuda con el proveedor de corte existe igual (D-030); solo no hay dónde
+      // imputar el costo porque los flejes ya se consumieron.
+      return { amountPen: '0.0000', strips: 0, imputed: false };
+    }
+
+    const amountPen = toDecimal(purchase.subtotal.toString()).times(
+      purchase.exchangeRate.toString(),
+    );
+    const shares = prorateByWeight(
+      amountPen,
+      targets.map((s) => ({ id: s.id, qtyKg: availableKg.get(s.id) ?? new Decimal(0) })),
+    );
+    const noteLabel = `Corte tercerizado ${purchase.series}-${purchase.number} (RF-41)`;
+
+    let imputedStrips = 0;
+    for (const share of shares) {
+      const strip = targets.find((s) => s.id === share.id);
+      const qty = availableKg.get(share.id);
+      if (!strip || !qty || qty.lte(0) || share.amountPen.isZero()) continue;
+
+      const movement = await this.inventory.adjustCost(tx, {
+        businessLineId: strip.businessLineId,
+        itemType: 'COIL',
+        itemId: strip.id,
+        unit: Unit.KGM,
+        amountPen: toFixedString(share.amountPen, 'MONEY'),
+        refType: 'PURCHASE',
+        refId: purchase.id,
+        notes: noteLabel,
+        actorId: actor.id,
+      });
+      if (!movement) continue;
+
+      imputedStrips += 1;
+      const before = await this.bumpCoilDocumentCost(
+        tx,
+        strip.id,
+        share.amountPen,
+        toDecimal(movement.qty.toString()),
+      );
+      if (before) {
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'coils.cutting-cost',
+          entity: 'coils',
+          entityId: strip.id,
+          before: { unitCostPerKg: before.from },
+          after: {
+            unitCostPerKg: before.to,
+            amountPen: toFixedString(share.amountPen, 'MONEY'),
+            servicePurchaseId: purchase.id,
+            reason: noteLabel,
+          },
+        });
+      }
+    }
+
+    return {
+      amountPen: toFixedString(amountPen, 'MONEY'),
+      strips: imputedStrips,
+      imputed: imputedStrips > 0,
+    };
+  }
+
+  /**
    * Mueve el costo del **documento** de una bobina (`unitCostPerKg` y sus totales) por
    * el mismo monto que se le imputó al kardex. El kardex va en soles (D-042) y el
    * documento en la moneda de la bobina (D-038), así que el delta se divide por su
@@ -911,6 +1034,38 @@ export class PurchasesService {
     }
   }
 
+  /**
+   * RF-41: el vínculo a una orden de corte solo vale para `serviceKind=CUTTING` y solo
+   * ADMINISTRADOR lo puede crear, por el mismo motivo que el landed cost (D-043): mueve
+   * el costo promedio del inventario sin tope y sin poder revertirlo una vez que los
+   * flejes se mueven.
+   */
+  private async assertCuttingOrderLinkIsValid(
+    actor: RequestUser,
+    input: CreatePurchaseInput,
+    businessLineId: string,
+  ): Promise<void> {
+    if (!input.relatedCuttingOrderId) return;
+    if (actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        'Solo un administrador puede imputar el costo de un servicio a una orden de corte',
+      );
+    }
+    const order = await this.prisma.cuttingOrder.findUnique({
+      where: { id: input.relatedCuttingOrderId },
+      select: { id: true, status: true, businessLineId: true },
+    });
+    if (!order) throw new NotFoundException('La orden de corte vinculada no existe');
+    if (order.status === CuttingOrderStatus.CANCELLED) {
+      throw new BadRequestException('La orden de corte vinculada está anulada');
+    }
+    if (order.businessLineId !== businessLineId) {
+      throw new BadRequestException(
+        'El servicio y la orden de corte tienen que estar en la misma línea de negocio',
+      );
+    }
+  }
+
   private async resolveExchangeRate(
     input: CreatePurchaseInput,
   ): Promise<{ rate: Decimal; source: ExchangeRateSource }> {
@@ -947,6 +1102,7 @@ const PURCHASE_RELATIONS = {
   businessLine: { select: { code: true } },
   payments: { orderBy: { date: 'asc' } },
   relatedPurchase: { select: { series: true, number: true } },
+  relatedCuttingOrder: { select: { id: true, supplier: { select: { name: true } } } },
   // Servicios (flete, aduanas, seguro) imputados a esta compra de bobinas (D-043).
   landedCostServices: {
     select: {
@@ -967,6 +1123,7 @@ type PurchaseWithRelations = Purchase & {
   businessLine: { code: BusinessLineCode };
   payments: SupplierPayment[];
   relatedPurchase: { series: string; number: string } | null;
+  relatedCuttingOrder: { id: string; supplier: { name: string } } | null;
   landedCostServices: {
     id: string;
     series: string;
@@ -1006,6 +1163,10 @@ function toListDto(p: PurchaseWithRelations): PurchaseListItemDto {
     relatedPurchaseId: p.relatedPurchaseId,
     relatedPurchaseLabel: p.relatedPurchase
       ? `${p.relatedPurchase.series}-${p.relatedPurchase.number}`
+      : null,
+    relatedCuttingOrderId: p.relatedCuttingOrderId,
+    relatedCuttingOrderLabel: p.relatedCuttingOrder
+      ? `Corte · ${p.relatedCuttingOrder.supplier.name}`
       : null,
     // `flatMap` en vez de `filter` + `map`: así TypeScript estrecha `serviceKind` sin
     // una aserción, que es lo que un servicio nunca debería necesitar acá.

@@ -10,6 +10,7 @@ import {
   Palette,
   Percent,
   ReceiptText,
+  Scissors,
   ScrollText,
   ShoppingCart,
   Truck,
@@ -49,6 +50,7 @@ export const NAV: NavGroup[] = [
       { title: 'Catálogo', href: '/catalogo', icon: PackageSearch, roles: ALL },
       { title: 'Inventario', href: '/inventario', icon: Warehouse, roles: ALL },
       { title: 'Kardex', href: '/kardex', icon: ScrollText, roles: ALL },
+      { title: 'Flejes', href: '/flejes', icon: Scissors, roles: ALL },
     ],
   },
   {
@@ -64,6 +66,12 @@ export const NAV: NavGroup[] = [
         title: 'Compras',
         href: '/compras',
         icon: ShoppingCart,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        title: 'Corte tercerizado',
+        href: '/corte',
+        icon: Scissors,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
       {

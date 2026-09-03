@@ -18,6 +18,10 @@ function typeFromQuery(raw: string | null): PurchaseType {
 export function NuevaCompraView() {
   const params = useSearchParams();
   const type = typeFromQuery(params.get('tipo'));
+  // Vincular el costo de un corte tercerizado (RF-41) reusa el flujo normal de compras:
+  // `/corte/[id]` linkea acá con la orden y la línea de negocio ya elegidas.
+  const ordenCorte = params.get('ordenCorte') ?? undefined;
+  const businessLine = params.get('linea') ?? undefined;
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -39,7 +43,14 @@ export function NuevaCompraView() {
         </p>
       )}
 
-      <PurchaseForm key={type} initialValues={defaultPurchaseValues(type)} />
+      <PurchaseForm
+        key={`${type}-${ordenCorte ?? ''}`}
+        initialValues={defaultPurchaseValues(type, {
+          businessLine,
+          serviceKind: ordenCorte ? 'CUTTING' : undefined,
+          relatedCuttingOrderId: ordenCorte,
+        })}
+      />
     </RoleGate>
   );
 }

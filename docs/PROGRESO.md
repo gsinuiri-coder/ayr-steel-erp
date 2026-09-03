@@ -10,7 +10,7 @@
 | 1 — Maestros, catálogo, precios, importación | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción |
 | 2a — Kardex + compras + alta de bobinas      | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho   |
 | 2b — Partido, merma, cierre, anulación       | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho   |
-| 3 — Corte tercerizado + flejes               | ⚪ Pendiente            | —                                                        |
+| 3 — Corte tercerizado + flejes               | 🟡 En curso             | —                                                        |
 | 4 — Producción + `/planta`                   | ⚪ Pendiente            | —                                                        |
 | 5 — Cotizaciones y ventas                    | ⚪ Pendiente            | —                                                        |
 | 6 — Facturación Nubefact                     | ⚪ Pendiente            | —                                                        |
@@ -152,6 +152,21 @@ Lo que sigue sin cubrirse por E2E: operar el partido, la merma y las anulaciones
 - `findMovements` de un ítem lee hasta 10 000 movimientos para calcular el saldo corrido. Sirve de sobra hoy; con años de historia hay que paginar hacia atrás desde un saldo de apertura, que ya está implementado para el filtro por fechas.
 - El prorrateo de landed cost es siempre **por kg** (D-043). Si aparece un seguro que se cobra sobre el valor CIF, se agrega el criterio como campo de la compra.
 - RF-22 (cancelar plan de corte) es de Fase 3 por D-044: en 2b no existe todavía el plan de corte.
+
+## Fase 3 — detalle
+
+| #   | Entregable                                                                                                                       | Estado                                                                   |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 1   | Decisiones D-047..D-050 (P-13 resuelta), §3.7 reordenado (D-048), §4 con RF-22 anotado                                           | ✅ `docs/ARQUITECTURA.md` §0.2, §3.7, §5; espejo en `docs/DECISIONES.md` |
+| 2   | Prisma: `coils.kind`, `CoilStatus.IN_THIRD_PARTY`, `cutting_orders`, `cutting_order_coils`, `purchases.related_cutting_order_id` | ⚪ pendiente                                                             |
+| 3   | Módulo `cutting`: envío (RF-40), recepción parcial por bobina (RF-41), cancelación (RF-22)                                       | ⚪ pendiente                                                             |
+| 4   | Costo del servicio de corte: prorrateo por kg entre flejes recibidos (RF-41)                                                     | ⚪ pendiente                                                             |
+| 5   | Web: `/corte`, `/corte/nueva`, `/corte/[id]`, `/flejes` (RF-42)                                                                  | ⚪ pendiente                                                             |
+| 6   | Tests unit (plan de corte, prorrateo, cancelación parcial)                                                                       | ⚪ pendiente                                                             |
+| 7   | Revisión de `revisor`, `auditor-seguridad`, `qa`                                                                                 | ⚪ pendiente                                                             |
+| 8   | E2E de Fase 3                                                                                                                    | ⚪ pendiente                                                             |
+| 9   | Deploy y migración en `production`                                                                                               | ⚪ pendiente                                                             |
+| 10  | Cierre: handoff, commit, push                                                                                                    | ⚪ pendiente                                                             |
 
 ## Bloqueos
 

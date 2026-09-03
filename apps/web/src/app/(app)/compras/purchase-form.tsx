@@ -25,6 +25,7 @@ import {
   SERVICE_KINDS,
   UNIT_LABELS,
   UNITS,
+  type CuttingOrderListItemDto,
   type FinishDto,
   type ProductDto,
   type PurchaseDto,
@@ -100,6 +101,8 @@ const baseFormSchema = z.object({
   serviceKind: z.enum(SERVICE_KINDS).optional(),
   /** Landed cost (D-043): compra COIL a la que se imputa el servicio. */
   relatedPurchaseId: z.string().optional(),
+  /** Costo de corte tercerizado (RF-41): orden de corte a la que se imputa el servicio. */
+  relatedCuttingOrderId: z.string().optional(),
   notes: z.string().trim().max(500).optional(),
   sourceXmlKey: z.string().optional(),
   items: z
@@ -179,11 +182,16 @@ export function emptyItem(type: PurchaseType): PurchaseFormValues['items'][numbe
   };
 }
 
-export function defaultPurchaseValues(type: PurchaseType): PurchaseFormValues {
+export function defaultPurchaseValues(
+  type: PurchaseType,
+  overrides?: { businessLine?: string; serviceKind?: string; relatedCuttingOrderId?: string },
+): PurchaseFormValues {
   return {
     type,
     supplierId: '',
-    businessLine: type === PurchaseType.COIL ? 'drywall' : 'trading',
+    businessLine:
+      (overrides?.businessLine as PurchaseFormValues['businessLine']) ??
+      (type === PurchaseType.COIL ? 'drywall' : 'trading'),
     docType: 'FACTURA',
     series: '',
     number: '',
@@ -193,6 +201,9 @@ export function defaultPurchaseValues(type: PurchaseType): PurchaseFormValues {
     igvRate: '18',
     paymentTerms: 'CONTADO',
     creditDays: '',
+    serviceKind: overrides?.serviceKind as PurchaseFormValues['serviceKind'],
+    relatedPurchaseId: '',
+    relatedCuttingOrderId: overrides?.relatedCuttingOrderId ?? '',
     notes: '',
     items: [emptyItem(type)],
   };
@@ -252,7 +263,8 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
   }, [canLink, relatedPurchaseId, form]);
   useEffect(() => {
     if (form.getValues('relatedPurchaseId')) form.setValue('relatedPurchaseId', '');
-    // Solo al cambiar de línea: la compra vinculada tiene que ser de la misma (D-043).
+    if (form.getValues('relatedCuttingOrderId')) form.setValue('relatedCuttingOrderId', '');
+    // Solo al cambiar de línea: la compra/orden vinculada tiene que ser de la misma línea.
   }, [businessLine, form]);
   const coilPurchases = useQuery({
     queryKey: ['purchases', 'coil-received', businessLine],
@@ -261,6 +273,20 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
         `/purchases?type=COIL&status=RECEIVED&businessLine=${businessLine}`,
       ),
     enabled: canLink,
+  });
+
+  // Costo de corte tercerizado (RF-41): solo se imputa a una orden de corte de la misma
+  // línea, no anulada del todo (D-033: el costo se ingresa al recibir, aunque la orden
+  // todavía tenga bobinas pendientes de volver).
+  const canLinkCutting = type === PurchaseType.SERVICE && serviceKind === 'CUTTING';
+  const relatedCuttingOrderId = form.watch('relatedCuttingOrderId');
+  useEffect(() => {
+    if (relatedCuttingOrderId && !canLinkCutting) form.setValue('relatedCuttingOrderId', '');
+  }, [canLinkCutting, relatedCuttingOrderId, form]);
+  const cuttingOrders = useQuery({
+    queryKey: ['cutting-orders', businessLine],
+    queryFn: () => api<CuttingOrderListItemDto[]>(`/cutting?businessLine=${businessLine}`),
+    enabled: canLinkCutting,
   });
 
   const products = useQuery({
@@ -640,6 +666,45 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 )}
               />
             )}
+            {canLinkCutting && (
+              <FormField
+                control={form.control}
+                name="relatedCuttingOrderId"
+                render={({ field }) => (
+                  <FormItem className="md:col-span-2">
+                    <FormLabel>Imputar al costo de una orden de corte (RF-41)</FormLabel>
+                    <Select
+                      value={field.value ?? NO_LINK}
+                      onValueChange={(v) => {
+                        field.onChange(v === NO_LINK ? '' : v);
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value={NO_LINK}>No imputar (queda como gasto)</SelectItem>
+                        {cuttingOrders.data
+                          ?.filter((o) => o.status !== 'CANCELLED')
+                          .map((o) => (
+                            <SelectItem key={o.id} value={o.id}>
+                              {o.supplierName} — {o.coilCount} bobina(s)
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      Al recibir esta compra, su valor sin IGV se reparte por kilo entre los flejes
+                      ya recibidos de esa orden, sin importar si llega antes o después de la
+                      recepción física. Solo un administrador puede imputarlo.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="notes"
@@ -967,6 +1032,12 @@ function toApiBody(values: PurchaseFormValues): Record<string, unknown> {
     relatedPurchaseId:
       values.type === PurchaseType.SERVICE && values.relatedPurchaseId?.trim()
         ? values.relatedPurchaseId
+        : undefined,
+    relatedCuttingOrderId:
+      values.type === PurchaseType.SERVICE &&
+      values.serviceKind === 'CUTTING' &&
+      values.relatedCuttingOrderId?.trim()
+        ? values.relatedCuttingOrderId
         : undefined,
     sourceXmlKey: values.sourceXmlKey ?? undefined,
     notes: values.notes?.trim() ? values.notes.trim() : undefined,

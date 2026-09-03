@@ -217,3 +217,41 @@ El docx original saltaba de RF-14 a RF-16, y D-031 (P-08) ya había señalado a 
 **Decisión.** El cambio de moneda, tipo de cambio o costo unitario solo se admite si la bobina **no tiene movimientos posteriores** a su `IN` inicial. Cuando se admite, no se hace `UPDATE` del movimiento: se emite la reversa del `IN` original (`reverse`) y un `IN` nuevo al costo corregido, ambos en la misma transacción. Los campos que no tocan el kardex (ancho, notas) se editan mientras la bobina esté `OPEN`, sin condiciones extra.
 
 **Consecuencias.** El kardex de la bobina muestra las tres filas (ingreso, reversa, reingreso), que es exactamente la trazabilidad que pide RF-95: se ve qué se corrigió, cuándo y quién. Si la bobina ya se movió, la corrección queda bloqueada con un mensaje que nombra el movimiento que la bloquea; la salida en ese caso es anular primero la operación posterior. Solo ADMINISTRADOR puede editar moneda/TC (§3.4); SUPERVISOR_PLANTA edita el resto.
+
+## D-047..D-050 — Arranque de Fase 3 (corte tercerizado y flejes)
+
+**Fecha:** 2026-09-02
+
+### D-047 — Consumo de producción: kg teórico con override (cierra P-13)
+
+**Contexto.** RF-30/RF-34 piden producir consumiendo bobina o fleje. Hay que decidir con qué kg se descuenta el kardex de la materia prima: lo que dicen las dimensiones del producto fabricado, o lo que el operario pesa físicamente.
+
+**Alternativas.** (a) Solo kg real pesado: exacto, pero obliga a pesar cada corrida y no da un número de referencia para detectar una corrida anómala. (b) Solo kg teórico por dimensiones: simple y rápido, pero no captura la merma de proceso real (recorte, rebabas) y el kardex terminaría mintiendo sobre cuánta materia prima se usó de verdad. (c) Teórico por defecto con override manual.
+
+**Decisión.** (c). El kg teórico sale de las dimensiones del producto × `densityFactor` del acabado (RF-25): en drywall, kg por metro de perfil calculado desde el fleje consumido; en coberturas, ancho × espesor × largo × densidad. El operario puede sobreescribir ese teórico con el kg real si pesó la corrida. La diferencia entre lo que el kardex tenía que salir (teórico u override) y lo que realmente se descuenta del fleje/bobina consumido se registra automáticamente como merma de proceso (`SCRAP`), igual que D-040.
+
+**Consecuencias.** El caso normal (sin pesar) no exige nada extra del operario: el sistema calcula y descuenta solo. El caso con pesaje queda igual de auditable que cualquier otra merma, sin un tercer mecanismo de ajuste aparte. Se implementa recién en Fase 4 (drywall) y Fase 5 (coberturas); queda registrado ahora para no reabrir la pregunta al llegar ahí.
+
+### D-048 — Reorden de fases 4 y 5 por dependencia RF-31
+
+**Contexto.** §3.7 tenía Fase 4 = producción (drywall + coberturas) y Fase 5 = cotizaciones y ventas. RF-31 exige que toda producción de coberturas vaya contra una cotización confirmada; sin cotizaciones (Fase 5) no hay nada contra qué producir coberturas.
+
+**Decisión.** Fase 4 = producción drywall (que no depende de cotización) + terminal `/planta`. Fase 5 = cotizaciones + `production_orders` (D-026) + producción de coberturas + ventas, todo junto porque coberturas y ventas comparten la dependencia de cotización.
+
+**Consecuencias.** Evita mockear cotizaciones para poder cerrar Fase 4, el mismo problema que D-034 ya había evitado entre compras y bobinas. Drywall sale una fase antes que coberturas aunque el docx original las trataba como una sola fase de "producción".
+
+### D-049 — Los flejes son bobinas con `kind = STRIP`
+
+**Contexto.** RF-40..42 piden enviar bobinas a corte tercerizado, recibir flejes y consultar su stock por ancho. Hay que decidir si un fleje es una entidad nueva o una variación de `coils`.
+
+**Decisión.** `coils` gana la columna `kind COIL|STRIP` (default `COIL`). Un fleje es una fila `kind=STRIP` con `parentCoilId` a la bobina de la que salió (comprada o, en corte tercerizado, la bobina enviada al tercero), creada con la misma mecánica que el partido interno (RF-15, `planCoilSplit`): mismo código RF-13, mismo `typeKey` RF-14, mismo kardex vía `InventoryService`. La diferencia con una hija de partido interno es el `refType` del movimiento (`CUTTING` en vez de `SPLIT`) y que el stock de flejes (RF-42) se agrupa por `typeKey` **+ `widthMm`** — a diferencia del inventario de bobinas (RF-51), que agrupa solo por `typeKey` porque el ancho de una bobina entera no importa para su reventa, pero el ancho de un fleje sí importa para producir drywall.
+
+**Consecuencias.** Cero duplicación de código de kardex, códigos ni trazabilidad: `CoilsService.create`/`prepareBatch` y `planCoilSplit` se reusan sin tocarlos. El corte tercerizado no necesita tabla nueva para "el fleje" en sí, solo para el envío y la recepción (`cutting_orders`/`cutting_order_coils`).
+
+### D-050 — Envío a corte no mueve el kardex
+
+**Contexto.** RF-40 envía una bobina a un tercero para que la corte. Hay que decidir si ese envío es una salida de kardex (como si se vendiera o consumiera) o no.
+
+**Decisión.** La bobina enviada pasa a `status = IN_THIRD_PARTY` (nuevo valor del enum `CoilStatus`) sin movimiento de inventario: sigue siendo propiedad de la empresa, solo cambió de ubicación física. Mientras está `IN_THIRD_PARTY` se excluye de producción y del partido local (RF-15) — las mismas exclusiones que una bobina `CLOSED`, más estricta porque tampoco se puede editar su costo (D-045) mientras está fuera. El kardex real —salida `OUT refType=CUTTING` de la madre, entradas `IN` de los flejes— se emite recién al **recibir**, con la misma matemática que el partido (`planCoilSplit`).
+
+**Consecuencias.** Evita una salida de kardex por un envío que puede tardar semanas en volver o incluso no volver nunca (pérdida en el tercero, que se resolvería como una merma en ese momento, fuera de alcance de v1). RF-22 (cancelar el plan de corte) se resuelve solo devolviendo la bobina a `OPEN`, sin reversar ningún movimiento, porque no hubo ninguno.

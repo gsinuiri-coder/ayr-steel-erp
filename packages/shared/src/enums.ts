@@ -327,11 +327,16 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   OTHER: 'Otro',
 };
 
-/** Estado de una bobina (RF-19, RF-21). */
+/**
+ * Estado de una bobina (RF-19, RF-21). `IN_THIRD_PARTY` (D-050, Fase 3): la bobina está
+ * en poder de un proveedor de corte tercerizado; sigue en el kardex de la empresa pero
+ * no entra a producción ni a partido local (RF-15) hasta que vuelve.
+ */
 export const CoilStatus = {
   OPEN: 'OPEN',
   CLOSED: 'CLOSED',
   CANCELLED: 'CANCELLED',
+  IN_THIRD_PARTY: 'IN_THIRD_PARTY',
 } as const;
 export type CoilStatus = (typeof CoilStatus)[keyof typeof CoilStatus];
 export const COIL_STATUSES = Object.values(CoilStatus) as [CoilStatus, ...CoilStatus[]];
@@ -339,6 +344,19 @@ export const COIL_STATUS_LABELS: Record<CoilStatus, string> = {
   OPEN: 'Abierta',
   CLOSED: 'Cerrada',
   CANCELLED: 'Anulada',
+  IN_THIRD_PARTY: 'En corte tercerizado',
+};
+
+/** Clase de fila de `coils` (D-049). Un fleje es una bobina `STRIP`. */
+export const CoilKind = {
+  COIL: 'COIL',
+  STRIP: 'STRIP',
+} as const;
+export type CoilKind = (typeof CoilKind)[keyof typeof CoilKind];
+export const COIL_KINDS = Object.values(CoilKind) as [CoilKind, ...CoilKind[]];
+export const COIL_KIND_LABELS: Record<CoilKind, string> = {
+  COIL: 'Bobina',
+  STRIP: 'Fleje',
 };
 
 /** Estado de un partido de bobina (RF-15/RF-16). */
@@ -380,4 +398,49 @@ export const UNIT_LABELS: Record<Unit, string> = {
   MTR: 'Metro (MTR)',
   TNE: 'Tonelada (TNE)',
   ZZ: 'Servicio (ZZ)',
+};
+
+// ---------------------------------------------------------------------------
+// Fase 3 — corte tercerizado y flejes (RF-40..42, D-049/D-050)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estado de una orden de corte tercerizado. `PARTIALLY_RECEIVED` mientras conviven
+ * bobinas `SENT` y `RECEIVED`; `RECEIVED` cuando ya no queda ninguna `SENT` (recibida o
+ * cancelada); `CANCELLED` solo si ninguna bobina llegó a recibirse.
+ */
+export const CuttingOrderStatus = {
+  SENT: 'SENT',
+  PARTIALLY_RECEIVED: 'PARTIALLY_RECEIVED',
+  RECEIVED: 'RECEIVED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type CuttingOrderStatus = (typeof CuttingOrderStatus)[keyof typeof CuttingOrderStatus];
+export const CUTTING_ORDER_STATUSES = Object.values(CuttingOrderStatus) as [
+  CuttingOrderStatus,
+  ...CuttingOrderStatus[],
+];
+export const CUTTING_ORDER_STATUS_LABELS: Record<CuttingOrderStatus, string> = {
+  SENT: 'Enviada',
+  PARTIALLY_RECEIVED: 'Recepción parcial',
+  RECEIVED: 'Recibida',
+  CANCELLED: 'Anulada',
+};
+
+/** Estado de una bobina dentro de una orden de corte. */
+export const CuttingOrderCoilStatus = {
+  SENT: 'SENT',
+  RECEIVED: 'RECEIVED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type CuttingOrderCoilStatus =
+  (typeof CuttingOrderCoilStatus)[keyof typeof CuttingOrderCoilStatus];
+export const CUTTING_ORDER_COIL_STATUSES = Object.values(CuttingOrderCoilStatus) as [
+  CuttingOrderCoilStatus,
+  ...CuttingOrderCoilStatus[],
+];
+export const CUTTING_ORDER_COIL_STATUS_LABELS: Record<CuttingOrderCoilStatus, string> = {
+  SENT: 'Enviada',
+  RECEIVED: 'Recibida',
+  CANCELLED: 'Anulada',
 };

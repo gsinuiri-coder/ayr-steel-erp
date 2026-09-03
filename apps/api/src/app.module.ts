@@ -10,6 +10,7 @@ import { AppThrottlerGuard } from './common/throttler.guard';
 import { ConfigModule } from './config/config.module';
 import { ENV, type Env } from './config/env';
 import { CustomersModule } from './customers/customers.module';
+import { CuttingModule } from './cutting/cutting.module';
 import { DocumentsModule } from './documents/documents.module';
 import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
 import { FinishesModule } from './finishes/finishes.module';
@@ -52,6 +53,7 @@ import { UsersModule } from './users/users.module';
     InventoryModule,
     CoilsModule,
     PurchasesModule,
+    CuttingModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],

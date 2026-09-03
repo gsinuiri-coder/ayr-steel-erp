@@ -6,6 +6,10 @@
 // Fase 2b (D-041): reversa de movimientos, partido de bobina (`coil_splits`), merma,
 // cierre/edición/anulación de bobina, anulación de compra recibida y landed cost
 // (`purchases.related_purchase_id`, D-043).
+// Fase 3 (D-047..D-050): corte tercerizado (`cutting_orders`/`cutting_order_coils`,
+// RF-40..42), flejes como `coils.kind = STRIP` (D-049), envío sin movimiento de kardex
+// (`CoilStatus.IN_THIRD_PARTY`, D-050) y prorrateo del costo del servicio de corte
+// (`purchases.related_cutting_order_id`).
 // Regla D-003: dinero/kg/mm/tasas son siempre `Decimal @db.Decimal(p, s)` con
 // escala explícita (dinero 4, kg 3, mm 2, tasas/factores 4). Nunca `number`.
 
@@ -159,9 +163,36 @@ enum PaymentMethod {
 
 /// Estado de una bobina (RF-19). `CLOSED` no entra a producción; `CANCELLED` solo
 /// es alcanzable si no tuvo movimientos aparte del ingreso inicial (RF-21).
+/// `IN_THIRD_PARTY` (D-050, Fase 3): la bobina está en poder de un proveedor de corte;
+/// sigue siendo del kardex de la empresa pero no entra a producción ni a partido local.
 enum CoilStatus {
   OPEN
   CLOSED
+  CANCELLED
+  IN_THIRD_PARTY
+}
+
+/// Clase de fila de `coils` (D-049). Un fleje es una bobina `STRIP`, hija de la madre
+/// (`parentCoilId`) que la originó, comprada o enviada a corte tercerizado.
+enum CoilKind {
+  COIL
+  STRIP
+}
+
+/// Estado de una orden de corte tercerizado (RF-40..42, D-049/D-050).
+/// `PARTIALLY_RECEIVED` cuando algunas bobinas de la orden ya volvieron y otras siguen
+/// en el tercero; `RECEIVED` cuando ya no queda ninguna `SENT` (recibida o cancelada).
+enum CuttingOrderStatus {
+  SENT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+/// Estado de una bobina dentro de una orden de corte (RF-40..42).
+enum CuttingOrderCoilStatus {
+  SENT
+  RECEIVED
   CANCELLED
 }
 
@@ -253,6 +284,7 @@ model BusinessLine {
   inventoryBalances  InventoryBalance[]
   purchases          Purchase[]
   coils              Coil[]
+  cuttingOrders      CuttingOrder[]
 
   @@map("business_lines")
 }
@@ -333,8 +365,9 @@ model Supplier {
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  purchases Purchase[]
-  coils     Coil[]
+  purchases     Purchase[]
+  coils         Coil[]
+  cuttingOrders CuttingOrder[]
 
   @@unique([docType, docNumber])
   @@map("suppliers")
@@ -467,43 +500,49 @@ model InventoryBalance {
 /// `totalPen` es el equivalente en soles con el TC guardado (D-029). El costo que
 /// entra al kardex es el subtotal, sin IGV (D-038).
 model Purchase {
-  id                 String             @id @default(uuid()) @db.Uuid
-  supplierId         String             @map("supplier_id") @db.Uuid
-  supplier           Supplier           @relation(fields: [supplierId], references: [id])
-  businessLineId     String             @map("business_line_id") @db.Uuid
-  businessLine       BusinessLine       @relation(fields: [businessLineId], references: [id])
-  type               PurchaseType
-  docType            PurchaseDocType    @map("doc_type")
-  series             String             @db.VarChar(10)
-  number             String             @db.VarChar(20)
-  issueDate          DateTime           @map("issue_date") @db.Date
-  currency           Currency
-  exchangeRate       Decimal            @map("exchange_rate") @db.Decimal(10, 4)
-  exchangeRateSource ExchangeRateSource @map("exchange_rate_source")
-  subtotal           Decimal            @db.Decimal(18, 4)
-  igv                Decimal            @db.Decimal(18, 4)
-  total              Decimal            @db.Decimal(18, 4)
-  totalPen           Decimal            @map("total_pen") @db.Decimal(18, 4)
-  paymentTerms       PaymentTerms       @map("payment_terms")
-  creditDays         Int?               @map("credit_days")
-  dueDate            DateTime?          @map("due_date") @db.Date
-  status             PurchaseStatus     @default(DRAFT)
+  id                    String             @id @default(uuid()) @db.Uuid
+  supplierId            String             @map("supplier_id") @db.Uuid
+  supplier              Supplier           @relation(fields: [supplierId], references: [id])
+  businessLineId        String             @map("business_line_id") @db.Uuid
+  businessLine          BusinessLine       @relation(fields: [businessLineId], references: [id])
+  type                  PurchaseType
+  docType               PurchaseDocType    @map("doc_type")
+  series                String             @db.VarChar(10)
+  number                String             @db.VarChar(20)
+  issueDate             DateTime           @map("issue_date") @db.Date
+  currency              Currency
+  exchangeRate          Decimal            @map("exchange_rate") @db.Decimal(10, 4)
+  exchangeRateSource    ExchangeRateSource @map("exchange_rate_source")
+  subtotal              Decimal            @db.Decimal(18, 4)
+  igv                   Decimal            @db.Decimal(18, 4)
+  total                 Decimal            @db.Decimal(18, 4)
+  totalPen              Decimal            @map("total_pen") @db.Decimal(18, 4)
+  paymentTerms          PaymentTerms       @map("payment_terms")
+  creditDays            Int?               @map("credit_days")
+  dueDate               DateTime?          @map("due_date") @db.Date
+  status                PurchaseStatus     @default(DRAFT)
   /// Solo en compras de tipo SERVICE (D-030): decide si el servicio se puede imputar
   /// al costo de una compra de bobinas (D-043) o al de un corte tercerizado (Fase 3).
-  serviceKind        ServiceKind?       @map("service_kind")
+  serviceKind           ServiceKind?       @map("service_kind")
   /// Landed cost (D-043): compra `COIL` a la que se imputa esta compra de servicio.
   /// Solo con `serviceKind` FREIGHT/CUSTOMS/INSURANCE. Se prorratea al recibirla.
-  relatedPurchaseId  String?            @map("related_purchase_id") @db.Uuid
-  relatedPurchase    Purchase?          @relation("LandedCost", fields: [relatedPurchaseId], references: [id])
-  landedCostServices Purchase[]         @relation("LandedCost")
+  relatedPurchaseId     String?            @map("related_purchase_id") @db.Uuid
+  relatedPurchase       Purchase?          @relation("LandedCost", fields: [relatedPurchaseId], references: [id])
+  landedCostServices    Purchase[]         @relation("LandedCost")
+  /// Costo de corte tercerizado (RF-41): orden de corte a la que se imputa esta compra
+  /// de servicio. Solo con `serviceKind = CUTTING`. Se prorratea por kg entre los flejes
+  /// recibidos de esa orden al recibirla (D-049), sin importar si llega antes o después
+  /// de la recepción física.
+  relatedCuttingOrderId String?            @map("related_cutting_order_id") @db.Uuid
+  relatedCuttingOrder   CuttingOrder?      @relation(fields: [relatedCuttingOrderId], references: [id])
   /// Key en R2 del XML de la factura del proveedor cuando la compra nació de RF-11.
-  sourceXmlKey       String?            @map("source_xml_key") @db.VarChar(300)
-  notes              String?            @db.VarChar(500)
-  createdById        String             @map("created_by_id") @db.Uuid
-  receivedAt         DateTime?          @map("received_at") @db.Timestamptz(3)
-  cancelledAt        DateTime?          @map("cancelled_at") @db.Timestamptz(3)
-  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sourceXmlKey          String?            @map("source_xml_key") @db.VarChar(300)
+  notes                 String?            @db.VarChar(500)
+  createdById           String             @map("created_by_id") @db.Uuid
+  receivedAt            DateTime?          @map("received_at") @db.Timestamptz(3)
+  cancelledAt           DateTime?          @map("cancelled_at") @db.Timestamptz(3)
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   items    PurchaseItem[]
   payments SupplierPayment[]
@@ -514,6 +553,7 @@ model Purchase {
   @@index([businessLineId, issueDate])
   @@index([supplierId, status])
   @@index([relatedPurchaseId])
+  @@index([relatedCuttingOrderId])
   @@map("purchases")
 }
 
@@ -573,46 +613,56 @@ model SupplierPayment {
 /// (D-038) y en Fase 2b lo puede subir el landed cost (D-043). `parentCoilId`/`splitId`
 /// apuntan a la madre y al partido que creó la bobina hija (RF-15).
 model Coil {
-  id             String        @id @default(uuid()) @db.Uuid
-  code           String        @unique @db.VarChar(60)
-  typeKey        String        @map("type_key") @db.VarChar(40)
-  businessLineId String        @map("business_line_id") @db.Uuid
-  businessLine   BusinessLine  @relation(fields: [businessLineId], references: [id])
-  supplierId     String        @map("supplier_id") @db.Uuid
-  supplier       Supplier      @relation(fields: [supplierId], references: [id])
-  purchaseId     String?       @map("purchase_id") @db.Uuid
-  purchase       Purchase?     @relation(fields: [purchaseId], references: [id])
-  purchaseItemId String?       @unique @map("purchase_item_id") @db.Uuid
-  purchaseItem   PurchaseItem? @relation(fields: [purchaseItemId], references: [id])
-  finishId       String        @map("finish_id") @db.Uuid
-  finish         Finish        @relation(fields: [finishId], references: [id])
-  weightKg       Decimal       @map("weight_kg") @db.Decimal(12, 3)
-  widthMm        Decimal       @map("width_mm") @db.Decimal(8, 2)
-  thicknessMm    Decimal       @map("thickness_mm") @db.Decimal(6, 2)
-  currency       Currency
-  exchangeRate   Decimal       @map("exchange_rate") @db.Decimal(10, 4)
-  unitCostPerKg  Decimal       @map("unit_cost_per_kg") @db.Decimal(18, 4)
-  totalCost      Decimal       @map("total_cost") @db.Decimal(18, 4)
-  totalCostPen   Decimal       @map("total_cost_pen") @db.Decimal(18, 4)
-  status         CoilStatus    @default(OPEN)
-  parentCoilId   String?       @map("parent_coil_id") @db.Uuid
-  parentCoil     Coil?         @relation("CoilParent", fields: [parentCoilId], references: [id])
-  childCoils     Coil[]        @relation("CoilParent")
+  id                 String             @id @default(uuid()) @db.Uuid
+  code               String             @unique @db.VarChar(60)
+  typeKey            String             @map("type_key") @db.VarChar(40)
+  /// D-049: `COIL` (bobina) o `STRIP` (fleje, hija de `parentCoilId`).
+  kind               CoilKind           @default(COIL)
+  businessLineId     String             @map("business_line_id") @db.Uuid
+  businessLine       BusinessLine       @relation(fields: [businessLineId], references: [id])
+  supplierId         String             @map("supplier_id") @db.Uuid
+  supplier           Supplier           @relation(fields: [supplierId], references: [id])
+  purchaseId         String?            @map("purchase_id") @db.Uuid
+  purchase           Purchase?          @relation(fields: [purchaseId], references: [id])
+  purchaseItemId     String?            @unique @map("purchase_item_id") @db.Uuid
+  purchaseItem       PurchaseItem?      @relation(fields: [purchaseItemId], references: [id])
+  finishId           String             @map("finish_id") @db.Uuid
+  finish             Finish             @relation(fields: [finishId], references: [id])
+  weightKg           Decimal            @map("weight_kg") @db.Decimal(12, 3)
+  widthMm            Decimal            @map("width_mm") @db.Decimal(8, 2)
+  thicknessMm        Decimal            @map("thickness_mm") @db.Decimal(6, 2)
+  currency           Currency
+  exchangeRate       Decimal            @map("exchange_rate") @db.Decimal(10, 4)
+  unitCostPerKg      Decimal            @map("unit_cost_per_kg") @db.Decimal(18, 4)
+  totalCost          Decimal            @map("total_cost") @db.Decimal(18, 4)
+  totalCostPen       Decimal            @map("total_cost_pen") @db.Decimal(18, 4)
+  status             CoilStatus         @default(OPEN)
+  parentCoilId       String?            @map("parent_coil_id") @db.Uuid
+  parentCoil         Coil?              @relation("CoilParent", fields: [parentCoilId], references: [id])
+  childCoils         Coil[]             @relation("CoilParent")
   /// Partido que creó esta bobina hija (RF-15). Null en una bobina de compra.
-  splitId        String?       @map("split_id") @db.Uuid
-  split          CoilSplit?    @relation("SplitChildren", fields: [splitId], references: [id])
-  splitsAsParent CoilSplit[]   @relation("SplitParent")
+  splitId            String?            @map("split_id") @db.Uuid
+  split              CoilSplit?         @relation("SplitChildren", fields: [splitId], references: [id])
+  splitsAsParent     CoilSplit[]        @relation("SplitParent")
+  /// Recepción de corte tercerizado que creó este fleje (RF-41). Null salvo `kind=STRIP`
+  /// nacido de una orden de corte (D-049); un fleje de partido interno usa `splitId`.
+  cuttingOrderCoilId String?            @map("cutting_order_coil_id") @db.Uuid
+  cuttingOrderCoil   CuttingOrderCoil?  @relation("CuttingOrderCoilStrips", fields: [cuttingOrderCoilId], references: [id])
+  /// Órdenes de corte en las que esta bobina fue la enviada (RF-40), vía `CuttingOrderCoil.coilId`.
+  cuttingOrderSends  CuttingOrderCoil[] @relation("CuttingOrderCoilSource")
   /// Observaciones editables mientras la bobina está abierta (RF-20).
-  notes          String?       @db.VarChar(500)
-  createdById    String        @map("created_by_id") @db.Uuid
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  notes              String?            @db.VarChar(500)
+  createdById        String             @map("created_by_id") @db.Uuid
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([businessLineId, status])
   @@index([typeKey])
   @@index([supplierId])
   @@index([parentCoilId])
   @@index([splitId])
+  @@index([kind, typeKey])
+  @@index([cuttingOrderCoilId])
   @@map("coils")
 }
 
@@ -644,4 +694,67 @@ model CoilSplit {
 
   @@index([parentCoilId])
   @@map("coil_splits")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 3 — Corte tercerizado y flejes (RF-40..42, D-049/D-050)
+// ---------------------------------------------------------------------------
+
+/// Orden de corte tercerizado (RF-40..42). Agrupa una o más bobinas enviadas al mismo
+/// proveedor de corte (`providesCuttingService=true`) en el mismo envío. El envío NO
+/// mueve kardex (D-050): cada bobina de la orden pasa a `IN_THIRD_PARTY` y el kardex real
+/// se emite recién al recibirla (`CuttingOrderCoil`).
+model CuttingOrder {
+  id             String             @id @default(uuid()) @db.Uuid
+  supplierId     String             @map("supplier_id") @db.Uuid
+  supplier       Supplier           @relation(fields: [supplierId], references: [id])
+  /// Línea de negocio de las bobinas enviadas; todas las de una misma orden comparten
+  /// línea (se valida al enviar), así que vive acá para filtrar sin unir con `coils`.
+  businessLineId String             @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine       @relation(fields: [businessLineId], references: [id])
+  status         CuttingOrderStatus @default(SENT)
+  sentAt         DateTime           @default(now()) @map("sent_at") @db.Timestamptz(3)
+  cancelledAt    DateTime?          @map("cancelled_at") @db.Timestamptz(3)
+  notes          String?            @db.VarChar(500)
+  createdById    String             @map("created_by_id") @db.Uuid
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  coils     CuttingOrderCoil[]
+  purchases Purchase[]
+
+  @@index([supplierId, status])
+  @@index([businessLineId, status])
+  @@map("cutting_orders")
+}
+
+/// Una bobina dentro de una orden de corte, con su plan de anchos y —tras recibirla— lo
+/// que realmente volvió. `widthPlanMm`/`receivedWidthsMm` son arrays JSON
+/// `[{ widthMm, stripsCount }]` (mismo shape que el partido interno, RF-15); comparar
+/// ambos es lo que la vista usa para mostrar la diferencia plan vs. real.
+model CuttingOrderCoil {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  cuttingOrderId     String                 @map("cutting_order_id") @db.Uuid
+  cuttingOrder       CuttingOrder           @relation(fields: [cuttingOrderId], references: [id], onDelete: Cascade)
+  coilId             String                 @map("coil_id") @db.Uuid
+  coil               Coil                   @relation("CuttingOrderCoilSource", fields: [coilId], references: [id])
+  widthPlanMm        Json                   @map("width_plan_mm")
+  expectedKerfLossMm Decimal                @map("expected_kerf_loss_mm") @db.Decimal(8, 2)
+  status             CuttingOrderCoilStatus @default(SENT)
+  receivedAt         DateTime?              @map("received_at") @db.Timestamptz(3)
+  receivedWidthsMm   Json?                  @map("received_widths_mm")
+  /// Kilos realmente recibidos (input del operario, RF-41); base del prorrateo de `planCoilSplit`.
+  receivedWeightKg   Decimal?               @map("received_weight_kg") @db.Decimal(12, 3)
+  receivedKerfLossMm Decimal?               @map("received_kerf_loss_mm") @db.Decimal(8, 2)
+  /// Kilos que se llevó la merma de corte real; `receivedWeightKg` − Σ pesos de flejes.
+  receivedKerfLossKg Decimal?               @map("received_kerf_loss_kg") @db.Decimal(12, 3)
+  cancelledAt        DateTime?              @map("cancelled_at") @db.Timestamptz(3)
+  createdById        String                 @map("created_by_id") @db.Uuid
+  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  strips Coil[] @relation("CuttingOrderCoilStrips")
+
+  @@index([cuttingOrderId])
+  @@index([coilId])
+  @@map("cutting_order_coils")
 }

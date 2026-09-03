@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { decimalStringSchema, MAX_VALUE, toDecimal } from '../decimal';
-import { BUSINESS_LINES, COIL_SPLIT_STATUSES, COIL_STATUSES, CURRENCIES } from '../enums';
+import {
+  BUSINESS_LINES,
+  COIL_KINDS,
+  COIL_SPLIT_STATUSES,
+  COIL_STATUSES,
+  CURRENCIES,
+} from '../enums';
 
 /**
  * Bobina de acero (RF-10..RF-14). Alta siempre por una de las tres vías de Fase 2a
@@ -14,6 +20,8 @@ export const coilSchema = z.object({
   code: z.string(),
   /** RF-14: `{finishCode}-{thicknessMm}`, ignora el ancho. */
   typeKey: z.string(),
+  /** D-049: `COIL` (bobina) o `STRIP` (fleje). */
+  kind: z.enum(COIL_KINDS),
   businessLine: z.enum(BUSINESS_LINES),
   supplierId: z.string().uuid(),
   supplierName: z.string(),
@@ -51,6 +59,8 @@ export const coilQuerySchema = z.object({
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
   status: z.enum(COIL_STATUSES).optional(),
   supplierId: z.string().uuid().optional(),
+  /** D-049: filtra bobinas (`COIL`) o flejes (`STRIP`); sin filtro trae ambos. */
+  kind: z.enum(COIL_KINDS).optional(),
   search: z.string().trim().max(80).optional(),
 });
 export type CoilQuery = z.infer<typeof coilQuerySchema>;
