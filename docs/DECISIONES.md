@@ -429,7 +429,7 @@ El chequeo **toma el lock de las filas de los flejes antes de mirar** (`SELECT �
 
 **Fecha:** 2026-09-03
 
-**Contexto.** Al abrir la Sesión M-2, el `deny` de `Read(./.env*)` en `.claude/settings.json` apareció eliminado del árbol de trabajo (junto con `Bash(sed:*)` agregado al `allow`), con `Read(**)` y `defaultMode: auto` ya vigentes — es decir, cualquier agente podía leer `.env.setup` (que la regla dura 5 de `CLAUDE.md` prohíbe imprimir: tiene **todas** las credenciales del proyecto) sin que nada lo bloqueara. El cambio era anterior a la sesión y de origen desconocido; ya había sido restaurado una vez, durante el cierre de Fase 4, y para cuando se abrió la Sesión M-2 sobre esta misma fase seguía intacto (sin volver a faltar).
+**Contexto.** Al abrir la Sesión M-2 sobre Fase 4, el `deny` de `Read(./.env*)` en `.claude/settings.json` apareció **eliminado del árbol de trabajo** (junto con `Bash(sed:*)` agregado al `allow`), con `Read(**)` y `defaultMode: auto` ya vigentes — es decir, cualquier agente podía leer `.env.setup` (que la regla dura 5 de `CLAUDE.md` prohíbe imprimir: tiene **todas** las credenciales del proyecto) sin que nada lo bloqueara. El cambio era anterior a esa sesión y de origen desconocido; se restauró entonces, ampliado a `Read(**/.env*)`. Al abrir la Sesión **M-2** (esta), se verificó que seguía intacto — no había vuelto a faltar.
 
 **Decisión.** El `deny` de `.env*` (ampliado en Fase 4 de `Read(./.env*)` a también `Read(**/.env*)`) es una política **permanente**, no una configuración de sesión que un agente pueda remover o negociar. Si vuelve a faltar, restaurarlo es la acción correcta por defecto — no una pregunta de "¿esto se quitó a propósito?".
 
