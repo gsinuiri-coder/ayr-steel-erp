@@ -78,6 +78,23 @@ export class CatalogService {
     });
     if (!before) throw new NotFoundException('Producto no encontrado');
 
+    // D-055/D-059: la receta valida al crearse que el producto sea fabricado y se mida en
+    // piezas. Dejar cambiar esas dos cosas después esquivaría la validación y la orden de
+    // producción quedaría metiendo piezas a un producto que dice medirse en kilos.
+    const changesUnit = input.unit !== undefined && input.unit !== before.unit;
+    const changesSource = input.source !== undefined && input.source !== before.source;
+    if (changesUnit || changesSource) {
+      const bom = await this.prisma.productBom.findUnique({
+        where: { productId: id },
+        select: { id: true },
+      });
+      if (bom) {
+        throw new BadRequestException(
+          'El producto tiene una receta de fabricación: desactiva la receta antes de cambiarle la unidad o el origen',
+        );
+      }
+    }
+
     const data: Prisma.ProductUpdateInput = {};
     if (input.name !== undefined) data.name = input.name;
     if (input.unit !== undefined) data.unit = input.unit;

@@ -4,10 +4,13 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  BusinessLine,
   BUSINESS_LINE_LABELS,
   ImportEntity,
   PRODUCT_SOURCE_LABELS,
+  ProductSource,
   Role,
+  Unit,
   type BusinessLineDto,
   type ProductDto,
 } from '@ayr/shared';
@@ -26,7 +29,25 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ImportDialog } from '@/components/imports/import-dialog';
+import { BomDialog } from './bom-dialog';
 import { ProductDialog } from './product-dialog';
+
+/**
+ * D-059: solo los perfiles fabricados de Drywall llevan receta en Fase 4. Coberturas
+ * van contra cotización (RF-31) y son de Fase 5, así que no se les ofrece todavía.
+ *
+ * Las mismas condiciones que valida `BomsService.upsert`, para no ofrecer un diálogo que
+ * el API va a rechazar recién al guardarlo: el producto tiene que estar activo y medirse
+ * en piezas (`NIU`, D-055).
+ */
+function hasBom(product: ProductDto): boolean {
+  return (
+    product.businessLineCode === BusinessLine.DRYWALL &&
+    product.source === ProductSource.MANUFACTURED &&
+    product.isActive &&
+    product.unit === Unit.NIU
+  );
+}
 
 const CATALOG_QUERY_KEY = ['catalog'] as const;
 
@@ -41,6 +62,7 @@ export function CatalogoView() {
     lineId: string;
     nonce: number;
   }>({ open: false, lineId: '', nonce: 0 });
+  const [bomProduct, setBomProduct] = useState<ProductDto | null>(null);
 
   const lines = useQuery({
     queryKey: ['business-lines'],
@@ -155,13 +177,27 @@ export function CatalogoView() {
                             >
                               {p.isActive ? 'Desactivar' : 'Activar'}
                             </Button>
+                            {hasBom(p) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setBomProduct(p);
+                                }}
+                              >
+                                Receta
+                              </Button>
+                            )}
                           </TableCell>
                         )}
                       </TableRow>
                     ))}
                     {lineProducts.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        <TableCell
+                          colSpan={isAdmin ? 6 : 5}
+                          className="text-center text-muted-foreground"
+                        >
                           Sin productos en esta línea.
                         </TableCell>
                       </TableRow>
@@ -182,6 +218,17 @@ export function CatalogoView() {
           product={dialog.product}
           onOpenChange={(open) => {
             setDialog((d) => ({ ...d, open }));
+          }}
+        />
+      )}
+
+      {isAdmin && bomProduct && (
+        <BomDialog
+          key={bomProduct.id}
+          open
+          product={bomProduct}
+          onOpenChange={(open) => {
+            if (!open) setBomProduct(null);
           }}
         />
       )}

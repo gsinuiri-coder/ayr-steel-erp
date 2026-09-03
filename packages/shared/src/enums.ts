@@ -444,3 +444,51 @@ export const CUTTING_ORDER_COIL_STATUS_LABELS: Record<CuttingOrderCoilStatus, st
   RECEIVED: 'Recibida',
   CANCELLED: 'Anulada',
 };
+
+// ---------------------------------------------------------------------------
+// Fase 4 — producción de drywall (RF-32..35, RF-38, RF-39, D-055..D-060)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estado de una orden de producción (D-058). `DRAFT` mientras no tiene ningún fleje
+ * asignado; `IN_PROGRESS` desde el primero. `CLOSED` y `CANCELLED` son terminales.
+ */
+export const ProductionOrderStatus = {
+  DRAFT: 'DRAFT',
+  IN_PROGRESS: 'IN_PROGRESS',
+  CLOSED: 'CLOSED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type ProductionOrderStatus =
+  (typeof ProductionOrderStatus)[keyof typeof ProductionOrderStatus];
+export const PRODUCTION_ORDER_STATUSES = Object.values(ProductionOrderStatus) as [
+  ProductionOrderStatus,
+  ...ProductionOrderStatus[],
+];
+export const PRODUCTION_ORDER_STATUS_LABELS: Record<ProductionOrderStatus, string> = {
+  DRAFT: 'Borrador',
+  IN_PROGRESS: 'En proceso',
+  CLOSED: 'Cerrada',
+  CANCELLED: 'Anulada',
+};
+
+/** Estado de un reporte de piezas dentro de una OP (D-060). */
+export const ProductionReportStatus = {
+  ACTIVE: 'ACTIVE',
+  REVERTED: 'REVERTED',
+} as const;
+export type ProductionReportStatus =
+  (typeof ProductionReportStatus)[keyof typeof ProductionReportStatus];
+export const PRODUCTION_REPORT_STATUSES = Object.values(ProductionReportStatus) as [
+  ProductionReportStatus,
+  ...ProductionReportStatus[],
+];
+export const PRODUCTION_REPORT_STATUS_LABELS: Record<ProductionReportStatus, string> = {
+  ACTIVE: 'Vigente',
+  REVERTED: 'Revertido',
+};
+
+/** `123` → `OP-000123`. Correlativo legible de una orden de producción. */
+export function productionOrderCode(seq: number): string {
+  return `OP-${String(seq).padStart(6, '0')}`;
+}

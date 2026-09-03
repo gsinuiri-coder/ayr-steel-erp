@@ -105,6 +105,69 @@ try {
   );
   console.log(`Proveedores E2E: ${e2eSupplierIds.size}`);
 
+  // -2) Órdenes de producción E2E (Fase 4, D-060). Van primero de todo: mientras una OP
+  //     tenga flejes tomados, el guardrail de D-060 bloquea la reversa de la recepción de
+  //     corte, la anulación de la bobina y la de la compra — y mientras tenga reportes
+  //     vigentes, el producto terminado conserva piezas de prueba en el inventario
+  //     valorizado (RF-51). Se deshace en el orden inverso al que se construyó: reabrir
+  //     el cierre, revertir los reportes del más nuevo al más viejo y anular la orden,
+  //     que libera los flejes sin tocar el kardex.
+  const productionOrders = await call('/production');
+  const e2eProductionOrders = (
+    Array.isArray(productionOrders.body) ? productionOrders.body : []
+  ).filter(
+    (o) =>
+      // Con separador, igual que los proveedores `E2E …`: `E2E` a secas alcanzaría a un
+      // SKU legítimo del cliente que empiece con esas tres letras, y esto corre contra
+      // producción reabriendo órdenes y revirtiendo reportes.
+      typeof o.productSku === 'string' &&
+      o.productSku.startsWith('E2E-') &&
+      o.status !== 'CANCELLED',
+  );
+  console.log(`Órdenes de producción E2E vivas: ${e2eProductionOrders.length}`);
+  for (const order of e2eProductionOrders) {
+    if (dryRun) {
+      console.log(`  [simulado] deshacer y anular la orden de producción ${order.code}`);
+      continue;
+    }
+    if (order.status === 'CLOSED') {
+      const res = await call(`/production/${order.id}/reopen`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  ${order.code} reabierta`
+          : `  ${order.code} NO se pudo reabrir: ${res.body?.message ?? res.status}`,
+      );
+    }
+    const detail = await call(`/production/${order.id}`);
+    const active = (Array.isArray(detail.body?.reports) ? detail.body.reports : []).filter(
+      (r) => r.status === 'ACTIVE',
+    );
+    // Del más nuevo al más viejo: la reversa solo acepta el último reporte vigente.
+    for (const report of [...active].reverse()) {
+      const res = await call(`/production/${order.id}/reports/${report.id}/reverse`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  ${order.code}: reporte de ${report.pieces} piezas revertido`
+          : `  ${order.code}: reporte de ${report.pieces} piezas NO se pudo revertir: ${res.body?.message ?? res.status}`,
+      );
+    }
+    const cancelled = await call(`/production/${order.id}/cancel`, {
+      method: 'POST',
+      body: { reason: REASON },
+    });
+    console.log(
+      cancelled.ok
+        ? `  ${order.code} anulada; sus flejes quedan libres`
+        : `  ${order.code} NO se pudo anular: ${cancelled.body?.message ?? cancelled.status}`,
+    );
+  }
+
   // -1) Recepciones de corte E2E ya recibidas (Fase 3b, D-052): mientras la bobina
   //     madre tenga el movimiento CUTTING de esa recepción, ni el paso 1 (anular
   //     compra) ni el paso 2 (anular bobina) la alcanzan — es justo el residuo que

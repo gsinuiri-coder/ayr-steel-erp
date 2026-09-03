@@ -4,6 +4,7 @@ import {
   Boxes,
   Factory,
   FileText,
+  HardHat,
   Home,
   Layers,
   PackageSearch,
@@ -79,7 +80,12 @@ export const NAV: NavGroup[] = [
         href: '/produccion',
         icon: Factory,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-        soon: true,
+      },
+      {
+        title: 'Terminal de planta',
+        href: '/planta',
+        icon: HardHat,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
       {
         title: 'Proveedores',

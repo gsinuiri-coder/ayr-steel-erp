@@ -1,6 +1,5 @@
 {
   "permissions": {
-    "defaultMode": "auto",
     "allow": [
       "Bash(pnpm:*)",
       "Bash(npx:*)",
@@ -14,10 +13,10 @@
       "Bash(curl:*)",
       "Read(**)",
       "Edit(**)",
-      "Write(**)",
       "mcp__playwright__*",
       "mcp__context7__*"
     ],
-    "deny": ["Bash(rm -rf /*)", "Bash(git push --force*)", "Read(./.env*)"]
+    "deny": ["Bash(rm -rf /*)", "Bash(git push --force*)", "Read(./.env*)", "Read(**/.env*)"],
+    "defaultMode": "auto"
   }
 }

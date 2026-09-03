@@ -5,33 +5,56 @@
  * negocio. Se invoca desde `scripts/prod-e2e-leftovers.mjs`, que le pasa la conexión.
  */
 import { PrismaClient } from '@prisma/client';
+import { toDecimal } from '@ayr/shared';
 
 const TEST_NAME = { contains: 'E2E', mode: 'insensitive' as const };
 
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
   try {
-    const [suppliers, finishes, products, coils, purchases, movements] = await Promise.all([
-      prisma.supplier.findMany({
-        where: { name: TEST_NAME },
-        select: { code: true, isActive: true },
-      }),
-      prisma.finish.findMany({ where: { name: TEST_NAME }, select: { isActive: true } }),
-      prisma.product.findMany({
-        where: { sku: { startsWith: 'BOB' } },
-        select: { sku: true, isActive: true },
-      }),
-      prisma.coil.findMany({
-        where: { supplier: { name: TEST_NAME } },
-        select: { code: true, status: true },
-      }),
-      prisma.purchase.findMany({
-        where: { supplier: { name: TEST_NAME } },
-        select: { series: true, number: true, type: true, status: true, total: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-      prisma.inventoryMovement.count(),
-    ]);
+    const [suppliers, finishes, products, coils, purchases, movements, profiles, orders] =
+      await Promise.all([
+        prisma.supplier.findMany({
+          where: { name: TEST_NAME },
+          select: { code: true, isActive: true },
+        }),
+        prisma.finish.findMany({ where: { name: TEST_NAME }, select: { isActive: true } }),
+        prisma.product.findMany({
+          where: { sku: { startsWith: 'BOB' } },
+          select: { sku: true, isActive: true },
+        }),
+        prisma.coil.findMany({
+          where: { supplier: { name: TEST_NAME } },
+          select: { code: true, status: true },
+        }),
+        prisma.purchase.findMany({
+          where: { supplier: { name: TEST_NAME } },
+          select: { series: true, number: true, type: true, status: true, total: true },
+          orderBy: { createdAt: 'asc' },
+        }),
+        prisma.inventoryMovement.count(),
+        // Fase 4: perfiles de prueba (`E2E…`) y sus órdenes de producción. Las piezas que
+        // una OP cerrada dejó en stock se ven en `profileStock`: es lo que `prod:purge-e2e`
+        // tiene que dejar en cero reabriendo la OP y revirtiendo sus reportes (D-060).
+        prisma.product.findMany({
+          where: { sku: { startsWith: 'E2E-' } },
+          select: { id: true, sku: true, isActive: true },
+        }),
+        prisma.productionOrder.findMany({
+          where: { product: { sku: { startsWith: 'E2E-' } } },
+          select: { seq: true, status: true },
+          orderBy: { seq: 'asc' },
+        }),
+      ]);
+
+    // `inventory_balances.item_id` es polimórfico (§3.2): no hay FK que unir, así que el
+    // saldo de los perfiles de prueba se pide con los ids ya resueltos.
+    const profileStock = profiles.length
+      ? await prisma.inventoryBalance.findMany({
+          where: { itemType: 'PRODUCT', itemId: { in: profiles.map((p) => p.id) } },
+          select: { itemId: true, qty: true },
+        })
+      : [];
 
     const active = (rows: { isActive: boolean }[]) => rows.filter((r) => r.isActive).length;
     console.warn(`proveedores E2E: ${suppliers.length} (activos: ${active(suppliers)})`);
@@ -45,6 +68,19 @@ async function main(): Promise<void> {
     console.warn(`compras de proveedores E2E: ${purchases.length}`);
     for (const p of purchases) {
       console.warn(`  ${p.series}-${p.number}  ${p.type}  ${p.status}  ${p.total.toFixed(2)}`);
+    }
+    console.warn(
+      `perfiles E2E de drywall (Fase 4): ${profiles.length} (activos: ${active(profiles)})`,
+    );
+    console.warn(
+      `órdenes de producción E2E: ${orders.length} [${orders.map((o) => o.status).join(', ')}]`,
+    );
+    // Regla dura 1: una cantidad de kardex no se compara con `Number` ni siquiera acá.
+    const piecesInStock = profileStock.filter((b) => toDecimal(b.qty.toString()).gt(0));
+    console.warn(`perfiles E2E con piezas en stock: ${piecesInStock.length}`);
+    for (const b of piecesInStock) {
+      const sku = profiles.find((p) => p.id === b.itemId)?.sku ?? b.itemId;
+      console.warn(`  ${sku} — ${b.qty.toFixed(3)} piezas`);
     }
     console.warn(`movimientos de kardex en total: ${movements}`);
   } finally {

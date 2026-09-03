@@ -49,6 +49,7 @@ import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertStripsNotAssigned } from '../production/production-assignments';
 import { prorateByWeight } from './landed-cost';
 import { parseInvoiceXml } from './invoice-xml';
 import {
@@ -422,6 +423,20 @@ export class PurchasesService {
             );
           }
 
+          // D-060: mismo hueco que el anterior, ahora con producción. Los flejes que
+          // nacieron de una bobina de esta compra heredan su `purchaseId`, y montarlos en
+          // una OP tampoco deja movimiento de kardex que `assertNothingMovedAfter` pueda
+          // ver: sin este chequeo la anulación los cancelaba con la orden en curso.
+          const purchaseCoils = await tx.coil.findMany({
+            where: { purchaseId: id, status: { not: CoilStatus.CANCELLED } },
+            select: { id: true },
+          });
+          await assertStripsNotAssigned(
+            tx,
+            purchaseCoils.map((c) => c.id),
+            'anular la compra',
+          );
+
           const cancelled = await tx.coil.updateMany({
             where: { purchaseId: id, status: { not: CoilStatus.CANCELLED } },
             data: { status: CoilStatus.CANCELLED },
@@ -561,9 +576,16 @@ export class PurchasesService {
     // Se bloquean las bobinas antes de leer sus saldos: sin esto, entre la lectura y el
     // `FOR UPDATE` interno de `adjustCost` alguien puede consumir la bobina y el ajuste
     // se pierde, dejando el costo del documento inflado sin movimiento que lo respalde.
-    await tx.$queryRaw`
-      SELECT "id" FROM "coils" WHERE "id" = ANY(${coils.map((c) => c.id)}::uuid[]) FOR UPDATE
-    `;
+    // (`assertStripsNotAssigned` toma el mismo lock, así que este bloque queda cubierto.)
+    // D-060: un fleje nacido de estas bobinas puede estar montado en una OP viva —los
+    // flejes heredan el `purchaseId` de su madre—, y subirle el costo a mitad de corrida
+    // haría que los reportes previos y los siguientes salieran a costos distintos. Es la
+    // misma razón por la que D-045 (recostear una bobina) ya está bloqueado.
+    await assertStripsNotAssigned(
+      tx,
+      coils.map((c) => c.id),
+      'imputar este costo',
+    );
 
     const balances = await tx.inventoryBalance.findMany({
       where: { itemType: 'COIL', itemId: { in: coils.map((c) => c.id) } },
@@ -683,10 +705,14 @@ export class PurchasesService {
     if (strips.length === 0) return { amountPen: '0.0000', strips: 0, imputed: false };
 
     // Mismo cuidado que `applyLandedCost`: bloquear antes de leer saldos evita que un
-    // consumo concurrente deje el costo del documento inflado sin movimiento detrás.
-    await tx.$queryRaw`
-      SELECT "id" FROM "coils" WHERE "id" = ANY(${strips.map((s) => s.id)}::uuid[]) FOR UPDATE
-    `;
+    // consumo concurrente deje el costo del documento inflado sin movimiento detrás, y el
+    // guardrail de D-060 impide subirle el costo a un fleje que una OP viva ya está
+    // perfilando (sus reportes previos habrían salido a otro costo que los siguientes).
+    await assertStripsNotAssigned(
+      tx,
+      strips.map((s) => s.id),
+      'imputar el costo del corte',
+    );
 
     const balances = await tx.inventoryBalance.findMany({
       where: { itemType: 'COIL', itemId: { in: strips.map((s) => s.id) } },

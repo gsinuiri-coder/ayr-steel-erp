@@ -29,6 +29,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { liveMovements } from '../inventory/live-movements';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertStripsNotAssigned } from '../production/production-assignments';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
 import { CoilsService } from './coils.service';
 
@@ -61,6 +62,10 @@ export class CoilOperationsService {
         if (coil.status !== CoilStatus.OPEN) {
           throw new BadRequestException(notOpenMessage(coil.status));
         }
+        // D-060: un fleje tomado por una OP no deja rastro de kardex, así que nada más
+        // acá lo detectaría; partirlo mientras la orden lo tiene montado le sacaría el
+        // material por debajo.
+        await assertStripsNotAssigned(tx, [coil.id], 'partirlo');
 
         const balance = await tx.inventoryBalance.findUnique({
           where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
@@ -139,6 +144,12 @@ export class CoilOperationsService {
                 refId: split.id,
                 parentCoilId: coil.id,
                 splitId: split.id,
+                // La hija hereda la clase de la madre (D-049): partir un **fleje** para
+                // reancharlo devuelve flejes, no bobinas. Sin esto, la hija nacía con el
+                // `@default(COIL)` de la columna y se caía del stock de flejes (RF-42),
+                // producción la rechazaba por "es una bobina, no un fleje", y el guardrail
+                // de D-060 sobre las hijas de un partido quedaba inalcanzable.
+                kind: coil.kind,
                 actorId: actor.id,
               },
               { ...batch, sequence: batch.sequence + index },
@@ -203,6 +214,13 @@ export class CoilOperationsService {
         if (coil.status === CoilStatus.IN_THIRD_PARTY) {
           throw new BadRequestException(notOpenMessage(coil.status));
         }
+        // D-060: una hija de este partido puede ser un fleje ya montado en una OP, y esa
+        // asignación no deja movimiento de kardex que el chequeo de abajo pueda ver.
+        await assertStripsNotAssigned(
+          tx,
+          split.children.map((c) => c.id),
+          'revertir el partido',
+        );
 
         const all = await tx.inventoryMovement.findMany({
           where: { refType: 'SPLIT', refId: splitId },
@@ -302,6 +320,9 @@ export class CoilOperationsService {
       if (coil.status === CoilStatus.CANCELLED || coil.status === CoilStatus.IN_THIRD_PARTY) {
         throw new BadRequestException(notOpenMessage(coil.status));
       }
+      // D-060: mermar un fleje montado en una OP le quitaría a la orden el material que
+      // sus piezas todavía no consumieron, y la merma del cierre saldría de menos.
+      await assertStripsNotAssigned(tx, [coil.id], 'registrarle merma');
 
       const movement = await this.inventory.record(tx, {
         businessLineId: coil.businessLineId,
@@ -343,7 +364,21 @@ export class CoilOperationsService {
       if (movement.refType !== 'SCRAP' || movement.itemType !== 'COIL') {
         throw new BadRequestException('Ese movimiento no es una merma de bobina');
       }
+      // La merma de RF-17 apunta a la bobina misma (`refId = coil.id`); la merma de proceso
+      // del cierre de una OP (D-057) apunta a la orden. Sin distinguirlas, anular esta
+      // última devolvía los kilos y el valor al fleje mientras el producto terminado
+      // conservaba el costo absorbido (D-056): valor creado de la nada en el valorizado,
+      // y una reapertura posterior que ya no vería esa merma y duplicaría los kilos.
+      if (movement.refId !== movement.itemId) {
+        throw new BadRequestException(
+          'Esa merma es la merma de proceso del cierre de una orden de producción: reabre la orden para deshacerla (D-057)',
+        );
+      }
       await this.coils.lockCoil(tx, movement.itemId);
+      // Devolver los kilos de una merma anulada recalcula el costo promedio del fleje: si
+      // una OP ya reportó piezas contra él, sus reportes siguientes saldrían a otro costo
+      // que los anteriores (mismo motivo que bloquea recostear, D-045/D-060).
+      await assertStripsNotAssigned(tx, [movement.itemId], 'anular la merma');
       const reversal = await this.inventory.reverse(tx, movementId, actor.id, reason);
 
       await this.audit.write(tx, {
@@ -369,6 +404,9 @@ export class CoilOperationsService {
       if (coil.status === CoilStatus.CANCELLED || coil.status === CoilStatus.IN_THIRD_PARTY) {
         throw new BadRequestException(notOpenMessage(coil.status));
       }
+      // D-060: cerrar un fleje que una OP tiene montado lo sacaría de producción justo
+      // mientras la orden lo está usando.
+      await assertStripsNotAssigned(tx, [coil.id], 'cambiarle el estado');
       if (coil.status === input.status) {
         throw new BadRequestException(
           input.status === CoilStatus.OPEN
@@ -412,6 +450,12 @@ export class CoilOperationsService {
       }
       if (input.widthMm !== undefined && coil.status !== CoilStatus.OPEN) {
         throw new BadRequestException('El ancho solo se edita con la bobina abierta');
+      }
+      // D-060: recostear (D-045) o reanchar un fleje montado en una OP cambiaría, a mitad
+      // de la corrida, el costo con el que ya entraron piezas y el ancho contra el que se
+      // validó la receta.
+      if (touchesCost || input.widthMm !== undefined) {
+        await assertStripsNotAssigned(tx, [coil.id], 'editarlo');
       }
 
       const data: Prisma.CoilUpdateInput = {};
@@ -500,6 +544,9 @@ export class CoilOperationsService {
       if (coil.status === CoilStatus.IN_THIRD_PARTY) {
         throw new BadRequestException(notOpenMessage(coil.status));
       }
+      // D-060: anular un fleje montado en una OP dejaría a la orden apuntando a material
+      // que ya no existe, sin ningún movimiento de kardex que lo delatara.
+      await assertStripsNotAssigned(tx, [coil.id], 'anularlo');
       if (coil.splitId) {
         throw new BadRequestException(
           'Es una bobina hija de un partido: revierte el partido en vez de anularla (RF-16)',

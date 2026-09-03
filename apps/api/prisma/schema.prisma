@@ -10,6 +10,10 @@
 // RF-40..42), flejes como `coils.kind = STRIP` (D-049), envío sin movimiento de kardex
 // (`CoilStatus.IN_THIRD_PARTY`, D-050) y prorrateo del costo del servicio de corte
 // (`purchases.related_cutting_order_id`).
+// Fase 4 (D-055..D-060): producción de drywall — receta en el maestro de productos
+// (`product_boms`), orden de producción (`production_orders`) con flejes asignados
+// (`production_order_consumptions`, sin kardex al asignar) y reportes parciales de
+// piezas (`production_reports`, kardex por reporte); merma de proceso y costeo al cerrar.
 // Regla D-003: dinero/kg/mm/tasas son siempre `Decimal @db.Decimal(p, s)` con
 // escala explícita (dinero 4, kg 3, mm 2, tasas/factores 4). Nunca `number`.
 
@@ -203,6 +207,24 @@ enum CoilSplitStatus {
   REVERTED
 }
 
+/// Estado de una orden de producción (RF-34, Fase 4, D-058). La UI los llama
+/// BORRADOR / EN PROCESO / CERRADA / ANULADA (§0.1: identificadores en inglés).
+/// `DRAFT` es la OP recién creada, sin ningún fleje asignado todavía; `IN_PROGRESS`
+/// desde que se le asigna el primero. `CLOSED` y `CANCELLED` son terminales.
+enum ProductionOrderStatus {
+  DRAFT
+  IN_PROGRESS
+  CLOSED
+  CANCELLED
+}
+
+/// Estado de un reporte de piezas dentro de una OP (D-060). Revertir no borra la fila:
+/// la marca `REVERTED` y emite las reversas de kardex, igual que `CoilSplitStatus`.
+enum ProductionReportStatus {
+  ACTIVE
+  REVERTED
+}
+
 /// Estado de una fila dentro de un lote de importación.
 enum ImportRowStatus {
   VALID
@@ -285,6 +307,7 @@ model BusinessLine {
   purchases          Purchase[]
   coils              Coil[]
   cuttingOrders      CuttingOrder[]
+  productionOrders   ProductionOrder[]
 
   @@map("business_lines")
 }
@@ -301,6 +324,7 @@ model Finish {
 
   coils         Coil[]
   purchaseItems PurchaseItem[]
+  boms          ProductBom[]
 
   @@map("finishes")
 }
@@ -319,7 +343,10 @@ model Product {
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  purchaseItems PurchaseItem[]
+  purchaseItems    PurchaseItem[]
+  /// Receta de fabricación (D-059). Solo la tienen los productos fabricados.
+  bom              ProductBom?
+  productionOrders ProductionOrder[]
 
   @@unique([businessLineId, sku])
   @@index([businessLineId])
@@ -650,6 +677,8 @@ model Coil {
   cuttingOrderCoil   CuttingOrderCoil?  @relation("CuttingOrderCoilStrips", fields: [cuttingOrderCoilId], references: [id])
   /// Órdenes de corte en las que esta bobina fue la enviada (RF-40), vía `CuttingOrderCoil.coilId`.
   cuttingOrderSends  CuttingOrderCoil[] @relation("CuttingOrderCoilSource")
+  /// Asignaciones de este fleje a órdenes de producción (RF-34, Fase 4, D-060).
+  productionInputs   ProductionOrderConsumption[]
   /// Observaciones editables mientras la bobina está abierta (RF-20).
   notes              String?            @db.VarChar(500)
   createdById        String             @map("created_by_id") @db.Uuid
@@ -762,4 +791,150 @@ model CuttingOrderCoil {
   @@index([cuttingOrderId])
   @@index([coilId])
   @@map("cutting_order_coils")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 4 — Producción de drywall y terminal `/planta` (RF-32..35, RF-38, RF-39)
+// ---------------------------------------------------------------------------
+
+/// Receta de un producto fabricado (D-059). En v1 hay **una receta por producto** y un
+/// solo insumo: el fleje. Un fleje no es un producto de catálogo (D-049: es una fila de
+/// `coils`), así que se identifica por acabado + espesor + ancho — exactamente el criterio
+/// con el que RF-42 agrupa el stock de flejes.
+///
+/// `kgPerPiece` es el kilo teórico de fleje que consume una pieza (D-047, D-055). Se
+/// sugiere desde la geometría (`inputWidthMm × thicknessMm × pieceLengthMm × densityFactor`
+/// del acabado) y el maestro puede sobreescribirlo con el valor medido en planta.
+model ProductBom {
+  id               String   @id @default(uuid()) @db.Uuid
+  productId        String   @unique @map("product_id") @db.Uuid
+  product          Product  @relation(fields: [productId], references: [id])
+  finishId         String   @map("finish_id") @db.Uuid
+  finish           Finish   @relation(fields: [finishId], references: [id])
+  inputThicknessMm Decimal  @map("input_thickness_mm") @db.Decimal(6, 2)
+  inputWidthMm     Decimal  @map("input_width_mm") @db.Decimal(8, 2)
+  /// Largo de una pieza terminada, en mm. Solo alimenta el cálculo sugerido de `kgPerPiece`.
+  pieceLengthMm    Decimal  @map("piece_length_mm") @db.Decimal(8, 2)
+  kgPerPiece       Decimal  @map("kg_per_piece") @db.Decimal(12, 3)
+  isActive         Boolean  @default(true) @map("is_active")
+  createdById      String   @map("created_by_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  productionOrders ProductionOrder[]
+
+  @@index([finishId, inputThicknessMm, inputWidthMm])
+  @@map("product_boms")
+}
+
+/// Orden de producción de drywall (RF-34, D-058). Consume flejes y produce piezas; la
+/// unidad primaria del producto terminado son **piezas** (D-055), no kilos.
+///
+/// `seq` es el correlativo que la UI muestra como `OP-000123`: un `serial` de Postgres,
+/// así dos altas concurrentes no compiten por un contador propio.
+/// Los campos de costeo (D-056) se calculan al **cerrar**; mientras la OP está viva son
+/// `null` porque el costo real solo se conoce cuando ya no entra ni sale material.
+model ProductionOrder {
+  id              String                @id @default(uuid()) @db.Uuid
+  seq             Int                   @unique @default(autoincrement())
+  businessLineId  String                @map("business_line_id") @db.Uuid
+  businessLine    BusinessLine          @relation(fields: [businessLineId], references: [id])
+  productId       String                @map("product_id") @db.Uuid
+  product         Product               @relation(fields: [productId], references: [id])
+  bomId           String                @map("bom_id") @db.Uuid
+  bom             ProductBom            @relation(fields: [bomId], references: [id])
+  status          ProductionOrderStatus @default(DRAFT)
+  /// Piezas que la corrida se propone producir. Referencia para planta; no bloquea nada.
+  targetPieces    Int?                  @map("target_pieces")
+  /// D-054: reserva que esta OP consume cuando nace de un pedido (Fase 5). En Fase 4
+  /// siempre `null` — drywall no depende de cotización (D-048) y el ledger de reservas
+  /// todavía no existe. La columna se crea ahora para no migrar la tabla dos veces.
+  reservationId   String?               @map("reservation_id") @db.Uuid
+  notes           String?               @db.VarChar(500)
+  /// Cierre (D-057): kilos asignados que no quedaron representados en piezas buenas.
+  scrapKg         Decimal?              @map("scrap_kg") @db.Decimal(12, 3)
+  /// Costeo v1 en soles (D-056, D-042). `overheadCostPen` es el hook de D-035: en v1
+  /// siempre 0, porque no hay mano de obra ni overhead estándar todavía.
+  materialCostPen Decimal?              @map("material_cost_pen") @db.Decimal(18, 4)
+  overheadCostPen Decimal?              @map("overhead_cost_pen") @db.Decimal(18, 4)
+  totalCostPen    Decimal?              @map("total_cost_pen") @db.Decimal(18, 4)
+  unitCostPen     Decimal?              @map("unit_cost_pen") @db.Decimal(18, 4)
+  createdById     String                @map("created_by_id") @db.Uuid
+  closedById      String?               @map("closed_by_id") @db.Uuid
+  closedAt        DateTime?             @map("closed_at") @db.Timestamptz(3)
+  cancelledById   String?               @map("cancelled_by_id") @db.Uuid
+  cancelledAt     DateTime?             @map("cancelled_at") @db.Timestamptz(3)
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  consumptions ProductionOrderConsumption[]
+  reports      ProductionReport[]
+
+  @@index([businessLineId, status])
+  @@index([productId])
+  @@map("production_orders")
+}
+
+/// Fleje puesto a disposición de una OP (D-060). **Asignar no mueve kardex**, mismo
+/// criterio que D-050 con el envío a corte: el fleje sigue siendo de la empresa y sigue
+/// en el almacén hasta que un reporte de piezas lo consume de verdad. Por eso un fleje
+/// con una asignación viva queda bloqueado para cualquier otra operación (merma, partido,
+/// anulación, corte, otra OP) mientras la OP no se cierre, se anule o lo libere.
+///
+/// `consumedKg` avanza con cada reporte de piezas y, al cerrar, con la merma de proceso;
+/// nunca supera `assignedKg`.
+model ProductionOrderConsumption {
+  id                String          @id @default(uuid()) @db.Uuid
+  productionOrderId String          @map("production_order_id") @db.Uuid
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  coilId            String          @map("coil_id") @db.Uuid
+  coil              Coil            @relation(fields: [coilId], references: [id])
+  assignedKg        Decimal         @map("assigned_kg") @db.Decimal(12, 3)
+  consumedKg        Decimal         @default(0) @map("consumed_kg") @db.Decimal(12, 3)
+  /// No nula cuando el fleje dejó de estar tomado por esta OP (liberación, anulación o
+  /// cierre). Es lo que hace que el guardrail deje de aplicar.
+  releasedAt        DateTime?       @map("released_at") @db.Timestamptz(3)
+  createdById       String          @map("created_by_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([productionOrderId])
+  @@index([coilId, releasedAt])
+  @@map("production_order_consumptions")
+}
+
+/// Reporte parcial de piezas producidas (D-058, patrón RF-41). Cada reporte emite el
+/// kardex completo de lo que produjo: la salida de los flejes por los kilos teóricos que
+/// esas piezas consumen (`refType=PRODUCTION`) y la entrada de las piezas al producto
+/// terminado, valorizada exactamente por lo que salió de los flejes.
+///
+/// Revertirlo (D-060) anula esos movimientos en bloque y devuelve los kilos a la
+/// asignación; la fila queda `REVERTED`, nunca se borra (§3.2).
+model ProductionReport {
+  id                String                 @id @default(uuid()) @db.Uuid
+  /// Orden real de los reportes de una OP. No se puede usar `createdAt`: en Postgres
+  /// `now()` es el instante en que **empezó la transacción**, así que dos reportes
+  /// concurrentes pueden quedar empatados o invertidos respecto al orden de commit, y
+  /// "revertir solo el último vigente" dejaría de ser cierto. Mismo criterio que el
+  /// kardex, que ordena por su `id` bigserial y no por `at`.
+  seq               Int                    @default(autoincrement())
+  productionOrderId String                 @map("production_order_id") @db.Uuid
+  productionOrder   ProductionOrder        @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  /// Piezas buenas. Unidad primaria del producto terminado (D-055).
+  pieces            Int
+  /// `pieces × bom.kgPerPiece`: los kilos de fleje que esas piezas consumen.
+  theoreticalKg     Decimal                @map("theoretical_kg") @db.Decimal(12, 3)
+  /// Valor en soles que salió de los flejes por este reporte (D-042).
+  materialCostPen   Decimal                @map("material_cost_pen") @db.Decimal(18, 4)
+  /// `materialCostPen / pieces`: costo con el que las piezas entraron al kardex.
+  unitCostPen       Decimal                @map("unit_cost_pen") @db.Decimal(18, 4)
+  status            ProductionReportStatus @default(ACTIVE)
+  notes             String?                @db.VarChar(240)
+  createdById       String                 @map("created_by_id") @db.Uuid
+  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  revertedById      String?                @map("reverted_by_id") @db.Uuid
+  revertedAt        DateTime?              @map("reverted_at") @db.Timestamptz(3)
+
+  @@unique([seq])
+  @@index([productionOrderId, status])
+  @@map("production_reports")
 }

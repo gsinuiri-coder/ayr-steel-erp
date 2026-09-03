@@ -28,6 +28,7 @@ import { CoilsService } from '../coils/coils.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertStripsNotAssigned } from '../production/production-assignments';
 import { deriveCuttingOrderStatus, expandWidthCounts, validateWidthBudget } from './cutting-math';
 
 /** Shape JSON de `widthPlanMm`/`receivedWidthsMm` (una fila por ancho, no por tira). */
@@ -369,6 +370,12 @@ export class CuttingService {
         // viene acotado por `liveMovements` a los vivos de esta recepción puntual.
         const stripIds = movements.filter((m) => m.type === 'IN').map((m) => m.itemId);
         const strips = await tx.coil.findMany({ where: { id: { in: stripIds } } });
+
+        // D-060: un fleje montado en una orden de producción no deja rastro de kardex
+        // (igual que el envío a corte de D-050 no lo deja), así que el chequeo de
+        // movimientos posteriores de más abajo no lo vería. Es el mismo hueco que este
+        // método ya tuvo que tapar a mano con `IN_THIRD_PARTY` sobre la madre.
+        await assertStripsNotAssigned(tx, stripIds, 'revertir la recepción');
 
         // Los flejes: mismo criterio "todo o nada" que RF-16 con las hijas de un
         // partido. Si uno ya se consumió, se vendió o se volvió a partir, devolver su
