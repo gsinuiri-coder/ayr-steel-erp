@@ -168,6 +168,48 @@ try {
     );
   }
 
+  /**
+   * Revierte las mermas de prueba vivas sobre flejes E2E (Fase 3b: el E2E de "reversa
+   * bloqueada por fleje consumido" registra una merma a propósito).
+   *
+   * Se llama **dos veces**: antes de revertir las recepciones de corte, porque esa merma
+   * es justo lo que bloquea la reversa ("el fleje X ya tiene movimientos posteriores"), y
+   * otra vez antes de anular bobinas, porque RF-21 exige que el fleje no tenga movimientos
+   * posteriores a su ingreso. Con una sola pasada al final, cuatro recepciones de corte se
+   * quedaban sin revertir y sus compras sin anular.
+   */
+  async function revertTestScraps() {
+    const openForScrap = await call('/coils?status=OPEN');
+    const strips = (Array.isArray(openForScrap.body) ? openForScrap.body : []).filter(
+      (c) => e2eSupplierIds.has(c.supplierId) && c.kind === 'STRIP',
+    );
+    for (const strip of strips) {
+      const movements = await call(`/inventory/movements?itemType=COIL&itemId=${strip.id}`);
+      const liveScrap = (Array.isArray(movements.body) ? movements.body : []).find(
+        (m) =>
+          m.refType === 'SCRAP' && m.type === 'OUT' && m.reversalOfId === null && !m.reversedById,
+      );
+      if (!liveScrap) continue;
+      if (dryRun) {
+        console.log(`  [simulado] revertir merma de prueba en el fleje ${strip.code}`);
+        continue;
+      }
+      const res = await call(`/coils/scraps/${liveScrap.id}/cancel`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  merma de prueba en ${strip.code} revertida`
+          : `  merma de prueba en ${strip.code} NO se pudo revertir: ${res.body?.message ?? res.status}`,
+      );
+    }
+  }
+
+  // -1.5) Mermas de prueba sobre flejes, antes de tocar las recepciones de corte: son
+  //       exactamente lo que hace fallar a la reversa de D-052.
+  await revertTestScraps();
+
   // -1) Recepciones de corte E2E ya recibidas (Fase 3b, D-052): mientras la bobina
   //     madre tenga el movimiento CUTTING de esa recepción, ni el paso 1 (anular
   //     compra) ni el paso 2 (anular bobina) la alcanzan — es justo el residuo que
@@ -249,10 +291,14 @@ try {
     );
   }
 
-  // 1) Compras recibidas: anularlas revierte su kardex y anula sus bobinas de una vez.
+  // 1) Compras de proveedores E2E. Anular una `RECEIVED` revierte su kardex y anula sus
+  //    bobinas de una vez; una `DRAFT` no movió nada, pero igual queda como documento de
+  //    prueba en `/compras` (los tests de rol dejan facturas de servicio sin recibir), así
+  //    que también se anula. Las que tienen un pago registrado se resisten, y el mensaje
+  //    lo dice.
   const purchases = await call('/purchases');
   const received = (Array.isArray(purchases.body) ? purchases.body : []).filter(
-    (p) => e2eSupplierIds.has(p.supplierId) && p.status === 'RECEIVED',
+    (p) => e2eSupplierIds.has(p.supplierId) && p.status !== 'CANCELLED',
   );
   for (const purchase of received) {
     if (dryRun) {
@@ -270,36 +316,9 @@ try {
     );
   }
 
-  // 1.5) Flejes con una merma de prueba viva (Fase 3b: el E2E de "reversa bloqueada
-  //      por fleje consumido" registra una merma a propósito). Esa merma es justo lo
-  //      que bloquea anular el fleje en el paso 2 (RF-21 exige que no tenga movimientos
-  //      posteriores a su ingreso), así que se revierte primero (RF-18) para que el
-  //      paso siguiente lo alcance.
-  const openForScrap = await call('/coils?status=OPEN');
-  const e2eStrips = (Array.isArray(openForScrap.body) ? openForScrap.body : []).filter(
-    (c) => e2eSupplierIds.has(c.supplierId) && c.kind === 'STRIP',
-  );
-  for (const strip of e2eStrips) {
-    const movements = await call(`/inventory/movements?itemType=COIL&itemId=${strip.id}`);
-    const liveScrap = (Array.isArray(movements.body) ? movements.body : []).find(
-      (m) =>
-        m.refType === 'SCRAP' && m.type === 'OUT' && m.reversalOfId === null && !m.reversedById,
-    );
-    if (!liveScrap) continue;
-    if (dryRun) {
-      console.log(`  [simulado] revertir merma de prueba en el fleje ${strip.code}`);
-      continue;
-    }
-    const res = await call(`/coils/scraps/${liveScrap.id}/cancel`, {
-      method: 'POST',
-      body: { reason: REASON },
-    });
-    console.log(
-      res.ok
-        ? `  merma de prueba en ${strip.code} revertida`
-        : `  merma de prueba en ${strip.code} NO se pudo revertir: ${res.body?.message ?? res.status}`,
-    );
-  }
+  // 1.5) Segunda pasada de mermas: la primera (antes de las reversas de corte) puede
+  //      haber dejado alguna fuera si el fleje todavía estaba tomado por una OP.
+  await revertTestScraps();
 
   // 2) Bobinas que quedaron con saldo y no cuelgan de una compra (alta por planilla,
   //    RF-12): se anulan una por una con el mismo endpoint de RF-21.

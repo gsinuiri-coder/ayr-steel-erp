@@ -12,7 +12,7 @@
 | 2b — Partido, merma, cierre, anulación       | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho   |
 | 3 — Corte tercerizado + flejes               | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho   |
 | 3b — Reversa de recepción de corte           | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho   |
-| 4 — Producción drywall + `/planta`           | 🟡 En curso             | —                                                        |
+| 4 — Producción drywall + `/planta`           | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho          |
 | 5 — Cotizaciones y ventas                    | ⚪ Pendiente            | —                                                        |
 | 6 — Facturación Nubefact                     | ⚪ Pendiente            | —                                                        |
 | 7 — Auditoría, reportes, UAT                 | ⚪ Pendiente            | —                                                        |
@@ -235,8 +235,8 @@ Lo que sigue sin cubrirse por E2E: operar el partido, la merma y las anulaciones
 | 7   | Tests unit (`theoreticalKgPerPiece`, reparto entre flejes, costeo)                                                    | ✅ 12 nuevos en `production-math.spec.ts` (133 unit en total)                       |
 | 8   | Revisión de `revisor` (API y web, por separado), `auditor-seguridad` y `qa`                                           | ✅ 1 bloqueante + 5 altos + 8 medios corregidos; ver abajo                          |
 | 9   | E2E de Fase 4                                                                                                         | ✅ 16 tests nuevos: 5 de flujo + 11 de bordes escritos por `qa`                     |
-| 10  | Deploy y migración en `production`; `pnpm e2e:prod` y `pnpm prod:purge-e2e`                                           | ⚪ pendiente                                                                        |
-| 11  | Cierre: handoff, commit, push                                                                                         | ⚪ pendiente                                                                        |
+| 10  | Deploy y migración en `production`; `pnpm e2e:prod` y `pnpm prod:purge-e2e`                                           | ✅ 56/56 contra producción; 0 stock de prueba tras la purga                         |
+| 11  | Cierre: handoff, commit, push                                                                                         | ✅ CI verde en `main` (corrida 33786845045)                                         |
 
 **El modelo, en cuatro actos.** Una OP fabrica un perfil contra la **receta** del producto (D-059: acabado + espesor + ancho del fleje, más `kgPerPiece`). **Consumir un fleje** lo pone a disposición de la orden y **no mueve kardex** (D-060, mismo criterio que D-050 con el envío a corte). **Reportar piezas** (N veces, D-058) saca del fleje los kilos teóricos de esas piezas y mete las piezas al producto terminado, que se lleva en **unidades, no en kilos** (D-055), valorizadas exactamente por lo que salió del fleje. **Cerrar** saca por diferencia la merma de proceso (D-057) y reparte todo el material —piezas y merma— entre las piezas buenas con un `ADJUST` (D-056). El resultado es que el valor que sale de los flejes es exactamente el que entra al producto: el kardex cierra sin residuo.
 
@@ -262,7 +262,22 @@ Lo que sigue sin cubrirse por E2E: operar el partido, la merma y las anulaciones
 
 **Lo que la auditoría de seguridad dejó explícitamente por escrito.** El `ADJUST` que emite el cierre de una OP **no** es equivalente al hallazgo alto de Fase 2b sobre el landed cost: allá el supervisor tipeaba un monto arbitrario que se inyectaba al costo del inventario (por eso D-043 pasó a ADMINISTRADOR); acá el ajuste es derivado y conservativo —`costo total − valor con el que entraron las piezas`— sobre material que §3.4 ya le da al supervisor, es reversible y queda auditado fleje por fleje. Por eso cerrar y reabrir siguen siendo del supervisor de planta y no se restringieron. `agy` rechazó la petición de segunda opinión ("my safety guidelines strictly prohibit performing targeted security auditing"), así que esta auditoría no tuvo contraste externo.
 
+**E2E de Fase 4 contra producción.** `pnpm e2e:prod` corre ahora `auth` + `fase1` + `fase2a` + `fase2b` + `fase3` + `fase3b` + `fase4` + `fase4-bordes` con el mismo administrador efímero: **56/56 verdes**; 57/57 en local (con `usuarios.spec.ts`). La primera corrida tras el deploy dejó 55/56: el primer test de UI de Fase 1 encontró la página de login sin hidratar (arranque en frío de Vercel recién desplegado, `getByLabel('Correo electrónico')` sin aparecer en 45 s). Repetida la corrida completa sin tocar nada, verde. No es un defecto de Fase 4 —los E2E de producción son todos por API— pero queda anotado: **la primera corrida contra producción justo después de un deploy puede fallar por arranque en frío**; conviene reintentarla antes de investigar.
+
+**Producción queda sin stock de prueba.** Verificado con `node scripts/prod-e2e-leftovers.mjs` tras `pnpm prod:purge-e2e`: **0 bobinas abiertas con saldo**, las 364 bobinas E2E en `CANCELLED`, las **44 órdenes de producción E2E anuladas** y **0 perfiles E2E con piezas en stock** — que es lo nuevo de esta fase, porque una OP cerrada deja piezas en el inventario valorizado y sin la reapertura (D-060) no habría forma de sacarlas. 1 218 movimientos de kardex conservados (§3.2).
+
+`prod:purge-e2e` necesitó dos correcciones para llegar a eso: revertir las mermas de prueba de los flejes **antes** de las recepciones de corte (con una sola pasada al final, cuatro recepciones se quedaban sin revertir y sus compras sin anular, porque la merma es justo lo que bloquea la reversa de D-052), y anular también las compras `DRAFT` de proveedores E2E, que antes quedaban como documentos de prueba en `/compras`.
+
+**Residuo conocido: 6 comprobantes de servicio con un pago registrado** (`F001-390581293`, `F001-403036715`, `F001-410928458`, `F001-418751083`, `F001-458009649`, `F001-459185928`). Ninguno tiene efecto en el inventario —cinco están en `DRAFT` y no movieron kardex—, pero no se pueden anular porque **anular un pago a proveedor no existe todavía**: D-039 lo dejó "para Fase 2b junto con el resto de anulaciones" y nunca se construyó. Es lo único que separa a producción de quedar completamente sin rastro de pruebas; conviene resolverlo en la fase que toque cuentas por pagar.
+
 **La migración volvió a nacer con el nombre mal ordenado (D-053).** `prisma migrate dev` la creó como `20260903085114_fase4_produccion_drywall`, que ordena **antes** de las de Fase 2a/2b/3/3b y habría roto el shadow database otra vez. Se detectó al mirar la carpeta, no después: backup de `_prisma_migrations` de `dev`, `git mv` a `20260904140000_fase4_produccion_drywall` y `scripts/migrations-rename.mjs --branch dev`, con `prisma migrate status` limpio después. **El reloj de esta máquina reporta una fecha anterior a la de las migraciones ya aplicadas**, así que cualquier migración nueva va a repetir el problema: revisar el nombre de la carpeta antes de commitear es ahora parte del flujo.
+
+**Diferido a fases posteriores:**
+
+- **Anular un pago a proveedor** (D-039 lo dio por hecho para Fase 2b y no se construyó). Es lo único que impide dejar producción sin ningún rastro de pruebas, y también lo que hace que una compra pagada por error no se pueda corregir hoy.
+- La receta de la OP (`bomId`) apunta a la receta **viva**, no a una versión congelada: una OP ya cerrada puede mostrar un `kgPerPiece` distinto del que usó. Los datos reales están a salvo en `production_reports.theoreticalKg`; si hace falta la receta histórica, hay que congelarla en la OP al crearla.
+- `MAX_ORDER_STRIPS` (20 flejes) y `MAX_ORDER_REPORTS` (200) por orden, y el orden por `seq` bajo concurrencia, no tienen E2E: exigen escenarios grandes o carreras, y serían lentos o inestables.
+- Los pendientes de Fase 2b/3 (paginación de `findMovements`, prorrateo siempre por kg) siguen igual.
 
 ## Sesión M-1 — mantenimiento: fix de shadow DB (2026-09-03)
 
