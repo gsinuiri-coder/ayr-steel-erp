@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Decimal, type CuttingOrderCoilDto, type CuttingOrderDto } from '@ayr/shared';
+import {
+  Decimal,
+  MIN_CHILD_WIDTH_MM,
+  MIN_SPLIT_YIELD,
+  type CuttingOrderCoilDto,
+  type CuttingOrderDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
@@ -219,7 +225,13 @@ interface ReceivePreview {
   error: string | null;
 }
 
-/** Igual chequeo de presupuesto de ancho que `validateWidthBudget` del API (sin peso). */
+/**
+ * Recibir ejecuta el mismo `planCoilSplit` que el partido interno (RF-15): replica sus
+ * mismas reglas (ancho mínimo por fleje, piso de aprovechamiento del 80%, presupuesto de
+ * ancho), no solo el presupuesto de ancho, para no mostrar una previsualización en verde
+ * que el servidor rebota igual que le pasaba al partido antes de que se corrigiera
+ * (ver `coil-split-dialog.tsx`).
+ */
 function previewReceive(
   row: CuttingOrderCoilDto,
   rows: WidthRow[],
@@ -240,10 +252,15 @@ function previewReceive(
   const widthsTotal = widths.reduce((acc, w) => acc.plus(w), new Decimal(0));
   const consumed = widthsTotal.plus(kerf);
   const parentWidth = new Decimal(row.coilWidthMm);
+  const minYieldWidth = parentWidth.times(MIN_SPLIT_YIELD);
 
   let error: string | null = null;
-  if (consumed.gt(parentWidth)) {
+  if (widths.some((w) => w.lt(MIN_CHILD_WIDTH_MM))) {
+    error = `El ancho de cada fleje debe ser de al menos ${MIN_CHILD_WIDTH_MM} mm.`;
+  } else if (consumed.gt(parentWidth)) {
     error = `Los anchos más la merma suman ${consumed.toFixed(2)} mm y la bobina tiene ${row.coilWidthMm} mm.`;
+  } else if (widthsTotal.lt(minYieldWidth)) {
+    error = `Los flejes cubren ${widthsTotal.toFixed(2)} mm de ${row.coilWidthMm} mm: la recepción tiene que aprovechar al menos ${minYieldWidth.toFixed(2)} mm.`;
   } else if (new Decimal(receivedWeightKg.trim()).gt(new Decimal(row.coilAvailableKg))) {
     error = `Solo hay ${row.coilAvailableKg} kg disponibles en esta bobina.`;
   }

@@ -129,7 +129,10 @@ export function NuevaOrdenCorteView() {
                 ))}
               </SelectContent>
             </Select>
-            {cuttingSuppliers?.length === 0 && (
+            {suppliers.isError && (
+              <p className="text-xs text-destructive">No se pudieron cargar los proveedores.</p>
+            )}
+            {!suppliers.isError && cuttingSuppliers?.length === 0 && (
               <p className="text-xs text-muted-foreground">
                 Ningún proveedor tiene marcado &quot;presta servicio de corte&quot; (RF-81).
               </p>
@@ -171,6 +174,13 @@ export function NuevaOrdenCorteView() {
                   </TableCell>
                 </TableRow>
               )}
+              {availableCoils.isError && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-destructive">
+                    No se pudieron cargar las bobinas disponibles.
+                  </TableCell>
+                </TableRow>
+              )}
               {candidates.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell className="font-mono">{c.code}</TableCell>
@@ -197,7 +207,7 @@ export function NuevaOrdenCorteView() {
                   </TableCell>
                 </TableRow>
               ))}
-              {!availableCoils.isPending && candidates.length === 0 && (
+              {!availableCoils.isPending && !availableCoils.isError && candidates.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center text-muted-foreground">
                     No hay bobinas abiertas disponibles.

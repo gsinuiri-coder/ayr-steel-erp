@@ -27,7 +27,20 @@ export type WidthCountInput = z.infer<typeof widthCountSchema>;
 const widthPlanSchema = z
   .array(widthCountSchema)
   .min(1, 'El plan necesita al menos un ancho')
-  .max(MAX_SPLIT_ROWS, `Un plan admite hasta ${MAX_SPLIT_ROWS} filas de anchos`);
+  .max(MAX_SPLIT_ROWS, `Un plan admite hasta ${MAX_SPLIT_ROWS} filas de anchos`)
+  .superRefine((rows, ctx) => {
+    // Cada tira abre una fila de `coils` y un movimiento de kardex dentro de la misma
+    // transacción que sostiene el lock de la madre (igual razón que `createCoilSplitSchema`
+    // en `coil.ts`): sin este tope total, filas dentro del límite individual podían sumar
+    // cientos de tiras en una sola recepción.
+    const total = rows.reduce((acc, r) => acc + r.stripsCount, 0);
+    if (total > MAX_SPLIT_CHILDREN) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `El plan admite hasta ${MAX_SPLIT_CHILDREN} tiras en total`,
+      });
+    }
+  });
 
 // --------------------------------------------------------------------------
 // RF-40 — enviar bobinas a corte

@@ -158,15 +158,24 @@ Lo que sigue sin cubrirse por E2E: operar el partido, la merma y las anulaciones
 | #   | Entregable                                                                                                                       | Estado                                                                   |
 | --- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | 1   | Decisiones D-047..D-050 (P-13 resuelta), §3.7 reordenado (D-048), §4 con RF-22 anotado                                           | ✅ `docs/ARQUITECTURA.md` §0.2, §3.7, §5; espejo en `docs/DECISIONES.md` |
-| 2   | Prisma: `coils.kind`, `CoilStatus.IN_THIRD_PARTY`, `cutting_orders`, `cutting_order_coils`, `purchases.related_cutting_order_id` | ⚪ pendiente                                                             |
-| 3   | Módulo `cutting`: envío (RF-40), recepción parcial por bobina (RF-41), cancelación (RF-22)                                       | ⚪ pendiente                                                             |
-| 4   | Costo del servicio de corte: prorrateo por kg entre flejes recibidos (RF-41)                                                     | ⚪ pendiente                                                             |
-| 5   | Web: `/corte`, `/corte/nueva`, `/corte/[id]`, `/flejes` (RF-42)                                                                  | ⚪ pendiente                                                             |
-| 6   | Tests unit (plan de corte, prorrateo, cancelación parcial)                                                                       | ⚪ pendiente                                                             |
-| 7   | Revisión de `revisor`, `auditor-seguridad`, `qa`                                                                                 | ⚪ pendiente                                                             |
-| 8   | E2E de Fase 3                                                                                                                    | ⚪ pendiente                                                             |
+| 2   | Prisma: `coils.kind`, `CoilStatus.IN_THIRD_PARTY`, `cutting_orders`, `cutting_order_coils`, `purchases.related_cutting_order_id` | ✅ migración `20260903031603_fase3_corte_flejes`, aplicada en `dev`      |
+| 3   | Módulo `cutting`: envío (RF-40), recepción parcial por bobina (RF-41), cancelación (RF-22)                                       | ✅ `apps/api/src/cutting/`                                               |
+| 4   | Costo del servicio de corte: prorrateo por kg entre flejes recibidos (RF-41)                                                     | ✅ `applyCuttingOrderCost` en `purchases.service.ts`, mismo patrón D-043 |
+| 5   | Web: `/corte`, `/corte/nueva`, `/corte/[id]`, `/flejes` (RF-42)                                                                  | ✅                                                                       |
+| 6   | Tests unit (plan de corte, prorrateo, cancelación parcial)                                                                       | ✅ 5 en `cutting-math.spec.ts` (128 unit en total)                       |
+| 7   | Revisión de `revisor`, `auditor-seguridad`, `qa`                                                                                 | ✅ 1 alto + 3 medios/bajos corregidos; ver abajo                         |
+| 8   | E2E de Fase 3                                                                                                                    | 🟡 en curso                                                              |
 | 9   | Deploy y migración en `production`                                                                                               | ⚪ pendiente                                                             |
 | 10  | Cierre: handoff, commit, push                                                                                                    | ⚪ pendiente                                                             |
+
+**Hallazgos corregidos en esta fase (`revisor`).**
+
+- **Alto.** `widthPlanSchema` (`packages/shared/src/schemas/cutting.ts`) topaba anchos por fila y filas por plan, pero no el total de tiras: a diferencia de `createCoilSplitSchema` (RF-15), un `receive()` podía pedir cientos de flejes en una sola transacción con lock. Corregido con el mismo `superRefine` de tope total (`MAX_SPLIT_CHILDREN`) que ya tenía el partido interno.
+- **Medio.** `/flejes` sumaba el valorizado total con `Number`/`+` en vez de `Decimal` (D-003). Corregido.
+- **Medio.** La previsualización de recepción (`cutting-receive-dialog.tsx`) solo replicaba el presupuesto de ancho de `receive()`, no el ancho mínimo por fleje ni el piso de aprovechamiento del 80% que `planCoilSplit` también exige ahí — el mismo hueco que el partido interno tuvo en Fase 2b antes de corregirse. Corregido.
+- **Bajos.** `nueva-orden-view.tsx` no cubría `isError` de sus queries; `CoilOperationsService.lockCoil` y el `lockCoil` propio de `CuttingService` eran una copia textual — se unificó como `CoilsService.lockCoil`, que ambos ahora reusan.
+
+**Auditoría de seguridad (`auditor-seguridad`, con segunda opinión de `agy`).** Sin hallazgos críticos ni altos: `$queryRaw` nuevos parametrizados vía tagged template (sin inyección), `assertCuttingOrderLinkIsValid` exige ADMINISTRADOR igual que el landed cost de D-043, `GET /cutting/strips` oculta costos a VENDEDOR igual que `/inventory/*`, sin escritura de kardex fuera de `InventoryService`.
 
 ## Bloqueos
 

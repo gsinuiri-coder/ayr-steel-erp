@@ -173,7 +173,7 @@ export class CuttingService {
           );
         }
 
-        const coil = await this.lockCoil(tx, coilId);
+        const coil = await this.coils.lockCoil(tx, coilId);
         if (coil.status !== CoilStatus.IN_THIRD_PARTY) {
           throw new BadRequestException('La bobina no figura enviada a corte tercerizado');
         }
@@ -567,14 +567,5 @@ export class CuttingService {
     });
     const status = deriveCuttingOrderStatus(rows.map((r) => r.status));
     await tx.cuttingOrder.update({ where: { id: cuttingOrderId }, data: { status } });
-  }
-
-  /** Igual que `CoilOperationsService.lockCoil`: bloquea la fila hasta el fin de la transacción. */
-  private async lockCoil(tx: Prisma.TransactionClient, coilId: string): Promise<Coil> {
-    const locked = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "coils" WHERE "id" = ${coilId}::uuid FOR UPDATE
-    `;
-    if (locked.length === 0) throw new NotFoundException('Bobina no encontrada');
-    return tx.coil.findUniqueOrThrow({ where: { id: coilId } });
   }
 }

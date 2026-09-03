@@ -57,7 +57,7 @@ export class CoilOperationsService {
   async split(actor: RequestUser, coilId: string, input: CreateCoilSplitInput): Promise<CoilDto[]> {
     const created = await this.prisma.$transaction(
       async (tx) => {
-        const coil = await this.lockCoil(tx, coilId);
+        const coil = await this.coils.lockCoil(tx, coilId);
         if (coil.status !== CoilStatus.OPEN) {
           throw new BadRequestException(
             coil.status === CoilStatus.CLOSED
@@ -199,7 +199,7 @@ export class CoilOperationsService {
         if (split.status === CoilSplitStatus.REVERTED) {
           throw new ConflictException('Ese partido ya fue revertido');
         }
-        const coil = await this.lockCoil(tx, split.parentCoilId);
+        const coil = await this.coils.lockCoil(tx, split.parentCoilId);
 
         const all = await tx.inventoryMovement.findMany({
           where: { refType: 'SPLIT', refId: splitId },
@@ -295,7 +295,7 @@ export class CoilOperationsService {
     input: CreateCoilScrapInput,
   ): Promise<CoilDto> {
     await this.prisma.$transaction(async (tx) => {
-      const coil = await this.lockCoil(tx, coilId);
+      const coil = await this.coils.lockCoil(tx, coilId);
       if (coil.status === CoilStatus.CANCELLED) {
         throw new BadRequestException('La bobina está anulada');
       }
@@ -340,7 +340,7 @@ export class CoilOperationsService {
       if (movement.refType !== 'SCRAP' || movement.itemType !== 'COIL') {
         throw new BadRequestException('Ese movimiento no es una merma de bobina');
       }
-      await this.lockCoil(tx, movement.itemId);
+      await this.coils.lockCoil(tx, movement.itemId);
       const reversal = await this.inventory.reverse(tx, movementId, actor.id, reason);
 
       await this.audit.write(tx, {
@@ -362,7 +362,7 @@ export class CoilOperationsService {
 
   async setStatus(actor: RequestUser, coilId: string, input: SetCoilStatusInput): Promise<CoilDto> {
     await this.prisma.$transaction(async (tx) => {
-      const coil = await this.lockCoil(tx, coilId);
+      const coil = await this.coils.lockCoil(tx, coilId);
       if (coil.status === CoilStatus.CANCELLED) {
         throw new BadRequestException('La bobina está anulada: no se puede abrir ni cerrar');
       }
@@ -403,7 +403,7 @@ export class CoilOperationsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      const coil = await this.lockCoil(tx, coilId);
+      const coil = await this.coils.lockCoil(tx, coilId);
       if (coil.status === CoilStatus.CANCELLED) {
         throw new BadRequestException('La bobina está anulada: no se puede editar');
       }
@@ -490,7 +490,7 @@ export class CoilOperationsService {
   /** Solo si no tiene ningún movimiento aparte del ingreso inicial. Reversa ese ingreso. */
   async cancel(actor: RequestUser, coilId: string, reason: string): Promise<CoilDto> {
     await this.prisma.$transaction(async (tx) => {
-      const coil = await this.lockCoil(tx, coilId);
+      const coil = await this.coils.lockCoil(tx, coilId);
       if (coil.status === CoilStatus.CANCELLED) {
         throw new BadRequestException('La bobina ya está anulada');
       }
@@ -519,20 +519,6 @@ export class CoilOperationsService {
   // -------------------------------------------------------------------------
   // Utilidades comunes
   // -------------------------------------------------------------------------
-
-  /**
-   * Bloquea la fila de la bobina hasta el fin de la transacción. Sin esto, dos
-   * partidos simultáneos de la misma bobina pasan las dos validaciones de saldo antes
-   * de que ninguna escriba: el lock del saldo de kardex llega tarde para eso, porque
-   * el plan (anchos, pesos) ya se calculó.
-   */
-  private async lockCoil(tx: Prisma.TransactionClient, coilId: string): Promise<Coil> {
-    const locked = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "coils" WHERE "id" = ${coilId}::uuid FOR UPDATE
-    `;
-    if (locked.length === 0) throw new NotFoundException('Bobina no encontrada');
-    return tx.coil.findUniqueOrThrow({ where: { id: coilId } });
-  }
 
   /**
    * El ingreso inicial de la bobina, exigiendo que sea el **único** movimiento vivo

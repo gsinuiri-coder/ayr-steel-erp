@@ -257,6 +257,20 @@ export class CoilsService {
     });
   }
 
+  /**
+   * Bloquea la fila de la bobina hasta el fin de la transacción. La usan tanto
+   * `CoilOperationsService` (partido, merma, edición, anulación) como `CuttingService`
+   * (recepción de corte, RF-41): dos operaciones simultáneas sobre la misma bobina no
+   * pueden calcular su plan sobre el mismo saldo/ancho antes de que ninguna escriba.
+   */
+  async lockCoil(tx: Prisma.TransactionClient, coilId: string): Promise<Coil> {
+    const locked = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "coils" WHERE "id" = ${coilId}::uuid FOR UPDATE
+    `;
+    if (locked.length === 0) throw new NotFoundException('Bobina no encontrada');
+    return tx.coil.findUniqueOrThrow({ where: { id: coilId } });
+  }
+
   async findAll(query: CoilQuery): Promise<CoilDto[]> {
     const coils = await this.prisma.coil.findMany({
       where: {

@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
   BUSINESS_LINES,
+  Decimal,
   Role,
   type BusinessLine,
   type StripStockRowDto,
@@ -41,9 +42,10 @@ export function FlejesView() {
     queryFn: () => api<StripStockRowDto[]>(`/cutting/strips${queryString}`),
   });
 
+  // D-003: dinero nunca se opera con `number`.
   const totalPen = (stock.data ?? []).reduce(
-    (acc, r) => (r.totalValuePen ? acc + Number(r.totalValuePen) : acc),
-    0,
+    (acc, r) => (r.totalValuePen ? acc.plus(new Decimal(r.totalValuePen)) : acc),
+    new Decimal(0),
   );
 
   return (
