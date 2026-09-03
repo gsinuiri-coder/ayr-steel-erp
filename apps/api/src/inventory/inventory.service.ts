@@ -300,26 +300,37 @@ export class InventoryService {
       newQty = balance.qty.plus(origQty);
       newValue = currentValue.plus(origValue);
     } else {
-      // Un ADJUST solo movió valor: su reversa devuelve ese valor sobre los kilos que
-      // haya hoy, que es lo que mantiene el inventario valorizado cuadrado.
+      // Un ADJUST solo movió valor. Su reversa saca la parte de ese valor que TODAVÍA
+      // está en el saldo: el ajuste repartió `origValue` sobre `origQty` kilos, así que
+      // si hoy quedan menos, lo que sigue adentro es la fracción proporcional. Sacar el
+      // monto completo dejaría el promedio por debajo del costo real del stock que
+      // sobrevive, y ese error viaja al precio sugerido (D-032) y al costeo (D-035).
       if (balance.qty.lte(0)) {
         throw new BadRequestException(
           'No se puede anular el ajuste de costo: el ítem ya no tiene saldo',
         );
       }
+      const surviving = Decimal.min(balance.qty, origQty);
       type = 'ADJUST';
       qty = balance.qty;
-      totalCost = origValue.negated();
+      totalCost = origValue.times(surviving).div(origQty).negated();
       unitCost = totalCost.div(balance.qty);
       newQty = balance.qty;
       newValue = currentValue.plus(totalCost);
     }
 
     if (newValue.isNegative()) {
-      // Puede pasar si entre medio hubo salidas al promedio y el promedio bajó: el
-      // valor que sale ya no está. Se recorta a cero en vez de dejar costo negativo,
-      // que no significa nada en un kardex y envenenaría el promedio siguiente.
-      newValue = new Decimal(0);
+      if (newQty.lte(0)) {
+        // Sin kilos, un residuo negativo es ruido de redondeo del promedio guardado con
+        // 4 decimales: el saldo vacío se cierra en cero y no hay nada que distorsionar.
+        newValue = new Decimal(0);
+      } else {
+        // Con kilos en stock sí importa: recortarlo a cero en silencio dejaría el
+        // valorizado por debajo del costo real sin error, sin auditoría y sin traza.
+        throw new ConflictException(
+          `No se puede anular el movimiento: sacaría ${origValue.toFixed(2)} de un saldo valorizado en ${currentValue.toFixed(2)}. Revisa los movimientos posteriores del ítem.`,
+        );
+      }
     }
     const newAvgCost = newQty.lte(0) ? new Decimal(0) : newValue.div(newQty);
 
@@ -378,9 +389,15 @@ export class InventoryService {
     `;
 
     const rows = await tx.$queryRaw<
-      { id: string; qty: Prisma.Decimal; avg_cost: Prisma.Decimal; unit: string }[]
+      {
+        id: string;
+        qty: Prisma.Decimal;
+        avg_cost: Prisma.Decimal;
+        unit: string;
+        business_line_id: string;
+      }[]
     >`
-      SELECT "id", "qty", "avg_cost", "unit"
+      SELECT "id", "qty", "avg_cost", "unit", "business_line_id"
       FROM "inventory_balances"
       WHERE "item_type" = ${input.itemType}::"InventoryItemType"
         AND "item_id" = ${input.itemId}::uuid
@@ -388,6 +405,14 @@ export class InventoryService {
     `;
     const row = rows[0];
     if (!row) throw new NotFoundException('No se pudo obtener el saldo de inventario del ítem');
+    // El saldo es único por (itemType, itemId), no por línea: un movimiento emitido con
+    // la línea equivocada actualizaría el saldo de otra línea sin que nada avisara, y el
+    // valorizado por línea (RF-51) empezaría a mentir en las dos.
+    if (row.business_line_id !== input.businessLineId) {
+      throw new BadRequestException(
+        'El ítem ya tiene saldo en otra línea de negocio: un mismo ítem no se mueve en dos líneas',
+      );
+    }
 
     return {
       id: row.id,
@@ -398,7 +423,7 @@ export class InventoryService {
   }
 
   /** Inventario valorizado (RF-51, base de RF-90). */
-  async findBalances(query: InventoryQuery): Promise<InventoryBalanceDto[]> {
+  async findBalances(query: InventoryQuery, showCosts: boolean): Promise<InventoryBalanceDto[]> {
     const balances = await this.prisma.inventoryBalance.findMany({
       where: {
         itemType: query.itemType,
@@ -426,8 +451,8 @@ export class InventoryService {
         itemName: label?.name ?? '',
         qty: qty.toFixed(3),
         unit: b.unit,
-        avgCost: avgCost.toFixed(4),
-        totalValue: toFixedString(qty.times(avgCost), 'MONEY'),
+        avgCost: showCosts ? avgCost.toFixed(4) : null,
+        totalValue: showCosts ? toFixedString(qty.times(avgCost), 'MONEY') : null,
         updatedAt: b.updatedAt.toISOString(),
       };
     });
@@ -442,7 +467,7 @@ export class InventoryService {
    * promedio de promedios: dos bobinas del mismo tipo con pesos distintos tienen que
    * pesar distinto en el costo agregado.
    */
-  async summary(businessLine: BusinessLine): Promise<InventorySummaryDto> {
+  async summary(businessLine: BusinessLine, showCosts: boolean): Promise<InventorySummaryDto> {
     const balances = await this.prisma.inventoryBalance.findMany({
       where: { businessLine: { code: toPrismaLineCode(businessLine) } },
       take: 5000,
@@ -490,8 +515,10 @@ export class InventoryService {
         name: g.name,
         qty: g.qty.toFixed(3),
         unit: g.unit,
-        avgCostPen: toFixedString(g.qty.lte(0) ? new Decimal(0) : g.value.div(g.qty), 'MONEY'),
-        totalValuePen: toFixedString(g.value, 'MONEY'),
+        avgCostPen: showCosts
+          ? toFixedString(g.qty.lte(0) ? new Decimal(0) : g.value.div(g.qty), 'MONEY')
+          : null,
+        totalValuePen: showCosts ? toFixedString(g.value, 'MONEY') : null,
         itemCount: g.ids.length,
         // Solo tiene sentido enlazar al kardex de un ítem cuando el grupo es uno solo.
         itemId: g.ids.length === 1 ? (g.ids[0] ?? null) : null,
@@ -499,12 +526,15 @@ export class InventoryService {
     }
     rows.sort((a, b) => a.key.localeCompare(b.key));
 
-    const total = rows.reduce((acc, r) => acc.plus(toDecimal(r.totalValuePen)), new Decimal(0));
+    const total = rows.reduce(
+      (acc, r) => acc.plus(toDecimal(r.totalValuePen ?? '0')),
+      new Decimal(0),
+    );
     return {
       businessLine,
       coils: rows.filter((r) => r.itemType === 'COIL'),
       products: rows.filter((r) => r.itemType === 'PRODUCT'),
-      totalValuePen: toFixedString(total, 'MONEY'),
+      totalValuePen: showCosts ? toFixedString(total, 'MONEY') : null,
     };
   }
 
@@ -513,7 +543,7 @@ export class InventoryService {
    * devuelve además el saldo corrido después de cada movimiento, recalculado en orden
    * cronológico; en un listado mezclado ese saldo no tiene sentido y va en `null`.
    */
-  async findMovements(query: InventoryQuery): Promise<InventoryMovementDto[]> {
+  async findMovements(query: InventoryQuery, showCosts: boolean): Promise<InventoryMovementDto[]> {
     const singleItem = Boolean(query.itemId && query.itemType);
 
     const movements = await this.prisma.inventoryMovement.findMany({
@@ -546,8 +576,12 @@ export class InventoryService {
     // el costo exacto que el movimiento original metió, no el promedio del momento, y
     // un `ADJUST` mueve valor sin mover cantidad. Con `totalCost` las tres formas caen
     // en la misma cuenta y esta vista no puede divergir de `inventory_balances`.
-    let runningQty = new Decimal(0);
-    let runningValue = new Decimal(0);
+    //
+    // Con filtro `desde` hay que arrancar del saldo de apertura, no de cero: si no, un
+    // kardex filtrado por fecha muestra cantidades y promedios que no son los del ítem.
+    const opening = singleItem && query.from ? await this.openingBalance(query, query.from) : null;
+    let runningQty = opening?.qty ?? new Decimal(0);
+    let runningValue = opening?.value ?? new Decimal(0);
 
     const dtos = movements.map((m) => {
       const qty = toDecimal(m.qty.toString());
@@ -576,8 +610,8 @@ export class InventoryService {
         type: m.type,
         qty: qty.toFixed(3),
         unit: m.unit,
-        unitCost: unitCost.toFixed(4),
-        totalCost: m.totalCost.toFixed(4),
+        unitCost: showCosts ? unitCost.toFixed(4) : null,
+        totalCost: showCosts ? m.totalCost.toFixed(4) : null,
         refType: m.refType,
         refId: m.refId,
         notes: m.notes,
@@ -587,12 +621,38 @@ export class InventoryService {
         actorName: m.actorId ? (actors.get(m.actorId) ?? null) : null,
         at: m.at.toISOString(),
         balanceQty: singleItem ? runningQty.toFixed(3) : null,
-        balanceAvgCost: singleItem ? toFixedString(runningAvg, 'MONEY') : null,
+        balanceAvgCost: singleItem && showCosts ? toFixedString(runningAvg, 'MONEY') : null,
       } satisfies InventoryMovementDto;
     });
 
     // Más reciente primero para la vista; el cálculo del saldo corrido necesitaba el orden inverso.
     return dtos.reverse();
+  }
+
+  /**
+   * Saldo de un ítem justo antes de `from`, con la misma cuenta por valor que usa el
+   * saldo corrido: entradas suman cantidad y valor, salidas restan ambas y los ajustes
+   * solo mueven valor. Se calcula en SQL para no traer a memoria un histórico entero
+   * que la vista después descarta.
+   */
+  private async openingBalance(
+    query: InventoryQuery,
+    from: string,
+  ): Promise<{ qty: Decimal; value: Decimal }> {
+    const rows = await this.prisma.$queryRaw<{ qty: Prisma.Decimal; value: Prisma.Decimal }[]>`
+      SELECT
+        COALESCE(SUM(CASE "type" WHEN 'IN' THEN "qty" WHEN 'OUT' THEN -"qty" ELSE 0 END), 0) AS "qty",
+        COALESCE(SUM(CASE "type" WHEN 'OUT' THEN -"total_cost" ELSE "total_cost" END), 0) AS "value"
+      FROM "inventory_movements"
+      WHERE "item_type" = ${query.itemType}::"InventoryItemType"
+        AND "item_id" = ${query.itemId}::uuid
+        AND "at" < ${new Date(`${from}T00:00:00.000Z`)}
+    `;
+    const row = rows[0];
+    return {
+      qty: toDecimal(row?.qty.toString() ?? '0'),
+      value: Decimal.max(toDecimal(row?.value.toString() ?? '0'), new Decimal(0)),
+    };
   }
 
   /** Resuelve el código y nombre legible de cada ítem referido (SKU o código de bobina). */

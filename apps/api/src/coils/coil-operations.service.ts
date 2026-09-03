@@ -109,29 +109,43 @@ export class CoilOperationsService {
         }
         const unitCostPen = out.unitCost.toFixed(4);
 
+        // Proveedor, acabado, producto de catálogo y los N correlativos se resuelven una
+        // sola vez para toda la tanda: con una hija por consulta, un partido de 20 tiras
+        // eran cientos de viajes a la base sosteniendo el lock del proveedor.
+        const batch = await this.coils.prepareBatch(tx, {
+          supplierId: coil.supplierId,
+          finishId: coil.finishId,
+          thicknessMm: coil.thicknessMm.toFixed(2),
+          count: plan.children.length,
+        });
+
         const children: Coil[] = [];
-        for (const child of plan.children) {
+        for (const [index, child] of plan.children.entries()) {
           children.push(
-            await this.coils.create(tx, {
-              businessLineId: coil.businessLineId,
-              supplierId: coil.supplierId,
-              purchaseId: coil.purchaseId ?? undefined,
-              finishId: coil.finishId,
-              weightKg: toFixedString(child.weightKg, 'KG'),
-              widthMm: toFixedString(child.widthMm, 'MM'),
-              thicknessMm: coil.thicknessMm.toFixed(2),
-              currency: coil.currency,
-              exchangeRate: coil.exchangeRate.toFixed(4),
-              // El costo del documento se hereda tal cual (RF-15); el del kardex es el
-              // promedio vigente de la madre, que es de donde salieron estos kilos.
-              unitCostPerKg: coil.unitCostPerKg.toFixed(4),
-              kardexUnitCostPen: unitCostPen,
-              refType: 'SPLIT',
-              refId: split.id,
-              parentCoilId: coil.id,
-              splitId: split.id,
-              actorId: actor.id,
-            }),
+            await this.coils.create(
+              tx,
+              {
+                businessLineId: coil.businessLineId,
+                supplierId: coil.supplierId,
+                purchaseId: coil.purchaseId ?? undefined,
+                finishId: coil.finishId,
+                weightKg: toFixedString(child.weightKg, 'KG'),
+                widthMm: toFixedString(child.widthMm, 'MM'),
+                thicknessMm: coil.thicknessMm.toFixed(2),
+                currency: coil.currency,
+                exchangeRate: coil.exchangeRate.toFixed(4),
+                // El costo del documento se hereda tal cual (RF-15); el del kardex es el
+                // promedio vigente de la madre, que es de donde salieron estos kilos.
+                unitCostPerKg: coil.unitCostPerKg.toFixed(4),
+                kardexUnitCostPen: unitCostPen,
+                refType: 'SPLIT',
+                refId: split.id,
+                parentCoilId: coil.id,
+                splitId: split.id,
+                actorId: actor.id,
+              },
+              { ...batch, sequence: batch.sequence + index },
+            ),
           );
         }
 
@@ -186,24 +200,31 @@ export class CoilOperationsService {
         }
         const coil = await this.lockCoil(tx, split.parentCoilId);
 
-        const movements = await tx.inventoryMovement.findMany({
+        const all = await tx.inventoryMovement.findMany({
           where: { refType: 'SPLIT', refId: splitId },
           orderBy: { id: 'asc' },
+          include: { reversals: { select: { id: true } } },
         });
-        const movementIds = new Set(movements.map((m) => m.id));
+        const movementIds = new Set(all.map((m) => m.id));
+        // Los movimientos que ya se anularon entre sí (y sus reversas) no se vuelven a
+        // tocar: un recosteo de una hija (D-045) deja tres filas bajo el mismo `refId` y
+        // solo la última está viva. Sin este filtro la reversa del partido chocaría con
+        // "un movimiento de anulación no se puede volver a anular".
+        const movements = liveMovements(all);
 
         // Solo se revierte un partido intacto: si una hija ya se consumió, se mermó o
         // se volvió a partir, devolver su peso a la madre inventaría kilos que ya no
         // existen. Se nombra la bobina que bloquea para que el usuario sepa qué anular.
         for (const child of split.children) {
-          const extra = await tx.inventoryMovement.findFirst({
+          const extra = await tx.inventoryMovement.findMany({
             where: { itemType: 'COIL', itemId: child.id, id: { notIn: [...movementIds] } },
             orderBy: { id: 'asc' },
-            select: { refType: true },
+            include: { reversals: { select: { id: true } } },
           });
-          if (extra) {
+          const blocking = liveMovements(extra)[0];
+          if (blocking) {
             throw new BadRequestException(
-              `La bobina hija ${child.code} ya tiene movimientos posteriores (${extra.refType}): anúlalos antes de revertir el partido`,
+              `La bobina hija ${child.code} ya tiene movimientos posteriores (${blocking.refType}): anúlalos antes de revertir el partido`,
             );
           }
         }
@@ -426,7 +447,7 @@ export class CoilOperationsService {
         data.totalCostPen = toFixedString(totalCost.times(exchangeRate), 'MONEY');
       }
 
-      await tx.coil.update({ where: { id: coilId }, data });
+      const updated = await tx.coil.update({ where: { id: coilId }, data });
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'coils.update',
@@ -439,7 +460,17 @@ export class CoilOperationsService {
           unitCostPerKg: coil.unitCostPerKg.toFixed(4),
           notes: coil.notes,
         },
-        after: { ...(data as Prisma.InputJsonObject), reason: input.reason ?? null },
+        // Se construye campo por campo en vez de volcar el `CoilUpdateInput`: ese objeto
+        // puede llevar formas relacionales de Prisma que no son JSON serializable.
+        after: {
+          widthMm: updated.widthMm.toFixed(2),
+          currency: updated.currency,
+          exchangeRate: updated.exchangeRate.toFixed(4),
+          unitCostPerKg: updated.unitCostPerKg.toFixed(4),
+          notes: updated.notes,
+          recosted: touchesCost,
+          reason: input.reason ?? null,
+        },
       });
     });
     return this.coils.findOne(coilId);
@@ -508,12 +539,17 @@ export class CoilOperationsService {
     const movements = await tx.inventoryMovement.findMany({
       where: { itemType: 'COIL', itemId: coilId },
       orderBy: { id: 'asc' },
+      include: { reversals: { select: { id: true } } },
     });
-    const first = movements[0];
+    // Lo que ya se anuló no cuenta: una merma registrada y después anulada (RF-17 →
+    // RF-18) deja el saldo como estaba, y bloquear por ella dejaría la bobina sin poder
+    // anularse ni corregirse nunca, pidiendo anular algo que el usuario ya anuló.
+    const live = liveMovements(movements);
+    const first = live[0];
     if (first?.type !== 'IN') {
       throw new BadRequestException('La bobina no tiene un ingreso de kardex que corregir');
     }
-    const blocking = movements.filter((m) => m.id !== first.id);
+    const blocking = live.filter((m) => m.id !== first.id);
     if (blocking.length > 0) {
       const kinds = [...new Set(blocking.map((m) => m.refType))].join(', ');
       throw new BadRequestException(
@@ -522,4 +558,15 @@ export class CoilOperationsService {
     }
     return first;
   }
+}
+
+/**
+ * Movimientos que siguen afectando el saldo: ni son la anulación de otro, ni fueron
+ * anulados. Un par movimiento+reversa se cancela entre sí y no debe bloquear nada
+ * (§3.2: el kardex es append-only, así que esos pares se acumulan para siempre).
+ */
+export function liveMovements<T extends { reversalOfId: bigint | null; reversals: unknown[] }>(
+  movements: T[],
+): T[] {
+  return movements.filter((m) => m.reversalOfId === null && m.reversals.length === 0);
 }

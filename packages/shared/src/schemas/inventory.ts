@@ -21,8 +21,9 @@ export const inventoryMovementSchema = z.object({
   type: z.enum(INVENTORY_MOVEMENT_TYPES),
   qty: z.string(),
   unit: z.string(),
-  unitCost: z.string(),
-  totalCost: z.string(),
+  /** Costos en soles (D-042). Van en null para VENDEDOR, que no ve costos de compra. */
+  unitCost: z.string().nullable(),
+  totalCost: z.string().nullable(),
   refType: z.enum(INVENTORY_REF_TYPES),
   refId: z.string().nullable(),
   /** Motivo escrito por el usuario en una merma, una anulación o un ajuste de costo. */
@@ -52,9 +53,10 @@ export const inventoryBalanceSchema = z.object({
   itemName: z.string(),
   qty: z.string(),
   unit: z.string(),
-  avgCost: z.string(),
+  /** Costos en soles (D-042). Van en null para VENDEDOR, que no ve costos de compra. */
+  avgCost: z.string().nullable(),
   /** qty × avgCost, precalculado por el API para no repetir la multiplicación en el web. */
-  totalValue: z.string(),
+  totalValue: z.string().nullable(),
   updatedAt: z.string(),
 });
 export type InventoryBalanceDto = z.infer<typeof inventoryBalanceSchema>;
@@ -89,8 +91,8 @@ export const inventorySummaryRowSchema = z.object({
   qty: z.string(),
   unit: z.string(),
   /** Costo promedio ponderado en soles del grupo (valor total / cantidad). */
-  avgCostPen: z.string(),
-  totalValuePen: z.string(),
+  avgCostPen: z.string().nullable(),
+  totalValuePen: z.string().nullable(),
   /** Cuántas bobinas hay detrás de la fila; siempre 1 en un producto de catálogo. */
   itemCount: z.number().int(),
   /** Id del ítem cuando la fila es un solo ítem (producto), para enlazar al kardex. */
@@ -102,7 +104,7 @@ export const inventorySummarySchema = z.object({
   businessLine: z.enum(BUSINESS_LINES),
   coils: z.array(inventorySummaryRowSchema),
   products: z.array(inventorySummaryRowSchema),
-  totalValuePen: z.string(),
+  totalValuePen: z.string().nullable(),
 });
 export type InventorySummaryDto = z.infer<typeof inventorySummarySchema>;
 

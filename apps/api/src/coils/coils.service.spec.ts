@@ -134,7 +134,9 @@ describe('CoilsService.create (RF-10..RF-14)', () => {
     expect(fake.queries).toHaveLength(1);
     const sql = fake.queries[0] ?? '';
     expect(sql).toContain('UPDATE "suppliers"');
-    expect(sql).toContain('"coil_seq" = "coil_seq" + 1');
+    // El incremento va parametrizado (el partido reserva N de una vez), por eso no se
+    // busca el literal 1 sino la forma de la sentencia.
+    expect(sql).toContain('"coil_seq" = "coil_seq" +');
     expect(sql).toContain('RETURNING');
     // El correlativo nunca se lee antes de escribirlo: una sola sentencia, sin SELECT previo.
     expect(sql).not.toContain('SELECT');

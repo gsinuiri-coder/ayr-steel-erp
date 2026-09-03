@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ import {
 import {
   Decimal,
   LANDED_COST_SERVICE_KINDS,
+  Role,
   SERVICE_KIND_LABELS,
   STOCK_PURCHASE_TYPES,
   toDecimal,
@@ -40,6 +42,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { liveMovements } from '../coils/coil-operations.service';
 import { CoilsService } from '../coils/coils.service';
 import { StorageService } from '../documents/storage.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
@@ -156,7 +159,7 @@ export class PurchasesService {
     }
 
     await this.assertItemsAreConsistent(input, businessLine.id);
-    await this.assertLandedCostLinkIsValid(input);
+    await this.assertLandedCostLinkIsValid(actor, input, businessLine.id);
 
     const { rate, source } = await this.resolveExchangeRate(input);
     const totals = computeTotals(input);
@@ -340,11 +343,6 @@ export class PurchasesService {
     if (purchase.status === PurchaseStatus.CANCELLED) {
       throw new BadRequestException('La compra ya está anulada');
     }
-    if (purchase.payments.length > 0) {
-      throw new BadRequestException(
-        'La compra tiene pagos registrados: anula primero los pagos al proveedor',
-      );
-    }
 
     await this.prisma.$transaction(
       async (tx) => {
@@ -358,6 +356,17 @@ export class PurchasesService {
           throw new ConflictException('La compra cambió de estado por otra operación');
         }
 
+        // Los pagos se comprueban DENTRO de la transacción, después de tomar el lock de
+        // la fila: leerlos antes dejaba pasar un pago concurrente y la compra quedaba
+        // anulada con dinero aplicado, descuadrando el estado de cuenta del proveedor.
+        const payments = await tx.supplierPayment.count({ where: { purchaseId: id } });
+        if (payments > 0) {
+          throw new BadRequestException(
+            'La compra tiene pagos registrados: anula primero los pagos al proveedor',
+          );
+        }
+
+        let cancelledCoils = 0;
         if (purchase.status === PurchaseStatus.RECEIVED) {
           const movements = await tx.inventoryMovement.findMany({
             where: { refType: 'PURCHASE', refId: id },
@@ -381,10 +390,11 @@ export class PurchasesService {
             }
           }
 
-          await tx.coil.updateMany({
+          const cancelled = await tx.coil.updateMany({
             where: { purchaseId: id, status: { not: CoilStatus.CANCELLED } },
             data: { status: CoilStatus.CANCELLED },
           });
+          cancelledCoils = cancelled.count;
         }
 
         await this.audit.write(tx, {
@@ -393,10 +403,17 @@ export class PurchasesService {
           entity: 'purchases',
           entityId: id,
           before: { status: purchase.status },
-          after: { status: PurchaseStatus.CANCELLED, reason },
+          after: {
+            status: PurchaseStatus.CANCELLED,
+            reason,
+            cancelledCoils,
+          },
         });
       },
-      { timeout: 30_000 },
+      // Una compra admite 200 líneas y cada reversa son varios viajes a Neon: con 30 s
+      // una anulación grande se quedaba sin tiempo, hacía rollback y la compra no se
+      // podía anular nunca. Ver la nota de rendimiento en docs/PROGRESO.md.
+      { timeout: 120_000, maxWait: 10_000 },
     );
     return this.findOne(id);
   }
@@ -427,9 +444,14 @@ export class PurchasesService {
         OR: [...lastOwnId].map(([itemId, id]) => ({ itemId, id: { gt: id } })),
       },
       orderBy: { id: 'asc' },
-      take: 5,
+      include: { reversals: { select: { id: true } } },
+      take: 50,
     });
-    const blocking = later.filter((m) => !ownIds.has(m.id));
+    // Lo que ya se anuló no bloquea: una merma registrada y anulada después deja el
+    // saldo intacto, y contarla dejaría la compra sin poder anularse nunca más.
+    const blocking = liveMovements(later)
+      .filter((m) => !ownIds.has(m.id))
+      .slice(0, 5);
     if (blocking.length === 0) return;
 
     const labels = await this.resolveMovementLabels(tx, blocking);
@@ -474,7 +496,7 @@ export class PurchasesService {
     tx: Prisma.TransactionClient,
     purchase: Purchase,
     actor: RequestUser,
-  ): Promise<{ amountPen: string; coils: number } | null> {
+  ): Promise<{ amountPen: string; coils: number; imputed: boolean } | null> {
     if (purchase.type !== PurchaseType.SERVICE || !purchase.relatedPurchaseId) return null;
     if (!purchase.serviceKind || !LANDED_COST_SERVICE_KINDS.includes(purchase.serviceKind)) {
       return null;
@@ -485,23 +507,32 @@ export class PurchasesService {
       select: { id: true, status: true, series: true, number: true },
     });
     if (!related) throw new NotFoundException('La compra de bobinas vinculada no existe');
+    const service = SERVICE_KIND_LABELS[purchase.serviceKind].toLowerCase();
+    if (related.status === PurchaseStatus.CANCELLED) {
+      throw new BadRequestException(
+        `La compra ${related.series}-${related.number} está anulada: registra el ${service} sin vincularlo a ella`,
+      );
+    }
     if (related.status !== PurchaseStatus.RECEIVED) {
       throw new BadRequestException(
-        `La compra ${related.series}-${related.number} todavía no fue recibida: recíbela antes de imputarle el ${SERVICE_KIND_LABELS[purchase.serviceKind].toLowerCase()}`,
+        `La compra ${related.series}-${related.number} todavía no fue recibida: recíbela antes de imputarle el ${service}`,
       );
     }
 
     const coils = await tx.coil.findMany({
       where: { purchaseId: related.id, status: { not: CoilStatus.CANCELLED } },
-      select: {
-        id: true,
-        code: true,
-        businessLineId: true,
-        exchangeRate: true,
-        unitCostPerKg: true,
-      },
+      select: { id: true, code: true, businessLineId: true },
       orderBy: { code: 'asc' },
     });
+    if (coils.length === 0) return { amountPen: '0.0000', coils: 0, imputed: false };
+
+    // Se bloquean las bobinas antes de leer sus saldos: sin esto, entre la lectura y el
+    // `FOR UPDATE` interno de `adjustCost` alguien puede consumir la bobina y el ajuste
+    // se pierde, dejando el costo del documento inflado sin movimiento que lo respalde.
+    await tx.$queryRaw`
+      SELECT "id" FROM "coils" WHERE "id" = ANY(${coils.map((c) => c.id)}::uuid[]) FOR UPDATE
+    `;
+
     const balances = await tx.inventoryBalance.findMany({
       where: { itemType: 'COIL', itemId: { in: coils.map((c) => c.id) } },
       select: { itemId: true, qty: true },
@@ -511,9 +542,10 @@ export class PurchasesService {
     // reescribirlo tocaría movimientos pasados (D-043).
     const targets = coils.filter((c) => (availableKg.get(c.id) ?? new Decimal(0)).gt(0));
     if (targets.length === 0) {
-      throw new BadRequestException(
-        `Las bobinas de la compra ${related.series}-${related.number} ya no tienen saldo: no hay dónde imputar este costo`,
-      );
+      // La recepción NO se aborta: la deuda con el proveedor del servicio existe igual
+      // y tiene que llegar a la cuenta por pagar (D-030). Solo no hay dónde imputar el
+      // costo, y eso queda dicho en la auditoría de la recepción.
+      return { amountPen: '0.0000', coils: 0, imputed: false };
     }
 
     const amountPen = toDecimal(purchase.subtotal.toString()).times(
@@ -525,12 +557,13 @@ export class PurchasesService {
     );
     const noteLabel = `${SERVICE_KIND_LABELS[purchase.serviceKind]} ${purchase.series}-${purchase.number} (D-043)`;
 
+    let imputedCoils = 0;
     for (const share of shares) {
       const coil = targets.find((c) => c.id === share.id);
       const qty = availableKg.get(share.id);
       if (!coil || !qty || qty.lte(0) || share.amountPen.isZero()) continue;
 
-      await this.inventory.adjustCost(tx, {
+      const movement = await this.inventory.adjustCost(tx, {
         businessLineId: coil.businessLineId,
         itemType: 'COIL',
         itemId: coil.id,
@@ -541,11 +574,43 @@ export class PurchasesService {
         notes: noteLabel,
         actorId: actor.id,
       });
+      // Si el kardex no aceptó el ajuste (línea NOOP o saldo en cero), el documento de
+      // la bobina tampoco se toca: un `unitCostPerKg` sin movimiento detrás no se puede
+      // revertir después y quedaría mintiendo para siempre.
+      if (!movement) continue;
 
-      await this.bumpCoilDocumentCost(tx, coil.id, share.amountPen, qty);
+      imputedCoils += 1;
+      const before = await this.bumpCoilDocumentCost(
+        tx,
+        coil.id,
+        share.amountPen,
+        toDecimal(movement.qty.toString()),
+      );
+      // Auditoría por bobina (RF-95): el `unitCostPerKg` de una bobina también cambia
+      // por acá, no solo por RF-20, y con un único registro a nivel de compra no se
+      // podría reconstruir después qué costo tenía cada bobina antes del flete.
+      if (before) {
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'coils.landed-cost',
+          entity: 'coils',
+          entityId: coil.id,
+          before: { unitCostPerKg: before.from },
+          after: {
+            unitCostPerKg: before.to,
+            amountPen: toFixedString(share.amountPen, 'MONEY'),
+            servicePurchaseId: purchase.id,
+            reason: noteLabel,
+          },
+        });
+      }
     }
 
-    return { amountPen: toFixedString(amountPen, 'MONEY'), coils: targets.length };
+    return {
+      amountPen: toFixedString(amountPen, 'MONEY'),
+      coils: imputedCoils,
+      imputed: imputedCoils > 0,
+    };
   }
 
   /**
@@ -559,13 +624,13 @@ export class PurchasesService {
     coilId: string,
     amountPen: Decimal,
     qtyKg: Decimal,
-  ): Promise<void> {
-    if (qtyKg.lte(0) || amountPen.isZero()) return;
+  ): Promise<{ from: string; to: string } | null> {
+    if (qtyKg.lte(0) || amountPen.isZero()) return null;
     const coil = await tx.coil.findUnique({
       where: { id: coilId },
       select: { weightKg: true, exchangeRate: true, unitCostPerKg: true },
     });
-    if (!coil) return;
+    if (!coil) return null;
 
     const exchangeRate = toDecimal(coil.exchangeRate.toString());
     const deltaPerKg = amountPen.div(qtyKg).div(exchangeRate);
@@ -582,6 +647,7 @@ export class PurchasesService {
         totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
       },
     });
+    return { from: coil.unitCostPerKg.toFixed(4), to: toFixedString(newUnitCost, 'MONEY') };
   }
 
   /** Pago parcial o total (D-039). El saldo se recalcula, nunca se almacena. */
@@ -798,11 +864,24 @@ export class PurchasesService {
    * Zod ya cortó los `serviceKind` que no se imputan; acá se valida lo que necesita la
    * base de datos delante.
    */
-  private async assertLandedCostLinkIsValid(input: CreatePurchaseInput): Promise<void> {
+  private async assertLandedCostLinkIsValid(
+    actor: RequestUser,
+    input: CreatePurchaseInput,
+    businessLineId: string,
+  ): Promise<void> {
     if (!input.relatedPurchaseId) return;
+    // Imputar landed cost mueve el costo promedio del inventario, que es exactamente lo
+    // que D-045 y §3.4 reservan a ADMINISTRADOR: sin este corte, un supervisor podría
+    // inflar el valorizado con una factura de flete inventada y nadie podría revertirlo
+    // en cuanto esas bobinas se movieran (lo levantó `auditor-seguridad`).
+    if (actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        'Solo un administrador puede imputar el costo de un servicio a una compra de bobinas',
+      );
+    }
     const related = await this.prisma.purchase.findUnique({
       where: { id: input.relatedPurchaseId },
-      select: { id: true, type: true, status: true },
+      select: { id: true, type: true, status: true, businessLineId: true },
     });
     if (!related) throw new NotFoundException('La compra de bobinas vinculada no existe');
     if (related.type !== PurchaseType.COIL) {
@@ -812,6 +891,14 @@ export class PurchasesService {
     }
     if (related.status === PurchaseStatus.CANCELLED) {
       throw new BadRequestException('La compra de bobinas vinculada está anulada');
+    }
+    // El `ADJUST` se graba con la línea de la bobina: si el servicio se registró en otra
+    // línea, el valorizado de esa línea (RF-51) subiría por un costo que no aparece en
+    // ninguna de sus compras y el margen por línea dejaría de cuadrar.
+    if (related.businessLineId !== businessLineId) {
+      throw new BadRequestException(
+        'El servicio y la compra de bobinas tienen que estar en la misma línea de negocio',
+      );
     }
   }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -27,18 +27,11 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatDate, formatMoney, formatQty, todayIso } from '@/lib/format';
+import { ReasonDialog } from '@/components/reason-dialog';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   Form,
   FormControl,
@@ -108,7 +101,8 @@ export function CompraDetalleView({ id }: { id: string }) {
   });
 
   const cancel = useMutation({
-    mutationFn: () => api<PurchaseDto>(`/purchases/${id}/cancel`, { method: 'POST' }),
+    mutationFn: (reason: string) =>
+      api<PurchaseDto>(`/purchases/${id}/cancel`, { method: 'POST', body: { reason } }),
     onSuccess: () => {
       toast.success('Compra anulada');
       invalidate();
@@ -152,7 +146,7 @@ export function CompraDetalleView({ id }: { id: string }) {
               {receive.isPending ? 'Recibiendo…' : 'Recibir'}
             </Button>
           )}
-          {isAdmin && p.status === 'DRAFT' && (
+          {isAdmin && p.status !== 'CANCELLED' && (
             <Button
               variant="outline"
               disabled={cancel.isPending}
@@ -183,6 +177,20 @@ export function CompraDetalleView({ id }: { id: string }) {
               />
             )}
             {p.serviceKind && <Row label="Servicio" value={SERVICE_KIND_LABELS[p.serviceKind]} />}
+            {/* Landed cost (D-043): a qué compra de bobinas se imputa este servicio. */}
+            {p.relatedPurchaseId && p.relatedPurchaseLabel && (
+              <Row
+                label="Se imputa a"
+                value={
+                  <Link
+                    className="underline underline-offset-4"
+                    href={`/compras/${p.relatedPurchaseId}`}
+                  >
+                    {p.relatedPurchaseLabel}
+                  </Link>
+                }
+              />
+            )}
           </CardContent>
         </Card>
 
@@ -284,6 +292,53 @@ export function CompraDetalleView({ id }: { id: string }) {
         </CardContent>
       </Card>
 
+      {p.landedCostServices.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Servicios imputados al costo de las bobinas (D-043)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Comprobante</TableHead>
+                  <TableHead>Servicio</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead className="text-right">Monto sin IGV (S/)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {p.landedCostServices.map((service) => (
+                  <TableRow key={service.purchaseId}>
+                    <TableCell>
+                      <Link
+                        className="underline underline-offset-4"
+                        href={`/compras/${service.purchaseId}`}
+                      >
+                        {service.documentLabel}
+                      </Link>
+                    </TableCell>
+                    <TableCell>{SERVICE_KIND_LABELS[service.serviceKind]}</TableCell>
+                    <TableCell>
+                      <Badge variant={service.status === 'RECEIVED' ? 'secondary' : 'outline'}>
+                        {PURCHASE_STATUS_LABELS[service.status]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {/* Solo una compra RECIBIDA llegó al kardex: en borrador es lo que
+                          se imputará al recibirla, no lo que ya está en el costo. */}
+                      {formatMoney(service.amountPen)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pagos</CardTitle>
@@ -331,36 +386,22 @@ export function CompraDetalleView({ id }: { id: string }) {
         </div>
       )}
 
-      <Dialog open={confirmCancel} onOpenChange={setConfirmCancel}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Anular la compra {p.documentLabel}</DialogTitle>
-            <DialogDescription>
-              La compra queda anulada de forma permanente. No se puede deshacer.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setConfirmCancel(false);
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={cancel.isPending}
-              onClick={() => {
-                setConfirmCancel(false);
-                cancel.mutate();
-              }}
-            >
-              Sí, anular
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog
+        open={confirmCancel}
+        onOpenChange={setConfirmCancel}
+        title={`Anular la compra ${p.documentLabel}`}
+        description={
+          p.status === 'RECEIVED'
+            ? 'Se revierten todos los movimientos de kardex de la compra y sus bobinas quedan anuladas. Solo se puede si nada de lo que entró con ella se movió después.'
+            : 'La compra queda anulada de forma permanente. No se puede deshacer.'
+        }
+        confirmLabel="Sí, anular"
+        pending={cancel.isPending}
+        onConfirm={(reason) => {
+          setConfirmCancel(false);
+          cancel.mutate(reason);
+        }}
+      />
     </>
   );
 }
@@ -573,7 +614,7 @@ function unitLabel(unit: string): string {
   return known ? (known.split(' (')[0] ?? unit) : unit;
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex justify-between gap-4">
       <span className="text-muted-foreground">{label}</span>

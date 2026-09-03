@@ -204,7 +204,11 @@ export function BobinasView() {
             )}
             {coils.data?.map((c) => (
               <TableRow key={c.id}>
-                <TableCell className="font-mono font-medium">{c.code}</TableCell>
+                <TableCell className="font-mono font-medium">
+                  <Link className="underline underline-offset-4" href={`/bobinas/${c.id}`}>
+                    {c.code}
+                  </Link>
+                </TableCell>
                 <TableCell>{c.typeKey}</TableCell>
                 <TableCell>{BUSINESS_LINE_LABELS[c.businessLine]}</TableCell>
                 <TableCell>{c.supplierName}</TableCell>

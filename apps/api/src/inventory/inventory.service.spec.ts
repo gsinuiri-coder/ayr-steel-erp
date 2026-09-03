@@ -16,6 +16,7 @@ interface RawBalance {
   qty: { toString: () => string };
   avg_cost: { toString: () => string };
   unit: string;
+  business_line_id: string;
 }
 
 /**
@@ -24,7 +25,10 @@ interface RawBalance {
  * `INSERT ... ON CONFLICT` y el `SELECT ... FOR UPDATE`), sin depender de Postgres.
  */
 function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }) {
-  const balances = new Map<string, { id: string; qty: string; avgCost: string; unit: string }>();
+  const balances = new Map<
+    string,
+    { id: string; qty: string; avgCost: string; unit: string; businessLineId: string }
+  >();
   const movements: FakeMovement[] = [];
   const executed: string[] = [];
 
@@ -34,7 +38,7 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
     },
     $executeRaw: jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
       executed.push(strings.join('?'));
-      const [, , itemType, itemId, unit] = values as string[];
+      const [, businessLineId, itemType, itemId, unit] = values as string[];
       const key = `${itemType}:${itemId}`;
       if (!balances.has(key)) {
         balances.set(key, {
@@ -42,6 +46,7 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
           qty: '0',
           avgCost: '0',
           unit: unit ?? 'KGM',
+          businessLineId: businessLineId ?? line.id,
         });
       }
       return Promise.resolve(1);
@@ -56,6 +61,7 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
         qty: { toString: () => found.qty },
         avg_cost: { toString: () => found.avgCost },
         unit: found.unit,
+        business_line_id: found.businessLineId,
       };
       return Promise.resolve([row]);
     }),

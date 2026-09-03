@@ -10,10 +10,12 @@ import {
   Palette,
   Percent,
   ReceiptText,
+  ScrollText,
   ShoppingCart,
   Truck,
   Users,
   UsersRound,
+  Warehouse,
 } from 'lucide-react';
 import { Role } from '@ayr/shared';
 
@@ -45,6 +47,8 @@ export const NAV: NavGroup[] = [
       { title: 'Líneas', href: '/lineas', icon: Layers, roles: ALL },
       { title: 'Acabados', href: '/acabados', icon: Palette, roles: ALL },
       { title: 'Catálogo', href: '/catalogo', icon: PackageSearch, roles: ALL },
+      { title: 'Inventario', href: '/inventario', icon: Warehouse, roles: ALL },
+      { title: 'Kardex', href: '/kardex', icon: ScrollText, roles: ALL },
     ],
   },
   {

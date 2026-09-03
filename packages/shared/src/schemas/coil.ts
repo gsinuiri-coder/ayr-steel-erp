@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { decimalStringSchema, toDecimal } from '../decimal';
+import { decimalStringSchema, MAX_VALUE, toDecimal } from '../decimal';
 import { BUSINESS_LINES, COIL_SPLIT_STATUSES, COIL_STATUSES, CURRENCIES } from '../enums';
 
 /**
@@ -92,26 +92,28 @@ export const coilSplitSchema = z.object({
 export type CoilSplitDto = z.infer<typeof coilSplitSchema>;
 
 const splitChildInputSchema = z.object({
-  widthMm: decimalStringSchema('MM', { positive: true }),
+  widthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }),
   /** Tiras idénticas de ese ancho; el slitting casi siempre produce varias. */
-  count: z.number().int().min(1, 'Al menos una tira').max(50, 'Máximo 50 tiras iguales').default(1),
+  count: z.number().int().min(1, 'Al menos una tira').max(20, 'Máximo 20 tiras iguales').default(1),
 });
 
 /**
  * RF-15. `splitWeightKg` es opcional: si no viene, se parte todo el saldo disponible
- * de la madre. El peso se prorratea por ancho sobre `Σ anchos + kerfLossMm`, así que
- * la merma de corte se lleva su parte y la suma cierra contra `splitWeightKg`.
+ * de la madre. El peso se prorratea por ancho **sobre el ancho de la madre**, y todo lo
+ * que las hijas no cubren (el kerf declarado más el recorte de borde) es pérdida de
+ * corte. El API exige además un ancho mínimo por hija y un piso de aprovechamiento,
+ * para que un partido no pueda usarse como baja encubierta de la bobina.
  */
 export const createCoilSplitSchema = z
   .object({
-    splitWeightKg: decimalStringSchema('KG', { positive: true }).optional(),
-    kerfLossMm: decimalStringSchema('MM').default('0.00'),
+    splitWeightKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+    kerfLossMm: decimalStringSchema('MM', { max: MAX_VALUE.WIDTH_MM }).default('0.00'),
     children: z
       .array(splitChildInputSchema)
       .min(1, 'El partido necesita al menos una bobina hija')
       // Cada hija abre una fila de bobina y un movimiento de kardex dentro de la misma
       // transacción que mantiene el lock del saldo de la madre.
-      .max(30, 'Un partido admite hasta 30 filas de anchos'),
+      .max(20, 'Un partido admite hasta 20 filas de anchos'),
   })
   .superRefine((d, ctx) => {
     if (toDecimal(d.kerfLossMm).isNegative()) {
@@ -122,18 +124,15 @@ export const createCoilSplitSchema = z
       });
     }
     const strips = d.children.reduce((acc, c) => acc + c.count, 0);
-    if (strips > 60) {
+    if (strips > 20) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['children'],
-        message: 'Un partido admite hasta 60 bobinas hijas',
+        message: 'Un partido admite hasta 20 bobinas hijas',
       });
     }
   });
 export type CreateCoilSplitInput = z.infer<typeof createCoilSplitSchema>;
-
-export const revertCoilSplitSchema = z.object({ reason: reasonSchema });
-export type RevertCoilSplitInput = z.infer<typeof revertCoilSplitSchema>;
 
 // --------------------------------------------------------------------------
 // Fase 2b — merma, cierre, edición y anulación (RF-17..RF-21)
@@ -141,7 +140,7 @@ export type RevertCoilSplitInput = z.infer<typeof revertCoilSplitSchema>;
 
 /** RF-17, D-040: salida `SCRAP` valorizada al costo promedio vigente. */
 export const createCoilScrapSchema = z.object({
-  qtyKg: decimalStringSchema('KG', { positive: true }),
+  qtyKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
   reason: reasonSchema,
 });
 export type CreateCoilScrapInput = z.infer<typeof createCoilScrapSchema>;
@@ -165,11 +164,14 @@ export type SetCoilStatusInput = z.infer<typeof setCoilStatusSchema>;
  */
 export const updateCoilSchema = z
   .object({
-    widthMm: decimalStringSchema('MM', { positive: true }).optional(),
+    widthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }).optional(),
     notes: z.string().trim().max(500).optional(),
     currency: z.enum(CURRENCIES).optional(),
-    exchangeRate: decimalStringSchema('RATE', { positive: true }).optional(),
-    unitCostPerKg: decimalStringSchema('MONEY', { positive: true }).optional(),
+    exchangeRate: decimalStringSchema('RATE', { positive: true, max: MAX_VALUE.RATE }).optional(),
+    unitCostPerKg: decimalStringSchema('MONEY', {
+      positive: true,
+      max: MAX_VALUE.MONEY,
+    }).optional(),
     reason: reasonSchema.optional(),
   })
   .superRefine((d, ctx) => {
@@ -192,8 +194,15 @@ export const updateCoilSchema = z
         message: 'Una bobina en soles va con tipo de cambio 1',
       });
     }
+    // Pasar a moneda extranjera sin decir el tipo de cambio dejaría el recosteo
+    // arrastrando el TC anterior —1.0000 si la bobina venía en soles— y el costo del
+    // kardex, que va en soles (D-042), entraría dividido por 3.7 sin que nada avise.
+    if (d.currency !== undefined && d.currency !== 'PEN' && d.exchangeRate === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['exchangeRate'],
+        message: 'Cambiar la moneda a dólares exige indicar el tipo de cambio',
+      });
+    }
   });
 export type UpdateCoilInput = z.infer<typeof updateCoilSchema>;
-
-/** Campos de `updateCoilSchema` reservados a ADMINISTRADOR (§3.4, D-045). */
-export const COIL_COST_FIELDS = ['currency', 'exchangeRate', 'unitCostPerKg'] as const;

@@ -53,6 +53,17 @@ describe('planCoilSplit (RF-15)', () => {
       expect(plan.children.map((c) => c.weightKg.toFixed(3))).toEqual(['600.000', '600.000']);
     });
 
+    it('lo que no cubren las tiras es recorte de borde, no peso regalado a las hijas', () => {
+      // Madre de 1220 mm, una tira de 1000 mm: los 220 mm restantes son recorte de
+      // borde. Prorratear sobre Σ anchos le daría a la hija los 5000 kg enteros, un peso
+      // imposible para 1000 mm del mismo espesor, y el recorte desaparecería del kardex.
+      const plan = planCoilSplit({ ...base, widthsMm: ['1000.00'] });
+
+      expect(plan.children[0]?.weightKg.toFixed(3)).toBe('4098.361');
+      expect(plan.kerfLossKg.toFixed(3)).toBe('901.639');
+      expect(childrenTotal(plan.children).plus(plan.kerfLossKg).toFixed(3)).toBe('5000.000');
+    });
+
     it('sin peso explícito parte todo el saldo disponible del kardex', () => {
       const plan = planCoilSplit({ ...base, availableKg: '3210.500', widthsMm: ['1220.00'] });
       expect(plan.splitWeightKg.toFixed(3)).toBe('3210.500');
@@ -95,9 +106,23 @@ describe('planCoilSplit (RF-15)', () => {
 
     it('rechaza un partido sin hijas y uno con merma negativa', () => {
       expect(() => planCoilSplit({ ...base, widthsMm: [] })).toThrow(BadRequestException);
-      expect(() => planCoilSplit({ ...base, kerfLossMm: '-1.00', widthsMm: ['600.00'] })).toThrow(
+      expect(() => planCoilSplit({ ...base, kerfLossMm: '-1.00', widthsMm: ['1220.00'] })).toThrow(
         BadRequestException,
       );
+    });
+
+    it('rechaza una hija más angosta que el mínimo físico de una tira', () => {
+      expect(() => planCoilSplit({ ...base, widthsMm: ['1216.00', '4.00'] })).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('rechaza un partido que bota más del 20 % del ancho de la madre', () => {
+      // 900 de 1220 mm es 73 %: eso no es partir, es dar de baja la bobina. Sin este
+      // piso, una sola tira angosta haría desaparecer el valor sin dejar una merma.
+      expect(() => planCoilSplit({ ...base, widthsMm: ['900.00'] })).toThrow(BadRequestException);
+      // 1000 de 1220 mm es 82 %: pasa.
+      expect(() => planCoilSplit({ ...base, widthsMm: ['1000.00'] })).not.toThrow();
     });
 
     it('rechaza una hija cuyo peso redondea a cero', () => {
@@ -106,7 +131,7 @@ describe('planCoilSplit (RF-15)', () => {
           ...base,
           availableKg: '0.010',
           splitWeightKg: '0.010',
-          widthsMm: ['1219.00', '1.00'],
+          widthsMm: ['1210.00', '10.00'],
         }),
       ).toThrow(BadRequestException);
     });

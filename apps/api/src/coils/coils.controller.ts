@@ -39,7 +39,9 @@ import { CoilsService } from './coils.service';
  * operaciones de Fase 2b sobre una bobina ya existente.
  *
  * Restringido a ADMINISTRADOR y SUPERVISOR_PLANTA (§3.4) porque el DTO lleva el costo
- * de compra por kilo. Anular una bobina y tocar su costo son solo de ADMINISTRADOR.
+ * de compra por kilo. Reparto de anulaciones según **D-046**: el supervisor deshace lo
+ * que él registra en planta (revertir partido, anular merma); anular la bobina entera y
+ * cambiar su moneda, su tipo de cambio o su costo son solo de ADMINISTRADOR.
  */
 @Controller('coils')
 @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
@@ -149,10 +151,17 @@ export class CoilsController {
   }
 }
 
+/** Máximo de `bigint` en Postgres (`int8`). Por encima, la consulta revienta con un 500. */
+const MAX_BIGINT = 9223372036854775807n;
+
 /** Los ids de kardex son `BigInt` autoincremental, no UUID: `ParseUUIDPipe` no sirve. */
 function parseMovementId(value: string): bigint {
-  if (!/^\d{1,19}$/.test(value)) {
+  if (!/^[1-9]\d{0,18}$/.test(value)) {
     throw new BadRequestException('Identificador de movimiento inválido');
   }
-  return BigInt(value);
+  const id = BigInt(value);
+  if (id > MAX_BIGINT) {
+    throw new BadRequestException('Identificador de movimiento inválido');
+  }
+  return id;
 }

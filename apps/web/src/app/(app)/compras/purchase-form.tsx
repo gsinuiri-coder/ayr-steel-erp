@@ -19,6 +19,7 @@ import {
   PURCHASE_TYPE_LABELS,
   PURCHASE_TYPES,
   PurchaseType,
+  LANDED_COST_SERVICE_KINDS,
   SERVICE_KIND_LABELS,
   SERVICE_KINDS,
   UNIT_LABELS,
@@ -26,6 +27,7 @@ import {
   type FinishDto,
   type ProductDto,
   type PurchaseDto,
+  type PurchaseListItemDto,
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
@@ -49,6 +51,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+
+/** Valor centinela del select: Radix no admite un SelectItem con value vacío. */
+const NO_LINK = 'NONE';
 
 const decimalField = (message: string) =>
   z
@@ -92,6 +97,8 @@ const baseFormSchema = z.object({
   paymentTerms: z.enum(PAYMENT_TERMS),
   creditDays: z.string().trim().optional(),
   serviceKind: z.enum(SERVICE_KINDS).optional(),
+  /** Landed cost (D-043): compra COIL a la que se imputa el servicio. */
+  relatedPurchaseId: z.string().optional(),
   notes: z.string().trim().max(500).optional(),
   sourceXmlKey: z.string().optional(),
   items: z
@@ -228,6 +235,22 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
     queryFn: () => api<FinishDto[]>('/finishes'),
     enabled: type === PurchaseType.COIL,
   });
+  // Landed cost (D-043): solo se puede imputar a una compra de bobinas ya recibida de
+  // la misma línea. La lista se pide únicamente cuando el servicio lo admite.
+  const serviceKind = form.watch('serviceKind');
+  const canLink =
+    type === PurchaseType.SERVICE &&
+    serviceKind !== undefined &&
+    LANDED_COST_SERVICE_KINDS.includes(serviceKind);
+  const coilPurchases = useQuery({
+    queryKey: ['purchases', 'coil-received', businessLine],
+    queryFn: () =>
+      api<PurchaseListItemDto[]>(
+        `/purchases?type=COIL&status=RECEIVED&businessLine=${businessLine}`,
+      ),
+    enabled: canLink,
+  });
+
   const products = useQuery({
     queryKey: ['catalog', businessLine],
     queryFn: () => api<ProductDto[]>(`/catalog?businessLine=${businessLine}`),
@@ -568,6 +591,43 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 )}
               />
             )}
+            {canLink && (
+              <FormField
+                control={form.control}
+                name="relatedPurchaseId"
+                render={({ field }) => (
+                  <FormItem className="md:col-span-2">
+                    <FormLabel>Imputar al costo de una compra de bobinas (D-043)</FormLabel>
+                    <Select
+                      value={field.value ?? NO_LINK}
+                      onValueChange={(v) => {
+                        field.onChange(v === NO_LINK ? '' : v);
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value={NO_LINK}>No imputar (queda como gasto)</SelectItem>
+                        {coilPurchases.data?.map((purchase) => (
+                          <SelectItem key={purchase.id} value={purchase.id}>
+                            {purchase.documentLabel} — {purchase.supplierName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      Al recibir esta compra, su valor sin IGV se reparte por kilo entre las bobinas
+                      de la compra elegida y sube su costo promedio. Solo un administrador puede
+                      imputarlo.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="notes"
@@ -892,6 +952,10 @@ function toApiBody(values: PurchaseFormValues): Record<string, unknown> {
     // El superRefine ya garantizó que sea un entero de 1 a 365 cuando hay crédito.
     creditDays: values.creditDays?.trim() ? Number(values.creditDays) : undefined,
     serviceKind: values.type === PurchaseType.SERVICE ? values.serviceKind : undefined,
+    relatedPurchaseId:
+      values.type === PurchaseType.SERVICE && values.relatedPurchaseId?.trim()
+        ? values.relatedPurchaseId
+        : undefined,
     sourceXmlKey: values.sourceXmlKey ?? undefined,
     notes: values.notes?.trim() ? values.notes.trim() : undefined,
     items: values.items.map((item) => ({

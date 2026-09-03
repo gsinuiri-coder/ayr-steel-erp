@@ -23,6 +23,19 @@ export function formatMoney(value: string, currency: Currency = 'PEN', decimals 
   return `${negative ? '-' : ''}${SYMBOL[currency]} ${group(intPart)}${decPart ? `.${decPart}` : ''}`;
 }
 
+/**
+ * Igual que `formatMoney` pero tolera `null`: el API oculta los costos a VENDEDOR
+ * (§3.4) devolviéndolos vacíos, y la vista muestra un guion en vez de un cero que se
+ * leería como un costo real de S/ 0.00.
+ */
+export function formatMoneyOrDash(
+  value: string | null,
+  currency: Currency = 'PEN',
+  decimals = 2,
+): string {
+  return value === null ? '—' : formatMoney(value, currency, decimals);
+}
+
 /** `"4500.000"` → `"4,500.000 kg"` (o la unidad que se pase). */
 export function formatQty(value: string, unit?: string): string {
   const [intPart = '0', decPart] = value.split('.');

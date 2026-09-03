@@ -53,6 +53,19 @@ export interface CreateCoilInput {
 }
 
 /**
+ * Datos que una tanda de altas comparte (partido, RF-15): proveedor, acabado y el
+ * primer correlativo reservado. `create` los reusa en vez de volver a consultarlos y
+ * de tomar el lock del proveedor una vez por hija.
+ */
+export interface CoilCreateContext {
+  supplier: { code: string } | null;
+  finish: { code: string; name: string } | null;
+  /** Correlativo de ESTA bobina; el llamador lo incrementa por hija. */
+  sequence: number;
+  tradingProductEnsured: boolean;
+}
+
+/**
  * Bobinas (RF-10..RF-14). El alta llega siempre desde una de las tres vías de Fase 2a
  * (compra manual, XML de factura, planilla); no hay creación suelta por HTTP.
  * Toda alta emite su entrada de kardex vía `InventoryService` (§3.2).
@@ -69,11 +82,17 @@ export class CoilsService {
    * (RF-13), el producto de catálogo para venta directa (D-037) y el movimiento de
    * kardex tienen que entrar o fallar juntos.
    */
-  async create(tx: Prisma.TransactionClient, input: CreateCoilInput): Promise<Coil> {
-    const [supplier, finish] = await Promise.all([
-      tx.supplier.findUnique({ where: { id: input.supplierId } }),
-      tx.finish.findUnique({ where: { id: input.finishId } }),
-    ]);
+  async create(
+    tx: Prisma.TransactionClient,
+    input: CreateCoilInput,
+    preloaded?: CoilCreateContext,
+  ): Promise<Coil> {
+    const [supplier, finish] = preloaded
+      ? [preloaded.supplier, preloaded.finish]
+      : await Promise.all([
+          tx.supplier.findUnique({ where: { id: input.supplierId } }),
+          tx.finish.findUnique({ where: { id: input.finishId } }),
+        ]);
     if (!supplier) throw new NotFoundException('Proveedor no encontrado');
     if (!finish) throw new NotFoundException('Acabado no encontrado');
 
@@ -82,7 +101,10 @@ export class CoilsService {
     const exchangeRate = toDecimal(input.exchangeRate);
     const totalCost = weightKg.times(unitCostPerKg);
 
-    const sequence = await this.nextSequence(tx, input.supplierId);
+    // El partido reserva los correlativos de golpe y precarga proveedor y acabado: sin
+    // eso, cada hija repetía cuatro consultas y otro `UPDATE suppliers`, que retiene el
+    // lock de la fila del proveedor y frena cualquier otra alta de bobina suya.
+    const sequence = preloaded?.sequence ?? (await this.nextSequence(tx, input.supplierId));
     const typeKey = coilTypeKey(finish.code, input.thicknessMm);
 
     const coil = await tx.coil.create({
@@ -115,7 +137,11 @@ export class CoilsService {
       },
     });
 
-    await this.ensureTradingProduct(tx, finish, input.thicknessMm);
+    // El producto de `trading` es uno por `typeKey`: en un partido todas las hijas
+    // comparten acabado y espesor, así que basta asegurarlo una vez.
+    if (!preloaded?.tradingProductEnsured) {
+      await this.ensureTradingProduct(tx, finish, input.thicknessMm);
+    }
 
     const movement = await this.inventory.record(tx, {
       businessLineId: input.businessLineId,
@@ -150,10 +176,43 @@ export class CoilsService {
    * lock de la fila del proveedor, así que dos altas concurrentes del mismo proveedor
    * reciben números distintos sin necesidad de una tabla de contadores aparte.
    */
-  private async nextSequence(tx: Prisma.TransactionClient, supplierId: string): Promise<number> {
+  /**
+   * Reserva `count` correlativos de una vez y devuelve el contexto que `create` reusa
+   * para toda una tanda de hijas (RF-15). Un solo `UPDATE` sobre el proveedor en vez de
+   * uno por hija: el lock de esa fila se toma y se suelta una sola vez.
+   */
+  async prepareBatch(
+    tx: Prisma.TransactionClient,
+    input: { supplierId: string; finishId: string; thicknessMm: string; count: number },
+  ): Promise<CoilCreateContext> {
+    const [supplier, finish] = await Promise.all([
+      tx.supplier.findUnique({ where: { id: input.supplierId } }),
+      tx.finish.findUnique({ where: { id: input.finishId } }),
+    ]);
+    if (!supplier) throw new NotFoundException('Proveedor no encontrado');
+    if (!finish) throw new NotFoundException('Acabado no encontrado');
+
+    const last = await this.nextSequence(tx, input.supplierId, input.count);
+    await this.ensureTradingProduct(tx, finish, input.thicknessMm);
+
+    return {
+      supplier,
+      finish,
+      // `nextSequence` devuelve el último reservado; el primero de la tanda es el que
+      // sigue al valor previo.
+      sequence: last - input.count + 1,
+      tradingProductEnsured: true,
+    };
+  }
+
+  private async nextSequence(
+    tx: Prisma.TransactionClient,
+    supplierId: string,
+    count = 1,
+  ): Promise<number> {
     const rows = await tx.$queryRaw<{ coil_seq: number }[]>`
       UPDATE "suppliers"
-      SET "coil_seq" = "coil_seq" + 1
+      SET "coil_seq" = "coil_seq" + ${count}
       WHERE "id" = ${supplierId}::uuid
       RETURNING "coil_seq"
     `;
