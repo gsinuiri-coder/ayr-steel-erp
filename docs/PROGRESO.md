@@ -222,6 +222,19 @@ Lo que sigue sin cubrirse por E2E: operar el partido, la merma y las anulaciones
 
 **Diferido a fases posteriores:** ninguno nuevo. Los pendientes de Fase 2b/3 (paginación de `findMovements`, prorrateo siempre por kg) siguen igual.
 
+## Sesión M-1 — mantenimiento: fix de shadow DB (2026-09-03)
+
+Sesión corta de mantenimiento, fuera del avance por fases: reparar `prisma migrate dev` (D-053) y registrar la decisión de diseño de reservas para Fase 5 (D-054, cierra P-15). No se tocó código de producto ni migraciones nuevas de esquema.
+
+- **Diagnóstico primero, sin tocar nada.** `_prisma_migrations.started_at` en `dev` y `production` (mismo orden en ambas): `init → refresh_grace → fase1 → fase2a → fase2b → fase3 → fase3b`. La carpeta de Fase 3 (`20260903031603...`) ordena antes que `fase2a`/`fase2b` por nombre aunque se aplicó después — de ahí el `type "CoilStatus" does not exist` que Fase 3b había documentado como bloqueo.
+- **Backup** de `_prisma_migrations` completo (`dev` y `production`) en `docs/backup/prisma-migrations-{dev,production}-*.json` antes de cualquier cambio.
+- **Fix:** carpeta renombrada a `20260904125000_fase3_corte_flejes` (solo el nombre, `.sql` intacto) + `UPDATE _prisma_migrations.migration_name` a mano en `dev` y `production`, verificando `id`/`checksum` sin cambios antes y después.
+- **Verificación:** `prisma migrate status` limpio en las dos ramas; `prisma migrate dev` reconstruye el shadow database sin error ("Already in sync"); `pnpm turbo lint typecheck test build` verde (121 unit); `pnpm format:check` verde (salvo `.claude/settings.json`, ajeno a esta sesión); **41/41 E2E en local** contra Neon `dev`.
+- **Nota de la sesión.** `prisma migrate dev --create-only` con un campo dummy en `AuditLog` aplicó el cambio de verdad en vez de solo crear el archivo (contradice su propio `--help` en Prisma 6.19.3). Detectado y revertido a mano (columna, fila de `_prisma_migrations`, carpetas) antes de la verificación real. Queda anotado en D-053 para no asumir que `--create-only` es inerte sin comprobarlo.
+- **D-054 (P-15 resuelta).** Modelo de cotización→pedido→reserva para Fase 5: cotizar no reserva; confirmar crea pedido+reserva en una transacción atómica; reserva en ledger propio (no en `inventory_movements`), estados `ACTIVA`/`CONSUMIDA`/`LIBERADA`, invariante `disponible ≥ reservado` que bloquea anulación/merma/corte/consumo ajeno mientras esté `ACTIVA`; OP consume, cancelación libera; sin vencimiento automático, alerta + liberación manual. Detalle largo en `docs/DECISIONES.md`.
+- **Scripts nuevos** (solo para este tipo de reparación puntual, no parte del flujo normal): `scripts/migrations-diagnose.mjs`, `scripts/migrations-backup.mjs`, `scripts/migrations-rename.mjs`, `scripts/migrations-status.mjs`, cada uno con su contraparte en `apps/api/prisma/migrations-*.ts`.
+- **No se tocó** la rama `ci` (se resetea por corrida desde su padre); hereda el orden correcto en su próximo reset.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
@@ -248,7 +261,7 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
 - `gcloud` en Git Bash falla ("Python was not found"); funciona vía `cmd /c gcloud ...` o desde PowerShell/cmd. `scripts/lib.mjs#run` ya lo resuelve.
 - La rama por defecto de Neon se llama `production` (no `main`). Ver D-016.
 - Prisma bloquea `migrate reset` cuando lo invoca un agente. El reset de pruebas es `apps/api/prisma/reset-test-db.ts` (D-018).
-- **Fase 3b.** `pnpm db:migrate` (`prisma migrate dev`) falla con `type "CoilStatus" does not exist` al reproducir el historial completo en un shadow database nuevo: la carpeta `20260903031603_fase3_corte_flejes` quedó nombrada con una fecha anterior a `20260903120000_fase2a_...`/`20260904120000_fase2b_...` aunque depende de tipos que esas crean. El historial real aplicado a cada rama de Neon es correcto (se aplicó en el orden real de las sesiones); solo el reproceso desde cero falla. Mientras eso no se corrija (requiere renombrar una carpeta de migración ya aplicada en `production`, fuera de alcance sin autorización del dueño), escribir la migración a mano y aplicarla con `prisma migrate deploy` (`pnpm db:deploy`/`pnpm db:prod`), que no usa shadow database.
+- **Fase 3b (resuelto en Sesión M-1, ver D-053).** `pnpm db:migrate` (`prisma migrate dev`) volvió a funcionar contra `dev`: la carpeta `20260903031603_fase3_corte_flejes` se renombró a `20260904125000_fase3_corte_flejes` (entre `fase2b` y `fase3b`, el orden real de aplicación) y `_prisma_migrations.migration_name` se sincronizó a mano en `dev` y `production`. Ya no hace falta escribir migraciones a mano ni usar `migrate deploy` para esquivar el shadow database; una migración nueva se crea con el flujo normal (`pnpm db:migrate`).
 - `vercel build` local falla en Windows por symlinks; el deploy es con build remoto (D-019). El proyecto Vercel está ligado al repo GitHub: cada push a `main` despliega el web.
 - El proxy `/api/*` del web es un Route Handler (fetch server-side), no un `rewrite()` de Next: Vercel bloquea rewrites hacia el dominio por defecto de Cloud Run (D-022).
 - Para verificar RF-03 contra producción: `pnpm e2e:prod`. Crea un administrador efímero, corre los 6 escenarios de auth y borra los usuarios `e2e-...@ayr.test` en `finally` (D-024). Nunca usa ni modifica la cuenta del dueño. Si la limpieza fallara, el script lo avisa y hay que revisar `/usuarios` en producción.

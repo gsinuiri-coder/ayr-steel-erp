@@ -1,0 +1,72 @@
+[
+  {
+    "id": "265ee314-0e88-4a3c-8ab5-5fb251ecf01b",
+    "checksum": "e767617fcf62f225b8b344366ea085612eaa098bcfb2aa84ae951ba90c35b471",
+    "finished_at": "2026-09-02T16:35:57.518Z",
+    "migration_name": "20260902160054_init",
+    "logs": null,
+    "rolled_back_at": null,
+    "started_at": "2026-09-02T16:35:56.873Z",
+    "applied_steps_count": 1
+  },
+  {
+    "id": "211ac7be-1784-4a25-b26d-226bc067318c",
+    "checksum": "af4de69800dca70853fca998778cd7334408f9ee0e54cd9e652d0af11cf9502b",
+    "finished_at": "2026-09-02T17:53:53.510Z",
+    "migration_name": "20260902170000_refresh_grace_and_audit_append_only",
+    "logs": null,
+    "rolled_back_at": null,
+    "started_at": "2026-09-02T17:53:52.944Z",
+    "applied_steps_count": 1
+  },
+  {
+    "id": "c15e24f5-3c2b-412c-a4ab-91dafdcd6705",
+    "checksum": "448c84a30f0444589dfe0fd220a811dadaf4ddf508ffeb453134ac95ec708783",
+    "finished_at": "2026-09-02T20:52:44.722Z",
+    "migration_name": "20260902195110_fase1_maestros_catalogo_importacion",
+    "logs": null,
+    "rolled_back_at": null,
+    "started_at": "2026-09-02T20:52:44.089Z",
+    "applied_steps_count": 1
+  },
+  {
+    "id": "f5c82185-d68b-4cc9-884c-16298307a777",
+    "checksum": "7cb3d0c5353946274b38927719c1dbc40004c5049a41d446f4361d5a6010cbe7",
+    "finished_at": "2026-09-02T22:57:09.879Z",
+    "migration_name": "20260903120000_fase2a_kardex_compras_bobinas",
+    "logs": null,
+    "rolled_back_at": null,
+    "started_at": "2026-09-02T22:57:09.240Z",
+    "applied_steps_count": 1
+  },
+  {
+    "id": "592f0877-fa1d-4ce2-893e-bf47152dcc1a",
+    "checksum": "ccaefd0016608fb87b59aee0b35c3aabb1a7fce911bbcaf4f10d792ac32e4111",
+    "finished_at": "2026-09-03T01:11:41.711Z",
+    "migration_name": "20260904120000_fase2b_reversa_partido_merma_landed_cost",
+    "logs": null,
+    "rolled_back_at": null,
+    "started_at": "2026-09-03T01:11:41.148Z",
+    "applied_steps_count": 1
+  },
+  {
+    "id": "00c62080-1c8a-475d-8730-84f910c1aeee",
+    "checksum": "8aabc5f5ffe7c38a420c6193ed07470502f23ab22455594bf0aa48fa13f1fc5a",
+    "finished_at": "2026-09-03T04:40:24.814Z",
+    "migration_name": "20260903031603_fase3_corte_flejes",
+    "logs": null,
+    "rolled_back_at": null,
+    "started_at": "2026-09-03T04:40:24.236Z",
+    "applied_steps_count": 1
+  },
+  {
+    "id": "38c126ba-fc35-45dc-8617-1da28c299b9a",
+    "checksum": "d8fe3384bd14a542b7e06fdf698db30063c9e3f32d74f91f7d5aa0ebad582106",
+    "finished_at": "2026-09-03T06:40:51.633Z",
+    "migration_name": "20260904130000_fase3b_reversa_recepcion_corte",
+    "logs": null,
+    "rolled_back_at": null,
+    "started_at": "2026-09-03T06:40:51.075Z",
+    "applied_steps_count": 1
+  }
+]
