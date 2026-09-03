@@ -10,7 +10,7 @@
 | 1 — Maestros, catálogo, precios, importación | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción |
 | 2a — Kardex + compras + alta de bobinas      | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho   |
 | 2b — Partido, merma, cierre, anulación       | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho   |
-| 3 — Corte tercerizado + flejes               | 🟡 En curso             | —                                                        |
+| 3 — Corte tercerizado + flejes               | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho   |
 | 4 — Producción + `/planta`                   | ⚪ Pendiente            | —                                                        |
 | 5 — Cotizaciones y ventas                    | ⚪ Pendiente            | —                                                        |
 | 6 — Facturación Nubefact                     | ⚪ Pendiente            | —                                                        |
@@ -155,18 +155,18 @@ Lo que sigue sin cubrirse por E2E: operar el partido, la merma y las anulaciones
 
 ## Fase 3 — detalle
 
-| #   | Entregable                                                                                                                       | Estado                                                                   |
-| --- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| 1   | Decisiones D-047..D-050 (P-13 resuelta), §3.7 reordenado (D-048), §4 con RF-22 anotado                                           | ✅ `docs/ARQUITECTURA.md` §0.2, §3.7, §5; espejo en `docs/DECISIONES.md` |
-| 2   | Prisma: `coils.kind`, `CoilStatus.IN_THIRD_PARTY`, `cutting_orders`, `cutting_order_coils`, `purchases.related_cutting_order_id` | ✅ migración `20260903031603_fase3_corte_flejes`, aplicada en `dev`      |
-| 3   | Módulo `cutting`: envío (RF-40), recepción parcial por bobina (RF-41), cancelación (RF-22)                                       | ✅ `apps/api/src/cutting/`                                               |
-| 4   | Costo del servicio de corte: prorrateo por kg entre flejes recibidos (RF-41)                                                     | ✅ `applyCuttingOrderCost` en `purchases.service.ts`, mismo patrón D-043 |
-| 5   | Web: `/corte`, `/corte/nueva`, `/corte/[id]`, `/flejes` (RF-42)                                                                  | ✅                                                                       |
-| 6   | Tests unit (plan de corte, prorrateo, cancelación parcial)                                                                       | ✅ 5 en `cutting-math.spec.ts` (128 unit en total)                       |
-| 7   | Revisión de `revisor`, `auditor-seguridad`, `qa`                                                                                 | ✅ 1 alto + 3 medios/bajos corregidos; ver abajo                         |
-| 8   | E2E de Fase 3                                                                                                                    | 🟡 en curso                                                              |
-| 9   | Deploy y migración en `production`                                                                                               | ⚪ pendiente                                                             |
-| 10  | Cierre: handoff, commit, push                                                                                                    | ⚪ pendiente                                                             |
+| #   | Entregable                                                                                                                       | Estado                                                                             |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 1   | Decisiones D-047..D-050 (P-13 resuelta), §3.7 reordenado (D-048), §4 con RF-22 anotado                                           | ✅ `docs/ARQUITECTURA.md` §0.2, §3.7, §5; espejo en `docs/DECISIONES.md`           |
+| 2   | Prisma: `coils.kind`, `CoilStatus.IN_THIRD_PARTY`, `cutting_orders`, `cutting_order_coils`, `purchases.related_cutting_order_id` | ✅ migración `20260903031603_fase3_corte_flejes`, aplicada en `dev` y `production` |
+| 3   | Módulo `cutting`: envío (RF-40), recepción parcial por bobina (RF-41), cancelación (RF-22)                                       | ✅ `apps/api/src/cutting/`                                                         |
+| 4   | Costo del servicio de corte: prorrateo por kg entre flejes recibidos (RF-41)                                                     | ✅ `applyCuttingOrderCost` en `purchases.service.ts`, mismo patrón D-043           |
+| 5   | Web: `/corte`, `/corte/nueva`, `/corte/[id]`, `/flejes` (RF-42)                                                                  | ✅                                                                                 |
+| 6   | Tests unit (plan de corte, prorrateo, cancelación parcial)                                                                       | ✅ 5 en `cutting-math.spec.ts` (121 unit en total)                                 |
+| 7   | Revisión de `revisor`, `auditor-seguridad`, `qa`                                                                                 | ✅ 1 alto + 3 medios/bajos + 1 bloqueante de `qa` corregidos; ver abajo            |
+| 8   | E2E de Fase 3                                                                                                                    | ✅ 4 tests nuevos; 35/35 en local y 34/34 contra producción                        |
+| 9   | Deploy y migración en `production`                                                                                               | ✅ migración aplicada y API redesplegado en Cloud Run; web por push a `main`       |
+| 10  | Cierre: handoff, commit, push                                                                                                    | ✅ `docs/handoff/fase-3.md`                                                        |
 
 **Hallazgos corregidos en esta fase (`revisor`).**
 
@@ -176,6 +176,17 @@ Lo que sigue sin cubrirse por E2E: operar el partido, la merma y las anulaciones
 - **Bajos.** `nueva-orden-view.tsx` no cubría `isError` de sus queries; `CoilOperationsService.lockCoil` y el `lockCoil` propio de `CuttingService` eran una copia textual — se unificó como `CoilsService.lockCoil`, que ambos ahora reusan.
 
 **Auditoría de seguridad (`auditor-seguridad`, con segunda opinión de `agy`).** Sin hallazgos críticos ni altos: `$queryRaw` nuevos parametrizados vía tagged template (sin inyección), `assertCuttingOrderLinkIsValid` exige ADMINISTRADOR igual que el landed cost de D-043, `GET /cutting/strips` oculta costos a VENDEDOR igual que `/inventory/*`, sin escritura de kardex fuera de `InventoryService`.
+
+**Hallazgo de `qa` sobre el API (bloqueante, corregido).** `registerScrap`, `cancel` y `setStatus` de bobina (`coil-operations.service.ts`) solo bloqueaban `CoilStatus.CANCELLED`; como D-050 hace que enviar una bobina a corte (`IN_THIRD_PARTY`) no genere movimiento de kardex, esos tres endpoints trataban una bobina en poder de un tercero como si estuviera disponible: se le podía registrar merma, anularla o cambiarle el estado sin que la orden de corte se enterara, dejando `cutting_order_coils` apuntando a una bobina que ya cambió por debajo. La misma falla existía en `PurchasesService.cancel()`: anular la compra original de una bobina enviada a corte la cancelaba igual (sin movimiento "posterior" que lo bloqueara, porque el envío no deja rastro en el kardex). Los cuatro sitios ahora bloquean también `IN_THIRD_PARTY`, con un mensaje que distingue por qué la bobina no está disponible.
+
+**E2E de Fase 3 contra producción.** `pnpm e2e:prod` corre ahora `auth` + `fase1` + `fase2a` + `fase2b` + `fase3` con el mismo administrador efímero (34/34 verdes tras el deploy; 35/35 en local, donde además corre `usuarios.spec.ts`). Los 4 tests de Fase 3 cubren el flujo completo (enviar → bloqueo de partido local mientras está en el tercero → recibir con merma y prorrateo → `/cutting/strips` → compra de servicio que sube el costo → cancelar lo pendiente), la validación del plan de anchos, la cancelación parcial de una orden con dos bobinas, y los permisos de D-046/D-043 (supervisor opera, solo administrador vincula la factura del servicio).
+
+**Producción queda casi sin stock de prueba, con un residual acotado y documentado.** `pnpm prod:purge-e2e` ganó un paso previo (D-050) que cancela las órdenes de corte E2E que quedaron `SENT`/`PARTIALLY_RECEIVED` antes de intentar anular compras y bobinas — necesario porque, a diferencia de una compra o un partido, enviar a corte no deja ningún movimiento de kardex que bloquee nada, así que sin este paso una bobina `IN_THIRD_PARTY` quedaba fuera del alcance de los dos pasos siguientes. Tras la corrida quedan **3 bobinas madre con material sin poder anularse** (una con 2 000 kg de saldo, dos ya `CLOSED` sin saldo): son las que el test de Fase 3 recibió parcialmente, y su compra `COIL` original queda bloqueada porque la bobina ya tiene un movimiento `CUTTING` posterior a su ingreso — la misma regla que protege cualquier bobina que ya se movió (RF-21, `cancel` de compra). **No existe una reversa de recepción de corte** (RF-40..42 solo definen RF-22, cancelar el plan _antes_ de recibir): es el mismo hueco que tuvo Fase 2a antes de que 2b construyera `reverse`, aplicado ahora a la recepción de corte. Queda anotado como pendiente para cuando haga falta (ver "Diferido a fases posteriores"); todo lo demás (proveedores, acabados, productos `BOB…`, el resto de compras y bobinas) quedó desactivado/anulado y verificado con `node scripts/prod-e2e-leftovers.mjs`.
+
+**Diferido a fases posteriores:**
+
+- No hay endpoint para revertir una recepción de corte tercerizado (deshacer RF-41 después de recibida): si un operario recibe mal una bobina, hoy no hay forma de deshacerlo — solo de corregirlo hacia adelante (otra merma, otro partido). Simétrico a lo que RF-16 resuelve para el partido interno; se agrega si el negocio lo pide.
+- `findMovements`/`applyCuttingOrderCost` heredan las mismas limitaciones ya anotadas para landed cost en Fase 2b (paginación de historial largo, prorrateo siempre por kg).
 
 ## Bloqueos
 
