@@ -105,6 +105,33 @@ try {
   );
   console.log(`Proveedores E2E: ${e2eSupplierIds.size}`);
 
+  // 0) Órdenes de corte pendientes (Fase 3, D-050): una bobina enviada a un tercero
+  //    queda IN_THIRD_PARTY sin movimiento de kardex, así que ni el paso 1 (anular
+  //    compra) ni el paso 2 (anular bobina abierta) la alcanzan. Cancelar lo pendiente
+  //    la devuelve a OPEN antes de que los pasos siguientes puedan tocarla.
+  const cuttingOrders = await call('/cutting');
+  const pendingCuttingOrders = (Array.isArray(cuttingOrders.body) ? cuttingOrders.body : []).filter(
+    (o) =>
+      e2eSupplierIds.has(o.supplierId) &&
+      (o.status === 'SENT' || o.status === 'PARTIALLY_RECEIVED'),
+  );
+  console.log(`Órdenes de corte E2E pendientes: ${pendingCuttingOrders.length}`);
+  for (const order of pendingCuttingOrders) {
+    if (dryRun) {
+      console.log(`  [simulado] cancelar lo pendiente de la orden ${order.id}`);
+      continue;
+    }
+    const res = await call(`/cutting/${order.id}/cancel`, {
+      method: 'POST',
+      body: { reason: REASON },
+    });
+    console.log(
+      res.ok
+        ? `  orden de corte ${order.id} — lo pendiente quedó cancelado`
+        : `  orden de corte ${order.id} NO se pudo cancelar: ${res.body?.message ?? res.status}`,
+    );
+  }
+
   // 1) Compras recibidas: anularlas revierte su kardex y anula sus bobinas de una vez.
   const purchases = await call('/purchases');
   const received = (Array.isArray(purchases.body) ? purchases.body : []).filter(
