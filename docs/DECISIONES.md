@@ -434,3 +434,18 @@ El chequeo **toma el lock de las filas de los flejes antes de mirar** (`SELECT �
 **Decisión.** El `deny` de `.env*` (ampliado en Fase 4 de `Read(./.env*)` a también `Read(**/.env*)`) es una política **permanente**, no una configuración de sesión que un agente pueda remover o negociar. Si vuelve a faltar, restaurarlo es la acción correcta por defecto — no una pregunta de "¿esto se quitó a propósito?".
 
 **Consecuencias.** Queda pendiente que el dueño confirme si la eliminación original (antes de Fase 4) fue intencional. Si no lo fue, vale la pena revisar si `.env.setup` llegó a leerse por algún agente mientras el `deny` estuvo ausente y, de ser así, evaluar rotar las credenciales que contiene (Neon, JWT, Nubefact, R2, UptimeRobot). Esta sesión no encontró evidencia de que se haya leído —el archivo nunca aparece en ningún transcript ni output de las sesiones de Fase 4 o M-2—, pero tampoco hay forma de confirmarlo desde el repositorio.
+
+## D-063 — Permisos de diagnóstico de solo lectura y comandos desde la raíz
+
+**Fecha:** 2026-09-03
+
+**Contexto.** Con el `allow` restringido a `pnpm`/`node`/`git`/`gh`/… (más `Read(**)`), cada `grep -rn` para ubicar una función, cada `ls` de un directorio de migraciones y cada `git show` de un commit anterior abría una aprobación manual. En una sesión de fase completa son decenas de interrupciones sobre comandos que **no pueden modificar nada**, mientras que las operaciones que sí escriben (`pnpm`, `node`, `gcloud`, `neonctl`) ya estaban permitidas sin fricción. El costo era real y el riesgo que evitaba, ninguno.
+
+**Decisión.** Al `allow` de `.claude/settings.json` entran `Bash(grep:*)`, `Bash(rg:*)`, `Bash(head:*)`, `Bash(tail:*)`, `Bash(ls:*)`, `Bash(find:*)`, `Bash(wc:*)`, `Bash(git log:*)`, `Bash(git diff:*)` y `Bash(git show:*)`. El `deny` de `Read(./.env*)`/`Read(**/.env*)` (D-062) queda exactamente como está — **ampliar el `allow` de Bash no lo toca, no lo debilita y no lo negocia**.
+
+**El límite que hace que esto sea seguro, en `CLAUDE.md` como regla dura 8.** Dos prohibiciones, por motivos distintos:
+
+1. **Un comando de diagnóstico jamás apunta a `.env*`** ni a un glob que pueda expandirse a uno. Un `Bash(grep:*)` permitido es, literalmente, la puerta por la que el contenido de `.env.setup` podría llegar a un output esquivando el `deny` de `Read`. La regla dura 5 (nunca imprimir `.env.setup`) aplica igual a Bash que a `Read`; el `deny` es la red, no el criterio.
+2. **Nunca prefijar un comando con `cd … &&`**: todo se corre desde la raíz del repo con rutas relativas (`grep -rn "x" apps/api/src`, no `cd apps/api && grep -rn "x" src`). El motivo no es estético: en Fase 0, un `cd apps/api && prisma migrate deploy` aplicó una migración contra la rama de Neon equivocada porque el `cd` cambió qué `.env` se cargaba (ver el hallazgo "migración de producción desactualizada" en `docs/PROGRESO.md`), y el web de PowerShell/Git Bash de esta máquina hace que un `cd` en un comando compuesto dispare además aprobaciones inesperadas. Con rutas relativas desde la raíz, el comando dice exactamente sobre qué opera.
+
+**Consecuencias.** Menos interrupciones sin ampliar la superficie de escritura del agente: ninguno de los comandos agregados puede modificar el árbol de trabajo, la base de datos ni un servicio externo. `git diff`/`git show`/`git log` ya estaban cubiertos por `Bash(git:*)`; se listan aparte para que la intención quede escrita aunque alguien restrinja `git` en el futuro.

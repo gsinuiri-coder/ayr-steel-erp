@@ -31,8 +31,9 @@ ERP web para una empresa peruana de transformación y venta de acero. Fuente de 
 5. **Secretos**: `.env.setup` tiene todas las credenciales. Nunca imprimirlo, nunca commitearlo, nunca copiar valores a código o docs. Los scripts lo leen con `scripts/lib.mjs#readEnvFile`.
 6. **Git**: nunca `git push --force`. Commits pequeños por punto de alcance.
 7. **Windows**: scripts cross-platform (Node/pnpm), sin bash-isms. `gcloud` se invoca vía `cmd /c gcloud ...` desde Git Bash.
-8. Si un comando externo falla 3 veces, documentar el bloqueo en `docs/PROGRESO.md` y seguir con lo que no dependa de él.
-9. Dudas de diseño: aplicar la recomendación de `docs/ARQUITECTURA.md` §5 y registrar la decisión en §0.2. Preguntar al dueño solo si un servicio externo exige acción humana.
+8. **Comandos desde la raíz (D-063)**: nunca prefijar un comando con `cd ... &&`. Correr siempre desde la raíz del repo con rutas relativas (`grep -rn "x" apps/api/src`, no `cd apps/api && grep ...`). Un comando de diagnóstico (`grep`/`rg`/`ls`/`find`/`head`/`tail`/`wc`) **jamás** apunta a `.env*` ni a rutas que puedan expandirse a ellos: la regla dura 5 y el `deny` de `Read(**/.env*)` (D-062) no se esquivan por Bash.
+9. Si un comando externo falla 3 veces, documentar el bloqueo en `docs/PROGRESO.md` y seguir con lo que no dependa de él.
+10. Dudas de diseño: aplicar la recomendación de `docs/ARQUITECTURA.md` §5 y registrar la decisión en §0.2. Preguntar al dueño solo si un servicio externo exige acción humana.
 
 ## Comandos
 
