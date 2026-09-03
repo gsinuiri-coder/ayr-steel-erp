@@ -160,7 +160,11 @@ async function deactivateTrail(
   },
 ): Promise<void> {
   for (const purchaseId of trail.purchaseIds ?? []) {
-    await api.post(`/api/purchases/${purchaseId}/cancel`).catch(() => undefined);
+    // La anulación exige motivo (`cancelPurchaseSchema`): sin cuerpo, el POST se iba en
+    // un 400 que el `catch` se tragaba y la compra quedaba viva en producción.
+    await api
+      .post(`/api/purchases/${purchaseId}/cancel`, { data: { reason: 'Limpieza de prueba E2E' } })
+      .catch(() => undefined);
   }
   if (trail.supplierId) {
     await api
