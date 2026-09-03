@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { decimalStringSchema } from '../decimal';
+import { reasonSchema } from './coil';
 import {
   BUSINESS_LINES,
   CURRENCIES,
@@ -66,6 +67,8 @@ export const supplierPaymentSchema = z.object({
   method: z.enum(PAYMENT_METHODS),
   reference: z.string().nullable(),
   createdAt: z.string(),
+  /** Anulación del pago (Sesión M-2, cierra D-039). Append-only, igual que RF-16/D-052. */
+  reversedAt: z.string().nullable(),
 });
 export type SupplierPaymentDto = z.infer<typeof supplierPaymentSchema>;
 
@@ -387,3 +390,10 @@ export const createSupplierPaymentSchema = z.object({
   reference: z.string().trim().max(80).optional(),
 });
 export type CreateSupplierPaymentInput = z.infer<typeof createSupplierPaymentSchema>;
+
+/**
+ * Anular un pago (Sesión M-2, cierra D-039): el monto vuelve a formar parte del saldo
+ * pendiente. Motivo obligatorio (RF-95), mismo criterio que cualquier otra reversa.
+ */
+export const reversePaymentSchema = z.object({ reason: reasonSchema });
+export type ReversePaymentInput = z.infer<typeof reversePaymentSchema>;

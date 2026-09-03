@@ -18,6 +18,7 @@ import {
   createPurchaseSchema,
   createSupplierPaymentSchema,
   purchaseQuerySchema,
+  reversePaymentSchema,
   Role,
   type CancelPurchaseInput,
   type CreatePurchaseInput,
@@ -26,6 +27,7 @@ import {
   type PurchaseDto,
   type PurchaseListItemDto,
   type PurchaseQuery,
+  type ReversePaymentInput,
   type SupplierStatementDto,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -116,6 +118,18 @@ export class PurchasesController {
     @Body(new ZodValidationPipe(createSupplierPaymentSchema)) body: CreateSupplierPaymentInput,
   ): Promise<PurchaseDto> {
     return this.purchases.addPayment(actor, id, body);
+  }
+
+  /** Anular un pago a proveedor (Sesión M-2, cierra D-039). El saldo vuelve a incluirlo. */
+  @Post(':id/payments/:paymentId/reverse')
+  @Roles(Role.ADMINISTRADOR)
+  reversePayment(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+    @Body(new ZodValidationPipe(reversePaymentSchema)) body: ReversePaymentInput,
+  ): Promise<PurchaseDto> {
+    return this.purchases.reversePayment(actor, id, paymentId, body);
   }
 
   @Post(':id/cancel')

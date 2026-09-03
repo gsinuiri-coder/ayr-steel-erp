@@ -291,15 +291,48 @@ try {
     );
   }
 
+  // 0.7) Pagos vigentes de compras E2E (Sesión M-2, cierra D-039: "anular un pago se
+  //      resuelve en Fase 2b junto con el resto de anulaciones", nunca construido hasta
+  //      ahora). Una compra con un pago vivo no se puede anular — mismo guardrail que el
+  //      paso 1 de abajo, ahora correcto: antes contaba cualquier pago, vivo o no, así
+  //      que una compra pagada quedaba bloqueada para siempre y esta purga nunca podía
+  //      dejarla anulada. Se revierte cada pago vigente primero, con motivo y auditoría,
+  //      igual que cualquier otra reversa.
+  const purchases = await call('/purchases');
+  const e2ePurchases = (Array.isArray(purchases.body) ? purchases.body : []).filter(
+    (p) => e2eSupplierIds.has(p.supplierId) && p.status !== 'CANCELLED',
+  );
+  const withLivePayments = e2ePurchases.filter((p) => Number.parseFloat(p.paidAmount) > 0);
+  console.log(`Compras E2E con pagos vigentes: ${withLivePayments.length}`);
+  for (const purchase of withLivePayments) {
+    if (dryRun) {
+      console.log(`  [simulado] revertir pagos de ${purchase.documentLabel}`);
+      continue;
+    }
+    // La lista no trae el detalle de los pagos; hay que pedirlo por compra.
+    const detail = await call(`/purchases/${purchase.id}`);
+    const livePayments = (Array.isArray(detail.body?.payments) ? detail.body.payments : []).filter(
+      (payment) => !payment.reversedAt,
+    );
+    for (const payment of livePayments) {
+      const res = await call(`/purchases/${purchase.id}/payments/${payment.id}/reverse`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  pago de ${purchase.documentLabel} (${payment.amount} ${payment.currency}) revertido`
+          : `  pago de ${purchase.documentLabel} NO se pudo revertir: ${res.body?.message ?? res.status}`,
+      );
+    }
+  }
+
   // 1) Compras de proveedores E2E. Anular una `RECEIVED` revierte su kardex y anula sus
   //    bobinas de una vez; una `DRAFT` no movió nada, pero igual queda como documento de
   //    prueba en `/compras` (los tests de rol dejan facturas de servicio sin recibir), así
-  //    que también se anula. Las que tienen un pago registrado se resisten, y el mensaje
-  //    lo dice.
-  const purchases = await call('/purchases');
-  const received = (Array.isArray(purchases.body) ? purchases.body : []).filter(
-    (p) => e2eSupplierIds.has(p.supplierId) && p.status !== 'CANCELLED',
-  );
+  //    que también se anula. Las que tienen un pago vigente se resisten (paso 0.7 debería
+  //    haberlas destrabado ya), y el mensaje lo dice.
+  const received = e2ePurchases;
   for (const purchase of received) {
     if (dryRun) {
       console.log(`  [simulado] anular compra ${purchase.documentLabel}`);

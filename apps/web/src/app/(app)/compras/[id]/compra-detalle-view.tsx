@@ -78,6 +78,7 @@ export function CompraDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [reversingPaymentId, setReversingPaymentId] = useState<string | null>(null);
 
   const purchase = useQuery({
     queryKey: ['purchase', id],
@@ -91,6 +92,8 @@ export function CompraDetalleView({ id }: { id: string }) {
     void queryClient.invalidateQueries({ queryKey: ['inventory'] });
     // Recibir o anular una compra cambia el detalle de cada bobina que creó.
     void queryClient.invalidateQueries({ queryKey: ['coil'] });
+    // Registrar, anular un pago o anular la compra cambia el saldo que ve el proveedor.
+    void queryClient.invalidateQueries({ queryKey: ['supplier-statement'] });
   };
 
   const receive = useMutation({
@@ -111,6 +114,21 @@ export function CompraDetalleView({ id }: { id: string }) {
       invalidate();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo anular'),
+  });
+
+  const reversePayment = useMutation({
+    mutationFn: ({ paymentId, reason }: { paymentId: string; reason: string }) =>
+      api<PurchaseDto>(`/purchases/${id}/payments/${paymentId}/reverse`, {
+        method: 'POST',
+        body: { reason },
+      }),
+    onSuccess: () => {
+      toast.success('Pago anulado: el monto vuelve a formar parte del saldo pendiente');
+      setReversingPaymentId(null);
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo anular el pago'),
   });
 
   if (purchase.isPending) return <Skeleton className="h-64 w-full" />;
@@ -354,22 +372,50 @@ export function CompraDetalleView({ id }: { id: string }) {
                 <TableHead>Medio</TableHead>
                 <TableHead>Referencia</TableHead>
                 <TableHead className="text-right">Monto</TableHead>
+                <TableHead>Estado</TableHead>
+                {isAdmin && <TableHead />}
               </TableRow>
             </TableHeader>
             <TableBody>
               {p.payments.map((payment) => (
-                <TableRow key={payment.id}>
+                <TableRow
+                  key={payment.id}
+                  className={payment.reversedAt ? 'opacity-60' : undefined}
+                >
                   <TableCell>{formatDate(payment.date)}</TableCell>
                   <TableCell>{PAYMENT_METHOD_LABELS[payment.method]}</TableCell>
                   <TableCell>{payment.reference ?? '—'}</TableCell>
                   <TableCell className="text-right">
                     {formatMoney(payment.amount, payment.currency)}
                   </TableCell>
+                  <TableCell>
+                    <Badge variant={payment.reversedAt ? 'outline' : 'secondary'}>
+                      {payment.reversedAt ? 'Anulado' : 'Vigente'}
+                    </Badge>
+                  </TableCell>
+                  {isAdmin && (
+                    <TableCell className="text-right">
+                      {!payment.reversedAt && p.status !== 'CANCELLED' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setReversingPaymentId(payment.id);
+                          }}
+                        >
+                          Anular pago
+                        </Button>
+                      )}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
               {p.payments.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={isAdmin ? 6 : 5}
+                    className="text-center text-muted-foreground"
+                  >
                     Sin pagos registrados.
                   </TableCell>
                 </TableRow>
@@ -404,6 +450,20 @@ export function CompraDetalleView({ id }: { id: string }) {
           // El diálogo se cierra en `onSuccess`: si el API rechaza la anulación —lo hace
           // cuando algo se movió después—, el motivo escrito no se pierde.
           cancel.mutate(reason);
+        }}
+      />
+
+      <ReasonDialog
+        open={reversingPaymentId !== null}
+        onOpenChange={(open) => {
+          if (!open) setReversingPaymentId(null);
+        }}
+        title="Anular el pago"
+        description="El monto vuelve a formar parte del saldo pendiente de la compra. No se puede deshacer."
+        confirmLabel="Sí, anular"
+        pending={reversePayment.isPending}
+        onConfirm={(reason) => {
+          if (reversingPaymentId) reversePayment.mutate({ paymentId: reversingPaymentId, reason });
         }}
       />
     </>

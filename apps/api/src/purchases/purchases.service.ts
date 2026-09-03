@@ -37,6 +37,7 @@ import {
   type PurchaseDto,
   type PurchaseListItemDto,
   type PurchaseQuery,
+  type ReversePaymentInput,
   type SupplierPaymentDto,
   type SupplierStatementDto,
 } from '@ayr/shared';
@@ -369,7 +370,11 @@ export class PurchasesService {
         // Los pagos se comprueban DENTRO de la transacción, después de tomar el lock de
         // la fila: leerlos antes dejaba pasar un pago concurrente y la compra quedaba
         // anulada con dinero aplicado, descuadrando el estado de cuenta del proveedor.
-        const payments = await tx.supplierPayment.count({ where: { purchaseId: id } });
+        // Solo cuentan los VIGENTES (Sesión M-2): uno ya anulado no es dinero aplicado,
+        // es justamente lo que la reversa de pago existe para poder destrabar.
+        const payments = await tx.supplierPayment.count({
+          where: { purchaseId: id, reversedAt: null },
+        });
         if (payments > 0) {
           throw new BadRequestException(
             'La compra tiene pagos registrados: anula primero los pagos al proveedor',
@@ -898,6 +903,69 @@ export class PurchasesService {
     return this.findOne(purchaseId);
   }
 
+  /**
+   * Anular un pago (Sesión M-2, cierra D-039: "anular un pago se resuelve en Fase 2b
+   * junto con el resto de anulaciones", nunca construido). El monto vuelve a formar
+   * parte del saldo pendiente; la fila nunca se borra (append-only, igual que RF-16 y
+   * D-052), se marca `reversedAt`/`reversedById` y el motivo queda en la auditoría.
+   *
+   * Guardrail "todo o nada", mismo criterio que el resto de reversas del proyecto:
+   * - el pago no puede estar ya anulado (idempotencia, como `InventoryService.reverse`);
+   * - la compra no puede estar `CANCELLED` — hoy es inalcanzable por la API (`cancel()`
+   *   exige cero pagos vigentes antes de anular, así que una compra `CANCELLED` nunca
+   *   tiene un pago vivo que revertir), pero se comprueba igual, por defensa, con el
+   *   mismo criterio que ya usa `addPayment`.
+   */
+  async reversePayment(
+    actor: RequestUser,
+    purchaseId: string,
+    paymentId: string,
+    input: ReversePaymentInput,
+  ): Promise<PurchaseDto> {
+    await this.prisma.$transaction(async (tx) => {
+      // Mismo lock que `addPayment`/`cancel`: no cambia el resultado de esta operación
+      // (revertir un pago solo puede subir el saldo, nunca dejarlo negativo), pero
+      // mantiene un único punto de serialización por compra para todo lo que toca su
+      // cuenta por pagar, en vez de que cada mutación decida su propio criterio.
+      await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${purchaseId}::uuid FOR UPDATE`;
+      const purchase = await tx.purchase.findUnique({ where: { id: purchaseId } });
+      if (!purchase) throw new NotFoundException('Compra no encontrada');
+      if (purchase.status === PurchaseStatus.CANCELLED) {
+        throw new BadRequestException('La compra está anulada');
+      }
+
+      const payment = await tx.supplierPayment.findFirst({
+        where: { id: paymentId, purchaseId },
+      });
+      if (!payment) throw new NotFoundException('Pago no encontrado');
+
+      // El cambio de estado va primero y condicionado al estado leído (mismo patrón que
+      // `cancel()`): dos anulaciones simultáneas del mismo pago no pueden convivir.
+      const claimed = await tx.supplierPayment.updateMany({
+        where: { id: paymentId, reversedAt: null },
+        data: { reversedById: actor.id, reversedAt: new Date() },
+      });
+      if (claimed.count === 0) {
+        throw new ConflictException('Ese pago ya fue anulado');
+      }
+
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'purchases.payment-reverse',
+        entity: 'supplier_payments',
+        entityId: paymentId,
+        before: {
+          purchaseId,
+          amount: payment.amount.toFixed(4),
+          currency: payment.currency,
+          method: payment.method,
+        },
+        after: { reason: input.reason },
+      });
+    });
+    return this.findOne(purchaseId);
+  }
+
   async findAll(query: PurchaseQuery): Promise<PurchaseListItemDto[]> {
     const purchases = await this.prisma.purchase.findMany({
       where: {
@@ -1274,5 +1342,6 @@ function toPaymentDto(p: SupplierPayment): SupplierPaymentDto {
     method: p.method,
     reference: p.reference,
     createdAt: p.createdAt.toISOString(),
+    reversedAt: p.reversedAt ? p.reversedAt.toISOString() : null,
   };
 }

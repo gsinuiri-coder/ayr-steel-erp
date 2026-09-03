@@ -616,7 +616,10 @@ model PurchaseItem {
 }
 
 /// Pago a proveedor imputado a una compra (D-039). Una compra admite N pagos
-/// parciales; el saldo se calcula (total − pagos), nunca se almacena.
+/// parciales; el saldo se calcula (total − pagos vigentes), nunca se almacena.
+/// Anular un pago (Sesión M-2, cierra D-039) es append-only, igual que `CoilSplit`
+/// (RF-16) y `CuttingOrderCoil` (D-052): la fila nunca se borra, se marca revertida.
+/// El motivo de la anulación va al `audit_log` (RF-95), no a esta tabla.
 model SupplierPayment {
   id           String        @id @default(uuid()) @db.Uuid
   purchaseId   String        @map("purchase_id") @db.Uuid
@@ -629,6 +632,8 @@ model SupplierPayment {
   reference    String?       @db.VarChar(80)
   createdById  String        @map("created_by_id") @db.Uuid
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  reversedById String?       @map("reversed_by_id") @db.Uuid
+  reversedAt   DateTime?     @map("reversed_at") @db.Timestamptz(3)
 
   @@index([purchaseId])
   @@map("supplier_payments")

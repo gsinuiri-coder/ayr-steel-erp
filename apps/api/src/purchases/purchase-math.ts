@@ -25,11 +25,17 @@ export interface BalanceablePurchase {
   currency: Currency;
 }
 
-/** Lo mínimo de un pago que necesita el cálculo de saldo. */
+/**
+ * Lo mínimo de un pago que necesita el cálculo de saldo. `reversedAt` es obligatorio a
+ * propósito, no opcional: obliga a cada llamador a decidir explícitamente qué pasa un
+ * pago anulado (Sesión M-2) en vez de arrastrar el olvido en silencio, que es justo lo
+ * que dejaba `cancel()` contando pagos ya anulados como si siguieran vigentes.
+ */
 export interface BalanceablePayment {
   amount: Prisma.Decimal;
   currency: Currency;
   exchangeRate: Prisma.Decimal;
+  reversedAt: Date | null;
 }
 
 export interface ComputedItem {
@@ -100,18 +106,23 @@ export function purchaseBalance(
   purchase: BalanceablePurchase,
   payments: BalanceablePayment[],
 ): Decimal {
-  const paid = payments.reduce(
-    (acc, p) =>
-      acc.plus(
-        toPurchaseCurrency(
-          toDecimal(p.amount.toString()),
-          p.currency,
-          purchase.currency,
-          toDecimal(p.exchangeRate.toString()),
+  // Un pago anulado (Sesión M-2) no cuenta para el saldo: se filtra acá, en el único
+  // lugar donde se suman pagos, para que ningún llamador (alta de pago, DTO de lista,
+  // estado de cuenta) tenga que acordarse de hacerlo por su cuenta.
+  const paid = payments
+    .filter((p) => p.reversedAt === null)
+    .reduce(
+      (acc, p) =>
+        acc.plus(
+          toPurchaseCurrency(
+            toDecimal(p.amount.toString()),
+            p.currency,
+            purchase.currency,
+            toDecimal(p.exchangeRate.toString()),
+          ),
         ),
-      ),
-    new Decimal(0),
-  );
+      new Decimal(0),
+    );
   const balance = money(toDecimal(purchase.total.toString()).minus(paid));
   // Un pago en otra moneda deja residuos de céntimos al convertir: por debajo de un
   // céntimo la compra se considera saldada, si no nunca llegaría a saldo cero (D-039).

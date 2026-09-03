@@ -43,8 +43,9 @@ function payment(
   amount: string,
   currency: Currency = Currency.PEN,
   exchangeRate = '1.0000',
+  reversedAt: Date | null = null,
 ): BalanceablePayment {
-  return { amount: dec(amount), currency, exchangeRate: dec(exchangeRate) };
+  return { amount: dec(amount), currency, exchangeRate: dec(exchangeRate), reversedAt };
 }
 
 describe('computeTotals (D-038: el kardex se valoriza sin IGV)', () => {
@@ -167,5 +168,24 @@ describe('purchaseBalance (D-039: pagos parciales)', () => {
   it('una diferencia mayor a un céntimo sigue siendo saldo pendiente', () => {
     const payments = [payment('25015.9000')];
     expect(purchaseBalance(purchasePen, payments).toFixed(4)).toBe('0.1000');
+  });
+});
+
+describe('purchaseBalance con pagos anulados (Sesión M-2, cierra D-039)', () => {
+  const purchasePen = { total: dec('25016.0000'), currency: Currency.PEN };
+
+  it('un pago anulado no cuenta para el saldo: vuelve a ser como si nunca se hubiera pagado', () => {
+    const payments = [payment('10000.0000', Currency.PEN, '1.0000', new Date())];
+    expect(purchaseBalance(purchasePen, payments).toFixed(4)).toBe('25016.0000');
+    expect(paidAmount(purchasePen, payments).toFixed(4)).toBe('0.0000');
+  });
+
+  it('solo se descuentan los pagos vigentes cuando conviven con uno anulado', () => {
+    const payments = [
+      payment('10000.0000', Currency.PEN, '1.0000', new Date()),
+      payment('5016.0000'),
+    ];
+    expect(purchaseBalance(purchasePen, payments).toFixed(4)).toBe('20000.0000');
+    expect(paidAmount(purchasePen, payments).toFixed(4)).toBe('5016.0000');
   });
 });
