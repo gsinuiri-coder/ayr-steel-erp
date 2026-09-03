@@ -363,7 +363,10 @@ test.describe('Fase 3b — revertir la recepción de un corte tercerizado (D-050
       // La madre recupera su saldo original en kg, en poder del tercero (D-050): el
       // envío sigue vivo, no queda "disponible" en planta hasta que se reciba de nuevo.
       const motherAfterReverse = await getJson<CoilDto>(api, `/api/coils/${mother.id}`);
-      expect(motherAfterReverse).toMatchObject({ status: 'IN_THIRD_PARTY', availableKg: '5000.000' });
+      expect(motherAfterReverse).toMatchObject({
+        status: 'IN_THIRD_PARTY',
+        availableKg: '5000.000',
+      });
       const motherBalanceAfterReverse = await coilBalance(api, mother.id);
       expect(motherBalanceAfterReverse.qty).toBe('5000.000');
       expect(motherBalanceAfterReverse.avgCost).toBe('4.0000');
@@ -490,8 +493,9 @@ test.describe('Fase 3b — revertir la recepción de un corte tercerizado (D-050
       expect(blocked.message).toContain('SCRAP');
 
       // Nada quedó a medias: ni la orden ni la madre ni el fleje B se tocaron.
-      const rowStillReceived = (await getJson<CuttingOrderDto>(api, `/api/cutting/${orderId}`))
-        .coils.find((c) => c.coilId === mother.id)!;
+      const rowStillReceived = (
+        await getJson<CuttingOrderDto>(api, `/api/cutting/${orderId}`)
+      ).coils.find((c) => c.coilId === mother.id)!;
       expect(rowStillReceived.status).toBe('RECEIVED');
       const motherStillClosed = await getJson<CoilDto>(api, `/api/coils/${mother.id}`);
       expect(motherStillClosed.status).toBe('CLOSED');
@@ -634,7 +638,8 @@ test.describe('Fase 3b — revertir la recepción de un corte tercerizado (D-050
         finish,
         lines: [
           {
-            description: 'Bobina E2E que se reenvía a un segundo corte antes de revertir el primero',
+            description:
+              'Bobina E2E que se reenvía a un segundo corte antes de revertir el primero',
             weightKg: '5000',
             widthMm: '1220',
             thicknessMm: '2',
@@ -950,9 +955,10 @@ test.describe('Fase 3b — revertir la recepción de un corte tercerizado (D-050
       expect(row2.strips).toHaveLength(2);
       const gen2Strips = row2.strips;
       for (const strip of gen2Strips) {
-        expect(gen1Ids.has(strip.id), 'La segunda recepción no debe reusar flejes de la primera').toBe(
-          false,
-        );
+        expect(
+          gen1Ids.has(strip.id),
+          'La segunda recepción no debe reusar flejes de la primera',
+        ).toBe(false);
       }
       const motherAfterReceive2 = await getJson<CoilDto>(api, `/api/coils/${mother.id}`);
       expect(motherAfterReceive2).toMatchObject({ status: 'OPEN', availableKg: '1000.000' });
