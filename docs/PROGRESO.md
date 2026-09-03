@@ -9,7 +9,7 @@
 | 0 — Bootstrap                                | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                        |
 | 1 — Maestros, catálogo, precios, importación | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción |
 | 2a — Kardex + compras + alta de bobinas      | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho   |
-| 2b — Partido, merma, cierre, anulación       | 🟡 En curso             | —                                                        |
+| 2b — Partido, merma, cierre, anulación       | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho   |
 | 3 — Corte tercerizado + flejes               | ⚪ Pendiente            | —                                                        |
 | 4 — Producción + `/planta`                   | ⚪ Pendiente            | —                                                        |
 | 5 — Cotizaciones y ventas                    | ⚪ Pendiente            | —                                                        |
@@ -110,9 +110,9 @@ Una compra ya recibida, sus bobinas y sus movimientos no se pueden deshacer hast
 | 7   | Web: `/inventario`, `/bobinas/[id]`, `/kardex`, anulación de compra con motivo, vínculo de landed cost                  | ✅                                                                               |
 | 8   | Tests unit (reverse, ajuste de costo, partido, prorrateo)                                                               | ✅ 111 unit en verde                                                             |
 | 9   | Revisión de `revisor` (API y web) y `auditor-seguridad`                                                                 | ✅ 3 bloqueantes + 7 altos corregidos; ver abajo                                 |
-| 10  | E2E de Fase 2b                                                                                                          | 🟡 en curso                                                                      |
+| 10  | E2E de Fase 2b                                                                                                          | ✅ 14 tests nuevos; 31/31 en local y 30/30 contra producción                     |
 | 11  | Deploy y migración en `production`                                                                                      | ✅ migración aplicada y API redesplegado en Cloud Run                            |
-| 12  | Cierre: handoff, commit, push                                                                                           | ⚪ pendiente                                                                     |
+| 12  | Cierre: handoff, commit, push                                                                                           | ✅ CI verde (corrida 33707954677)                                                |
 
 **Modelo del partido (RF-15).** Se parte una porción del **largo** del rollo: la madre conserva su ancho y pierde peso. El peso que entra al partido se reparte por ancho **sobre el ancho de la madre**, no sobre la suma de los anchos de las hijas. Todo lo que las hijas no cubren —el kerf declarado más el recorte de borde— es `kerfLossKg`, pérdida real del corte. Las hijas entran al kardex al costo promedio vigente de la madre, así que el valor del inventario solo pierde lo que se lleva esa merma.
 
@@ -140,6 +140,12 @@ Una compra ya recibida, sus bobinas y sus movimientos no se pueden deshacer hast
 **Hallazgo de `qa` sobre el API.** Anular una compra recibida revertía **todos** sus movimientos sin filtrar los ya revertidos: un recosteo (D-045) o una bobina anulada individualmente (RF-21) dejan bajo el mismo `refId` un ingreso revertido más su reversa, así que el bucle intentaba anular una anulación y la compra quedaba sin poder anularse nunca. Es el mismo defecto que el revisor encontró en las otras tres validaciones, en el único lugar que había quedado sin `liveMovements`.
 
 **Rendimiento del partido y de la anulación.** Un partido creaba una bobina con ~8 consultas cada una, incluido un `UPDATE suppliers` que retiene el lock del proveedor hasta el commit: 60 hijas eran cientos de viajes a Neon bloqueando cualquier otra alta de ese proveedor. Ahora el máximo es 20 hijas, y proveedor, acabado, producto de catálogo y los N correlativos se resuelven una sola vez (`CoilsService.prepareBatch`). La anulación de una compra revierte hasta 200 movimientos en una transacción: se le subió el timeout a 120 s. Si el volumen crece, la salida es moverla a un job de pg-boss con estado `CANCELLING`.
+
+**E2E de Fase 2b contra producción.** `pnpm e2e:prod` corre ahora `auth` + `fase1` + `fase2a` + `fase2b` con el mismo administrador efímero (30/30 verdes tras el deploy; 31/31 en local, donde además corre `usuarios.spec.ts`). Los 14 tests de 2b cubren el partido y su reversa, la merma y su anulación, la anulación de compra bloqueada y desbloqueada, el landed cost verificado en `/inventario`, el piso de aprovechamiento del partido, las dos regresiones del bug de `cancel`, el reparto de permisos de D-046 (supervisor puede / no puede, vendedor sin costos) y el ciclo de vida RF-19/20/21.
+
+**Producción queda sin stock de prueba.** Es lo que Fase 2a no podía hacer y dejó anotado: con `reverse` construido, `pnpm prod:purge-e2e` anula por API —el mismo endpoint del dueño, con motivo y auditoría— las compras `RECEIVED` y las bobinas con saldo que cuelgan de un proveedor `E2E …`. Hacía falta: tras la corrida, `/inventario` mostraba S/ 113 000 de stock de prueba en Drywall, justo lo que la pantalla nueva no tiene que mostrar. Verificado después de ejecutarlo: **0 bobinas abiertas con saldo**, las 34 de prueba en `CANCELLED`, y el kardex conservando las 92 filas del rastro (§3.2). El script admite `--dry-run` y borra el administrador efímero al terminar. Conviene correrlo después de cada `pnpm e2e:prod`.
+
+Lo que sigue sin cubrirse por E2E: operar el partido, la merma y las anulaciones **desde los diálogos de la UI** (hoy se hacen por API y la UI se verifica en lectura) y `/kardex?item=` con filtro de fechas, cuyo saldo de apertura se verificó a mano contra `inventory_balances` en Neon `dev`.
 
 **Diferido a fases posteriores:**
 
