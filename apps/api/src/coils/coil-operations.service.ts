@@ -59,11 +59,7 @@ export class CoilOperationsService {
       async (tx) => {
         const coil = await this.coils.lockCoil(tx, coilId);
         if (coil.status !== CoilStatus.OPEN) {
-          throw new BadRequestException(
-            coil.status === CoilStatus.CLOSED
-              ? 'La bobina está cerrada: ábrela antes de partirla (RF-19)'
-              : 'La bobina está anulada',
-          );
+          throw new BadRequestException(notOpenMessage(coil.status));
         }
 
         const balance = await tx.inventoryBalance.findUnique({
@@ -296,8 +292,8 @@ export class CoilOperationsService {
   ): Promise<CoilDto> {
     await this.prisma.$transaction(async (tx) => {
       const coil = await this.coils.lockCoil(tx, coilId);
-      if (coil.status === CoilStatus.CANCELLED) {
-        throw new BadRequestException('La bobina está anulada');
+      if (coil.status === CoilStatus.CANCELLED || coil.status === CoilStatus.IN_THIRD_PARTY) {
+        throw new BadRequestException(notOpenMessage(coil.status));
       }
 
       const movement = await this.inventory.record(tx, {
@@ -363,8 +359,8 @@ export class CoilOperationsService {
   async setStatus(actor: RequestUser, coilId: string, input: SetCoilStatusInput): Promise<CoilDto> {
     await this.prisma.$transaction(async (tx) => {
       const coil = await this.coils.lockCoil(tx, coilId);
-      if (coil.status === CoilStatus.CANCELLED) {
-        throw new BadRequestException('La bobina está anulada: no se puede abrir ni cerrar');
+      if (coil.status === CoilStatus.CANCELLED || coil.status === CoilStatus.IN_THIRD_PARTY) {
+        throw new BadRequestException(notOpenMessage(coil.status));
       }
       if (coil.status === input.status) {
         throw new BadRequestException(
@@ -494,6 +490,9 @@ export class CoilOperationsService {
       if (coil.status === CoilStatus.CANCELLED) {
         throw new BadRequestException('La bobina ya está anulada');
       }
+      if (coil.status === CoilStatus.IN_THIRD_PARTY) {
+        throw new BadRequestException(notOpenMessage(coil.status));
+      }
       if (coil.splitId) {
         throw new BadRequestException(
           'Es una bobina hija de un partido: revierte el partido en vez de anularla (RF-16)',
@@ -551,4 +550,19 @@ export class CoilOperationsService {
     }
     return first;
   }
+}
+
+/**
+ * Mensaje para una bobina que no está `OPEN`, distinguiendo por qué: cerrada (RF-19),
+ * anulada (RF-21) o en poder de un tercero de corte (D-050, Fase 3). Antes de D-050 solo
+ * existían las dos primeras razones; sin distinguir la tercera, una bobina enviada a
+ * corte —que no tiene nada de anulado— se reportaba como "anulada".
+ */
+function notOpenMessage(status: CoilStatus): string {
+  if (status === CoilStatus.CLOSED)
+    return 'La bobina está cerrada: ábrela antes de operarla (RF-19)';
+  if (status === CoilStatus.IN_THIRD_PARTY) {
+    return 'La bobina está enviada a corte tercerizado: recíbela o cancela la orden antes de operarla';
+  }
+  return 'La bobina está anulada';
 }

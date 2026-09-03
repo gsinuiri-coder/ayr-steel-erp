@@ -408,6 +408,20 @@ export class PurchasesService {
             }
           }
 
+          // D-050: enviar una bobina a corte tercerizado no genera movimiento de kardex,
+          // así que `assertNothingMovedAfter` no la detecta como "posterior". Sin este
+          // chequeo, anular la compra la cancelaba igual, dejando la orden de corte
+          // apuntando a una bobina que ya no existe.
+          const outAtCutter = await tx.coil.findMany({
+            where: { purchaseId: id, status: CoilStatus.IN_THIRD_PARTY },
+            select: { code: true },
+          });
+          if (outAtCutter.length > 0) {
+            throw new BadRequestException(
+              `No se puede anular la compra: ${outAtCutter.map((c) => c.code).join(', ')} está en corte tercerizado. Recíbela o cancela esa orden primero.`,
+            );
+          }
+
           const cancelled = await tx.coil.updateMany({
             where: { purchaseId: id, status: { not: CoilStatus.CANCELLED } },
             data: { status: CoilStatus.CANCELLED },
