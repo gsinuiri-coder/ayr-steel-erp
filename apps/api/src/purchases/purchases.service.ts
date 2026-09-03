@@ -368,11 +368,20 @@ export class PurchasesService {
 
         let cancelledCoils = 0;
         if (purchase.status === PurchaseStatus.RECEIVED) {
-          const movements = await tx.inventoryMovement.findMany({
+          const own = await tx.inventoryMovement.findMany({
             where: { refType: 'PURCHASE', refId: id },
             orderBy: { id: 'asc' },
+            include: { reversals: { select: { id: true } } },
           });
-          await this.assertNothingMovedAfter(tx, movements);
+          // Para decidir qué es "posterior" cuentan TODOS los movimientos de la compra,
+          // incluidos los ya revertidos y sus reversas: son suyos igual.
+          await this.assertNothingMovedAfter(tx, own);
+
+          // Pero solo se revierte lo que sigue vivo. Un recosteo (D-045) o una bobina
+          // anulada (RF-21) dejan bajo el mismo `refId` un ingreso ya revertido más su
+          // reversa: sin este filtro el bucle intentaba anular una anulación y la
+          // compra quedaba sin poder anularse nunca, con un mensaje que no decía nada.
+          const movements = liveMovements(own);
 
           // Del más nuevo al más viejo: si una compra generó un ingreso y luego un
           // ajuste de costo sobre el mismo ítem, el ajuste tiene que deshacerse primero.
