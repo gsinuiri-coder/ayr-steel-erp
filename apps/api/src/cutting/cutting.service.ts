@@ -26,6 +26,7 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { planCoilSplit } from '../coils/coil-split-math';
 import { CoilsService } from '../coils/coils.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { deriveCuttingOrderStatus, expandWidthCounts, validateWidthBudget } from './cutting-math';
 
@@ -265,6 +266,11 @@ export class CuttingService {
             receivedWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             receivedKerfLossMm: toFixedString(plan.kerfLossMm, 'MM'),
             receivedKerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
+            // Si esta fila ya se había recibido y revertido antes (Fase 3b), esta
+            // recepción nueva reemplaza a la anterior: el rastro de la reversa pasada
+            // no aplica a lo que se acaba de recibir.
+            revertedById: null,
+            revertedAt: null,
           },
         });
 
@@ -281,6 +287,172 @@ export class CuttingService {
             strips: children.map((c) => c.code),
             receivedWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             kerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
+          },
+        });
+      },
+      { timeout: 30_000 },
+    );
+
+    return this.findOne(cuttingOrderId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Fase 3b — revertir una recepción (simétrico a RF-16)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Deshace la recepción de UNA bobina de la orden (RF-41 a la inversa): anula los
+   * flejes que creó y devuelve el saldo a la madre, con el mismo criterio "todo o
+   * nada" que RF-16 (revertir un partido) — si algún fleje ya se movió (consumo,
+   * venta, otro partido), falla completa nombrándolo. La fila vuelve a `SENT`: el
+   * envío sigue vivo, así que se puede recibir de nuevo o cancelar (RF-22).
+   *
+   * Guardrail propio de D-050 que RF-16 no necesita: la madre puede haberse vuelto a
+   * enviar a OTRA orden de corte desde que se recibió esta (`send()` no deja rastro de
+   * kardex), así que además de "sin movimientos posteriores" se exige que su estado
+   * actual sea `OPEN` o `CLOSED` — nunca `IN_THIRD_PARTY` de otro envío, nunca
+   * `CANCELLED`. Con ambos guardrails en verde, el envío queda vivo por construcción:
+   * la bobina vuelve a `IN_THIRD_PARTY`, nunca a un "disponible" ambiguo.
+   */
+  async reverse(
+    actor: RequestUser,
+    cuttingOrderId: string,
+    coilId: string,
+    reason: string,
+  ): Promise<CuttingOrderDto> {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const row = await tx.cuttingOrderCoil.findFirst({ where: { cuttingOrderId, coilId } });
+        if (!row) throw new NotFoundException('La bobina no pertenece a esa orden de corte');
+
+        await tx.$queryRaw`
+          SELECT "id" FROM "cutting_order_coils" WHERE "id" = ${row.id}::uuid FOR UPDATE
+        `;
+        const fresh = await tx.cuttingOrderCoil.findUniqueOrThrow({ where: { id: row.id } });
+        if (fresh.status !== CuttingOrderCoilStatus.RECEIVED) {
+          throw new BadRequestException(
+            fresh.status === CuttingOrderCoilStatus.SENT
+              ? 'Esta bobina de la orden todavía no se recibió: no hay nada que revertir'
+              : 'Esta bobina de la orden está cancelada: no hay nada que revertir',
+          );
+        }
+
+        const coil = await this.coils.lockCoil(tx, coilId);
+        if (coil.status === CoilStatus.IN_THIRD_PARTY) {
+          throw new BadRequestException(
+            `${coil.code} está enviada a otra orden de corte: no se puede revertir esta recepción mientras siga allá`,
+          );
+        }
+        if (coil.status === CoilStatus.CANCELLED) {
+          throw new BadRequestException(`${coil.code} está anulada`);
+        }
+
+        const all = await tx.inventoryMovement.findMany({
+          where: { refType: 'CUTTING', refId: row.id },
+          orderBy: { id: 'asc' },
+          include: { reversals: { select: { id: true } } },
+        });
+        const movementIds = new Set(all.map((m) => m.id));
+        // Igual que RF-16: los pares movimiento+reversa que ya se cancelaron entre sí
+        // (por ejemplo un recosteo posterior) no cuentan para nada de lo que sigue.
+        const movements = liveMovements(all);
+        const motherOut = movements.find((m) => m.itemId === coilId && m.type === 'OUT');
+        if (!motherOut) {
+          throw new BadRequestException(
+            'Esta recepción no tiene un movimiento de kardex que revertir',
+          );
+        }
+
+        // Los flejes de ESTA generación, no todos los que alguna vez colgaron de la
+        // fila: si ya se recibió, revirtió y volvió a recibir antes, `cuttingOrderCoilId`
+        // también apunta a los flejes `CANCELLED` de la vez anterior. `movements` ya
+        // viene acotado por `liveMovements` a los vivos de esta recepción puntual.
+        const stripIds = movements.filter((m) => m.type === 'IN').map((m) => m.itemId);
+        const strips = await tx.coil.findMany({ where: { id: { in: stripIds } } });
+
+        // Los flejes: mismo criterio "todo o nada" que RF-16 con las hijas de un
+        // partido. Si uno ya se consumió, se vendió o se volvió a partir, devolver su
+        // peso a la madre inventariaría kilos que ya no existen.
+        for (const strip of strips) {
+          const extra = await tx.inventoryMovement.findMany({
+            where: {
+              itemType: 'COIL',
+              itemId: strip.id,
+              ...(movementIds.size > 0 ? { id: { notIn: [...movementIds] } } : {}),
+            },
+            orderBy: { id: 'asc' },
+            include: { reversals: { select: { id: true } } },
+          });
+          const blocking = liveMovements(extra)[0];
+          if (blocking) {
+            throw new BadRequestException(
+              `El fleje ${strip.code} ya tiene movimientos posteriores (${blocking.refType}): anúlalos antes de revertir la recepción`,
+            );
+          }
+        }
+
+        // La madre: guardrail propio de esta reversa (D-050). Un envío a otra orden no
+        // deja movimiento, así que hay que chequear explícitamente lo que sí queda
+        // rastro: cualquier movimiento de la madre posterior a la salida que se está
+        // revirtiendo (otro partido, otra merma, otra recepción de corte).
+        const motherMovements = await tx.inventoryMovement.findMany({
+          where: { itemType: 'COIL', itemId: coilId },
+          orderBy: { id: 'asc' },
+          include: { reversals: { select: { id: true } } },
+        });
+        const motherBlocking = liveMovements(motherMovements).find((m) => m.id > motherOut.id);
+        if (motherBlocking) {
+          throw new BadRequestException(
+            `${coil.code} ya tuvo movimientos posteriores a esta recepción (${motherBlocking.refType}): no se puede revertir`,
+          );
+        }
+
+        // Primero las entradas de los flejes y al final la salida de la madre: al
+        // revés, la madre recuperaría el peso antes de que los flejes lo devuelvan.
+        for (const movement of movements.filter((m) => m.type === 'IN')) {
+          await this.inventory.reverse(tx, movement.id, actor.id, reason);
+        }
+        await this.inventory.reverse(tx, motherOut.id, actor.id, reason);
+
+        await tx.coil.updateMany({
+          where: { id: { in: stripIds } },
+          data: { status: CoilStatus.CANCELLED },
+        });
+
+        await tx.cuttingOrderCoil.update({
+          where: { id: row.id },
+          data: {
+            status: CuttingOrderCoilStatus.SENT,
+            receivedAt: null,
+            receivedWidthsMm: Prisma.JsonNull,
+            receivedWeightKg: null,
+            receivedKerfLossMm: null,
+            receivedKerfLossKg: null,
+            revertedById: actor.id,
+            revertedAt: new Date(),
+          },
+        });
+
+        // El envío sigue vivo (la fila vuelve a SENT): la bobina vuelve a estar en
+        // poder del tercero, a la espera de una recepción correcta.
+        await tx.coil.update({
+          where: { id: coilId },
+          data: { status: CoilStatus.IN_THIRD_PARTY },
+        });
+
+        await this.recomputeOrderStatus(tx, cuttingOrderId);
+
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'cutting.receive-reverse',
+          entity: 'cutting_orders',
+          entityId: cuttingOrderId,
+          before: { coilId, status: fresh.status },
+          after: {
+            coilId,
+            status: CuttingOrderCoilStatus.SENT,
+            reason,
+            cancelledStrips: strips.map((s) => s.code),
           },
         });
       },
@@ -398,7 +570,11 @@ export class CuttingService {
         coils: {
           include: {
             coil: { select: { code: true, widthMm: true } },
+            // Excluye los flejes CANCELLED de una recepción anterior de la misma fila
+            // (revertida y vuelta a recibir): sin este filtro se mezclan con los vivos
+            // de la recepción actual, sin ninguna marca que los distinga en la UI.
             strips: {
+              where: { status: { not: CoilStatus.CANCELLED } },
               select: { id: true, code: true, widthMm: true, weightKg: true },
               orderBy: { code: 'asc' },
             },
@@ -461,6 +637,7 @@ export class CuttingService {
         receivedKerfLossMm: row.receivedKerfLossMm ? row.receivedKerfLossMm.toFixed(2) : null,
         receivedKerfLossKg: row.receivedKerfLossKg ? row.receivedKerfLossKg.toFixed(3) : null,
         cancelledAt: row.cancelledAt ? row.cancelledAt.toISOString() : null,
+        revertedAt: row.revertedAt ? row.revertedAt.toISOString() : null,
         strips: row.strips.map((s) => ({
           id: s.id,
           code: s.code,

@@ -39,6 +39,7 @@ import { CuttingReceiveDialog } from './cutting-receive-dialog';
 export function CorteDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [receiving, setReceiving] = useState<CuttingOrderCoilDto | null>(null);
+  const [reverting, setReverting] = useState<CuttingOrderCoilDto | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
   const order = useQuery({
@@ -64,6 +65,21 @@ export function CorteDetalleView({ id }: { id: string }) {
     },
     onError: (err) =>
       toast.error(err instanceof ApiError ? err.message : 'No se pudo anular la orden'),
+  });
+
+  const revert = useMutation({
+    mutationFn: ({ coilId, reason }: { coilId: string; reason: string }) =>
+      api<CuttingOrderDto>(`/cutting/${id}/coils/${coilId}/reverse`, {
+        method: 'POST',
+        body: { reason },
+      }),
+    onSuccess: () => {
+      toast.success('La recepción quedó revertida: la bobina vuelve a estar en el tercero');
+      setReverting(null);
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo revertir la recepción'),
   });
 
   if (order.isPending) return <Skeleton className="h-64 w-full" />;
@@ -190,6 +206,17 @@ export function CorteDetalleView({ id }: { id: string }) {
                         Recibir
                       </Button>
                     )}
+                    {row.status === 'RECEIVED' && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => {
+                          setReverting(row);
+                        }}
+                      >
+                        Revertir
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -259,6 +286,24 @@ export function CorteDetalleView({ id }: { id: string }) {
         pending={cancel.isPending}
         onConfirm={(reason) => {
           cancel.mutate(reason);
+        }}
+      />
+
+      <ReasonDialog
+        open={reverting !== null}
+        onOpenChange={(open) => {
+          if (!open) setReverting(null);
+        }}
+        title="Revertir la recepción"
+        description={
+          reverting
+            ? `Los flejes de ${reverting.coilCode} (${reverting.strips.map((s) => s.code).join(', ')}) quedan anulados y su peso vuelve a la bobina madre, que regresa a "en el tercero". Solo se puede si ningún fleje se movió después.`
+            : ''
+        }
+        confirmLabel="Sí, revertir"
+        pending={revert.isPending}
+        onConfirm={(reason) => {
+          if (reverting) revert.mutate({ coilId: reverting.coilId, reason });
         }}
       />
     </RoleGate>

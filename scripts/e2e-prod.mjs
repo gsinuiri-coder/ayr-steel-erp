@@ -1,8 +1,9 @@
 // Corre los E2E de autenticación (auth.spec.ts), de Fase 1 (fase1.spec.ts) y de
-// las fases 2a, 2b y 3 (fase2a.spec.ts, fase2b.spec.ts, fase3.spec.ts) contra producción
-// (Vercel + Cloud Run), incluidos los escenarios que crean datos (RF-03: usuario
-// desactivado, cambio de rol; Fase 1: acabado, producto, importación, margen; Fase 2a:
-// compras, bobinas y kardex; Fase 3: corte tercerizado y flejes).
+// las fases 2a, 2b, 3 y 3b (fase2a.spec.ts, fase2b.spec.ts, fase3.spec.ts,
+// fase3b.spec.ts) contra producción (Vercel + Cloud Run), incluidos los escenarios que
+// crean datos (RF-03: usuario desactivado, cambio de rol; Fase 1: acabado, producto,
+// importación, margen; Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y
+// flejes; Fase 3b: reversa de recepción de corte).
 //
 // Para no tocar la cuenta real del dueño, crea un ADMINISTRADOR efímero con
 // contraseña aleatoria, corre la suite y lo borra junto con los usuarios que la
@@ -80,6 +81,7 @@ try {
       'e2e/tests/fase2a.spec.ts',
       'e2e/tests/fase2b.spec.ts',
       'e2e/tests/fase3.spec.ts',
+      'e2e/tests/fase3b.spec.ts',
     ],
     {
       E2E_BASE_URL: baseUrl,

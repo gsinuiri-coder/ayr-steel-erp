@@ -255,3 +255,25 @@ El docx original saltaba de RF-14 a RF-16, y D-031 (P-08) ya había señalado a 
 **Decisión.** La bobina enviada pasa a `status = IN_THIRD_PARTY` (nuevo valor del enum `CoilStatus`) sin movimiento de inventario: sigue siendo propiedad de la empresa, solo cambió de ubicación física. Mientras está `IN_THIRD_PARTY` se excluye de producción y del partido local (RF-15) — las mismas exclusiones que una bobina `CLOSED`, más estricta porque tampoco se puede editar su costo (D-045) mientras está fuera. El kardex real —salida `OUT refType=CUTTING` de la madre, entradas `IN` de los flejes— se emite recién al **recibir**, con la misma matemática que el partido (`planCoilSplit`).
 
 **Consecuencias.** Evita una salida de kardex por un envío que puede tardar semanas en volver o incluso no volver nunca (pérdida en el tercero, que se resolvería como una merma en ese momento, fuera de alcance de v1). RF-22 (cancelar el plan de corte) se resuelve solo devolviendo la bobina a `OPEN`, sin reversar ningún movimiento, porque no hubo ninguno.
+
+## D-051..D-052 — Fase 3b (reversa de recepción de corte tercerizado)
+
+**Fecha:** 2026-09-03
+
+### D-051 — Fase 3b se intercala entre Fase 3 y Fase 4
+
+**Contexto.** El handoff de Fase 3 dejó anotado un hueco explícito: no existe forma de deshacer una recepción de corte tercerizado ya confirmada (RF-41), simétrico al hueco que RF-16 cerró para el partido interno en Fase 2b. Consecuencia concreta: 3 bobinas madre de prueba en producción (una con 2 000 kg) quedaron sin poder anularse porque su compra original está bloqueada por un movimiento `CUTTING` posterior que nada podía revertir.
+
+**Decisión.** Se cierra el hueco ahora, como una sub-fase "3b" entre Fase 3 y Fase 4, antes de empezar producción — igual que D-041 partió la Fase 2 original en 2a/2b por la misma razón (una fase grande con dependencia técnica interna, cerrada en dos sesiones verificables cada una).
+
+**Consecuencias.** §3.7 gana la fila "3b". Fase 4 (producción) empieza sin heredar el mismo hueco: si un operario de planta recibe mal un envío de corte, ya existe una forma de corregirlo antes de que production empiece a consumir esos flejes.
+
+### D-052 — Guardrails de `CuttingService.reverse()`
+
+**Contexto.** `reverse()` deshace la recepción de UNA bobina de una orden de corte: anula los flejes que creó y devuelve el peso a la madre. RF-16 (revertir un partido) es el patrón a seguir, pero un envío a corte tiene una diferencia de fondo con un partido: D-050 hizo que **enviar** una bobina a un tercero no deje ningún rastro de kardex. Eso significa que, entre la recepción que se quiere revertir y el momento de la reversa, la bobina madre pudo haberse reenviado a OTRA orden de corte sin que ningún movimiento lo delate — algo que RF-16 nunca tuvo que contemplar, porque antes de D-050 una bobina no podía "irse" sin dejar rastro.
+
+**Alternativas.** (a) Revertir siempre y decidir el estado final de la bobina madre con una regla adicional (por ejemplo, "si el envío sigue vivo va a `IN_THIRD_PARTY`, si no, queda disponible") sin verificar si la madre se movió entre medio. (b) Bloquear la reversa entera si la madre tiene cualquier indicio de haberse movido desde esta recepción (estado actual distinto de `OPEN`/`CLOSED`, o cualquier movimiento de kardex posterior a la salida que se revierte), igual que RF-16 bloquea si una hija se movió.
+
+**Decisión.** (b). Antes de revertir, la bobina madre debe estar `OPEN` o `CLOSED` (nunca `IN_THIRD_PARTY` de otro envío, nunca `CANCELLED`) y no puede tener ningún movimiento de kardex posterior a la salida que se revierte (otro partido, otra merma, otra recepción de corte). Si ambos guardrails pasan, el resultado es siempre el mismo: los flejes de esa recepción quedan `CANCELLED`, la fila (`cuttingOrderCoil`) vuelve a `SENT` y la bobina madre vuelve a `IN_THIRD_PARTY` — el envío queda vivo por construcción, porque cualquier escenario donde no lo estaría ya bloqueó la operación antes de llegar a decidir un estado final. El mismo guardrail de `IN_THIRD_PARTY` se agregó retroactivamente a `revertSplit` (RF-16, `coil-operations.service.ts`), que tenía el mismo hueco sin haberlo necesitado nunca hasta que D-050 introdujo `IN_THIRD_PARTY`.
+
+**Consecuencias.** No existe hoy un camino de código donde la reversa termine con la bobina simplemente "disponible" sin pasar por `IN_THIRD_PARTY": si el guardrail bloquea, la operación falla completa (mismo criterio "todo o nada" que ya usa RF-16 con las hijas de un partido y RF-21 con los movimientos posteriores de una bobina), nunca deja un estado ambiguo a mitad de camino. Si el negocio pide más adelante un caso legítimo donde la bobina deba quedar disponible en vez de reenviarse, se agrega como una decisión nueva con su propio criterio explícito, no como una rama silenciosa de esta.

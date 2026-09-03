@@ -108,6 +108,8 @@ export const cuttingOrderCoilSchema = z.object({
   receivedKerfLossMm: z.string().nullable(),
   receivedKerfLossKg: z.string().nullable(),
   cancelledAt: z.string().nullable(),
+  /** Última reversa de recepción (Fase 3b), si la hubo. */
+  revertedAt: z.string().nullable(),
   /** Flejes creados al recibir esta fila (vacío mientras siga `SENT`). */
   strips: z.array(
     z.object({

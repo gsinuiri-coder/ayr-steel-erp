@@ -153,6 +153,37 @@ try {
     );
   }
 
+  // 1.5) Flejes con una merma de prueba viva (Fase 3b: el E2E de "reversa bloqueada
+  //      por fleje consumido" registra una merma a propósito). Esa merma es justo lo
+  //      que bloquea anular el fleje en el paso 2 (RF-21 exige que no tenga movimientos
+  //      posteriores a su ingreso), así que se revierte primero (RF-18) para que el
+  //      paso siguiente lo alcance.
+  const openForScrap = await call('/coils?status=OPEN');
+  const e2eStrips = (Array.isArray(openForScrap.body) ? openForScrap.body : []).filter(
+    (c) => e2eSupplierIds.has(c.supplierId) && c.kind === 'STRIP',
+  );
+  for (const strip of e2eStrips) {
+    const movements = await call(`/inventory/movements?itemType=COIL&itemId=${strip.id}`);
+    const liveScrap = (Array.isArray(movements.body) ? movements.body : []).find(
+      (m) =>
+        m.refType === 'SCRAP' && m.type === 'OUT' && m.reversalOfId === null && !m.reversedById,
+    );
+    if (!liveScrap) continue;
+    if (dryRun) {
+      console.log(`  [simulado] revertir merma de prueba en el fleje ${strip.code}`);
+      continue;
+    }
+    const res = await call(`/coils/scraps/${liveScrap.id}/cancel`, {
+      method: 'POST',
+      body: { reason: REASON },
+    });
+    console.log(
+      res.ok
+        ? `  merma de prueba en ${strip.code} revertida`
+        : `  merma de prueba en ${strip.code} NO se pudo revertir: ${res.body?.message ?? res.status}`,
+    );
+  }
+
   // 2) Bobinas que quedaron con saldo y no cuelgan de una compra (alta por planilla,
   //    RF-12): se anulan una por una con el mismo endpoint de RF-21.
   const coils = await call('/coils?status=OPEN');

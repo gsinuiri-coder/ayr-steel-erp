@@ -4,6 +4,7 @@ import {
   createCuttingOrderSchema,
   cuttingOrderQuerySchema,
   receiveCuttingOrderCoilSchema,
+  reverseMovementSchema,
   Role,
   stripStockQuerySchema,
   type CancelCuttingOrderInput,
@@ -12,6 +13,7 @@ import {
   type CuttingOrderListItemDto,
   type CuttingOrderQuery,
   type ReceiveCuttingOrderCoilInput,
+  type ReverseMovementInput,
   type StripStockQuery,
   type StripStockRowDto,
 } from '@ayr/shared';
@@ -72,6 +74,17 @@ export class CuttingController {
     @Body(new ZodValidationPipe(receiveCuttingOrderCoilSchema)) body: ReceiveCuttingOrderCoilInput,
   ): Promise<CuttingOrderDto> {
     return this.cutting.receive(actor, id, coilId, body);
+  }
+
+  /** Revertir la recepción de una bobina de la orden (Fase 3b, simétrico a RF-16). */
+  @Post(':id/coils/:coilId/reverse')
+  reverse(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('coilId', ParseUUIDPipe) coilId: string,
+    @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
+  ): Promise<CuttingOrderDto> {
+    return this.cutting.reverse(actor, id, coilId, body.reason);
   }
 
   /** Cancelar lo no recibido de la orden (RF-22). */
