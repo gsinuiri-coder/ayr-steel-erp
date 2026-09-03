@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -59,8 +60,8 @@ const decimalField = (message: string) =>
   z
     .string()
     .trim()
-    .regex(/^\d+(\.\d+)?$/, message)
-    .refine((v) => Number.parseFloat(v) > 0, message);
+    // D-003: la comparación va por `Decimal`, no por `parseFloat`.
+    .refine((v) => isPositiveDecimal(v), message);
 
 const itemSchema = z.object({
   productId: z.string().optional(),
@@ -242,6 +243,17 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
     type === PurchaseType.SERVICE &&
     serviceKind !== undefined &&
     LANDED_COST_SERVICE_KINDS.includes(serviceKind);
+  const relatedPurchaseId = form.watch('relatedPurchaseId');
+  // El vínculo se limpia cuando deja de tener sentido: si sobrevive a un cambio de
+  // servicio o de línea, el campo desaparece de pantalla pero se sigue enviando, y el
+  // API responde apuntando a un campo que el usuario ya no ve.
+  useEffect(() => {
+    if (relatedPurchaseId && !canLink) form.setValue('relatedPurchaseId', '');
+  }, [canLink, relatedPurchaseId, form]);
+  useEffect(() => {
+    if (form.getValues('relatedPurchaseId')) form.setValue('relatedPurchaseId', '');
+    // Solo al cambiar de línea: la compra vinculada tiene que ser de la misma (D-043).
+  }, [businessLine, form]);
   const coilPurchases = useQuery({
     queryKey: ['purchases', 'coil-received', businessLine],
     queryFn: () =>

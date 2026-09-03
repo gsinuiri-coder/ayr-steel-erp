@@ -3,7 +3,14 @@
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Decimal, type CoilDto } from '@ayr/shared';
+import {
+  Decimal,
+  MAX_SPLIT_CHILDREN,
+  MAX_SPLIT_ROWS,
+  MIN_CHILD_WIDTH_MM,
+  MIN_SPLIT_YIELD,
+  type CoilDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
@@ -61,7 +68,7 @@ export function CoilSplitDialog({
           kerfLossMm: kerfLossMm.trim() || '0',
           children: rows.map((r) => ({
             widthMm: r.widthMm.trim(),
-            count: Number.parseInt(r.count, 10) || 1,
+            count: stripCount(r.count),
           })),
         },
       }),
@@ -208,53 +215,77 @@ interface SplitPreview {
   error: string | null;
 }
 
-/** Previsualización con `Decimal` (D-003): ni el ancho ni el peso pasan por `number`. */
+/** Tiras de una fila: el API exige un entero >= 1, así que se normaliza en los dos lados. */
+function stripCount(raw: string): number {
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
+}
+
+const kg = (value: Decimal): string => value.toDecimalPlaces(3, Decimal.ROUND_HALF_UP).toFixed(3);
+
+/**
+ * Previsualización con `Decimal` (D-003): ni el ancho ni el peso pasan por `number`.
+ *
+ * Replica **todas** las reglas de `planCoilSplit` del API y su mismo reparto por
+ * acumulado redondeado. Adelantar solo la mitad de las validaciones era peor que no
+ * adelantar ninguna: el caso cotidiano (sacar una tira angosta de una bobina ancha)
+ * mostraba una previsualización en verde y terminaba en un 400 del servidor.
+ */
 function previewSplit(
   coil: CoilDto,
   rows: WidthRow[],
   kerfLossMm: string,
   splitWeightKg: string,
 ): SplitPreview | null {
-  const valid = rows.filter((r) => isPositiveDecimal(r.widthMm));
-  if (valid.length === 0 || !isPositiveDecimal(splitWeightKg)) return null;
+  if (rows.some((r) => !isPositiveDecimal(r.widthMm))) return null;
+  if (rows.length === 0 || !isPositiveDecimal(splitWeightKg)) return null;
   const kerf = /^\d+(\.\d+)?$/.test(kerfLossMm.trim())
     ? new Decimal(kerfLossMm.trim())
     : new Decimal(0);
 
-  const widths = valid.flatMap((r) => {
-    const count = Math.max(1, Number.parseInt(r.count, 10) || 1);
-    return Array.from({ length: count }, () => new Decimal(r.widthMm.trim()));
-  });
+  const widths = rows.flatMap((r) =>
+    Array.from({ length: stripCount(r.count) }, () => new Decimal(r.widthMm.trim())),
+  );
   const widthsTotal = widths.reduce((acc, w) => acc.plus(w), new Decimal(0));
   const consumed = widthsTotal.plus(kerf);
   const weight = new Decimal(splitWeightKg.trim());
+  const parentWidth = new Decimal(coil.widthMm);
+  const minYieldWidth = parentWidth.times(MIN_SPLIT_YIELD);
 
   let error: string | null = null;
-  if (consumed.gt(new Decimal(coil.widthMm))) {
+  if (widths.some((w) => w.lt(MIN_CHILD_WIDTH_MM))) {
+    error = `El ancho de cada hija debe ser de al menos ${MIN_CHILD_WIDTH_MM} mm.`;
+  } else if (rows.length > MAX_SPLIT_ROWS || widths.length > MAX_SPLIT_CHILDREN) {
+    error = `Un partido admite hasta ${MAX_SPLIT_CHILDREN} bobinas hijas.`;
+  } else if (consumed.gt(parentWidth)) {
     error = `Los anchos más la merma suman ${consumed.toFixed(2)} mm y la madre tiene ${coil.widthMm} mm.`;
+  } else if (widthsTotal.lt(minYieldWidth)) {
+    error = `Las hijas cubren ${widthsTotal.toFixed(2)} mm de ${coil.widthMm} mm: un partido tiene que aprovechar al menos ${minYieldWidth.toFixed(2)} mm. Si vas a dar de baja el resto, regístralo como merma.`;
   } else if (weight.gt(new Decimal(coil.availableKg))) {
     error = `Solo hay ${coil.availableKg} kg disponibles.`;
   }
 
-  // El reparto va sobre el ancho de la MADRE, igual que el API: lo que no cubren las
-  // tiras es recorte de borde y suma a la merma, no se reparte entre las hijas.
-  const parentWidth = new Decimal(coil.widthMm);
-  const perStrip = widths
-    .slice(0, 6)
-    .map((w) =>
-      weight.times(w).div(parentWidth).toDecimalPlaces(3, Decimal.ROUND_HALF_UP).toFixed(3),
-    );
+  // Mismo acumulado redondeado que `planCoilSplit`: repartir cada tira por separado
+  // daba milésimas distintas a las que después devuelve el API.
+  const perStrip: string[] = [];
+  let cumulativeWidth = new Decimal(0);
+  let previousWeight = new Decimal(0);
+  for (const width of widths) {
+    cumulativeWidth = cumulativeWidth.plus(width);
+    const cumulativeWeight = weight
+      .times(cumulativeWidth)
+      .div(parentWidth)
+      .toDecimalPlaces(3, Decimal.ROUND_HALF_UP);
+    if (perStrip.length < 6) perStrip.push(kg(cumulativeWeight.minus(previousWeight)));
+    previousWeight = cumulativeWeight;
+  }
   if (widths.length > 6) perStrip.push('…');
 
   return {
     strips: widths.length,
     consumedWidthMm: consumed.toFixed(2),
     perStrip,
-    kerfKg: weight
-      .times(parentWidth.minus(widthsTotal))
-      .div(parentWidth)
-      .toDecimalPlaces(3, Decimal.ROUND_HALF_UP)
-      .toFixed(3),
+    kerfKg: kg(weight.minus(previousWeight)),
     error,
   };
 }

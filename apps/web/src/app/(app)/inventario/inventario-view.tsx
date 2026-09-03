@@ -13,6 +13,7 @@ import {
   type InventorySummaryRowDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { useSession } from '@/lib/session';
 import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,6 +37,10 @@ const STOCK_LINES = BUSINESS_LINES.filter((line) => !NOOP_INVENTORY_LINES.includ
  * soles (D-042) porque el kardex se lleva en soles.
  */
 export function InventarioView() {
+  const { user } = useSession();
+  // VENDEDOR ve cantidades pero no costos de compra (§3.4): el API se los devuelve en
+  // `null`, así que mostrarle tres columnas de guiones sería solo ruido.
+  const showCosts = user.role !== Role.VENDEDOR;
   const [line, setLine] = useState<BusinessLine>(STOCK_LINES[0] ?? 'drywall');
 
   return (
@@ -63,7 +68,7 @@ export function InventarioView() {
         </TabsList>
         {STOCK_LINES.map((l) => (
           <TabsContent key={l} value={l} className="mt-4 grid gap-4">
-            <LinePanel line={l} />
+            <LinePanel line={l} showCosts={showCosts} />
           </TabsContent>
         ))}
       </Tabs>
@@ -71,7 +76,7 @@ export function InventarioView() {
   );
 }
 
-function LinePanel({ line }: { line: BusinessLine }) {
+function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean }) {
   const summary = useQuery({
     queryKey: ['inventory', 'summary', line],
     queryFn: () => api<InventorySummaryDto>(`/inventory/summary?businessLine=${line}`),
@@ -88,12 +93,16 @@ function LinePanel({ line }: { line: BusinessLine }) {
     <>
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Valorizado de la línea</CardTitle>
+          <CardTitle className="text-base">
+            {showCosts ? 'Valorizado de la línea' : 'Ítems con saldo'}
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-2xl font-semibold" data-testid="inventario-total">
-            {formatMoneyOrDash(totalValuePen)}
-          </p>
+          {showCosts && (
+            <p className="text-2xl font-semibold" data-testid="inventario-total">
+              {formatMoneyOrDash(totalValuePen)}
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             {coils.length} tipo(s) de bobina y {products.length} producto(s) con saldo.
           </p>
@@ -105,12 +114,14 @@ function LinePanel({ line }: { line: BusinessLine }) {
         emptyLabel="No hay bobinas con saldo en esta línea."
         rows={coils}
         keyHeader="Tipo (acabado-espesor)"
+        showCosts={showCosts}
       />
       <SummaryTable
         title="Productos de catálogo"
         emptyLabel="No hay productos con saldo en esta línea."
         rows={products}
         keyHeader="SKU"
+        showCosts={showCosts}
       />
     </>
   );
@@ -121,12 +132,15 @@ function SummaryTable({
   keyHeader,
   emptyLabel,
   rows,
+  showCosts,
 }: {
   title: string;
   keyHeader: string;
   emptyLabel: string;
   rows: InventorySummaryRowDto[];
+  showCosts: boolean;
 }) {
+  const columnCount = showCosts ? 6 : 4;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -140,8 +154,8 @@ function SummaryTable({
               <TableHead>Descripción</TableHead>
               <TableHead className="text-right">Ítems</TableHead>
               <TableHead className="text-right">Cantidad</TableHead>
-              <TableHead className="text-right">Costo prom.</TableHead>
-              <TableHead className="text-right">Valorizado</TableHead>
+              {showCosts && <TableHead className="text-right">Costo prom.</TableHead>}
+              {showCosts && <TableHead className="text-right">Valorizado</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -166,17 +180,21 @@ function SummaryTable({
                 <TableCell className="text-right">
                   {formatQty(row.qty, unitSymbol(row.unit))}
                 </TableCell>
-                <TableCell className="text-right">
-                  {formatMoneyOrDash(row.avgCostPen, 'PEN', 4)}
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  {formatMoneyOrDash(row.totalValuePen)}
-                </TableCell>
+                {showCosts && (
+                  <TableCell className="text-right">
+                    {formatMoneyOrDash(row.avgCostPen, 'PEN', 4)}
+                  </TableCell>
+                )}
+                {showCosts && (
+                  <TableCell className="text-right font-medium">
+                    {formatMoneyOrDash(row.totalValuePen)}
+                  </TableCell>
+                )}
               </TableRow>
             ))}
             {rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
                   {emptyLabel}
                 </TableCell>
               </TableRow>

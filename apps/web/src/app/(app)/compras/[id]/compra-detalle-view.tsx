@@ -26,7 +26,7 @@ import {
   type PurchaseDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatDate, formatMoney, formatQty, todayIso } from '@/lib/format';
+import { formatDate, formatMoney, formatQty, isPositiveDecimal, todayIso } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
@@ -89,6 +89,8 @@ export function CompraDetalleView({ id }: { id: string }) {
     void queryClient.invalidateQueries({ queryKey: ['purchases'] });
     void queryClient.invalidateQueries({ queryKey: ['coils'] });
     void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    // Recibir o anular una compra cambia el detalle de cada bobina que creó.
+    void queryClient.invalidateQueries({ queryKey: ['coil'] });
   };
 
   const receive = useMutation({
@@ -105,6 +107,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       api<PurchaseDto>(`/purchases/${id}/cancel`, { method: 'POST', body: { reason } }),
     onSuccess: () => {
       toast.success('Compra anulada');
+      setConfirmCancel(false);
       invalidate();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo anular'),
@@ -118,7 +121,7 @@ export function CompraDetalleView({ id }: { id: string }) {
   const p = purchase.data;
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const canReceive = user.role === Role.ADMINISTRADOR || user.role === Role.SUPERVISOR_PLANTA;
-  const hasBalance = Number.parseFloat(p.balance) > 0;
+  const hasBalance = isPositiveDecimal(p.balance);
 
   return (
     <>
@@ -398,7 +401,8 @@ export function CompraDetalleView({ id }: { id: string }) {
         confirmLabel="Sí, anular"
         pending={cancel.isPending}
         onConfirm={(reason) => {
-          setConfirmCancel(false);
+          // El diálogo se cierra en `onSuccess`: si el API rechaza la anulación —lo hace
+          // cuando algo se movió después—, el motivo escrito no se pierde.
           cancel.mutate(reason);
         }}
       />

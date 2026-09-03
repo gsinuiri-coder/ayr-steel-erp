@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
   COIL_SPLIT_STATUS_LABELS,
+  INVENTORY_MOVEMENT_TYPE_LABELS,
+  INVENTORY_REF_TYPE_LABELS,
   COIL_STATUS_LABELS,
   CURRENCY_LABELS,
   Role,
@@ -15,7 +17,7 @@ import {
   type InventoryMovementDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatDate, formatMoney, formatQty, unitSymbol } from '@/lib/format';
+import { formatDate, formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
@@ -67,6 +69,9 @@ export function BobinaDetalleView({ id }: { id: string }) {
     void queryClient.invalidateQueries({ queryKey: ['coil', id] });
     void queryClient.invalidateQueries({ queryKey: ['coils'] });
     void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    // Anular o partir una bobina cambia el estado de la compra que la creó y su lista.
+    void queryClient.invalidateQueries({ queryKey: ['purchase'] });
+    void queryClient.invalidateQueries({ queryKey: ['purchases'] });
   };
 
   const runAction = useMutation({
@@ -107,7 +112,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 
   const c = coil.data;
   const isOpen = c.status === 'OPEN';
-  const hasStock = Number.parseFloat(c.availableKg) > 0;
+  const hasStock = isPositiveDecimal(c.availableKg);
   const canOperate = isOpen && hasStock;
 
   return (
@@ -117,13 +122,10 @@ export function BobinaDetalleView({ id }: { id: string }) {
           <h1 className="font-mono text-2xl font-semibold">{c.code}</h1>
           <p className="text-sm text-muted-foreground">
             {c.typeKey} · {BUSINESS_LINE_LABELS[c.businessLine]} · {c.supplierName}
-            {c.parentCoilCode && (
+            {c.parentCoilId && c.parentCoilCode && (
               <>
                 {' · hija de '}
-                <Link
-                  className="underline underline-offset-4"
-                  href={`/bobinas/${c.parentCoilId ?? ''}`}
-                >
+                <Link className="underline underline-offset-4" href={`/bobinas/${c.parentCoilId}`}>
                   {c.parentCoilCode}
                 </Link>
               </>
@@ -250,6 +252,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
+              <QueryStates query={splits} colSpan={6} error="No se pudieron cargar los partidos." />
               {splits.data?.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="whitespace-nowrap">
@@ -267,7 +270,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
                           className="font-mono text-xs underline underline-offset-4"
                           href={`/bobinas/${child.id}`}
                         >
-                          {child.code} ({child.widthMm} mm · {child.weightKg} kg)
+                          {child.code} ({child.widthMm} mm · {formatQty(child.weightKg, 'kg')})
                         </Link>
                       ))}
                     </div>
@@ -329,18 +332,19 @@ export function BobinaDetalleView({ id }: { id: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
+              <QueryStates query={movements} colSpan={7} error="No se pudo cargar el kardex." />
               {movements.data?.map((m) => (
                 <TableRow key={m.id} className={m.reversedById ? 'opacity-60' : undefined}>
                   <TableCell className="whitespace-nowrap">
                     {new Date(m.at).toLocaleString('es-PE')}
                   </TableCell>
                   <TableCell>
-                    {m.type}
+                    {INVENTORY_MOVEMENT_TYPE_LABELS[m.type]}
                     {m.reversalOfId && (
                       <span className="ml-2 text-xs text-muted-foreground">anulación</span>
                     )}
                   </TableCell>
-                  <TableCell>{m.refType}</TableCell>
+                  <TableCell>{INVENTORY_REF_TYPE_LABELS[m.refType]}</TableCell>
                   <TableCell className="text-right">
                     {m.type === 'ADJUST' ? '—' : formatQty(m.qty, unitSymbol(m.unit))}
                   </TableCell>
@@ -440,6 +444,42 @@ function pendingDescription(action: PendingAction | null): string {
     return `Se devuelven ${action.qty} kg al saldo con un movimiento inverso. El movimiento original no se borra.`;
   }
   return 'La bobina queda anulada y su ingreso se revierte en el kardex. Solo se puede si no tiene ningún otro movimiento.';
+}
+
+/**
+ * Fila de carga o de error dentro de una tabla. Sin esto, una consulta que falla deja
+ * `data` en `undefined`: no se pinta ni una fila ni el mensaje de vacío (que exige
+ * `length === 0`), y un kardex caído se ve igual que una bobina sin movimientos —justo
+ * en la tabla que decide si algo se puede anular.
+ */
+function QueryStates({
+  query,
+  colSpan,
+  error,
+}: {
+  query: { isPending: boolean; isError: boolean };
+  colSpan: number;
+  error: string;
+}) {
+  if (query.isPending) {
+    return (
+      <TableRow>
+        <TableCell colSpan={colSpan}>
+          <Skeleton className="h-5 w-full" />
+        </TableCell>
+      </TableRow>
+    );
+  }
+  if (query.isError) {
+    return (
+      <TableRow>
+        <TableCell colSpan={colSpan} className="text-destructive">
+          {error}
+        </TableCell>
+      </TableRow>
+    );
+  }
+  return null;
 }
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {

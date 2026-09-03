@@ -1,5 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
-import { Decimal, roundTo, toDecimal, type DecimalInput } from '@ayr/shared';
+import {
+  Decimal,
+  MIN_CHILD_WIDTH_MM,
+  MIN_SPLIT_YIELD,
+  roundTo,
+  toDecimal,
+  type DecimalInput,
+} from '@ayr/shared';
 
 /**
  * Aritmética del partido de bobina (RF-15), aparte del servicio para poder probarla
@@ -16,20 +23,6 @@ import { Decimal, roundTo, toDecimal, type DecimalInput } from '@ayr/shared';
  * haberse dado de baja nunca. Todo lo que no queda en una hija —el kerf declarado más
  * el recorte de borde— va a `kerfLossKg`, que es la pérdida real del corte.
  */
-
-/**
- * Ancho mínimo de una bobina hija, en mm. Una tira más angosta que esto no existe en
- * una slitter real; el límite está para que nadie pueda "partir" una bobina en una
- * tira de 0.01 mm y hacer desaparecer el resto del valor como merma de corte.
- */
-export const MIN_CHILD_WIDTH_MM = 5;
-
-/**
- * Fracción mínima del ancho de la madre que tienen que cubrir las hijas. Un corte que
- * bota más del 20 % del ancho no es un partido, es dar de baja la bobina: para eso está
- * la merma (RF-17), que exige motivo y queda auditada como tal.
- */
-export const MIN_SPLIT_YIELD = 0.8;
 
 export interface SplitChildPlan {
   widthMm: Decimal;

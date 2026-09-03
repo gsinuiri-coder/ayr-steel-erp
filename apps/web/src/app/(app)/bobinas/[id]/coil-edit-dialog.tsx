@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CURRENCIES, CURRENCY_LABELS, type Currency, type CoilDto } from '@ayr/shared';
+import { CURRENCIES, CURRENCY_LABELS, Decimal, type Currency, type CoilDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,6 +24,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+
+/**
+ * Igualdad por **valor** de dos decimales serializados. El DTO llega con escala fija
+ * (`"3.4500"`), así que comparar texto haría pasar por cambio un `3.45` retipeado.
+ */
+function decimalEquals(a: string, b: string): boolean {
+  const left = a.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(left)) return false;
+  return new Decimal(left).eq(new Decimal(b));
+}
 
 /**
  * Editar una bobina (RF-20). Ancho y observaciones son libres con la bobina abierta;
@@ -50,24 +61,36 @@ export function CoilEditDialog({
   const [unitCostPerKg, setUnitCostPerKg] = useState(coil.unitCostPerKg);
   const [reason, setReason] = useState('');
 
+  // La bobina se lee de un ref y no de las dependencias: si una invalidación refresca
+  // el detalle mientras el diálogo está abierto, el efecto no puede pisar lo que el
+  // usuario está tipeando. Solo `open` reinicia el formulario.
+  const coilRef = useRef(coil);
+  coilRef.current = coil;
   useEffect(() => {
-    if (open) {
-      setWidthMm(coil.widthMm);
-      setNotes(coil.notes ?? '');
-      setCurrency(coil.currency);
-      setExchangeRate(coil.exchangeRate);
-      setUnitCostPerKg(coil.unitCostPerKg);
-      setReason('');
-    }
-  }, [open, coil]);
+    if (!open) return;
+    const current = coilRef.current;
+    setWidthMm(current.widthMm);
+    setNotes(current.notes ?? '');
+    setCurrency(current.currency);
+    setExchangeRate(current.exchangeRate);
+    setUnitCostPerKg(current.unitCostPerKg);
+    setReason('');
+  }, [open]);
 
+  // Se compara por valor, no por texto: el DTO llega con escala fija (`"3.4500"`), así
+  // que retipear `3.45` parecía un cambio y disparaba un recosteo real —reversa del
+  // ingreso más un ingreso nuevo en un kardex append-only— por nada.
   const costChanged =
     canEditCost &&
     (currency !== coil.currency ||
-      exchangeRate.trim() !== coil.exchangeRate ||
-      unitCostPerKg.trim() !== coil.unitCostPerKg);
-  const widthChanged = widthMm.trim() !== coil.widthMm;
+      !decimalEquals(exchangeRate, coil.exchangeRate) ||
+      !decimalEquals(unitCostPerKg, coil.unitCostPerKg));
+  const widthChanged = !decimalEquals(widthMm, coil.widthMm);
   const notesChanged = notes.trim() !== (coil.notes ?? '');
+  // Cambiar a moneda extranjera sin escribir el TC dejaría el recosteo con el `1.0000`
+  // que arrastra una bobina en soles, y el kardex (que va en soles, D-042) entraría a
+  // un sexto de su valor real sin que nada avise.
+  const needsRate = currency !== 'PEN' && !isPositiveDecimal(exchangeRate);
 
   const update = useMutation({
     mutationFn: () =>
@@ -101,7 +124,8 @@ export function CoilEditDialog({
   });
 
   const canSubmit =
-    (widthChanged || notesChanged || costChanged) && (!costChanged || reason.trim().length >= 3);
+    (widthChanged || notesChanged || costChanged) &&
+    (!costChanged || (reason.trim().length >= 3 && !needsRate));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -154,7 +178,9 @@ export function CoilEditDialog({
                     value={currency}
                     onValueChange={(v) => {
                       setCurrency(v as Currency);
-                      if (v === 'PEN') setExchangeRate('1.0000');
+                      // Al salir de soles se vacía: heredar el 1.0000 de una bobina en
+                      // PEN recostearía el kardex a un sexto de su valor (D-042).
+                      setExchangeRate(v === 'PEN' ? '1.0000' : '');
                     }}
                   >
                     <SelectTrigger id="edit-currency">
@@ -174,12 +200,18 @@ export function CoilEditDialog({
                   <Input
                     id="edit-rate"
                     inputMode="decimal"
+                    aria-invalid={needsRate}
                     disabled={currency === 'PEN'}
                     value={currency === 'PEN' ? '1.0000' : exchangeRate}
                     onChange={(e) => {
                       setExchangeRate(e.target.value);
                     }}
                   />
+                  {needsRate && (
+                    <p className="text-sm text-destructive">
+                      Escribe el tipo de cambio con el que se recostea la bobina.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="grid gap-1">

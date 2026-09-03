@@ -91,10 +91,36 @@ export const coilSplitSchema = z.object({
 });
 export type CoilSplitDto = z.infer<typeof coilSplitSchema>;
 
+/**
+ * Ancho mínimo de una bobina hija, en mm. Una tira más angosta no existe en una
+ * slitter real; el límite impide "partir" una bobina en una tira de 0.01 mm y hacer
+ * desaparecer el resto del valor como merma de corte.
+ */
+export const MIN_CHILD_WIDTH_MM = 5;
+
+/**
+ * Fracción mínima del ancho de la madre que tienen que cubrir las hijas. Un corte que
+ * bota más del 20 % del ancho no es un partido, es dar de baja la bobina: para eso está
+ * la merma (RF-17), que exige motivo y queda auditada como tal.
+ */
+export const MIN_SPLIT_YIELD = 0.8;
+
+/** Tope de filas de anchos y de bobinas hijas de un mismo partido. */
+export const MAX_SPLIT_ROWS = 20;
+export const MAX_SPLIT_CHILDREN = 20;
+
 const splitChildInputSchema = z.object({
-  widthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }),
+  widthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }).refine(
+    (v) => toDecimal(v).gte(MIN_CHILD_WIDTH_MM),
+    `El ancho de cada hija debe ser de al menos ${MIN_CHILD_WIDTH_MM} mm`,
+  ),
   /** Tiras idénticas de ese ancho; el slitting casi siempre produce varias. */
-  count: z.number().int().min(1, 'Al menos una tira').max(20, 'Máximo 20 tiras iguales').default(1),
+  count: z
+    .number()
+    .int()
+    .min(1, 'Al menos una tira')
+    .max(MAX_SPLIT_CHILDREN, `Máximo ${MAX_SPLIT_CHILDREN} tiras iguales`)
+    .default(1),
 });
 
 /**
@@ -113,7 +139,7 @@ export const createCoilSplitSchema = z
       .min(1, 'El partido necesita al menos una bobina hija')
       // Cada hija abre una fila de bobina y un movimiento de kardex dentro de la misma
       // transacción que mantiene el lock del saldo de la madre.
-      .max(20, 'Un partido admite hasta 20 filas de anchos'),
+      .max(MAX_SPLIT_ROWS, `Un partido admite hasta ${MAX_SPLIT_ROWS} filas de anchos`),
   })
   .superRefine((d, ctx) => {
     if (toDecimal(d.kerfLossMm).isNegative()) {
@@ -124,11 +150,11 @@ export const createCoilSplitSchema = z
       });
     }
     const strips = d.children.reduce((acc, c) => acc + c.count, 0);
-    if (strips > 20) {
+    if (strips > MAX_SPLIT_CHILDREN) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['children'],
-        message: 'Un partido admite hasta 20 bobinas hijas',
+        message: `Un partido admite hasta ${MAX_SPLIT_CHILDREN} bobinas hijas`,
       });
     }
   });

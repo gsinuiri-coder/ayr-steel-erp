@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
   INVENTORY_ITEM_TYPE_LABELS,
+  INVENTORY_ITEM_TYPES,
   INVENTORY_MOVEMENT_TYPE_LABELS,
   INVENTORY_REF_TYPE_LABELS,
   Role,
@@ -36,7 +37,14 @@ import {
 export function KardexView() {
   const params = useSearchParams();
   const itemId = params.get('item') ?? '';
-  const itemType = (params.get('itemType') as InventoryItemType | null) ?? 'COIL';
+  // La URL la escribe cualquiera: un  inventado solo lograría un 400 y un
+  // "no se pudo cargar" sin explicación.
+  const rawItemType = params.get('itemType');
+  const itemType: InventoryItemType = INVENTORY_ITEM_TYPES.includes(
+    rawItemType as InventoryItemType,
+  )
+    ? (rawItemType as InventoryItemType)
+    : 'COIL';
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
@@ -56,6 +64,8 @@ export function KardexView() {
   });
 
   const singleItem = Boolean(itemId);
+  // 8 columnas base; con un ítem concreto se suman saldo y costo promedio.
+  const columnCount = singleItem ? 9 : 8;
   const header = movements.data?.[0];
 
   return (
@@ -114,14 +124,14 @@ export function KardexView() {
           <TableBody>
             {movements.isPending && (
               <TableRow>
-                <TableCell colSpan={10}>
+                <TableCell colSpan={columnCount}>
                   <Skeleton className="h-5 w-full" />
                 </TableCell>
               </TableRow>
             )}
             {movements.isError && (
               <TableRow>
-                <TableCell colSpan={10} className="text-destructive">
+                <TableCell colSpan={columnCount} className="text-destructive">
                   No se pudo cargar el kardex.
                 </TableCell>
               </TableRow>
@@ -181,7 +191,7 @@ export function KardexView() {
             ))}
             {movements.data?.length === 0 && (
               <TableRow>
-                <TableCell colSpan={10} className="text-center text-muted-foreground">
+                <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
                   No hay movimientos para este filtro.
                 </TableCell>
               </TableRow>
