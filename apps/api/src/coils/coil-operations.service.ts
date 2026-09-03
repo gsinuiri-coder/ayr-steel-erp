@@ -196,6 +196,13 @@ export class CoilOperationsService {
           throw new ConflictException('Ese partido ya fue revertido');
         }
         const coil = await this.coils.lockCoil(tx, split.parentCoilId);
+        // D-050: la madre puede haberse enviado a corte tercerizado después de este
+        // partido (`send()` no deja rastro de kardex), así que revertir aquí devolvería
+        // peso a una bobina que hoy es del tercero. Mismo guardrail que Fase 3 agregó a
+        // `registerScrap`/`cancel`/`setStatus` para este estado.
+        if (coil.status === CoilStatus.IN_THIRD_PARTY) {
+          throw new BadRequestException(notOpenMessage(coil.status));
+        }
 
         const all = await tx.inventoryMovement.findMany({
           where: { refType: 'SPLIT', refId: splitId },
