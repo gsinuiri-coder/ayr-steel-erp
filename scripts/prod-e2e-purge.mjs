@@ -105,10 +105,64 @@ try {
   );
   console.log(`Proveedores E2E: ${e2eSupplierIds.size}`);
 
+  // -1) Recepciones de corte E2E ya recibidas (Fase 3b, D-052): mientras la bobina
+  //     madre tenga el movimiento CUTTING de esa recepción, ni el paso 1 (anular
+  //     compra) ni el paso 2 (anular bobina) la alcanzan — es justo el residuo que
+  //     Fase 3 dejó documentado y que esta reversa existe para resolver. Si la madre
+  //     además tiene un partido local posterior (RF-15), se revierte primero: el
+  //     guardrail de la reversa (D-052) bloquea si la madre se movió después de la
+  //     recepción que se quiere deshacer.
+  const allCuttingOrders = await call('/cutting');
+  const e2eReceivedOrders = (
+    Array.isArray(allCuttingOrders.body) ? allCuttingOrders.body : []
+  ).filter(
+    (o) =>
+      e2eSupplierIds.has(o.supplierId) &&
+      (o.status === 'RECEIVED' || o.status === 'PARTIALLY_RECEIVED'),
+  );
+  console.log(`Órdenes de corte E2E con recepciones vivas: ${e2eReceivedOrders.length}`);
+  for (const order of e2eReceivedOrders) {
+    const detail = await call(`/cutting/${order.id}`);
+    const receivedRows = (Array.isArray(detail.body?.coils) ? detail.body.coils : []).filter(
+      (c) => c.status === 'RECEIVED',
+    );
+    for (const row of receivedRows) {
+      if (dryRun) {
+        console.log(`  [simulado] revertir recepción de ${row.coilCode} (orden ${order.id})`);
+        continue;
+      }
+      const splits = await call(`/coils/${row.coilId}/splits`);
+      const activeSplits = (Array.isArray(splits.body) ? splits.body : []).filter(
+        (s) => s.status === 'ACTIVE',
+      );
+      for (const split of activeSplits) {
+        const r = await call(`/coils/splits/${split.id}/revert`, {
+          method: 'POST',
+          body: { reason: REASON },
+        });
+        console.log(
+          r.ok
+            ? `  partido local de ${row.coilCode} revertido`
+            : `  partido local de ${row.coilCode} NO se pudo revertir: ${r.body?.message ?? r.status}`,
+        );
+      }
+      const res = await call(`/cutting/${order.id}/coils/${row.coilId}/reverse`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  recepción de ${row.coilCode} revertida (orden ${order.id})`
+          : `  recepción de ${row.coilCode} NO se pudo revertir: ${res.body?.message ?? res.status}`,
+      );
+    }
+  }
+
   // 0) Órdenes de corte pendientes (Fase 3, D-050): una bobina enviada a un tercero
   //    queda IN_THIRD_PARTY sin movimiento de kardex, así que ni el paso 1 (anular
   //    compra) ni el paso 2 (anular bobina abierta) la alcanzan. Cancelar lo pendiente
-  //    la devuelve a OPEN antes de que los pasos siguientes puedan tocarla.
+  //    la devuelve a OPEN antes de que los pasos siguientes puedan tocarla — incluidas
+  //    las órdenes que el paso anterior acaba de dejar con una fila SENT de nuevo.
   const cuttingOrders = await call('/cutting');
   const pendingCuttingOrders = (Array.isArray(cuttingOrders.body) ? cuttingOrders.body : []).filter(
     (o) =>
