@@ -42,11 +42,11 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
-import { liveMovements } from '../coils/coil-operations.service';
 import { CoilsService } from '../coils/coils.service';
 import { StorageService } from '../documents/storage.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { prorateByWeight } from './landed-cost';
 import { parseInvoiceXml } from './invoice-xml';

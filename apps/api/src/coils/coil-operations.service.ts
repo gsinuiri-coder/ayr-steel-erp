@@ -26,6 +26,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { liveMovements } from '../inventory/live-movements';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
@@ -217,7 +218,13 @@ export class CoilOperationsService {
         // existen. Se nombra la bobina que bloquea para que el usuario sepa qué anular.
         for (const child of split.children) {
           const extra = await tx.inventoryMovement.findMany({
-            where: { itemType: 'COIL', itemId: child.id, id: { notIn: [...movementIds] } },
+            where: {
+              itemType: 'COIL',
+              itemId: child.id,
+              // Un partido siempre tiene movimientos; el guard evita un `NOT IN ()` si
+              // alguna vez llegara vacío.
+              ...(movementIds.size > 0 ? { id: { notIn: [...movementIds] } } : {}),
+            },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },
           });
@@ -558,15 +565,4 @@ export class CoilOperationsService {
     }
     return first;
   }
-}
-
-/**
- * Movimientos que siguen afectando el saldo: ni son la anulación de otro, ni fueron
- * anulados. Un par movimiento+reversa se cancela entre sí y no debe bloquear nada
- * (§3.2: el kardex es append-only, así que esos pares se acumulan para siempre).
- */
-export function liveMovements<T extends { reversalOfId: bigint | null; reversals: unknown[] }>(
-  movements: T[],
-): T[] {
-  return movements.filter((m) => m.reversalOfId === null && m.reversals.length === 0);
 }
