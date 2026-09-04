@@ -79,7 +79,8 @@ function dispatchCommand(
     packageCount: 3,
     vehicle: { plate: 'ABC-123' },
     driver: {
-      name: 'Juan Pérez',
+      givenNames: 'Juan Carlos',
+      familyNames: 'Pérez Gómez',
       docType: DocType.DNI,
       docNumber: '40404040',
       license: 'Q40404040',
@@ -191,9 +192,15 @@ describe('buildDispatchNotePayload (D-078)', () => {
     expect(payload.operacion).toBe('generar_guia');
     // Catálogo 18: 02 = transporte privado.
     expect(payload.tipo_de_transporte).toBe('02');
-    expect(payload.vehiculo_placa).toBe('ABC-123');
+    // El PSE espera la placa bajo el prefijo del transportista, incluso en traslado
+    // privado: en `vehiculo_placa` la ignoraba en silencio y rechazaba por placa vacía.
+    expect(payload.transportista_placa_numero).toBe('ABC-123');
     expect(payload.conductor_documento_tipo).toBe('1');
     expect(payload.conductor_numero_licencia).toBe('Q40404040');
+    // Nombres y apellidos por separado: el PSE rechaza la guía sin los apellidos, y
+    // partir un nombre completo por espacios se equivoca con "Juan Carlos Pérez Gómez".
+    expect(payload.conductor_nombres).toBe('Juan Carlos');
+    expect(payload.conductor_apellidos).toBe('Pérez Gómez');
     expect(payload).not.toHaveProperty('transportista_documento_numero');
   });
 
@@ -209,8 +216,8 @@ describe('buildDispatchNotePayload (D-078)', () => {
     expect(payload.tipo_de_transporte).toBe('01');
     expect(payload.transportista_documento_numero).toBe('20500000002');
     expect(payload.transportista_denominacion).toBe('Transportes SAC');
-    expect(payload).not.toHaveProperty('vehiculo_placa');
-    expect(payload).not.toHaveProperty('conductor_nombre');
+    expect(payload).not.toHaveProperty('transportista_placa_numero');
+    expect(payload).not.toHaveProperty('conductor_apellidos');
   });
 
   it('manda el ubigeo de partida y de llegada, que SUNAT exige', () => {

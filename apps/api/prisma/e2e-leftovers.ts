@@ -95,13 +95,22 @@ async function main(): Promise<void> {
         where: { salesOrder: { customer: { name: TEST_NAME } } },
         select: { seq: true, status: true },
       }),
+      // La boleta a "público en general" (D-077) no sale a nombre del cliente de prueba:
+      // se reconoce por la marca en observaciones, que es lo que ponen los tests.
       prisma.fiscalDocument.findMany({
-        where: { customer: { name: TEST_NAME } },
+        where: {
+          OR: [{ customer: { name: TEST_NAME } }, { notes: { startsWith: 'E2E ' } }],
+        },
         select: { number: true, docType: true, status: true, totalPen: true },
         orderBy: { createdAt: 'asc' },
       }),
       prisma.customerPayment.findMany({
-        where: { reversedAt: null, document: { customer: { name: TEST_NAME } } },
+        where: {
+          reversedAt: null,
+          document: {
+            OR: [{ customer: { name: TEST_NAME } }, { notes: { startsWith: 'E2E ' } }],
+          },
+        },
         select: { amountPen: true, document: { select: { number: true } } },
       }),
     ]);

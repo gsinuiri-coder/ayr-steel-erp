@@ -195,7 +195,8 @@ export function DespachoDetalleView({ id }: { id: string }) {
               <>
                 <div>{d.vehiclePlate}</div>
                 <div className="text-muted-foreground">
-                  {d.driverName} · {d.driverDocType} {d.driverDocNumber} · Lic. {d.driverLicense}
+                  {d.driverGivenNames} {d.driverFamilyNames} · {d.driverDocType} {d.driverDocNumber}{' '}
+                  · Lic. {d.driverLicense}
                 </div>
               </>
             ) : (

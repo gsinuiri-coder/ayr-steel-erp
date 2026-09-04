@@ -87,7 +87,9 @@ export interface IssueDispatchNoteCommand {
   /** Traslado privado: vehículo y conductor propios. Null en el público. */
   vehicle: { plate: string } | null;
   driver: {
-    name: string;
+    /** Separados porque SUNAT los pide así; unirlos y volver a partirlos adivina mal. */
+    givenNames: string;
+    familyNames: string;
     docType: DocType;
     docNumber: string;
     license: string;

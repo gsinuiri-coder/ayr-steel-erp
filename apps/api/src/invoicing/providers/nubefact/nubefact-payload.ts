@@ -4,6 +4,7 @@ import {
   FiscalDocType,
   TRANSFER_MODE_SUNAT_CODE,
   TransferMode,
+  UNITS,
   toDecimal,
   type CreditNoteReason,
 } from '@ayr/shared';
@@ -72,6 +73,21 @@ const TRANSFER_REASON_SALE = '01';
  */
 const TRANSFER_MODE_CODE = TRANSFER_MODE_SUNAT_CODE;
 
+/**
+ * Códigos del catálogo 03 de SUNAT que el proyecto usa (`Unit` en `@ayr/shared`).
+ *
+ * `products.unit` es **texto libre** en el maestro —hay productos cargados por planilla con
+ * unidades fuera del catálogo— y ese valor viaja tal cual al PSE, que lo rechaza. Antes de
+ * mandarlo se normaliza, y lo que no se reconoce cae a `NIU` (unidad), que es lo que menos
+ * miente sobre una cantidad contable.
+ */
+const SUNAT_UNITS = new Set<string>(UNITS);
+
+function unitCode(unit: string): string {
+  const normalized = unit.trim().toUpperCase();
+  return SUNAT_UNITS.has(normalized) ? normalized : 'NIU';
+}
+
 function customerDocCode(party: PartyRef): string {
   return party.docType === null ? '-' : CUSTOMER_DOC_CODE[party.docType];
 }
@@ -121,7 +137,7 @@ export function buildInvoicePayload(command: IssueDocumentCommand): Record<strin
     enviar_automaticamente_al_cliente: false,
     formato_de_pdf: 'A4',
     items: command.lines.map((line) => ({
-      unidad_de_medida: line.unit,
+      unidad_de_medida: unitCode(line.unit),
       codigo: line.code ?? '',
       descripcion: line.description,
       cantidad: Number(line.qty),
@@ -186,7 +202,7 @@ export function buildDispatchNotePayload(
     observaciones: command.notes ?? '',
     enviar_automaticamente_a_la_sunat: true,
     items: command.lines.map((line) => ({
-      unidad_de_medida: line.unit,
+      unidad_de_medida: unitCode(line.unit),
       codigo: line.code ?? '',
       descripcion: line.description,
       cantidad: Number(line.qty),
@@ -194,15 +210,22 @@ export function buildDispatchNotePayload(
   };
 
   if (command.transferMode === TransferMode.PRIVATE) {
-    // El `CHECK` de `dispatches` ya garantiza que estén los cinco campos; el `?? ''` es
+    // El `CHECK` de `dispatches` ya garantiza que estén los seis campos; el `?? ''` es
     // defensa en profundidad, no una alternativa real.
+    //
+    // **Los nombres de estos campos los dictó el propio PSE al rechazar la primera guía**:
+    // pedía `transportista_placa_numero` (no `vehiculo_placa`, que ignoraba en silencio) y
+    // los apellidos del conductor por separado. En traslado privado el transportista es la
+    // propia empresa, y por eso la placa viaja igual bajo el prefijo `transportista_`.
     payload.conductor_documento_tipo = command.driver
       ? DRIVER_DOC_CODE[command.driver.docType]
       : '';
     payload.conductor_documento_numero = command.driver?.docNumber ?? '';
-    payload.conductor_nombre = command.driver?.name ?? '';
+    payload.conductor_nombre = command.driver?.givenNames ?? '';
+    payload.conductor_nombres = command.driver?.givenNames ?? '';
+    payload.conductor_apellidos = command.driver?.familyNames ?? '';
     payload.conductor_numero_licencia = command.driver?.license ?? '';
-    payload.vehiculo_placa = command.vehicle?.plate ?? '';
+    payload.transportista_placa_numero = command.vehicle?.plate ?? '';
   } else {
     payload.transportista_documento_tipo = CUSTOMER_DOC_CODE[DocType.RUC];
     payload.transportista_documento_numero = command.carrier?.docNumber ?? '';

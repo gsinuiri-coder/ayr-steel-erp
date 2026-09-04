@@ -14,22 +14,27 @@ import type { Response } from 'express';
 import {
   createCreditNoteSchema,
   createCustomerPaymentSchema,
+  createFiscalSeriesSchema,
   createInvoiceSchema,
   fiscalDocumentQuerySchema,
   reverseCustomerPaymentSchema,
   Role,
+  updateFiscalSeriesSchema,
   updateInvoicingSettingsSchema,
   voidDocumentSchema,
   type CreateCreditNoteInput,
   type CreateCustomerPaymentInput,
+  type CreateFiscalSeriesInput,
   type CreateInvoiceInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentQuery,
+  type FiscalSeriesDto,
   type InvoicingSettingsDto,
   type ReceivableSummaryDto,
   type ReverseCustomerPaymentInput,
   type SalesOrderProgressDto,
+  type UpdateFiscalSeriesInput,
   type UpdateInvoicingSettingsInput,
   type VoidDocumentInput,
 } from '@ayr/shared';
@@ -77,6 +82,38 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(updateInvoicingSettingsSchema)) body: UpdateInvoicingSettingsInput,
   ): Promise<InvoicingSettingsDto> {
     return this.invoicing.updateSettings(actor, body);
+  }
+
+  /**
+   * Series del punto de emisión (D-072).
+   *
+   * Se administran porque **la autorización es del PSE por emisor**: la serie que sirve en
+   * una cuenta no sirve en otra, y descubrirlo cuesta un correlativo rechazado por cada
+   * intento. Solo ADMINISTRADOR: una serie mal puesta rompe la numeración fiscal.
+   */
+  @Get('series')
+  @Roles(Role.ADMINISTRADOR)
+  findSeries(): Promise<FiscalSeriesDto[]> {
+    return this.invoicing.findSeries();
+  }
+
+  @Post('series')
+  @Roles(Role.ADMINISTRADOR)
+  createSeries(
+    @CurrentUser() actor: RequestUser,
+    @Body(new ZodValidationPipe(createFiscalSeriesSchema)) body: CreateFiscalSeriesInput,
+  ): Promise<FiscalSeriesDto> {
+    return this.invoicing.createSeries(actor, body);
+  }
+
+  @Patch('series/:id')
+  @Roles(Role.ADMINISTRADOR)
+  updateSeries(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(updateFiscalSeriesSchema)) body: UpdateFiscalSeriesInput,
+  ): Promise<FiscalSeriesDto> {
+    return this.invoicing.setSeriesActive(actor, id, body.isActive);
   }
 
   /** Cuántos documentos esperan aceptación y cuántos ya pasaron el umbral (D-073). */

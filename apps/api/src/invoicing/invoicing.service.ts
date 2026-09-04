@@ -36,6 +36,8 @@ import {
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentQuery,
+  type CreateFiscalSeriesInput,
+  type FiscalSeriesDto,
   type InvoicingSettingsDto,
   type SalesOrderProgressDto,
   type UpdateInvoicingSettingsInput,
@@ -218,6 +220,112 @@ export class InvoicingService {
       });
     });
     return this.settings();
+  }
+
+  // -------------------------------------------------------------------------
+  // D-072 — series del punto de emisión
+  // -------------------------------------------------------------------------
+
+  async findSeries(): Promise<FiscalSeriesDto[]> {
+    const rows = await this.prisma.fiscalSeries.findMany({
+      orderBy: [{ docType: 'asc' }, { series: 'asc' }],
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      docType: row.docType,
+      series: row.series,
+      affectedDocType: row.affectedDocType,
+      correlative: row.correlative,
+      isActive: row.isActive,
+    }));
+  }
+
+  /**
+   * Da de alta una serie (D-072).
+   *
+   * Las series que siembra la migración son las habituales, pero **la autorización es del
+   * PSE por emisor**: una cuenta puede tener `F001` y otra no, y cada intento contra una
+   * serie no autorizada cuesta un correlativo rechazado. Poder alinearlas acá es lo que
+   * evita que eso sea una migración —y lo que hace que estrenar el módulo con una cuenta
+   * nueva no dependa de desplegar de nuevo—.
+   *
+   * Dar de alta una serie **desactiva la anterior** de la misma combinación: el índice
+   * parcial de la migración solo admite una activa, y hacerlo explícito evita que el alta
+   * falle con un choque de índice que no le dice nada a nadie.
+   */
+  async createSeries(actor: RequestUser, input: CreateFiscalSeriesInput): Promise<FiscalSeriesDto> {
+    const id = await this.prisma.$transaction(async (tx) => {
+      const affectedDocType =
+        input.docType === FiscalDocType.NOTA_CREDITO ? (input.affectedDocType ?? null) : null;
+
+      await tx.fiscalSeries.updateMany({
+        where: { docType: input.docType, affectedDocType, isActive: true },
+        data: { isActive: false },
+      });
+
+      const created = await tx.fiscalSeries.create({
+        data: {
+          docType: input.docType,
+          series: input.series,
+          affectedDocType,
+          correlative: input.correlative,
+        },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.series.create',
+        entity: 'fiscal_series',
+        entityId: created.id,
+        after: { docType: input.docType, series: input.series, correlative: input.correlative },
+      });
+      return created.id;
+    });
+    const rows = await this.findSeries();
+    const created = rows.find((s) => s.id === id);
+    if (!created) throw new NotFoundException('Serie no encontrada');
+    return created;
+  }
+
+  /**
+   * Activa o desactiva una serie. **El correlativo no se toca desde acá**: bajarlo emitiría
+   * dos veces el mismo número y subirlo abriría un hueco, y las dos cosas son problemas con
+   * SUNAT, no con el sistema. Continuar una numeración existente se hace al **crear** la
+   * serie, que es cuando todavía no hay nada emitido con ella.
+   */
+  async setSeriesActive(
+    actor: RequestUser,
+    id: string,
+    isActive: boolean,
+  ): Promise<FiscalSeriesDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const series = await tx.fiscalSeries.findUnique({ where: { id } });
+      if (!series) throw new NotFoundException('Serie no encontrada');
+      if (series.isActive === isActive) return;
+
+      if (isActive) {
+        await tx.fiscalSeries.updateMany({
+          where: {
+            docType: series.docType,
+            affectedDocType: series.affectedDocType,
+            isActive: true,
+          },
+          data: { isActive: false },
+        });
+      }
+      await tx.fiscalSeries.update({ where: { id }, data: { isActive } });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.series.toggle',
+        entity: 'fiscal_series',
+        entityId: id,
+        before: { series: series.series, isActive: series.isActive },
+        after: { isActive },
+      });
+    });
+    const rows = await this.findSeries();
+    const updated = rows.find((s) => s.id === id);
+    if (!updated) throw new NotFoundException('Serie no encontrada');
+    return updated;
   }
 
   // -------------------------------------------------------------------------
@@ -1717,12 +1825,14 @@ export class InvoicingService {
         packageCount: dispatch.packageCount,
         vehicle: dispatch.vehiclePlate ? { plate: dispatch.vehiclePlate } : null,
         driver:
-          dispatch.driverName &&
+          dispatch.driverGivenNames &&
+          dispatch.driverFamilyNames &&
           dispatch.driverDocType &&
           dispatch.driverDocNumber &&
           dispatch.driverLicense
             ? {
-                name: dispatch.driverName,
+                givenNames: dispatch.driverGivenNames,
+                familyNames: dispatch.driverFamilyNames,
                 docType: dispatch.driverDocType,
                 docNumber: dispatch.driverDocNumber,
                 license: dispatch.driverLicense,

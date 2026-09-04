@@ -348,6 +348,68 @@ export const updateInvoicingSettingsSchema = z.object({
 });
 export type UpdateInvoicingSettingsInput = z.infer<typeof updateInvoicingSettingsSchema>;
 
+/**
+ * Serie del punto de emisión (D-072).
+ *
+ * Existe como maestro administrable y no como constante de la migración porque **las series
+ * las autoriza el PSE para cada emisor**: la que sirve en una cuenta no sirve en otra, y
+ * descubrirlo cuesta un correlativo rechazado por cada intento. Poder alinearlas sin una
+ * migración es lo que separa "configurar el sistema" de "desplegar de nuevo".
+ */
+export const fiscalSeriesSchema = z.object({
+  id: z.string().uuid(),
+  docType: z.enum(FISCAL_DOC_TYPES),
+  series: z.string(),
+  /** Solo en series de nota de crédito: el tipo del comprobante que afecta. */
+  affectedDocType: z.enum(FISCAL_DOC_TYPES).nullable(),
+  /** Último correlativo entregado. `0` = todavía no se emitió ninguno de esta serie. */
+  correlative: z.number().int(),
+  isActive: z.boolean(),
+});
+export type FiscalSeriesDto = z.infer<typeof fiscalSeriesSchema>;
+
+export const createFiscalSeriesSchema = z
+  .object({
+    docType: z.enum(FISCAL_DOC_TYPES, {
+      errorMap: () => ({ message: 'Tipo de documento inválido' }),
+    }),
+    /** Cuatro caracteres, formato SUNAT: letra del tipo + tres alfanuméricos. */
+    series: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z][A-Z0-9]{3}$/, 'La serie son cuatro caracteres (ej: F001)'),
+    affectedDocType: z.enum(FISCAL_DOC_TYPES).optional(),
+    /**
+     * Último correlativo ya emitido en esa serie **fuera del sistema**. Se admite al crear
+     * para poder continuar una numeración existente sin repetir números; después no se
+     * toca, porque bajarlo emitiría dos veces el mismo comprobante.
+     */
+    correlative: z.number().int().min(0).max(99_999_999).default(0),
+  })
+  .superRefine((input, ctx) => {
+    const isCreditNote = input.docType === 'NOTA_CREDITO';
+    if (isCreditNote && input.affectedDocType === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['affectedDocType'],
+        message: 'Una serie de nota de crédito tiene que decir a qué tipo de comprobante afecta',
+      });
+    }
+    if (!isCreditNote && input.affectedDocType !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['affectedDocType'],
+        message: 'Solo una serie de nota de crédito afecta a otro tipo de comprobante',
+      });
+    }
+  });
+export type CreateFiscalSeriesInput = z.infer<typeof createFiscalSeriesSchema>;
+
+/** Activar o desactivar una serie. El correlativo no se edita nunca (ver arriba). */
+export const updateFiscalSeriesSchema = z.object({ isActive: z.boolean() });
+export type UpdateFiscalSeriesInput = z.infer<typeof updateFiscalSeriesSchema>;
+
 export const invoicingSettingsSchema = z.object({
   providerOffline: z.boolean(),
   alertAfterHours: z.number().int(),
@@ -513,7 +575,9 @@ export const createDispatchSchema = z
     totalWeightKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
     packageCount: z.number().int().positive().max(9999).optional(),
     vehiclePlate: z.string().trim().max(10).optional(),
-    driverName: z.string().trim().max(160).optional(),
+    /** Separados porque SUNAT los pide así (D-078): el PSE rechaza la guía sin apellidos. */
+    driverGivenNames: z.string().trim().max(80).optional(),
+    driverFamilyNames: z.string().trim().max(80).optional(),
     driverDocType: z.enum(DOC_TYPES).optional(),
     driverDocNumber: z.string().trim().max(20).optional(),
     driverLicense: z.string().trim().max(20).optional(),
@@ -537,7 +601,8 @@ export const createDispatchSchema = z
     };
     if (input.transferMode === TransferMode.PRIVATE) {
       require('vehiclePlate', 'El traslado privado necesita la placa del vehículo');
-      require('driverName', 'El traslado privado necesita el nombre del conductor');
+      require('driverGivenNames', 'El traslado privado necesita los nombres del conductor');
+      require('driverFamilyNames', 'El traslado privado necesita los apellidos del conductor');
       require('driverDocType', 'El traslado privado necesita el documento del conductor');
       require('driverDocNumber', 'El traslado privado necesita el documento del conductor');
       require('driverLicense', 'El traslado privado necesita la licencia del conductor');
@@ -547,7 +612,8 @@ export const createDispatchSchema = z
       require('carrierDocNumber', 'El traslado público necesita el RUC del transportista');
       require('carrierName', 'El traslado público necesita la razón social del transportista');
       forbid('vehiclePlate', 'Un traslado público no lleva vehículo propio');
-      forbid('driverName', 'Un traslado público no lleva conductor propio');
+      forbid('driverGivenNames', 'Un traslado público no lleva conductor propio');
+      forbid('driverFamilyNames', 'Un traslado público no lleva conductor propio');
       forbid('driverDocType', 'Un traslado público no lleva conductor propio');
       forbid('driverDocNumber', 'Un traslado público no lleva conductor propio');
       forbid('driverLicense', 'Un traslado público no lleva conductor propio');
@@ -604,7 +670,8 @@ export const dispatchSchema = z.object({
   totalWeightKg: z.string(),
   packageCount: z.number().int().nullable(),
   vehiclePlate: z.string().nullable(),
-  driverName: z.string().nullable(),
+  driverGivenNames: z.string().nullable(),
+  driverFamilyNames: z.string().nullable(),
   driverDocType: z.enum(DOC_TYPES).nullable(),
   driverDocNumber: z.string().nullable(),
   driverLicense: z.string().nullable(),
@@ -650,7 +717,8 @@ export const transportSuggestionsSchema = z.object({
   vehicles: z.array(z.object({ plate: z.string() })),
   drivers: z.array(
     z.object({
-      name: z.string(),
+      givenNames: z.string(),
+      familyNames: z.string(),
       docType: z.enum(DOC_TYPES),
       docNumber: z.string(),
       license: z.string(),

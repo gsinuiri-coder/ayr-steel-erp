@@ -67,7 +67,8 @@ export function NuevoDespachoView() {
   const [totalWeightKg, setTotalWeightKg] = useState('');
   const [packageCount, setPackageCount] = useState('');
   const [vehiclePlate, setVehiclePlate] = useState('');
-  const [driverName, setDriverName] = useState('');
+  const [driverGivenNames, setDriverGivenNames] = useState('');
+  const [driverFamilyNames, setDriverFamilyNames] = useState('');
   const [driverDocType, setDriverDocType] = useState<DocType>('DNI');
   const [driverDocNumber, setDriverDocNumber] = useState('');
   const [driverLicense, setDriverLicense] = useState('');
@@ -168,7 +169,8 @@ export function NuevoDespachoView() {
           ...(transferMode === 'PRIVATE'
             ? {
                 vehiclePlate: vehiclePlate.trim(),
-                driverName: driverName.trim(),
+                driverGivenNames: driverGivenNames.trim(),
+                driverFamilyNames: driverFamilyNames.trim(),
                 driverDocType,
                 driverDocNumber: driverDocNumber.trim(),
                 driverLicense: driverLicense.trim(),
@@ -197,7 +199,8 @@ export function NuevoDespachoView() {
   const transportComplete =
     transferMode === 'PRIVATE'
       ? vehiclePlate.trim() !== '' &&
-        driverName.trim() !== '' &&
+        driverGivenNames.trim() !== '' &&
+        driverFamilyNames.trim() !== '' &&
         driverDocNumber.trim() !== '' &&
         driverLicense.trim() !== ''
       : carrierDocNumber.trim() !== '' && carrierName.trim() !== '';
@@ -389,18 +392,26 @@ export function NuevoDespachoView() {
                   ))}
                 </datalist>
               </div>
+              {/*
+                Nombres y apellidos por separado: SUNAT los pide así y el PSE rechaza la
+                guía sin los apellidos. Partirlos de un campo único se equivoca con un
+                nombre compuesto, y esa adivinanza saldría impresa en la guía.
+              */}
               <div className="space-y-2">
-                <Label>Conductor</Label>
+                <Label>Nombres del conductor</Label>
                 <Input
-                  value={driverName}
+                  value={driverGivenNames}
                   list="conductores"
-                  maxLength={160}
+                  maxLength={80}
                   onChange={(e) => {
-                    setDriverName(e.target.value);
-                    // Elegir un conductor conocido trae su documento y su licencia: es lo
-                    // que reemplaza al catálogo diferido (D-078).
-                    const match = suggestions.data?.drivers.find((d) => d.name === e.target.value);
+                    setDriverGivenNames(e.target.value);
+                    // Elegir un conductor conocido trae sus apellidos, su documento y su
+                    // licencia: es lo que reemplaza al catálogo diferido (D-078).
+                    const match = suggestions.data?.drivers.find(
+                      (d) => d.givenNames === e.target.value,
+                    );
                     if (match) {
+                      setDriverFamilyNames(match.familyNames);
                       setDriverDocType(match.docType);
                       setDriverDocNumber(match.docNumber);
                       setDriverLicense(match.license);
@@ -409,9 +420,19 @@ export function NuevoDespachoView() {
                 />
                 <datalist id="conductores">
                   {(suggestions.data?.drivers ?? []).map((d) => (
-                    <option key={d.docNumber} value={d.name} />
+                    <option key={d.docNumber} value={d.givenNames} />
                   ))}
                 </datalist>
+              </div>
+              <div className="space-y-2">
+                <Label>Apellidos del conductor</Label>
+                <Input
+                  value={driverFamilyNames}
+                  maxLength={80}
+                  onChange={(e) => {
+                    setDriverFamilyNames(e.target.value);
+                  }}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Licencia</Label>

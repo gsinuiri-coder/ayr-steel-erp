@@ -34,9 +34,17 @@ import { PrismaService } from '../prisma/prisma.service';
  *    al saldo y el motivo queda en la auditoría (el patrón de M-2).
  */
 
-/** Estados en los que el comprobante sigue siendo una deuda del cliente. */
+/**
+ * Estados en los que el comprobante **es una deuda del cliente**.
+ *
+ * `SEND_ERROR` cuenta: el documento tomó correlativo, ya consume la línea del pedido y ya
+ * habilita el despacho. Dejarlo fuera hacía que, con el PSE caído, la mercadería pudiera
+ * salir pero el cobro no se pudiera registrar — la mitad de la promesa de D-073 sin
+ * cumplir, y encima la mitad que se lleva el dinero.
+ */
 const LIVE_STATUSES: FiscalDocumentStatus[] = [
   FiscalDocumentStatus.ISSUED,
+  FiscalDocumentStatus.SEND_ERROR,
   FiscalDocumentStatus.ACCEPTED,
   FiscalDocumentStatus.VOID_PENDING,
 ];

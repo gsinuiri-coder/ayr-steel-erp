@@ -188,10 +188,15 @@ try {
   //        no el del papel: producción tiene que quedar sin material de prueba y sin cuentas
   //        por cobrar inventadas, con los documentos anulados y a la vista.
   const isE2eCustomer = (name) => typeof name === 'string' && name.startsWith('E2E ');
+  // Una boleta a "público en general" (D-077) sale a nombre del cliente sembrado, no del
+  // cliente de prueba: el filtro por nombre no la ve. Por eso los tests le ponen la marca
+  // en observaciones, y por eso acá se mira también ahí.
+  const isE2eDocument = (d) =>
+    isE2eCustomer(d.customerName) || (typeof d.notes === 'string' && d.notes.startsWith('E2E '));
 
   const documents = await call('/invoicing/documents');
   const e2eDocuments = (Array.isArray(documents.body) ? documents.body : []).filter(
-    (d) => isE2eCustomer(d.customerName) && d.status !== 'VOIDED' && d.status !== 'REJECTED',
+    (d) => isE2eDocument(d) && d.status !== 'VOIDED' && d.status !== 'REJECTED',
   );
   console.log(`Comprobantes E2E vivos: ${e2eDocuments.length}`);
 

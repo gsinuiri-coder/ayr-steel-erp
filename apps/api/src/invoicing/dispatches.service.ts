@@ -76,9 +76,19 @@ const dispatchInclude = {
 
 type DispatchRow = Prisma.DispatchGetPayload<{ include: typeof dispatchInclude }>;
 
-/** Estados en los que un documento electrónico ya declaró algo ante SUNAT. */
+/**
+ * Estados en los que un documento electrónico **ya declara** el traslado, y por lo tanto
+ * bloquea la reversa del despacho.
+ *
+ * `SEND_ERROR` está adentro, y es justo el caso que había que cubrir: un documento en ese
+ * estado tomó correlativo y el job lo va a seguir reintentando (D-073), así que revertir el
+ * despacho mientras tanto termina con el PSE recibiendo una guía que declara un traslado
+ * que ya no existe. Es la misma lista que `LIVE_DOCUMENT_STATUSES` en `invoicing.service.ts`
+ * y que fueran distintas era el defecto.
+ */
 const DECLARED_STATUSES: FiscalDocumentStatus[] = [
   FiscalDocumentStatus.ISSUED,
+  FiscalDocumentStatus.SEND_ERROR,
   FiscalDocumentStatus.ACCEPTED,
   FiscalDocumentStatus.VOID_PENDING,
 ];
@@ -175,7 +185,8 @@ export class DispatchesService {
             totalWeightKg: toFixedString(input.totalWeightKg, 'KG'),
             packageCount: input.packageCount ?? null,
             vehiclePlate: input.vehiclePlate ?? null,
-            driverName: input.driverName ?? null,
+            driverGivenNames: input.driverGivenNames ?? null,
+            driverFamilyNames: input.driverFamilyNames ?? null,
             driverDocType: input.driverDocType ?? null,
             driverDocNumber: input.driverDocNumber ?? null,
             driverLicense: input.driverLicense ?? null,
@@ -523,7 +534,8 @@ export class DispatchesService {
       take: 200,
       select: {
         vehiclePlate: true,
-        driverName: true,
+        driverGivenNames: true,
+        driverFamilyNames: true,
         driverDocType: true,
         driverDocNumber: true,
         driverLicense: true,
@@ -541,9 +553,16 @@ export class DispatchesService {
 
     for (const r of rows) {
       if (r.vehiclePlate) vehicles.set(r.vehiclePlate, { plate: r.vehiclePlate });
-      if (r.driverName && r.driverDocType && r.driverDocNumber && r.driverLicense) {
+      if (
+        r.driverGivenNames &&
+        r.driverFamilyNames &&
+        r.driverDocType &&
+        r.driverDocNumber &&
+        r.driverLicense
+      ) {
         drivers.set(r.driverDocNumber, {
-          name: r.driverName,
+          givenNames: r.driverGivenNames,
+          familyNames: r.driverFamilyNames,
           docType: r.driverDocType,
           docNumber: r.driverDocNumber,
           license: r.driverLicense,
@@ -603,7 +622,8 @@ export class DispatchesService {
       totalWeightKg: row.totalWeightKg.toFixed(3),
       packageCount: row.packageCount,
       vehiclePlate: row.vehiclePlate,
-      driverName: row.driverName,
+      driverGivenNames: row.driverGivenNames,
+      driverFamilyNames: row.driverFamilyNames,
       driverDocType: row.driverDocType,
       driverDocNumber: row.driverDocNumber,
       driverLicense: row.driverLicense,

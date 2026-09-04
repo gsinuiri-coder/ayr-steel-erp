@@ -1508,11 +1508,16 @@ model Dispatch {
   packageCount  Int?         @map("package_count")
 
   /// Traslado privado (D-078). Van los cuatro o no va ninguno; lo obliga un `CHECK`.
-  vehiclePlate    String?  @map("vehicle_plate") @db.VarChar(10)
-  driverName      String?  @map("driver_name") @db.VarChar(160)
-  driverDocType   DocType? @map("driver_doc_type")
-  driverDocNumber String?  @map("driver_doc_number") @db.VarChar(20)
-  driverLicense   String?  @map("driver_license") @db.VarChar(20)
+  vehiclePlate      String?  @map("vehicle_plate") @db.VarChar(10)
+  /// Nombres y apellidos **por separado**: SUNAT los pide así y el PSE rechaza la guía si
+  /// faltan los apellidos. Partir un nombre completo por espacios acierta con "Juan Pérez
+  /// Gómez" y falla con "José Luis Pérez", y esa adivinanza saldría impresa en un
+  /// documento fiscal.
+  driverGivenNames  String?  @map("driver_given_names") @db.VarChar(80)
+  driverFamilyNames String?  @map("driver_family_names") @db.VarChar(80)
+  driverDocType     DocType? @map("driver_doc_type")
+  driverDocNumber   String?  @map("driver_doc_number") @db.VarChar(20)
+  driverLicense     String?  @map("driver_license") @db.VarChar(20)
 
   /// Traslado público (D-078): el transportista tercero. Su propia GRE está fuera de
   /// alcance; acá solo se lo identifica como responsable del traslado.
