@@ -45,6 +45,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { CoilsService } from '../coils/coils.service';
+import { ColorsService } from '../colors/colors.service';
 import { StorageService } from '../documents/storage.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -71,6 +72,7 @@ export class PurchasesService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
+    private readonly colors: ColorsService,
     private readonly exchangeRates: ExchangeRatesService,
     private readonly storage: StorageService,
   ) {}
@@ -168,6 +170,12 @@ export class PurchasesService {
     const { rate, source } = await this.resolveExchangeRate(input);
     const totals = computeTotals(input);
     const dueDate = computeDueDate(input);
+    // D-085: los colores se validan contra el maestro **antes** de la transacción (el `map`
+    // que arma las líneas no puede ser async). Mismo criterio que el catálogo: sin esto una
+    // línea de compra sería la puerta trasera para meter un color desactivado en el filtro.
+    const colorByLine = await Promise.all(
+      totals.items.map((item) => this.colors.resolveActive(item.colorId)),
+    );
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
@@ -210,6 +218,7 @@ export class PurchasesService {
                 igv: toFixedString(item.igv, 'MONEY'),
                 total: toFixedString(item.total, 'MONEY'),
                 finishId: item.finishId ?? null,
+                colorId: colorByLine[index] ?? null,
                 widthMm: item.widthMm ? toFixedString(item.widthMm, 'MM') : null,
                 thicknessMm: item.thicknessMm ? toFixedString(item.thicknessMm, 'MM') : null,
               })),
@@ -279,6 +288,8 @@ export class PurchasesService {
               purchaseId: purchase.id,
               purchaseItemId: item.id,
               finishId: requireField(item.finishId, 'La línea no tiene acabado'),
+              // D-085: el color se elige al registrar la compra; la bobina lo hereda.
+              colorId: item.colorId,
               weightKg: item.qty.toFixed(3),
               widthMm: requireField(item.widthMm, 'La línea no tiene ancho').toFixed(2),
               thicknessMm: requireField(item.thicknessMm, 'La línea no tiene espesor').toFixed(2),
@@ -1012,6 +1023,7 @@ export class PurchasesService {
           include: {
             product: { select: { sku: true } },
             finish: { select: { code: true } },
+            color: { select: { name: true, hexColor: true } },
             coil: { select: { code: true } },
           },
         },
@@ -1308,6 +1320,8 @@ function toItemDto(
   item: PurchaseItem & {
     product: { sku: string } | null;
     finish: { code: string } | null;
+    // D-085: solo el detalle de la compra trae el color; el listado no lo necesita.
+    color?: { name: string; hexColor: string } | null;
     coil: { code: string } | null;
   },
 ) {
@@ -1325,6 +1339,9 @@ function toItemDto(
     total: item.total.toFixed(4),
     finishId: item.finishId,
     finishCode: item.finish?.code ?? null,
+    colorId: item.colorId,
+    colorName: item.color?.name ?? null,
+    colorHex: item.color?.hexColor ?? null,
     widthMm: item.widthMm ? item.widthMm.toFixed(2) : null,
     thicknessMm: item.thicknessMm ? item.thicknessMm.toFixed(2) : null,
     coilCode: item.coil?.code ?? null,

@@ -48,6 +48,8 @@ export interface ComputedItem {
   igv: Decimal;
   total: Decimal;
   finishId?: string;
+  /** D-085: color de la bobina que la línea da de alta. Solo en compras `COIL`. */
+  colorId?: string;
   widthMm?: string;
   thicknessMm?: string;
 }
@@ -73,6 +75,7 @@ export function computeTotals(input: CreatePurchaseInput): PurchaseTotals {
       igv,
       total: subtotal.plus(igv),
       finishId: item.finishId,
+      colorId: item.colorId,
       widthMm: item.widthMm,
       thicknessMm: item.thicknessMm,
     } satisfies ComputedItem;

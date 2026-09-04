@@ -30,6 +30,7 @@ function line(overrides: Partial<ResolvedSalesLine>): ResolvedSalesLine {
     reserveUnit: 'NIU',
     productSku: 'SKU',
     productName: 'Perfil',
+    pieces: [],
     reserveItemLabel: 'SKU',
     ...overrides,
   };

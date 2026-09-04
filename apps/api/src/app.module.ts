@@ -5,6 +5,7 @@ import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { BusinessLinesModule } from './business-lines/business-lines.module';
 import { CatalogModule } from './catalog/catalog.module';
+import { ColorsModule } from './colors/colors.module';
 import { CoilsModule } from './coils/coils.module';
 import { AppThrottlerGuard } from './common/throttler.guard';
 import { ConfigModule } from './config/config.module';
@@ -46,6 +47,7 @@ import { UsersModule } from './users/users.module';
     JobsModule,
     BusinessLinesModule,
     FinishesModule,
+    ColorsModule,
     CatalogModule,
     CustomersModule,
     SuppliersModule,

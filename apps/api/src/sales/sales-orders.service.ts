@@ -50,7 +50,11 @@ const orderInclude = {
   quotation: { select: { id: true, seq: true } },
   items: {
     orderBy: { lineNumber: 'asc' },
-    include: { product: { select: { sku: true, name: true } } },
+    include: {
+      product: { select: { sku: true, name: true } },
+      // D-083: copia congelada de los largos que se cotizaron.
+      pieces: { orderBy: { lineNumber: 'asc' } },
+    },
   },
   reservations: {
     orderBy: { createdAt: 'asc' },
@@ -62,7 +66,16 @@ const orderInclude = {
           items: { select: { productId: true } },
         },
       },
-      productionOrders: { select: { id: true, seq: true }, take: 1 },
+      productionOrders: {
+        // Solo la OP **viva** (D-084): anular una de coberturas deja `reservation_id`
+        // apuntando a la reserva y la devuelve a ACTIVA (D-066), así que con la última a
+        // secas la reserva quedaba con una OP anulada colgada — y `/planta`, que ofrece las
+        // reservas sin OP, la hacía desaparecer del único punto de entrada para volver a
+        // fabricarla.
+        where: { status: { in: ['DRAFT', 'IN_PROGRESS'] } },
+        select: { id: true, seq: true },
+        take: 1,
+      },
     },
   },
 } satisfies Prisma.SalesOrderInclude;
@@ -144,7 +157,12 @@ export class SalesOrdersService {
 
         const quotation = await tx.quotation.findUniqueOrThrow({
           where: { id: quotationId },
-          include: { items: { orderBy: { lineNumber: 'asc' } } },
+          include: {
+            items: {
+              orderBy: { lineNumber: 'asc' },
+              include: { pieces: { orderBy: { lineNumber: 'asc' } } },
+            },
+          },
         });
         if (quotation.items.length === 0) {
           throw new BadRequestException('La cotización no tiene líneas');
@@ -204,6 +222,19 @@ export class SalesOrdersService {
                 reserveItemId: i.reserveItemId,
                 reserveQty: i.reserveQty,
                 reserveUnit: i.reserveUnit,
+                // D-083: el pedido congela los largos igual que congela el precio; a partir
+                // de acá la cotización puede reemitirse y estos no se mueven.
+                ...(i.pieces.length > 0
+                  ? {
+                      pieces: {
+                        create: i.pieces.map((p) => ({
+                          lineNumber: p.lineNumber,
+                          lengthMm: p.lengthMm,
+                          qty: p.qty,
+                        })),
+                      },
+                    }
+                  : {}),
               })),
             },
           },
@@ -273,7 +304,7 @@ export class SalesOrdersService {
           );
         }
 
-        const lines = await resolveSalesLines(tx, line.id, line.quotationRequired, input.items);
+        const lines = await resolveSalesLines(tx, line.id, input.items);
         const totals = documentTotals(lines);
 
         const order = await tx.salesOrder.create({
@@ -304,6 +335,17 @@ export class SalesOrdersService {
                 reserveItemId: l.reserveItemId,
                 reserveQty: l.reserveQty,
                 reserveUnit: l.reserveUnit,
+                ...(l.pieces.length > 0
+                  ? {
+                      pieces: {
+                        create: l.pieces.map((p) => ({
+                          lineNumber: p.lineNumber,
+                          lengthMm: p.lengthMm,
+                          qty: p.qty,
+                        })),
+                      },
+                    }
+                  : {}),
               })),
             },
           },
@@ -625,7 +667,16 @@ export class SalesOrdersService {
             items: { select: { productId: true } },
           },
         },
-        productionOrders: { select: { id: true, seq: true }, take: 1 },
+        productionOrders: {
+          // Solo la OP **viva** (D-084): anular una de coberturas deja `reservation_id`
+          // apuntando a la reserva y la devuelve a ACTIVA (D-066), así que con la última a
+          // secas la reserva quedaba con una OP anulada colgada — y `/planta`, que ofrece las
+          // reservas sin OP, la hacía desaparecer del único punto de entrada para volver a
+          // fabricarla.
+          where: { status: { in: ['DRAFT', 'IN_PROGRESS'] } },
+          select: { id: true, seq: true },
+          take: 1,
+        },
       },
     });
     const labels = await this.reserveLabels([row]);
@@ -793,7 +844,16 @@ export class SalesOrdersService {
             items: { select: { productId: true } },
           },
         },
-        productionOrders: { select: { id: true, seq: true }, take: 1 },
+        productionOrders: {
+          // Solo la OP **viva** (D-084): anular una de coberturas deja `reservation_id`
+          // apuntando a la reserva y la devuelve a ACTIVA (D-066), así que con la última a
+          // secas la reserva quedaba con una OP anulada colgada — y `/planta`, que ofrece las
+          // reservas sin OP, la hacía desaparecer del único punto de entrada para volver a
+          // fabricarla.
+          where: { status: { in: ['DRAFT', 'IN_PROGRESS'] } },
+          select: { id: true, seq: true },
+          take: 1,
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 500,

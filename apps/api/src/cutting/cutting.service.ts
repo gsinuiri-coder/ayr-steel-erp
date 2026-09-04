@@ -242,6 +242,8 @@ export class CuttingService {
                 supplierId: coil.supplierId,
                 purchaseId: coil.purchaseId ?? undefined,
                 finishId: coil.finishId,
+                // D-085: cortar no cambia el color del material.
+                colorId: coil.colorId,
                 weightKg: toFixedString(child.weightKg, 'KG'),
                 widthMm: toFixedString(child.widthMm, 'MM'),
                 thicknessMm: coil.thicknessMm.toFixed(2),

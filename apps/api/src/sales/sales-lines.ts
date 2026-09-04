@@ -1,10 +1,13 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { CoilStatus, InventoryItemType, type Prisma } from '@prisma/client';
 import {
+  describePieces,
+  piecesMeters,
   salesLineTotals,
   toDecimal,
   toFixedString,
   Unit,
+  type RoofingPieceDto,
   type SalesItemDto,
   type SalesItemInput,
 } from '@ayr/shared';
@@ -35,6 +38,8 @@ export interface ResolvedSalesLine {
   reserveItemId: string;
   reserveQty: string;
   reserveUnit: string;
+  /** D-083: los largos de una línea compuesta. Vacío en una línea simple. */
+  pieces: RoofingPieceDto[];
   /** Solo para armar el DTO; no se persiste (sale del join con el producto o la bobina). */
   productSku: string;
   productName: string;
@@ -47,19 +52,26 @@ export interface ResolvedSalesLine {
  * El destino de la reserva se decide acá, una sola vez:
  *
  * - con `reserveFromCoilId`, la línea promete **kilos de esa bobina**. Es el caso de una
- *   cobertura: se fabrica contra el pedido, así que su producto terminado no tiene stock
- *   que reservar y lo que hay que proteger es la materia prima;
+ *   cobertura que se fabrica contra el pedido: su producto terminado no tiene stock que
+ *   reservar y lo que hay que proteger es la materia prima;
  * - sin él, la línea promete **el propio producto**, en su unidad de venta. Es el caso de
- *   un perfil de drywall o de un producto de trading, que se venden de stock.
+ *   un perfil de drywall, de un producto de trading y —desde D-083— también el de una
+ *   cobertura que sale de stock, sea una plancha de catálogo o el sobrante de una corrida
+ *   anterior.
  *
- * En una línea de negocio con cotización obligatoria (D-065) el primer caso es el único
- * admitido: prometer un producto terminado que todavía no existe sería una reserva sobre
- * un saldo de cero, y la confirmación fallaría siempre sin decir por qué.
+ * **Desde D-083 el segundo caso ya no se rechaza en una línea con cotización obligatoria.**
+ * Antes se cortaba acá con el argumento de que reservar un producto terminado inexistente
+ * fallaría igual al confirmar; el argumento dejó de valer cuando la producción de coberturas
+ * empezó a dejar metros y planchas en stock, que son perfectamente vendibles. Quien decide
+ * ahora es el disponible real, en `createReservations`, con un mensaje que dice cuánto hay.
+ *
+ * D-083 además distingue las dos formas de línea por la **unidad del producto**: `MTR` es
+ * una cobertura a medida y su línea es compuesta (subítems `{cantidad, largo}` cuya suma en
+ * metros **es** la cantidad de la línea); cualquier otra unidad es una línea simple.
  */
 export async function resolveSalesLines(
   tx: Prisma.TransactionClient,
   businessLineId: string,
-  quotationRequired: boolean,
   items: SalesItemInput[],
 ): Promise<ResolvedSalesLine[]> {
   const productIds = [...new Set(items.map((i) => i.productId))];
@@ -111,6 +123,36 @@ export async function resolveSalesLines(
       );
     }
 
+    // D-083: la forma de la línea la fija la unidad del producto, no un flag del input.
+    // Sin este par de chequeos, una cobertura a medida podría cotizarse sin largos —y la OP
+    // no tendría plan de corte que copiar— o un perfil podría llegar con largos que nada
+    // en el sistema volvería a mirar.
+    const madeToMeasure = product.unit === Unit.MTR;
+    if (madeToMeasure && item.pieces === undefined) {
+      throw new BadRequestException(
+        `${at}: ${product.sku} se vende por metro lineal: detalla cuántas planchas de cada largo lleva la línea`,
+      );
+    }
+    if (!madeToMeasure && item.pieces !== undefined) {
+      throw new BadRequestException(
+        `${at}: ${product.sku} no se vende a medida (se mide en ${product.unit}): quita el detalle de largos`,
+      );
+    }
+
+    const pieces: RoofingPieceDto[] = (item.pieces ?? []).map((piece, i) => ({
+      lineNumber: i + 1,
+      lengthMm: toFixedString(piece.lengthMm, 'MM'),
+      qty: piece.qty,
+    }));
+    // Redundante con el `superRefine` del schema, y a propósito: el pedido directo y la
+    // edición de cotización pasan por acá con las mismas líneas, y esta es la única puerta
+    // por la que las dos entran a la base.
+    if (madeToMeasure && !piecesMeters(pieces).equals(toDecimal(item.qty))) {
+      throw new BadRequestException(
+        `${at}: los largos suman ${piecesMeters(pieces).toFixed(3)} m y la línea dice ${toDecimal(item.qty).toFixed(3)}`,
+      );
+    }
+
     const totals = salesLineTotals({ qty: item.qty, unitPricePen });
 
     let reserveItemType: InventoryItemType;
@@ -136,11 +178,6 @@ export async function resolveSalesLines(
       reserveUnit = Unit.KGM;
       reserveItemLabel = coil.code;
     } else {
-      if (quotationRequired) {
-        throw new BadRequestException(
-          `${at}: en esta línea de negocio el producto se fabrica contra el pedido, así que hay que indicar de qué bobina y cuántos kilos se reservan`,
-        );
-      }
       reserveItemType = InventoryItemType.PRODUCT;
       reserveItemId = product.id;
       reserveQty = toFixedString(toDecimal(item.qty), 'KG');
@@ -151,7 +188,11 @@ export async function resolveSalesLines(
     return {
       lineNumber,
       productId: product.id,
-      description: item.description ?? product.name,
+      // D-083: los largos viajan en la descripción porque es lo que el cliente lee en la
+      // cotización y en el comprobante — vende metros, pero recibe planchas.
+      description:
+        item.description ??
+        (pieces.length > 0 ? `${product.name} (${describePieces(pieces)})` : product.name),
       qty: item.qty,
       unit: product.unit,
       listPricePen,
@@ -163,6 +204,7 @@ export async function resolveSalesLines(
       reserveItemId,
       reserveQty,
       reserveUnit,
+      pieces,
       productSku: product.sku,
       productName: product.name,
       reserveItemLabel,
@@ -203,6 +245,7 @@ export function toSalesItemDto(
     reserveItemId: string;
     reserveQty: Prisma.Decimal;
     reserveUnit: string;
+    pieces?: { lineNumber: number; lengthMm: Prisma.Decimal; qty: number }[];
     product: { sku: string; name: string };
   },
   reserveItemLabel: string,
@@ -221,6 +264,10 @@ export function toSalesItemDto(
     subtotalPen: row.subtotalPen.toFixed(4),
     igvPen: row.igvPen.toFixed(4),
     totalPen: row.totalPen.toFixed(4),
+    pieces: (row.pieces ?? [])
+      .slice()
+      .sort((a, b) => a.lineNumber - b.lineNumber)
+      .map((p) => ({ lineNumber: p.lineNumber, lengthMm: p.lengthMm.toFixed(2), qty: p.qty })),
     reserveItemType: row.reserveItemType,
     reserveItemId: row.reserveItemId,
     reserveItemLabel,

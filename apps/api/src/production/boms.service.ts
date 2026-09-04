@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   BusinessLineCode,
+  ProductBomKind,
   ProductSource,
   ProductionOrderStatus,
   type Finish,
@@ -32,13 +33,16 @@ const BOM_RELATIONS = {
 } satisfies Prisma.ProductBomInclude;
 
 /**
- * Receta de fabricación en el maestro de productos (D-059). Una por producto: qué fleje
- * consume (acabado + espesor + ancho, que es como RF-42 agrupa el stock de flejes) y
- * cuántos kilos teóricos se lleva cada pieza (D-047).
+ * Receta de fabricación en el maestro de productos (D-059, D-087). Una por producto, de dos
+ * clases:
  *
- * En Fase 4 solo admite productos de la línea **drywall**: coberturas exigen cotización
- * (RF-31) y son de Fase 5 (D-048); dejar cargar su receta ahora sería construir la mitad
- * de un módulo que todavía no puede producir nada.
+ * - **DRYWALL** (Fase 4): qué fleje consume —acabado + espesor + ancho, que es como RF-42
+ *   agrupa el stock de flejes— y cuántos kilos teóricos se lleva cada pieza (D-047).
+ * - **ROOFING** (Fase 6): solo acabado y espesor de entrada. El ancho lo pone la bobina que
+ *   se monte y el kilo sale de su geometría por el largo reportado, así que fijarlos en el
+ *   maestro solo dejaría fuera rollos válidos. El `pieceLengthMm` es lo que separa los dos
+ *   productos de D-083: **con** largo es una plancha de catálogo (`NIU`, stock general),
+ *   **sin** largo es una cobertura a medida (`MTR`, el largo lo trae el pedido).
  */
 @Injectable()
 export class BomsService {
@@ -77,9 +81,16 @@ export class BomsService {
       include: { businessLine: { select: { code: true } } },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    if (product.businessLine.code !== BusinessLineCode.DRYWALL) {
+    const kind = input.kind;
+    const expectedLine =
+      kind === ProductBomKind.DRYWALL
+        ? BusinessLineCode.DRYWALL
+        : BusinessLineCode.METALLIC_ROOFING;
+    if (product.businessLine.code !== expectedLine) {
       throw new BadRequestException(
-        'Por ahora solo los productos de la línea Drywall tienen receta de fabricación: coberturas van contra cotización (RF-31) y son de Fase 5',
+        kind === ProductBomKind.DRYWALL
+          ? 'Una receta de drywall es de un producto de la línea Drywall'
+          : 'Una receta de cobertura es de un producto de la línea Metallic Roofing',
       );
     }
     if (!product.isActive) {
@@ -90,11 +101,17 @@ export class BomsService {
         'La receta es de un producto fabricado: cambia el origen del producto a Fabricado',
       );
     }
-    // D-055: el producto terminado se lleva en piezas, no en kilos. Con otra unidad el
-    // kardex mezclaría escalas en el mismo saldo y `kgPerPiece` no significaría nada.
-    if (product.unit !== Unit.NIU) {
+    // D-055 y D-083: la unidad del producto **es** lo que separa los tres casos, y por eso
+    // se valida acá y no se deduce después. Un perfil y una plancha de catálogo se cuentan
+    // por pieza; una cobertura a medida se lleva en metros porque dos planchas de largo
+    // distinto no pueden compartir un promedio ponderado.
+    const expectedUnit =
+      kind === ProductBomKind.DRYWALL || input.pieceLengthMm !== undefined ? Unit.NIU : Unit.MTR;
+    if (product.unit !== expectedUnit) {
       throw new BadRequestException(
-        `El producto se debe medir en unidades (${Unit.NIU}): las piezas son la unidad primaria del producto terminado (D-055)`,
+        expectedUnit === Unit.NIU
+          ? `El producto se debe medir en unidades (${Unit.NIU}): con largo fijo, la pieza es la unidad del producto terminado (D-055, D-083)`
+          : `Una cobertura a medida se mide en metros lineales (${Unit.MTR}): el largo lo pone el pedido, así que la pieza no es una unidad comparable (D-083)`,
       );
     }
 
@@ -102,25 +119,42 @@ export class BomsService {
     if (!finish) throw new NotFoundException('Acabado no encontrado');
     if (!finish.isActive) throw new BadRequestException('El acabado está desactivado');
 
-    const suggested = theoreticalKgPerPiece({
-      widthMm: input.inputWidthMm,
-      thicknessMm: input.inputThicknessMm,
-      pieceLengthMm: input.pieceLengthMm,
-      densityFactor: finish.densityFactor.toFixed(4),
-    });
-    if (input.kgPerPiece === undefined && suggested.lte(0)) {
-      throw new BadRequestException(
-        'La geometría de la pieza no llega a un kilo redondeable: revisa ancho, espesor y largo, o escribe el kilo por pieza a mano',
-      );
+    // El kilo por pieza solo existe en drywall: el schema ya rechaza mandarlo en una
+    // receta de cobertura, donde sale de la bobina montada por el largo reportado (D-047).
+    let kgPerPiece: string | null = null;
+    if (kind === ProductBomKind.DRYWALL) {
+      // El schema ya los exige; el chequeo se repite acá porque es lo que estrecha el tipo,
+      // y porque un servicio no debería depender de que su llamador haya validado — es la
+      // misma red que `drywallShape` pone del lado de la orden.
+      const { inputWidthMm, pieceLengthMm } = input;
+      if (inputWidthMm === undefined || pieceLengthMm === undefined) {
+        throw new BadRequestException(
+          'Una receta de drywall necesita el ancho del fleje y el largo de la pieza',
+        );
+      }
+      const suggested = theoreticalKgPerPiece({
+        widthMm: inputWidthMm,
+        thicknessMm: input.inputThicknessMm,
+        pieceLengthMm,
+        densityFactor: finish.densityFactor.toFixed(4),
+      });
+      if (input.kgPerPiece === undefined && suggested.lte(0)) {
+        throw new BadRequestException(
+          'La geometría de la pieza no llega a un kilo redondeable: revisa ancho, espesor y largo, o escribe el kilo por pieza a mano',
+        );
+      }
+      kgPerPiece = toFixedString(input.kgPerPiece ?? suggested, 'KG');
     }
-    const kgPerPiece = input.kgPerPiece ?? toFixedString(suggested, 'KG');
 
     const data = {
+      kind,
       finishId: input.finishId,
       inputThicknessMm: toFixedString(input.inputThicknessMm, 'MM'),
-      inputWidthMm: toFixedString(input.inputWidthMm, 'MM'),
-      pieceLengthMm: toFixedString(input.pieceLengthMm, 'MM'),
-      kgPerPiece: toFixedString(kgPerPiece, 'KG'),
+      inputWidthMm:
+        input.inputWidthMm === undefined ? null : toFixedString(input.inputWidthMm, 'MM'),
+      pieceLengthMm:
+        input.pieceLengthMm === undefined ? null : toFixedString(input.pieceLengthMm, 'MM'),
+      kgPerPiece,
       isActive: input.isActive ?? true,
     };
 
@@ -201,10 +235,11 @@ function auditView(bom: ProductBom): Prisma.InputJsonObject {
   return {
     productId: bom.productId,
     finishId: bom.finishId,
+    kind: bom.kind,
     inputThicknessMm: bom.inputThicknessMm.toFixed(2),
-    inputWidthMm: bom.inputWidthMm.toFixed(2),
-    pieceLengthMm: bom.pieceLengthMm.toFixed(2),
-    kgPerPiece: bom.kgPerPiece.toFixed(3),
+    inputWidthMm: bom.inputWidthMm?.toFixed(2) ?? null,
+    pieceLengthMm: bom.pieceLengthMm?.toFixed(2) ?? null,
+    kgPerPiece: bom.kgPerPiece?.toFixed(3) ?? null,
     isActive: bom.isActive,
   };
 }
@@ -215,23 +250,31 @@ export function toDto(bom: BomWithRelations): ProductBomDto {
     productId: bom.productId,
     productSku: bom.product.sku,
     productName: bom.product.name,
+    productUnit: bom.product.unit,
     businessLine: toSharedLineCode(bom.product.businessLine.code),
+    kind: bom.kind,
     finishId: bom.finishId,
     finishCode: bom.finish.code,
     finishName: bom.finish.name,
+    densityFactor: bom.finish.densityFactor.toFixed(4),
     inputThicknessMm: bom.inputThicknessMm.toFixed(2),
-    inputWidthMm: bom.inputWidthMm.toFixed(2),
-    pieceLengthMm: bom.pieceLengthMm.toFixed(2),
-    kgPerPiece: bom.kgPerPiece.toFixed(3),
-    suggestedKgPerPiece: toFixedString(
-      theoreticalKgPerPiece({
-        widthMm: bom.inputWidthMm.toFixed(2),
-        thicknessMm: bom.inputThicknessMm.toFixed(2),
-        pieceLengthMm: bom.pieceLengthMm.toFixed(2),
-        densityFactor: bom.finish.densityFactor.toFixed(4),
-      }),
-      'KG',
-    ),
+    inputWidthMm: bom.inputWidthMm?.toFixed(2) ?? null,
+    pieceLengthMm: bom.pieceLengthMm?.toFixed(2) ?? null,
+    kgPerPiece: bom.kgPerPiece?.toFixed(3) ?? null,
+    // Solo tiene sentido donde hay una geometría fija que sugerir: en coberturas la
+    // geometría la trae el rollo que todavía no se montó.
+    suggestedKgPerPiece:
+      bom.inputWidthMm && bom.pieceLengthMm
+        ? toFixedString(
+            theoreticalKgPerPiece({
+              widthMm: bom.inputWidthMm.toFixed(2),
+              thicknessMm: bom.inputThicknessMm.toFixed(2),
+              pieceLengthMm: bom.pieceLengthMm.toFixed(2),
+              densityFactor: bom.finish.densityFactor.toFixed(4),
+            }),
+            'KG',
+          )
+        : null,
     isActive: bom.isActive,
     createdAt: bom.createdAt.toISOString(),
     updatedAt: bom.updatedAt.toISOString(),

@@ -46,6 +46,23 @@ const envSchema = z.object({
    */
   NUBEFACT_URL: z.string().default(''),
   NUBEFACT_TOKEN: z.string().default(''),
+  /**
+   * Tolerancia de espesor del filtro de bobina de la OP de coberturas (D-086), en mm.
+   * Vacío = la constante compartida (0.02 mm). Existe como variable y **no** como pantalla
+   * a propósito: un número que la operación no cambia todos los días no necesita UI, y una
+   * UI lo convierte en algo que se puede aflojar hasta que el filtro no filtre nada.
+   */
+  ROOFING_THICKNESS_TOLERANCE_MM: z
+    .string()
+    .default('')
+    // Vacío = la constante compartida. Si viene, tiene que ser un número positivo y chico:
+    // un valor no numérico reventaba en cada consulta del filtro con un 500 opaco, y uno
+    // alto (`10`) lo anulaba en silencio — **fallando abierto**, que es lo peor que puede
+    // hacer un control que existe para que no se role la bobina del calibre equivocado.
+    .refine(
+      (v) => v === '' || (/^\d+(\.\d+)?$/.test(v) && Number(v) > 0 && Number(v) <= 0.5),
+      'ROOFING_THICKNESS_TOLERANCE_MM debe ser un número entre 0 y 0.5 mm, o quedar vacío',
+    ),
   /** Storage R2 (D-007) para los archivos de `imports`. Vacío en entornos que no importan planillas. */
   R2_ACCOUNT_ID: z.string().default(''),
   R2_ACCESS_KEY_ID: z.string().default(''),

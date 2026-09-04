@@ -31,6 +31,12 @@ export interface CreateCoilInput {
   purchaseId?: string;
   purchaseItemId?: string;
   finishId: string;
+  /**
+   * D-085: color de la bobina. Las prepintadas lo llevan y las galvanizadas no; una hija de
+   * partido o un fleje de corte **heredan el de la madre**, porque rolar o cortar no cambia
+   * el color del material.
+   */
+  colorId?: string | null;
   weightKg: string;
   widthMm: string;
   thicknessMm: string;
@@ -130,6 +136,7 @@ export class CoilsService {
         weightKg: toFixedString(weightKg, 'KG'),
         widthMm: toFixedString(input.widthMm, 'MM'),
         thicknessMm: toFixedString(input.thicknessMm, 'MM'),
+        colorId: input.colorId ?? null,
         currency: input.currency,
         exchangeRate: toFixedString(exchangeRate, 'RATE'),
         unitCostPerKg: toFixedString(unitCostPerKg, 'MONEY'),
@@ -282,6 +289,11 @@ export class CoilsService {
         supplierId: query.supplierId,
         thicknessMm: query.thicknessMm,
         kind: query.kind,
+        // `sin-color` es un filtro real y no la ausencia de filtro: es como se listan las
+        // galvanizadas, que son justo las que un producto sin color puede montar (D-086).
+        ...(query.colorId === undefined
+          ? {}
+          : { colorId: query.colorId === 'sin-color' ? null : query.colorId }),
         ...(query.search
           ? {
               OR: [
@@ -390,6 +402,10 @@ export class CoilsService {
       weightKg: c.weightKg.toFixed(3),
       widthMm: c.widthMm.toFixed(2),
       thicknessMm: c.thicknessMm.toFixed(2),
+      colorId: c.colorId,
+      colorCode: c.color?.code ?? null,
+      colorName: c.color?.name ?? null,
+      colorHex: c.color?.hexColor ?? null,
       currency: c.currency,
       exchangeRate: c.exchangeRate.toFixed(4),
       unitCostPerKg: c.unitCostPerKg.toFixed(4),
@@ -412,6 +428,7 @@ export const COIL_RELATIONS = {
   businessLine: true,
   supplier: { select: { name: true } },
   finish: { select: { code: true, name: true } },
+  color: { select: { code: true, name: true, hexColor: true } },
   purchase: { select: { series: true, number: true } },
   parentCoil: { select: { code: true } },
 } satisfies Prisma.CoilInclude;
@@ -420,6 +437,7 @@ type CoilWithRelations = Coil & {
   businessLine: { code: BusinessLineCode };
   supplier: { name: string };
   finish: { code: string; name: string };
+  color: { code: string; name: string; hexColor: string } | null;
   purchase: { series: string; number: string } | null;
   parentCoil: { code: string } | null;
 };

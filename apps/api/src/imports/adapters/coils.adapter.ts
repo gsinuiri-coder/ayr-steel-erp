@@ -22,6 +22,11 @@ const COLUMNS = {
   businessLineCode: { key: 'businessLineCode', header: 'Línea', required: true },
   supplierCode: { key: 'supplierCode', header: 'Proveedor (código)', required: true },
   finishCode: { key: 'finishCode', header: 'Acabado', required: true },
+  /**
+   * D-085: código del maestro de colores. Opcional — las galvanizadas no llevan color, y
+   * una planilla histórica anterior a Fase 6 no tiene la columna.
+   */
+  colorCode: { key: 'colorCode', header: 'Color (código)', required: false },
   weightKg: { key: 'weightKg', header: 'Peso (kg)', required: true },
   widthMm: { key: 'widthMm', header: 'Ancho (mm)', required: true },
   thicknessMm: { key: 'thicknessMm', header: 'Espesor (mm)', required: true },
@@ -93,6 +98,18 @@ export class CoilsImportAdapter implements ImportAdapter {
       else finishId = finish.id;
     }
 
+    // D-085: el color es opcional, pero un código que no existe es un error de la fila y
+    // no un "sin color" silencioso: importar una bobina prepintada como galvanizada la
+    // deja invisible para el filtro de la OP de coberturas sin que nadie se entere.
+    const colorCode = getField(raw, COLUMNS.colorCode).toUpperCase();
+    let colorId: string | null = null;
+    if (colorCode) {
+      const color = await this.prisma.color.findUnique({ where: { code: colorCode } });
+      if (!color) errors.push(`No existe el color "${colorCode}"`);
+      else if (!color.isActive) errors.push(`El color "${colorCode}" está desactivado`);
+      else colorId = color.id;
+    }
+
     if (!CURRENCIES.includes(currency as Currency)) {
       errors.push('La moneda debe ser PEN o USD');
     }
@@ -126,6 +143,8 @@ export class CoilsImportAdapter implements ImportAdapter {
         supplierId,
         finishCode,
         finishId,
+        colorCode,
+        colorId,
         weightKg,
         widthMm,
         thicknessMm,
@@ -154,6 +173,7 @@ export class CoilsImportAdapter implements ImportAdapter {
       businessLineId: data.businessLineId as string,
       supplierId: data.supplierId as string,
       finishId: data.finishId as string,
+      colorId: (data.colorId as string | null) ?? null,
       weightKg: data.weightKg as string,
       widthMm: data.widthMm as string,
       thicknessMm: data.thicknessMm as string,

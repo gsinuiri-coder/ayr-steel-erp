@@ -4,10 +4,16 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { BomsService } from './boms.service';
 import { ProductionController } from './production.controller';
 import { ProductionService } from './production.service';
+import { RoofingProductionController } from './roofing-production.controller';
+import { RoofingProductionService } from './roofing-production.service';
 
 /**
- * Producción de drywall (RF-32..35, RF-39, Fase 4). Depende de `coils` (bloquea los
- * flejes que consume) y de `inventory` (único escritor del kardex, regla dura 2).
+ * Producción: drywall (RF-32..35, RF-39, Fase 4) y coberturas (RF-30..33, Fase 6, D-087).
+ * Una sola tabla y dos servicios; el controller de coberturas se declara **antes** para que
+ * `/production/roofing/...` no lo coma el `:id` de `/production`.
+ *
+ * Depende de `coils` (bloquea los
+ * rollos que consume) y de `inventory` (único escritor del kardex, regla dura 2).
  *
  * El guardrail que `coils`, `cutting` y `purchases` necesitan sobre los flejes asignados
  * (D-060) NO sale de este módulo: vive en `production-assignments.ts` como función suelta
@@ -15,8 +21,8 @@ import { ProductionService } from './production.service';
  */
 @Module({
   imports: [InventoryModule, CoilsModule],
-  controllers: [ProductionController],
-  providers: [ProductionService, BomsService],
+  controllers: [RoofingProductionController, ProductionController],
+  providers: [ProductionService, RoofingProductionService, BomsService],
   exports: [ProductionService, BomsService],
 })
 export class ProductionModule {}

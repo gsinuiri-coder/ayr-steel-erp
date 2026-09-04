@@ -42,7 +42,11 @@ const quotationInclude = {
   businessLine: { select: { code: true } },
   items: {
     orderBy: { lineNumber: 'asc' },
-    include: { product: { select: { sku: true, name: true } } },
+    include: {
+      product: { select: { sku: true, name: true } },
+      // D-083: los largos de una línea compuesta. Vacío en el resto del catálogo.
+      pieces: { orderBy: { lineNumber: 'asc' } },
+    },
   },
   // Solo el pedido **vivo**: anular uno devuelve la cotización a EMITIDA y permite
   // confirmarla otra vez, así que una cotización puede acumular varios pedidos anulados y
@@ -104,7 +108,7 @@ export class QuotationsService {
         input.customerId,
         input.businessLine,
       );
-      const lines = await resolveSalesLines(tx, line.id, line.quotationRequired, input.items);
+      const lines = await resolveSalesLines(tx, line.id, input.items);
       const totals = documentTotals(lines);
       const validUntil = defaultValidUntil(input.issueDate, input.validityDays);
 
@@ -157,7 +161,7 @@ export class QuotationsService {
         input.customerId,
         toSharedLineCode(current.businessLineCode),
       );
-      const lines = await resolveSalesLines(tx, line.id, line.quotationRequired, input.items);
+      const lines = await resolveSalesLines(tx, line.id, input.items);
       const totals = documentTotals(lines);
       const validUntil = defaultValidUntil(input.issueDate, input.validityDays);
 
@@ -646,5 +650,16 @@ function toItemCreate(
     reserveItemId: line.reserveItemId,
     reserveQty: line.reserveQty,
     reserveUnit: line.reserveUnit,
+    ...(line.pieces.length > 0
+      ? {
+          pieces: {
+            create: line.pieces.map((p) => ({
+              lineNumber: p.lineNumber,
+              lengthMm: p.lengthMm,
+              qty: p.qty,
+            })),
+          },
+        }
+      : {}),
   };
 }

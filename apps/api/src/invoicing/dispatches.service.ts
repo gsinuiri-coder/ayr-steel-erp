@@ -30,6 +30,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
+import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
 import { pendingQty, proratedQty } from './invoicing-math';
 
 /**
@@ -119,9 +120,7 @@ export class DispatchesService {
         `;
         const order = await tx.salesOrder.findUnique({
           where: { id: input.salesOrderId },
-          include: {
-            items: { orderBy: { lineNumber: 'asc' }, include: { reservation: true } },
-          },
+          include: { items: { orderBy: { lineNumber: 'asc' } } },
         });
         if (!order) throw new NotFoundException('Pedido no encontrado');
         if (order.status === SalesOrderStatus.CANCELLED) {
@@ -136,7 +135,8 @@ export class DispatchesService {
 
         // Resolución de líneas. Se hace entera antes de tocar kardex para que una línea
         // que no cabe no deje al despacho a medias: todo o nada, como el resto del proyecto.
-        const lines = input.items.map((item) => {
+        const lines = [];
+        for (const item of input.items) {
           const orderItem = byId.get(item.salesOrderItemId);
           if (!orderItem) {
             throw new BadRequestException('Hay una línea que no pertenece a este pedido');
@@ -151,26 +151,54 @@ export class DispatchesService {
               `A la línea ${orderItem.lineNumber} le quedan ${pending.toFixed(3)} por despachar y se intentan despachar ${qty.toFixed(3)}`,
             );
           }
-          // **La cantidad que sale del kardex no es la de venta.** Una cobertura se vende
-          // por pieza y sale de los kilos de una bobina (D-066): despachar 100 piezas tiene
-          // que sacar los kilos que esa línea reservó, no 100 kilos. En perfiles y trading
-          // las dos cifras coinciden —el ítem reservado es el propio producto—, que es
-          // justo lo que hace que el error pase desapercibido hasta la primera cobertura.
-          const reserveQty = proratedQty(
-            qty,
-            orderItem.qty.toString(),
-            orderItem.reserveQty.toString(),
-          );
+          // **Qué sale del kardex, y cuánto.** D-088: las coordenadas las decide la reserva
+          // **viva** de la línea, no las congeladas de `sales_order_items`. En una cobertura
+          // esas dos cosas dejan de coincidir en cuanto la OP produce: la línea prometió
+          // kilos de una bobina, pero lo que sale del almacén son los metros que la
+          // producción fabricó — y los kilos ya salieron cuando se reportó. Despachar contra
+          // lo congelado los habría sacado dos veces.
+          const target = await resolveDispatchTarget(tx, orderItem);
+          // **La cantidad que sale del kardex no es siempre la de venta.** Cuando el ítem
+          // reservado es una bobina (venta directa, RF-73) hay que sacar los kilos que la
+          // línea prometió, no las unidades vendidas; cuando sale del producto que la
+          // producción fabricó, venta y kardex van en la misma unidad y la proporción es 1:1.
+          const reserveQty = target.fromProduction
+            ? qty
+            : proratedQty(qty, orderItem.qty.toString(), orderItem.reserveQty.toString());
           if (reserveQty.lte(0)) {
             throw new BadRequestException(
               `La línea ${orderItem.lineNumber} no tiene material asignado: no se puede despachar`,
             );
           }
-          // El peso de la guía es un dato de transporte y por eso es editable; por defecto
-          // es el mismo número, que es lo correcto cuando la reserva ya está en kilos.
+          // Nunca más de lo que la producción dejó reservado para esta línea: el saldo del
+          // producto lo comparten todas las órdenes, así que sin este tope una línea podría
+          // llevarse metros fabricados para otro pedido y el error solo aparecería como una
+          // invariante rota aguas abajo.
+          if (target.fromProduction && target.reservationId !== null) {
+            const held = await findLineReservation(
+              tx,
+              orderItem.id,
+              target.itemType,
+              target.itemId,
+            );
+            if (held !== null && reserveQty.gt(held.qty)) {
+              throw new BadRequestException(
+                `La línea ${orderItem.lineNumber} tiene ${held.qty.toFixed(3)} ${held.unit} fabricados y reservados, y se intentan despachar ${reserveQty.toFixed(3)}: produce el resto antes de despacharlo`,
+              );
+            }
+          }
+          // El peso de la guía es un dato de transporte y por eso es editable. Por defecto
+          // es la misma cifra, que es lo correcto **solo cuando lo que sale ya está en kilos**:
+          // en una cobertura a medida `reserveQty` son metros, y heredarlo declararía 24.6 kg
+          // en la guía por 268 kg de planchas. Ahí el peso se exige.
+          if (item.weightKg === undefined && target.unit !== Unit.KGM) {
+            throw new BadRequestException(
+              `La línea ${orderItem.lineNumber} se despacha en ${target.unit}: indica el peso en kilos para la guía de remisión`,
+            );
+          }
           const weightKg = item.weightKg !== undefined ? toDecimal(item.weightKg) : reserveQty;
-          return { orderItem, qty, reserveQty, weightKg };
-        });
+          lines.push({ orderItem, qty, reserveQty, weightKg, target });
+        }
 
         const dispatch = await tx.dispatch.create({
           data: {
@@ -203,8 +231,8 @@ export class DispatchesService {
         const coilIds = [
           ...new Set(
             lines
-              .filter((l) => l.orderItem.reserveItemType === ('COIL' as InventoryItemType))
-              .map((l) => l.orderItem.reserveItemId),
+              .filter((l) => l.target.itemType === ('COIL' as InventoryItemType))
+              .map((l) => l.target.itemId),
           ),
         ].sort();
         if (coilIds.length > 0) {
@@ -216,22 +244,22 @@ export class DispatchesService {
         let lineNumber = 0;
         for (const line of lines) {
           lineNumber += 1;
-          const { orderItem, qty, reserveQty, weightKg } = line;
+          const { orderItem, qty, reserveQty, weightKg, target } = line;
 
           // D-074: la reserva se descuenta **antes** de la salida de kardex. Solo lo que
           // este despacho se lleva, y **en la unidad de la reserva**: el resto de la línea
           // sigue prometido y protegido.
-          if (orderItem.reservation) {
-            await consumeReservationQty(tx, orderItem.reservation.id, reserveQty);
+          if (target.reservationId !== null) {
+            await consumeReservationQty(tx, target.reservationId, reserveQty);
           }
 
           const movement = await this.inventory.record(tx, {
             businessLineId: order.businessLineId,
-            itemType: orderItem.reserveItemType,
-            itemId: orderItem.reserveItemId,
+            itemType: target.itemType,
+            itemId: target.itemId,
             type: 'OUT',
             qty: toFixedString(reserveQty, 'KG'),
-            unit: orderItem.reserveUnit,
+            unit: target.unit,
             refType: 'SALE',
             refId: dispatch.id,
             notes: `Despacho ${dispatchCode(dispatch.seq)} de ${salesOrderCode(order.seq)}`,
@@ -249,8 +277,8 @@ export class DispatchesService {
               unit: orderItem.unit,
               reserveQty: toFixedString(reserveQty, 'KG'),
               weightKg: toFixedString(weightKg, 'KG'),
-              itemType: orderItem.reserveItemType,
-              itemId: orderItem.reserveItemId,
+              itemType: target.itemType,
+              itemId: target.itemId,
               // Null solo en líneas de negocio sin inventario (`NOOP`, §2.2), donde
               // `record` devuelve null a propósito. La reversa lo trata como no-op.
               movementId: movement?.id ?? null,
@@ -326,7 +354,9 @@ export class DispatchesService {
           include: {
             items: {
               orderBy: { lineNumber: 'asc' },
-              include: { salesOrderItem: { include: { reservation: true } } },
+              // D-088: la reserva ya no se lee desde la línea (son varias); la reversa la
+              // busca por las coordenadas del ítem que este despacho sacó.
+              include: { salesOrderItem: { select: { id: true } } },
             },
             documents: { select: { number: true, status: true } },
           },
@@ -368,14 +398,21 @@ export class DispatchesService {
           // Toda reversa aguas abajo restaura la reserva (D-066/D-074): sin esto el
           // material vuelve al almacén sin nada que lo proteja mientras el pedido lo
           // sigue prometiendo, que es el defecto que 5a costó encontrar.
-          if (item.salesOrderItem.reservation) {
+          //
+          // D-088: se restaura la reserva **del ítem que salió**, que el propio despacho
+          // guardó en `itemType`/`itemId`. Con la reserva de la línea a secas, revertir el
+          // despacho de una cobertura habría devuelto la promesa a la bobina en vez de a los
+          // metros que vuelven al almacén.
+          const held = await findLineReservation(
+            tx,
+            item.salesOrderItemId,
+            item.itemType,
+            item.itemId,
+          );
+          if (held) {
             // `reserveQty` y no `qty`: se devuelve exactamente lo que salió, en la unidad
             // del ítem de kardex.
-            await restoreReservationQty(
-              tx,
-              item.salesOrderItem.reservation.id,
-              toDecimal(item.reserveQty.toString()),
-            );
+            await restoreReservationQty(tx, held.id, toDecimal(item.reserveQty.toString()));
           }
         }
 

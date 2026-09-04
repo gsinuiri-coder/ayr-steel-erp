@@ -3,6 +3,8 @@ import {
   BusinessLineCode,
   CoilKind,
   CoilStatus,
+  ProductBomKind,
+  ProductionOrderKind,
   ProductionOrderStatus,
   ProductionReportStatus,
   SalesOrderStatus,
@@ -15,6 +17,7 @@ import {
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   productionOrderCode,
+  salesOrderCode,
   theoreticalKg,
   toDecimal,
   toFixedString,
@@ -36,13 +39,17 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  assertCoilsNotReserved,
-  markReservationConsumed,
-  restoreReservation,
-} from '../sales/reservation-guard';
+import { assertCoilsNotReserved, markReservationConsumed } from '../sales/reservation-guard';
 import { BomsService, toDto as bomToDto } from './boms.service';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
+import {
+  assertKind,
+  assertLive as assertOrderLive,
+  lockOrder as lockProductionOrder,
+  recomputeStatus as recomputeOrderStatus,
+  resolveActorNames as resolveNames,
+  restoreReservationIfIdle as restoreIdleReservation,
+} from './production-shared';
 import {
   allocateStripKg,
   closeAdjustmentPen,
@@ -52,11 +59,22 @@ import {
 
 const ORDER_RELATIONS = {
   businessLine: { select: { code: true } },
-  product: { select: { sku: true, name: true } },
+  product: { select: { sku: true, name: true, unit: true } },
   bom: {
     include: {
       product: { include: { businessLine: { select: { code: true } } } },
       finish: true,
+    },
+  },
+  /** D-084: el plan de corte de una OP de coberturas. Vacío en drywall. */
+  items: { orderBy: { lineNumber: 'asc' } },
+  /**
+   * D-084: de qué pedido nació la orden. Se llega por la reserva, que es el único vínculo
+   * que existe entre producción y ventas (D-054).
+   */
+  reservation: {
+    select: {
+      salesOrder: { select: { id: true, seq: true, customer: { select: { name: true } } } },
     },
   },
   consumptions: {
@@ -75,7 +93,11 @@ const ORDER_RELATIONS = {
   // Los reportes de una OP no tienen tope de negocio pero sí de request: una corrida
   // real no pasa de unas pocas decenas, y traerlos todos sin cota dejaría el detalle
   // creciendo sin límite. `MAX_ORDER_REPORTS` corta bastante antes.
-  reports: { orderBy: { seq: 'asc' }, take: MAX_ORDER_REPORTS },
+  reports: {
+    orderBy: { seq: 'asc' },
+    take: MAX_ORDER_REPORTS,
+    include: { piecesDetail: { orderBy: { lineNumber: 'asc' } } },
+  },
 } satisfies Prisma.ProductionOrderInclude;
 
 /**
@@ -85,12 +107,51 @@ const ORDER_RELATIONS = {
  */
 const LIST_RELATIONS = {
   businessLine: { select: { code: true } },
-  product: { select: { sku: true, name: true } },
+  product: { select: { sku: true, name: true, unit: true } },
+  reservation: {
+    select: {
+      salesOrder: { select: { id: true, seq: true, customer: { select: { name: true } } } },
+    },
+  },
   consumptions: { select: { assignedKg: true, consumedKg: true, releasedAt: true } },
-  reports: { select: { pieces: true, status: true } },
+  reports: { select: { pieces: true, metersM: true, status: true } },
 } satisfies Prisma.ProductionOrderInclude;
 
 type OrderForList = Prisma.ProductionOrderGetPayload<{ include: typeof LIST_RELATIONS }>;
+
+/**
+ * Estrecha una receta a la forma de drywall (D-087): desde Fase 6 las tres columnas que solo
+ * usa esta rama son nullable en la base, y el `CHECK` de la migración garantiza que en una
+ * receta `DRYWALL` vienen las tres. Este chequeo es la red que traduce esa garantía al
+ * tipo — y el mensaje existe para el caso imposible en que alguien escriba en la base sin
+ * pasar por `BomsService`.
+ */
+function drywallShape<
+  T extends {
+    kind: ProductBomKind;
+    inputWidthMm: Prisma.Decimal | null;
+    pieceLengthMm: Prisma.Decimal | null;
+    kgPerPiece: Prisma.Decimal | null;
+  },
+>(
+  bom: T,
+): T & { inputWidthMm: Prisma.Decimal; pieceLengthMm: Prisma.Decimal; kgPerPiece: Prisma.Decimal } {
+  if (
+    bom.kind !== ProductBomKind.DRYWALL ||
+    bom.inputWidthMm === null ||
+    bom.pieceLengthMm === null ||
+    bom.kgPerPiece === null
+  ) {
+    throw new BadRequestException(
+      'La receta del producto no es una receta de drywall completa: revisa ancho de fleje, largo de pieza y kilo por pieza',
+    );
+  }
+  return bom as T & {
+    inputWidthMm: Prisma.Decimal;
+    pieceLengthMm: Prisma.Decimal;
+    kgPerPiece: Prisma.Decimal;
+  };
+}
 
 /**
  * Producción de drywall (RF-32..35, RF-39; D-055..D-060).
@@ -122,13 +183,17 @@ export class ProductionService {
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
     if (!product.isActive) throw new BadRequestException('El producto está desactivado');
-    // D-048: coberturas exigen una cotización confirmada (RF-31), que es de Fase 5.
+    // D-087: esta rama es la de drywall. Las coberturas tienen su propio servicio, que
+    // exige la reserva de un pedido (RF-31, D-084) en vez de admitirla como opcional.
     if (product.businessLine.code !== BusinessLineCode.DRYWALL) {
       throw new BadRequestException(
-        'Por ahora solo se producen perfiles de Drywall: las coberturas van contra cotización (RF-31) y son de Fase 5',
+        'Esta ruta produce perfiles de Drywall: las coberturas se producen desde producción de coberturas, contra un pedido (RF-31)',
       );
     }
     const bom = await this.boms.requireActiveBom(product.id);
+    if (bom.kind !== ProductBomKind.DRYWALL) {
+      throw new BadRequestException('La receta del producto no es de drywall');
+    }
 
     const orderId = await this.prisma.$transaction(async (tx) => {
       // D-054/D-066: la OP puede nacer de un pedido. La reserva se valida acá y no al
@@ -196,6 +261,7 @@ export class ProductionService {
 
       const order = await tx.productionOrder.create({
         data: {
+          kind: ProductionOrderKind.DRYWALL,
           businessLineId: product.businessLineId,
           productId: product.id,
           bomId: bom.id,
@@ -244,10 +310,12 @@ export class ProductionService {
       const order = await this.lockOrder(tx, orderId);
       this.assertLive(order, 'consumir flejes');
 
-      const bom = await tx.productBom.findUniqueOrThrow({
-        where: { id: order.bomId },
-        include: { finish: { select: { code: true } } },
-      });
+      const bom = drywallShape(
+        await tx.productBom.findUniqueOrThrow({
+          where: { id: order.bomId },
+          include: { finish: { select: { code: true } } },
+        }),
+      );
       const coil = await this.coils.lockCoil(tx, input.coilId);
 
       if (coil.kind !== CoilKind.STRIP) {
@@ -428,7 +496,9 @@ export class ProductionService {
           );
         }
 
-        const bom = await tx.productBom.findUniqueOrThrow({ where: { id: order.bomId } });
+        const bom = drywallShape(
+          await tx.productBom.findUniqueOrThrow({ where: { id: order.bomId } }),
+        );
         const neededKg = theoreticalKg(input.pieces, bom.kgPerPiece.toFixed(3));
 
         const rows = await tx.productionOrderConsumption.findMany({
@@ -1155,6 +1225,7 @@ export class ProductionService {
     const orders = await this.prisma.productionOrder.findMany({
       where: {
         status: query.status,
+        kind: query.kind,
         productId: query.productId,
         businessLine: query.businessLine
           ? { code: toPrismaLineCode(query.businessLine) }
@@ -1188,6 +1259,11 @@ export class ProductionService {
     return {
       ...this.toListItem(order, actors),
       bom: bomToDto(order.bom),
+      items: order.items.map((i) => ({
+        lineNumber: i.lineNumber,
+        lengthMm: i.lengthMm.toFixed(2),
+        qty: i.qty,
+      })),
       consumptions: order.consumptions.map((c) => ({
         id: c.id,
         coilId: c.coilId,
@@ -1208,6 +1284,12 @@ export class ProductionService {
       reports: order.reports.map((r) => ({
         id: r.id,
         pieces: r.pieces,
+        metersM: r.metersM === null ? null : r.metersM.toFixed(3),
+        piecesDetail: r.piecesDetail.map((p) => ({
+          lineNumber: p.lineNumber,
+          lengthMm: p.lengthMm.toFixed(2),
+          qty: p.qty,
+        })),
         theoreticalKg: r.theoreticalKg.toFixed(3),
         materialCostPen: r.materialCostPen.toFixed(4),
         unitCostPen: r.unitCostPen.toFixed(4),
@@ -1225,7 +1307,7 @@ export class ProductionService {
    * saldo, abiertos y que ninguna otra orden tiene tomados (D-060).
    */
   async stripOptions(productId: string): Promise<ProductionStripOptionDto[]> {
-    const bom = await this.boms.requireActiveBom(productId);
+    const bom = drywallShape(await this.boms.requireActiveBom(productId));
     const coils = await this.prisma.coil.findMany({
       where: {
         kind: CoilKind.STRIP,
@@ -1283,38 +1365,16 @@ export class ProductionService {
   // Utilidades comunes
   // -------------------------------------------------------------------------
 
-  private async lockOrder(
-    tx: Prisma.TransactionClient,
-    orderId: string,
-  ): Promise<{
-    id: string;
-    seq: number;
-    status: ProductionOrderStatus;
-    businessLineId: string;
-    productId: string;
-    bomId: string;
-    notes: string | null;
-    closedAt: Date | null;
-    reservationId: string | null;
-  }> {
-    const locked = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "production_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE
-    `;
-    if (locked.length === 0) throw new NotFoundException('Orden de producción no encontrada');
-    return tx.productionOrder.findUniqueOrThrow({
-      where: { id: orderId },
-      select: {
-        id: true,
-        seq: true,
-        status: true,
-        businessLineId: true,
-        productId: true,
-        bomId: true,
-        notes: true,
-        closedAt: true,
-        reservationId: true,
-      },
-    });
+  /**
+   * Bloquea la orden y comprueba que sea de **esta** rama (D-087). Delega en
+   * `production-shared.ts` para que drywall y coberturas no tengan dos versiones del mismo
+   * lock, y añade el chequeo de `kind`: sin él, mandar acá el id de una OP de coberturas la
+   * operaría con la aritmética de drywall, que es el error más caro de encontrar después.
+   */
+  private async lockOrder(tx: Prisma.TransactionClient, orderId: string) {
+    const order = await lockProductionOrder(tx, orderId);
+    assertKind(order, ProductionOrderKind.DRYWALL);
+    return order;
   }
 
   /**
@@ -1331,43 +1391,16 @@ export class ProductionService {
     orderId: string,
     reservationId: string,
   ): Promise<boolean> {
-    const stillReported = await tx.productionReport.count({
-      where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
-    });
-    if (stillReported > 0) return false;
-    return restoreReservation(tx, reservationId);
+    return restoreIdleReservation(tx, orderId, reservationId);
   }
 
   private assertLive(order: { status: ProductionOrderStatus }, action: string): void {
-    if (
-      order.status === ProductionOrderStatus.CLOSED ||
-      order.status === ProductionOrderStatus.CANCELLED
-    ) {
-      throw new BadRequestException(
-        `La orden está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}: no se puede ${action}`,
-      );
-    }
+    assertOrderLive(order, action);
   }
 
   /** `DRAFT` cuando la orden se quedó sin flejes tomados ni piezas vigentes. */
   private async recomputeStatus(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
-    const [strips, reports] = await Promise.all([
-      tx.productionOrderConsumption.count({
-        where: { productionOrderId: orderId, releasedAt: null },
-      }),
-      tx.productionReport.count({
-        where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
-      }),
-    ]);
-    await tx.productionOrder.update({
-      where: { id: orderId },
-      data: {
-        status:
-          strips === 0 && reports === 0
-            ? ProductionOrderStatus.DRAFT
-            : ProductionOrderStatus.IN_PROGRESS,
-      },
-    });
+    return recomputeOrderStatus(tx, orderId);
   }
 
   private toListItem(order: OrderForList, actors: Map<string, string>): ProductionOrderListItemDto {
@@ -1382,21 +1415,39 @@ export class ProductionService {
       new Decimal(0),
     );
 
+    // D-083: los metros solo existen en una cobertura a medida. `null` en drywall y en una
+    // plancha de catálogo es la señal de que la unidad del producto son piezas.
+    const reportedMeters = activeReports.some((r) => r.metersM !== null)
+      ? activeReports.reduce(
+          (acc, r) =>
+            acc.plus(r.metersM === null ? new Decimal(0) : toDecimal(r.metersM.toString())),
+          new Decimal(0),
+        )
+      : null;
+    const salesOrder = order.reservation?.salesOrder ?? null;
+
     return {
       id: order.id,
       code: productionOrderCode(order.seq),
+      kind: order.kind,
       businessLine: toSharedLineCode(order.businessLine.code),
       productId: order.productId,
       productSku: order.product.sku,
       productName: order.product.name,
+      productUnit: order.product.unit,
       status: order.status,
       targetPieces: order.targetPieces,
       reservationId: order.reservationId,
+      salesOrderId: salesOrder?.id ?? null,
+      salesOrderCode: salesOrder ? salesOrderCode(salesOrder.seq) : null,
+      customerName: salesOrder?.customer.name ?? null,
       notes: order.notes,
       piecesReported: activeReports.reduce((acc, r) => acc + r.pieces, 0),
+      metersReported: reportedMeters === null ? null : toFixedString(reportedMeters, 'KG'),
       assignedKg: toFixedString(assignedKg, 'KG'),
       consumedKg: toFixedString(consumedKg, 'KG'),
       scrapKg: order.scrapKg ? order.scrapKg.toFixed(3) : null,
+      consumedDeclaredKg: order.consumedKg ? order.consumedKg.toFixed(3) : null,
       materialCostPen: order.materialCostPen ? order.materialCostPen.toFixed(4) : null,
       overheadCostPen: order.overheadCostPen ? order.overheadCostPen.toFixed(4) : null,
       totalCostPen: order.totalCostPen ? order.totalCostPen.toFixed(4) : null,
@@ -1410,12 +1461,21 @@ export class ProductionService {
   }
 
   private async resolveActorNames(ids: string[]): Promise<Map<string, string>> {
-    const unique = [...new Set(ids)];
-    if (unique.length === 0) return new Map();
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: unique } },
-      select: { id: true, name: true },
-    });
-    return new Map(users.map((u) => [u.id, u.name]));
+    return resolveNames(this.prisma, ids);
+  }
+
+  /**
+   * Receta de cobertura ya validada, para `RoofingProductionService` (D-087). Vive acá y no
+   * en aquel servicio porque `BomsService` es de este módulo y porque el chequeo de `kind`
+   * es el mismo que `create` hace para drywall, en el otro sentido.
+   */
+  async requireRoofingBom(productId: string) {
+    const bom = await this.boms.requireActiveBom(productId);
+    if (bom.kind !== ProductBomKind.ROOFING) {
+      throw new BadRequestException(
+        'La receta del producto es de drywall: una orden de coberturas necesita una receta de cobertura',
+      );
+    }
+    return bom;
   }
 }

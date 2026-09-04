@@ -27,6 +27,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { ColorsService } from '../colors/colors.service';
 import { liveMovements } from '../inventory/live-movements';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -51,6 +52,7 @@ export class CoilOperationsService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
+    private readonly colors: ColorsService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -133,6 +135,8 @@ export class CoilOperationsService {
                 supplierId: coil.supplierId,
                 purchaseId: coil.purchaseId ?? undefined,
                 finishId: coil.finishId,
+                // D-085: cortar no cambia el color del material.
+                colorId: coil.colorId,
                 weightKg: toFixedString(child.weightKg, 'KG'),
                 widthMm: toFixedString(child.widthMm, 'MM'),
                 thicknessMm: coil.thicknessMm.toFixed(2),
@@ -463,15 +467,28 @@ export class CoilOperationsService {
       if (input.widthMm !== undefined && coil.status !== CoilStatus.OPEN) {
         throw new BadRequestException('El ancho solo se edita con la bobina abierta');
       }
+      if (input.colorId !== undefined && coil.status !== CoilStatus.OPEN) {
+        throw new BadRequestException('El color solo se edita con la bobina abierta');
+      }
       // D-060: recostear (D-045) o reanchar un fleje montado en una OP cambiaría, a mitad
       // de la corrida, el costo con el que ya entraron piezas y el ancho contra el que se
       // validó la receta.
-      if (touchesCost || input.widthMm !== undefined) {
+      // D-085: el color entra en la misma lista que el ancho. Cambiarlo en un rollo que
+      // una OP ya montó rompería, a mitad de corrida, la igualdad de color contra la que
+      // se validó el montaje (D-086).
+      if (touchesCost || input.widthMm !== undefined || input.colorId !== undefined) {
         await assertStripsNotAssigned(tx, [coil.id], 'editarlo');
       }
 
       const data: Prisma.CoilUpdateInput = {};
       if (input.widthMm !== undefined) data.widthMm = input.widthMm;
+      if (input.colorId !== undefined) {
+        // Por `resolveActive` y no por `connect` directo: un id inexistente daba un 500
+        // opaco, y —lo que importa— un color **desactivado** se podía asignar acá,
+        // esquivando a posteriori el guardrail que impide desactivar un color en uso.
+        const resolved = await this.colors.resolveActive(input.colorId);
+        data.color = resolved === null ? { disconnect: true } : { connect: { id: resolved } };
+      }
       if (input.notes !== undefined) data.notes = input.notes || null;
 
       if (touchesCost) {
