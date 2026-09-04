@@ -12,6 +12,11 @@ export const productSchema = z.object({
   unit: z.string(),
   /** D-068: precio de lista de venta, sin IGV y en soles (D-064). Null si no se fijó. */
   listPricePen: z.string().nullable(),
+  /** D-085: color del producto. Solo lo llevan las coberturas prepintadas. */
+  colorId: z.string().uuid().nullable(),
+  colorCode: z.string().nullable(),
+  colorName: z.string().nullable(),
+  colorHex: z.string().nullable(),
   isActive: z.boolean(),
   source: z.enum(PRODUCT_SOURCES),
   createdAt: z.string(),
@@ -45,6 +50,16 @@ const listPriceSchema = z
   .optional()
   .transform((v) => (v === '' || v === undefined ? null : v));
 
+/**
+ * D-085: cadena vacía = "sin color" y se guarda como `null`, igual que el precio de lista.
+ * El color es un id contra el maestro (`colors`) y nunca un texto: el filtro de bobina de
+ * la OP de coberturas compara ids, no cadenas, y el SKU no se parsea jamás.
+ */
+const colorIdSchema = z
+  .union([z.literal(''), z.string().uuid('Color inválido')])
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v));
+
 export const createProductSchema = z.object({
   businessLineId: z.string().uuid('Selecciona una línea de negocio'),
   sku: skuSchema,
@@ -52,6 +67,7 @@ export const createProductSchema = z.object({
   unit: unitSchema,
   source: z.enum(PRODUCT_SOURCES, { errorMap: () => ({ message: 'Origen inválido' }) }),
   listPricePen: listPriceSchema,
+  colorId: colorIdSchema,
 });
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 
@@ -61,6 +77,7 @@ export const updateProductSchema = z
     unit: unitSchema,
     source: z.enum(PRODUCT_SOURCES),
     listPricePen: listPriceSchema,
+    colorId: colorIdSchema,
     isActive: z.boolean(),
   })
   .partial()

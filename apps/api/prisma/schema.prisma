@@ -18,6 +18,12 @@
 // pedido (`sales_orders`) y ledger de reservas (`reservations`, fuera del kardex por
 // D-054), más `products.list_price_pen` (precio de lista, D-068) y
 // `business_lines.quotation_required` (D-065). Todo en soles (D-064).
+// Fase 6 (D-082..D-091): producción de coberturas metálicas contra pedido — maestro de
+// colores (`colors`, D-085), receta y orden de producción con `kind` (D-087), plan de
+// corte y largos reportados (`production_order_items`, `production_report_pieces`),
+// subítems de largo en la línea comercial (`quotation_item_pieces`,
+// `sales_order_item_pieces`, D-083) y la reserva que se traslada del insumo al producto
+// terminado (D-088: `reservations` deja de ser única por línea de pedido).
 // Fase 5b (D-070..D-078): ciclo fiscal y logístico sobre el pedido — documentos
 // electrónicos (`fiscal_documents`: factura, boleta, nota de crédito y guía de remisión
 // remitente, todos con la misma máquina de estados y el mismo job de reintento),
@@ -216,6 +222,24 @@ enum CuttingOrderCoilStatus {
 enum CoilSplitStatus {
   ACTIVE
   REVERTED
+}
+
+/// Qué línea de transformación fabrica una orden (D-087). `DRYWALL` consume flejes contra
+/// una receta de largo fijo y reporta piezas; `ROOFING` consume bobina, reporta largos
+/// reales contra el plan copiado del pedido (D-084) y lleva el producto terminado a medida
+/// en metros lineales (D-083). Comparten tabla, correlativo, estados y auditoría; lo que no
+/// comparten es el servicio que las opera.
+enum ProductionOrderKind {
+  DRYWALL
+  ROOFING
+}
+
+/// Qué clase de receta es (D-087). `DRYWALL` usa ancho de fleje, largo de pieza y kilo por
+/// pieza; `ROOFING` solo necesita acabado y espesor de entrada, porque el largo lo pone el
+/// pedido y el kilo teórico sale de la bobina que se monta (D-047).
+enum ProductBomKind {
+  DRYWALL
+  ROOFING
 }
 
 /// Estado de una orden de producción (RF-34, Fase 4, D-058). La UI los llama
@@ -464,6 +488,12 @@ model Product {
   /// en v1; las listas por cliente o por volumen quedan diferidas y entran, si hacen
   /// falta, como una tabla aparte que sobreescriba este valor.
   listPricePen   Decimal?      @map("list_price_pen") @db.Decimal(18, 4)
+  /// D-085: color del producto. Solo lo llevan las coberturas prepintadas; el resto del
+  /// catálogo va en null. El SKU lo refleja para leerlo a simple vista (espíritu de D-037),
+  /// pero **todo filtrado y todo emparejamiento con la bobina es por este id**, nunca
+  /// parseando el SKU.
+  colorId        String?       @map("color_id") @db.Uuid
+  color          Color?        @relation(fields: [colorId], references: [id])
   isActive       Boolean       @default(true) @map("is_active")
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -479,6 +509,7 @@ model Product {
 
   @@unique([businessLineId, sku])
   @@index([businessLineId])
+  @@index([colorId])
   @@map("products")
 }
 
@@ -742,6 +773,11 @@ model PurchaseItem {
   total       Decimal  @db.Decimal(18, 4)
   finishId    String?  @map("finish_id") @db.Uuid
   finish      Finish?  @relation(fields: [finishId], references: [id])
+  /// D-085: color de la bobina que esta línea da de alta. Solo en compras `COIL` de
+  /// material prepintado; el XML de factura no lo trae, así que esas bobinas nacen sin
+  /// color y se lo pone después la edición de la bobina (RF-20).
+  colorId     String?  @map("color_id") @db.Uuid
+  color       Color?   @relation(fields: [colorId], references: [id])
   widthMm     Decimal? @map("width_mm") @db.Decimal(8, 2)
   thicknessMm Decimal? @map("thickness_mm") @db.Decimal(6, 2)
 
@@ -800,6 +836,11 @@ model Coil {
   weightKg           Decimal                      @map("weight_kg") @db.Decimal(12, 3)
   widthMm            Decimal                      @map("width_mm") @db.Decimal(8, 2)
   thicknessMm        Decimal                      @map("thickness_mm") @db.Decimal(6, 2)
+  /// D-085: color de la bobina. Las prepintadas lo llevan, las galvanizadas van en null. El
+  /// filtro de la OP de coberturas exige **igualdad estricta** contra el color del producto,
+  /// null incluido: un producto sin color solo monta bobina sin color.
+  colorId            String?                      @map("color_id") @db.Uuid
+  color              Color?                       @relation(fields: [colorId], references: [id])
   currency           Currency
   exchangeRate       Decimal                      @map("exchange_rate") @db.Decimal(10, 4)
   unitCostPerKg      Decimal                      @map("unit_cost_per_kg") @db.Decimal(18, 4)
@@ -834,6 +875,9 @@ model Coil {
   @@index([splitId])
   @@index([kind, typeKey])
   @@index([cuttingOrderCoilId])
+  /// El índice del filtro de la OP de coberturas (D-086): abiertas de una línea, por color
+  /// y espesor. El rango de tolerancia lo resuelve el planner sobre `thickness_mm`.
+  @@index([businessLineId, status, colorId, thicknessMm])
   @@map("coils")
 }
 
@@ -948,24 +992,39 @@ model CuttingOrderCoil {
 /// sugiere desde la geometría (`inputWidthMm × thicknessMm × pieceLengthMm × densityFactor`
 /// del acabado) y el maestro puede sobreescribirlo con el valor medido en planta.
 model ProductBom {
-  id               String   @id @default(uuid()) @db.Uuid
-  productId        String   @unique @map("product_id") @db.Uuid
-  product          Product  @relation(fields: [productId], references: [id])
-  finishId         String   @map("finish_id") @db.Uuid
-  finish           Finish   @relation(fields: [finishId], references: [id])
-  inputThicknessMm Decimal  @map("input_thickness_mm") @db.Decimal(6, 2)
-  inputWidthMm     Decimal  @map("input_width_mm") @db.Decimal(8, 2)
+  id               String         @id @default(uuid()) @db.Uuid
+  productId        String         @unique @map("product_id") @db.Uuid
+  product          Product        @relation(fields: [productId], references: [id])
+  /// D-087: `DRYWALL` (Fase 4) o `ROOFING` (Fase 6). Decide qué columnas son obligatorias
+  /// y qué servicio opera la orden que nace de esta receta.
+  kind             ProductBomKind @default(DRYWALL)
+  finishId         String         @map("finish_id") @db.Uuid
+  finish           Finish         @relation(fields: [finishId], references: [id])
+  /// Espesor del material de entrada. En coberturas es también el espesor del producto —
+  /// rolar no cambia el espesor— y es lo que el filtro de bobina compara con tolerancia
+  /// (D-086).
+  inputThicknessMm Decimal        @map("input_thickness_mm") @db.Decimal(6, 2)
+  /// Ancho exacto del fleje que consume el perfil. **Solo DRYWALL**: una OP de coberturas
+  /// monta la bobina que haya y su ancho real es el que entra al kilo teórico (D-047), así
+  /// que fijarlo en la receta solo dejaría fuera rollos válidos.
+  inputWidthMm     Decimal?       @map("input_width_mm") @db.Decimal(8, 2)
   /// Largo de una pieza terminada, en mm. Solo alimenta el cálculo sugerido de `kgPerPiece`.
-  pieceLengthMm    Decimal  @map("piece_length_mm") @db.Decimal(8, 2)
-  kgPerPiece       Decimal  @map("kg_per_piece") @db.Decimal(12, 3)
-  isActive         Boolean  @default(true) @map("is_active")
-  createdById      String   @map("created_by_id") @db.Uuid
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// **Solo DRYWALL**: en coberturas a medida el largo lo pone el pedido (D-083), y en una
+  /// plancha de catálogo vive en el propio SKU.
+  pieceLengthMm    Decimal?       @map("piece_length_mm") @db.Decimal(8, 2)
+  /// **Solo DRYWALL**. El kilo teórico de una cobertura no es constante: sale del ancho y
+  /// el espesor de la bobina montada por el largo reportado (D-047), así que no hay nada
+  /// que guardar en el maestro.
+  kgPerPiece       Decimal?       @map("kg_per_piece") @db.Decimal(12, 3)
+  isActive         Boolean        @default(true) @map("is_active")
+  createdById      String         @map("created_by_id") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   productionOrders ProductionOrder[]
 
   @@index([finishId, inputThicknessMm, inputWidthMm])
+  @@index([kind, finishId, inputThicknessMm])
   @@map("product_boms")
 }
 
@@ -985,6 +1044,10 @@ model ProductionOrder {
   product         Product               @relation(fields: [productId], references: [id])
   bomId           String                @map("bom_id") @db.Uuid
   bom             ProductBom            @relation(fields: [bomId], references: [id])
+  /// D-087: qué línea de transformación es. `DRYWALL` consume flejes y reporta piezas;
+  /// `ROOFING` consume bobina y reporta largos. El correlativo, los estados, el ledger de
+  /// reservas y la auditoría son los mismos para las dos.
+  kind            ProductionOrderKind   @default(DRYWALL)
   status          ProductionOrderStatus @default(DRAFT)
   /// Piezas que la corrida se propone producir. Referencia para planta; no bloquea nada.
   targetPieces    Int?                  @map("target_pieces")
@@ -995,8 +1058,15 @@ model ProductionOrder {
   reservationId   String?               @map("reservation_id") @db.Uuid
   reservation     Reservation?          @relation(fields: [reservationId], references: [id])
   notes           String?               @db.VarChar(500)
-  /// Cierre (D-057): kilos asignados que no quedaron representados en piezas buenas.
+  /// Cierre (D-057 en drywall, D-089 en coberturas): kilos que salieron como merma de
+  /// proceso. En drywall es todo lo asignado que no llegó a ser pieza buena; en coberturas
+  /// es el despunte, `consumedKg − Σ kilos teóricos reportados`.
   scrapKg         Decimal?              @map("scrap_kg") @db.Decimal(12, 3)
+  /// **Solo ROOFING** (D-089): kilos que planta declara que la bobina consumió de verdad.
+  /// Por defecto, la suma de los kilos teóricos reportados (merma cero). Lo que quedó
+  /// asignado y no consumido se libera sin merma: la bobina sigue en el almacén, a
+  /// diferencia del fleje de drywall, que entra entero a la perfiladora.
+  consumedKg      Decimal?              @map("consumed_kg") @db.Decimal(12, 3)
   /// Costeo v1 en soles (D-056, D-042). `overheadCostPen` es el hook de D-035: en v1
   /// siempre 0, porque no hay mano de obra ni overhead estándar todavía.
   materialCostPen Decimal?              @map("material_cost_pen") @db.Decimal(18, 4)
@@ -1013,9 +1083,12 @@ model ProductionOrder {
 
   consumptions ProductionOrderConsumption[]
   reports      ProductionReport[]
+  /// D-084: el plan de corte copiado del pedido. Vacío en una OP de drywall.
+  items        ProductionOrderItem[]
 
   @@index([businessLineId, status])
   @@index([productId])
+  @@index([kind, status])
   @@map("production_orders")
 }
 
@@ -1063,9 +1136,16 @@ model ProductionReport {
   seq               Int                    @default(autoincrement())
   productionOrderId String                 @map("production_order_id") @db.Uuid
   productionOrder   ProductionOrder        @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
-  /// Piezas buenas. Unidad primaria del producto terminado (D-055).
+  /// Piezas buenas. Unidad primaria del producto terminado de drywall (D-055) y de la
+  /// plancha de catálogo; en una cobertura a medida es cuántas planchas salieron, y lo que
+  /// entra al kardex son los metros de `metersM`.
   pieces            Int
-  /// `pieces × bom.kgPerPiece`: los kilos de fleje que esas piezas consumen.
+  /// **Solo ROOFING a medida** (D-083): metros lineales que entraron al kardex en este
+  /// reporte, `Σ cantidad × largo` de `pieces` detallados. Null en drywall, donde la
+  /// unidad del producto terminado son piezas y no hay nada que derivar.
+  metersM           Decimal?               @map("meters_m") @db.Decimal(16, 3)
+  /// Kilos de material que esas piezas consumen. En drywall, `pieces × bom.kgPerPiece`; en
+  /// coberturas, la geometría de la bobina montada por los largos reportados (D-047).
   theoreticalKg     Decimal                @map("theoretical_kg") @db.Decimal(12, 3)
   /// Valor en soles que salió de los flejes por este reporte (D-042).
   materialCostPen   Decimal                @map("material_cost_pen") @db.Decimal(18, 4)
@@ -1077,6 +1157,9 @@ model ProductionReport {
   createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   revertedById      String?                @map("reverted_by_id") @db.Uuid
   revertedAt        DateTime?              @map("reverted_at") @db.Timestamptz(3)
+
+  /// D-083: los largos que de verdad salieron. Vacío en un reporte de drywall.
+  piecesDetail ProductionReportPiece[]
 
   @@unique([seq])
   @@index([productionOrderId, status])
@@ -1160,6 +1243,10 @@ model QuotationItem {
   reserveQty      Decimal           @map("reserve_qty") @db.Decimal(16, 3)
   reserveUnit     String            @map("reserve_unit") @db.VarChar(20)
 
+  /// D-083: los largos de una línea compuesta de cobertura a medida. `qty` de la línea es
+  /// la suma `Σ cantidad × largo` en metros y `unit` es `MTR`. Vacío en una línea simple.
+  pieces QuotationItemPiece[]
+
   @@unique([quotationId, lineNumber])
   @@index([quotationId])
   @@map("quotation_items")
@@ -1230,9 +1317,16 @@ model SalesOrderItem {
   reserveQty      Decimal           @map("reserve_qty") @db.Decimal(16, 3)
   reserveUnit     String            @map("reserve_unit") @db.VarChar(20)
 
-  reservation   Reservation?
+  /// **Plural desde D-088.** Una línea sostiene a la vez la promesa de materia prima que le
+  /// queda y la del producto terminado que la producción ya fabricó: al reportar largos, la
+  /// OP descuenta de la primera los kilos que consumió y abre (o aumenta) la segunda por los
+  /// metros que entraron al kardex. Antes de Fase 6 era una sola y el índice único lo
+  /// garantizaba; ahora el único es `(línea, itemType, itemId)`.
+  reservations  Reservation[]
   invoiceItems  FiscalDocumentItem[]
   dispatchItems DispatchItem[]
+  /// D-083: copia congelada de los subítems de largo de la cotización.
+  pieces        SalesOrderItemPiece[]
 
   @@unique([salesOrderId, lineNumber])
   @@index([salesOrderId])
@@ -1253,8 +1347,11 @@ model Reservation {
   id               String            @id @default(uuid()) @db.Uuid
   salesOrderId     String            @map("sales_order_id") @db.Uuid
   salesOrder       SalesOrder        @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
-  /// Una línea de pedido reserva una sola vez: es lo que hace idempotente la confirmación.
-  salesOrderItemId String            @unique @map("sales_order_item_id") @db.Uuid
+  /// Una línea reserva **una vez por ítem** (D-088). Al confirmar es siempre una sola fila,
+  /// y eso sigue haciendo idempotente la confirmación; la segunda aparece recién cuando la
+  /// producción de coberturas convierte la materia prima prometida en producto terminado y
+  /// la promesa se traslada de la bobina a los metros fabricados.
+  salesOrderItemId String            @map("sales_order_item_id") @db.Uuid
   salesOrderItem   SalesOrderItem    @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
   itemType         InventoryItemType @map("item_type")
   itemId           String            @map("item_id") @db.Uuid
@@ -1274,10 +1371,15 @@ model Reservation {
 
   productionOrders ProductionOrder[]
 
+  /// D-088: una línea, un ítem, una reserva. Es lo que hace que trasladar la promesa de la
+  /// bobina al producto terminado sea un `upsert` y no una decisión sobre cuál de dos filas
+  /// del mismo ítem vale.
+  @@unique([salesOrderItemId, itemType, itemId])
   /// El índice que sostiene la invariante: sumar lo reservado vivo de un ítem es una
   /// sola pasada por índice, y se consulta en cada salida de kardex de ese ítem.
   @@index([itemType, itemId, status])
   @@index([salesOrderId])
+  @@index([salesOrderItemId, status])
   @@map("reservations")
 }
 
@@ -1606,4 +1708,107 @@ model CustomerPayment {
 
   @@index([documentId])
   @@map("customer_payments")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 6 — coberturas metálicas y maestro de colores (RF-30..RF-33, RF-54; D-082..D-091)
+// ---------------------------------------------------------------------------
+
+/// Maestro de colores (RF-54, D-085).
+///
+/// Existe como tabla y no como texto libre en el producto por dos motivos que se refuerzan:
+/// el filtro de bobina de la OP compara **ids**, no cadenas que alguien tipeó con un acento
+/// distinto; y el `hexColor` deja mostrar la muestra real en el selector, que es como se
+/// elige un rollo en planta. Baja lógica, nunca `DELETE`: un color desactivado sigue
+/// explicando los productos y las bobinas que ya lo llevan.
+model Color {
+  id        String   @id @default(uuid()) @db.Uuid
+  /// Código corto para el SKU y para las planillas de importación (`ROJ`, `AZU`).
+  code      String   @unique @db.VarChar(20)
+  name      String   @db.VarChar(80)
+  /// `#RRGGBB`. Solo presentación: ninguna regla de negocio lo lee.
+  hexColor  String   @map("hex_color") @db.VarChar(7)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  products      Product[]
+  coils         Coil[]
+  purchaseItems PurchaseItem[]
+
+  @@map("colors")
+}
+
+/// Plan de corte de una OP de coberturas (D-084): los subítems `{cantidad, largo}` que se
+/// copian del pedido al crearla y que planta **puede editar** antes y durante la corrida.
+///
+/// Es una intención, no un hecho: lo que mueve kardex son los largos reportados
+/// (`production_report_pieces`). Existe para que el operario no tenga que retipear la lista
+/// del pedido y para poder comparar lo planificado con lo que salió.
+model ProductionOrderItem {
+  id                String          @id @default(uuid()) @db.Uuid
+  productionOrderId String          @map("production_order_id") @db.Uuid
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  lineNumber        Int             @map("line_number")
+  /// Largo de la plancha en mm, misma escala que el resto de las medidas (D-003).
+  lengthMm          Decimal         @map("length_mm") @db.Decimal(8, 2)
+  qty               Int
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([productionOrderId, lineNumber])
+  @@index([productionOrderId])
+  @@map("production_order_items")
+}
+
+/// Los largos que de verdad salieron en un reporte de coberturas (D-083).
+///
+/// El kardex del producto a medida se lleva en metros, así que estas filas son la única
+/// memoria de **cómo** se repartieron esos metros en planchas. La reversa de un reporte no
+/// las borra: la fila del reporte queda `REVERTED` y estas se van con ella, igual que el
+/// resto del proyecto trata lo append-only.
+model ProductionReportPiece {
+  id         String           @id @default(uuid()) @db.Uuid
+  reportId   String           @map("report_id") @db.Uuid
+  report     ProductionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  lineNumber Int              @map("line_number")
+  lengthMm   Decimal          @map("length_mm") @db.Decimal(8, 2)
+  qty        Int
+
+  @@unique([reportId, lineNumber])
+  @@index([reportId])
+  @@map("production_report_pieces")
+}
+
+/// Subítems de largo de una línea de cotización compuesta (D-083).
+///
+/// `quotation_items.qty` es la suma `Σ cantidad × largo` en metros y su `unit` es `MTR`:
+/// estas filas son el desglose que el vendedor tipeó y que después viaja al pedido, a la OP
+/// y a la descripción del comprobante.
+model QuotationItemPiece {
+  id              String        @id @default(uuid()) @db.Uuid
+  quotationItemId String        @map("quotation_item_id") @db.Uuid
+  quotationItem   QuotationItem @relation(fields: [quotationItemId], references: [id], onDelete: Cascade)
+  lineNumber      Int           @map("line_number")
+  lengthMm        Decimal       @map("length_mm") @db.Decimal(8, 2)
+  qty             Int
+
+  @@unique([quotationItemId, lineNumber])
+  @@index([quotationItemId])
+  @@map("quotation_item_pieces")
+}
+
+/// Copia congelada de los subítems de largo en el pedido (D-083). Como el resto de la línea,
+/// no se recalcula nunca contra la cotización después de confirmar.
+model SalesOrderItemPiece {
+  id               String         @id @default(uuid()) @db.Uuid
+  salesOrderItemId String         @map("sales_order_item_id") @db.Uuid
+  salesOrderItem   SalesOrderItem @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
+  lineNumber       Int            @map("line_number")
+  lengthMm         Decimal        @map("length_mm") @db.Decimal(8, 2)
+  qty              Int
+
+  @@unique([salesOrderItemId, lineNumber])
+  @@index([salesOrderItemId])
+  @@map("sales_order_item_pieces")
 }

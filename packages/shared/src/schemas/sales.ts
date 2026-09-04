@@ -17,6 +17,7 @@ import {
   SALES_ORDER_STATUSES,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing';
 
 /**
  * Ciclo comercial de Fase 5a (RF-61, RF-62, RF-65, RF-69; D-064..D-069).
@@ -210,6 +211,13 @@ export const salesItemInputSchema = z.object({
   description: z.string().trim().max(240).optional(),
   reserveFromCoilId: z.string().uuid().optional(),
   reserveKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+  /**
+   * D-083: los largos de una cobertura **a medida**. Con ellos, `qty` deja de ser un
+   * número que el vendedor tipea y pasa a ser `Σ cantidad × largo` en metros: la línea es
+   * compuesta y el precio se cotiza por metro lineal. Sin ellos la línea es simple, que es
+   * el caso de un perfil, de una plancha de catálogo y de todo lo de trading.
+   */
+  pieces: roofingPiecesSchema.optional(),
 });
 export type SalesItemInput = z.infer<typeof salesItemInputSchema>;
 
@@ -219,6 +227,19 @@ const salesItemsSchema = z
   .max(MAX_SALES_ITEMS, `Máximo ${MAX_SALES_ITEMS} líneas`)
   .superRefine((items, ctx) => {
     items.forEach((item, i) => {
+      // D-083: con subítems, la cantidad de la línea **es** la suma de los largos. Admitir
+      // que difieran dejaría dos verdades sobre lo mismo y el kardex seguiría a una de las
+      // dos sin decir cuál. Se comprueba acá para que el web lo diga antes de mandar.
+      if (item.pieces !== undefined) {
+        const expected = piecesMeters(item.pieces);
+        if (!expected.equals(toDecimal(item.qty))) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [i, 'qty'],
+            message: `Los largos suman ${expected.toFixed(3)} m y la línea dice ${toDecimal(item.qty).toFixed(3)}`,
+          });
+        }
+      }
       // Los dos campos de la reserva de materia prima van juntos o no van: con la bobina
       // sin kilos el API no sabría cuánto prometer, y con kilos sin bobina no sabría de
       // dónde. Se valida acá para que el web lo diga antes de mandar.
@@ -248,6 +269,8 @@ export const salesItemSchema = z.object({
   subtotalPen: z.string(),
   igvPen: z.string(),
   totalPen: z.string(),
+  /** D-083: los largos de una línea compuesta de cobertura a medida. Vacío en una simple. */
+  pieces: z.array(roofingPieceSchema),
   /** Qué reservará (o reservó) esta línea. Ver `salesItemInputSchema`. */
   reserveItemType: z.enum(INVENTORY_ITEM_TYPES),
   reserveItemId: z.string().uuid(),

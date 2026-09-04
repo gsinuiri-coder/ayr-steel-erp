@@ -50,6 +50,10 @@ export const purchaseItemSchema = z.object({
   total: z.string(),
   finishId: z.string().uuid().nullable(),
   finishCode: z.string().nullable(),
+  /** D-085: color de la bobina que esta línea da de alta. Null salvo material prepintado. */
+  colorId: z.string().uuid().nullable(),
+  colorName: z.string().nullable(),
+  colorHex: z.string().nullable(),
   widthMm: z.string().nullable(),
   thicknessMm: z.string().nullable(),
   /** Código de la bobina que esta línea creó al recibirse (null si aún no se recibió). */
@@ -162,6 +166,12 @@ const purchaseItemInputSchema = z.object({
   unit: z.enum(UNITS, { errorMap: () => ({ message: 'Unidad inválida' }) }),
   unitPrice: decimalStringSchema('MONEY', { positive: true }),
   finishId: z.string().uuid().optional(),
+  /**
+   * D-085: color de la bobina, solo en líneas `COIL` de material prepintado. Opcional a
+   * propósito y sin validación cruzada con el acabado: quién es prepintado y quién
+   * galvanizado lo sabe el almacenero que tiene el rollo delante, no el maestro.
+   */
+  colorId: z.string().uuid().optional(),
   widthMm: decimalStringSchema('MM', { positive: true }).optional(),
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
 });

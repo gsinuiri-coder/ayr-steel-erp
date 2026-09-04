@@ -472,6 +472,40 @@ export const PRODUCTION_ORDER_STATUS_LABELS: Record<ProductionOrderStatus, strin
   CANCELLED: 'Anulada',
 };
 
+/**
+ * Qué línea de transformación fabrica una orden (D-087). `DRYWALL` consume flejes contra
+ * una receta de largo fijo y reporta piezas; `ROOFING` consume bobina, reporta los largos
+ * reales del pedido y lleva el producto a medida en metros lineales (D-083).
+ */
+export const ProductionOrderKind = {
+  DRYWALL: 'DRYWALL',
+  ROOFING: 'ROOFING',
+} as const;
+export type ProductionOrderKind = (typeof ProductionOrderKind)[keyof typeof ProductionOrderKind];
+export const PRODUCTION_ORDER_KINDS = Object.values(ProductionOrderKind) as [
+  ProductionOrderKind,
+  ...ProductionOrderKind[],
+];
+export const PRODUCTION_ORDER_KIND_LABELS: Record<ProductionOrderKind, string> = {
+  DRYWALL: 'Perfiles de drywall',
+  ROOFING: 'Coberturas metálicas',
+};
+
+/** Qué clase de receta es (D-087). La misma tabla sirve a las dos líneas. */
+export const ProductBomKind = {
+  DRYWALL: 'DRYWALL',
+  ROOFING: 'ROOFING',
+} as const;
+export type ProductBomKind = (typeof ProductBomKind)[keyof typeof ProductBomKind];
+export const PRODUCT_BOM_KINDS = Object.values(ProductBomKind) as [
+  ProductBomKind,
+  ...ProductBomKind[],
+];
+export const PRODUCT_BOM_KIND_LABELS: Record<ProductBomKind, string> = {
+  DRYWALL: 'Perfil de drywall (desde fleje)',
+  ROOFING: 'Cobertura metálica (desde bobina)',
+};
+
 /** Estado de un reporte de piezas dentro de una OP (D-060). */
 export const ProductionReportStatus = {
   ACTIVE: 'ACTIVE',

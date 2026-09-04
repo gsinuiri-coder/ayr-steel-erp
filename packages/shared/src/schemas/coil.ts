@@ -33,6 +33,15 @@ export const coilSchema = z.object({
   weightKg: z.string(),
   widthMm: z.string(),
   thicknessMm: z.string(),
+  /**
+   * D-085: color de la bobina. Las prepintadas lo llevan, las galvanizadas van en null. Es
+   * lo que el filtro de la OP de coberturas compara contra el color del producto, por
+   * **igualdad estricta** — null incluido.
+   */
+  colorId: z.string().uuid().nullable(),
+  colorCode: z.string().nullable(),
+  colorName: z.string().nullable(),
+  colorHex: z.string().nullable(),
   currency: z.enum(CURRENCIES),
   exchangeRate: z.string(),
   /** Costo por kg SIN IGV (D-038). El landed cost (D-043) lo puede subir. */
@@ -61,6 +70,8 @@ export const coilQuerySchema = z.object({
   supplierId: z.string().uuid().optional(),
   /** D-049: filtra bobinas (`COIL`) o flejes (`STRIP`); sin filtro trae ambos. */
   kind: z.enum(COIL_KINDS).optional(),
+  /** D-085: filtra por color. `sin-color` trae las que no lo tienen (galvanizadas). */
+  colorId: z.union([z.literal('sin-color'), z.string().uuid()]).optional(),
   search: z.string().trim().max(80).optional(),
 });
 export type CoilQuery = z.infer<typeof coilQuerySchema>;
@@ -201,6 +212,12 @@ export type SetCoilStatusInput = z.infer<typeof setCoilStatusSchema>;
 export const updateCoilSchema = z
   .object({
     widthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }).optional(),
+    /**
+     * D-085. Cadena vacía = quitar el color. Se edita bajo el mismo guardrail que el ancho
+     * (bobina abierta y no montada en una OP): cambiar el color de un rollo que una orden
+     * ya montó rompería, a mitad de corrida, la igualdad contra la que se validó (D-086).
+     */
+    colorId: z.union([z.literal(''), z.string().uuid('Color inválido')]).optional(),
     notes: z.string().trim().max(500).optional(),
     currency: z.enum(CURRENCIES).optional(),
     exchangeRate: decimalStringSchema('RATE', { positive: true, max: MAX_VALUE.RATE }).optional(),

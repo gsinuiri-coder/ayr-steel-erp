@@ -15,6 +15,8 @@ export * from './schemas/inventory';
 export * from './schemas/purchase';
 export * from './schemas/coil';
 export * from './schemas/cutting';
+export * from './schemas/color';
+export * from './schemas/roofing';
 export * from './schemas/production';
 export * from './schemas/sales';
 export * from './schemas/invoicing';
