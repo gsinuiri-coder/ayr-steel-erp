@@ -78,7 +78,7 @@ export interface SalesOrderDto {
   id: string;
   code: string;
   quotationId: string | null;
-  status: 'CONFIRMED' | 'IN_PRODUCTION' | 'FULFILLED' | 'CANCELLED';
+  status: 'CONFIRMED' | 'IN_PRODUCTION' | 'PARTIALLY_FULFILLED' | 'FULFILLED' | 'CANCELLED';
   subtotalPen: string;
   igvPen: string;
   totalPen: string;
