@@ -1,5 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
-import { InventoryItemType, ReservationStatus, type Prisma } from '@prisma/client';
+import {
+  InventoryItemType,
+  ReservationStatus,
+  SalesOrderStatus,
+  type Prisma,
+} from '@prisma/client';
 import { Decimal, salesOrderCode, toDecimal } from '@ayr/shared';
 
 /**
@@ -168,6 +173,57 @@ export async function markReservationConsumed(
     data: { status: ReservationStatus.CONSUMED, consumedAt: new Date() },
   });
   return updated.count === 1;
+}
+
+/**
+ * Devuelve una reserva `CONSUMIDA` a `ACTIVA` cuando la orden de producción que la consumió
+ * deshace lo que hizo (revertir el último reporte vigente, o anularse).
+ *
+ * Sin esto, revertir la producción devolvía el material al almacén **sin ninguna reserva que
+ * lo protegiera**: el pedido seguía vivo prometiéndolo y cualquier merma, corte o venta se
+ * lo llevaba. Restaurar el estado anterior es exactamente lo que hacen el resto de reversas
+ * del proyecto — `cutting.reverse` devuelve la fila a `SENT` y la madre a `IN_THIRD_PARTY`
+ * (D-052), `revertSplit` devuelve los kilos a la madre— y "append-only" acá significa que la
+ * fila nunca se borra, no que su estado sea de ida sola.
+ *
+ * **No revalida la invariante a propósito.** La misma transacción que restaura la reserva es
+ * la que devuelve el material que esa reserva cubría, y mientras la OP lo tuvo montado el
+ * guardrail de D-060 se lo bloqueó a todos los demás: no hay nadie que se haya podido llevar
+ * ese saldo en el medio. Volver a comprobarla solo podría hacer fallar una reversa de
+ * producción legítima, que es justo el residuo que Fase 3b costó una sesión entera resolver.
+ *
+ * Devuelve `false` si no había nada que restaurar (reserva liberada a mano, pedido anulado):
+ * en esos casos la promesa ya no existe y revivirla sería inventar un compromiso.
+ */
+export async function restoreReservation(
+  tx: Prisma.TransactionClient,
+  reservationId: string,
+): Promise<boolean> {
+  const reservation = await tx.reservation.findUnique({
+    where: { id: reservationId },
+    select: {
+      id: true,
+      status: true,
+      salesOrderId: true,
+      salesOrder: { select: { status: true } },
+    },
+  });
+  if (!reservation) return false;
+  if (reservation.status !== ReservationStatus.CONSUMED) return false;
+  if (reservation.salesOrder.status === SalesOrderStatus.CANCELLED) return false;
+
+  const restored = await tx.reservation.updateMany({
+    where: { id: reservationId, status: ReservationStatus.CONSUMED },
+    data: { status: ReservationStatus.ACTIVE, consumedAt: null },
+  });
+  if (restored.count !== 1) return false;
+
+  // El pedido vuelve a "confirmado": ya no hay producción en curso contra él.
+  await tx.salesOrder.updateMany({
+    where: { id: reservation.salesOrderId, status: SalesOrderStatus.IN_PRODUCTION },
+    data: { status: SalesOrderStatus.CONFIRMED },
+  });
+  return true;
 }
 
 /** Bloquea las filas de esas bobinas (`FOR UPDATE`) y luego aplica `assertNotReserved`. */

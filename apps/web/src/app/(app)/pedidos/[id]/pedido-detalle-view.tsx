@@ -30,7 +30,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ReasonDialog } from '@/components/reason-dialog';
-import { salesOrderStatusBadge } from '../pedidos-view';
+import { RoleGate } from '@/components/role-gate';
+import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
 
 function reservationBadge(r: ReservationDto) {
   const label = RESERVATION_STATUS_LABELS[r.status];
@@ -38,6 +39,9 @@ function reservationBadge(r: ReservationDto) {
   if (r.status === 'CONSUMED') return <Badge variant="secondary">{label}</Badge>;
   return <Badge variant="outline">{label}</Badge>;
 }
+
+/** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
+const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** D-065/D-066: detalle del pedido, con la reserva visible y su liberación. */
 export function PedidoDetalleView({ id }: { id: string }) {
@@ -95,15 +99,21 @@ export function PedidoDetalleView({ id }: { id: string }) {
 
   const consumed = o.reservations.filter((r) => r.status === 'CONSUMED');
   const stale = o.reservations.filter((r) => r.isStale);
-  const canCancel = o.status !== 'CANCELLED' && o.status !== 'FULFILLED';
+  // El botón se apaga cuando una OP viva está fabricando con el material: el propio aviso
+  // de abajo dice que no se puede, y dejarlo habilitado terminaba en un diálogo con motivo
+  // escrito y un toast de error.
+  const blockedByProduction = o.reservations.some(
+    (r) => r.productionOrderId !== null && r.status === 'CONSUMED',
+  );
+  const canCancel = o.status !== 'CANCELLED' && o.status !== 'FULFILLED' && !blockedByProduction;
 
   return (
-    <>
+    <RoleGate allow={SALES_ROLES}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold">{o.code}</h1>
-            {salesOrderStatusBadge(o.status)}
+            <SalesOrderStatusBadge status={o.status} />
           </div>
           <p className="text-sm text-muted-foreground">
             {o.customerName} · {o.customerDocNumber} · {BUSINESS_LINE_LABELS[o.businessLine]}
@@ -130,7 +140,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
         )}
       </div>
 
-      {consumed.length > 0 && canCancel && (
+      {consumed.length > 0 && o.status !== 'CANCELLED' && (
         <Alert>
           <AlertDescription>
             {consumed.length === 1
@@ -331,6 +341,6 @@ export function PedidoDetalleView({ id }: { id: string }) {
           if (releasing) release.mutate({ reservationId: releasing.id, reason });
         }}
       />
-    </>
+    </RoleGate>
   );
 }

@@ -18,6 +18,7 @@ export function invalidateSales(
   void queryClient.invalidateQueries({ queryKey: ['quotations'] });
   void queryClient.invalidateQueries({ queryKey: ['sales-orders'] });
   void queryClient.invalidateQueries({ queryKey: ['reservations'] });
+  void queryClient.invalidateQueries({ queryKey: ['reservable-coils'] });
   void queryClient.invalidateQueries({ queryKey: ['inventory'] });
   void queryClient.invalidateQueries({ queryKey: ['coils'] });
   void queryClient.invalidateQueries({ queryKey: ['coil'] });

@@ -85,6 +85,32 @@ export function salesTotals(lines: SalesLineInput[]): SalesLineTotals {
   return { subtotal, igv, total: subtotal.plus(igv) };
 }
 
+/**
+ * Zona horaria del negocio. La empresa opera en Perú y **todas** las fechas de negocio
+ * —emisión, vigencia, vencimiento— son días calendario de Lima, no de UTC.
+ */
+export const BUSINESS_TIME_ZONE = 'America/Lima';
+
+/**
+ * El día de hoy **en Lima**, en `YYYY-MM-DD`.
+ *
+ * No es un detalle: Lima va cinco horas detrás de UTC, así que entre las 19:00 y la
+ * medianoche hora local, `new Date().toISOString()` ya devuelve la fecha del día siguiente.
+ * Con eso, una cotización válida "hasta el 10" se rechazaba por vencida durante las últimas
+ * cinco horas del día 10, y el pedido nacía fechado el 11. Vive en `@ayr/shared` para que
+ * el API, el job de vencimiento y el web usen exactamente la misma noción de "hoy".
+ */
+export function businessToday(now: Date = new Date()): string {
+  // `en-CA` da directamente `YYYY-MM-DD`; `Intl` resuelve el desfase y el horario de verano
+  // (que Perú no tiene, pero no hace falta asumirlo).
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
 /** `validUntil` por defecto: `issueDate` + N días, en formato `YYYY-MM-DD`. */
 export function defaultValidUntil(
   issueDate: string,
@@ -129,6 +155,12 @@ export const reservationSchema = z.object({
   qty: z.string(),
   unit: unitStringSchema,
   status: z.enum(RESERVATION_STATUSES),
+  /**
+   * Productos que pide el pedido de esta reserva. Es lo que la terminal de planta necesita
+   * para ofrecer solo las reservas que la orden a crear puede atender: el API exige que la
+   * reserva pertenezca a un pedido que encargó ese mismo producto.
+   */
+  orderProductIds: z.array(z.string().uuid()),
   /** OP que la consumió, si ya la consumió (D-060: `production_orders.reservation_id`). */
   productionOrderId: z.string().uuid().nullable(),
   productionOrderCode: z.string().nullable(),
@@ -353,6 +385,39 @@ export const salesOrderQuerySchema = z.object({
   search: z.string().trim().max(80).optional(),
 });
 export type SalesOrderQuery = z.infer<typeof salesOrderQuerySchema>;
+
+// --------------------------------------------------------------------------
+// Material reservable (D-066)
+// --------------------------------------------------------------------------
+
+/**
+ * Una bobina candidata a respaldar una línea de cotización, con su disponible ya
+ * descontado de lo reservado.
+ *
+ * Existe como ruta propia de `sales` y no como un filtro de `/coils` porque **VENDEDOR no
+ * tiene acceso a `/coils`**: esa ruta expone `unitCostPerKg`, `totalCost` y el proveedor,
+ * que es justo lo que §3.4 le oculta al vendedor. Acá no viaja ni un campo de costo — solo
+ * lo que hace falta para elegir de qué rollo sale el material que se promete.
+ */
+export const reservableCoilSchema = z.object({
+  coilId: z.string().uuid(),
+  code: z.string(),
+  /** Acabado + espesor (RF-14): con qué material se está comprometiendo la venta. */
+  typeKey: z.string(),
+  finishCode: z.string(),
+  widthMm: z.string(),
+  thicknessMm: z.string(),
+  /** Saldo físico del kardex. */
+  qty: z.string(),
+  reservedQty: z.string(),
+  availableQty: z.string(),
+});
+export type ReservableCoilDto = z.infer<typeof reservableCoilSchema>;
+
+export const reservableCoilQuerySchema = z.object({
+  businessLine: z.enum(BUSINESS_LINES),
+});
+export type ReservableCoilQuery = z.infer<typeof reservableCoilQuerySchema>;
 
 // --------------------------------------------------------------------------
 // D-067 — consulta de RUC/DNI contra apis.net.pe

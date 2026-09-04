@@ -7,6 +7,7 @@ import {
   createSalesOrderSchema,
   quotationQuerySchema,
   releaseReservationSchema,
+  reservableCoilQuerySchema,
   reservationQuerySchema,
   Role,
   salesOrderQuerySchema,
@@ -19,6 +20,8 @@ import {
   type QuotationListItemDto,
   type QuotationQuery,
   type ReleaseReservationInput,
+  type ReservableCoilDto,
+  type ReservableCoilQuery,
   type ReservationDto,
   type ReservationQuery,
   type SalesOrderDto,
@@ -175,7 +178,26 @@ export class SalesController {
   // Reservas (D-054, D-066)
   // -------------------------------------------------------------------------
 
+  /**
+   * Material reservable de una línea (D-066): bobinas abiertas con su disponible.
+   * Va antes de `reservations` solo por orden de lectura; son rutas distintas.
+   */
+  @Get('reservable-coils')
+  findReservableCoils(
+    @Query(new ZodValidationPipe(reservableCoilQuerySchema)) query: ReservableCoilQuery,
+  ): Promise<ReservableCoilDto[]> {
+    return this.orders.findReservableCoils(query);
+  }
+
+  /**
+   * Reservas activas. **También la lee SUPERVISOR_PLANTA**, que es la excepción al rol base
+   * del módulo: la terminal de planta necesita saber qué pedidos esperan producción para
+   * poder crear la orden contra su reserva (D-066). Sin eso, el material reservado quedaba
+   * bloqueado para toda orden y planta no tenía forma de crear la única que podía tomarlo.
+   * No transporta ningún costo — solo qué se prometió, a quién y cuánto.
+   */
   @Get('reservations')
+  @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
   findReservations(
     @Query(new ZodValidationPipe(reservationQuerySchema)) query: ReservationQuery,
   ): Promise<ReservationDto[]> {

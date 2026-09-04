@@ -36,7 +36,11 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
-import { assertCoilsNotReserved, markReservationConsumed } from '../sales/reservation-guard';
+import {
+  assertCoilsNotReserved,
+  markReservationConsumed,
+  restoreReservation,
+} from '../sales/reservation-guard';
 import { BomsService, toDto as bomToDto } from './boms.service';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
 import {
@@ -130,9 +134,23 @@ export class ProductionService {
       // D-054/D-066: la OP puede nacer de un pedido. La reserva se valida acá y no al
       // consumir, porque es lo que decide qué material puede montar esta orden.
       if (input.reservationId !== undefined) {
+        // Lock de la fila antes de mirarla: sin él, dos altas concurrentes pasaban las dos
+        // el chequeo de "reserva ya tomada" y la promesa quedaba prometida dos veces.
+        await tx.$queryRaw`
+          SELECT "id" FROM "reservations" WHERE "id" = ${input.reservationId}::uuid FOR UPDATE
+        `;
         const reservation = await tx.reservation.findUnique({
           where: { id: input.reservationId },
-          include: { salesOrder: { select: { status: true, businessLineId: true, seq: true } } },
+          include: {
+            salesOrder: {
+              select: {
+                status: true,
+                businessLineId: true,
+                seq: true,
+                items: { select: { productId: true } },
+              },
+            },
+          },
         });
         if (!reservation) throw new NotFoundException('Reserva no encontrada');
         if (reservation.status !== 'ACTIVE') {
@@ -148,6 +166,18 @@ export class ProductionService {
         if (reservation.salesOrder.businessLineId !== product.businessLineId) {
           throw new BadRequestException(
             'La reserva es de otra línea de negocio que el producto a fabricar',
+          );
+        }
+        // La línea de negocio no alcanza: sin este chequeo, una OP podía citar **cualquier**
+        // reserva viva de la línea y, por la excepción de `exceptReservationIds`, montar el
+        // material prometido a otro cliente. La reserva solo autoriza a fabricar lo que su
+        // propio pedido pidió.
+        const pedidoIncluyeElProducto = reservation.salesOrder.items.some(
+          (i) => i.productId === product.id,
+        );
+        if (!pedidoIncluyeElProducto) {
+          throw new BadRequestException(
+            `El pedido de esa reserva no pide ${product.sku}: una reserva solo autoriza a fabricar lo que su propio pedido encargó`,
           );
         }
         const taken = await tx.productionOrder.findFirst({
@@ -425,12 +455,19 @@ export class ProductionService {
         // D-060 (fleje asignado a una OP viva), no el ledger: cambia de custodio, no queda
         // desprotegido. El pedido pasa a "en producción", que es lo que RF-37 mostrará.
         if (order.reservationId) {
+          const reservation = await tx.reservation.findUniqueOrThrow({
+            where: { id: order.reservationId },
+            select: { salesOrderId: true },
+          });
+          // Pedido primero, reserva después: `SalesOrdersService.cancel` toma esos dos
+          // recursos en ese mismo orden (lock del pedido → lock de sus reservas). Con el
+          // orden invertido, anular un pedido y reportar producción a la vez se trababan en
+          // un deadlock que Postgres resolvía abortando una con un 500 opaco.
+          await tx.$queryRaw`
+            SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
+          `;
           const consumed = await markReservationConsumed(tx, order.reservationId);
           if (consumed) {
-            const reservation = await tx.reservation.findUniqueOrThrow({
-              where: { id: order.reservationId },
-              select: { salesOrderId: true },
-            });
             await tx.salesOrder.updateMany({
               where: { id: reservation.salesOrderId, status: SalesOrderStatus.CONFIRMED },
               data: { status: SalesOrderStatus.IN_PRODUCTION },
@@ -653,13 +690,27 @@ export class ProductionService {
         });
         await this.recomputeStatus(tx, orderId);
 
+        // D-066: si esta era la última pieza reportada de una OP nacida de un pedido, el
+        // material acaba de volver al fleje y la reserva tiene que volver con él. Sin esto,
+        // revertir la producción dejaba el material otra vez en stock **sin nada que lo
+        // protegiera**, con el pedido todavía prometiéndoselo al cliente: la primera merma o
+        // el primer envío a corte se lo llevaban.
+        const restored = order.reservationId
+          ? await this.restoreReservationIfIdle(tx, orderId, order.reservationId)
+          : false;
+
         await this.audit.write(tx, {
           actorId: actor.id,
           action: 'production.report-reverse',
           entity: 'production_orders',
           entityId: orderId,
           before: { reportId, pieces: report.pieces },
-          after: { reportId, status: ProductionReportStatus.REVERTED, reason },
+          after: {
+            reportId,
+            status: ProductionReportStatus.REVERTED,
+            reason,
+            ...(restored ? { reservationRestored: order.reservationId } : {}),
+          },
         });
       },
       { timeout: 30_000 },
@@ -1070,6 +1121,14 @@ export class ProductionService {
         },
       });
 
+      // D-066: anular la OP libera los flejes; si nació de un pedido, el material vuelve a
+      // estar prometido y la reserva tiene que volver a `ACTIVA` con él. También es lo que
+      // destraba la anulación del pedido: sin esta restauración, deshacer la producción no
+      // liberaba nada y el pedido quedaba bloqueado para siempre.
+      const restored = order.reservationId
+        ? await this.restoreReservationIfIdle(tx, orderId, order.reservationId)
+        : false;
+
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'production.cancel',
@@ -1080,6 +1139,7 @@ export class ProductionService {
           status: ProductionOrderStatus.CANCELLED,
           reason: input.reason,
           releasedStrips: released.count,
+          ...(restored ? { reservationRestored: order.reservationId } : {}),
         },
       });
     });
@@ -1255,6 +1315,27 @@ export class ProductionService {
         reservationId: true,
       },
     });
+  }
+
+  /**
+   * Devuelve la reserva del pedido a `ACTIVA` cuando esta OP deja de tener material en
+   * juego: ningún reporte vigente. Es la mitad simétrica de `markReservationConsumed`
+   * (D-066): la reserva se consume con el primer reporte y vuelve cuando el último se
+   * revierte o la orden se anula.
+   *
+   * Con reportes vigentes no restaura nada: parte del material ya salió del fleje y sigue
+   * representado en piezas, así que la promesa sigue cumplida en esa medida.
+   */
+  private async restoreReservationIfIdle(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    reservationId: string,
+  ): Promise<boolean> {
+    const stillReported = await tx.productionReport.count({
+      where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
+    });
+    if (stillReported > 0) return false;
+    return restoreReservation(tx, reservationId);
   }
 
   private assertLive(order: { status: ProductionOrderStatus }, action: string): void {

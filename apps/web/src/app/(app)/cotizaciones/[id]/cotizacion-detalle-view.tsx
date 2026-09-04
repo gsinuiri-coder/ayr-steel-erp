@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { BUSINESS_LINE_LABELS, type QuotationDto, type SalesOrderDto } from '@ayr/shared';
+import { BUSINESS_LINE_LABELS, Role, type QuotationDto, type SalesOrderDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatDate, formatMoney, formatQty, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
@@ -23,7 +23,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ReasonDialog } from '@/components/reason-dialog';
-import { quotationStatusBadge } from '../cotizaciones-view';
+import { RoleGate } from '@/components/role-gate';
+import { QuotationStatusBadge } from '@/components/sales/status-badges';
+
+/** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
+const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** RF-61/RF-62/RF-65: detalle de una cotización con sus acciones de estado. */
 export function CotizacionDetalleView({ id }: { id: string }) {
@@ -88,21 +92,27 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   const canCancel = q.status !== 'CONFIRMED' && q.status !== 'CANCELLED';
 
   return (
-    <>
+    <RoleGate allow={SALES_ROLES}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold">{q.code}</h1>
-            {quotationStatusBadge(q.status, q.isExpired)}
+            <QuotationStatusBadge status={q.status} isExpired={q.isExpired} />
           </div>
           <p className="text-sm text-muted-foreground">
             {q.customerName} · {q.customerDocNumber} · {BUSINESS_LINE_LABELS[q.businessLine]}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {q.pdfKey && (
+          {q.status !== 'DRAFT' && (
             <Button variant="outline" asChild>
-              {/* Descarga directa desde el API (D-068); el proxy `/api/*` reenvía el binario. */}
+              {/*
+                Descarga directa desde el API (D-068); el proxy `/api/*` reenvía el binario.
+                El botón depende del **estado**, no de `pdfKey`: si la subida a R2 falló al
+                emitir (que es un fallo tolerado a propósito), la cotización quedaba emitida
+                sin key, reemitirla daba 409 y no había forma de llegar al PDF. El endpoint
+                lo rearma cuando hace falta.
+              */}
               <a href={`/api/sales/quotations/${q.id}/pdf`}>Descargar PDF</a>
             </Button>
           )}
@@ -277,6 +287,6 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           cancel.mutate(reason);
         }}
       />
-    </>
+    </RoleGate>
   );
 }

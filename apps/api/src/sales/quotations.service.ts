@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -13,7 +14,9 @@ import {
   type InventoryItemType,
 } from '@prisma/client';
 import {
+  businessToday,
   defaultValidUntil,
+  Role,
   quotationCode,
   salesOrderCode,
   type CreateQuotationInput,
@@ -29,11 +32,6 @@ import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildQuotationPdf } from './quotation-pdf';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
-
-/** Fecha de hoy en `YYYY-MM-DD`, la misma forma en que se guardan las columnas `DATE`. */
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -76,6 +74,24 @@ export class QuotationsService {
     private readonly audit: AuditService,
     private readonly storage: StorageService,
   ) {}
+
+  /**
+   * RF-66 dice "una cotización **propia**": un vendedor no toca las de otro.
+   *
+   * Sin esto, con solo el id (que `GET /sales/quotations` devuelve a cualquier vendedor) se
+   * podía editar el borrador de un compañero, emitirlo, confirmarlo —creando un pedido y una
+   * reserva a nombre de su cliente— o anulárselo. El `audit_log` dejaba el rastro, pero el
+   * daño ya estaba hecho.
+   *
+   * La **lectura** sigue abierta a todo el equipo comercial: RF-69 pide una lista de
+   * cotizaciones, no una lista por vendedor, y en una empresa de este tamaño ver lo que
+   * cotizó el compañero es parte del trabajo. El ADMINISTRADOR opera cualquiera.
+   */
+  private assertOwnership(actor: RequestUser, createdById: string, action: string): void {
+    if (actor.role === Role.ADMINISTRADOR) return;
+    if (actor.id === createdById) return;
+    throw new ForbiddenException(`La cotización es de otro vendedor: no puedes ${action}`);
+  }
 
   // -------------------------------------------------------------------------
   // RF-61 — alta y edición
@@ -130,6 +146,7 @@ export class QuotationsService {
   async update(actor: RequestUser, id: string, input: UpdateQuotationInput): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
+      this.assertOwnership(actor, current.createdById, 'editarla');
       if (current.status !== QuotationStatus.DRAFT) {
         throw new BadRequestException(
           `Solo se edita una cotización en borrador; esta está ${current.status}. Anúlala y crea una nueva.`,
@@ -188,6 +205,7 @@ export class QuotationsService {
   async emit(actor: RequestUser, id: string): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
+      this.assertOwnership(actor, current.createdById, 'emitirla');
       if (current.status === QuotationStatus.EMITTED) {
         throw new ConflictException('La cotización ya está emitida');
       }
@@ -217,32 +235,47 @@ export class QuotationsService {
     return this.findOne(id);
   }
 
-  /** Genera y sube el PDF, y guarda su key. Los fallos de R2 no tumban la emisión. */
+  /** Arma el PDF de una cotización con su estado actual. No persiste nada. */
+  private async renderPdf(id: string): Promise<Buffer> {
+    const row = await this.prisma.quotation.findUniqueOrThrow({
+      where: { id },
+      include: quotationInclude,
+    });
+    return buildQuotationPdf({
+      code: quotationCode(row.seq),
+      // El estado va impreso: sin él, el PDF de una cotización anulada o vencida es
+      // indistinguible de uno vigente y se le puede reenviar al cliente como si valiera.
+      status: row.status,
+      issueDate: row.issueDate.toISOString().slice(0, 10),
+      validUntil: row.validUntil.toISOString().slice(0, 10),
+      customerName: row.customer.name,
+      customerDoc: `${row.customer.docType} ${row.customer.docNumber}`,
+      customerAddress: row.customer.address,
+      notes: row.notes,
+      items: row.items.map((i) => ({
+        description: i.description,
+        qty: i.qty.toFixed(3),
+        unit: i.unit,
+        unitPricePen: i.unitPricePen.toFixed(4),
+        totalPen: i.subtotalPen.toFixed(4),
+      })),
+      subtotalPen: row.subtotalPen.toFixed(4),
+      igvPen: row.igvPen.toFixed(4),
+      totalPen: row.totalPen.toFixed(4),
+    });
+  }
+
+  /**
+   * Genera el PDF, lo sube a R2 y guarda su key. Solo lo llama `emit`: es el momento en que
+   * el documento pasa a existir. Los fallos de R2 no tumban la emisión (D-068).
+   */
   private async generatePdf(id: string): Promise<void> {
     try {
       const row = await this.prisma.quotation.findUniqueOrThrow({
         where: { id },
-        include: quotationInclude,
+        select: { seq: true },
       });
-      const pdf = await buildQuotationPdf({
-        code: quotationCode(row.seq),
-        issueDate: row.issueDate.toISOString().slice(0, 10),
-        validUntil: row.validUntil.toISOString().slice(0, 10),
-        customerName: row.customer.name,
-        customerDoc: `${row.customer.docType} ${row.customer.docNumber}`,
-        customerAddress: row.customer.address,
-        notes: row.notes,
-        items: row.items.map((i) => ({
-          description: i.description,
-          qty: i.qty.toFixed(3),
-          unit: i.unit,
-          unitPricePen: i.unitPricePen.toFixed(4),
-          totalPen: i.subtotalPen.toFixed(4),
-        })),
-        subtotalPen: row.subtotalPen.toFixed(4),
-        igvPen: row.igvPen.toFixed(4),
-        totalPen: row.totalPen.toFixed(4),
-      });
+      const pdf = await this.renderPdf(id);
       const key = `quotations/${id}/${quotationCode(row.seq)}.pdf`;
       await this.storage.putObject(key, pdf, 'application/pdf');
       await this.prisma.quotation.update({ where: { id }, data: { pdfKey: key } });
@@ -251,25 +284,46 @@ export class QuotationsService {
     }
   }
 
-  /** Descarga el PDF de R2. Si no existe todavía, lo genera al vuelo. */
+  /**
+   * Descarga el PDF de la cotización.
+   *
+   * **Una cotización en borrador no tiene PDF**, y no es un detalle: sin ese corte, un
+   * vendedor podía armar un borrador con el precio que quisiera, no emitirlo nunca —así no
+   * queda emitido ni confirmable— y aun así mandarle al cliente un documento idéntico a uno
+   * válido. El documento existe recién cuando se emite.
+   *
+   * Fuera de `EMITIDA`/`CONFIRMADA` el PDF **se arma al vuelo y no se guarda**: el archivo
+   * de R2 se congeló al emitir y diría "Emitida" sobre una cotización que hoy está anulada
+   * o vencida. Redibujarlo con el estado de hoy es lo que hace que el papel no mienta.
+   *
+   * Ese es también el motivo de que este `GET` no escriba nada: la única escritura del PDF
+   * ocurre en `emit`, que es un `POST`.
+   */
   async pdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
     const row = await this.prisma.quotation.findUnique({
       where: { id },
-      select: { id: true, seq: true, pdfKey: true },
+      select: { id: true, seq: true, status: true, pdfKey: true },
     });
     if (!row) throw new NotFoundException('Cotización no encontrada');
-    if (!row.pdfKey) {
-      await this.generatePdf(id);
+    if (row.status === QuotationStatus.DRAFT) {
+      throw new BadRequestException(
+        'Una cotización en borrador todavía no tiene documento: emítela primero',
+      );
     }
-    const refreshed = await this.prisma.quotation.findUniqueOrThrow({
-      where: { id },
-      select: { pdfKey: true },
-    });
-    if (!refreshed.pdfKey) {
-      throw new BadRequestException('La cotización todavía no tiene PDF; vuelve a emitirla');
+
+    const filename = `${quotationCode(row.seq)}.pdf`;
+    const isCurrent =
+      row.status === QuotationStatus.EMITTED || row.status === QuotationStatus.CONFIRMED;
+    if (isCurrent && row.pdfKey) {
+      try {
+        return { buffer: await this.storage.getObject(row.pdfKey), filename };
+      } catch (err) {
+        // La key existe pero el objeto no (subida a medias, bucket purgado): se rearma en
+        // vez de devolver un 500 sobre un documento que sí se puede reconstruir.
+        this.logger.warn(`El PDF ${row.pdfKey} no se pudo leer de R2: ${String(err)}`);
+      }
     }
-    const buffer = await this.storage.getObject(refreshed.pdfKey);
-    return { buffer, filename: `${quotationCode(row.seq)}.pdf` };
+    return { buffer: await this.renderPdf(id), filename };
   }
 
   // -------------------------------------------------------------------------
@@ -284,6 +338,7 @@ export class QuotationsService {
   async cancel(actor: RequestUser, id: string, reason: string): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
+      this.assertOwnership(actor, current.createdById, 'anularla');
       if (current.status === QuotationStatus.CANCELLED) {
         throw new ConflictException('La cotización ya está anulada');
       }
@@ -328,7 +383,7 @@ export class QuotationsService {
    * confirmar ni aunque el job no haya corrido nunca.
    */
   async expireDue(actorId: string | null = null): Promise<number> {
-    const cutoff = toDateOnly(today());
+    const cutoff = toDateOnly(businessToday());
     const due = await this.prisma.quotation.findMany({
       where: { status: QuotationStatus.EMITTED, validUntil: { lt: cutoff } },
       select: { id: true, seq: true },
@@ -374,14 +429,16 @@ export class QuotationsService {
             }
           : {}),
       },
-      include: quotationInclude,
+      // La lista muestra totales, no líneas: traer `items` con su producto para 500
+      // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
+      include: { ...quotationInclude, items: false, _count: { select: { items: true } } },
       orderBy: { seq: 'desc' },
       take: 500,
     });
     const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
     return rows.map((r) => {
-      const { items, ...rest } = this.toDto(r, new Map(), actors);
-      return { ...rest, itemCount: items.length };
+      const { items: _items, ...rest } = this.toDto({ ...r, items: [] }, new Map(), actors);
+      return { ...rest, itemCount: r._count.items };
     });
   }
 
@@ -415,6 +472,7 @@ export class QuotationsService {
     businessLineId: string;
     businessLineCode: BusinessLineCode;
     validUntil: Date;
+    createdById: string;
   }> {
     const rows = await tx.$queryRaw<
       {
@@ -423,9 +481,10 @@ export class QuotationsService {
         status: QuotationStatus;
         business_line_id: string;
         valid_until: Date;
+        created_by_id: string;
       }[]
     >`
-      SELECT "id", "seq", "status", "business_line_id", "valid_until"
+      SELECT "id", "seq", "status", "business_line_id", "valid_until", "created_by_id"
       FROM "quotations" WHERE "id" = ${id}::uuid FOR UPDATE
     `;
     const row = rows[0];
@@ -441,6 +500,7 @@ export class QuotationsService {
       businessLineId: row.business_line_id,
       businessLineCode: line.code,
       validUntil: row.valid_until,
+      createdById: row.created_by_id,
     };
   }
 
@@ -524,7 +584,7 @@ export class QuotationsService {
       status: row.status,
       issueDate: row.issueDate.toISOString().slice(0, 10),
       validUntil,
-      isExpired: validUntil < today(),
+      isExpired: validUntil < businessToday(),
       subtotalPen: row.subtotalPen.toFixed(4),
       igvPen: row.igvPen.toFixed(4),
       totalPen: row.totalPen.toFixed(4),

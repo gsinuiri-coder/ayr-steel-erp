@@ -1,24 +1,31 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CoilStatus,
   Prisma,
   ProductionOrderStatus,
   QuotationStatus,
   ReservationStatus,
   SalesOrderStatus,
+  InventoryItemType as InventoryItemTypeEnum,
   type InventoryItemType,
 } from '@prisma/client';
 import {
+  businessToday,
   productionOrderCode,
+  Role,
   quotationCode,
   RESERVATION_STALE_DAYS,
   salesOrderCode,
   toDecimal,
   type CreateSalesOrderInput,
+  type ReservableCoilDto,
+  type ReservableCoilQuery,
   type ReservationDto,
   type ReservationQuery,
   type SalesOrderDto,
@@ -30,14 +37,11 @@ import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertStripsNotAssigned } from '../production/production-assignments';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 const orderInclude = {
@@ -51,7 +55,13 @@ const orderInclude = {
   reservations: {
     orderBy: { createdAt: 'asc' },
     include: {
-      salesOrder: { select: { seq: true, customer: { select: { name: true } } } },
+      salesOrder: {
+        select: {
+          seq: true,
+          customer: { select: { name: true } },
+          items: { select: { productId: true } },
+        },
+      },
       productionOrders: { select: { id: true, seq: true }, take: 1 },
     },
   },
@@ -93,95 +103,113 @@ export class SalesOrdersService {
    * seguiría figurando `EMITIDA` y sin este chequeo se podría confirmar.
    */
   async confirm(actor: RequestUser, quotationId: string): Promise<SalesOrderDto> {
-    const orderId = await this.prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<
-        { id: string; seq: number; status: QuotationStatus; valid_until: Date }[]
-      >`
-        SELECT "id", "seq", "status", "valid_until"
+    const orderId = await this.prisma.$transaction(
+      async (tx) => {
+        const rows = await tx.$queryRaw<
+          {
+            id: string;
+            seq: number;
+            status: QuotationStatus;
+            valid_until: Date;
+            created_by_id: string;
+          }[]
+        >`
+        SELECT "id", "seq", "status", "valid_until", "created_by_id"
         FROM "quotations" WHERE "id" = ${quotationId}::uuid FOR UPDATE
       `;
-      const head = rows[0];
-      if (!head) throw new NotFoundException('Cotización no encontrada');
+        const head = rows[0];
+        if (!head) throw new NotFoundException('Cotización no encontrada');
+        // RF-66: confirmar es el acto del vendedor **sobre su propia** cotización. Sin esto,
+        // cualquier vendedor podía comprometer stock a nombre del cliente de otro.
+        if (actor.role !== Role.ADMINISTRADOR && actor.id !== head.created_by_id) {
+          throw new ForbiddenException('La cotización es de otro vendedor: no puedes confirmarla');
+        }
 
-      if (head.status === QuotationStatus.CONFIRMED) {
-        throw new ConflictException('La cotización ya fue confirmada');
-      }
-      if (head.status !== QuotationStatus.EMITTED) {
-        throw new BadRequestException(
-          head.status === QuotationStatus.EXPIRED
-            ? 'La cotización está vencida: no se puede confirmar'
-            : `Solo se confirma una cotización emitida; esta está ${head.status}`,
-        );
-      }
-      const validUntil = head.valid_until.toISOString().slice(0, 10);
-      if (validUntil < today()) {
-        throw new BadRequestException(
-          `La cotización venció el ${validUntil}: no se puede confirmar`,
-        );
-      }
+        if (head.status === QuotationStatus.CONFIRMED) {
+          throw new ConflictException('La cotización ya fue confirmada');
+        }
+        if (head.status !== QuotationStatus.EMITTED) {
+          throw new BadRequestException(
+            head.status === QuotationStatus.EXPIRED
+              ? 'La cotización está vencida: no se puede confirmar'
+              : `Solo se confirma una cotización emitida; esta está ${head.status}`,
+          );
+        }
+        const validUntil = head.valid_until.toISOString().slice(0, 10);
+        if (validUntil < businessToday()) {
+          throw new BadRequestException(
+            `La cotización venció el ${validUntil}: no se puede confirmar`,
+          );
+        }
 
-      const quotation = await tx.quotation.findUniqueOrThrow({
-        where: { id: quotationId },
-        include: { items: { orderBy: { lineNumber: 'asc' } } },
-      });
-      if (quotation.items.length === 0) {
-        throw new BadRequestException('La cotización no tiene líneas');
-      }
+        const quotation = await tx.quotation.findUniqueOrThrow({
+          where: { id: quotationId },
+          include: { items: { orderBy: { lineNumber: 'asc' } } },
+        });
+        if (quotation.items.length === 0) {
+          throw new BadRequestException('La cotización no tiene líneas');
+        }
 
-      const order = await tx.salesOrder.create({
-        data: {
-          quotationId,
-          customerId: quotation.customerId,
-          businessLineId: quotation.businessLineId,
-          status: SalesOrderStatus.CONFIRMED,
-          issueDate: toDateOnly(today()),
-          subtotalPen: quotation.subtotalPen,
-          igvPen: quotation.igvPen,
-          totalPen: quotation.totalPen,
-          notes: quotation.notes,
-          createdById: actor.id,
-          items: {
-            create: quotation.items.map((i) => ({
-              lineNumber: i.lineNumber,
-              productId: i.productId,
-              description: i.description,
-              qty: i.qty,
-              unit: i.unit,
-              listPricePen: i.listPricePen,
-              unitPricePen: i.unitPricePen,
-              subtotalPen: i.subtotalPen,
-              igvPen: i.igvPen,
-              totalPen: i.totalPen,
-              reserveItemType: i.reserveItemType,
-              reserveItemId: i.reserveItemId,
-              reserveQty: i.reserveQty,
-              reserveUnit: i.reserveUnit,
-            })),
+        const order = await tx.salesOrder.create({
+          data: {
+            quotationId,
+            customerId: quotation.customerId,
+            businessLineId: quotation.businessLineId,
+            status: SalesOrderStatus.CONFIRMED,
+            issueDate: toDateOnly(businessToday()),
+            subtotalPen: quotation.subtotalPen,
+            igvPen: quotation.igvPen,
+            totalPen: quotation.totalPen,
+            notes: quotation.notes,
+            createdById: actor.id,
+            items: {
+              create: quotation.items.map((i) => ({
+                lineNumber: i.lineNumber,
+                productId: i.productId,
+                description: i.description,
+                qty: i.qty,
+                unit: i.unit,
+                listPricePen: i.listPricePen,
+                unitPricePen: i.unitPricePen,
+                subtotalPen: i.subtotalPen,
+                igvPen: i.igvPen,
+                totalPen: i.totalPen,
+                reserveItemType: i.reserveItemType,
+                reserveItemId: i.reserveItemId,
+                reserveQty: i.reserveQty,
+                reserveUnit: i.reserveUnit,
+              })),
+            },
           },
-        },
-        include: { items: { orderBy: { lineNumber: 'asc' } } },
-      });
+          include: { items: { orderBy: { lineNumber: 'asc' } } },
+        });
 
-      await this.createReservations(tx, actor, order.id, order.businessLineId, order.items);
+        await this.createReservations(tx, actor, order.id, order.businessLineId, order.items);
 
-      await tx.quotation.update({
-        where: { id: quotationId },
-        data: { status: QuotationStatus.CONFIRMED, confirmedAt: new Date() },
-      });
+        await tx.quotation.update({
+          where: { id: quotationId },
+          data: { status: QuotationStatus.CONFIRMED, confirmedAt: new Date() },
+        });
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'sales.order.confirm',
-        entity: 'sales_orders',
-        entityId: order.id,
-        after: {
-          code: salesOrderCode(order.seq),
-          quotationCode: quotationCode(head.seq),
-          totalPen: order.totalPen.toFixed(4),
-        },
-      });
-      return order.id;
-    });
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'sales.order.confirm',
+          entity: 'sales_orders',
+          entityId: order.id,
+          after: {
+            code: salesOrderCode(order.seq),
+            quotationCode: quotationCode(head.seq),
+            totalPen: order.totalPen.toFixed(4),
+          },
+        });
+        return order.id;
+      },
+      // Una confirmación toma un lock por línea (hasta `MAX_SALES_ITEMS`) sobre bobinas y
+      // saldos. Con el timeout por defecto de Prisma (5 s) un pedido de varias líneas
+      // contra Neon se caía por reloj; mismo criterio que el resto de transacciones largas
+      // del proyecto (partido, recepción de corte, cierre de OP).
+      { timeout: 30_000 },
+    );
 
     return this.findOne(orderId);
   }
@@ -196,76 +224,80 @@ export class SalesOrdersService {
    * de D-065 no significaría nada.
    */
   async createDirect(actor: RequestUser, input: CreateSalesOrderInput): Promise<SalesOrderDto> {
-    const orderId = await this.prisma.$transaction(async (tx) => {
-      const customer = await tx.customer.findUnique({
-        where: { id: input.customerId },
-        select: { id: true, isActive: true },
-      });
-      if (!customer) throw new NotFoundException('Cliente no encontrado');
-      if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
+    const orderId = await this.prisma.$transaction(
+      async (tx) => {
+        const customer = await tx.customer.findUnique({
+          where: { id: input.customerId },
+          select: { id: true, isActive: true },
+        });
+        if (!customer) throw new NotFoundException('Cliente no encontrado');
+        if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
 
-      const line = await tx.businessLine.findUnique({
-        where: { code: toPrismaLineCode(input.businessLine) },
-        select: { id: true, quotationRequired: true, inventoryStrategy: true },
-      });
-      if (!line) throw new NotFoundException('Línea de negocio no encontrada');
-      if (line.inventoryStrategy === 'NOOP') {
-        throw new BadRequestException('La línea services no lleva stock: no se vende por acá');
-      }
-      if (line.quotationRequired) {
-        throw new BadRequestException(
-          'Esta línea de negocio exige una cotización confirmada (RF-31): crea la cotización, emítela y confírmala',
-        );
-      }
+        const line = await tx.businessLine.findUnique({
+          where: { code: toPrismaLineCode(input.businessLine) },
+          select: { id: true, quotationRequired: true, inventoryStrategy: true },
+        });
+        if (!line) throw new NotFoundException('Línea de negocio no encontrada');
+        if (line.inventoryStrategy === 'NOOP') {
+          throw new BadRequestException('La línea services no lleva stock: no se vende por acá');
+        }
+        if (line.quotationRequired) {
+          throw new BadRequestException(
+            'Esta línea de negocio exige una cotización confirmada (RF-31): crea la cotización, emítela y confírmala',
+          );
+        }
 
-      const lines = await resolveSalesLines(tx, line.id, line.quotationRequired, input.items);
-      const totals = documentTotals(lines);
+        const lines = await resolveSalesLines(tx, line.id, line.quotationRequired, input.items);
+        const totals = documentTotals(lines);
 
-      const order = await tx.salesOrder.create({
-        data: {
-          quotationId: null,
-          customerId: customer.id,
-          businessLineId: line.id,
-          status: SalesOrderStatus.CONFIRMED,
-          issueDate: toDateOnly(input.issueDate),
-          subtotalPen: totals.subtotalPen,
-          igvPen: totals.igvPen,
-          totalPen: totals.totalPen,
-          notes: input.notes ?? null,
-          createdById: actor.id,
-          items: {
-            create: lines.map((l) => ({
-              lineNumber: l.lineNumber,
-              productId: l.productId,
-              description: l.description,
-              qty: l.qty,
-              unit: l.unit,
-              listPricePen: l.listPricePen,
-              unitPricePen: l.unitPricePen,
-              subtotalPen: l.subtotalPen,
-              igvPen: l.igvPen,
-              totalPen: l.totalPen,
-              reserveItemType: l.reserveItemType,
-              reserveItemId: l.reserveItemId,
-              reserveQty: l.reserveQty,
-              reserveUnit: l.reserveUnit,
-            })),
+        const order = await tx.salesOrder.create({
+          data: {
+            quotationId: null,
+            customerId: customer.id,
+            businessLineId: line.id,
+            status: SalesOrderStatus.CONFIRMED,
+            issueDate: toDateOnly(input.issueDate),
+            subtotalPen: totals.subtotalPen,
+            igvPen: totals.igvPen,
+            totalPen: totals.totalPen,
+            notes: input.notes ?? null,
+            createdById: actor.id,
+            items: {
+              create: lines.map((l) => ({
+                lineNumber: l.lineNumber,
+                productId: l.productId,
+                description: l.description,
+                qty: l.qty,
+                unit: l.unit,
+                listPricePen: l.listPricePen,
+                unitPricePen: l.unitPricePen,
+                subtotalPen: l.subtotalPen,
+                igvPen: l.igvPen,
+                totalPen: l.totalPen,
+                reserveItemType: l.reserveItemType,
+                reserveItemId: l.reserveItemId,
+                reserveQty: l.reserveQty,
+                reserveUnit: l.reserveUnit,
+              })),
+            },
           },
-        },
-        include: { items: { orderBy: { lineNumber: 'asc' } } },
-      });
+          include: { items: { orderBy: { lineNumber: 'asc' } } },
+        });
 
-      await this.createReservations(tx, actor, order.id, order.businessLineId, order.items);
+        await this.createReservations(tx, actor, order.id, order.businessLineId, order.items);
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'sales.order.create-direct',
-        entity: 'sales_orders',
-        entityId: order.id,
-        after: { code: salesOrderCode(order.seq), totalPen: totals.totalPen },
-      });
-      return order.id;
-    });
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'sales.order.create-direct',
+          entity: 'sales_orders',
+          entityId: order.id,
+          after: { code: salesOrderCode(order.seq), totalPen: totals.totalPen },
+        });
+        return order.id;
+      },
+      // Mismo motivo que `confirm`: un lock por línea sobre bobinas y saldos.
+      { timeout: 30_000 },
+    );
 
     return this.findOne(orderId);
   }
@@ -279,8 +311,16 @@ export class SalesOrdersService {
    * disponible, lanza y **toda** la transacción se cae: el pedido no queda a medias con
    * unas líneas reservadas y otras no (D-054).
    *
-   * Las líneas se ordenan por `(itemType, itemId)` antes de tomar los locks. Dos
-   * confirmaciones simultáneas que compartan ítems los piden en el mismo orden, así que se
+   * **Orden de locks: primero las bobinas, después los saldos.** Es el mismo orden que ya
+   * usan `production.consume` (`lockCoil` → `record`) y `coils.split`, y no es negociable:
+   * comprobar el disponible bajo el lock del **saldo** no serializa contra
+   * `production.consume` ni `cutting.send`, que bloquean la fila de la **bobina** y ni
+   * siquiera tocan el saldo (D-050/D-060: asignar y enviar no mueven kardex). Sin este
+   * lock previo quedaba una ventana en la que una confirmación y un envío a corte se
+   * cruzaban y la bobina terminaba reservada **y** en poder de un tercero.
+   *
+   * Dentro de cada grupo las filas se piden por id ascendente y las líneas se ordenan por
+   * `(itemType, itemId)`, así que dos confirmaciones simultáneas que compartan ítems se
    * serializan en vez de trabarse en un deadlock.
    */
   private async createReservations(
@@ -302,6 +342,39 @@ export class SalesOrdersService {
         `${b.reserveItemType}:${b.reserveItemId}`,
       ),
     );
+
+    const coilIds = [
+      ...new Set(
+        sorted
+          .filter((i) => i.reserveItemType === InventoryItemTypeEnum.COIL)
+          .map((i) => i.reserveItemId),
+      ),
+    ].sort();
+    if (coilIds.length > 0) {
+      await tx.$queryRaw`
+        SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
+      `;
+
+      // **La invariante también vale al revés.** Comprobar el disponible no alcanza para
+      // decidir si el material se puede prometer: entre cotizar y confirmar, la bobina pudo
+      // irse a un tercero (D-050) o quedar montada en una orden de producción (D-060), y
+      // ninguna de esas dos cosas mueve un gramo de kardex, así que el saldo se ve intacto.
+      // Prometerla igual deja al pedido comprometiendo material que no está, y —peor— hace
+      // que la recepción del corte o el reporte de esa OP se caigan después contra la
+      // invariante, sin más salida que liberar la reserva a mano.
+      const coils = await tx.coil.findMany({
+        where: { id: { in: coilIds } },
+        select: { id: true, code: true, status: true },
+      });
+      const unavailable = coils.filter((c) => c.status !== CoilStatus.OPEN);
+      if (unavailable.length > 0) {
+        const detail = unavailable.map((c) => `${c.code} (${c.status})`).join(', ');
+        throw new BadRequestException(
+          `No se puede reservar material de una bobina que no está disponible: ${detail}.`,
+        );
+      }
+      await assertStripsNotAssigned(tx, coilIds, 'reservar su material para un pedido');
+    }
 
     for (const item of sorted) {
       const qty = toDecimal(item.reserveQty.toString());
@@ -339,17 +412,20 @@ export class SalesOrdersService {
   /**
    * Anula el pedido y libera sus reservas activas.
    *
-   * Se bloquea mientras una **OP viva** (`DRAFT`/`IN_PROGRESS`) esté fabricando contra una
-   * reserva ya consumida: ahí hay material en la máquina comprometido con este pedido, y
-   * anularlo dejaría a esa orden huérfana. El bloqueo mira el estado de la orden y no solo
-   * el de la reserva, porque una reserva `CONSUMIDA` **no vuelve atrás** (append-only,
-   * §3.2): si bastara con que existiera, anular la OP no destrabaría nada y el pedido
-   * quedaría sin poder anularse para siempre — exactamente el agujero que D-061 tuvo que
-   * cerrar con los pagos a proveedor.
+   * **Se bloquea mientras exista una OP viva (`DRAFT`/`IN_PROGRESS`) colgada de cualquiera
+   * de sus reservas**, sin importar en qué estado esté la reserva. La distinción importa:
+   * una OP que ya montó el fleje (`consume`) pero todavía no reportó tiene su reserva en
+   * `ACTIVA`, y filtrar por `CONSUMIDA` dejaba anular el pedido en silencio — la reserva
+   * pasaba a `LIBERADA`, la orden seguía fabricando para un pedido que ya no existía y su
+   * primer reporte no encontraba nada que consumir.
    *
-   * Con la OP cerrada o anulada no hay nada que liberar: el material ya salió (o ya se
-   * devolvió por las reversas de producción, D-060) y anular el pedido es un acto
-   * puramente comercial.
+   * Que el bloqueo mire el **estado de la orden** y no el de la reserva es lo que evita el
+   * otro extremo: deshacer la producción (revertir el reporte, anular la OP) devuelve la
+   * reserva a `ACTIVA` y libera este bloqueo, así que un pedido nunca queda sin poder
+   * anularse para siempre — el agujero que D-061 tuvo que cerrar con los pagos a proveedor.
+   *
+   * Con la OP cerrada no hay nada que impedir: el material ya salió y anular el pedido es un
+   * acto puramente comercial.
    *
    * Si el pedido venía de una cotización, esa cotización vuelve a `EMITIDA` cuando sigue
    * vigente — el cliente puede volver a aceptarla— y queda `VENCIDA` cuando ya no.
@@ -364,6 +440,14 @@ export class SalesOrdersService {
         throw new BadRequestException('Un pedido ya atendido no se anula');
       }
 
+      // Lock de las reservas antes de leerlas, en orden de id. `production.report` escribe
+      // primero el pedido y después la reserva; sin este lock, las dos transacciones tomaban
+      // los mismos dos recursos en orden inverso y Postgres abortaba una con un deadlock que
+      // salía al usuario como un 500 opaco.
+      await tx.$queryRaw`
+        SELECT "id" FROM "reservations" WHERE "sales_order_id" = ${id}::uuid
+        ORDER BY "id" FOR UPDATE
+      `;
       const reservations = await tx.reservation.findMany({
         where: { salesOrderId: id },
         include: {
@@ -376,13 +460,11 @@ export class SalesOrdersService {
           },
         },
       });
-      const blocking = reservations.flatMap((r) =>
-        r.status === ReservationStatus.CONSUMED ? r.productionOrders : [],
-      );
+      const blocking = reservations.flatMap((r) => r.productionOrders);
       if (blocking.length > 0) {
         const detail = blocking.map((op) => `orden ${productionOrderCode(op.seq)}`).join(', ');
         throw new BadRequestException(
-          `No se puede anular: ${detail} está fabricando con el material reservado. Anula o cierra la orden de producción primero.`,
+          `No se puede anular: ${detail} está fabricando con el material reservado. Anula la orden de producción primero.`,
         );
       }
 
@@ -413,7 +495,8 @@ export class SalesOrdersService {
           select: { validUntil: true, status: true },
         });
         const validUntil = quotation.validUntil.toISOString().slice(0, 10);
-        const back = validUntil < today() ? QuotationStatus.EXPIRED : QuotationStatus.EMITTED;
+        const back =
+          validUntil < businessToday() ? QuotationStatus.EXPIRED : QuotationStatus.EMITTED;
         await tx.quotation.update({
           where: { id: order.quotationId },
           data: {
@@ -454,7 +537,18 @@ export class SalesOrdersService {
     await this.prisma.$transaction(async (tx) => {
       const reservation = await tx.reservation.findUnique({
         where: { id: reservationId },
-        select: { id: true, status: true, salesOrderId: true },
+        select: {
+          id: true,
+          status: true,
+          salesOrderId: true,
+          productionOrders: {
+            where: {
+              status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+            },
+            select: { seq: true },
+            take: 1,
+          },
+        },
       });
       if (!reservation) throw new NotFoundException('Reserva no encontrada');
       if (reservation.status === ReservationStatus.RELEASED) {
@@ -463,6 +557,15 @@ export class SalesOrdersService {
       if (reservation.status === ReservationStatus.CONSUMED) {
         throw new BadRequestException(
           'La reserva ya fue consumida por una orden de producción: no hay nada que liberar',
+        );
+      }
+      // Mismo bloqueo que anular el pedido, y por el mismo motivo: si se libera el material
+      // que una OP ya tiene montado, otro pedido lo puede reservar y el reporte de esa OP
+      // queda trabado contra la invariante, sin culpa de planta.
+      const busy = reservation.productionOrders[0];
+      if (busy) {
+        throw new BadRequestException(
+          `La orden de producción ${productionOrderCode(busy.seq)} está fabricando con este material. Anúlala antes de liberar la reserva.`,
         );
       }
       const released = await tx.reservation.updateMany({
@@ -489,7 +592,13 @@ export class SalesOrdersService {
     const row = await this.prisma.reservation.findUniqueOrThrow({
       where: { id: reservationId },
       include: {
-        salesOrder: { select: { seq: true, customer: { select: { name: true } } } },
+        salesOrder: {
+          select: {
+            seq: true,
+            customer: { select: { name: true } },
+            items: { select: { productId: true } },
+          },
+        },
         productionOrders: { select: { id: true, seq: true }, take: 1 },
       },
     });
@@ -518,18 +627,31 @@ export class SalesOrdersService {
             }
           : {}),
       },
-      include: orderInclude,
+      // Igual que la lista de cotizaciones: totales, no detalle. Las reservas activas se
+      // cuentan con un `_count` filtrado en vez de materializar cada una con su pedido, su
+      // cliente y su orden de producción.
+      include: {
+        ...orderInclude,
+        items: false,
+        reservations: false,
+        _count: {
+          select: {
+            items: true,
+            reservations: { where: { status: ReservationStatus.ACTIVE } },
+          },
+        },
+      },
       orderBy: { seq: 'desc' },
       take: 500,
     });
     const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
     return rows.map((r) => {
-      const dto = this.toDto(r, new Map(), actors);
-      const { items, reservations, ...rest } = dto;
+      const dto = this.toDto({ ...r, items: [], reservations: [] }, new Map(), actors);
+      const { items: _items, reservations: _reservations, ...rest } = dto;
       return {
         ...rest,
-        itemCount: items.length,
-        activeReservations: reservations.filter((x) => x.status === 'ACTIVE').length,
+        itemCount: r._count.items,
+        activeReservations: r._count.reservations,
       };
     });
   }
@@ -542,6 +664,94 @@ export class SalesOrdersService {
     return this.toDto(row, labels, actors);
   }
 
+  /**
+   * Bobinas abiertas de una línea con su disponible ya descontado de lo reservado (D-066).
+   *
+   * Es lo que el formulario de cotización ofrece al vendedor para elegir de qué rollo sale
+   * el material prometido. Vive acá y no en `coils` porque VENDEDOR no llega a esa ruta:
+   * expone costos y proveedor, que §3.4 le oculta. Acá no viaja ningún costo.
+   */
+  async findReservableCoils(query: ReservableCoilQuery): Promise<ReservableCoilDto[]> {
+    const coils = await this.prisma.coil.findMany({
+      where: {
+        status: CoilStatus.OPEN,
+        businessLine: { code: toPrismaLineCode(query.businessLine) },
+      },
+      select: {
+        id: true,
+        code: true,
+        typeKey: true,
+        widthMm: true,
+        thicknessMm: true,
+        finish: { select: { code: true } },
+      },
+      orderBy: { code: 'asc' },
+      take: 500,
+    });
+    if (coils.length === 0) return [];
+
+    const ids = coils.map((c) => c.id);
+    const [balances, reserved] = await Promise.all([
+      this.prisma.inventoryBalance.findMany({
+        where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
+        select: { itemId: true, qty: true },
+      }),
+      this.prisma.reservation.groupBy({
+        by: ['itemId'],
+        where: {
+          status: ReservationStatus.ACTIVE,
+          itemType: InventoryItemTypeEnum.COIL,
+          itemId: { in: ids },
+        },
+        _sum: { qty: true },
+      }),
+    ]);
+    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const reservedById = new Map(
+      reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
+    );
+
+    // D-060: un fleje montado en una OP viva no se puede prometer aunque su saldo esté
+    // intacto — asignar no mueve kardex, así que el disponible no lo delata. Ofrecerlo
+    // llevaría al vendedor a un 400 al confirmar, o peor, a trabar esa corrida de planta.
+    const assigned = new Set(
+      (
+        await this.prisma.productionOrderConsumption.findMany({
+          where: {
+            coilId: { in: ids },
+            releasedAt: null,
+            productionOrder: {
+              status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+            },
+          },
+          select: { coilId: true },
+        })
+      ).map((c) => c.coilId),
+    );
+
+    return (
+      coils
+        .filter((c) => !assigned.has(c.id))
+        .map((c) => {
+          const qty = qtyById.get(c.id) ?? toDecimal('0');
+          const res = reservedById.get(c.id) ?? toDecimal('0');
+          return {
+            coilId: c.id,
+            code: c.code,
+            typeKey: c.typeKey,
+            finishCode: c.finish.code,
+            widthMm: c.widthMm.toFixed(2),
+            thicknessMm: c.thicknessMm.toFixed(2),
+            qty: qty.toFixed(3),
+            reservedQty: res.toFixed(3),
+            availableQty: qty.minus(res).toFixed(3),
+          };
+        })
+        // Una bobina sin nada disponible tampoco se puede prometer.
+        .filter((c) => toDecimal(c.availableQty).gt(0))
+    );
+  }
+
   async findReservations(query: ReservationQuery): Promise<ReservationDto[]> {
     const rows = await this.prisma.reservation.findMany({
       where: {
@@ -550,7 +760,13 @@ export class SalesOrdersService {
         salesOrderId: query.salesOrderId,
       },
       include: {
-        salesOrder: { select: { seq: true, customer: { select: { name: true } } } },
+        salesOrder: {
+          select: {
+            seq: true,
+            customer: { select: { name: true } },
+            items: { select: { productId: true } },
+          },
+        },
         productionOrders: { select: { id: true, seq: true }, take: 1 },
       },
       orderBy: { createdAt: 'desc' },
@@ -636,6 +852,7 @@ export class SalesOrdersService {
       salesOrderCode: salesOrderCode(row.salesOrder.seq),
       salesOrderItemId: row.salesOrderItemId,
       customerName: row.salesOrder.customer.name,
+      orderProductIds: [...new Set(row.salesOrder.items.map((i) => i.productId))],
       itemType: row.itemType,
       itemId: row.itemId,
       itemLabel: label?.label ?? row.itemId,

@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, ImportEntity, Role, type CustomerDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,8 +24,14 @@ import { CustomerDialog } from './customer-dialog';
 
 const CUSTOMERS_QUERY_KEY = ['customers'] as const;
 
-/** RF-80/RF-82/RF-84: clientes. */
-export function ClientesView() {
+/**
+ * RF-80/RF-82/RF-84: clientes.
+ *
+ * `autoOpenNew` es lo que hace que `/clientes/nuevo` sea una ruta de verdad y no un enlace
+ * a ninguna parte: el alta vive en un diálogo (patrón de todos los maestros del proyecto),
+ * así que la ruta abre ese mismo diálogo sobre la lista en vez de duplicar el formulario.
+ */
+export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean }) {
   const { user } = useSession();
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
@@ -36,6 +43,12 @@ export function ClientesView() {
     setDialog((d) => ({ open: true, customer, nonce: d.nonce + 1 }));
   };
   const [search, setSearch] = useState('');
+
+  // Solo al montar (y solo si el rol puede dar de alta): cerrar el diálogo no debe
+  // reabrirlo, y navegar a /clientes tampoco.
+  useEffect(() => {
+    if (autoOpenNew && isAdmin) setDialog((d) => ({ open: true, nonce: d.nonce + 1 }));
+  }, [autoOpenNew, isAdmin]);
 
   const customers = useQuery({
     queryKey: CUSTOMERS_QUERY_KEY,
@@ -82,6 +95,15 @@ export function ClientesView() {
           )}
         </div>
       </div>
+
+      {autoOpenNew && !isAdmin && (
+        <Alert>
+          <AlertDescription>
+            Solo un administrador da de alta clientes (RF-85). Pídeselo con el número de documento a
+            mano: la búsqueda por RUC completa el resto.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Input
         placeholder="Buscar por nombre o número de documento…"

@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { PRODUCT_SOURCE_LABELS, PRODUCT_SOURCES, type ProductDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -39,12 +40,15 @@ const formSchema = z.object({
   name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(160),
   unit: z.string().trim().min(1, 'Obligatorio').max(20),
   source: z.enum(PRODUCT_SOURCES),
-  /** D-068: vacío significa "sin precio de lista", que el API guarda como `null`. */
+  /**
+   * D-068: vacío significa "sin precio de lista", que el API guarda como `null`.
+   * La comparación va con `isPositiveDecimal` (Decimal), no con `parseFloat`: regla dura 1.
+   */
   listPricePen: z
     .string()
     .trim()
     .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Debe ser un número decimal')
-    .refine((v) => v === '' || Number.parseFloat(v) > 0, 'Debe ser mayor a cero'),
+    .refine((v) => v === '' || isPositiveDecimal(v), 'Debe ser mayor a cero'),
 });
 type FormValues = z.infer<typeof formSchema>;
 

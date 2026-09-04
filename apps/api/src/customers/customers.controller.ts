@@ -49,6 +49,10 @@ export class CustomersController {
    * externo con nuestro token, así que un formulario en bucle no puede consumir la cuota.
    */
   @Get('lookup')
+  // §3.4: el maestro de clientes es de ADMINISTRADOR y VENDEDOR. Sin este `@Roles`,
+  // cualquier usuario autenticado gastaba la cuota del token de apis.net.pe, que además es
+  // el mismo del tipo de cambio SUNAT (D-029).
+  @Roles(Role.ADMINISTRADOR, Role.VENDEDOR)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async documentLookup(
     @Query('docType') docType: string,

@@ -19,6 +19,8 @@ export interface QuotationPdfLine {
 
 export interface QuotationPdfInput {
   code: string;
+  /** Estado actual de la cotización; se imprime cuando no es una vigente. */
+  status: 'DRAFT' | 'EMITTED' | 'CONFIRMED' | 'EXPIRED' | 'CANCELLED';
   issueDate: string;
   validUntil: string;
   customerName: string;
@@ -30,6 +32,16 @@ export interface QuotationPdfInput {
   igvPen: string;
   totalPen: string;
 }
+
+/**
+ * Rótulo que se estampa en el encabezado según el estado. Una cotización emitida o
+ * confirmada no lleva ninguno: es el documento normal.
+ */
+const STATUS_WARNING: Partial<Record<QuotationPdfInput['status'], string>> = {
+  EXPIRED: 'COTIZACIÓN VENCIDA',
+  CANCELLED: 'COTIZACIÓN ANULADA',
+  DRAFT: 'BORRADOR — SIN VALOR COMERCIAL',
+};
 
 const MARGIN = 48;
 const PAGE_WIDTH = 595.28; // A4 en puntos
@@ -91,6 +103,17 @@ export function buildQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
       width: CONTENT_WIDTH,
       align: 'right',
     });
+    // Una cotización anulada o vencida se rotula: sin esto el papel es idéntico al de una
+    // vigente y se le puede reenviar al cliente como si valiera.
+    const warning = STATUS_WARNING[input.status];
+    if (warning) {
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(11)
+        .fillColor('#b91c1c')
+        .text(warning, MARGIN, MARGIN + 46, { width: CONTENT_WIDTH, align: 'right' })
+        .fillColor('#000');
+    }
 
     // Cliente
     let y = MARGIN + 70;

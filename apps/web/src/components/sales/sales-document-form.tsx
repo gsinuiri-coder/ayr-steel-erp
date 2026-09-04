@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -8,14 +9,16 @@ import {
   BUSINESS_LINE_LABELS,
   DEFAULT_QUOTATION_VALIDITY_DAYS,
   Decimal,
+  MAX_QUOTATION_VALIDITY_DAYS,
   MAX_SALES_ITEMS,
   salesLineTotals,
+  toFixedString,
   type BusinessLine,
   type BusinessLineDto,
-  type CoilDto,
   type CustomerDto,
   type ProductDto,
   type QuotationDto,
+  type ReservableCoilDto,
   type SalesItemInput,
   type SalesOrderDto,
 } from '@ayr/shared';
@@ -69,6 +72,17 @@ function emptyLine(key: number): LineDraft {
   return { key, productId: '', qty: '', unitPricePen: '', reserveFromCoilId: '', reserveKg: '' };
 }
 
+/** Cantidad y precio con la escala fija que el API aplica antes de calcular (D-003). */
+function normalizeLine(l: { qty: string; unitPricePen: string }): {
+  qty: string;
+  unitPricePen: string;
+} {
+  return {
+    qty: toFixedString(l.qty, 'KG'),
+    unitPricePen: toFixedString(l.unitPricePen, 'MONEY'),
+  };
+}
+
 export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -91,15 +105,20 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
     queryKey: ['business-lines'],
     queryFn: () => api<BusinessLineDto[]>('/business-lines'),
   });
+  const lineId = businessLines.data?.find((l) => l.code === businessLine)?.id;
   const products = useQuery({
-    queryKey: ['catalog', businessLine],
-    queryFn: () => api<ProductDto[]>('/catalog'),
-    enabled: businessLine !== '',
+    queryKey: ['catalog', lineId],
+    // Filtrado en el API: cachear una copia del catálogo completo por cada línea era pedir
+    // lo mismo N veces para descartar casi todo en el cliente.
+    queryFn: () => api<ProductDto[]>(`/catalog?businessLineId=${lineId ?? ''}`),
+    enabled: lineId !== undefined,
   });
-  // Solo se reserva material de una bobina abierta; el API valida lo mismo.
+  // Material reservable de la línea: bobinas abiertas con disponible > 0, sin ningún
+  // campo de costo. Va por `/sales` y no por `/coils` porque VENDEDOR no tiene acceso a
+  // esa ruta (§3.4: le oculta costos y proveedor) — y es justo el rol que cotiza.
   const coils = useQuery({
-    queryKey: ['coils', businessLine, 'OPEN'],
-    queryFn: () => api<CoilDto[]>(`/coils?businessLine=${businessLine}&status=OPEN`),
+    queryKey: ['reservable-coils', businessLine],
+    queryFn: () => api<ReservableCoilDto[]>(`/sales/reservable-coils?businessLine=${businessLine}`),
     enabled: businessLine !== '',
   });
 
@@ -114,21 +133,31 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
   );
 
   function patchLine(key: number, patch: Partial<LineDraft>): void {
+    // Corregir la línea limpia el cartel rojo: dejarlo hasta el próximo envío hacía que el
+    // vendedor siguiera leyendo un error que ya había arreglado.
+    setFormError(null);
     setLines((current) => current.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
 
-  /** Al elegir producto se sugiere su precio de lista (D-068); el vendedor lo puede pisar. */
+  /**
+   * Al elegir producto se sugiere su precio de lista (D-068); el vendedor lo puede pisar.
+   * Si el producto nuevo no tiene precio de lista se **conserva** lo que ya estaba escrito:
+   * borrarlo obligaba a retipear un precio que el vendedor acababa de poner a mano.
+   */
   function chooseProduct(key: number, productId: string): void {
-    const product = productById.get(productId);
+    const listPrice = productById.get(productId)?.listPricePen;
     patchLine(key, {
       productId,
-      unitPricePen: product?.listPricePen ? new Decimal(product.listPricePen).toFixed(4) : '',
+      ...(listPrice ? { unitPricePen: new Decimal(listPrice).toFixed(4) } : {}),
     });
   }
 
+  // El API normaliza a la escala fija antes de calcular (`decimalStringSchema`), así que la
+  // previsualización tiene que hacerlo también: con `1.2345` kg, el importe de pantalla y el
+  // guardado diferían en milésimas — el mismo desajuste que se corrigió en el partido (2b).
   const totals = lines
     .filter((l) => isPositiveDecimal(l.qty) && isPositiveDecimal(l.unitPricePen))
-    .map((l) => salesLineTotals({ qty: l.qty, unitPricePen: l.unitPricePen }));
+    .map((l) => salesLineTotals(normalizeLine(l)));
   const subtotal = totals.reduce((acc, t) => acc.plus(t.subtotal), new Decimal(0));
   const igv = totals.reduce((acc, t) => acc.plus(t.igv), new Decimal(0));
 
@@ -148,15 +177,29 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
   });
 
   /**
-   * Valida el borrador y devuelve las líneas listas, o el primer error legible. Replica
-   * exactamente lo que el API valida (`resolveSalesLines`): el objetivo no es sustituirlo
-   * sino evitar el viaje de ida y vuelta, igual que la previsualización del partido (RF-15).
+   * Valida el borrador y devuelve las líneas listas, o el primer error legible. Replica lo
+   * que el API valida (`resolveSalesLines` y la comprobación de disponible de
+   * `createReservations`): el objetivo no es sustituirlo sino evitar el viaje de ida y
+   * vuelta, igual que la previsualización del partido (RF-15).
+   *
+   * El disponible se comprueba **acumulado por bobina**: dos líneas de 250 kg sobre una
+   * bobina con 400 disponibles pasan una a una y solo fallan sumadas — y en una cotización
+   * ese error no aparece al crearla sino al **confirmar**, cuando el cliente ya tiene el PDF.
    */
   function validate(): { items: SalesItemInput[] } | { error: string } {
     if (!customerId) return { error: 'Elige un cliente' };
     if (!businessLine) return { error: 'Elige una línea de negocio' };
+    if (isQuotation) {
+      const days = Number(validityDays);
+      if (!Number.isInteger(days) || days < 1 || days > MAX_QUOTATION_VALIDITY_DAYS) {
+        return {
+          error: `La vigencia debe ser un número entero de 1 a ${MAX_QUOTATION_VALIDITY_DAYS} días`,
+        };
+      }
+    }
 
     const items: SalesItemInput[] = [];
+    const reservedPerCoil = new Map<string, Decimal>();
     for (const [index, l] of lines.entries()) {
       const at = `Línea ${index + 1}`;
       if (!l.productId) return { error: `${at}: elige un producto` };
@@ -181,11 +224,33 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       if (hasKg && !isPositiveDecimal(l.reserveKg)) {
         return { error: `${at}: los kilos a reservar deben ser mayores a cero` };
       }
+      if (hasCoil) {
+        const coil = coils.data?.find((c) => c.coilId === l.reserveFromCoilId);
+        // Sin la lista cargada no se inventa una validación: el API tiene la última palabra
+        // y la comprueba bajo el lock del saldo, que es donde de verdad importa.
+        if (coil) {
+          const acc = (reservedPerCoil.get(coil.coilId) ?? new Decimal(0)).plus(
+            toFixedString(l.reserveKg, 'KG'),
+          );
+          reservedPerCoil.set(coil.coilId, acc);
+          if (acc.gt(new Decimal(coil.availableQty))) {
+            return {
+              error: `${at}: ${coil.code} tiene ${coil.availableQty} kg disponibles y las líneas de este documento ya piden ${acc.toFixed(3)}`,
+            };
+          }
+        }
+      }
+      const normalized = normalizeLine(l);
       items.push({
         productId: l.productId,
-        qty: l.qty,
-        unitPricePen: l.unitPricePen,
-        ...(hasCoil ? { reserveFromCoilId: l.reserveFromCoilId, reserveKg: l.reserveKg } : {}),
+        qty: normalized.qty,
+        unitPricePen: normalized.unitPricePen,
+        ...(hasCoil
+          ? {
+              reserveFromCoilId: l.reserveFromCoilId,
+              reserveKg: toFixedString(l.reserveKg, 'KG'),
+            }
+          : {}),
       });
     }
     return { items };
@@ -205,6 +270,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       businessLine,
       issueDate,
       ...(isQuotation ? { validityDays: Number(validityDays) } : {}),
+      // `validityDays` ya quedó validado como entero en rango dentro de `validate()`.
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       items,
     });
@@ -233,7 +299,17 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
 
       <div className="grid gap-4 rounded-lg border p-4 md:grid-cols-4">
         <div className="grid gap-2 md:col-span-2">
-          <Label htmlFor="customer">Cliente</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="customer">Cliente</Label>
+            {/* El cliente nuevo se da de alta sin perder el borrador de la cotización. */}
+            <Link
+              href="/clientes/nuevo"
+              target="_blank"
+              className="text-xs underline underline-offset-4 text-muted-foreground"
+            >
+              Registrar un cliente nuevo
+            </Link>
+          </div>
           <Select value={customerId} onValueChange={setCustomerId}>
             <SelectTrigger id="customer" className="w-full">
               <SelectValue placeholder="Elige un cliente" />
@@ -266,7 +342,12 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
             </SelectTrigger>
             <SelectContent>
               {businessLines.data
-                ?.filter((l) => l.inventoryStrategy === 'STOCK')
+                // D-065: un pedido directo no se admite en una línea que exige cotización.
+                // Ofrecerla llevaba al vendedor a llenar el formulario entero y comerse un
+                // 400 al guardar — el mismo "previsualización verde → 400" del partido (2b).
+                ?.filter(
+                  (l) => l.inventoryStrategy === 'STOCK' && (isQuotation || !l.quotationRequired),
+                )
                 .map((l) => (
                   <SelectItem key={l.id} value={l.code}>
                     {BUSINESS_LINE_LABELS[l.code]}
@@ -293,7 +374,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
               id="validity"
               type="number"
               min={1}
-              max={365}
+              max={MAX_QUOTATION_VALIDITY_DAYS}
               value={validityDays}
               onChange={(e) => {
                 setValidityDays(e.target.value);
@@ -366,6 +447,12 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
                             {p.sku} — {p.name}
                           </SelectItem>
                         ))}
+                        {/* Un desplegable vacío se ve igual que uno que no cargó: se dice. */}
+                        {products.isSuccess && activeProducts?.length === 0 && (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                            Esta línea no tiene productos activos.
+                          </div>
+                        )}
                       </SelectContent>
                     </Select>
                   </TableCell>
@@ -415,10 +502,15 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
                       </SelectTrigger>
                       <SelectContent>
                         {coils.data?.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.code} — {formatQty(c.availableKg, 'kg')}
+                          <SelectItem key={c.coilId} value={c.coilId}>
+                            {c.code} — {formatQty(c.availableQty, 'kg')} disp.
                           </SelectItem>
                         ))}
+                        {coils.isSuccess && coils.data.length === 0 && (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                            No hay bobinas con material disponible en esta línea.
+                          </div>
+                        )}
                       </SelectContent>
                     </Select>
                   </TableCell>

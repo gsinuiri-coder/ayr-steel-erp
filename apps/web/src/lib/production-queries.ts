@@ -17,4 +17,12 @@ export function invalidateProduction(queryClient: QueryClient, orderId?: string)
   void queryClient.invalidateQueries({ queryKey: ['coil'] });
   void queryClient.invalidateQueries({ queryKey: ['cutting', 'strips'] });
   void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+  // D-066: reportar consume la reserva del pedido y lo pasa a "en producción"; revertir o
+  // anular la orden la devuelve. Sin estas claves, las pantallas de ventas siguen mostrando
+  // el estado anterior — la simetría con `invalidateSales` tiene que valer en los dos sentidos.
+  void queryClient.invalidateQueries({ queryKey: ['reservations'] });
+  void queryClient.invalidateQueries({ queryKey: ['sales-order'] });
+  void queryClient.invalidateQueries({ queryKey: ['sales-orders'] });
+  void queryClient.invalidateQueries({ queryKey: ['quotation'] });
+  void queryClient.invalidateQueries({ queryKey: ['quotations'] });
 }

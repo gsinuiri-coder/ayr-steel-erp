@@ -6,12 +6,14 @@ import { useQuery } from '@tanstack/react-query';
 import {
   QUOTATION_STATUS_LABELS,
   QUOTATION_STATUSES,
+  Role,
   type QuotationListItemDto,
-  type QuotationStatus,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
-import { Badge } from '@/components/ui/badge';
+import { RoleGate } from '@/components/role-gate';
+import { QuotationStatusBadge } from '@/components/sales/status-badges';
+import { useDebounced } from '@/lib/use-debounced';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -32,45 +34,39 @@ import {
 } from '@/components/ui/table';
 
 const ALL = 'ALL';
-
-/** Color del estado: solo la confirmada es un hecho; vencida y anulada son terminales. */
-export function quotationStatusBadge(status: QuotationStatus, isExpired: boolean) {
-  const label = QUOTATION_STATUS_LABELS[status];
-  if (status === 'CONFIRMED') return <Badge>{label}</Badge>;
-  if (status === 'CANCELLED' || status === 'EXPIRED')
-    return <Badge variant="outline">{label}</Badge>;
-  // Una emitida cuya fecha ya pasó pero que el job todavía no marcó: se avisa igual, o la
-  // lista diría "Emitida" sobre algo que `confirmar` va a rechazar.
-  if (status === 'EMITTED' && isExpired) return <Badge variant="outline">Vencida</Badge>;
-  return <Badge variant="secondary">{label}</Badge>;
-}
+/** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
+const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** RF-61/RF-69: listado de cotizaciones. */
 export function CotizacionesView() {
   const [status, setStatus] = useState<string>(ALL);
   const [search, setSearch] = useState('');
+  // La búsqueda por cliente va al API (RF-84): filtrar solo en el cliente sobre las 500 filas
+  // que devuelve la lista hacía que, con más cotizaciones que eso, buscar una que existe
+  // dijera "ninguna coincide". El código de cotización se sigue filtrando acá.
+  const debouncedSearch = useDebounced(search.trim(), 300);
 
   const params = new URLSearchParams();
   if (status !== ALL) params.set('status', status);
+  if (debouncedSearch) params.set('search', debouncedSearch);
   const query = params.toString();
 
   const quotations = useQuery({
-    queryKey: ['quotations', status],
+    queryKey: ['quotations', status, debouncedSearch],
     queryFn: () => api<QuotationListItemDto[]>(`/sales/quotations${query ? `?${query}` : ''}`),
   });
 
-  const filtered = quotations.data?.filter((q) => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return true;
-    return (
+  const needle = search.trim().toLowerCase();
+  const filtered = quotations.data?.filter(
+    (q) =>
+      !needle ||
       q.code.toLowerCase().includes(needle) ||
       q.customerName.toLowerCase().includes(needle) ||
-      q.customerDocNumber.includes(needle)
-    );
-  });
+      q.customerDocNumber.includes(needle),
+  );
 
   return (
-    <>
+    <RoleGate allow={SALES_ROLES}>
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Cotizaciones</h1>
@@ -153,7 +149,9 @@ export function CotizacionesView() {
                 <TableCell>{formatDate(q.issueDate)}</TableCell>
                 <TableCell>{formatDate(q.validUntil)}</TableCell>
                 <TableCell className="text-right">{formatMoney(q.totalPen)}</TableCell>
-                <TableCell>{quotationStatusBadge(q.status, q.isExpired)}</TableCell>
+                <TableCell>
+                  {<QuotationStatusBadge status={q.status} isExpired={q.isExpired} />}
+                </TableCell>
                 <TableCell>
                   {q.salesOrderId ? (
                     <Link
@@ -180,6 +178,6 @@ export function CotizacionesView() {
           </TableBody>
         </Table>
       </div>
-    </>
+    </RoleGate>
   );
 }

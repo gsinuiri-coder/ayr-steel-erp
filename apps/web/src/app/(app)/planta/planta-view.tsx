@@ -14,6 +14,7 @@ import {
   Role,
   type ProductBomDto,
   type ProductionOrderDto,
+  type ReservationDto,
   type ProductionOrderListItemDto,
   type ProductionStripOptionDto,
 } from '@ayr/shared';
@@ -84,6 +85,8 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
   const queryClient = useQueryClient();
   const [productId, setProductId] = useState('');
   const [targetPieces, setTargetPieces] = useState('');
+  /** D-066: pedido contra el que se fabrica. Vacío = corrida de stock, sin reserva detrás. */
+  const [reservationId, setReservationId] = useState('');
 
   const boms = useQuery({
     queryKey: ['production-boms'],
@@ -100,6 +103,19 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
     queryKey: ['production-orders', 'planta', 'IN_PROGRESS'],
     queryFn: () => api<ProductionOrderListItemDto[]>('/production?status=IN_PROGRESS'),
   });
+  /**
+   * Reservas activas: los pedidos que esperan que planta fabrique (D-066).
+   *
+   * Sin esto la reserva no tenía consumidor en la UI y el guardrail se volvía en contra: al
+   * confirmar un pedido, el material quedaba bloqueado para **toda** orden que no fuera la
+   * nacida de esa reserva, y planta no tenía forma de crear esa orden. El fleje prometido se
+   * volvía inmovilizable hasta que un administrador liberara la reserva a mano — lo contrario
+   * de para qué se reserva.
+   */
+  const reservations = useQuery({
+    queryKey: ['reservations', 'ACTIVE'],
+    queryFn: () => api<ReservationDto[]>('/sales/reservations?status=ACTIVE'),
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -108,12 +124,14 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
         body: {
           productId,
           ...(targetPieces.trim() ? { targetPieces: Number(targetPieces.trim()) } : {}),
+          ...(reservationId ? { reservationId } : {}),
         },
       }),
     onSuccess: (order) => {
       toast.success(`Orden ${order.code} creada`);
       setProductId('');
       setTargetPieces('');
+      setReservationId('');
       invalidateProduction(queryClient);
       onSelect(order.id);
     },
@@ -122,6 +140,11 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
   });
 
   const activeBoms = (boms.data ?? []).filter((b) => b.isActive);
+  // Solo las reservas de pedidos que piden **este** perfil: el API rechaza cualquier otra
+  // (una reserva solo autoriza a fabricar lo que su propio pedido encargó).
+  const productReservations = (reservations.data ?? []).filter((r) =>
+    r.orderProductIds.includes(productId),
+  );
   const liveOrders = [...(inProgress.data ?? []), ...(draft.data ?? [])];
   const ordersPending = draft.isPending || inProgress.isPending;
   const ordersError = draft.isError || inProgress.isError;
@@ -183,6 +206,27 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
           >
             {create.isPending ? 'Creando…' : 'Crear orden'}
           </Button>
+          {productId !== '' && productReservations.length > 0 && (
+            <div className="grid gap-2 sm:col-span-3">
+              <Label htmlFor="planta-pedido">Pedido a atender (opcional)</Label>
+              <Select value={reservationId} onValueChange={setReservationId}>
+                <SelectTrigger id="planta-pedido" className="h-12">
+                  <SelectValue placeholder="Corrida de stock, sin pedido" />
+                </SelectTrigger>
+                <SelectContent>
+                  {productReservations.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.salesOrderCode} — {r.customerName} — {r.itemLabel} ({r.qty} {r.unit})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                Con un pedido elegido, la orden puede montar el material que ese pedido reservó —
+                que para cualquier otra orden está bloqueado.
+              </p>
+            </div>
+          )}
           {boms.isPending && <Skeleton className="h-5 w-full sm:col-span-3" />}
           {boms.isError && (
             <p className="text-sm text-destructive sm:col-span-3">

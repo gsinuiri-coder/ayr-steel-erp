@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -62,6 +62,13 @@ export function CustomerDialog({ open, customer, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const editing = !!customer;
   const [lookupNote, setLookupNote] = useState<string | null>(null);
+
+  // La nota del cliente anterior no se arrastra al siguiente: la vista puede quedar montada
+  // entre una alta y otra, y "No se encontró ese documento" aparecía sobre un formulario
+  // recién abierto.
+  useEffect(() => {
+    if (open) setLookupNote(null);
+  }, [open]);
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {

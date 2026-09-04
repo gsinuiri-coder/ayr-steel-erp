@@ -259,6 +259,25 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
       const stillActive = await getJson<SalesOrderDto>(api, `/api/sales/orders/${order.id}`);
       expect(stillActive.reservations[0]!.status).toBe('ACTIVE');
 
+      // Pero con el fleje ya montado, ni anular el pedido ni liberar la reserva a mano:
+      // el bloqueo mira el **estado de la OP**, no el de la reserva. Filtrando por reserva
+      // CONSUMIDA, este caso —fleje montado, todavía sin reportar— se colaba y dejaba a la
+      // orden fabricando contra un pedido anulado.
+      const cancelWhileMounted = await postExpectingError(
+        api,
+        `/api/sales/orders/${order.id}/cancel`,
+        { reason: 'Intento con el fleje ya montado' },
+      );
+      expect(cancelWhileMounted.status).toBe(400);
+      expect(cancelWhileMounted.message).toContain(op.code);
+      const releaseWhileMounted = await postExpectingError(
+        api,
+        `/api/sales/reservations/${reservation.id}/release`,
+        { reason: 'Intento con el fleje ya montado' },
+      );
+      expect(releaseWhileMounted.status).toBe(400);
+      expect(releaseWhileMounted.message).toContain(op.code);
+
       // Reportar piezas sí: sale material del fleje, así que la promesa se cumple.
       const reported = await postJson<ProductionOrderDto>(api, `/api/production/${op.id}/report`, {
         pieces: 100,
@@ -304,14 +323,23 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
       await postJson<ProductionOrderDto>(api, `/api/production/${op.id}/cancel`, {
         reason: 'Deshacer la corrida de prueba',
       });
+      // Deshacer la producción **devuelve la reserva a ACTIVA** y el pedido a confirmado: el
+      // material volvió al fleje y tiene que volver protegido, o la primera merma se lo lleva
+      // mientras el pedido sigue prometiéndoselo al cliente.
+      const restored = await getJson<SalesOrderDto>(api, `/api/sales/orders/${order.id}`);
+      expect(restored.status).toBe('CONFIRMED');
+      expect(restored.reservations[0]).toMatchObject({ status: 'ACTIVE', consumedAt: null });
+      expect(await availabilityOf(api, 'COIL', strip.id)).toMatchObject({
+        reservedQty: '1000.000',
+      });
+
       const finallyCancelled = await postJson<SalesOrderDto>(
         api,
         `/api/sales/orders/${order.id}/cancel`,
         { reason: 'El cliente se echó atrás tras deshacer la producción' },
       );
       expect(finallyCancelled.status).toBe('CANCELLED');
-      // La reserva consumida queda como estaba: el ledger es append-only, no se reescribe.
-      expect(finallyCancelled.reservations[0]!.status).toBe('CONSUMED');
+      expect(finallyCancelled.reservations[0]!.status).toBe('RELEASED');
     } finally {
       await purgeSalesTrail(api, trail);
       await deactivateTrail(api, {
@@ -797,6 +825,21 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
     };
 
     try {
+      // El vendedor NO llega a `/coils` (§3.4: esa ruta expone costos y proveedor), así que
+      // el material reservable tiene que salir por una ruta propia de ventas sin costos.
+      // Sin esto, el formulario de cotización de coberturas era inusable justo para el rol
+      // que lo usa.
+      const coilsForSeller = await sellerApi.get(`/api/coils?businessLine=${COVER_LINE}`);
+      expect(coilsForSeller.status()).toBe(403);
+      const reservable = await getJson<
+        { coilId: string; code: string; availableQty: string; qty: string }[]
+      >(sellerApi, `/api/sales/reservable-coils?businessLine=${COVER_LINE}`);
+      const mine = reservable.find((c) => c.coilId === stock.coil.id);
+      expect(mine, 'el vendedor tiene que ver la bobina disponible para prometerla').toBeDefined();
+      expect(mine).toMatchObject({ qty: '1200.000', availableQty: '1200.000' });
+      // Ni un campo de costo en la respuesta: es lo que hace que la ruta sea admisible.
+      expect(Object.keys(mine!)).not.toContain('unitCostPerKg');
+
       // El vendedor cotiza, emite y confirma: es su trabajo (§3.4).
       const quotation = await createQuotation(sellerApi, {
         customerId: customer.id,

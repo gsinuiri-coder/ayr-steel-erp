@@ -6,12 +6,14 @@ import { useQuery } from '@tanstack/react-query';
 import {
   SALES_ORDER_STATUS_LABELS,
   SALES_ORDER_STATUSES,
+  Role,
   type SalesOrderListItemDto,
-  type SalesOrderStatus,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
-import { Badge } from '@/components/ui/badge';
+import { RoleGate } from '@/components/role-gate';
+import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
+import { useDebounced } from '@/lib/use-debounced';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -32,40 +34,38 @@ import {
 } from '@/components/ui/table';
 
 const ALL = 'ALL';
-
-export function salesOrderStatusBadge(status: SalesOrderStatus) {
-  const label = SALES_ORDER_STATUS_LABELS[status];
-  if (status === 'CANCELLED') return <Badge variant="outline">{label}</Badge>;
-  if (status === 'FULFILLED') return <Badge variant="secondary">{label}</Badge>;
-  return <Badge>{label}</Badge>;
-}
+/** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
+const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** Pedidos (D-065). La reserva viva es lo que hace que el pedido signifique algo. */
 export function PedidosView() {
   const [status, setStatus] = useState<string>(ALL);
   const [search, setSearch] = useState('');
+  // Igual que en cotizaciones: la búsqueda por cliente va al API (RF-84) para que un pedido
+  // fuera de las 500 más recientes se pueda encontrar.
+  const debouncedSearch = useDebounced(search.trim(), 300);
 
   const params = new URLSearchParams();
   if (status !== ALL) params.set('status', status);
+  if (debouncedSearch) params.set('search', debouncedSearch);
   const query = params.toString();
 
   const orders = useQuery({
-    queryKey: ['sales-orders', status],
+    queryKey: ['sales-orders', status, debouncedSearch],
     queryFn: () => api<SalesOrderListItemDto[]>(`/sales/orders${query ? `?${query}` : ''}`),
   });
 
-  const filtered = orders.data?.filter((o) => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return true;
-    return (
+  const needle = search.trim().toLowerCase();
+  const filtered = orders.data?.filter(
+    (o) =>
+      !needle ||
       o.code.toLowerCase().includes(needle) ||
       o.customerName.toLowerCase().includes(needle) ||
-      o.customerDocNumber.includes(needle)
-    );
-  });
+      o.customerDocNumber.includes(needle),
+  );
 
   return (
-    <>
+    <RoleGate allow={SALES_ROLES}>
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Pedidos</h1>
@@ -157,7 +157,9 @@ export function PedidosView() {
                 <TableCell>{formatDate(o.issueDate)}</TableCell>
                 <TableCell className="text-right">{formatMoney(o.totalPen)}</TableCell>
                 <TableCell className="text-right">{o.activeReservations}</TableCell>
-                <TableCell>{salesOrderStatusBadge(o.status)}</TableCell>
+                <TableCell>
+                  <SalesOrderStatusBadge status={o.status} />
+                </TableCell>
               </TableRow>
             ))}
             {filtered?.length === 0 && (
@@ -172,6 +174,6 @@ export function PedidosView() {
           </TableBody>
         </Table>
       </div>
-    </>
+    </RoleGate>
   );
 }
