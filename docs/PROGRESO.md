@@ -714,6 +714,46 @@ borrador no existe fiscalmente: no tomó correlativo, no consume pedido, no tien
 nunca supo de él. La auditoría se escribe antes del borrado, porque después no quedaría a qué
 apuntar.
 
+## Sesión M-3 — mantenimiento: auditoría y guardrail previos al pase a Nubefact real (2026-09-04)
+
+Sesión corta de mantenimiento, fuera del avance por fases: preparar el pase de la cuenta demo
+de Nubefact a la cuenta real (checklist de `docs/handoff/fase-5b.md`). **El pase no se hizo**:
+el dueño decidió en esta sesión seguir en demo/contingencia hasta nuevo aviso. Lo que sí se
+completó no depende de esa decisión y queda cerrado.
+
+- **Auditoría previa (solo lectura, D-073).** `fiscal_documents` en producción: **0 filas**,
+  ningún estado — nada en `ISSUED`, `SEND_ERROR` ni `VOID_PENDING`. Las cinco series
+  (`F001`/`B001`/`BC01`/`FC01`/`T001`) siguen en `correlative=0`, nunca usadas.
+  `invoicing_settings.providerOffline=false`. Confirmado con un script temporal (`prisma`
+  `groupBy` + `findMany` sobre `fiscal_documents`/`fiscal_series`, no commiteado, borrado al
+  cerrar la auditoría) contra la rama `production` de Neon. Conclusión: el pase, cuando se
+  haga, no dispara ningún envío retroactivo — no hay nada en contingencia esperando salir.
+- **Correlativos y series: sin cambios, decisión del dueño.** Arrancan en 1 (nunca se facturó
+  antes con SUNAT bajo este RUC) y las series son las ya sembradas. El modelo **ya soportaba**
+  un correlativo inicial distinto de 1 desde D-072 (`createFiscalSeriesSchema.correlative`,
+  `min(0)`, pensado para continuar una numeración externa) — no hizo falta implementar nada.
+- **D-081 — guardrail nuevo en `e2e:prod`.** `scripts/e2e-prod.mjs` fuerza
+  `E2E_FISCAL_EMISSION: '0'` como última entrada del `env` que recibe Playwright, así que
+  gana sin importar qué traiga el shell de quien invoque el script. Antes de este cambio,
+  `E2E_FISCAL_EMISSION=1` en el entorno del operador se colaba sin que el script lo tocara —
+  inofensivo hoy porque Cloud Run no tiene credenciales del PSE (D-080), pero dejaría de serlo
+  el día que se cargue la cuenta real. Detalle y motivo completo en `docs/ARQUITECTURA.md` §0.2
+  D-081.
+- **`pnpm prod:purge-e2e` auditado, sin cambios.** Ya era seguro: solo actúa sobre comprobantes
+  cuyo `customerName` o `notes` empiezan con `E2E ` (`isE2eDocument` en
+  `scripts/prod-e2e-purge.mjs`), nunca sobre un documento real.
+- **Verificación:** `pnpm turbo lint typecheck test build` en verde; no hubo cambio de schema
+  ni de lógica de dominio, solo el script de E2E y documentación.
+
+**Pendiente — el pase en sí.** Sigue abierto exactamente como lo dejó `docs/handoff/fase-5b.md`:
+cargar `NUBEFACT_URL`/`NUBEFACT_TOKEN` productivos en Secret Manager
+(`scripts/gcp-secrets.mjs`), agregar las dos líneas a `--set-secrets` en `scripts/deploy-api.mjs`
+(ya comentadas en su sitio exacto), redesplegar, y hacer el smoke controlado de un comprobante
+real. Precondición del dueño para retomarlo: cuenta real de Nubefact activa, RUC habilitado en
+SUNAT, series confirmadas por el contador, y `NUBEFACT_URL`/`NUBEFACT_TOKEN` productivos en
+`.env.setup`. Mientras no haya aviso del dueño, producción sigue sin credenciales del PSE
+(D-080) y toda emisión cae en contingencia.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.

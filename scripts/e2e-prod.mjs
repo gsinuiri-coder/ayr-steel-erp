@@ -2,13 +2,20 @@
 // 2a, 2b, 3, 3b y 4 (fase2a.spec.ts, fase2b.spec.ts, fase3.spec.ts, fase3b.spec.ts,
 // fase4.spec.ts, fase4-bordes.spec.ts), de la Sesión M-2 (m2-reversa-pago.spec.ts) y de
 // la Fase 5a (fase5a.spec.ts, fase5a-bordes.spec.ts) y de la Fase 5b (fase5b.spec.ts,
-// fase5b-bordes.spec.ts). Los comprobantes de la 5b salen contra la cuenta **demo** del
-// PSE, nunca contra la real: un comprobante aceptado por SUNAT no se borra, se da de baja.
-// contra producción (Vercel + Cloud Run), incluidos los escenarios que crean datos
-// (RF-03: usuario desactivado, cambio de rol; Fase 1: acabado, producto, importación,
-// margen; Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y flejes;
-// Fase 3b: reversa de recepción de corte; Fase 4: órdenes de producción de drywall, con
-// sus reportes de piezas y su merma de proceso; M-2: anular un pago a proveedor).
+// fase5b-bordes.spec.ts) contra producción (Vercel + Cloud Run), incluidos los escenarios
+// que crean datos (RF-03: usuario desactivado, cambio de rol; Fase 1: acabado, producto,
+// importación, margen; Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y
+// flejes; Fase 3b: reversa de recepción de corte; Fase 4: órdenes de producción de
+// drywall, con sus reportes de piezas y su merma de proceso; M-2: anular un pago a
+// proveedor).
+//
+// D-081 (Sesión M-3): desde que producción puede llevar credenciales reales del PSE,
+// `E2E_FISCAL_EMISSION` se fuerza a `'0'` más abajo sin importar qué traiga el entorno de
+// quien invoca este script. Los tests de facturación que emiten (fase5b*.spec.ts) se
+// saltan siempre contra producción; el resto de la suite (despacho, borradores, cobranza
+// sobre lo ya emitido) sigue corriendo igual. Habilitarlo aquí sería emitir comprobantes
+// reales contra SUNAT en cada corrida de E2E — no hay ningún escenario en el que eso sea
+// correcto.
 //
 // Para no tocar la cuenta real del dueño, crea un ADMINISTRADOR efímero con
 // contraseña aleatoria, corre la suite y lo borra junto con los usuarios que la
@@ -100,6 +107,8 @@ try {
       E2E_ALLOW_WRITES: '1',
       E2E_ADMIN_EMAIL,
       E2E_ADMIN_PASSWORD: password,
+      // D-081: nunca emitir contra el PSE real desde e2e:prod (ver nota arriba).
+      E2E_FISCAL_EMISSION: '0',
     },
   );
 } finally {
