@@ -619,3 +619,199 @@ anular el pedido (libera las reservas activas) y liberar una reserva a mano (D-0
 ADMINISTRADOR, siempre con motivo). Todas "todo o nada", todas idempotentes, todas con motivo
 que va al `audit_log` (RF-95). Cerrar el hueco después cuesta una sesión entera y deja
 residuos en producción mientras tanto.
+
+## D-070..D-078 — Fase 5b (facturación electrónica, GRE, despacho y cobranza)
+
+Contexto largo de las nueve decisiones de §0.2. La fase entera se apoya en una idea: **el
+ciclo físico y el ciclo fiscal son dos relojes distintos**, y todo lo que se diseñó acá sale
+de no obligarlos a marcar la misma hora.
+
+### Por qué 5b dejó de ser producción de coberturas (D-070)
+
+El plan de D-048/D-065 tenía 5b como "producción de coberturas, venta, despacho y cobranza" y
+la Fase 6 como "facturación Nubefact". El dueño lo reordenó, y el motivo es visible en lo que
+5a entregó: un pedido que reserva material, y **nada** después. El pedido no salía del
+almacén, no se facturaba y no se cobraba. Producir un tipo de producto más no cerraba ese
+hueco; cerrarlo sí, para todos los productos que ya existen.
+
+El otro motivo es de construcción. El comprobante, la guía de remisión y el despacho comparten
+el mismo puerto de PSE, el mismo job de reintento, el mismo layout de archivos en R2 y el
+mismo criterio de reversa. Repartirlos entre dos fases habría obligado a diseñar el puerto dos
+veces, o a diseñarlo mal la primera. La producción de coberturas, en cambio, no comparte nada
+con esto: solo necesita la reserva, que ya está construida y probada.
+
+Resultado: **5c** queda con producción de coberturas (RF-30, RF-31, RF-33), venta directa
+(RF-60, RF-64, RF-73) y la cola de producción (RF-37, RF-38). La Fase 6 se reduce a la
+importación de comprobantes ya emitidos (RF-71, RF-72), que es lo único suyo que 5b no absorbe.
+
+### El puerto, y por qué el dominio no conoce a Nubefact (D-071)
+
+Decisión del dueño, y la más estructural de la fase. `invoicing` define
+`ElectronicInvoicingProvider` con cuatro métodos —emitir comprobante, emitir guía, consultar
+estado, comunicar baja— en tipos propios del dominio, y lo inyecta por token. La única
+implementación es `NubefactProvider`, que vive bajo `invoicing/providers/` y es el **único**
+lugar del repositorio donde aparece el vocabulario de ese PSE.
+
+Lo que se compra con eso no es portabilidad teórica. Un PSE peruano se cambia —por precio, por
+caída sostenida, por quiebra— y ese cambio no puede ser una migración de base de datos. Sin el
+puerto, los nombres del proveedor (`sunat_ticket_numero`, `aceptada_por_sunat`, sus códigos de
+error, su forma de numerar) se filtran a las columnas, a los estados de la máquina y a los
+textos de la UI, y reemplazarlo obliga a tocar todo el ciclo de venta.
+
+La contraparte es que **la respuesta cruda se guarda igual**, tal cual, en
+`fiscal_documents.provider_response`. El dominio no la lee nunca: no hay una sola rama de
+código que dependa de su forma. Está ahí para soporte y para poder reconstruir qué contestó el
+PSE si algún día SUNAT dice una cosa y nuestro registro dice otra. Guardar la evidencia y no
+depender de ella son dos cosas distintas, y esta decisión hace las dos.
+
+`NullInvoicingProvider` cubre el arranque sin credenciales devolviendo un error de envío. No es
+un caso degenerado: es exactamente la ruta de contingencia de D-073, así que el entorno sin PSE
+ejercita el mismo camino que una caída real.
+
+### El correlativo se toma al enviar, no al crear (D-072)
+
+Un correlativo es un recurso fiscal, no un id de aplicación. SUNAT lo exige consecutivo y sin
+huecos por serie. Si se asignara al crear el borrador, **cada borrador abandonado abriría un
+hueco** — y los borradores se abandonan todo el tiempo, por eso existen. Asignarlo en el
+momento del envío significa que un número existe solo si hubo un intento real de emisión.
+
+La toma es atómica (`UPDATE fiscal_series SET correlative = correlative + 1 … RETURNING`), el
+mismo patrón que ya usa `suppliers.coil_seq` para el código de bobina de RF-13, y por el mismo
+motivo: dos emisiones simultáneas no pueden llevarse el mismo número.
+
+**Un documento rechazado conserva su número.** La corrección se emite con uno nuevo, y el
+rechazado queda en el historial apuntado por `replaces_fiscal_document_id`. Es la regla de
+SUNAT y además es lo honesto: el intento rechazado ocurrió y la administración ya lo vio;
+reutilizar su número escondería un hecho que está registrado del otro lado.
+
+Series del punto de emisión: `F001` factura, `B001` boleta, `T001` guía de remisión remitente,
+y para la nota de crédito **la serie depende del comprobante afectado** (`FC01` si afecta una
+factura, `BC01` si afecta una boleta), que es como lo pidió el dueño.
+
+### La contingencia: el camión no espera al PSE (D-073)
+
+Decisión del dueño, enunciada como "la operación NUNCA para por el PSE". Enviar un comprobante
+hace tres cosas, **en este orden**:
+
+1. asigna correlativo, deja el documento en `ISSUED` —emitido, pendiente de envío— y
+   **confirma la transacción**;
+2. intenta el envío **fuera** de esa transacción;
+3. según lo que conteste el PSE, pasa a `ACCEPTED`, `REJECTED` o `SEND_ERROR`.
+
+Desde el final del paso 1 el documento ya habilita el despacho. La mercadería sale con el PSE
+caído, que es todo el punto.
+
+El orden no es cosmético. Si el envío ocurriera **dentro** de la transacción, una caída del PSE
+revertiría el correlativo ya tomado —abriendo justo el hueco que D-072 evita— o dejaría la
+transacción abierta esperando a un tercero, con el camión parado en la puerta.
+
+Que el intento inline exista, en vez de encolar y ya, es la lección de D-069 en un lugar donde
+duele más: el API escala a cero en Cloud Run (§3.6), así que **un job no puede ser la única
+garantía de que algo ocurra**. El camino normal es inmediato y verificable de punta a punta; el
+job (`invoicing.send`, con backoff, más un barrido cada 15 minutos) es la red que recoge lo que
+ese intento no pudo, y `POST /invoicing/documents/:id/retry` lo empuja a mano.
+
+Dos piezas más que salen de tratar la caída como algo normal y no como un error:
+`invoicing_settings.provider_offline`, que un ADMINISTRADOR levanta durante una caída conocida
+para dejar de golpear al PSE sin tocar credenciales, y `alert_after_hours`, el umbral tras el
+cual un documento sin aceptar deja de ser "en camino" y pasa a ser un problema visible en la
+lista y en el contador del menú.
+
+### Qué camino usa cada anulación
+
+El módulo lo documenta porque la respuesta depende de dos cosas que cambian: el tipo de
+comprobante y el plazo.
+
+- **Factura aceptada, dentro de los 7 días calendario de su emisión y sin efecto económico que
+  corregir** → comunicación de baja. El documento se da por no emitido.
+- **Fuera de ese plazo, o con efecto económico** (devolución, descuento, anulación de una
+  operación ya declarada) → **nota de crédito**. Es la reversa fiscal, y es la razón por la que
+  la NC entra en esta fase y no en la siguiente: la lección de 3b y M-2 es que una operación sin
+  su reversa deja residuo en producción desde el primer día.
+- **Boleta** → siempre nota de crédito. La baja de boletas va por resumen diario, que está
+  fuera de alcance.
+
+### El despacho cierra el pedido, la factura no (D-074)
+
+Decisión del dueño. Los dos relojes de nuevo: se despacha y se factura después, se factura por
+adelantado y se despacha en tres tandas, se anula una factura y la mercadería ya está en casa
+del cliente. `FULFILLED` describe un hecho del **almacén**. Atarlo al comprobante haría que
+anular una factura _desatendiera_ un pedido cuya mercadería ya salió, que es una frase sin
+sentido físico.
+
+De ahí se sigue el resto: como el despacho es el que saca el material, es también el que
+**consume la reserva** —`markReservationConsumed` **antes** del movimiento de kardex, o la
+invariante de D-066 bloquearía con la propia reserva del pedido justo la salida que viene a
+cumplirla— y su reversa la **restaura**. Es literalmente el mismo par que D-060 construyó para
+la orden de producción, y la razón por la que 5a lo dejó como funciones sueltas en
+`reservation-guard.ts` y no como un servicio: `production` e `invoicing` lo usan igual sin que
+`sales` entre en un ciclo de módulos con los dos.
+
+El guardrail nuevo de la fase es el simétrico: **una reversa de despacho se bloquea si un
+comprobante aceptado lo referencia.** Deshacer la salida de mercadería que una factura vigente
+declara dejaría al kardex y a SUNAT contando cosas distintas. El camino es al revés: primero se
+resuelve el comprobante (baja o nota de crédito), después se revierte el despacho.
+
+### La cobranza es el espejo del pago a proveedor (D-075)
+
+`customer_payments` es `supplier_payments` mirado desde el otro lado, y a propósito: el saldo
+pendiente ya está resuelto en compras (D-039) y resolverlo distinto en ventas daría dos verdades
+sobre la misma pregunta. Se recalcula, **nunca se almacena**. La reversa sigue el patrón de
+M-2/D-061 al pie: la fila no se borra, se marca `reversed_at`/`reversed_by_id`, el monto vuelve
+al saldo y el motivo va al `audit_log`.
+
+Un cobro va **contra un comprobante**, no contra el pedido. Es lo que hace que el saldo cierre
+cuando hay facturación parcial o notas de crédito: el pedido no es un documento de cobro y no
+tiene saldo que cobrar.
+
+La única asimetría deliberada con compras es de roles: allá registrar un pago es de
+ADMINISTRADOR, acá registrar un cobro es también de VENDEDOR. Compras es un módulo de planta al
+que VENDEDOR no entra; la cobranza es parte de su trabajo. Revertir sigue siendo de
+ADMINISTRADOR, por D-046.
+
+**La detracción se difiere.** Su cálculo depende del catálogo 54 de SUNAT y de reglas por tipo
+de bien que no se pueden adivinar sin una definición del dueño. Capturarla como campo
+informativo —código, porcentaje y monto escritos a mano, que viajan al PSE tal cual— no impide
+emitir y, sobre todo, no inventa un número que después alguien pagaría.
+
+### El vendedor ya puede dar de alta clientes (D-076)
+
+Cierra el pendiente que 5a dejó anotado. El botón "Buscar RUC" de D-067 existía sin ninguna
+puerta por la que meter el cliente encontrado, así que cotizar a un cliente nuevo obligaba a
+interrumpir a un administrador. VENDEDOR crea y edita datos básicos; siguen siendo de
+ADMINISTRADOR los tres campos con consecuencia fuera del maestro: el **documento** (es la
+identidad fiscal con la que sale el comprobante), los **días de crédito** (definen el
+vencimiento de una cuenta por cobrar) y la **baja lógica** (esconde al cliente de todo el
+sistema). Proveedores no cambian.
+
+### "Público en general", como cliente y no como excepción (D-077)
+
+Decisión del dueño. La venta menor de mostrador existe, y sin esto obligaría a inventar un
+cliente por cada una, ensuciando el maestro con filas irrepetibles. La migración siembra un
+cliente `PÚBLICO EN GENERAL` con `is_system = true`: la API rechaza editarlo o darlo de baja y
+la UI no ofrece ninguna de las dos.
+
+Sembrarlo como una fila normal del maestro —en vez de tratar la boleta sin cliente como un caso
+especial— es lo que hace que todo el resto del ciclo (comprobante, cobranza, saldo, lista de
+cuentas por cobrar) funcione sin una sola rama adicional.
+
+El tope de **S/ 700** de SUNAT para boleta sin identificar es un **bloqueo suave**, como lo
+pidió el dueño: la emisión se detiene pidiendo un cliente identificado, y solo ADMINISTRADOR
+puede forzar la excepción. Forzarla no es gratis: queda escrita en el propio comprobante
+(`generic_customer_override_by_id`) y en la auditoría. Es la diferencia entre una regla que se
+puede saltar y una regla que se puede saltar **dejando constancia**, que es lo que un
+requerimiento de SUNAT necesita poder mostrar.
+
+### La modalidad de traslado se elige por despacho (D-078)
+
+Decisión del dueño. Subcontratar el flete es normal en el rubro, así que una modalidad fija en
+configuración habría dejado sin guía a la mitad de los despachos. Privado lleva placa del
+vehículo y nombre, documento y licencia del conductor; público lleva RUC y razón social del
+transportista. La **GRE del transportista** queda fuera de alcance: solo emitimos la del
+remitente.
+
+El **catálogo de vehículos y conductores frecuentes se difiere**. Dos maestros con su ABM y su
+UI ensanchan la fase sin resolver nada que el autocompletado no resuelva: `GET
+/dispatches/transport-suggestions` devuelve los valores usados en despachos anteriores, no
+cuesta una tabla, y si mañana hacen falta atributos propios del vehículo (capacidad,
+certificado de inspección) el catálogo entra sin migrar nada de lo ya capturado.
