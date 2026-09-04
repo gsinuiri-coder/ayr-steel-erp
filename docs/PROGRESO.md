@@ -4,20 +4,20 @@
 
 ## Estado general
 
-| Fase                                          | Estado                      | Cierre                                                   |
-| --------------------------------------------- | --------------------------- | -------------------------------------------------------- |
-| 0 — Bootstrap                                 | ✅ Cerrada (2026-09-02)     | Login E2E verde en prod, CI verde                        |
-| 1 — Maestros, catálogo, precios, importación  | ✅ Cerrada (2026-09-02)     | E2E de Fase 1 verdes en local + CI, deploy en producción |
-| 2a — Kardex + compras + alta de bobinas       | ✅ Cerrada (2026-09-03)     | 16/16 E2E verdes en producción, CI verde, deploy hecho   |
-| 2b — Partido, merma, cierre, anulación        | ✅ Cerrada (2026-09-04)     | 30/30 E2E verdes en producción, CI verde, deploy hecho   |
-| 3 — Corte tercerizado + flejes                | ✅ Cerrada (2026-09-02)     | 34/34 E2E verdes en producción, CI verde, deploy hecho   |
-| 3b — Reversa de recepción de corte            | ✅ Cerrada (2026-09-03)     | 40/40 E2E verdes en producción, CI verde, deploy hecho   |
-| 4 — Producción drywall + `/planta`            | ✅ Cerrada (2026-09-03)     | 56/56 E2E en producción, CI verde, deploy hecho          |
-| 5a — Cotización → pedido + reserva            | ✅ Cerrada (2026-09-04)     | 83/83 E2E en producción, CI verde, deploy hecho          |
-| 5b — Facturación, GRE, despacho y cobranza    | 🟡 En progreso (2026-09-04) | Milestones 1 y 2 completos; E2E y despliegue pendientes  |
-| 5c — Producción de coberturas y venta directa | ⚪ Pendiente                | —                                                        |
-| 6 — Importación de comprobantes               | ⚪ Pendiente                | —                                                        |
-| 7 — Auditoría, reportes, UAT                  | ⚪ Pendiente                | —                                                        |
+| Fase                                          | Estado                  | Cierre                                                                 |
+| --------------------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
+| 0 — Bootstrap                                 | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                                      |
+| 1 — Maestros, catálogo, precios, importación  | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción               |
+| 2a — Kardex + compras + alta de bobinas       | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho                 |
+| 2b — Partido, merma, cierre, anulación        | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho                 |
+| 3 — Corte tercerizado + flejes                | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho                 |
+| 3b — Reversa de recepción de corte            | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho                 |
+| 4 — Producción drywall + `/planta`            | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho                        |
+| 5a — Cotización → pedido + reserva            | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho                        |
+| 5b — Facturación, GRE, despacho y cobranza    | ✅ Cerrada (2026-09-04) | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho |
+| 5c — Producción de coberturas y venta directa | ⚪ Pendiente            | —                                                                      |
+| 6 — Importación de comprobantes               | ⚪ Pendiente            | —                                                                      |
+| 7 — Auditoría, reportes, UAT                  | ⚪ Pendiente            | —                                                                      |
 
 ## Fase 0 — detalle
 
@@ -671,6 +671,48 @@ que era configuración disfrazada de constante: alinearlas dejó de ser una migr
 
 Lo que hace falta del dueño: registrar esas series en el panel de Nubefact, o decir cuáles
 tiene autorizadas la cuenta para darlas de alta desde el sistema.
+
+### Cierre: qué quedó verificado y cómo
+
+- **195 unit** verdes; `lint`, `typecheck`, `format:check` y `build` limpios en los tres paquetes.
+- **19 E2E** contra la cuenta demo del PSE: los diez escenarios obligatorios de la fase más
+  nueve bordes. La corrida de cierre volvió a ejecutar los tres que quedaban con el código
+  final en vez de repetir la suite entera —cada corrida completa gasta unos veinte documentos
+  de un cupo de cincuenta—, así que **no fue un 17/17 de una sola pasada** y conviene decirlo.
+- **89 pasados y 13 saltados contra producción**, sin un solo fallo. Los 13 saltados son los que
+  emiten: contra producción están apagados a propósito (ver abajo).
+- **CI verde** y **purga sin residuo**: producción quedó con 0 documentos electrónicos, 0
+  despachos vivos, 0 reservas activas, 0 cobros vigentes y 0 piezas de prueba en stock.
+
+### La compuerta de emisión, y por qué existe
+
+Los E2E de esta fase **no emiten contra producción**, y no es una comodidad: el correlativo lo
+asigna nuestra propia `fiscal_series`, no el PSE (D-072). Sin proveedor configurado —que es
+como quedó producción por D-080— cada emisión de prueba se llevaría un número de la serie real
+y quedaría en `SEND_ERROR` **sin ningún estado terminal al que llevarlo**: la baja exige un
+comprobante aceptado. Serían huecos permanentes en la numeración fiscal de la empresa.
+
+Contra producción corre todo lo que no emite —despacho, reversas, despacho parcial, guardrails
+de reserva de 5a, progreso del pedido, configuración—, que es donde está el riesgo de kardex.
+
+La suite acabó necesitando **tres modos**, no dos: emisión permitida, emisión prohibida y
+**emisión permitida sin proveedor detrás**. El tercero es el que verifica la promesa de
+contingencia contra un entorno realmente sin PSE, en vez de simularla con el interruptor
+manual — y es el modo en el que corre producción.
+
+El mismo error de fondo apareció dos veces, primero en el producto y después en las pruebas:
+**tratar "no hay PSE" como si fuera "el PSE tarda"**. En el producto quemaba correlativos; en
+las pruebas agotó el tiempo del job de CI, porque sin proveedor la cola de pendientes solo
+crece y el barrido la reprocesaba entera en cada espera.
+
+### Un hueco que la limpieza destapó
+
+Producción quedó con un **borrador** de boleta que ninguna ruta podía quitar: la baja exige un
+comprobante aceptado y no había otra puerta. Se agregó `DELETE /invoicing/documents/:id`, que
+es **la única fila del módulo que se borra de verdad** — y puede serlo justamente porque un
+borrador no existe fiscalmente: no tomó correlativo, no consume pedido, no tiene saldo y SUNAT
+nunca supo de él. La auditoría se escribe antes del borrado, porque después no quedaría a qué
+apuntar.
 
 ## Bloqueos
 
