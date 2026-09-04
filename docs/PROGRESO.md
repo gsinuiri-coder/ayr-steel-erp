@@ -623,6 +623,55 @@ el borrador de otro.
 un estado tan normal como el punto de `.5`, tirando la pantalla entera; y los kilos se
 restaban con `number`, rompiendo la regla dura 1 sobre la cifra que decide cuánto se acredita.
 
+### Lo que solo apareció contra el PSE de verdad
+
+Las tres revisiones estáticas no podían ver nada de esto. Salió en la primera corrida de
+`qa` contra la cuenta demo de Nubefact, y es el argumento para que los E2E de esta fase
+existan contra el PSE y no contra un doble.
+
+- **La guía salía mal armada.** El propio PSE nombró los campos: la placa va bajo
+  `transportista_placa_numero` —en `vehiculo_placa` la ignoraba en silencio y rechazaba por
+  "placa no puede estar en blanco"— y los apellidos del conductor van aparte. Se partieron
+  en dos columnas (`driver_given_names`, `driver_family_names`) en vez de dividir el texto
+  en el adaptador: partir un nombre por espacios acierta con "Juan Pérez Gómez" y falla con
+  "José Luis Pérez", y esa adivinanza sale impresa en un documento fiscal.
+- **La unidad de medida viajaba tal cual desde `products.unit`**, que es texto libre en el
+  maestro. Ahora se normaliza contra el catálogo 03 y lo que no se reconoce cae a `NIU`.
+- **Con la contingencia levantada se podía revertir un despacho cuya guía ya tenía
+  correlativo.** `DECLARED_STATUSES` dejaba fuera `SEND_ERROR` mientras
+  `LIVE_DOCUMENT_STATUSES` sí lo contaba, y esa asimetría era el defecto: al recuperarse el
+  PSE, el barrido declaraba un traslado que ya no existía.
+- **Un comprobante emitido en contingencia no se podía cobrar**, que es la mitad de la
+  promesa de D-073 sin cumplir — y la mitad que se lleva el dinero.
+- **La purga no veía las boletas a "público en general"**: no salen a nombre del cliente de
+  prueba. Ahora se reconocen además por la marca en observaciones.
+
+Y uno que encontré revisando mi propio código, no la suite: **el despacho sacaba del kardex
+la cantidad de venta en vez de la que la reserva promete**. En perfiles coinciden —el ítem
+reservado es el propio producto—, y por eso el error habría esperado hasta la primera
+cobertura para aparecer: vender 100 piezas de una bobina habría descontado 100 kilos.
+
+### Bloqueo abierto: las series del punto de emisión
+
+**La cuenta demo del PSE no tiene autorizadas las series que siembra la migración**
+(`F001`, `B001`, `T001`, `FC01`, `BC01`): responde _"No puedes emitir comprobantes con esta
+serie"_. Mientras eso siga así, **ningún entorno con esa cuenta llega a `ACCEPTED`**, y cada
+intento gasta un correlativo real.
+
+La consecuencia para esta fase es que el tramo posterior a la aceptación —cobro sobre un
+comprobante aceptado, nota de crédito sobre uno aceptado, reversa de despacho bloqueada por
+factura aceptada— **no se pudo probar de punta a punta**. Todo lo anterior sí: la emisión
+toma correlativo, el rechazo es determinista y se corrige con número nuevo, la contingencia
+deja salir la mercadería, y los guardrails de 5a siguen en pie.
+
+Lo que se hizo al respecto: **las series pasaron a ser administrables**
+(`GET/POST/PATCH /invoicing/series`, solo ADMINISTRADOR) y se muestran en la tarjeta de
+contingencia de `/comprobantes`. La autorización de una serie es del PSE **por emisor**, así
+que era configuración disfrazada de constante: alinearlas dejó de ser una migración.
+
+Lo que hace falta del dueño: registrar esas series en el panel de Nubefact, o decir cuáles
+tiene autorizadas la cuenta para darlas de alta desde el sistema.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
