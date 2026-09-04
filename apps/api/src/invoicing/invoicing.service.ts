@@ -1028,6 +1028,15 @@ export class InvoicingService {
     // Sin número no hay nada que enviar: el correlativo se toma al emitir (D-072).
     if (document.number === null) return;
     if (!RETRYABLE_DOCUMENT_STATUSES.includes(document.status)) return;
+
+    // La contingencia se mira **antes** de reclamar el intento: un envío que nunca sale a
+    // la red no es un intento, y contarlo como tal borra la diferencia entre "todavía no
+    // salió" y "salió y no entra", que es lo que `sendAttempts` existe para decir.
+    const settings = await this.settingsRow();
+    if (settings.providerOffline) {
+      await this.applyResult(id, this.offlineResult());
+      return;
+    }
     if (!(await this.claimAttempt(id))) return;
 
     // **Nunca lanza**, y la garantía es de este método, no del adaptador: cualquier fallo
@@ -1035,23 +1044,18 @@ export class InvoicingService {
     // un 500 sobre un documento que ya tomó correlativo, que es exactamente lo que D-073
     // existe para evitar.
     try {
-      const settings = await this.settingsRow();
-      const result = settings.providerOffline
-        ? this.offlineResult()
-        : // Con ticket, el documento **ya está en el PSE**: reemitirlo con la misma serie y
-          // correlativo lo devolvería como duplicado —o sea, como rechazo— y quemaría el
-          // número. Lo que corresponde es preguntar por él.
-          document.providerTicket
-          ? await this.callProvider(() =>
-              this.provider.queryStatus({
-                docType: document.docType,
-                series: document.seriesRef?.series ?? '',
-                correlative: document.correlative ?? 0,
-              }),
-            )
-          : await this.callProvider(() =>
-              this.provider.issueDocument(this.toIssueCommand(document)),
-            );
+      // Con ticket, el documento **ya está en el PSE**: reemitirlo con la misma serie y
+      // correlativo lo devolvería como duplicado —o sea, como rechazo— y quemaría el
+      // número. Lo que corresponde es preguntar por él.
+      const result = document.providerTicket
+        ? await this.callProvider(() =>
+            this.provider.queryStatus({
+              docType: document.docType,
+              series: document.seriesRef?.series ?? '',
+              correlative: document.correlative ?? 0,
+            }),
+          )
+        : await this.callProvider(() => this.provider.issueDocument(this.toIssueCommand(document)));
 
       await this.applyResult(document.id, result);
       if (result.outcome === 'ACCEPTED') {
@@ -1667,13 +1671,14 @@ export class InvoicingService {
     });
     if (!document?.dispatch || document.number === null) return;
     if (!RETRYABLE_DOCUMENT_STATUSES.includes(document.status)) return;
-    if (!(await this.claimAttempt(id))) return;
 
+    // Mismo orden que `deliver`: la contingencia se mira antes de contar un intento.
     const settings = await this.settingsRow();
     if (settings.providerOffline) {
       await this.applyResult(id, this.offlineResult());
       return;
     }
+    if (!(await this.claimAttempt(id))) return;
 
     const dispatch = document.dispatch;
     // El comprobante que respalda el traslado, si el pedido ya tiene uno aceptado.
