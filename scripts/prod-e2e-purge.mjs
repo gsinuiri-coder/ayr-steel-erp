@@ -168,6 +168,107 @@ try {
     );
   }
 
+  // -1.75) Ciclo fiscal y logístico de Fase 5b (D-072..D-075). Va **antes** de los pedidos
+  //        y después de las órdenes de producción, y el orden interno importa tanto como
+  //        el externo:
+  //
+  //        1. Los **cobros** primero: un comprobante con cobros vigentes no se da de baja
+  //           (un documento anulado no debe nada, así que la baja dejaría dinero recibido
+  //           contra algo que dejó de existir).
+  //        2. Los **comprobantes** después: mientras uno esté aceptado y facture las
+  //           líneas de un despacho, la reversa de ese despacho está bloqueada (D-074).
+  //        3. Las **guías**, por el mismo motivo: la guía es el papel que dice que esa
+  //           mercadería salió.
+  //        4. Los **despachos** al final: revertirlos devuelve el stock y baja el pedido de
+  //           "atendido", que es lo que permite que el paso siguiente lo anule — un pedido
+  //           ya atendido no se anula.
+  //
+  //        Los comprobantes **no se borran**: se dan de baja. Un comprobante que el PSE
+  //        aceptó existe, y el rastro que esta purga persigue es el de **stock y saldo**,
+  //        no el del papel: producción tiene que quedar sin material de prueba y sin cuentas
+  //        por cobrar inventadas, con los documentos anulados y a la vista.
+  const isE2eCustomer = (name) => typeof name === 'string' && name.startsWith('E2E ');
+
+  const documents = await call('/invoicing/documents');
+  const e2eDocuments = (Array.isArray(documents.body) ? documents.body : []).filter(
+    (d) => isE2eCustomer(d.customerName) && d.status !== 'VOIDED' && d.status !== 'REJECTED',
+  );
+  console.log(`Comprobantes E2E vivos: ${e2eDocuments.length}`);
+
+  // 1. Cobros vigentes.
+  for (const document of e2eDocuments) {
+    const detail = await call(`/invoicing/documents/${document.id}`);
+    const livePayments = (Array.isArray(detail.body?.payments) ? detail.body.payments : []).filter(
+      (payment) => payment.reversedAt === null,
+    );
+    for (const payment of livePayments) {
+      if (dryRun) {
+        console.log(`  [simulado] revertir cobro de ${payment.amountPen} en ${document.number}`);
+        continue;
+      }
+      const res = await call(`/invoicing/documents/${document.id}/payments/${payment.id}/reverse`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  cobro de ${payment.amountPen} en ${document.number} revertido`
+          : `  cobro en ${document.number} NO se pudo revertir: ${res.body?.message ?? res.status}`,
+      );
+    }
+  }
+
+  // 2 y 3. Los documentos: primero las notas de crédito (para que el afectado quede sin
+  //        notas vivas y se pueda dar de baja), después el resto.
+  const byVoidOrder = [...e2eDocuments].sort((a, b) => {
+    const rank = (d) =>
+      d.docType === 'NOTA_CREDITO' ? 0 : d.docType === 'GUIA_REMISION_REMITENTE' ? 2 : 1;
+    return rank(a) - rank(b);
+  });
+  for (const document of byVoidOrder) {
+    if (dryRun) {
+      console.log(`  [simulado] dar de baja ${document.number ?? 'borrador'}`);
+      continue;
+    }
+    if (document.status === 'DRAFT') {
+      // Un borrador nunca tomó correlativo (D-072): no hay nada que comunicar a SUNAT y
+      // tampoco nada que ensucie producción. Se deja como está.
+      console.log(`  ${document.docType} en borrador: sin correlativo, no hay baja que hacer`);
+      continue;
+    }
+    const res = await call(`/invoicing/documents/${document.id}/void`, {
+      method: 'POST',
+      body: { reason: REASON },
+    });
+    console.log(
+      res.ok
+        ? `  ${document.number} dado de baja`
+        : `  ${document.number} NO se pudo dar de baja: ${res.body?.message ?? res.status}`,
+    );
+  }
+
+  // 4. Despachos: devuelven el stock y bajan el pedido de "atendido".
+  const dispatches = await call('/dispatches?status=ISSUED');
+  const e2eDispatches = (Array.isArray(dispatches.body) ? dispatches.body : []).filter((d) =>
+    isE2eCustomer(d.customerName),
+  );
+  console.log(`Despachos E2E vivos: ${e2eDispatches.length}`);
+  for (const dispatch of e2eDispatches) {
+    if (dryRun) {
+      console.log(`  [simulado] revertir el despacho ${dispatch.code} y devolver su stock`);
+      continue;
+    }
+    const res = await call(`/dispatches/${dispatch.id}/reverse`, {
+      method: 'POST',
+      body: { reason: REASON },
+    });
+    console.log(
+      res.ok
+        ? `  despacho ${dispatch.code} revertido; su stock vuelve al almacén`
+        : `  despacho ${dispatch.code} NO se pudo revertir: ${res.body?.message ?? res.status}`,
+    );
+  }
+
   // -1.5) Pedidos y cotizaciones E2E (Fase 5a, D-054/D-066). Van después de las órdenes
   //       de producción —una OP viva fabricando con material reservado bloquea la
   //       anulación del pedido— y **antes** de todo lo demás: una reserva `ACTIVA` hace

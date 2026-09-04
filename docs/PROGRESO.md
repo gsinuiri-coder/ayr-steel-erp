@@ -4,19 +4,20 @@
 
 ## Estado general
 
-| Fase                                         | Estado                  | Cierre                                                   |
-| -------------------------------------------- | ----------------------- | -------------------------------------------------------- |
-| 0 — Bootstrap                                | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                        |
-| 1 — Maestros, catálogo, precios, importación | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción |
-| 2a — Kardex + compras + alta de bobinas      | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho   |
-| 2b — Partido, merma, cierre, anulación       | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho   |
-| 3 — Corte tercerizado + flejes               | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho   |
-| 3b — Reversa de recepción de corte           | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho   |
-| 4 — Producción drywall + `/planta`           | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho          |
-| 5a — Cotización → pedido + reserva           | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho          |
-| 5b — Producción de coberturas y venta        | ⚪ Pendiente            | —                                                        |
-| 6 — Facturación Nubefact                     | ⚪ Pendiente            | —                                                        |
-| 7 — Auditoría, reportes, UAT                 | ⚪ Pendiente            | —                                                        |
+| Fase                                          | Estado                      | Cierre                                                   |
+| --------------------------------------------- | --------------------------- | -------------------------------------------------------- |
+| 0 — Bootstrap                                 | ✅ Cerrada (2026-09-02)     | Login E2E verde en prod, CI verde                        |
+| 1 — Maestros, catálogo, precios, importación  | ✅ Cerrada (2026-09-02)     | E2E de Fase 1 verdes en local + CI, deploy en producción |
+| 2a — Kardex + compras + alta de bobinas       | ✅ Cerrada (2026-09-03)     | 16/16 E2E verdes en producción, CI verde, deploy hecho   |
+| 2b — Partido, merma, cierre, anulación        | ✅ Cerrada (2026-09-04)     | 30/30 E2E verdes en producción, CI verde, deploy hecho   |
+| 3 — Corte tercerizado + flejes                | ✅ Cerrada (2026-09-02)     | 34/34 E2E verdes en producción, CI verde, deploy hecho   |
+| 3b — Reversa de recepción de corte            | ✅ Cerrada (2026-09-03)     | 40/40 E2E verdes en producción, CI verde, deploy hecho   |
+| 4 — Producción drywall + `/planta`            | ✅ Cerrada (2026-09-03)     | 56/56 E2E en producción, CI verde, deploy hecho          |
+| 5a — Cotización → pedido + reserva            | ✅ Cerrada (2026-09-04)     | 83/83 E2E en producción, CI verde, deploy hecho          |
+| 5b — Facturación, GRE, despacho y cobranza    | 🟡 En progreso (2026-09-04) | Milestones 1 y 2 completos; E2E y despliegue pendientes  |
+| 5c — Producción de coberturas y venta directa | ⚪ Pendiente                | —                                                        |
+| 6 — Importación de comprobantes               | ⚪ Pendiente                | —                                                        |
+| 7 — Auditoría, reportes, UAT                  | ⚪ Pendiente                | —                                                        |
 
 ## Fase 0 — detalle
 
@@ -504,6 +505,123 @@ cierra en cero.
   adicional). El test la verifica igual, para que siga valiendo si la escala cambia.
 - Los pendientes de Fase 2b/3/4 (paginación de `findMovements`, prorrateo siempre por kg,
   receta no congelada en la OP) siguen igual.
+
+## Fase 5b — detalle
+
+**Facturación electrónica, guía de remisión, despacho y cobranza** (RF-70, RF-74..RF-79,
+RF-86..RF-89; D-070..D-078). El realcance de la fase es D-070: 5b dejó de ser "producción
+de coberturas y venta" —eso pasó a **5c**— y pasó a cerrar el tramo que iba **después** del
+pedido, que era el hueco real que 5a dejó: el pedido reservaba material y no tenía forma de
+salir del almacén, de facturarse ni de cobrarse.
+
+### El puerto, y por qué el dominio no conoce a Nubefact (D-071)
+
+`ElectronicInvoicingProvider` define cuatro operaciones en vocabulario de SUNAT —emitir
+comprobante, emitir guía, consultar estado, comunicar baja, más la consulta de la baja que
+la revisión obligó a separar— y `NubefactProvider` es la única implementación. Un
+`grep -i nubefact` fuera de `invoicing/providers/nubefact/` solo devuelve la fábrica del
+módulo, los nombres de las variables de entorno y los comentarios del puerto que explican
+la decisión.
+
+`NullInvoicingProvider` se ata cuando faltan credenciales y devuelve **error de envío**, que
+es lo mismo que devuelve un PSE caído: un entorno sin PSE ejercita el mismo camino que una
+caída real, en vez de un camino falso que solo existe en desarrollo.
+
+### El corazón: dos fases y un correlativo que no se desperdicia (D-072, D-073)
+
+Enviar un comprobante hace, en este orden: (1) toma correlativo, deja el documento en
+`ISSUED` y **confirma la transacción**; (2) intenta el envío fuera de esa transacción; (3)
+según lo que conteste el PSE, pasa a `ACCEPTED`, `REJECTED` o `SEND_ERROR`. Desde el final
+del paso 1 el documento ya habilita el despacho.
+
+Invertirlo —enviar dentro de la transacción— haría que una caída del PSE revirtiera un
+correlativo ya tomado, que es exactamente el hueco que D-072 evita, o dejara un camión
+esperando a que conteste un tercero.
+
+El job (`invoicing.send-pending`, cada 15 minutos **y al arrancar**) recoge lo que el
+intento inline no pudo. Corre al arrancar porque el API escala a cero en Cloud Run: es la
+misma advertencia de D-069, y acá vale igual.
+
+### El despacho cierra el pedido, la factura no (D-074)
+
+`dispatches` mueve kardex por `InventoryService` (regla dura 2), consume la reserva **antes**
+de la salida —si fuera al revés, la propia reserva del pedido bloquearía contra la invariante
+de D-066 justo la salida que viene a cumplirla— y recalcula el estado del pedido desde las
+filas de despacho vigentes.
+
+**El cambio fino de esta fase**: la reserva se consume **solo por lo despachado**, no entera.
+`reservations.qty` pasó a significar "lo que todavía está prometido"; la promesa original
+vive en `sales_order_items.reserve_qty` y no se toca, así que no se pierde información.
+Consumirla entera en un despacho parcial habría dejado el resto de la línea —material que el
+pedido sigue prometiendo— sin nada que lo proteja: el mismo agujero que la auditoría de 5a
+encontró en el otro sentido.
+
+La reversa devuelve stock, restaura la reserva y recalcula el pedido, y se bloquea si un
+documento electrónico vigente declara ese traslado (la guía del propio despacho, o un
+comprobante vivo que facture sus líneas). Deshacerlo al revés dejaría al kardex diciendo que
+la mercadería está en el almacén y a SUNAT diciendo que salió.
+
+### Cobranza, espejo de compras (D-075)
+
+`customer_payments` es `supplier_payments` mirado desde el otro lado: saldo recalculado y
+nunca almacenado, cobro contra el **comprobante** —no contra el pedido, que no tiene saldo—
+y reversa que marca la fila sin borrarla, con el motivo al `audit_log`. La única asimetría
+deliberada es de roles: registrar un cobro es también de VENDEDOR, porque cobrar es parte de
+su trabajo y compras es un módulo de planta al que no entra.
+
+### Lo demás
+
+- **D-076**: VENDEDOR da de alta y edita clientes; documento, días de crédito y baja lógica
+  siguen siendo de ADMINISTRADOR (y la revisión encontró que faltaba cerrarlo en el **alta**,
+  no solo en la edición).
+- **D-077**: cliente `PÚBLICO EN GENERAL` sembrado e inmutable, con bloqueo suave del tope de
+  S/ 700 y excepción de ADMINISTRADOR registrada en el comprobante y en la auditoría.
+- **D-078**: modalidad de traslado por despacho; el catálogo de vehículos y conductores queda
+  diferido y lo reemplaza el autocompletado desde despachos anteriores. El **ubigeo** de
+  partida y llegada se captura en el despacho —SUNAT lo exige en la guía— por la misma razón
+  que todo lo demás de esta fase: un dato mal puesto vuelve rechazado con el correlativo ya
+  gastado.
+
+### Hallazgos de la revisión (revisor API, revisor web, auditor-seguridad)
+
+Tres pasadas en paralelo sobre el diff del Milestone 1. **4 bloqueantes, 7 altos, 10 medios
+y varios bajos**, todos corregidos antes de seguir con el Milestone 2. Los que cambiaron
+decisiones y no solo código:
+
+**Bloqueantes.**
+
+- `SEND_ERROR` no contaba como emitido, así que la misma línea de pedido se podía facturar
+  dos veces **justo con el PSE caído** — el escenario para el que existe la contingencia. El
+  estado tiene correlativo tomado y el job lo va a reintentar: cuenta.
+- Los topes de "cuánto queda por facturar" se comprobaban solo al **crear el borrador**, y un
+  borrador no consume nada: dos borradores sobre la misma línea pasaban los dos y, al
+  enviarse, tomaban número los dos. Ahora se revalida dentro de la transacción que toma el
+  correlativo, que es el último punto en el que todavía se puede decir que no.
+- Dos líneas del mismo documento sobre la misma línea de pedido se comparaban cada una contra
+  el pendiente completo.
+- **La baja se confirmaba sola.** `refreshStatus` de un `VOID_PENDING` preguntaba por el
+  **comprobante**, y un documento con baja en trámite es por definición uno que SUNAT ya
+  aceptó: la consulta devolvía "aceptado" y el documento se marcaba anulado sin que SUNAT lo
+  anulara, con la cuenta por cobrar desapareciendo. Obligó a partir la consulta de baja en un
+  método propio del puerto.
+
+**Altos.** 401/403 se clasificaban como **rechazo** en vez de error de envío, así que un token
+vencido quemaba el correlativo de cada comprobante; un documento con ticket se **reemitía**
+en cada barrido en vez de consultarse; el reintento manual de una guía armaba un payload de
+comprobante vacío; corregir una guía rechazada violaba un `CHECK` y salía como 500; el
+`VOID_PENDING` era un estado sin salida si SUNAT rechazaba la baja; y `precio_unitario` se
+calculaba con `number` —11.86 × 1.18 = 13.994799999999998— sobre un campo cuya coherencia el
+PSE valida.
+
+**Seguridad.** El script de secretos de GitHub prefería las credenciales **reales** del PSE y
+solo caía a la demo si faltaban, en un job que corre en cada pull request; los archivos que
+devuelve el PSE se descargaban de cualquier URL que dijera su respuesta, sin tope de tamaño;
+y faltaba la comprobación de propiedad al estilo de RF-66, así que un vendedor podía emitir
+el borrador de otro.
+
+**Web.** El total se recalculaba con lo que el usuario está tipeando y `toDecimal` lanzaba con
+un estado tan normal como el punto de `.5`, tirando la pantalla entera; y los kilos se
+restaban con `number`, rompiendo la regla dura 1 sobre la cifra que decide cuánto se acredita.
 
 ## Bloqueos
 

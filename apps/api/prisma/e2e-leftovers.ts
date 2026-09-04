@@ -25,6 +25,9 @@ async function main(): Promise<void> {
       quotations,
       salesOrders,
       reservations,
+      dispatches,
+      fiscalDocuments,
+      livePayments,
     ] = await Promise.all([
       prisma.supplier.findMany({
         where: { name: TEST_NAME },
@@ -84,6 +87,23 @@ async function main(): Promise<void> {
           salesOrder: { select: { seq: true, customer: { select: { name: true } } } },
         },
       }),
+      // Fase 5b: lo que el ciclo fiscal y logístico puede dejar en producción. El rastro
+      // que importa no es el papel —un comprobante dado de baja **debe** seguir existiendo—
+      // sino el **stock** que un despacho vivo mantiene fuera del almacén y el **saldo** de
+      // una cuenta por cobrar inventada. Los dos tienen que quedar en cero.
+      prisma.dispatch.findMany({
+        where: { salesOrder: { customer: { name: TEST_NAME } } },
+        select: { seq: true, status: true },
+      }),
+      prisma.fiscalDocument.findMany({
+        where: { customer: { name: TEST_NAME } },
+        select: { number: true, docType: true, status: true, totalPen: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.customerPayment.findMany({
+        where: { reversedAt: null, document: { customer: { name: TEST_NAME } } },
+        select: { amountPen: true, document: { select: { number: true } } },
+      }),
     ]);
 
     // `inventory_balances.item_id` es polimórfico (§3.2): no hay FK que unir, así que el
@@ -135,6 +155,26 @@ async function main(): Promise<void> {
           r.salesOrder.seq,
         ).padStart(6, '0')} (${r.salesOrder.customer.name})`,
       );
+    }
+    // Fase 5b. Un despacho `ISSUED` es material de prueba **fuera del almacén**: es el
+    // residuo que la purga tiene que dejar en cero revirtiéndolo.
+    const liveDispatches = dispatches.filter((d) => d.status === 'ISSUED');
+    console.warn(
+      `despachos E2E: ${dispatches.length} (vivos: ${liveDispatches.length}) [${dispatches
+        .map((d) => d.status)
+        .join(', ')}]`,
+    );
+    console.warn(`documentos electrónicos E2E: ${fiscalDocuments.length}`);
+    for (const d of fiscalDocuments) {
+      console.warn(
+        `  ${d.number ?? 'borrador'}  ${d.docType}  ${d.status}  ${d.totalPen.toFixed(2)}`,
+      );
+    }
+    // Un cobro vigente sobre un comprobante de prueba es dinero inventado en la cuenta por
+    // cobrar: tiene que quedar en cero.
+    console.warn(`cobros vigentes sobre comprobantes E2E: ${livePayments.length}`);
+    for (const payment of livePayments) {
+      console.warn(`  ${payment.document.number ?? 'borrador'} — ${payment.amountPen.toFixed(2)}`);
     }
     console.warn(`movimientos de kardex en total: ${movements}`);
   } finally {
