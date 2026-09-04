@@ -164,13 +164,14 @@ export abstract class ElectronicInvoicingProvider {
   abstract readonly configured: boolean;
 
   /**
-   * Host del que se admiten los archivos firmados (PDF, XML, CDR).
+   * Hosts de los que se admiten los archivos firmados (PDF, XML, CDR).
    *
    * Los enlaces vienen dentro de la respuesta del proveedor, así que descargarlos sin
    * comprobar a dónde apuntan convertiría al API en un lector de cualquier dirección que
-   * ese cuerpo diga. `null` cuando el proveedor no sirve archivos.
+   * ese cuerpo diga. Es una **lista** porque un PSE sirve su API y sus archivos desde
+   * dominios distintos; vacía cuando el proveedor no sirve archivos.
    */
-  abstract readonly fileHost: string | null;
+  abstract readonly fileHosts: readonly string[];
 
   abstract issueDocument(command: IssueDocumentCommand): Promise<ProviderResult>;
 

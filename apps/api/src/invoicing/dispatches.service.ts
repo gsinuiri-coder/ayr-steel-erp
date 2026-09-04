@@ -334,8 +334,13 @@ export class DispatchesService {
 
         const declaredNote = dispatch.documents.find((d) => DECLARED_STATUSES.includes(d.status));
         if (declaredNote) {
+          // El mensaje dice **el camino completo** porque la baja de una guía puede tener
+          // que hacerse en el panel del PSE: hoy la operación de baja del proveedor no la
+          // reconoce ("el documento no existe o no fue enviado"), y sin decirlo el despacho
+          // parecía imposible de revertir para siempre. «Consultar al PSE» sobre la guía
+          // reconcilia la baja hecha por fuera y desbloquea esta reversa.
           throw new BadRequestException(
-            `La guía ${declaredNote.number ?? 'de este despacho'} está vigente: dala de baja antes de revertir el despacho`,
+            `La guía ${declaredNote.number ?? 'de este despacho'} está vigente y declara este traslado: dala de baja y usa «Consultar al PSE» sobre ella antes de revertir el despacho.`,
           );
         }
 

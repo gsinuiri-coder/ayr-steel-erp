@@ -21,7 +21,7 @@ import {
 export class NullInvoicingProvider extends ElectronicInvoicingProvider {
   readonly name = 'sin proveedor';
   readonly configured = false;
-  readonly fileHost = null;
+  readonly fileHosts: readonly string[] = [];
 
   constructor(
     private readonly reason = 'El proveedor de facturación electrónica no está configurado',

@@ -7,6 +7,7 @@ import {
   buildDispatchNotePayload,
   buildInvoicePayload,
   buildVoidPayload,
+  buildVoidQueryPayload,
 } from './nubefact-payload';
 
 /**
@@ -245,6 +246,28 @@ describe('buildDispatchNotePayload (D-078)', () => {
     );
     expect(payload.documento_relacionado_serie).toBe('F001');
     expect(payload.documento_relacionado_numero).toBe(12);
+  });
+});
+
+describe('buildVoidQueryPayload', () => {
+  it('una guía se consulta con su propia operación, no con la de anulación', () => {
+    // El proveedor no tiene consulta de anulación para una guía: su estado —incluido el de
+    // haber sido dada de baja desde el panel— sale de `consultar_guia`.
+    const payload = buildVoidQueryPayload({
+      docType: FiscalDocType.GUIA_REMISION_REMITENTE,
+      series: 'T001',
+      correlative: 5,
+    });
+    expect(payload.operacion).toBe('consultar_guia');
+  });
+
+  it('un comprobante sí usa la consulta de anulación', () => {
+    const payload = buildVoidQueryPayload({
+      docType: FiscalDocType.FACTURA,
+      series: 'F001',
+      correlative: 12,
+    });
+    expect(payload.operacion).toBe('consultar_anulacion');
   });
 });
 

@@ -39,6 +39,8 @@ interface NubefactResponse {
   enlace_del_cdr?: string;
   sunat_ticket_numero?: string;
   anulacion_aceptada_por_sunat?: boolean;
+  /** El proveedor marca así un documento ya dado de baja al consultarlo. */
+  anulado?: boolean;
   /** Texto del proveedor cuando el documento queda esperando a SUNAT. */
   nota_importante?: string;
 }
@@ -114,15 +116,23 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
   }
 
   /**
-   * Los archivos firmados salen del mismo host que atiende la API. Si el proveedor
-   * empezara a servirlos desde un CDN propio, acá es donde se agrega —y sigue siendo una
-   * lista explícita, no "lo que diga la respuesta".
+   * **Los archivos firmados no salen del host de la API.** La API atiende en `api.…` y los
+   * enlaces del PDF, el XML y el CDR apuntan a `www.…`; exigir el mismo host hacía que no
+   * se guardara ninguno.
+   *
+   * Sigue siendo una lista explícita derivada de la URL configurada, no "lo que diga la
+   * respuesta": si el proveedor empezara a servirlos desde un CDN, acá es donde se agrega.
    */
-  get fileHost(): string | null {
+  get fileHosts(): readonly string[] {
     try {
-      return this.url ? new URL(this.url).host : null;
+      if (!this.url) return [];
+      const host = new URL(this.url).host;
+      // `api.nubefact.com` → también `nubefact.com` y `www.nubefact.com`.
+      const labels = host.split('.');
+      const parent = labels.length > 2 ? labels.slice(1).join('.') : host;
+      return [...new Set([host, parent, `www.${parent}`])];
     } catch {
-      return null;
+      return [];
     }
   }
 
@@ -255,8 +265,11 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
     // **El orden importa.** Para una consulta de baja, el veredicto es el de la
     // anulación y **solo** ese: caer a `aceptada_por_sunat` daría siempre "aceptado",
     // porque un documento con baja en trámite es uno que SUNAT ya había aceptado.
+    // En la consulta de baja se acepta también `anulado`: una **guía** no tiene consulta
+    // de anulación propia y su baja —hecha desde el panel del PSE, porque su operación de
+    // baja no la reconoce— se ve en ese campo al consultarla.
     const accepted = options.voidQuery
-      ? data.anulacion_aceptada_por_sunat
+      ? (data.anulacion_aceptada_por_sunat ?? (data.anulado === true ? true : undefined))
       : (data.aceptada_por_sunat ?? data.anulacion_aceptada_por_sunat);
     const soapError = data.sunat_soap_error;
 

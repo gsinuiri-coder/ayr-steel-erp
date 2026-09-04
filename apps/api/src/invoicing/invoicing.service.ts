@@ -1154,10 +1154,28 @@ export class InvoicingService {
     // un 500 sobre un documento que ya tomó correlativo, que es exactamente lo que D-073
     // existe para evitar.
     try {
-      // Con ticket, el documento **ya está en el PSE**: reemitirlo con la misma serie y
-      // correlativo lo devolvería como duplicado —o sea, como rechazo— y quemaría el
-      // número. Lo que corresponde es preguntar por él.
-      const result = document.providerTicket
+      /**
+       * **Reenviar o consultar**, y el criterio no puede ser el ticket.
+       *
+       * Un documento que el PSE ya recibió y que espera a SUNAT **no siempre trae ticket**:
+       * boletas y guías vuelven `PENDING` sin él. Decidir por el ticket hacía que el
+       * barrido los reemitiera con la misma serie y correlativo, el PSE los devolviera
+       * como duplicados y eso sí se leyera como rechazo terminal — el barrido destruía
+       * exactamente lo que venía a rescatar.
+       *
+       * El estado ya lo dice, y es lo que hay que mirar:
+       * - `SEND_ERROR` — el envío **nunca entró**. Se reenvía.
+       * - `ISSUED` con intentos previos — la última respuesta fue `PENDING`, o sea que el
+       *   PSE lo tiene. Se consulta.
+       * - `ISSUED` sin intentos — recién numerado por `assign`. Se envía por primera vez.
+       *
+       * `document.sendAttempts` se lee **antes** de `claimAttempt`, así que todavía es el
+       * contador previo a este intento.
+       */
+      const alreadyAtProvider =
+        document.status === FiscalDocumentStatus.ISSUED &&
+        (document.sendAttempts > 0 || document.providerTicket !== null);
+      const result = alreadyAtProvider
         ? await this.callProvider(() =>
             this.provider.queryStatus({
               docType: document.docType,
@@ -1355,7 +1373,11 @@ export class InvoicingService {
     for (const [url, ext, field, contentType] of files) {
       if (!url) continue;
       if (!this.isAllowedFileUrl(url)) {
-        this.logger.warn(`El PSE devolvió un enlace de ${ext} fuera de su propio dominio`);
+        // Se avisa con el host para que un cambio de dominio del proveedor se vea en los
+        // logs en vez de manifestarse como "los comprobantes no tienen PDF".
+        this.logger.warn(
+          `El PSE devolvió un enlace de ${ext} en un host no admitido: ${new URL(url).host}`,
+        );
         continue;
       }
       try {
@@ -1392,9 +1414,9 @@ export class InvoicingService {
     }
   }
 
-  /** Host admitido para los archivos, tal como lo declara el proveedor atado. */
-  private providerHost(): string | null {
-    return this.provider.fileHost;
+  /** Hosts admitidos para los archivos, tal como los declara el proveedor atado. */
+  private providerHosts(): readonly string[] {
+    return this.provider.fileHosts;
   }
 
   /**
@@ -1408,8 +1430,12 @@ export class InvoicingService {
     try {
       const target = new URL(url);
       if (target.protocol !== 'https:') return false;
-      const base = this.providerHost();
-      return base !== null && target.host === base;
+      // Una **lista** y no un solo host: el PSE sirve los archivos firmados desde un
+      // dominio distinto al de su API (`www.…` frente a `api.…`), y exigir el mismo host
+      // hacía que ningún PDF, XML ni CDR se guardara nunca — en silencio, salvo por una
+      // línea de log. Sin ellos no hay papel que mandarle al cliente ni CDR que mostrar en
+      // un requerimiento.
+      return this.providerHosts().includes(target.host);
     } catch {
       return false;
     }
@@ -1545,6 +1571,10 @@ export class InvoicingService {
     // lo arreglara —la baja contesta "ya fue anulado" para siempre— y el comprobante
     // quedaba contado como deuda vigente de un cliente que ya no la tiene.
     if (document.status === FiscalDocumentStatus.ACCEPTED) {
+      // Para una **guía** esta consulta es más que una reconciliación: es la única salida.
+      // La operación de baja del proveedor no reconoce una GRE ya aceptada, así que darla
+      // de baja se hace en su panel — y sin esto el sistema nunca se enteraba, dejando el
+      // despacho bloqueado para siempre por una guía que ya no existe.
       const voidResult = await this.callProvider(() => this.provider.queryVoidStatus(command));
       if (voidResult.outcome === 'ACCEPTED') {
         const updated = await this.prisma.fiscalDocument.updateMany({
@@ -1839,6 +1869,24 @@ export class InvoicingService {
     // Igual que `deliver`: la garantía de que un fallo del PSE no se convierte en un error
     // del usuario es de este servicio, no del adaptador (D-073). Acá pesa más que en
     // ningún otro lado, porque del otro lado del envío hay un camión esperando.
+    // Mismo criterio que `deliver`: si el PSE ya la tiene, se consulta en vez de
+    // reemitirla con el mismo correlativo.
+    if (
+      document.status === FiscalDocumentStatus.ISSUED &&
+      (document.sendAttempts > 0 || document.providerTicket !== null)
+    ) {
+      const queried = await this.callProvider(() =>
+        this.provider.queryStatus({
+          docType: document.docType,
+          series: document.seriesRef?.series ?? '',
+          correlative: document.correlative ?? 0,
+        }),
+      );
+      await this.applyResult(id, queried);
+      if (queried.outcome === 'ACCEPTED') await this.storeFiles(id, document.number, queried);
+      return;
+    }
+
     const result = await this.callProvider(() =>
       this.provider.issueDispatchNote({
         series: document.seriesRef?.series ?? '',

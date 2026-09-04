@@ -264,6 +264,12 @@ export function buildQueryPayload(command: QueryDocumentCommand): Record<string,
  * tiene que ser la suya.
  */
 export function buildVoidQueryPayload(command: QueryDocumentCommand): Record<string, unknown> {
+  // Una guía no tiene "anulación" que consultar en el proveedor: su estado —incluido el de
+  // haber sido dada de baja desde el panel— sale de `consultar_guia`, la misma operación
+  // que su consulta normal.
+  if (command.docType === FiscalDocType.GUIA_REMISION_REMITENTE) {
+    return buildQueryPayload(command);
+  }
   return {
     operacion: 'consultar_anulacion',
     tipo_de_comprobante: DOC_TYPE_CODE[command.docType],
