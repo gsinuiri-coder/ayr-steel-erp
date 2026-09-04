@@ -34,6 +34,9 @@ export interface CoilDto {
   id: string;
   code: string;
   kind: string;
+  /** D-085: color de la bobina; null en las galvanizadas. */
+  colorId?: string | null;
+  purchaseId?: string | null;
   typeKey: string;
   status: string;
   widthMm: string;
@@ -55,14 +58,21 @@ export interface BusinessLineDto {
 export interface ProductDto {
   id: string;
   sku: string;
+  businessLineId: string;
+  unit: string;
+  colorId?: string | null;
 }
 
 export interface ProductBomDto {
   id: string;
   productId: string;
-  kgPerPiece: string;
-  suggestedKgPerPiece: string;
-  inputWidthMm: string;
+  /** D-087: `DRYWALL` o `ROOFING`. Las tres de abajo son null en una receta de cobertura. */
+  kind: string;
+  kgPerPiece: string | null;
+  suggestedKgPerPiece: string | null;
+  inputWidthMm: string | null;
+  pieceLengthMm: string | null;
+  inputThicknessMm: string;
 }
 
 export interface ProductionConsumptionDto {
@@ -80,6 +90,9 @@ export interface ProductionConsumptionDto {
 export interface ProductionReportDto {
   id: string;
   pieces: number;
+  /** D-083: metros que entraron al kardex. Null en drywall y en plancha de catálogo. */
+  metersM?: string | null;
+  piecesDetail?: { lineNumber: number; lengthMm: string; qty: number }[];
   theoreticalKg: string;
   materialCostPen: string | null;
   unitCostPen: string | null;
@@ -90,9 +103,22 @@ export interface ProductionReportDto {
 export interface ProductionOrderDto {
   id: string;
   code: string;
+  /** D-087: `DRYWALL` o `ROOFING`. */
+  kind: string;
   status: string;
   productId: string;
+  productUnit: string;
+  /** D-084: el pedido del que nació. Null en una corrida de stock de drywall. */
+  salesOrderId: string | null;
+  salesOrderCode: string | null;
+  customerName: string | null;
+  /** D-084: el plan de corte copiado del pedido. Vacío en drywall. */
+  items: { lineNumber: number; lengthMm: string; qty: number }[];
   piecesReported: number;
+  /** D-083: metros buenos acumulados. Null cuando el producto se cuenta en piezas. */
+  metersReported: string | null;
+  /** D-089: los kilos que planta declaró que la bobina consumió. */
+  consumedDeclaredKg: string | null;
   assignedKg: string;
   consumedKg: string;
   scrapKg: string | null;
@@ -156,7 +182,7 @@ export async function createCuttingSupplier(api: APIRequestContext): Promise<Cre
   return postJson<CreatedSupplier>(api, '/api/suppliers', {
     code,
     docType: 'RUC',
-    docNumber: `20${String(Date.now()).slice(-9)}`,
+    docNumber: `20${String(Date.now()).slice(-6)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`,
     name: `E2E Proveedor de corte ${code}`,
     creditDays: 0,
     providesCuttingService: true,

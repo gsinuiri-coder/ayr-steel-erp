@@ -74,7 +74,11 @@ export async function createSupplier(
   overrides: Partial<{ code: string; docNumber: string; name: string }> = {},
 ): Promise<CreatedSupplier> {
   const code = overrides.code ?? `EE${randomLetters(4)}`;
-  const docNumber = overrides.docNumber ?? `20${String(Date.now()).slice(-9)}`;
+  // Con solo `Date.now()` dos altas en el mismo milisegundo chocaban por RUC repetido, y
+  // un escenario de esta suite crea tres proveedores seguidos: el sufijo aleatorio lo cierra.
+  const docNumber =
+    overrides.docNumber ??
+    `20${String(Date.now()).slice(-6)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
   const name = overrides.name ?? `E2E Proveedor ${code}`;
   return postJson<CreatedSupplier>(api, '/api/suppliers', {
     code,
@@ -95,13 +99,16 @@ export interface CreatedFinish {
 /** Acabado de prueba con código único (entra en el código RF-13 de cada bobina). */
 export async function createFinish(
   api: APIRequestContext,
-  overrides: Partial<{ code: string; name: string }> = {},
+  // `densityFactor` es override desde Fase 6: el kilo teórico de una cobertura sale de la
+  // geometría de la bobina por ese factor (D-047), y una densidad redonda deja la aritmética
+  // del test comprobable a ojo.
+  overrides: Partial<{ code: string; name: string; densityFactor: string }> = {},
 ): Promise<CreatedFinish> {
   const code = overrides.code ?? `E2E${randomLetters(4)}`;
   const finish = await postJson<CreatedFinish>(api, '/api/finishes', {
     code,
     name: overrides.name ?? `Acabado E2E ${code}`,
-    densityFactor: '7.85',
+    densityFactor: overrides.densityFactor ?? '7.85',
   });
   return { id: finish.id, code: finish.code, name: finish.name };
 }

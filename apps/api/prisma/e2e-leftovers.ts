@@ -21,6 +21,7 @@ async function main(): Promise<void> {
       movements,
       profiles,
       orders,
+      colors,
       customers,
       quotations,
       salesOrders,
@@ -57,8 +58,17 @@ async function main(): Promise<void> {
       }),
       prisma.productionOrder.findMany({
         where: { product: { sku: { startsWith: 'E2E-' } } },
-        select: { seq: true, status: true },
+        // Desde Fase 6 el listado trae las dos clases de orden (D-087): el `kind` es lo que
+        // dice si una que quedó viva retiene un fleje o una bobina entera.
+        select: { seq: true, status: true, kind: true },
         orderBy: { seq: 'asc' },
+      }),
+      // Fase 6 (D-085): un color de prueba activo no bloquea nada, pero ensucia el selector
+      // que planta usa para elegir el rollo, así que se cuenta como residuo.
+      prisma.color.findMany({
+        where: { code: { startsWith: 'E2E' } },
+        select: { code: true, name: true, isActive: true },
+        orderBy: { code: 'asc' },
       }),
       // Fase 5a: clientes, cotizaciones, pedidos y —lo que de verdad importa— reservas.
       // Una reserva ACTIVA sobreviviente bloquea merma, corte, cierre y anulación de la
@@ -141,8 +151,14 @@ async function main(): Promise<void> {
       `perfiles E2E de drywall (Fase 4): ${profiles.length} (activos: ${active(profiles)})`,
     );
     console.warn(
-      `órdenes de producción E2E: ${orders.length} [${orders.map((o) => o.status).join(', ')}]`,
+      `órdenes de producción E2E: ${orders.length} [${orders
+        .map((o) => `${o.kind}:${o.status}`)
+        .join(', ')}]`,
     );
+    console.warn(`colores E2E: ${colors.length} (activos: ${active(colors)})`);
+    for (const c of colors.filter((x) => x.isActive)) {
+      console.warn(`  ${c.code} — ${c.name}`);
+    }
     // Regla dura 1: una cantidad de kardex no se compara con `Number` ni siquiera acá.
     const piecesInStock = profileStock.filter((b) => toDecimal(b.qty.toString()).gt(0));
     console.warn(`perfiles E2E con piezas en stock: ${piecesInStock.length}`);

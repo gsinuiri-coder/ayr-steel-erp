@@ -27,6 +27,9 @@ export interface CustomerDto {
 }
 
 export interface SalesItemDto {
+  /** D-083: los largos de una línea compuesta de cobertura. Vacío en una línea simple. */
+  pieces?: { lineNumber: number; lengthMm: string; qty: number }[];
+  description?: string;
   id: string;
   lineNumber: number;
   productId: string;

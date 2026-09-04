@@ -130,8 +130,12 @@ try {
       console.log(`  [simulado] deshacer y anular la orden de producción ${order.code}`);
       continue;
     }
+    // D-087: las mutaciones de una orden de coberturas cuelgan de `/production/roofing`.
+    // El listado es uno solo, así que la clase la decide el `kind` de cada fila.
+    const base =
+      order.kind === 'ROOFING' ? `/production/roofing/${order.id}` : `/production/${order.id}`;
     if (order.status === 'CLOSED') {
-      const res = await call(`/production/${order.id}/reopen`, {
+      const res = await call(`${base}/reopen`, {
         method: 'POST',
         body: { reason: REASON },
       });
@@ -147,7 +151,7 @@ try {
     );
     // Del más nuevo al más viejo: la reversa solo acepta el último reporte vigente.
     for (const report of [...active].reverse()) {
-      const res = await call(`/production/${order.id}/reports/${report.id}/reverse`, {
+      const res = await call(`${base}/reports/${report.id}/reverse`, {
         method: 'POST',
         body: { reason: REASON },
       });
@@ -157,13 +161,13 @@ try {
           : `  ${order.code}: reporte de ${report.pieces} piezas NO se pudo revertir: ${res.body?.message ?? res.status}`,
       );
     }
-    const cancelled = await call(`/production/${order.id}/cancel`, {
+    const cancelled = await call(`${base}/cancel`, {
       method: 'POST',
       body: { reason: REASON },
     });
     console.log(
       cancelled.ok
-        ? `  ${order.code} anulada; sus flejes quedan libres`
+        ? `  ${order.code} anulada; su material queda libre`
         : `  ${order.code} NO se pudo anular: ${cancelled.body?.message ?? cancelled.status}`,
     );
   }
@@ -600,6 +604,28 @@ try {
     );
   }
 
+  // 2.9) Colores E2E (Fase 6, D-085). Van **al final** de las desactivaciones: el API se
+  //      niega a desactivar un color que un producto activo o una bobina viva todavía use,
+  //      así que solo funciona cuando ya se desactivaron los productos y se anularon las
+  //      bobinas de prueba. Si alguno queda activo, el log lo dice con el motivo.
+  const colors = await call('/colors');
+  const e2eColors = (Array.isArray(colors.body) ? colors.body : []).filter(
+    (c) => typeof c.code === 'string' && c.code.startsWith('E2E') && c.isActive,
+  );
+  console.log(`Colores E2E activos: ${e2eColors.length}`);
+  for (const color of e2eColors) {
+    if (dryRun) {
+      console.log(`  [simulado] desactivar el color ${color.code} — ${color.name}`);
+      continue;
+    }
+    const res = await call(`/colors/${color.id}`, { method: 'PATCH', body: { isActive: false } });
+    console.log(
+      res.ok
+        ? `  ${color.code} desactivado`
+        : `  ${color.code} NO se pudo desactivar: ${res.body?.message ?? res.status}`,
+    );
+  }
+
   // 3) Estado final del valorizado, para dejarlo por escrito en el log.
   const remaining = await call('/coils?status=OPEN');
   const withStock = (Array.isArray(remaining.body) ? remaining.body : []).filter(
@@ -611,6 +637,20 @@ try {
   }
   // Una reserva viva sobreviviente es el residuo más caro de esta fase: bloquea merma,
   // corte, cierre y anulación de la bobina, así que se deja dicho explícitamente.
+  const e2eProducts = await call('/catalog');
+  const withProductStock = [];
+  for (const p of (Array.isArray(e2eProducts.body) ? e2eProducts.body : []).filter(
+    (p) => typeof p.sku === 'string' && p.sku.startsWith('E2E-'),
+  )) {
+    const balances = await call(`/inventory/balances?itemType=PRODUCT&itemId=${p.id}`);
+    const balance = Array.isArray(balances.body) ? balances.body[0] : undefined;
+    if (balance && Number.parseFloat(balance.qty) > 0) {
+      withProductStock.push(`${p.sku} — ${balance.qty} ${balance.unit}`);
+    }
+  }
+  console.log(`Productos E2E con saldo tras la limpieza: ${withProductStock.length}`);
+  for (const line of withProductStock) console.log(`  ${line}`);
+
   const stillReserved = await call('/sales/reservations?status=ACTIVE');
   const liveReservations = Array.isArray(stillReserved.body) ? stillReserved.body : [];
   console.log(`Reservas activas en producción tras la limpieza: ${liveReservations.length}`);
