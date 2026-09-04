@@ -3,6 +3,7 @@ import { decimalStringSchema, MAX_VALUE, toDecimal, type DecimalInput } from '..
 import {
   CREDIT_NOTE_REASONS,
   DISPATCH_STATUSES,
+  FULL_CREDIT_NOTE_REASONS,
   DOC_TYPES,
   FISCAL_DOC_TYPES,
   FISCAL_DOCUMENT_STATUSES,
@@ -15,6 +16,7 @@ import {
   TransferMode,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { businessToday } from './sales';
 
 /**
  * Ciclo fiscal y logístico de Fase 5b (RF-70, RF-74..RF-79, RF-86..RF-89; D-070..D-078).
@@ -79,6 +81,9 @@ export function voidPathFor(
   issueDate: string,
   today: string,
 ): 'VOID' | 'CREDIT_NOTE' {
+  // Una guía de remisión no tiene importes, así que no hay nota de crédito posible: su
+  // única corrección es la comunicación de baja, sin plazo de siete días de por medio.
+  if (docType === FiscalDocType.GUIA_REMISION_REMITENTE) return 'VOID';
   if (docType !== FiscalDocType.FACTURA) return 'CREDIT_NOTE';
   const issued = Date.parse(`${issueDate}T00:00:00.000Z`);
   const now = Date.parse(`${today}T00:00:00.000Z`);
@@ -122,6 +127,39 @@ const isoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
   .refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00.000Z`)), 'Fecha inválida');
+
+/**
+ * Días hacia atrás que se admiten como fecha de emisión. SUNAT acepta comunicar un
+ * comprobante con algunos días de atraso, pero no meses; y **nunca** uno futuro.
+ */
+export const MAX_BACKDATED_ISSUE_DAYS = 7;
+
+/**
+ * Fecha de emisión válida contra el día de negocio (D-072).
+ *
+ * Se valida acá y no al enviar por el mismo motivo que el ubigeo: una fecha fuera de
+ * ventana vuelve rechazada **con el correlativo ya gastado**, y ese número no se recupera.
+ */
+function assertIssueDateWindow(issueDate: string, ctx: z.RefinementCtx, path: string[]): void {
+  const today = businessToday();
+  if (issueDate > today) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message: 'La fecha de emisión no puede ser futura',
+    });
+    return;
+  }
+  const limit = new Date(`${today}T00:00:00.000Z`);
+  limit.setUTCDate(limit.getUTCDate() - MAX_BACKDATED_ISSUE_DAYS);
+  if (issueDate < limit.toISOString().slice(0, 10)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message: `La fecha de emisión no puede tener más de ${MAX_BACKDATED_ISSUE_DAYS} días de atraso`,
+    });
+  }
+}
 
 const qtySchema = decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG });
 const moneySchema = decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY });
@@ -233,6 +271,21 @@ export const createInvoiceSchema = z
         message: 'Hay líneas de un pedido pero el comprobante no dice de cuál',
       });
     }
+    // Dos líneas del comprobante sobre la misma línea de pedido: cada una se compararía
+    // por separado contra el pendiente y juntas facturarían el doble en una sola petición.
+    const seen = new Set<string>();
+    for (const [i, item] of input.items.entries()) {
+      if (item.salesOrderItemId === undefined) continue;
+      if (seen.has(item.salesOrderItemId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['items', i, 'salesOrderItemId'],
+          message: 'La misma línea del pedido está repetida en el comprobante',
+        });
+      }
+      seen.add(item.salesOrderItemId);
+    }
+    assertIssueDateWindow(input.issueDate, ctx, ['issueDate']);
   });
 export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;
 
@@ -241,22 +294,47 @@ export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;
  * todas las líneas del afectado. Con `items` es **parcial** y cada una acredita como
  * mucho lo que su línea original todavía tiene sin acreditar.
  */
-export const createCreditNoteSchema = z.object({
-  reason: z.enum(CREDIT_NOTE_REASONS, {
-    errorMap: () => ({ message: 'Motivo de nota de crédito inválido' }),
-  }),
-  issueDate: isoDateSchema,
-  notes: z.string().trim().max(500).optional(),
-  items: z
-    .array(
-      z.object({
-        affectedItemId: z.string().uuid(),
-        qty: qtySchema,
-      }),
-    )
-    .max(MAX_INVOICE_ITEMS, `Máximo ${MAX_INVOICE_ITEMS} líneas`)
-    .optional(),
-});
+export const createCreditNoteSchema = z
+  .object({
+    reason: z.enum(CREDIT_NOTE_REASONS, {
+      errorMap: () => ({ message: 'Motivo de nota de crédito inválido' }),
+    }),
+    issueDate: isoDateSchema,
+    notes: z.string().trim().max(500).optional(),
+    items: z
+      .array(
+        z.object({
+          affectedItemId: z.string().uuid(),
+          qty: qtySchema,
+        }),
+      )
+      .max(MAX_INVOICE_ITEMS, `Máximo ${MAX_INVOICE_ITEMS} líneas`)
+      .optional(),
+  })
+  .superRefine((input, ctx) => {
+    const seen = new Set<string>();
+    for (const [i, item] of (input.items ?? []).entries()) {
+      if (seen.has(item.affectedItemId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['items', i, 'affectedItemId'],
+          message: 'La misma línea del comprobante está repetida en la nota de crédito',
+        });
+      }
+      seen.add(item.affectedItemId);
+    }
+    // Un motivo que describe un ajuste **parcial** sin decir qué líneas acreditar acabaría
+    // emitiendo una nota total, que es lo contrario de lo que se pidió.
+    if ((input.items ?? []).length === 0 && !FULL_CREDIT_NOTE_REASONS.includes(input.reason)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['items'],
+        message:
+          'Este motivo acredita una parte: indica las cantidades por línea, o elige un motivo de anulación o devolución total',
+      });
+    }
+    assertIssueDateWindow(input.issueDate, ctx, ['issueDate']);
+  });
 export type CreateCreditNoteInput = z.infer<typeof createCreditNoteSchema>;
 
 /** Comunicación de baja de un comprobante aceptado (RF-75). Siempre con motivo. */
@@ -590,6 +668,13 @@ export const salesOrderProgressSchema = z.object({
   salesOrderId: z.string().uuid(),
   salesOrderCode: z.string(),
   status: z.string(),
+  /**
+   * El cliente del pedido. Viaja acá para que los formularios no tengan que buscarlo en
+   * la lista de pedidos, que está paginada: con un pedido fuera de esa página quedaban
+   * sin cliente y sin explicar por qué.
+   */
+  customerId: z.string().uuid(),
+  customerName: z.string(),
   lines: z.array(
     z.object({
       salesOrderItemId: z.string().uuid(),

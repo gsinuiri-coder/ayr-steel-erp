@@ -11,6 +11,8 @@ import {
   PAYMENT_TERMS,
   PAYMENT_TERMS_LABELS,
   Role,
+  UNIT_LABELS,
+  UNITS,
   businessToday,
   salesTotals,
   toDecimal,
@@ -23,7 +25,7 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
-import { formatMoney, unitSymbol } from '@/lib/format';
+import { formatMoney, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -80,8 +82,8 @@ export function NuevoComprobanteView() {
   const [qtyByLine, setQtyByLine] = useState<Record<string, string>>({});
   /** Líneas libres de una venta directa. */
   const [freeLines, setFreeLines] = useState<
-    { description: string; qty: string; unit: string; unitPricePen: string }[]
-  >([{ description: '', qty: '', unit: 'NIU', unitPricePen: '' }]);
+    { key: string; description: string; qty: string; unit: string; unitPricePen: string }[]
+  >([{ key: 'l0', description: '', qty: '', unit: 'NIU', unitPricePen: '' }]);
 
   const customers = useQuery({
     queryKey: ['customers'],
@@ -100,12 +102,13 @@ export function NuevoComprobanteView() {
   });
 
   // Elegir el pedido fija el cliente: facturar a otro sería emitirle a alguien que no
-  // compró. El API lo rechaza igual; acá se evita el viaje.
+  // compró. El cliente sale del **avance del pedido**, que se pide por id, y no de la
+  // lista de pedidos, que está paginada: con un pedido fuera de esa página el formulario
+  // quedaba con el cliente vacío, el select deshabilitado y sin explicar por qué.
   useEffect(() => {
     if (salesOrderId === NONE) return;
-    const order = orders.data?.find((o) => o.id === salesOrderId);
-    if (order) setCustomerId(order.customerId);
-  }, [salesOrderId, orders.data]);
+    if (progress.data?.customerId) setCustomerId(progress.data.customerId);
+  }, [salesOrderId, progress.data]);
 
   // Al cargar el avance, se propone facturar todo lo pendiente de cada línea: es el caso
   // normal, y dejarlo en blanco obligaba a retipear el pedido entero.
@@ -118,23 +121,48 @@ export function NuevoComprobanteView() {
           .map((l) => [l.salesOrderItemId, l.pendingInvoiceQty]),
       ),
     );
-  }, [progress.data]);
+    // Depende de `salesOrderId` y de que el avance **exista**, no de su identidad:
+    // cualquier invalidación futura de `['order-progress']` con el formulario abierto
+    // habría borrado lo que el vendedor ya tenía tipeado.
+  }, [salesOrderId, progress.data]);
 
   const customer = customers.data?.find((c) => c.id === customerId);
   const activeCustomers = (customers.data ?? []).filter((c) => c.isActive);
 
+  // `isPositiveDecimal` y no `trim() !== ''`: `salesTotals` corre en cada render sobre lo
+  // que el usuario está **tipeando**, y `toDecimal` lanza con un estado intermedio tan
+  // normal como el punto de ".5". Sin este guard, la primera pulsación reventaba la
+  // pantalla y borraba todo lo cargado. Es el mismo filtro que ya usa el formulario de
+  // cotización antes de llamar a `salesLineTotals`.
   const lines = useMemo(() => {
     if (salesOrderId !== NONE) {
       return (progress.data?.lines ?? [])
-        .filter((l) => (qtyByLine[l.salesOrderItemId] ?? '').trim() !== '')
+        .filter((l) => isPositiveDecimal(qtyByLine[l.salesOrderItemId] ?? ''))
         .map((l) => ({
           qty: qtyByLine[l.salesOrderItemId] ?? '0',
           unitPricePen: l.unitPricePen,
         }));
     }
     return freeLines
-      .filter((l) => l.qty.trim() !== '' && l.unitPricePen.trim() !== '')
+      .filter((l) => isPositiveDecimal(l.qty) && isPositiveDecimal(l.unitPricePen))
       .map((l) => ({ qty: l.qty, unitPricePen: l.unitPricePen }));
+  }, [salesOrderId, progress.data, qtyByLine, freeLines]);
+
+  /** Cantidades escritas que no son un decimal válido, o que pasan lo pendiente. */
+  const invalidLines = useMemo(() => {
+    if (salesOrderId !== NONE) {
+      return (progress.data?.lines ?? []).filter((l) => {
+        const raw = (qtyByLine[l.salesOrderItemId] ?? '').trim();
+        if (raw === '') return false;
+        if (!isPositiveDecimal(raw)) return true;
+        return toDecimal(raw).gt(toDecimal(l.pendingInvoiceQty));
+      }).length;
+    }
+    return freeLines.filter(
+      (l) =>
+        (l.qty.trim() !== '' && !isPositiveDecimal(l.qty)) ||
+        (l.unitPricePen.trim() !== '' && !isPositiveDecimal(l.unitPricePen)),
+    ).length;
   }, [salesOrderId, progress.data, qtyByLine, freeLines]);
 
   const totals = lines.length > 0 ? salesTotals(lines) : null;
@@ -188,7 +216,19 @@ export function NuevoComprobanteView() {
     },
   });
 
-  const canSubmit = customerId !== '' && lines.length > 0 && !create.isPending;
+  // El botón respeta las mismas tres reglas que la pantalla ya muestra en rojo: sin
+  // esto, el usuario apretaba y el API devolvía en un toast el mismo texto que tenía
+  // delante.
+  const factureNeedsRuc =
+    docType === 'FACTURA' && customer !== undefined && customer.docType !== 'RUC';
+  const canSubmit =
+    customerId !== '' &&
+    lines.length > 0 &&
+    invalidLines === 0 &&
+    !factureNeedsRuc &&
+    !(isGenericCustomer && docType !== 'BOLETA') &&
+    !(overGenericCap && !forceGeneric) &&
+    !create.isPending;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -330,6 +370,22 @@ export function NuevoComprobanteView() {
       </Card>
 
       {/* D-077: el tope de la boleta genérica, dicho antes de mandar y no como error del API. */}
+      {factureNeedsRuc && !isGenericCustomer && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            Una factura se emite a un cliente con RUC. {customer?.name} tiene {customer?.docType}:
+            para esta venta corresponde una boleta.
+          </AlertDescription>
+        </Alert>
+      )}
+      {invalidLines > 0 && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            {invalidLines === 1 ? 'Una línea tiene' : `${invalidLines} líneas tienen`} una cantidad
+            que no es válida o que pasa lo pendiente. Corrígela antes de continuar.
+          </AlertDescription>
+        </Alert>
+      )}
       {isGenericCustomer && docType !== 'BOLETA' && (
         <Alert variant="destructive">
           <AlertDescription>
@@ -429,7 +485,9 @@ export function NuevoComprobanteView() {
           <h2 className="text-lg font-medium">Líneas</h2>
           <div className="space-y-2">
             {freeLines.map((line, i) => (
-              <div key={i} className="flex flex-wrap items-end gap-2">
+              // Clave estable y no el índice: al borrar una línea del medio, con `key={i}`
+              // los inputs de abajo perdían el foco y el estado del DOM.
+              <div key={line.key} className="flex flex-wrap items-end gap-2">
                 <div className="min-w-64 flex-1 space-y-1">
                   <Label className="text-xs">Descripción</Label>
                   <Input
@@ -454,17 +512,30 @@ export function NuevoComprobanteView() {
                     }}
                   />
                 </div>
-                <div className="w-24 space-y-1">
+                <div className="w-36 space-y-1">
                   <Label className="text-xs">Unidad</Label>
-                  <Input
+                  {/*
+                    Del catálogo 03 de SUNAT y no texto libre: la unidad viaja tal cual al
+                    PSE, y un "und" escrito a mano vuelve rechazado con el correlativo ya
+                    gastado (D-072).
+                  */}
+                  <Select
                     value={line.unit}
-                    maxLength={20}
-                    onChange={(e) => {
-                      setFreeLines((prev) =>
-                        prev.map((l, j) => (j === i ? { ...l, unit: e.target.value } : l)),
-                      );
+                    onValueChange={(v) => {
+                      setFreeLines((prev) => prev.map((l, j) => (j === i ? { ...l, unit: v } : l)));
                     }}
-                  />
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {UNITS.map((u) => (
+                        <SelectItem key={u} value={u}>
+                          {UNIT_LABELS[u]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="w-36 space-y-1">
                   <Label className="text-xs">P. unitario sin IGV</Label>
@@ -497,7 +568,13 @@ export function NuevoComprobanteView() {
             onClick={() => {
               setFreeLines((prev) => [
                 ...prev,
-                { description: '', qty: '', unit: 'NIU', unitPricePen: '' },
+                {
+                  key: `l${Date.now()}`,
+                  description: '',
+                  qty: '',
+                  unit: 'NIU',
+                  unitPricePen: '',
+                },
               ]);
             }}
           >

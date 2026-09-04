@@ -45,17 +45,6 @@ export function isStalled(
 }
 
 /**
- * Backoff del reintento de envío, en milisegundos (D-073). Crece al doble desde un minuto
- * y se corta en una hora: pasado eso, insistir más seguido no ayuda y solo hace ruido en
- * los logs y en la cuota del PSE.
- */
-export function retryDelayMs(attempts: number): number {
-  const base = 60_000;
-  const capped = Math.min(Math.max(attempts, 0), 6);
-  return Math.min(base * 2 ** capped, 3_600_000);
-}
-
-/**
  * Lo que **todavía se puede** despachar o facturar de una línea de pedido.
  *
  * Nunca devuelve negativo: si por algún camino se despachó de más, el pendiente es cero y
@@ -64,25 +53,6 @@ export function retryDelayMs(attempts: number): number {
 export function pendingQty(ordered: DecimalInput, done: DecimalInput): Decimal {
   const remaining = toDecimal(ordered).minus(toDecimal(done));
   return remaining.isNegative() ? new Decimal(0) : remaining;
-}
-
-/**
- * Suma de cantidades ya usadas por documento (despachado, facturado, acreditado), a
- * partir de las filas que las llevan. Se calcula **siempre desde las filas**, nunca desde
- * un contador almacenado: un contador se desincroniza con la primera reversa que alguien
- * olvide restar, y este proyecto tiene reversas en todas partes.
- */
-export function sumByKey<T>(
-  rows: T[],
-  key: (row: T) => string,
-  qty: (row: T) => DecimalInput,
-): Map<string, Decimal> {
-  const out = new Map<string, Decimal>();
-  for (const row of rows) {
-    const k = key(row);
-    out.set(k, (out.get(k) ?? new Decimal(0)).plus(toDecimal(qty(row))));
-  }
-  return out;
 }
 
 /**

@@ -1258,6 +1258,11 @@ model Reservation {
   salesOrderItem   SalesOrderItem    @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
   itemType         InventoryItemType @map("item_type")
   itemId           String            @map("item_id") @db.Uuid
+  /// **Lo que todavía está prometido**, no la promesa original (D-074, Fase 5b): un
+  /// despacho parcial descuenta de acá lo que se llevó, y al llegar a cero la reserva pasa
+  /// a `CONSUMIDA`. La promesa original vive en `sales_order_items.reserve_qty`, que no se
+  /// toca nunca, así que bajar esta cifra no pierde información — y mantenerla al día es lo
+  /// que hace que el resto de la línea siga protegido después de un despacho parcial.
   qty              Decimal           @db.Decimal(16, 3)
   unit             String            @db.VarChar(20)
   status           ReservationStatus @default(ACTIVE)

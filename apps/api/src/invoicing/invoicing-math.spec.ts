@@ -5,13 +5,7 @@ import {
   VOID_WINDOW_DAYS,
   voidPathFor,
 } from '@ayr/shared';
-import {
-  dueDateFor,
-  isStalled,
-  pendingQty,
-  proratedWeightKg,
-  retryDelayMs,
-} from './invoicing-math';
+import { dueDateFor, isStalled, pendingQty, proratedWeightKg } from './invoicing-math';
 
 /**
  * Reglas de calendario y de saldo de Fase 5b (D-072..D-075).
@@ -111,18 +105,6 @@ describe('isStalled (D-073)', () => {
 
   it('pasado el umbral, sí', () => {
     expect(isStalled(new Date('2026-09-04T05:00:00.000Z'), 6, now)).toBe(true);
-  });
-});
-
-describe('retryDelayMs (D-073)', () => {
-  it('empieza en un minuto y crece al doble', () => {
-    expect(retryDelayMs(0)).toBe(60_000);
-    expect(retryDelayMs(1)).toBe(120_000);
-    expect(retryDelayMs(3)).toBe(480_000);
-  });
-
-  it('se corta en una hora: insistir más seguido no ayuda', () => {
-    expect(retryDelayMs(10)).toBe(3_600_000);
   });
 });
 

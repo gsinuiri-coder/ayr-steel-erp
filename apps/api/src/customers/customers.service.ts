@@ -47,6 +47,14 @@ export class CustomersService {
   }
 
   async create(actor: RequestUser, input: CreateCustomerInput): Promise<CustomerDto> {
+    // D-076: los días de crédito son de ADMINISTRADOR también en el alta. Sin esto, la
+    // regla se aplicaba en `update` y se esquivaba dando de alta al cliente con 365 días
+    // — y esa cifra define el vencimiento de todas sus cuentas por cobrar (D-075).
+    if (actor.role !== Role.ADMINISTRADOR && input.creditDays > 0) {
+      throw new ForbiddenException(
+        'Los días de crédito los fija un administrador: crea el cliente al contado y pide el cambio',
+      );
+    }
     try {
       const customer = await this.prisma.$transaction(async (tx) => {
         const created = await tx.customer.create({

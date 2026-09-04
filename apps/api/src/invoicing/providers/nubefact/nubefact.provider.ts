@@ -12,6 +12,7 @@ import {
   buildInvoicePayload,
   buildQueryPayload,
   buildVoidPayload,
+  buildVoidQueryPayload,
 } from './nubefact-payload';
 
 /**
@@ -43,6 +44,25 @@ interface NubefactResponse {
 /** Timeout de la llamada. Generoso: el PSE firma, envía a SUNAT y espera el CDR. */
 const REQUEST_TIMEOUT_MS = 60_000;
 
+/**
+ * Tope del cuerpo que se lee del PSE. Mismo criterio que `DocumentLookupService` con
+ * apis.net.pe: la respuesta de un tercero se archiva entera en `provider_response`, y sin
+ * tope un cuerpo enorme agota la memoria de la instancia o revienta el `jsonb` **después**
+ * de que el correlativo ya se gastó.
+ */
+const MAX_BODY_BYTES = 512 * 1024;
+
+/**
+ * Códigos HTTP que **no** son culpa del contenido del documento y por lo tanto se
+ * reintentan (D-073).
+ *
+ * 401 y 403 están acá y esa es la corrección que más importa: un token vencido marcaba
+ * cada comprobante como `REJECTED` y quemaba su correlativo, obligando a corregir y
+ * reemitir uno por uno por un problema de credenciales que no tiene nada que ver con lo
+ * que dice el documento.
+ */
+const RETRYABLE_HTTP_STATUS = new Set([401, 403, 408, 429]);
+
 @Injectable()
 export class NubefactProvider extends ElectronicInvoicingProvider {
   readonly name = 'Nubefact';
@@ -59,6 +79,19 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
     return this.url.length > 0 && this.token.length > 0;
   }
 
+  /**
+   * Los archivos firmados salen del mismo host que atiende la API. Si el proveedor
+   * empezara a servirlos desde un CDN propio, acá es donde se agrega —y sigue siendo una
+   * lista explícita, no "lo que diga la respuesta".
+   */
+  get fileHost(): string | null {
+    try {
+      return this.url ? new URL(this.url).host : null;
+    } catch {
+      return null;
+    }
+  }
+
   issueDocument(command: IssueDocumentCommand): Promise<ProviderResult> {
     return this.post(buildInvoicePayload(command));
   }
@@ -69,6 +102,10 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
 
   queryStatus(command: QueryDocumentCommand): Promise<ProviderResult> {
     return this.post(buildQueryPayload(command));
+  }
+
+  queryVoidStatus(command: QueryDocumentCommand): Promise<ProviderResult> {
+    return this.post(buildVoidQueryPayload(command), { voidQuery: true });
   }
 
   voidDocument(command: VoidDocumentCommand): Promise<ProviderResult> {
@@ -82,7 +119,10 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
    * una caída del PSE en un 500 sobre una operación que, por D-073, tiene que seguir
    * adelante. Todo error de transporte sale como `ERROR`, que es lo que el job reintenta.
    */
-  private async post(payload: Record<string, unknown>): Promise<ProviderResult> {
+  private async post(
+    payload: Record<string, unknown>,
+    options: { voidQuery?: boolean } = {},
+  ): Promise<ProviderResult> {
     if (!this.configured) {
       return this.errorResult(
         'PROVIDER_UNAVAILABLE',
@@ -105,20 +145,34 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const text = await response.text();
-      try {
-        body = text ? (JSON.parse(text) as unknown) : {};
-      } catch {
-        // Un cuerpo que no es JSON es casi siempre una página de error del borde (proxy,
-        // mantenimiento). Se archiva como texto para poder diagnosticarlo después.
-        body = { nonJsonBody: text.slice(0, 2000) };
+      if (text.length > MAX_BODY_BYTES) {
+        // No se parsea ni se archiva entero: solo la cabeza, para poder diagnosticarlo.
+        body = { oversizedBody: text.slice(0, 2000), bytes: text.length };
+      } else {
+        try {
+          body = text ? (JSON.parse(text) as unknown) : {};
+        } catch {
+          // Un cuerpo que no es JSON es casi siempre una página de error del borde (proxy,
+          // mantenimiento). Se archiva como texto para poder diagnosticarlo después.
+          body = { nonJsonBody: text.slice(0, 2000) };
+        }
       }
     } catch (err) {
       // Red caída, DNS, timeout: no sabemos qué pasó del otro lado. `ERROR`, y se reintenta.
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Fallo de transporte contra el PSE: ${message}`);
-      return this.errorResult('TRANSPORT', `No se pudo contactar al PSE: ${message}`, {
-        transportError: message,
-      });
+      // Al usuario le llega una **clase** de error, no el texto crudo: un
+      // `Failed to parse URL from …` incluiría la URL de la cuenta del PSE, que es un
+      // identificador semisecreto, y `lastSendError` se muestra en pantalla. El detalle
+      // completo queda en `provider_response`, que no sale del servidor.
+      const isTimeout = err instanceof Error && err.name === 'TimeoutError';
+      return this.errorResult(
+        isTimeout ? 'TIMEOUT' : 'TRANSPORT',
+        isTimeout
+          ? 'El PSE no respondió a tiempo'
+          : 'No se pudo contactar al PSE (problema de red o del proveedor)',
+        { transportError: message },
+      );
     }
 
     const data = (body ?? {}) as NubefactResponse;
@@ -129,7 +183,7 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
       // **La distinción que importa** (ver `ProviderOutcome`): un 5xx es del proveedor y se
       // reintenta; un 4xx con mensaje es el contenido del documento y no va a mejorar por
       // insistir. Un correlativo ya gastado por un rechazo no se recupera reintentando.
-      const retryable = response.status >= 500 || response.status === 429;
+      const retryable = response.status >= 500 || RETRYABLE_HTTP_STATUS.has(response.status);
       return retryable
         ? this.errorResult(String(data.codigo_de_error ?? response.status), errorMessage, body)
         : {
@@ -149,8 +203,12 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
       return this.errorResult(String(response.status), `El PSE respondió ${response.status}`, body);
     }
 
-    // Una baja contesta con su propio campo de aceptación y, a veces, solo con un ticket.
-    const accepted = data.aceptada_por_sunat ?? data.anulacion_aceptada_por_sunat;
+    // **El orden importa.** Para una consulta de baja, el veredicto es el de la
+    // anulación y **solo** ese: caer a `aceptada_por_sunat` daría siempre "aceptado",
+    // porque un documento con baja en trámite es uno que SUNAT ya había aceptado.
+    const accepted = options.voidQuery
+      ? data.anulacion_aceptada_por_sunat
+      : (data.aceptada_por_sunat ?? data.anulacion_aceptada_por_sunat);
     const soapError = data.sunat_soap_error;
 
     if (accepted === false) {

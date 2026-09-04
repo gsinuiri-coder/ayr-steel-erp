@@ -18,6 +18,10 @@ export function invalidateInvoicing(
   queryClient: QueryClient,
   ids: { documentId?: string; dispatchId?: string; orderId?: string } = {},
 ): void {
+  // El prefijo completo y no solo el id que se pasó: una nota de crédito cambia el saldo
+  // del comprobante **afectado**, y una corrección deja al rechazado con un reemplazo. Con
+  // un solo id, la factura de origen quedaba en caché con el saldo viejo.
+  void queryClient.invalidateQueries({ queryKey: ['fiscal-document'] });
   if (ids.documentId) {
     void queryClient.invalidateQueries({ queryKey: ['fiscal-document', ids.documentId] });
   }

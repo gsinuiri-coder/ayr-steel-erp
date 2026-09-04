@@ -5,9 +5,9 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   FISCAL_DOC_TYPE_LABELS,
-  FISCAL_DOC_TYPES,
   FISCAL_DOCUMENT_STATUS_LABELS,
   FISCAL_DOCUMENT_STATUSES,
+  INVOICE_DOC_TYPES,
   Role,
   type FiscalDocumentListItemDto,
 } from '@ayr/shared';
@@ -116,7 +116,8 @@ export function ComprobantesView() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>Todos los tipos</SelectItem>
-            {FISCAL_DOC_TYPES.map((t) => (
+            {/* La guía de remisión se ve desde su despacho, no acá. */}
+            {INVOICE_DOC_TYPES.map((t) => (
               <SelectItem key={t} value={t}>
                 {FISCAL_DOC_TYPE_LABELS[t]}
               </SelectItem>

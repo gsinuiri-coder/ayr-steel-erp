@@ -9,10 +9,10 @@ import {
 } from '@nestjs/common';
 import {
   DispatchStatus,
+  DocType,
   FiscalDocType,
   FiscalDocumentStatus,
   Prisma,
-  type DocType,
   type InventoryItemType,
 } from '@prisma/client';
 import {
@@ -44,7 +44,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { isStalled, pendingQty } from './invoicing-math';
+import { dueDateFor, isStalled, pendingQty } from './invoicing-math';
 import {
   ELECTRONIC_INVOICING_PROVIDER,
   type ElectronicInvoicingProvider,
@@ -112,9 +112,28 @@ function toDateOnly(value: string): Date {
  */
 const RETRYABLE: FiscalDocumentStatus[] = [...RETRYABLE_DOCUMENT_STATUSES];
 
-/** Estados en los que el comprobante todavía cuenta como emitido para el cliente. */
+/**
+ * Tope de un archivo descargado del PSE. Un PDF de comprobante pesa decenas de kilobytes;
+ * veinte megas es holgado y a la vez impide que un cuerpo enorme agote la memoria de una
+ * instancia de Cloud Run.
+ */
+const MAX_DOCUMENT_FILE_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Estados en los que el comprobante **ya existe** y consume pedido: tiene correlativo
+ * tomado y sigue en pie.
+ *
+ * `SEND_ERROR` está adentro y no es un detalle: es el estado de un documento que tomó su
+ * número y que el job va a seguir reintentando hasta que entre (D-073). Dejarlo fuera
+ * hacía que, **justo con el PSE caído** —el escenario para el que existe la contingencia—,
+ * la misma línea de pedido se pudiera facturar dos veces.
+ *
+ * Los que no cuentan son los tres que nunca llegaron a existir o dejaron de existir:
+ * `DRAFT` (sin correlativo), `REJECTED` (SUNAT no lo aceptó) y `VOIDED` (dado de baja).
+ */
 const LIVE_DOCUMENT_STATUSES: FiscalDocumentStatus[] = [
   FiscalDocumentStatus.ISSUED,
+  FiscalDocumentStatus.SEND_ERROR,
   FiscalDocumentStatus.ACCEPTED,
   FiscalDocumentStatus.VOID_PENDING,
 ];
@@ -147,7 +166,18 @@ export class InvoicingService {
   }> {
     const existing = await this.prisma.invoicingSetting.findFirst();
     if (existing) return existing;
-    return this.prisma.invoicingSetting.create({ data: {} });
+    try {
+      return await this.prisma.invoicingSetting.create({ data: {} });
+    } catch (err) {
+      // El índice de fila única de la migración rechaza la segunda creación concurrente;
+      // la que perdió simplemente lee la que ganó. Sin él, dos peticiones sobre una base
+      // recién restaurada dejaban dos filas y `providerOffline` pasaba a depender de cuál
+      // devolviera `findFirst`.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return this.prisma.invoicingSetting.findFirstOrThrow();
+      }
+      throw err;
+    }
   }
 
   async settings(): Promise<InvoicingSettingsDto> {
@@ -212,7 +242,7 @@ export class InvoicingService {
             'Al cliente "público en general" solo se le emiten boletas: elige un cliente identificado para una factura',
           );
         }
-        if (input.docType === FiscalDocType.FACTURA && customer.docType !== ('RUC' as DocType)) {
+        if (input.docType === FiscalDocType.FACTURA && customer.docType !== DocType.RUC) {
           throw new BadRequestException(
             'Una factura se emite a un cliente con RUC; para este cliente corresponde una boleta',
           );
@@ -299,13 +329,18 @@ export class InvoicingService {
     return this.findOne(id);
   }
 
-  /** Vencimiento: el que mandó el usuario, o `issueDate + creditDays` en crédito (D-075). */
+  /**
+   * Vencimiento: el que mandó el usuario, o el que sale de los días de crédito (D-075).
+   *
+   * Delega en `dueDateFor`, que es la función con prueba unitaria. Tener una segunda
+   * implementación acá hacía que la probada no fuera la que corría: con `CREDITO` y cero
+   * días de crédito, esta devolvía la fecha de emisión —un comprobante que nace vencido—
+   * y la probada devolvía `null`.
+   */
   private resolveDueDate(input: CreateInvoiceInput, creditDays: number): string | null {
     if (input.paymentTerms === 'CONTADO') return null;
     if (input.dueDate) return input.dueDate;
-    const d = new Date(`${input.issueDate}T00:00:00.000Z`);
-    d.setUTCDate(d.getUTCDate() + Math.max(creditDays, 0));
-    return d.toISOString().slice(0, 10);
+    return dueDateFor(input.issueDate, creditDays);
   }
 
   /**
@@ -367,6 +402,11 @@ export class InvoicingService {
       ]),
     );
 
+    // Lo que este mismo comprobante ya comprometió en líneas anteriores. Sin esto, dos
+    // líneas del mismo documento apuntando a la misma línea de pedido se comparaban cada
+    // una contra el pendiente completo y juntas facturaban el doble en una sola petición.
+    const usedHere = new Map<string, Decimal>();
+
     return input.items.map((item) => {
       const qty = toDecimal(item.qty);
       if (item.salesOrderItemId) {
@@ -383,13 +423,16 @@ export class InvoicingService {
         if (orderItem.salesOrder.customerId !== input.customerId) {
           throw new BadRequestException('El comprobante y el pedido son de clientes distintos');
         }
-        const already = invoicedByItem.get(orderItem.id) ?? new Decimal(0);
+        const already = (invoicedByItem.get(orderItem.id) ?? new Decimal(0)).plus(
+          usedHere.get(orderItem.id) ?? new Decimal(0),
+        );
         const pending = toDecimal(orderItem.qty.toString()).minus(already);
         if (qty.gt(pending)) {
           throw new BadRequestException(
             `A la línea ${orderItem.lineNumber} (${orderItem.product.sku}) le quedan ${pending.toFixed(3)} por facturar y se intentan facturar ${qty.toFixed(3)}`,
           );
         }
+        usedHere.set(orderItem.id, (usedHere.get(orderItem.id) ?? new Decimal(0)).plus(qty));
         const price = item.unitPricePen ?? orderItem.unitPricePen.toString();
         const totals = salesTotals([{ qty: item.qty, unitPricePen: price }]);
         const s = serializeSalesTotals(totals);
@@ -462,6 +505,13 @@ export class InvoicingService {
           `Solo se acredita un comprobante aceptado por SUNAT; este está ${affected.status}`,
         );
       }
+      // Acreditar tiene el mismo efecto económico que dar de baja —el saldo se va a cero—,
+      // así que sigue la misma regla de propiedad que emitir.
+      if (actor.role !== Role.ADMINISTRADOR && affected.createdById !== actor.id) {
+        throw new ForbiddenException(
+          'El comprobante es de otro vendedor: no puedes emitir su nota de crédito',
+        );
+      }
 
       // Lo ya acreditado por línea, contando solo notas vivas.
       const credited = await tx.fiscalDocumentItem.groupBy({
@@ -482,24 +532,36 @@ export class InvoicingService {
       const requested =
         input.items && input.items.length > 0
           ? input.items
-          : affected.items.map((i) => ({
-              affectedItemId: i.id,
-              // Total: lo que quede sin acreditar de cada línea.
-              qty: toDecimal(i.qty.toString())
-                .minus(creditedByItem.get(i.id) ?? new Decimal(0))
-                .toFixed(3),
-            }));
+          : affected.items
+              // Una "total" sobre un comprobante que ya tuvo una parcial acredita **lo que
+              // queda**, no todo: sin este filtro, la primera línea ya acreditada por
+              // completo hacía fallar la operación culpando a una línea que el usuario ni
+              // siquiera pidió.
+              .filter((i) =>
+                toDecimal(i.qty.toString())
+                  .minus(creditedByItem.get(i.id) ?? new Decimal(0))
+                  .gt(0),
+              )
+              .map((i) => ({
+                affectedItemId: i.id,
+                qty: toDecimal(i.qty.toString())
+                  .minus(creditedByItem.get(i.id) ?? new Decimal(0))
+                  .toFixed(3),
+              }));
 
       const byId = new Map(affected.items.map((i) => [i.id, i]));
+      // Mismo acumulador que en `resolveLines`, por el mismo motivo: dos líneas de la NC
+      // sobre la misma línea del comprobante acreditaban el doble.
+      const usedHere = new Map<string, Decimal>();
       const lines = requested.map((line) => {
         const original = byId.get(line.affectedItemId);
         if (!original) {
           throw new BadRequestException('Hay una línea que no pertenece al comprobante afectado');
         }
         const qty = toDecimal(line.qty);
-        const pending = toDecimal(original.qty.toString()).minus(
-          creditedByItem.get(original.id) ?? new Decimal(0),
-        );
+        const pending = toDecimal(original.qty.toString())
+          .minus(creditedByItem.get(original.id) ?? new Decimal(0))
+          .minus(usedHere.get(original.id) ?? new Decimal(0));
         if (qty.lte(0)) {
           throw new BadRequestException(
             `La línea ${original.lineNumber} ya está acreditada por completo`,
@@ -510,6 +572,7 @@ export class InvoicingService {
             `A la línea ${original.lineNumber} le quedan ${pending.toFixed(3)} por acreditar y se intentan acreditar ${qty.toFixed(3)}`,
           );
         }
+        usedHere.set(original.id, (usedHere.get(original.id) ?? new Decimal(0)).plus(qty));
         const totals = salesTotals([
           { qty: line.qty, unitPricePen: original.unitPricePen.toString() },
         ]);
@@ -596,6 +659,20 @@ export class InvoicingService {
    * administración, y esconderlo detrás del mismo número sería borrar un hecho.
    */
   async correct(actor: RequestUser, id: string): Promise<FiscalDocumentDto> {
+    try {
+      return await this.correctInner(actor, id);
+    } catch (err) {
+      // `replaces_document_id` es único: dos correcciones simultáneas del mismo rechazado
+      // chocan contra el índice, y sin esto la segunda salía como un 500 en vez del 409
+      // que la comprobación de más abajo ya quiso dar.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException('Ese comprobante rechazado ya fue corregido');
+      }
+      throw err;
+    }
+  }
+
+  private async correctInner(actor: RequestUser, id: string): Promise<FiscalDocumentDto> {
     const newId = await this.prisma.$transaction(async (tx) => {
       const rejected = await tx.fiscalDocument.findUnique({
         where: { id },
@@ -604,6 +681,9 @@ export class InvoicingService {
       if (!rejected) throw new NotFoundException('Comprobante no encontrado');
       if (rejected.status !== FiscalDocumentStatus.REJECTED) {
         throw new BadRequestException('Solo se corrige un comprobante rechazado');
+      }
+      if (actor.role !== Role.ADMINISTRADOR && rejected.createdById !== actor.id) {
+        throw new ForbiddenException('El comprobante es de otro vendedor: no puedes corregirlo');
       }
       const existing = await tx.fiscalDocument.findFirst({
         where: { replacesDocumentId: id },
@@ -623,6 +703,9 @@ export class InvoicingService {
           salesOrderId: rejected.salesOrderId,
           affectedDocumentId: rejected.affectedDocumentId,
           creditNoteReason: rejected.creditNoteReason,
+          // El despacho va con la copia: sin él, corregir una guía rechazada creaba una
+          // fila que viola `fiscal_documents_shape_ck` y salía como un 500 de Postgres.
+          dispatchId: rejected.dispatchId,
           replacesDocumentId: rejected.id,
           // Fecha de hoy y no la del rechazado: el documento nuevo se emite ahora.
           issueDate: toDateOnly(businessToday()),
@@ -686,9 +769,31 @@ export class InvoicingService {
    * revirtiera un correlativo ya tomado, que es exactamente el hueco que D-072 evita.
    */
   async send(actor: RequestUser, id: string): Promise<FiscalDocumentDto> {
+    await this.assertOwnership(actor, id, 'emitirlo');
     await this.assign(actor, id);
     await this.deliver(id);
     return this.findOne(id);
+  }
+
+  /**
+   * Un vendedor solo opera **sobre sus propios** documentos; el administrador, sobre
+   * todos. Es la misma regla que RF-66 impuso en cotizaciones (`assertOwnership` en
+   * `QuotationsService`) y por el mismo motivo: con solo el id, cualquier vendedor podía
+   * emitir el borrador de un compañero — y emitir es irreversible, toma correlativo y lo
+   * manda a SUNAT a nombre de la empresa.
+   *
+   * La **lectura** queda abierta: la lista es del equipo comercial entero.
+   */
+  private async assertOwnership(actor: RequestUser, id: string, action: string): Promise<void> {
+    if (actor.role === Role.ADMINISTRADOR) return;
+    const document = await this.prisma.fiscalDocument.findUnique({
+      where: { id },
+      select: { createdById: true },
+    });
+    if (!document) throw new NotFoundException('Comprobante no encontrado');
+    if (document.createdById !== actor.id) {
+      throw new ForbiddenException(`El comprobante es de otro vendedor: no puedes ${action}`);
+    }
   }
 
   /** Fase 1: correlativo y estado `ISSUED`, en su propia transacción. */
@@ -713,7 +818,7 @@ export class InvoicingService {
       const document = await tx.fiscalDocument.findUniqueOrThrow({
         where: { id },
         include: {
-          items: { select: { id: true } },
+          items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
           affectedDocument: { select: { docType: true } },
         },
       });
@@ -723,6 +828,14 @@ export class InvoicingService {
       ) {
         throw new BadRequestException('Un comprobante sin líneas no se emite');
       }
+
+      // **Revalidar antes de tomar el correlativo.** Los topes de "cuánto queda por
+      // facturar" y "cuánto queda por acreditar" se comprueban al crear el borrador, pero
+      // un borrador no consume nada: dos borradores sobre la misma línea pasan los dos esa
+      // comprobación y, al enviarse, ambos toman número y sobrefacturan el pedido con dos
+      // comprobantes válidos ante SUNAT. Acá, con la fila ya bloqueada, es el último punto
+      // en el que todavía se puede decir que no.
+      await this.assertStillAvailable(tx, document);
 
       const affectedDocType =
         document.docType === FiscalDocType.NOTA_CREDITO
@@ -753,6 +866,117 @@ export class InvoicingService {
         after: { number: fiscalDocumentNumber(series, correlative) },
       });
     });
+  }
+
+  /**
+   * Comprueba, con el documento ya bloqueado, que sus líneas siguen cabiendo en lo que
+   * queda por facturar o por acreditar **sin contarse a sí mismo**.
+   *
+   * Es la misma cuenta que hace `resolveLines`/`createCreditNote` al crear el borrador,
+   * repetida en el único momento en que deja de ser una estimación: justo antes de gastar
+   * un correlativo, que es lo único de esta fase que no se puede deshacer.
+   */
+  private async assertStillAvailable(
+    tx: Prisma.TransactionClient,
+    document: {
+      id: string;
+      docType: FiscalDocType;
+      items: {
+        qty: Prisma.Decimal;
+        salesOrderItemId: string | null;
+        affectedItemId: string | null;
+      }[];
+    },
+  ): Promise<void> {
+    if (document.docType === FiscalDocType.GUIA_REMISION_REMITENTE) return;
+
+    if (document.docType === FiscalDocType.NOTA_CREDITO) {
+      const ids = document.items.flatMap((i) => (i.affectedItemId ? [i.affectedItemId] : []));
+      if (ids.length === 0) return;
+      const originals = await tx.fiscalDocumentItem.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, lineNumber: true, qty: true },
+      });
+      const credited = await tx.fiscalDocumentItem.groupBy({
+        by: ['affectedItemId'],
+        where: {
+          affectedItemId: { in: ids },
+          documentId: { not: document.id },
+          document: { status: { in: LIVE_DOCUMENT_STATUSES } },
+        },
+        _sum: { qty: true },
+      });
+      const creditedById = new Map(
+        credited.flatMap((r) =>
+          r.affectedItemId === null
+            ? []
+            : [
+                [r.affectedItemId, toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString())] as [
+                  string,
+                  Decimal,
+                ],
+              ],
+        ),
+      );
+      for (const item of document.items) {
+        if (!item.affectedItemId) continue;
+        const original = originals.find((o) => o.id === item.affectedItemId);
+        if (!original) continue;
+        const available = toDecimal(original.qty.toString()).minus(
+          creditedById.get(original.id) ?? new Decimal(0),
+        );
+        if (toDecimal(item.qty.toString()).gt(available)) {
+          throw new ConflictException(
+            `Otra nota de crédito ya acreditó la línea ${original.lineNumber}: quedan ${available.toFixed(3)}. Revisa este borrador antes de emitirlo.`,
+          );
+        }
+      }
+      return;
+    }
+
+    const ids = document.items.flatMap((i) => (i.salesOrderItemId ? [i.salesOrderItemId] : []));
+    if (ids.length === 0) return;
+    const orderItems = await tx.salesOrderItem.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, lineNumber: true, qty: true },
+    });
+    const invoiced = await tx.fiscalDocumentItem.groupBy({
+      by: ['salesOrderItemId'],
+      where: {
+        salesOrderItemId: { in: ids },
+        documentId: { not: document.id },
+        document: {
+          status: { in: LIVE_DOCUMENT_STATUSES },
+          docType: { not: FiscalDocType.NOTA_CREDITO },
+        },
+      },
+      _sum: { qty: true },
+    });
+    const invoicedById = new Map(
+      invoiced.flatMap((r) =>
+        r.salesOrderItemId === null
+          ? []
+          : [
+              [r.salesOrderItemId, toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString())] as [
+                string,
+                Decimal,
+              ],
+            ],
+      ),
+    );
+    for (const item of document.items) {
+      if (!item.salesOrderItemId) continue;
+      const orderItem = orderItems.find((o) => o.id === item.salesOrderItemId);
+      if (!orderItem) continue;
+      const available = toDecimal(orderItem.qty.toString()).minus(
+        invoicedById.get(orderItem.id) ?? new Decimal(0),
+      );
+      if (toDecimal(item.qty.toString()).gt(available)) {
+        throw new ConflictException(
+          `Otro comprobante ya facturó la línea ${orderItem.lineNumber} del pedido: quedan ${available.toFixed(3)}. Revisa este borrador antes de emitirlo.`,
+        );
+      }
+    }
   }
 
   /**
@@ -804,14 +1028,72 @@ export class InvoicingService {
     // Sin número no hay nada que enviar: el correlativo se toma al emitir (D-072).
     if (document.number === null) return;
     if (!RETRYABLE_DOCUMENT_STATUSES.includes(document.status)) return;
+    if (!(await this.claimAttempt(id))) return;
 
-    const settings = await this.settingsRow();
-    const result = settings.providerOffline
-      ? this.offlineResult()
-      : await this.provider.issueDocument(this.toIssueCommand(document));
+    // **Nunca lanza**, y la garantía es de este método, no del adaptador: cualquier fallo
+    // acá —incluido el de escribir el resultado— subiría por `send` hasta el usuario como
+    // un 500 sobre un documento que ya tomó correlativo, que es exactamente lo que D-073
+    // existe para evitar.
+    try {
+      const settings = await this.settingsRow();
+      const result = settings.providerOffline
+        ? this.offlineResult()
+        : // Con ticket, el documento **ya está en el PSE**: reemitirlo con la misma serie y
+          // correlativo lo devolvería como duplicado —o sea, como rechazo— y quemaría el
+          // número. Lo que corresponde es preguntar por él.
+          document.providerTicket
+          ? await this.callProvider(() =>
+              this.provider.queryStatus({
+                docType: document.docType,
+                series: document.seriesRef?.series ?? '',
+                correlative: document.correlative ?? 0,
+              }),
+            )
+          : await this.callProvider(() =>
+              this.provider.issueDocument(this.toIssueCommand(document)),
+            );
 
-    await this.applyResult(document.id, result);
-    if (result.outcome === 'ACCEPTED') await this.storeFiles(document.id, document.number, result);
+      await this.applyResult(document.id, result);
+      if (result.outcome === 'ACCEPTED') {
+        await this.storeFiles(document.id, document.number, result);
+      }
+    } catch (err) {
+      this.logger.error(`Fallo al enviar ${document.number} al PSE`, err);
+    }
+  }
+
+  /**
+   * Envía el documento por el camino que corresponde a su tipo.
+   *
+   * Existe porque una guía de remisión y un comprobante de pago arman payloads distintos
+   * —la guía no tiene líneas con importes— y ramificar en cada llamador hacía que el
+   * reintento manual de una guía terminara mandando un comprobante vacío al PSE.
+   */
+  private async deliverAny(id: string, docType: FiscalDocType): Promise<void> {
+    if (docType === FiscalDocType.GUIA_REMISION_REMITENTE) {
+      await this.deliverDispatchNote(id);
+    } else {
+      await this.deliver(id);
+    }
+  }
+
+  /**
+   * Reclama el intento antes de salir a la red (D-073).
+   *
+   * `applyResult` protege la **escritura** del resultado, pero no el envío: dos reintentos
+   * simultáneos —uno manual y el barrido del job, por ejemplo— leían el mismo estado y
+   * llamaban al PSE dos veces con el mismo correlativo. Este `updateMany` condicionado es
+   * lo que hace que solo uno de los dos salga; el otro ve cero filas afectadas y se retira.
+   *
+   * Marcar el intento acá y no después también deja `sendAttempts` contando intentos
+   * reales, que es lo que separa "todavía no salió" de "salió y no entra".
+   */
+  private async claimAttempt(id: string): Promise<boolean> {
+    const claimed = await this.prisma.fiscalDocument.updateMany({
+      where: { id, status: { in: RETRYABLE } },
+      data: { sendAttempts: { increment: 1 }, lastAttemptAt: new Date() },
+    });
+    return claimed.count === 1;
   }
 
   /** Contingencia manual: no se llama al PSE y el documento queda para el job (D-073). */
@@ -889,14 +1171,17 @@ export class InvoicingService {
     };
   }
 
-  /** Escribe el desenlace del envío. Una sola escritura, condicionada al estado leído. */
+  /**
+   * Escribe el desenlace del envío. Una sola escritura, condicionada al estado leído.
+   *
+   * El contador de intentos ya lo subió `claimAttempt` antes de salir a la red: acá solo
+   * se registra **qué contestó** el PSE.
+   */
   private async applyResult(id: string, result: ProviderResult): Promise<void> {
     const now = new Date();
     const data: Prisma.FiscalDocumentUpdateInput = {
       providerResponse: result.raw ?? {},
       providerTicket: result.ticket,
-      sendAttempts: { increment: 1 },
-      lastAttemptAt: now,
     };
 
     if (result.outcome === 'ACCEPTED') {
@@ -920,10 +1205,23 @@ export class InvoicingService {
       data.lastSendError = result.message?.slice(0, 500) ?? 'Error de envío';
     }
 
-    await this.prisma.fiscalDocument.updateMany({
+    const updated = await this.prisma.fiscalDocument.updateMany({
       where: { id, status: { in: RETRYABLE } },
       data: data,
     });
+
+    // RF-95: "SUNAT lo aceptó" y "SUNAT lo rechazó" son exactamente los hechos que un
+    // requerimiento fiscal necesita poder mostrar, y hasta acá no dejaban ningún rastro.
+    // El actor es `null` porque la transición la decide el PSE, no una persona.
+    if (updated.count === 1 && result.outcome !== 'PENDING') {
+      await this.audit.log({
+        actorId: null,
+        action: `invoicing.document.${result.outcome.toLowerCase()}`,
+        entity: 'fiscal_documents',
+        entityId: id,
+        after: { outcome: result.outcome, code: result.code, message: result.message },
+      });
+    }
   }
 
   /**
@@ -942,15 +1240,37 @@ export class InvoicingService {
     const data: Record<string, string> = {};
     for (const [url, ext, field, contentType] of files) {
       if (!url) continue;
+      if (!this.isAllowedFileUrl(url)) {
+        this.logger.warn(`El PSE devolvió un enlace de ${ext} fuera de su propio dominio`);
+        continue;
+      }
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(30_000),
+          // Sin seguir redirecciones: la validación de host no sirve de nada si el
+          // destino puede reenviar a otra parte después de pasarla.
+          redirect: 'manual',
+        });
         if (!res.ok) continue;
+        const declared = Number(res.headers.get('content-length') ?? '0');
+        if (declared > MAX_DOCUMENT_FILE_BYTES) {
+          this.logger.warn(`El ${ext} de ${number} supera el tamaño máximo; no se guarda`);
+          continue;
+        }
         const buffer = Buffer.from(await res.arrayBuffer());
+        if (buffer.byteLength > MAX_DOCUMENT_FILE_BYTES) {
+          this.logger.warn(`El ${ext} de ${number} supera el tamaño máximo; no se guarda`);
+          continue;
+        }
         const key = `fiscal-documents/${id}/${number}.${ext}`;
         await this.storage.putObject(key, buffer, contentType);
         data[field] = key;
       } catch (err) {
-        this.logger.warn(`No se pudo guardar el ${ext} de ${number}: ${String(err)}`);
+        // Sin la URL en el mensaje: es una URL-capacidad del PSE y los logs de Cloud Run
+        // los lee más gente que la que puede ver un comprobante.
+        this.logger.warn(
+          `No se pudo guardar el ${ext} de ${number}: ${err instanceof Error ? err.name : 'error'}`,
+        );
       }
     }
     if (Object.keys(data).length > 0) {
@@ -958,11 +1278,34 @@ export class InvoicingService {
     }
   }
 
+  /** Host admitido para los archivos, tal como lo declara el proveedor atado. */
+  private providerHost(): string | null {
+    return this.provider.fileHost;
+  }
+
+  /**
+   * Solo se descargan archivos de **el mismo host del PSE**, y solo por HTTPS.
+   *
+   * Los enlaces vienen dentro del cuerpo JSON del proveedor, así que sin esta comprobación
+   * un PSE comprometido —o un DNS envenenado— convierte al API en un lector de la red
+   * interna cuyo resultado, además, queda descargable desde `GET …/pdf`.
+   */
+  private isAllowedFileUrl(url: string): boolean {
+    try {
+      const target = new URL(url);
+      if (target.protocol !== 'https:') return false;
+      const base = this.providerHost();
+      return base !== null && target.host === base;
+    } catch {
+      return false;
+    }
+  }
+
   /** Reintento manual del envío (D-073). El job hace lo mismo, sin usuario. */
   async retry(actor: RequestUser, id: string): Promise<FiscalDocumentDto> {
     const document = await this.prisma.fiscalDocument.findUnique({
       where: { id },
-      select: { id: true, status: true },
+      select: { id: true, status: true, docType: true },
     });
     if (!document) throw new NotFoundException('Comprobante no encontrado');
     if (!RETRYABLE_DOCUMENT_STATUSES.includes(document.status)) {
@@ -970,13 +1313,14 @@ export class InvoicingService {
         `Solo se reintenta un comprobante emitido o con error de envío; este está ${document.status}`,
       );
     }
+    await this.assertOwnership(actor, id, 'reintentar su envío');
     await this.audit.log({
       actorId: actor.id,
       action: 'invoicing.document.retry',
       entity: 'fiscal_documents',
       entityId: id,
     });
-    await this.deliver(id);
+    await this.deliverAny(id, document.docType);
     return this.findOne(id);
   }
 
@@ -996,11 +1340,7 @@ export class InvoicingService {
       select: { id: true, docType: true },
     });
     for (const doc of pending) {
-      if (doc.docType === FiscalDocType.GUIA_REMISION_REMITENTE) {
-        await this.deliverDispatchNote(doc.id);
-      } else {
-        await this.deliver(doc.id);
-      }
+      await this.deliverAny(doc.id, doc.docType);
     }
     return pending.length;
   }
@@ -1019,27 +1359,66 @@ export class InvoicingService {
       throw new BadRequestException('Un borrador no tiene nada que consultar');
     }
 
-    const result = await this.provider.queryStatus({
+    const command = {
       docType: document.docType,
       series: document.seriesRef.series,
       correlative: document.correlative ?? 0,
-    });
+    };
 
+    // Una baja en trámite se consulta con **su propia** operación (D-072). Preguntar por
+    // el comprobante daría siempre "aceptado" —un documento con baja en trámite es, por
+    // definición, uno que SUNAT aceptó— y el documento se daría por anulado sin que SUNAT
+    // lo anulara: la cuenta por cobrar desaparecía mientras el comprobante seguía vigente.
     if (document.status === FiscalDocumentStatus.VOID_PENDING) {
-      if (result.outcome === 'ACCEPTED') {
-        await this.prisma.fiscalDocument.updateMany({
+      const voidResult = await this.provider.queryVoidStatus(command);
+      if (voidResult.outcome === 'ACCEPTED') {
+        const updated = await this.prisma.fiscalDocument.updateMany({
           where: { id, status: FiscalDocumentStatus.VOID_PENDING },
           data: {
             status: FiscalDocumentStatus.VOIDED,
             voidedAt: new Date(),
-            voidedById: actor.id,
-            providerResponse: result.raw ?? {},
+            // `voidedById` **no se toca**: ya guarda al administrador que pidió la baja, y
+            // pisarlo con quien apretó "consultar" haría que el registro de quién anuló
+            // fuera el de cualquiera que refrescó la pantalla.
+            providerResponse: voidResult.raw ?? {},
           },
+        });
+        if (updated.count === 1) {
+          await this.audit.log({
+            actorId: actor.id,
+            action: 'invoicing.document.void-confirmed',
+            entity: 'fiscal_documents',
+            entityId: id,
+            after: { number: document.number },
+          });
+        }
+      } else if (voidResult.outcome === 'REJECTED') {
+        // SUNAT rechazó la baja: el comprobante sigue vivo. Sin esto, `VOID_PENDING` era
+        // un estado sin salida —ni se anulaba, ni se podía acreditar, ni se reintentaba—
+        // y el documento quedaba vigente para el cliente y bloqueado para el sistema.
+        await this.prisma.fiscalDocument.updateMany({
+          where: { id, status: FiscalDocumentStatus.VOID_PENDING },
+          data: {
+            status: FiscalDocumentStatus.ACCEPTED,
+            voidRequestedAt: null,
+            rejectionCode: voidResult.code,
+            rejectionMessage:
+              voidResult.message?.slice(0, 500) ?? 'SUNAT rechazó la comunicación de baja',
+            providerResponse: voidResult.raw ?? {},
+          },
+        });
+        await this.audit.log({
+          actorId: actor.id,
+          action: 'invoicing.document.void-rejected',
+          entity: 'fiscal_documents',
+          entityId: id,
+          after: { number: document.number, message: voidResult.message },
         });
       }
       return this.findOne(id);
     }
 
+    const result = await this.provider.queryStatus(command);
     await this.applyResult(id, result);
     if (result.outcome === 'ACCEPTED') await this.storeFiles(id, document.number, result);
     return this.findOne(id);
@@ -1106,6 +1485,15 @@ export class InvoicingService {
       );
     }
 
+    // El interruptor de contingencia también cubre la baja (D-073): durante una caída
+    // conocida del PSE, insistir solo agrega ruido y deja al usuario con un error opaco.
+    const settings = await this.settingsRow();
+    if (settings.providerOffline) {
+      throw new ConflictException(
+        'El envío al PSE está en contingencia manual: baja el interruptor antes de comunicar una baja',
+      );
+    }
+
     const result = await this.provider.voidDocument({
       docType: document.docType,
       series: document.seriesRef?.series ?? '',
@@ -1124,7 +1512,22 @@ export class InvoicingService {
 
     const now = new Date();
     await this.prisma.$transaction(async (tx) => {
-      await tx.fiscalDocument.updateMany({
+      // Los guardrails se revalidan **con la fila bloqueada**: entre la comprobación de
+      // arriba y esta escritura pasó una llamada al PSE de hasta un minuto, y en esa
+      // ventana alguien pudo registrar un cobro o emitir una nota de crédito.
+      await tx.$queryRaw`
+        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
+      `;
+      const livePayments = await tx.customerPayment.count({
+        where: { documentId: id, reversedAt: null },
+      });
+      if (livePayments > 0) {
+        throw new ConflictException(
+          'Se registró un cobro mientras se comunicaba la baja: revierte el cobro y vuelve a intentarlo',
+        );
+      }
+
+      const updated = await tx.fiscalDocument.updateMany({
         where: { id, status: FiscalDocumentStatus.ACCEPTED },
         data:
           result.outcome === 'ACCEPTED'
@@ -1146,6 +1549,11 @@ export class InvoicingService {
                 providerResponse: (result.raw ?? {}) as Prisma.InputJsonValue,
               },
       });
+      // Sin mirar el `count`, dos bajas simultáneas escribían las dos su auditoría de
+      // "baja exitosa" aunque solo una hubiera cambiado algo.
+      if (updated.count !== 1) {
+        throw new ConflictException('El comprobante cambió de estado mientras se daba de baja');
+      }
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'invoicing.document.void',
@@ -1162,6 +1570,66 @@ export class InvoicingService {
   // -------------------------------------------------------------------------
   // Guía de remisión — la emite `dispatches`, la envía este servicio (D-071)
   // -------------------------------------------------------------------------
+
+  /**
+   * Emite la guía de remisión remitente de un despacho (RF-78, D-078).
+   *
+   * Sigue las **mismas dos fases** que un comprobante (D-073): el correlativo y el estado
+   * `ISSUED` se confirman antes de hablar con el PSE, así que la mercadería puede salir
+   * con la guía todavía sin aceptar. Es el caso en el que esa decisión más se nota: acá hay
+   * un camión esperando.
+   *
+   * Un despacho puede acumular varias guías si alguna fue rechazada —el rechazado conserva
+   * su correlativo (D-072)—, pero **solo una vigente a la vez**.
+   */
+  async issueDispatchNote(actor: RequestUser, dispatchId: string): Promise<FiscalDocumentDto> {
+    const documentId = await this.prisma.$transaction(async (tx) => {
+      const dispatch = await tx.dispatch.findUnique({
+        where: { id: dispatchId },
+        include: {
+          salesOrder: { select: { id: true, customerId: true } },
+          documents: { select: { id: true, number: true, status: true } },
+        },
+      });
+      if (!dispatch) throw new NotFoundException('Despacho no encontrado');
+      if (dispatch.status !== DispatchStatus.ISSUED) {
+        throw new BadRequestException('Un despacho revertido no tiene guía que emitir');
+      }
+      const live = dispatch.documents.find((d) => d.status !== FiscalDocumentStatus.REJECTED);
+      if (live) {
+        throw new ConflictException(`El despacho ya tiene la guía ${live.number ?? 'en borrador'}`);
+      }
+
+      const created = await tx.fiscalDocument.create({
+        data: {
+          docType: FiscalDocType.GUIA_REMISION_REMITENTE,
+          status: FiscalDocumentStatus.DRAFT,
+          customerId: dispatch.salesOrder.customerId,
+          dispatchId: dispatch.id,
+          // La guía no cuelga del pedido: el `CHECK` de la migración la ata al despacho, y
+          // atarla también al pedido la haría aparecer entre los comprobantes de la venta.
+          issueDate: toDateOnly(businessToday()),
+          paymentTerms: 'CONTADO',
+          subtotalPen: '0',
+          igvPen: '0',
+          totalPen: '0',
+          createdById: actor.id,
+        },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.dispatch-note.create',
+        entity: 'fiscal_documents',
+        entityId: created.id,
+        after: { dispatchId },
+      });
+      return created.id;
+    });
+
+    await this.assign(actor, documentId);
+    await this.deliverDispatchNote(documentId);
+    return this.findOne(documentId);
+  }
 
   /**
    * Segunda fase del envío para una guía. Es gemela de `deliver` y está separada solo
@@ -1187,6 +1655,7 @@ export class InvoicingService {
     });
     if (!document?.dispatch || document.number === null) return;
     if (!RETRYABLE_DOCUMENT_STATUSES.includes(document.status)) return;
+    if (!(await this.claimAttempt(id))) return;
 
     const settings = await this.settingsRow();
     if (settings.providerOffline) {
@@ -1206,60 +1675,91 @@ export class InvoicingService {
       include: { seriesRef: { select: { series: true } } },
     });
 
-    const result = await this.provider.issueDispatchNote({
-      series: document.seriesRef?.series ?? '',
-      correlative: document.correlative ?? 0,
-      issueDate: document.issueDate.toISOString().slice(0, 10),
-      transferDate: dispatch.dispatchDate.toISOString().slice(0, 10),
-      customer: {
-        docType: document.customer.isSystem ? null : document.customer.docType,
-        docNumber: document.customer.docNumber,
-        name: document.customer.name,
-        address: document.customer.address,
-        email: document.customer.email,
-      },
-      originAddress: dispatch.originAddress,
-      destinationAddress: dispatch.destinationAddress,
-      originUbigeo: dispatch.originUbigeo,
-      destinationUbigeo: dispatch.destinationUbigeo,
-      transferMode: dispatch.transferMode,
-      totalWeightKg: dispatch.totalWeightKg.toFixed(3),
-      packageCount: dispatch.packageCount,
-      vehicle: dispatch.vehiclePlate ? { plate: dispatch.vehiclePlate } : null,
-      driver:
-        dispatch.driverName &&
-        dispatch.driverDocType &&
-        dispatch.driverDocNumber &&
-        dispatch.driverLicense
+    // Igual que `deliver`: la garantía de que un fallo del PSE no se convierte en un error
+    // del usuario es de este servicio, no del adaptador (D-073). Acá pesa más que en
+    // ningún otro lado, porque del otro lado del envío hay un camión esperando.
+    const result = await this.callProvider(() =>
+      this.provider.issueDispatchNote({
+        series: document.seriesRef?.series ?? '',
+        correlative: document.correlative ?? 0,
+        issueDate: document.issueDate.toISOString().slice(0, 10),
+        transferDate: dispatch.dispatchDate.toISOString().slice(0, 10),
+        customer: {
+          docType: document.customer.isSystem ? null : document.customer.docType,
+          docNumber: document.customer.docNumber,
+          name: document.customer.name,
+          address: document.customer.address,
+          email: document.customer.email,
+        },
+        originAddress: dispatch.originAddress,
+        destinationAddress: dispatch.destinationAddress,
+        originUbigeo: dispatch.originUbigeo,
+        destinationUbigeo: dispatch.destinationUbigeo,
+        transferMode: dispatch.transferMode,
+        totalWeightKg: dispatch.totalWeightKg.toFixed(3),
+        packageCount: dispatch.packageCount,
+        vehicle: dispatch.vehiclePlate ? { plate: dispatch.vehiclePlate } : null,
+        driver:
+          dispatch.driverName &&
+          dispatch.driverDocType &&
+          dispatch.driverDocNumber &&
+          dispatch.driverLicense
+            ? {
+                name: dispatch.driverName,
+                docType: dispatch.driverDocType,
+                docNumber: dispatch.driverDocNumber,
+                license: dispatch.driverLicense,
+              }
+            : null,
+        carrier:
+          dispatch.carrierDocNumber && dispatch.carrierName
+            ? { docNumber: dispatch.carrierDocNumber, name: dispatch.carrierName }
+            : null,
+        lines: dispatch.items.map((i) => ({
+          code: i.product.sku,
+          description: i.description,
+          unit: i.unit,
+          qty: i.qty.toFixed(3),
+        })),
+        notes: dispatch.notes,
+        relatedDocument: related?.seriesRef
           ? {
-              name: dispatch.driverName,
-              docType: dispatch.driverDocType,
-              docNumber: dispatch.driverDocNumber,
-              license: dispatch.driverLicense,
+              docType: related.docType,
+              series: related.seriesRef.series,
+              correlative: related.correlative ?? 0,
             }
           : null,
-      carrier:
-        dispatch.carrierDocNumber && dispatch.carrierName
-          ? { docNumber: dispatch.carrierDocNumber, name: dispatch.carrierName }
-          : null,
-      lines: dispatch.items.map((i) => ({
-        code: i.product.sku,
-        description: i.description,
-        unit: i.unit,
-        qty: i.qty.toFixed(3),
-      })),
-      notes: dispatch.notes,
-      relatedDocument: related?.seriesRef
-        ? {
-            docType: related.docType,
-            series: related.seriesRef.series,
-            correlative: related.correlative ?? 0,
-          }
-        : null,
-    });
+      }),
+    );
 
     await this.applyResult(id, result);
     if (result.outcome === 'ACCEPTED') await this.storeFiles(id, document.number, result);
+  }
+
+  /**
+   * Envuelve una llamada al puerto para que nunca lance.
+   *
+   * El contrato dice que un adaptador no lanza, pero apoyar en esa disciplina una garantía
+   * de D-073 —"la operación nunca para por el PSE"— es apoyarla en el lugar equivocado:
+   * un proveedor nuevo, escrito por otra persona, no tiene por qué recordarla.
+   */
+  private async callProvider(call: () => Promise<ProviderResult>): Promise<ProviderResult> {
+    try {
+      return await call();
+    } catch (err) {
+      this.logger.error('El proveedor de facturación lanzó una excepción', err);
+      return {
+        outcome: 'ERROR',
+        ticket: null,
+        sunatHash: null,
+        pdfUrl: null,
+        xmlUrl: null,
+        cdrUrl: null,
+        code: 'PROVIDER_THREW',
+        message: 'No se pudo completar el envío al PSE',
+        raw: { error: err instanceof Error ? err.name : 'error' },
+      };
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1277,10 +1777,14 @@ export class InvoicingService {
    * `fiscal_document_items`) y no desde contadores guardados: un contador se desincroniza
    * con la primera reversa que alguien olvide restar, y acá hay reversas de las dos cosas.
    */
-  async orderProgress(salesOrderId: string): Promise<SalesOrderProgressDto> {
+  async orderProgress(
+    salesOrderId: string,
+    options: { withPrices: boolean } = { withPrices: true },
+  ): Promise<SalesOrderProgressDto> {
     const order = await this.prisma.salesOrder.findUnique({
       where: { id: salesOrderId },
       include: {
+        customer: { select: { name: true } },
         items: {
           orderBy: { lineNumber: 'asc' },
           include: { product: { select: { sku: true } } },
@@ -1336,6 +1840,8 @@ export class InvoicingService {
       salesOrderId: order.id,
       salesOrderCode: salesOrderCode(order.seq),
       status: order.status,
+      customerId: order.customerId,
+      customerName: order.customer.name,
       lines: order.items.map((item) => {
         const qty = toDecimal(item.qty.toString());
         const dispatchedQty = dispatchedByItem.get(item.id) ?? new Decimal(0);
@@ -1348,7 +1854,9 @@ export class InvoicingService {
           description: item.description,
           qty: qty.toFixed(3),
           unit: item.unit,
-          unitPricePen: item.unitPricePen.toFixed(4),
+          // §3.4: el supervisor de planta no tiene alcance comercial. Necesita saber
+          // cuánto puede sacar, no a cuánto se vendió.
+          unitPricePen: options.withPrices ? item.unitPricePen.toFixed(4) : '0.0000',
           dispatchedQty: dispatchedQty.toFixed(3),
           pendingDispatchQty: pendingQty(qty, dispatchedQty).toFixed(3),
           invoicedQty: invoicedQty.toFixed(3),
@@ -1401,6 +1909,14 @@ export class InvoicingService {
       customerId: query.customerId,
       salesOrderId: query.salesOrderId,
     };
+    if (query.pendingOnly) {
+      // El saldo es derivado (D-075) y no se puede sumar en SQL sin duplicar la regla que
+      // vive en `@ayr/shared`. Lo que **sí** se puede acotar en SQL es qué documentos son
+      // capaces de tener saldo: sin esto, el tope de 300 filas se llenaba de borradores y
+      // notas de crédito y las cuentas por cobrar dejaban de ver deudas reales.
+      where.status = { in: LIVE_DOCUMENT_STATUSES };
+      where.docType = { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] };
+    }
     if (query.search) {
       where.OR = [
         { number: { contains: query.search, mode: 'insensitive' } },
@@ -1608,8 +2124,7 @@ export class InvoicingService {
         RETRYABLE_DOCUMENT_STATUSES.includes(row.status) &&
         isStalled(row.issuedAt, alertAfterHours),
       voidPath:
-        row.status === FiscalDocumentStatus.ACCEPTED &&
-        row.docType !== FiscalDocType.GUIA_REMISION_REMITENTE
+        row.status === FiscalDocumentStatus.ACCEPTED
           ? voidPathFor(row.docType, issueDate, businessToday())
           : null,
       createdByName: actors.get(row.createdById) ?? null,

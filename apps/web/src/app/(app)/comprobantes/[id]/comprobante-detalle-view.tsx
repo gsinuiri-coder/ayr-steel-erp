@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -12,12 +13,13 @@ import {
   PAYMENT_TERMS_LABELS,
   Role,
   businessToday,
+  toDecimal,
   type CreditNoteReason,
   type FiscalDocumentDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
-import { formatDate, formatMoney, formatQty, unitSymbol } from '@/lib/format';
+import { formatDate, formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -56,6 +58,7 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** RF-70/RF-74/RF-75/RF-76: detalle del comprobante y sus acciones fiscales. */
 export function ComprobanteDetalleView({ id }: { id: string }) {
+  const router = useRouter();
   const { user } = useSession();
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
@@ -118,7 +121,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     onSuccess: (created) => {
       toast.success('Se creó un borrador corregido con correlativo nuevo');
       refresh();
-      window.location.href = `/comprobantes/${created.id}`;
+      router.push(`/comprobantes/${created.id}`);
     },
     onError,
   });
@@ -143,8 +146,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
 
   const creditNote = useMutation({
     mutationFn: () => {
+      // `isPositiveDecimal` y no `Number(qty) > 0`: descartar en silencio una cantidad mal
+      // escrita mandaba una nota parcial por el subconjunto equivocado —o, si todas
+      // quedaban fuera, una nota **total**, que es lo contrario de lo que se pidió.
       const items = Object.entries(creditQty)
-        .filter(([, qty]) => qty.trim() !== '' && Number(qty) > 0)
+        .filter(([, qty]) => isPositiveDecimal(qty))
         .map(([affectedItemId, qty]) => ({ affectedItemId, qty: qty.trim() }));
       return api<FiscalDocumentDto>(`/invoicing/documents/${id}/credit-note`, {
         method: 'POST',
@@ -161,29 +167,70 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       setCreditOpen(false);
       setCreditQty({});
       refresh();
-      window.location.href = `/comprobantes/${created.id}`;
+      router.push(`/comprobantes/${created.id}`);
     },
     onError,
   });
 
-  if (document.isPending) return <Skeleton className="h-64 w-full" />;
+  // Dentro del `RoleGate`: fuera, quien no tiene permiso veía "no se pudo cargar" en
+  // lugar de "no tienes permiso", que es justo lo que el guard existe para decir.
+  if (document.isPending) {
+    return (
+      <RoleGate allow={SALES_ROLES}>
+        <Skeleton className="h-64 w-full" />
+      </RoleGate>
+    );
+  }
   if (document.isError || !d) {
     return (
-      <Alert variant="destructive">
-        <AlertDescription>No se pudo cargar el comprobante.</AlertDescription>
-      </Alert>
+      <RoleGate allow={SALES_ROLES}>
+        <Alert variant="destructive">
+          <AlertDescription>No se pudo cargar el comprobante.</AlertDescription>
+        </Alert>
+      </RoleGate>
     );
   }
 
-  const isDraft = d.status === 'DRAFT';
+  // Una guía de remisión comparte tabla y pantalla con los comprobantes, pero su envío
+  // arma otro payload y su corrección vive en el despacho.
+  const isDispatchNote = d.docType === 'GUIA_REMISION_REMITENTE';
+  const isDraft = d.status === 'DRAFT' && !isDispatchNote;
   const canRetry = d.status === 'ISSUED' || d.status === 'SEND_ERROR';
-  const canCorrect = d.status === 'REJECTED';
-  const canVoid = isAdmin && d.voidPath === 'VOID';
-  const canCreditNote =
-    d.status === 'ACCEPTED' &&
-    d.docType !== 'NOTA_CREDITO' &&
-    d.docType !== 'GUIA_REMISION_REMITENTE';
+  const canCorrect = d.status === 'REJECTED' && !isDispatchNote;
+  // Los mismos guardas que `voidDocument`: con un cobro vigente o una nota de crédito
+  // viva, la baja se rechaza. Sin esto el usuario escribía el motivo en el diálogo y
+  // recién ahí recibía el "no".
+  const hasLivePayments = d.payments.some((p) => p.reversedAt === null);
+  const hasLiveCreditNotes = d.creditNotes.some(
+    (n) => n.status !== 'REJECTED' && n.status !== 'DRAFT',
+  );
+  const voidBlockedBy = hasLivePayments
+    ? 'tiene cobros vigentes: revierte el cobro antes de darlo de baja'
+    : hasLiveCreditNotes
+      ? 'ya tiene nota de crédito: su saldo ya está ajustado'
+      : null;
+  const canVoid = isAdmin && d.voidPath === 'VOID' && voidBlockedBy === null;
+  // Una guía no lleva saldo ni cobros, así que sus dos guardas no aplican: lo único que
+  // se le puede hacer es darla de baja.
+  const canVoidDispatchNote = isAdmin && isDispatchNote && d.status === 'ACCEPTED';
+  const canCreditNote = d.status === 'ACCEPTED' && d.docType !== 'NOTA_CREDITO' && !isDispatchNote;
   const isFullReason = FULL_CREDIT_NOTE_REASONS.includes(creditReason);
+  // Consultar tiene sentido donde puede cambiar algo: un pendiente de aceptación, una baja
+  // en trámite, o un aceptado al que le faltan archivos. En `REJECTED` y `VOIDED` la
+  // consulta gastaba una llamada al PSE para mostrar un "listo" que no significaba nada.
+  const canQuery =
+    d.status === 'ISSUED' ||
+    d.status === 'SEND_ERROR' ||
+    d.status === 'VOID_PENDING' ||
+    (d.status === 'ACCEPTED' && !(d.hasPdf && d.hasXml && d.hasCdr));
+  // W9: una guía de remisión comparte tabla y pantalla con los comprobantes, pero su
+  // envío arma otro payload y su corrección vive en el despacho.
+  const typedCreditQty = Object.values(creditQty).filter((q) => q.trim() !== '');
+  const validCreditQty = typedCreditQty.filter((q) => isPositiveDecimal(q));
+  // Un motivo parcial sin cantidades acabaría emitiendo una nota **total**; y una cantidad
+  // mal escrita, una parcial por el subconjunto equivocado. Las dos cosas se cortan acá.
+  const canCreateCreditNote =
+    typedCreditQty.length === validCreditQty.length && (isFullReason || validCreditQty.length > 0);
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -227,7 +274,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Reintentar envío
             </Button>
           )}
-          {!isDraft && (
+          {canQuery && (
             <Button
               variant="outline"
               disabled={refreshStatus.isPending}
@@ -258,7 +305,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Nota de crédito
             </Button>
           )}
-          {canVoid && (
+          {(canVoid || canVoidDispatchNote) && (
             <Button
               variant="destructive"
               onClick={() => {
@@ -304,6 +351,39 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <AlertDescription>
             La baja está comunicada y SUNAT todavía no la confirmó. «Consultar al PSE» revisa si ya
             respondió.
+          </AlertDescription>
+        </Alert>
+      )}
+      {voidBlockedBy !== null && isAdmin && d.voidPath === 'VOID' && (
+        <Alert>
+          <AlertDescription>
+            Este comprobante no se puede dar de baja porque {voidBlockedBy}.
+          </AlertDescription>
+        </Alert>
+      )}
+      {isDispatchNote && (
+        <Alert>
+          <AlertDescription>
+            Esta es la guía de remisión del despacho{' '}
+            {d.dispatchId ? (
+              <Link href={`/despachos/${d.dispatchId}`} className="underline">
+                {d.dispatchCode}
+              </Link>
+            ) : (
+              d.dispatchCode
+            )}
+            . Se emite y se corrige desde el despacho, no desde esta pantalla.
+          </AlertDescription>
+        </Alert>
+      )}
+      {d.voidPath === 'CREDIT_NOTE' && !isDispatchNote && (
+        <Alert>
+          <AlertDescription>
+            Para deshacer este comprobante corresponde una <strong>nota de crédito</strong>, no la
+            comunicación de baja:{' '}
+            {d.docType === 'BOLETA'
+              ? 'la baja de una boleta se comunica por resumen diario, que está fuera de alcance.'
+              : 'ya pasó el plazo de siete días de la comunicación de baja.'}
           </AlertDescription>
         </Alert>
       )}
@@ -415,7 +495,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
                   <TableCell className="text-right">{formatMoney(item.igvPen)}</TableCell>
                   <TableCell className="text-right">
-                    {Number(item.creditedQty) > 0 ? formatQty(item.creditedQty, '') : '—'}
+                    {toDecimal(item.creditedQty).gt(0)
+                      ? formatQty(item.creditedQty, unitSymbol(item.unit))
+                      : '—'}
                   </TableCell>
                 </TableRow>
               ))}
@@ -494,7 +576,18 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         }}
       />
 
-      <Dialog open={creditOpen} onOpenChange={setCreditOpen}>
+      <Dialog
+        open={creditOpen}
+        onOpenChange={(open) => {
+          setCreditOpen(open);
+          // Cancelar y reabrir no arrastra lo tipeado la vez anterior, igual que
+          // `ReasonDialog`.
+          if (!open) {
+            setCreditQty({});
+            setCreditReason('ANULACION_OPERACION');
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Nota de crédito sobre {d.number}</DialogTitle>
@@ -534,7 +627,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             <div className="space-y-2">
               <Label>Cantidades a acreditar (opcional)</Label>
               {d.items.map((item) => {
-                const pending = Number(item.qty) - Number(item.creditedQty);
+                const pending = toDecimal(item.qty).minus(toDecimal(item.creditedQty));
                 return (
                   <div key={item.id} className="flex items-center gap-3">
                     <span className="flex-1 text-sm">
@@ -568,7 +661,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Cancelar
             </Button>
             <Button
-              disabled={creditNote.isPending}
+              disabled={creditNote.isPending || !canCreateCreditNote}
               onClick={() => {
                 creditNote.mutate();
               }}

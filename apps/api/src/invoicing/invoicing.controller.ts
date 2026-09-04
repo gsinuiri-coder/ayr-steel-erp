@@ -9,20 +9,26 @@ import {
   Query,
   Res,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import {
   createCreditNoteSchema,
+  createCustomerPaymentSchema,
   createInvoiceSchema,
   fiscalDocumentQuerySchema,
+  reverseCustomerPaymentSchema,
   Role,
   updateInvoicingSettingsSchema,
   voidDocumentSchema,
   type CreateCreditNoteInput,
+  type CreateCustomerPaymentInput,
   type CreateInvoiceInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentQuery,
   type InvoicingSettingsDto,
+  type ReceivableSummaryDto,
+  type ReverseCustomerPaymentInput,
   type SalesOrderProgressDto,
   type UpdateInvoicingSettingsInput,
   type VoidDocumentInput,
@@ -32,6 +38,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { InvoicingService } from './invoicing.service';
+import { ReceivablesService } from './receivables.service';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76).
@@ -44,7 +51,10 @@ import { InvoicingService } from './invoicing.service';
 @Controller('invoicing')
 @Roles(Role.ADMINISTRADOR, Role.VENDEDOR)
 export class InvoicingController {
-  constructor(private readonly invoicing: InvoicingService) {}
+  constructor(
+    private readonly invoicing: InvoicingService,
+    private readonly receivablesService: ReceivablesService,
+  ) {}
 
   // -------------------------------------------------------------------------
   // Configuración y alertas (D-073)
@@ -80,6 +90,7 @@ export class InvoicingController {
    * API escala a cero y hace falta poder ponerlo al día bajo demanda —y probarlo de punta
    * a punta—, exactamente como `POST /sales/quotations/expire` (D-069).
    */
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('send-pending')
   @Roles(Role.ADMINISTRADOR)
   async sendPending(): Promise<{ sent: number }> {
@@ -96,9 +107,12 @@ export class InvoicingController {
   @Get('orders/:salesOrderId/progress')
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
   orderProgress(
+    @CurrentUser() actor: RequestUser,
     @Param('salesOrderId', ParseUUIDPipe) salesOrderId: string,
   ): Promise<SalesOrderProgressDto> {
-    return this.invoicing.orderProgress(salesOrderId);
+    return this.invoicing.orderProgress(salesOrderId, {
+      withPrices: actor.role !== Role.SUPERVISOR_PLANTA,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -141,7 +155,11 @@ export class InvoicingController {
   private async sendFile(id: string, kind: 'pdf' | 'xml' | 'cdr', res: Response): Promise<void> {
     const { buffer, filename, contentType } = await this.invoicing.file(id, kind);
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    // El nombre sale de un correlativo del sistema y hoy no puede llevar comillas ni
+    // saltos de línea; se sanea igual para que un futuro alta de series no reabra la
+    // inyección de cabecera.
+    const safeName = filename.replace(/[^A-Za-z0-9._-]/g, '_');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
     res.send(buffer);
   }
 
@@ -155,6 +173,9 @@ export class InvoicingController {
   }
 
   /** D-072/D-073: toma correlativo, deja el documento emitido y lo manda al PSE. */
+  // Throttle propio, como el lookup de RUC (D-067): cada llamada sale a un servicio
+  // externo con nuestro token **y gasta un correlativo**, que es peor que gastar cuota.
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('documents/:id/send')
   send(
     @CurrentUser() actor: RequestUser,
@@ -164,6 +185,7 @@ export class InvoicingController {
   }
 
   /** D-073: reintento manual de un envío que no entró. */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('documents/:id/retry')
   retry(
     @CurrentUser() actor: RequestUser,
@@ -173,6 +195,7 @@ export class InvoicingController {
   }
 
   /** Consulta el estado real contra el PSE: resuelve pendientes y bajas en trámite. */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('documents/:id/refresh')
   refresh(
     @CurrentUser() actor: RequestUser,
@@ -198,6 +221,51 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(createCreditNoteSchema)) body: CreateCreditNoteInput,
   ): Promise<FiscalDocumentDto> {
     return this.invoicing.createCreditNote(actor, id, body);
+  }
+
+  // -------------------------------------------------------------------------
+  // Cobranza (RF-86..RF-88, D-075)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Cuentas por cobrar agregadas por cliente (RF-88).
+   *
+   * Va **antes** de `documents/:id` en el archivo por orden de lectura; son prefijos
+   * distintos y no colisionan.
+   */
+  @Get('receivables')
+  receivables(): Promise<ReceivableSummaryDto[]> {
+    return this.receivablesService.receivables();
+  }
+
+  /**
+   * RF-86: registra un cobro.
+   *
+   * ADMINISTRADOR **y VENDEDOR**, a diferencia del pago a proveedor, que es solo de
+   * ADMINISTRADOR: compras es un módulo de planta al que el vendedor no entra, y cobrar es
+   * parte de su trabajo (D-075).
+   */
+  @Post('documents/:id/payments')
+  async addPayment(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(createCustomerPaymentSchema)) body: CreateCustomerPaymentInput,
+  ): Promise<FiscalDocumentDto> {
+    await this.receivablesService.addPayment(actor, id, body);
+    return this.invoicing.findOne(id);
+  }
+
+  /** RF-87: revierte un cobro (D-046: solo ADMINISTRADOR). La fila nunca se borra. */
+  @Post('documents/:id/payments/:paymentId/reverse')
+  @Roles(Role.ADMINISTRADOR)
+  async reversePayment(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+    @Body(new ZodValidationPipe(reverseCustomerPaymentSchema)) body: ReverseCustomerPaymentInput,
+  ): Promise<FiscalDocumentDto> {
+    await this.receivablesService.reversePayment(actor, id, paymentId, body.reason);
+    return this.invoicing.findOne(id);
   }
 
   /** RF-75: comunicación de baja (D-046: solo ADMINISTRADOR). */

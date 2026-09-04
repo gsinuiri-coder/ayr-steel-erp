@@ -2,7 +2,9 @@ import {
   CREDIT_NOTE_REASON_SUNAT_CODE,
   DocType,
   FiscalDocType,
+  TRANSFER_MODE_SUNAT_CODE,
   TransferMode,
+  toDecimal,
   type CreditNoteReason,
 } from '@ayr/shared';
 import type {
@@ -64,11 +66,11 @@ const IGV_TYPE_TAXED = 1;
 /** Catálogo 20: motivo de traslado. `01` = venta, que es de donde nace todo despacho. */
 const TRANSFER_REASON_SALE = '01';
 
-/** Catálogo 18: modalidad de traslado. */
-const TRANSFER_MODE_CODE: Record<TransferMode, string> = {
-  PUBLIC: '01',
-  PRIVATE: '02',
-};
+/**
+ * Catálogo 18: modalidad de traslado. Sale de `@ayr/shared` y no de una tabla local
+ * porque es de SUNAT, no del proveedor: el web muestra el mismo código.
+ */
+const TRANSFER_MODE_CODE = TRANSFER_MODE_SUNAT_CODE;
 
 function customerDocCode(party: PartyRef): string {
   return party.docType === null ? '-' : CUSTOMER_DOC_CODE[party.docType];
@@ -124,7 +126,14 @@ export function buildInvoicePayload(command: IssueDocumentCommand): Record<strin
       descripcion: line.description,
       cantidad: Number(line.qty),
       valor_unitario: Number(line.unitPricePen),
-      precio_unitario: Number(line.unitPricePen) * (1 + Number(command.igvRatePct) / 100),
+      // Con IGV, calculado en Decimal y recién después convertido (D-003): en `number`,
+      // 11.86 × 1.18 daba 13.994799999999998 y el PSE valida coherencia entre el valor
+      // unitario, el precio unitario y los totales.
+      precio_unitario: Number(
+        toDecimal(line.unitPricePen)
+          .times(toDecimal(command.igvRatePct).div(100).plus(1))
+          .toFixed(4),
+      ),
       subtotal: Number(line.subtotalPen),
       tipo_de_igv: IGV_TYPE_TAXED,
       igv: Number(line.igvPen),
@@ -213,6 +222,22 @@ export function buildDispatchNotePayload(
 export function buildQueryPayload(command: QueryDocumentCommand): Record<string, unknown> {
   return {
     operacion: 'consultar_comprobante',
+    tipo_de_comprobante: DOC_TYPE_CODE[command.docType],
+    serie: command.series,
+    numero: command.correlative,
+  };
+}
+
+/**
+ * Payload de `consultar_anulacion`: el estado de la **baja**, no el del comprobante.
+ *
+ * Preguntar por el comprobante para saber si la baja entró da siempre "aceptado" —el
+ * documento con baja en trámite es justamente uno que SUNAT aceptó—, así que esta consulta
+ * tiene que ser la suya.
+ */
+export function buildVoidQueryPayload(command: QueryDocumentCommand): Record<string, unknown> {
+  return {
+    operacion: 'consultar_anulacion',
     tipo_de_comprobante: DOC_TYPE_CODE[command.docType],
     serie: command.series,
     numero: command.correlative,

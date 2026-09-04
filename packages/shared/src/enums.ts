@@ -615,18 +615,6 @@ export const FISCAL_DOC_TYPE_LABELS: Record<FiscalDocType, string> = {
 };
 
 /**
- * Código del catálogo 01 de SUNAT. Vive acá y no dentro del proveedor porque es del
- * **dominio**: lo define SUNAT, no el PSE (D-071). El adaptador lo traduce a lo que su
- * API espera, pero el número es el mismo con cualquier proveedor.
- */
-export const FISCAL_DOC_TYPE_SUNAT_CODE: Record<FiscalDocType, string> = {
-  FACTURA: '01',
-  BOLETA: '03',
-  NOTA_CREDITO: '07',
-  GUIA_REMISION_REMITENTE: '09',
-};
-
-/**
  * Estado de un documento electrónico (D-073). La UI los llama BORRADOR / EMITIDO /
  * ACEPTADO / RECHAZADO / ERROR DE ENVÍO / BAJA EN TRÁMITE / ANULADO.
  *
@@ -665,20 +653,6 @@ export const FISCAL_DOCUMENT_STATUS_LABELS: Record<FiscalDocumentStatus, string>
 export const RETRYABLE_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
   FiscalDocumentStatus.ISSUED,
   FiscalDocumentStatus.SEND_ERROR,
-];
-
-/**
- * Estados en los que el documento **ya existe fiscalmente**: tiene correlativo y no se
- * puede reutilizar. Es la condición que habilita el despacho (D-073) y la que bloquea
- * su reversa cuando el documento está `ACCEPTED` (D-074).
- */
-export const NUMBERED_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
-  FiscalDocumentStatus.ISSUED,
-  FiscalDocumentStatus.ACCEPTED,
-  FiscalDocumentStatus.REJECTED,
-  FiscalDocumentStatus.SEND_ERROR,
-  FiscalDocumentStatus.VOID_PENDING,
-  FiscalDocumentStatus.VOIDED,
 ];
 
 /** Motivo de una nota de crédito (catálogo 09 de SUNAT). */

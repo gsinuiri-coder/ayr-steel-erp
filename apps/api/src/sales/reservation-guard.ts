@@ -176,6 +176,91 @@ export async function markReservationConsumed(
 }
 
 /**
+ * Descuenta de una reserva lo que un **despacho** acaba de sacar (D-074, Fase 5b).
+ *
+ * La diferencia con `markReservationConsumed` es la razón de que exista: la orden de
+ * producción se lleva el material **entero** y cambia de custodio (D-060), así que
+ * consumir la reserva completa es exacto. Un despacho, en cambio, puede llevarse **una
+ * parte** de la línea, y marcar toda la reserva consumida dejaría el resto —material que
+ * el pedido sigue prometiendo— sin nada que lo proteja: cualquier merma, corte o venta se
+ * lo llevaría. Es el mismo agujero que la auditoría de 5a encontró en el otro sentido.
+ *
+ * Por eso `reservations.qty` significa **lo que todavía está prometido**, no la promesa
+ * original: esa vive en `sales_order_items.reserve_qty`, que no se toca nunca, así que
+ * bajar esta cifra no pierde información. Cuando llega a cero, la reserva pasa a
+ * `CONSUMIDA`.
+ *
+ * Se llama **antes** de escribir la salida de kardex, por el mismo motivo que
+ * `markReservationConsumed`: si fuera al revés, la propia reserva bloquearía contra la
+ * invariante de D-066 justo la salida que viene a cumplirla.
+ *
+ * Devuelve lo que efectivamente se descontó, que puede ser menos que `qty` si la reserva
+ * ya estaba liberada a mano o parcialmente consumida.
+ */
+export async function consumeReservationQty(
+  tx: Prisma.TransactionClient,
+  reservationId: string,
+  qty: Decimal,
+): Promise<Decimal> {
+  const reservation = await tx.reservation.findUnique({
+    where: { id: reservationId },
+    select: { id: true, status: true, qty: true },
+  });
+  if (!reservation) return new Decimal(0);
+  if (reservation.status !== ReservationStatus.ACTIVE) return new Decimal(0);
+
+  const outstanding = toDecimal(reservation.qty.toString());
+  const consumed = Decimal.min(outstanding, qty);
+  const remaining = outstanding.minus(consumed);
+
+  await tx.reservation.updateMany({
+    where: { id: reservationId, status: ReservationStatus.ACTIVE },
+    data: remaining.lte(0)
+      ? { qty: '0', status: ReservationStatus.CONSUMED, consumedAt: new Date() }
+      : { qty: remaining.toFixed(3) },
+  });
+  return consumed;
+}
+
+/**
+ * La mitad simétrica: devuelve a la reserva lo que la reversa de un despacho restituyó.
+ *
+ * Si la reserva había quedado `CONSUMIDA` por haberse despachado entera, vuelve a
+ * `ACTIVA` —y el pedido, de "atendido" a lo que corresponda, que lo recalcula el
+ * llamador—. Es la misma regla que `restoreReservation` aplica para la producción: toda
+ * reversa aguas abajo restaura la promesa, o el material vuelve al almacén desprotegido
+ * mientras el pedido lo sigue prometiendo.
+ *
+ * **No revalida la invariante**, y por el mismo motivo que `restoreReservation`: la misma
+ * transacción que sube la reserva es la que devuelve el material al kardex, así que el
+ * saldo sube y baja a la vez. Comprobarla acá solo podría hacer fallar una reversa
+ * legítima.
+ *
+ * Devuelve `false` si la reserva ya no existe o si su pedido está anulado: ahí la promesa
+ * dejó de existir y revivirla sería inventar un compromiso.
+ */
+export async function restoreReservationQty(
+  tx: Prisma.TransactionClient,
+  reservationId: string,
+  qty: Decimal,
+): Promise<boolean> {
+  const reservation = await tx.reservation.findUnique({
+    where: { id: reservationId },
+    select: { id: true, status: true, qty: true, salesOrder: { select: { status: true } } },
+  });
+  if (!reservation) return false;
+  if (reservation.status === ReservationStatus.RELEASED) return false;
+  if (reservation.salesOrder.status === SalesOrderStatus.CANCELLED) return false;
+
+  const restored = toDecimal(reservation.qty.toString()).plus(qty);
+  await tx.reservation.update({
+    where: { id: reservationId },
+    data: { qty: restored.toFixed(3), status: ReservationStatus.ACTIVE, consumedAt: null },
+  });
+  return true;
+}
+
+/**
  * Devuelve una reserva `CONSUMIDA` a `ACTIVA` cuando la orden de producción que la consumió
  * deshace lo que hizo (revertir el último reporte vigente, o anularse).
  *

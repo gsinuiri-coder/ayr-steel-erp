@@ -106,6 +106,30 @@ describe('buildInvoicePayload', () => {
     expect(payload.total).toBe(1180);
   });
 
+  it('el precio con IGV se calcula en Decimal y no arrastra basura binaria (D-003)', () => {
+    // 11.86 × 1.18 en `number` da 13.994799999999998, y el PSE valida la coherencia entre
+    // el valor unitario, el precio unitario y los totales: ese residuo es un rechazo con
+    // el correlativo ya gastado.
+    const payload = buildInvoicePayload(
+      invoiceCommand({
+        lines: [
+          {
+            code: 'PERF-90',
+            description: 'Perfil 90',
+            unit: 'NIU',
+            qty: '1.000',
+            unitPricePen: '11.8600',
+            subtotalPen: '11.8600',
+            igvPen: '2.1348',
+            totalPen: '13.9948',
+          },
+        ],
+      }),
+    );
+    const [item] = payload.items as Record<string, unknown>[];
+    expect(item?.precio_unitario).toBe(13.9948);
+  });
+
   it('una boleta a público en general viaja sin tipo de documento (D-077)', () => {
     const payload = buildInvoicePayload(
       invoiceCommand({

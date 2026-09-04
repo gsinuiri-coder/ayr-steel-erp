@@ -161,11 +161,34 @@ export abstract class ElectronicInvoicingProvider {
   /** `false` cuando no hay credenciales: el envío falla como `ERROR` y el job reintenta. */
   abstract readonly configured: boolean;
 
+  /**
+   * Host del que se admiten los archivos firmados (PDF, XML, CDR).
+   *
+   * Los enlaces vienen dentro de la respuesta del proveedor, así que descargarlos sin
+   * comprobar a dónde apuntan convertiría al API en un lector de cualquier dirección que
+   * ese cuerpo diga. `null` cuando el proveedor no sirve archivos.
+   */
+  abstract readonly fileHost: string | null;
+
   abstract issueDocument(command: IssueDocumentCommand): Promise<ProviderResult>;
 
   abstract issueDispatchNote(command: IssueDispatchNoteCommand): Promise<ProviderResult>;
 
   abstract queryStatus(command: QueryDocumentCommand): Promise<ProviderResult>;
+
+  /**
+   * Estado de la **comunicación de baja**, que no es el del comprobante.
+   *
+   * Existe como método aparte porque confundirlos tiene una consecuencia concreta y fea:
+   * un documento con baja en trámite es, por definición, un comprobante que SUNAT ya
+   * aceptó, así que preguntar por el comprobante devuelve "aceptado" y llevaría a darlo
+   * por anulado sin que SUNAT lo haya anulado — con la cuenta por cobrar desapareciendo
+   * mientras el comprobante sigue vigente.
+   *
+   * `ACCEPTED` acá significa "la baja fue aceptada"; `REJECTED`, que SUNAT la rechazó y el
+   * comprobante sigue vivo.
+   */
+  abstract queryVoidStatus(command: QueryDocumentCommand): Promise<ProviderResult>;
 
   abstract voidDocument(command: VoidDocumentCommand): Promise<ProviderResult>;
 }
