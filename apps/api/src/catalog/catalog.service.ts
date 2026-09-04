@@ -50,6 +50,7 @@ export class CatalogService {
             name: input.name,
             unit: input.unit,
             source: input.source,
+            listPricePen: input.listPricePen,
           },
           include: { businessLine: { select: { code: true } } },
         });
@@ -99,6 +100,9 @@ export class CatalogService {
     if (input.name !== undefined) data.name = input.name;
     if (input.unit !== undefined) data.unit = input.unit;
     if (input.source !== undefined) data.source = input.source;
+    // D-068: `null` es un valor legítimo (quitar el precio de lista), así que no se puede
+    // usar el truco de `?? undefined` que sirve para el resto de campos.
+    if (input.listPricePen !== undefined) data.listPricePen = input.listPricePen;
     if (input.isActive !== undefined) data.isActive = input.isActive;
 
     const after = await this.prisma.$transaction(async (tx) => {
@@ -131,6 +135,7 @@ function toDto(p: WithLineCode): ProductDto {
     sku: p.sku,
     name: p.name,
     unit: p.unit,
+    listPricePen: p.listPricePen === null ? null : p.listPricePen.toFixed(4),
     isActive: p.isActive,
     source: p.source,
     createdAt: p.createdAt.toISOString(),
@@ -145,6 +150,7 @@ function auditView(p: Product): Prisma.InputJsonObject {
     name: p.name,
     unit: p.unit,
     source: p.source,
+    listPricePen: p.listPricePen === null ? null : p.listPricePen.toFixed(4),
     isActive: p.isActive,
   };
 }

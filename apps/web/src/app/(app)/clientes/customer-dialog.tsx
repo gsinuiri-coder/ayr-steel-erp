@@ -1,11 +1,18 @@
 'use client';
 
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { DOC_TYPE_LABELS, DOC_TYPES, type CustomerDto } from '@ayr/shared';
+import {
+  DOC_TYPE_LABELS,
+  DOC_TYPES,
+  docNumberLengths,
+  type CustomerDto,
+  type DocumentLookupDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
@@ -54,6 +61,7 @@ interface Props {
 export function CustomerDialog({ open, customer, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const editing = !!customer;
+  const [lookupNote, setLookupNote] = useState<string | null>(null);
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -66,6 +74,47 @@ export function CustomerDialog({ open, customer, onOpenChange }: Props) {
       creditDays: customer?.creditDays ?? 0,
     },
   });
+
+  /**
+   * D-067: autocompletar razón social y dirección desde apis.net.pe. Es **opcional** de
+   * punta a punta: si el servicio no responde, no está configurado o el documento no
+   * existe, se avisa y la captura manual sigue igual de disponible. Nada bloquea el
+   * formulario — mismo criterio que el fallback del tipo de cambio (D-029).
+   */
+  const lookup = useMutation({
+    mutationFn: ({ docType, docNumber }: { docType: string; docNumber: string }) =>
+      api<DocumentLookupDto>(
+        `/customers/lookup?docType=${encodeURIComponent(docType)}&docNumber=${encodeURIComponent(docNumber)}`,
+      ),
+    onSuccess: (result) => {
+      if (result.found && result.name) {
+        form.setValue('name', result.name, { shouldValidate: true });
+        if (result.address) form.setValue('address', result.address, { shouldValidate: true });
+        setLookupNote(null);
+        toast.success('Datos traídos del padrón');
+        return;
+      }
+      setLookupNote(
+        result.reason === 'UNAVAILABLE'
+          ? 'El servicio de consulta no respondió. Escribe los datos a mano.'
+          : result.reason === 'NOT_CONFIGURED'
+            ? 'La consulta automática no está configurada. Escribe los datos a mano.'
+            : 'No se encontró ese documento. Escribe los datos a mano.',
+      );
+    },
+    onError: () => {
+      setLookupNote('No se pudo consultar el documento. Escribe los datos a mano.');
+    },
+  });
+
+  const docType = form.watch('docType');
+  const docNumber = form.watch('docNumber');
+  const lengths = docNumberLengths[docType];
+  const canLookup =
+    !editing &&
+    docType !== 'CE' &&
+    docNumber.trim().length >= lengths.min &&
+    docNumber.trim().length <= lengths.max;
 
   const save = useMutation({
     mutationFn: (values: FormValues) => {
@@ -144,14 +193,34 @@ export function CustomerDialog({ open, customer, onOpenChange }: Props) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Número</FormLabel>
-                    <FormControl>
-                      <Input disabled={editing} autoComplete="off" {...field} />
-                    </FormControl>
+                    <div className="flex gap-2">
+                      <FormControl>
+                        <Input disabled={editing} autoComplete="off" {...field} />
+                      </FormControl>
+                      {!editing && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={!canLookup || lookup.isPending}
+                          onClick={() => {
+                            setLookupNote(null);
+                            lookup.mutate({ docType, docNumber: docNumber.trim() });
+                          }}
+                        >
+                          {lookup.isPending ? 'Buscando…' : 'Buscar'}
+                        </Button>
+                      )}
+                    </div>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
+            {lookupNote && (
+              <p className="text-sm text-muted-foreground" role="status">
+                {lookupNote}
+              </p>
+            )}
             <FormField
               control={form.control}
               name="name"

@@ -93,8 +93,13 @@ export const inventorySummaryRowSchema = z.object({
   key: z.string(),
   itemType: z.enum(INVENTORY_ITEM_TYPES),
   name: z.string(),
+  /** Saldo **físico** del grupo. No descuenta reservas. */
   qty: z.string(),
   unit: z.string(),
+  /** D-066: suma de las reservas `ACTIVA` sobre los ítems del grupo. */
+  reservedQty: z.string(),
+  /** `qty − reservedQty`: lo que una venta o una producción nueva puede tomar. */
+  availableQty: z.string(),
   /** Costo promedio ponderado en soles del grupo (valor total / cantidad). */
   avgCostPen: z.string().nullable(),
   totalValuePen: z.string().nullable(),

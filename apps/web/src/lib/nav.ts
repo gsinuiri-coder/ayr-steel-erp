@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Banknote,
   Boxes,
+  ClipboardList,
   Factory,
   FileText,
   HardHat,
@@ -109,7 +110,12 @@ export const NAV: NavGroup[] = [
         href: '/cotizaciones',
         icon: FileText,
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-        soon: true,
+      },
+      {
+        title: 'Pedidos',
+        href: '/pedidos',
+        icon: ClipboardList,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
       },
       {
         title: 'Ventas',

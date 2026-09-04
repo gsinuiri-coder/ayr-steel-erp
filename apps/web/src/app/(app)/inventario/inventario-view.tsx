@@ -7,6 +7,7 @@ import {
   BUSINESS_LINE_LABELS,
   NOOP_INVENTORY_LINES,
   BUSINESS_LINES,
+  Decimal,
   Role,
   type BusinessLine,
   type InventorySummaryDto,
@@ -140,7 +141,9 @@ function SummaryTable({
   rows: InventorySummaryRowDto[];
   showCosts: boolean;
 }) {
-  const columnCount = showCosts ? 6 : 4;
+  // Físico, reservado y disponible son tres columnas siempre visibles: son cantidades,
+  // no costos, así que VENDEDOR también las ve (D-066, §3.4).
+  const columnCount = showCosts ? 8 : 6;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -153,7 +156,9 @@ function SummaryTable({
               <TableHead>{keyHeader}</TableHead>
               <TableHead>Descripción</TableHead>
               <TableHead className="text-right">Ítems</TableHead>
-              <TableHead className="text-right">Cantidad</TableHead>
+              <TableHead className="text-right">Físico</TableHead>
+              <TableHead className="text-right">Reservado</TableHead>
+              <TableHead className="text-right">Disponible</TableHead>
               {showCosts && <TableHead className="text-right">Costo prom.</TableHead>}
               {showCosts && <TableHead className="text-right">Valorizado</TableHead>}
             </TableRow>
@@ -179,6 +184,20 @@ function SummaryTable({
                 <TableCell className="text-right">{row.itemCount}</TableCell>
                 <TableCell className="text-right">
                   {formatQty(row.qty, unitSymbol(row.unit))}
+                </TableCell>
+                <TableCell className="text-right">
+                  {/* Un cero reservado se muestra como guion: la fila normal es la que no
+                      tiene nada comprometido, y un "0.000" en cada línea es ruido. */}
+                  {new Decimal(row.reservedQty).isZero() ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    <span className="font-medium text-amber-600">
+                      {formatQty(row.reservedQty, unitSymbol(row.unit))}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatQty(row.availableQty, unitSymbol(row.unit))}
                 </TableCell>
                 {showCosts && (
                   <TableCell className="text-right">

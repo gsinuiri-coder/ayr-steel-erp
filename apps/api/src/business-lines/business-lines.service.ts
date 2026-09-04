@@ -27,6 +27,7 @@ function toDto(l: BusinessLine): BusinessLineDto {
     code: toSharedLineCode(l.code),
     name: l.name,
     inventoryStrategy: l.inventoryStrategy,
+    quotationRequired: l.quotationRequired,
     createdAt: l.createdAt.toISOString(),
     updatedAt: l.updatedAt.toISOString(),
   };

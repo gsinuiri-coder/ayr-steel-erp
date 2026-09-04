@@ -39,6 +39,12 @@ const formSchema = z.object({
   name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(160),
   unit: z.string().trim().min(1, 'Obligatorio').max(20),
   source: z.enum(PRODUCT_SOURCES),
+  /** D-068: vacío significa "sin precio de lista", que el API guarda como `null`. */
+  listPricePen: z
+    .string()
+    .trim()
+    .refine((v) => v === '' || /^d+(.d+)?$/.test(v), 'Debe ser un número decimal')
+    .refine((v) => v === '' || Number.parseFloat(v) > 0, 'Debe ser mayor a cero'),
 });
 type FormValues = z.infer<typeof formSchema>;
 
@@ -59,6 +65,7 @@ export function ProductDialog({ open, businessLineId, product, onOpenChange }: P
       name: product?.name ?? '',
       unit: product?.unit ?? '',
       source: product?.source ?? 'MANUFACTURED',
+      listPricePen: product?.listPricePen ?? '',
     },
   });
 
@@ -67,7 +74,12 @@ export function ProductDialog({ open, businessLineId, product, onOpenChange }: P
       if (editing) {
         return api<ProductDto>(`/catalog/${product.id}`, {
           method: 'PATCH',
-          body: { name: values.name, unit: values.unit, source: values.source },
+          body: {
+            name: values.name,
+            unit: values.unit,
+            source: values.source,
+            listPricePen: values.listPricePen,
+          },
         });
       }
       return api<ProductDto>('/catalog', { method: 'POST', body: { ...values, businessLineId } });
@@ -145,6 +157,28 @@ export function ProductDialog({ open, businessLineId, product, onOpenChange }: P
                   <FormControl>
                     <Input placeholder="kg, unidad, m…" autoComplete="off" {...field} />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="listPricePen"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Precio de lista (S/, sin IGV)</FormLabel>
+                  <FormControl>
+                    <Input
+                      inputMode="decimal"
+                      placeholder="Opcional"
+                      autoComplete="off"
+                      {...field}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    Se sugiere al cotizar (D-068). El vendedor lo puede editar en la línea; queda
+                    registrado el precio de lista junto al cotizado.
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}

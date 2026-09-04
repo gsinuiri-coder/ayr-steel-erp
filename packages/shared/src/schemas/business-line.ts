@@ -10,6 +10,11 @@ export const businessLineSchema = z.object({
   code: z.enum(BUSINESS_LINES),
   name: z.string(),
   inventoryStrategy: z.enum(INVENTORY_STRATEGIES),
+  /**
+   * D-065: la línea exige cotización confirmada antes de vender (coberturas, RF-31) o
+   * admite pedido directo. El web lo usa para ofrecer o esconder el alta directa de pedido.
+   */
+  quotationRequired: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

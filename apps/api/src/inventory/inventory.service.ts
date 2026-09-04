@@ -523,12 +523,16 @@ export class InventoryService {
     });
     const withStock = balances.filter((b) => toDecimal(b.qty.toString()).gt(0));
     const labels = await this.resolveItemLabels(withStock);
+    // D-066: lo reservado se agrega por grupo junto con la cantidad, para que la pantalla
+    // muestre físico, reservado y disponible como tres columnas de la misma fila.
+    const reserved = await this.reservedByItem(withStock);
 
     const groups = new Map<
       string,
       { itemType: InventoryItemType; name: string; unit: string; ids: string[] } & {
         qty: Decimal;
         value: Decimal;
+        reserved: Decimal;
       }
     >();
 
@@ -539,10 +543,12 @@ export class InventoryService {
       const key = b.itemType === 'COIL' ? (label?.name ?? b.itemId) : (label?.code ?? b.itemId);
       const qty = toDecimal(b.qty.toString());
       const value = qty.times(toDecimal(b.avgCost.toString()));
+      const itemReserved = reserved.get(labelKey(b.itemType, b.itemId)) ?? new Decimal(0);
       const current = groups.get(`${b.itemType}:${key}`);
       if (current) {
         current.qty = current.qty.plus(qty);
         current.value = current.value.plus(value);
+        current.reserved = current.reserved.plus(itemReserved);
         current.ids.push(b.itemId);
       } else {
         groups.set(`${b.itemType}:${key}`, {
@@ -554,6 +560,7 @@ export class InventoryService {
           ids: [b.itemId],
           qty,
           value,
+          reserved: itemReserved,
         });
       }
     }
@@ -566,6 +573,8 @@ export class InventoryService {
         name: g.name,
         qty: g.qty.toFixed(3),
         unit: g.unit,
+        reservedQty: g.reserved.toFixed(3),
+        availableQty: g.qty.minus(g.reserved).toFixed(3),
         avgCostPen: showCosts
           ? toFixedString(g.qty.lte(0) ? new Decimal(0) : g.value.div(g.qty), 'MONEY')
           : null,
