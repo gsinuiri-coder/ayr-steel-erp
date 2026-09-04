@@ -235,6 +235,23 @@ export class QuotationsService {
     return this.findOne(id);
   }
 
+  /**
+   * Estado **efectivo** de una cotización: el guardado, salvo que sea una `EMITIDA` cuya
+   * vigencia ya pasó y que el job diario (D-069) todavía no marcó.
+   *
+   * Es exactamente el mismo razonamiento por el que `confirm()` revalida la fecha en vez de
+   * confiar en el estado: el API escala a cero y el cron puede no haber corrido. Acá importa
+   * igual o más, porque esta es la puerta por la que el documento sale hacia el cliente —
+   * durante esa ventana se reenviaba un papel indistinguible de uno vigente sobre una
+   * cotización que el propio API ya no dejaba confirmar.
+   */
+  private effectiveStatus(row: { status: QuotationStatus; validUntil: Date }): QuotationStatus {
+    const validUntil = row.validUntil.toISOString().slice(0, 10);
+    return row.status === QuotationStatus.EMITTED && validUntil < businessToday()
+      ? QuotationStatus.EXPIRED
+      : row.status;
+  }
+
   /** Arma el PDF de una cotización con su estado actual. No persiste nada. */
   private async renderPdf(id: string): Promise<Buffer> {
     const row = await this.prisma.quotation.findUniqueOrThrow({
@@ -245,7 +262,7 @@ export class QuotationsService {
       code: quotationCode(row.seq),
       // El estado va impreso: sin él, el PDF de una cotización anulada o vencida es
       // indistinguible de uno vigente y se le puede reenviar al cliente como si valiera.
-      status: row.status,
+      status: this.effectiveStatus(row),
       issueDate: row.issueDate.toISOString().slice(0, 10),
       validUntil: row.validUntil.toISOString().slice(0, 10),
       customerName: row.customer.name,
@@ -302,7 +319,7 @@ export class QuotationsService {
   async pdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
     const row = await this.prisma.quotation.findUnique({
       where: { id },
-      select: { id: true, seq: true, status: true, pdfKey: true },
+      select: { id: true, seq: true, status: true, validUntil: true, pdfKey: true },
     });
     if (!row) throw new NotFoundException('Cotización no encontrada');
     if (row.status === QuotationStatus.DRAFT) {
@@ -312,8 +329,10 @@ export class QuotationsService {
     }
 
     const filename = `${quotationCode(row.seq)}.pdf`;
-    const isCurrent =
-      row.status === QuotationStatus.EMITTED || row.status === QuotationStatus.CONFIRMED;
+    // Con el estado **efectivo**, no el guardado: una emitida cuya fecha ya pasó no puede
+    // servir el archivo congelado en R2, que se dibujó cuando todavía era vigente.
+    const status = this.effectiveStatus(row);
+    const isCurrent = status === QuotationStatus.EMITTED || status === QuotationStatus.CONFIRMED;
     if (isCurrent && row.pdfKey) {
       try {
         return { buffer: await this.storage.getObject(row.pdfKey), filename };

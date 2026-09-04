@@ -309,23 +309,23 @@ Sesión corta de mantenimiento, fuera del avance por fases: cerrar el hueco que 
 
 ## Fase 5a — detalle
 
-| #   | Entregable                                                                                                                | Estado |
-| --- | ------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 0   | D-063 (permisos de diagnóstico y comandos desde la raíz), regla dura 8 en `CLAUDE.md`                                     | ✅ commit propio antes de tocar código |
-| 1   | Decisiones D-064..D-069, §3.7 partida en 5a/5b, §3.2 con la segunda regla transversal, RF-51/61/62/63/65/66/69 trazados   | ✅ `docs/ARQUITECTURA.md` §0.2, `docs/DECISIONES.md` |
-| 2   | Prisma: `quotations`/`quotation_items`, `sales_orders`/`sales_order_items`, `reservations`, `products.list_price_pen`, `business_lines.quotation_required`, FK de `production_orders.reservation_id` | ✅ migraciones `20260904160000`, `20260904161000` y `20260904162000`, aplicadas en `dev` |
-| 3   | Módulo `sales`: cotizaciones, pedidos, ledger de reservas, PDF y job de vencimiento                                       | ✅ `apps/api/src/sales/` |
-| 4   | Invariante `disponible ≥ reservado` en **todas** las rutas que tocan stock, en sus dos formas (D-066)                     | ✅ `reservation-guard.ts` como función suelta, sin ciclo de módulos |
-| 5   | Las tres reversas en esta misma fase: anular cotización, anular pedido (libera), liberar reserva a mano                   | ✅ |
-| 6   | Web: `/cotizaciones`, `/cotizaciones/nueva`, `/cotizaciones/[id]`, `/pedidos`, `/pedidos/nuevo`, `/pedidos/[id]`; columnas reservado/disponible en `/inventario`; lookup de RUC en `/clientes`; precio de lista en `/catalogo` | ✅ |
-| 7   | Tests unit (aritmética comercial + invariante en el kardex)                                                              | ✅ 16 nuevos (155 en total) |
-| 8   | Revisión de `revisor` (API y web por separado) y `auditor-seguridad`                                                     | ⏳ |
-| 9   | E2E de Fase 5a                                                                                                           | ✅ 9 escenarios en `e2e/tests/fase5a.spec.ts` |
-| 10  | Deploy y migración en `production`; `pnpm e2e:prod` y `pnpm prod:purge-e2e`                                              | ⏳ |
-| 11  | Cierre: handoff, commit, push                                                                                            | ⏳ |
+| #   | Entregable                                                                                                                                                                                                                     | Estado                                                                                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| 0   | D-063 (permisos de diagnóstico y comandos desde la raíz), regla dura 8 en `CLAUDE.md`                                                                                                                                          | ✅ commit propio antes de tocar código                                                   |
+| 1   | Decisiones D-064..D-069, §3.7 partida en 5a/5b, §3.2 con la segunda regla transversal, RF-51/61/62/63/65/66/69 trazados                                                                                                        | ✅ `docs/ARQUITECTURA.md` §0.2, `docs/DECISIONES.md`                                     |
+| 2   | Prisma: `quotations`/`quotation_items`, `sales_orders`/`sales_order_items`, `reservations`, `products.list_price_pen`, `business_lines.quotation_required`, FK de `production_orders.reservation_id`                           | ✅ migraciones `20260904160000`, `20260904161000` y `20260904162000`, aplicadas en `dev` |
+| 3   | Módulo `sales`: cotizaciones, pedidos, ledger de reservas, PDF y job de vencimiento                                                                                                                                            | ✅ `apps/api/src/sales/`                                                                 |
+| 4   | Invariante `disponible ≥ reservado` en **todas** las rutas que tocan stock, en sus dos formas (D-066)                                                                                                                          | ✅ `reservation-guard.ts` como función suelta, sin ciclo de módulos                      |
+| 5   | Las tres reversas en esta misma fase: anular cotización, anular pedido (libera), liberar reserva a mano                                                                                                                        | ✅                                                                                       |
+| 6   | Web: `/cotizaciones`, `/cotizaciones/nueva`, `/cotizaciones/[id]`, `/pedidos`, `/pedidos/nuevo`, `/pedidos/[id]`; columnas reservado/disponible en `/inventario`; lookup de RUC en `/clientes`; precio de lista en `/catalogo` | ✅                                                                                       |
+| 7   | Tests unit (aritmética comercial + invariante en el kardex)                                                                                                                                                                    | ✅ 16 nuevos (155 en total)                                                              |
+| 8   | Revisión de `revisor` (API y web por separado) y `auditor-seguridad`                                                                                                                                                           | ⏳                                                                                       |
+| 9   | E2E de Fase 5a                                                                                                                                                                                                                 | ✅ 9 escenarios en `e2e/tests/fase5a.spec.ts`                                            |
+| 10  | Deploy y migración en `production`; `pnpm e2e:prod` y `pnpm prod:purge-e2e`                                                                                                                                                    | ⏳                                                                                       |
+| 11  | Cierre: handoff, commit, push                                                                                                                                                                                                  | ⏳                                                                                       |
 
 **El modelo, en cuatro actos.** **Cotizar** es una simulación de precio: no toca inventario
-y lo único que hace con el stock es *declarar*, línea por línea, qué se reservaría (D-054).
+y lo único que hace con el stock es _declarar_, línea por línea, qué se reservaría (D-054).
 **Emitir** la pasa a `EMITIDA` —el único estado desde el que se confirma— y genera su PDF.
 **Confirmar** crea el pedido **y** las reservas en una sola transacción; si a una línea no le
 alcanza el disponible, no se crea nada. **Consumir**: la OP nacida del pedido monta el
