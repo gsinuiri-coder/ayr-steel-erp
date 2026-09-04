@@ -39,14 +39,21 @@ run('gcloud', [
   // Delimitador ^|^ porque WEB_ORIGIN puede llevar comas.
   '--set-env-vars',
   `^|^NODE_ENV=production|WEB_ORIGIN=${webOrigin}|JOBS_ENABLED=true`,
+  // D-080: **producción no lleva credenciales del PSE**. Sin ellas se ata
+  // `NullInvoicingProvider` y toda emisión cae en la contingencia de D-073 —toma
+  // correlativo, permite despachar y queda pendiente—, que es exactamente lo que se quiere
+  // mientras la única cuenta disponible es la demo: así es **imposible** que un comprobante
+  // quede marcado como aceptado por SUNAT contra una cuenta de pruebas.
+  //
+  // El pase a la cuenta real es su propia sesión, con su checklist. Ahí se agregan
+  // `NUBEFACT_URL=NUBEFACT_URL:latest` y `NUBEFACT_TOKEN=NUBEFACT_TOKEN:latest` a la lista
+  // de abajo, después de cargarlas en Secret Manager.
   '--set-secrets',
   [
     'DATABASE_URL=DATABASE_URL:latest',
     'DIRECT_URL=DIRECT_URL:latest',
     'JWT_SECRET=JWT_SECRET:latest',
     'APIS_NET_PE_TOKEN=APIS_NET_PE_TOKEN:latest',
-    'NUBEFACT_URL=NUBEFACT_URL:latest',
-    'NUBEFACT_TOKEN=NUBEFACT_TOKEN:latest',
     'R2_ACCOUNT_ID=R2_ACCOUNT_ID:latest',
     'R2_ACCESS_KEY_ID=R2_ACCESS_KEY_ID:latest',
     'R2_SECRET_ACCESS_KEY=R2_SECRET_ACCESS_KEY:latest',
