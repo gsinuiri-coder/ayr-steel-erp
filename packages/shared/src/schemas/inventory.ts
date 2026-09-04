@@ -51,8 +51,13 @@ export const inventoryBalanceSchema = z.object({
   itemId: z.string().uuid(),
   itemLabel: z.string(),
   itemName: z.string(),
+  /** Saldo **físico**: lo que el kardex dice que hay. No descuenta reservas. */
   qty: z.string(),
   unit: z.string(),
+  /** D-066: suma de las reservas `ACTIVA` sobre este ítem. Cantidades, no costos: se ve con cualquier rol. */
+  reservedQty: z.string(),
+  /** `qty − reservedQty`. Es lo que una venta o una producción nueva puede tomar. */
+  availableQty: z.string(),
   /** Costos en soles (D-042). Van en null para VENDEDOR, que no ve costos de compra. */
   avgCost: z.string().nullable(),
   /** qty × avgCost, precalculado por el API para no repetir la multiplicación en el web. */

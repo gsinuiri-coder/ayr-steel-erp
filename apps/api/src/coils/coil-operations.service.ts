@@ -8,6 +8,7 @@ import {
 import {
   CoilSplitStatus,
   CoilStatus,
+  InventoryItemType,
   Prisma,
   type Coil,
   type InventoryMovement,
@@ -30,6 +31,7 @@ import { liveMovements } from '../inventory/live-movements';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
+import { assertNotReserved } from '../sales/reservation-guard';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
 import { CoilsService } from './coils.service';
 
@@ -407,6 +409,16 @@ export class CoilOperationsService {
       // D-060: cerrar un fleje que una OP tiene montado lo sacaría de producción justo
       // mientras la orden lo está usando.
       await assertStripsNotAssigned(tx, [coil.id], 'cambiarle el estado');
+      // D-066: cerrar tampoco mueve kardex, así que la invariante de cantidad no lo ve, y
+      // una bobina cerrada no entra a producción (RF-19): el material prometido a un
+      // pedido quedaría inalcanzable sin que nada avisara.
+      if (input.status === CoilStatus.CLOSED) {
+        await assertNotReserved(
+          tx,
+          [{ itemType: InventoryItemType.COIL, itemId: coil.id }],
+          'cerrarla',
+        );
+      }
       if (coil.status === input.status) {
         throw new BadRequestException(
           input.status === CoilStatus.OPEN

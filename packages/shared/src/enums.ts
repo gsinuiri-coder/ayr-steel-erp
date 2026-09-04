@@ -492,3 +492,88 @@ export const PRODUCTION_REPORT_STATUS_LABELS: Record<ProductionReportStatus, str
 export function productionOrderCode(seq: number): string {
   return `OP-${String(seq).padStart(6, '0')}`;
 }
+
+// ---------------------------------------------------------------------------
+// Fase 5a — cotización, pedido y reserva (RF-61, RF-62, RF-65, RF-69; D-064..D-069)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estado de una cotización (D-069). `DRAFT` mientras el vendedor la arma; `EMITTED`
+ * cuando ya se le mandó al cliente (es el único estado desde el que se confirma);
+ * `CONFIRMED` cuando generó pedido y reserva. `EXPIRED` lo pone el job diario al pasar
+ * `validUntil`; `CANCELLED` es la anulación manual. Los tres últimos son terminales,
+ * salvo que anular el pedido devuelva la cotización a `EMITTED` si sigue vigente.
+ */
+export const QuotationStatus = {
+  DRAFT: 'DRAFT',
+  EMITTED: 'EMITTED',
+  CONFIRMED: 'CONFIRMED',
+  EXPIRED: 'EXPIRED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type QuotationStatus = (typeof QuotationStatus)[keyof typeof QuotationStatus];
+export const QUOTATION_STATUSES = Object.values(QuotationStatus) as [
+  QuotationStatus,
+  ...QuotationStatus[],
+];
+export const QUOTATION_STATUS_LABELS: Record<QuotationStatus, string> = {
+  DRAFT: 'Borrador',
+  EMITTED: 'Emitida',
+  CONFIRMED: 'Confirmada',
+  EXPIRED: 'Vencida',
+  CANCELLED: 'Anulada',
+};
+
+/**
+ * Estado de un pedido (D-065). Estados mínimos de Fase 5a: el despacho real, la guía y
+ * la cobranza son de Fase 5b. `IN_PRODUCTION` desde que una OP nace del pedido;
+ * `FULFILLED` cuando se entregó todo.
+ */
+export const SalesOrderStatus = {
+  CONFIRMED: 'CONFIRMED',
+  IN_PRODUCTION: 'IN_PRODUCTION',
+  FULFILLED: 'FULFILLED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type SalesOrderStatus = (typeof SalesOrderStatus)[keyof typeof SalesOrderStatus];
+export const SALES_ORDER_STATUSES = Object.values(SalesOrderStatus) as [
+  SalesOrderStatus,
+  ...SalesOrderStatus[],
+];
+export const SALES_ORDER_STATUS_LABELS: Record<SalesOrderStatus, string> = {
+  CONFIRMED: 'Confirmado',
+  IN_PRODUCTION: 'En producción',
+  FULFILLED: 'Atendido',
+  CANCELLED: 'Anulado',
+};
+
+/**
+ * Estado de una reserva de stock (D-054, D-066). `ACTIVE` es la única que descuenta
+ * disponible y la única que bloquea operaciones sobre el ítem; `CONSUMED` la marca la OP
+ * al emitir material; `RELEASED` sale de anular el pedido o de la liberación manual.
+ */
+export const ReservationStatus = {
+  ACTIVE: 'ACTIVE',
+  CONSUMED: 'CONSUMED',
+  RELEASED: 'RELEASED',
+} as const;
+export type ReservationStatus = (typeof ReservationStatus)[keyof typeof ReservationStatus];
+export const RESERVATION_STATUSES = Object.values(ReservationStatus) as [
+  ReservationStatus,
+  ...ReservationStatus[],
+];
+export const RESERVATION_STATUS_LABELS: Record<ReservationStatus, string> = {
+  ACTIVE: 'Activa',
+  CONSUMED: 'Consumida',
+  RELEASED: 'Liberada',
+};
+
+/** `123` → `COT-000123`. Correlativo legible de una cotización (D-068). */
+export function quotationCode(seq: number): string {
+  return `COT-${String(seq).padStart(6, '0')}`;
+}
+
+/** `123` → `PED-000123`. Correlativo legible de un pedido (D-068). */
+export function salesOrderCode(seq: number): string {
+  return `PED-${String(seq).padStart(6, '0')}`;
+}

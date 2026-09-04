@@ -1,0 +1,12 @@
+-- D-065: `business_lines.quotation_required` nace en `false` para todas las líneas, y la
+-- única que de verdad exige cotización confirmada antes de vender es la de coberturas
+-- metálicas (`metallic-roofing`), que fabrica contra pedido (RF-31, D-048).
+--
+-- Drywall vende perfiles de stock, roofing (UPVC) y trading son compra-venta: las tres
+-- admiten pedido directo. `services` no lleva stock (§2.2), así que el flag no la afecta.
+--
+-- Va en su propia migración y no en la que crea la columna porque esa ya estaba aplicada
+-- cuando se decidió el valor inicial: modificar el `.sql` de una migración ya aplicada
+-- cambia su checksum y rompe `migrate deploy` en las otras ramas (la misma clase de
+-- problema que D-053).
+UPDATE "business_lines" SET "quotation_required" = true WHERE "code" = 'metallic-roofing';

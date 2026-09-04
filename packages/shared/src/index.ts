@@ -16,3 +16,4 @@ export * from './schemas/purchase';
 export * from './schemas/coil';
 export * from './schemas/cutting';
 export * from './schemas/production';
+export * from './schemas/sales';

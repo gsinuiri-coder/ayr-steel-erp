@@ -79,6 +79,13 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
         },
       ),
     },
+    // D-066: la invariante `disponible ≥ reservado` consulta el ledger en cada salida.
+    // La transacción falsa lo devuelve vacío por defecto; los tests que necesiten una
+    // reserva viva sobreescriben estos mocks.
+    reservation: {
+      aggregate: jest.fn().mockResolvedValue({ _sum: { qty: null } }),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     inventoryMovement: {
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
         // Prisma devuelve `null` en las columnas opcionales que no se escribieron; sin
@@ -418,6 +425,91 @@ describe('InventoryService (§3.2, D-028)', () => {
 
       await service.reverse(fake.tx, adjust!.id, ACTOR, 'Flete anulado');
       expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '1000.000', avgCost: '5.0000' });
+    });
+  });
+  /**
+   * D-066 — invariante `disponible ≥ reservado`. El ledger de reservas vive fuera del
+   * kardex (D-054), así que el único punto donde una salida lo puede violar es este; los
+   * tests le enchufan reservas vivas a la transacción falsa y comprueban los dos lados.
+   */
+  describe('invariante disponible ≥ reservado (D-066)', () => {
+    function reserve(fake: ReturnType<typeof createFakeTx>, qty: string, orderSeq = 1): void {
+      const tx = fake.tx as unknown as {
+        reservation: { aggregate: jest.Mock; findMany: jest.Mock };
+      };
+      tx.reservation.aggregate.mockResolvedValue({ _sum: { qty: { toString: () => qty } } });
+      tx.reservation.findMany.mockResolvedValue([
+        {
+          id: 'res-1',
+          itemType: 'COIL',
+          itemId: ITEM,
+          qty: { toString: () => qty },
+          unit: 'KGM',
+          salesOrder: { id: 'ord-1', seq: orderSeq },
+        },
+      ]);
+    }
+
+    it('bloquea la salida que dejaría el saldo por debajo de lo reservado', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '1000.000', unitCost: '5.0000' }));
+      reserve(fake, '400.000');
+
+      await expect(
+        service.record(
+          fake.tx,
+          entry({ type: 'OUT', qty: '700.000', unitCost: undefined, refType: 'SCRAP' }),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      // Falla completa: el saldo queda intacto, sin movimiento a medias.
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '1000.000' });
+      expect(fake.movements).toHaveLength(1);
+    });
+
+    it('el mensaje nombra el pedido que tiene el material reservado', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '1000.000', unitCost: '5.0000' }));
+      reserve(fake, '400.000', 42);
+
+      await expect(
+        service.record(
+          fake.tx,
+          entry({ type: 'OUT', qty: '700.000', unitCost: undefined, refType: 'SCRAP' }),
+        ),
+      ).rejects.toThrow(/PED-000042/);
+    });
+
+    it('deja pasar la salida que respeta lo reservado, hasta el límite exacto', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '1000.000', unitCost: '5.0000' }));
+      reserve(fake, '400.000');
+
+      await service.record(
+        fake.tx,
+        entry({ type: 'OUT', qty: '600.000', unitCost: undefined, refType: 'SCRAP' }),
+      );
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '400.000' });
+    });
+
+    it('una entrada nunca se bloquea, por reservado que esté el ítem', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      await service.record(fake.tx, entry({ qty: '100.000', unitCost: '5.0000' }));
+      reserve(fake, '100.000');
+
+      await service.record(fake.tx, entry({ qty: '50.000', unitCost: '6.0000' }));
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '150.000' });
+    });
+
+    it('anular un ingreso también respeta la invariante (misma regla, otra puerta)', async () => {
+      const fake = createFakeTx(STOCK_LINE);
+      const first = await service.record(fake.tx, entry({ qty: '500.000', unitCost: '5.0000' }));
+      await service.record(fake.tx, entry({ qty: '500.000', unitCost: '5.0000' }));
+      reserve(fake, '600.000');
+
+      await expect(
+        service.reverse(fake.tx, first!.id, ACTOR, 'Compra anulada'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '1000.000' });
     });
   });
 });

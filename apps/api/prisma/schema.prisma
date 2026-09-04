@@ -14,6 +14,10 @@
 // (`product_boms`), orden de producción (`production_orders`) con flejes asignados
 // (`production_order_consumptions`, sin kardex al asignar) y reportes parciales de
 // piezas (`production_reports`, kardex por reporte); merma de proceso y costeo al cerrar.
+// Fase 5a (D-064..D-069): ciclo comercial hasta la reserva — cotización (`quotations`),
+// pedido (`sales_orders`) y ledger de reservas (`reservations`, fuera del kardex por
+// D-054), más `products.list_price_pen` (precio de lista, D-068) y
+// `business_lines.quotation_required` (D-065). Todo en soles (D-064).
 // Regla D-003: dinero/kg/mm/tasas son siempre `Decimal @db.Decimal(p, s)` con
 // escala explícita (dinero 4, kg 3, mm 2, tasas/factores 4). Nunca `number`.
 
@@ -225,6 +229,34 @@ enum ProductionReportStatus {
   REVERTED
 }
 
+/// Estado de una cotización (D-069). La UI los llama BORRADOR / EMITIDA / CONFIRMADA /
+/// VENCIDA / ANULADA (§0.1: identificadores en inglés). `EXPIRED` lo pone el job diario
+/// al pasar `validUntil`; anular el pedido devuelve la cotización a `EMITTED` si sigue vigente.
+enum QuotationStatus {
+  DRAFT
+  EMITTED
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+}
+
+/// Estado de un pedido (D-065). Estados mínimos de Fase 5a: despacho, guía y cobranza
+/// son de Fase 5b.
+enum SalesOrderStatus {
+  CONFIRMED
+  IN_PRODUCTION
+  FULFILLED
+  CANCELLED
+}
+
+/// Estado de una reserva de stock (D-054, D-066). `ACTIVE` es la única que descuenta
+/// disponible y la única que bloquea operaciones sobre el ítem.
+enum ReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+}
+
 /// Estado de una fila dentro de un lote de importación.
 enum ImportRowStatus {
   VALID
@@ -297,6 +329,10 @@ model BusinessLine {
   code              BusinessLineCode  @unique
   name              String            @db.VarChar(80)
   inventoryStrategy InventoryStrategy @map("inventory_strategy")
+  /// D-065: la línea exige cotización confirmada antes de vender (RF-31, coberturas) o
+  /// admite pedido directo (perfiles, trading). Es el flag que decide si `POST
+  /// /sales/orders` se acepta o se rechaza para un producto de esta línea.
+  quotationRequired Boolean           @default(false) @map("quotation_required")
   createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -308,6 +344,8 @@ model BusinessLine {
   coils              Coil[]
   cuttingOrders      CuttingOrder[]
   productionOrders   ProductionOrder[]
+  quotations         Quotation[]
+  salesOrders        SalesOrder[]
 
   @@map("business_lines")
 }
@@ -339,6 +377,10 @@ model Product {
   name           String        @db.VarChar(160)
   unit           String        @db.VarChar(20)
   source         ProductSource
+  /// D-068: precio de lista de venta, **sin IGV y en soles** (D-064). Único por producto
+  /// en v1; las listas por cliente o por volumen quedan diferidas y entran, si hacen
+  /// falta, como una tabla aparte que sobreescriba este valor.
+  listPricePen   Decimal?      @map("list_price_pen") @db.Decimal(18, 4)
   isActive       Boolean       @default(true) @map("is_active")
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -347,6 +389,8 @@ model Product {
   /// Receta de fabricación (D-059). Solo la tienen los productos fabricados.
   bom              ProductBom?
   productionOrders ProductionOrder[]
+  quotationItems   QuotationItem[]
+  salesOrderItems  SalesOrderItem[]
 
   @@unique([businessLineId, sku])
   @@index([businessLineId])
@@ -366,6 +410,9 @@ model Customer {
   isActive   Boolean  @default(true) @map("is_active")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  quotations  Quotation[]
+  salesOrders SalesOrder[]
 
   @@unique([docType, docNumber])
   @@map("customers")
@@ -645,50 +692,50 @@ model SupplierPayment {
 /// (D-038) y en Fase 2b lo puede subir el landed cost (D-043). `parentCoilId`/`splitId`
 /// apuntan a la madre y al partido que creó la bobina hija (RF-15).
 model Coil {
-  id                 String             @id @default(uuid()) @db.Uuid
-  code               String             @unique @db.VarChar(60)
-  typeKey            String             @map("type_key") @db.VarChar(40)
+  id                 String                       @id @default(uuid()) @db.Uuid
+  code               String                       @unique @db.VarChar(60)
+  typeKey            String                       @map("type_key") @db.VarChar(40)
   /// D-049: `COIL` (bobina) o `STRIP` (fleje, hija de `parentCoilId`).
-  kind               CoilKind           @default(COIL)
-  businessLineId     String             @map("business_line_id") @db.Uuid
-  businessLine       BusinessLine       @relation(fields: [businessLineId], references: [id])
-  supplierId         String             @map("supplier_id") @db.Uuid
-  supplier           Supplier           @relation(fields: [supplierId], references: [id])
-  purchaseId         String?            @map("purchase_id") @db.Uuid
-  purchase           Purchase?          @relation(fields: [purchaseId], references: [id])
-  purchaseItemId     String?            @unique @map("purchase_item_id") @db.Uuid
-  purchaseItem       PurchaseItem?      @relation(fields: [purchaseItemId], references: [id])
-  finishId           String             @map("finish_id") @db.Uuid
-  finish             Finish             @relation(fields: [finishId], references: [id])
-  weightKg           Decimal            @map("weight_kg") @db.Decimal(12, 3)
-  widthMm            Decimal            @map("width_mm") @db.Decimal(8, 2)
-  thicknessMm        Decimal            @map("thickness_mm") @db.Decimal(6, 2)
+  kind               CoilKind                     @default(COIL)
+  businessLineId     String                       @map("business_line_id") @db.Uuid
+  businessLine       BusinessLine                 @relation(fields: [businessLineId], references: [id])
+  supplierId         String                       @map("supplier_id") @db.Uuid
+  supplier           Supplier                     @relation(fields: [supplierId], references: [id])
+  purchaseId         String?                      @map("purchase_id") @db.Uuid
+  purchase           Purchase?                    @relation(fields: [purchaseId], references: [id])
+  purchaseItemId     String?                      @unique @map("purchase_item_id") @db.Uuid
+  purchaseItem       PurchaseItem?                @relation(fields: [purchaseItemId], references: [id])
+  finishId           String                       @map("finish_id") @db.Uuid
+  finish             Finish                       @relation(fields: [finishId], references: [id])
+  weightKg           Decimal                      @map("weight_kg") @db.Decimal(12, 3)
+  widthMm            Decimal                      @map("width_mm") @db.Decimal(8, 2)
+  thicknessMm        Decimal                      @map("thickness_mm") @db.Decimal(6, 2)
   currency           Currency
-  exchangeRate       Decimal            @map("exchange_rate") @db.Decimal(10, 4)
-  unitCostPerKg      Decimal            @map("unit_cost_per_kg") @db.Decimal(18, 4)
-  totalCost          Decimal            @map("total_cost") @db.Decimal(18, 4)
-  totalCostPen       Decimal            @map("total_cost_pen") @db.Decimal(18, 4)
-  status             CoilStatus         @default(OPEN)
-  parentCoilId       String?            @map("parent_coil_id") @db.Uuid
-  parentCoil         Coil?              @relation("CoilParent", fields: [parentCoilId], references: [id])
-  childCoils         Coil[]             @relation("CoilParent")
+  exchangeRate       Decimal                      @map("exchange_rate") @db.Decimal(10, 4)
+  unitCostPerKg      Decimal                      @map("unit_cost_per_kg") @db.Decimal(18, 4)
+  totalCost          Decimal                      @map("total_cost") @db.Decimal(18, 4)
+  totalCostPen       Decimal                      @map("total_cost_pen") @db.Decimal(18, 4)
+  status             CoilStatus                   @default(OPEN)
+  parentCoilId       String?                      @map("parent_coil_id") @db.Uuid
+  parentCoil         Coil?                        @relation("CoilParent", fields: [parentCoilId], references: [id])
+  childCoils         Coil[]                       @relation("CoilParent")
   /// Partido que creó esta bobina hija (RF-15). Null en una bobina de compra.
-  splitId            String?            @map("split_id") @db.Uuid
-  split              CoilSplit?         @relation("SplitChildren", fields: [splitId], references: [id])
-  splitsAsParent     CoilSplit[]        @relation("SplitParent")
+  splitId            String?                      @map("split_id") @db.Uuid
+  split              CoilSplit?                   @relation("SplitChildren", fields: [splitId], references: [id])
+  splitsAsParent     CoilSplit[]                  @relation("SplitParent")
   /// Recepción de corte tercerizado que creó este fleje (RF-41). Null salvo `kind=STRIP`
   /// nacido de una orden de corte (D-049); un fleje de partido interno usa `splitId`.
-  cuttingOrderCoilId String?            @map("cutting_order_coil_id") @db.Uuid
-  cuttingOrderCoil   CuttingOrderCoil?  @relation("CuttingOrderCoilStrips", fields: [cuttingOrderCoilId], references: [id])
+  cuttingOrderCoilId String?                      @map("cutting_order_coil_id") @db.Uuid
+  cuttingOrderCoil   CuttingOrderCoil?            @relation("CuttingOrderCoilStrips", fields: [cuttingOrderCoilId], references: [id])
   /// Órdenes de corte en las que esta bobina fue la enviada (RF-40), vía `CuttingOrderCoil.coilId`.
-  cuttingOrderSends  CuttingOrderCoil[] @relation("CuttingOrderCoilSource")
+  cuttingOrderSends  CuttingOrderCoil[]           @relation("CuttingOrderCoilSource")
   /// Asignaciones de este fleje a órdenes de producción (RF-34, Fase 4, D-060).
   productionInputs   ProductionOrderConsumption[]
   /// Observaciones editables mientras la bobina está abierta (RF-20).
-  notes              String?            @db.VarChar(500)
-  createdById        String             @map("created_by_id") @db.Uuid
-  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  notes              String?                      @db.VarChar(500)
+  createdById        String                       @map("created_by_id") @db.Uuid
+  createdAt          DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([businessLineId, status])
   @@index([typeKey])
@@ -851,10 +898,12 @@ model ProductionOrder {
   status          ProductionOrderStatus @default(DRAFT)
   /// Piezas que la corrida se propone producir. Referencia para planta; no bloquea nada.
   targetPieces    Int?                  @map("target_pieces")
-  /// D-054: reserva que esta OP consume cuando nace de un pedido (Fase 5). En Fase 4
-  /// siempre `null` — drywall no depende de cotización (D-048) y el ledger de reservas
-  /// todavía no existe. La columna se crea ahora para no migrar la tabla dos veces.
+  /// D-054: reserva que esta OP consume cuando nace de un pedido. La columna nació en
+  /// Fase 4 sin FK (el ledger no existía todavía); Fase 5a la conecta al ledger y le
+  /// agrega la relación. Sigue nullable: una OP de drywall sin pedido detrás no reserva
+  /// nada (D-048).
   reservationId   String?               @map("reservation_id") @db.Uuid
+  reservation     Reservation?          @relation(fields: [reservationId], references: [id])
   notes           String?               @db.VarChar(500)
   /// Cierre (D-057): kilos asignados que no quedaron representados en piezas buenas.
   scrapKg         Decimal?              @map("scrap_kg") @db.Decimal(12, 3)
@@ -942,4 +991,182 @@ model ProductionReport {
   @@unique([seq])
   @@index([productionOrderId, status])
   @@map("production_reports")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 5a — cotización, pedido y reserva (RF-61, RF-62, RF-65, RF-69; D-064..D-069)
+// ---------------------------------------------------------------------------
+
+/// Cotización (RF-61). Simulación de precio: **no reserva stock** (D-054). Todo el
+/// dominio comercial va en soles (D-064), así que no hay moneda ni tipo de cambio acá.
+/// Los montos son sin IGV en `subtotalPen`, con el IGV separado (D-068).
+///
+/// `seq` es el correlativo que la UI muestra como `COT-000123`: un `serial` de Postgres,
+/// igual que `production_orders.seq`, para que dos altas concurrentes no compitan por un
+/// contador propio.
+model Quotation {
+  id             String          @id @default(uuid()) @db.Uuid
+  seq            Int             @unique @default(autoincrement())
+  customerId     String          @map("customer_id") @db.Uuid
+  customer       Customer        @relation(fields: [customerId], references: [id])
+  businessLineId String          @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine    @relation(fields: [businessLineId], references: [id])
+  status         QuotationStatus @default(DRAFT)
+  issueDate      DateTime        @map("issue_date") @db.Date
+  /// Último día en que la cotización se puede confirmar (D-069). El job diario marca
+  /// `EXPIRED` a las que ya pasaron; `confirm()` lo revalida igual, por si el job no corrió.
+  validUntil     DateTime        @map("valid_until") @db.Date
+  subtotalPen    Decimal         @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen         Decimal         @map("igv_pen") @db.Decimal(18, 4)
+  totalPen       Decimal         @map("total_pen") @db.Decimal(18, 4)
+  notes          String?         @db.VarChar(500)
+  /// Key en R2 del PDF generado al emitir (D-068). Se regenera si la cotización se reemite.
+  pdfKey         String?         @map("pdf_key") @db.VarChar(300)
+  createdById    String          @map("created_by_id") @db.Uuid
+  emittedAt      DateTime?       @map("emitted_at") @db.Timestamptz(3)
+  confirmedAt    DateTime?       @map("confirmed_at") @db.Timestamptz(3)
+  expiredAt      DateTime?       @map("expired_at") @db.Timestamptz(3)
+  cancelledAt    DateTime?       @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById  String?         @map("cancelled_by_id") @db.Uuid
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  items      QuotationItem[]
+  salesOrder SalesOrder?
+
+  @@index([customerId, status])
+  @@index([businessLineId, status])
+  @@index([status, validUntil])
+  @@map("quotations")
+}
+
+/// Línea de una cotización. `listPricePen` es el precio del maestro al momento de cotizar
+/// y `unitPricePen` el que el vendedor dejó: guardar los dos es lo que hace auditable el
+/// descuento (D-068).
+///
+/// `reserveItemType`/`reserveItemId`/`reserveQty` declaran qué reservará la confirmación:
+/// el propio producto (perfiles, trading) o los kilos de una bobina concreta (coberturas,
+/// que se fabrican contra el pedido y todavía no tienen producto terminado en stock).
+model QuotationItem {
+  id              String            @id @default(uuid()) @db.Uuid
+  quotationId     String            @map("quotation_id") @db.Uuid
+  quotation       Quotation         @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  lineNumber      Int               @map("line_number")
+  productId       String            @map("product_id") @db.Uuid
+  product         Product           @relation(fields: [productId], references: [id])
+  description     String            @db.VarChar(240)
+  qty             Decimal           @db.Decimal(16, 3)
+  unit            String            @db.VarChar(20)
+  listPricePen    Decimal?          @map("list_price_pen") @db.Decimal(18, 4)
+  unitPricePen    Decimal           @map("unit_price_pen") @db.Decimal(18, 4)
+  subtotalPen     Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen          Decimal           @map("igv_pen") @db.Decimal(18, 4)
+  totalPen        Decimal           @map("total_pen") @db.Decimal(18, 4)
+  reserveItemType InventoryItemType @map("reserve_item_type")
+  reserveItemId   String            @map("reserve_item_id") @db.Uuid
+  reserveQty      Decimal           @map("reserve_qty") @db.Decimal(16, 3)
+  reserveUnit     String            @map("reserve_unit") @db.VarChar(20)
+
+  @@unique([quotationId, lineNumber])
+  @@index([quotationId])
+  @@map("quotation_items")
+}
+
+/// Pedido (D-065). Nace de confirmar una cotización o, en las líneas que no la exigen,
+/// de un alta directa. Confirmar crea el pedido y sus reservas en **una sola
+/// transacción**: si una línea no tiene disponible, no se crea nada (D-054).
+model SalesOrder {
+  id             String           @id @default(uuid()) @db.Uuid
+  seq            Int              @unique @default(autoincrement())
+  /// Cotización de origen. Null en un pedido directo (línea con cotización opcional).
+  quotationId    String?          @unique @map("quotation_id") @db.Uuid
+  quotation      Quotation?       @relation(fields: [quotationId], references: [id])
+  customerId     String           @map("customer_id") @db.Uuid
+  customer       Customer         @relation(fields: [customerId], references: [id])
+  businessLineId String           @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine     @relation(fields: [businessLineId], references: [id])
+  status         SalesOrderStatus @default(CONFIRMED)
+  issueDate      DateTime         @map("issue_date") @db.Date
+  subtotalPen    Decimal          @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen         Decimal          @map("igv_pen") @db.Decimal(18, 4)
+  totalPen       Decimal          @map("total_pen") @db.Decimal(18, 4)
+  notes          String?          @db.VarChar(500)
+  createdById    String           @map("created_by_id") @db.Uuid
+  cancelledById  String?          @map("cancelled_by_id") @db.Uuid
+  cancelledAt    DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  items        SalesOrderItem[]
+  reservations Reservation[]
+
+  @@index([customerId, status])
+  @@index([businessLineId, status])
+  @@map("sales_orders")
+}
+
+/// Línea de un pedido: copia congelada de la línea de la cotización (o del alta directa).
+/// Los precios no se recalculan nunca contra el maestro después de confirmar.
+model SalesOrderItem {
+  id              String            @id @default(uuid()) @db.Uuid
+  salesOrderId    String            @map("sales_order_id") @db.Uuid
+  salesOrder      SalesOrder        @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  lineNumber      Int               @map("line_number")
+  productId       String            @map("product_id") @db.Uuid
+  product         Product           @relation(fields: [productId], references: [id])
+  description     String            @db.VarChar(240)
+  qty             Decimal           @db.Decimal(16, 3)
+  unit            String            @db.VarChar(20)
+  listPricePen    Decimal?          @map("list_price_pen") @db.Decimal(18, 4)
+  unitPricePen    Decimal           @map("unit_price_pen") @db.Decimal(18, 4)
+  subtotalPen     Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen          Decimal           @map("igv_pen") @db.Decimal(18, 4)
+  totalPen        Decimal           @map("total_pen") @db.Decimal(18, 4)
+  reserveItemType InventoryItemType @map("reserve_item_type")
+  reserveItemId   String            @map("reserve_item_id") @db.Uuid
+  reserveQty      Decimal           @map("reserve_qty") @db.Decimal(16, 3)
+  reserveUnit     String            @map("reserve_unit") @db.VarChar(20)
+
+  reservation Reservation?
+
+  @@unique([salesOrderId, lineNumber])
+  @@index([salesOrderId])
+  @@map("sales_order_items")
+}
+
+/// Ledger de reservas (D-054, D-066). **Fuera del kardex a propósito**: una reserva es una
+/// promesa comercial, no un hecho físico, y un `OUT` ficticio ensuciaría el promedio
+/// ponderado y el valorizado (RF-90..94) con una salida que todavía no ocurrió — mismo
+/// argumento que D-050 usa para el envío a corte.
+///
+/// La fila apunta al ítem con **el mismo par `(itemType, itemId)` que usa
+/// `inventory_balances`**, que es lo que permite comprobar la invariante
+/// `disponible ≥ reservado` bajo el mismo lock de saldo que ya toma el kardex.
+/// Append-only en el mismo sentido que el resto del proyecto: una reserva nunca se borra,
+/// cambia de estado y guarda quién y cuándo.
+model Reservation {
+  id               String            @id @default(uuid()) @db.Uuid
+  salesOrderId     String            @map("sales_order_id") @db.Uuid
+  salesOrder       SalesOrder        @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  /// Una línea de pedido reserva una sola vez: es lo que hace idempotente la confirmación.
+  salesOrderItemId String            @unique @map("sales_order_item_id") @db.Uuid
+  salesOrderItem   SalesOrderItem    @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
+  itemType         InventoryItemType @map("item_type")
+  itemId           String            @map("item_id") @db.Uuid
+  qty              Decimal           @db.Decimal(16, 3)
+  unit             String            @db.VarChar(20)
+  status           ReservationStatus @default(ACTIVE)
+  createdById      String            @map("created_by_id") @db.Uuid
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  consumedAt       DateTime?         @map("consumed_at") @db.Timestamptz(3)
+  releasedById     String?           @map("released_by_id") @db.Uuid
+  releasedAt       DateTime?         @map("released_at") @db.Timestamptz(3)
+
+  productionOrders ProductionOrder[]
+
+  /// El índice que sostiene la invariante: sumar lo reservado vivo de un ítem es una
+  /// sola pasada por índice, y se consulta en cada salida de kardex de ese ítem.
+  @@index([itemType, itemId, status])
+  @@index([salesOrderId])
+  @@map("reservations")
 }

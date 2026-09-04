@@ -4,6 +4,7 @@ import {
   CoilStatus,
   CuttingOrderCoilStatus,
   CuttingOrderStatus,
+  InventoryItemType,
   Prisma,
   type Coil,
 } from '@prisma/client';
@@ -29,6 +30,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
+import { assertNotReserved } from '../sales/reservation-guard';
 import { deriveCuttingOrderStatus, expandWidthCounts, validateWidthBudget } from './cutting-math';
 
 /** Shape JSON de `widthPlanMm`/`receivedWidthsMm` (una fila por ancho, no por tira). */
@@ -105,6 +107,17 @@ export class CuttingService {
         }
       }
       if (!businessLineId) throw new BadRequestException('La orden necesita al menos una bobina');
+
+      // D-066: enviar a un tercero no mueve kardex (D-050), así que la invariante de
+      // cantidad de `InventoryService` no ve nada — y sin embargo el material prometido a
+      // un pedido deja de estar disponible. Es el mismo hueco que D-060 tapó para las
+      // asignaciones de producción, aplicado ahora al ledger de reservas. Las filas ya
+      // están bloqueadas unas líneas más arriba, en el mismo orden.
+      await assertNotReserved(
+        tx,
+        coilIds.map((id) => ({ itemType: InventoryItemType.COIL, itemId: id })),
+        'enviarla a corte',
+      );
 
       const order = await tx.cuttingOrder.create({
         data: {

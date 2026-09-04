@@ -1,0 +1,391 @@
+import { z } from 'zod';
+import {
+  Decimal,
+  decimalStringSchema,
+  MAX_VALUE,
+  money,
+  roundTo,
+  toDecimal,
+  toFixedString,
+  type DecimalInput,
+} from '../decimal';
+import {
+  BUSINESS_LINES,
+  INVENTORY_ITEM_TYPES,
+  QUOTATION_STATUSES,
+  RESERVATION_STATUSES,
+  SALES_ORDER_STATUSES,
+} from '../enums';
+import { reasonSchema } from './coil';
+
+/**
+ * Ciclo comercial de Fase 5a (RF-61, RF-62, RF-65, RF-69; D-064..D-069).
+ *
+ * Modelo en una línea: se cotiza (simulación de precio, sin efecto en inventario, D-054),
+ * se **confirma** —y ahí, en una sola transacción, nacen el pedido y la reserva— y la
+ * reserva descuenta disponible hasta que una OP la consume o alguien la libera.
+ *
+ * Todo el dominio comercial va **en soles** (D-064): no hay selector de moneda ni tipo de
+ * cambio en ventas. El USD existe solo en compras (D-042).
+ */
+
+// --------------------------------------------------------------------------
+// Constantes y aritmética compartida entre web y API
+// --------------------------------------------------------------------------
+
+/** IGV en puntos porcentuales. Fijo en ventas (D-068); en compras es un input (D-030). */
+export const IGV_RATE_PCT = '18.0000';
+
+/** Vigencia por defecto de una cotización, en días (D-069). El vendedor la puede cambiar. */
+export const DEFAULT_QUOTATION_VALIDITY_DAYS = 7;
+
+/** Tope de vigencia. Una cotización a más de un año no es una cotización. */
+export const MAX_QUOTATION_VALIDITY_DAYS = 365;
+
+/**
+ * Tope de líneas de una cotización o pedido. Cada línea confirmada abre una reserva con
+ * su propio lock de saldo dentro de la transacción de confirmación — mismo motivo por el
+ * que el partido (RF-15) y la OP (D-060) topan sus hijas.
+ */
+export const MAX_SALES_ITEMS = 50;
+
+/**
+ * Días desde los que una reserva `ACTIVA` se considera vieja y la lista la marca (D-054:
+ * sin vencimiento automático, alerta + liberación manual con permiso de ADMINISTRADOR).
+ */
+export const RESERVATION_STALE_DAYS = 30;
+
+export interface SalesLineInput {
+  qty: DecimalInput;
+  unitPricePen: DecimalInput;
+}
+
+export interface SalesLineTotals {
+  subtotal: Decimal;
+  igv: Decimal;
+  total: Decimal;
+}
+
+/**
+ * Totales de una línea: precio sin IGV × cantidad, más IGV. Vive acá y no en el API para
+ * que la cotización que el vendedor ve mientras tipea sea exactamente la que el API
+ * guarda, igual que las constantes del partido (RF-15) y el kilo por pieza (D-059).
+ */
+export function salesLineTotals(line: SalesLineInput): SalesLineTotals {
+  const subtotal = money(toDecimal(line.qty).times(toDecimal(line.unitPricePen)));
+  const igv = money(subtotal.times(toDecimal(IGV_RATE_PCT)).div(100));
+  return { subtotal, igv, total: subtotal.plus(igv) };
+}
+
+/** Suma de líneas ya calculadas. El total es Σ subtotales + Σ IGV, no Σ totales redondeados. */
+export function salesTotals(lines: SalesLineInput[]): SalesLineTotals {
+  const totals = lines.map(salesLineTotals);
+  const subtotal = totals.reduce((acc, t) => acc.plus(t.subtotal), new Decimal(0));
+  const igv = totals.reduce((acc, t) => acc.plus(t.igv), new Decimal(0));
+  return { subtotal, igv, total: subtotal.plus(igv) };
+}
+
+/** `validUntil` por defecto: `issueDate` + N días, en formato `YYYY-MM-DD`. */
+export function defaultValidUntil(
+  issueDate: string,
+  days: number = DEFAULT_QUOTATION_VALIDITY_DAYS,
+): string {
+  const d = new Date(`${issueDate}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
+  .refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00.000Z`)), 'Fecha inválida');
+
+const qtySchema = decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG });
+const priceSchema = decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY });
+
+/**
+ * La unidad de un producto es texto libre en el maestro (`products.unit`, VarChar(20)):
+ * el catálogo de SUNAT (`Unit`) es la guía, no una restricción, y hay productos cargados
+ * por planilla con unidades fuera de él. El DTO la transporta tal cual.
+ */
+const unitStringSchema = z.string().max(20);
+
+// --------------------------------------------------------------------------
+// D-066 — reserva
+// --------------------------------------------------------------------------
+
+export const reservationSchema = z.object({
+  id: z.string().uuid(),
+  salesOrderId: z.string().uuid(),
+  salesOrderCode: z.string(),
+  salesOrderItemId: z.string().uuid(),
+  customerName: z.string(),
+  /** Coordenadas del ítem en el kardex: exactamente el par que usa `inventory_balances`. */
+  itemType: z.enum(INVENTORY_ITEM_TYPES),
+  itemId: z.string().uuid(),
+  /** SKU del producto o código de la bobina, según `itemType`. */
+  itemLabel: z.string(),
+  itemName: z.string(),
+  qty: z.string(),
+  unit: unitStringSchema,
+  status: z.enum(RESERVATION_STATUSES),
+  /** OP que la consumió, si ya la consumió (D-060: `production_orders.reservation_id`). */
+  productionOrderId: z.string().uuid().nullable(),
+  productionOrderCode: z.string().nullable(),
+  /** `true` cuando lleva `RESERVATION_STALE_DAYS` activa: la alerta de D-054. */
+  isStale: z.boolean(),
+  createdAt: z.string(),
+  consumedAt: z.string().nullable(),
+  releasedAt: z.string().nullable(),
+});
+export type ReservationDto = z.infer<typeof reservationSchema>;
+
+export const reservationQuerySchema = z.object({
+  status: z.enum(RESERVATION_STATUSES).optional(),
+  itemId: z.string().uuid().optional(),
+  salesOrderId: z.string().uuid().optional(),
+});
+export type ReservationQuery = z.infer<typeof reservationQuerySchema>;
+
+/** Liberación manual de una reserva (D-054): solo ADMINISTRADOR, siempre con motivo. */
+export const releaseReservationSchema = z.object({ reason: reasonSchema });
+export type ReleaseReservationInput = z.infer<typeof releaseReservationSchema>;
+
+// --------------------------------------------------------------------------
+// D-065 — líneas de cotización y de pedido
+// --------------------------------------------------------------------------
+
+/**
+ * Una línea de cotización o de pedido.
+ *
+ * `reserveFromCoilId`/`reserveKg` declaran **qué va a reservar** la confirmación cuando
+ * el producto se fabrica contra el pedido (coberturas): la reserva cae sobre los kilos de
+ * esa bobina, no sobre un producto terminado que todavía no existe. Sin ellos, la reserva
+ * es sobre el stock del propio producto, en su unidad de venta (perfiles, trading).
+ *
+ * Declararlo al cotizar y materializarlo al confirmar es lo que hace que "cotizar no
+ * reserva" (D-054) siga siendo cierto sin perder qué material se prometió.
+ */
+export const salesItemInputSchema = z.object({
+  productId: z.string({ required_error: 'El producto es obligatorio' }).uuid(),
+  qty: qtySchema,
+  /**
+   * Precio unitario sin IGV, en soles. Opcional: sin él se usa el precio de lista del
+   * maestro. Mandarlo es el override del vendedor (D-068), que queda registrado junto al
+   * precio de lista vigente al momento de cotizar.
+   */
+  unitPricePen: priceSchema.optional(),
+  description: z.string().trim().max(240).optional(),
+  reserveFromCoilId: z.string().uuid().optional(),
+  reserveKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+});
+export type SalesItemInput = z.infer<typeof salesItemInputSchema>;
+
+const salesItemsSchema = z
+  .array(salesItemInputSchema)
+  .min(1, 'Al menos una línea')
+  .max(MAX_SALES_ITEMS, `Máximo ${MAX_SALES_ITEMS} líneas`)
+  .superRefine((items, ctx) => {
+    items.forEach((item, i) => {
+      // Los dos campos de la reserva de materia prima van juntos o no van: con la bobina
+      // sin kilos el API no sabría cuánto prometer, y con kilos sin bobina no sabría de
+      // dónde. Se valida acá para que el web lo diga antes de mandar.
+      if ((item.reserveFromCoilId === undefined) !== (item.reserveKg === undefined)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [i, 'reserveKg'],
+          message: 'Para reservar materia prima hacen falta la bobina y los kilos',
+        });
+      }
+    });
+  });
+
+export const salesItemSchema = z.object({
+  id: z.string().uuid(),
+  lineNumber: z.number().int(),
+  productId: z.string().uuid(),
+  productSku: z.string(),
+  productName: z.string(),
+  description: z.string(),
+  qty: z.string(),
+  unit: unitStringSchema,
+  /** Precio de lista del maestro al momento de cotizar (D-068). Null si no tenía. */
+  listPricePen: z.string().nullable(),
+  /** Precio efectivamente cotizado. Difiere del de lista cuando el vendedor lo editó. */
+  unitPricePen: z.string(),
+  subtotalPen: z.string(),
+  igvPen: z.string(),
+  totalPen: z.string(),
+  /** Qué reservará (o reservó) esta línea. Ver `salesItemInputSchema`. */
+  reserveItemType: z.enum(INVENTORY_ITEM_TYPES),
+  reserveItemId: z.string().uuid(),
+  reserveItemLabel: z.string(),
+  reserveQty: z.string(),
+  reserveUnit: unitStringSchema,
+});
+export type SalesItemDto = z.infer<typeof salesItemSchema>;
+
+// --------------------------------------------------------------------------
+// RF-61 — cotización
+// --------------------------------------------------------------------------
+
+export const createQuotationSchema = z.object({
+  customerId: z.string({ required_error: 'El cliente es obligatorio' }).uuid(),
+  businessLine: z.enum(BUSINESS_LINES, {
+    errorMap: () => ({ message: 'Línea de negocio inválida' }),
+  }),
+  issueDate: isoDateSchema,
+  validityDays: z
+    .number()
+    .int()
+    .min(1, 'Al menos un día de vigencia')
+    .max(MAX_QUOTATION_VALIDITY_DAYS, `Máximo ${MAX_QUOTATION_VALIDITY_DAYS} días`)
+    .default(DEFAULT_QUOTATION_VALIDITY_DAYS),
+  notes: z.string().trim().max(500).optional(),
+  items: salesItemsSchema,
+});
+export type CreateQuotationInput = z.infer<typeof createQuotationSchema>;
+
+/** Editar una cotización en `BORRADOR` (RF-66). Reemplaza las líneas completas. */
+export const updateQuotationSchema = createQuotationSchema.omit({ businessLine: true });
+export type UpdateQuotationInput = z.infer<typeof updateQuotationSchema>;
+
+/** Anular una cotización en cualquier estado no confirmado (RF-65). Motivo obligatorio. */
+export const cancelQuotationSchema = z.object({ reason: reasonSchema });
+export type CancelQuotationInput = z.infer<typeof cancelQuotationSchema>;
+
+export const quotationSchema = z.object({
+  id: z.string().uuid(),
+  /** `COT-000123`, derivado del correlativo (D-068). */
+  code: z.string(),
+  customerId: z.string().uuid(),
+  customerName: z.string(),
+  customerDocNumber: z.string(),
+  businessLine: z.enum(BUSINESS_LINES),
+  status: z.enum(QUOTATION_STATUSES),
+  issueDate: z.string(),
+  validUntil: z.string(),
+  /** `true` cuando `validUntil` ya pasó, aunque el job todavía no la haya marcado. */
+  isExpired: z.boolean(),
+  subtotalPen: z.string(),
+  igvPen: z.string(),
+  totalPen: z.string(),
+  notes: z.string().nullable(),
+  /** Pedido que nació de confirmarla (D-065). Null mientras no se confirma. */
+  salesOrderId: z.string().uuid().nullable(),
+  salesOrderCode: z.string().nullable(),
+  /** Key del PDF en R2; el archivo se descarga por `GET /sales/quotations/:id/pdf`. */
+  pdfKey: z.string().nullable(),
+  items: z.array(salesItemSchema),
+  createdAt: z.string(),
+  createdByName: z.string().nullable(),
+  emittedAt: z.string().nullable(),
+  confirmedAt: z.string().nullable(),
+  cancelledAt: z.string().nullable(),
+});
+export type QuotationDto = z.infer<typeof quotationSchema>;
+
+export const quotationListItemSchema = quotationSchema.omit({ items: true }).extend({
+  itemCount: z.number().int(),
+});
+export type QuotationListItemDto = z.infer<typeof quotationListItemSchema>;
+
+export const quotationQuerySchema = z.object({
+  status: z.enum(QUOTATION_STATUSES).optional(),
+  customerId: z.string().uuid().optional(),
+  businessLine: z.enum(BUSINESS_LINES).optional(),
+  /** Búsqueda por código de cotización o nombre/documento del cliente (RF-84). */
+  search: z.string().trim().max(80).optional(),
+});
+export type QuotationQuery = z.infer<typeof quotationQuerySchema>;
+
+// --------------------------------------------------------------------------
+// RF-62 — confirmación y pedido
+// --------------------------------------------------------------------------
+
+/**
+ * Pedido directo, sin cotización previa (D-065). Solo se admite en líneas cuya cotización
+ * es **opcional**; en las que la exigen (coberturas, RF-31) el API lo rechaza.
+ */
+export const createSalesOrderSchema = createQuotationSchema.omit({ validityDays: true });
+export type CreateSalesOrderInput = z.infer<typeof createSalesOrderSchema>;
+
+/** Anular un pedido: libera sus reservas activas (D-066). Motivo obligatorio. */
+export const cancelSalesOrderSchema = z.object({ reason: reasonSchema });
+export type CancelSalesOrderInput = z.infer<typeof cancelSalesOrderSchema>;
+
+export const salesOrderSchema = z.object({
+  id: z.string().uuid(),
+  /** `PED-000123`, derivado del correlativo (D-068). */
+  code: z.string(),
+  quotationId: z.string().uuid().nullable(),
+  quotationCode: z.string().nullable(),
+  customerId: z.string().uuid(),
+  customerName: z.string(),
+  customerDocNumber: z.string(),
+  businessLine: z.enum(BUSINESS_LINES),
+  status: z.enum(SALES_ORDER_STATUSES),
+  issueDate: z.string(),
+  subtotalPen: z.string(),
+  igvPen: z.string(),
+  totalPen: z.string(),
+  notes: z.string().nullable(),
+  items: z.array(salesItemSchema),
+  reservations: z.array(reservationSchema),
+  createdAt: z.string(),
+  createdByName: z.string().nullable(),
+  cancelledAt: z.string().nullable(),
+});
+export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
+
+export const salesOrderListItemSchema = salesOrderSchema
+  .omit({ items: true, reservations: true })
+  .extend({
+    itemCount: z.number().int(),
+    activeReservations: z.number().int(),
+  });
+export type SalesOrderListItemDto = z.infer<typeof salesOrderListItemSchema>;
+
+export const salesOrderQuerySchema = z.object({
+  status: z.enum(SALES_ORDER_STATUSES).optional(),
+  customerId: z.string().uuid().optional(),
+  businessLine: z.enum(BUSINESS_LINES).optional(),
+  search: z.string().trim().max(80).optional(),
+});
+export type SalesOrderQuery = z.infer<typeof salesOrderQuerySchema>;
+
+// --------------------------------------------------------------------------
+// D-067 — consulta de RUC/DNI contra apis.net.pe
+// --------------------------------------------------------------------------
+
+/**
+ * Resultado de la búsqueda por documento. `found: false` **no es un error**: la captura
+ * manual sigue disponible y el formulario no se bloquea (mismo criterio que el fallback
+ * del tipo de cambio, D-029). `reason` explica por qué no hubo datos, para que la UI
+ * distinga "no existe ese RUC" de "el servicio no respondió".
+ */
+export const documentLookupSchema = z.object({
+  found: z.boolean(),
+  docType: z.string(),
+  docNumber: z.string(),
+  name: z.string().nullable(),
+  address: z.string().nullable(),
+  reason: z.enum(['OK', 'NOT_FOUND', 'UNAVAILABLE', 'NOT_CONFIGURED']),
+});
+export type DocumentLookupDto = z.infer<typeof documentLookupSchema>;
+
+/** Serialización de un total de línea a los strings del DTO (D-003). */
+export function serializeSalesTotals(totals: SalesLineTotals): {
+  subtotalPen: string;
+  igvPen: string;
+  totalPen: string;
+} {
+  return {
+    subtotalPen: toFixedString(totals.subtotal, 'MONEY'),
+    igvPen: toFixedString(totals.igv, 'MONEY'),
+    totalPen: toFixedString(totals.total, 'MONEY'),
+  };
+}
+
+/** Redondeo a kilos de una cantidad de reserva; centraliza la escala (D-003). */
+export const reserveQty = (v: DecimalInput): Decimal => roundTo(v, 'KG');

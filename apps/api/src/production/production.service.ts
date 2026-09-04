@@ -5,6 +5,7 @@ import {
   CoilStatus,
   ProductionOrderStatus,
   ProductionReportStatus,
+  SalesOrderStatus,
   Prisma,
   type InventoryMovement,
 } from '@prisma/client';
@@ -35,6 +36,7 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertCoilsNotReserved, markReservationConsumed } from '../sales/reservation-guard';
 import { BomsService, toDto as bomToDto } from './boms.service';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
 import {
@@ -125,6 +127,43 @@ export class ProductionService {
     const bom = await this.boms.requireActiveBom(product.id);
 
     const orderId = await this.prisma.$transaction(async (tx) => {
+      // D-054/D-066: la OP puede nacer de un pedido. La reserva se valida acá y no al
+      // consumir, porque es lo que decide qué material puede montar esta orden.
+      if (input.reservationId !== undefined) {
+        const reservation = await tx.reservation.findUnique({
+          where: { id: input.reservationId },
+          include: { salesOrder: { select: { status: true, businessLineId: true, seq: true } } },
+        });
+        if (!reservation) throw new NotFoundException('Reserva no encontrada');
+        if (reservation.status !== 'ACTIVE') {
+          throw new BadRequestException(
+            reservation.status === 'CONSUMED'
+              ? 'Esa reserva ya fue consumida por otra orden de producción'
+              : 'Esa reserva está liberada: ya no hay material comprometido que fabricar',
+          );
+        }
+        if (reservation.salesOrder.status === 'CANCELLED') {
+          throw new BadRequestException('El pedido de esa reserva está anulado');
+        }
+        if (reservation.salesOrder.businessLineId !== product.businessLineId) {
+          throw new BadRequestException(
+            'La reserva es de otra línea de negocio que el producto a fabricar',
+          );
+        }
+        const taken = await tx.productionOrder.findFirst({
+          where: {
+            reservationId: input.reservationId,
+            status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+          },
+          select: { seq: true },
+        });
+        if (taken) {
+          throw new BadRequestException(
+            `La reserva ya está tomada por la orden ${productionOrderCode(taken.seq)}`,
+          );
+        }
+      }
+
       const order = await tx.productionOrder.create({
         data: {
           businessLineId: product.businessLineId,
@@ -132,6 +171,7 @@ export class ProductionService {
           bomId: bom.id,
           status: ProductionOrderStatus.DRAFT,
           targetPieces: input.targetPieces ?? null,
+          reservationId: input.reservationId ?? null,
           notes: input.notes ?? null,
           createdById: actor.id,
         },
@@ -146,6 +186,7 @@ export class ProductionService {
           productId: product.id,
           bomId: bom.id,
           targetPieces: order.targetPieces,
+          reservationId: order.reservationId,
         },
       });
       return order.id;
@@ -206,6 +247,16 @@ export class ProductionService {
           `${coil.code} no coincide con la receta del producto: se necesita un fleje de acabado ${bom.finish.code}, ${bom.inputThicknessMm.toFixed(2)} mm de espesor y ${bom.inputWidthMm.toFixed(2)} mm de ancho`,
         );
       }
+
+      // D-066: un fleje reservado por un pedido solo lo puede montar la OP que nace de ese
+      // mismo pedido. La excepción es imprescindible: sin ella la reserva se bloquearía a
+      // sí misma y la orden que viene a cumplirla no podría tomar su propio material.
+      await assertCoilsNotReserved(
+        tx,
+        [coil.id],
+        'consumirlo en esta orden',
+        order.reservationId ? [order.reservationId] : [],
+      );
 
       const assigned = await findLiveStripAssignments(tx, [coil.id]);
       const taken = assigned[0];
@@ -367,6 +418,25 @@ export class ProductionService {
           ),
         }));
         const allocations = allocateStripKg(allocationRows, neededKg);
+
+        // D-054/D-066: la reserva se marca CONSUMIDA **antes** de mover el kardex. Si fuera
+        // al revés, la invariante `disponible ≥ reservado` bloquearía justo la salida que
+        // viene a cumplir la promesa. A partir de acá el material lo protege el guardrail de
+        // D-060 (fleje asignado a una OP viva), no el ledger: cambia de custodio, no queda
+        // desprotegido. El pedido pasa a "en producción", que es lo que RF-37 mostrará.
+        if (order.reservationId) {
+          const consumed = await markReservationConsumed(tx, order.reservationId);
+          if (consumed) {
+            const reservation = await tx.reservation.findUniqueOrThrow({
+              where: { id: order.reservationId },
+              select: { salesOrderId: true },
+            });
+            await tx.salesOrder.updateMany({
+              where: { id: reservation.salesOrderId, status: SalesOrderStatus.CONFIRMED },
+              data: { status: SalesOrderStatus.IN_PRODUCTION },
+            });
+          }
+        }
 
         const report = await tx.productionReport.create({
           data: {
@@ -1165,6 +1235,7 @@ export class ProductionService {
     bomId: string;
     notes: string | null;
     closedAt: Date | null;
+    reservationId: string | null;
   }> {
     const locked = await tx.$queryRaw<{ id: string }[]>`
       SELECT "id" FROM "production_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE
@@ -1181,6 +1252,7 @@ export class ProductionService {
         bomId: true,
         notes: true,
         closedAt: true,
+        reservationId: true,
       },
     });
   }

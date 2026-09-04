@@ -132,6 +132,13 @@ export const createProductionOrderSchema = z.object({
   productId: z.string({ required_error: 'El producto a fabricar es obligatorio' }).uuid(),
   targetPieces: piecesSchema.optional(),
   notes: z.string().trim().max(500).optional(),
+  /**
+   * D-054/D-066: reserva de un pedido que esta OP viene a cumplir. Con ella, la orden puede
+   * montar el material reservado (que para cualquier otra orden está bloqueado) y, al
+   * emitir el primer material, la reserva pasa a `CONSUMIDA`. Sin ella, la OP es una
+   * corrida de stock como las de Fase 4.
+   */
+  reservationId: z.string().uuid().optional(),
 });
 export type CreateProductionOrderInput = z.infer<typeof createProductionOrderSchema>;
 

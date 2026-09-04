@@ -26,6 +26,7 @@ import {
 } from '@ayr/shared';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
 
 /**
  * Entrada de `InventoryService.record`. `qty` siempre positiva: el sentido lo da `type`
@@ -149,6 +150,16 @@ export class InventoryService {
       newQty = balance.qty.minus(qty);
       newAvgCost = balance.avgCost;
     }
+
+    // D-066: `disponible ≥ reservado`. Acá y en `reverse` está el único punto por el que
+    // pasa toda salida de stock del sistema (§3.2), y el saldo ya está bloqueado por
+    // `lockBalance`, así que la comprobación no tiene ventana de carrera.
+    await assertReservationInvariant(
+      tx,
+      { itemType: input.itemType, itemId: input.itemId },
+      newQty,
+      balance.qty,
+    );
 
     await tx.inventoryBalance.update({
       where: { id: balance.id },
@@ -334,6 +345,16 @@ export class InventoryService {
     }
     const newAvgCost = newQty.lte(0) ? new Decimal(0) : newValue.div(newQty);
 
+    // D-066: la reversa de un ingreso saca stock igual que una salida, así que también
+    // tiene que respetar `disponible ≥ reservado`. Anular la compra de una bobina cuyo
+    // material ya está prometido a un pedido falla acá, con el pedido nombrado.
+    await assertReservationInvariant(
+      tx,
+      { itemType: original.itemType, itemId: original.itemId },
+      newQty,
+      balance.qty,
+    );
+
     await tx.inventoryBalance.update({
       where: { id: balance.id },
       data: {
@@ -422,6 +443,29 @@ export class InventoryService {
     };
   }
 
+  /**
+   * Saldo físico, reservado y disponible de un ítem, **con el saldo bloqueado** (D-066).
+   *
+   * Es el mismo `FOR UPDATE` que toma cualquier movimiento de kardex, y por eso vive acá y
+   * no en `sales`: la confirmación de un pedido tiene que ver exactamente el saldo que
+   * verá la próxima salida, o dos transacciones concurrentes podrían prometer el mismo
+   * material. `unit` sale del saldo si el ítem ya tiene uno, y del `fallbackUnit` si es
+   * la primera vez que se lo toca.
+   */
+  async lockAvailability(
+    tx: Prisma.TransactionClient,
+    input: ItemRef,
+  ): Promise<{ qty: Decimal; reserved: Decimal; available: Decimal; unit: string }> {
+    const balance = await this.lockBalance(tx, input);
+    const reserved = await reservedQty(tx, { itemType: input.itemType, itemId: input.itemId });
+    return {
+      qty: balance.qty,
+      reserved,
+      available: balance.qty.minus(reserved),
+      unit: balance.unit,
+    };
+  }
+
   /** Inventario valorizado (RF-51, base de RF-90). */
   async findBalances(query: InventoryQuery, showCosts: boolean): Promise<InventoryBalanceDto[]> {
     const balances = await this.prisma.inventoryBalance.findMany({
@@ -438,10 +482,13 @@ export class InventoryService {
     });
 
     const labels = await this.resolveItemLabels(balances);
+    // D-066: lo reservado se resuelve en una sola consulta agrupada, no una por fila.
+    const reserved = await this.reservedByItem(balances);
     return balances.map((b) => {
       const qty = toDecimal(b.qty.toString());
       const avgCost = toDecimal(b.avgCost.toString());
       const label = labels.get(labelKey(b.itemType, b.itemId));
+      const reservedQty = reserved.get(labelKey(b.itemType, b.itemId)) ?? new Decimal(0);
       return {
         id: b.id,
         businessLine: toSharedLineCode(b.businessLine.code),
@@ -451,6 +498,8 @@ export class InventoryService {
         itemName: label?.name ?? '',
         qty: qty.toFixed(3),
         unit: b.unit,
+        reservedQty: reservedQty.toFixed(3),
+        availableQty: qty.minus(reservedQty).toFixed(3),
         avgCost: showCosts ? avgCost.toFixed(4) : null,
         totalValue: showCosts ? toFixedString(qty.times(avgCost), 'MONEY') : null,
         updatedAt: b.updatedAt.toISOString(),
@@ -658,6 +707,31 @@ export class InventoryService {
   }
 
   /** Resuelve el código y nombre legible de cada ítem referido (SKU o código de bobina). */
+  /**
+   * Reservas `ACTIVA` de un conjunto de saldos, agrupadas por ítem (D-066). Una sola
+   * consulta para toda la lista: en `/inventario` hay cientos de filas y una consulta por
+   * fila sería el mismo N+1 que ya costó una corrección en la recepción de compras.
+   */
+  private async reservedByItem(
+    balances: { itemType: InventoryItemType; itemId: string }[],
+  ): Promise<Map<string, Decimal>> {
+    const map = new Map<string, Decimal>();
+    if (balances.length === 0) return map;
+    const rows = await this.prisma.reservation.groupBy({
+      by: ['itemType', 'itemId'],
+      where: {
+        status: 'ACTIVE',
+        itemId: { in: [...new Set(balances.map((b) => b.itemId))] },
+      },
+      _sum: { qty: true },
+    });
+    for (const r of rows) {
+      if (r._sum.qty === null) continue;
+      map.set(labelKey(r.itemType, r.itemId), toDecimal(r._sum.qty.toString()));
+    }
+    return map;
+  }
+
   private async resolveItemLabels(
     rows: { itemType: InventoryItemType; itemId: string }[],
   ): Promise<Map<string, { code: string; name: string }>> {
