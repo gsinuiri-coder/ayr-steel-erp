@@ -30,7 +30,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
-import { pendingQty, proratedWeightKg } from './invoicing-math';
+import { pendingQty, proratedQty } from './invoicing-math';
 
 /**
  * Despacho de un pedido (RF-77..RF-79; D-074, D-078).
@@ -141,11 +141,25 @@ export class DispatchesService {
               `A la línea ${orderItem.lineNumber} le quedan ${pending.toFixed(3)} por despachar y se intentan despachar ${qty.toFixed(3)}`,
             );
           }
-          const weightKg =
-            item.weightKg !== undefined
-              ? toDecimal(item.weightKg)
-              : proratedWeightKg(qty, orderItem.qty.toString(), orderItem.reserveQty.toString());
-          return { orderItem, qty, weightKg };
+          // **La cantidad que sale del kardex no es la de venta.** Una cobertura se vende
+          // por pieza y sale de los kilos de una bobina (D-066): despachar 100 piezas tiene
+          // que sacar los kilos que esa línea reservó, no 100 kilos. En perfiles y trading
+          // las dos cifras coinciden —el ítem reservado es el propio producto—, que es
+          // justo lo que hace que el error pase desapercibido hasta la primera cobertura.
+          const reserveQty = proratedQty(
+            qty,
+            orderItem.qty.toString(),
+            orderItem.reserveQty.toString(),
+          );
+          if (reserveQty.lte(0)) {
+            throw new BadRequestException(
+              `La línea ${orderItem.lineNumber} no tiene material asignado: no se puede despachar`,
+            );
+          }
+          // El peso de la guía es un dato de transporte y por eso es editable; por defecto
+          // es el mismo número, que es lo correcto cuando la reserva ya está en kilos.
+          const weightKg = item.weightKg !== undefined ? toDecimal(item.weightKg) : reserveQty;
+          return { orderItem, qty, reserveQty, weightKg };
         });
 
         const dispatch = await tx.dispatch.create({
@@ -191,12 +205,13 @@ export class DispatchesService {
         let lineNumber = 0;
         for (const line of lines) {
           lineNumber += 1;
-          const { orderItem, qty, weightKg } = line;
+          const { orderItem, qty, reserveQty, weightKg } = line;
 
           // D-074: la reserva se descuenta **antes** de la salida de kardex. Solo lo que
-          // este despacho se lleva: el resto de la línea sigue prometido y protegido.
+          // este despacho se lleva, y **en la unidad de la reserva**: el resto de la línea
+          // sigue prometido y protegido.
           if (orderItem.reservation) {
-            await consumeReservationQty(tx, orderItem.reservation.id, qty);
+            await consumeReservationQty(tx, orderItem.reservation.id, reserveQty);
           }
 
           const movement = await this.inventory.record(tx, {
@@ -204,7 +219,7 @@ export class DispatchesService {
             itemType: orderItem.reserveItemType,
             itemId: orderItem.reserveItemId,
             type: 'OUT',
-            qty: toFixedString(qty, 'KG'),
+            qty: toFixedString(reserveQty, 'KG'),
             unit: orderItem.reserveUnit,
             refType: 'SALE',
             refId: dispatch.id,
@@ -221,6 +236,7 @@ export class DispatchesService {
               description: orderItem.description,
               qty: toFixedString(qty, 'KG'),
               unit: orderItem.unit,
+              reserveQty: toFixedString(reserveQty, 'KG'),
               weightKg: toFixedString(weightKg, 'KG'),
               itemType: orderItem.reserveItemType,
               itemId: orderItem.reserveItemId,
@@ -337,10 +353,12 @@ export class DispatchesService {
           // material vuelve al almacén sin nada que lo proteja mientras el pedido lo
           // sigue prometiendo, que es el defecto que 5a costó encontrar.
           if (item.salesOrderItem.reservation) {
+            // `reserveQty` y no `qty`: se devuelve exactamente lo que salió, en la unidad
+            // del ítem de kardex.
             await restoreReservationQty(
               tx,
               item.salesOrderItem.reservation.id,
-              toDecimal(item.qty.toString()),
+              toDecimal(item.reserveQty.toString()),
             );
           }
         }
@@ -606,6 +624,7 @@ export class DispatchesService {
         description: i.description,
         qty: i.qty.toFixed(3),
         unit: i.unit,
+        reserveQty: i.reserveQty.toFixed(3),
         weightKg: i.weightKg.toFixed(3),
         itemType: i.itemType,
         itemId: i.itemId,

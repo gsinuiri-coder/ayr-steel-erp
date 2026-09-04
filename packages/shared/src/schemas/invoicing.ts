@@ -579,6 +579,8 @@ export const dispatchItemSchema = z.object({
   description: z.string(),
   qty: z.string(),
   unit: unitStringSchema,
+  /** Cantidad en la unidad del ítem de kardex: lo que realmente salió del almacén. */
+  reserveQty: z.string(),
   weightKg: z.string(),
   itemType: z.enum(['PRODUCT', 'COIL']),
   itemId: z.string().uuid(),

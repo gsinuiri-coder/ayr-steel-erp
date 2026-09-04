@@ -56,14 +56,17 @@ export function pendingQty(ordered: DecimalInput, done: DecimalInput): Decimal {
 }
 
 /**
- * Peso de una línea de despacho cuando el usuario no lo escribió.
+ * Cuánto del material reservado se lleva un despacho parcial (D-074).
  *
- * La reserva de la línea (D-066) dice cuántos kilos respaldan **toda** la línea del
- * pedido; si se despacha una parte, el peso va en la misma proporción. Con la reserva en
- * la misma unidad que la venta (perfiles por pieza, bobina por kilo) esto es exacto; es
- * una estimación solo cuando las unidades difieren, y por eso el campo es editable.
+ * La reserva de la línea (D-066) respalda **toda** la línea del pedido, y no siempre en la
+ * misma unidad: una cobertura se vende por pieza y se reserva en kilos de una bobina. Si se
+ * despacha una parte, se lleva la parte proporcional de esa reserva — y esa, no la cantidad
+ * de venta, es la que sale del kardex y la que se descuenta de la promesa.
+ *
+ * Se llama `proratedQty` y no `proratedWeightKg` porque el resultado está en la unidad de
+ * la **reserva**: llamarlo peso hacía creer que siempre eran kilos.
  */
-export function proratedWeightKg(
+export function proratedQty(
   dispatchQty: DecimalInput,
   orderedQty: DecimalInput,
   reserveQty: DecimalInput,

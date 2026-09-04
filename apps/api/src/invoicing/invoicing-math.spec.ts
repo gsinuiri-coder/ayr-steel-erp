@@ -5,7 +5,7 @@ import {
   VOID_WINDOW_DAYS,
   voidPathFor,
 } from '@ayr/shared';
-import { dueDateFor, isStalled, pendingQty, proratedWeightKg } from './invoicing-math';
+import { dueDateFor, isStalled, pendingQty, proratedQty } from './invoicing-math';
 
 /**
  * Reglas de calendario y de saldo de Fase 5b (D-072..D-075).
@@ -108,7 +108,7 @@ describe('isStalled (D-073)', () => {
   });
 });
 
-describe('pendingQty y proratedWeightKg (D-074)', () => {
+describe('pendingQty y proratedQty (D-074)', () => {
   it('lo pendiente es lo pedido menos lo hecho', () => {
     expect(pendingQty('10.000', '4.000').toFixed(3)).toBe('6.000');
   });
@@ -117,11 +117,22 @@ describe('pendingQty y proratedWeightKg (D-074)', () => {
     expect(pendingQty('10.000', '12.000').toFixed(3)).toBe('0.000');
   });
 
-  it('el peso de un despacho parcial va en proporción a la reserva de la línea', () => {
-    expect(proratedWeightKg('25.000', '100.000', '400.000').toFixed(3)).toBe('100.000');
+  it('un despacho parcial se lleva la parte proporcional de la reserva', () => {
+    expect(proratedQty('25.000', '100.000', '400.000').toFixed(3)).toBe('100.000');
   });
 
-  it('una línea sin cantidad pedida no reparte peso en vez de dividir por cero', () => {
-    expect(proratedWeightKg('5.000', '0', '400.000').toFixed(3)).toBe('0.000');
+  it('cuando la reserva está en la misma unidad que la venta, es la misma cifra', () => {
+    // Perfiles y trading: el ítem reservado es el propio producto. Es el caso en el que el
+    // error de usar la cantidad de venta pasaba desapercibido.
+    expect(proratedQty('30.000', '100.000', '100.000').toFixed(3)).toBe('30.000');
+  });
+
+  it('una cobertura se vende por pieza y sale en kilos de la bobina', () => {
+    // 40 de 200 piezas contra una reserva de 1000 kg: salen 200 kg, no 40.
+    expect(proratedQty('40.000', '200.000', '1000.000').toFixed(3)).toBe('200.000');
+  });
+
+  it('una línea sin cantidad pedida no reparte nada en vez de dividir por cero', () => {
+    expect(proratedQty('5.000', '0', '400.000').toFixed(3)).toBe('0.000');
   });
 });

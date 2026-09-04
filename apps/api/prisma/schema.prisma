@@ -1551,8 +1551,17 @@ model DispatchItem {
   productId        String         @map("product_id") @db.Uuid
   product          Product        @relation(fields: [productId], references: [id])
   description      String         @db.VarChar(240)
+  /// Cantidad **en la unidad de venta**: lo que el cliente pidió y lo que consume el
+  /// pendiente del pedido.
   qty              Decimal        @db.Decimal(16, 3)
   unit             String         @db.VarChar(20)
+  /// Cantidad **en la unidad del ítem de kardex**, que no siempre es la de venta: una
+  /// cobertura se vende por pieza y sale de los kilos de una bobina (D-066). Es lo que
+  /// mueve el kardex y lo que se descuenta de la reserva, y guardarla es lo que hace que
+  /// la reversa devuelva exactamente lo mismo que sacó.
+  reserveQty       Decimal        @map("reserve_qty") @db.Decimal(16, 3)
+  /// Peso bruto declarado en la guía. Coincide con `reserveQty` cuando la reserva ya está
+  /// en kilos, y es un dato de transporte —editable— cuando no.
   weightKg         Decimal        @map("weight_kg") @db.Decimal(16, 3)
 
   /// El par del kardex del que salió el material: el mismo que usan `inventory_balances`

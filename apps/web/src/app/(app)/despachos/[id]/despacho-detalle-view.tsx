@@ -261,6 +261,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
                 <TableHead>Producto</TableHead>
                 <TableHead>Material</TableHead>
                 <TableHead className="text-right">Cantidad</TableHead>
+                <TableHead className="text-right">Salió del kardex</TableHead>
                 <TableHead className="text-right">Peso</TableHead>
               </TableRow>
             </TableHeader>
@@ -272,10 +273,14 @@ export function DespachoDetalleView({ id }: { id: string }) {
                     <div className="font-medium">{item.productSku}</div>
                     <div className="text-xs text-muted-foreground">{item.description}</div>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{item.itemType}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {item.itemType === 'COIL' ? 'Bobina' : 'Producto'}
+                  </TableCell>
                   <TableCell className="text-right">
                     {formatQty(item.qty, unitSymbol(item.unit))}
                   </TableCell>
+                  {/* Lo que realmente salió del kardex, que no siempre es la cantidad de venta. */}
+                  <TableCell className="text-right">{formatQty(item.reserveQty)}</TableCell>
                   <TableCell className="text-right">{formatQty(item.weightKg, 'kg')}</TableCell>
                 </TableRow>
               ))}
