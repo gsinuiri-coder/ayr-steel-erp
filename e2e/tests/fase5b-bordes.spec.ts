@@ -11,6 +11,7 @@ import {
   createSeries,
   dispatchOrder,
   expectNotRejected,
+  expectPendingWithNumber,
   freeLine,
   genericCustomer,
   getDispatch,
@@ -241,13 +242,24 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
         attempts: 3,
         kick: () => sendPending(api),
       });
-      expect(
-        resolved.status,
-        'tras el barrido el comprobante deja de estar pendiente de envío',
-      ).not.toBe('SEND_ERROR');
-      if (pse.accepts) {
-        expect(resolved.status).toBe('ACCEPTED');
-        expect(resolved.acceptedAt).not.toBeNull();
+
+      if (pse.providerConfigured) {
+        // Con un PSE atado, el barrido saca al documento de la cola: deja de estar
+        // pendiente de envío.
+        expect(
+          resolved.status,
+          'tras el barrido el comprobante deja de estar pendiente de envío',
+        ).not.toBe('SEND_ERROR');
+        if (pse.accepts) {
+          expect(resolved.status).toBe('ACCEPTED');
+          expect(resolved.acceptedAt).not.toBeNull();
+        }
+      } else {
+        // Sin PSE no hay a quién enviarlo: que siga pendiente **es lo diseñado** (D-073).
+        // Lo que el barrido no puede hacer es empeorarlo —darlo por rechazado o por
+        // aceptado sin que nadie lo haya visto— ni quitarle el número que ya tomó.
+        expectPendingWithNumber(resolved, 'el comprobante emitido sin PSE');
+        expect(resolved.number).toBe(invoice.number);
       }
     } finally {
       await setProviderOffline(api, false).catch(() => undefined);
@@ -288,20 +300,21 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       // Emitida: número tomado, y el veredicto todavía no está.
       expect(boleta.number).toMatch(/^B001-\d{8}$/);
       expect(boleta.issuedAt).not.toBeNull();
-      expectNotRejected(boleta, 'la boleta recién emitida');
+      expectNotRejected(boleta, 'la boleta recién emitida', pse);
       // Sin motivo no hay rechazo: ni código ni mensaje de rechazo.
       expect(boleta.rejectionCode).toBeNull();
 
       // Y la consulta al PSE la resuelve —o la deja esperando, que también es correcto—.
       const settled = await settleWithPse(api, boleta.id);
-      expectNotRejected(settled, 'la boleta tras consultar al PSE');
+      expectNotRejected(settled, 'la boleta tras consultar al PSE', pse);
       if (settled.status === 'ACCEPTED') {
         expect(settled.acceptedAt).not.toBeNull();
       } else {
-        // Sigue en camino: el barrido la recoge. Se deja dicho en el informe.
-        expect(settled.status).toBe('ISSUED');
+        // Sigue en camino —SUNAT tarda, o no hay PSE a quien preguntar— y el barrido la
+        // recoge. En los dos casos conserva su número, que es lo que importa.
+        expectPendingWithNumber(settled, 'la boleta tras consultar');
         console.log(
-          `[informe] ${settled.number} sigue pendiente de SUNAT tras consultar; no es un fallo`,
+          `[informe] ${settled.number} sigue pendiente tras consultar (${settled.status}); no es un fallo`,
         );
       }
     } finally {
@@ -333,11 +346,11 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
         notes: 'E2E boleta que pasa por el barrido',
       });
       trail.documentIds!.push(boleta.id);
-      expectNotRejected(boleta, 'la boleta recién emitida');
+      expectNotRejected(boleta, 'la boleta recién emitida', pse);
 
       await sendPending(api);
       const afterSweep = await getDocument(api, boleta.id);
-      expectNotRejected(afterSweep, 'la boleta tras el barrido');
+      expectNotRejected(afterSweep, 'la boleta tras el barrido', pse);
       // Y sobre todo: **no por duplicado**. Ese era el síntoma exacto del defecto —el
       // barrido reemitía con el mismo correlativo y el PSE lo devolvía como repetido—, así
       // que se nombra el mensaje en vez de mirar el contador de intentos: una consulta

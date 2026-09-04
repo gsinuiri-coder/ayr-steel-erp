@@ -228,7 +228,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
       // que hace falta que alguien la dé de baja en el panel del proveedor. Mientras eso no
       // ocurra, el caso queda sin cubrir y así se informa.
       const refreshed = await settleWithPse(api, note.id, { attempts: 1 });
-      expectNotRejected(refreshed, 'la guía tras consultarla al PSE');
+      expectNotRejected(refreshed, 'la guía tras consultarla al PSE', pse);
 
       // Y mientras la guía esté vigente, la reversa del despacho está bloqueada y el
       // mensaje dice qué hacer: darla de baja primero.
@@ -312,10 +312,10 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
       const issuedNote = await issueDispatchNote(api, dispatch.id);
       trail.documentIds!.push(issuedNote.id);
       expect(issuedNote.number).toMatch(/^T001-\d{8}$/);
-      expectNotRejected(issuedNote, 'la guía recién emitida');
+      expectNotRejected(issuedNote, 'la guía recién emitida', pse);
 
       const note = await settleWithPse(api, issuedNote.id);
-      expectNotRejected(note, 'la guía tras consultar al PSE');
+      expectNotRejected(note, 'la guía tras consultar al PSE', pse);
       const withNote = await getDispatch(api, dispatch.id);
       expect(withNote.dispatchNoteNumber).toBe(note.number);
       expect(withNote.dispatchNoteStatus).toBe(note.status);
@@ -738,7 +738,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
       expect(boleta.number, 'la boleta toma correlativo de su serie').toMatch(/^B001-\d{8}$/);
       expect(boleta.genericCustomerOverrideByName).toBeNull();
       // La boleta se informa a SUNAT por resumen: sale emitida y esperando, no rechazada.
-      expectNotRejected(boleta, 'la boleta al público en general');
+      expectNotRejected(boleta, 'la boleta al público en general', pse);
     } finally {
       await purgeInvoicingTrail(api, trail);
     }

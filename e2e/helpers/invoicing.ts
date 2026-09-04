@@ -529,15 +529,54 @@ export async function settleWithPse(
 }
 
 /**
- * Un documento que salió al PSE no puede estar rechazado sin motivo. Con veredicto queda
- * aceptado; sin veredicto, esperando. Las dos cosas son válidas; "rechazado" a secas no.
+ * Estados en los que un documento **ya emitido** puede estar legítimamente, según el
+ * entorno. Son tres mundos distintos y confundirlos es lo que hacía fallar a CI:
+ *
+ * - **Con PSE atado**: el documento sale y vuelve `ACCEPTED`, o se queda `ISSUED` esperando
+ *   el veredicto de SUNAT (boletas y guías van por resumen, en diferido).
+ * - **Sin PSE** (CI sin credenciales, producción por D-080): no hay a quién enviarlo, así
+ *   que se queda `ISSUED` o `SEND_ERROR`. **Eso es lo diseñado, no una avería**: D-073 dice
+ *   que emitir toma correlativo, habilita el despacho y deja el envío pendiente, y
+ *   `NullInvoicingProvider` existe justamente para ejercitar ese camino.
+ *
+ * En los dos mundos hay algo que **nunca** es aceptable: `REJECTED` sin motivo, y `DRAFT`
+ * después de haber tomado número.
  */
-export function expectNotRejected(document: FiscalDocumentDto, label: string): void {
+export function settledStatuses(pse: PseProbe): FiscalDocumentStatus[] {
+  return pse.providerConfigured ? ['ISSUED', 'ACCEPTED'] : ['ISSUED', 'SEND_ERROR'];
+}
+
+/**
+ * Un documento emitido no puede estar rechazado sin motivo, y tiene que haberse quedado en
+ * uno de los estados que su entorno permite (ver `settledStatuses`).
+ */
+export function expectNotRejected(document: FiscalDocumentDto, label: string, pse: PseProbe): void {
   expect(
     document.status,
     `${label} volvió rechazado: ${document.rejectionCode ?? 'sin código'} — ${document.rejectionMessage ?? 'sin motivo'}`,
   ).not.toBe('REJECTED');
-  expect(['ISSUED', 'ACCEPTED'], `${label} quedó en ${document.status}`).toContain(document.status);
+  const allowed = settledStatuses(pse);
+  expect(
+    allowed,
+    `${label} quedó en ${document.status}; en este entorno (PSE ${pse.providerConfigured ? 'configurado' : 'sin configurar'}) solo cabe ${allowed.join(' o ')}`,
+  ).toContain(document.status);
+}
+
+/**
+ * La promesa de D-073 sobre un comprobante emitido **sin PSE detrás**: el número existe
+ * para la empresa aunque nadie lo haya recibido todavía.
+ *
+ * Vale más que cualquier aserción sobre la aceptación, porque es la garantía que sostiene
+ * la operación cuando el proveedor no está: hasta ahora solo se ejercitaba con el
+ * interruptor manual de contingencia, y no con un entorno realmente sin PSE.
+ */
+export function expectPendingWithNumber(document: FiscalDocumentDto, label: string): void {
+  expect(document.number, `${label} tiene que haber tomado correlativo`).not.toBeNull();
+  expect(document.issuedAt, `${label} tiene que estar emitido`).not.toBeNull();
+  expect(
+    ['ISSUED', 'SEND_ERROR'],
+    `${label} quedó en ${document.status} y sin PSE solo cabe pendiente de envío`,
+  ).toContain(document.status);
 }
 
 /**
@@ -740,7 +779,10 @@ export const FISCAL_EMISSION_REASON =
 // ---------------------------------------------------------------------------
 
 export interface PseProbe {
+  /** El entorno puede llegar a un comprobante ACEPTADO. */
   accepts: boolean;
+  /** Hay un PSE atado. Sin él, emitir deja el documento pendiente **por diseño** (D-073). */
+  providerConfigured: boolean;
   reason: string;
 }
 
@@ -766,6 +808,7 @@ export async function probePse(api: APIRequestContext): Promise<PseProbe> {
   if (!settings.providerConfigured) {
     return {
       accepts: false,
+      providerConfigured: false,
       reason:
         `Este entorno no tiene PSE configurado (proveedor: ${settings.providerName}): toda ` +
         'emisión cae en contingencia y ningún comprobante llega a aceptado. Los escenarios ' +
@@ -775,13 +818,14 @@ export async function probePse(api: APIRequestContext): Promise<PseProbe> {
   if (!invoiceableRucFromEnv()) {
     return {
       accepts: false,
+      providerConfigured: true,
       reason:
         'Falta E2E_CUSTOMER_RUC. SUNAT rechaza el comprobante si el RUC del receptor no existe ' +
         '(código 1083) y cada intento gasta un correlativo, así que los escenarios que ' +
         'necesitan una aceptación no se ejecutan.',
     };
   }
-  return { accepts: true, reason: '' };
+  return { accepts: true, providerConfigured: true, reason: '' };
 }
 
 // ---------------------------------------------------------------------------
