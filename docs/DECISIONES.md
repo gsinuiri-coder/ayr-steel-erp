@@ -863,3 +863,198 @@ sin cambiar una línea del dominio. Queda anotada acá porque es exactamente el 
 detalle que hay que revisar al cambiar de proveedor (D-071): lo que se hereda de un
 adaptador no es solo el vocabulario, es también **qué operaciones no soporta** — y eso solo
 se descubre corriendo contra el proveedor real, que es lo que costó encontrarla.
+
+---
+
+## D-082..D-091 — Fase 6 (producción de coberturas metálicas contra pedido y maestro de colores)
+
+§0.2 tiene la decisión y el motivo de cada una. Acá va el contexto que no cabe en una fila:
+el modelo de los dos tipos de producto, el traslado de la reserva —que corrige un hueco de
+Fase 5b— y por qué la merma de coberturas no puede copiar la de drywall.
+
+### Los dos productos que conviven (D-083)
+
+Una empresa de coberturas vende lo mismo de dos maneras y el ERP tiene que sostener las dos
+sin inventar un tercer módulo.
+
+**Plancha catálogo.** Largo comercial fijo (3.00 m, 3.60 m…), SKU propio, unidad `NIU`,
+stock general. Se produce para tener, se cotiza como cualquier producto —cantidad × precio
+por pieza— y se despacha del almacén. En el sistema es **idéntica a un perfil de drywall**:
+receta en el maestro, OP que reporta piezas, kardex en piezas. No necesitó ni una línea de
+código nueva más allá de la rama de la OP.
+
+**A medida.** El cliente trae la medida del techo y la plancha se rola a ese largo. El
+producto de catálogo es el **perfil sin largo** (`COB-TR4-030-ROJO`), su unidad es `MTR` y
+la línea de cotización es **compuesta**: subítems `{cantidad, largo}` que el vendedor tipea
+—3 de 4.20 m, 2 de 6.00 m— y que totalizan metros lineales y kilos teóricos. El precio se
+cotiza por metro lineal, que es como se cotiza en el rubro.
+
+**Por qué el kardex de lo a medida va en metros y no en piezas.** Fue la decisión más
+cara de deshacer si se elegía mal. Con la unidad en piezas, una plancha de 3 m y una de 9 m
+comparten saldo y comparten promedio ponderado: valen lo mismo en el inventario valorizado
+y el costo de la venta miente por un factor de tres. Es exactamente el problema que D-055
+resolvió para drywall al fijar la unidad de entrada del perfil, solo que acá el largo es
+variable y el error es proporcional a esa variación. En metros, el costo por metro es
+uniforme —un metro de ese perfil cuesta lo mismo esté en la pieza que esté— y el kardex
+cierra exacto contra los kilos de bobina que salieron.
+
+Lo que se pierde con metros es la identidad de la pieza, y por eso los largos viven en
+tablas de detalle: `quotation_item_pieces` y `sales_order_item_pieces` (lo que se prometió),
+`production_order_items` (el plan de corte que planta ajusta) y `production_report_pieces`
+(los largos que de verdad salieron). El comprobante lleva los largos en la descripción de
+la línea, que es lo que el cliente necesita leer.
+
+La separación entre los dos tipos no necesita un flag: la sostiene `products.unit`, y el
+kardex ya prohíbe mezclar unidades en un mismo saldo desde Fase 2a.
+**Un efecto lateral que valía la pena:** `resolveSalesLines` dejó de rechazar una línea sin
+bobina en una línea de negocio con cotización obligatoria. Ese rechazo existía desde 5a con un
+argumento razonable —"prometer un producto terminado que todavía no existe sería una reserva
+sobre un saldo de cero, y la confirmación fallaría siempre sin decir por qué"— que dejó de valer
+en cuanto la producción de coberturas empezó a dejar metros y planchas en el almacén. Quien
+decide ahora es el disponible real, bajo el lock del saldo, con un mensaje que dice cuánto hay.
+La regla de RF-31 no se debilita: sigue viviendo donde de verdad aplica, en `createDirect`, que
+es la puerta que no admite pedido sin cotización.
+
+### El traslado de la reserva, y el hueco de 5b que destapó (D-088)
+
+Este es el corazón de la fase y **no estaba en el plan**: apareció leyendo
+`dispatches.service.ts` antes de escribir nada.
+
+**El hueco.** El despacho saca del kardex `orderItem.reserveItemType` /
+`orderItem.reserveItemId`. En un perfil o en un producto de trading eso es el propio
+producto y todo cuadra. En una cobertura, `sales-lines.ts` reserva **la bobina** —el
+producto terminado no existe todavía al confirmar el pedido, así que lo que se protege es
+la materia prima (D-054)—. Pero la OP ya sacó esos kilos de la bobina al reportar. Despachar
+habría emitido una **segunda** salida sobre la misma bobina: el kardex habría descontado dos
+veces un material que salió una sola vez, y el pedido habría quedado "atendido" con la
+bobina en negativo o bloqueada por la invariante. Fase 5b lo dejó anotado en su handoff en
+otra forma ("el despacho sacaba la cantidad de venta en vez de la que la reserva promete"),
+lo arregló a medias, y el resto solo podía aparecer con la primera cobertura — que es esta.
+
+**La corrección.** La promesa comercial no desaparece cuando el material se transforma:
+**cambia de ítem**. Al reportar largos, la OP hace dos cosas en la misma transacción:
+
+1. descuenta de la reserva de bobina los kilos que consumió (`consumeReservationQty`, el
+   mecanismo que D-074 ya había construido para el despacho parcial), y
+2. **crea una reserva nueva** sobre el producto terminado por los metros que acaban de
+   entrar al kardex, a nombre del mismo pedido y de la misma línea.
+
+Las piezas a medida, entonces, **nacen reservadas**. Mientras el pedido no las despache,
+la invariante `disponible ≥ reservado` (D-066) impide que otra venta, una merma o una OP
+se las lleve, sin ninguna regla nueva: es la invariante de cantidad de siempre, aplicada a
+un ítem que antes no existía.
+
+**Por qué dos filas y no una fila mutada.** Mutar `itemType`/`itemId` de la reserva original
+habría sido menos código y una mentira: la fila que decía "1 200 kg de BOB-0007 están
+prometidos" describe un hecho que **ocurrió** y que se cumplió; convertirla en "24.6 m de
+COB-TR4 están prometidos" borraría el rastro de cómo se cumplió. Con dos filas, el ledger
+se lee como lo que es —una promesa de materia prima que se consumió y una promesa de
+producto que nació de ella—, y la producción parcial funciona sola: reportar 3 de 5 piezas
+deja viva la promesa de bobina por lo que falta y abre la de producto por lo hecho, con las
+dos invariantes ciertas en cada paso intermedio.
+
+El precio de la decisión es el índice: `reservations.sales_order_item_id` deja de ser único
+y pasa a `@@unique([sales_order_item_id, item_type, item_id])`, y todo lo que leía
+`orderItem.reservation` en singular pasa a leer la **reserva viva** de la línea. El despacho
+toma de ahí sus coordenadas de kardex; `sales_order_items.reserve_*` sigue congelado como lo
+que siempre fue: el registro de lo que se prometió el día que se confirmó el pedido.
+
+### Lo que la revisión encontró, y que este diseño no traía gratis
+
+Cuatro cosas, y las cuatro tienen la misma raíz: **una promesa que se mueve entre ítems obliga
+a revisar cada punto donde alguien la lee o la descuenta**, y es fácil arreglar la mitad.
+
+1. **La reversa del reporte se bloqueaba a sí misma.** Revertir sacaba los metros del kardex
+   _antes_ de reducir la reserva que esos mismos metros sostienen, y `InventoryService.reverse`
+   comprueba `disponible ≥ reservado` sobre el saldo que dejaría: `0 ≥ 24.600` es falso, así que
+   RF-33 fallaba **en su camino principal**, no en un borde, con un mensaje que le pedía al
+   operario liberar la reserva del pedido que venía a corregir. El orden correcto es el que
+   `report` ya usaba y documentaba —promesa primero, kardex después— y estaba invertido.
+2. **El despunte del cierre no descontaba la promesa.** `report` consume la reserva de bobina
+   solo por los kilos teóricos, así que cerrar con merma solo funcionaba si el rollo tenía kilos
+   libres por encima de lo reservado. En el caso normal de una cobertura —el pedido reserva el
+   rollo que va a rolar— cerrar fallaba siempre, y el mensaje que veía planta era "anula el
+   pedido o libera la reserva" en el paso más rutinario de la corrida.
+3. **El despacho volvía a caer en la bobina.** `resolveDispatchTarget` prefería el producto solo
+   mientras su reserva estuviera `ACTIVA`; en cuanto un primer despacho la consumía entera, el
+   segundo caía a las coordenadas congeladas y emitía una salida de **kilos de bobina** por una
+   venta de planchas. Era el mismo hueco que D-088 vino a cerrar, reaparecido un despacho más
+   tarde. Ahora una línea que se fabrica contra el pedido —la que trae largos— **no vuelve nunca
+   al insumo**: o hay producto terminado reservado, o el despacho se rechaza diciendo que hay
+   que producir primero.
+4. **Sobre-producir dejaba metros prometidos para siempre.** Los largos reales difieren del plan
+   (D-084), así que reportar de más es esperable; abrir reserva por todo lo reportado no lo era:
+   el pedido pasaba a atendido y esos metros quedaban `ACTIVA` sin que nada los liberara. El
+   upsert se topa contra lo que la línea todavía debe, y lo que sobra entra al kardex como stock
+   libre, que es lo que de verdad es.
+
+Un quinto, más fino: la OP puede montar **cualquier** bobina que pase el filtro, no
+necesariamente la que el pedido reservó. Descontar —o devolver— la promesa de un rollo del que
+no salió un gramo dejaba la invariante mintiendo sobre material intacto, así que el consumo y la
+restauración de la reserva de bobina ocurren solo cuando el rollo rolado **es** el reservado.
+
+Ninguno de los cuatro primeros lo habría atrapado la aritmética pura de `roofing-math.spec.ts`:
+los encontró la revisión leyendo el **orden de las operaciones**, y el E2E del ciclo completo los
+confirmó en cuanto existió. Es la misma lección de Fase 5b en otra forma — el defecto que solo
+aparece con el primer caso real no lo encuentra un test de función pura.
+
+### Por qué la merma de coberturas no puede copiar la de drywall (D-089)
+
+D-057 dice que al cerrar la OP sale como merma "todo lo asignado que no llegó a ser pieza
+buena". Para un fleje es exacto: el fleje entra entero a la perfiladora y lo que no salió en
+perfiles se perdió en el proceso.
+
+Para una bobina de coberturas es **falso**. La bobina se monta en la roladora, se rolan los
+metros del pedido y el rollo **sigue ahí**, con su saldo, listo para el pedido siguiente.
+Aplicar D-057 tal cual habría dado de baja un rollo entero en cada cierre: una merma del
+90 % sobre material que está físicamente en el almacén, que además habría exigido motivo
+escrito y habría dejado el inventario valorizado sin ninguna relación con la realidad.
+
+Lo que sí es merma acá es el **despunte**: los centímetros que se pierden en cada corte y el
+arranque de la máquina. Se conoce de una sola manera —pesando o leyendo el contador de la
+roladora— y por eso planta lo declara al cerrar: `consumedKg`, con la suma de los kilos
+teóricos como valor por defecto (merma cero). La diferencia sale como `OUT refType=SCRAP`
+sobre la bobina y su costo se traslada a los metros buenos con un `ADJUST`, que es D-057
+palabra por palabra en su segunda mitad. El resto de lo asignado se libera sin merma.
+
+Es también la aplicación literal de D-047, que ya había previsto este caso dos fases antes:
+"kg teórico … con **override** de kg real que el operario puede escribir a mano".
+
+### El filtro de bobina, y por qué la igualdad de color es estricta (D-085, D-086)
+
+El filtro que `/planta` ofrece al montar la bobina es corto a propósito: abierta, con saldo,
+de la línea de la orden, espesor dentro de `±0.02 mm` del de la receta, y **`colorId` igual
+al del producto**.
+
+La tolerancia existe porque el espesor nominal de una bobina y el que trae el rollo no
+coinciden nunca: exigir igualdad exacta dejaría fuera del filtro material perfectamente
+válido y empujaría a alguien a saltarse el filtro. Es una constante compartida y no un
+campo de pantalla por el mismo motivo que `MAX_SCRAP_RATIO_WITHOUT_REASON`: un número que la
+operación no cambia todos los días no necesita UI, y una UI lo convierte en algo que se
+puede aflojar hasta que el filtro no filtre nada.
+
+La **igualdad estricta de color, con `NULL` incluido**, fue una elección deliberada contra
+la lectura más obvia ("si el producto tiene color, compara; si no, no filtres"). Con `NULL`
+tratado como comodín, un producto galvanizado —sin color— aceptaría cualquier bobina
+prepintada del almacén, que es justo el error caro: se rola un rollo de color en un pedido
+que no lo pedía y no hay forma de deshacerlo. Estricto, el filtro no ofrece nada raro y el
+caso legítimo (producto sin color, bobina sin color) sigue funcionando.
+
+Y el `hexColor` del maestro no es decoración: en planta el rollo se elige por lo que se ve.
+Un selector con la muestra al lado del nombre evita el error que ningún guardrail de base de
+datos puede atrapar — montar el rojo que no era.
+
+### Qué no se construyó, y por qué (D-090, D-091)
+
+**Sin servicio de rolado tercerizado.** La máquina es propia, así que el costo de la
+cobertura es D-056 sin variantes: los kilos de bobina consumidos con su landed cost ya
+dentro, más la merma de despunte absorbida, divididos entre los metros buenos. Mano de obra
+y overhead siguen en cero y explícitos, como hook de D-035.
+
+**Sin producción de UPVC.** La línea `roofing` compra planchas y perfiles de PVC terminados
+y los vende: no hay bobina, no hay rolado y no hay nada que transformar. Esta fase solo
+verificó que el catálogo lo modele bien y lo cubrió con un E2E de compra → venta → kardex.
+Queda dicho —y esto es lo que importa para la sesión que algún día lo necesite— que una
+producción de UPVC entraría como otro `kind` de la OP de D-087, no como una entidad nueva:
+la lección de D-051 es que el hueco que se deja para después cuesta una sesión entera y deja
+residuos en producción mientras tanto.
