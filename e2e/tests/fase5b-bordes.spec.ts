@@ -238,10 +238,16 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       const swept = await sendPending(api);
       expect(swept.sent).toBeGreaterThan(0);
 
-      const resolved = await waitForStatus(api, invoice.id, ['ACCEPTED', 'REJECTED'], {
-        attempts: 3,
-        kick: () => sendPending(api),
-      });
+      // **Solo se espera si hay a quién esperar.** Sin PSE, el documento se queda
+      // pendiente por diseño y ningún barrido lo va a mover: insistir no cambia el
+      // resultado y sí multiplica el trabajo, porque cada pasada reprocesa una cola que
+      // sin proveedor solo crece. Es lo que agotaba el timeout del job en CI.
+      const resolved = pse.providerConfigured
+        ? await waitForStatus(api, invoice.id, ['ACCEPTED', 'REJECTED'], {
+            attempts: 3,
+            kick: () => sendPending(api),
+          })
+        : await getDocument(api, invoice.id);
 
       if (pse.providerConfigured) {
         // Con un PSE atado, el barrido saca al documento de la cola: deja de estar
