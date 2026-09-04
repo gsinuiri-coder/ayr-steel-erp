@@ -352,6 +352,8 @@ Los reportes de v1 son exactamente estos cinco. Cualquier otro reporte queda fue
 | RF-93 | Reporte de cuentas por pagar por proveedor.            |
 | RF-94 | Reporte de cola de producción.                         |
 
+> **Fase 5b (D-070..D-078).** El ciclo posterior al pedido: RF-70 y RF-74..RF-79 en `invoicing` (`/comprobantes`, `/despachos`) y RF-86..RF-89 en la cobranza (`/cobranzas`). El puerto `ElectronicInvoicingProvider` es lo que hace que ninguno de esos requisitos dependa del PSE que se use hoy.
+
 ### 4.9 Auditoría y configuración
 
 | **#** | **Requisito**                                            | **Implementación** |

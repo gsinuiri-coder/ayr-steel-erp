@@ -1333,6 +1333,13 @@ export class InvoicingService {
    * lección de D-069.
    */
   async sendPending(limit = 20): Promise<number> {
+    // Con la contingencia levantada no se sale a la red (D-073). Sin este corte, el barrido
+    // recorría la cola cada quince minutos solo para volver a marcarla con error y para
+    // inflar el contador de intentos, que es justo lo que distingue "todavía no salió" de
+    // "salió y no entra".
+    const settings = await this.settingsRow();
+    if (settings.providerOffline) return 0;
+
     const pending = await this.prisma.fiscalDocument.findMany({
       where: { status: { in: RETRYABLE }, number: { not: null } },
       orderBy: { issuedAt: 'asc' },
