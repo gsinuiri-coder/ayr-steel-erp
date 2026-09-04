@@ -13,7 +13,7 @@
 | 3 — Corte tercerizado + flejes               | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho   |
 | 3b — Reversa de recepción de corte           | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho   |
 | 4 — Producción drywall + `/planta`           | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho          |
-| 5a — Cotización → pedido + reserva           | 🟡 En curso             | —                                                        |
+| 5a — Cotización → pedido + reserva           | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho          |
 | 5b — Producción de coberturas y venta        | ⚪ Pendiente            | —                                                        |
 | 6 — Facturación Nubefact                     | ⚪ Pendiente            | —                                                        |
 | 7 — Auditoría, reportes, UAT                 | ⚪ Pendiente            | —                                                        |
@@ -441,6 +441,69 @@ los usuarios comparten la de salida, así que el límite del lookup es global y 
 Protege bien la cuota del tercero (que es lo que D-067 quería) pero un usuario en bucle deja
 sin autocompletado a toda la empresa. Cambiar el tracker a `user.id` toca el guard global que
 también protege el login, así que va con el resto del hardening de Fase 7.
+
+**Los bordes de `qa` encontraron un defecto que las tres revisiones anteriores no vieron.**
+El PDF de una cotización **vencida** salía sin rótulo mientras el job diario no la hubiera
+marcado: `confirm()` ya la rechazaba por fecha, pero `pdf()` decidía con el `status` guardado
+y servía el archivo congelado en R2 — un papel indistinguible de uno vigente sobre una
+cotización que el propio API ya no dejaba confirmar. Es exactamente el razonamiento de D-069
+(el API escala a cero y el cron puede no correr) aplicado a la puerta por la que el documento
+sale al cliente. Corregido con `effectiveStatus`, que recalcula el vencimiento al servir.
+
+Los 10 bordes cubren además: dos líneas sobre la misma bobina (la segunda ve la reserva que la
+primera creó **en la misma transacción**, y si la suma excede el disponible fallan enteras);
+dos líneas sobre bobinas distintas; reserva sobre el propio producto en piezas con la
+invariante bloqueando la salida; el bloqueante de la revisión por sus **dos** caminos (bobina
+enviada a corte y fleje montado en una OP entre cotizar y confirmar); editar, emitir y anular
+con sus PDF; RF-66; y **dos confirmaciones simultáneas sobre la misma bobina**, donde una gana
+y la otra falla con un 400 de dominio, sin reserva huérfana (estable en tres corridas).
+
+**E2E de Fase 5a contra producción.** `pnpm e2e:prod` corre ahora `auth` + `fase1` + `fase2a` +
+`fase2b` + `fase3` + `fase3b` + `fase4` + `fase4-bordes` + `m2-reversa-pago` + `fase5a` +
+`fase5a-bordes` con el mismo administrador efímero: **83/83 verdes**; 84/84 en local (con
+`usuarios.spec.ts`).
+
+**Una corrida se perdió por un error operativo, no del producto.** El primer `pnpm e2e:prod`
+se abortó a los 64 tests con un `ENOENT` sobre un archivo de trace: había otra corrida de
+Playwright en paralelo verificando los bordes en local, y **todas comparten `test-results/`**,
+que Playwright limpia al arrancar. El síntoma (un `ENOENT` junto a un "Test timeout of
+45000ms") no se parece en nada a la causa. Repetida sola, verde. Queda anotado: **una suite de
+Playwright a la vez**, o `--output` propio para cada una.
+
+**Producción queda sin ningún rastro.** Verificado con `node scripts/prod-e2e-leftovers.mjs`
+tras `pnpm prod:purge-e2e`: **0 bobinas abiertas con saldo, 0 reservas ACTIVAS en toda la
+base, 0 perfiles E2E con piezas en stock**, y las 20 cotizaciones, 13 pedidos, 114 órdenes de
+producción y todas las compras E2E en `CANCELLED`, con los 19 clientes de prueba desactivados.
+2 526 movimientos de kardex conservados (§3.2).
+
+`prod:purge-e2e` necesitó dos ampliaciones para llegar ahí. La primera, prevista: un paso
+que anula pedidos y cotizaciones E2E, libera las reservas sueltas y desactiva los clientes —
+va **después** de las órdenes de producción (una OP viva bloquea la anulación del pedido) y
+**antes** de todo lo demás (una reserva activa bloquea la anulación de la bobina, la de su
+compra, el envío a corte y el cierre). La segunda salió de correrlo: la reversa de mermas de
+prueba filtraba por `kind = STRIP`, porque hasta Fase 3b las únicas mermas de prueba eran
+sobre flejes; el test de la invariante de D-066 registra una sobre una **bobina madre**, que
+quedó con 1 600 kg y sin poder anularse. Con el filtro ampliado a bobinas y flejes, la purga
+cierra en cero.
+
+**Diferido a fases posteriores:**
+
+- El tracker del throttle es `req.ip`, y detrás del proxy de Vercel (D-015) todos los usuarios
+  comparten la IP de salida: el límite de 20/min del lookup de RUC es global y no por usuario.
+  Protege la cuota del tercero, que es lo que D-067 quería, pero un usuario en bucle deja sin
+  autocompletado a toda la empresa. Cambiar el tracker a `user.id` toca el guard global que
+  también protege el login, así que va con el hardening de Fase 7.
+- **El vendedor puede buscar un RUC pero no dar de alta el cliente**: RF-85 reserva las
+  mutaciones de `/customers` a ADMINISTRADOR, así que el botón "Buscar" de D-067 queda sin
+  salida para el rol que lo usa. Es coherente con §3.4; si el dueño quiere que el vendedor dé
+  de alta clientes, es un cambio de RF-85, no un bug.
+- `SalesOrderStatus.FULFILLED` existe y **nada lo alcanza todavía**: el despacho que cierra un
+  pedido es Fase 5b.
+- La garantía de D-068 de sumar `Σ subtotales + Σ IGV` en vez de `Σ totales de línea` **no es
+  falsable con la escala actual** (dinero a 4 decimales, `total = subtotal + igv` sin redondeo
+  adicional). El test la verifica igual, para que siga valiendo si la escala cambia.
+- Los pendientes de Fase 2b/3/4 (paginación de `findMovements`, prorrateo siempre por kg,
+  receta no congelada en la OP) siguen igual.
 
 ## Bloqueos
 

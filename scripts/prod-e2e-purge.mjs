@@ -265,10 +265,14 @@ try {
    */
   async function revertTestScraps() {
     const openForScrap = await call('/coils?status=OPEN');
-    const strips = (Array.isArray(openForScrap.body) ? openForScrap.body : []).filter(
-      (c) => e2eSupplierIds.has(c.supplierId) && c.kind === 'STRIP',
+    // **Bobinas y flejes**, no solo flejes: Fase 3b solo dejaba mermas de prueba sobre
+    // flejes, pero el test de la invariante de Fase 5a (D-066) registra una merma sobre una
+    // bobina madre para comprobar que lo reservado la bloquea. Con el filtro por `STRIP`,
+    // esa madre quedaba con saldo y sin poder anularse — un residuo en producción.
+    const scrapped = (Array.isArray(openForScrap.body) ? openForScrap.body : []).filter((c) =>
+      e2eSupplierIds.has(c.supplierId),
     );
-    for (const strip of strips) {
+    for (const strip of scrapped) {
       const movements = await call(`/inventory/movements?itemType=COIL&itemId=${strip.id}`);
       const liveScrap = (Array.isArray(movements.body) ? movements.body : []).find(
         (m) =>
@@ -276,7 +280,7 @@ try {
       );
       if (!liveScrap) continue;
       if (dryRun) {
-        console.log(`  [simulado] revertir merma de prueba en el fleje ${strip.code}`);
+        console.log(`  [simulado] revertir merma de prueba en ${strip.code}`);
         continue;
       }
       const res = await call(`/coils/scraps/${liveScrap.id}/cancel`, {
