@@ -41,6 +41,38 @@ interface NubefactResponse {
   anulacion_aceptada_por_sunat?: boolean;
 }
 
+/**
+ * Primer texto **con contenido** de la lista.
+ *
+ * `??` no sirve acá: el PSE devuelve `sunat_description: ""` en varios rechazos, y una
+ * cadena vacía gana contra el operador de fusión nula. El resultado era un comprobante
+ * rechazado **sin motivo visible**, que es el peor rechazo posible: el usuario ve que no
+ * entró y no tiene nada que corregir.
+ */
+function firstText(...candidates: (string | undefined | null)[]): string | null {
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+/**
+ * El PSE responde con un error cuando la baja **ya se había comunicado**. Para el dominio
+ * eso no es un fallo: el documento está anulado, que es justo lo que se pedía.
+ *
+ * Tratarlo como error dejaba la fila en `ACCEPTED` para siempre —anulada del lado del PSE y
+ * contada como deuda vigente del cliente de este lado— sin ninguna ruta que lo reconciliara.
+ * Reconocer el mensaje es propio del proveedor, y por eso vive acá y no en el servicio.
+ */
+function saysAlreadyVoided(message: string): boolean {
+  const normalized = message
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return normalized.includes('ya fue anulado') || normalized.includes('proceso de anulacion');
+}
+
 /** Timeout de la llamada. Generoso: el PSE firma, envía a SUNAT y espera el CDR. */
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -109,7 +141,7 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
   }
 
   voidDocument(command: VoidDocumentCommand): Promise<ProviderResult> {
-    return this.post(buildVoidPayload(command));
+    return this.post(buildVoidPayload(command), { voidCall: true });
   }
 
   /**
@@ -121,7 +153,7 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
    */
   private async post(
     payload: Record<string, unknown>,
-    options: { voidQuery?: boolean } = {},
+    options: { voidQuery?: boolean; voidCall?: boolean } = {},
   ): Promise<ProviderResult> {
     if (!this.configured) {
       return this.errorResult(
@@ -179,6 +211,21 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
 
     // El proveedor contesta 200 con `errors` adentro tanto como 4xx con el mismo campo.
     const errorMessage = Array.isArray(data.errors) ? data.errors.join('; ') : data.errors;
+    if (errorMessage && options.voidCall && saysAlreadyVoided(errorMessage)) {
+      // La baja ya estaba comunicada: para el dominio, el desenlace pedido **ya ocurrió**.
+      // Devolverlo como error dejaba el documento vigente de este lado y anulado del otro.
+      return {
+        outcome: 'ACCEPTED',
+        ticket: data.sunat_ticket_numero ?? null,
+        sunatHash: null,
+        pdfUrl: null,
+        xmlUrl: null,
+        cdrUrl: null,
+        code: null,
+        message: 'El comprobante ya estaba anulado en el PSE',
+        raw: body,
+      };
+    }
     if (errorMessage) {
       // **La distinción que importa** (ver `ProviderOutcome`): un 5xx es del proveedor y se
       // reintenta; un 4xx con mensaje es el contenido del documento y no va a mejorar por
@@ -220,8 +267,10 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
         pdfUrl: data.enlace_del_pdf ?? null,
         xmlUrl: data.enlace_del_xml ?? null,
         cdrUrl: data.enlace_del_cdr ?? null,
-        code: data.sunat_responsecode ?? null,
-        message: data.sunat_description ?? soapError ?? 'SUNAT rechazó el documento',
+        code: firstText(data.sunat_responsecode, String(data.codigo_de_error ?? '')),
+        message:
+          firstText(data.sunat_description, soapError, data.sunat_note) ??
+          'SUNAT rechazó el documento sin dar motivo; la respuesta completa quedó archivada',
         raw: body,
       };
     }
@@ -237,7 +286,7 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
         xmlUrl: data.enlace_del_xml ?? null,
         cdrUrl: data.enlace_del_cdr ?? null,
         code: null,
-        message: data.sunat_note ?? null,
+        message: firstText(data.sunat_note),
         raw: body,
       };
     }
@@ -249,8 +298,8 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
       pdfUrl: data.enlace_del_pdf ?? null,
       xmlUrl: data.enlace_del_xml ?? null,
       cdrUrl: data.enlace_del_cdr ?? null,
-      code: data.sunat_responsecode ?? null,
-      message: data.sunat_description ?? null,
+      code: firstText(data.sunat_responsecode),
+      message: firstText(data.sunat_description, data.sunat_note),
       raw: body,
     };
   }

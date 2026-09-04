@@ -1538,7 +1538,37 @@ export class InvoicingService {
       return this.findOne(id);
     }
 
-    const result = await this.provider.queryStatus(command);
+    // **Reconciliación de una baja perdida.** Un documento puede estar anulado en el PSE y
+    // seguir `ACCEPTED` acá: pasa cuando la comunicación de baja llegó al PSE pero la
+    // respuesta no volvió, o volvió como error. Sin esta consulta no había ninguna ruta que
+    // lo arreglara —la baja contesta "ya fue anulado" para siempre— y el comprobante
+    // quedaba contado como deuda vigente de un cliente que ya no la tiene.
+    if (document.status === FiscalDocumentStatus.ACCEPTED) {
+      const voidResult = await this.callProvider(() => this.provider.queryVoidStatus(command));
+      if (voidResult.outcome === 'ACCEPTED') {
+        const updated = await this.prisma.fiscalDocument.updateMany({
+          where: { id, status: FiscalDocumentStatus.ACCEPTED },
+          data: {
+            status: FiscalDocumentStatus.VOIDED,
+            voidedAt: new Date(),
+            voidRequestedAt: document.voidRequestedAt ?? new Date(),
+            providerResponse: voidResult.raw ?? {},
+          },
+        });
+        if (updated.count === 1) {
+          await this.audit.log({
+            actorId: actor.id,
+            action: 'invoicing.document.void-reconciled',
+            entity: 'fiscal_documents',
+            entityId: id,
+            after: { number: document.number, source: 'consulta al PSE' },
+          });
+          return this.findOne(id);
+        }
+      }
+    }
+
+    const result = await this.callProvider(() => this.provider.queryStatus(command));
     await this.applyResult(id, result);
     if (result.outcome === 'ACCEPTED') await this.storeFiles(id, document.number, result);
     return this.findOne(id);
@@ -1614,16 +1644,18 @@ export class InvoicingService {
       );
     }
 
-    const result = await this.provider.voidDocument({
-      docType: document.docType,
-      series: document.seriesRef?.series ?? '',
-      correlative: document.correlative ?? 0,
-      reason,
-    });
+    const result = await this.callProvider(() =>
+      this.provider.voidDocument({
+        docType: document.docType,
+        series: document.seriesRef?.series ?? '',
+        correlative: document.correlative ?? 0,
+        reason,
+      }),
+    );
 
     if (result.outcome === 'ERROR') {
       throw new ConflictException(
-        `No se pudo comunicar la baja al PSE: ${result.message ?? 'sin detalle'}. El comprobante sigue vigente; vuelve a intentarlo.`,
+        `No se pudo comunicar la baja al PSE: ${result.message ?? 'sin detalle'}. El comprobante sigue vigente; vuelve a intentarlo, o usa «Consultar al PSE» si sospechas que la baja sí llegó.`,
       );
     }
     if (result.outcome === 'REJECTED') {
