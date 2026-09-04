@@ -66,6 +66,9 @@ jobs:
       # un comprobante aceptado por SUNAT no se borra, se da de baja.
       NUBEFACT_URL: ${{ secrets.NUBEFACT_URL }}
       NUBEFACT_TOKEN: ${{ secrets.NUBEFACT_TOKEN }}
+      # RUC receptor de los comprobantes de prueba. Vacío = los E2E saltan la aceptación
+      # en vez de emitir contra un RUC que SUNAT no reconoce.
+      E2E_CUSTOMER_RUC: ${{ secrets.E2E_CUSTOMER_RUC }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

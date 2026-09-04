@@ -28,6 +28,12 @@ const apiEnv = [
   // es válido y deja el módulo en contingencia (D-073), que no es un fallo de arranque.
   `NUBEFACT_URL=${setup.NUBEFACT_URL ?? setup.NUBEFACT_DEMO_URL ?? ''}`,
   `NUBEFACT_TOKEN=${setup.NUBEFACT_TOKEN ?? setup.NUBEFACT_DEMO_TOKEN ?? ''}`,
+  // RUC receptor de los comprobantes de prueba (Fase 5b). SUNAT valida que **exista**, así
+  // que un RUC inventado con dígito verificador correcto vuelve rechazado y gasta un
+  // correlativo. Decisión del dueño: se usa el RUC de la propia empresa (emisor = receptor),
+  // que existe y no involucra a ningún tercero. Vacío = los E2E saltan la aceptación en vez
+  // de emitir contra un RUC que no existe.
+  `E2E_CUSTOMER_RUC=${setup.E2E_CUSTOMER_RUC ?? ''}`,
   `R2_ACCOUNT_ID=${setup.R2_ACCOUNT_ID ?? ''}`,
   `R2_ACCESS_KEY_ID=${setup.R2_ACCESS_KEY_ID ?? ''}`,
   `R2_SECRET_ACCESS_KEY=${setup.R2_SECRET_ACCESS_KEY ?? ''}`,
