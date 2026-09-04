@@ -1147,34 +1147,36 @@ export class InvoicingService {
       await this.applyResult(id, this.offlineResult());
       return;
     }
-    if (!(await this.claimAttempt(id))) return;
+    /**
+     * **Reenviar o consultar**, y el criterio no puede ser el ticket.
+     *
+     * Un documento que el PSE ya recibió y que espera a SUNAT **no siempre trae ticket**:
+     * boletas y guías vuelven `PENDING` sin él. Decidir por el ticket hacía que el barrido
+     * los reemitiera con la misma serie y correlativo, el PSE los devolviera como
+     * duplicados y eso sí se leyera como rechazo terminal — el barrido destruía justo lo
+     * que venía a rescatar.
+     *
+     * El estado ya lo dice, y es lo que hay que mirar:
+     * - `SEND_ERROR` — el envío **nunca entró**. Se reenvía.
+     * - `ISSUED` con intentos previos — la última respuesta fue `PENDING`, o sea que el
+     *   PSE lo tiene. Se consulta.
+     * - `ISSUED` sin intentos — recién numerado por `assign`. Se envía por primera vez.
+     *
+     * `document.sendAttempts` se lee **antes** del reclamo, así que todavía es el contador
+     * previo a este intento.
+     */
+    const alreadyAtProvider =
+      document.status === FiscalDocumentStatus.ISSUED &&
+      (document.sendAttempts > 0 || document.providerTicket !== null);
+
+    // Consultar no es un intento de envío: no sube el contador.
+    if (!(await this.claimAttempt(id, { counts: !alreadyAtProvider }))) return;
 
     // **Nunca lanza**, y la garantía es de este método, no del adaptador: cualquier fallo
     // acá —incluido el de escribir el resultado— subiría por `send` hasta el usuario como
     // un 500 sobre un documento que ya tomó correlativo, que es exactamente lo que D-073
     // existe para evitar.
     try {
-      /**
-       * **Reenviar o consultar**, y el criterio no puede ser el ticket.
-       *
-       * Un documento que el PSE ya recibió y que espera a SUNAT **no siempre trae ticket**:
-       * boletas y guías vuelven `PENDING` sin él. Decidir por el ticket hacía que el
-       * barrido los reemitiera con la misma serie y correlativo, el PSE los devolviera
-       * como duplicados y eso sí se leyera como rechazo terminal — el barrido destruía
-       * exactamente lo que venía a rescatar.
-       *
-       * El estado ya lo dice, y es lo que hay que mirar:
-       * - `SEND_ERROR` — el envío **nunca entró**. Se reenvía.
-       * - `ISSUED` con intentos previos — la última respuesta fue `PENDING`, o sea que el
-       *   PSE lo tiene. Se consulta.
-       * - `ISSUED` sin intentos — recién numerado por `assign`. Se envía por primera vez.
-       *
-       * `document.sendAttempts` se lee **antes** de `claimAttempt`, así que todavía es el
-       * contador previo a este intento.
-       */
-      const alreadyAtProvider =
-        document.status === FiscalDocumentStatus.ISSUED &&
-        (document.sendAttempts > 0 || document.providerTicket !== null);
       const result = alreadyAtProvider
         ? await this.callProvider(() =>
             this.provider.queryStatus({
@@ -1210,20 +1212,26 @@ export class InvoicingService {
   }
 
   /**
-   * Reclama el intento antes de salir a la red (D-073).
+   * Reclama la salida a la red antes de hacerla (D-073).
    *
-   * `applyResult` protege la **escritura** del resultado, pero no el envío: dos reintentos
-   * simultáneos —uno manual y el barrido del job, por ejemplo— leían el mismo estado y
-   * llamaban al PSE dos veces con el mismo correlativo. Este `updateMany` condicionado es
-   * lo que hace que solo uno de los dos salga; el otro ve cero filas afectadas y se retira.
+   * `applyResult` protege la **escritura** del resultado, pero no la llamada: dos
+   * reintentos simultáneos —uno manual y el barrido del job, por ejemplo— leían el mismo
+   * estado y llamaban al PSE dos veces con el mismo correlativo. Este `updateMany`
+   * condicionado es lo que hace que solo uno de los dos salga; el otro ve cero filas
+   * afectadas y se retira.
    *
-   * Marcar el intento acá y no después también deja `sendAttempts` contando intentos
-   * reales, que es lo que separa "todavía no salió" de "salió y no entra".
+   * **`counts` decide si además sube el contador de intentos**, y la distinción importa:
+   * `sendAttempts` está para separar "todavía no salió" de "salió y no entra", así que
+   * sumarle las **consultas** —que no emiten nada— diluye justo la pregunta que responde.
+   * Solo cuenta la emisión real.
    */
-  private async claimAttempt(id: string): Promise<boolean> {
+  private async claimAttempt(id: string, options: { counts: boolean }): Promise<boolean> {
     const claimed = await this.prisma.fiscalDocument.updateMany({
       where: { id, status: { in: RETRYABLE } },
-      data: { sendAttempts: { increment: 1 }, lastAttemptAt: new Date() },
+      data: {
+        ...(options.counts ? { sendAttempts: { increment: 1 } } : {}),
+        lastAttemptAt: new Date(),
+      },
     });
     return claimed.count === 1;
   }
@@ -1852,7 +1860,6 @@ export class InvoicingService {
       await this.applyResult(id, this.offlineResult());
       return;
     }
-    if (!(await this.claimAttempt(id))) return;
 
     const dispatch = document.dispatch;
     // El comprobante que respalda el traslado, si el pedido ya tiene uno aceptado.
@@ -1870,11 +1877,12 @@ export class InvoicingService {
     // del usuario es de este servicio, no del adaptador (D-073). Acá pesa más que en
     // ningún otro lado, porque del otro lado del envío hay un camión esperando.
     // Mismo criterio que `deliver`: si el PSE ya la tiene, se consulta en vez de
-    // reemitirla con el mismo correlativo.
-    if (
+    // reemitirla con el mismo correlativo, y consultar no cuenta como intento de envío.
+    const noteAlreadyAtProvider =
       document.status === FiscalDocumentStatus.ISSUED &&
-      (document.sendAttempts > 0 || document.providerTicket !== null)
-    ) {
+      (document.sendAttempts > 0 || document.providerTicket !== null);
+    if (!(await this.claimAttempt(id, { counts: !noteAlreadyAtProvider }))) return;
+    if (noteAlreadyAtProvider) {
       const queried = await this.callProvider(() =>
         this.provider.queryStatus({
           docType: document.docType,
