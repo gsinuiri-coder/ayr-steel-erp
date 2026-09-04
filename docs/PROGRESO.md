@@ -13,7 +13,8 @@
 | 3 — Corte tercerizado + flejes               | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho   |
 | 3b — Reversa de recepción de corte           | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho   |
 | 4 — Producción drywall + `/planta`           | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho          |
-| 5 — Cotizaciones y ventas                    | ⚪ Pendiente            | —                                                        |
+| 5a — Cotización → pedido + reserva           | 🟡 En curso             | —                                                        |
+| 5b — Producción de coberturas y venta        | ⚪ Pendiente            | —                                                        |
 | 6 — Facturación Nubefact                     | ⚪ Pendiente            | —                                                        |
 | 7 — Auditoría, reportes, UAT                 | ⚪ Pendiente            | —                                                        |
 
@@ -305,6 +306,141 @@ Sesión corta de mantenimiento, fuera del avance por fases: cerrar el hueco que 
 - **E2E contra producción.** `pnpm e2e:prod` corre ahora también `m2-reversa-pago.spec.ts`: **65/65 verdes en local; 64/64 contra producción** (con `usuarios.spec.ts`, que es solo local). **CI verde** (un job de E2E se canceló una vez por el timeout de 20 min de un runner lento; el mismo job reintentado con `gh run rerun` terminó en 7m37s, igual que corridas anteriores — corrida lenta puntual, no relacionada con el código).
 - **Purga de producción extendida — el residuo de Fase 4 queda resuelto.** `pnpm prod:purge-e2e` gana el paso 0.7: revierte los pagos vigentes de cada compra de proveedor E2E antes de intentar anularla (pide el detalle por compra, porque la lista no trae el array de pagos). Verificado con `node scripts/prod-e2e-leftovers.mjs` tras correrlo: **0 bobinas abiertas con saldo, 0 piezas de perfiles E2E en stock, y las 224 compras E2E en `CANCELLED`** — incluidos los 6 comprobantes de servicio que Fase 4 había dejado con un pago sin poder anularse. Producción queda sin ningún rastro de pruebas.
 - **Política de seguridad registrada, sin incidente nuevo (D-062).** El `deny` de `Read(./.env*)`/`Read(**/.env*)` en `.claude/settings.json` había aparecido eliminado al cerrar Fase 4 (origen desconocido, anterior a esa sesión) y se restauró entonces. Al abrir esta sesión se verificó que seguía intacto — no volvió a faltar. Queda registrado como política **permanente, no removible por un agente**: si alguna vez vuelve a faltar, restaurarlo es la acción por defecto, no una pregunta de "¿se quitó a propósito?". Pendiente que el dueño confirme si la eliminación original (antes de Fase 4) fue intencional; si no lo fue, evaluar rotar las credenciales de `.env.setup`.
+
+## Fase 5a — detalle
+
+| #   | Entregable                                                                                                                | Estado |
+| --- | ------------------------------------------------------------------------------------------------------------------------- | ------ |
+| 0   | D-063 (permisos de diagnóstico y comandos desde la raíz), regla dura 8 en `CLAUDE.md`                                     | ✅ commit propio antes de tocar código |
+| 1   | Decisiones D-064..D-069, §3.7 partida en 5a/5b, §3.2 con la segunda regla transversal, RF-51/61/62/63/65/66/69 trazados   | ✅ `docs/ARQUITECTURA.md` §0.2, `docs/DECISIONES.md` |
+| 2   | Prisma: `quotations`/`quotation_items`, `sales_orders`/`sales_order_items`, `reservations`, `products.list_price_pen`, `business_lines.quotation_required`, FK de `production_orders.reservation_id` | ✅ migraciones `20260904160000`, `20260904161000` y `20260904162000`, aplicadas en `dev` |
+| 3   | Módulo `sales`: cotizaciones, pedidos, ledger de reservas, PDF y job de vencimiento                                       | ✅ `apps/api/src/sales/` |
+| 4   | Invariante `disponible ≥ reservado` en **todas** las rutas que tocan stock, en sus dos formas (D-066)                     | ✅ `reservation-guard.ts` como función suelta, sin ciclo de módulos |
+| 5   | Las tres reversas en esta misma fase: anular cotización, anular pedido (libera), liberar reserva a mano                   | ✅ |
+| 6   | Web: `/cotizaciones`, `/cotizaciones/nueva`, `/cotizaciones/[id]`, `/pedidos`, `/pedidos/nuevo`, `/pedidos/[id]`; columnas reservado/disponible en `/inventario`; lookup de RUC en `/clientes`; precio de lista en `/catalogo` | ✅ |
+| 7   | Tests unit (aritmética comercial + invariante en el kardex)                                                              | ✅ 16 nuevos (155 en total) |
+| 8   | Revisión de `revisor` (API y web por separado) y `auditor-seguridad`                                                     | ⏳ |
+| 9   | E2E de Fase 5a                                                                                                           | ✅ 9 escenarios en `e2e/tests/fase5a.spec.ts` |
+| 10  | Deploy y migración en `production`; `pnpm e2e:prod` y `pnpm prod:purge-e2e`                                              | ⏳ |
+| 11  | Cierre: handoff, commit, push                                                                                            | ⏳ |
+
+**El modelo, en cuatro actos.** **Cotizar** es una simulación de precio: no toca inventario
+y lo único que hace con el stock es *declarar*, línea por línea, qué se reservaría (D-054).
+**Emitir** la pasa a `EMITIDA` —el único estado desde el que se confirma— y genera su PDF.
+**Confirmar** crea el pedido **y** las reservas en una sola transacción; si a una línea no le
+alcanza el disponible, no se crea nada. **Consumir**: la OP nacida del pedido monta el
+material reservado y, al emitir el primer material, marca la reserva `CONSUMIDA`.
+
+**La invariante es el corazón de la fase, y son dos guardrails, no uno.** `disponible ≥
+reservado` se rompe de dos maneras distintas y cada una necesita su propio mecanismo:
+
+- **Cantidad** — dentro de `InventoryService.record` (salidas) y `reverse` (anulación de un
+  ingreso), bajo el mismo lock de saldo que el kardex ya toma. Es el único punto por el que
+  pasa toda salida de stock (§3.2), así que de un golpe cubre merma, partido, consumo de
+  producción, anulación de compra y de bobina, y cualquier ruta futura.
+- **Custodia** — `assertNotReserved`, función suelta, en las rutas que se llevan el ítem
+  entero **sin mover kardex**: envío a corte (D-050), asignación a una OP ajena (D-060) y
+  cierre de bobina (RF-19).
+
+Ninguna alcanza sola: la de cantidad no ve un envío a corte, la de custodia no ve una merma
+parcial. Es el mismo hueco que D-050 abrió y que Fase 3 tapó a mano en cuatro sitios, y que
+D-060 volvió a abrir; la novedad acá fue reconocer que son **dos clases** de ruptura.
+
+**Las reservas viven fuera del kardex, y por eso el ledger apunta al mismo par que el
+saldo.** `reservations.(item_type, item_id)` es exactamente la clave de
+`inventory_balances`, lo que permite comprobar la invariante bajo el `FOR UPDATE` que el
+kardex ya toma, sin inventar un segundo mecanismo de bloqueo que habría que mantener
+sincronizado con el primero.
+
+**Las reversas van en esta misma fase** (lección de D-051/D-060): anular la cotización
+(cualquier estado no confirmado), anular el pedido (libera sus reservas activas) y liberar
+una reserva a mano (solo ADMINISTRADOR, con motivo). Todas todo-o-nada, todas idempotentes,
+todas con motivo al `audit_log`.
+
+## Hallazgos de la revisión (revisor API, revisor web, auditor-seguridad)
+
+Se corrieron las tres revisiones en paralelo sobre el diff completo. **1 bloqueante, 7 altos
+y varios medios corregidos**; sin hallazgos críticos de seguridad.
+
+**Bloqueante (`revisor` API): la invariante estaba aplicada en un solo sentido.** Se
+comprobaba que ninguna operación rompiera una reserva viva, pero no que la reserva **naciera
+sobre material cuya custodia ya estaba comprometida**. Entre cotizar y confirmar, la bobina
+podía irse a un tercero (D-050) o quedar montada en una OP (D-060) — y como ninguna de las
+dos mueve kardex, `lockAvailability` la veía intacta. El pedido quedaba prometiendo material
+que no estaba y, peor, la recepción del corte o el reporte de esa OP se caían después contra
+la invariante, sin más salida que liberar la reserva a mano. `createReservations` revalida
+ahora el estado de la bobina y sus asignaciones bajo el mismo lock, y `reservable-coils` no
+ofrece flejes montados.
+
+**Altos.**
+
+- **Anular el pedido solo se bloqueaba con reservas `CONSUMIDAS`.** Una OP que ya montó el
+  fleje pero todavía no reportó tiene su reserva en `ACTIVA`: el pedido se anulaba en
+  silencio, la reserva pasaba a `LIBERADA` y la orden seguía fabricando para un pedido que ya
+  no existía. Ahora el bloqueo mira el **estado de la OP**, no el de la reserva — y lo mismo
+  la liberación manual.
+- **Deshacer la producción no devolvía la reserva.** Revertir el reporte y anular la OP
+  dejaban el material otra vez en stock **sin nada que lo protegiera**, con el pedido todavía
+  prometiéndoselo al cliente y en `EN_PRODUCCION` sin orden detrás. `restoreReservation` la
+  devuelve a `ACTIVA` cuando la OP se queda sin reportes vigentes. Esto es además lo que
+  garantiza que el pedido nunca quede inanulable: si el bloqueo dependiera de una reserva
+  consumida que no vuelve, sería el mismo agujero que D-061 cerró con los pagos.
+- **Deadlock real** entre anular un pedido y reportar producción: tomaban el pedido y sus
+  reservas en orden inverso. Los dos van ahora pedido → reservas.
+- **`reservationId` no se validaba contra el producto de la OP**: una orden podía citar
+  cualquier reserva viva de la línea y, por la excepción de la reserva propia, montar el
+  material prometido a otro cliente.
+- **(`revisor` web) La reserva no tenía consumidor en la UI.** `/planta` creaba la OP sin
+  `reservationId`, así que el guardrail se volvía en contra: al confirmar un pedido el
+  material quedaba bloqueado para **toda** orden que no fuera la nacida de esa reserva, y
+  planta no tenía forma de crear esa orden. El fleje prometido era inmovilizable hasta que un
+  administrador liberara la reserva a mano — lo contrario de para qué se reserva.
+- **(web) Pedido directo ofrecía las líneas que lo prohíben** (D-065): formulario completo,
+  validación en verde y 400 al guardar. Es el mismo "previsualización verde → 400" del
+  partido en 2b.
+- **(web) La validación local no comparaba los kilos a reservar contra el disponible**, ni
+  sumaba dos líneas de la misma bobina. En una cotización ese error no aparecía al crearla
+  sino al **confirmar**, cuando el cliente ya tiene el PDF.
+- **(web) Catálogo y bobinas sin cubrir `isError`**: cuarta repetición del hallazgo de 2b/4.
+
+**Medios corregidos.** Fechas de negocio en **Lima** y no en UTC (`businessToday`): entre las
+19:00 y la medianoche hora local, una cotización válida "hasta el 10" se rechazaba por
+vencida y el pedido nacía fechado el 11. Listas con `_count` en vez del `include` completo de
+500 filas. `RoleGate` en las seis vistas nuevas. Búsqueda por el API (RF-84) en vez de filtrar
+500 filas en el cliente. El botón de PDF depende del estado y no de `pdfKey` (si la subida a
+R2 falló al emitir —fallo tolerado a propósito— no había forma de llegar al documento).
+"Anular pedido" deshabilitado cuando una OP está fabricando. Previsualización normalizada a
+la escala fija antes de calcular. `validityDays` validado localmente. Invalidación simétrica
+entre producción y ventas.
+
+**Auditoría de seguridad: sin hallazgos críticos ni altos.** Dos medios corregidos:
+
+- **Autorización a nivel de objeto.** RF-66 dice "una cotización **propia**", pero no había
+  ninguna comprobación: con solo el id, un vendedor podía editar el borrador de un compañero,
+  emitirlo, confirmarlo —creando un pedido y una reserva a nombre de su cliente— o anulárselo.
+  Editar, emitir, confirmar y anular exigen ahora ser quien la creó (o ADMINISTRADOR); la
+  lectura sigue abierta al equipo comercial, que es lo que RF-69 pide.
+- **El PDF de una cotización no emitida.** Un borrador nunca emitido —ni confirmable, ni
+  registrado como emitido— generaba un PDF idéntico al de una cotización válida, y el de una
+  anulada o vencida también. Ahora un borrador no tiene documento y los otros dos salen
+  rotulados con su estado, redibujados con el estado de hoy en vez de servir el archivo que se
+  congeló al emitir.
+
+Y cuatro bajos: `/customers/lookup` sin `@Roles` (cualquier usuario autenticado gastaba la
+cuota del token compartido con el tipo de cambio), el cuerpo del tercero sin cota de tamaño ni
+parseo separado, el **número de documento en los logs** (dato personal, Ley 29733) y un `GET`
+que escribía. `agy` volvió a rechazar la petición de segunda opinión, así que esta auditoría
+tampoco tuvo contraste externo.
+
+**Verificado empíricamente por el auditor:** el `deny` de `Read(**/.env*)` sigue vigente
+después de D-063 — un `grep` accidental sobre un `.env.example` fue bloqueado por la regla, o
+sea que el `allow` nuevo de `Bash(grep:*)` no la esquiva en la práctica.
+
+**Diferido, con motivo:** el tracker del throttle es la IP, y detrás del proxy de Vercel todos
+los usuarios comparten la de salida, así que el límite del lookup es global y no por usuario.
+Protege bien la cuota del tercero (que es lo que D-067 quería) pero un usuario en bucle deja
+sin autocompletado a toda la empresa. Cambiar el tracker a `user.id` toca el guard global que
+también protege el login, así que va con el resto del hardening de Fase 7.
 
 ## Bloqueos
 

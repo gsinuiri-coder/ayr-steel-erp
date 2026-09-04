@@ -150,6 +150,32 @@ export class SalesOrdersService {
           throw new BadRequestException('La cotización no tiene líneas');
         }
 
+        // Entre emitir y confirmar pueden pasar hasta 365 días (D-069): en ese lapso el
+        // cliente o un producto pueden haberse dado de baja. `resolveSalesLines` lo valida
+        // al **crear** la cotización, así que sin este chequeo la confirmación era la única
+        // puerta del ciclo que no lo miraba, y el pedido nacía contra un maestro muerto.
+        const customer = await tx.customer.findUniqueOrThrow({
+          where: { id: quotation.customerId },
+          select: { isActive: true, name: true },
+        });
+        if (!customer.isActive) {
+          throw new BadRequestException(
+            `El cliente ${customer.name} está desactivado: reactívalo o cotiza a otro cliente`,
+          );
+        }
+        const inactive = await tx.product.findFirst({
+          where: {
+            id: { in: quotation.items.map((i) => i.productId) },
+            isActive: false,
+          },
+          select: { sku: true },
+        });
+        if (inactive) {
+          throw new BadRequestException(
+            `El producto ${inactive.sku} está desactivado desde que se emitió la cotización: crea una nueva`,
+          );
+        }
+
         const order = await tx.salesOrder.create({
           data: {
             quotationId,

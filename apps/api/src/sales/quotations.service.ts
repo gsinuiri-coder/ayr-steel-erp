@@ -387,12 +387,16 @@ export class QuotationsService {
     const due = await this.prisma.quotation.findMany({
       where: { status: QuotationStatus.EMITTED, validUntil: { lt: cutoff } },
       select: { id: true, seq: true },
+      // De la más vencida a la más reciente: con más de 500 pendientes, un tope sin orden
+      // podía devolver siempre el mismo tramo y dejar las más viejas sin marcar corrida tras
+      // corrida. Así cada pasada avanza sobre la cola.
+      orderBy: { validUntil: 'asc' },
       take: 500,
     });
     if (due.length === 0) return 0;
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.quotation.updateMany({
+    const expired = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.quotation.updateMany({
         where: { id: { in: due.map((q) => q.id) }, status: QuotationStatus.EMITTED },
         data: { status: QuotationStatus.EXPIRED, expiredAt: new Date() },
       });
@@ -401,11 +405,14 @@ export class QuotationsService {
         action: 'sales.quotation.expire',
         entity: 'quotations',
         entityId: null,
-        after: { count: due.length, codes: due.map((q) => quotationCode(q.seq)) },
+        // El conteo real del `updateMany`, no el de la lectura previa: entre una y otra,
+        // alguna pudo confirmarse o anularse y el filtro de estado la deja fuera.
+        after: { count: result.count, codes: due.map((q) => quotationCode(q.seq)) },
       });
+      return result.count;
     });
-    this.logger.log(`Cotizaciones vencidas: ${due.length}`);
-    return due.length;
+    this.logger.log(`Cotizaciones vencidas: ${expired}`);
+    return expired;
   }
 
   // -------------------------------------------------------------------------
