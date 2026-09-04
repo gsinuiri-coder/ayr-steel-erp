@@ -581,9 +581,12 @@ export class DispatchesService {
     actors: Map<string, string>,
     blockingDocumentNumbers: string[],
   ): DispatchDto {
-    // La guía "vigente" es la última que no fue rechazada: un rechazo conserva su
-    // correlativo y queda en el historial (D-072), pero no es la guía del traslado.
-    const note = row.documents.find((d) => d.status !== FiscalDocumentStatus.REJECTED);
+    // La guía "vigente" es la última que sigue en pie: un rechazo conserva su correlativo
+    // y una baja también queda en el historial (D-072), pero ninguno de los dos es la guía
+    // del traslado.
+    const note = row.documents.find(
+      (d) => d.status !== FiscalDocumentStatus.REJECTED && d.status !== FiscalDocumentStatus.VOIDED,
+    );
     return {
       id: row.id,
       code: dispatchCode(row.seq),

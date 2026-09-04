@@ -1595,7 +1595,12 @@ export class InvoicingService {
       if (dispatch.status !== DispatchStatus.ISSUED) {
         throw new BadRequestException('Un despacho revertido no tiene guía que emitir');
       }
-      const live = dispatch.documents.find((d) => d.status !== FiscalDocumentStatus.REJECTED);
+      // Una guía **rechazada o dada de baja** no es la guía del traslado: se puede emitir
+      // otra. Solo bloquea la que sigue en pie.
+      const live = dispatch.documents.find(
+        (d) =>
+          d.status !== FiscalDocumentStatus.REJECTED && d.status !== FiscalDocumentStatus.VOIDED,
+      );
       if (live) {
         throw new ConflictException(`El despacho ya tiene la guía ${live.number ?? 'en borrador'}`);
       }

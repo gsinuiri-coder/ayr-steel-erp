@@ -102,8 +102,12 @@ export function DespachoDetalleView({ id }: { id: string }) {
       ? `el comprobante ${d.blockingDocumentNumbers.join(', ')} factura líneas de este despacho`
       : null;
   const canReverse = isAdmin && isLive && reverseBlockedBy === null;
+  // Una guía rechazada o dada de baja no impide emitir otra: la que bloquea es la vigente.
   const canIssueNote =
-    isLive && (d.dispatchNoteStatus === null || d.dispatchNoteStatus === 'REJECTED');
+    isLive &&
+    (d.dispatchNoteStatus === null ||
+      d.dispatchNoteStatus === 'REJECTED' ||
+      d.dispatchNoteStatus === 'VOIDED');
 
   return (
     <RoleGate allow={DISPATCH_ROLES}>
