@@ -18,6 +18,13 @@
 // pedido (`sales_orders`) y ledger de reservas (`reservations`, fuera del kardex por
 // D-054), más `products.list_price_pen` (precio de lista, D-068) y
 // `business_lines.quotation_required` (D-065). Todo en soles (D-064).
+// Fase 5b (D-070..D-078): ciclo fiscal y logístico sobre el pedido — documentos
+// electrónicos (`fiscal_documents`: factura, boleta, nota de crédito y guía de remisión
+// remitente, todos con la misma máquina de estados y el mismo job de reintento),
+// series con correlativo asignado al enviar (`fiscal_series`, D-072), despacho que mueve
+// kardex y cierra el pedido (`dispatches`, D-074), cobranza espejo de los pagos a
+// proveedor (`customer_payments`, D-075) y la configuración de contingencia
+// (`invoicing_settings`, D-073).
 // Regla D-003: dinero/kg/mm/tasas son siempre `Decimal @db.Decimal(p, s)` con
 // escala explícita (dinero 4, kg 3, mm 2, tasas/factores 4). Nunca `number`.
 
@@ -245,6 +252,8 @@ enum QuotationStatus {
 enum SalesOrderStatus {
   CONFIRMED
   IN_PRODUCTION
+  /// D-074: hay mercadería despachada y todavía queda pendiente en alguna línea.
+  PARTIALLY_FULFILLED
   FULFILLED
   CANCELLED
 }
@@ -255,6 +264,80 @@ enum ReservationStatus {
   ACTIVE
   CONSUMED
   RELEASED
+}
+
+/// Tipo de documento electrónico que **emitimos** (catálogo 01 de SUNAT, D-072). El de
+/// compras es `PurchaseDocType` y no se mezcla: aquel describe lo que nos emitieron a
+/// nosotros y admite nota de débito, que acá está diferida.
+///
+/// `GUIA_REMISION_REMITENTE` comparte tabla con los comprobantes de pago a propósito
+/// (D-071/D-073): es otro documento electrónico con la misma máquina de estados, el mismo
+/// job de reintento y el mismo layout de archivos en R2. Un `CHECK` en `fiscal_documents`
+/// impide que un comprobante nazca con ese tipo por accidente.
+enum FiscalDocType {
+  /// Catálogo 01, código 01.
+  FACTURA
+  /// Catálogo 01, código 03.
+  BOLETA
+  /// Catálogo 01, código 07.
+  NOTA_CREDITO
+  /// Catálogo 01, código 09.
+  GUIA_REMISION_REMITENTE
+}
+
+/// Máquina de estados de un documento electrónico (D-073). La UI los llama BORRADOR /
+/// EMITIDO / ACEPTADO / RECHAZADO / ERROR DE ENVÍO / BAJA EN TRÁMITE / ANULADO.
+///
+/// `ISSUED` es el estado de contingencia y el corazón de D-073: el correlativo ya está
+/// tomado, el documento existe para la empresa y **habilita el despacho**, pero el PSE
+/// todavía no lo aceptó. `SEND_ERROR` es lo mismo con un intento fallido encima; los dos
+/// los reintenta el job. `REJECTED` es terminal: se corrige y se **reemite con un
+/// correlativo nuevo** (D-072), y el rechazado queda en el historial.
+enum FiscalDocumentStatus {
+  DRAFT
+  ISSUED
+  ACCEPTED
+  REJECTED
+  SEND_ERROR
+  VOID_PENDING
+  VOIDED
+}
+
+/// Motivo de una nota de crédito (catálogo 09 de SUNAT). Solo los que el negocio usa;
+/// el resto del catálogo entra cuando haga falta, sin migrar lo emitido.
+enum CreditNoteReason {
+  /// 01 — anulación de la operación.
+  ANULACION_OPERACION
+  /// 02 — anulación por error en el RUC.
+  ANULACION_ERROR_RUC
+  /// 03 — corrección por error en la descripción.
+  CORRECCION_DESCRIPCION
+  /// 04 — descuento global.
+  DESCUENTO_GLOBAL
+  /// 05 — descuento por ítem.
+  DESCUENTO_ITEM
+  /// 06 — devolución total.
+  DEVOLUCION_TOTAL
+  /// 07 — devolución por ítem.
+  DEVOLUCION_ITEM
+  /// 13 — ajuste de operaciones de exportación (y otros ajustes de monto).
+  OTROS_AJUSTES
+}
+
+/// Modalidad de traslado de un despacho (catálogo 18 de SUNAT, D-078). Se elige **por
+/// despacho**, no en configuración: la decide el envío concreto.
+enum TransferMode {
+  /// 02 — transporte privado: vehículo y conductor propios.
+  PRIVATE
+  /// 01 — transporte público: la carga va con un transportista tercero.
+  PUBLIC
+}
+
+/// Estado de un despacho (D-074). Mismo criterio que `CoilSplitStatus` y
+/// `ProductionReportStatus`: revertir no borra la fila, la marca.
+enum DispatchStatus {
+  ISSUED
+  REVERSED
 }
 
 /// Estado de una fila dentro de un lote de importación.
@@ -391,6 +474,8 @@ model Product {
   productionOrders ProductionOrder[]
   quotationItems   QuotationItem[]
   salesOrderItems  SalesOrderItem[]
+  invoiceItems     FiscalDocumentItem[]
+  dispatchItems    DispatchItem[]
 
   @@unique([businessLineId, sku])
   @@index([businessLineId])
@@ -407,12 +492,17 @@ model Customer {
   email      String?  @db.VarChar(160)
   phone      String?  @db.VarChar(30)
   creditDays Int      @default(0) @map("credit_days")
+  /// D-077: cliente sembrado por el sistema ("PÚBLICO EN GENERAL"). No se edita ni se
+  /// da de baja desde ninguna ruta; existe para que la boleta sin cliente identificado
+  /// sea una venta normal y no un caso especial en todo el ciclo.
+  isSystem   Boolean  @default(false) @map("is_system")
   isActive   Boolean  @default(true) @map("is_active")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  quotations  Quotation[]
-  salesOrders SalesOrder[]
+  quotations      Quotation[]
+  salesOrders     SalesOrder[]
+  fiscalDocuments FiscalDocument[]
 
   @@unique([docType, docNumber])
   @@map("customers")
@@ -1107,8 +1197,10 @@ model SalesOrder {
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  items        SalesOrderItem[]
-  reservations Reservation[]
+  items           SalesOrderItem[]
+  reservations    Reservation[]
+  fiscalDocuments FiscalDocument[]
+  dispatches      Dispatch[]
 
   @@index([customerId, status])
   @@index([businessLineId, status])
@@ -1138,7 +1230,9 @@ model SalesOrderItem {
   reserveQty      Decimal           @map("reserve_qty") @db.Decimal(16, 3)
   reserveUnit     String            @map("reserve_unit") @db.VarChar(20)
 
-  reservation Reservation?
+  reservation   Reservation?
+  invoiceItems  FiscalDocumentItem[]
+  dispatchItems DispatchItem[]
 
   @@unique([salesOrderId, lineNumber])
   @@index([salesOrderId])
@@ -1180,4 +1274,317 @@ model Reservation {
   @@index([itemType, itemId, status])
   @@index([salesOrderId])
   @@map("reservations")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 5b — facturación electrónica, guía de remisión, despacho y cobranza
+// (RF-70, RF-74..RF-79, RF-86..RF-89; D-070..D-078)
+// ---------------------------------------------------------------------------
+
+/// Series y correlativos del punto de emisión (D-072).
+///
+/// Hay **una serie activa por tipo de documento**; para la nota de crédito, una por tipo
+/// de comprobante afectado (`FC01` afecta facturas, `BC01` boletas). El correlativo se
+/// toma con `UPDATE … SET correlative = correlative + 1 … RETURNING`, el mismo patrón
+/// atómico de `suppliers.coil_seq`, y **en el momento de enviar**, no al crear el
+/// borrador: un correlativo existe solo si hubo intento real de emisión.
+model FiscalSeries {
+  id              String         @id @default(uuid()) @db.Uuid
+  docType         FiscalDocType  @map("doc_type")
+  /// `F001`, `B001`, `FC01`, `BC01`, `T001`. Cuatro caracteres, formato SUNAT.
+  series          String         @unique @db.VarChar(4)
+  /// Solo en series de `NOTA_CREDITO`: tipo del comprobante que afecta. Null en el resto.
+  /// La unicidad "una serie activa por combinación" la sostiene un índice parcial creado
+  /// en la migración; Postgres trata los NULL como distintos y un `@@unique` no bastaría.
+  affectedDocType FiscalDocType? @map("affected_doc_type")
+  /// Último correlativo entregado. `0` = todavía no se emitió ninguno de esta serie.
+  correlative     Int            @default(0)
+  isActive        Boolean        @default(true) @map("is_active")
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  documents FiscalDocument[]
+
+  @@index([docType, isActive])
+  @@map("fiscal_series")
+}
+
+/// Configuración del módulo, fila única (D-073).
+///
+/// `providerOffline` es el interruptor de contingencia manual: durante una caída conocida
+/// del PSE, un ADMINISTRADOR lo levanta y las emisiones dejan de salir a la red —el
+/// documento igual toma correlativo y habilita el despacho— hasta que lo baja.
+/// `alertAfterHours` es el umbral tras el cual un documento sin aceptar deja de ser "en
+/// camino" y pasa a ser un problema visible en la lista y en el menú.
+model InvoicingSetting {
+  id              String   @id @default(uuid()) @db.Uuid
+  providerOffline Boolean  @default(false) @map("provider_offline")
+  alertAfterHours Int      @default(6) @map("alert_after_hours")
+  updatedById     String?  @map("updated_by_id") @db.Uuid
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("invoicing_settings")
+}
+
+/// Documento electrónico: comprobante de pago (factura, boleta, nota de crédito) o guía
+/// de remisión remitente (D-071..D-073).
+///
+/// Los cuatro comparten tabla porque comparten **todo lo que cuesta**: la máquina de
+/// estados, la asignación de correlativo, el job de reintento, los archivos en R2 y el
+/// puerto del PSE. Lo que no comparten vive aparte: los importes y las líneas son de los
+/// comprobantes (un `CHECK` obliga a la guía a llevarlos en cero y sin líneas), y los
+/// datos de transporte de la guía viven en `dispatches`.
+///
+/// **Todo va en soles** (D-064): no hay columna de moneda ni de tipo de cambio.
+model FiscalDocument {
+  id      String               @id @default(uuid()) @db.Uuid
+  docType FiscalDocType        @map("doc_type")
+  status  FiscalDocumentStatus @default(DRAFT)
+
+  /// Serie, correlativo y número legible. **Null mientras es borrador** (D-072): se
+  /// asignan al enviar. `number` es `serie-correlativo` con el correlativo a 8 dígitos
+  /// (`F001-00000123`), que es el formato con el que SUNAT identifica el documento.
+  seriesId    String?       @map("series_id") @db.Uuid
+  /// `seriesRef` y no `series` para no chocar con `FiscalSeries.series`, que es el string
+  /// que se imprime en el número del documento.
+  seriesRef   FiscalSeries? @relation(fields: [seriesId], references: [id])
+  correlative Int?
+  number      String?       @unique @db.VarChar(20)
+
+  customerId   String      @map("customer_id") @db.Uuid
+  customer     Customer    @relation(fields: [customerId], references: [id])
+  /// Pedido de origen. Null en una venta directa sin pedido.
+  salesOrderId String?     @map("sales_order_id") @db.Uuid
+  salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id])
+  /// Despacho que documenta esta guía de remisión. Null en los comprobantes de pago.
+  dispatchId   String?     @map("dispatch_id") @db.Uuid
+  dispatch     Dispatch?   @relation(fields: [dispatchId], references: [id])
+
+  /// Nota de crédito: comprobante afectado y motivo del catálogo 09. Van juntos o no van
+  /// (`CHECK` en la migración): una NC sin documento afectado no es emitible.
+  affectedDocumentId String?           @map("affected_document_id") @db.Uuid
+  affectedDocument   FiscalDocument?   @relation("AffectedDocument", fields: [affectedDocumentId], references: [id])
+  creditNotes        FiscalDocument[]  @relation("AffectedDocument")
+  creditNoteReason   CreditNoteReason? @map("credit_note_reason")
+
+  /// Si este documento nació de corregir uno **rechazado**, apunta al rechazado (D-072).
+  /// El rechazado conserva su propio correlativo y queda en el historial.
+  replacesDocumentId String?         @unique @map("replaces_document_id") @db.Uuid
+  replacesDocument   FiscalDocument? @relation("ReplacedDocument", fields: [replacesDocumentId], references: [id])
+  replacedBy         FiscalDocument? @relation("ReplacedDocument")
+
+  issueDate    DateTime     @map("issue_date") @db.Date
+  /// Condición de pago y vencimiento de la cuenta por cobrar (D-075). `dueDate` solo en
+  /// crédito; sale de `customers.credit_days` y el usuario la puede corregir.
+  paymentTerms PaymentTerms @default(CONTADO) @map("payment_terms")
+  dueDate      DateTime?    @map("due_date") @db.Date
+
+  subtotalPen Decimal @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen      Decimal @map("igv_pen") @db.Decimal(18, 4)
+  totalPen    Decimal @map("total_pen") @db.Decimal(18, 4)
+
+  /// Detracción **informativa** (D-075): se captura a mano y viaja al PSE tal cual. El
+  /// sistema no la calcula ni la valida contra el catálogo 54.
+  detractionCode      String?  @map("detraction_code") @db.VarChar(10)
+  detractionPct       Decimal? @map("detraction_pct") @db.Decimal(6, 2)
+  detractionAmountPen Decimal? @map("detraction_amount_pen") @db.Decimal(18, 4)
+
+  /// D-077: quién forzó la boleta a "público en general" por encima del tope de SUNAT.
+  /// Null en el caso normal; con valor, es la constancia de que alguien se saltó la regla.
+  genericCustomerOverrideById String? @map("generic_customer_override_by_id") @db.Uuid
+
+  notes String? @db.VarChar(500)
+
+  /// D-071: respuesta cruda del PSE, tal cual. **El dominio no la lee nunca**; está para
+  /// soporte y para reconstruir qué contestó el proveedor ante una discrepancia.
+  providerResponse Json?   @map("provider_response")
+  providerTicket   String? @map("provider_ticket") @db.VarChar(80)
+  /// Código hash del CDR (la constancia de recepción de SUNAT).
+  sunatHash        String? @map("sunat_hash") @db.VarChar(120)
+  rejectionCode    String? @map("rejection_code") @db.VarChar(20)
+  rejectionMessage String? @map("rejection_message") @db.VarChar(500)
+
+  /// Archivos en R2 (D-007). Los devuelve el PSE ya firmados; se descargan y se guardan.
+  pdfKey String? @map("pdf_key") @db.VarChar(300)
+  xmlKey String? @map("xml_key") @db.VarChar(300)
+  cdrKey String? @map("cdr_key") @db.VarChar(300)
+
+  /// Reintentos del envío (D-073). `sendAttempts` cuenta los intentos reales, no los
+  /// encolados: es lo que separa "todavía no salió" de "salió y no entra".
+  sendAttempts  Int       @default(0) @map("send_attempts")
+  lastSendError String?   @map("last_send_error") @db.VarChar(500)
+  lastAttemptAt DateTime? @map("last_attempt_at") @db.Timestamptz(3)
+
+  createdById     String    @map("created_by_id") @db.Uuid
+  issuedAt        DateTime? @map("issued_at") @db.Timestamptz(3)
+  acceptedAt      DateTime? @map("accepted_at") @db.Timestamptz(3)
+  rejectedAt      DateTime? @map("rejected_at") @db.Timestamptz(3)
+  voidRequestedAt DateTime? @map("void_requested_at") @db.Timestamptz(3)
+  voidedAt        DateTime? @map("voided_at") @db.Timestamptz(3)
+  voidedById      String?   @map("voided_by_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  items    FiscalDocumentItem[]
+  payments CustomerPayment[]
+
+  @@index([status, docType])
+  @@index([customerId, status])
+  @@index([salesOrderId])
+  @@index([dispatchId])
+  @@index([affectedDocumentId])
+  /// El índice del job y de la alerta (D-073): documentos pendientes de envío por antigüedad.
+  @@index([status, issuedAt])
+  @@map("fiscal_documents")
+}
+
+/// Línea de un comprobante de pago. **Las guías de remisión no tienen líneas acá**: las
+/// suyas son las del despacho, que llevan cantidad y unidad pero ningún importe, y
+/// duplicarlas con importes en cero habría hecho que el valorizado de un comprobante
+/// dependiera de qué tipo de documento es.
+model FiscalDocumentItem {
+  id           String         @id @default(uuid()) @db.Uuid
+  documentId   String         @map("document_id") @db.Uuid
+  document     FiscalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  lineNumber   Int            @map("line_number")
+  /// Null en una línea libre (un servicio, un ajuste de nota de crédito).
+  productId    String?        @map("product_id") @db.Uuid
+  product      Product?       @relation(fields: [productId], references: [id])
+  description  String         @db.VarChar(240)
+  qty          Decimal        @db.Decimal(16, 3)
+  unit         String         @db.VarChar(20)
+  unitPricePen Decimal        @map("unit_price_pen") @db.Decimal(18, 4)
+  subtotalPen  Decimal        @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen       Decimal        @map("igv_pen") @db.Decimal(18, 4)
+  totalPen     Decimal        @map("total_pen") @db.Decimal(18, 4)
+
+  /// Línea del pedido que factura, cuando el comprobante nace de uno. Es lo que permite
+  /// saber cuánto de cada línea queda por facturar sin recorrer todos los comprobantes.
+  salesOrderItemId String?              @map("sales_order_item_id") @db.Uuid
+  salesOrderItem   SalesOrderItem?      @relation(fields: [salesOrderItemId], references: [id])
+  /// Línea del comprobante afectado, en una nota de crédito **parcial**.
+  affectedItemId   String?              @map("affected_item_id") @db.Uuid
+  affectedItem     FiscalDocumentItem?  @relation("AffectedItem", fields: [affectedItemId], references: [id])
+  creditedBy       FiscalDocumentItem[] @relation("AffectedItem")
+
+  @@unique([documentId, lineNumber])
+  @@index([documentId])
+  @@index([salesOrderItemId])
+  @@map("fiscal_document_items")
+}
+
+/// Despacho de un pedido (D-074). Es el que **saca la mercadería**: mueve kardex, consume
+/// la reserva y cierra el pedido cuando cubre el 100 % de sus líneas.
+///
+/// Los datos de transporte son los de la guía de remisión remitente (D-078) y la
+/// modalidad se elige acá, no en configuración: privado lleva vehículo y conductor;
+/// público, el transportista. La guía en sí es un `FiscalDocument` que apunta a esta fila.
+model Dispatch {
+  id           String         @id @default(uuid()) @db.Uuid
+  seq          Int            @unique @default(autoincrement())
+  salesOrderId String         @map("sales_order_id") @db.Uuid
+  salesOrder   SalesOrder     @relation(fields: [salesOrderId], references: [id])
+  status       DispatchStatus @default(ISSUED)
+  dispatchDate DateTime       @map("dispatch_date") @db.Date
+
+  /// Direcciones de partida y llegada de la guía. La de llegada arranca con la del
+  /// cliente y se puede corregir: se despacha a obra tanto como a domicilio fiscal.
+  originAddress      String @map("origin_address") @db.VarChar(240)
+  destinationAddress String @map("destination_address") @db.VarChar(240)
+  /// Ubigeo INEI de seis dígitos. SUNAT lo exige en la guía, y sin él el PSE la rechaza
+  /// con el correlativo ya gastado (D-072): por eso se captura en el despacho y no al
+  /// emitir. El de partida es casi siempre el del almacén y lo autocompleta la sugerencia.
+  originUbigeo       String @map("origin_ubigeo") @db.VarChar(6)
+  destinationUbigeo  String @map("destination_ubigeo") @db.VarChar(6)
+
+  transferMode  TransferMode @map("transfer_mode")
+  /// Peso bruto total del traslado, obligatorio en la guía.
+  totalWeightKg Decimal      @map("total_weight_kg") @db.Decimal(16, 3)
+  packageCount  Int?         @map("package_count")
+
+  /// Traslado privado (D-078). Van los cuatro o no va ninguno; lo obliga un `CHECK`.
+  vehiclePlate    String?  @map("vehicle_plate") @db.VarChar(10)
+  driverName      String?  @map("driver_name") @db.VarChar(160)
+  driverDocType   DocType? @map("driver_doc_type")
+  driverDocNumber String?  @map("driver_doc_number") @db.VarChar(20)
+  driverLicense   String?  @map("driver_license") @db.VarChar(20)
+
+  /// Traslado público (D-078): el transportista tercero. Su propia GRE está fuera de
+  /// alcance; acá solo se lo identifica como responsable del traslado.
+  carrierDocNumber String? @map("carrier_doc_number") @db.VarChar(20)
+  carrierName      String? @map("carrier_name") @db.VarChar(160)
+
+  notes String? @db.VarChar(500)
+
+  createdById  String    @map("created_by_id") @db.Uuid
+  reversedById String?   @map("reversed_by_id") @db.Uuid
+  reversedAt   DateTime? @map("reversed_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  items     DispatchItem[]
+  /// Guías de remisión emitidas para este despacho. Es una lista y no una sola porque una
+  /// guía rechazada conserva su correlativo y la corrección se emite aparte (D-072).
+  documents FiscalDocument[]
+
+  @@index([salesOrderId, status])
+  @@index([status, dispatchDate])
+  @@map("dispatches")
+}
+
+/// Línea de un despacho: qué salió, de qué línea del pedido y por qué movimiento de
+/// kardex. `movementId` es lo que hace posible la reversa exacta (`InventoryService.reverse`),
+/// igual que en el partido de bobina (RF-16) y en la recepción de corte (D-051).
+model DispatchItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  dispatchId String   @map("dispatch_id") @db.Uuid
+  dispatch   Dispatch @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+  lineNumber Int      @map("line_number")
+
+  salesOrderItemId String         @map("sales_order_item_id") @db.Uuid
+  salesOrderItem   SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
+  productId        String         @map("product_id") @db.Uuid
+  product          Product        @relation(fields: [productId], references: [id])
+  description      String         @db.VarChar(240)
+  qty              Decimal        @db.Decimal(16, 3)
+  unit             String         @db.VarChar(20)
+  weightKg         Decimal        @map("weight_kg") @db.Decimal(16, 3)
+
+  /// El par del kardex del que salió el material: el mismo que usan `inventory_balances`
+  /// y `reservations` (D-066).
+  itemType   InventoryItemType @map("item_type")
+  itemId     String            @map("item_id") @db.Uuid
+  /// Movimiento `OUT` que generó esta línea. Null solo en líneas de negocio sin
+  /// inventario (`NOOP`, §2.2), donde `InventoryService.record` devuelve null a propósito.
+  movementId BigInt?           @map("movement_id")
+
+  @@unique([dispatchId, lineNumber])
+  @@index([dispatchId])
+  @@index([salesOrderItemId])
+  @@map("dispatch_items")
+}
+
+/// Cobro de un comprobante (D-075). Espejo exacto de `supplier_payments`: el saldo se
+/// recalcula y **nunca se almacena**, y revertir no borra la fila —la marca
+/// `reversedAt`/`reversedById`— igual que la reversa de pago a proveedor de D-061.
+///
+/// Va contra el **comprobante**, no contra el pedido: es lo que hace que el saldo cierre
+/// con facturación parcial o con notas de crédito de por medio.
+model CustomerPayment {
+  id         String         @id @default(uuid()) @db.Uuid
+  documentId String         @map("document_id") @db.Uuid
+  document   FiscalDocument @relation(fields: [documentId], references: [id])
+  date       DateTime       @db.Date
+  /// En soles, siempre (D-064). No hay moneda ni tipo de cambio en ventas.
+  amountPen  Decimal        @map("amount_pen") @db.Decimal(18, 4)
+  method     PaymentMethod
+  reference  String?        @db.VarChar(120)
+
+  createdById  String    @map("created_by_id") @db.Uuid
+  reversedById String?   @map("reversed_by_id") @db.Uuid
+  reversedAt   DateTime? @map("reversed_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([documentId])
+  @@map("customer_payments")
 }

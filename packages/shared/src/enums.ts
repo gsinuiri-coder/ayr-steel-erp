@@ -532,6 +532,8 @@ export const QUOTATION_STATUS_LABELS: Record<QuotationStatus, string> = {
 export const SalesOrderStatus = {
   CONFIRMED: 'CONFIRMED',
   IN_PRODUCTION: 'IN_PRODUCTION',
+  /// D-074: hay mercadería despachada y todavía queda pendiente en alguna línea.
+  PARTIALLY_FULFILLED: 'PARTIALLY_FULFILLED',
   FULFILLED: 'FULFILLED',
   CANCELLED: 'CANCELLED',
 } as const;
@@ -543,6 +545,7 @@ export const SALES_ORDER_STATUSES = Object.values(SalesOrderStatus) as [
 export const SALES_ORDER_STATUS_LABELS: Record<SalesOrderStatus, string> = {
   CONFIRMED: 'Confirmado',
   IN_PRODUCTION: 'En producción',
+  PARTIALLY_FULFILLED: 'Atendido en parte',
   FULFILLED: 'Atendido',
   CANCELLED: 'Anulado',
 };
@@ -576,4 +579,196 @@ export function quotationCode(seq: number): string {
 /** `123` → `PED-000123`. Correlativo legible de un pedido (D-068). */
 export function salesOrderCode(seq: number): string {
   return `PED-${String(seq).padStart(6, '0')}`;
+}
+
+// ---------------------------------------------------------------------------
+// Fase 5b — documentos electrónicos, despacho y cobranza (D-070..D-078)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tipo de documento electrónico que **emitimos**. Espejo de `FiscalDocType` en Prisma.
+ *
+ * No se confunde con `PurchaseDocType`, que describe lo que nos emitieron a nosotros y
+ * admite nota de débito: la de venta está diferida (D-070).
+ */
+export const FiscalDocType = {
+  FACTURA: 'FACTURA',
+  BOLETA: 'BOLETA',
+  NOTA_CREDITO: 'NOTA_CREDITO',
+  GUIA_REMISION_REMITENTE: 'GUIA_REMISION_REMITENTE',
+} as const;
+export type FiscalDocType = (typeof FiscalDocType)[keyof typeof FiscalDocType];
+export const FISCAL_DOC_TYPES = Object.values(FiscalDocType) as [FiscalDocType, ...FiscalDocType[]];
+
+/** Los tres que llevan importes y líneas. La guía no es un comprobante de pago. */
+export const INVOICE_DOC_TYPES = [
+  FiscalDocType.FACTURA,
+  FiscalDocType.BOLETA,
+  FiscalDocType.NOTA_CREDITO,
+] as [FiscalDocType, ...FiscalDocType[]];
+
+export const FISCAL_DOC_TYPE_LABELS: Record<FiscalDocType, string> = {
+  FACTURA: 'Factura',
+  BOLETA: 'Boleta de venta',
+  NOTA_CREDITO: 'Nota de crédito',
+  GUIA_REMISION_REMITENTE: 'Guía de remisión remitente',
+};
+
+/**
+ * Código del catálogo 01 de SUNAT. Vive acá y no dentro del proveedor porque es del
+ * **dominio**: lo define SUNAT, no el PSE (D-071). El adaptador lo traduce a lo que su
+ * API espera, pero el número es el mismo con cualquier proveedor.
+ */
+export const FISCAL_DOC_TYPE_SUNAT_CODE: Record<FiscalDocType, string> = {
+  FACTURA: '01',
+  BOLETA: '03',
+  NOTA_CREDITO: '07',
+  GUIA_REMISION_REMITENTE: '09',
+};
+
+/**
+ * Estado de un documento electrónico (D-073). La UI los llama BORRADOR / EMITIDO /
+ * ACEPTADO / RECHAZADO / ERROR DE ENVÍO / BAJA EN TRÁMITE / ANULADO.
+ *
+ * `ISSUED` es el estado de contingencia: correlativo ya tomado, PSE todavía sin
+ * responder, y **el despacho ya habilitado**. `REJECTED` es terminal — se corrige y se
+ * reemite con un correlativo nuevo (D-072).
+ */
+export const FiscalDocumentStatus = {
+  DRAFT: 'DRAFT',
+  ISSUED: 'ISSUED',
+  ACCEPTED: 'ACCEPTED',
+  REJECTED: 'REJECTED',
+  SEND_ERROR: 'SEND_ERROR',
+  VOID_PENDING: 'VOID_PENDING',
+  VOIDED: 'VOIDED',
+} as const;
+export type FiscalDocumentStatus = (typeof FiscalDocumentStatus)[keyof typeof FiscalDocumentStatus];
+export const FISCAL_DOCUMENT_STATUSES = Object.values(FiscalDocumentStatus) as [
+  FiscalDocumentStatus,
+  ...FiscalDocumentStatus[],
+];
+export const FISCAL_DOCUMENT_STATUS_LABELS: Record<FiscalDocumentStatus, string> = {
+  DRAFT: 'Borrador',
+  ISSUED: 'Emitido (pendiente de envío)',
+  ACCEPTED: 'Aceptado',
+  REJECTED: 'Rechazado',
+  SEND_ERROR: 'Error de envío',
+  VOID_PENDING: 'Baja en trámite',
+  VOIDED: 'Anulado',
+};
+
+/**
+ * Estados desde los que el job de D-073 vuelve a intentar el envío. `ISSUED` es el que
+ * nunca salió; `SEND_ERROR`, el que salió y no entró.
+ */
+export const RETRYABLE_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
+  FiscalDocumentStatus.ISSUED,
+  FiscalDocumentStatus.SEND_ERROR,
+];
+
+/**
+ * Estados en los que el documento **ya existe fiscalmente**: tiene correlativo y no se
+ * puede reutilizar. Es la condición que habilita el despacho (D-073) y la que bloquea
+ * su reversa cuando el documento está `ACCEPTED` (D-074).
+ */
+export const NUMBERED_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
+  FiscalDocumentStatus.ISSUED,
+  FiscalDocumentStatus.ACCEPTED,
+  FiscalDocumentStatus.REJECTED,
+  FiscalDocumentStatus.SEND_ERROR,
+  FiscalDocumentStatus.VOID_PENDING,
+  FiscalDocumentStatus.VOIDED,
+];
+
+/** Motivo de una nota de crédito (catálogo 09 de SUNAT). */
+export const CreditNoteReason = {
+  ANULACION_OPERACION: 'ANULACION_OPERACION',
+  ANULACION_ERROR_RUC: 'ANULACION_ERROR_RUC',
+  CORRECCION_DESCRIPCION: 'CORRECCION_DESCRIPCION',
+  DESCUENTO_GLOBAL: 'DESCUENTO_GLOBAL',
+  DESCUENTO_ITEM: 'DESCUENTO_ITEM',
+  DEVOLUCION_TOTAL: 'DEVOLUCION_TOTAL',
+  DEVOLUCION_ITEM: 'DEVOLUCION_ITEM',
+  OTROS_AJUSTES: 'OTROS_AJUSTES',
+} as const;
+export type CreditNoteReason = (typeof CreditNoteReason)[keyof typeof CreditNoteReason];
+export const CREDIT_NOTE_REASONS = Object.values(CreditNoteReason) as [
+  CreditNoteReason,
+  ...CreditNoteReason[],
+];
+export const CREDIT_NOTE_REASON_LABELS: Record<CreditNoteReason, string> = {
+  ANULACION_OPERACION: 'Anulación de la operación',
+  ANULACION_ERROR_RUC: 'Anulación por error en el RUC',
+  CORRECCION_DESCRIPCION: 'Corrección por error en la descripción',
+  DESCUENTO_GLOBAL: 'Descuento global',
+  DESCUENTO_ITEM: 'Descuento por ítem',
+  DEVOLUCION_TOTAL: 'Devolución total',
+  DEVOLUCION_ITEM: 'Devolución por ítem',
+  OTROS_AJUSTES: 'Otros ajustes de monto',
+};
+export const CREDIT_NOTE_REASON_SUNAT_CODE: Record<CreditNoteReason, string> = {
+  ANULACION_OPERACION: '01',
+  ANULACION_ERROR_RUC: '02',
+  CORRECCION_DESCRIPCION: '03',
+  DESCUENTO_GLOBAL: '04',
+  DESCUENTO_ITEM: '05',
+  DEVOLUCION_TOTAL: '06',
+  DEVOLUCION_ITEM: '07',
+  OTROS_AJUSTES: '13',
+};
+
+/**
+ * Motivos que anulan la operación completa. Solo con uno de estos tiene sentido una nota
+ * de crédito **total**; los de descuento y devolución parcial piden líneas.
+ */
+export const FULL_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
+  CreditNoteReason.ANULACION_OPERACION,
+  CreditNoteReason.ANULACION_ERROR_RUC,
+  CreditNoteReason.DEVOLUCION_TOTAL,
+];
+
+/** Modalidad de traslado (catálogo 18 de SUNAT, D-078). Se elige por despacho. */
+export const TransferMode = {
+  PRIVATE: 'PRIVATE',
+  PUBLIC: 'PUBLIC',
+} as const;
+export type TransferMode = (typeof TransferMode)[keyof typeof TransferMode];
+export const TRANSFER_MODES = Object.values(TransferMode) as [TransferMode, ...TransferMode[]];
+export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
+  PRIVATE: 'Transporte privado (vehículo propio)',
+  PUBLIC: 'Transporte público (transportista)',
+};
+export const TRANSFER_MODE_SUNAT_CODE: Record<TransferMode, string> = {
+  PUBLIC: '01',
+  PRIVATE: '02',
+};
+
+/** Estado de un despacho (D-074). Revertir marca la fila, nunca la borra. */
+export const DispatchStatus = {
+  ISSUED: 'ISSUED',
+  REVERSED: 'REVERSED',
+} as const;
+export type DispatchStatus = (typeof DispatchStatus)[keyof typeof DispatchStatus];
+export const DISPATCH_STATUSES = Object.values(DispatchStatus) as [
+  DispatchStatus,
+  ...DispatchStatus[],
+];
+export const DISPATCH_STATUS_LABELS: Record<DispatchStatus, string> = {
+  ISSUED: 'Despachado',
+  REVERSED: 'Revertido',
+};
+
+/**
+ * `T001` + `123` → `T001-00000123`. Formato con el que SUNAT identifica un documento:
+ * serie de cuatro caracteres, guion, correlativo a ocho dígitos (§2.1 de
+ * `docs/referencias/ubl21-factura.md`).
+ */
+export function fiscalDocumentNumber(series: string, correlative: number): string {
+  return `${series}-${String(correlative).padStart(8, '0')}`;
+}
+
+/** `123` → `DES-000123`. Correlativo interno de un despacho; no es un número fiscal. */
+export function dispatchCode(seq: number): string {
+  return `DES-${String(seq).padStart(6, '0')}`;
 }

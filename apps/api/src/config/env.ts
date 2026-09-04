@@ -35,6 +35,17 @@ const envSchema = z.object({
     .transform((v) => v === 'true'),
   /** Tipo de cambio SUNAT (D-029). Vacío = solo fallback manual (bloqueo B-02, ver PROGRESO.md). */
   APIS_NET_PE_TOKEN: z.string().default(''),
+  /**
+   * PSE de facturación electrónica (D-071). La URL identifica a la cuenta y con ella al
+   * emisor, por eso no hay variables de RUC ni de razón social. Vacías = se ata
+   * `NullInvoicingProvider` y toda emisión queda en contingencia (D-073), que es un
+   * estado válido y no un fallo de arranque.
+   *
+   * **Nunca apuntar a producción de Nubefact desde un entorno de prueba**: un comprobante
+   * aceptado por SUNAT no se borra, se da de baja.
+   */
+  NUBEFACT_URL: z.string().default(''),
+  NUBEFACT_TOKEN: z.string().default(''),
   /** Storage R2 (D-007) para los archivos de `imports`. Vacío en entornos que no importan planillas. */
   R2_ACCOUNT_ID: z.string().default(''),
   R2_ACCESS_KEY_ID: z.string().default(''),

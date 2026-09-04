@@ -17,6 +17,12 @@ export const customerSchema = z.object({
   email: z.string().nullable(),
   phone: z.string().nullable(),
   creditDays: z.number().int(),
+  /**
+   * D-077: cliente sembrado por el sistema ("PÚBLICO EN GENERAL"). Viaja al web para que
+   * la UI no ofrezca editarlo ni darlo de baja; el API lo rechaza igual, esto es la
+   * cortesía de no mostrar un botón que va a fallar.
+   */
+  isSystem: z.boolean(),
   isActive: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),

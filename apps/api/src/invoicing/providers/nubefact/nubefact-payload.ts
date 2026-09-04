@@ -1,0 +1,231 @@
+import {
+  CREDIT_NOTE_REASON_SUNAT_CODE,
+  DocType,
+  FiscalDocType,
+  TransferMode,
+  type CreditNoteReason,
+} from '@ayr/shared';
+import type {
+  IssueDispatchNoteCommand,
+  IssueDocumentCommand,
+  PartyRef,
+  QueryDocumentCommand,
+  VoidDocumentCommand,
+} from '../../ports/electronic-invoicing.port';
+
+/**
+ * Traducción del dominio al vocabulario de Nubefact (D-071).
+ *
+ * **Todo lo que sabe de Nubefact este proyecto está acá y en `nubefact.provider.ts`.**
+ * Es una función pura a propósito: se puede probar el payload completo sin red, que es la
+ * única forma barata de verificar un contrato con un tercero.
+ *
+ * Los códigos numéricos son de los catálogos de SUNAT; lo que es propio de Nubefact es
+ * **cómo se llaman los campos** y qué valores usa para el tipo de comprobante. Contrastado
+ * contra la documentación pública de la API y contra clientes conocidos
+ * (`neohunter/NubeFact`); el detalle de la guía de remisión es el menos verificado de los
+ * cuatro y es el primero que hay que mirar si el PSE rechaza por forma.
+ */
+
+/** Tipo de comprobante en la numeración de Nubefact (no es el catálogo 01 de SUNAT). */
+const DOC_TYPE_CODE: Record<FiscalDocType, number> = {
+  FACTURA: 1,
+  BOLETA: 2,
+  NOTA_CREDITO: 3,
+  GUIA_REMISION_REMITENTE: 7,
+};
+
+/**
+ * Catálogo 06 de SUNAT. `-` es "VARIOS — ventas menores a S/ 700 y otros": es el que
+ * corresponde a la boleta a público en general (D-077), y por eso el puerto admite
+ * `docType: null` en vez de forzar un DNI inventado.
+ */
+const CUSTOMER_DOC_CODE: Record<DocType, string> = {
+  DNI: '1',
+  CE: '4',
+  RUC: '6',
+};
+
+/** Catálogo 06 para el conductor de una guía: ahí sí siempre hay un documento real. */
+const DRIVER_DOC_CODE: Record<DocType, string> = CUSTOMER_DOC_CODE;
+
+/** Catálogo 17: tipo de operación. `1` = venta interna, el único caso de v1. */
+const SUNAT_TRANSACTION_SALE = 1;
+
+/** Catálogo 02: moneda. `1` = PEN. Todo el dominio comercial va en soles (D-064). */
+const CURRENCY_PEN = 1;
+
+/**
+ * Catálogo 07: afectación del IGV por línea. `1` = gravado, operación onerosa. Todas las
+ * líneas de v1 son gravadas; exoneradas e inafectas entran cuando el catálogo las pida.
+ */
+const IGV_TYPE_TAXED = 1;
+
+/** Catálogo 20: motivo de traslado. `01` = venta, que es de donde nace todo despacho. */
+const TRANSFER_REASON_SALE = '01';
+
+/** Catálogo 18: modalidad de traslado. */
+const TRANSFER_MODE_CODE: Record<TransferMode, string> = {
+  PUBLIC: '01',
+  PRIVATE: '02',
+};
+
+function customerDocCode(party: PartyRef): string {
+  return party.docType === null ? '-' : CUSTOMER_DOC_CODE[party.docType];
+}
+
+/** Los campos del receptor, iguales en comprobante y en guía. */
+function customerFields(party: PartyRef): Record<string, unknown> {
+  return {
+    cliente_tipo_de_documento: customerDocCode(party),
+    cliente_numero_de_documento: party.docNumber,
+    cliente_denominacion: party.name,
+    cliente_direccion: party.address ?? '',
+    cliente_email: party.email ?? '',
+  };
+}
+
+function creditNoteCode(reason: CreditNoteReason): number {
+  return Number(CREDIT_NOTE_REASON_SUNAT_CODE[reason]);
+}
+
+/**
+ * Payload de `generar_comprobante`.
+ *
+ * Los totales van **calculados por nosotros**, no delegados al PSE: la aritmética de una
+ * línea ya está definida una sola vez en `@ayr/shared` (`salesLineTotals`) y es la misma
+ * que vio el vendedor en pantalla y la que quedó guardada. Dejar que el proveedor los
+ * recalcule abriría la posibilidad de que el papel diga un número y la base otro.
+ */
+export function buildInvoicePayload(command: IssueDocumentCommand): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    operacion: 'generar_comprobante',
+    tipo_de_comprobante: DOC_TYPE_CODE[command.docType],
+    serie: command.series,
+    numero: command.correlative,
+    sunat_transaction: SUNAT_TRANSACTION_SALE,
+    ...customerFields(command.customer),
+    fecha_de_emision: command.issueDate,
+    fecha_de_vencimiento: command.dueDate ?? '',
+    moneda: CURRENCY_PEN,
+    porcentaje_de_igv: Number(command.igvRatePct),
+    total_gravada: Number(command.subtotalPen),
+    total_igv: Number(command.igvPen),
+    total: Number(command.totalPen),
+    observaciones: command.notes ?? '',
+    // El PSE envía a SUNAT en la misma llamada: es lo que hace que una emisión tenga una
+    // respuesta útil (aceptada o rechazada) y no solo un acuse de recibo.
+    enviar_automaticamente_a_la_sunat: true,
+    enviar_automaticamente_al_cliente: false,
+    formato_de_pdf: 'A4',
+    items: command.lines.map((line) => ({
+      unidad_de_medida: line.unit,
+      codigo: line.code ?? '',
+      descripcion: line.description,
+      cantidad: Number(line.qty),
+      valor_unitario: Number(line.unitPricePen),
+      precio_unitario: Number(line.unitPricePen) * (1 + Number(command.igvRatePct) / 100),
+      subtotal: Number(line.subtotalPen),
+      tipo_de_igv: IGV_TYPE_TAXED,
+      igv: Number(line.igvPen),
+      total: Number(line.totalPen),
+      anticipo_regularizacion: false,
+    })),
+  };
+
+  if (command.affects) {
+    payload.tipo_de_nota_de_credito = creditNoteCode(command.affects.reason);
+    payload.documento_que_se_modifica_tipo = DOC_TYPE_CODE[command.affects.docType];
+    payload.documento_que_se_modifica_serie = command.affects.series;
+    payload.documento_que_se_modifica_numero = command.affects.correlative;
+  }
+
+  if (command.detraction) {
+    payload.detraccion = true;
+    payload.detraccion_tipo = command.detraction.code;
+    payload.detraccion_porcentaje = Number(command.detraction.pct);
+    payload.detraccion_total = Number(command.detraction.amountPen);
+  }
+
+  return payload;
+}
+
+/**
+ * Payload de `generar_guia` (D-078). La rama de transporte es lo único que cambia entre
+ * las dos modalidades; el resto del documento es idéntico.
+ */
+export function buildDispatchNotePayload(
+  command: IssueDispatchNoteCommand,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    operacion: 'generar_guia',
+    tipo_de_comprobante: DOC_TYPE_CODE[FiscalDocType.GUIA_REMISION_REMITENTE],
+    serie: command.series,
+    numero: command.correlative,
+    ...customerFields(command.customer),
+    fecha_de_emision: command.issueDate,
+    fecha_de_inicio_de_traslado: command.transferDate,
+    motivo_de_traslado: TRANSFER_REASON_SALE,
+    peso_bruto_total: Number(command.totalWeightKg),
+    peso_bruto_unidad_de_medida: 'KGM',
+    numero_de_bultos: command.packageCount ?? 0,
+    tipo_de_transporte: TRANSFER_MODE_CODE[command.transferMode],
+    punto_de_partida_ubigeo: command.originUbigeo,
+    punto_de_partida_direccion: command.originAddress,
+    punto_de_llegada_ubigeo: command.destinationUbigeo,
+    punto_de_llegada_direccion: command.destinationAddress,
+    observaciones: command.notes ?? '',
+    enviar_automaticamente_a_la_sunat: true,
+    items: command.lines.map((line) => ({
+      unidad_de_medida: line.unit,
+      codigo: line.code ?? '',
+      descripcion: line.description,
+      cantidad: Number(line.qty),
+    })),
+  };
+
+  if (command.transferMode === TransferMode.PRIVATE) {
+    // El `CHECK` de `dispatches` ya garantiza que estén los cinco campos; el `?? ''` es
+    // defensa en profundidad, no una alternativa real.
+    payload.conductor_documento_tipo = command.driver
+      ? DRIVER_DOC_CODE[command.driver.docType]
+      : '';
+    payload.conductor_documento_numero = command.driver?.docNumber ?? '';
+    payload.conductor_nombre = command.driver?.name ?? '';
+    payload.conductor_numero_licencia = command.driver?.license ?? '';
+    payload.vehiculo_placa = command.vehicle?.plate ?? '';
+  } else {
+    payload.transportista_documento_tipo = CUSTOMER_DOC_CODE[DocType.RUC];
+    payload.transportista_documento_numero = command.carrier?.docNumber ?? '';
+    payload.transportista_denominacion = command.carrier?.name ?? '';
+  }
+
+  if (command.relatedDocument) {
+    payload.documento_relacionado_tipo = DOC_TYPE_CODE[command.relatedDocument.docType];
+    payload.documento_relacionado_serie = command.relatedDocument.series;
+    payload.documento_relacionado_numero = command.relatedDocument.correlative;
+  }
+
+  return payload;
+}
+
+/** Payload de `consultar_comprobante`. Sirve igual para una guía. */
+export function buildQueryPayload(command: QueryDocumentCommand): Record<string, unknown> {
+  return {
+    operacion: 'consultar_comprobante',
+    tipo_de_comprobante: DOC_TYPE_CODE[command.docType],
+    serie: command.series,
+    numero: command.correlative,
+  };
+}
+
+/** Payload de `generar_anulacion` (comunicación de baja). */
+export function buildVoidPayload(command: VoidDocumentCommand): Record<string, unknown> {
+  return {
+    operacion: 'generar_anulacion',
+    tipo_de_comprobante: DOC_TYPE_CODE[command.docType],
+    serie: command.series,
+    numero: command.correlative,
+    motivo: command.reason,
+  };
+}

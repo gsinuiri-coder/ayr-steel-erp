@@ -10,6 +10,11 @@ const secrets = {
   JWT_SECRET: setup.JWT_SECRET,
   // D-029/D-007 (Fase 1): tipo de cambio SUNAT y storage R2 para `imports`.
   APIS_NET_PE_TOKEN: setup.APIS_NET_PE_TOKEN ?? '',
+  // D-071 (Fase 5b): PSE de facturación electrónica. Se acepta el nombre con y sin
+  // `DEMO` porque el entorno de prueba y el real se guardan con claves distintas; vacío
+  // es válido y deja el módulo en contingencia (D-073), que no es un fallo de arranque.
+  NUBEFACT_URL: setup.NUBEFACT_URL ?? setup.NUBEFACT_DEMO_URL ?? '',
+  NUBEFACT_TOKEN: setup.NUBEFACT_TOKEN ?? setup.NUBEFACT_DEMO_TOKEN ?? '',
   R2_ACCOUNT_ID: setup.R2_ACCOUNT_ID ?? '',
   R2_ACCESS_KEY_ID: setup.R2_ACCESS_KEY_ID ?? '',
   R2_SECRET_ACCESS_KEY: setup.R2_SECRET_ACCESS_KEY ?? '',

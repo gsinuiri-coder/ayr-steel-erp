@@ -17,6 +17,7 @@ import { FinishesModule } from './finishes/finishes.module';
 import { HealthController } from './health/health.controller';
 import { ImportsModule } from './imports/imports.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { InvoicingModule } from './invoicing/invoicing.module';
 import { JobsModule } from './jobs/jobs.module';
 import { PricingModule } from './pricing/pricing.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -58,6 +59,7 @@ import { UsersModule } from './users/users.module';
     CuttingModule,
     ProductionModule,
     SalesModule,
+    InvoicingModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],

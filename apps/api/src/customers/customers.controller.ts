@@ -28,7 +28,11 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CustomersService } from './customers.service';
 import { DocumentLookupService } from './document-lookup.service';
 
-/** RF-80/RF-82/RF-85: clientes. Lectura para todos, mutación solo ADMINISTRADOR. */
+/**
+ * RF-80/RF-82/RF-85: clientes. Lectura para todos; alta y edición de datos básicos para
+ * ADMINISTRADOR y VENDEDOR (D-076), con los campos sensibles —documento, días de crédito
+ * y baja lógica— separados dentro del servicio, no por ruta.
+ */
 @Controller('customers')
 export class CustomersController {
   constructor(
@@ -75,8 +79,9 @@ export class CustomersController {
     return this.customers.findOne(id);
   }
 
+  /** D-076: el vendedor da de alta al cliente que acaba de buscar por RUC (D-067). */
   @Post()
-  @Roles(Role.ADMINISTRADOR)
+  @Roles(Role.ADMINISTRADOR, Role.VENDEDOR)
   create(
     @CurrentUser() actor: RequestUser,
     @Body(new ZodValidationPipe(createCustomerSchema)) body: CreateCustomerInput,
@@ -84,8 +89,13 @@ export class CustomersController {
     return this.customers.create(actor, body);
   }
 
+  /**
+   * D-076: el vendedor edita datos básicos. Los días de crédito y la baja lógica los
+   * rechaza `CustomersService.update` por rol, y el cliente del sistema (D-077) no se
+   * edita con ninguno.
+   */
   @Patch(':id')
-  @Roles(Role.ADMINISTRADOR)
+  @Roles(Role.ADMINISTRADOR, Role.VENDEDOR)
   update(
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,

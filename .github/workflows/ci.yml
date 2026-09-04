@@ -62,6 +62,10 @@ jobs:
       ALLOW_DB_RESET: '1'
       THROTTLE_DISABLED: 'true'
       APIS_NET_PE_TOKEN: ${{ secrets.APIS_NET_PE_TOKEN }}
+      # D-071: PSE de facturación electrónica. En CI apunta **siempre** a la cuenta demo;
+      # un comprobante aceptado por SUNAT no se borra, se da de baja.
+      NUBEFACT_URL: ${{ secrets.NUBEFACT_URL }}
+      NUBEFACT_TOKEN: ${{ secrets.NUBEFACT_TOKEN }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
