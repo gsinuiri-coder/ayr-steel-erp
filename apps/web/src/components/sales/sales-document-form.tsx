@@ -11,20 +11,26 @@ import {
   Decimal,
   MAX_QUOTATION_VALIDITY_DAYS,
   MAX_SALES_ITEMS,
+  describePieces,
+  piecesCount,
+  piecesMeters,
   salesLineTotals,
   toFixedString,
+  Unit,
   type BusinessLine,
   type BusinessLineDto,
   type CustomerDto,
   type ProductDto,
   type QuotationDto,
   type ReservableCoilDto,
+  type RoofingPieceDto,
   type SalesItemInput,
   type SalesOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatMoney, formatQty, isPositiveDecimal, todayIso, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
+import { EMPTY_PIECE_ROW, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,6 +64,9 @@ import {
  * guarda (mismo criterio que el partido de RF-15 y el kilo por pieza de D-059).
  */
 
+/** Un subítem de la línea compuesta: metros a la vista, milímetros hacia el API (D-083). */
+type PieceDraft = PieceRow;
+
 interface LineDraft {
   key: number;
   productId: string;
@@ -66,10 +75,32 @@ interface LineDraft {
   /** D-066: bobina de la que sale el material prometido. Vacío = se reserva el producto. */
   reserveFromCoilId: string;
   reserveKg: string;
+  /**
+   * D-083: los largos de una cobertura a medida. La cantidad de la línea deja de tipearse y
+   * pasa a ser la suma `Σ cantidad × largo` en metros, que es lo que el API exige que
+   * coincida — por eso el campo de cantidad se bloquea en cuanto la línea es compuesta.
+   */
+  pieces: PieceDraft[];
 }
 
+const EMPTY_PIECE = EMPTY_PIECE_ROW;
+
 function emptyLine(key: number): LineDraft {
-  return { key, productId: '', qty: '', unitPricePen: '', reserveFromCoilId: '', reserveKg: '' };
+  return {
+    key,
+    productId: '',
+    qty: '',
+    unitPricePen: '',
+    reserveFromCoilId: '',
+    reserveKg: '',
+    pieces: [EMPTY_PIECE],
+  };
+}
+
+/** Los subítems del borrador, o el motivo por el que todavía no son válidos. */
+function toPieces(rows: PieceDraft[]): RoofingPieceDto[] | null {
+  const parsed = parsePieceRows(rows);
+  return parsed.ok ? parsed.pieces : null;
 }
 
 /** Cantidad y precio con la escala fija que el API aplica antes de calcular (D-003). */
@@ -149,7 +180,27 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
     patchLine(key, {
       productId,
       ...(listPrice ? { unitPricePen: new Decimal(listPrice).toFixed(4) } : {}),
+      // Cambiar de producto puede cambiar la forma de la línea (simple ↔ compuesta): el
+      // detalle anterior dejaría de significar nada, y la cantidad se recalcula sola.
+      pieces: [EMPTY_PIECE],
+      qty: '',
     });
+  }
+
+  /** D-083: la línea es compuesta cuando el producto se vende por metro lineal. */
+  function isMadeToMeasure(productId: string): boolean {
+    return productById.get(productId)?.unit === Unit.MTR;
+  }
+
+  /**
+   * Reemplaza los largos de una línea y **recalcula su cantidad**: en una línea compuesta la
+   * cantidad no es un dato que el vendedor escriba, es la suma de los largos. Mantenerla
+   * como campo editable era ofrecer dos verdades sobre lo mismo, que es justo lo que el API
+   * rechaza.
+   */
+  function patchPieces(key: number, pieces: PieceDraft[]): void {
+    const parsed = toPieces(pieces);
+    patchLine(key, { pieces, qty: parsed === null ? '' : piecesMeters(parsed).toFixed(3) });
   }
 
   // El API normaliza a la escala fija antes de calcular (`decimalStringSchema`), así que la
@@ -203,6 +254,12 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
     for (const [index, l] of lines.entries()) {
       const at = `Línea ${index + 1}`;
       if (!l.productId) return { error: `${at}: elige un producto` };
+      const madeToMeasure = isMadeToMeasure(l.productId);
+      const pieces = madeToMeasure ? toPieces(l.pieces) : null;
+      if (madeToMeasure) {
+        const parsed = parsePieceRows(l.pieces);
+        if (!parsed.ok) return { error: `${at}: ${parsed.reason}` };
+      }
       if (!isPositiveDecimal(l.qty)) {
         return { error: `${at}: la cantidad debe ser mayor a cero` };
       }
@@ -216,11 +273,9 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       if (hasCoil !== hasKg) {
         return { error: `${at}: para reservar materia prima hacen falta la bobina y los kilos` };
       }
-      if (requiresQuotation && !hasCoil) {
-        return {
-          error: `${at}: en ${BUSINESS_LINE_LABELS[businessLine]} el producto se fabrica contra el pedido; indica de qué bobina y cuántos kilos se reservan`,
-        };
-      }
+      // Desde D-083 una línea de una línea con cotización obligatoria puede salir de stock
+      // (una plancha de catálogo, o el sobrante de una corrida): quien decide es el
+      // disponible real al confirmar, no un rechazo de forma acá.
       if (hasKg && !isPositiveDecimal(l.reserveKg)) {
         return { error: `${at}: los kilos a reservar deben ser mayores a cero` };
       }
@@ -245,6 +300,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         productId: l.productId,
         qty: normalized.qty,
         unitPricePen: normalized.unitPricePen,
+        ...(pieces ? { pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })) } : {}),
         ...(hasCoil
           ? {
               reserveFromCoilId: l.reserveFromCoilId,
@@ -399,8 +455,9 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         <Alert>
           <AlertDescription>
             En {businessLine ? BUSINESS_LINE_LABELS[businessLine] : 'esta línea'} el producto se
-            fabrica contra el pedido (RF-31): cada línea reserva kilos de una bobina concreta, no
-            producto terminado.
+            fabrica contra el pedido (RF-31): la línea reserva kilos de una bobina concreta, y la
+            producción convierte esa promesa en el producto terminado. Si lo que vendes ya está
+            fabricado y en stock, deja la bobina vacía.
           </AlertDescription>
         </Alert>
       )}
@@ -419,13 +476,17 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {lines.map((l, index) => {
+            {lines.flatMap((l, index) => {
               const product = productById.get(l.productId);
               const valid = isPositiveDecimal(l.qty) && isPositiveDecimal(l.unitPricePen);
               const lineTotal = valid
                 ? salesLineTotals({ qty: l.qty, unitPricePen: l.unitPricePen }).subtotal
                 : null;
-              return (
+              const madeToMeasure = isMadeToMeasure(l.productId);
+              const parsedLine = madeToMeasure ? parsePieceRows(l.pieces) : null;
+              const parsedPieces = parsedLine?.ok === true ? parsedLine.pieces : null;
+              const pieceError = parsedLine?.ok === false ? parsedLine.reason : '';
+              return [
                 <TableRow key={l.key}>
                   <TableCell>
                     <Select
@@ -461,6 +522,11 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
                       inputMode="decimal"
                       aria-label={`Cantidad de la línea ${index + 1}`}
                       value={l.qty}
+                      // D-083: en una línea compuesta la cantidad la manda el detalle de
+                      // largos. Editarla a mano abriría la puerta a que diga otra cosa que
+                      // los largos, que es exactamente lo que el API rechaza.
+                      readOnly={madeToMeasure}
+                      disabled={madeToMeasure}
                       onChange={(e) => {
                         patchLine(l.key, { qty: e.target.value });
                       }}
@@ -541,8 +607,30 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
                       Quitar
                     </Button>
                   </TableCell>
-                </TableRow>
-              );
+                </TableRow>,
+                // D-083: el editor de largos va en su propia fila y no en una celda, porque
+                // en una obra real son varias medidas y no entran en el ancho de la columna.
+                ...(madeToMeasure
+                  ? [
+                      <TableRow key={`${String(l.key)}-pieces`} className="bg-muted/40">
+                        <TableCell colSpan={7} className="py-3">
+                          <PieceEditor
+                            rows={l.pieces}
+                            lineIndex={index}
+                            onChange={(rows) => {
+                              patchPieces(l.key, rows);
+                            }}
+                          />
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            {parsedPieces === null
+                              ? pieceError
+                              : `${describePieces(parsedPieces)} · ${String(piecesCount(parsedPieces))} planchas · ${piecesMeters(parsedPieces).toFixed(3)} m`}
+                          </p>
+                        </TableCell>
+                      </TableRow>,
+                    ]
+                  : []),
+              ];
             })}
           </TableBody>
         </Table>
@@ -595,5 +683,77 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         </Button>
       </div>
     </>
+  );
+}
+
+/**
+ * Editor de subítems de una línea compuesta (D-083). Habla en **metros** porque es como se
+ * mide un techo; el API guarda milímetros como el resto de las medidas del proyecto.
+ */
+function PieceEditor({
+  rows,
+  lineIndex,
+  onChange,
+}: {
+  rows: PieceDraft[];
+  lineIndex: number;
+  onChange: (rows: PieceDraft[]) => void;
+}) {
+  const set = (i: number, patch: Partial<PieceDraft>) => {
+    onChange(rows.map((r, j) => (i === j ? { ...r, ...patch } : r)));
+  };
+  return (
+    <div className="grid gap-2">
+      <span className="text-xs font-medium text-muted-foreground">
+        Planchas de esta línea (cantidad × largo)
+      </span>
+      {rows.map((row, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <Input
+            className="w-24"
+            inputMode="numeric"
+            placeholder="3"
+            aria-label={`Planchas del largo ${i + 1} de la línea ${lineIndex + 1}`}
+            value={row.qty}
+            onChange={(e) => {
+              set(i, { qty: e.target.value });
+            }}
+          />
+          <span className="text-muted-foreground">×</span>
+          <Input
+            className="w-28"
+            inputMode="decimal"
+            placeholder="4.20"
+            aria-label={`Largo ${i + 1} de la línea ${lineIndex + 1} en metros`}
+            value={row.lengthM}
+            onChange={(e) => {
+              set(i, { lengthM: e.target.value });
+            }}
+          />
+          <span className="text-muted-foreground">m</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Quitar el largo ${i + 1} de la línea ${lineIndex + 1}`}
+            disabled={rows.length === 1}
+            onClick={() => {
+              onChange(rows.filter((_, j) => j !== i));
+            }}
+          >
+            Quitar
+          </Button>
+        </div>
+      ))}
+      <Button
+        variant="outline"
+        size="sm"
+        className="justify-self-start"
+        onClick={() => {
+          onChange([...rows, EMPTY_PIECE]);
+        }}
+      >
+        Agregar largo
+      </Button>
+    </div>
   );
 }

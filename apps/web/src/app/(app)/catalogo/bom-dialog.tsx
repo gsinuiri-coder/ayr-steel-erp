@@ -7,9 +7,13 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import {
+  BusinessLine,
+  ProductBomKind,
+  ROOFING_THICKNESS_TOLERANCE_MM,
   theoreticalKgPerPiece,
   toDecimal,
   toFixedString,
+  Unit,
   type FinishDto,
   type ProductBomDto,
   type ProductDto,
@@ -49,13 +53,49 @@ import { Skeleton } from '@/components/ui/skeleton';
 const decimalField = (label: string) =>
   z.string().trim().refine(isPositiveDecimal, `${label} debe ser un número mayor a cero`);
 
-const formSchema = z.object({
-  finishId: z.string().uuid('Elige el acabado del fleje'),
-  inputThicknessMm: decimalField('El espesor'),
-  inputWidthMm: decimalField('El ancho'),
-  pieceLengthMm: decimalField('El largo'),
-  kgPerPiece: decimalField('El kilo por pieza'),
-});
+/**
+ * D-087: la receta tiene dos formas. En drywall el ancho del fleje, el largo de la pieza y
+ * el kilo son obligatorios; en coberturas el ancho lo pone la bobina que se monte y el kilo
+ * sale de su geometría por el largo reportado, así que acá solo se pide acabado y espesor.
+ * El largo sigue siendo opcional en coberturas y es lo que separa los dos productos de
+ * D-083: con largo es una plancha de catálogo, sin largo es una cobertura a medida.
+ */
+const formSchema = z
+  .object({
+    finishId: z.string().uuid('Elige el acabado del material'),
+    inputThicknessMm: decimalField('El espesor'),
+    inputWidthMm: z.string(),
+    pieceLengthMm: z.string(),
+    kgPerPiece: z.string(),
+    kind: z.enum([ProductBomKind.DRYWALL, ProductBomKind.ROOFING]),
+    /** Una plancha de catálogo (cobertura con largo fijo) sí necesita su largo. */
+    requiresPieceLength: z.boolean(),
+  })
+  .superRefine((v, ctx) => {
+    // En drywall los tres son obligatorios. En coberturas, el largo lo es **solo** cuando el
+    // formulario lo muestra (plancha de catálogo): el diálogo lo esconde en una cobertura a
+    // medida, y ahí no hay nada que exigir.
+    const required =
+      v.kind === ProductBomKind.DRYWALL
+        ? (['inputWidthMm', 'pieceLengthMm', 'kgPerPiece'] as const)
+        : v.requiresPieceLength
+          ? (['pieceLengthMm'] as const)
+          : ([] as const);
+    const labels: Record<string, string> = {
+      inputWidthMm: 'El ancho',
+      pieceLengthMm: 'El largo',
+      kgPerPiece: 'El kilo por pieza',
+    };
+    for (const field of required) {
+      if (!isPositiveDecimal(v[field].trim())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${labels[field] ?? 'El campo'} debe ser un número mayor a cero`,
+        });
+      }
+    }
+  });
 type FormValues = z.infer<typeof formSchema>;
 
 /**
@@ -94,6 +134,17 @@ export function BomDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  // D-087/D-083: la clase de receta y el producto que produce salen de la línea y de la
+  // unidad del producto, no de un selector: son exactamente las condiciones que valida
+  // `BomsService.upsert`, y ofrecer elegirlas dejaría guardar combinaciones que el API
+  // rechaza recién al enviar.
+  const kind =
+    product.businessLineCode === BusinessLine.METALLIC_ROOFING
+      ? ProductBomKind.ROOFING
+      : ProductBomKind.DRYWALL;
+  const isRoofing = kind === ProductBomKind.ROOFING;
+  /** Cobertura **a medida**: se mide en metros y el largo lo trae el pedido (D-083). */
+  const madeToMeasure = isRoofing && product.unit === Unit.MTR;
   /** El maestro escribió el kilo a mano: deja de seguir a la geometría. */
   const [manualKg, setManualKg] = useState(false);
   const [isActive, setIsActive] = useState(true);
@@ -123,6 +174,8 @@ export function BomDialog({
       inputWidthMm: '',
       pieceLengthMm: '',
       kgPerPiece: '',
+      kind,
+      requiresPieceLength: isRoofing && !madeToMeasure,
     },
   });
 
@@ -135,11 +188,15 @@ export function BomDialog({
     form.reset({
       finishId: bom.data.finishId,
       inputThicknessMm: bom.data.inputThicknessMm,
-      inputWidthMm: bom.data.inputWidthMm,
-      pieceLengthMm: bom.data.pieceLengthMm,
-      kgPerPiece: bom.data.kgPerPiece,
+      inputWidthMm: bom.data.inputWidthMm ?? '',
+      pieceLengthMm: bom.data.pieceLengthMm ?? '',
+      kgPerPiece: bom.data.kgPerPiece ?? '',
+      kind: bom.data.kind,
+      requiresPieceLength: isRoofing && !madeToMeasure,
     });
-    setManualKg(bom.data.kgPerPiece !== bom.data.suggestedKgPerPiece);
+    setManualKg(
+      bom.data.kgPerPiece !== null && bom.data.kgPerPiece !== bom.data.suggestedKgPerPiece,
+    );
     setIsActive(bom.data.isActive);
   }, [bom.isPending, bom.data, form]);
 
@@ -158,13 +215,14 @@ export function BomDialog({
         }).toFixed(3)
       : null;
 
-  // Mientras el maestro no lo toque, el kilo por pieza sigue a la geometría.
+  // Mientras el maestro no lo toque, el kilo por pieza sigue a la geometría. En coberturas
+  // no hay nada que seguir: el kilo lo pone el rollo que se monte.
   useEffect(() => {
-    if (manualKg || suggested === null) return;
+    if (isRoofing || manualKg || suggested === null) return;
     if (form.getValues('kgPerPiece') !== suggested) {
       form.setValue('kgPerPiece', suggested, { shouldValidate: true });
     }
-  }, [manualKg, suggested, form]);
+  }, [isRoofing, manualKg, suggested, form]);
 
   const overridden = suggested !== null && values.kgPerPiece.trim() !== suggested;
 
@@ -174,7 +232,17 @@ export function BomDialog({
         method: 'PUT',
         // Solo se manda `kgPerPiece` cuando de verdad es un override: si coincide con la
         // geometría, se deja que el API lo calcule y no queda un número congelado.
-        body: { ...v, kgPerPiece: manualKg ? v.kgPerPiece : undefined, isActive },
+        // En coberturas, ancho y kilo **no se mandan**: el API los rechaza a propósito
+        // (D-087), porque mandarlos significaría creer que la receta fija el material.
+        body: isRoofing
+          ? {
+              kind,
+              finishId: v.finishId,
+              inputThicknessMm: v.inputThicknessMm,
+              pieceLengthMm: madeToMeasure ? undefined : v.pieceLengthMm,
+              isActive,
+            }
+          : { ...v, kgPerPiece: manualKg ? v.kgPerPiece : undefined, isActive },
       }),
     onSuccess: () => {
       toast.success('Receta guardada');
@@ -201,8 +269,11 @@ export function BomDialog({
         <DialogHeader>
           <DialogTitle>Receta de {product.sku}</DialogTitle>
           <DialogDescription>
-            Qué fleje consume el perfil y cuántos kilos se lleva cada pieza. La orden de producción
-            valida el fleje contra estos datos.
+            {isRoofing
+              ? madeToMeasure
+                ? 'Con qué material se rola esta cobertura. El largo lo trae cada pedido y el kilo sale del ancho y el espesor de la bobina que se monte (D-047).'
+                : 'Con qué material se rola esta plancha de catálogo y de qué largo sale. El kilo sale del ancho y el espesor de la bobina que se monte (D-047).'
+              : 'Qué fleje consume el perfil y cuántos kilos se lleva cada pieza. La orden de producción valida el fleje contra estos datos.'}
           </DialogDescription>
         </DialogHeader>
         {bom.isPending && <Skeleton className="h-40 w-full" />}
@@ -235,7 +306,7 @@ export function BomDialog({
               name="finishId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Acabado del fleje</FormLabel>
+                  <FormLabel>{isRoofing ? 'Acabado del material' : 'Acabado del fleje'}</FormLabel>
                   <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger className="w-full" disabled={finishes.isPending}>
@@ -259,7 +330,7 @@ export function BomDialog({
                 </FormItem>
               )}
             />
-            <div className="grid grid-cols-3 gap-3">
+            <div className={isRoofing ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-3 gap-3'}>
               <FormField
                 control={form.control}
                 name="inputThicknessMm"
@@ -269,42 +340,59 @@ export function BomDialog({
                     <FormControl>
                       <Input inputMode="decimal" autoComplete="off" {...field} />
                     </FormControl>
+                    {isRoofing && (
+                      <FormDescription>
+                        La orden ofrece bobinas de este espesor ±{ROOFING_THICKNESS_TOLERANCE_MM} mm
+                        (D-086).
+                      </FormDescription>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="inputWidthMm"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Ancho (mm)</FormLabel>
-                    <FormControl>
-                      <Input inputMode="decimal" autoComplete="off" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="pieceLengthMm"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Largo (mm)</FormLabel>
-                    <FormControl>
-                      <Input inputMode="decimal" autoComplete="off" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {!isRoofing && (
+                <FormField
+                  control={form.control}
+                  name="inputWidthMm"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Ancho (mm)</FormLabel>
+                      <FormControl>
+                        <Input inputMode="decimal" autoComplete="off" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+              {!madeToMeasure && (
+                <FormField
+                  control={form.control}
+                  name="pieceLengthMm"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Largo (mm)</FormLabel>
+                      <FormControl>
+                        <Input inputMode="decimal" autoComplete="off" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
             </div>
+            {isRoofing && (
+              <p className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+                {madeToMeasure
+                  ? 'Esta cobertura se vende por metro lineal: cada pedido trae sus largos y la orden de producción los copia como plan de corte (D-083, D-084).'
+                  : 'Esta plancha tiene largo fijo y se cuenta por pieza. La orden de producción rechaza reportar cualquier otro largo.'}
+              </p>
+            )}
             <FormField
               control={form.control}
               name="kgPerPiece"
               render={({ field }) => (
-                <FormItem>
+                <FormItem className={isRoofing ? 'hidden' : undefined}>
                   <FormLabel>Kilos por pieza</FormLabel>
                   <FormControl>
                     <Input

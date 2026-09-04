@@ -5,6 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CURRENCIES, CURRENCY_LABELS, Decimal, type Currency, type CoilDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { ColorSelect } from '@/components/colors/color-select';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
@@ -55,6 +56,7 @@ export function CoilEditDialog({
   onDone: () => void;
 }) {
   const [widthMm, setWidthMm] = useState(coil.widthMm);
+  const [colorId, setColorId] = useState(coil.colorId ?? '');
   const [notes, setNotes] = useState(coil.notes ?? '');
   const [currency, setCurrency] = useState<Currency>(coil.currency);
   const [exchangeRate, setExchangeRate] = useState(coil.exchangeRate);
@@ -70,6 +72,7 @@ export function CoilEditDialog({
     if (!open) return;
     const current = coilRef.current;
     setWidthMm(current.widthMm);
+    setColorId(current.colorId ?? '');
     setNotes(current.notes ?? '');
     setCurrency(current.currency);
     setExchangeRate(current.exchangeRate);
@@ -86,6 +89,7 @@ export function CoilEditDialog({
       !decimalEquals(exchangeRate, coil.exchangeRate) ||
       !decimalEquals(unitCostPerKg, coil.unitCostPerKg));
   const widthChanged = !decimalEquals(widthMm, coil.widthMm);
+  const colorChanged = colorId !== (coil.colorId ?? '');
   const notesChanged = notes.trim() !== (coil.notes ?? '');
   // Cambiar a moneda extranjera sin escribir el TC dejaría el recosteo con el `1.0000`
   // que arrastra una bobina en soles, y el kardex (que va en soles, D-042) entraría a
@@ -98,6 +102,7 @@ export function CoilEditDialog({
         method: 'PATCH',
         body: {
           ...(widthChanged ? { widthMm: widthMm.trim() } : {}),
+          ...(colorChanged ? { colorId } : {}),
           ...(notesChanged ? { notes: notes.trim() } : {}),
           ...(costChanged
             ? {
@@ -124,7 +129,7 @@ export function CoilEditDialog({
   });
 
   const canSubmit =
-    (widthChanged || notesChanged || costChanged) &&
+    (widthChanged || colorChanged || notesChanged || costChanged) &&
     (!costChanged || (reason.trim().length >= 3 && !needsRate));
 
   return (
@@ -156,6 +161,15 @@ export function CoilEditDialog({
                 El ancho solo se edita con la bobina abierta.
               </p>
             )}
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="edit-color">Color</Label>
+            <ColorSelect value={colorId} onChange={setColorId} disabled={coil.status !== 'OPEN'} />
+            <p className="text-sm text-muted-foreground">
+              {coil.status === 'OPEN'
+                ? 'La orden de coberturas solo ofrece bobinas del mismo color que el producto (D-086).'
+                : 'El color solo se edita con la bobina abierta.'}
+            </p>
           </div>
           <div className="grid gap-1">
             <Label htmlFor="edit-notes">Observaciones</Label>

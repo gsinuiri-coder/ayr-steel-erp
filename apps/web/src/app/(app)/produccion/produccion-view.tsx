@@ -4,9 +4,12 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
+  PRODUCTION_ORDER_KIND_LABELS,
+  PRODUCTION_ORDER_KINDS,
   PRODUCTION_ORDER_STATUS_LABELS,
   PRODUCTION_ORDER_STATUSES,
   Role,
+  type ProductionOrderKind,
   type ProductionOrderListItemDto,
   type ProductionOrderStatus,
 } from '@ayr/shared';
@@ -41,11 +44,22 @@ const STATUS_VARIANT: Record<ProductionOrderStatus, 'default' | 'secondary' | 'o
   CANCELLED: 'outline',
 };
 
-/** Órdenes de producción de drywall (RF-34). Vista de administración; planta usa `/planta`. */
+/**
+ * Órdenes de producción (RF-34, RF-30). Vista de administración; planta usa `/planta`.
+ *
+ * Un solo listado para las dos líneas de transformación (D-087): comparten tabla,
+ * correlativo y estados, y para quien las administra una orden es una orden. Lo que cambia
+ * por clase es qué producen —piezas o metros— y con qué material, y eso se distingue en la
+ * fila y con el filtro.
+ */
 export function ProduccionView() {
   const [status, setStatus] = useState<ProductionOrderStatus | typeof ALL>(ALL);
+  const [kind, setKind] = useState<ProductionOrderKind | typeof ALL>(ALL);
 
-  const queryString = status === ALL ? '' : `?status=${status}`;
+  const params = new URLSearchParams();
+  if (status !== ALL) params.set('status', status);
+  if (kind !== ALL) params.set('kind', kind);
+  const queryString = params.size > 0 ? `?${params.toString()}` : '';
   const orders = useQuery({
     queryKey: ['production-orders', queryString],
     queryFn: () => api<ProductionOrderListItemDto[]>(`/production${queryString}`),
@@ -57,8 +71,9 @@ export function ProduccionView() {
         <div>
           <h1 className="text-2xl font-semibold">Producción</h1>
           <p className="text-sm text-muted-foreground">
-            Órdenes de perfiles de drywall (RF-34): consumen flejes y producen piezas, con
-            trazabilidad hasta la bobina madre. La captura del operario está en{' '}
+            Perfiles de drywall desde fleje (RF-34) y coberturas metálicas desde bobina contra
+            pedido (RF-30, RF-31), con trazabilidad hasta la bobina madre. La captura del operario
+            está en{' '}
             <Link href="/planta" className="underline underline-offset-4">
               /planta
             </Link>
@@ -89,6 +104,24 @@ export function ProduccionView() {
             ))}
           </SelectContent>
         </Select>
+        <Select
+          value={kind}
+          onValueChange={(v) => {
+            setKind(v as ProductionOrderKind | typeof ALL);
+          }}
+        >
+          <SelectTrigger className="w-60" aria-label="Línea de transformación">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Las dos líneas</SelectItem>
+            {PRODUCTION_ORDER_KINDS.map((k) => (
+              <SelectItem key={k} value={k}>
+                {PRODUCTION_ORDER_KIND_LABELS[k]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="rounded-lg border">
@@ -97,10 +130,10 @@ export function ProduccionView() {
             <TableRow>
               <TableHead>Orden</TableHead>
               <TableHead>Producto</TableHead>
-              <TableHead className="text-right">Piezas</TableHead>
-              <TableHead className="text-right">Fleje asignado</TableHead>
+              <TableHead className="text-right">Producido</TableHead>
+              <TableHead className="text-right">Material asignado</TableHead>
               <TableHead className="text-right">Merma</TableHead>
-              <TableHead className="text-right">Costo/pieza</TableHead>
+              <TableHead className="text-right">Costo unitario</TableHead>
               <TableHead>Creada</TableHead>
               <TableHead>Estado</TableHead>
             </TableRow>
@@ -131,11 +164,25 @@ export function ProduccionView() {
                 <TableCell>
                   <div className="font-medium">{o.productSku}</div>
                   <div className="text-xs text-muted-foreground">{o.productName}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {PRODUCTION_ORDER_KIND_LABELS[o.kind]}
+                    {o.salesOrderCode !== null && <> · {o.salesOrderCode}</>}
+                  </div>
                 </TableCell>
                 <TableCell className="text-right">
-                  {o.piecesReported}
-                  {o.targetPieces !== null && (
-                    <span className="text-muted-foreground"> / {o.targetPieces}</span>
+                  {/* D-083: una cobertura a medida se produce en metros, no en piezas. */}
+                  {o.metersReported === null ? (
+                    <>
+                      {o.piecesReported}
+                      {o.targetPieces !== null && (
+                        <span className="text-muted-foreground"> / {o.targetPieces}</span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {o.metersReported} m
+                      <span className="text-muted-foreground"> · {o.piecesReported} pzs</span>
+                    </>
                   )}
                 </TableCell>
                 <TableCell className="text-right">{formatQty(o.assignedKg, 'kg')}</TableCell>

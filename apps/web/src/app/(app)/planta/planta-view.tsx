@@ -10,6 +10,9 @@ import {
   MAX_ORDER_STRIPS,
   MAX_REPORT_PIECES,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
+  ProductBomKind,
+  PRODUCTION_ORDER_KIND_LABELS,
+  ProductionOrderKind,
   PRODUCTION_ORDER_STATUS_LABELS,
   Role,
   type ProductBomDto,
@@ -36,12 +39,19 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { invalidateProduction } from '@/lib/production-queries';
+import { RoofingPickerCard, RoofingTerminal } from './roofing-terminal';
 
 /**
  * Terminal de planta (RF-39, D-013: no hay app nativa, es una ruta web responsive).
  * Mobile-first a propósito: el operario la usa de pie, con guantes y en una tablet, así
  * que todo son tarjetas de una columna y botones altos; el escritorio solo ensancha la
  * grilla. Lo que no es captura —costos, kardex, correcciones— vive en `/produccion`.
+ *
+ * Desde Fase 6 atiende las **dos** líneas de transformación (D-087). El selector muestra
+ * ambas —crear una corrida de drywall se hace eligiendo el perfil, y una de coberturas
+ * eligiendo el pedido que viene a cumplir (D-084)— y el listado de órdenes en curso es uno
+ * solo, porque para el operario una orden es una orden. La captura sí se parte: los largos
+ * y el consumo declarado de coberturas viven en `roofing-terminal.tsx`.
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -139,7 +149,11 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo crear la orden'),
   });
 
-  const activeBoms = (boms.data ?? []).filter((b) => b.isActive);
+  // Solo las recetas de drywall: una corrida de coberturas no se crea eligiendo el
+  // producto (D-084), y ofrecerla acá terminaría en un 400 del API.
+  const activeBoms = (boms.data ?? []).filter(
+    (b) => b.isActive && b.kind === ProductBomKind.DRYWALL,
+  );
   // Solo las reservas de pedidos que piden **este** perfil: el API rechaza cualquier otra
   // (una reserva solo autoriza a fabricar lo que su propio pedido encargó).
   const productReservations = (reservations.data ?? []).filter((r) =>
@@ -161,13 +175,15 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
       <div>
         <h1 className="text-2xl font-semibold">Planta</h1>
         <p className="text-sm text-muted-foreground">
-          Captura de la corrida de perfiles: consumir fleje, reportar piezas y cerrar (RF-39).
+          Captura de la corrida: montar material, reportar lo producido y cerrar (RF-39).
         </p>
       </div>
 
+      <RoofingPickerCard onSelect={onSelect} />
+
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Nueva orden</CardTitle>
+          <CardTitle className="text-base">Nueva orden de perfiles (drywall)</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
           <div className="grid gap-2">
@@ -179,7 +195,8 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
               <SelectContent>
                 {activeBoms.map((b) => (
                   <SelectItem key={b.productId} value={b.productId}>
-                    {b.productSku} — {b.productName} ({b.inputWidthMm} mm)
+                    {b.productSku} — {b.productName}
+                    {b.inputWidthMm !== null && <> ({b.inputWidthMm} mm)</>}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -276,10 +293,16 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
               </div>
               <div className="mt-1 text-sm">{o.productSku}</div>
               <div className="text-xs text-muted-foreground">{o.productName}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {PRODUCTION_ORDER_KIND_LABELS[o.kind]}
+                {o.salesOrderCode !== null && <> · {o.salesOrderCode}</>}
+              </div>
               <div className="mt-3 text-sm">
-                {o.piecesReported} piezas
+                {o.kind === ProductionOrderKind.ROOFING && o.metersReported !== null
+                  ? `${o.metersReported} m`
+                  : `${String(o.piecesReported)} piezas`}
                 {o.targetPieces !== null && <> de {o.targetPieces}</>} ·{' '}
-                {formatQty(o.assignedKg, 'kg')} de fleje
+                {formatQty(o.assignedKg, 'kg')} montados
               </div>
             </button>
           ))}
@@ -307,7 +330,10 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
     queryKey: ['production-strips', productId],
     queryFn: () => api<ProductionStripOptionDto[]>(`/production/strips?productId=${productId}`),
     enabled:
-      productId !== '' && order.data?.status !== 'CLOSED' && order.data?.status !== 'CANCELLED',
+      productId !== '' &&
+      order.data?.kind === ProductionOrderKind.DRYWALL &&
+      order.data.status !== 'CLOSED' &&
+      order.data.status !== 'CANCELLED',
   });
 
   const invalidate = () => {
@@ -383,6 +409,12 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
   }
 
   const o = order.data;
+  // D-087: la captura de coberturas es otra pantalla. La bifurcación va **después** de
+  // todos los hooks para que el orden de hooks no cambie entre renders.
+  if (o.kind === ProductionOrderKind.ROOFING) {
+    return <RoofingTerminal order={o} onBack={onBack} />;
+  }
+
   const liveStrips = o.consumptions.filter((c) => c.releasedAt === null);
   const pendingKg = liveStrips.reduce(
     (acc, c) => acc.plus(new Decimal(c.remainingKg)),
@@ -394,7 +426,7 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
   );
   const needsReason =
     assignedKg.gt(0) && pendingKg.div(assignedKg).gt(MAX_SCRAP_RATIO_WITHOUT_REASON);
-  const kgPerPiece = new Decimal(o.bom.kgPerPiece);
+  const kgPerPiece = new Decimal(o.bom.kgPerPiece ?? '0');
   const maxPieces = kgPerPiece.lte(0) ? 0 : pendingKg.div(kgPerPiece).floor().toNumber();
   const trimmed = pieces.trim();
   const piecesValid = /^\d+$/.test(trimmed) && Number(trimmed) > 0;
@@ -460,7 +492,7 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
               {report.isPending ? 'Registrando…' : 'Reportar'}
             </Button>
             <p className="text-sm text-muted-foreground sm:col-span-2">
-              Cada pieza consume {o.bom.kgPerPiece} kg de fleje según la receta.
+              Cada pieza consume {o.bom.kgPerPiece ?? '—'} kg de fleje según la receta.
               {overCapacity && (
                 <span className="text-destructive">
                   {' '}

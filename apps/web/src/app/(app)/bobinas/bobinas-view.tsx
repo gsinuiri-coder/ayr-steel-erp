@@ -15,6 +15,7 @@ import {
   type FinishDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { ColorSwatch } from '@/components/colors/color-swatch';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useSession } from '@/lib/session';
 import { RoleGate } from '@/components/role-gate';
@@ -179,6 +180,7 @@ export function BobinasView() {
               <TableHead>Tipo</TableHead>
               <TableHead>Línea</TableHead>
               <TableHead>Proveedor</TableHead>
+              <TableHead>Color</TableHead>
               <TableHead className="text-right">Ancho</TableHead>
               <TableHead className="text-right">Peso</TableHead>
               <TableHead className="text-right">Disponible</TableHead>
@@ -190,14 +192,14 @@ export function BobinasView() {
             {coils.isPending &&
               [0, 1, 2].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={9}>
+                  <TableCell colSpan={10}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
             {coils.isError && (
               <TableRow>
-                <TableCell colSpan={9} className="text-destructive">
+                <TableCell colSpan={10} className="text-destructive">
                   No se pudieron cargar las bobinas.
                 </TableCell>
               </TableRow>
@@ -212,6 +214,13 @@ export function BobinasView() {
                 <TableCell>{c.typeKey}</TableCell>
                 <TableCell>{BUSINESS_LINE_LABELS[c.businessLine]}</TableCell>
                 <TableCell>{c.supplierName}</TableCell>
+                <TableCell>
+                  <ColorSwatch
+                    color={
+                      c.colorName && c.colorHex ? { name: c.colorName, hexColor: c.colorHex } : null
+                    }
+                  />
+                </TableCell>
                 <TableCell className="text-right">{c.widthMm} mm</TableCell>
                 <TableCell className="text-right">{formatQty(c.weightKg, 'kg')}</TableCell>
                 <TableCell className="text-right font-medium">
@@ -229,7 +238,7 @@ export function BobinasView() {
             ))}
             {coils.data?.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground">
+                <TableCell colSpan={10} className="text-center text-muted-foreground">
                   No hay bobinas que coincidan con los filtros.
                 </TableCell>
               </TableRow>

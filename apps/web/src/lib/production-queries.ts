@@ -25,4 +25,10 @@ export function invalidateProduction(queryClient: QueryClient, orderId?: string)
   void queryClient.invalidateQueries({ queryKey: ['sales-orders'] });
   void queryClient.invalidateQueries({ queryKey: ['quotation'] });
   void queryClient.invalidateQueries({ queryKey: ['quotations'] });
+  // D-088: reportar y cerrar sacan kilos de la bobina y meten producto terminado, así que
+  // el material reservable que ve el vendedor y el avance del pedido cambian con cada
+  // operación de planta. La simetría con `invalidateSales` tiene que valer en los dos
+  // sentidos, y estas dos claves faltaban.
+  void queryClient.invalidateQueries({ queryKey: ['reservable-coils'] });
+  void queryClient.invalidateQueries({ queryKey: ['order-progress'] });
 }

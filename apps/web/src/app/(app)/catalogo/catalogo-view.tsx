@@ -29,24 +29,31 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ImportDialog } from '@/components/imports/import-dialog';
+import { ColorSwatch } from '@/components/colors/color-swatch';
 import { BomDialog } from './bom-dialog';
+import { ColoresPanel } from './colores-panel';
 import { ProductDialog } from './product-dialog';
 
 /**
- * D-059: solo los perfiles fabricados de Drywall llevan receta en Fase 4. Coberturas
- * van contra cotización (RF-31) y son de Fase 5, así que no se les ofrece todavía.
+ * Qué productos llevan receta (D-059, D-087). Las mismas condiciones que valida
+ * `BomsService.upsert`, para no ofrecer un diálogo que el API va a rechazar al guardarlo:
  *
- * Las mismas condiciones que valida `BomsService.upsert`, para no ofrecer un diálogo que
- * el API va a rechazar recién al guardarlo: el producto tiene que estar activo y medirse
- * en piezas (`NIU`, D-055).
+ * - **Drywall**: perfil fabricado y activo, medido en piezas (`NIU`, D-055).
+ * - **Coberturas** (Fase 6): fabricado y activo, en piezas si es plancha de catálogo o en
+ *   metros (`MTR`) si es a medida (D-083).
  */
 function hasBom(product: ProductDto): boolean {
-  return (
-    product.businessLineCode === BusinessLine.DRYWALL &&
-    product.source === ProductSource.MANUFACTURED &&
-    product.isActive &&
-    product.unit === Unit.NIU
-  );
+  if (product.source !== ProductSource.MANUFACTURED || !product.isActive) return false;
+  if (product.businessLineCode === BusinessLine.DRYWALL) return product.unit === Unit.NIU;
+  if (product.businessLineCode === BusinessLine.METALLIC_ROOFING) {
+    return product.unit === Unit.NIU || product.unit === Unit.MTR;
+  }
+  return false;
+}
+
+/** El color solo tiene sentido donde hay material prepintado: coberturas (D-085). */
+function usesColor(lineCode: BusinessLine): boolean {
+  return lineCode === BusinessLine.METALLIC_ROOFING;
 }
 
 const CATALOG_QUERY_KEY = ['catalog'] as const;
@@ -113,7 +120,11 @@ export function CatalogoView() {
               {BUSINESS_LINE_LABELS[l.code]}
             </TabsTrigger>
           ))}
+          <TabsTrigger value="colores">Colores</TabsTrigger>
         </TabsList>
+        <TabsContent value="colores">
+          <ColoresPanel isAdmin={isAdmin} />
+        </TabsContent>
         {lines.data.map((line) => {
           const lineProducts = products.data?.filter((p) => p.businessLineId === line.id) ?? [];
           return (
@@ -136,6 +147,7 @@ export function CatalogoView() {
                     <TableRow>
                       <TableHead>SKU</TableHead>
                       <TableHead>Nombre</TableHead>
+                      {usesColor(line.code) && <TableHead>Color</TableHead>}
                       <TableHead>Unidad</TableHead>
                       <TableHead>Origen</TableHead>
                       <TableHead>Estado</TableHead>
@@ -147,6 +159,17 @@ export function CatalogoView() {
                       <TableRow key={p.id} data-state={p.isActive ? undefined : 'inactive'}>
                         <TableCell className="font-medium">{p.sku}</TableCell>
                         <TableCell>{p.name}</TableCell>
+                        {usesColor(line.code) && (
+                          <TableCell>
+                            <ColorSwatch
+                              color={
+                                p.colorId && p.colorName && p.colorHex
+                                  ? { name: p.colorName, hexColor: p.colorHex }
+                                  : null
+                              }
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>{p.unit}</TableCell>
                         <TableCell>{PRODUCT_SOURCE_LABELS[p.source]}</TableCell>
                         <TableCell>
@@ -195,7 +218,7 @@ export function CatalogoView() {
                     {lineProducts.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={isAdmin ? 6 : 5}
+                          colSpan={(isAdmin ? 6 : 5) + (usesColor(line.code) ? 1 : 0)}
                           className="text-center text-muted-foreground"
                         >
                           Sin productos en esta línea.
@@ -215,6 +238,9 @@ export function CatalogoView() {
           key={`${dialog.product?.id ?? 'nuevo'}-${dialog.nonce}`}
           open={dialog.open}
           businessLineId={dialog.lineId}
+          usesColor={usesColor(
+            lines.data.find((l) => l.id === dialog.lineId)?.code ?? BusinessLine.DRYWALL,
+          )}
           product={dialog.product}
           onOpenChange={(open) => {
             setDialog((d) => ({ ...d, open }));

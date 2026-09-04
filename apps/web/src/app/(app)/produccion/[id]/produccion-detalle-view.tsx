@@ -7,14 +7,19 @@ import { toast } from 'sonner';
 import {
   Decimal,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
+  PRODUCTION_ORDER_KIND_LABELS,
   PRODUCTION_ORDER_STATUS_LABELS,
+  ProductionOrderKind,
+  describePieces,
+  piecesCount,
+  piecesMeters,
   PRODUCTION_REPORT_STATUS_LABELS,
   Role,
   type ProductionOrderDto,
   type ProductionReportDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatDate, formatMoney, formatMoneyOrDash, formatQty } from '@/lib/format';
+import { formatDate, formatMoney, formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -51,13 +56,23 @@ export function ProduccionDetalleView({ id }: { id: string }) {
     queryFn: () => api<ProductionOrderDto>(`/production/${id}`),
   });
 
+  /**
+   * D-087: las mutaciones de una orden de coberturas viven bajo `/production/roofing`.
+   * El detalle es uno solo —una orden es una orden— pero cada verbo va a su rama, porque el
+   * cuerpo y la aritmética no se parecen.
+   */
+  const base =
+    order.data?.kind === ProductionOrderKind.ROOFING
+      ? `/production/roofing/${id}`
+      : `/production/${id}`;
+
   const invalidate = () => {
     invalidateProduction(queryClient, id);
   };
 
   const close = useMutation({
     mutationFn: (reason?: string) =>
-      api<ProductionOrderDto>(`/production/${id}/close`, {
+      api<ProductionOrderDto>(`${base}/close`, {
         method: 'POST',
         body: reason ? { reason } : {},
       }),
@@ -74,9 +89,9 @@ export function ProduccionDetalleView({ id }: { id: string }) {
 
   const cancel = useMutation({
     mutationFn: (reason: string) =>
-      api<ProductionOrderDto>(`/production/${id}/cancel`, { method: 'POST', body: { reason } }),
+      api<ProductionOrderDto>(`${base}/cancel`, { method: 'POST', body: { reason } }),
     onSuccess: () => {
-      toast.success('Orden anulada: los flejes que tomó quedan libres otra vez');
+      toast.success('Orden anulada: el material que tomó queda libre otra vez');
       setCancelling(false);
       invalidate();
     },
@@ -86,7 +101,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
 
   const reopen = useMutation({
     mutationFn: (reason: string) =>
-      api<ProductionOrderDto>(`/production/${id}/reopen`, { method: 'POST', body: { reason } }),
+      api<ProductionOrderDto>(`${base}/reopen`, { method: 'POST', body: { reason } }),
     onSuccess: () => {
       toast.success('Orden reabierta: la merma y el costeo del cierre quedaron revertidos');
       setReopening(false);
@@ -98,12 +113,14 @@ export function ProduccionDetalleView({ id }: { id: string }) {
 
   const revert = useMutation({
     mutationFn: ({ reportId, reason }: { reportId: string; reason: string }) =>
-      api<ProductionOrderDto>(`/production/${id}/reports/${reportId}/reverse`, {
+      api<ProductionOrderDto>(`${base}/reports/${reportId}/reverse`, {
         method: 'POST',
         body: { reason },
       }),
     onSuccess: () => {
-      toast.success('Reporte revertido: las piezas salen del stock y los kilos vuelven al fleje');
+      toast.success(
+        'Reporte revertido: el producto sale del stock y los kilos vuelven al material',
+      );
       setReverting(null);
       invalidate();
     },
@@ -130,8 +147,14 @@ export function ProduccionDetalleView({ id }: { id: string }) {
     new Decimal(0),
   );
   // Con mucha merma, cerrar es una baja de inventario y el API pide motivo (D-057).
+  // D-089: en coberturas, lo montado y no consumido **no es merma** — vuelve al almacén —
+  // y este cierre no declara `consumedKg`, así que el despunte es cero y el API nunca pide
+  // motivo. Aplicar la fórmula de drywall acá exigía explicar una merma que no existe, con
+  // un texto que además afirmaba lo contrario de lo que iba a pasar.
   const closeNeedsReason =
-    assignedKg.gt(0) && pendingKg.div(assignedKg).gt(MAX_SCRAP_RATIO_WITHOUT_REASON);
+    o.kind === ProductionOrderKind.ROOFING
+      ? false
+      : assignedKg.gt(0) && pendingKg.div(assignedKg).gt(MAX_SCRAP_RATIO_WITHOUT_REASON);
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -139,15 +162,39 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         <div>
           <h1 className="font-mono text-2xl font-semibold">{o.code}</h1>
           <p className="text-sm text-muted-foreground">
-            {o.productSku} · {o.productName} · receta {o.bom.kgPerPiece} kg por pieza desde fleje de{' '}
-            {o.bom.inputWidthMm} mm
+            {o.productSku} · {o.productName} ·{' '}
+            {o.kind === ProductionOrderKind.ROOFING
+              ? `bobina de ${o.bom.inputThicknessMm} mm (±0.02)`
+              : `receta ${o.bom.kgPerPiece ?? '—'} kg por pieza desde fleje de ${o.bom.inputWidthMm ?? '—'} mm`}
+            {o.salesOrderCode !== null && (
+              <>
+                {' '}
+                ·{' '}
+                <Link
+                  className="underline underline-offset-4"
+                  href={`/pedidos/${o.salesOrderId ?? ''}`}
+                >
+                  {o.salesOrderCode}
+                </Link>{' '}
+                · {o.customerName}
+              </>
+            )}
             {o.notes && <> · {o.notes}</>}
           </p>
+          {o.items.length > 0 && (
+            <p className="text-sm">
+              Plan de corte: {describePieces(o.items)}{' '}
+              <span className="text-muted-foreground">
+                ({piecesCount(o.items)} planchas · {piecesMeters(o.items).toFixed(3)} m)
+              </span>
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={o.status === 'IN_PROGRESS' ? 'default' : 'secondary'}>
             {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
           </Badge>
+          <Badge variant="outline">{PRODUCTION_ORDER_KIND_LABELS[o.kind]}</Badge>
           {isLive && (
             <Button asChild variant="outline">
               <Link href={`/planta?op=${o.id}`}>Abrir en planta</Link>
@@ -188,15 +235,27 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <SummaryCard title="Piezas buenas" value={String(o.piecesReported)} />
-        <SummaryCard title="Fleje asignado" value={formatQty(o.assignedKg, 'kg')} />
         <SummaryCard
-          title="Merma de proceso"
+          title={o.metersReported === null ? 'Piezas buenas' : 'Metros buenos'}
+          value={o.metersReported === null ? String(o.piecesReported) : `${o.metersReported} m`}
+          hint={o.metersReported === null ? undefined : `${String(o.piecesReported)} planchas`}
+        />
+        <SummaryCard title="Material asignado" value={formatQty(o.assignedKg, 'kg')} />
+        <SummaryCard
+          title={o.kind === ProductionOrderKind.ROOFING ? 'Despunte' : 'Merma de proceso'}
           value={o.scrapKg ? formatQty(o.scrapKg, 'kg') : '—'}
-          hint="Sale sola al cerrar: kilos asignados menos el teórico de las piezas buenas"
+          hint={
+            o.kind === ProductionOrderKind.ROOFING
+              ? `Al cerrar: los kilos declarados${o.consumedDeclaredKg ? ` (${formatQty(o.consumedDeclaredKg, 'kg')})` : ''} menos el teórico de las planchas reportadas`
+              : 'Sale sola al cerrar: kilos asignados menos el teórico de las piezas buenas'
+          }
         />
         <SummaryCard
-          title="Costo por pieza"
+          title={
+            o.kind === ProductionOrderKind.ROOFING
+              ? `Costo por ${unitSymbol(o.productUnit)}`
+              : 'Costo por pieza'
+          }
           value={formatMoneyOrDash(o.unitCostPen, 'PEN', 4)}
           hint={
             o.totalCostPen
@@ -208,13 +267,17 @@ export function ProduccionDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Flejes consumidos por la orden</CardTitle>
+          <CardTitle className="text-base">
+            {o.kind === ProductionOrderKind.ROOFING
+              ? 'Bobinas montadas en la orden'
+              : 'Flejes consumidos por la orden'}
+          </CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Fleje</TableHead>
+                <TableHead>{o.kind === ProductionOrderKind.ROOFING ? 'Bobina' : 'Fleje'}</TableHead>
                 <TableHead>Bobina madre</TableHead>
                 <TableHead className="text-right">Asignado</TableHead>
                 <TableHead className="text-right">Consumido</TableHead>

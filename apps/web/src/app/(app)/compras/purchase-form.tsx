@@ -33,6 +33,7 @@ import {
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { ColorSelect } from '@/components/colors/color-select';
 import { formatMoney, isPositiveDecimal, todayIso } from '@/lib/format';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -71,6 +72,8 @@ const itemSchema = z.object({
   unit: z.enum(UNITS),
   unitPrice: decimalField('Precio inválido'),
   finishId: z.string().optional(),
+  /** D-085: color de la bobina. Vacío = sin color (galvanizada). */
+  colorId: z.string().optional(),
   widthMm: z.string().trim().optional(),
   thicknessMm: z.string().trim().optional(),
 });
@@ -176,6 +179,7 @@ export function emptyItem(type: PurchaseType): PurchaseFormValues['items'][numbe
     unit: type === PurchaseType.COIL ? 'KGM' : 'NIU',
     unitPrice: '',
     finishId: '',
+    colorId: '',
     widthMm: '',
     thicknessMm: '',
     productId: '',
@@ -810,6 +814,23 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                     )}
                   />
                 )}
+                {isCoil && (
+                  <FormField
+                    control={form.control}
+                    name={`items.${index}.colorId`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Color</FormLabel>
+                        <ColorSelect
+                          value={field.value ?? ''}
+                          onChange={field.onChange}
+                          placeholder="Sin color"
+                        />
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
                 <FormField
                   control={form.control}
                   name={`items.${index}.description`}
@@ -1048,6 +1069,8 @@ function toApiBody(values: PurchaseFormValues): Record<string, unknown> {
       unit: isCoil ? 'KGM' : item.unit,
       unitPrice: item.unitPrice,
       finishId: item.finishId?.trim() ? item.finishId : undefined,
+      // D-085: solo en bobinas y solo si se eligió; vacío significa galvanizada, sin color.
+      colorId: isCoil && item.colorId?.trim() ? item.colorId : undefined,
       widthMm: item.widthMm?.trim() ? item.widthMm : undefined,
       thicknessMm: item.thicknessMm?.trim() ? item.thicknessMm : undefined,
     })),

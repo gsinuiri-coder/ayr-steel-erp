@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { PRODUCT_SOURCE_LABELS, PRODUCT_SOURCES, type ProductDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { ColorSelect } from '@/components/colors/color-select';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
@@ -49,17 +50,21 @@ const formSchema = z.object({
     .trim()
     .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Debe ser un número decimal')
     .refine((v) => v === '' || isPositiveDecimal(v), 'Debe ser mayor a cero'),
+  /** D-085: vacío = sin color, que el API guarda como `null`. */
+  colorId: z.string(),
 });
 type FormValues = z.infer<typeof formSchema>;
 
 interface Props {
   open: boolean;
   businessLineId: string;
+  /** D-085: solo coberturas llevan color; en el resto del catálogo el campo no aparece. */
+  usesColor: boolean;
   product?: ProductDto;
   onOpenChange: (open: boolean) => void;
 }
 
-export function ProductDialog({ open, businessLineId, product, onOpenChange }: Props) {
+export function ProductDialog({ open, businessLineId, usesColor, product, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const editing = !!product;
   const form = useForm<FormValues>({
@@ -70,6 +75,7 @@ export function ProductDialog({ open, businessLineId, product, onOpenChange }: P
       unit: product?.unit ?? '',
       source: product?.source ?? 'MANUFACTURED',
       listPricePen: product?.listPricePen ?? '',
+      colorId: product?.colorId ?? '',
     },
   });
 
@@ -83,10 +89,14 @@ export function ProductDialog({ open, businessLineId, product, onOpenChange }: P
             unit: values.unit,
             source: values.source,
             listPricePen: values.listPricePen,
+            ...(usesColor ? { colorId: values.colorId } : {}),
           },
         });
       }
-      return api<ProductDto>('/catalog', { method: 'POST', body: { ...values, businessLineId } });
+      return api<ProductDto>('/catalog', {
+        method: 'POST',
+        body: { ...values, colorId: usesColor ? values.colorId : '', businessLineId },
+      });
     },
     onSuccess: () => {
       toast.success(editing ? 'Producto actualizado' : 'Producto creado');
@@ -165,6 +175,23 @@ export function ProductDialog({ open, businessLineId, product, onOpenChange }: P
                 </FormItem>
               )}
             />
+            {usesColor && (
+              <FormField
+                control={form.control}
+                name="colorId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Color</FormLabel>
+                    <ColorSelect value={field.value} onChange={field.onChange} />
+                    <p className="text-xs text-muted-foreground">
+                      La orden de producción solo ofrece bobinas de este mismo color (D-086). Un
+                      producto sin color solo monta bobinas sin color.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="listPricePen"
