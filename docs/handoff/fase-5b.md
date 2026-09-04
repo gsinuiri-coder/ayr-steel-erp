@@ -113,6 +113,8 @@ físicamente los comprobantes de la cuenta demo, doce documentos con baja en tr�
 `ACCEPTED`: el PSE ya no conoce esos números, así que ni la baja se completa ni se pueden volver
 a anular.
 
+**Ojo operativo — los nombres de las claves del PSE en `.env.setup`.** `scripts/gh-secrets.mjs` lee **solo** `NUBEFACT_DEMO_URL` y `NUBEFACT_DEMO_TOKEN`, sin caer nunca a las claves sin `DEMO`: la auditoría encontró que prefería las reales, en un job que corre en cada pull request. Si en `.env.setup` las credenciales demo están guardadas con los nombres **sin** `DEMO`, `pnpm secrets:gh` deja el secreto de CI vacío y CI corre con el proveedor nulo — que es seguro y no rompe nada (la suite tiene su modo sin PSE), pero **no ejercita la emisión real**. Para que CI emita contra la demo, duplicarlas en `.env.setup` con los nombres `NUBEFACT_DEMO_*`. El entorno local usa `scripts/write-local-env.mjs`, que sí acepta los dos nombres.
+
 **Ojo operativo — el cupo de la cuenta demo.** Son 50 documentos y **no se libera anulándolos**:
 hay que borrarlos físicamente en el panel. Una corrida completa gasta unos veinte.
 
