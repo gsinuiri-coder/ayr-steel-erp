@@ -29,6 +29,7 @@ import {
   serializeSalesTotals,
   toDecimal,
   toFixedString,
+  VOID_WINDOW_DAYS,
   voidPathFor,
   dispatchCode as toDispatchCode,
   type CreateCreditNoteInput,
@@ -1629,9 +1630,11 @@ export class InvoicingService {
     );
     if (path !== 'VOID') {
       throw new BadRequestException(
-        document.docType === FiscalDocType.FACTURA
-          ? 'Pasó el plazo de la comunicación de baja: emite una nota de crédito'
-          : 'Una boleta no se da de baja de forma individual: emite una nota de crédito',
+        path === 'NONE'
+          ? `Pasaron más de ${VOID_WINDOW_DAYS} días desde su emisión y una nota de crédito no se acredita con otra: este documento ya no se puede deshacer`
+          : document.docType === FiscalDocType.FACTURA
+            ? 'Pasó el plazo de la comunicación de baja: emite una nota de crédito'
+            : 'Una boleta no se da de baja de forma individual: emite una nota de crédito',
       );
     }
 

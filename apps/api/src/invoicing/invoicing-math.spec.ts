@@ -52,6 +52,22 @@ describe('voidPathFor (D-072)', () => {
   it('una boleta va siempre por nota de crédito: su baja es por resumen diario', () => {
     expect(voidPathFor(FiscalDocType.BOLETA, '2026-09-04', '2026-09-04')).toBe('CREDIT_NOTE');
   });
+
+  it('una guía se da de baja sin plazo: no existe nota de crédito sobre una guía', () => {
+    expect(voidPathFor(FiscalDocType.GUIA_REMISION_REMITENTE, '2020-01-01', '2026-09-04')).toBe(
+      'VOID',
+    );
+  });
+
+  it('una nota de crédito se da de baja dentro del plazo', () => {
+    expect(voidPathFor(FiscalDocType.NOTA_CREDITO, '2026-09-01', '2026-09-04')).toBe('VOID');
+  });
+
+  it('pasado el plazo, una nota de crédito ya no se puede deshacer', () => {
+    // No existe una nota de crédito sobre una nota de crédito, así que ofrecer ese camino
+    // sería mandar al usuario a un callejón. Decir que no hay ninguno es más útil.
+    expect(voidPathFor(FiscalDocType.NOTA_CREDITO, '2026-09-01', '2026-09-20')).toBe('NONE');
+  });
 });
 
 describe('documentBalance (D-075)', () => {

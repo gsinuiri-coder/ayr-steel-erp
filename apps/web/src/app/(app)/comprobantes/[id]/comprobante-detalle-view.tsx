@@ -440,6 +440,15 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </AlertDescription>
         </Alert>
       )}
+      {d.voidPath === 'NONE' && (
+        <Alert>
+          <AlertDescription>
+            Este documento ya no se puede deshacer: pasó el plazo de la comunicación de baja y una
+            nota de crédito no se acredita con otra. Si hay que corregir el efecto, se hace con un
+            documento nuevo sobre el comprobante original.
+          </AlertDescription>
+        </Alert>
+      )}
       {d.voidPath === 'CREDIT_NOTE' && !isDispatchNote && (
         <Alert>
           <AlertDescription>

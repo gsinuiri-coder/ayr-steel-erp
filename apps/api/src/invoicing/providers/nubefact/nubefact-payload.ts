@@ -241,10 +241,15 @@ export function buildDispatchNotePayload(
   return payload;
 }
 
-/** Payload de `consultar_comprobante`. Sirve igual para una guía. */
+/**
+ * Payload de consulta. **La guía tiene su propia operación**: el propio proveedor lo dice
+ * en la respuesta de emisión ("usa la operación 'consultar_guia' para obtener el PDF o el
+ * CDR"), y preguntarle por ella como si fuera un comprobante no devuelve su estado.
+ */
 export function buildQueryPayload(command: QueryDocumentCommand): Record<string, unknown> {
+  const isDispatchNote = command.docType === FiscalDocType.GUIA_REMISION_REMITENTE;
   return {
-    operacion: 'consultar_comprobante',
+    operacion: isDispatchNote ? 'consultar_guia' : 'consultar_comprobante',
     tipo_de_comprobante: DOC_TYPE_CODE[command.docType],
     serie: command.series,
     numero: command.correlative,

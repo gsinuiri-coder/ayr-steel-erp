@@ -66,30 +66,41 @@ export const GENERIC_CUSTOMER_MAX_TOTAL_PEN = '700.0000';
 export const VOID_WINDOW_DAYS = 7;
 
 /**
- * Qué camino aplica para deshacer un comprobante aceptado, según su tipo y su antigüedad
+ * Qué camino aplica para deshacer un documento aceptado, según su tipo y su antigüedad
  * (D-072). Vive en `@ayr/shared` para que el API lo **aplique** y la UI lo **explique**
  * con la misma regla: si divergieran, el botón diría una cosa y el API haría otra.
  *
  * - `VOID` — comunicación de baja. El documento se da por no emitido.
  * - `CREDIT_NOTE` — nota de crédito. Es la reversa fiscal con efecto económico.
+ * - `NONE` — no hay forma de deshacerlo, y decirlo es mejor que ofrecer un camino falso.
  *
- * Las boletas van siempre por nota de crédito: su baja se comunica por resumen diario,
- * que está fuera de alcance en v1.
+ * Los cuatro casos, y por qué cada uno:
+ *
+ * - **Guía de remisión**: no tiene importes, así que no existe una nota de crédito sobre
+ *   ella. Su única corrección es la baja, y sin plazo de por medio.
+ * - **Factura**: baja dentro de los siete días; pasado el plazo, nota de crédito.
+ * - **Boleta**: siempre nota de crédito — su baja se comunica por resumen diario, que está
+ *   fuera de alcance en v1.
+ * - **Nota de crédito**: baja dentro del plazo y **nada** después. No existe una nota de
+ *   crédito sobre una nota de crédito, y ofrecerla sería mandar al usuario a un callejón.
  */
 export function voidPathFor(
   docType: FiscalDocType,
   issueDate: string,
   today: string,
-): 'VOID' | 'CREDIT_NOTE' {
-  // Una guía de remisión no tiene importes, así que no hay nota de crédito posible: su
-  // única corrección es la comunicación de baja, sin plazo de siete días de por medio.
+): 'VOID' | 'CREDIT_NOTE' | 'NONE' {
   if (docType === FiscalDocType.GUIA_REMISION_REMITENTE) return 'VOID';
-  if (docType !== FiscalDocType.FACTURA) return 'CREDIT_NOTE';
+  if (docType === FiscalDocType.BOLETA) return 'CREDIT_NOTE';
+
   const issued = Date.parse(`${issueDate}T00:00:00.000Z`);
   const now = Date.parse(`${today}T00:00:00.000Z`);
-  if (Number.isNaN(issued) || Number.isNaN(now)) return 'CREDIT_NOTE';
-  const days = Math.floor((now - issued) / 86_400_000);
-  return days <= VOID_WINDOW_DAYS ? 'VOID' : 'CREDIT_NOTE';
+  const withinWindow =
+    !Number.isNaN(issued) &&
+    !Number.isNaN(now) &&
+    Math.floor((now - issued) / 86_400_000) <= VOID_WINDOW_DAYS;
+
+  if (withinWindow) return 'VOID';
+  return docType === FiscalDocType.FACTURA ? 'CREDIT_NOTE' : 'NONE';
 }
 
 /**
@@ -518,8 +529,11 @@ export const fiscalDocumentSchema = z.object({
   lastAttemptAt: z.string().nullable(),
   /** D-073: lleva más de `alertAfterHours` emitido sin que el PSE lo acepte. */
   isStalled: z.boolean(),
-  /** Camino que corresponde para deshacerlo hoy (D-072). Null si no aplica ninguno. */
-  voidPath: z.enum(['VOID', 'CREDIT_NOTE']).nullable(),
+  /**
+   * Camino que corresponde para deshacerlo hoy (D-072). `null` mientras el documento no
+   * esté aceptado; `NONE` cuando ya no hay ninguno.
+   */
+  voidPath: z.enum(['VOID', 'CREDIT_NOTE', 'NONE']).nullable(),
   createdByName: z.string().nullable(),
   createdAt: z.string(),
   issuedAt: z.string().nullable(),

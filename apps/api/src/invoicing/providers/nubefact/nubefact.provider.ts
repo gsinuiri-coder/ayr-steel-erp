@@ -39,6 +39,8 @@ interface NubefactResponse {
   enlace_del_cdr?: string;
   sunat_ticket_numero?: string;
   anulacion_aceptada_por_sunat?: boolean;
+  /** Texto del proveedor cuando el documento queda esperando a SUNAT. */
+  nota_importante?: string;
 }
 
 /**
@@ -257,6 +259,37 @@ export class NubefactProvider extends ElectronicInvoicingProvider {
       ? data.anulacion_aceptada_por_sunat
       : (data.aceptada_por_sunat ?? data.anulacion_aceptada_por_sunat);
     const soapError = data.sunat_soap_error;
+
+    /**
+     * **`aceptada_por_sunat: false` no siempre significa "rechazado".**
+     *
+     * Las boletas, las guías y las comunicaciones de baja van por el camino asíncrono de
+     * SUNAT: el PSE las recibe y contesta `false` con **todos los campos del veredicto en
+     * blanco**, porque SUNAT todavía no las procesó —la propia respuesta lo dice: "La Sunat
+     * puede tomar un tiempo en aceptarla"—.
+     *
+     * Leer eso como rechazo terminal era el defecto que quemaba un correlativo por cada
+     * guía y por cada boleta, y hacía fallar siempre la primera comunicación de baja. Un
+     * rechazo de verdad **trae motivo**: un código de respuesta, una descripción, un error
+     * de SOAP o la lista de `errors`. Sin ninguno de los cuatro, lo honesto es `PENDING`:
+     * el documento se queda esperando y el barrido lo resuelve.
+     */
+    const verdict = firstText(data.sunat_responsecode, data.sunat_description, soapError);
+
+    if (accepted === false && verdict === null) {
+      // Recibido por el PSE, sin veredicto de SUNAT todavía. Se consulta después.
+      return {
+        outcome: 'PENDING',
+        ticket: data.sunat_ticket_numero ?? null,
+        sunatHash: firstText(data.codigo_hash),
+        pdfUrl: null,
+        xmlUrl: null,
+        cdrUrl: null,
+        code: null,
+        message: firstText(data.nota_importante, data.sunat_note),
+        raw: body,
+      };
+    }
 
     if (accepted === false) {
       // SUNAT lo vio y lo rechazó: terminal. El detalle sale del CDR.
