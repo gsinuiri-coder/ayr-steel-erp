@@ -757,6 +757,47 @@ export class InvoicingService {
     return this.findOne(id);
   }
 
+  /**
+   * Descarta un borrador (RF-70).
+   *
+   * **Es la única fila de este módulo que se borra de verdad**, y puede serlo justamente
+   * porque un borrador no existe fiscalmente: no tomó correlativo (D-072), no consume
+   * pedido, no tiene saldo y SUNAT nunca supo de él. Todo lo demás —un rechazado, una baja,
+   * un cobro revertido— se marca y se conserva, porque son hechos que ocurrieron.
+   *
+   * Sin esto, un borrador creado por error se quedaba en la lista para siempre: la baja
+   * exige un comprobante aceptado y no había ninguna otra puerta.
+   */
+  async discardDraft(actor: RequestUser, id: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const document = await tx.fiscalDocument.findUnique({
+        where: { id },
+        select: { id: true, status: true, docType: true, createdById: true, totalPen: true },
+      });
+      if (!document) throw new NotFoundException('Comprobante no encontrado');
+      if (document.status !== FiscalDocumentStatus.DRAFT) {
+        throw new BadRequestException(
+          'Solo se descarta un borrador: un documento que ya tomó correlativo se da de baja, no se borra',
+        );
+      }
+      if (actor.role !== Role.ADMINISTRADOR && document.createdById !== actor.id) {
+        throw new ForbiddenException('El borrador es de otro vendedor: no puedes descartarlo');
+      }
+
+      // La auditoría **antes** del borrado: después no quedaría a qué apuntar, y RF-95 pide
+      // que la acción quede registrada aunque la fila desaparezca.
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.document.discard-draft',
+        entity: 'fiscal_documents',
+        entityId: id,
+        before: { docType: document.docType, totalPen: document.totalPen.toFixed(4) },
+      });
+      // Las líneas caen por `onDelete: Cascade`.
+      await tx.fiscalDocument.delete({ where: { id } });
+    });
+  }
+
   // -------------------------------------------------------------------------
   // RF-74 — corregir un rechazado
   // -------------------------------------------------------------------------

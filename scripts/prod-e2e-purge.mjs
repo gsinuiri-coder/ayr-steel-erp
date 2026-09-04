@@ -236,9 +236,15 @@ try {
       continue;
     }
     if (document.status === 'DRAFT') {
-      // Un borrador nunca tomó correlativo (D-072): no hay nada que comunicar a SUNAT y
-      // tampoco nada que ensucie producción. Se deja como está.
-      console.log(`  ${document.docType} en borrador: sin correlativo, no hay baja que hacer`);
+      // Un borrador nunca tomó correlativo (D-072), así que no hay baja que comunicar a
+      // SUNAT: se descarta. Es lo único de este módulo que se borra de verdad, y puede
+      // serlo justamente porque no existe fiscalmente.
+      const res = await call(`/invoicing/documents/${document.id}`, { method: 'DELETE' });
+      console.log(
+        res.ok
+          ? `  borrador de ${document.docType} descartado`
+          : `  borrador de ${document.docType} NO se pudo descartar: ${res.body?.message ?? res.status}`,
+      );
       continue;
     }
     const res = await call(`/invoicing/documents/${document.id}/void`, {

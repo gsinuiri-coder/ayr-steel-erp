@@ -68,6 +68,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [voidOpen, setVoidOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [creditOpen, setCreditOpen] = useState(false);
   const [creditReason, setCreditReason] = useState<CreditNoteReason>('ANULACION_OPERACION');
   const [creditQty, setCreditQty] = useState<Record<string, string>>({});
@@ -90,6 +91,17 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   function refresh(): void {
     invalidateInvoicing(queryClient, { documentId: id, orderId: d?.salesOrderId ?? undefined });
   }
+
+  const discard = useMutation({
+    // El API responde 204 sin cuerpo; `api` devuelve `undefined` en ese caso.
+    mutationFn: () => api<undefined>(`/invoicing/documents/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      toast.success('Borrador descartado');
+      refresh();
+      router.push('/comprobantes');
+    },
+    onError,
+  });
 
   const send = useMutation({
     mutationFn: () => api<FiscalDocumentDto>(`/invoicing/documents/${id}/send`, { method: 'POST' }),
@@ -308,6 +320,17 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {isDraft && (
+            <Button
+              variant="outline"
+              disabled={discard.isPending}
+              onClick={() => {
+                setDiscardOpen(true);
+              }}
+            >
+              Descartar borrador
+            </Button>
+          )}
           {isDraft && (
             <Button
               disabled={send.isPending}
@@ -719,6 +742,38 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         {d.sunatHash && <> Hash SUNAT: {d.sunatHash}.</>}
         {d.sendAttempts > 0 && <> Intentos de envío: {d.sendAttempts}.</>}
       </div>
+
+      <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Descartar este borrador</DialogTitle>
+            <DialogDescription>
+              Un borrador no tomó correlativo y SUNAT nunca supo de él, así que se borra sin dejar
+              hueco en la numeración. Es lo único de facturación que se borra de verdad: todo lo
+              demás se anula y se conserva.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDiscardOpen(false);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={discard.isPending}
+              onClick={() => {
+                discard.mutate();
+              }}
+            >
+              Descartar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ReasonDialog
         open={voidOpen}

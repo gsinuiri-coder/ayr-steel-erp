@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -207,6 +209,19 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(createInvoiceSchema)) body: CreateInvoiceInput,
   ): Promise<FiscalDocumentDto> {
     return this.invoicing.create(actor, body);
+  }
+
+  /**
+   * Descarta un borrador. Es lo único que se borra en este módulo, y solo porque un
+   * borrador no existe fiscalmente (D-072).
+   */
+  @Delete('documents/:id')
+  @HttpCode(204)
+  discardDraft(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<void> {
+    return this.invoicing.discardDraft(actor, id);
   }
 
   /** D-072/D-073: toma correlativo, deja el documento emitido y lo manda al PSE. */
