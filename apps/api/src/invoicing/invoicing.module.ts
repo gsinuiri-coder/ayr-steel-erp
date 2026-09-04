@@ -2,7 +2,11 @@ import { Module } from '@nestjs/common';
 import { ENV, type Env } from '../config/env';
 import { ConfigModule } from '../config/config.module';
 import { DocumentsModule } from '../documents/documents.module';
+import { InventoryModule } from '../inventory/inventory.module';
 import { JobsModule } from '../jobs/jobs.module';
+import { DispatchesController } from './dispatches.controller';
+import { DispatchesService } from './dispatches.service';
+import { ReceivablesService } from './receivables.service';
 import { InvoicingController } from './invoicing.controller';
 import { InvoicingSendJob } from './invoicing-send.job';
 import { InvoicingService } from './invoicing.service';
@@ -25,10 +29,14 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
  * ejercita exactamente el mismo camino que una caída real.
  */
 @Module({
-  imports: [ConfigModule, DocumentsModule, JobsModule],
-  controllers: [InvoicingController],
+  // `inventory` porque el despacho **mueve kardex** (regla dura 2): la salida la escribe
+  // `InventoryService`, nunca este módulo.
+  imports: [ConfigModule, DocumentsModule, InventoryModule, JobsModule],
+  controllers: [InvoicingController, DispatchesController],
   providers: [
     InvoicingService,
+    DispatchesService,
+    ReceivablesService,
     InvoicingSendJob,
     {
       provide: ELECTRONIC_INVOICING_PROVIDER,
@@ -39,6 +47,6 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
           : new NullInvoicingProvider(),
     },
   ],
-  exports: [InvoicingService],
+  exports: [InvoicingService, DispatchesService],
 })
 export class InvoicingModule {}

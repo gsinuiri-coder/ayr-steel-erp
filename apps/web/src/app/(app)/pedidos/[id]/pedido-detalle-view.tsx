@@ -137,9 +137,14 @@ export function PedidoDetalleView({ id }: { id: string }) {
             despachar saca la mercadería y cierra el pedido; facturar no lo cierra.
           */}
           {canOperate && (
-            <Button asChild>
-              <Link href={`/comprobantes/nuevo?pedido=${o.id}`}>Emitir comprobante</Link>
-            </Button>
+            <>
+              <Button asChild>
+                <Link href={`/despachos/nuevo?pedido=${o.id}`}>Despachar</Link>
+              </Button>
+              <Button variant="outline" asChild>
+                <Link href={`/comprobantes/nuevo?pedido=${o.id}`}>Emitir comprobante</Link>
+              </Button>
+            </>
           )}
           {isAdmin && canCancel && (
             <Button

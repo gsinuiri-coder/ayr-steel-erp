@@ -15,6 +15,7 @@ import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useDebounced } from '@/lib/use-debounced';
 import { RoleGate } from '@/components/role-gate';
+import { ContingencyCard } from '@/components/invoicing/contingency-card';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -83,6 +84,8 @@ export function ComprobantesView() {
           <Link href="/comprobantes/nuevo">Nuevo comprobante</Link>
         </Button>
       </div>
+
+      <ContingencyCard />
 
       {/*
         El aviso de D-073. "Pendiente" no es un error —es el estado normal de un documento

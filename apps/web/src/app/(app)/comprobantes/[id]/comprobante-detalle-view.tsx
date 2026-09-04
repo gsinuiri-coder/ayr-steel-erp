@@ -10,12 +10,16 @@ import {
   CREDIT_NOTE_REASONS,
   FISCAL_DOC_TYPE_LABELS,
   FULL_CREDIT_NOTE_REASONS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_METHODS,
   PAYMENT_TERMS_LABELS,
   Role,
   businessToday,
   toDecimal,
   type CreditNoteReason,
+  type CustomerPaymentDto,
   type FiscalDocumentDto,
+  type PaymentMethod,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
@@ -25,6 +29,7 @@ import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges'
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -66,6 +71,12 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const [creditOpen, setCreditOpen] = useState(false);
   const [creditReason, setCreditReason] = useState<CreditNoteReason>('ANULACION_OPERACION');
   const [creditQty, setCreditQty] = useState<Record<string, string>>({});
+  const [payOpen, setPayOpen] = useState(false);
+  const [payDate, setPayDate] = useState(businessToday());
+  const [payAmount, setPayAmount] = useState('');
+  const [payMethod, setPayMethod] = useState<PaymentMethod>('TRANSFER');
+  const [payReference, setPayReference] = useState('');
+  const [reversingPayment, setReversingPayment] = useState<CustomerPaymentDto | null>(null);
 
   const document = useQuery({
     queryKey: ['fiscal-document', id],
@@ -174,6 +185,41 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
 
   // Dentro del `RoleGate`: fuera, quien no tiene permiso veía "no se pudo cargar" en
   // lugar de "no tienes permiso", que es justo lo que el guard existe para decir.
+  const addPayment = useMutation({
+    mutationFn: () =>
+      api<FiscalDocumentDto>(`/invoicing/documents/${id}/payments`, {
+        method: 'POST',
+        body: {
+          date: payDate,
+          amountPen: payAmount.trim(),
+          method: payMethod,
+          ...(payReference.trim() ? { reference: payReference.trim() } : {}),
+        },
+      }),
+    onSuccess: () => {
+      toast.success('Cobro registrado');
+      setPayOpen(false);
+      setPayAmount('');
+      setPayReference('');
+      refresh();
+    },
+    onError,
+  });
+
+  const reversePayment = useMutation({
+    mutationFn: ({ paymentId, reason }: { paymentId: string; reason: string }) =>
+      api<FiscalDocumentDto>(`/invoicing/documents/${id}/payments/${paymentId}/reverse`, {
+        method: 'POST',
+        body: { reason },
+      }),
+    onSuccess: () => {
+      toast.success('Cobro revertido: el monto volvió al saldo');
+      setReversingPayment(null);
+      refresh();
+    },
+    onError,
+  });
+
   if (document.isPending) {
     return (
       <RoleGate allow={SALES_ROLES}>
@@ -229,6 +275,13 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const validCreditQty = typedCreditQty.filter((q) => isPositiveDecimal(q));
   // Un motivo parcial sin cantidades acabaría emitiendo una nota **total**; y una cantidad
   // mal escrita, una parcial por el subconjunto equivocado. Las dos cosas se cortan acá.
+  // Solo se cobra lo que existe fiscalmente y todavía debe algo. El saldo cero no
+  // esconde el botón por gusto: cobrar de más lo rechaza el API igual.
+  const canCollect =
+    !isDispatchNote &&
+    d.docType !== 'NOTA_CREDITO' &&
+    (d.status === 'ISSUED' || d.status === 'SEND_ERROR' || d.status === 'ACCEPTED') &&
+    toDecimal(d.balancePen).gt(0);
   const canCreateCreditNote =
     typedCreditQty.length === validCreditQty.length && (isFullReason || validCreditQty.length > 0);
 
@@ -511,6 +564,89 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         </div>
       </section>
 
+      {/*
+        RF-86/RF-87: la cobranza vive en el comprobante porque el saldo es del comprobante
+        (D-075). Una nota de crédito y una guía no se cobran.
+      */}
+      {!isDispatchNote && d.docType !== 'NOTA_CREDITO' && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-medium">Cobros</h2>
+            {canCollect && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setPayAmount(d.balancePen);
+                  setPayOpen(true);
+                }}
+              >
+                Registrar cobro
+              </Button>
+            )}
+          </div>
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>Medio</TableHead>
+                  <TableHead>Referencia</TableHead>
+                  <TableHead className="text-right">Monto</TableHead>
+                  <TableHead>Registrado por</TableHead>
+                  {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {d.payments.map((p) => (
+                  <TableRow key={p.id} className={p.reversedAt !== null ? 'opacity-60' : undefined}>
+                    <TableCell>{formatDate(p.date)}</TableCell>
+                    <TableCell>{PAYMENT_METHOD_LABELS[p.method]}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {p.reference ?? '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {formatMoney(p.amountPen)}
+                      {p.reversedAt !== null && (
+                        <Badge variant="outline" className="ml-2">
+                          Revertido
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm">{p.createdByName ?? '—'}</TableCell>
+                    {isAdmin && (
+                      <TableCell className="text-right">
+                        {p.reversedAt === null && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setReversingPayment(p);
+                            }}
+                          >
+                            Revertir
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
+                {d.payments.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={isAdmin ? 6 : 5}
+                      className="text-center text-muted-foreground"
+                    >
+                      Todavía no hay cobros.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+      )}
+
       {d.creditNotes.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-lg font-medium">Notas de crédito</h2>
@@ -573,6 +709,111 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         pending={voidDocument.isPending}
         onConfirm={(reason) => {
           voidDocument.mutate(reason);
+        }}
+      />
+
+      <Dialog open={payOpen} onOpenChange={setPayOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Registrar cobro de {d.number}</DialogTitle>
+            <DialogDescription>
+              El saldo pendiente es {formatMoney(d.balancePen)}. Un cobro no se borra: si hay que
+              deshacerlo, se revierte y el monto vuelve al saldo.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Fecha</Label>
+              <Input
+                type="date"
+                value={payDate}
+                onChange={(e) => {
+                  setPayDate(e.target.value);
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Monto</Label>
+              <Input
+                inputMode="decimal"
+                value={payAmount}
+                onChange={(e) => {
+                  setPayAmount(e.target.value);
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Medio de pago</Label>
+              <Select
+                value={payMethod}
+                onValueChange={(v) => {
+                  setPayMethod(v as PaymentMethod);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHODS.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {PAYMENT_METHOD_LABELS[m]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Referencia</Label>
+              <Input
+                value={payReference}
+                maxLength={120}
+                placeholder="N.º de operación"
+                onChange={(e) => {
+                  setPayReference(e.target.value);
+                }}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPayOpen(false);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={
+                addPayment.isPending ||
+                !isPositiveDecimal(payAmount) ||
+                toDecimal(isPositiveDecimal(payAmount) ? payAmount : '0').gt(
+                  toDecimal(d.balancePen),
+                )
+              }
+              onClick={() => {
+                addPayment.mutate();
+              }}
+            >
+              Registrar cobro
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ReasonDialog
+        open={reversingPayment !== null}
+        onOpenChange={(open) => {
+          if (!open) setReversingPayment(null);
+        }}
+        title={`Revertir el cobro de ${reversingPayment ? formatMoney(reversingPayment.amountPen) : ''}`}
+        description="El monto vuelve al saldo pendiente. La fila del cobro no se borra: queda marcada, con el motivo en la auditoría."
+        confirmLabel="Revertir cobro"
+        pending={reversePayment.isPending}
+        onConfirm={(reason) => {
+          if (reversingPayment) {
+            reversePayment.mutate({ paymentId: reversingPayment.id, reason });
+          }
         }}
       />
 

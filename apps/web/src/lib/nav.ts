@@ -15,6 +15,7 @@ import {
   Scissors,
   ScrollText,
   ShoppingCart,
+  Send,
   Truck,
   Users,
   UsersRound,
@@ -126,17 +127,15 @@ export const NAV: NavGroup[] = [
       {
         title: 'Despachos',
         href: '/despachos',
-        icon: Truck,
+        icon: Send,
         // El despacho es un acto de almacén (D-074): lo hace planta, no solo el vendedor.
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA],
-        soon: true,
       },
       {
         title: 'Cobranzas',
         href: '/cobranzas',
         icon: Banknote,
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-        soon: true,
       },
     ],
   },
