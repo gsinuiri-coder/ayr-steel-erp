@@ -106,6 +106,10 @@ export function PedidoDetalleView({ id }: { id: string }) {
     (r) => r.productionOrderId !== null && r.status === 'CONSUMED',
   );
   const canCancel = o.status !== 'CANCELLED' && o.status !== 'FULFILLED' && !blockedByProduction;
+  // Un pedido anulado no se despacha ni se factura; uno ya atendido tampoco se despacha,
+  // pero sí se puede seguir facturando, así que el botón de comprobante vive con este
+  // mismo permiso y el API es el que corta lo que ya no queda pendiente.
+  const canOperate = o.status !== 'CANCELLED';
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -127,17 +131,28 @@ export function PedidoDetalleView({ id }: { id: string }) {
             )}
           </p>
         </div>
-        {isAdmin && canCancel && (
-          <Button
-            variant="destructive"
-            disabled={cancel.isPending}
-            onClick={() => {
-              setCancelOpen(true);
-            }}
-          >
-            Anular pedido
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {/*
+            Los dos actos que siguen al pedido, y que corren por separado (D-074):
+            despachar saca la mercadería y cierra el pedido; facturar no lo cierra.
+          */}
+          {canOperate && (
+            <Button asChild>
+              <Link href={`/comprobantes/nuevo?pedido=${o.id}`}>Emitir comprobante</Link>
+            </Button>
+          )}
+          {isAdmin && canCancel && (
+            <Button
+              variant="destructive"
+              disabled={cancel.isPending}
+              onClick={() => {
+                setCancelOpen(true);
+              }}
+            >
+              Anular pedido
+            </Button>
+          )}
+        </div>
       </div>
 
       {consumed.length > 0 && o.status !== 'CANCELLED' && (

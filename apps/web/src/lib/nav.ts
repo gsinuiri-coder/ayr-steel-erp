@@ -118,9 +118,23 @@ export const NAV: NavGroup[] = [
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
       },
       {
-        title: 'Ventas',
-        href: '/ventas',
+        title: 'Comprobantes',
+        href: '/comprobantes',
         icon: ReceiptText,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
+        title: 'Despachos',
+        href: '/despachos',
+        icon: Truck,
+        // El despacho es un acto de almacén (D-074): lo hace planta, no solo el vendedor.
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA],
+        soon: true,
+      },
+      {
+        title: 'Cobranzas',
+        href: '/cobranzas',
+        icon: Banknote,
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
         soon: true,
       },
