@@ -242,7 +242,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const isDispatchNote = d.docType === 'GUIA_REMISION_REMITENTE';
   const isDraft = d.status === 'DRAFT' && !isDispatchNote;
   const canRetry = d.status === 'ISSUED' || d.status === 'SEND_ERROR';
-  const canCorrect = d.status === 'REJECTED' && !isDispatchNote;
+  // Un rechazado que **ya se corrigió** no se vuelve a corregir: el API lo rechaza con un
+  // 409, y lo útil es el enlace a su reemplazo.
+  const canCorrect = d.status === 'REJECTED' && !isDispatchNote && d.replacedByDocumentId === null;
   // Los mismos guardas que `voidDocument`: con un cobro vigente o una nota de crédito
   // viva, la baja se rechaza. Sin esto el usuario escribía el motivo en el diálogo y
   // recién ahí recibía el "no".
@@ -348,6 +350,13 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Corregir y reemitir
             </Button>
           )}
+          {d.replacedByDocumentId && (
+            <Button variant="outline" asChild>
+              <Link href={`/comprobantes/${d.replacedByDocumentId}`}>
+                Ver {d.replacedByDocumentNumber ?? 'la corrección'}
+              </Link>
+            </Button>
+          )}
           {canCreditNote && (
             <Button
               variant="outline"
@@ -394,8 +403,10 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         <Alert variant="destructive">
           <AlertDescription>
             SUNAT rechazó el comprobante{d.rejectionCode ? ` (${d.rejectionCode})` : ''}:{' '}
-            {d.rejectionMessage ?? 'sin detalle'}. El número {d.number} queda en el historial;
-            «Corregir y reemitir» crea un borrador nuevo que tomará otro correlativo.
+            {d.rejectionMessage ?? 'sin detalle'}. El número {d.number} queda en el historial.{' '}
+            {d.replacedByDocumentNumber
+              ? `Ya fue corregido por ${d.replacedByDocumentNumber}.`
+              : '«Corregir y reemitir» crea un borrador nuevo que tomará otro correlativo.'}
           </AlertDescription>
         </Alert>
       )}

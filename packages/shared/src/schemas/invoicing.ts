@@ -477,8 +477,18 @@ export const fiscalDocumentSchema = z.object({
   affectedDocumentId: z.string().uuid().nullable(),
   affectedDocumentNumber: z.string().nullable(),
   creditNoteReason: z.enum(CREDIT_NOTE_REASONS).nullable(),
+  /** El rechazado que este documento corrige (D-072). */
   replacesDocumentId: z.string().uuid().nullable(),
   replacesDocumentNumber: z.string().nullable(),
+  /**
+   * El documento que corrige a este, si es un rechazado que ya se corrigió.
+   *
+   * Existe porque sin él un rechazado era un callejón sin salida en la pantalla: el botón
+   * de corregir seguía ahí y lo único que producía era un 409 nombrando un documento al
+   * que no se podía navegar.
+   */
+  replacedByDocumentId: z.string().uuid().nullable(),
+  replacedByDocumentNumber: z.string().nullable(),
   issueDate: z.string(),
   paymentTerms: z.enum(PAYMENT_TERMS),
   dueDate: z.string().nullable(),

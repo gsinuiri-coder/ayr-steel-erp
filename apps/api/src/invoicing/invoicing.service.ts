@@ -94,6 +94,7 @@ const documentInclude = {
     },
   },
   replacesDocument: { select: { id: true, number: true } },
+  replacedBy: { select: { id: true, number: true } },
   items: { orderBy: { lineNumber: 'asc' }, include: { product: { select: { sku: true } } } },
   payments: { orderBy: { createdAt: 'asc' } },
   creditNotes: {
@@ -2221,6 +2222,8 @@ export class InvoicingService {
       creditNoteReason: row.creditNoteReason,
       replacesDocumentId: row.replacesDocumentId,
       replacesDocumentNumber: row.replacesDocument?.number ?? null,
+      replacedByDocumentId: row.replacedBy?.id ?? null,
+      replacedByDocumentNumber: row.replacedBy?.number ?? null,
       issueDate,
       paymentTerms: row.paymentTerms,
       dueDate,
