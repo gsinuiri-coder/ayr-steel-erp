@@ -815,3 +815,51 @@ UI ensanchan la fase sin resolver nada que el autocompletado no resuelva: `GET
 /dispatches/transport-suggestions` devuelve los valores usados en despachos anteriores, no
 cuesta una tabla, y si mañana hacen falta atributos propios del vehículo (capacidad,
 certificado de inspección) el catálogo entra sin migrar nada de lo ya capturado.
+
+## D-079 — La baja de la guía de remisión no pasa por el puerto
+
+Es la única operación de Fase 5b que no se puede completar desde el sistema, y la primera
+grieta real entre el contrato del puerto (D-071) y lo que una implementación concreta
+soporta. Por eso tiene decisión propia y no una nota al pie.
+
+### Qué pasa
+
+`ElectronicInvoicingProvider.voidDocument` está definido para los cuatro tipos de documento,
+y el adaptador lo implementa mandando la operación de anulación del proveedor. Para una
+factura, una boleta o una nota de crédito funciona. Para una **guía de remisión aceptada**,
+el proveedor responde:
+
+> El documento no existe o no fue enviado a NubeFacT
+
+No es un problema de nuestro payload: la guía existe, está aceptada por SUNAT y el propio
+proveedor la devuelve al consultarla. Su operación de anulación, sencillamente, no la cubre.
+
+### Por qué importa más de lo que parece
+
+Una guía vigente **bloquea la reversa del despacho** (D-074), y con razón: deshacer una
+salida de mercadería que un documento vigente declara dejaría al kardex diciendo que el
+material está en el almacén y a SUNAT diciendo que salió. Sin una vía de baja, ese despacho
+quedaba trabado **para siempre**, sin ningún camino que el usuario pudiera recorrer.
+
+### Las tres salidas, y por qué esta
+
+1. **Debilitar el guardrail** —permitir la reversa con la guía vigente si lo pide un
+   administrador— resuelve el bloqueo rompiendo justo la garantía por la que existe. El
+   guardrail no sobra: sobra la falta de salida.
+2. **Inventar la operación correcta del proveedor.** No se pudo verificar cuál es, y una
+   operación adivinada contra un documento fiscal se paga con un correlativo quemado por
+   intento. Adivinar acá es más caro que en cualquier otro lugar del proyecto.
+3. **Reconciliar**, que es lo elegido: la baja se hace en el panel del PSE y el sistema la
+   **lee**. «Consultar al PSE» sobre la guía usa `consultar_guia` —su consulta propia, no la
+   de anulación—, reconoce el marcador de anulado y la pasa a `VOIDED`, con lo que la
+   reversa del despacho se desbloquea sola. El mensaje del bloqueo dice ese camino completo
+   en vez de limitarse a decir que no se puede.
+
+### Qué significa para el puerto
+
+**La asimetría es de la implementación, no del contrato.** El puerto sigue definiendo
+`voidDocument` para los cuatro tipos, y un PSE que sí soporte la baja de una GRE funciona
+sin cambiar una línea del dominio. Queda anotada acá porque es exactamente el tipo de
+detalle que hay que revisar al cambiar de proveedor (D-071): lo que se hereda de un
+adaptador no es solo el vocabulario, es también **qué operaciones no soporta** — y eso solo
+se descubre corriendo contra el proveedor real, que es lo que costó encontrarla.
