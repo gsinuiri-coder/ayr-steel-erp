@@ -1,6 +1,7 @@
 // Corre los E2E de autenticación (auth.spec.ts), de Fase 1 (fase1.spec.ts), de las fases
 // 2a, 2b, 3, 3b y 4 (fase2a.spec.ts, fase2b.spec.ts, fase3.spec.ts, fase3b.spec.ts,
-// fase4.spec.ts, fase4-bordes.spec.ts) y de la Sesión M-2 (m2-reversa-pago.spec.ts)
+// fase4.spec.ts, fase4-bordes.spec.ts), de la Sesión M-2 (m2-reversa-pago.spec.ts) y de
+// la Fase 5a (fase5a.spec.ts)
 // contra producción (Vercel + Cloud Run), incluidos los escenarios que crean datos
 // (RF-03: usuario desactivado, cambio de rol; Fase 1: acabado, producto, importación,
 // margen; Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y flejes;
@@ -87,6 +88,7 @@ try {
       'e2e/tests/fase4.spec.ts',
       'e2e/tests/fase4-bordes.spec.ts',
       'e2e/tests/m2-reversa-pago.spec.ts',
+      'e2e/tests/fase5a.spec.ts',
     ],
     {
       E2E_BASE_URL: baseUrl,

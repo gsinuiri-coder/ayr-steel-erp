@@ -1031,8 +1031,11 @@ model Quotation {
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  items      QuotationItem[]
-  salesOrder SalesOrder?
+  items       QuotationItem[]
+  /// Pedidos nacidos de esta cotización. Es una lista y no uno solo porque anular un
+  /// pedido la devuelve a `EMITIDA` y se puede volver a confirmar; como mucho uno de
+  /// ellos está vivo a la vez.
+  salesOrders SalesOrder[]
 
   @@index([customerId, status])
   @@index([businessLineId, status])
@@ -1079,7 +1082,14 @@ model SalesOrder {
   id             String           @id @default(uuid()) @db.Uuid
   seq            Int              @unique @default(autoincrement())
   /// Cotización de origen. Null en un pedido directo (línea con cotización opcional).
-  quotationId    String?          @unique @map("quotation_id") @db.Uuid
+  ///
+  /// **No es único a propósito.** Anular un pedido devuelve la cotización a `EMITIDA` si
+  /// sigue vigente (D-065), y desde ahí se puede volver a confirmar: con una restricción
+  /// de unicidad, ese segundo intento chocaría contra el pedido anulado y la cotización
+  /// quedaría inconfirmable para siempre. La regla real —"una cotización tiene como mucho
+  /// un pedido **vivo**"— la sostiene el estado de la cotización, que solo se confirma
+  /// desde `EMITIDA`, bajo el lock de su propia fila.
+  quotationId    String?          @map("quotation_id") @db.Uuid
   quotation      Quotation?       @relation(fields: [quotationId], references: [id])
   customerId     String           @map("customer_id") @db.Uuid
   customer       Customer         @relation(fields: [customerId], references: [id])
@@ -1102,6 +1112,7 @@ model SalesOrder {
 
   @@index([customerId, status])
   @@index([businessLineId, status])
+  @@index([quotationId])
   @@map("sales_orders")
 }
 

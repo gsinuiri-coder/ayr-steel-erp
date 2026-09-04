@@ -12,40 +12,79 @@ const TEST_NAME = { contains: 'E2E', mode: 'insensitive' as const };
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
   try {
-    const [suppliers, finishes, products, coils, purchases, movements, profiles, orders] =
-      await Promise.all([
-        prisma.supplier.findMany({
-          where: { name: TEST_NAME },
-          select: { code: true, isActive: true },
-        }),
-        prisma.finish.findMany({ where: { name: TEST_NAME }, select: { isActive: true } }),
-        prisma.product.findMany({
-          where: { sku: { startsWith: 'BOB' } },
-          select: { sku: true, isActive: true },
-        }),
-        prisma.coil.findMany({
-          where: { supplier: { name: TEST_NAME } },
-          select: { code: true, status: true },
-        }),
-        prisma.purchase.findMany({
-          where: { supplier: { name: TEST_NAME } },
-          select: { series: true, number: true, type: true, status: true, total: true },
-          orderBy: { createdAt: 'asc' },
-        }),
-        prisma.inventoryMovement.count(),
-        // Fase 4: perfiles de prueba (`E2E…`) y sus órdenes de producción. Las piezas que
-        // una OP cerrada dejó en stock se ven en `profileStock`: es lo que `prod:purge-e2e`
-        // tiene que dejar en cero reabriendo la OP y revirtiendo sus reportes (D-060).
-        prisma.product.findMany({
-          where: { sku: { startsWith: 'E2E-' } },
-          select: { id: true, sku: true, isActive: true },
-        }),
-        prisma.productionOrder.findMany({
-          where: { product: { sku: { startsWith: 'E2E-' } } },
-          select: { seq: true, status: true },
-          orderBy: { seq: 'asc' },
-        }),
-      ]);
+    const [
+      suppliers,
+      finishes,
+      products,
+      coils,
+      purchases,
+      movements,
+      profiles,
+      orders,
+      customers,
+      quotations,
+      salesOrders,
+      reservations,
+    ] = await Promise.all([
+      prisma.supplier.findMany({
+        where: { name: TEST_NAME },
+        select: { code: true, isActive: true },
+      }),
+      prisma.finish.findMany({ where: { name: TEST_NAME }, select: { isActive: true } }),
+      prisma.product.findMany({
+        where: { sku: { startsWith: 'BOB' } },
+        select: { sku: true, isActive: true },
+      }),
+      prisma.coil.findMany({
+        where: { supplier: { name: TEST_NAME } },
+        select: { code: true, status: true },
+      }),
+      prisma.purchase.findMany({
+        where: { supplier: { name: TEST_NAME } },
+        select: { series: true, number: true, type: true, status: true, total: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.inventoryMovement.count(),
+      // Fase 4: perfiles de prueba (`E2E…`) y sus órdenes de producción. Las piezas que
+      // una OP cerrada dejó en stock se ven en `profileStock`: es lo que `prod:purge-e2e`
+      // tiene que dejar en cero reabriendo la OP y revirtiendo sus reportes (D-060).
+      prisma.product.findMany({
+        where: { sku: { startsWith: 'E2E-' } },
+        select: { id: true, sku: true, isActive: true },
+      }),
+      prisma.productionOrder.findMany({
+        where: { product: { sku: { startsWith: 'E2E-' } } },
+        select: { seq: true, status: true },
+        orderBy: { seq: 'asc' },
+      }),
+      // Fase 5a: clientes, cotizaciones, pedidos y —lo que de verdad importa— reservas.
+      // Una reserva ACTIVA sobreviviente bloquea merma, corte, cierre y anulación de la
+      // bobina (D-066), así que es el residuo más caro que puede quedar en producción.
+      prisma.customer.findMany({
+        where: { name: TEST_NAME },
+        select: { name: true, isActive: true },
+      }),
+      prisma.quotation.findMany({
+        where: { customer: { name: TEST_NAME } },
+        select: { seq: true, status: true },
+        orderBy: { seq: 'asc' },
+      }),
+      prisma.salesOrder.findMany({
+        where: { customer: { name: TEST_NAME } },
+        select: { seq: true, status: true },
+        orderBy: { seq: 'asc' },
+      }),
+      prisma.reservation.findMany({
+        where: { status: 'ACTIVE' },
+        select: {
+          qty: true,
+          unit: true,
+          itemType: true,
+          itemId: true,
+          salesOrder: { select: { seq: true, customer: { select: { name: true } } } },
+        },
+      }),
+    ]);
 
     // `inventory_balances.item_id` es polimórfico (§3.2): no hay FK que unir, así que el
     // saldo de los perfiles de prueba se pide con los ids ya resueltos.
@@ -81,6 +120,21 @@ async function main(): Promise<void> {
     for (const b of piecesInStock) {
       const sku = profiles.find((p) => p.id === b.itemId)?.sku ?? b.itemId;
       console.warn(`  ${sku} — ${b.qty.toFixed(3)} piezas`);
+    }
+    console.warn(`clientes E2E: ${customers.length} (activos: ${active(customers)})`);
+    console.warn(
+      `cotizaciones E2E: ${quotations.length} [${quotations.map((q) => q.status).join(', ')}]`,
+    );
+    console.warn(
+      `pedidos E2E: ${salesOrders.length} [${salesOrders.map((o) => o.status).join(', ')}]`,
+    );
+    console.warn(`reservas ACTIVAS en toda la base: ${reservations.length}`);
+    for (const r of reservations) {
+      console.warn(
+        `  ${r.itemType} ${r.itemId} — ${r.qty.toFixed(3)} ${r.unit} — PED-${String(
+          r.salesOrder.seq,
+        ).padStart(6, '0')} (${r.salesOrder.customer.name})`,
+      );
     }
     console.warn(`movimientos de kardex en total: ${movements}`);
   } finally {

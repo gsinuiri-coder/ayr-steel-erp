@@ -449,3 +449,173 @@ El chequeo **toma el lock de las filas de los flejes antes de mirar** (`SELECT �
 2. **Nunca prefijar un comando con `cd … &&`**: todo se corre desde la raíz del repo con rutas relativas (`grep -rn "x" apps/api/src`, no `cd apps/api && grep -rn "x" src`). El motivo no es estético: en Fase 0, un `cd apps/api && prisma migrate deploy` aplicó una migración contra la rama de Neon equivocada porque el `cd` cambió qué `.env` se cargaba (ver el hallazgo "migración de producción desactualizada" en `docs/PROGRESO.md`), y el web de PowerShell/Git Bash de esta máquina hace que un `cd` en un comando compuesto dispare además aprobaciones inesperadas. Con rutas relativas desde la raíz, el comando dice exactamente sobre qué opera.
 
 **Consecuencias.** Menos interrupciones sin ampliar la superficie de escritura del agente: ninguno de los comandos agregados puede modificar el árbol de trabajo, la base de datos ni un servicio externo. `git diff`/`git show`/`git log` ya estaban cubiertos por `Bash(git:*)`; se listan aparte para que la intención quede escrita aunque alguien restrinja `git` en el futuro.
+
+## D-064..D-069 — Fase 5a (cotización → confirmación → pedido + reserva)
+
+**Fecha:** 2026-09-03
+
+Fase 5a construye el ciclo comercial **hasta la reserva**. Facturación electrónica
+(Nubefact), guías, despacho y cobranzas son Fase 5b y no se tocan acá. El modelo de fondo ya
+estaba decidido en **D-054** (P-15, resuelta por el dueño en la Sesión M-1); lo que sigue son
+las decisiones que hicieron falta para construirlo.
+
+### El modelo, en cuatro actos
+
+1. **Cotizar** es una simulación de precio: no toca inventario ni promete nada (D-054). Lo
+   único que la cotización hace con el stock es **declarar**, línea por línea, qué se
+   reservaría al confirmarla.
+2. **Emitir** la pasa a `EMITIDA` —el único estado desde el que se confirma— y genera su PDF.
+3. **Confirmar** es el acto del vendedor: crea el pedido **y** las reservas en una sola
+   transacción. Si a una línea no le alcanza el disponible, no se crea nada.
+4. **Consumir**: la orden de producción nacida del pedido monta el material reservado y, al
+   emitir el primer material, marca la reserva `CONSUMIDA`.
+
+### D-064 — El dominio comercial va solo en soles
+
+**Decisión del dueño.** Cotización, pedido, precios de lista y PDF, únicamente en PEN. Sin
+selector de moneda y sin tipo de cambio en ventas. El USD sigue existiendo en compras, con
+conversión obligatoria al TC de la fecha (D-042 ya lleva el kardex en soles).
+
+No es una simplificación de implementación: un precio cotizado en dólares obliga a decidir
+con qué tipo de cambio se congela, qué pasa si el TC se mueve entre la cotización y el
+pedido, y en qué moneda se emite el comprobante. Son tres preguntas de negocio sin respuesta
+hoy, porque la empresa vende en soles. Si algún día cambia, el campo entra junto al TC
+congelado en la cotización, exactamente como ya funciona en compras.
+
+### D-065 — Un solo flujo, con un flag por línea de negocio
+
+`business_lines.quotation_required` decide si la línea **exige** cotización confirmada antes
+de vender (coberturas metálicas, RF-31/D-048) o admite **pedido directo** (drywall, roofing
+UPVC, trading). En v1 solo `metallic-roofing` la exige.
+
+La tentación era construir dos flujos, uno "con cotización" y otro "sin". Eso habría
+duplicado la validación de líneas, el cálculo de totales y la creación de reservas — y es
+justo por ahí por donde se esquivaría RF-31: bastaría que el alta directa olvidara una
+validación para poder vender una cobertura sin cotizar. Con un solo camino
+(`sales-lines.ts` resuelve las líneas para los dos) la regla vive en un dato, no en dos ramas
+de código, y el pedido directo nunca puede admitir lo que la cotización rechaza.
+
+**Qué reserva cada línea.** Con `reserveFromCoilId`/`reserveKg`, la línea promete **kilos de
+una bobina concreta**: es el caso de la cobertura, que se fabrica contra el pedido y cuyo
+producto terminado todavía no existe, así que lo que hay que proteger es la materia prima.
+Sin ellos, promete **el propio producto** en su unidad de venta: el caso del perfil o del
+producto de trading, que se venden de stock. En una línea con cotización obligatoria el
+primer caso es el único admitido — prometer un producto terminado inexistente sería una
+reserva sobre saldo cero, y la confirmación fallaría siempre sin decir por qué.
+
+Declararlo al **cotizar** y materializarlo al **confirmar** es lo que hace que "cotizar no
+reserva" siga siendo cierto sin perder el rastro de qué material se prometió.
+
+### D-066 — El ledger de reservas y la invariante, en dos formas
+
+Una reserva apunta al ítem con el **mismo par `(itemType, itemId)` que usa
+`inventory_balances`**. No es un detalle de implementación: es lo que permite comprobar
+`disponible ≥ reservado` bajo el mismo `FOR UPDATE` de saldo que ya toma el kardex, sin
+inventar un segundo mecanismo de bloqueo que habría que mantener sincronizado con el primero.
+
+La invariante se aplica en **dos formas distintas**, y reconocer que son dos —y no una— es la
+parte que costó pensar:
+
+- **Cantidad** (`assertReservationInvariant`, dentro de `InventoryService.record` y
+  `reverse`). Es el único punto por el que pasa toda salida de stock del sistema (§3.2), así
+  que de un solo golpe cubre merma (RF-17), partido (RF-15), consumo de producción, anulación
+  de compra, anulación de bobina y cualquier ruta que se agregue después. Solo se comprueba
+  cuando el saldo baja.
+- **Custodia** (`assertNotReserved`, función suelta). Para las operaciones que se llevan el
+  ítem entero **sin mover un gramo de kardex**, que son exactamente las que la forma anterior
+  no puede ver: enviar la bobina a un tercero (D-050), asignarla a una orden de producción
+  ajena (D-060) y cerrarla (RF-19: una bobina cerrada no entra a producción).
+
+Ninguna de las dos alcanza sola. La de cantidad no ve un envío a corte; la de custodia no ve
+una merma parcial que deja el saldo por debajo de lo prometido. Es el mismo hueco que D-050
+abrió con `IN_THIRD_PARTY` —y que Fase 3 tuvo que tapar a mano en cuatro sitios— y que D-060
+volvió a abrir con las asignaciones sin kardex. La lección acumulada es que **cada vez que
+algo compromete material sin escribir en el kardex hay que revisar todas las rutas que lo
+tocan antes de escribir la primera línea de UI**, y esta vez se hizo así.
+
+**La excepción imprescindible.** La OP nacida del pedido tiene que poder montar el material
+que ese mismo pedido reservó, así que `assertNotReserved` acepta una lista de reservas
+propias. Sin esa excepción, la reserva se bloquearía a sí misma y la orden que viene a
+cumplirla no podría tomar su propio material.
+
+**El orden en que la reserva se consume.** `report()` marca la reserva `CONSUMIDA` **antes**
+de escribir la salida de kardex. Al revés, la propia reserva bloquearía justo la salida que
+viene a cumplirla. A partir de ese momento el material deja de estar protegido por el ledger
+y pasa a estarlo por el guardrail de D-060 —el fleje está asignado a una OP viva y nadie más
+lo puede tocar—: la promesa no queda desprotegida, cambia de custodio.
+
+**Por qué anular un pedido no mira solo el estado de la reserva.** Una reserva `CONSUMIDA` no
+vuelve atrás (el ledger es append-only, §3.2). Si bastara con que existiera una para bloquear
+la anulación, deshacer la orden de producción no destrabaría nada y el pedido quedaría sin
+poder anularse **para siempre** — exactamente el agujero que D-061 tuvo que cerrar con los
+pagos a proveedor, y que habría dejado residuo permanente en producción. El bloqueo mira si
+hay una **OP viva** (`DRAFT`/`IN_PROGRESS`) fabricando con ese material; con la orden cerrada
+o anulada, anular el pedido es un acto puramente comercial y no toca stock.
+
+### D-067 — Consulta de RUC/DNI, opcional de punta a punta
+
+`GET /customers/lookup` consulta apis.net.pe, el **mismo proveedor** que ya sirve el tipo de
+cambio SUNAT (D-029): un solo token y un solo tercero del que depender. Sin token, con la API
+caída, con el documento inexistente o con un carné de extranjería (que no tiene padrón
+consultable), responde `found:false` con el motivo y **nunca lanza**: el formulario sigue
+aceptando la captura manual y el botón "Buscar" es una comodidad, no un paso del flujo.
+
+Mismo criterio de fallback que D-029, por la misma razón: un maestro de clientes que no se
+puede dar de alta porque un tercero está caído no es una opción. Throttle propio de 20/min,
+igual que la subida de XML de compras, porque cada llamada sale con nuestro token y un
+formulario en bucle consumiría la cuota compartida con el tipo de cambio.
+
+### D-068 — Precios, numeración y PDF
+
+**Precio de lista único por producto** en el maestro (`products.list_price_pen`, sin IGV, en
+soles). El vendedor lo puede editar en la línea y la cotización guarda **los dos**: guardar
+solo el cotizado perdería la referencia contra la que se dio el descuento; guardar solo el de
+lista perdería lo que de verdad se le prometió al cliente. Listas múltiples o por cliente
+quedan diferidas y entran, si hacen falta, como una tabla aparte que sobreescriba este valor
+— sin tocar nada de lo construido.
+
+**IGV fijo del 18 %**, calculado sobre el subtotal **ya redondeado** a la escala de dinero, y
+el total del documento como `Σ subtotales + Σ IGV` y no como suma de totales de línea ya
+redondeados. La aritmética vive en `@ayr/shared` (`salesLineTotals`), así que el número que
+el vendedor ve mientras tipea es exactamente el que el API guarda — mismo criterio que las
+constantes del partido (RF-15) y el kilo por pieza (D-059).
+
+**Numeración** por `serial` de Postgres: `COT-nnnnnn` y `PED-nnnnnn`, igual que `OP-nnnnnn`
+(D-058). Evita el contador propio con lock que ya costó una corrección en el código de bobina
+(RF-13).
+
+**PDF** de la cotización subido a R2 al emitir. La subida va **fuera** de la transacción: es
+una llamada de red a un servicio externo, y sostenerla dentro dejaría una transacción de
+Postgres abierta a merced de la latencia de R2. Si falla, la cotización queda emitida igual y
+sin PDF, que se regenera reemitiendo o al pedir la descarga — el hecho de negocio es emitir,
+el archivo es un adjunto.
+
+### D-069 — Vigencia y vencimiento
+
+`DRAFT` → `EMITTED` → `CONFIRMED` | `EXPIRED` | `CANCELLED`. Vigencia por defecto de 7 días,
+editable al crear la cotización.
+
+**El job diario no es la regla.** Un trabajo de pg-boss a las 05:00 UTC (medianoche en Lima,
+así que una cotización "válida hasta el 10" se puede confirmar todo el día 10 hora local)
+marca `EXPIRED` las emitidas cuya fecha pasó, y `POST /sales/quotations/expire` hace lo mismo
+bajo demanda. Pero el API vive en Cloud Run con **escalado a cero** (§3.6): una instancia
+dormida no ejecuta ningún cron, así que un vencimiento que dependiera solo del job sería un
+vencimiento que a veces no ocurre — y "a veces no ocurre" sobre una regla comercial es peor
+que no tener la regla. Por eso `confirm()` revalida la vigencia por su cuenta y rechaza una
+cotización vencida aunque su estado siga diciendo `EMITTED`. El job pone al día la lista; la
+verdad la sostiene la validación.
+
+**Anular el pedido devuelve la cotización a `EMITIDA`** si sigue vigente (y a `EXPIRED` si
+no), de modo que el cliente puede volver a aceptarla. Eso obligó a quitar la restricción de
+unicidad de `sales_orders.quotation_id`: con ella, el segundo intento de confirmar chocaba
+contra el pedido anulado y la cotización quedaba inconfirmable para siempre. La regla real
+—"una cotización tiene como mucho un pedido **vivo**"— la sostiene el estado de la
+cotización, que solo se confirma desde `EMITIDA` y bajo el lock de su propia fila.
+
+### Las reversas van en esta misma fase
+
+Por la lección de D-051 y D-060: anular la cotización (cualquier estado no confirmado),
+anular el pedido (libera las reservas activas) y liberar una reserva a mano (D-054, solo
+ADMINISTRADOR, siempre con motivo). Todas "todo o nada", todas idempotentes, todas con motivo
+que va al `audit_log` (RF-95). Cerrar el hueco después cuesta una sesión entera y deja
+residuos en producción mientras tanto.

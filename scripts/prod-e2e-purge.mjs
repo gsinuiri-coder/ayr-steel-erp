@@ -168,6 +168,91 @@ try {
     );
   }
 
+  // -1.5) Pedidos y cotizaciones E2E (Fase 5a, D-054/D-066). Van después de las órdenes
+  //       de producción —una OP viva fabricando con material reservado bloquea la
+  //       anulación del pedido— y **antes** de todo lo demás: una reserva `ACTIVA` hace
+  //       fallar la anulación de la bobina, la de su compra, el envío a corte y el cierre.
+  //       Es el mismo tipo de bloqueo transversal que D-060 introdujo con los flejes.
+  //
+  //       Anular el pedido libera sus reservas; anular la cotización cierra el documento.
+  //       El orden importa: una cotización confirmada no se anula hasta que su pedido lo
+  //       está (el API lo exige, y con razón: es lo que libera el material).
+  const salesOrders = await call('/sales/orders');
+  const e2eSalesOrders = (Array.isArray(salesOrders.body) ? salesOrders.body : []).filter(
+    // Con separador, mismo criterio que los proveedores `E2E …` y los SKU `E2E-`: `E2E` a
+    // secas alcanzaría a un cliente real cuyo nombre empiece con esas tres letras, y esto
+    // corre contra producción liberando material.
+    (o) =>
+      typeof o.customerName === 'string' &&
+      o.customerName.startsWith('E2E ') &&
+      o.status !== 'CANCELLED',
+  );
+  console.log(`Pedidos E2E vivos: ${e2eSalesOrders.length}`);
+  for (const order of e2eSalesOrders) {
+    if (dryRun) {
+      console.log(`  [simulado] anular el pedido ${order.code} y liberar sus reservas`);
+      continue;
+    }
+    const res = await call(`/sales/orders/${order.id}/cancel`, {
+      method: 'POST',
+      body: { reason: REASON },
+    });
+    console.log(
+      res.ok
+        ? `  pedido ${order.code} anulado; sus reservas quedan liberadas`
+        : `  pedido ${order.code} NO se pudo anular: ${res.body?.message ?? res.status}`,
+    );
+  }
+
+  const quotations = await call('/sales/quotations');
+  const e2eQuotations = (Array.isArray(quotations.body) ? quotations.body : []).filter(
+    (q) =>
+      typeof q.customerName === 'string' &&
+      q.customerName.startsWith('E2E ') &&
+      q.status !== 'CANCELLED',
+  );
+  console.log(`Cotizaciones E2E vivas: ${e2eQuotations.length}`);
+  for (const quotation of e2eQuotations) {
+    if (dryRun) {
+      console.log(`  [simulado] anular la cotización ${quotation.code}`);
+      continue;
+    }
+    const res = await call(`/sales/quotations/${quotation.id}/cancel`, {
+      method: 'POST',
+      body: { reason: REASON },
+    });
+    console.log(
+      res.ok
+        ? `  cotización ${quotation.code} anulada`
+        : `  cotización ${quotation.code} NO se pudo anular: ${res.body?.message ?? res.status}`,
+    );
+  }
+
+  // Quedan reservas sueltas si un pedido no se pudo anular; se liberan una por una para
+  // que ninguna bloquee los pasos siguientes, y el log dice cuáles fueron.
+  const reservations = await call('/sales/reservations?status=ACTIVE');
+  const e2eReservations = (Array.isArray(reservations.body) ? reservations.body : []).filter(
+    (r) => typeof r.customerName === 'string' && r.customerName.startsWith('E2E '),
+  );
+  if (e2eReservations.length > 0) {
+    console.log(`Reservas E2E todavía activas: ${e2eReservations.length}`);
+    for (const reservation of e2eReservations) {
+      if (dryRun) {
+        console.log(`  [simulado] liberar la reserva de ${reservation.itemLabel}`);
+        continue;
+      }
+      const res = await call(`/sales/reservations/${reservation.id}/release`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  reserva de ${reservation.itemLabel} (${reservation.salesOrderCode}) liberada`
+          : `  reserva de ${reservation.itemLabel} NO se pudo liberar: ${res.body?.message ?? res.status}`,
+      );
+    }
+  }
+
   /**
    * Revierte las mermas de prueba vivas sobre flejes E2E (Fase 3b: el E2E de "reversa
    * bloqueada por fleje consumido" registra una merma a propósito).
@@ -375,6 +460,30 @@ try {
     );
   }
 
+  // 2.5) Clientes E2E (Fase 5a): baja lógica, igual que la de proveedores y acabados que
+  //      cada spec hace en su `finally`. Van al final porque un cliente desactivado no
+  //      impide anular sus documentos, pero un documento vivo sí deja al cliente en uso.
+  const customers = await call('/customers');
+  const e2eCustomers = (Array.isArray(customers.body) ? customers.body : []).filter(
+    (c) => typeof c.name === 'string' && c.name.startsWith('E2E ') && c.isActive,
+  );
+  console.log(`Clientes E2E activos: ${e2eCustomers.length}`);
+  for (const customer of e2eCustomers) {
+    if (dryRun) {
+      console.log(`  [simulado] desactivar el cliente ${customer.name}`);
+      continue;
+    }
+    const res = await call(`/customers/${customer.id}`, {
+      method: 'PATCH',
+      body: { isActive: false },
+    });
+    console.log(
+      res.ok
+        ? `  cliente ${customer.name} desactivado`
+        : `  cliente ${customer.name} NO se pudo desactivar: ${res.body?.message ?? res.status}`,
+    );
+  }
+
   // 3) Estado final del valorizado, para dejarlo por escrito en el log.
   const remaining = await call('/coils?status=OPEN');
   const withStock = (Array.isArray(remaining.body) ? remaining.body : []).filter(
@@ -383,6 +492,14 @@ try {
   console.log(`Bobinas abiertas con saldo tras la limpieza: ${withStock.length}`);
   for (const coil of withStock) {
     console.log(`  ${coil.code} — ${coil.supplierName} — ${coil.availableKg} kg`);
+  }
+  // Una reserva viva sobreviviente es el residuo más caro de esta fase: bloquea merma,
+  // corte, cierre y anulación de la bobina, así que se deja dicho explícitamente.
+  const stillReserved = await call('/sales/reservations?status=ACTIVE');
+  const liveReservations = Array.isArray(stillReserved.body) ? stillReserved.body : [];
+  console.log(`Reservas activas en producción tras la limpieza: ${liveReservations.length}`);
+  for (const r of liveReservations) {
+    console.log(`  ${r.itemLabel} — ${r.qty} ${r.unit} — ${r.salesOrderCode} (${r.customerName})`);
   }
 } catch (err) {
   failed = true;

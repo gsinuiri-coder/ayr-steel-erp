@@ -43,7 +43,7 @@ const formSchema = z.object({
   listPricePen: z
     .string()
     .trim()
-    .refine((v) => v === '' || /^d+(.d+)?$/.test(v), 'Debe ser un número decimal')
+    .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Debe ser un número decimal')
     .refine((v) => v === '' || Number.parseFloat(v) > 0, 'Debe ser mayor a cero'),
 });
 type FormValues = z.infer<typeof formSchema>;

@@ -8,6 +8,7 @@ import {
 import {
   Prisma,
   QuotationStatus,
+  SalesOrderStatus,
   type BusinessLineCode,
   type InventoryItemType,
 } from '@prisma/client';
@@ -45,7 +46,14 @@ const quotationInclude = {
     orderBy: { lineNumber: 'asc' },
     include: { product: { select: { sku: true, name: true } } },
   },
-  salesOrder: { select: { id: true, seq: true } },
+  // Solo el pedido **vivo**: anular uno devuelve la cotización a EMITIDA y permite
+  // confirmarla otra vez, así que una cotización puede acumular varios pedidos anulados y
+  // como mucho uno vigente. Mostrar el anulado haría creer que sigue confirmada.
+  salesOrders: {
+    where: { status: { not: SalesOrderStatus.CANCELLED } },
+    select: { id: true, seq: true },
+    take: 1,
+  },
 } satisfies Prisma.QuotationInclude;
 
 type QuotationRow = Prisma.QuotationGetPayload<{ include: typeof quotationInclude }>;
@@ -505,6 +513,7 @@ export class QuotationsService {
     actors: Map<string, string>,
   ): QuotationDto {
     const validUntil = row.validUntil.toISOString().slice(0, 10);
+    const liveOrder = row.salesOrders[0];
     return {
       id: row.id,
       code: quotationCode(row.seq),
@@ -520,8 +529,8 @@ export class QuotationsService {
       igvPen: row.igvPen.toFixed(4),
       totalPen: row.totalPen.toFixed(4),
       notes: row.notes,
-      salesOrderId: row.salesOrder?.id ?? null,
-      salesOrderCode: row.salesOrder ? salesOrderCode(row.salesOrder.seq) : null,
+      salesOrderId: liveOrder?.id ?? null,
+      salesOrderCode: liveOrder ? salesOrderCode(liveOrder.seq) : null,
       pdfKey: row.pdfKey,
       items: row.items.map((i) => toSalesItemDto(i, labels.get(i.reserveItemId) ?? '')),
       createdAt: row.createdAt.toISOString(),

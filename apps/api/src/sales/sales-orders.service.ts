@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  ProductionOrderStatus,
   QuotationStatus,
   ReservationStatus,
   SalesOrderStatus,
@@ -69,9 +70,8 @@ type ReserveRef =
  *
  * Confirmar una cotización crea el pedido **y** sus reservas en una sola transacción: si
  * una sola línea no tiene disponible, no se crea nada (D-054, "falla completa, nunca
- * parcial"). Anular el pedido libera las reservas por el mismo camino, y se bloquea si una
- * OP ya consumió una — ahí la promesa dejó de ser una promesa y pasó a ser material que
- * salió del almacén.
+ * parcial"). Anular el pedido libera las reservas por el mismo camino, y se bloquea
+ * mientras una orden de producción viva esté fabricando con ese material.
  */
 @Injectable()
 export class SalesOrdersService {
@@ -337,9 +337,19 @@ export class SalesOrdersService {
   // -------------------------------------------------------------------------
 
   /**
-   * Anula el pedido y libera sus reservas activas. Se bloquea si una OP ya consumió alguna:
-   * ahí el material salió del almacén y devolverlo es asunto de las reversas de producción
-   * (D-060), no de una anulación comercial.
+   * Anula el pedido y libera sus reservas activas.
+   *
+   * Se bloquea mientras una **OP viva** (`DRAFT`/`IN_PROGRESS`) esté fabricando contra una
+   * reserva ya consumida: ahí hay material en la máquina comprometido con este pedido, y
+   * anularlo dejaría a esa orden huérfana. El bloqueo mira el estado de la orden y no solo
+   * el de la reserva, porque una reserva `CONSUMIDA` **no vuelve atrás** (append-only,
+   * §3.2): si bastara con que existiera, anular la OP no destrabaría nada y el pedido
+   * quedaría sin poder anularse para siempre — exactamente el agujero que D-061 tuvo que
+   * cerrar con los pagos a proveedor.
+   *
+   * Con la OP cerrada o anulada no hay nada que liberar: el material ya salió (o ya se
+   * devolvió por las reversas de producción, D-060) y anular el pedido es un acto
+   * puramente comercial.
    *
    * Si el pedido venía de una cotización, esa cotización vuelve a `EMITIDA` cuando sigue
    * vigente — el cliente puede volver a aceptarla— y queda `VENCIDA` cuando ya no.
@@ -356,18 +366,23 @@ export class SalesOrdersService {
 
       const reservations = await tx.reservation.findMany({
         where: { salesOrderId: id },
-        include: { productionOrders: { select: { seq: true }, take: 1 } },
+        include: {
+          productionOrders: {
+            where: {
+              status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+            },
+            select: { seq: true },
+            take: 1,
+          },
+        },
       });
-      const consumed = reservations.filter((r) => r.status === ReservationStatus.CONSUMED);
-      if (consumed.length > 0) {
-        const detail = consumed
-          .map((r) => {
-            const op = r.productionOrders[0];
-            return op ? `orden ${productionOrderCode(op.seq)}` : 'una orden de producción';
-          })
-          .join(', ');
+      const blocking = reservations.flatMap((r) =>
+        r.status === ReservationStatus.CONSUMED ? r.productionOrders : [],
+      );
+      if (blocking.length > 0) {
+        const detail = blocking.map((op) => `orden ${productionOrderCode(op.seq)}`).join(', ');
         throw new BadRequestException(
-          `No se puede anular: ${detail} ya consumió el material reservado. Revierte o anula la orden de producción primero.`,
+          `No se puede anular: ${detail} está fabricando con el material reservado. Anula o cierra la orden de producción primero.`,
         );
       }
 
