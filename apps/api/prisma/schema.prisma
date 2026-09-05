@@ -179,6 +179,10 @@ enum PaymentMethod {
   TRANSFER
   CHECK
   DEPOSIT
+  /// Tarjeta de débito o crédito por POS bancario (Fase 7b, D-101).
+  CARD
+  /// Billetera móvil: Yape, Plin y equivalentes (Fase 7b, D-101).
+  WALLET
   OTHER
 }
 
@@ -351,10 +355,11 @@ enum CreditNoteReason {
 /// Modalidad de traslado de un despacho (catálogo 18 de SUNAT, D-078). Se elige **por
 /// despacho**, no en configuración: la decide el envío concreto.
 enum TransferMode {
-  /// 02 — transporte privado: vehículo y conductor propios.
   PRIVATE
-  /// 01 — transporte público: la carga va con un transportista tercero.
   PUBLIC
+  /// Recojo en mostrador (Fase 7b, D-103): se lo lleva el comprador. Sin vehículo, sin
+  /// transportista y sin guía de remisión remitente — el traslado no es nuestro.
+  PICKUP
 }
 
 /// Estado de un despacho (D-074). Mismo criterio que `CoilSplitStatus` y
@@ -378,16 +383,18 @@ enum ImportBatchStatus {
 }
 
 model User {
-  id                 String    @id @default(uuid()) @db.Uuid
-  email              String    @unique @db.VarChar(160)
-  name               String    @db.VarChar(120)
-  passwordHash       String    @map("password_hash")
+  id                 String        @id @default(uuid()) @db.Uuid
+  email              String        @unique @db.VarChar(160)
+  name               String        @db.VarChar(120)
+  passwordHash       String        @map("password_hash")
   role               Role
-  active             Boolean   @default(true)
-  mustChangePassword Boolean   @default(false) @map("must_change_password")
-  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  active             Boolean       @default(true)
+  mustChangePassword Boolean       @default(false) @map("must_change_password")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions           Session[]
+  /// Turnos de caja del punto de venta (Fase 7b, D-101).
+  cashSessions       CashSession[] @relation("CashSessionUser")
 
   @@map("users")
 }
@@ -1256,8 +1263,8 @@ model QuotationItem {
 /// de un alta directa. Confirmar crea el pedido y sus reservas en **una sola
 /// transacción**: si una línea no tiene disponible, no se crea nada (D-054).
 model SalesOrder {
-  id             String           @id @default(uuid()) @db.Uuid
-  seq            Int              @unique @default(autoincrement())
+  id                   String           @id @default(uuid()) @db.Uuid
+  seq                  Int              @unique @default(autoincrement())
   /// Cotización de origen. Null en un pedido directo (línea con cotización opcional).
   ///
   /// **No es único a propósito.** Anular un pedido devuelve la cotización a `EMITIDA` si
@@ -1266,36 +1273,38 @@ model SalesOrder {
   /// quedaría inconfirmable para siempre. La regla real —"una cotización tiene como mucho
   /// un pedido **vivo**"— la sostiene el estado de la cotización, que solo se confirma
   /// desde `EMITIDA`, bajo el lock de su propia fila.
-  quotationId    String?          @map("quotation_id") @db.Uuid
-  quotation      Quotation?       @relation(fields: [quotationId], references: [id])
-  customerId     String           @map("customer_id") @db.Uuid
-  customer       Customer         @relation(fields: [customerId], references: [id])
-  businessLineId String           @map("business_line_id") @db.Uuid
-  businessLine   BusinessLine     @relation(fields: [businessLineId], references: [id])
-  status         SalesOrderStatus @default(CONFIRMED)
-  issueDate      DateTime         @map("issue_date") @db.Date
-  subtotalPen    Decimal          @map("subtotal_pen") @db.Decimal(18, 4)
-  igvPen         Decimal          @map("igv_pen") @db.Decimal(18, 4)
-  totalPen       Decimal          @map("total_pen") @db.Decimal(18, 4)
-  notes          String?          @db.VarChar(500)
-  createdById    String           @map("created_by_id") @db.Uuid
-  cancelledById  String?          @map("cancelled_by_id") @db.Uuid
-  cancelledAt    DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  quotationId          String?          @map("quotation_id") @db.Uuid
+  quotation            Quotation?       @relation(fields: [quotationId], references: [id])
+  customerId           String           @map("customer_id") @db.Uuid
+  customer             Customer         @relation(fields: [customerId], references: [id])
+  businessLineId       String           @map("business_line_id") @db.Uuid
+  businessLine         BusinessLine     @relation(fields: [businessLineId], references: [id])
+  status               SalesOrderStatus @default(CONFIRMED)
+  issueDate            DateTime         @map("issue_date") @db.Date
+  subtotalPen          Decimal          @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen               Decimal          @map("igv_pen") @db.Decimal(18, 4)
+  totalPen             Decimal          @map("total_pen") @db.Decimal(18, 4)
+  notes                String?          @db.VarChar(500)
+  createdById          String           @map("created_by_id") @db.Uuid
+  cancelledById        String?          @map("cancelled_by_id") @db.Uuid
+  cancelledAt          DateTime?        @map("cancelled_at") @db.Timestamptz(3)
   /// Fecha prometida de entrega (Fase 7, D-096). Opcional; el vendedor la fija solo al
   /// confirmar/crear el pedido, después solo ADMINISTRADOR (`PATCH .../promised-delivery-date`).
-  promisedDeliveryDate DateTime?  @map("promised_delivery_date") @db.Date
+  promisedDeliveryDate DateTime?        @map("promised_delivery_date") @db.Date
   /// Prioridad manual excepcional de la cola de producción (D-094): cachea el último valor
   /// vigente para ordenar sin releer `audit_log`, que sigue siendo la fuente de "quién y cuándo".
-  priorityAt     DateTime?        @map("priority_at") @db.Timestamptz(3)
-  priorityById   String?          @map("priority_by_id") @db.Uuid
-  priorityReason String?          @map("priority_reason") @db.VarChar(500)
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  priorityAt           DateTime?        @map("priority_at") @db.Timestamptz(3)
+  priorityById         String?          @map("priority_by_id") @db.Uuid
+  priorityReason       String?          @map("priority_reason") @db.VarChar(500)
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   items           SalesOrderItem[]
   reservations    Reservation[]
   fiscalDocuments FiscalDocument[]
   dispatches      Dispatch[]
+  /// Venta de mostrador que creó este pedido (Fase 7b, D-100). Null en el resto.
+  posSale         PosSale?
 
   @@index([customerId, status])
   @@index([businessLineId, status])
@@ -1542,6 +1551,8 @@ model FiscalDocument {
 
   items    FiscalDocumentItem[]
   payments CustomerPayment[]
+  /// Venta de mostrador que emitió este comprobante (Fase 7b, D-100). Null en el resto.
+  posSale  PosSale?
 
   @@index([status, docType])
   @@index([customerId, status])
@@ -1646,6 +1657,8 @@ model Dispatch {
   /// Guías de remisión emitidas para este despacho. Es una lista y no una sola porque una
   /// guía rechazada conserva su correlativo y la corrección se emite aparte (D-072).
   documents FiscalDocument[]
+  /// Venta de mostrador que creó este despacho (Fase 7b, D-100). Null en el resto.
+  posSale   PosSale?
 
   @@index([salesOrderId, status])
   @@index([status, dispatchDate])
@@ -1713,6 +1726,9 @@ model CustomerPayment {
   reversedById String?   @map("reversed_by_id") @db.Uuid
   reversedAt   DateTime? @map("reversed_at") @db.Timestamptz(3)
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  /// Venta de mostrador que registró este cobro (Fase 7b, D-100). Null en el resto.
+  posSale PosSale?
 
   @@index([documentId])
   @@map("customer_payments")
@@ -1819,4 +1835,122 @@ model SalesOrderItemPiece {
   @@unique([salesOrderItemId, lineNumber])
   @@index([salesOrderItemId])
   @@map("sales_order_item_pieces")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 7b — punto de venta de mostrador (RF-60; D-098..D-104)
+// ---------------------------------------------------------------------------
+
+/// Estado de un turno de caja (D-101). Un usuario tiene como mucho un turno `OPEN`.
+enum CashSessionStatus {
+  OPEN
+  CLOSED
+}
+
+/// Estado de una venta de mostrador (D-100). `VOIDED` es el resultado de la cadena de
+/// reversas encadenadas; la fila nunca se borra, igual que el resto del proyecto.
+enum PosSaleStatus {
+  ACTIVE
+  VOIDED
+}
+
+/// Turno de caja del punto de venta (D-101).
+///
+/// Existe porque **nada más en el sistema sabe a qué turno pertenece un cobro**: el
+/// `customer_payments` de D-075 registra cuánto y con qué medio, no en qué caja entró. El
+/// arqueo del cierre compara el efectivo esperado —apertura más las ventas en efectivo del
+/// turno— contra lo contado, y guarda la diferencia con su motivo: es un hecho del turno,
+/// no algo que se pueda recalcular después de que alguien cuente los billetes.
+///
+/// Los medios distintos de efectivo **no entran al arqueo** y sí al resumen: una venta con
+/// tarjeta o Yape no pone billetes en el cajón, así que sumarla al esperado haría que toda
+/// caja con tarjetas cerrara con faltante.
+model CashSession {
+  id     String            @id @default(uuid()) @db.Uuid
+  seq    Int               @unique @default(autoincrement())
+  status CashSessionStatus @default(OPEN)
+
+  /// Dueño del turno. Un usuario abre y cierra su propia caja (D-101).
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation("CashSessionUser", fields: [userId], references: [id])
+
+  /// Copia de `userId` **mientras el turno está abierto**, `null` en cuanto se cierra.
+  ///
+  /// Existe solo para que el índice único de abajo diga "un turno abierto por usuario"
+  /// en la base: Postgres no cuenta los nulos en un índice único, así que los turnos
+  /// cerrados no se estorban entre sí. Sin esto la regla viviría únicamente en el
+  /// servicio, y dos aperturas simultáneas del mismo cajero —dos pestañas, un doble
+  /// toque— dejarían la caja partida en dos turnos que nadie sabría cuadrar.
+  /// Un `CHECK` en la migración obliga a que valga `user_id` si y solo si está `OPEN`.
+  openUserId String? @unique @map("open_user_id") @db.Uuid
+
+  /// Monto con el que arranca el cajón. En soles, siempre (D-064).
+  openingAmountPen Decimal  @map("opening_amount_pen") @db.Decimal(18, 4)
+  openedAt         DateTime @default(now()) @map("opened_at") @db.Timestamptz(3)
+  openingNotes     String?  @map("opening_notes") @db.VarChar(500)
+
+  /// Arqueo del cierre. Los cuatro van juntos o van todos en null: un turno abierto no
+  /// tiene arqueo, y uno cerrado siempre lo tiene (`CHECK` en la migración).
+  ///
+  /// `expectedCashPen` se **congela** al cerrar en vez de recalcularse: una reversa
+  /// posterior de una venta cambiaría el esperado de un turno ya arqueado y el papel
+  /// firmado por el cajero dejaría de coincidir con la pantalla.
+  expectedCashPen Decimal?  @map("expected_cash_pen") @db.Decimal(18, 4)
+  countedCashPen  Decimal?  @map("counted_cash_pen") @db.Decimal(18, 4)
+  differencePen   Decimal?  @map("difference_pen") @db.Decimal(18, 4)
+  /// Motivo de la diferencia. Obligatorio cuando `differencePen != 0` (D-101).
+  closingNotes    String?   @map("closing_notes") @db.VarChar(500)
+  closedAt        DateTime? @map("closed_at") @db.Timestamptz(3)
+  closedById      String?   @map("closed_by_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sales PosSale[]
+
+  @@index([userId, status])
+  @@index([status, openedAt])
+  @@map("cash_sessions")
+}
+
+/// Una venta de mostrador (D-099, D-100).
+///
+/// **No duplica nada de lo que ya existe**: el pedido, el despacho, el comprobante y el
+/// cobro son las filas de siempre, creadas por los servicios de siempre. Esta fila guarda
+/// lo único que no se puede derivar de ellas —que los cuatro nacieron juntos en el
+/// mostrador, en este turno de caja— y es lo que permite anular la venta como una cadena
+/// de reversas identificable en vez de cuatro operaciones sueltas.
+model PosSale {
+  id     String        @id @default(uuid()) @db.Uuid
+  seq    Int           @unique @default(autoincrement())
+  status PosSaleStatus @default(ACTIVE)
+
+  cashSessionId String      @map("cash_session_id") @db.Uuid
+  cashSession   CashSession @relation(fields: [cashSessionId], references: [id])
+
+  /// Los cuatro documentos de la venta. Únicos: un pedido de mostrador no se vuelve a
+  /// vender, y sin la unicidad dos filas de POS podrían reclamar la misma cadena.
+  salesOrderId      String          @unique @map("sales_order_id") @db.Uuid
+  salesOrder        SalesOrder      @relation(fields: [salesOrderId], references: [id])
+  dispatchId        String          @unique @map("dispatch_id") @db.Uuid
+  dispatch          Dispatch        @relation(fields: [dispatchId], references: [id])
+  fiscalDocumentId  String          @unique @map("fiscal_document_id") @db.Uuid
+  fiscalDocument    FiscalDocument  @relation(fields: [fiscalDocumentId], references: [id])
+  /// Cobro de la venta. Se conserva aunque la reversa lo marque `reversedAt`.
+  customerPaymentId String          @unique @map("customer_payment_id") @db.Uuid
+  customerPayment   CustomerPayment @relation(fields: [customerPaymentId], references: [id])
+
+  /// Medio de pago y total, copiados del cobro para poder cuadrar la caja sin recorrer
+  /// cuatro tablas por venta. El cobro sigue siendo la fuente de verdad.
+  method   PaymentMethod
+  totalPen Decimal       @map("total_pen") @db.Decimal(18, 4)
+
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  voidedById  String?   @map("voided_by_id") @db.Uuid
+  voidedAt    DateTime? @map("voided_at") @db.Timestamptz(3)
+  voidReason  String?   @map("void_reason") @db.VarChar(500)
+
+  @@index([cashSessionId, status])
+  @@map("pos_sales")
 }

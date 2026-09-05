@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
+  TransferMode,
   Unit,
   dispatchCode,
   salesOrderCode,
@@ -111,203 +112,220 @@ export class DispatchesService {
   // -------------------------------------------------------------------------
 
   async create(actor: RequestUser, input: CreateDispatchInput): Promise<DispatchDto> {
-    const id = await this.prisma.$transaction(
-      async (tx) => {
-        // Lock del pedido primero, igual que `SalesOrdersService.cancel`: dos despachos
-        // simultáneos del mismo pedido se serializan en vez de repartirse el pendiente.
-        await tx.$queryRaw`
-          SELECT "id" FROM "sales_orders" WHERE "id" = ${input.salesOrderId}::uuid FOR UPDATE
-        `;
-        const order = await tx.salesOrder.findUnique({
-          where: { id: input.salesOrderId },
-          include: { items: { orderBy: { lineNumber: 'asc' } } },
-        });
-        if (!order) throw new NotFoundException('Pedido no encontrado');
-        if (order.status === SalesOrderStatus.CANCELLED) {
-          throw new BadRequestException('El pedido está anulado: no se puede despachar');
-        }
-
-        const byId = new Map(order.items.map((i) => [i.id, i]));
-        const dispatchedBefore = await this.dispatchedByItem(
-          tx,
-          order.items.map((i) => i.id),
-        );
-
-        // Resolución de líneas. Se hace entera antes de tocar kardex para que una línea
-        // que no cabe no deje al despacho a medias: todo o nada, como el resto del proyecto.
-        const lines = [];
-        for (const item of input.items) {
-          const orderItem = byId.get(item.salesOrderItemId);
-          if (!orderItem) {
-            throw new BadRequestException('Hay una línea que no pertenece a este pedido');
-          }
-          const qty = toDecimal(item.qty);
-          const pending = pendingQty(
-            orderItem.qty.toString(),
-            dispatchedBefore.get(orderItem.id) ?? new Decimal(0),
-          );
-          if (qty.gt(pending)) {
-            throw new BadRequestException(
-              `A la línea ${orderItem.lineNumber} le quedan ${pending.toFixed(3)} por despachar y se intentan despachar ${qty.toFixed(3)}`,
-            );
-          }
-          // **Qué sale del kardex, y cuánto.** D-088: las coordenadas las decide la reserva
-          // **viva** de la línea, no las congeladas de `sales_order_items`. En una cobertura
-          // esas dos cosas dejan de coincidir en cuanto la OP produce: la línea prometió
-          // kilos de una bobina, pero lo que sale del almacén son los metros que la
-          // producción fabricó — y los kilos ya salieron cuando se reportó. Despachar contra
-          // lo congelado los habría sacado dos veces.
-          const target = await resolveDispatchTarget(tx, orderItem);
-          // **La cantidad que sale del kardex no es siempre la de venta.** Cuando el ítem
-          // reservado es una bobina (venta directa, RF-73) hay que sacar los kilos que la
-          // línea prometió, no las unidades vendidas; cuando sale del producto que la
-          // producción fabricó, venta y kardex van en la misma unidad y la proporción es 1:1.
-          const reserveQty = target.fromProduction
-            ? qty
-            : proratedQty(qty, orderItem.qty.toString(), orderItem.reserveQty.toString());
-          if (reserveQty.lte(0)) {
-            throw new BadRequestException(
-              `La línea ${orderItem.lineNumber} no tiene material asignado: no se puede despachar`,
-            );
-          }
-          // Nunca más de lo que la producción dejó reservado para esta línea: el saldo del
-          // producto lo comparten todas las órdenes, así que sin este tope una línea podría
-          // llevarse metros fabricados para otro pedido y el error solo aparecería como una
-          // invariante rota aguas abajo.
-          if (target.fromProduction && target.reservationId !== null) {
-            const held = await findLineReservation(
-              tx,
-              orderItem.id,
-              target.itemType,
-              target.itemId,
-            );
-            if (held !== null && reserveQty.gt(held.qty)) {
-              throw new BadRequestException(
-                `La línea ${orderItem.lineNumber} tiene ${held.qty.toFixed(3)} ${held.unit} fabricados y reservados, y se intentan despachar ${reserveQty.toFixed(3)}: produce el resto antes de despacharlo`,
-              );
-            }
-          }
-          // El peso de la guía es un dato de transporte y por eso es editable. Por defecto
-          // es la misma cifra, que es lo correcto **solo cuando lo que sale ya está en kilos**:
-          // en una cobertura a medida `reserveQty` son metros, y heredarlo declararía 24.6 kg
-          // en la guía por 268 kg de planchas. Ahí el peso se exige.
-          if (item.weightKg === undefined && target.unit !== Unit.KGM) {
-            throw new BadRequestException(
-              `La línea ${orderItem.lineNumber} se despacha en ${target.unit}: indica el peso en kilos para la guía de remisión`,
-            );
-          }
-          const weightKg = item.weightKg !== undefined ? toDecimal(item.weightKg) : reserveQty;
-          lines.push({ orderItem, qty, reserveQty, weightKg, target });
-        }
-
-        const dispatch = await tx.dispatch.create({
-          data: {
-            salesOrderId: order.id,
-            status: DispatchStatus.ISSUED,
-            dispatchDate: toDateOnly(input.dispatchDate),
-            originAddress: input.originAddress,
-            destinationAddress: input.destinationAddress,
-            originUbigeo: input.originUbigeo,
-            destinationUbigeo: input.destinationUbigeo,
-            transferMode: input.transferMode,
-            totalWeightKg: toFixedString(input.totalWeightKg, 'KG'),
-            packageCount: input.packageCount ?? null,
-            vehiclePlate: input.vehiclePlate ?? null,
-            driverGivenNames: input.driverGivenNames ?? null,
-            driverFamilyNames: input.driverFamilyNames ?? null,
-            driverDocType: input.driverDocType ?? null,
-            driverDocNumber: input.driverDocNumber ?? null,
-            driverLicense: input.driverLicense ?? null,
-            carrierDocNumber: input.carrierDocNumber ?? null,
-            carrierName: input.carrierName ?? null,
-            notes: input.notes ?? null,
-            createdById: actor.id,
-          },
-        });
-
-        // Orden de locks: bobinas y después saldos, el mismo que usan `production.consume`
-        // y `createReservations`. Invertirlo abre la ventana en la que un envío a corte o
-        // una confirmación de pedido se cruzan con esta salida.
-        const coilIds = [
-          ...new Set(
-            lines
-              .filter((l) => l.target.itemType === ('COIL' as InventoryItemType))
-              .map((l) => l.target.itemId),
-          ),
-        ].sort();
-        if (coilIds.length > 0) {
-          await tx.$queryRaw`
-            SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
-          `;
-        }
-
-        let lineNumber = 0;
-        for (const line of lines) {
-          lineNumber += 1;
-          const { orderItem, qty, reserveQty, weightKg, target } = line;
-
-          // D-074: la reserva se descuenta **antes** de la salida de kardex. Solo lo que
-          // este despacho se lleva, y **en la unidad de la reserva**: el resto de la línea
-          // sigue prometido y protegido.
-          if (target.reservationId !== null) {
-            await consumeReservationQty(tx, target.reservationId, reserveQty);
-          }
-
-          const movement = await this.inventory.record(tx, {
-            businessLineId: order.businessLineId,
-            itemType: target.itemType,
-            itemId: target.itemId,
-            type: 'OUT',
-            qty: toFixedString(reserveQty, 'KG'),
-            unit: target.unit,
-            refType: 'SALE',
-            refId: dispatch.id,
-            notes: `Despacho ${dispatchCode(dispatch.seq)} de ${salesOrderCode(order.seq)}`,
-            actorId: actor.id,
-          });
-
-          await tx.dispatchItem.create({
-            data: {
-              dispatchId: dispatch.id,
-              lineNumber,
-              salesOrderItemId: orderItem.id,
-              productId: orderItem.productId,
-              description: orderItem.description,
-              qty: toFixedString(qty, 'KG'),
-              unit: orderItem.unit,
-              reserveQty: toFixedString(reserveQty, 'KG'),
-              weightKg: toFixedString(weightKg, 'KG'),
-              itemType: target.itemType,
-              itemId: target.itemId,
-              // Null solo en líneas de negocio sin inventario (`NOOP`, §2.2), donde
-              // `record` devuelve null a propósito. La reversa lo trata como no-op.
-              movementId: movement?.id ?? null,
-            },
-          });
-        }
-
-        const status = await this.recomputeOrderStatus(tx, order.id);
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'invoicing.dispatch.create',
-          entity: 'dispatches',
-          entityId: dispatch.id,
-          after: {
-            code: dispatchCode(dispatch.seq),
-            salesOrder: salesOrderCode(order.seq),
-            lines: lines.length,
-            orderStatus: status,
-          },
-        });
-        return dispatch.id;
-      },
+    const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input), {
       // Un despacho toma un lock por línea sobre bobinas y saldos, igual que la
       // confirmación de un pedido; el timeout por defecto de Prisma no alcanza contra Neon.
-      { timeout: 30_000 },
+      timeout: 30_000,
+    });
+    return this.findOne(id);
+  }
+
+  /**
+   * El cuerpo de `create`, **dentro de una transacción que abre el llamador**.
+   *
+   * Lo usa el mostrador (RF-60, D-099), que crea pedido, despacho, comprobante y cobro
+   * juntos o no crea ninguno: en una venta de mostrador la mercadería sale por el
+   * mostrador en el mismo acto, así que un despacho que se confirme por su cuenta y una
+   * emisión que falle después dejarían el kardex descontado sin comprobante que lo declare.
+   */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: CreateDispatchInput,
+  ): Promise<string> {
+    // Lock del pedido primero, igual que `SalesOrdersService.cancel`: dos despachos
+    // simultáneos del mismo pedido se serializan en vez de repartirse el pendiente.
+    await tx.$queryRaw`
+      SELECT "id" FROM "sales_orders" WHERE "id" = ${input.salesOrderId}::uuid FOR UPDATE
+    `;
+    const order = await tx.salesOrder.findUnique({
+      where: { id: input.salesOrderId },
+      include: { items: { orderBy: { lineNumber: 'asc' } } },
+    });
+    if (!order) throw new NotFoundException('Pedido no encontrado');
+    if (order.status === SalesOrderStatus.CANCELLED) {
+      throw new BadRequestException('El pedido está anulado: no se puede despachar');
+    }
+
+    const byId = new Map(order.items.map((i) => [i.id, i]));
+    const dispatchedBefore = await this.dispatchedByItem(
+      tx,
+      order.items.map((i) => i.id),
     );
 
-    return this.findOne(id);
+    // Resolución de líneas. Se hace entera antes de tocar kardex para que una línea
+    // que no cabe no deje al despacho a medias: todo o nada, como el resto del proyecto.
+    const lines = [];
+    for (const item of input.items) {
+      const orderItem = byId.get(item.salesOrderItemId);
+      if (!orderItem) {
+        throw new BadRequestException('Hay una línea que no pertenece a este pedido');
+      }
+      const qty = toDecimal(item.qty);
+      const pending = pendingQty(
+        orderItem.qty.toString(),
+        dispatchedBefore.get(orderItem.id) ?? new Decimal(0),
+      );
+      if (qty.gt(pending)) {
+        throw new BadRequestException(
+          `A la línea ${orderItem.lineNumber} le quedan ${pending.toFixed(3)} por despachar y se intentan despachar ${qty.toFixed(3)}`,
+        );
+      }
+      // **Qué sale del kardex, y cuánto.** D-088: las coordenadas las decide la reserva
+      // **viva** de la línea, no las congeladas de `sales_order_items`. En una cobertura
+      // esas dos cosas dejan de coincidir en cuanto la OP produce: la línea prometió
+      // kilos de una bobina, pero lo que sale del almacén son los metros que la
+      // producción fabricó — y los kilos ya salieron cuando se reportó. Despachar contra
+      // lo congelado los habría sacado dos veces.
+      const target = await resolveDispatchTarget(tx, orderItem);
+      // **La cantidad que sale del kardex no es siempre la de venta.** Cuando el ítem
+      // reservado es una bobina (venta directa, RF-73) hay que sacar los kilos que la
+      // línea prometió, no las unidades vendidas; cuando sale del producto que la
+      // producción fabricó, venta y kardex van en la misma unidad y la proporción es 1:1.
+      const reserveQty = target.fromProduction
+        ? qty
+        : proratedQty(qty, orderItem.qty.toString(), orderItem.reserveQty.toString());
+      if (reserveQty.lte(0)) {
+        throw new BadRequestException(
+          `La línea ${orderItem.lineNumber} no tiene material asignado: no se puede despachar`,
+        );
+      }
+      // Nunca más de lo que la producción dejó reservado para esta línea: el saldo del
+      // producto lo comparten todas las órdenes, así que sin este tope una línea podría
+      // llevarse metros fabricados para otro pedido y el error solo aparecería como una
+      // invariante rota aguas abajo.
+      if (target.fromProduction && target.reservationId !== null) {
+        const held = await findLineReservation(tx, orderItem.id, target.itemType, target.itemId);
+        if (held !== null && reserveQty.gt(held.qty)) {
+          throw new BadRequestException(
+            `La línea ${orderItem.lineNumber} tiene ${held.qty.toFixed(3)} ${held.unit} fabricados y reservados, y se intentan despachar ${reserveQty.toFixed(3)}: produce el resto antes de despacharlo`,
+          );
+        }
+      }
+      // El peso de la guía es un dato de transporte y por eso es editable. Por defecto
+      // es la misma cifra, que es lo correcto **solo cuando lo que sale ya está en kilos**:
+      // en una cobertura a medida `reserveQty` son metros, y heredarlo declararía 24.6 kg
+      // en la guía por 268 kg de planchas. Ahí el peso se exige.
+      //
+      // En un recojo en mostrador (D-103) no se exige: no hay guía donde declararlo, y
+      // pedirle el peso en kilos de tres planchas a quien atiende el mostrador sería
+      // cobrarle un dato que nadie va a leer.
+      if (
+        input.transferMode !== TransferMode.PICKUP &&
+        item.weightKg === undefined &&
+        target.unit !== Unit.KGM
+      ) {
+        throw new BadRequestException(
+          `La línea ${orderItem.lineNumber} se despacha en ${target.unit}: indica el peso en kilos para la guía de remisión`,
+        );
+      }
+      const weightKg = item.weightKg !== undefined ? toDecimal(item.weightKg) : reserveQty;
+      lines.push({ orderItem, qty, reserveQty, weightKg, target });
+    }
+
+    const dispatch = await tx.dispatch.create({
+      data: {
+        salesOrderId: order.id,
+        status: DispatchStatus.ISSUED,
+        dispatchDate: toDateOnly(input.dispatchDate),
+        originAddress: input.originAddress,
+        destinationAddress: input.destinationAddress,
+        originUbigeo: input.originUbigeo,
+        destinationUbigeo: input.destinationUbigeo,
+        transferMode: input.transferMode,
+        // D-103: sin guía no hay peso bruto que declarar; el recojo en mostrador cae en
+        // cero y el `CHECK` de la base lo admite solo para esa modalidad.
+        totalWeightKg: toFixedString(input.totalWeightKg ?? '0', 'KG'),
+        packageCount: input.packageCount ?? null,
+        vehiclePlate: input.vehiclePlate ?? null,
+        driverGivenNames: input.driverGivenNames ?? null,
+        driverFamilyNames: input.driverFamilyNames ?? null,
+        driverDocType: input.driverDocType ?? null,
+        driverDocNumber: input.driverDocNumber ?? null,
+        driverLicense: input.driverLicense ?? null,
+        carrierDocNumber: input.carrierDocNumber ?? null,
+        carrierName: input.carrierName ?? null,
+        notes: input.notes ?? null,
+        createdById: actor.id,
+      },
+    });
+
+    // Orden de locks: bobinas y después saldos, el mismo que usan `production.consume`
+    // y `createReservations`. Invertirlo abre la ventana en la que un envío a corte o
+    // una confirmación de pedido se cruzan con esta salida.
+    const coilIds = [
+      ...new Set(
+        lines
+          .filter((l) => l.target.itemType === ('COIL' as InventoryItemType))
+          .map((l) => l.target.itemId),
+      ),
+    ].sort();
+    if (coilIds.length > 0) {
+      await tx.$queryRaw`
+        SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
+      `;
+    }
+
+    let lineNumber = 0;
+    for (const line of lines) {
+      lineNumber += 1;
+      const { orderItem, qty, reserveQty, weightKg, target } = line;
+
+      // D-074: la reserva se descuenta **antes** de la salida de kardex. Solo lo que
+      // este despacho se lleva, y **en la unidad de la reserva**: el resto de la línea
+      // sigue prometido y protegido.
+      if (target.reservationId !== null) {
+        await consumeReservationQty(tx, target.reservationId, reserveQty);
+      }
+
+      const movement = await this.inventory.record(tx, {
+        businessLineId: order.businessLineId,
+        itemType: target.itemType,
+        itemId: target.itemId,
+        type: 'OUT',
+        qty: toFixedString(reserveQty, 'KG'),
+        unit: target.unit,
+        refType: 'SALE',
+        refId: dispatch.id,
+        notes: `Despacho ${dispatchCode(dispatch.seq)} de ${salesOrderCode(order.seq)}`,
+        actorId: actor.id,
+      });
+
+      await tx.dispatchItem.create({
+        data: {
+          dispatchId: dispatch.id,
+          lineNumber,
+          salesOrderItemId: orderItem.id,
+          productId: orderItem.productId,
+          description: orderItem.description,
+          qty: toFixedString(qty, 'KG'),
+          unit: orderItem.unit,
+          reserveQty: toFixedString(reserveQty, 'KG'),
+          weightKg: toFixedString(weightKg, 'KG'),
+          itemType: target.itemType,
+          itemId: target.itemId,
+          // Null solo en líneas de negocio sin inventario (`NOOP`, §2.2), donde
+          // `record` devuelve null a propósito. La reversa lo trata como no-op.
+          movementId: movement?.id ?? null,
+        },
+      });
+    }
+
+    const status = await this.recomputeOrderStatus(tx, order.id);
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.dispatch.create',
+      entity: 'dispatches',
+      entityId: dispatch.id,
+      after: {
+        code: dispatchCode(dispatch.seq),
+        salesOrder: salesOrderCode(order.seq),
+        lines: lines.length,
+        orderStatus: status,
+      },
+    });
+    return dispatch.id;
   }
 
   // -------------------------------------------------------------------------
@@ -329,6 +347,74 @@ export class DispatchesService {
    * (baja o nota de crédito) y después se revierte el despacho. Deshacerlo al revés dejaría
    * al kardex diciendo que la mercadería está en el almacén y a SUNAT diciendo que salió.
    */
+  /**
+   * El comprobante vigente que **todavía factura** alguna línea de este despacho, si lo hay.
+   *
+   * "Todavía" es la palabra que este método agrega, y es la corrección de un hueco de Fase
+   * 5b que el mostrador destapó. La comprobación original miraba solo el estado del
+   * comprobante, y una **boleta no se da de baja de forma individual** (`voidPathFor`, D-072:
+   * su baja va por resumen diario, fuera de alcance): su único camino es la nota de crédito,
+   * que deja la boleta `ACCEPTED` para siempre. Con el criterio viejo, el propio mensaje de
+   * error ofrecía un camino —"emite una nota de crédito"— que no desbloqueaba nada, y el
+   * despacho de cualquier venta con boleta quedaba irreversible. En el mostrador, donde la
+   * boleta es el caso normal, eso habría dejado la anulación de venta sin salida (D-100).
+   *
+   * La regla correcta es la que ya usa el resto del módulo para el saldo (D-075): una línea
+   * **acreditada por completo** por notas de crédito vivas dejó de estar facturada. Un
+   * comprobante bloquea mientras a alguna de sus líneas sobre este despacho le quede algo
+   * sin acreditar; acreditar todo es, económicamente y ante SUNAT, deshacer la venta.
+   */
+  private async declaringDocument(
+    tx: Prisma.TransactionClient,
+    dispatch: { salesOrderId: string; items: { salesOrderItemId: string }[] },
+  ): Promise<{ number: string | null } | null> {
+    const lineIds = dispatch.items.map((i) => i.salesOrderItemId);
+    const documents = await tx.fiscalDocument.findMany({
+      where: {
+        salesOrderId: dispatch.salesOrderId,
+        status: { in: DECLARED_STATUSES },
+        docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
+        items: { some: { salesOrderItemId: { in: lineIds } } },
+      },
+      select: {
+        number: true,
+        items: {
+          where: { salesOrderItemId: { in: lineIds } },
+          select: { id: true, qty: true },
+        },
+      },
+    });
+    if (documents.length === 0) return null;
+
+    const itemIds = documents.flatMap((d) => d.items.map((i) => i.id));
+    // Solo las notas **vivas**: una NC dada de baja no acredita nada, igual que en
+    // `documentBalance` y en `createCreditNote`.
+    const credited = await tx.fiscalDocumentItem.groupBy({
+      by: ['affectedItemId'],
+      where: {
+        affectedItemId: { in: itemIds },
+        document: { status: { in: DECLARED_STATUSES } },
+      },
+      _sum: { qty: true },
+    });
+    const creditedByItem = new Map(
+      credited.map((r) => [
+        r.affectedItemId ?? '',
+        toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString()),
+      ]),
+    );
+
+    return (
+      documents.find((d) =>
+        d.items.some((i) =>
+          toDecimal(i.qty.toString())
+            .minus(creditedByItem.get(i.id) ?? new Decimal(0))
+            .gt(0),
+        ),
+      ) ?? null
+    );
+  }
+
   async reverse(actor: RequestUser, id: string, reason: string): Promise<DispatchDto> {
     await this.prisma.$transaction(
       async (tx) => {
@@ -374,17 +460,7 @@ export class DispatchesService {
           );
         }
 
-        const blocking = await tx.fiscalDocument.findFirst({
-          where: {
-            salesOrderId: dispatch.salesOrderId,
-            status: { in: DECLARED_STATUSES },
-            docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
-            items: {
-              some: { salesOrderItemId: { in: dispatch.items.map((i) => i.salesOrderItemId) } },
-            },
-          },
-          select: { number: true },
-        });
+        const blocking = await this.declaringDocument(tx, dispatch);
         if (blocking) {
           throw new BadRequestException(
             `El comprobante ${blocking.number ?? ''} factura líneas de este despacho: dalo de baja o emite una nota de crédito antes de revertirlo`,

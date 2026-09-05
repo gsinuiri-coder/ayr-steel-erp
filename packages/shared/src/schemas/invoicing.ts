@@ -596,7 +596,11 @@ export const createDispatchSchema = z
     transferMode: z.enum(TRANSFER_MODES, {
       errorMap: () => ({ message: 'Modalidad de traslado inválida' }),
     }),
-    totalWeightKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
+    /**
+     * Peso bruto del traslado. Obligatorio y positivo cuando hay guía; en un recojo en
+     * mostrador (D-103) no hay guía que declararlo, así que es opcional y cae en cero.
+     */
+    totalWeightKg: decimalStringSchema('KG', { max: MAX_VALUE.KG }).optional(),
     packageCount: z.number().int().positive().max(9999).optional(),
     vehiclePlate: z.string().trim().max(10).optional(),
     /** Separados porque SUNAT los pide así (D-078): el PSE rechaza la guía sin apellidos. */
@@ -623,7 +627,25 @@ export const createDispatchSchema = z
     const forbid = (field: keyof typeof input, message: string): void => {
       if (input[field]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message });
     };
-    if (input.transferMode === TransferMode.PRIVATE) {
+    if (input.transferMode === TransferMode.PICKUP) {
+      // D-103: un recojo en mostrador no lleva ningún dato de transporte, en ninguna de
+      // las dos modalidades. Es la tercera rama del `CHECK` de la base.
+      forbid('vehiclePlate', 'Un recojo en mostrador no lleva vehículo');
+      forbid('driverGivenNames', 'Un recojo en mostrador no lleva conductor');
+      forbid('driverFamilyNames', 'Un recojo en mostrador no lleva conductor');
+      forbid('driverDocType', 'Un recojo en mostrador no lleva conductor');
+      forbid('driverDocNumber', 'Un recojo en mostrador no lleva conductor');
+      forbid('driverLicense', 'Un recojo en mostrador no lleva conductor');
+      forbid('carrierDocNumber', 'Un recojo en mostrador no lleva transportista');
+      forbid('carrierName', 'Un recojo en mostrador no lleva transportista');
+    } else if (input.transferMode === TransferMode.PRIVATE) {
+      if (input.totalWeightKg === undefined || toDecimal(input.totalWeightKg).lte(0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['totalWeightKg'],
+          message: 'La guía necesita el peso bruto del traslado',
+        });
+      }
       require('vehiclePlate', 'El traslado privado necesita la placa del vehículo');
       require('driverGivenNames', 'El traslado privado necesita los nombres del conductor');
       require('driverFamilyNames', 'El traslado privado necesita los apellidos del conductor');
@@ -633,6 +655,13 @@ export const createDispatchSchema = z
       forbid('carrierDocNumber', 'Un traslado privado no lleva transportista');
       forbid('carrierName', 'Un traslado privado no lleva transportista');
     } else {
+      if (input.totalWeightKg === undefined || toDecimal(input.totalWeightKg).lte(0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['totalWeightKg'],
+          message: 'La guía necesita el peso bruto del traslado',
+        });
+      }
       require('carrierDocNumber', 'El traslado público necesita el RUC del transportista');
       require('carrierName', 'El traslado público necesita la razón social del transportista');
       forbid('vehiclePlate', 'Un traslado público no lleva vehículo propio');

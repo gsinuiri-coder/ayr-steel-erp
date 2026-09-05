@@ -21,6 +21,8 @@ import {
   documentBalance,
   fiscalDocumentNumber,
   GENERIC_CUSTOMER_MAX_TOTAL_PEN,
+  GRE_TRANSFER_MODES,
+  TransferMode,
   IGV_RATE_PCT,
   RETRYABLE_DOCUMENT_STATUSES,
   Role,
@@ -339,104 +341,113 @@ export class InvoicingService {
    * PSE: hasta acá todo es reversible sin dejar rastro fiscal.
    */
   async create(actor: RequestUser, input: CreateInvoiceInput): Promise<FiscalDocumentDto> {
-    const id = await this.prisma.$transaction(
-      async (tx) => {
-        const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
-        if (!customer) throw new NotFoundException('Cliente no encontrado');
-        if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
-
-        // D-077: el cliente sembrado solo admite boleta. Una factura necesita RUC, y el
-        // genérico no tiene ninguno: emitirla sería mandar al PSE una identidad inventada.
-        if (customer.isSystem && input.docType !== FiscalDocType.BOLETA) {
-          throw new BadRequestException(
-            'Al cliente "público en general" solo se le emiten boletas: elige un cliente identificado para una factura',
-          );
-        }
-        if (input.docType === FiscalDocType.FACTURA && customer.docType !== DocType.RUC) {
-          throw new BadRequestException(
-            'Una factura se emite a un cliente con RUC; para este cliente corresponde una boleta',
-          );
-        }
-
-        const lines = await this.resolveLines(tx, input);
-        const totals = salesTotals(
-          lines.map((l) => ({ qty: l.qty, unitPricePen: l.unitPricePen })),
-        );
-        const serialized = serializeSalesTotals(totals);
-
-        // D-077: bloqueo suave del tope de SUNAT. La excepción existe, la puede usar solo
-        // ADMINISTRADOR y **queda escrita en el propio comprobante**, que es la diferencia
-        // entre una regla que se puede saltar y una que se puede saltar dejando constancia.
-        let overrideById: string | null = null;
-        if (customer.isSystem && totals.total.gt(toDecimal(GENERIC_CUSTOMER_MAX_TOTAL_PEN))) {
-          if (!input.forceGenericCustomer) {
-            throw new BadRequestException(
-              `Una boleta a "público en general" no puede pasar de S/ ${toDecimal(GENERIC_CUSTOMER_MAX_TOTAL_PEN).toFixed(2)}: identifica al cliente (esta es de S/ ${totals.total.toFixed(2)})`,
-            );
-          }
-          if (actor.role !== Role.ADMINISTRADOR) {
-            throw new ForbiddenException(
-              'Solo un administrador puede emitir una boleta a "público en general" por encima del tope',
-            );
-          }
-          overrideById = actor.id;
-        }
-
-        const dueDate = this.resolveDueDate(input, customer.creditDays);
-
-        const created = await tx.fiscalDocument.create({
-          data: {
-            docType: input.docType,
-            status: FiscalDocumentStatus.DRAFT,
-            customerId: customer.id,
-            salesOrderId: input.salesOrderId ?? null,
-            issueDate: toDateOnly(input.issueDate),
-            paymentTerms: input.paymentTerms,
-            dueDate: dueDate === null ? null : toDateOnly(dueDate),
-            subtotalPen: serialized.subtotalPen,
-            igvPen: serialized.igvPen,
-            totalPen: serialized.totalPen,
-            detractionCode: input.detraction?.code ?? null,
-            detractionPct: input.detraction?.pct ?? null,
-            detractionAmountPen: input.detraction?.amountPen ?? null,
-            genericCustomerOverrideById: overrideById,
-            notes: input.notes ?? null,
-            createdById: actor.id,
-            items: {
-              create: lines.map((l, i) => ({
-                lineNumber: i + 1,
-                productId: l.productId,
-                description: l.description,
-                qty: l.qty,
-                unit: l.unit,
-                unitPricePen: l.unitPricePen,
-                subtotalPen: l.subtotalPen,
-                igvPen: l.igvPen,
-                totalPen: l.totalPen,
-                salesOrderItemId: l.salesOrderItemId,
-              })),
-            },
-          },
-        });
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'invoicing.document.create',
-          entity: 'fiscal_documents',
-          entityId: created.id,
-          after: {
-            docType: input.docType,
-            customer: customer.name,
-            totalPen: serialized.totalPen,
-            genericOverride: overrideById !== null,
-          },
-        });
-        return created.id;
-      },
-      { timeout: 30_000 },
-    );
-
+    const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input), {
+      timeout: 30_000,
+    });
     return this.findOne(id);
+  }
+
+  /**
+   * El cuerpo de `create`, **dentro de una transacción que abre el llamador**.
+   *
+   * Lo usa el mostrador (RF-60, D-099): un borrador que se confirme por su cuenta y una
+   * asignación de correlativo que falle después dejarían un comprobante huérfano por cada
+   * venta que no cerró.
+   */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: CreateInvoiceInput,
+  ): Promise<string> {
+    const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
+    if (!customer) throw new NotFoundException('Cliente no encontrado');
+    if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
+
+    // D-077: el cliente sembrado solo admite boleta. Una factura necesita RUC, y el
+    // genérico no tiene ninguno: emitirla sería mandar al PSE una identidad inventada.
+    if (customer.isSystem && input.docType !== FiscalDocType.BOLETA) {
+      throw new BadRequestException(
+        'Al cliente "público en general" solo se le emiten boletas: elige un cliente identificado para una factura',
+      );
+    }
+    if (input.docType === FiscalDocType.FACTURA && customer.docType !== DocType.RUC) {
+      throw new BadRequestException(
+        'Una factura se emite a un cliente con RUC; para este cliente corresponde una boleta',
+      );
+    }
+
+    const lines = await this.resolveLines(tx, input);
+    const totals = salesTotals(lines.map((l) => ({ qty: l.qty, unitPricePen: l.unitPricePen })));
+    const serialized = serializeSalesTotals(totals);
+
+    // D-077: bloqueo suave del tope de SUNAT. La excepción existe, la puede usar solo
+    // ADMINISTRADOR y **queda escrita en el propio comprobante**, que es la diferencia
+    // entre una regla que se puede saltar y una que se puede saltar dejando constancia.
+    let overrideById: string | null = null;
+    if (customer.isSystem && totals.total.gt(toDecimal(GENERIC_CUSTOMER_MAX_TOTAL_PEN))) {
+      if (!input.forceGenericCustomer) {
+        throw new BadRequestException(
+          `Una boleta a "público en general" no puede pasar de S/ ${toDecimal(GENERIC_CUSTOMER_MAX_TOTAL_PEN).toFixed(2)}: identifica al cliente (esta es de S/ ${totals.total.toFixed(2)})`,
+        );
+      }
+      if (actor.role !== Role.ADMINISTRADOR) {
+        throw new ForbiddenException(
+          'Solo un administrador puede emitir una boleta a "público en general" por encima del tope',
+        );
+      }
+      overrideById = actor.id;
+    }
+
+    const dueDate = this.resolveDueDate(input, customer.creditDays);
+
+    const created = await tx.fiscalDocument.create({
+      data: {
+        docType: input.docType,
+        status: FiscalDocumentStatus.DRAFT,
+        customerId: customer.id,
+        salesOrderId: input.salesOrderId ?? null,
+        issueDate: toDateOnly(input.issueDate),
+        paymentTerms: input.paymentTerms,
+        dueDate: dueDate === null ? null : toDateOnly(dueDate),
+        subtotalPen: serialized.subtotalPen,
+        igvPen: serialized.igvPen,
+        totalPen: serialized.totalPen,
+        detractionCode: input.detraction?.code ?? null,
+        detractionPct: input.detraction?.pct ?? null,
+        detractionAmountPen: input.detraction?.amountPen ?? null,
+        genericCustomerOverrideById: overrideById,
+        notes: input.notes ?? null,
+        createdById: actor.id,
+        items: {
+          create: lines.map((l, i) => ({
+            lineNumber: i + 1,
+            productId: l.productId,
+            description: l.description,
+            qty: l.qty,
+            unit: l.unit,
+            unitPricePen: l.unitPricePen,
+            subtotalPen: l.subtotalPen,
+            igvPen: l.igvPen,
+            totalPen: l.totalPen,
+            salesOrderItemId: l.salesOrderItemId,
+          })),
+        },
+      },
+    });
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.document.create',
+      entity: 'fiscal_documents',
+      entityId: created.id,
+      after: {
+        docType: input.docType,
+        customer: customer.name,
+        totalPen: serialized.totalPen,
+        genericOverride: overrideById !== null,
+      },
+    });
+    return created.id;
   }
 
   /**
@@ -949,73 +960,81 @@ export class InvoicingService {
 
   /** Fase 1: correlativo y estado `ISSUED`, en su propia transacción. */
   private async assign(actor: RequestUser, id: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<
-        { id: string; status: FiscalDocumentStatus; doc_type: FiscalDocType }[]
-      >`
-        SELECT "id", "status", "doc_type" FROM "fiscal_documents"
-        WHERE "id" = ${id}::uuid FOR UPDATE
-      `;
-      const head = rows[0];
-      if (!head) throw new NotFoundException('Comprobante no encontrado');
-      if (head.status !== FiscalDocumentStatus.DRAFT) {
-        throw new ConflictException(
-          head.status === FiscalDocumentStatus.REJECTED
-            ? 'Este comprobante fue rechazado: corrígelo para emitir uno nuevo'
-            : 'El comprobante ya fue emitido',
-        );
-      }
+    await this.prisma.$transaction((tx) => this.assignInTx(tx, actor, id));
+  }
 
-      const document = await tx.fiscalDocument.findUniqueOrThrow({
-        where: { id },
-        include: {
-          items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
-          affectedDocument: { select: { docType: true } },
-        },
-      });
-      if (
-        document.items.length === 0 &&
-        document.docType !== FiscalDocType.GUIA_REMISION_REMITENTE
-      ) {
-        throw new BadRequestException('Un comprobante sin líneas no se emite');
-      }
-
-      // **Revalidar antes de tomar el correlativo.** Los topes de "cuánto queda por
-      // facturar" y "cuánto queda por acreditar" se comprueban al crear el borrador, pero
-      // un borrador no consume nada: dos borradores sobre la misma línea pasan los dos esa
-      // comprobación y, al enviarse, ambos toman número y sobrefacturan el pedido con dos
-      // comprobantes válidos ante SUNAT. Acá, con la fila ya bloqueada, es el último punto
-      // en el que todavía se puede decir que no.
-      await this.assertStillAvailable(tx, document);
-
-      const affectedDocType =
-        document.docType === FiscalDocType.NOTA_CREDITO
-          ? (document.affectedDocument?.docType ?? null)
-          : null;
-      const { seriesId, series, correlative } = await this.allocateNumber(
-        tx,
-        document.docType,
-        affectedDocType,
+  /**
+   * La fase 1 de D-073 **dentro de una transacción que abre el llamador**.
+   *
+   * El mostrador (D-099) la usa para que el correlativo se tome en la misma transacción que
+   * el pedido, el despacho y el cobro. Eso **no** contradice a D-073: lo que esa decisión
+   * exige es que el envío al PSE quede **fuera** de la transacción que toma el número, y
+   * sigue quedando fuera — el POS confirma primero y llama a `deliver` después, igual que
+   * `send`. Lo que cambia es cuánto abarca esa primera transacción, no su orden.
+   */
+  async assignInTx(tx: Prisma.TransactionClient, actor: RequestUser, id: string): Promise<void> {
+    const rows = await tx.$queryRaw<
+      { id: string; status: FiscalDocumentStatus; doc_type: FiscalDocType }[]
+    >`
+      SELECT "id", "status", "doc_type" FROM "fiscal_documents"
+      WHERE "id" = ${id}::uuid FOR UPDATE
+    `;
+    const head = rows[0];
+    if (!head) throw new NotFoundException('Comprobante no encontrado');
+    if (head.status !== FiscalDocumentStatus.DRAFT) {
+      throw new ConflictException(
+        head.status === FiscalDocumentStatus.REJECTED
+          ? 'Este comprobante fue rechazado: corrígelo para emitir uno nuevo'
+          : 'El comprobante ya fue emitido',
       );
+    }
 
-      await tx.fiscalDocument.update({
-        where: { id },
-        data: {
-          seriesId,
-          correlative,
-          number: fiscalDocumentNumber(series, correlative),
-          status: FiscalDocumentStatus.ISSUED,
-          issuedAt: new Date(),
-        },
-      });
+    const document = await tx.fiscalDocument.findUniqueOrThrow({
+      where: { id },
+      include: {
+        items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
+        affectedDocument: { select: { docType: true } },
+      },
+    });
+    if (document.items.length === 0 && document.docType !== FiscalDocType.GUIA_REMISION_REMITENTE) {
+      throw new BadRequestException('Un comprobante sin líneas no se emite');
+    }
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'invoicing.document.issue',
-        entity: 'fiscal_documents',
-        entityId: id,
-        after: { number: fiscalDocumentNumber(series, correlative) },
-      });
+    // **Revalidar antes de tomar el correlativo.** Los topes de "cuánto queda por
+    // facturar" y "cuánto queda por acreditar" se comprueban al crear el borrador, pero
+    // un borrador no consume nada: dos borradores sobre la misma línea pasan los dos esa
+    // comprobación y, al enviarse, ambos toman número y sobrefacturan el pedido con dos
+    // comprobantes válidos ante SUNAT. Acá, con la fila ya bloqueada, es el último punto
+    // en el que todavía se puede decir que no.
+    await this.assertStillAvailable(tx, document);
+
+    const affectedDocType =
+      document.docType === FiscalDocType.NOTA_CREDITO
+        ? (document.affectedDocument?.docType ?? null)
+        : null;
+    const { seriesId, series, correlative } = await this.allocateNumber(
+      tx,
+      document.docType,
+      affectedDocType,
+    );
+
+    await tx.fiscalDocument.update({
+      where: { id },
+      data: {
+        seriesId,
+        correlative,
+        number: fiscalDocumentNumber(series, correlative),
+        status: FiscalDocumentStatus.ISSUED,
+        issuedAt: new Date(),
+      },
+    });
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.document.issue',
+      entity: 'fiscal_documents',
+      entityId: id,
+      after: { number: fiscalDocumentNumber(series, correlative) },
     });
   }
 
@@ -1829,6 +1848,15 @@ export class InvoicingService {
       if (dispatch.status !== DispatchStatus.ISSUED) {
         throw new BadRequestException('Un despacho revertido no tiene guía que emitir');
       }
+      // D-103: en un recojo en mostrador el traslado lo hace el comprador con su propio
+      // medio, así que el remitente no emite guía —no hay transportista contratado ni
+      // vehículo nuestro que declarar, y el catálogo 18 de SUNAT no tiene un código para
+      // esta modalidad justamente porque nunca llega a un documento—.
+      if (!GRE_TRANSFER_MODES.includes(dispatch.transferMode)) {
+        throw new BadRequestException(
+          'Este despacho es un recojo en mostrador: el traslado es del comprador y no genera guía de remisión remitente',
+        );
+      }
       // Una guía **rechazada o dada de baja** no es la guía del traslado: se puede emitir
       // otra. Solo bloquea la que sigue en pie.
       const live = dispatch.documents.find(
@@ -1903,6 +1931,16 @@ export class InvoicingService {
     }
 
     const dispatch = document.dispatch;
+    // D-103: un recojo en mostrador no llega a tener guía —`issueDispatchNote` lo rechaza
+    // antes de crear el borrador—, así que esta rama solo puede darse si alguien creó la
+    // guía y después cambió la modalidad del despacho. Se corta acá antes de gastar un
+    // intento contra el PSE con una modalidad que su catálogo no tiene.
+    if (!GRE_TRANSFER_MODES.includes(dispatch.transferMode)) {
+      throw new BadRequestException(
+        'Este despacho es un recojo en mostrador: no corresponde una guía de remisión remitente',
+      );
+    }
+    const transferMode = dispatch.transferMode as Exclude<TransferMode, 'PICKUP'>;
     // El comprobante que respalda el traslado, si el pedido ya tiene uno aceptado.
     const related = await this.prisma.fiscalDocument.findFirst({
       where: {
@@ -1953,7 +1991,7 @@ export class InvoicingService {
         destinationAddress: dispatch.destinationAddress,
         originUbigeo: dispatch.originUbigeo,
         destinationUbigeo: dispatch.destinationUbigeo,
-        transferMode: dispatch.transferMode,
+        transferMode,
         totalWeightKg: dispatch.totalWeightKg.toFixed(3),
         packageCount: dispatch.packageCount,
         vehicle: dispatch.vehiclePlate ? { plate: dispatch.vehiclePlate } : null,

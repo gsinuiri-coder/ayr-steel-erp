@@ -81,7 +81,12 @@ export interface IssueDispatchNoteCommand {
   /** Ubigeo INEI de seis dígitos, obligatorio en la guía. */
   originUbigeo: string;
   destinationUbigeo: string;
-  transferMode: TransferMode;
+  /**
+   * Solo las modalidades que llegan a una guía (`GRE_TRANSFER_MODES`). El recojo en
+   * mostrador (D-103) no emite guía, así que no tiene forma de llegar hasta acá: el tipo lo
+   * dice, y `issueDispatchNote` lo rechaza antes de tomar correlativo.
+   */
+  transferMode: Exclude<TransferMode, 'PICKUP'>;
   totalWeightKg: string;
   packageCount: number | null;
   /** Traslado privado: vehículo y conductor propios. Null en el público. */

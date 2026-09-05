@@ -68,67 +68,83 @@ export class ReceivablesService {
     documentId: string,
     input: CreateCustomerPaymentInput,
   ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`
-        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${documentId}::uuid FOR UPDATE
-      `;
-      const document = await tx.fiscalDocument.findUnique({
-        where: { id: documentId },
-        include: {
-          payments: true,
-          creditNotes: { where: { status: { in: LIVE_STATUSES } }, select: { totalPen: true } },
-        },
-      });
-      if (!document) throw new NotFoundException('Comprobante no encontrado');
+    await this.prisma.$transaction((tx) => this.addPaymentInTx(tx, actor, documentId, input));
+  }
 
-      if (document.docType === FiscalDocType.NOTA_CREDITO) {
-        throw new BadRequestException(
-          'Una nota de crédito no se cobra: ajusta el saldo del comprobante que afecta',
-        );
-      }
-      if (document.docType === FiscalDocType.GUIA_REMISION_REMITENTE) {
-        throw new BadRequestException('Una guía de remisión no tiene saldo que cobrar');
-      }
-      if (!LIVE_STATUSES.includes(document.status)) {
-        throw new BadRequestException(
-          document.status === FiscalDocumentStatus.DRAFT
-            ? 'El comprobante todavía es un borrador: emítelo antes de cobrarlo'
-            : `Un comprobante ${document.status} no tiene saldo que cobrar`,
-        );
-      }
-
-      const balance = this.balanceOf(document);
-      const amount = toDecimal(input.amountPen);
-      if (amount.gt(balance)) {
-        throw new BadRequestException(
-          `El cobro excede el saldo pendiente (S/ ${balance.toFixed(2)})`,
-        );
-      }
-
-      const payment = await tx.customerPayment.create({
-        data: {
-          documentId,
-          date: new Date(`${input.date}T00:00:00.000Z`),
-          amountPen: toFixedString(input.amountPen, 'MONEY'),
-          method: input.method,
-          reference: input.reference ?? null,
-          createdById: actor.id,
-        },
-      });
-
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'invoicing.payment',
-        entity: 'customer_payments',
-        entityId: payment.id,
-        after: {
-          documentId,
-          number: document.number,
-          amountPen: payment.amountPen.toFixed(4),
-          method: payment.method,
-        },
-      });
+  /**
+   * El cuerpo de `addPayment`, **dentro de una transacción que abre el llamador**, y
+   * devolviendo el id del cobro.
+   *
+   * Lo usa el mostrador (RF-60, D-099): la venta de mostrador es contado por definición, así
+   * que el cobro nace con el comprobante o no nace ninguno. Devuelve el id porque la venta
+   * de mostrador lo guarda para poder revertir exactamente ese cobro al anularla (D-100).
+   */
+  async addPaymentInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    documentId: string,
+    input: CreateCustomerPaymentInput,
+  ): Promise<string> {
+    await tx.$queryRaw`
+      SELECT "id" FROM "fiscal_documents" WHERE "id" = ${documentId}::uuid FOR UPDATE
+    `;
+    const document = await tx.fiscalDocument.findUnique({
+      where: { id: documentId },
+      include: {
+        payments: true,
+        creditNotes: { where: { status: { in: LIVE_STATUSES } }, select: { totalPen: true } },
+      },
     });
+    if (!document) throw new NotFoundException('Comprobante no encontrado');
+
+    if (document.docType === FiscalDocType.NOTA_CREDITO) {
+      throw new BadRequestException(
+        'Una nota de crédito no se cobra: ajusta el saldo del comprobante que afecta',
+      );
+    }
+    if (document.docType === FiscalDocType.GUIA_REMISION_REMITENTE) {
+      throw new BadRequestException('Una guía de remisión no tiene saldo que cobrar');
+    }
+    if (!LIVE_STATUSES.includes(document.status)) {
+      throw new BadRequestException(
+        document.status === FiscalDocumentStatus.DRAFT
+          ? 'El comprobante todavía es un borrador: emítelo antes de cobrarlo'
+          : `Un comprobante ${document.status} no tiene saldo que cobrar`,
+      );
+    }
+
+    const balance = this.balanceOf(document);
+    const amount = toDecimal(input.amountPen);
+    if (amount.gt(balance)) {
+      throw new BadRequestException(
+        `El cobro excede el saldo pendiente (S/ ${balance.toFixed(2)})`,
+      );
+    }
+
+    const payment = await tx.customerPayment.create({
+      data: {
+        documentId,
+        date: new Date(`${input.date}T00:00:00.000Z`),
+        amountPen: toFixedString(input.amountPen, 'MONEY'),
+        method: input.method,
+        reference: input.reference ?? null,
+        createdById: actor.id,
+      },
+    });
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.payment',
+      entity: 'customer_payments',
+      entityId: payment.id,
+      after: {
+        documentId,
+        number: document.number,
+        amountPen: payment.amountPen.toFixed(4),
+        method: payment.method,
+      },
+    });
+    return payment.id;
   }
 
   /**

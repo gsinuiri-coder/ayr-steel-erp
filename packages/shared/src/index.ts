@@ -20,3 +20,4 @@ export * from './schemas/roofing';
 export * from './schemas/production';
 export * from './schemas/sales';
 export * from './schemas/invoicing';
+export * from './schemas/pos';

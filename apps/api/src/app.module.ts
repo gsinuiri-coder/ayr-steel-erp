@@ -24,6 +24,7 @@ import { PricingModule } from './pricing/pricing.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductionModule } from './production/production.module';
 import { PurchasesModule } from './purchases/purchases.module';
+import { PosModule } from './pos/pos.module';
 import { SalesModule } from './sales/sales.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { UsersModule } from './users/users.module';
@@ -62,6 +63,7 @@ import { UsersModule } from './users/users.module';
     ProductionModule,
     SalesModule,
     InvoicingModule,
+    PosModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],

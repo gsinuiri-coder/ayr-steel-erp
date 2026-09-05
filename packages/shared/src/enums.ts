@@ -309,12 +309,22 @@ export const LANDED_COST_SERVICE_KINDS: readonly ServiceKind[] = [
   ServiceKind.INSURANCE,
 ];
 
-/** Medio de pago a proveedor (D-039). */
+/**
+ * Medio de pago (D-039 para el pago a proveedor, D-075 para el cobro a cliente).
+ *
+ * `CARD` y `WALLET` los agrega el mostrador (Fase 7b, D-101). No son un enum aparte a
+ * propósito: un cobro de mostrador es un cobro como cualquier otro —la misma tabla, el
+ * mismo saldo, la misma reversa— y lo único que cambia es por dónde entró el dinero.
+ * Qué medios ofrece cada pantalla lo decide `POS_PAYMENT_METHODS` en `schemas/pos`,
+ * no el enum.
+ */
 export const PaymentMethod = {
   CASH: 'CASH',
   TRANSFER: 'TRANSFER',
   CHECK: 'CHECK',
   DEPOSIT: 'DEPOSIT',
+  CARD: 'CARD',
+  WALLET: 'WALLET',
   OTHER: 'OTHER',
 } as const;
 export type PaymentMethod = (typeof PaymentMethod)[keyof typeof PaymentMethod];
@@ -324,6 +334,8 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   TRANSFER: 'Transferencia',
   CHECK: 'Cheque',
   DEPOSIT: 'Depósito',
+  CARD: 'Tarjeta',
+  WALLET: 'Yape / Plin',
   OTHER: 'Otro',
 };
 
@@ -740,14 +752,33 @@ export const FULL_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
 export const TransferMode = {
   PRIVATE: 'PRIVATE',
   PUBLIC: 'PUBLIC',
+  /**
+   * Recojo en mostrador (Fase 7b, D-103): el comprador se lleva la mercadería del
+   * mostrador. No hay vehículo nuestro ni transportista contratado, así que **no hay guía
+   * de remisión remitente que emitir** —el traslado es del comprador— y por eso este modo
+   * no tiene código de SUNAT: nunca viaja al PSE.
+   */
+  PICKUP: 'PICKUP',
 } as const;
 export type TransferMode = (typeof TransferMode)[keyof typeof TransferMode];
 export const TRANSFER_MODES = Object.values(TransferMode) as [TransferMode, ...TransferMode[]];
 export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
   PRIVATE: 'Transporte privado (vehículo propio)',
   PUBLIC: 'Transporte público (transportista)',
+  PICKUP: 'Recojo en mostrador (lo lleva el cliente)',
 };
-export const TRANSFER_MODE_SUNAT_CODE: Record<TransferMode, string> = {
+
+/**
+ * Modalidades que **pueden** ir en una guía de remisión remitente. `PICKUP` no está: el
+ * traslado lo hace el comprador con su propio medio, así que el remitente no emite guía.
+ */
+export const GRE_TRANSFER_MODES: readonly TransferMode[] = [
+  TransferMode.PUBLIC,
+  TransferMode.PRIVATE,
+];
+
+/** Catálogo 18 de SUNAT. Solo las modalidades que llegan a una guía (ver `GRE_TRANSFER_MODES`). */
+export const TRANSFER_MODE_SUNAT_CODE: Record<'PUBLIC' | 'PRIVATE', string> = {
   PUBLIC: '01',
   PRIVATE: '02',
 };

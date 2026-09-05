@@ -299,95 +299,135 @@ export class SalesOrdersService {
    */
   async createDirect(actor: RequestUser, input: CreateSalesOrderInput): Promise<SalesOrderDto> {
     const orderId = await this.prisma.$transaction(
-      async (tx) => {
-        const customer = await tx.customer.findUnique({
-          where: { id: input.customerId },
-          select: { id: true, isActive: true },
-        });
-        if (!customer) throw new NotFoundException('Cliente no encontrado');
-        if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
-
-        const line = await tx.businessLine.findUnique({
-          where: { code: toPrismaLineCode(input.businessLine) },
-          select: { id: true, quotationRequired: true, inventoryStrategy: true },
-        });
-        if (!line) throw new NotFoundException('Línea de negocio no encontrada');
-        if (line.inventoryStrategy === 'NOOP') {
-          throw new BadRequestException('La línea services no lleva stock: no se vende por acá');
-        }
-        if (line.quotationRequired) {
-          throw new BadRequestException(
-            'Esta línea de negocio exige una cotización confirmada (RF-31): crea la cotización, emítela y confírmala',
-          );
-        }
-
-        const lines = await resolveSalesLines(tx, line.id, input.items);
-        const totals = documentTotals(lines);
-
-        const order = await tx.salesOrder.create({
-          data: {
-            quotationId: null,
-            customerId: customer.id,
-            businessLineId: line.id,
-            status: SalesOrderStatus.CONFIRMED,
-            issueDate: toDateOnly(input.issueDate),
-            subtotalPen: totals.subtotalPen,
-            igvPen: totals.igvPen,
-            totalPen: totals.totalPen,
-            notes: input.notes ?? null,
-            createdById: actor.id,
-            promisedDeliveryDate: input.promisedDeliveryDate
-              ? toDateOnly(input.promisedDeliveryDate)
-              : null,
-            items: {
-              create: lines.map((l) => ({
-                lineNumber: l.lineNumber,
-                productId: l.productId,
-                description: l.description,
-                qty: l.qty,
-                unit: l.unit,
-                listPricePen: l.listPricePen,
-                unitPricePen: l.unitPricePen,
-                subtotalPen: l.subtotalPen,
-                igvPen: l.igvPen,
-                totalPen: l.totalPen,
-                reserveItemType: l.reserveItemType,
-                reserveItemId: l.reserveItemId,
-                reserveQty: l.reserveQty,
-                reserveUnit: l.reserveUnit,
-                ...(l.pieces.length > 0
-                  ? {
-                      pieces: {
-                        create: l.pieces.map((p) => ({
-                          lineNumber: p.lineNumber,
-                          lengthMm: p.lengthMm,
-                          qty: p.qty,
-                        })),
-                      },
-                    }
-                  : {}),
-              })),
-            },
-          },
-          include: { items: { orderBy: { lineNumber: 'asc' } } },
-        });
-
-        await this.createReservations(tx, actor, order.id, order.businessLineId, order.items);
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'sales.order.create-direct',
-          entity: 'sales_orders',
-          entityId: order.id,
-          after: { code: salesOrderCode(order.seq), totalPen: totals.totalPen },
-        });
-        return order.id;
-      },
+      (tx) => this.createDirectInTx(tx, actor, input),
       // Mismo motivo que `confirm`: un lock por línea sobre bobinas y saldos.
       { timeout: 30_000 },
     );
-
     return this.findOne(orderId);
+  }
+
+  /**
+   * El cuerpo de `createDirect`, **dentro de una transacción que abre el llamador**.
+   *
+   * Existe porque el mostrador (RF-60, D-099) crea pedido, despacho, comprobante y cobro en
+   * una sola transacción: si cada uno abriera la suya, una venta podría quedar con el
+   * pedido creado y el kardex sin mover. Es el mismo patrón que ya usan `assign` y
+   * `deliver` en `invoicing` para partir una operación en tramos con dueño explícito.
+   *
+   * `counterSale` **no relaja nada**: cambia una regla por otra más estricta. El pedido de
+   * mostrador se salta `quotation_required` (D-065) —una plancha de catálogo en stock se
+   * vende sin cotizar— y a cambio exige que **cada línea esté respaldada por su propio
+   * producto**, que es exactamente lo que RF-31 protege: sin bobina reservada y sin
+   * subítems de largo, no hay forma de que una venta de mostrador arme una línea que
+   * después haya que fabricar.
+   */
+  async createDirectInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: CreateSalesOrderInput,
+    options: { counterSale?: boolean } = {},
+  ): Promise<string> {
+    const customer = await tx.customer.findUnique({
+      where: { id: input.customerId },
+      select: { id: true, isActive: true },
+    });
+    if (!customer) throw new NotFoundException('Cliente no encontrado');
+    if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
+
+    const line = await tx.businessLine.findUnique({
+      where: { code: toPrismaLineCode(input.businessLine) },
+      select: { id: true, quotationRequired: true, inventoryStrategy: true },
+    });
+    if (!line) throw new NotFoundException('Línea de negocio no encontrada');
+    if (line.inventoryStrategy === 'NOOP') {
+      throw new BadRequestException('La línea services no lleva stock: no se vende por acá');
+    }
+    if (line.quotationRequired && options.counterSale !== true) {
+      throw new BadRequestException(
+        'Esta línea de negocio exige una cotización confirmada (RF-31): crea la cotización, emítela y confírmala',
+      );
+    }
+
+    const lines = await resolveSalesLines(tx, line.id, input.items);
+
+    // D-098: el mostrador vende **stock del propio producto**. Una línea respaldada por
+    // otro ítem —la bobina de una cobertura a medida— es justo la que hay que fabricar,
+    // y ese camino es el de la Fase 6, no el del mostrador. El esquema del POS ni
+    // siquiera tiene el campo para pedirlo; esto es el cinturón por si algún día otro
+    // llamador reusa este método con `counterSale`.
+    if (options.counterSale === true) {
+      const madeToOrder = lines.find(
+        (l) =>
+          l.reserveItemType !== InventoryItemTypeEnum.PRODUCT ||
+          l.reserveItemId !== l.productId ||
+          l.pieces.length > 0,
+      );
+      if (madeToOrder) {
+        throw new BadRequestException(
+          `Línea ${madeToOrder.lineNumber}: ${madeToOrder.productSku} se fabrica contra el pedido y no se vende en mostrador: cotízalo (RF-31)`,
+        );
+      }
+    }
+    const totals = documentTotals(lines);
+
+    const order = await tx.salesOrder.create({
+      data: {
+        quotationId: null,
+        customerId: customer.id,
+        businessLineId: line.id,
+        status: SalesOrderStatus.CONFIRMED,
+        issueDate: toDateOnly(input.issueDate),
+        subtotalPen: totals.subtotalPen,
+        igvPen: totals.igvPen,
+        totalPen: totals.totalPen,
+        notes: input.notes ?? null,
+        createdById: actor.id,
+        promisedDeliveryDate: input.promisedDeliveryDate
+          ? toDateOnly(input.promisedDeliveryDate)
+          : null,
+        items: {
+          create: lines.map((l) => ({
+            lineNumber: l.lineNumber,
+            productId: l.productId,
+            description: l.description,
+            qty: l.qty,
+            unit: l.unit,
+            listPricePen: l.listPricePen,
+            unitPricePen: l.unitPricePen,
+            subtotalPen: l.subtotalPen,
+            igvPen: l.igvPen,
+            totalPen: l.totalPen,
+            reserveItemType: l.reserveItemType,
+            reserveItemId: l.reserveItemId,
+            reserveQty: l.reserveQty,
+            reserveUnit: l.reserveUnit,
+            ...(l.pieces.length > 0
+              ? {
+                  pieces: {
+                    create: l.pieces.map((p) => ({
+                      lineNumber: p.lineNumber,
+                      lengthMm: p.lengthMm,
+                      qty: p.qty,
+                    })),
+                  },
+                }
+              : {}),
+          })),
+        },
+      },
+      include: { items: { orderBy: { lineNumber: 'asc' } } },
+    });
+
+    await this.createReservations(tx, actor, order.id, order.businessLineId, order.items);
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: options.counterSale === true ? 'pos.order.create' : 'sales.order.create-direct',
+      entity: 'sales_orders',
+      entityId: order.id,
+      after: { code: salesOrderCode(order.seq), totalPen: totals.totalPen },
+    });
+    return order.id;
   }
 
   // -------------------------------------------------------------------------

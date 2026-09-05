@@ -47,6 +47,8 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
           : new NullInvoicingProvider(),
     },
   ],
-  exports: [InvoicingService, DispatchesService],
+  // `ReceivablesService` se exporta desde Fase 7b: el mostrador registra el cobro dentro
+  // de la misma transacción que crea la venta (D-099), no por HTTP contra este módulo.
+  exports: [InvoicingService, DispatchesService, ReceivablesService],
 })
 export class InvoicingModule {}
