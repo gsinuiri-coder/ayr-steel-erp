@@ -44,7 +44,11 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
-import { derivePiecesPlan, roofingTheoreticalKg, type CoilGeometry } from '../production/roofing-math';
+import {
+  derivePiecesPlan,
+  roofingTheoreticalKg,
+  type CoilGeometry,
+} from '../production/roofing-math';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 
 function toDateOnly(value: string): Date {
@@ -797,7 +801,9 @@ export class SalesOrdersService {
           },
         },
         productionOrders: {
-          where: { status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] } },
+          where: {
+            status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+          },
           select: { id: true },
           take: 1,
         },
@@ -971,11 +977,19 @@ export class SalesOrdersService {
       orderBy: { seq: 'desc' },
       take: 500,
     });
-    const actorIds = rows.flatMap((r) => [r.createdById, ...(r.priorityById ? [r.priorityById] : [])]);
+    const actorIds = rows.flatMap((r) => [
+      r.createdById,
+      ...(r.priorityById ? [r.priorityById] : []),
+    ]);
     const actors = await this.resolveActorNames(actorIds);
     return rows.map((r) => {
       const dto = this.toDto({ ...r, items: [], reservations: [] }, new Map(), actors);
-      const { items: _items, reservations: _reservations, queueStatus: _queueStatus, ...rest } = dto;
+      const {
+        items: _items,
+        reservations: _reservations,
+        queueStatus: _queueStatus,
+        ...rest
+      } = dto;
       return {
         ...rest,
         itemCount: r._count.items,

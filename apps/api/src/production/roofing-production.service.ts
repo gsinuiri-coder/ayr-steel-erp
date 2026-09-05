@@ -176,7 +176,10 @@ export class RoofingProductionService {
       // cantidad pedida y del largo de la receta. Misma función que usa la cola de Fase 7
       // para mostrar los mismos subítems antes de que esta OP exista (D-093).
       const items = derivePiecesPlan(
-        reservation.salesOrderItem.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty })),
+        reservation.salesOrderItem.pieces.map((p) => ({
+          lengthMm: p.lengthMm.toFixed(2),
+          qty: p.qty,
+        })),
         bom.pieceLengthMm === null ? null : bom.pieceLengthMm.toFixed(2),
         reservation.salesOrderItem.qty.toString(),
       );

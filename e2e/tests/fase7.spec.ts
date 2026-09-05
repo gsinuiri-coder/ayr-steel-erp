@@ -377,7 +377,10 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       lineCode: ROOFING_LINE,
       listPricePen: '40',
     });
-    const trail: { orderIds: string[]; quotationIds: string[] } = { orderIds: [], quotationIds: [] };
+    const trail: { orderIds: string[]; quotationIds: string[] } = {
+      orderIds: [],
+      quotationIds: [],
+    };
 
     try {
       const quotation = await createQuotation(api, {
@@ -469,6 +472,7 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
 /** Detalle de un pedido, con los campos de la Fase 7 tipados. */
 async function getOrder(api: APIRequestContext, orderId: string): Promise<SalesOrderDto> {
   const res = await api.get(`/api/sales/orders/${orderId}`);
-  if (!res.ok()) throw new Error(`GET orders/${orderId} falló: ${res.status()} ${await res.text()}`);
+  if (!res.ok())
+    throw new Error(`GET orders/${orderId} falló: ${res.status()} ${await res.text()}`);
   return (await res.json()) as SalesOrderDto;
 }

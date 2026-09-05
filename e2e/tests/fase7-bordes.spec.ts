@@ -80,11 +80,10 @@ test.describe('Fase 7 — bordes de la cola de producción', () => {
       expect(sinMotivoAlQuitar.status).toBe(400);
 
       // Motivo demasiado corto: el mínimo de `reasonSchema` (3 caracteres) también aplica acá.
-      const motivoCorto = await patchExpectingError(
-        api,
-        `/api/sales/orders/${order.id}/priority`,
-        { priority: false, reason: 'ab' },
-      );
+      const motivoCorto = await patchExpectingError(api, `/api/sales/orders/${order.id}/priority`, {
+        priority: false,
+        reason: 'ab',
+      });
       expect(motivoCorto.status).toBe(400);
 
       // Y sigue priorizado: ningún intento fallido tocó nada.

@@ -15,7 +15,11 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoneyOrDash, formatQty } from '@/lib/format';
-import { QueueAdminControls, QueueEntrySummary, useProductionQueue } from '@/components/production-queue';
+import {
+  QueueAdminControls,
+  QueueEntrySummary,
+  useProductionQueue,
+} from '@/components/production-queue';
 import { RoleGate } from '@/components/role-gate';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';

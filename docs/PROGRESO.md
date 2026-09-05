@@ -4,20 +4,20 @@
 
 ## Estado general
 
-| Fase                                                   | Estado                  | Cierre                                                                 |
-| ------------------------------------------------------ | ----------------------- | ---------------------------------------------------------------------- |
-| 0 — Bootstrap                                          | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                                      |
-| 1 — Maestros, catálogo, precios, importación           | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción               |
-| 2a — Kardex + compras + alta de bobinas                | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho                 |
-| 2b — Partido, merma, cierre, anulación                 | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho                 |
-| 3 — Corte tercerizado + flejes                         | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho                 |
-| 3b — Reversa de recepción de corte                     | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho                 |
-| 4 — Producción drywall + `/planta`                     | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho                        |
-| 5a — Cotización → pedido + reserva                     | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho                        |
-| 5b — Facturación, GRE, despacho y cobranza             | ✅ Cerrada (2026-09-04) | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho |
-| 6 — Producción de coberturas + color                   | ✅ Cerrada (2026-09-05) | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros   |
+| Fase                                                   | Estado                   | Cierre                                                                                                                                                                                                                 |
+| ------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Bootstrap                                          | ✅ Cerrada (2026-09-02)  | Login E2E verde en prod, CI verde                                                                                                                                                                                      |
+| 1 — Maestros, catálogo, precios, importación           | ✅ Cerrada (2026-09-02)  | E2E de Fase 1 verdes en local + CI, deploy en producción                                                                                                                                                               |
+| 2a — Kardex + compras + alta de bobinas                | ✅ Cerrada (2026-09-03)  | 16/16 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
+| 2b — Partido, merma, cierre, anulación                 | ✅ Cerrada (2026-09-04)  | 30/30 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
+| 3 — Corte tercerizado + flejes                         | ✅ Cerrada (2026-09-02)  | 34/34 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
+| 3b — Reversa de recepción de corte                     | ✅ Cerrada (2026-09-03)  | 40/40 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
+| 4 — Producción drywall + `/planta`                     | ✅ Cerrada (2026-09-03)  | 56/56 E2E en producción, CI verde, deploy hecho                                                                                                                                                                        |
+| 5a — Cotización → pedido + reserva                     | ✅ Cerrada (2026-09-04)  | 83/83 E2E en producción, CI verde, deploy hecho                                                                                                                                                                        |
+| 5b — Facturación, GRE, despacho y cobranza             | ✅ Cerrada (2026-09-04)  | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho                                                                                                                                                 |
+| 6 — Producción de coberturas + color                   | ✅ Cerrada (2026-09-05)  | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros                                                                                                                                                   |
 | 7 — Cola, punto de venta e importación de comprobantes | 🟡 En curso (2026-09-05) | Cola de producción cerrada: 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros, deploy de API hecho (web pendiente: token de Vercel vencido). Faltan RF-60 (POS) y RF-71/72 (importación) |
-| 8 — Auditoría, reportes, UAT                           | ⚪ Pendiente            | —                                                                      |
+| 8 — Auditoría, reportes, UAT                           | ⚪ Pendiente             | —                                                                                                                                                                                                                      |
 
 ## Fase 0 — detalle
 
@@ -833,19 +833,19 @@ varias veces mientras se aplicaban las correcciones de la revisión, así que el
 
 ## Fase 7 — detalle (cola de producción; POS e importación quedan pendientes)
 
-| #   | Entregable                                                                     | Estado                                                                                     |
-| --- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 1   | Cola derivada (D-092, D-093): `GET /sales/orders/queue`, sin tabla nueva        | ✅ reusa `resolveDispatchTarget` (D-088) + filtro `kind=ROOFING`                              |
-| 2   | Prioridad manual + fecha prometida (D-094, D-096)                              | ✅ 4 columnas en `sales_orders`, `PATCH .../priority`, `PATCH .../promised-delivery-date`     |
-| 3   | Semáforo VENCIDO/PROXIMO/A_TIEMPO/SIN_FECHA                                    | ✅ `queueSemaphore()` en `@ayr/shared`, sobre `businessToday()` (D-069)                       |
-| 4   | `/planta` como entrada (D-095), `/produccion` admin, badge en `/pedidos/[id]`  | ✅ `RoofingPickerCard` reescrita, `QueueEntrySummary`/`QueueAdminControls` compartidos         |
-| 5   | Indicador RF-38 en el menú lateral                                              | ✅ badge en "Terminal de planta" con el conteo de la cola                                     |
-| 6   | E2E: los 6 escenarios exigidos + 2 de borde                                    | ✅ `fase7.spec.ts` (7 tests), `fase7-bordes.spec.ts` (2 tests)                                |
-| 7   | `pnpm turbo lint typecheck test build`                                         | ✅ verde                                                                                      |
-| 8   | Migración de mano + `db:prod`                                                 | ✅ `20260905090000_fase7_cola_prioridad_fecha_prometida`, aplicada en `dev` y `production`     |
+| #   | Entregable                                                                    | Estado                                                                                                                                |
+| --- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Cola derivada (D-092, D-093): `GET /sales/orders/queue`, sin tabla nueva      | ✅ reusa `resolveDispatchTarget` (D-088) + filtro `kind=ROOFING`                                                                      |
+| 2   | Prioridad manual + fecha prometida (D-094, D-096)                             | ✅ 4 columnas en `sales_orders`, `PATCH .../priority`, `PATCH .../promised-delivery-date`                                             |
+| 3   | Semáforo VENCIDO/PROXIMO/A_TIEMPO/SIN_FECHA                                   | ✅ `queueSemaphore()` en `@ayr/shared`, sobre `businessToday()` (D-069)                                                               |
+| 4   | `/planta` como entrada (D-095), `/produccion` admin, badge en `/pedidos/[id]` | ✅ `RoofingPickerCard` reescrita, `QueueEntrySummary`/`QueueAdminControls` compartidos                                                |
+| 5   | Indicador RF-38 en el menú lateral                                            | ✅ badge en "Terminal de planta" con el conteo de la cola                                                                             |
+| 6   | E2E: los 6 escenarios exigidos + 2 de borde                                   | ✅ `fase7.spec.ts` (7 tests), `fase7-bordes.spec.ts` (2 tests)                                                                        |
+| 7   | `pnpm turbo lint typecheck test build`                                        | ✅ verde                                                                                                                              |
+| 8   | Migración de mano + `db:prod`                                                 | ✅ `20260905090000_fase7_cola_prioridad_fecha_prometida`, aplicada en `dev` y `production`                                            |
 | 9   | Revisión: `revisor` + `auditor-seguridad` en paralelo                         | ✅ 1 ALTO (reserva de bobina que sobraba, corregido), 1 MEDIO (filtro `kind`, corregido), 1 BAJO (auditoría antes/después, corregido) |
-| 10  | E2E contra producción + purga                                                  | ✅ 110/110 (13 saltados por D-081), purga sin rastros tras remediar un residuo de la propia purga (ver nota) |
-| 11  | Deploy                                                                         | 🟡 API en Cloud Run hecho; **web pendiente** — token del CLI de Vercel vencido, requiere `vercel login` |
+| 10  | E2E contra producción + purga                                                 | ✅ 110/110 (13 saltados por D-081), purga sin rastros tras remediar un residuo de la propia purga (ver nota)                          |
+| 11  | Deploy                                                                        | 🟡 API en Cloud Run hecho; **web pendiente** — token del CLI de Vercel vencido, requiere `vercel login`                               |
 
 ### Hallazgo del revisor: la reserva de bobina que nunca se drenaba (D-097)
 

@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Put, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Put,
+  Query,
+  Res,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import {
   cancelQuotationSchema,
@@ -213,7 +224,8 @@ export class SalesController {
   setOrderPromisedDeliveryDate(
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(updatePromisedDeliveryDateSchema)) body: UpdatePromisedDeliveryDateInput,
+    @Body(new ZodValidationPipe(updatePromisedDeliveryDateSchema))
+    body: UpdatePromisedDeliveryDateInput,
   ): Promise<SalesOrderDto> {
     return this.orders.setPromisedDeliveryDate(actor, id, body.promisedDeliveryDate);
   }

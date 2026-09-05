@@ -71,8 +71,9 @@ export function QueueEntrySummary({ entry }: { entry: ProductionQueueEntryDto })
         {entry.theoreticalKg !== null && <> · {formatQty(entry.theoreticalKg, 'kg')} teóricos</>}
       </div>
       <div className="text-xs text-muted-foreground">
-        Prometida: {entry.promisedDeliveryDate ? formatDate(entry.promisedDeliveryDate) : 'sin fecha'}{' '}
-        · en cola desde {queueAgeLabel(entry.createdAt)}
+        Prometida:{' '}
+        {entry.promisedDeliveryDate ? formatDate(entry.promisedDeliveryDate) : 'sin fecha'} · en
+        cola desde {queueAgeLabel(entry.createdAt)}
       </div>
       {entry.priority && (
         <div className="text-xs text-muted-foreground">

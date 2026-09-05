@@ -166,9 +166,9 @@ export function RoofingPickerCard({ onSelect }: { onSelect: (id: string) => void
       </CardHeader>
       <CardContent className="grid gap-3">
         <p className="text-sm text-muted-foreground">
-          La cola ordena prioridad, luego semáforo de fecha prometida y luego el pedido más
-          antiguo (RF-37, D-094). Una orden de coberturas nace del pedido y copia sus largos
-          como plan de corte, que puedes ajustar antes y durante la corrida (RF-31, D-084).
+          La cola ordena prioridad, luego semáforo de fecha prometida y luego el pedido más antiguo
+          (RF-37, D-094). Una orden de coberturas nace del pedido y copia sus largos como plan de
+          corte, que puedes ajustar antes y durante la corrida (RF-31, D-084).
         </p>
         {queue.isPending && <Skeleton className="h-16 w-full" />}
         {queue.isError && (

@@ -136,9 +136,14 @@ export function PedidoDetalleView({ id }: { id: string }) {
             )}
           </p>
           <p className="text-sm text-muted-foreground">
-            Fecha prometida: {o.promisedDeliveryDate ? formatDate(o.promisedDeliveryDate) : 'sin fecha'}
+            Fecha prometida:{' '}
+            {o.promisedDeliveryDate ? formatDate(o.promisedDeliveryDate) : 'sin fecha'}
             {o.priority && o.priorityReason && (
-              <> · Prioridad: {o.priorityReason}{o.priorityByName ? ` — ${o.priorityByName}` : ''}</>
+              <>
+                {' '}
+                · Prioridad: {o.priorityReason}
+                {o.priorityByName ? ` — ${o.priorityByName}` : ''}
+              </>
             )}
           </p>
           {isAdmin && o.status !== 'CANCELLED' && (
