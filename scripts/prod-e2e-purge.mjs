@@ -100,7 +100,11 @@ try {
   const suppliers = await call('/suppliers');
   const e2eSupplierIds = new Set(
     (Array.isArray(suppliers.body) ? suppliers.body : [])
-      .filter((s) => typeof s.name === 'string' && s.name.startsWith('E2E'))
+      // **Con separador**, igual que los clientes y las órdenes de producción de más abajo:
+      // `E2E` a secas alcanzaría a un proveedor legítimo cuyo nombre empiece con esas tres
+      // letras, y este guion corre contra producción anulando sus compras y sus bobinas.
+      // Todos los helpers de E2E nombran a sus proveedores `E2E …`.
+      .filter((s) => typeof s.name === 'string' && s.name.startsWith('E2E '))
       .map((s) => s.id),
   );
   console.log(`Proveedores E2E: ${e2eSupplierIds.size}`);

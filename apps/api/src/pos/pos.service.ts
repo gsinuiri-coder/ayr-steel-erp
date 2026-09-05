@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CashSessionStatus,
   DispatchStatus,
   FiscalDocType,
   FiscalDocumentStatus,
@@ -107,11 +109,27 @@ export class PosService {
    * unidad `MTR` porque es la marca de una cobertura a medida (D-083): esa se cotiza, no se
    * despacha del mostrador. Y se ordena por disponible descendente porque en un mostrador
    * lo primero que importa es qué hay.
+   *
+   * **La consulta arranca por el saldo y no por el catálogo**, que es lo contrario de lo
+   * intuitivo. Empezando por `products` con un `take` hacía falta cortar por algún orden, y
+   * el único disponible ahí es alfabético: con el catálogo crecido, un producto con stock
+   * podía quedar fuera de los primeros SKU y no aparecer nunca sin escribir su código
+   * exacto. Las filas de `inventory_balances` con saldo positivo son pocas por definición
+   * —solo lo que de verdad hay en el almacén—, así que ese es el conjunto por el que se
+   * empieza.
    */
   async findProducts(query: PosProductQuery): Promise<PosProductDto[]> {
     const search = query.search?.trim();
+    const withStock = await this.prisma.inventoryBalance.findMany({
+      where: { itemType: 'PRODUCT', qty: { gt: 0 } },
+      select: { itemId: true, qty: true },
+    });
+    if (withStock.length === 0) return [];
+
+    const stockIds = withStock.map((b) => b.itemId);
     const products = await this.prisma.product.findMany({
       where: {
+        id: { in: stockIds },
         isActive: true,
         // D-098: `MTR` es la unidad de la cobertura a medida. El mostrador no la vende.
         unit: { not: 'MTR' },
@@ -136,23 +154,16 @@ export class PosService {
         listPricePen: true,
         businessLine: { select: { code: true, name: true } },
       },
-      orderBy: { sku: 'asc' },
-      take: 200,
     });
     if (products.length === 0) return [];
 
     const ids = products.map((p) => p.id);
-    const [balances, reserved] = await Promise.all([
-      this.prisma.inventoryBalance.findMany({
-        where: { itemType: 'PRODUCT', itemId: { in: ids } },
-        select: { itemId: true, qty: true },
-      }),
-      this.prisma.reservation.groupBy({
-        by: ['itemId'],
-        where: { itemType: 'PRODUCT', itemId: { in: ids }, status: 'ACTIVE' },
-        _sum: { qty: true },
-      }),
-    ]);
+    const reserved = await this.prisma.reservation.groupBy({
+      by: ['itemId'],
+      where: { itemType: 'PRODUCT', itemId: { in: ids }, status: 'ACTIVE' },
+      _sum: { qty: true },
+    });
+    const balances = withStock;
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
     const reservedById = new Map(
       reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString())]),
@@ -268,8 +279,15 @@ export class PosService {
         });
         await this.invoicing.assignInTx(tx, actor, fiscalDocumentId);
 
-        // 6. El cobro. El mostrador es contado: la venta se cobra entera en el acto.
-        const totalPen = toFixedString(order.totalPen.toString(), 'MONEY');
+        // 6. El cobro. El mostrador es contado: la venta se cobra entera en el acto, y el
+        //    monto sale del **comprobante**, que es contra quien `addPaymentInTx` valida el
+        //    saldo. Hoy coincide con el total del pedido porque el POS factura las líneas
+        //    enteras; leerlo del documento quita esa coincidencia implícita del medio.
+        const invoiced = await tx.fiscalDocument.findUniqueOrThrow({
+          where: { id: fiscalDocumentId },
+          select: { totalPen: true },
+        });
+        const totalPen = toFixedString(invoiced.totalPen.toString(), 'MONEY');
         const customerPaymentId = await this.receivables.addPaymentInTx(
           tx,
           actor,
@@ -369,49 +387,152 @@ export class PosService {
     if (sale.status === PosSaleStatus.VOIDED) {
       throw new BadRequestException('Esa venta ya está anulada');
     }
-    // D-100: solo dentro del turno abierto. Anular una venta de un turno ya arqueado movería
-    // el efectivo esperado de una caja que alguien firmó; ahí el camino es la nota de
-    // crédito desde `/comprobantes`, que no toca la caja de ayer.
-    if (sale.cashSession.status !== 'OPEN') {
+
+    const document = sale.fiscalDocument;
+    // El comprobante ya deshecho no vuelve a deshacerse: un reintento se salta el paso 2 y
+    // sigue por el despacho. `VOID_PENDING` cuenta como deshecho — la baja está comunicada y
+    // en trámite—, y una nota de crédito viva sobre él dice lo mismo por el otro camino.
+    const alreadyUndone =
+      document.status === FiscalDocumentStatus.VOIDED ||
+      document.status === FiscalDocumentStatus.VOID_PENDING ||
+      (await this.hasLiveCreditNote(document.id));
+    if (!alreadyUndone && document.status !== FiscalDocumentStatus.ACCEPTED) {
       throw new BadRequestException(
-        'El turno de esa venta ya está cerrado: emite una nota de crédito desde el comprobante en vez de anular la venta',
+        `El comprobante de esa venta todavía no fue aceptado por SUNAT (está ${document.status}): no se puede deshacer hasta que el PSE lo resuelva. Usa «Consultar al PSE» sobre el comprobante.`,
       );
     }
 
-    const document = sale.fiscalDocument;
-    if (document.status !== FiscalDocumentStatus.ACCEPTED) {
-      throw new BadRequestException(
-        document.status === FiscalDocumentStatus.VOIDED
-          ? 'El comprobante de esa venta ya fue dado de baja: revisa el pedido y el despacho desde sus pantallas'
-          : `El comprobante de esa venta todavía no fue aceptado por SUNAT (está ${document.status}): no se puede deshacer hasta que el PSE lo resuelva. Usa «Consultar al PSE» sobre el comprobante.`,
-      );
-    }
+    // **El reclamo, antes del primer paso y bajo el lock del turno.**
+    //
+    // Hace dos cosas que la comprobación suelta de `cashSession.status` no podía hacer:
+    //
+    // 1. **Serializa contra el cierre de caja.** `CashSessionsService.close` toma `FOR UPDATE`
+    //    sobre `cash_sessions`, así que tomando el mismo lock acá un arqueo no puede confirmarse
+    //    en medio de una anulación. Sin esto, el cierre congelaba `expectedCashPen` contando
+    //    como vigente una venta cuyo cobro ya se había revertido — un faltante inventado sobre
+    //    el número que el cajero firma, que es justo lo que D-101 existe para evitar.
+    // 2. **Impide que dos anulaciones corran a la vez.** `ACTIVE → VOIDING` es condicional, así
+    //    que la segunda no encuentra nada que reclamar y sale. Sin eso, dos peticiones podían
+    //    llegar juntas a `createCreditNote` y emitir **dos notas de crédito** sobre la misma
+    //    boleta: dos correlativos gastados y un saldo negativo que no se deshace.
+    //
+    // Desde `VOIDING` la venta deja de contar para el arqueo (`expectedCash` solo suma las
+    // `ACTIVE`), y las tres marcas de anulación se escriben acá y no al final para que un
+    // reintento sepa quién la empezó y por qué.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT "id" FROM "cash_sessions" WHERE "id" = ${sale.cashSessionId}::uuid FOR UPDATE
+      `;
+      const session = await tx.cashSession.findUniqueOrThrow({
+        where: { id: sale.cashSessionId },
+        select: { status: true },
+      });
+      // D-100: solo dentro del turno abierto. Anular una venta de un turno ya arqueado movería
+      // el efectivo esperado de una caja que alguien firmó; ahí el camino es la nota de
+      // crédito desde `/comprobantes`, que no toca la caja de ayer.
+      if (session.status !== CashSessionStatus.OPEN) {
+        throw new BadRequestException(
+          'El turno de esa venta ya está cerrado: emite una nota de crédito desde el comprobante en vez de anular la venta',
+        );
+      }
+      if (sale.status === PosSaleStatus.ACTIVE) {
+        const claimed = await tx.posSale.updateMany({
+          where: { id, status: PosSaleStatus.ACTIVE },
+          data: {
+            status: PosSaleStatus.VOIDING,
+            voidedById: actor.id,
+            voidedAt: new Date(),
+            voidReason: reason,
+          },
+        });
+        if (claimed.count === 0) {
+          throw new ConflictException('Esa venta ya se está anulando: espera a que termine');
+        }
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'pos.sale.void-start',
+          entity: 'pos_sales',
+          entityId: id,
+          before: { status: PosSaleStatus.ACTIVE, totalPen: sale.totalPen.toFixed(4) },
+          after: { status: PosSaleStatus.VOIDING, reason },
+        });
+      }
+    });
 
     // 1. El cobro.
     if (sale.customerPayment.reversedAt === null) {
       await this.receivables.reversePayment(actor, document.id, sale.customerPayment.id, reason);
     }
 
-    // 2. El comprobante, por el camino que le corresponde.
-    const path = voidPathFor(
-      document.docType,
-      document.issueDate.toISOString().slice(0, 10),
-      businessToday(),
-    );
-    if (path === 'VOID') {
+    // 2. El comprobante, por el camino que le corresponde. Si un intento anterior ya lo
+    //    deshizo —dado de baja, en trámite de baja o acreditado con una nota viva— se salta:
+    //    volver a acreditar emitiría una segunda nota de crédito sobre lo mismo.
+    const path = alreadyUndone
+      ? 'DONE'
+      : voidPathFor(
+          document.docType,
+          document.issueDate.toISOString().slice(0, 10),
+          businessToday(),
+        );
+    if (path === 'DONE') {
+      // Nada que deshacer: el comprobante ya está resuelto por un intento anterior. Salvo que
+      // ese intento lo dejara con la baja **en trámite**, y ahí sí hay algo que hacer:
+      // preguntarle al PSE si SUNAT ya la confirmó. Sin esto, un reintento chocaba contra el
+      // paso 3 con un mensaje sobre facturación que no explicaba nada.
+      if (document.status === FiscalDocumentStatus.VOID_PENDING) {
+        const current = await this.invoicing
+          .refreshStatus(actor, document.id)
+          .catch(() => this.invoicing.findOne(document.id));
+        if (current.status === FiscalDocumentStatus.VOID_PENDING) {
+          throw new ConflictException(
+            `La baja del comprobante ${current.number ?? ''} sigue en trámite ante SUNAT: vuelve a anular la venta en cuanto figure como anulado.`,
+          );
+        }
+      }
+    } else if (path === 'VOID') {
       await this.invoicing.voidDocument(actor, document.id, reason);
     } else if (path === 'CREDIT_NOTE') {
       // Nota de crédito **total**: sin `items`, `createCreditNote` copia lo que quede por
       // acreditar de cada línea (D-072). Motivo 01 del catálogo 09, que es el que
       // corresponde a una anulación de la operación.
-      await this.invoicing.createCreditNote(actor, document.id, {
+      const creditNote = await this.invoicing.createCreditNote(actor, document.id, {
         reason: CreditNoteReason.ANULACION_OPERACION,
         issueDate: businessToday(),
       });
+      // **Y se emite en el acto.** `createCreditNote` deja un borrador, y un borrador no
+      // acredita nada: no tiene correlativo, no está en los estados vivos y `documentBalance`
+      // no lo cuenta. Sin emitirlo, la boleta seguiría facturando sus líneas enteras y el
+      // paso siguiente —revertir el despacho— se bloquearía contra una nota que existe pero
+      // todavía no es un documento. La emisión toma número y confirma; el envío al PSE queda
+      // fuera, como en toda emisión (D-073), así que una caída no deja la anulación a medias.
+      if (creditNote.status === FiscalDocumentStatus.DRAFT) {
+        await this.invoicing.send(actor, creditNote.id);
+      }
     } else {
       throw new BadRequestException(
         'El comprobante de esa venta ya no se puede deshacer: pasó el plazo de la comunicación de baja y una nota de crédito no se acredita con otra',
       );
+    }
+
+    // **La baja no es instantánea.** SUNAT resuelve la comunicación de baja por ticket, así
+    // que `voidDocument` puede dejar el comprobante en `VOID_PENDING`: comunicada y sin
+    // confirmar. En ese estado el documento **sigue declarando el traslado** (D-074), así que
+    // el paso siguiente se bloquearía contra él. Se consulta al PSE —lo mismo que haría el
+    // operario— y solo si sigue en trámite se corta, diciendo exactamente dónde quedó: la
+    // venta está reclamada en `VOIDING`, el cobro ya se revirtió, y reintentar la anulación
+    // retoma desde el despacho en cuanto SUNAT confirme.
+    if (path === 'VOID') {
+      let current = await this.invoicing.findOne(document.id);
+      if (current.status === FiscalDocumentStatus.VOID_PENDING) {
+        current = await this.invoicing
+          .refreshStatus(actor, document.id)
+          .catch(() => this.invoicing.findOne(document.id));
+      }
+      if (current.status === FiscalDocumentStatus.VOID_PENDING) {
+        throw new ConflictException(
+          `La baja del comprobante ${current.number ?? ''} quedó en trámite ante SUNAT: el cobro ya se revirtió y la venta está marcada en anulación. Usa «Consultar al PSE» sobre el comprobante y vuelve a anular la venta en cuanto figure como anulado.`,
+        );
+      }
     }
 
     // 3. El despacho: devuelve el stock y restaura la reserva.
@@ -425,8 +546,8 @@ export class PosService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      const claimed = await tx.posSale.updateMany({
-        where: { id, status: PosSaleStatus.ACTIVE },
+      const closed = await tx.posSale.updateMany({
+        where: { id, status: { in: [PosSaleStatus.ACTIVE, PosSaleStatus.VOIDING] } },
         data: {
           status: PosSaleStatus.VOIDED,
           voidedById: actor.id,
@@ -434,13 +555,13 @@ export class PosService {
           voidReason: reason,
         },
       });
-      if (claimed.count === 0) return;
+      if (closed.count === 0) return;
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'pos.sale.void',
         entity: 'pos_sales',
         entityId: id,
-        before: { status: PosSaleStatus.ACTIVE, totalPen: sale.totalPen.toFixed(4) },
+        before: { status: PosSaleStatus.VOIDING, totalPen: sale.totalPen.toFixed(4) },
         after: { status: PosSaleStatus.VOIDED, reason, fiscalPath: path },
       });
     });
@@ -473,9 +594,25 @@ export class PosService {
     return rows.map((r) => toSaleDto(r, names));
   }
 
-  async findOne(id: string): Promise<PosSaleListItemDto> {
-    const row = await this.prisma.posSale.findUnique({ where: { id }, include: saleInclude });
+  /**
+   * Una venta de mostrador, con la misma regla de propiedad que su turno: el dueño de la
+   * caja o un administrador. `actor` es opcional solo para los llamadores internos que ya
+   * hicieron la comprobación —`sell` y `voidSale` devuelven la venta que acaban de tocar—;
+   * la ruta HTTP siempre lo pasa.
+   */
+  async findOne(id: string, actor?: RequestUser): Promise<PosSaleListItemDto> {
+    const row = await this.prisma.posSale.findUnique({
+      where: { id },
+      include: { ...saleInclude, cashSession: { select: { userId: true } } },
+    });
     if (!row) throw new NotFoundException('Venta de mostrador no encontrada');
+    if (
+      actor !== undefined &&
+      actor.role !== Role.ADMINISTRADOR &&
+      row.cashSession.userId !== actor.id
+    ) {
+      throw new ForbiddenException('Esa venta es de la caja de otro usuario');
+    }
     const names = await this.actorNames([row.createdById, row.voidedById]);
     return toSaleDto(row, names);
   }
@@ -508,6 +645,21 @@ export class PosService {
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
     return customer;
+  }
+
+  /**
+   * ¿El comprobante ya tiene una nota de crédito **viva**?
+   *
+   * Es la mitad del "ya está deshecho" que el estado del documento no cuenta: una boleta
+   * acreditada por completo sigue `ACCEPTED` para siempre (D-072), así que sin mirar sus
+   * notas un reintento de la anulación emitiría una segunda sobre lo mismo.
+   */
+  private async hasLiveCreditNote(documentId: string): Promise<boolean> {
+    const note = await this.prisma.fiscalDocument.findFirst({
+      where: { affectedDocumentId: documentId, status: { in: LIVE_FISCAL_STATUSES } },
+      select: { id: true },
+    });
+    return note !== null;
   }
 
   private async genericCustomer(): Promise<{ id: string; name: string }> {
@@ -589,6 +741,14 @@ export class PosService {
  * Lima cercado: es la sede, y este dato no llega a ningún documento fiscal (D-103).
  */
 const DEFAULT_PICKUP = { address: 'Mostrador — recojo en tienda', ubigeo: '150101' };
+
+/** Estados en los que un comprobante **existe y sigue en pie** (espejo de `invoicing`). */
+const LIVE_FISCAL_STATUSES: FiscalDocumentStatus[] = [
+  FiscalDocumentStatus.ISSUED,
+  FiscalDocumentStatus.SEND_ERROR,
+  FiscalDocumentStatus.ACCEPTED,
+  FiscalDocumentStatus.VOID_PENDING,
+];
 
 /** Estados en los que el comprobante todavía espera respuesta del PSE (D-073). */
 const PENDING_FISCAL_STATUSES: FiscalDocumentStatus[] = [

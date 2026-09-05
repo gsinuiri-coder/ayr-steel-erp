@@ -64,7 +64,7 @@ export interface PosContextDto {
 export interface PosSaleDto {
   id: string;
   code: string;
-  status: 'ACTIVE' | 'VOIDED';
+  status: 'ACTIVE' | 'VOIDING' | 'VOIDED';
   cashSessionId: string;
   customerName: string;
   customerDocNumber: string;
@@ -134,6 +134,45 @@ export async function setupPosStock(
   await postJson(api, `/api/purchases/${purchase.id}/receive`);
 
   return { supplier, product, purchaseId: purchase.id, qty };
+}
+
+/**
+ * Un producto **a medida** con saldo propio: la contraparte de `setupPosStock`.
+ *
+ * Se mide en `MTR`, que es la marca de una cobertura a medida (D-083), y por eso el
+ * mostrador no lo vende (D-098). Existe con saldo a propósito: sin un producto así en la
+ * base, comprobar que el buscador no lo lista es una aserción que pasa por vacío.
+ */
+export async function setupMeasuredStock(api: APIRequestContext): Promise<PosStock> {
+  const supplier = await createSupplier(api, { name: 'E2E Proveedor a medida' });
+  const product = await createSellableProduct(api, {
+    lineCode: POS_LINE,
+    unit: 'MTR',
+    listPricePen: '30.0000',
+  });
+  const purchase = await postJson<{ id: string }>(api, '/api/purchases', {
+    supplierId: supplier.id,
+    businessLine: POS_LINE,
+    type: 'FINISHED_GOOD',
+    docType: 'FACTURA',
+    series: 'F001',
+    number: uniqueDocumentNumber(),
+    issueDate: today(),
+    currency: 'PEN',
+    igvRate: '18',
+    paymentTerms: 'CONTADO',
+    items: [
+      {
+        productId: product.id,
+        description: 'Producto E2E a medida (no se vende en mostrador)',
+        qty: '12',
+        unit: 'MTR',
+        unitPrice: '15',
+      },
+    ],
+  });
+  await postJson(api, `/api/purchases/${purchase.id}/receive`);
+  return { supplier, product, purchaseId: purchase.id, qty: '12' };
 }
 
 export function posContext(api: APIRequestContext): Promise<PosContextDto> {

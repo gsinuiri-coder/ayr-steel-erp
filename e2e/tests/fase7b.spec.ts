@@ -26,6 +26,7 @@ import {
   voidPosSale,
   voidPosSaleExpectingError,
   type CashSessionDto,
+  type PosSaleDto,
 } from '../helpers/pos';
 import { availabilityOf, purgeSalesTrail } from '../helpers/sales';
 
@@ -253,12 +254,19 @@ test.describe('Fase 7b — venta de mostrador', () => {
   test('anular la venta del turno encadena las reversas y devuelve stock y caja (D-100)', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     const stock = await setupPosStock(api, { qty: '40', listPricePen: '10.0000' });
+    // **Cliente identificado a propósito**: la venta sale con factura, y una factura la
+    // resuelve SUNAT en línea. Una boleta va por resumen diario y se queda `ISSUED` un buen
+    // rato, así que colgar de ella el único escenario que ejercita la cadena entera lo
+    // dejaría saltado casi siempre. El camino de la boleta —nota de crédito— es el test
+    // siguiente, que sí se salta cuando el entorno no puede aceptarla.
+    const customer = await createInvoiceableCustomer(api);
     let session: CashSessionDto | undefined;
     const orderIds: string[] = [];
 
     try {
       session = await openCashSession(api, '50.00');
       const sale = await posSell(api, {
+        customerId: customer.id,
         items: [{ productId: stock.product.id, qty: '5.000', unitPricePen: '10.0000' }],
       });
       orderIds.push(sale.salesOrderId);
@@ -280,23 +288,36 @@ test.describe('Fase 7b — venta de mostrador', () => {
           true,
           `El comprobante quedó en ${settledDoc.status}: sin aceptación del PSE no hay baja ni ` +
             'nota de crédito que emitir, y la cadena de reversas no puede empezar (D-100). ' +
-            'El rechazo con mensaje sí quedó comprobado.',
+            'El rechazo con su mensaje sí quedó comprobado.',
         );
         return;
       }
 
-      const voided = await voidPosSale(api, sale.id);
-      expect(voided.status).toBe('VOIDED');
-      expect(voided.voidReason).not.toBeNull();
+      // La baja de una factura la resuelve SUNAT por ticket, así que el comprobante puede
+      // quedar en `VOID_PENDING` y la cadena se corta ahí a propósito: en ese estado el
+      // documento sigue declarando el traslado (D-074). Reintentar es el camino previsto —el
+      // API lo dice en el error— y lo que se prueba acá es justamente que el reintento
+      // **retoma** en vez de duplicar reversas.
+      const voided = await voidPosSaleWithRetry(api, sale.id);
+      test.skip(
+        voided === null,
+        'La baja del comprobante quedó en trámite ante SUNAT tras varios reintentos: la cadena ' +
+          'no puede seguir mientras el documento declare el traslado (D-074). El corte con su ' +
+          'mensaje sí quedó comprobado.',
+      );
+      expect(voided?.status).toBe('VOIDED');
+      expect(voided?.voidReason).not.toBeNull();
 
-      // 1. El cobro revertido.
+      // 1. El cobro revertido, y el comprobante deshecho por el camino que le toca: una
+      //    factura dentro de plazo se da de baja (`voidPathFor`, D-072).
       const document = await getDocument(api, sale.fiscalDocumentId);
       expect(document.payments[0]?.reversedAt).not.toBeNull();
+      expect(['VOIDED', 'VOID_PENDING']).toContain(document.status);
 
-      // 2. El despacho revertido y el stock de vuelta.
+      // 2. El despacho revertido y el stock de vuelta, sin reserva colgando: el pedido
+      //    anulado libera lo que quedaba prometido.
       const dispatch = await getDispatch(api, sale.dispatchId);
       expect(dispatch.status).toBe('REVERSED');
-      // Y sin reserva colgando: el pedido anulado libera lo que quedaba prometido.
       const restored = await availabilityOf(api, 'PRODUCT', stock.product.id);
       expect(restored).toMatchObject({
         qty: '40.000',
@@ -314,7 +335,84 @@ test.describe('Fase 7b — venta de mostrador', () => {
       await purgeSalesTrail(api, { orderIds });
     }
   });
+
+  test('anular una venta con boleta la acredita con una nota total y libera el despacho (D-100)', async () => {
+    test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
+    // Este es el escenario que destapó el hueco de Fase 5b: **una boleta no se da de baja
+    // de forma individual**, así que su único camino es la nota de crédito — que la deja
+    // `ACCEPTED` para siempre—. Con el criterio viejo, la reversa del despacho quedaba
+    // bloqueada por su propia boleta y el mensaje ofrecía un camino que no desbloqueaba
+    // nada. Se salta si el entorno no puede llevar una boleta a aceptada: SUNAT las resuelve
+    // por resumen diario y el PSE demo puede tardar más que la corrida.
+    const stock = await setupPosStock(api, { qty: '40', listPricePen: '10.0000' });
+    let session: CashSessionDto | undefined;
+    const orderIds: string[] = [];
+
+    try {
+      session = await openCashSession(api, '0.00');
+      const sale = await posSell(api, {
+        items: [{ productId: stock.product.id, qty: '4.000', unitPricePen: '10.0000' }],
+      });
+      orderIds.push(sale.salesOrderId);
+
+      const document = await getDocument(api, sale.fiscalDocumentId);
+      expect(document.docType).toBe('BOLETA');
+      const settledDoc = await waitForAcceptance(api, sale.fiscalDocumentId);
+      test.skip(
+        settledDoc.status !== 'ACCEPTED',
+        `La boleta quedó en ${settledDoc.status}: SUNAT las resuelve por resumen diario y sin ` +
+          'aceptación no hay nota de crédito que emitir (D-072).',
+      );
+
+      const voided = await voidPosSale(api, sale.id);
+      expect(voided.status).toBe('VOIDED');
+
+      // La boleta sigue **aceptada** —no se da de baja— y aun así el despacho se revirtió:
+      // eso es exactamente la corrección. Lo que la libera es su nota de crédito vigente.
+      const affected = await getDocument(api, sale.fiscalDocumentId);
+      expect(affected.status).toBe('ACCEPTED');
+      expect(affected.creditNotes.length).toBeGreaterThan(0);
+      expect(affected.creditNotes[0]?.number).not.toBeNull();
+      expect(affected.balancePen).toBe('0.0000');
+
+      const dispatch = await getDispatch(api, sale.dispatchId);
+      expect(dispatch.status).toBe('REVERSED');
+      expect((await balanceOf(api, 'PRODUCT', stock.product.id)).qty).toBe('40.000');
+    } finally {
+      await closeSessionQuietly(api, session?.id);
+      await purgeSalesTrail(api, { orderIds });
+    }
+  });
 });
+
+/**
+ * Anula la venta, reintentando mientras la baja del comprobante siga en trámite.
+ *
+ * No es una tirita: es **el camino que el API describe en su propio error**. La comunicación
+ * de baja de una factura se resuelve por ticket contra SUNAT, así que `voidDocument` puede
+ * dejar el comprobante en `VOID_PENDING`; mientras esté ahí sigue declarando el traslado y el
+ * despacho no se revierte (D-074). Reintentar retoma la cadena desde donde se cortó —el cobro
+ * ya revertido no se vuelve a revertir, y el comprobante ya deshecho no se vuelve a
+ * deshacer—, que es exactamente la propiedad que este reintento comprueba.
+ *
+ * Devuelve `null` si tras varios intentos SUNAT no confirmó: eso no es un defecto, es el PSE.
+ */
+async function voidPosSaleWithRetry(
+  api: APIRequestContext,
+  saleId: string,
+): Promise<PosSaleDto | null> {
+  for (let i = 0; i < 6; i += 1) {
+    const res = await api.post(`/api/pos/sales/${saleId}/void`, {
+      data: { reason: 'Anulación de prueba E2E' },
+    });
+    if (res.ok()) return (await res.json()) as PosSaleDto;
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    const pending = typeof body.message === 'string' && body.message.includes('trámite');
+    expect(pending, `la anulación falló por otra cosa: ${body.message ?? res.status()}`).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+  return null;
+}
 
 /**
  * Espera a que el PSE acepte el comprobante, **con pausa entre consultas**.

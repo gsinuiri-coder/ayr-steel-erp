@@ -13,6 +13,7 @@ import {
   cashSessionCode,
   expectedCash,
   toDecimal,
+  totalsByMethod,
   toFixedString,
   type CashSessionDto,
   type CashSessionQuery,
@@ -186,11 +187,19 @@ export class CashSessionsService {
     return row === null ? null : this.findOne(actor, row.id);
   }
 
+  /**
+   * Turnos visibles para quien pregunta.
+   *
+   * Un vendedor solo ve los suyos: el arqueo de otro cajero es información de caja ajena.
+   * Un administrador ve los de todos **solo si lo pide** (`mine=false`); por defecto también
+   * ve los suyos, y esa asimetría es deliberada. La pantalla de caja busca "mi turno
+   * abierto", y devolverle al administrador el turno abierto **más reciente de cualquier
+   * cajero** le hacía contar billetes contra el esperado ajeno y cerrar la caja de otro sin
+   * ninguna señal en pantalla. El listado completo sigue disponible, rotulado con su dueño.
+   */
   async findAll(actor: RequestUser, query: CashSessionQuery): Promise<CashSessionDto[]> {
-    // Un vendedor solo ve sus propios turnos: el arqueo de otro cajero es información de
-    // caja ajena. Es la misma regla de propiedad que `assertOwnership` aplica a los
-    // comprobantes en `invoicing`.
-    const userId = actor.role === Role.ADMINISTRADOR ? query.userId : actor.id;
+    const seesAll = actor.role === Role.ADMINISTRADOR && !query.mine;
+    const userId = seesAll ? query.userId : actor.id;
     const rows = await this.prisma.cashSession.findMany({
       where: { status: query.status, userId },
       include: {
@@ -278,17 +287,15 @@ export class CashSessionsService {
         ? toDecimal(row.expectedCashPen.toString())
         : expectedCash(row.openingAmountPen.toString(), sales);
 
-    const totals = POS_PAYMENT_METHODS.map((method) => {
-      const forMethod = live.filter((s) => s.method === method);
-      return {
-        method,
-        saleCount: forMethod.length,
-        totalPen: toFixedString(
-          forMethod.reduce((acc, s) => acc.plus(toDecimal(s.totalPen)), new Decimal(0)),
-          'MONEY',
-        ),
-      };
-    });
+    // La suma por medio sale de `@ayr/shared` y no de una segunda implementación acá: es la
+    // misma razón por la que el esperado usa `expectedCash` — dos cuentas del mismo dinero
+    // terminan divergiendo en el centavo que hace que una caja no cuadre.
+    const byMethod = totalsByMethod(sales);
+    const totals = POS_PAYMENT_METHODS.map((method) => ({
+      method,
+      saleCount: live.filter((s) => s.method === method).length,
+      totalPen: toFixedString(byMethod[method], 'MONEY'),
+    }));
 
     return {
       id: row.id,

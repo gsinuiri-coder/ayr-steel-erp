@@ -49,6 +49,17 @@ describe('expectedCash (D-101)', () => {
     expect(result.toFixed(4)).toBe('70.0000');
   });
 
+  it('tampoco cuenta una venta que se está anulando (D-100)', () => {
+    // `VOIDING` es el reclamo de la cadena de reversas: desde ese instante el dinero de esa
+    // venta ya no cuenta para el arqueo, que es lo que impide que un cierre concurrente
+    // congele un esperado con una venta cuyo cobro ya se revirtió.
+    const result = expectedCash('10.0000', [
+      sale({ totalPen: '90.0000', status: PosSaleStatus.VOIDING }),
+      sale({ totalPen: '5.0000' }),
+    ]);
+    expect(result.toFixed(4)).toBe('15.0000');
+  });
+
   it('un turno sin ventas espera exactamente su apertura', () => {
     expect(expectedCash('0.0000', []).toFixed(4)).toBe('0.0000');
     expect(expectedCash('123.4500', []).toFixed(4)).toBe('123.4500');

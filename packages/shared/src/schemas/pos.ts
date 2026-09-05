@@ -60,7 +60,16 @@ export const CASH_SESSION_STATUS_LABELS: Record<CashSessionStatus, string> = {
   CLOSED: 'Cerrada',
 };
 
-export const PosSaleStatus = { ACTIVE: 'ACTIVE', VOIDED: 'VOIDED' } as const;
+/**
+ * Estado de una venta de mostrador (D-100).
+ *
+ * `VOIDING` es la venta ya **reclamada** por una anulación cuya cadena todavía no terminó.
+ * No puede ser atómica —el paso del comprobante habla con el PSE— así que el estado existe
+ * para que, mientras dura, la venta deje de contar para el arqueo, un cierre de caja
+ * concurrente no la congele como vigente y una segunda anulación no emita una nota de
+ * crédito duplicada.
+ */
+export const PosSaleStatus = { ACTIVE: 'ACTIVE', VOIDING: 'VOIDING', VOIDED: 'VOIDED' } as const;
 export type PosSaleStatus = (typeof PosSaleStatus)[keyof typeof PosSaleStatus];
 export const POS_SALE_STATUSES = Object.values(PosSaleStatus) as [
   PosSaleStatus,
@@ -68,6 +77,7 @@ export const POS_SALE_STATUSES = Object.values(PosSaleStatus) as [
 ];
 export const POS_SALE_STATUS_LABELS: Record<PosSaleStatus, string> = {
   ACTIVE: 'Vigente',
+  VOIDING: 'Anulándose',
   VOIDED: 'Anulada',
 };
 
@@ -323,7 +333,17 @@ export type CashSessionDto = z.infer<typeof cashSessionSchema>;
 
 export const cashSessionQuerySchema = z.object({
   status: z.enum(CASH_SESSION_STATUSES).optional(),
-  /** Solo ADMINISTRADOR ve turnos ajenos; para el resto el API lo fuerza al propio. */
+  /**
+   * Por defecto **solo los turnos propios**, para cualquier rol. Un ADMINISTRADOR pide
+   * `mine=false` para ver los de todos; sin eso, la pantalla de caja le mostraba como suyo
+   * el turno abierto más reciente de cualquier cajero.
+   */
+  mine: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .default(true)
+    .transform((v) => v !== false && v !== 'false'),
+  /** Filtra por cajero. Solo lo respeta un ADMINISTRADOR que además pidió `mine=false`. */
   userId: z.string().uuid().optional(),
 });
 export type CashSessionQuery = z.infer<typeof cashSessionQuerySchema>;

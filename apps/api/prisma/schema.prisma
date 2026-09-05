@@ -1851,6 +1851,12 @@ enum CashSessionStatus {
 /// reversas encadenadas; la fila nunca se borra, igual que el resto del proyecto.
 enum PosSaleStatus {
   ACTIVE
+  /// La cadena de reversas empezó y todavía no terminó (D-100). No puede ser atómica —el
+  /// paso del comprobante habla con el PSE— así que la venta se **reclama** en este estado
+  /// bajo el lock de su turno antes del primer paso: desde ahí deja de contar para el
+  /// arqueo, un cierre de caja concurrente no la puede congelar como vigente y una segunda
+  /// anulación no puede emitir una nota de crédito duplicada.
+  VOIDING
   VOIDED
 }
 

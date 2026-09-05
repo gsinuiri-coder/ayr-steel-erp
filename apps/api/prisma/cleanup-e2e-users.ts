@@ -41,13 +41,20 @@ async function main(): Promise<void> {
   // Fase 7b: los turnos de caja del mostrador (D-101) cuelgan del usuario con
   // `onDelete: RESTRICT`, así que sin esto el borrado falla en cuanto un E2E abre caja.
   //
-  // Se borran **solo los turnos sin ventas**, que es lo único que un E2E debería dejar: un
-  // turno vacío no registra ningún hecho —ni dinero, ni arqueo que alguien haya firmado— y
-  // su fila no le sirve a nadie. Uno con ventas sí las tiene, y ahí el guion se planta y lo
-  // dice en vez de arrastrar la venta de mostrador consigo.
+  // Se borran los turnos y las ventas **ya anuladas** que cuelguen de ellos: ni el turno ni
+  // la fila de enlace registran un hecho que se pierda —la cadena de reversas está hecha y
+  // `audit_log` la conserva—. Un turno con una venta **viva** sí lo registra, y ahí el guion
+  // se planta y lo dice en vez de arrastrarla consigo.
   const ids = targets.map((u) => u.id);
   const withSales = await prisma.cashSession.findMany({
-    where: { userId: { in: ids }, sales: { some: {} } },
+    // **Solo las ventas vivas.** Una venta ya anulada no describe nada que se pierda al
+    // borrar el turno —su cadena de reversas está hecha y `audit_log` la conserva—, y
+    // contarla dejaba al guion pidiendo "anula esas ventas primero" justo después de que
+    // alguien las anulara: sin salida.
+    where: {
+      userId: { in: ids },
+      sales: { some: { status: { in: ['ACTIVE', 'VOIDING'] } } },
+    },
     select: { seq: true, user: { select: { email: true } } },
   });
   if (withSales.length > 0) {
@@ -57,6 +64,8 @@ async function main(): Promise<void> {
         'Anula esas ventas primero (POST /pos/sales/:id/void) y vuelve a correr la limpieza.',
     );
   }
+  // Las ventas anuladas se van con su turno: son la fila de enlace, no el hecho.
+  await prisma.posSale.deleteMany({ where: { cashSession: { userId: { in: ids } } } });
   const sessions = await prisma.cashSession.deleteMany({ where: { userId: { in: ids } } });
   if (sessions.count > 0) console.warn(`Turnos de caja de E2E borrados: ${sessions.count}`);
 

@@ -608,6 +608,14 @@ export class InvoicingService {
     input: CreateCreditNoteInput,
   ): Promise<FiscalDocumentDto> {
     const id = await this.prisma.$transaction(async (tx) => {
+      // **El afectado se bloquea antes de leer lo que le queda por acreditar.** Sin esto,
+      // dos notas de crédito concurrentes sobre el mismo comprobante calculaban las dos el
+      // mismo pendiente y acreditaban el doble: dos correlativos gastados, dos documentos
+      // ante SUNAT y un saldo negativo que no se deshace —una nota de crédito no se acredita
+      // con otra—. Es el mismo lock que `addPayment` toma para el saldo, por el mismo motivo.
+      await tx.$queryRaw`
+        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${affectedId}::uuid FOR UPDATE
+      `;
       const affected = await tx.fiscalDocument.findUnique({
         where: { id: affectedId },
         include: { items: { orderBy: { lineNumber: 'asc' } }, customer: true },

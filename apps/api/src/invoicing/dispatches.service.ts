@@ -341,21 +341,6 @@ export class DispatchesService {
   // -------------------------------------------------------------------------
 
   /**
-   * Devuelve el stock, restaura las reservas y recalcula el estado del pedido.
-   *
-   * **El guardrail de la fase**: se bloquea si un documento electrónico vigente declara
-   * este traslado. Son dos casos distintos y los dos importan:
-   *
-   * - la **guía de remisión del propio despacho**, que es literalmente el papel que dice
-   *   que esa mercadería salió;
-   * - un **comprobante vigente del mismo pedido** que factura alguna de las líneas que
-   *   este despacho sacó.
-   *
-   * En los dos, el camino es al revés del que se intenta: primero se resuelve el documento
-   * (baja o nota de crédito) y después se revierte el despacho. Deshacerlo al revés dejaría
-   * al kardex diciendo que la mercadería está en el almacén y a SUNAT diciendo que salió.
-   */
-  /**
    * El comprobante vigente que **todavía factura** alguna línea de este despacho, si lo hay.
    *
    * "Todavía" es la palabra que este método agrega, y es la corrección de un hueco de Fase
@@ -423,6 +408,22 @@ export class DispatchesService {
     );
   }
 
+  /**
+   * Devuelve el stock, restaura las reservas y recalcula el estado del pedido.
+   *
+   * **El guardrail de la fase**: se bloquea si un documento electrónico vigente declara
+   * este traslado. Son dos casos distintos y los dos importan:
+   *
+   * - la **guía de remisión del propio despacho**, que es literalmente el papel que dice
+   *   que esa mercadería salió;
+   * - un **comprobante vigente del mismo pedido** que **todavía** factura alguna de las
+   *   líneas que este despacho sacó (ver `declaringDocument`).
+   *
+   * En los dos, el camino es al revés del que se intenta: primero se resuelve el documento
+   * (baja, o nota de crédito **emitida** — un borrador no acredita nada) y después se
+   * revierte el despacho. Deshacerlo al revés dejaría al kardex diciendo que la mercadería
+   * está en el almacén y a SUNAT diciendo que salió.
+   */
   async reverse(actor: RequestUser, id: string, reason: string): Promise<DispatchDto> {
     await this.prisma.$transaction(
       async (tx) => {
@@ -471,7 +472,7 @@ export class DispatchesService {
         const blocking = await this.declaringDocument(tx, dispatch);
         if (blocking) {
           throw new BadRequestException(
-            `El comprobante ${blocking.number ?? ''} factura líneas de este despacho: dalo de baja o emite una nota de crédito antes de revertirlo`,
+            `El comprobante ${blocking.number ?? ''} todavía factura líneas de este despacho: dalo de baja, o emítele una nota de crédito por lo que falta acreditar, antes de revertirlo`,
           );
         }
 

@@ -916,6 +916,67 @@ por completo por notas vivas dejó de estarlo. No es una excepción para el POS 
 despacho con boleta, venga de donde venga, ahora se revierte por el camino que su mensaje
 anuncia.
 
+### Hallazgos corregidos en esta fase (revisor + auditor-seguridad)
+
+- **Bloqueante.** La nota de crédito de la anulación **nacía borrador y nadie la emitía**, y
+  un borrador no acredita nada: no tiene correlativo, no está en los estados vivos y
+  `documentBalance` no lo cuenta. Como una boleta solo se deshace por nota de crédito
+  (D-072), el paso siguiente —revertir el despacho— se bloqueaba siempre, y con el cobro ya
+  revertido la venta quedaba **a medio anular**. Encontrado dos veces por caminos distintos:
+  al escribir el E2E de la anulación y por `revisor`. Ahora se emite en el acto, con el envío
+  al PSE fuera de la transacción como toda emisión (D-073).
+- **Alto.** `voidSale` **no era idempotente en el paso del comprobante**, en contra de lo que
+  prometía su propio JSDoc: un reintento creaba otra nota de crédito, y un documento que
+  quedó en `VOID_PENDING` hacía fallar la precondición con un mensaje que decía "todavía no
+  fue aceptado". Ahora el paso 2 se salta si el comprobante ya está deshecho —dado de baja,
+  en trámite de baja, o con una nota de crédito viva— y el reintento sigue por el despacho.
+- **Alto.** `/pos/caja` le mostraba a un ADMINISTRADOR **el turno abierto más reciente de
+  cualquier cajero como si fuera el suyo**: `GET /pos/cash-sessions` sin `userId` devolvía los
+  de todos y la vista tomaba el primer `OPEN`. Desde ahí contaba billetes contra el esperado
+  ajeno y cerraba una caja que no era la suya, sin ninguna señal en pantalla. El turno propio
+  sale ahora de `GET /pos/context` (que filtra por el actor); el listado completo sigue
+  disponible con `mine=false` y cada fila dice de quién es.
+- **Medio (los tres, de concurrencia).** El guardrail "solo dentro del turno abierto" era
+  TOCTOU: un cierre de caja podía confirmarse en medio de una anulación y congelar
+  `expectedCashPen` contando como vigente una venta cuyo cobro ya se había revertido — un
+  faltante inventado sobre el número que el cajero firma. Y dos anulaciones concurrentes de
+  la misma venta podían emitir **dos notas de crédito** sobre la misma boleta: dos
+  correlativos gastados y un saldo negativo que no se deshace. Los dos se cierran con el
+  mismo mecanismo: la venta se **reclama** en un estado nuevo, `VOIDING`, bajo el lock de su
+  turno y antes del primer paso. Desde ahí deja de contar para el arqueo, el cierre no puede
+  colarse y la segunda anulación no encuentra nada que reclamar. Aparte, `createCreditNote`
+  ganó el `FOR UPDATE` sobre el comprobante afectado que le faltaba desde Fase 5b — el mismo
+  lock que `addPayment` toma para el saldo, por el mismo motivo.
+- **Medios.** `cleanup-e2e-users.ts` se plantaba con una venta **ya anulada** pidiendo
+  "anúlala primero" (sin salida); ahora solo bloquea con ventas vivas y se lleva las anuladas
+  con su turno. El error de la anulación se pintaba **detrás** del diálogo abierto, así que
+  el usuario no veía el motivo del fallo.
+- **Bajos.** IDOR de lectura en `GET /pos/sales/:id` (era la única lectura del módulo sin
+  comprobación de propiedad); el filtro de proveedores de `prod:purge-e2e` era `E2E` **sin
+  separador**, contra lo que decía su propio comentario y contra el criterio del resto del
+  guion —y ese guion corre contra producción anulando compras y bobinas—; la excepción al
+  tope de S/ 700 se mandaba **implícita** por tener rol de administrador, cuando D-077 la
+  describe como una decisión (ahora es una casilla explícita); el buscador cortaba por los
+  200 primeros SKU **alfabéticos**, así que con el catálogo crecido un producto con stock
+  podía no aparecer nunca (ahora arranca por las filas de saldo positivo); `PICKUP` no
+  prohibía `totalWeightKg`; `totalsByMethod` estaba escrita en `@ayr/shared` y reimplementada
+  a mano en el servicio; el cobro se registraba por el total del **pedido** contra el
+  **comprobante**; y un E2E comprobaba que ninguna cobertura a medida aparece en el buscador
+  **sin que hubiera ninguna en la base**, así que pasaba por vacío.
+
+**Sin hallazgos críticos ni altos de seguridad.** El auditor confirmó que ningún VENDEDOR
+puede ver o cerrar la caja de otro por API, anular una venta, cerrar con diferencia ni forzar
+la boleta sobre el tope; que SUPERVISOR_PLANTA queda fuera del mostrador en las tres capas;
+que ninguna ruta nueva expone costos de compra; que el efectivo esperado no entra por el
+cuerpo de la petición; y que `pnpm audit --prod` sale limpio. `agy` rehusó la segunda
+opinión, así que la auditoría es de una sola fuente.
+
+Dos hallazgos quedan **anotados y sin corregir**, con motivo: el buscador de cliente del
+mostrador se trae el maestro entero y filtra en el navegador (hace falta un `search` en
+`GET /customers`, que es API de otro módulo), y el override de precio del vendedor no tiene
+piso — es D-068 heredado, pero en mostrador el arqueo nunca lo detecta porque el efectivo
+esperado se deriva del total de la propia venta. Los dos van a la Fase 8 (hardening).
+
 ### La modalidad de traslado que faltaba (D-103)
 
 Una venta de mostrador crea un despacho de verdad, pero el traslado lo hace el **comprador**.

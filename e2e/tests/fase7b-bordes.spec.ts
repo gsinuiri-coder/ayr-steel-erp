@@ -9,6 +9,7 @@ import {
   posContext,
   posProducts,
   posSellExpectingError,
+  setupMeasuredStock,
   setupPosStock,
   POS_LINE,
   type CashSessionDto,
@@ -158,9 +159,20 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
       session = await openCashSession(api, '0.00');
 
       // D-098: un producto que se mide en metros lineales es una cobertura a medida y no
-      // aparece siquiera en el buscador del mostrador.
+      // aparece siquiera en el buscador del mostrador. Se **siembra uno con saldo** en vez de
+      // comprobar que la lista no trae ninguno: sin un `MTR` vivo en la base, esa aserción
+      // pasa por vacío y no prueba nada.
+      const madeToMeasure = await setupMeasuredStock(api);
       const listed = await posProducts(api);
+      expect(listed.some((p) => p.productId === madeToMeasure.product.id)).toBe(false);
       expect(listed.every((p) => p.unit !== 'MTR')).toBe(true);
+      // Y si alguien lo pide por id, el API lo rechaza igual: el buscador es cortesía, no
+      // el control.
+      const refusedMeasured = await posSellExpectingError(api, {
+        items: [{ productId: madeToMeasure.product.id, qty: '1.000', unitPricePen: '10.0000' }],
+      });
+      expect(refusedMeasured.status).toBe(400);
+      expect(refusedMeasured.message).toContain('no se vende en mostrador');
 
       // D-104: un carrito de dos líneas de negocio no cabe en un pedido, que tiene una sola.
       const other = await postJson<{ id: string }>(api, '/api/catalog', {

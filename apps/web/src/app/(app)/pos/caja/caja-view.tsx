@@ -12,6 +12,7 @@ import {
   Role,
   toDecimal,
   type CashSessionDto,
+  type PosContextDto,
   type PosSaleListItemDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
@@ -53,12 +54,24 @@ export function CajaView() {
   const [error, setError] = useState<string | null>(null);
   const [voiding, setVoiding] = useState<PosSaleListItemDto | null>(null);
 
-  const sessions = useQuery({
-    queryKey: ['cash-sessions'],
-    queryFn: () => api<CashSessionDto[]>('/pos/cash-sessions'),
+  // **El turno propio sale del contexto, no del listado.** Buscar el primer `OPEN` de
+  // `/pos/cash-sessions` le daba a un administrador el turno abierto más reciente de
+  // cualquier cajero como si fuera el suyo: contaba billetes contra el esperado ajeno y
+  // cerraba una caja que no era la suya, sin ninguna señal en pantalla.
+  const context = useQuery({
+    queryKey: ['pos-context'],
+    queryFn: () => api<PosContextDto>('/pos/context'),
   });
+  const open = context.data?.session ?? null;
 
-  const open = sessions.data?.find((s) => s.status === 'OPEN') ?? null;
+  // El historial sí es de todos para un administrador, y cada fila dice de quién es.
+  const sessions = useQuery({
+    queryKey: ['cash-sessions', user.role],
+    queryFn: () =>
+      api<CashSessionDto[]>(
+        `/pos/cash-sessions?status=CLOSED${user.role === Role.ADMINISTRADOR ? '&mine=false' : ''}`,
+      ),
+  });
 
   const sales = useQuery({
     queryKey: ['cash-session-sales', open?.id],
@@ -109,11 +122,14 @@ export function CajaView() {
       });
     },
     onError: (err) => {
+      // Se cierra el diálogo **antes** de pintar el error: con el diálogo abierto encima, el
+      // mensaje quedaba detrás y la anulación parecía no hacer nada.
+      setVoiding(null);
       setError(err instanceof ApiError ? err.message : 'No se pudo anular la venta');
     },
   });
 
-  const closed = (sessions.data ?? []).filter((s) => s.status === 'CLOSED');
+  const closed = sessions.data ?? [];
 
   return (
     <RoleGate allow={POS_ROLES}>
@@ -130,7 +146,7 @@ export function CajaView() {
         </Button>
       </div>
 
-      {sessions.isPending ? (
+      {context.isPending ? (
         <Skeleton className="h-64 w-full" />
       ) : open === null ? (
         <Card>
@@ -146,7 +162,7 @@ export function CajaView() {
           <Card>
             <CardHeader>
               <CardTitle>
-                {open.code} · {CASH_SESSION_STATUS_LABELS[open.status]}
+                {open.code} · {CASH_SESSION_STATUS_LABELS[open.status]} · {open.userName}
               </CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4">

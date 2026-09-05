@@ -638,6 +638,9 @@ export const createDispatchSchema = z
       forbid('driverLicense', 'Un recojo en mostrador no lleva conductor');
       forbid('carrierDocNumber', 'Un recojo en mostrador no lleva transportista');
       forbid('carrierName', 'Un recojo en mostrador no lleva transportista');
+      // Sin guía no hay peso bruto que declarar: admitirlo dejaría escrito un dato que
+      // nadie va a leer y que nadie pesó.
+      forbid('totalWeightKg', 'Un recojo en mostrador no declara peso: no genera guía');
     } else if (input.transferMode === TransferMode.PRIVATE) {
       if (input.totalWeightKg === undefined || toDecimal(input.totalWeightKg).lte(0)) {
         ctx.addIssue({

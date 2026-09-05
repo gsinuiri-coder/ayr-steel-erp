@@ -74,6 +74,10 @@ export function PosView() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [opening, setOpening] = useState('0.00');
   const [done, setDone] = useState<PosSaleListItemDto | null>(null);
+  // D-077: la excepción al tope de la boleta genérica la **decide** un administrador, no se
+  // aplica sola por tener el rol. Queda escrita en el comprobante y en la auditoría, así que
+  // el acto que la dispara tiene que ser explícito.
+  const [forceGeneric, setForceGeneric] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const context = useQuery({
@@ -132,7 +136,7 @@ export function PosView() {
           customerId: customer?.id,
           method,
           reference: reference.trim() || undefined,
-          forceGenericCustomer: customer === null && overGenericCap,
+          forceGenericCustomer: customer === null && overGenericCap && forceGeneric,
           items: cart.map((l) => ({
             productId: l.product.productId,
             qty: l.qty,
@@ -149,6 +153,7 @@ export function PosView() {
       setCustomer(null);
       setMethod(null);
       setReference('');
+      setForceGeneric(false);
       invalidatePos(queryClient, {
         cashSessionId: sale.cashSessionId,
         orderId: sale.salesOrderId,
@@ -427,9 +432,24 @@ export function PosView() {
                 <p className="text-sm text-destructive" role="alert">
                   Una boleta a público en general no pasa de{' '}
                   {formatMoney(GENERIC_CUSTOMER_MAX_TOTAL_PEN)}: identifica al cliente.
-                  {user.role === Role.ADMINISTRADOR &&
-                    ' Como administrador puedes cobrarla igual; quedará registrado en el comprobante.'}
                 </p>
+              )}
+
+              {overGenericCap && user.role === Role.ADMINISTRADOR && (
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={forceGeneric}
+                    onChange={(e) => {
+                      setForceGeneric(e.target.checked);
+                    }}
+                  />
+                  <span>
+                    Emitirla igual como boleta a público en general. Queda registrado en el
+                    comprobante y en la auditoría quién autorizó la excepción.
+                  </span>
+                </label>
               )}
 
               <div className="grid grid-cols-2 gap-2">
@@ -468,7 +488,7 @@ export function PosView() {
 
               <Button
                 size="lg"
-                disabled={!canSell || (overGenericCap && user.role !== Role.ADMINISTRADOR)}
+                disabled={!canSell || (overGenericCap && !forceGeneric)}
                 onClick={() => {
                   sell.mutate();
                 }}

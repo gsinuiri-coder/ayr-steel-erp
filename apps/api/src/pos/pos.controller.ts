@@ -126,8 +126,11 @@ export class PosController {
   }
 
   @Get('sales/:id')
-  findSale(@Param('id', ParseUUIDPipe) id: string): Promise<PosSaleListItemDto> {
-    return this.pos.findOne(id);
+  findSale(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<PosSaleListItemDto> {
+    return this.pos.findOne(id, actor);
   }
 
   /** D-100: cadena de reversas completa. Solo ADMINISTRADOR, como toda reversa (D-046). */
