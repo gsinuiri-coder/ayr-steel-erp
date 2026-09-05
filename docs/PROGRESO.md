@@ -1193,6 +1193,16 @@ Aparte, `prod-e2e-purge.mjs` ahora **saltea la baja de un importado** en vez de 
 el API la rechaza siempre (D-105), así que la purga imprimía un fallo perpetuo. Sus cobros
 sí se revierten, que es la parte que ensucia cuentas por cobrar.
 
+### El techo de tiempo del E2E en CI, otra vez
+
+La primera corrida de CI de esta fase quedó **cancelada por timeout** a los 50 minutos, con
+unos 75 de 149 tests hechos. No es un fallo de la suite: lo que manda no es el número de
+tests sino la **varianza de Neon**. La misma suite de 136 tests tardó `22m16s` y `41m06s` el
+mismo día (corridas `33975924839` y `33951665233`), así que con 149 la corrida lenta se pasa
+del techo. Subido a **75 minutos**, dimensionado sobre el peor caso medido y no sobre el
+promedio: un timeout no distingue "lento" de "roto", y averiguar cuál de los dos era obliga a
+reejecutar la hora entera.
+
 ### Residuo en la rama `dev` de Neon
 
 Las corridas de E2E de esta sesión dejaron en la rama `dev` unos catorce comprobantes
