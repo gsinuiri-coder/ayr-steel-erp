@@ -604,6 +604,80 @@ try {
     );
   }
 
+  // 2.8) Productos E2E. La purga desactivaba proveedores, acabados y clientes pero **no**
+  //      productos: quedaban activos en el catálogo del cliente, visibles en `/catalogo` y
+  //      en el desplegable de toda cotización. Va antes de los colores porque el API se
+  //      niega a desactivar un color que un producto activo todavía use.
+  //
+  //      Solo los del prefijo con separador (`E2E-`), nunca los `BOB…` de venta directa
+  //      (D-037), que el alta de una bobina crea sola y que pueden ser del cliente.
+  const catalog = await call('/catalog');
+  const e2eCatalog = (Array.isArray(catalog.body) ? catalog.body : []).filter(
+    (p) => typeof p.sku === 'string' && p.sku.startsWith('E2E-') && p.isActive,
+  );
+  console.log(`Productos E2E activos: ${e2eCatalog.length}`);
+  for (const product of e2eCatalog) {
+    if (dryRun) {
+      console.log(`  [simulado] desactivar el producto ${product.sku}`);
+      continue;
+    }
+    const res = await call(`/catalog/${product.id}`, {
+      method: 'PATCH',
+      body: { isActive: false },
+    });
+    console.log(
+      res.ok
+        ? `  ${product.sku} desactivado`
+        : `  ${product.sku} NO se pudo desactivar: ${res.body?.message ?? res.status}`,
+    );
+  }
+
+  // 2.85) Proveedores y acabados E2E. Los desactiva cada spec en su `finally`, así que
+  //       hasta ahora la purga solo los leía para filtrar; los que sobrevivían eran los de
+  //       un test que murió antes de llegar a su limpieza, y quedaban activos en
+  //       `/proveedores` y `/acabados` a la vista del cliente. Van después de anular
+  //       bobinas y compras: antes, el API se niega.
+  const activeSuppliers = (Array.isArray(suppliers.body) ? suppliers.body : []).filter(
+    (x) => e2eSupplierIds.has(x.id) && x.isActive,
+  );
+  console.log(`Proveedores E2E activos: ${activeSuppliers.length}`);
+  for (const supplier of activeSuppliers) {
+    if (dryRun) {
+      console.log(`  [simulado] desactivar el proveedor ${supplier.code}`);
+      continue;
+    }
+    const res = await call(`/suppliers/${supplier.id}`, {
+      method: 'PATCH',
+      body: { isActive: false },
+    });
+    console.log(
+      res.ok
+        ? `  ${supplier.code} desactivado`
+        : `  ${supplier.code} NO se pudo desactivar: ${res.body?.message ?? res.status}`,
+    );
+  }
+
+  const finishes = await call('/finishes');
+  const activeFinishes = (Array.isArray(finishes.body) ? finishes.body : []).filter(
+    (f) => typeof f.name === 'string' && f.name.startsWith('Acabado E2E') && f.isActive,
+  );
+  console.log(`Acabados E2E activos: ${activeFinishes.length}`);
+  for (const finish of activeFinishes) {
+    if (dryRun) {
+      console.log(`  [simulado] desactivar el acabado ${finish.code}`);
+      continue;
+    }
+    const res = await call(`/finishes/${finish.id}`, {
+      method: 'PATCH',
+      body: { isActive: false },
+    });
+    console.log(
+      res.ok
+        ? `  ${finish.code} desactivado`
+        : `  ${finish.code} NO se pudo desactivar: ${res.body?.message ?? res.status}`,
+    );
+  }
+
   // 2.9) Colores E2E (Fase 6, D-085). Van **al final** de las desactivaciones: el API se
   //      niega a desactivar un color que un producto activo o una bobina viva todavía use,
   //      así que solo funciona cuando ya se desactivaron los productos y se anularon las

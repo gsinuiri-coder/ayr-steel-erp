@@ -4,20 +4,20 @@
 
 ## Estado general
 
-| Fase                                          | Estado                  | Cierre                                                                 |
-| --------------------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
-| 0 — Bootstrap                                 | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                                      |
-| 1 — Maestros, catálogo, precios, importación  | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción               |
-| 2a — Kardex + compras + alta de bobinas       | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho                 |
-| 2b — Partido, merma, cierre, anulación        | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho                 |
-| 3 — Corte tercerizado + flejes                | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho                 |
-| 3b — Reversa de recepción de corte            | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho                 |
-| 4 — Producción drywall + `/planta`            | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho                        |
-| 5a — Cotización → pedido + reserva            | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho                        |
-| 5b — Facturación, GRE, despacho y cobranza    | ✅ Cerrada (2026-09-04) | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho |
-| 5c — Producción de coberturas y venta directa | ⚪ Pendiente            | —                                                                      |
-| 6 — Importación de comprobantes               | ⚪ Pendiente            | —                                                                      |
-| 7 — Auditoría, reportes, UAT                  | ⚪ Pendiente            | —                                                                      |
+| Fase                                                   | Estado                  | Cierre                                                                 |
+| ------------------------------------------------------ | ----------------------- | ---------------------------------------------------------------------- |
+| 0 — Bootstrap                                          | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                                      |
+| 1 — Maestros, catálogo, precios, importación           | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción               |
+| 2a — Kardex + compras + alta de bobinas                | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho                 |
+| 2b — Partido, merma, cierre, anulación                 | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho                 |
+| 3 — Corte tercerizado + flejes                         | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho                 |
+| 3b — Reversa de recepción de corte                     | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho                 |
+| 4 — Producción drywall + `/planta`                     | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho                        |
+| 5a — Cotización → pedido + reserva                     | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho                        |
+| 5b — Facturación, GRE, despacho y cobranza             | ✅ Cerrada (2026-09-04) | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho |
+| 6 — Producción de coberturas + color                   | 🟡 En curso             | —                                                                      |
+| 7 — Cola, punto de venta e importación de comprobantes | ⚪ Pendiente            | —                                                                      |
+| 8 — Auditoría, reportes, UAT                           | ⚪ Pendiente            | —                                                                      |
 
 ## Fase 0 — detalle
 
@@ -713,6 +713,123 @@ es **la única fila del módulo que se borra de verdad** — y puede serlo justa
 borrador no existe fiscalmente: no tomó correlativo, no consume pedido, no tiene saldo y SUNAT
 nunca supo de él. La auditoría se escribe antes del borrado, porque después no quedaría a qué
 apuntar.
+
+## Fase 6 — detalle
+
+| #   | Entregable                                                                                                                                                                                                                                                                                                                   | Estado                                                                             |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 1   | Decisiones D-082..D-091, §3.7 renumerada (5c→6, 6→7, 7→8), RF-30..RF-33/RF-36/RF-39 y RF-54 actualizados; contexto largo en `docs/DECISIONES.md`                                                                                                                                                                             | ✅                                                                                 |
+| 2   | Prisma: `colors`, `products.color_id`, `coils.color_id`, `purchase_items.color_id`, `product_boms.kind` (+ nullables y `CHECK`), `production_orders.kind`/`consumed_kg`, `production_order_items`, `production_report_pieces`, `quotation_item_pieces`, `sales_order_item_pieces`, `reservations` unique por `(línea, ítem)` | ✅ dos migraciones, aplicadas en `dev`                                             |
+| 3   | `@ayr/shared`: schemas de color y de coberturas, subítems de largo, `piecesMeters`/`describePieces`/`thicknessWithinTolerance`, `ROOFING_THICKNESS_TOLERANCE_MM`                                                                                                                                                             | ✅                                                                                 |
+| 4   | API `colors` (CRUD ADMINISTRADOR, baja lógica, auditoría) + color en catálogo, bobinas (3 vías de alta), compras e importación                                                                                                                                                                                               | ✅                                                                                 |
+| 5   | Cotización y pedido con línea compuesta: subítems `{cantidad, largo}`, `qty` en metros derivada, descripción con los largos hacia el comprobante                                                                                                                                                                             | ✅                                                                                 |
+| 6   | `RoofingProductionService`: OP desde pedido con plan copiado y editable, montaje de bobina filtrada (espesor ±TOL + color estricto), reporte de largos, cierre con consumo declarado y despunte                                                                                                                              | ✅                                                                                 |
+| 7   | Traslado de la reserva del insumo al producto (D-088) y despacho que lee la reserva viva                                                                                                                                                                                                                                     | ✅                                                                                 |
+| 8   | Reversas: reporte de largos, reapertura del cierre, anulación de OP — todas con motivo y falla completa                                                                                                                                                                                                                      | ✅                                                                                 |
+| 9   | Web: paleta de colores en `/catalogo`, color en producto y bobina, editor de subítems en la cotización, rama de coberturas en `/planta`, `/produccion` con las dos clases                                                                                                                                                    | ✅                                                                                 |
+| 10  | Tests unit de la aritmética de coberturas (`roofing-math.spec.ts`)                                                                                                                                                                                                                                                           | ✅ 18 nuevos, 213 en total                                                         |
+| 11  | Revisión de `revisor` (API y web por separado) y `auditor-seguridad`                                                                                                                                                                                                                                                         | ✅ 3 bloqueantes + 3 altos corregidos; ver abajo                                   |
+| 12  | E2E de Fase 6                                                                                                                                                                                                                                                                                                                | ✅ 11 tests nuevos, verdes en local y contra producción                            |
+| 13  | Deploy y migración en `production`                                                                                                                                                                                                                                                                                           | ✅ dos migraciones aplicadas, API redesplegado en Cloud Run, web por push a `main` |
+| 14  | Cierre: handoff, commit, push                                                                                                                                                                                                                                                                                                | ✅ `docs/handoff/fase-6.md`                                                        |
+
+**El modelo, en un párrafo.** Conviven dos productos de cobertura (D-083). La **plancha de
+catálogo** tiene largo fijo en la receta, se cuenta en piezas y se vende como cualquier
+producto. La **cobertura a medida** no tiene largo: el pedido lo trae, la línea de cotización
+es compuesta —subítems `{cantidad, largo}` cuya suma en metros **es** la cantidad de la línea—
+y su kardex se lleva en **metros lineales**, porque en un saldo de piezas una plancha de 3 m y
+una de 9 m compartirían promedio ponderado. La OP nace del pedido (D-084), copia sus largos
+como plan de corte editable, monta una bobina filtrada por espesor ±0.02 mm y **color idéntico**
+(D-085/D-086), reporta los largos reales y cierra declarando los kilos que la bobina consumió de
+verdad; la diferencia contra el teórico es el despunte (D-089) y **el resto del rollo vuelve al
+almacén**, que es donde esta fase se separa de D-057.
+
+**El hueco de Fase 5b que esta fase destapó (D-088).** El despacho sacaba del kardex las
+coordenadas congeladas de `sales_order_items`, que en una cobertura son **la bobina**. Como la
+OP ya había sacado esos kilos al reportar, despachar los habría sacado por segunda vez. En
+perfiles y trading el defecto es invisible —el ítem reservado es el propio producto—, así que
+habría esperado a la primera cobertura real. La corrección es que la promesa **se traslada**: al
+reportar, la reserva de bobina se descuenta por los kilos consumidos y nace una reserva sobre
+los metros fabricados, de modo que las planchas a medida **nacen reservadas** para el pedido que
+las encargó. `reservations.sales_order_item_id` dejó de ser único.
+
+### Hallazgos corregidos en esta fase (revisor ×2 + auditor-seguridad)
+
+- **Bloqueante.** `reverseReport` sacaba los metros del kardex **antes** de reducir la reserva
+  que esos mismos metros sostienen, y `InventoryService.reverse` comprueba
+  `disponible ≥ reservado`: `0 ≥ 24.600` es falso, así que **RF-33 fallaba en su camino
+  principal** —no en un borde— pidiéndole al operario que liberara la reserva del pedido que
+  venía a corregir. El orden correcto es el que `report` ya usaba y documentaba.
+- **Bloqueante.** El despacho **volvía a caer en la bobina** cuando la reserva de producto
+  dejaba de estar `ACTIVA`: bastaba un primer despacho que la consumiera entera, o despachar
+  antes de producir, para que el segundo emitiera una salida de kilos de bobina por una venta de
+  planchas. Era el mismo hueco de D-088 reaparecido un despacho más tarde. Ahora una línea que
+  se fabrica contra el pedido **no vuelve nunca al insumo**: sin producto terminado reservado, el
+  despacho se rechaza diciendo que hay que producir primero.
+- **Bloqueante (web).** El DTO de la reserva exponía la última OP sin filtrar por estado, y
+  anular una de coberturas deja el vínculo puesto: el pedido volvía a estar disponible para el
+  API pero **desaparecía del único punto de entrada de `/planta`**, así que RF-33 dejaba el
+  pedido imposible de fabricar sin anularlo entero. Ahora el DTO solo muestra la OP viva.
+- **Alto.** El `OUT` de despunte del cierre no descontaba la reserva de bobina, así que una
+  orden que reservó el rollo entero —el caso normal— **no se podía cerrar con merma**: la propia
+  promesa bloqueaba la salida.
+- **Alto (web).** El cierre desde `/produccion/[id]` calculaba "¿hace falta motivo?" con la
+  fórmula de drywall (`pendiente / asignado`), que en coberturas es siempre alta porque el rollo
+  sobrante no es merma: el diálogo exigía explicar una baja de inventario que no iba a ocurrir, y
+  su texto afirmaba lo contrario de lo que el API haría.
+- **Alto (web).** La precarga del plan de corte convertía mm → m con `number` y dos decimales
+  (regla dura 1): un largo de 4 205 mm volvía como 4.20 m y guardar el plan sin tocar nada lo
+  reescribía a 4 200. Los otros dos sitios usaban `Decimal`; este era el único que divergía.
+- **Medios.** Sobre-reportar dejaba metros prometidos para siempre (ahora el upsert se topa
+  contra lo que la línea debe); el peso por defecto de la guía heredaba una cantidad en metros;
+  el `colorId` de bobinas y compras se conectaba sin validar, lo que permitía meter a posteriori
+  un color desactivado y esquivar el guardrail de la baja lógica; la bobina elegida en la
+  terminal no se limpiaba al bajarla; y `invalidateProduction` no refrescaba el material
+  reservable que ve el vendedor.
+- **Bajos.** `describePieces` dividía milímetros con `number` y ese texto viaja a la descripción
+  del comprobante; `ROOFING_THICKNESS_TOLERANCE_MM` no se validaba al arrancar y un valor alto
+  **anulaba el filtro en silencio** (fallo abierto); el plan derivado de una plancha de catálogo
+  redondeaba hacia abajo; `reservationId` en el filtro de bobinas no se comprobaba contra el
+  producto; la restauración de la reserva devolvía kilos a un rollo del que podían no haber
+  salido; y varios detalles de accesibilidad y unidades en pantalla.
+
+**Sin hallazgos críticos de seguridad.** El auditor confirmó que ninguna ruta nueva expone
+costos a VENDEDOR (`roofingCoilOptionSchema` se diseñó sin ellos y el servicio construye
+exactamente esos campos), que los guards y la auditoría cubren las nueve mutaciones nuevas, que
+no hay superficie de inyección en los parámetros nuevos y que `pnpm audit --prod` sale limpio.
+`agy` rehusó la tarea de segunda opinión, así que la auditoría es de una sola fuente.
+
+### Tres defectos latentes de los helpers de E2E que esta fase hizo visibles
+
+Ninguno es de la Fase 6, y los tres llevaban tiempo esperando la corrida que los despertara.
+Van anotados porque el síntoma, en los tres casos, apunta a cualquier parte menos a la causa.
+
+1. **`createInvoiceableCustomer` reusaba el cliente por RUC sin mirar si estaba activo.** El RUC
+   facturable es uno solo, así que el helper siempre devuelve el mismo cliente entre corridas —
+   y `prod:purge-e2e` lo deja `isActive: false`. Desde ahí, **toda** corrida contra producción
+   posterior a una purga moría en `POST /sales/orders` con "El cliente está desactivado", en
+   cuatro tests de Fase 5b que parecían haberse roto con lo último que se hubiera tocado. Ahora
+   lo reactiva si lo encuentra inactivo.
+2. **`today()` partía de UTC.** Es exactamente la lección de D-069, que el API ya había
+   aprendido con `businessToday`: Lima va cinco horas detrás, así que a partir de las 19:00 hora
+   local `toISOString()` devuelve la fecha de mañana y cualquier documento fechado "hoy" se
+   rechaza por futuro. El fallo aparecía **según la hora a la que corrieras la suite**.
+3. **Códigos y documentos con poca entropía.** El acabado (`E2E` + 4 letras) y el RUC de
+   proveedor (`Date.now()` a secas) chocaban de vez en cuando dentro de una misma corrida, y el
+   409 reventaba un test que no tenía nada que ver con lo que estaba probando.
+
+Y una cuarta, operativa: **el job de E2E de CI se quedó sin tiempo**. Estaba en 30 minutos y la
+Fase 6 le suma once tests, cada uno con su compra, recepción y ciclo comercial contra Neon.
+Subió a 50.
+
+### Ojo operativo — el cupo de la cuenta demo del PSE
+
+Los dos tests de Fase 5b que emiten fallaron **en local** con
+_"No puedes enviar mas de 50 documentos en una cuenta DEMO"_. Es lo que ya avisaba
+`docs/handoff/fase-5b.md`: son 50 documentos, no se liberan anulándolos —hay que borrarlos en
+el panel de Nubefact— y una corrida completa gasta unos veinte. Esta sesión corrió la suite
+varias veces mientras se aplicaban las correcciones de la revisión, así que el cupo se agotó.
+**No bloquea el cierre**: `e2e:prod` no emite nunca (D-081 fuerza `E2E_FISCAL_EMISSION=0`).
 
 ## Sesión M-3 — mantenimiento: auditoría y guardrail previos al pase a Nubefact real (2026-09-04)
 
