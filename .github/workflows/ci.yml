@@ -47,8 +47,9 @@ jobs:
     needs: calidad
     # La suite crecio con Fase 5b (19 tests mas) y el entorno de CI no tiene PSE, asi que
     # los documentos se quedan pendientes y el barrido reprocesa una cola que solo crece.
-    # Con 20 minutos la corrida quedaba al filo.
-    timeout-minutes: 30
+    # Con 20 minutos la corrida quedaba al filo, y con 30 la Fase 6 (11 tests mas, cada uno
+    # con su compra, recepcion y ciclo comercial contra Neon) la corto a mitad de camino.
+    timeout-minutes: 50
     # La rama Neon `ci` se resetea en cada corrida: solo una corrida a la vez.
     concurrency:
       group: neon-ci-branch

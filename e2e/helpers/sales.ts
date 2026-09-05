@@ -459,9 +459,14 @@ export function pdfText(buffer: Buffer): string {
   return lines.join('\n');
 }
 
-/** Fecha ISO desplazada N días respecto de hoy (negativo = pasado). */
+/**
+ * Fecha ISO desplazada N días respecto de hoy (negativo = pasado), contando desde el día
+ * **de Lima** y no de UTC — mismo motivo que `today()`: entre las 19:00 y la medianoche
+ * hora local, partir de UTC adelanta un día y una vigencia "hasta mañana" se convierte en
+ * "hasta pasado".
+ */
 export function isoDaysFromToday(days: number): string {
-  const d = new Date();
+  const d = new Date(`${today()}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }

@@ -101,6 +101,8 @@ try {
       'e2e/tests/fase5a-bordes.spec.ts',
       'e2e/tests/fase5b.spec.ts',
       'e2e/tests/fase5b-bordes.spec.ts',
+      'e2e/tests/fase6.spec.ts',
+      'e2e/tests/fase6-bordes.spec.ts',
     ],
     {
       E2E_BASE_URL: baseUrl,

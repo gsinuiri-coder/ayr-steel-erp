@@ -104,7 +104,10 @@ export async function createFinish(
   // del test comprobable a ojo.
   overrides: Partial<{ code: string; name: string; densityFactor: string }> = {},
 ): Promise<CreatedFinish> {
-  const code = overrides.code ?? `E2E${randomLetters(4)}`;
+  // Cuatro letras al azar chocaban de vez en cuando dentro de una misma corrida, y el 409
+  // aparecía en un test que no tenía nada que ver con el acabado: el sufijo de reloj lo
+  // vuelve único sin pasarse de los 20 caracteres que admite el código.
+  const code = overrides.code ?? `E${randomLetters(3)}${String(Date.now()).slice(-6)}`;
   const finish = await postJson<CreatedFinish>(api, '/api/finishes', {
     code,
     name: overrides.name ?? `Acabado E2E ${code}`,

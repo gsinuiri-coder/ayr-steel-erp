@@ -234,7 +234,18 @@ export async function createInvoiceableCustomer(
   const existing = (await getJson<CustomerDto[]>(api, '/api/customers')).find(
     (c) => c.docNumber === docNumber,
   );
-  if (existing) return existing;
+  if (existing) {
+    // **Reactivarlo si la purga lo desactivó.** El RUC facturable es uno solo, así que este
+    // helper siempre reusa el mismo cliente entre corridas; `prod:purge-e2e` lo deja
+    // `isActive: false`, y desde ahí toda corrida posterior contra producción moría en
+    // `POST /sales/orders` con "El cliente está desactivado" — un fallo que parecía de la
+    // fase que se estuviera cerrando y era del ciclo purga → volver a correr.
+    if (!existing.isActive) {
+      await api.patch(`/api/customers/${existing.id}`, { data: { isActive: true } });
+      return { ...existing, isActive: true };
+    }
+    return existing;
+  }
   return postJson<CustomerDto>(api, '/api/customers', {
     docType: 'RUC',
     docNumber,

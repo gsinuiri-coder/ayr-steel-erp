@@ -164,8 +164,22 @@ export function uniqueDocumentNumber(): string {
   return String(Date.now()).slice(-9);
 }
 
+/**
+ * El día de hoy **en Lima**, no en UTC.
+ *
+ * Es la misma lección de D-069, que el API ya había aprendido con `businessToday`: Lima va
+ * cinco horas detrás, así que entre las 19:00 y la medianoche `toISOString()` devuelve la
+ * fecha de mañana. Con eso, cualquier documento que el test fechara "hoy" se rechazaba por
+ * futuro durante las últimas cinco horas del día — un fallo que aparece según la hora a la
+ * que corras la suite y no se parece en nada a su causa.
+ */
 export function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
 
 export function randomLetters(length: number): string {
