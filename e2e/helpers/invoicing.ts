@@ -75,6 +75,16 @@ export interface FiscalDocumentDto {
   affectedDocumentNumber: string | null;
   replacesDocumentId: string | null;
   replacesDocumentNumber: string | null;
+  /** RF-71, D-105: emitido por el ERP o importado ya emitido. */
+  origin: 'ISSUED_HERE' | 'IMPORTED';
+  /**
+   * RF-72: cuándo lo archivó una reimportación, la versión que lo reemplazó y la que
+   * **este** archivó al importarse.
+   */
+  archivedAt: string | null;
+  supersededByDocumentId: string | null;
+  supersedesDocumentId: string | null;
+  notes: string | null;
   issueDate: string;
   paymentTerms: 'CONTADO' | 'CREDITO';
   dueDate: string | null;

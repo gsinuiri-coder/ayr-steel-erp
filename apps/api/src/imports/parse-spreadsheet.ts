@@ -13,9 +13,15 @@ export function parseSpreadsheet(buffer: Buffer): Record<string, unknown>[] {
     // XLSX.read en modo 'buffer' asume el codepage por defecto (no UTF-8) para CSV,
     // lo que rompe encabezados con tildes ("Línea"). Un .csv es texto: se decodifica
     // como UTF-8 primero y se lee en modo 'string', que sí respeta el texto real.
+    //
+    // `cellDates` es obligatorio desde RF-71, la primera entidad importable con columna de
+    // fecha: sin él, SheetJS entrega el **número de serie** de Excel —`2026-09-05` llegaba
+    // como `46270`— y toda fila con fecha quedaba inválida por formato. No es exclusivo del
+    // xlsx: el lector de csv también reconoce la fecha y la convierte.
+    const options = { cellDates: true } as const;
     workbook = isZip(buffer)
-      ? XLSX.read(buffer, { type: 'buffer' })
-      : XLSX.read(buffer.toString('utf8'), { type: 'string' });
+      ? XLSX.read(buffer, { type: 'buffer', ...options })
+      : XLSX.read(buffer.toString('utf8'), { type: 'string', ...options });
   } catch {
     throw new BadRequestException('No se pudo leer el archivo; solo se aceptan xlsx o csv');
   }

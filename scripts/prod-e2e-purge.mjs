@@ -172,6 +172,16 @@ try {
     return rank(a) - rank(b);
   });
   for (const document of byVoidOrder) {
+    // D-105: un comprobante **importado** no se da de baja desde el ERP —el PSE no lo conoce
+    // como nuestro—, así que intentarlo solo produce un 400 perpetuo en cada corrida de la
+    // purga. Sus cobros sí se revirtieron arriba, que es la parte que ensucia cuentas por
+    // cobrar; el papel queda, marcado como E2E y a la vista.
+    if (document.origin === 'IMPORTED') {
+      console.log(
+        `  ${document.number} importado: no se da de baja desde el ERP, queda marcado como E2E`,
+      );
+      continue;
+    }
     if (dryRun) {
       console.log(`  [simulado] dar de baja ${document.number ?? 'borrador'}`);
       continue;

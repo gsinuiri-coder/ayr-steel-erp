@@ -119,8 +119,24 @@ export function rawToString(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number' || typeof value === 'boolean') return String(value).trim();
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) return toCalendarDate(value);
   return '';
+}
+
+/**
+ * Una celda de fecha es un **día calendario**, no un instante: `2026-09-05` en la planilla
+ * tiene que salir `2026-09-05` en cualquier máquina.
+ *
+ * Por eso se formatea con las partes locales y no con `toISOString()`: SheetJS construye la
+ * fecha en hora local (`cellDates`), así que en una zona al este de Greenwich el ISO caía en
+ * el día anterior y el comprobante entraba fechado un día antes. En Cloud Run —UTC— las dos
+ * formas coinciden, que es justo lo que habría hecho que el defecto no apareciera nunca en
+ * producción y sí en la máquina de alguien.
+ */
+function toCalendarDate(value: Date): string {
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${value.getFullYear()}-${month}-${day}`;
 }
 
 /**

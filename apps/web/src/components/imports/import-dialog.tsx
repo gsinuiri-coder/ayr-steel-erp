@@ -1,12 +1,12 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   IMPORT_ENTITY_LABELS,
+  ImportEntity,
   type ImportBatchWithRowsDto,
-  type ImportEntity,
   type ImportRowDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
@@ -30,6 +30,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { IMPORT_COLUMNS } from './import-columns';
+
+/**
+ * Entidades cuya planilla trae **varias filas por entidad** (RF-71, D-107). Son las únicas
+ * que necesitan releer el lote entero al corregir una fila: en las demás, una fila es una
+ * entidad y su veredicto no depende de ninguna otra.
+ */
+const GROUPED_ENTITIES: ImportEntity[] = [ImportEntity.FISCAL_DOCUMENTS];
 
 async function uploadImport(entity: ImportEntity, file: File): Promise<ImportBatchWithRowsDto> {
   const form = new FormData();
@@ -55,6 +62,17 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
   const [batch, setBatch] = useState<ImportBatchWithRowsDto | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const columns = IMPORT_COLUMNS[entity];
+  const grouped = GROUPED_ENTITIES.includes(entity);
+  // En una entidad agrupada una fila es una **línea**, no un comprobante: decir "filas" no
+  // es falso pero cuenta en una unidad que el usuario no usa.
+  const unit = grouped ? 'líneas' : 'filas';
+  /**
+   * Número de la última edición lanzada. Dos `blur` seguidos dejan dos peticiones en vuelo
+   * y la primera puede contestar última: sin este contador, su respuesta —con los errores
+   * de antes de la segunda corrección— pisaba a la buena, y el usuario decidía confirmar
+   * mirando información caducada.
+   */
+  const editSeq = useRef(0);
 
   const upload = useMutation({
     mutationFn: (file: File) => uploadImport(entity, file),
@@ -67,18 +85,30 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
   });
 
   const updateRow = useMutation({
-    // Se relee el lote entero y no solo la fila que volvió: en una importación agrupada
-    // (RF-71) corregir una línea cambia si el **comprobante** cuadra, y esa respuesta está
-    // en las otras filas del grupo, que el PATCH no devuelve.
     mutationFn: async ({ rowId, data }: { rowId: string; data: Record<string, unknown> }) => {
-      await api<ImportRowDto>(`/imports/${batch?.id}/rows/${rowId}`, {
+      const seq = (editSeq.current += 1);
+      const batchId = batch?.id;
+      const row = await api<ImportRowDto>(`/imports/${batchId}/rows/${rowId}`, {
         method: 'PATCH',
         body: { data },
       });
-      return api<ImportBatchWithRowsDto>(`/imports/${batch?.id}`);
+      // Solo la importación agrupada necesita releer el lote: ahí (RF-71) corregir una línea
+      // cambia si el **comprobante** cuadra, y esa respuesta está en las otras filas del
+      // grupo, que el PATCH no devuelve. En catálogo o clientes, releer 2000 filas por cada
+      // celda que pierde el foco sería pagar un viaje entero para no enterarse de nada.
+      const full = grouped ? await api<ImportBatchWithRowsDto>(`/imports/${batchId}`) : null;
+      return { seq, batchId, row, full };
     },
-    onSuccess: (updated) => {
-      setBatch(updated);
+    onSuccess: ({ seq, batchId, row, full }) => {
+      // Descarta lo que llegó tarde y lo que ya no corresponde: el lote pudo cancelarse
+      // (`reset()`) mientras la petición volaba, y aplicarlo resucitaba un preview cerrado
+      // con su botón de confirmar activo — confirmando un archivo que el usuario descartó.
+      if (seq !== editSeq.current) return;
+      setBatch((b) => {
+        if (!b || b.id !== batchId || b.status === 'CONFIRMED') return b;
+        if (full) return full;
+        return { ...b, rows: b.rows.map((r) => (r.id === row.id ? row : r)) };
+      });
     },
     onError: (err) => {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo validar la fila');
@@ -91,7 +121,7 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
     onSuccess: (data) => {
       setBatch(data);
       const confirmed = data.rows.filter((r) => r.status === 'CONFIRMED').length;
-      toast.success(`${confirmed} de ${data.rows.length} filas importadas`);
+      toast.success(`${confirmed} de ${data.rows.length} ${unit} importadas`);
       void queryClient.invalidateQueries({ queryKey: invalidateQueryKey });
     },
     onError: (err) => {
@@ -181,7 +211,7 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
                 </Table>
               </div>
               <p className="text-sm text-muted-foreground">
-                {validCount} de {batch.rows.length} filas listas para confirmar.
+                {validCount} de {batch.rows.length} {unit} listas para confirmar.
               </p>
             </div>
           )}
@@ -208,7 +238,7 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
                 }}
                 disabled={validCount === 0 || confirm.isPending}
               >
-                {confirm.isPending ? 'Confirmando…' : `Confirmar ${validCount} filas`}
+                {confirm.isPending ? 'Confirmando…' : `Confirmar ${validCount} ${unit}`}
               </Button>
             )}
           </DialogFooter>
@@ -230,6 +260,21 @@ function RowEditor({
   onSave: (data: Record<string, unknown>) => void;
 }) {
   const [values, setValues] = useState<Record<string, unknown>>(row.data);
+  const [focused, setFocused] = useState<string | null>(null);
+
+  // El API **normaliza** al validar (el correlativo pasa a número, los importes a escala
+  // fija), así que sin esto el preview seguía mostrando el texto crudo y no lo que de verdad
+  // se iba a importar. La celda con el foco se respeta: el usuario puede estar tabulando al
+  // campo siguiente de la misma fila mientras vuelve la respuesta del anterior.
+  useEffect(() => {
+    setValues((current) => {
+      const next = { ...row.data };
+      if (focused !== null && focused in current) next[focused] = current[focused];
+      return next;
+    });
+    // `focused` queda fuera de las dependencias a propósito: resincronizar al cambiar de
+    // celda borraría lo que el usuario está tipeando en la siguiente.
+  }, [row.data]);
 
   return (
     <>
@@ -242,11 +287,20 @@ function RowEditor({
               aria-label={`${c.label} fila ${row.rowNumber}`}
               value={(values[c.key] as string | number | undefined)?.toString() ?? ''}
               disabled={disabled || row.status === 'CONFIRMED'}
+              onFocus={() => {
+                setFocused(c.key);
+              }}
               onChange={(e) => {
                 setValues((v) => ({ ...v, [c.key]: e.target.value }));
               }}
               onBlur={() => {
-                onSave(values);
+                setFocused(null);
+                // Solo si de verdad cambió. Guardar en cada `blur` mandaba una petición por
+                // celda tabulada —dieciséis por fila en comprobantes— y, peor, el `blur` que
+                // dispara el clic en «Confirmar» ponía un PATCH en carrera con el POST.
+                const current = (values[c.key] as string | number | undefined)?.toString() ?? '';
+                const saved = (row.data[c.key] as string | number | undefined)?.toString() ?? '';
+                if (current !== saved) onSave(values);
               }}
             />
           </TableCell>
@@ -264,11 +318,18 @@ function RowEditor({
           </TableCell>
         </TableRow>
       )}
-      {/* RF-72: un aviso no bloquea, pero el usuario tiene que verlo antes de confirmar. */}
+      {/*
+        RF-72: un aviso no bloquea, pero el usuario tiene que verlo antes de confirmar.
+        Lleva la palabra "Aviso" delante y no solo otro color: en escala de grises o con un
+        lector de pantalla, un aviso se leía igual que un error que impide confirmar.
+      */}
       {row.warnings && row.warnings.length > 0 && (
         <TableRow>
-          <TableCell colSpan={columns.length + 2} className="py-1 text-xs text-amber-600">
-            {row.warnings.join('; ')}
+          <TableCell
+            colSpan={columns.length + 2}
+            className="py-1 text-xs text-amber-600 dark:text-amber-400"
+          >
+            Aviso: {row.warnings.join('; ')}
           </TableCell>
         </TableRow>
       )}

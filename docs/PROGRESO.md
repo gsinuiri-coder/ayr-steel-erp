@@ -1055,6 +1055,153 @@ limpiar. Lo que la otra mitad deja —proveedor, compra de producto terminado, p
 pedido con cliente `E2E `— ya lo cubren los filtros de siempre, y los turnos de caja los
 borra `cleanup-e2e-users.ts`, que ahora se planta si alguno tuviera ventas.
 
+## Fase 7c — detalle (importación de comprobantes ya emitidos; la fila de la Fase 7 queda completa)
+
+Tercer y último tramo de la Fase 7 (D-092..D-096 dejaron la cola; D-098..D-104, el
+mostrador). Entrega RF-71 y RF-72 con cinco decisiones nuevas, **D-105..D-109**. RF-11, que
+aparecía en la misma fila de §3.7, ya estaba entregado desde la Fase 2a: seguía ahí por
+arrastre.
+
+Modelo en una línea: **el comprobante importado es el mismo comprobante con otro origen**
+(D-105). Vive en `fiscal_documents` con `origin = IMPORTED`, nace `ACCEPTED` porque SUNAT ya
+lo recibió, crea su cuenta por cobrar como cualquiera —que es para lo que se importa— y no
+habla nunca con el PSE: ni se envía, ni se reintenta, ni se consulta, ni se da de baja, ni
+recibe una nota de crédito emitida acá.
+
+| #   | Entregable                                                                        | Estado                                                              |
+| --- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 1   | Decisiones D-105..D-109 en §0.2 + contexto largo en `DECISIONES.md`               | ✅                                                                  |
+| 2   | Prisma: `origin`, `archived_at`, `supersedes_document_id`, `warnings`             | ✅ tres migraciones, aplicadas en `dev` y `production`              |
+| 3   | Unicidad parcial de `number` (`WHERE archived_at IS NULL`) + `CHECK` de archivado | ✅ conviven la archivada y la vigente; dos vigentes, no             |
+| 4   | `GroupedImportAdapter`: N filas de planilla → una entidad (D-107)                 | ✅ el grupo se valida entero y se confirma entero                   |
+| 5   | `FiscalImportService` en `invoicing` (patrón `*InTx`, D-099)                      | ✅ las reglas fiscales no se mudan al importador                    |
+| 6   | Serie del importado (D-106): empuje atómico, alta inactiva, tope de salto         | ✅ auditado, con el salto absurdo rechazado                         |
+| 7   | RF-72: reimportar archiva la anterior, con sus tres puertas cerradas              | ✅ lo emitido acá, lo cobrado y lo acreditado no se reimportan      |
+| 8   | Guardrails de D-105 en `invoicing` y en el web                                    | ✅ `assertIssuedHere` + botones apagados en vez de errores del API  |
+| 9   | Avisos no bloqueantes (`import_rows.warnings`)                                    | ✅ "esta fila archiva la versión anterior" se ve antes de confirmar |
+| 10  | E2E                                                                               | ✅ `fase7c.spec.ts` (4) y `fase7c-bordes.spec.ts` (9), 13 en verde  |
+| 11  | `pnpm turbo lint typecheck test build`                                            | ✅ verde (255 unit, +19)                                            |
+
+### Lo que más importa de la fase: lo que **no** miraba al archivado
+
+RF-72 dice que reimportar archive la versión anterior, y eso se implementó desde el
+principio. Lo que la revisión encontró es la otra mitad, y estaba fuera del código nuevo:
+**todo lo que ya sumaba comprobantes seguía sumando también la versión archivada**, porque
+una archivada conserva su `status = ACCEPTED` intacto.
+
+- `receivables()` (RF-88) contaba las dos: reimportar un comprobante —el caso normal de
+  RF-72, corregir un total mal tipeado— **duplicaba la deuda del cliente**, y ese total
+  contradecía al listado de `/comprobantes`, que sí filtraba.
+- El crédito por notas de crédito se sumaba igual desde las dos, así que el saldo del
+  comprobante afectado se iba a cero con una sola nota reimportada.
+- Nada impedía **cobrar** sobre una versión archivada, a la que se llega con un clic desde
+  el enlace que la propia fase agregó.
+
+El arreglo es una sola idea aplicada en todos lados: **`archivedAt: null` acompaña a
+`LIVE_DOCUMENT_STATUSES` en cada agregado**. Es la misma lección de D-088 y D-097 —cuando
+una entidad puede dejar de ser la vigente, hay que revisar cada punto que la lee— aplicada
+por primera vez a un documento fiscal y no a una reserva.
+
+### El correlativo que podía retroceder
+
+`resolveSeriesInTx` hacía `findUnique` y después `update` sobre `fiscal_series.correlative`,
+que es exactamente el recurso que D-072 mueve con `UPDATE … RETURNING` por un motivo: si
+`allocateNumber` avanzaba la serie entre la lectura y la escritura, el `update` la pisaba y
+el correlativo **retrocedía** — y el próximo comprobante repetía un número que SUNAT ya
+tiene. Ahora es un `UPDATE … SET correlative = GREATEST(correlative, $n) … RETURNING` que
+devuelve el valor anterior y el nuevo, y el salto queda en `audit_log`.
+
+Encima se agregó el tope: adelantar una serie **activa** más de 1000 números se rechaza. No
+hay ninguna ruta que baje un correlativo (a propósito, lo dice `setSeriesActive`), así que
+un `12345678` tecleado donde iba `123` habría quemado el rango de la serie con la que se
+factura de verdad, sin vuelta atrás y sin que nada lo avisara.
+
+### Un defecto de RF-52 que llevaba ahí desde la Fase 1
+
+Encontrado por `qa` al escribir los E2E: `parseSpreadsheet` leía el archivo **sin
+`cellDates`**, así que SheetJS entregaba las fechas como el número de serie de Excel
+(`2026-09-05` → `46270`) y toda fila con fecha quedaba inválida por formato. Con eso,
+**ninguna planilla exportada por otro sistema se podía importar**: entraba solo un archivo
+con la columna formateada como texto.
+
+No es un defecto de esta fase: está en el importador desde RF-52. No se había visto porque
+productos, clientes y bobinas no tienen ninguna columna de fecha, y el comprobante es la
+primera entidad importable que sí. El arreglo tiene dos mitades, y la segunda es la que
+habría vuelto: `rawToString` formateaba la fecha con `toISOString()`, que al este de
+Greenwich cae en el **día anterior** — en Cloud Run (UTC) y en Lima coincide, así que el
+defecto no habría aparecido nunca en producción y sí en la máquina de alguien. Ahora se
+formatea con las partes locales, que es como SheetJS construye la fecha.
+
+### Hallazgos corregidos en esta fase (revisor API + revisor web + auditor-seguridad)
+
+Tres pasadas. La del web se hizo aparte, por la lección de la Fase 2b, y encontró un
+bloqueante que la del API no podía ver.
+
+**Bloqueantes.** Los tres del archivado (arriba); el correlativo con read-then-write
+(arriba); una fila con `"abc"` en Cantidad terminaba en un **500** porque la validación de
+grupo se lo pasaba a `toDecimal`; y, en el web, `setBatch(updated)` sin guarda **resucitaba
+un lote cancelado**: el `blur` del clic en «Cancelar» dejaba una petición en vuelo cuya
+respuesta reabría el preview con su botón de confirmar activo — confirmándolo se importaban
+comprobantes que el usuario había descartado y se adelantaba una serie activa.
+
+**Altos.** Una nota de crédito importada podía acreditar un comprobante **emitido por el
+ERP** y sin tope de monto: borraba el saldo de una factura real con un documento que SUNAT
+nunca vio, y de paso le bloqueaba la baja. El cliente del importado no pasaba las tres
+reglas de la emisión normal (activo, genérico solo con boleta, factura solo con RUC), así
+que entraban facturas contra un DNI. La columna de cliente vacía dejaba la fila **válida** y
+moría recién al confirmar. Y en el web, dos ediciones solapadas podían dejar que la
+respuesta vieja pisara a la nueva —con el agravante de que el `blur` del clic en «Confirmar»
+ponía un `PATCH` en carrera con el `POST`—.
+
+**Medios y bajos corregidos.** El grupo se arma con lo que **dice** el archivo y no con el
+número ya validado (una línea con el correlativo roto se quedaba fuera de su propio
+comprobante, y a precio cero ni siquiera movía el total: se habría importado un documento al
+que le falta un renglón). Se guarda el total **del papel** y no el recalculado, porque con
+la tolerancia de redondeo cobrar el importe exacto del comprobante real se rechazaba por
+"excede el saldo pendiente"; el IGV absorbe la diferencia. El lote se reclama antes de crear
+nada (dos POST simultáneos creaban el comprobante dos veces) y vuelve a `PARSED` si no entró
+ninguno, para poder corregir y reintentar. El preview comprueba las notas de crédito vivas y
+avisa del adelanto de serie. Tope de 50 líneas por comprobante, fecha de emisión de más de
+diez años rechazada, `notes` es campo de cabecera, la fila que **tiene** el error ya no dice
+"otra línea tiene errores", auditoría propia del archivado y de la serie creada al importar,
+lock consultivo por número (un `FOR UPDATE` no bloquea nada cuando la fila todavía no
+existe), `affectedDocType` en la serie de NC creada al importar, y `confirmErrorMessage`
+acotado a las dos excepciones de dominio propias. En el web: el preview resincroniza con lo
+que el API normalizó, no guarda si nada cambió, solo relee el lote entero en las entidades
+agrupadas, los avisos llevan la palabra "Aviso" y variante para modo oscuro, y una versión
+archivada dice que su saldo no cuenta en cobranzas.
+
+### Frontera conocida — el costo del preview
+
+Cada fila del preview hace hasta dos consultas (cliente y SKU), así que un archivo de 2000
+filas son varios miles de viajes a Neon en una sola petición. Es el patrón que el importador
+tiene desde RF-52 y la ruta es solo de ADMINISTRADOR, así que no se cambió acá; el tope de
+50 líneas por comprobante sí acota lo que cuesta **revalidar un grupo** al corregir una
+fila, que es lo que esta fase agregó. Resolver clientes y SKUs con dos consultas por archivo
+queda anotado para la Fase 8, junto con el buscador de cliente del mostrador.
+
+### Frontera conocida — la suite de esta fase no corre contra producción
+
+Importar escribe numeración fiscal real —empuja el correlativo de una serie, o crea una
+inactiva— y deja comprobantes que **no se pueden dar de baja**. Es exactamente el riesgo que
+`fiscalEmissionAllowed()` gobierna desde la Fase 5b, así que `fase7c*.spec.ts` se salta
+entera contra una URL externa con ese mismo motivo escrito. Las suites igual están listadas
+en `scripts/e2e-prod.mjs`: listarlas es lo que hace que el informe diga "saltadas" en vez de
+callar, que es el defecto que costó una corrida entera en la Fase 7b.
+
+Aparte, `prod-e2e-purge.mjs` ahora **saltea la baja de un importado** en vez de intentarla:
+el API la rechaza siempre (D-105), así que la purga imprimía un fallo perpetuo. Sus cobros
+sí se revierten, que es la parte que ensucia cuentas por cobrar.
+
+### Residuo en la rama `dev` de Neon
+
+Las corridas de E2E de esta sesión dejaron en la rama `dev` unos catorce comprobantes
+importados vivos, dos archivados, doce series `Z…` inactivas y veintiséis lotes de
+importación, todos con marca `E2E `. **No se pueden borrar ni dar de baja por diseño**: un
+importado no tiene camino de baja. No afecta a `ci` (se resetea por corrida) ni a
+producción (la suite se salta allí). Limpiar `dev` exigiría SQL a mano, y es decisión del
+dueño.
+
 ## Sesión M-3 — mantenimiento: auditoría y guardrail previos al pase a Nubefact real (2026-09-04)
 
 Sesión corta de mantenimiento, fuera del avance por fases: preparar el pase de la cuenta demo

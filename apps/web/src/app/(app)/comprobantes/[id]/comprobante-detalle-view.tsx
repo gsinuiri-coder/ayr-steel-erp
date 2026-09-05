@@ -459,9 +459,10 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       {isImported && (
         <Alert>
           <AlertDescription>
-            Este comprobante se importó ya emitido: SUNAT lo recibió fuera del ERP. Se puede cobrar
-            y consultar, pero su baja y su nota de crédito se hacen donde se emitió y el resultado
-            se vuelve a importar. Reimportarlo archiva esta versión y deja la nueva en su lugar.
+            Este comprobante se importó ya emitido: SUNAT lo recibió fuera del ERP. Se puede ver y
+            cobrar, pero su baja y su nota de crédito se hacen donde se emitió y el resultado se
+            vuelve a importar. Reimportarlo archiva esta versión y deja la nueva en su lugar,
+            mientras todavía no tenga cobros vigentes ni notas de crédito encima.
             {d.supersedesDocumentId && (
               <>
                 {' '}
@@ -576,7 +577,18 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Saldo</CardTitle>
           </CardHeader>
-          <CardContent className="text-lg font-semibold">{formatMoney(d.balancePen)}</CardContent>
+          <CardContent className="text-lg font-semibold">
+            {formatMoney(d.balancePen)}
+            {/*
+              RF-72: el saldo de una versión archivada se sigue calculando igual, pero ya no
+              suma en cuentas por cobrar. Sin esta línea, la cifra se lee como una deuda viva.
+            */}
+            {d.archivedAt !== null && (
+              <div className="text-xs font-normal text-muted-foreground">
+                Versión archivada: no cuenta en cobranzas
+              </div>
+            )}
+          </CardContent>
         </Card>
       </div>
 

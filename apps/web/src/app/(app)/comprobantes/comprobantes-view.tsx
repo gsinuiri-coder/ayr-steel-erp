@@ -5,8 +5,11 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   FISCAL_DOC_TYPE_LABELS,
+  FISCAL_DOCUMENT_ORIGIN_LABELS,
   FISCAL_DOCUMENT_STATUS_LABELS,
   FISCAL_DOCUMENT_STATUSES,
+  FiscalDocumentOrigin,
+  ImportEntity,
   INVOICE_DOC_TYPES,
   Role,
   type FiscalDocumentListItemDto,
@@ -91,7 +94,10 @@ export function ComprobantesView() {
             al lado y no en el formulario de emisión. Solo ADMINISTRADOR, igual que el API.
           */}
           {isAdmin && (
-            <ImportDialog entity="FISCAL_DOCUMENTS" invalidateQueryKey={['fiscal-documents']} />
+            <ImportDialog
+              entity={ImportEntity.FISCAL_DOCUMENTS}
+              invalidateQueryKey={['fiscal-documents']}
+            />
           )}
           <Button asChild>
             <Link href="/comprobantes/nuevo">Nuevo comprobante</Link>
@@ -225,9 +231,9 @@ export function ComprobantesView() {
                       salió el documento. En uno importado, el ERP no vio esa aceptación:
                       la afirma la planilla.
                     */}
-                    {d.origin === 'IMPORTED' && (
-                      <Badge variant="outline" className="ml-2">
-                        Importado
+                    {d.origin === FiscalDocumentOrigin.IMPORTED && (
+                      <Badge variant="secondary" className="ml-2">
+                        {FISCAL_DOCUMENT_ORIGIN_LABELS[d.origin]}
                       </Badge>
                     )}
                   </TableCell>
