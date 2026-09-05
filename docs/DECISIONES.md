@@ -1171,3 +1171,97 @@ código y no solo en la intención. No se tocó `resolveDispatchTarget` (Fase 6,
 producción): el mismo hueco teórico existe ahí, pero es una ruta ya probada y en producción,
 y extender el alcance de esta sesión a auditar el despacho completo habría sido el tipo de
 scope creep que el dueño pidió evitar explícitamente.
+
+## D-098..D-104 — Fase 7b (punto de venta de mostrador)
+
+§0.2 tiene las siete decisiones y su motivo corto. Acá va lo que no cabe en una fila: el
+patrón `*InTx` que hizo posible componer cuatro servicios en una transacción, el hueco de
+Fase 5b que la anulación destapó, y las dos fronteras que esta fase deja escritas a
+propósito en vez de resolver a medias.
+
+### El patrón `*InTx`: por qué existe y qué hay que respetar al usarlo
+
+D-099 exige que una venta de mostrador cree pedido, despacho, comprobante y cobro **o no
+cree ninguno**. Los cuatro servicios abrían su propia transacción, así que componerlos
+tenía dos salidas: llamarlos por HTTP uno tras otro —y aceptar que una venta pudiera quedar
+con el kardex descontado y sin comprobante— o partirlos.
+
+Se partieron, y la forma importa: el método público (`create`, `createDirect`, `addPayment`)
+**abre la transacción y delega**; el método `*InTx` tiene el cuerpo entero y recibe el
+`Prisma.TransactionClient` del llamador. Ningún `*InTx` abre transacciones anidadas, ninguno
+llama a `this.findOne` al final (eso queda en el público, fuera de la transacción) y todos
+devuelven el **id** en vez del DTO. Es el mismo reparto que `assign`/`deliver` ya hacía en
+`invoicing` desde D-073.
+
+Dos cosas que hay que seguir respetando al agregar un compositor nuevo:
+
+1. **El orden de los locks no cambia.** Cada `*InTx` conserva el suyo (pedido → bobinas →
+   saldos), y el compositor no toma ninguno por su cuenta salvo el del turno de caja, que va
+   primero de todo. Alterarlo reintroduce el deadlock que D-054 y D-060 costaron encontrar.
+2. **Lo que habla con el exterior queda fuera.** El envío al PSE lo sigue haciendo
+   `deliver` **después** de que la transacción confirmó (D-073), y su fallo se registra sin
+   propagarse: una venta de mostrador no se cae porque un tercero no conteste.
+
+### El hueco de Fase 5b que la anulación destapó, y por qué nadie lo había visto
+
+`DispatchesService.reverse` se bloquea si un comprobante vigente del pedido factura alguna
+de las líneas del despacho (D-074). El criterio era el **estado del comprobante**, y con eso
+alcanzaba mientras la única forma de deshacer un comprobante fuera la baja.
+
+No lo es. `voidPathFor` (D-072) dice que **una boleta no se da de baja de forma individual**
+—su baja va por resumen diario, fuera de alcance en v1—, así que su único camino es la nota
+de crédito, que deja la boleta `ACCEPTED` para siempre. Con el criterio viejo:
+
+- el despacho de **cualquier** venta con boleta era irreversible, para siempre;
+- y el mensaje de error decía "dalo de baja o emite una nota de crédito antes de
+  revertirlo", ofreciendo un camino que no desbloqueaba nada.
+
+Fase 5b nunca lo notó porque probó la nota de crédito y probó la reversa del despacho, pero
+nunca las dos sobre la misma línea. El mostrador lo destapó en el primer intento: la boleta
+es su caso normal, y anular una venta es su segunda operación más frecuente.
+
+La corrección (`declaringDocument`) usa el criterio que el resto del módulo ya aplicaba al
+saldo (D-075): una línea **acreditada por completo** por notas vivas dejó de estar
+facturada. Un comprobante bloquea mientras a alguna de sus líneas sobre ese despacho le
+quede algo sin acreditar. No es una excepción para el POS: cualquier despacho con boleta,
+venga de donde venga, ahora se puede revertir por el camino que su propio mensaje anuncia.
+
+### Frontera 1 — sin PSE no hay anulación de venta, y eso se dice
+
+Con producción desplegada sin credenciales del PSE (D-080), un comprobante de mostrador
+queda `ISSUED` o `SEND_ERROR`: tomó correlativo y espera al job. Ni la baja ni la nota de
+crédito existen sobre él —las dos exigen `ACCEPTED`—, así que **la venta no se puede
+anular** hasta que el PSE lo resuelva.
+
+Se evaluó la alternativa: dejar que el POS revirtiera el cobro, el despacho y el pedido
+"por dentro", sin tocar el comprobante. Se descartó, y no por prolijidad: el job de D-073
+seguiría reintentando ese envío, así que el PSE terminaría recibiendo el comprobante de una
+venta que ya no existe, con su correlativo y su cliente. El guardrail de D-074 —no revertir
+un despacho que un documento vigente declara— dice exactamente lo mismo desde Fase 5b.
+
+Así que el API lo rechaza con el estado concreto en el mensaje y apunta a «Consultar al
+PSE». Es una limitación real de operar en contingencia, no un defecto del mostrador, y
+desaparece sola el día del pase a la cuenta real (checklist en `docs/handoff/fase-5b.md`).
+
+### Frontera 2 — el mostrador no aparece en `prod:purge-e2e`, a propósito
+
+La purga contra producción reconoce lo de prueba por marcas de texto: proveedor `E2E `,
+SKU `E2E-`, cliente `E2E `, observaciones `E2E `. Una venta de mostrador a **público en
+general** no tiene ninguna: su pedido y su despacho salen a nombre del cliente sembrado de
+D-077, igual que una venta real de mostrador.
+
+Se decidió **no** enseñarle a la purga a reconocerlas. Cualquier heurística que las
+distinguiera correría el riesgo de anular una venta de mostrador **real** —cobro revertido,
+comprobante acreditado, stock devuelto— y ese es el error que ese guion no puede cometer.
+La cobertura viene por otro lado y es suficiente:
+
+- **contra producción no existen ventas de mostrador de prueba**: todas emiten, y D-081
+  fuerza `E2E_FISCAL_EMISSION=0` en `e2e:prod`, así que esa mitad de la suite se salta;
+- lo que la mitad que **sí** corre deja —proveedor, compra de producto terminado, producto,
+  pedido con cliente `E2E `— ya lo limpia la purga con sus filtros de siempre;
+- los **turnos de caja** cuelgan del usuario efímero, y `cleanup-e2e-users.ts` (que
+  `e2e:prod` y la propia purga ejecutan al terminar) ahora los borra; si alguno tuviera
+  ventas, se planta y lo dice en vez de arrastrarlas.
+
+Queda anotado por si algún día se decide emitir de prueba contra producción: ese día habría
+que darle al POS una marca propia antes de tocar la purga.

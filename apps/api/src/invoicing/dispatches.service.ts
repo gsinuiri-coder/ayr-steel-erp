@@ -219,7 +219,15 @@ export class DispatchesService {
           `La línea ${orderItem.lineNumber} se despacha en ${target.unit}: indica el peso en kilos para la guía de remisión`,
         );
       }
-      const weightKg = item.weightKg !== undefined ? toDecimal(item.weightKg) : reserveQty;
+      // En un recojo el peso por defecto es **cero y no la cantidad**: `reserveQty` son
+      // unidades, no kilos, y sin guía que lo declare copiarlo dejaría escrito "3 kg" por
+      // tres planchas. Cero dice lo que de verdad se sabe: nada.
+      const weightKg =
+        item.weightKg !== undefined
+          ? toDecimal(item.weightKg)
+          : input.transferMode === TransferMode.PICKUP
+            ? new Decimal(0)
+            : reserveQty;
       lines.push({ orderItem, qty, reserveQty, weightKg, target });
     }
 

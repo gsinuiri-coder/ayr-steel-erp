@@ -346,6 +346,13 @@ export class PosService {
    * un comprobante de una venta que ya no existe. Con producción sin credenciales del PSE
    * (D-080) esto significa que una venta de mostrador **no se anula hasta que el
    * comprobante se resuelva**, y el mensaje lo dice en vez de fallar con un error opaco.
+   *
+   * **La cadena no es atómica, y no puede serlo**: el paso 2 habla con el PSE, y D-073
+   * prohíbe que una llamada al proveedor viva dentro de una transacción. A cambio, cada paso
+   * comprueba su propio estado antes de actuar —cobro sin revertir, despacho vivo, pedido no
+   * anulado—, así que **reintentar la anulación retoma donde se cortó** en vez de duplicar
+   * reversas. Es el mismo criterio por el que `prod:purge-e2e` se puede correr dos veces
+   * seguidas sin romper nada.
    */
   async voidSale(actor: RequestUser, id: string, reason: string): Promise<PosSaleListItemDto> {
     const sale = await this.prisma.posSale.findUnique({

@@ -873,6 +873,82 @@ reporte → anular, con el mismo criterio "anula por API" que usa el resto del s
 un despacho E2E (según si el ítem es materia prima o producto terminado de un solo uso)
 excede el alcance de esta sesión y merece su propia revisión, no un parche apurado.
 
+## Fase 7b — detalle (punto de venta de mostrador; importación de comprobantes sigue pendiente)
+
+Segundo tramo de la Fase 7 (D-092..D-096 dejaron la cola; esto entrega RF-60). Siete
+decisiones nuevas, **D-098..D-104**, y una corrección de un hueco de Fase 5b que el
+mostrador destapó.
+
+Modelo en una línea: **el POS no es un camino paralelo de stock** (D-099). Es UI rápida que
+crea pedido + despacho + comprobante + cobranza en **una transacción**, reusando los cuatro
+servicios que ya existían desde la Fase 5b. El módulo `pos` no importa `InventoryModule` —no
+escribe kardex, no toca reservas, no comprueba disponible— y esa dependencia ausente es la
+prueba estructural de que no abrió un segundo camino.
+
+| #   | Entregable                                                                      | Estado                                                                                              |
+| --- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 0   | Defecto de `prod:purge-e2e` del tramo 1, corregido **en el guion**              | ✅ el bloque de producción se mueve después del despacho; commit propio                             |
+| 1   | Decisiones D-098..D-104 en §0.2 + contexto largo en `DECISIONES.md`             | ✅                                                                                                  |
+| 2   | Prisma: `cash_sessions`, `pos_sales`, `PaymentMethod` += CARD/WALLET, `PICKUP`  | ✅ tres migraciones, aplicadas en `dev` y `production`                                              |
+| 3   | `*InTx` en pedido, despacho, comprobante y cobro (D-099)                        | ✅ el público abre la transacción y delega; el `*InTx` recibe la del llamador                       |
+| 4   | `POST /pos/sales`: los cuatro documentos en una transacción, envío al PSE fuera | ✅ D-073 intacto: la fase 1 se ensancha, el orden no cambia                                         |
+| 5   | Caja: apertura, ventas por medio, cierre con arqueo (D-101)                     | ✅ esperado solo con efectivo, congelado al cerrar; diferencia con motivo y ADMINISTRADOR           |
+| 6   | Anulación encadenada (D-100)                                                    | ✅ cobro → comprobante → despacho → pedido, solo en el turno abierto y con comprobante aceptado     |
+| 7   | Web: `/pos` (una pantalla) y `/pos/caja`, aviso de contingencia (D-102)         | ✅ dos toques entre carrito y venta cerrada; `Mostrador` primero del grupo Comercial                |
+| 8   | E2E: los siete escenarios exigidos + cinco de borde                             | ✅ `fase7b.spec.ts` (5, emiten) y `fase7b-bordes.spec.ts` (6, no emiten y corren contra producción) |
+| 9   | `pnpm turbo lint typecheck test build`                                          | ✅ verde                                                                                            |
+
+### Lo que más importa de la fase: el hueco de Fase 5b que la boleta escondía
+
+`DispatchesService.reverse` se bloqueaba si **cualquier** comprobante vigente del pedido
+facturaba alguna línea del despacho. Parecía correcto hasta que se cruzó con `voidPathFor`
+(D-072): **una boleta no se da de baja de forma individual** —su baja va por resumen diario,
+fuera de alcance en v1—, así que su único camino es la nota de crédito, que la deja
+`ACCEPTED` para siempre. Consecuencia: el despacho de **toda** venta con boleta era
+irreversible, y el propio mensaje de error ofrecía un camino ("emite una nota de crédito")
+que no desbloqueaba nada.
+
+Fase 5b no lo vio porque probó la nota de crédito y probó la reversa del despacho, pero
+nunca las dos sobre la misma línea. El mostrador lo destapó en el primer intento: la boleta
+es su caso normal. La corrección (`declaringDocument`) aplica el criterio que el módulo ya
+usaba para el saldo (D-075): bloquea solo lo que **todavía** factura, y una línea acreditada
+por completo por notas vivas dejó de estarlo. No es una excepción para el POS — cualquier
+despacho con boleta, venga de donde venga, ahora se revierte por el camino que su mensaje
+anuncia.
+
+### La modalidad de traslado que faltaba (D-103)
+
+Una venta de mostrador crea un despacho de verdad, pero el traslado lo hace el **comprador**.
+Ninguna de las dos modalidades de Fase 5b es cierta ahí: rellenar una placa y un conductor
+inventados habría metido datos falsos en la tabla que alimenta guías reales, y poner al
+cliente como "transportista" habría mentido en otro campo. Se agrega `TransferMode.PICKUP`,
+sin transporte y sin peso, que **no tiene código en el catálogo 18 de SUNAT** porque nunca
+llega a un documento: `issueDispatchNote` lo rechaza y el tipo del puerto
+(`Exclude<TransferMode, PICKUP>`) hace que ni siquiera compile mandarlo al PSE. Sirve además
+a cualquier recojo en tienda fuera del POS, y `/despachos/nuevo` lo ofrece.
+
+### Frontera conocida — con el PSE en contingencia, una venta de mostrador no se anula
+
+Sin credenciales del PSE (D-080) el comprobante queda `ISSUED`/`SEND_ERROR`: tomó
+correlativo y espera al job. Ni la baja ni la nota de crédito existen sobre él, así que la
+cadena de D-100 no puede empezar y el API lo rechaza diciendo el estado concreto. Se evaluó
+revertir "por dentro" el cobro, el despacho y el pedido dejando el comprobante quieto: se
+descartó porque el job de D-073 seguiría enviando después el comprobante de una venta que ya
+no existe — que es exactamente lo que el guardrail de D-074 impide desde Fase 5b. Desaparece
+sola con el pase a la cuenta real de Nubefact.
+
+### Frontera conocida — el mostrador no entra a `prod:purge-e2e`, a propósito
+
+Una venta de mostrador a **público en general** no lleva ninguna marca de prueba: su pedido
+y su despacho salen a nombre del cliente sembrado de D-077, igual que una venta real.
+Enseñarle a la purga a reconocerlas habría puesto en riesgo anular una venta de mostrador
+**real** contra producción, y ese es el error que ese guion no puede cometer. No hace falta:
+todas las ventas de mostrador emiten, y D-081 fuerza `E2E_FISCAL_EMISSION=0` en `e2e:prod`,
+así que contra producción esa mitad de la suite se salta y no hay ventas de prueba que
+limpiar. Lo que la otra mitad deja —proveedor, compra de producto terminado, producto,
+pedido con cliente `E2E `— ya lo cubren los filtros de siempre, y los turnos de caja los
+borra `cleanup-e2e-users.ts`, que ahora se planta si alguno tuviera ventas.
+
 ## Sesión M-3 — mantenimiento: auditoría y guardrail previos al pase a Nubefact real (2026-09-04)
 
 Sesión corta de mantenimiento, fuera del avance por fases: preparar el pase de la cuenta demo
@@ -945,7 +1021,7 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
 - Para verificar RF-03 contra producción: `pnpm e2e:prod`. Crea un administrador efímero, corre los 6 escenarios de auth y borra los usuarios `e2e-...@ayr.test` en `finally` (D-024). Nunca usa ni modifica la cuenta del dueño. Si la limpieza fallara, el script lo avisa y hay que revisar `/usuarios` en producción.
 - `spawnSync('algo.cmd', ...)` sin `shell: true` falla con `EINVAL` en esta máquina Windows/Node 24; usar `shell: true` (o invocar `cmd.exe /c` explícito) al lanzar `pnpm`/binarios `.cmd` desde Node.
 - **Fase 7 (2026-09-05):** el token del CLI de Vercel (`%APPDATA%/xdg.data/com.vercel.cli/auth.json`) venció; `pnpm deploy:web` falla con `403 invalidToken`. No bloquea: el proyecto Vercel está ligado al repo de GitHub (ver arriba), así que el push a `main` de esta fase dispara igual el deploy del web. `pnpm deploy:web` vuelve a hacer falta el día que se necesite un deploy fuera de un push (p. ej. reapuntar `API_URL` sin cambiar código) — ahí sí hace falta que el dueño corra `vercel login` primero.
-- **Fase 7 (2026-09-05):** `pnpm prod:purge-e2e` revierte cualquier despacho E2E para "devolver el stock", sin distinguir materia prima de producto terminado de SKU único — revertir el despacho de una cobertura ya cerrada puede reabrir su OP a medias y dejar el kardex del producto con saldo fantasma. Detalle y remediación en "Fase 7 — detalle" arriba. Pendiente decidir si vale la pena enseñarle al script esa distinción.
+- **Fase 7 (2026-09-05), RESUELTO en Fase 7b:** `pnpm prod:purge-e2e` revertía el despacho E2E **después** de deshacer la producción, así que `reverseReport` se topaba con su propia salida de despacho —bloquea si el producto tuvo movimientos posteriores vivos que no sean `IN`— y la orden quedaba reabierta a medias con saldo fantasma en el kardex. El bloque de órdenes de producción se movió **después** del ciclo fiscal y logístico y antes de los pedidos: con el despacho ya revertido, reabrir → revertir el reporte → anular pasa en una sola corrida. No hizo falta enseñarle al guion a distinguir materia prima de producto terminado: bastaba el orden.
 - Hallazgos de revisión pendientes (bajos): pinear acciones de GitHub a SHA, CSP en el web, job de limpieza de `sessions` expiradas, `Permissions-Policy`. Registrados aquí para Fase 7 (hardening).
 - SonarCloud: en `.env.setup` `SONAR_ORG` y `SONAR_PROJECT_KEY` venían intercambiados (corregido: org `gsinuiri-coder`, key `gsinuiri-coder_ayr-steel-erp`). El proyecto tenía Automatic Analysis activo; se desactivó por API para que el análisis lo haga CI con cobertura (D-021).
 - Los subagentes de `.claude/agents/` solo aparecen en el selector tras reiniciar la sesión de Claude Code; en esta sesión se ejecutaron como `general-purpose` con la definición como prompt.

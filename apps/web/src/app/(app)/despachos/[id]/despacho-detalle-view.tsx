@@ -103,8 +103,11 @@ export function DespachoDetalleView({ id }: { id: string }) {
       : null;
   const canReverse = isAdmin && isLive && reverseBlockedBy === null;
   // Una guía rechazada o dada de baja no impide emitir otra: la que bloquea es la vigente.
+  // D-103: un recojo en mostrador no tiene guía — el traslado es del comprador—, así que el
+  // botón no aparece en vez de ofrecer una operación que el API rechaza.
   const canIssueNote =
     isLive &&
+    d.transferMode !== 'PICKUP' &&
     (d.dispatchNoteStatus === null ||
       d.dispatchNoteStatus === 'REJECTED' ||
       d.dispatchNoteStatus === 'VOIDED');

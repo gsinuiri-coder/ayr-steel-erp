@@ -15,6 +15,7 @@ import {
   Scissors,
   ScrollText,
   ShoppingCart,
+  Store,
   Send,
   Truck,
   Users,
@@ -100,6 +101,14 @@ export const NAV: NavGroup[] = [
   {
     label: 'Comercial',
     items: [
+      {
+        // Fase 7b (RF-60): primero de la lista porque es la pantalla que más se abre al
+        // día, y la única que se usa de pie con una tablet en la mano.
+        title: 'Mostrador',
+        href: '/pos',
+        icon: Store,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
       {
         title: 'Clientes',
         href: '/clientes',

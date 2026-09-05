@@ -164,21 +164,26 @@ export function NuevoDespachoView() {
           destinationAddress: destinationAddress.trim(),
           destinationUbigeo: destinationUbigeo.trim(),
           transferMode,
-          totalWeightKg,
+          // D-103: un recojo en mostrador no genera guía, así que no lleva peso bruto ni
+          // datos de transporte. El API los rechaza si vienen, y con razón: serían datos
+          // inventados sobre un traslado que no hacemos nosotros.
+          ...(transferMode === 'PICKUP' ? {} : { totalWeightKg }),
           ...(packageCount.trim() ? { packageCount: Number(packageCount) } : {}),
-          ...(transferMode === 'PRIVATE'
-            ? {
-                vehiclePlate: vehiclePlate.trim(),
-                driverGivenNames: driverGivenNames.trim(),
-                driverFamilyNames: driverFamilyNames.trim(),
-                driverDocType,
-                driverDocNumber: driverDocNumber.trim(),
-                driverLicense: driverLicense.trim(),
-              }
-            : {
-                carrierDocNumber: carrierDocNumber.trim(),
-                carrierName: carrierName.trim(),
-              }),
+          ...(transferMode === 'PICKUP'
+            ? {}
+            : transferMode === 'PRIVATE'
+              ? {
+                  vehiclePlate: vehiclePlate.trim(),
+                  driverGivenNames: driverGivenNames.trim(),
+                  driverFamilyNames: driverFamilyNames.trim(),
+                  driverDocType,
+                  driverDocNumber: driverDocNumber.trim(),
+                  driverLicense: driverLicense.trim(),
+                }
+              : {
+                  carrierDocNumber: carrierDocNumber.trim(),
+                  carrierName: carrierName.trim(),
+                }),
           ...(notes.trim() ? { notes: notes.trim() } : {}),
           items: selectedLines.map((l) => ({
             salesOrderItemId: l.salesOrderItemId,
@@ -197,13 +202,15 @@ export function NuevoDespachoView() {
   });
 
   const transportComplete =
-    transferMode === 'PRIVATE'
-      ? vehiclePlate.trim() !== '' &&
-        driverGivenNames.trim() !== '' &&
-        driverFamilyNames.trim() !== '' &&
-        driverDocNumber.trim() !== '' &&
-        driverLicense.trim() !== ''
-      : carrierDocNumber.trim() !== '' && carrierName.trim() !== '';
+    transferMode === 'PICKUP'
+      ? true
+      : transferMode === 'PRIVATE'
+        ? vehiclePlate.trim() !== '' &&
+          driverGivenNames.trim() !== '' &&
+          driverFamilyNames.trim() !== '' &&
+          driverDocNumber.trim() !== '' &&
+          driverLicense.trim() !== ''
+        : carrierDocNumber.trim() !== '' && carrierName.trim() !== '';
 
   const canSubmit =
     salesOrderId !== NONE &&
@@ -213,7 +220,7 @@ export function NuevoDespachoView() {
     /^\d{6}$/.test(originUbigeo.trim()) &&
     destinationAddress.trim() !== '' &&
     /^\d{6}$/.test(destinationUbigeo.trim()) &&
-    isPositiveDecimal(totalWeightKg) &&
+    (transferMode === 'PICKUP' || isPositiveDecimal(totalWeightKg)) &&
     transportComplete &&
     !create.isPending;
 
@@ -349,7 +356,7 @@ export function NuevoDespachoView() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2" hidden={transferMode === 'PICKUP'}>
             <Label>Peso bruto total (kg)</Label>
             <Input
               inputMode="decimal"
@@ -366,8 +373,8 @@ export function NuevoDespachoView() {
         </CardContent>
       </Card>
 
-      {/* D-078: la modalidad decide qué datos pide la guía. */}
-      <Card>
+      {/* D-078: la modalidad decide qué datos pide la guía. D-103: el recojo no pide ninguno. */}
+      <Card hidden={transferMode === 'PICKUP'}>
         <CardHeader>
           <CardTitle className="text-base">
             {transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}

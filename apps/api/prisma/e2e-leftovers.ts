@@ -6,6 +6,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { toDecimal } from '@ayr/shared';
+import { E2E_EMAIL_PREFIX, E2E_EMAIL_SUFFIX } from './e2e-users';
 
 const TEST_NAME = { contains: 'E2E', mode: 'insensitive' as const };
 
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
       dispatches,
       fiscalDocuments,
       livePayments,
+      cashSessions,
     ] = await Promise.all([
       prisma.supplier.findMany({
         where: { name: TEST_NAME },
@@ -123,6 +125,23 @@ async function main(): Promise<void> {
         },
         select: { amountPen: true, document: { select: { number: true } } },
       }),
+      // Fase 7b (D-101): los turnos de caja del mostrador cuelgan del **usuario**, así que
+      // se reconocen por el correo efímero de E2E y no por una marca en el texto. Un turno
+      // `OPEN` que sobrevive a la corrida es el residuo que importa: bloquea el borrado del
+      // usuario en `cleanup-e2e-users.ts` y deja una caja abierta en producción.
+      prisma.cashSession.findMany({
+        where: {
+          user: { email: { startsWith: E2E_EMAIL_PREFIX, endsWith: E2E_EMAIL_SUFFIX } },
+        },
+        select: {
+          seq: true,
+          status: true,
+          differencePen: true,
+          user: { select: { email: true } },
+          _count: { select: { sales: true } },
+        },
+        orderBy: { openedAt: 'asc' },
+      }),
     ]);
 
     // `inventory_balances.item_id` es polimórfico (§3.2): no hay FK que unir, así que el
@@ -200,6 +219,18 @@ async function main(): Promise<void> {
     console.warn(`cobros vigentes sobre comprobantes E2E: ${livePayments.length}`);
     for (const payment of livePayments) {
       console.warn(`  ${payment.document.number ?? 'borrador'} — ${payment.amountPen.toFixed(2)}`);
+    }
+    // Fase 7b: caja del mostrador. Lo que no puede quedar es un turno abierto o una venta
+    // de mostrador viva; un turno cerrado y sin ventas lo borra `cleanup-e2e-users.ts`.
+    const openSessions = cashSessions.filter((c) => c.status === 'OPEN');
+    const sessionsWithSales = cashSessions.filter((c) => c._count.sales > 0);
+    console.warn(
+      `turnos de caja E2E: ${cashSessions.length} (abiertos: ${openSessions.length}, con ventas: ${sessionsWithSales.length})`,
+    );
+    for (const c of cashSessions) {
+      console.warn(
+        `  CAJA-${String(c.seq).padStart(6, '0')}  ${c.status}  ventas: ${c._count.sales}  diferencia: ${c.differencePen?.toFixed(2) ?? '—'}`,
+      );
     }
     console.warn(`movimientos de kardex en total: ${movements}`);
   } finally {

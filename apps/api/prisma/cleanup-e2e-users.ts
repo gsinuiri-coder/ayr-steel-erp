@@ -38,9 +38,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { count } = await prisma.user.deleteMany({
-    where: { id: { in: targets.map((u) => u.id) } },
+  // Fase 7b: los turnos de caja del mostrador (D-101) cuelgan del usuario con
+  // `onDelete: RESTRICT`, así que sin esto el borrado falla en cuanto un E2E abre caja.
+  //
+  // Se borran **solo los turnos sin ventas**, que es lo único que un E2E debería dejar: un
+  // turno vacío no registra ningún hecho —ni dinero, ni arqueo que alguien haya firmado— y
+  // su fila no le sirve a nadie. Uno con ventas sí las tiene, y ahí el guion se planta y lo
+  // dice en vez de arrastrar la venta de mostrador consigo.
+  const ids = targets.map((u) => u.id);
+  const withSales = await prisma.cashSession.findMany({
+    where: { userId: { in: ids }, sales: { some: {} } },
+    select: { seq: true, user: { select: { email: true } } },
   });
+  if (withSales.length > 0) {
+    const detail = withSales.map((s) => `CAJA-${String(s.seq).padStart(6, '0')}`).join(', ');
+    throw new Error(
+      `No se borran los usuarios de E2E: sus turnos de caja tienen ventas de mostrador (${detail}). ` +
+        'Anula esas ventas primero (POST /pos/sales/:id/void) y vuelve a correr la limpieza.',
+    );
+  }
+  const sessions = await prisma.cashSession.deleteMany({ where: { userId: { in: ids } } });
+  if (sessions.count > 0) console.warn(`Turnos de caja de E2E borrados: ${sessions.count}`);
+
+  const { count } = await prisma.user.deleteMany({ where: { id: { in: ids } } });
   console.warn(`Usuarios de E2E borrados: ${count}`);
 }
 
