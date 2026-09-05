@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import {
+  DocType,
   FiscalDocType,
   FiscalDocumentOrigin,
   FiscalDocumentStatus,
@@ -7,8 +8,15 @@ import {
   Prisma,
   type CreditNoteReason,
 } from '@prisma/client';
-import { fiscalDocumentNumber, salesTotals, serializeSalesTotals } from '@ayr/shared';
+import {
+  fiscalDocumentNumber,
+  salesTotals,
+  serializeSalesTotals,
+  toDecimal,
+  toFixedString,
+} from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
+import { totalTolerance } from '../imports/fiscal-import-math';
 import { dueDateFor } from './invoicing-math';
 
 /** Una línea del comprobante importado, ya normalizada por el adaptador de planilla. */
@@ -35,6 +43,13 @@ export interface ImportedDocumentInput {
   affectedDocumentId: string | null;
   creditNoteReason: CreditNoteReason | null;
   notes: string | null;
+  /**
+   * El total que declara el papel. **Manda sobre la suma de las líneas** dentro de la
+   * tolerancia de redondeo: es lo que SUNAT tiene y lo que el cliente debe, y si se
+   * guardara el recalculado, cobrar el importe exacto del comprobante real se habría
+   * rechazado por "excede el saldo pendiente".
+   */
+  totalPen: string;
   lines: ImportedDocumentLine[];
 }
 
@@ -45,6 +60,17 @@ const LIVE_STATUSES: FiscalDocumentStatus[] = [
   FiscalDocumentStatus.ACCEPTED,
   FiscalDocumentStatus.VOID_PENDING,
 ];
+
+/**
+ * Cuánto puede adelantar una importación el correlativo de una serie **activa** (D-106).
+ *
+ * Empujarlo es necesario —si no, el ERP volvería a entregar un número que SUNAT ya tiene—
+ * pero no tiene vuelta atrás: no hay ninguna ruta que baje un correlativo, a propósito
+ * (`setSeriesActive` lo dice: bajarlo emitiría dos veces el mismo número). Un `12345678`
+ * tecleado donde iba `123` quemaría el rango de la serie con la que se factura de verdad,
+ * así que un salto absurdo se rechaza en vez de aplicarse en silencio.
+ */
+export const MAX_ACTIVE_SERIES_JUMP = 1_000;
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -82,16 +108,17 @@ export class FiscalImportService {
     actorId: string,
   ): Promise<string> {
     const number = fiscalDocumentNumber(input.series, input.correlative);
+    await this.assertCustomerUsableInTx(tx, input);
+    const affectedDocType = await this.assertCreditNoteFitsInTx(tx, input);
     const previousId = await this.archivePreviousInTx(tx, number);
-    const seriesId = await this.resolveSeriesInTx(
-      tx,
-      input.series,
-      input.docType,
-      input.correlative,
-    );
+    const seriesId = await this.resolveSeriesInTx(tx, actorId, {
+      series: input.series,
+      docType: input.docType,
+      correlative: input.correlative,
+      affectedDocType,
+    });
 
-    const totals = salesTotals(input.lines);
-    const serialized = serializeSalesTotals(totals);
+    const totals = this.resolveTotals(input);
     const dueDate = await this.resolveDueDateInTx(tx, input);
 
     // `issuedAt`/`acceptedAt` salen de la fecha de emisión del papel, no del reloj: el
@@ -116,9 +143,9 @@ export class FiscalImportService {
         issueDate: toDateOnly(input.issueDate),
         paymentTerms: input.paymentTerms,
         dueDate: dueDate ? toDateOnly(dueDate) : null,
-        subtotalPen: serialized.subtotalPen,
-        igvPen: serialized.igvPen,
-        totalPen: serialized.totalPen,
+        subtotalPen: totals.subtotalPen,
+        igvPen: totals.igvPen,
+        totalPen: totals.totalPen,
         notes: input.notes,
         createdById: actorId,
         issuedAt,
@@ -148,12 +175,140 @@ export class FiscalImportService {
       after: {
         number,
         docType: input.docType,
-        totalPen: serialized.totalPen,
+        totalPen: totals.totalPen,
         lines: input.lines.length,
         archivedDocumentId: previousId,
       },
     });
+    // RF-95: el archivado necesita su **propia** entrada, con el id del archivado como
+    // `entityId`. Contarlo solo dentro del registro del sucesor dejaba sin respuesta la
+    // pregunta que alguien va a hacer de verdad: "¿por qué este comprobante salió de la
+    // lista?", que se busca por el id del que desapareció.
+    if (previousId) {
+      await this.audit.write(tx, {
+        actorId,
+        action: 'invoicing.import.archive',
+        entity: 'fiscal_documents',
+        entityId: previousId,
+        after: { archivedBy: document.id, number },
+      });
+    }
     return document.id;
+  }
+
+  /**
+   * El total del comprobante importado: **manda el del papel**, y el IGV absorbe la
+   * diferencia de redondeo contra la suma de las líneas.
+   *
+   * El subtotal sale de las líneas (es lo único que las líneas pueden decir) y el total, de
+   * la planilla. Guardar el recalculado habría dejado el saldo por cobrar unos céntimos
+   * lejos del comprobante real, y cobrar el importe exacto del papel se habría rechazado
+   * por "excede el saldo pendiente". La diferencia admitida es la misma tolerancia que
+   * valida el adaptador; acá se vuelve a comprobar porque este servicio es la autoridad, no
+   * la pantalla.
+   */
+  private resolveTotals(input: ImportedDocumentInput): {
+    subtotalPen: string;
+    igvPen: string;
+    totalPen: string;
+  } {
+    const computed = serializeSalesTotals(salesTotals(input.lines));
+    const declared = toDecimal(input.totalPen);
+    const diff = declared.minus(toDecimal(computed.totalPen)).abs();
+    if (diff.gt(totalTolerance(input.lines.length))) {
+      throw new BadRequestException(
+        `Las líneas suman ${toDecimal(computed.totalPen).toFixed(2)} y el comprobante declara ${declared.toFixed(2)}`,
+      );
+    }
+    const subtotal = toDecimal(computed.subtotalPen);
+    const igv = declared.minus(subtotal);
+    if (igv.isNegative()) {
+      throw new BadRequestException(
+        `El total declarado (${declared.toFixed(2)}) es menor que el valor de venta de sus líneas`,
+      );
+    }
+    return {
+      subtotalPen: toFixedString(subtotal, 'MONEY'),
+      igvPen: toFixedString(igv, 'MONEY'),
+      totalPen: toFixedString(declared, 'MONEY'),
+    };
+  }
+
+  /**
+   * El cliente del comprobante importado tiene que servir para emitirle (mismas tres
+   * reglas que `InvoicingService.createInTx`, D-077).
+   *
+   * No es una repetición por descuido: importar es la **otra** puerta por la que nace un
+   * comprobante, y una regla que solo vive en una de las dos no es una regla. Sin esto
+   * entraban facturas contra un DNI o contra "público en general" —fiscalmente inválidas—
+   * y cuentas por cobrar a nombre de clientes dados de baja.
+   */
+  private async assertCustomerUsableInTx(
+    tx: Prisma.TransactionClient,
+    input: ImportedDocumentInput,
+  ): Promise<void> {
+    const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
+    if (!customer) throw new BadRequestException('Cliente no encontrado');
+    if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
+    if (customer.isSystem && input.docType !== FiscalDocType.BOLETA) {
+      throw new BadRequestException(
+        'Al cliente "público en general" solo le corresponden boletas: usa un cliente identificado',
+      );
+    }
+    if (input.docType === FiscalDocType.FACTURA && customer.docType !== DocType.RUC) {
+      throw new BadRequestException(
+        'Una factura va a un cliente con RUC; para este cliente corresponde una boleta',
+      );
+    }
+  }
+
+  /**
+   * Una nota de crédito importada solo acredita a un comprobante **importado**, y no por
+   * más de lo que a ese comprobante le queda.
+   *
+   * Las dos mitades cierran el mismo hueco. Sin la primera, una planilla podía borrar el
+   * saldo de una factura que el ERP emitió de verdad con un documento que SUNAT nunca vio
+   * —y de paso bloquearle la baja, porque una NC viva la bloquea—. Sin la segunda, podía
+   * acreditar diez veces el total. Es el equivalente importado del tope que
+   * `assertStillAvailable` aplica a la nota de crédito emitida acá.
+   */
+  private async assertCreditNoteFitsInTx(
+    tx: Prisma.TransactionClient,
+    input: ImportedDocumentInput,
+  ): Promise<FiscalDocType | null> {
+    if (input.docType !== FiscalDocType.NOTA_CREDITO || !input.affectedDocumentId) return null;
+    const affected = await tx.fiscalDocument.findUnique({
+      where: { id: input.affectedDocumentId },
+      select: { number: true, origin: true, totalPen: true, archivedAt: true, docType: true },
+    });
+    if (!affected) throw new BadRequestException('El comprobante afectado no existe');
+    if (affected.origin !== FiscalDocumentOrigin.IMPORTED) {
+      throw new BadRequestException(
+        `El comprobante ${affected.number ?? ''} lo emitió el ERP: su nota de crédito se emite acá, no se importa`,
+      );
+    }
+    if (affected.archivedAt !== null) {
+      throw new BadRequestException(
+        `El comprobante ${affected.number ?? ''} fue reemplazado por una reimportación: acredita la versión vigente`,
+      );
+    }
+
+    const credited = await tx.fiscalDocument.aggregate({
+      where: {
+        affectedDocumentId: input.affectedDocumentId,
+        status: { in: LIVE_STATUSES },
+        archivedAt: null,
+      },
+      _sum: { totalPen: true },
+    });
+    const already = toDecimal((credited._sum.totalPen ?? new Prisma.Decimal(0)).toString());
+    const pending = toDecimal(affected.totalPen.toString()).minus(already);
+    if (toDecimal(input.totalPen).gt(pending)) {
+      throw new BadRequestException(
+        `Al comprobante ${affected.number ?? ''} le quedan ${pending.toFixed(2)} por acreditar y esta nota acredita ${toDecimal(input.totalPen).toFixed(2)}`,
+      );
+    }
+    return affected.docType;
   }
 
   /**
@@ -170,13 +325,12 @@ export class FiscalImportService {
     tx: Prisma.TransactionClient,
     number: string,
   ): Promise<string | null> {
-    // El lock va sobre las filas de ese número, incluidas las archivadas: sin él, dos
-    // importaciones simultáneas del mismo comprobante archivaban cada una a la anterior y
-    // dejaban dos vigentes —el índice único parcial las frena, pero con un error de base
-    // en la cara del usuario en vez de un mensaje que se entienda.
-    await tx.$queryRaw`
-      SELECT "id" FROM "fiscal_documents" WHERE "number" = ${number} FOR UPDATE
-    `;
+    // El lock es sobre el **número**, no sobre las filas: un `FOR UPDATE` no bloquea nada
+    // cuando todavía no existe ninguna, que es justo el caso de la primera importación, y
+    // dos simultáneas del mismo comprobante terminaban chocando contra el índice único
+    // parcial con un mensaje que no explica nada. Un lock consultivo de transacción existe
+    // aunque la fila no, y se suelta solo al terminar.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${number})::bigint)`;
     const previous = await tx.fiscalDocument.findFirst({
       where: { number, archivedAt: null },
       select: { id: true, origin: true, status: true },
@@ -227,14 +381,38 @@ export class FiscalImportService {
    */
   private async resolveSeriesInTx(
     tx: Prisma.TransactionClient,
-    series: string,
-    docType: FiscalDocType,
-    correlative: number,
+    actorId: string,
+    spec: {
+      series: string;
+      docType: FiscalDocType;
+      correlative: number;
+      /** Solo en series de nota de crédito: el tipo del comprobante que afecta (D-072). */
+      affectedDocType: FiscalDocType | null;
+    },
   ): Promise<string> {
+    const { series, docType, correlative, affectedDocType } = spec;
     const existing = await tx.fiscalSeries.findUnique({ where: { series } });
     if (!existing) {
       const created = await tx.fiscalSeries.create({
-        data: { docType, series, correlative, isActive: false },
+        // `affectedDocType` se completa aunque la serie nazca inactiva: sin él, el día que
+        // alguien la active `allocateNumber` no la elegiría nunca —su filtro compara ese
+        // campo con `IS NOT DISTINCT FROM`— y la serie quedaría activa y muerta.
+        data: {
+          docType,
+          series,
+          correlative,
+          isActive: false,
+          affectedDocType: docType === FiscalDocType.NOTA_CREDITO ? affectedDocType : null,
+        },
+      });
+      // Una serie que nace sola tiene que dejar rastro igual que la que alguien da de alta
+      // desde `/configuracion/series` (RF-95): es maestro fiscal, no un dato derivado.
+      await this.audit.write(tx, {
+        actorId,
+        action: 'invoicing.series.create-from-import',
+        entity: 'fiscal_series',
+        entityId: created.id,
+        after: { series, docType, correlative, isActive: false },
       });
       return created.id;
     }
@@ -243,8 +421,40 @@ export class FiscalImportService {
         `La serie ${series} está registrada para ${existing.docType} y el archivo la usa para ${docType}`,
       );
     }
-    if (existing.correlative < correlative) {
-      await tx.fiscalSeries.update({ where: { id: existing.id }, data: { correlative } });
+    if (existing.correlative >= correlative) return existing.id;
+
+    // El salto absurdo se rechaza **solo** en una serie activa y ya en uso: ahí el
+    // correlativo es el próximo número que el ERP va a emitir de verdad, y no hay ruta que
+    // lo baje. En una inactiva o recién creada, adelantarla es justo lo que se quiere.
+    if (existing.isActive && existing.correlative > 0) {
+      const jump = correlative - existing.correlative;
+      if (jump > MAX_ACTIVE_SERIES_JUMP) {
+        throw new BadRequestException(
+          `El correlativo ${correlative} adelantaría la serie activa ${series} en ${jump} números (está en ${existing.correlative}): revisa el archivo, porque esto no se puede deshacer`,
+        );
+      }
+    }
+
+    // Atómico y no read-then-write: es el mismo recurso que `allocateNumber` mueve con
+    // `UPDATE … RETURNING` (D-072). Con un `update` sobre lo leído, una emisión que
+    // ocurriera entremedio quedaba pisada y el correlativo **retrocedía** — y el próximo
+    // comprobante repetía un número que SUNAT ya tiene.
+    const [row] = await tx.$queryRaw<{ before: number; after: number }[]>`
+      UPDATE "fiscal_series" s
+      SET "correlative" = GREATEST(s."correlative", ${correlative}), "updated_at" = NOW()
+      FROM "fiscal_series" old
+      WHERE s."id" = old."id" AND s."id" = ${existing.id}::uuid
+      RETURNING old."correlative" AS "before", s."correlative" AS "after"
+    `;
+    if (row && row.before !== row.after) {
+      await this.audit.write(tx, {
+        actorId,
+        action: 'invoicing.series.correlative-bump',
+        entity: 'fiscal_series',
+        entityId: existing.id,
+        before: { correlative: row.before },
+        after: { correlative: row.after, series, reason: 'importación de comprobante emitido' },
+      });
     }
     return existing.id;
   }

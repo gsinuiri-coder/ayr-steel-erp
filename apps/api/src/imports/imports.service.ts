@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
-  HttpException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -112,7 +112,10 @@ function markIntraBatchDuplicates(rows: RowValidation[], adapter: ImportAdapter)
  * nombres de columnas y restricciones a la pantalla.
  */
 function confirmErrorMessage(err: unknown): string {
-  if (err instanceof HttpException && err.getStatus() < 500) {
+  // Solo estas dos, y no "cualquier HttpException < 500": las lanza el dominio propio y
+  // están escritas en español para el usuario. Un 4xx que viniera de una capa ajena —un
+  // cliente HTTP, un pipe— llegaría literal a la pantalla sin que nadie lo haya redactado.
+  if (err instanceof BadRequestException || err instanceof ConflictException) {
     const response = err.getResponse();
     const message =
       typeof response === 'string' ? response : (response as { message?: unknown })?.message;
@@ -348,22 +351,39 @@ export class ImportsService {
       throw new BadRequestException('No hay filas válidas para confirmar');
     }
 
-    const confirmedCount = isGroupedAdapter(adapter)
-      ? await this.confirmGroups(batchId, batch.rows, adapter, actor.id)
-      : await this.confirmRows(batchId, validRows, adapter, actor.id);
+    // El lote se **reclama** antes de crear nada, con la misma condición en el `WHERE`: dos
+    // POST simultáneos sobre el mismo lote pasaban los dos la comprobación de arriba, y con
+    // el adaptador agrupado eso significa crear el comprobante dos veces —el segundo archiva
+    // al primero y deja las filas del primero apuntando a un id que ya no es el vigente—.
+    // Es el mismo patrón que el estado `VOIDING` de D-100: reclamar y después trabajar.
+    const claimed = await this.prisma.importBatch.updateMany({
+      where: { id: batchId, status: ImportBatchStatus.PARSED },
+      data: { status: ImportBatchStatus.CONFIRMED },
+    });
+    if (claimed.count === 0) throw new BadRequestException('El lote ya fue confirmado');
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.importBatch.update({
-        where: { id: batchId },
-        data: { status: ImportBatchStatus.CONFIRMED },
-      });
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'imports.confirm',
-        entity: 'import_batches',
-        entityId: batchId,
-        after: { confirmedRows: confirmedCount, skippedRows: batch.rows.length - confirmedCount },
-      });
+    let confirmedCount = 0;
+    try {
+      confirmedCount = isGroupedAdapter(adapter)
+        ? await this.confirmGroups(batchId, batch.rows, adapter, actor.id)
+        : await this.confirmRows(batchId, validRows, adapter, actor.id);
+    } finally {
+      if (confirmedCount === 0) {
+        // Nada entró: dejar el lote confirmado lo volvía irreparable —ni se puede editar una
+        // fila ni reintentar—, y la única salida era volver a subir el archivo.
+        await this.prisma.importBatch.updateMany({
+          where: { id: batchId },
+          data: { status: ImportBatchStatus.PARSED },
+        });
+      }
+    }
+
+    await this.audit.log({
+      actorId: actor.id,
+      action: 'imports.confirm',
+      entity: 'import_batches',
+      entityId: batchId,
+      after: { confirmedRows: confirmedCount, skippedRows: batch.rows.length - confirmedCount },
     });
     return this.findOne(batchId);
   }

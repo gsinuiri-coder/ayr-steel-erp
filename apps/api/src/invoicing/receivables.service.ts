@@ -92,7 +92,11 @@ export class ReceivablesService {
       where: { id: documentId },
       include: {
         payments: true,
-        creditNotes: { where: { status: { in: LIVE_STATUSES } }, select: { totalPen: true } },
+        creditNotes: {
+          // RF-72: una versión archivada dejó de ser el documento; no acredita nada.
+          where: { status: { in: LIVE_STATUSES }, archivedAt: null },
+          select: { totalPen: true },
+        },
       },
     });
     if (!document) throw new NotFoundException('Comprobante no encontrado');
@@ -110,6 +114,13 @@ export class ReceivablesService {
         document.status === FiscalDocumentStatus.DRAFT
           ? 'El comprobante todavía es un borrador: emítelo antes de cobrarlo'
           : `Un comprobante ${document.status} no tiene saldo que cobrar`,
+      );
+    }
+    // RF-72: una reimportación lo dejó atrás. Cobrar sobre la versión archivada dejaría el
+    // cobro colgado de un documento que ya no suma en ninguna cuenta por cobrar.
+    if (document.archivedAt !== null) {
+      throw new BadRequestException(
+        'Este comprobante fue reemplazado por una reimportación posterior: cobra sobre la versión vigente',
       );
     }
 
@@ -203,11 +214,18 @@ export class ReceivablesService {
       where: {
         status: { in: LIVE_STATUSES },
         docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
+        // RF-72: sin esto, reimportar un comprobante duplicaba la deuda del cliente — la
+        // versión archivada sigue aceptada y volvía a sumar su total.
+        archivedAt: null,
       },
       include: {
         customer: { select: { id: true, name: true, docNumber: true } },
         payments: { select: { amountPen: true, reversedAt: true } },
-        creditNotes: { where: { status: { in: LIVE_STATUSES } }, select: { totalPen: true } },
+        creditNotes: {
+          // RF-72: una versión archivada dejó de ser el documento; no acredita nada.
+          where: { status: { in: LIVE_STATUSES }, archivedAt: null },
+          select: { totalPen: true },
+        },
       },
     });
 

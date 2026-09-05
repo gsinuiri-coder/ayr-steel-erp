@@ -1,5 +1,6 @@
 import {
   asText,
+  isDecimalText,
   mismatchedHeaderLabels,
   totalMismatch,
   totalTolerance,
@@ -28,6 +29,25 @@ describe('asText', () => {
     expect(asText({ a: 1 })).toBe('');
     expect(asText(null)).toBe('');
     expect(asText(undefined)).toBe('');
+  });
+});
+
+describe('isDecimalText', () => {
+  it('acepta lo que `toDecimal` sabe leer', () => {
+    expect(isDecimalText('118.0000')).toBe(true);
+    expect(isDecimalText('2')).toBe(true);
+    expect(isDecimalText('-3.5')).toBe(true);
+  });
+
+  it('rechaza lo que una fila inválida conserva sin normalizar', () => {
+    // Es el caso que importa: sin este filtro, "abc" en Cantidad llegaba a `toDecimal`,
+    // que lanza, y la subida terminaba en un 500 en vez de en una fila marcada en rojo.
+    expect(isDecimalText('abc')).toBe(false);
+    expect(isDecimalText('')).toBe(false);
+    expect(isDecimalText('1,5')).toBe(false);
+    expect(isDecimalText('1e3')).toBe(false);
+    expect(isDecimalText(118)).toBe(false);
+    expect(isDecimalText(null)).toBe(false);
   });
 });
 

@@ -21,6 +21,18 @@ export function asText(value: unknown): string {
 }
 
 /**
+ * ¿Este texto es un decimal que `toDecimal` puede leer?
+ *
+ * Hace falta porque una fila **inválida** conserva en `data` lo que el usuario escribió, sin
+ * normalizar: si "Cantidad" dice `abc`, ese `abc` sigue ahí. Sin este filtro, la validación
+ * de grupo se lo pasaba a `toDecimal`, que lanza, y una planilla con un número mal escrito
+ * terminaba en un 500 en vez de en una fila marcada en rojo.
+ */
+export function isDecimalText(value: unknown): value is string {
+  return typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value.trim());
+}
+
+/**
  * Tolerancia al comparar el total declarado con la suma de las líneas: un céntimo por
  * línea.
  *

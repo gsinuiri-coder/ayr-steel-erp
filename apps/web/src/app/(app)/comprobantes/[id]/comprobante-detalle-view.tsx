@@ -298,6 +298,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   // Solo se cobra lo que existe fiscalmente y todavía debe algo. El saldo cero no
   // esconde el botón por gusto: cobrar de más lo rechaza el API igual.
   const canCollect =
+    // RF-72: a una versión archivada se llega con un clic desde su sucesora, y cobrarla
+    // dejaría el dinero colgado de un documento que ya no suma en ninguna cuenta.
+    d.archivedAt === null &&
     !isDispatchNote &&
     d.docType !== 'NOTA_CREDITO' &&
     (d.status === 'ISSUED' || d.status === 'SEND_ERROR' || d.status === 'ACCEPTED') &&

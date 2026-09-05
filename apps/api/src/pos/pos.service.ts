@@ -656,7 +656,12 @@ export class PosService {
    */
   private async hasLiveCreditNote(documentId: string): Promise<boolean> {
     const note = await this.prisma.fiscalDocument.findFirst({
-      where: { affectedDocumentId: documentId, status: { in: LIVE_FISCAL_STATUSES } },
+      where: {
+        affectedDocumentId: documentId,
+        status: { in: LIVE_FISCAL_STATUSES },
+        // RF-72: una NC archivada por reimportación dejó de acreditar nada.
+        archivedAt: null,
+      },
       select: { id: true },
     });
     return note !== null;

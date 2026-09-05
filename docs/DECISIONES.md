@@ -1265,3 +1265,112 @@ La cobertura viene por otro lado y es suficiente:
 
 Queda anotado por si algún día se decide emitir de prueba contra producción: ese día habría
 que darle al POS una marca propia antes de tocar la purga.
+
+## D-105..D-109 — Fase 7c (importación de comprobantes ya emitidos)
+
+§0.2 tiene las cinco decisiones y su motivo corto. Acá va lo que no cabe en una fila: por
+qué el corte va en el origen y no en el estado, cómo se sostiene la unicidad del número
+cuando conviven dos versiones del mismo comprobante, y las fronteras que esta fase deja
+escritas a propósito.
+
+### Por qué `origin` y no un estado nuevo
+
+La tentación era agregar un estado —`IMPORTED`— a `FiscalDocumentStatus` y terminar. No
+funciona, y el motivo es que **estado y origen responden preguntas distintas**. El estado
+dice en qué punto del trámite está el documento; el origen, quién lo emitió. Un comprobante
+importado está _aceptado_: SUNAT lo recibió, tiene número, y la empresa lo puede cobrar. Lo
+que no tiene es contraparte del otro lado: el PSE no lo conoce como nuestro.
+
+Mezclarlos habría roto las dos cosas a la vez. Un estado `IMPORTED` habría dejado fuera de
+`LIVE_DOCUMENT_STATUSES` a documentos que sí consumen pedido y sí tienen saldo —o habría
+obligado a meterlo, y entonces cada lista de estados del módulo tendría que acordarse de
+él—. Con `origin` aparte, todo lo que ya estaba escrito sigue valiendo sin tocarse: un
+importado es `ACCEPTED` y se comporta como tal para el saldo, la búsqueda y los reportes.
+
+El corte tiene un costo que conviene tener presente: **"aceptado" pasa a querer decir dos
+cosas** según el origen. En uno emitido acá, el ERP vio el CDR; en uno importado, lo afirma
+la planilla. Por eso el listado y el detalle lo marcan, y por eso `voidPath` devuelve `null`
+en un importado en vez de ofrecer un camino que solo puede terminar en un error.
+
+### Lo que frena qué
+
+Cuatro operaciones del módulo hablan con el PSE y ninguna tiene sentido sobre un importado.
+La mitad ya estaba frenada sin escribir nada:
+
+- `send` exige `DRAFT` (un importado nace `ACCEPTED`);
+- `retry` exige `ISSUED`/`SEND_ERROR`;
+- `correct` exige `REJECTED`.
+
+La otra mitad exige exactamente el estado que un importado tiene, así que hubo que cortarla
+a mano con `assertIssuedHere`:
+
+- `voidDocument` exige `ACCEPTED`;
+- `createCreditNote` exige que el afectado esté `ACCEPTED`;
+- `refreshStatus` solo pide número y serie.
+
+`sendPending` (el job de D-073) filtra además por `origin = ISSUED_HERE`. Hoy es redundante
+—un importado nunca está en un estado reintentable— y está igual: el día que un importado
+pueda quedar en otro estado, el job no puede ser el que se entere mandándolo al PSE.
+
+### La unicidad del número cuando hay dos versiones
+
+RF-72 obliga a que la versión anterior siga existiendo, así que el `UNIQUE (number)` de
+Fase 5b deja de ser cierto: tras una reimportación hay dos filas con `F001-00000123`. Lo que
+sigue siendo cierto —y es lo que hay que sostener— es que **solo una está vigente**. De ahí
+el índice único parcial:
+
+```sql
+CREATE UNIQUE INDEX "fiscal_documents_number_active_key"
+  ON "fiscal_documents"("number") WHERE "archived_at" IS NULL;
+```
+
+Es el mismo recurso que D-072 ya había usado para "una sola serie activa por combinación", y
+por el mismo motivo: Postgres puede expresar la regla real, y una restricción de Prisma no.
+
+El orden dentro de la transacción no es intercambiable: **primero se archiva la anterior,
+después se crea la nueva.** Al revés, las dos serían vigentes por un instante y el índice
+rechazaría la inserción. Y antes de todo eso va un `SELECT … FOR UPDATE` sobre las filas de
+ese número —incluidas las archivadas—, porque sin él dos importaciones simultáneas del mismo
+comprobante archivaban cada una a la anterior y la segunda chocaba contra el índice: la
+regla se habría respetado igual, pero con un error de base en la cara del usuario en vez de
+un mensaje que se entienda.
+
+### El total del papel manda, con un céntimo de tolerancia por línea
+
+La planilla trae el total del comprobante **y** sus líneas. Podrían no coincidir, y hay que
+decidir cuál gana. Gana el papel: es lo que SUNAT tiene y lo que el cliente debe. Pero
+recalcular las líneas con la escala del proyecto (cuatro decimales, D-003) no reproduce
+exactamente un documento que redondeó a dos línea por línea, así que exigir igualdad exacta
+habría rechazado comprobantes correctos.
+
+La tolerancia es **un céntimo por línea**: es la máxima diferencia que el redondeo puede
+producir, y cualquier cosa mayor es un total que no es el de sus líneas. Cuando no cuadra, el
+mensaje dice los dos números —lo que suman y lo que declara el archivo—, porque "no cuadra" a
+secas obliga a rehacer la cuenta a mano para saber cuál de los dos está mal.
+
+La aritmética vive en `apps/api/src/imports/fiscal-import-math.ts`, separada del adaptador y
+de la base, por el mismo criterio que `invoicing-math.ts`: es la parte que se puede equivocar
+en silencio, y una deuda equivocada no la descubre ninguna prueba de integración.
+
+### Fronteras que esta fase deja escritas
+
+**Un importado no se anula desde el ERP.** Su baja y su nota de crédito se hacen donde se
+emitió —el portal de SUNAT, o el sistema anterior— y el resultado se vuelve a importar. La
+alternativa, emitir una nota de crédito propia contra él, es peor que inútil: nacería
+referida a un documento que para el PSE no es nuestro.
+
+**Un importado no trae lo ya cobrado** (D-109). El caso que de verdad importa —la emisión de
+contingencia durante una caída del PSE— es nueva y sin cobrar, y tiene que aparecer como
+deuda el mismo día. Admitir un histórico ya pagado habría exigido inventar el medio de pago y
+la fecha de cada cobro viejo.
+
+**Un importado no trae su PDF.** El comprobante existe con su número, sus líneas y su saldo,
+pero sin archivo: el detalle no ofrece descarga porque no hay nada que descargar. Adjuntar el
+PDF original al importar es una extensión evidente y ninguna decisión de esta fase la
+estorba: sería un campo más en la planilla, o una subida aparte contra `documents`.
+
+**La suite E2E de esta fase no corre contra producción.** Importar escribe numeración fiscal
+real —empuja el correlativo de una serie, o crea una inactiva— y deja comprobantes que **no
+se pueden dar de baja**, que es exactamente el riesgo que `fiscalEmissionAllowed()` ya
+gobierna desde Fase 5b. La suite se salta con ese mismo motivo cuando apunta a una URL
+externa; corre entera en local y en CI.

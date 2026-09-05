@@ -103,6 +103,8 @@ const documentInclude = {
   items: { orderBy: { lineNumber: 'asc' }, include: { product: { select: { sku: true } } } },
   payments: { orderBy: { createdAt: 'asc' } },
   creditNotes: {
+    // RF-72: una versión archivada dejó de ser el documento, así que tampoco acredita nada.
+    where: { archivedAt: null },
     orderBy: { createdAt: 'asc' },
     select: { id: true, number: true, status: true, issueDate: true, totalPen: true },
   },
@@ -536,6 +538,7 @@ export class InvoicingService {
         document: {
           status: { in: LIVE_DOCUMENT_STATUSES },
           docType: { not: FiscalDocType.NOTA_CREDITO },
+          archivedAt: null,
         },
       },
       _sum: { qty: true },
@@ -672,7 +675,7 @@ export class InvoicingService {
         by: ['affectedItemId'],
         where: {
           affectedItemId: { in: affected.items.map((i) => i.id) },
-          document: { status: { in: LIVE_DOCUMENT_STATUSES } },
+          document: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
         },
         _sum: { qty: true },
       });
@@ -1105,7 +1108,7 @@ export class InvoicingService {
         where: {
           affectedItemId: { in: ids },
           documentId: { not: document.id },
-          document: { status: { in: LIVE_DOCUMENT_STATUSES } },
+          document: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
         },
         _sum: { qty: true },
       });
@@ -1151,6 +1154,7 @@ export class InvoicingService {
         document: {
           status: { in: LIVE_DOCUMENT_STATUSES },
           docType: { not: FiscalDocType.NOTA_CREDITO },
+          archivedAt: null,
         },
       },
       _sum: { qty: true },
@@ -1737,7 +1741,7 @@ export class InvoicingService {
         seriesRef: { select: { series: true } },
         payments: { where: { reversedAt: null }, select: { id: true } },
         creditNotes: {
-          where: { status: { in: LIVE_DOCUMENT_STATUSES } },
+          where: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
           select: { number: true },
         },
       },
@@ -2157,6 +2161,7 @@ export class InvoicingService {
         document: {
           status: { in: LIVE_DOCUMENT_STATUSES },
           docType: { not: FiscalDocType.NOTA_CREDITO },
+          archivedAt: null,
         },
       },
       _sum: { qty: true },
@@ -2313,7 +2318,7 @@ export class InvoicingService {
       by: ['affectedItemId'],
       where: {
         affectedItemId: { in: itemIds },
-        document: { status: { in: LIVE_DOCUMENT_STATUSES } },
+        document: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
       },
       _sum: { qty: true },
     });
