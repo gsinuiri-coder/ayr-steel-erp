@@ -885,18 +885,20 @@ servicios que ya existían desde la Fase 5b. El módulo `pos` no importa `Invent
 escribe kardex, no toca reservas, no comprueba disponible— y esa dependencia ausente es la
 prueba estructural de que no abrió un segundo camino.
 
-| #   | Entregable                                                                      | Estado                                                                                              |
-| --- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| 0   | Defecto de `prod:purge-e2e` del tramo 1, corregido **en el guion**              | ✅ el bloque de producción se mueve después del despacho; commit propio                             |
-| 1   | Decisiones D-098..D-104 en §0.2 + contexto largo en `DECISIONES.md`             | ✅                                                                                                  |
-| 2   | Prisma: `cash_sessions`, `pos_sales`, `PaymentMethod` += CARD/WALLET, `PICKUP`  | ✅ tres migraciones, aplicadas en `dev` y `production`                                              |
-| 3   | `*InTx` en pedido, despacho, comprobante y cobro (D-099)                        | ✅ el público abre la transacción y delega; el `*InTx` recibe la del llamador                       |
-| 4   | `POST /pos/sales`: los cuatro documentos en una transacción, envío al PSE fuera | ✅ D-073 intacto: la fase 1 se ensancha, el orden no cambia                                         |
-| 5   | Caja: apertura, ventas por medio, cierre con arqueo (D-101)                     | ✅ esperado solo con efectivo, congelado al cerrar; diferencia con motivo y ADMINISTRADOR           |
-| 6   | Anulación encadenada (D-100)                                                    | ✅ cobro → comprobante → despacho → pedido, solo en el turno abierto y con comprobante aceptado     |
-| 7   | Web: `/pos` (una pantalla) y `/pos/caja`, aviso de contingencia (D-102)         | ✅ dos toques entre carrito y venta cerrada; `Mostrador` primero del grupo Comercial                |
-| 8   | E2E: los siete escenarios exigidos + cinco de borde                             | ✅ `fase7b.spec.ts` (5, emiten) y `fase7b-bordes.spec.ts` (6, no emiten y corren contra producción) |
-| 9   | `pnpm turbo lint typecheck test build`                                          | ✅ verde                                                                                            |
+| #   | Entregable                                                                      | Estado                                                                                                        |
+| --- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 0   | Defecto de `prod:purge-e2e` del tramo 1, corregido **en el guion**              | ✅ el bloque de producción se mueve después del despacho; commit propio                                       |
+| 1   | Decisiones D-098..D-104 en §0.2 + contexto largo en `DECISIONES.md`             | ✅                                                                                                            |
+| 2   | Prisma: `cash_sessions`, `pos_sales`, `PaymentMethod` += CARD/WALLET, `PICKUP`  | ✅ tres migraciones, aplicadas en `dev` y `production`                                                        |
+| 3   | `*InTx` en pedido, despacho, comprobante y cobro (D-099)                        | ✅ el público abre la transacción y delega; el `*InTx` recibe la del llamador                                 |
+| 4   | `POST /pos/sales`: los cuatro documentos en una transacción, envío al PSE fuera | ✅ D-073 intacto: la fase 1 se ensancha, el orden no cambia                                                   |
+| 5   | Caja: apertura, ventas por medio, cierre con arqueo (D-101)                     | ✅ esperado solo con efectivo, congelado al cerrar; diferencia con motivo y ADMINISTRADOR                     |
+| 6   | Anulación encadenada (D-100)                                                    | ✅ cobro → comprobante → despacho → pedido, solo en el turno abierto y con comprobante aceptado               |
+| 7   | Web: `/pos` (una pantalla) y `/pos/caja`, aviso de contingencia (D-102)         | ✅ dos toques entre carrito y venta cerrada; `Mostrador` primero del grupo Comercial                          |
+| 8   | E2E: los siete escenarios exigidos + cinco de borde                             | ✅ `fase7b.spec.ts` (5, emiten) y `fase7b-bordes.spec.ts` (6, no emiten y corren contra producción)           |
+| 9   | `pnpm turbo lint typecheck test build`                                          | ✅ verde (236 unit, +15)                                                                                      |
+| 10  | E2E contra producción + purga                                                   | ✅ 6 pasados y 6 saltados (D-081), sin fallos; producción sin rastros                                         |
+| 11  | Deploy                                                                          | ✅ API en Cloud Run; **web pendiente** — el token del CLI de Vercel sigue vencido, llega con el push a `main` |
 
 ### Lo que más importa de la fase: el hueco de Fase 5b que la boleta escondía
 
@@ -915,6 +917,49 @@ usaba para el saldo (D-075): bloquea solo lo que **todavía** factura, y una lí
 por completo por notas vivas dejó de estarlo. No es una excepción para el POS — cualquier
 despacho con boleta, venga de donde venga, ahora se revierte por el camino que su mensaje
 anuncia.
+
+### Verificación — lo que se pudo correr y lo que no
+
+- `pnpm turbo lint typecheck test build` **verde**: 236 unit (15 nuevos, todos del arqueo y
+  de la forma de la venta de mostrador). `pnpm format:check` verde.
+- `pnpm e2e --grep "Fase 7b"` **10 pasados, 1 saltado** en la primera corrida completa; el
+  saltado era la anulación, que después se partió en dos (factura → baja, boleta → nota de
+  crédito) y se corrigió. Una corrida de regresión de los 21 tests con "anular" en el título
+  —Fase 2b, 3b, 5b, 6, 7 y M-2— quedó **19 pasados, 1 saltado y 1 fallo**, y ese fallo es el
+  que destapó que la nota de crédito nacía borrador.
+- `pnpm e2e:prod --grep "Fase 7b"` **6 pasados y 6 saltados, sin fallos**. Los 6 saltados son
+  los que emiten: D-081 fuerza `E2E_FISCAL_EMISSION=0` contra producción y así tiene que ser.
+- **Producción sin rastros**, verificado con `prod:purge-e2e` y con el reporte de solo lectura
+  `prod:e2e-leftovers`: 0 perfiles con piezas en stock, **0 reservas activas en toda la base**,
+  0 despachos vivos, 0 comprobantes E2E, 0 cobros vigentes y **0 turnos de caja E2E**.
+
+**Bloqueo, documentado por la regla dura 9.** La suite local completa (`pnpm e2e`, 136 tests)
+**no se pudo terminar** en esta sesión. Se intentó dos veces: la primera avanzó 12 tests en
+85 minutos y la segunda, acotada a las ocho suites que tocan lo que la fase cambió, no llegó
+a completar ninguno en 20 minutos. La causa es del entorno, no del código: la rama `dev` de
+Neon quedó degradada tras las corridas del día, y en paralelo se acumularon procesos de
+Chrome huérfanos de las corridas interrumpidas (27 en un momento) que saturaron la máquina.
+La misma suite acotada corre contra **producción** en menos de un minuto, que es la prueba de
+que el problema es local. La verificación de la suite entera queda en manos de **CI**, que la
+ejecuta en cada push con su propia base (Neon rama `ci`, reseteada por corrida).
+
+### Dos defectos de las herramientas que esta fase encontró
+
+- **`scripts/e2e-prod.mjs` no incluía las suites de Fase 7b.** La lista de archivos está
+  escrita a mano, así que una fase nueva no entra sola: la primera corrida contra producción
+  ejecutó 123 tests y **ninguno era del mostrador**. Se agregaron las dos suites y, de paso,
+  el guion pasa ahora a Playwright cualquier bandera extra (`pnpm e2e:prod --grep "Fase 7b"`),
+  que es lo que permite verificar una fase sin las dos horas de suite entera.
+- **Un argumento con espacios se partía en dos.** `run()` lanza con `shell: true` —pnpm es un
+  `.cmd` en Windows—, así que `--grep "Fase 7b"` llegaba como `--grep Fase` más un filtro de
+  archivo `7b`, y la corrida "acotada" ejecutaba 121 de los 135 tests. Ahora los argumentos
+  con espacios viajan entrecomillados.
+
+**Ojo operativo — el reporte final de `prod:purge-e2e` tarda mucho.** Consulta el saldo de
+cada producto E2E **uno por uno** contra Cloud Run, y ya hay 443 acumulados de todas las
+sesiones: la limpieza en sí termina rápido, pero el resumen final se va a más de una hora.
+Mientras tanto, `node scripts/prod-e2e-leftovers.mjs` da el mismo cuadro leyendo la base
+directamente y en segundos. Anotado para Fase 8.
 
 ### Hallazgos corregidos en esta fase (revisor + auditor-seguridad)
 

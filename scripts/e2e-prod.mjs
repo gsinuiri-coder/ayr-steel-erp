@@ -41,6 +41,28 @@ import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
 const DEFAULT_BASE_URL = 'https://ayr-steel-erp-web.vercel.app';
 const E2E_ADMIN_EMAIL = 'e2e-admin@ayr.test';
 
+/**
+ * Todo lo que no sea `--base-url` y su valor se le pasa tal cual a Playwright. La lista de
+ * suites **no** es negociable —es lo que se verifica contra producción— pero acotarla con un
+ * `--grep` sí, y tener que editar el guion para eso invitaba a editarlo mal.
+ */
+function extraPlaywrightArgs(argv) {
+  const out = [];
+  for (let i = 2; i < argv.length; i += 1) {
+    if (argv[i] === '--base-url') {
+      i += 1;
+      continue;
+    }
+    // `run()` lanza con `shell: true` (pnpm es un .cmd en Windows), así que un argumento
+    // con espacios se parte en dos si no viaja entrecomillado: `--grep "Fase 7b"` llegaba a
+    // Playwright como `--grep Fase` más un filtro de archivo `7b`, y la corrida acotada
+    // terminaba ejecutando casi toda la suite.
+    out.push(/s/.test(argv[i]) ? JSON.stringify(argv[i]) : argv[i]);
+  }
+  return out;
+}
+const extraArgs = extraPlaywrightArgs(process.argv);
+
 const idx = process.argv.indexOf('--base-url');
 const baseUrl = idx > -1 ? process.argv[idx + 1] : DEFAULT_BASE_URL;
 
@@ -108,6 +130,14 @@ try {
       'e2e/tests/fase6-bordes.spec.ts',
       'e2e/tests/fase7.spec.ts',
       'e2e/tests/fase7-bordes.spec.ts',
+      'e2e/tests/fase7b.spec.ts',
+      'e2e/tests/fase7b-bordes.spec.ts',
+      // Cualquier bandera extra que se le pase a `pnpm e2e:prod` viaja a Playwright. Sirve
+      // para acotar una corrida —`pnpm e2e:prod --grep "Fase 7b"`— cuando lo que se quiere
+      // verificar es una fase concreta y no las dos horas de suite entera. Va **después** de
+      // la lista de archivos: una bandera de Playwright puede ir en cualquier posición, y
+      // así ningún argumento del usuario puede desplazar a un archivo de la lista.
+      ...extraArgs,
     ],
     {
       E2E_BASE_URL: baseUrl,

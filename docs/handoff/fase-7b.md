@@ -15,6 +15,13 @@ escribe kardex, no toca reservas y no comprueba disponible por su cuenta. Esa de
 ausente es la prueba estructural de que no se abrió un segundo camino, y de ahí salen gratis
 la invariante `disponible ≥ reservado`, el kardex append-only y la contingencia de D-073.
 
+Estado: `pnpm turbo lint typecheck test build` en verde (**236 unit**, 15 nuevos); **12 E2E
+nuevos**; **6 pasados y 6 saltados contra producción, sin fallos** (los saltados emiten y
+D-081 los apaga); cinco migraciones aplicadas en `dev` y `production`; API redesplegado.
+`prod:purge-e2e` deja producción con **0 productos con saldo, 0 reservas activas, 0 despachos
+vivos, 0 comprobantes E2E, 0 cobros vigentes y 0 turnos de caja**. **El web queda pendiente de
+desplegar** — el token del CLI de Vercel sigue vencido (§4); llega con el push a `main`.
+
 Lo que más importa de la fase, otra vez, no estaba en el plan: la anulación de una venta
 destapó que **la reversa de un despacho con boleta era imposible desde la Fase 5b**. El
 guardrail de D-074 bloqueaba por el estado del comprobante, y una boleta no se da de baja de
@@ -109,6 +116,27 @@ de anulación principal usa **factura** (síncrona, camino de baja) y el de bole
 ejercita la corrección de la nota de crédito— se salta con su motivo cuando el entorno no
 puede aceptarla. No es un defecto del mostrador.
 
+**Bloqueo, por la regla dura 9 — la suite local completa no se pudo terminar.** Dos
+intentos: el primero avanzó 12 de 136 tests en 85 minutos; el segundo, acotado a las ocho
+suites que tocan lo que la fase cambió, no completó ninguno en 20. Es del entorno y no del
+código —la rama `dev` de Neon quedó degradada tras las corridas del día, y procesos de Chrome
+huérfanos de las corridas interrumpidas saturaron la máquina—, y la prueba es que la misma
+suite acotada corre **contra producción en menos de un minuto**. La suite entera queda en
+manos de **CI**, que la ejecuta en cada push contra la rama `ci` de Neon. Detalle en
+`docs/PROGRESO.md`.
+
+**Dos defectos de las herramientas, corregidos.** `scripts/e2e-prod.mjs` tiene la lista de
+suites escrita a mano y **no incluía las de Fase 7b**: la primera corrida contra producción
+ejecutó 123 tests y ninguno era del mostrador. Se agregaron, y el guion pasa ahora cualquier
+bandera extra a Playwright (`pnpm e2e:prod --grep "Fase 7b"`) — con el cuidado de
+entrecomillar los argumentos con espacios, porque `shell: true` partía `--grep "Fase 7b"` en
+dos y la corrida "acotada" ejecutaba 121 de 135.
+
+**Ojo operativo — el resumen final de `prod:purge-e2e` tarda más de una hora.** Consulta el
+saldo de cada producto E2E uno por uno contra Cloud Run y ya hay 443 acumulados; la limpieza
+en sí es rápida. `node scripts/prod-e2e-leftovers.mjs` da el mismo cuadro leyendo la base, en
+segundos.
+
 **Anotado para Fase 8 (hardening), sin corregir en esta fase.** Dos hallazgos bajos de la
 auditoría: el buscador de cliente del mostrador se trae el maestro completo y filtra en el
 navegador (hace falta un `search` en `GET /customers`, que es API de otro módulo), y el
@@ -125,9 +153,11 @@ y el `vercel login` para dejar `pnpm deploy:web` operativo fuera de un push.
 ```
 pnpm install && pnpm env:local
 pnpm turbo lint typecheck test build   # exit 0
-pnpm e2e --grep "Fase 7b"              # solo esta fase
-pnpm e2e:prod                          # contra producción (D-024, D-081)
+pnpm e2e --grep "Fase 7b"              # solo esta fase (12 tests)
+pnpm e2e:prod --grep "Fase 7b"         # solo esta fase, contra producción (D-024, D-081)
+pnpm e2e:prod                          # la suite entera contra producción
 pnpm prod:purge-e2e --dry-run          # qué dejaría limpio
+node scripts/prod-e2e-leftovers.mjs    # el residuo, leyendo la base (segundos)
 ```
 
 **No correr dos suites de Playwright a la vez**: comparten `test-results/`.

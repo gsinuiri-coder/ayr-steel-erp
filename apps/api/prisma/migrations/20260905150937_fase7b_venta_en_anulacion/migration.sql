@@ -1,1 +1,8 @@
--- This is an empty migration.
+-- Migración **vacía**, y se conserva a propósito.
+--
+-- La creó un segundo `prisma migrate dev --create-only` cuando el valor `VOIDING` del enum
+-- ya estaba en `20260905150822_fase7b_venta_en_anulacion`: Prisma no encontró nada que
+-- generar y dejó la carpeta igual. Ya está registrada en `_prisma_migrations` de `dev` y de
+-- `production`, así que borrarla obligaría a tocar esa tabla a mano en las dos ramas de Neon
+-- —exactamente el rato que costó D-053—, y a cambio de nada: una migración vacía no hace
+-- nada al aplicarse.

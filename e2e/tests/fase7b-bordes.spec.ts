@@ -172,7 +172,15 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
         items: [{ productId: madeToMeasure.product.id, qty: '1.000', unitPricePen: '10.0000' }],
       });
       expect(refusedMeasured.status).toBe(400);
-      expect(refusedMeasured.message).toContain('no se vende en mostrador');
+      // **Lo rechazan dos guardrails, y gana el de más adentro.** El de D-083 exige el
+      // desglose de largos de cualquier producto que se mida en metros, y el esquema del
+      // mostrador no tiene dónde ponerlo (D-098); el de `counterSale` —"esta línea se fabrica
+      // contra el pedido"— es el cinturón que hay detrás. Se acepta cualquiera de los dos:
+      // lo que importa es que la venta no entre, no cuál de los dos candados la paró.
+      expect(
+        /se vende por metro lineal|no se vende en mostrador/.test(refusedMeasured.message),
+        `el mostrador aceptó un producto a medida: ${refusedMeasured.message}`,
+      ).toBe(true);
 
       // D-104: un carrito de dos líneas de negocio no cabe en un pedido, que tiene una sola.
       const other = await postJson<{ id: string }>(api, '/api/catalog', {
