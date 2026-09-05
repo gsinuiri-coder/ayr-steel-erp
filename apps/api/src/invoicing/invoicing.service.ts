@@ -25,6 +25,7 @@ import {
   GRE_TRANSFER_MODES,
   TransferMode,
   IGV_RATE_PCT,
+  LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   RETRYABLE_DOCUMENT_STATUSES,
   Role,
   salesOrderCode,
@@ -141,12 +142,7 @@ const MAX_DOCUMENT_FILE_BYTES = 20 * 1024 * 1024;
  * Los que no cuentan son los tres que nunca llegaron a existir o dejaron de existir:
  * `DRAFT` (sin correlativo), `REJECTED` (SUNAT no lo aceptó) y `VOIDED` (dado de baja).
  */
-const LIVE_DOCUMENT_STATUSES: FiscalDocumentStatus[] = [
-  FiscalDocumentStatus.ISSUED,
-  FiscalDocumentStatus.SEND_ERROR,
-  FiscalDocumentStatus.ACCEPTED,
-  FiscalDocumentStatus.VOID_PENDING,
-];
+const LIVE_DOCUMENT_STATUSES: FiscalDocumentStatus[] = [...SHARED_LIVE_DOCUMENT_STATUSES];
 
 /**
  * D-105: un comprobante **importado** no tiene contraparte del otro lado.
@@ -2394,6 +2390,11 @@ export class InvoicingService {
     return [
       row.createdById,
       row.genericCustomerOverrideById,
+      // D-110 y D-072: quién anuló y quién dio de baja. Sin ellos, el nombre salía `null` y
+      // la constancia quedaba muda justo en lo primero que se pregunta ante un comprobante
+      // que dejó de deber — el `?? null` del DTO lo escondía sin que nada fallara.
+      row.annulledById,
+      row.voidedById,
       ...row.payments.flatMap((p) => [p.createdById, p.reversedById]),
     ];
   }

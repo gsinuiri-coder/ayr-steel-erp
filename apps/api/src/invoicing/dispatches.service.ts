@@ -17,6 +17,7 @@ import {
   TransferMode,
   Unit,
   dispatchCode,
+  LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   salesOrderCode,
   toDecimal,
   toFixedString,
@@ -88,12 +89,7 @@ type DispatchRow = Prisma.DispatchGetPayload<{ include: typeof dispatchInclude }
  * que ya no existe. Es la misma lista que `LIVE_DOCUMENT_STATUSES` en `invoicing.service.ts`
  * y que fueran distintas era el defecto.
  */
-const DECLARED_STATUSES: FiscalDocumentStatus[] = [
-  FiscalDocumentStatus.ISSUED,
-  FiscalDocumentStatus.SEND_ERROR,
-  FiscalDocumentStatus.ACCEPTED,
-  FiscalDocumentStatus.VOID_PENDING,
-];
+const DECLARED_STATUSES: FiscalDocumentStatus[] = [...SHARED_LIVE_DOCUMENT_STATUSES];
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);

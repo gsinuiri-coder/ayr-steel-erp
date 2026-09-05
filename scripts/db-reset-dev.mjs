@@ -15,14 +15,14 @@
 // exige `--yes`.
 //
 // Uso: node scripts/db-reset-dev.mjs --yes [--preserve-under-name dev-antes-de-m4]
-import { spawnSync } from 'node:child_process';
-import { NEON_PROJECT_ID } from './lib.mjs';
+import { NEON_PROJECT_ID, run } from './lib.mjs';
 
 const BRANCH = 'dev';
+const PARENT = 'production';
 
 if (!process.argv.includes('--yes')) {
   console.error(
-    `Esto reemplaza el contenido de la rama '${BRANCH}' por el de 'production' y pierde todo\n` +
+    `Esto reemplaza el contenido de la rama '${BRANCH}' por el de '${PARENT}' y pierde todo\n` +
       `lo que exista solo en '${BRANCH}'. Vuelve a correrlo con --yes si es lo que quieres.\n\n` +
       `  node scripts/db-reset-dev.mjs --yes [--preserve-under-name dev-antes-de-<motivo>]`,
   );
@@ -30,27 +30,46 @@ if (!process.argv.includes('--yes')) {
 }
 
 const preserveIdx = process.argv.indexOf('--preserve-under-name');
-const preserveUnderName = preserveIdx > -1 ? process.argv[preserveIdx + 1] : undefined;
+const preserveRaw = preserveIdx > -1 ? process.argv[preserveIdx + 1] : undefined;
+// Sin esto, `--preserve-under-name --yes` creaba una rama llamada `--yes`.
+if (preserveIdx > -1 && (!preserveRaw || preserveRaw.startsWith('-'))) {
+  console.error('--preserve-under-name necesita un nombre de rama, no otra bandera.');
+  process.exit(1);
+}
+const preserveUnderName = preserveRaw;
+
+// El guion promete "desde production", así que lo comprueba en vez de confiar en la
+// topología: `--parent` resetea contra el padre **real**, y si algún día `dev` colgara de
+// otra rama el mensaje estaría mintiendo y el contenido vendría de donde nadie pidió.
+const parent = JSON.parse(
+  run('neonctl', ['branches', 'get', PARENT, '--project-id', NEON_PROJECT_ID, '--output', 'json'], {
+    quiet: true,
+  }),
+);
+const target = JSON.parse(
+  run('neonctl', ['branches', 'get', BRANCH, '--project-id', NEON_PROJECT_ID, '--output', 'json'], {
+    quiet: true,
+  }),
+);
+if (target.parent_id !== parent.id) {
+  console.error(
+    `La rama '${BRANCH}' no cuelga de '${PARENT}' (su padre es ${target.parent_id ?? 'ninguno'}).\n` +
+      'Revisa la topología en Neon antes de resetear: este guion solo sabe reponer desde el padre.',
+  );
+  process.exit(1);
+}
 
 const args = ['branches', 'reset', BRANCH, '--project-id', NEON_PROJECT_ID, '--parent'];
 if (preserveUnderName) args.push('--preserve-under-name', preserveUnderName);
 
 console.log(
-  `Reseteando la rama '${BRANCH}' al estado de su padre ('production')` +
+  `Reseteando la rama '${BRANCH}' al estado de su padre ('${PARENT}')` +
     (preserveUnderName ? `, conservando el estado anterior como '${preserveUnderName}'` : '') +
     '…',
 );
 
-// `neonctl` en Git Bash necesita pasar por cmd.exe en Windows, igual que `gcloud`.
-const res = spawnSync(
-  process.platform === 'win32' ? 'cmd' : 'neonctl',
-  process.platform === 'win32' ? ['/c', 'neonctl', ...args] : args,
-  { stdio: 'inherit' },
-);
-if ((res.status ?? 1) !== 0) {
-  console.error('El reset falló. La rama quedó como estaba.');
-  process.exit(res.status ?? 1);
-}
+// `run` de `lib.mjs` ya resuelve el `cmd /c` que Windows necesita (regla dura 7).
+run('neonctl', args);
 
 console.log('');
 console.log(`Rama '${BRANCH}' repuesta desde 'production'. Ahora, en este orden:`);

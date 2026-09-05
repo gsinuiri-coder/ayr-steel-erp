@@ -1374,3 +1374,112 @@ real —empuja el correlativo de una serie, o crea una inactiva— y deja compro
 se pueden dar de baja**, que es exactamente el riesgo que `fiscalEmissionAllowed()` ya
 gobierna desde Fase 5b. La suite se salta con ese mismo motivo cuando apunta a una URL
 externa; corre entera en local y en CI.
+
+## D-110..D-111 — Sesión M-4 (anulación de comprobante importado y reposición de `dev`)
+
+§0.2 tiene las dos decisiones y su motivo corto. Acá va lo que no cabe en una fila: por qué
+el estado es propio, qué se revisó antes de agregarlo, y por qué la limpieza de una rama no
+se hace con `DELETE`.
+
+### La cuarta vez que falta la reversa
+
+D-061 (anular un pago a proveedor), D-088 (la reserva que se traslada y nadie devolvía),
+D-097 (el saldo de reserva que sobraba al cerrar una OP) y ahora D-110. En los cuatro casos
+el patrón es idéntico: se construyó una operación que **crea** un hecho —un pago, una
+promesa, un comprobante— y su reversa se dejó para después, porque en el momento parecía un
+caso raro. En los cuatro casos el "caso raro" resultó ser el primer día de uso real.
+
+Acá el hueco era el peor de los cuatro, porque no había forma alguna de salir: un importado
+nace `ACCEPTED`, y las tres puertas de salida del módulo —`send`, `voidDocument`,
+`createCreditNote`— exigen hablar con el PSE, que no conoce al documento como nuestro
+(D-105). Un número mal tecleado en la planilla se convertía en una cuenta por cobrar que
+**nadie podía cancelar nunca**, ni siquiera un administrador, ni siquiera con SQL sin romper
+las reglas del proyecto.
+
+La regla que queda escrita, para no volver a pagarla: **una operación que crea un hecho
+persistente no está terminada hasta que existe la que lo deshace.** No hace falta que la
+reversa sea bonita ni que cubra todos los casos; hace falta que exista y que se pueda llegar
+a ella desde la pantalla.
+
+### Por qué `ANNULLED` y no `VOIDED`
+
+La tentación era reusar `VOIDED`: el efecto que se busca es idéntico —el documento deja de
+deber, sale de las cuentas— y **todos** los filtros existentes ya lo trataban como terminal,
+así que no habría hecho falta tocar nada. Es justamente la razón por la que estuvo cerca de
+ser la decisión equivocada: era la barata.
+
+`VOIDED` no describe un efecto, describe un **hecho**: SUNAT aceptó la comunicación de baja.
+Sobre un importado ese hecho nunca ocurrió. Un contador que abriera la base y viera un
+comprobante `VOIDED` concluiría que está dado de baja ante SUNAT, y estaría equivocado: en
+SUNAT ese comprobante sigue vigente, porque lo emitió otro sistema y nadie le comunicó nada.
+
+Es la misma trampa que D-105 ya había evitado una vez. Ahí el aprendizaje fue que
+"**aceptado** quiere decir dos cosas distintas según el origen" y por eso el origen se separó
+del estado. Reusar `VOIDED` habría reintroducido exactamente esa ambigüedad en el otro
+extremo del ciclo, y con peores consecuencias: un estado equivocado sobre un documento
+fiscal no es un detalle de modelado, es una afirmación falsa en un registro que se audita.
+
+El costo de la decisión correcta fue el que se esperaba: revisar cada lector de estado. Ver
+abajo.
+
+### El censo de lectores, hecho antes de escribir el estado
+
+La lección de RF-72 —una versión archivada seguía sumando en todo lo que no la miraba— se
+aplicó al revés esta vez: **primero el censo, después el código**. El resultado fue mejor de
+lo previsto, y por un motivo que vale anotar: casi todos los cortes del módulo estaban
+escritos como **listas blancas** (`status: { in: LIVE_DOCUMENT_STATUSES }`,
+`DECLARED_STATUSES`, `LIVE_FISCAL_STATUSES`, `RETRYABLE`), y una lista blanca no deja entrar
+a un estado nuevo por descuido: hay que agregarlo a mano.
+
+Las dos únicas **listas negras** que quedaban eran las que deciden cuál es la guía de
+remisión vigente de un despacho (`d.status !== REJECTED && d.status !== VOIDED`). Ninguna
+podía fallar hoy —una guía nunca se importa, así que nunca puede quedar `ANNULLED`—, pero
+las dos se pasaron a lista blanca igual, porque el defecto que tenían era estructural: **con
+una lista negra, cada estado terminal futuro entra solo y en silencio como "vigente"**, y el
+día que falle no habrá nada en el diff que lo delate.
+
+`documentBalance` sí hubo que tocarlo, y es la mitad que hace útil a toda la operación: sin
+el cero, la anulación dejaba el comprobante marcado y la deuda en pie.
+
+### Anular no borra el cobro, y por eso lo bloquea
+
+`documentBalance` devuelve cero para un anulado **aunque tenga cobros**, igual que para un
+`VOIDED`. Eso es correcto para el saldo y peligroso para el dinero: un cobro vigente contra
+un comprobante que dejó de existir es plata recibida sin causa, y el cero la haría invisible.
+
+Por eso el guardrail va en el servicio y en este orden: se toma el lock del comprobante, se
+cuentan los cobros vivos y recién entonces se anula. El `SELECT … FOR UPDATE` no es
+decorativo: sin él, un cobro que entra entre la comprobación y el `UPDATE` queda colgado
+exactamente del documento que acaba de dejar de deber. Es el mismo lock, por el mismo
+motivo, que `addPayment` y la nota de crédito ya tomaban.
+
+### Reimportar después de anular
+
+`archivePreviousInTx` (RF-72) busca la versión vigente por `{ number, archivedAt: null }`. Un
+anulado conserva `archivedAt` nulo, así que una reimportación posterior lo encuentra y lo
+archiva como "versión anterior", con la nueva apuntándolo por `supersedesDocumentId`. Es el
+comportamiento que se quiere y no hizo falta escribir nada: el número queda libre, la cadena
+de versiones se conserva entera, y el papel anulado sigue ahí con su motivo.
+
+Las tres puertas de la reimportación siguen valiendo sobre un anulado: sin cobros vivos (los
+tuvo que revertir para anular) y sin notas de crédito vivas (idem).
+
+### Por qué la limpieza de `dev` no se hace con SQL
+
+El residuo de las pruebas en `dev` no se puede borrar por la aplicación **por diseño**: el
+kardex es append-only, un comprobante no se elimina, una serie fiscal con documentos colgando
+tampoco. La salida tentadora es un `DELETE` a mano "total, es dev".
+
+No se hizo, y el motivo no es purismo. Es que la mano que escribe `DELETE FROM
+fiscal_documents WHERE …` contra una rama es la misma que un día lo va a escribir contra la
+equivocada, y el proyecto entero está construido sobre la premisa contraria —anular es
+emitir el movimiento inverso, revertir es marcar, nada se borra—. Un procedimiento
+documentado que contradice esa premisa "solo en dev" es un procedimiento que entrena para el
+accidente.
+
+Reponer la rama entera desde `production` no discrimina qué borrar, no deja media
+transacción deshecha y deja `dev` diciendo lo mismo que producción, que es lo que uno quiere
+de un entorno de desarrollo. Y se hace con **reset**, no con `delete` + `create`: la regla
+dura del proyecto prohíbe borrar ramas de Neon, y además recrear cambiaría el endpoint y
+dejaría inservibles las cadenas de conexión de `.env`, de los secretos de GitHub y de Cloud
+Run.

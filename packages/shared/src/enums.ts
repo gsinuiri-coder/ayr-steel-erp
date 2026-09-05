@@ -717,6 +717,27 @@ export const RETRYABLE_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
 ];
 
 /**
+ * Estados en los que un comprobante **existe**: tomó número y sigue en pie. Es el corte que
+ * decide si consume pedido, si tiene saldo, si acredita y si bloquea una reversa.
+ *
+ * Vive acá y no repetida en cada servicio desde la Sesión M-4. Era la misma lista escrita
+ * siete veces —`invoicing`, `receivables`, `dispatches`, `fiscal-import`, el adaptador de
+ * planilla, el POS y el web—, así que el censo de cada estado nuevo había que hacerlo siete
+ * veces y bastaba olvidar una para que un documento muerto siguiera contando en un rincón.
+ *
+ * Es una **lista blanca** a propósito: un estado terminal nuevo queda fuera por
+ * construcción, y para que entre hay que agregarlo acá a mano. La forma contraria —"todos
+ * menos los anulados"— fue justo la que dejó pasar en silencio a `ANNULLED` en los dos
+ * lugares que D-110 tuvo que corregir.
+ */
+export const LIVE_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
+  FiscalDocumentStatus.ISSUED,
+  FiscalDocumentStatus.SEND_ERROR,
+  FiscalDocumentStatus.ACCEPTED,
+  FiscalDocumentStatus.VOID_PENDING,
+];
+
+/**
  * De dónde salió un documento electrónico (RF-71, D-105).
  *
  * `ISSUED_HERE` es todo lo que el ERP emitió: tomó correlativo de una serie propia, pasó

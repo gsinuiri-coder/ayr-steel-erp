@@ -15,6 +15,7 @@ import {
   fiscalDocumentNumber,
   ImportEntity,
   INVOICE_DOC_TYPES,
+  LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   MAX_SALES_ITEMS,
   MAX_VALUE,
   PAYMENT_TERMS,
@@ -90,13 +91,7 @@ const qtySchema = decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG 
 const priceSchema = decimalStringSchema('MONEY', { max: MAX_VALUE.MONEY });
 const totalSchema = decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY });
 
-/** Estados en los que un comprobante **existe**: mismo criterio que `invoicing`. */
-const LIVE_STATUSES: FiscalDocumentStatus[] = [
-  FiscalDocumentStatus.ISSUED,
-  FiscalDocumentStatus.SEND_ERROR,
-  FiscalDocumentStatus.ACCEPTED,
-  FiscalDocumentStatus.VOID_PENDING,
-];
+const LIVE_STATUSES: FiscalDocumentStatus[] = [...SHARED_LIVE_DOCUMENT_STATUSES];
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** Serie de SUNAT: cuatro caracteres alfanuméricos en mayúscula (`F001`, `BC01`). */
@@ -482,12 +477,18 @@ export class FiscalDocumentsImportAdapter implements GroupedImportAdapter {
     if (head.docType === FiscalDocType.NOTA_CREDITO && affected) {
       const target = await this.prisma.fiscalDocument.findFirst({
         where: { number: affected, archivedAt: null },
-        select: { id: true, docType: true, origin: true, totalPen: true },
+        select: { id: true, docType: true, origin: true, status: true, totalPen: true },
       });
       if (!target) {
         shared.push(`El comprobante afectado ${affected} no existe: impórtalo antes que su nota`);
       } else if (target.docType === FiscalDocType.NOTA_CREDITO) {
         shared.push(`El documento afectado ${affected} es una nota de crédito`);
+      } else if (!LIVE_STATUSES.includes(target.status)) {
+        // D-110: un afectado anulado no acredita nada. Se comprueba acá además de en el
+        // servicio para que se vea en la previsualización y no al confirmar.
+        shared.push(
+          `El comprobante ${affected} está ${target.status}: no se le puede acreditar nada`,
+        );
       } else if (target.origin !== FiscalDocumentOrigin.IMPORTED) {
         // Es el mismo corte que D-105 aplica en el otro sentido: una planilla no puede
         // borrar el saldo de una factura real con un documento que SUNAT nunca vio.

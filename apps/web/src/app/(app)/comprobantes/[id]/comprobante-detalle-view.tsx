@@ -12,6 +12,7 @@ import {
   FULL_CREDIT_NOTE_REASONS,
   PAYMENT_METHOD_LABELS,
   PAYMENT_METHODS,
+  LIVE_DOCUMENT_STATUSES,
   PAYMENT_TERMS_LABELS,
   Role,
   businessToday,
@@ -23,7 +24,14 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
-import { formatDate, formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
+import {
+  formatDate,
+  formatMoney,
+  formatQty,
+  formatTimestampDate,
+  isPositiveDecimal,
+  unitSymbol,
+} from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -280,9 +288,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   // viva, la baja se rechaza. Sin esto el usuario escribía el motivo en el diálogo y
   // recién ahí recibía el "no".
   const hasLivePayments = d.payments.some((p) => p.reversedAt === null);
-  const hasLiveCreditNotes = d.creditNotes.some(
-    (n) => n.status !== 'REJECTED' && n.status !== 'DRAFT',
-  );
+  // Lista blanca, y compartida con el API (`LIVE_DOCUMENT_STATUSES`): con "todas menos
+  // rechazadas y borradores", una nota de crédito **anulada** (D-110) seguía contando como
+  // viva acá y no allá — el saldo del afectado volvía a subir en el API mientras el web
+  // escondía el botón de anular y explicaba que el saldo ya estaba ajustado.
+  const hasLiveCreditNotes = d.creditNotes.some((n) => LIVE_DOCUMENT_STATUSES.includes(n.status));
   const voidBlockedBy = hasLivePayments
     ? // El verbo cambia con el origen: sobre un importado lo que se ofrece es anular por
       // dentro (D-110), y mandar al usuario a "dar de baja" un botón que no existe es peor
@@ -349,7 +359,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               comprobante que dejó de deber, y el motivo vive en la fila además del audit_log. */}
           {d.annulledAt && (
             <p className="text-sm text-muted-foreground">
-              Anulado internamente el {formatDate(d.annulledAt.slice(0, 10))}
+              Anulado internamente el {formatTimestampDate(d.annulledAt)}
               {d.annulledByName ? ` por ${d.annulledByName}` : ''} — {d.annulReason}
             </p>
           )}

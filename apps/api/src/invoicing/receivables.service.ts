@@ -9,6 +9,7 @@ import {
   Decimal,
   businessToday,
   documentBalance,
+  LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   toDecimal,
   toFixedString,
   type CreateCustomerPaymentInput,
@@ -42,12 +43,7 @@ import { PrismaService } from '../prisma/prisma.service';
  * salir pero el cobro no se pudiera registrar — la mitad de la promesa de D-073 sin
  * cumplir, y encima la mitad que se lleva el dinero.
  */
-const LIVE_STATUSES: FiscalDocumentStatus[] = [
-  FiscalDocumentStatus.ISSUED,
-  FiscalDocumentStatus.SEND_ERROR,
-  FiscalDocumentStatus.ACCEPTED,
-  FiscalDocumentStatus.VOID_PENDING,
-];
+const LIVE_STATUSES: FiscalDocumentStatus[] = [...SHARED_LIVE_DOCUMENT_STATUSES];
 
 @Injectable()
 export class ReceivablesService {

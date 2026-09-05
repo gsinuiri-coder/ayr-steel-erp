@@ -76,6 +76,25 @@ export function todayIso(): string {
 }
 
 /**
+ * El **día de Lima** de un instante, en `DD/MM/AAAA`.
+ *
+ * `formatDate(iso.slice(0, 10))` no sirve para un timestamp: corta en UTC, y Lima va cinco
+ * horas detrás, así que todo lo ocurrido después de las 19:00 locales se mostraba con la
+ * fecha del día siguiente. Es el mismo desfase que `businessToday` y `queueAgeLabel` ya
+ * existen para evitar (D-069).
+ */
+export function formatTimestampDate(iso: string | null): string {
+  if (!iso) return '—';
+  const day = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(iso));
+  return formatDate(day);
+}
+
+/**
  * Edad en la cola de producción (D-093), en días calendario **de Lima** (D-069) y no en
  * milisegundos: contar por `Date.now() - createdAt` corre el riesgo del mismo desfase que
  * `businessToday` existe para evitar, cerca de la medianoche local.

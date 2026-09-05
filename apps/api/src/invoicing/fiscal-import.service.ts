@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import {
   fiscalDocumentNumber,
+  LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   salesTotals,
   serializeSalesTotals,
   toDecimal,
@@ -60,13 +61,7 @@ export interface ImportedDocumentInput {
   lines: ImportedDocumentLine[];
 }
 
-/** Estados en los que un comprobante **existe**: tomó número y sigue en pie. */
-const LIVE_STATUSES: FiscalDocumentStatus[] = [
-  FiscalDocumentStatus.ISSUED,
-  FiscalDocumentStatus.SEND_ERROR,
-  FiscalDocumentStatus.ACCEPTED,
-  FiscalDocumentStatus.VOID_PENDING,
-];
+const LIVE_STATUSES: FiscalDocumentStatus[] = [...SHARED_LIVE_DOCUMENT_STATUSES];
 
 /**
  * Cuánto puede adelantar una importación el correlativo de una serie **activa** (D-106).
@@ -396,9 +391,23 @@ export class FiscalImportService {
     input: ImportedDocumentInput,
   ): Promise<FiscalDocType | null> {
     if (input.docType !== FiscalDocType.NOTA_CREDITO || !input.affectedDocumentId) return null;
+    // El afectado se bloquea antes de leerlo, igual que en `annulImported` y en la nota de
+    // crédito emitida acá: sin el lock, una anulación concurrente pasaba por la ventana entre
+    // esta comprobación y el `create`, y la nota quedaba acreditando un documento que el ERP
+    // acababa de dar por inexistente.
+    await tx.$queryRaw`
+      SELECT "id" FROM "fiscal_documents" WHERE "id" = ${input.affectedDocumentId}::uuid FOR UPDATE
+    `;
     const affected = await tx.fiscalDocument.findUnique({
       where: { id: input.affectedDocumentId },
-      select: { number: true, origin: true, totalPen: true, archivedAt: true, docType: true },
+      select: {
+        number: true,
+        origin: true,
+        status: true,
+        totalPen: true,
+        archivedAt: true,
+        docType: true,
+      },
     });
     if (!affected) throw new BadRequestException('El comprobante afectado no existe');
     if (affected.origin !== FiscalDocumentOrigin.IMPORTED) {
@@ -409,6 +418,15 @@ export class FiscalImportService {
     if (affected.archivedAt !== null) {
       throw new BadRequestException(
         `El comprobante ${affected.number ?? ''} fue reemplazado por una reimportación: acredita la versión vigente`,
+      );
+    }
+    // Y tiene que seguir en pie. Antes daba igual —un importado solo podía estar
+    // `ACCEPTED`—; desde D-110 puede estar anulado, y una nota de crédito viva contra un
+    // documento que el ERP da por inexistente no acredita nada y encima bloquea la
+    // reimportación de ese número.
+    if (!LIVE_STATUSES.includes(affected.status)) {
+      throw new BadRequestException(
+        `El comprobante ${affected.number ?? ''} está ${affected.status}: no se le puede acreditar nada`,
       );
     }
 

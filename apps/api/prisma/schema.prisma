@@ -1585,6 +1585,11 @@ model FiscalDocument {
   /// (`voided_*`) porque son hechos distintos: una la aceptó SUNAT, la otra la decidió un
   /// administrador acá. El motivo es obligatorio y va en la fila, además de `audit_log`,
   /// porque es lo primero que se pregunta al ver un comprobante que dejó de deber.
+  ///
+  /// Tres `CHECK` en la migración: las tres columnas van juntas, `ANNULLED` es privativo de
+  /// `origin = IMPORTED`, y `status = 'ANNULLED'` **equivale** a tener fecha de anulación
+  /// (bicondicional, no implicación: si no, una fila podía llevar la constancia completa y
+  /// seguir debiendo).
   annulledAt      DateTime? @map("annulled_at") @db.Timestamptz(3)
   annulledById    String?   @map("annulled_by_id") @db.Uuid
   annulReason     String?   @map("annul_reason") @db.VarChar(240)

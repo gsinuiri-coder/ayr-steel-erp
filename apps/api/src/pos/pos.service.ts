@@ -24,6 +24,7 @@ import {
   Role,
   businessToday,
   dispatchCode,
+  LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   posSaleCode,
   salesOrderCode,
   toDecimal,
@@ -748,12 +749,7 @@ export class PosService {
 const DEFAULT_PICKUP = { address: 'Mostrador — recojo en tienda', ubigeo: '150101' };
 
 /** Estados en los que un comprobante **existe y sigue en pie** (espejo de `invoicing`). */
-const LIVE_FISCAL_STATUSES: FiscalDocumentStatus[] = [
-  FiscalDocumentStatus.ISSUED,
-  FiscalDocumentStatus.SEND_ERROR,
-  FiscalDocumentStatus.ACCEPTED,
-  FiscalDocumentStatus.VOID_PENDING,
-];
+const LIVE_FISCAL_STATUSES: FiscalDocumentStatus[] = [...SHARED_LIVE_DOCUMENT_STATUSES];
 
 /** Estados en los que el comprobante todavía espera respuesta del PSE (D-073). */
 const PENDING_FISCAL_STATUSES: FiscalDocumentStatus[] = [

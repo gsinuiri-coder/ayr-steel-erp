@@ -4,7 +4,13 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Role, TRANSFER_MODE_LABELS, type DispatchDto, type FiscalDocumentDto } from '@ayr/shared';
+import {
+  LIVE_DOCUMENT_STATUSES,
+  Role,
+  TRANSFER_MODE_LABELS,
+  type DispatchDto,
+  type FiscalDocumentDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { formatDate, formatQty, unitSymbol } from '@/lib/format';
@@ -92,10 +98,11 @@ export function DespachoDetalleView({ id }: { id: string }) {
   }
 
   const isLive = d.status === 'ISSUED';
+  // Lista blanca por el mismo motivo que en el API (D-110): con "todas menos rechazada y
+  // dada de baja", cada estado terminal nuevo entraba solo y en silencio como "la guía
+  // vigente", y nada en el diff lo habría delatado.
   const noteBlocks =
-    d.dispatchNoteStatus !== null &&
-    d.dispatchNoteStatus !== 'REJECTED' &&
-    d.dispatchNoteStatus !== 'VOIDED';
+    d.dispatchNoteStatus !== null && LIVE_DOCUMENT_STATUSES.includes(d.dispatchNoteStatus);
   const reverseBlockedBy = noteBlocks
     ? `la guía ${d.dispatchNoteNumber ?? ''} está vigente: dala de baja primero`
     : d.blockingDocumentNumbers.length > 0
@@ -105,12 +112,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
   // Una guía rechazada o dada de baja no impide emitir otra: la que bloquea es la vigente.
   // D-103: un recojo en mostrador no tiene guía — el traslado es del comprador—, así que el
   // botón no aparece en vez de ofrecer una operación que el API rechaza.
-  const canIssueNote =
-    isLive &&
-    d.transferMode !== 'PICKUP' &&
-    (d.dispatchNoteStatus === null ||
-      d.dispatchNoteStatus === 'REJECTED' ||
-      d.dispatchNoteStatus === 'VOIDED');
+  const canIssueNote = isLive && d.transferMode !== 'PICKUP' && !noteBlocks;
 
   return (
     <RoleGate allow={DISPATCH_ROLES}>
