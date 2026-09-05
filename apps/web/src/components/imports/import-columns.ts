@@ -33,4 +33,27 @@ export const IMPORT_COLUMNS: Record<ImportEntity, { key: string; label: string }
     { key: 'unitCostPerKg', label: 'Costo por kg sin IGV' },
     { key: 'exchangeRate', label: 'Tipo de cambio' },
   ],
+  /**
+   * RF-71: una fila **por línea**, con la cabecera repetida. Las siete primeras columnas
+   * describen el comprobante y tienen que decir lo mismo en todas sus líneas; las cinco
+   * últimas son de la línea.
+   */
+  FISCAL_DOCUMENTS: [
+    { key: 'docType', label: 'Tipo (FACTURA/BOLETA/NOTA_CREDITO)' },
+    { key: 'series', label: 'Serie' },
+    { key: 'correlative', label: 'Correlativo' },
+    { key: 'issueDate', label: 'Fecha de emisión' },
+    { key: 'customerDocNumber', label: 'Cliente (RUC/DNI)' },
+    { key: 'paymentTerms', label: 'Condición de pago (CONTADO/CREDITO)' },
+    { key: 'dueDate', label: 'Fecha de vencimiento' },
+    { key: 'totalPen', label: 'Total del comprobante' },
+    { key: 'affectedNumber', label: 'Documento afectado (NC)' },
+    { key: 'creditNoteReason', label: 'Motivo de la NC' },
+    { key: 'notes', label: 'Notas' },
+    { key: 'sku', label: 'SKU' },
+    { key: 'description', label: 'Descripción' },
+    { key: 'qty', label: 'Cantidad' },
+    { key: 'unit', label: 'Unidad' },
+    { key: 'unitPricePen', label: 'Precio unitario sin IGV' },
+  ],
 };

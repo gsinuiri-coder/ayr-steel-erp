@@ -115,6 +115,8 @@ export const ImportEntity = {
   PRODUCTS: 'PRODUCTS',
   CUSTOMERS: 'CUSTOMERS',
   COILS: 'COILS',
+  /** RF-71: comprobantes ya emitidos fuera del ERP. Una fila por **línea**, no por documento. */
+  FISCAL_DOCUMENTS: 'FISCAL_DOCUMENTS',
 } as const;
 export type ImportEntity = (typeof ImportEntity)[keyof typeof ImportEntity];
 export const IMPORT_ENTITIES = Object.values(ImportEntity) as [ImportEntity, ...ImportEntity[]];
@@ -122,6 +124,7 @@ export const IMPORT_ENTITY_LABELS: Record<ImportEntity, string> = {
   PRODUCTS: 'Catálogo (productos)',
   CUSTOMERS: 'Clientes',
   COILS: 'Bobinas',
+  FISCAL_DOCUMENTS: 'Comprobantes ya emitidos',
 };
 
 /** Estado de una fila dentro de un lote de importación. */
@@ -700,6 +703,29 @@ export const RETRYABLE_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
   FiscalDocumentStatus.ISSUED,
   FiscalDocumentStatus.SEND_ERROR,
 ];
+
+/**
+ * De dónde salió un documento electrónico (RF-71, D-105).
+ *
+ * `ISSUED_HERE` es todo lo que el ERP emitió: tomó correlativo de una serie propia, pasó
+ * por el puerto del PSE y tiene su CDR. `IMPORTED` es lo que ya existía emitido **afuera**
+ * —histórico previo al ERP, o una emisión de contingencia hecha en el portal de SUNAT—
+ * y entró por planilla. La diferencia no es cosmética: un importado no se envía, no se
+ * anula ni se corrige contra el PSE desde acá, y es el único que se puede reimportar.
+ */
+export const FiscalDocumentOrigin = {
+  ISSUED_HERE: 'ISSUED_HERE',
+  IMPORTED: 'IMPORTED',
+} as const;
+export type FiscalDocumentOrigin = (typeof FiscalDocumentOrigin)[keyof typeof FiscalDocumentOrigin];
+export const FISCAL_DOCUMENT_ORIGINS = Object.values(FiscalDocumentOrigin) as [
+  FiscalDocumentOrigin,
+  ...FiscalDocumentOrigin[],
+];
+export const FISCAL_DOCUMENT_ORIGIN_LABELS: Record<FiscalDocumentOrigin, string> = {
+  ISSUED_HERE: 'Emitido en el ERP',
+  IMPORTED: 'Importado',
+};
 
 /** Motivo de una nota de crédito (catálogo 09 de SUNAT). */
 export const CreditNoteReason = {

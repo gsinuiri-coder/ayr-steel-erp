@@ -98,6 +98,8 @@ enum ImportEntity {
   PRODUCTS
   CUSTOMERS
   COILS
+  /// RF-71: comprobantes ya emitidos afuera. Una fila por **línea**, agrupadas por número.
+  FISCAL_DOCUMENTS
 }
 
 /// Qué clase de ítem mueve el kardex (§3.2). Un producto de catálogo o una bobina.
@@ -329,6 +331,15 @@ enum FiscalDocumentStatus {
   SEND_ERROR
   VOID_PENDING
   VOIDED
+}
+
+/// De dónde salió el documento (RF-71, D-105). `ISSUED_HERE` tomó correlativo de una serie
+/// propia y pasó por el puerto del PSE; `IMPORTED` ya existía emitido afuera —histórico o
+/// contingencia en el portal de SUNAT— y entró por planilla. Un importado no se envía, no
+/// se anula contra el PSE desde acá, y es el único reimportable (RF-72).
+enum FiscalDocumentOrigin {
+  ISSUED_HERE
+  IMPORTED
 }
 
 /// Motivo de una nota de crédito (catálogo 09 de SUNAT). Solo los que el negocio usa;
@@ -633,6 +644,9 @@ model ImportRow {
   rowNumber       Int             @map("row_number")
   data            Json
   errors          Json?
+  /// RF-72: lo que hay que ver antes de confirmar y **no** bloquea (que esta fila archiva
+  /// la versión anterior de un comprobante). Lo que está en `errors` no se confirma.
+  warnings        Json?
   status          ImportRowStatus @default(VALID)
   createdEntityId String?         @map("created_entity_id") @db.Uuid
 
@@ -1464,16 +1478,21 @@ model FiscalDocument {
   id      String               @id @default(uuid()) @db.Uuid
   docType FiscalDocType        @map("doc_type")
   status  FiscalDocumentStatus @default(DRAFT)
+  origin  FiscalDocumentOrigin @default(ISSUED_HERE)
 
   /// Serie, correlativo y número legible. **Null mientras es borrador** (D-072): se
   /// asignan al enviar. `number` es `serie-correlativo` con el correlativo a 8 dígitos
   /// (`F001-00000123`), que es el formato con el que SUNAT identifica el documento.
+  ///
+  /// La unicidad de `number` es **parcial** desde RF-72 (`WHERE archived_at IS NULL`, índice
+  /// creado en la migración): una reimportación deja conviviendo la versión archivada y la
+  /// vigente con el mismo número, y solo la vigente tiene que ser única.
   seriesId    String?       @map("series_id") @db.Uuid
   /// `seriesRef` y no `series` para no chocar con `FiscalSeries.series`, que es el string
   /// que se imprime en el número del documento.
   seriesRef   FiscalSeries? @relation(fields: [seriesId], references: [id])
   correlative Int?
-  number      String?       @unique @db.VarChar(20)
+  number      String?       @db.VarChar(20)
 
   customerId   String      @map("customer_id") @db.Uuid
   customer     Customer    @relation(fields: [customerId], references: [id])
@@ -1496,6 +1515,18 @@ model FiscalDocument {
   replacesDocumentId String?         @unique @map("replaces_document_id") @db.Uuid
   replacesDocument   FiscalDocument? @relation("ReplacedDocument", fields: [replacesDocumentId], references: [id])
   replacedBy         FiscalDocument? @relation("ReplacedDocument")
+
+  /// RF-72: la versión anterior que **esta** importación archivó. Misma forma que D-072 y
+  /// por el mismo motivo: reimportar no pisa la fila anterior, la deja archivada con sus
+  /// líneas y su historial y le pone un sucesor. `archivedAt` marca a la archivada.
+  ///
+  /// Las dos puntas viven en filas distintas, así que ningún `CHECK` puede exigir que
+  /// aparezcan juntas: eso lo sostiene la transacción de `FiscalImportService`. Lo que sí
+  /// ata la migración es que solo un documento **importado** archiva o queda archivado.
+  supersedesDocumentId String?         @unique @map("supersedes_document_id") @db.Uuid
+  supersedesDocument   FiscalDocument? @relation("SupersededDocument", fields: [supersedesDocumentId], references: [id])
+  supersededBy         FiscalDocument? @relation("SupersededDocument")
+  archivedAt           DateTime?       @map("archived_at") @db.Timestamptz(3)
 
   issueDate    DateTime     @map("issue_date") @db.Date
   /// Condición de pago y vencimiento de la cuenta por cobrar (D-075). `dueDate` solo en
@@ -1561,6 +1592,9 @@ model FiscalDocument {
   @@index([affectedDocumentId])
   /// El índice del job y de la alerta (D-073): documentos pendientes de envío por antigüedad.
   @@index([status, issuedAt])
+  /// RF-71/RF-72: buscar por número al importar, incluidas las versiones ya archivadas
+  /// (el índice único parcial solo cubre las vigentes).
+  @@index([number])
   @@map("fiscal_documents")
 }
 

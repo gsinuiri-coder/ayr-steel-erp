@@ -67,12 +67,18 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
   });
 
   const updateRow = useMutation({
-    mutationFn: ({ rowId, data }: { rowId: string; data: Record<string, unknown> }) =>
-      api<ImportRowDto>(`/imports/${batch?.id}/rows/${rowId}`, { method: 'PATCH', body: { data } }),
-    onSuccess: (updatedRow) => {
-      setBatch((b) =>
-        b ? { ...b, rows: b.rows.map((r) => (r.id === updatedRow.id ? updatedRow : r)) } : b,
-      );
+    // Se relee el lote entero y no solo la fila que volvió: en una importación agrupada
+    // (RF-71) corregir una línea cambia si el **comprobante** cuadra, y esa respuesta está
+    // en las otras filas del grupo, que el PATCH no devuelve.
+    mutationFn: async ({ rowId, data }: { rowId: string; data: Record<string, unknown> }) => {
+      await api<ImportRowDto>(`/imports/${batch?.id}/rows/${rowId}`, {
+        method: 'PATCH',
+        body: { data },
+      });
+      return api<ImportBatchWithRowsDto>(`/imports/${batch?.id}`);
+    },
+    onSuccess: (updated) => {
+      setBatch(updated);
     },
     onError: (err) => {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo validar la fila');
@@ -255,6 +261,14 @@ function RowEditor({
         <TableRow>
           <TableCell colSpan={columns.length + 2} className="py-1 text-xs text-destructive">
             {row.errors.join('; ')}
+          </TableCell>
+        </TableRow>
+      )}
+      {/* RF-72: un aviso no bloquea, pero el usuario tiene que verlo antes de confirmar. */}
+      {row.warnings && row.warnings.length > 0 && (
+        <TableRow>
+          <TableCell colSpan={columns.length + 2} className="py-1 text-xs text-amber-600">
+            {row.warnings.join('; ')}
           </TableCell>
         </TableRow>
       )}

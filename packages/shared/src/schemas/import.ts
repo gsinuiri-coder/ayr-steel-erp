@@ -11,6 +11,8 @@ export const importRowSchema = z.object({
   rowNumber: z.number().int(),
   data: z.record(z.string(), z.unknown()),
   errors: z.array(z.string()).nullable(),
+  /** RF-72: lo que hay que ver antes de confirmar y no bloquea la confirmación. */
+  warnings: z.array(z.string()).nullable(),
   status: z.enum(IMPORT_ROW_STATUSES),
   createdEntityId: z.string().nullable(),
 });

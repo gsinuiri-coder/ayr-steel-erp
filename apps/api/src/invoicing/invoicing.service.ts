@@ -11,6 +11,7 @@ import {
   DispatchStatus,
   DocType,
   FiscalDocType,
+  FiscalDocumentOrigin,
   FiscalDocumentStatus,
   Prisma,
   type InventoryItemType,
@@ -98,6 +99,7 @@ const documentInclude = {
   },
   replacesDocument: { select: { id: true, number: true } },
   replacedBy: { select: { id: true, number: true } },
+  supersededBy: { select: { id: true } },
   items: { orderBy: { lineNumber: 'asc' }, include: { product: { select: { sku: true } } } },
   payments: { orderBy: { createdAt: 'asc' } },
   creditNotes: {
@@ -143,6 +145,28 @@ const LIVE_DOCUMENT_STATUSES: FiscalDocumentStatus[] = [
   FiscalDocumentStatus.ACCEPTED,
   FiscalDocumentStatus.VOID_PENDING,
 ];
+
+/**
+ * D-105: un comprobante **importado** no tiene contraparte del otro lado.
+ *
+ * Entró ya emitido por planilla (RF-71), así que el PSE no lo conoce como nuestro: pedirle
+ * su baja, mandarle una nota de crédito contra él o preguntarle su estado son tres formas
+ * de hablar de un documento que, para el proveedor, no existe. Lo que sí se puede hacer
+ * con él es lo que no toca al PSE: cobrarlo, verlo y reimportarlo.
+ *
+ * Los estados hacen la mitad del trabajo —un importado nace `ACCEPTED`, así que ni `send`
+ * ni `retry` ni `correct` lo alcanzan—, pero la baja y la nota de crédito **sí** exigen
+ * exactamente ese estado. Este corte es el que las frena.
+ */
+function assertIssuedHere(
+  document: { origin: FiscalDocumentOrigin; number: string | null },
+  action: string,
+): void {
+  if (document.origin !== FiscalDocumentOrigin.IMPORTED) return;
+  throw new BadRequestException(
+    `El comprobante ${document.number ?? ''} se importó ya emitido: ${action} se hace donde se emitió, y el resultado se vuelve a importar`,
+  );
+}
 
 @Injectable()
 export class InvoicingService {
@@ -621,6 +645,7 @@ export class InvoicingService {
         include: { items: { orderBy: { lineNumber: 'asc' } }, customer: true },
       });
       if (!affected) throw new NotFoundException('Comprobante no encontrado');
+      assertIssuedHere(affected, 'emitir su nota de crédito');
       if (affected.docType === FiscalDocType.NOTA_CREDITO) {
         throw new BadRequestException(
           'Una nota de crédito no se acredita con otra nota de crédito',
@@ -1557,7 +1582,14 @@ export class InvoicingService {
     if (settings.providerOffline) return 0;
 
     const pending = await this.prisma.fiscalDocument.findMany({
-      where: { status: { in: RETRYABLE }, number: { not: null } },
+      // `origin` es redundante hoy —un importado nace `ACCEPTED` y nunca está en RETRYABLE—
+      // y está igual: el día que un importado pueda quedar en otro estado, el job no puede
+      // ser el que se entere mandándolo al PSE.
+      where: {
+        status: { in: RETRYABLE },
+        number: { not: null },
+        origin: FiscalDocumentOrigin.ISSUED_HERE,
+      },
       orderBy: { issuedAt: 'asc' },
       take: limit,
       select: { id: true, docType: true },
@@ -1578,6 +1610,7 @@ export class InvoicingService {
       include: documentInclude,
     });
     if (!document) throw new NotFoundException('Comprobante no encontrado');
+    assertIssuedHere(document, 'consultar su estado en el PSE');
     if (document.number === null || !document.seriesRef) {
       throw new BadRequestException('Un borrador no tiene nada que consultar');
     }
@@ -1710,6 +1743,7 @@ export class InvoicingService {
       },
     });
     if (!document) throw new NotFoundException('Comprobante no encontrado');
+    assertIssuedHere(document, 'darlo de baja');
     if (document.status === FiscalDocumentStatus.VOIDED) {
       throw new ConflictException('El comprobante ya está anulado');
     }
@@ -2214,6 +2248,10 @@ export class InvoicingService {
       docType: query.docType,
       customerId: query.customerId,
       salesOrderId: query.salesOrderId,
+      origin: query.origin,
+      // RF-72: la versión archivada por una reimportación deja de ser el comprobante y sale
+      // de la lista. Sigue existiendo, y se llega a ella desde la vigente que la reemplazó.
+      ...(query.includeArchived ? {} : { archivedAt: null }),
     };
     if (query.pendingOnly) {
       // El saldo es derivado (D-075) y no se puede sumar en SQL sin duplicar la regla que
@@ -2432,9 +2470,16 @@ export class InvoicingService {
         RETRYABLE_DOCUMENT_STATUSES.includes(row.status) &&
         isStalled(row.issuedAt, alertAfterHours),
       voidPath:
-        row.status === FiscalDocumentStatus.ACCEPTED
+        // Un importado no tiene camino de baja **desde acá** (D-105): se deshace donde se
+        // emitió y el resultado se vuelve a importar. Sin este corte, la pantalla ofrecía
+        // un botón que solo podía terminar en un error del servicio.
+        row.status === FiscalDocumentStatus.ACCEPTED && row.origin !== FiscalDocumentOrigin.IMPORTED
           ? voidPathFor(row.docType, issueDate, businessToday())
           : null,
+      origin: row.origin,
+      archivedAt: row.archivedAt?.toISOString() ?? null,
+      supersededByDocumentId: row.supersededBy?.id ?? null,
+      supersedesDocumentId: row.supersedesDocumentId,
       createdByName: actors.get(row.createdById) ?? null,
       createdAt: row.createdAt.toISOString(),
       issuedAt: row.issuedAt?.toISOString() ?? null,

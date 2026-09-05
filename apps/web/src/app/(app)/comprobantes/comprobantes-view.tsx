@@ -12,10 +12,12 @@ import {
   type FiscalDocumentListItemDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { useSession } from '@/lib/session';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useDebounced } from '@/lib/use-debounced';
 import { RoleGate } from '@/components/role-gate';
 import { ContingencyCard } from '@/components/invoicing/contingency-card';
+import { ImportDialog } from '@/components/imports/import-dialog';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -44,6 +46,8 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** RF-70: listado de comprobantes electrónicos, con el aviso de contingencia (D-073). */
 export function ComprobantesView() {
+  const { user } = useSession();
+  const isAdmin = user.role === Role.ADMINISTRADOR;
   const [status, setStatus] = useState<string>(ALL);
   const [docType, setDocType] = useState<string>(ALL);
   const [pendingOnly, setPendingOnly] = useState(false);
@@ -80,9 +84,19 @@ export function ComprobantesView() {
             el PSE todavía no lo haya aceptado.
           </p>
         </div>
-        <Button asChild>
-          <Link href="/comprobantes/nuevo">Nuevo comprobante</Link>
-        </Button>
+        <div className="flex gap-2">
+          {/*
+            RF-71: importar comprobantes **ya emitidos** (histórico o contingencia en el
+            portal de SUNAT). No es la ruta normal de facturar (D-025), y por eso vive acá
+            al lado y no en el formulario de emisión. Solo ADMINISTRADOR, igual que el API.
+          */}
+          {isAdmin && (
+            <ImportDialog entity="FISCAL_DOCUMENTS" invalidateQueryKey={['fiscal-documents']} />
+          )}
+          <Button asChild>
+            <Link href="/comprobantes/nuevo">Nuevo comprobante</Link>
+          </Button>
+        </div>
       </div>
 
       <ContingencyCard />
@@ -204,6 +218,16 @@ export function ComprobantesView() {
                     {d.isOverdue && (
                       <Badge variant="outline" className="ml-2">
                         Vencido
+                      </Badge>
+                    )}
+                    {/*
+                      D-105: "aceptado" quiere decir dos cosas distintas según de dónde
+                      salió el documento. En uno importado, el ERP no vio esa aceptación:
+                      la afirma la planilla.
+                    */}
+                    {d.origin === 'IMPORTED' && (
+                      <Badge variant="outline" className="ml-2">
+                        Importado
                       </Badge>
                     )}
                   </TableCell>

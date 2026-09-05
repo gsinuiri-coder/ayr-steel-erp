@@ -13,8 +13,8 @@ import { toPrismaLineCode } from '../../common/business-line-code';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   getField,
-  type ImportAdapter,
   type ImportColumn,
+  type RowImportAdapter,
   type RowValidation,
 } from './import-adapter.interface';
 
@@ -46,7 +46,7 @@ const rateSchema = decimalStringSchema('RATE', { positive: true });
  * una bobina nueva es una compra de tipo COIL (RF-10/RF-11).
  */
 @Injectable()
-export class CoilsImportAdapter implements ImportAdapter {
+export class CoilsImportAdapter implements RowImportAdapter {
   entity = ImportEntity.COILS;
   columns = Object.values(COLUMNS);
 

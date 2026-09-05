@@ -6,6 +6,7 @@ import {
   FULL_CREDIT_NOTE_REASONS,
   DOC_TYPES,
   FISCAL_DOC_TYPES,
+  FISCAL_DOCUMENT_ORIGINS,
   FISCAL_DOCUMENT_STATUSES,
   FiscalDocType,
   FiscalDocumentStatus,
@@ -534,6 +535,16 @@ export const fiscalDocumentSchema = z.object({
    * esté aceptado; `NONE` cuando ya no hay ninguno.
    */
   voidPath: z.enum(['VOID', 'CREDIT_NOTE', 'NONE']).nullable(),
+  /** RF-71, D-105: emitido acá o importado ya emitido. */
+  origin: z.enum(FISCAL_DOCUMENT_ORIGINS),
+  /**
+   * RF-72: cuándo lo archivó una reimportación, y la versión que lo reemplazó. Los dos
+   * van juntos o no van: solo se archiva reimportando, y reimportar siempre deja sucesor.
+   */
+  archivedAt: z.string().nullable(),
+  supersededByDocumentId: z.string().uuid().nullable(),
+  /** La versión anterior que **este** documento archivó al importarse, si archivó alguna. */
+  supersedesDocumentId: z.string().uuid().nullable(),
   createdByName: z.string().nullable(),
   createdAt: z.string(),
   issuedAt: z.string().nullable(),
@@ -562,6 +573,15 @@ export type FiscalDocumentListItemDto = z.infer<typeof fiscalDocumentListItemSch
 export const fiscalDocumentQuerySchema = z.object({
   status: z.enum(FISCAL_DOCUMENT_STATUSES).optional(),
   docType: z.enum(FISCAL_DOC_TYPES).optional(),
+  origin: z.enum(FISCAL_DOCUMENT_ORIGINS).optional(),
+  /**
+   * RF-72: las versiones archivadas por una reimportación quedan **fuera** de la lista
+   * salvo que se pidan. La vigente es siempre la última, y es la que suma en cobranzas.
+   */
+  includeArchived: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => v === true || v === 'true'),
   customerId: z.string().uuid().optional(),
   salesOrderId: z.string().uuid().optional(),
   /** Solo los que tienen saldo pendiente: la vista de cuentas por cobrar (RF-88). */

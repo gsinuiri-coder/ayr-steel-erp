@@ -13,28 +13,89 @@ export interface RowValidation {
   /** Fila normalizada: mismas claves que `columns[].key`, valores ya listos para persistir. */
   data: Record<string, unknown>;
   errors: string[];
+  /**
+   * Lo que hay que saber antes de confirmar pero **no** impide confirmar (RF-72: "esta
+   * fila va a archivar la versión anterior de F001-00000123"). Un error bloquea; un aviso
+   * describe una consecuencia que el usuario tiene que poder ver venir.
+   */
+  warnings?: string[];
+}
+
+/** Errores y avisos que una validación de grupo agrega a una fila. */
+export interface RowIssues {
+  errors: string[];
+  warnings: string[];
 }
 
 /**
- * Adaptador de importación (RF-52, base reutilizable de RF-12/RF-71): cada entidad
- * importable define sus columnas, cómo validar una fila y cómo crear el registro real.
+ * Lo que comparten los dos tipos de adaptador: qué columnas espera la planilla y cómo se
+ * valida **una** fila por su cuenta.
  */
-export interface ImportAdapter {
+interface BaseImportAdapter {
   entity: ImportEntity;
   columns: ImportColumn[];
   validateRow(raw: Record<string, unknown>): Promise<RowValidation>;
-  /** Crea la entidad real dentro de la transacción de confirmación. Devuelve su id. */
-  createEntity(
-    tx: Prisma.TransactionClient,
-    data: Record<string, unknown>,
-    actorId: string,
-  ): Promise<string>;
   /**
    * Clave de unicidad de una fila ya normalizada (p. ej. línea+SKU), para detectar
    * duplicados dentro del propio archivo (dos filas válidas contra la DB pero iguales
    * entre sí). `undefined` si la fila no tiene datos suficientes para calcularla.
    */
   dedupeKey(data: Record<string, unknown>): string | undefined;
+}
+
+/**
+ * Adaptador de importación fila a fila (RF-52, RF-12): **una fila es una entidad**. Es el
+ * caso de productos, clientes y bobinas.
+ */
+export interface RowImportAdapter extends BaseImportAdapter {
+  /** Crea la entidad real dentro de la transacción de confirmación. Devuelve su id. */
+  createEntity(
+    tx: Prisma.TransactionClient,
+    data: Record<string, unknown>,
+    actorId: string,
+  ): Promise<string>;
+}
+
+/** Una fila del grupo tal como la ve `validateGroup`: ya normalizada y con sus errores. */
+export interface GroupRow {
+  data: Record<string, unknown>;
+  errors: string[];
+}
+
+/**
+ * Adaptador cuyas filas se **agrupan** (RF-71, D-107): N filas de la planilla forman una
+ * sola entidad, y la planilla repite la cabecera en cada una. Es el caso del comprobante,
+ * que tiene tantas filas como líneas.
+ *
+ * Aparece porque un comprobante no se puede validar línea por línea: que sus líneas sumen
+ * su propio total, o que le falte una, solo se ve mirando el grupo entero. Y no se puede
+ * crear a medias: o entran todas sus líneas o no entra el documento.
+ */
+export interface GroupedImportAdapter extends BaseImportAdapter {
+  /**
+   * Clave del grupo al que pertenece la fila ya normalizada (para el comprobante, su
+   * número). `undefined` cuando a la fila le falta el dato con el que se agrupa: esas
+   * filas no forman grupo y quedan inválidas por su propia validación.
+   */
+  groupKey(data: Record<string, unknown>): string | undefined;
+  /**
+   * Errores y avisos que **solo se ven mirando el grupo entero**. Devuelve, en el mismo
+   * orden que recibió, lo que hay que agregarle a cada fila. Recibe los errores propios de
+   * cada fila porque una línea rota invalida al documento completo, no solo a su renglón.
+   */
+  validateGroup(rows: GroupRow[]): Promise<RowIssues[]>;
+  /** Crea la entidad del grupo entero, en una transacción. Devuelve su id. */
+  createGroup(
+    tx: Prisma.TransactionClient,
+    rows: Record<string, unknown>[],
+    actorId: string,
+  ): Promise<string>;
+}
+
+export type ImportAdapter = RowImportAdapter | GroupedImportAdapter;
+
+export function isGroupedAdapter(adapter: ImportAdapter): adapter is GroupedImportAdapter {
+  return 'groupKey' in adapter;
 }
 
 /** Normaliza un encabezado para comparar: sin tildes, minúsculas, sin espacios extra. */

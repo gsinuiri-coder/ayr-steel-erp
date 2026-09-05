@@ -5,8 +5,8 @@ import { toPrismaLineCode } from '../../common/business-line-code';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   getField,
-  type ImportAdapter,
   type ImportColumn,
+  type RowImportAdapter,
   type RowValidation,
 } from './import-adapter.interface';
 
@@ -20,7 +20,7 @@ const COLUMNS = {
 
 /** Adaptador de importación de catálogo (RF-52). Resuelve el código de línea a su id. */
 @Injectable()
-export class ProductsImportAdapter implements ImportAdapter {
+export class ProductsImportAdapter implements RowImportAdapter {
   entity = ImportEntity.PRODUCTS;
   columns = Object.values(COLUMNS);
 

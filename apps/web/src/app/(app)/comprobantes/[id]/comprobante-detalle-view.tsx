@@ -253,7 +253,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   // arma otro payload y su corrección vive en el despacho.
   const isDispatchNote = d.docType === 'GUIA_REMISION_REMITENTE';
   const isDraft = d.status === 'DRAFT' && !isDispatchNote;
-  const canRetry = d.status === 'ISSUED' || d.status === 'SEND_ERROR';
+  // D-105: un comprobante importado entró ya emitido y el PSE no lo conoce como nuestro.
+  // Todo lo que habla con el proveedor —reintentar, consultar, dar de baja, acreditar— se
+  // apaga acá; lo que no habla con él —cobrarlo, verlo, reimportarlo— sigue disponible.
+  const isImported = d.origin === 'IMPORTED';
+  const canRetry = !isImported && (d.status === 'ISSUED' || d.status === 'SEND_ERROR');
   // Un rechazado que **ya se corrigió** no se vuelve a corregir: el API lo rechaza con un
   // 409, y lo útil es el enlace a su reemplazo.
   const canCorrect = d.status === 'REJECTED' && !isDispatchNote && d.replacedByDocumentId === null;
@@ -272,17 +276,19 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const canVoid = isAdmin && d.voidPath === 'VOID' && voidBlockedBy === null;
   // Una guía no lleva saldo ni cobros, así que sus dos guardas no aplican: lo único que
   // se le puede hacer es darla de baja.
-  const canVoidDispatchNote = isAdmin && isDispatchNote && d.status === 'ACCEPTED';
-  const canCreditNote = d.status === 'ACCEPTED' && d.docType !== 'NOTA_CREDITO' && !isDispatchNote;
+  const canVoidDispatchNote = isAdmin && !isImported && isDispatchNote && d.status === 'ACCEPTED';
+  const canCreditNote =
+    !isImported && d.status === 'ACCEPTED' && d.docType !== 'NOTA_CREDITO' && !isDispatchNote;
   const isFullReason = FULL_CREDIT_NOTE_REASONS.includes(creditReason);
   // Consultar tiene sentido donde puede cambiar algo: un pendiente de aceptación, una baja
   // en trámite, o un aceptado al que le faltan archivos. En `REJECTED` y `VOIDED` la
   // consulta gastaba una llamada al PSE para mostrar un "listo" que no significaba nada.
   const canQuery =
-    d.status === 'ISSUED' ||
-    d.status === 'SEND_ERROR' ||
-    d.status === 'VOID_PENDING' ||
-    (d.status === 'ACCEPTED' && !(d.hasPdf && d.hasXml && d.hasCdr));
+    !isImported &&
+    (d.status === 'ISSUED' ||
+      d.status === 'SEND_ERROR' ||
+      d.status === 'VOID_PENDING' ||
+      (d.status === 'ACCEPTED' && !(d.hasPdf && d.hasXml && d.hasCdr)));
   // W9: una guía de remisión comparte tabla y pantalla con los comprobantes, pero su
   // envío arma otro payload y su corrección vive en el despacho.
   const typedCreditQty = Object.values(creditQty).filter((q) => q.trim() !== '');
@@ -306,6 +312,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold">{d.number ?? 'Borrador'}</h1>
             <FiscalDocumentStatusBadge status={d.status} isStalled={d.isStalled} />
+            {isImported && <Badge variant="outline">Importado</Badge>}
+            {d.archivedAt && <Badge variant="secondary">Versión archivada</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">
             {FISCAL_DOC_TYPE_LABELS[d.docType]} · {d.customerName} · {d.customerDocNumber}
@@ -438,6 +446,38 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <AlertDescription>
             La baja está comunicada y SUNAT todavía no la confirmó. «Consultar al PSE» revisa si ya
             respondió.
+          </AlertDescription>
+        </Alert>
+      )}
+      {/*
+        RF-71/RF-72: lo que un comprobante importado sí y no admite, dicho una vez y arriba,
+        en vez de dejar que el usuario lo descubra botón por botón.
+      */}
+      {isImported && (
+        <Alert>
+          <AlertDescription>
+            Este comprobante se importó ya emitido: SUNAT lo recibió fuera del ERP. Se puede cobrar
+            y consultar, pero su baja y su nota de crédito se hacen donde se emitió y el resultado
+            se vuelve a importar. Reimportarlo archiva esta versión y deja la nueva en su lugar.
+            {d.supersedesDocumentId && (
+              <>
+                {' '}
+                <Link href={`/comprobantes/${d.supersedesDocumentId}`} className="underline">
+                  Ver la versión que reemplazó
+                </Link>
+                .
+              </>
+            )}
+            {d.supersededByDocumentId && (
+              <>
+                {' '}
+                Ya fue reemplazado:{' '}
+                <Link href={`/comprobantes/${d.supersededByDocumentId}`} className="underline">
+                  ver la versión vigente
+                </Link>
+                .
+              </>
+            )}
           </AlertDescription>
         </Alert>
       )}

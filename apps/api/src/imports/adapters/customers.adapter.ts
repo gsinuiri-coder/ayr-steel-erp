@@ -4,8 +4,8 @@ import { createCustomerSchema, ImportEntity } from '@ayr/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   getField,
-  type ImportAdapter,
   type ImportColumn,
+  type RowImportAdapter,
   type RowValidation,
 } from './import-adapter.interface';
 
@@ -21,7 +21,7 @@ const COLUMNS = {
 
 /** Adaptador de importación de clientes (RF-52). */
 @Injectable()
-export class CustomersImportAdapter implements ImportAdapter {
+export class CustomersImportAdapter implements RowImportAdapter {
   entity = ImportEntity.CUSTOMERS;
   columns = Object.values(COLUMNS);
 

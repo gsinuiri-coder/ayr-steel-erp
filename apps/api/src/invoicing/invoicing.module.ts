@@ -6,6 +6,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { JobsModule } from '../jobs/jobs.module';
 import { DispatchesController } from './dispatches.controller';
 import { DispatchesService } from './dispatches.service';
+import { FiscalImportService } from './fiscal-import.service';
 import { ReceivablesService } from './receivables.service';
 import { InvoicingController } from './invoicing.controller';
 import { InvoicingSendJob } from './invoicing-send.job';
@@ -37,6 +38,7 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
     InvoicingService,
     DispatchesService,
     ReceivablesService,
+    FiscalImportService,
     InvoicingSendJob,
     {
       provide: ELECTRONIC_INVOICING_PROVIDER,
@@ -49,6 +51,8 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
   ],
   // `ReceivablesService` se exporta desde Fase 7b: el mostrador registra el cobro dentro
   // de la misma transacción que crea la venta (D-099), no por HTTP contra este módulo.
-  exports: [InvoicingService, DispatchesService, ReceivablesService],
+  // `FiscalImportService` desde Fase 7c, por el mismo motivo: el adaptador de planilla
+  // (RF-71) crea el comprobante dentro de la transacción del lote de importación.
+  exports: [InvoicingService, DispatchesService, ReceivablesService, FiscalImportService],
 })
 export class InvoicingModule {}
