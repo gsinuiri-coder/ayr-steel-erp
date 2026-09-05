@@ -679,6 +679,17 @@ export const FiscalDocumentStatus = {
   SEND_ERROR: 'SEND_ERROR',
   VOID_PENDING: 'VOID_PENDING',
   VOIDED: 'VOIDED',
+  /**
+   * D-110: anulado **por dentro**, sin SUNAT. Es el estado terminal de un comprobante
+   * **importado** (`origin = IMPORTED`) que no debió entrar: el ERP lo da por no existente
+   * y su cuenta por cobrar desaparece.
+   *
+   * No es `VOIDED` y la diferencia no es cosmética: `VOIDED` afirma que SUNAT aceptó una
+   * baja, un hecho que aquí nunca ocurrió —el PSE no conoce a un importado como nuestro
+   * (D-105)—. Usar el mismo estado habría hecho que el papel dijera algo falso ante una
+   * auditoría, que es exactamente la trampa que D-105 evitó con `ACCEPTED`.
+   */
+  ANNULLED: 'ANNULLED',
 } as const;
 export type FiscalDocumentStatus = (typeof FiscalDocumentStatus)[keyof typeof FiscalDocumentStatus];
 export const FISCAL_DOCUMENT_STATUSES = Object.values(FiscalDocumentStatus) as [
@@ -692,7 +703,8 @@ export const FISCAL_DOCUMENT_STATUS_LABELS: Record<FiscalDocumentStatus, string>
   REJECTED: 'Rechazado',
   SEND_ERROR: 'Error de envío',
   VOID_PENDING: 'Baja en trámite',
-  VOIDED: 'Anulado',
+  VOIDED: 'Anulado ante SUNAT',
+  ANNULLED: 'Anulado internamente',
 };
 
 /**

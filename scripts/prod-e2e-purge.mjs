@@ -137,7 +137,13 @@ try {
 
   const documents = await call('/invoicing/documents');
   const e2eDocuments = (Array.isArray(documents.body) ? documents.body : []).filter(
-    (d) => isE2eDocument(d) && d.status !== 'VOIDED' && d.status !== 'REJECTED',
+    // 'ANNULLED' se suma a los terminales desde D-110: un importado anulado ya no debe nada
+    // ni se vuelve a tocar.
+    (d) =>
+      isE2eDocument(d) &&
+      d.status !== 'VOIDED' &&
+      d.status !== 'REJECTED' &&
+      d.status !== 'ANNULLED',
   );
   console.log(`Comprobantes E2E vivos: ${e2eDocuments.length}`);
 
@@ -172,13 +178,23 @@ try {
     return rank(a) - rank(b);
   });
   for (const document of byVoidOrder) {
-    // D-105: un comprobante **importado** no se da de baja desde el ERP —el PSE no lo conoce
-    // como nuestro—, así que intentarlo solo produce un 400 perpetuo en cada corrida de la
-    // purga. Sus cobros sí se revirtieron arriba, que es la parte que ensucia cuentas por
-    // cobrar; el papel queda, marcado como E2E y a la vista.
+    // D-105: un comprobante **importado** no se da de baja ante SUNAT —el PSE no lo conoce
+    // como nuestro—. Desde D-110 tiene su propia anulación interna, que es la que deja su
+    // cuenta por cobrar en cero; hasta la Sesión M-4 la purga solo podía saltearlo y la
+    // deuda de prueba se quedaba para siempre.
     if (document.origin === 'IMPORTED') {
+      if (dryRun) {
+        console.log(`  [simulado] anular (interno) ${document.number}`);
+        continue;
+      }
+      const res = await call(`/invoicing/documents/${document.id}/annul`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
       console.log(
-        `  ${document.number} importado: no se da de baja desde el ERP, queda marcado como E2E`,
+        res.ok
+          ? `  ${document.number} importado: anulado internamente`
+          : `  ${document.number} NO se pudo anular: ${res.body?.message ?? res.status}`,
       );
       continue;
     }

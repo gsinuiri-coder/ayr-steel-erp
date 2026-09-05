@@ -44,6 +44,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { FiscalImportService } from './fiscal-import.service';
 import { InvoicingService } from './invoicing.service';
 import { ReceivablesService } from './receivables.service';
 
@@ -61,6 +62,7 @@ export class InvoicingController {
   constructor(
     private readonly invoicing: InvoicingService,
     private readonly receivablesService: ReceivablesService,
+    private readonly fiscalImport: FiscalImportService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -329,5 +331,25 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(voidDocumentSchema)) body: VoidDocumentInput,
   ): Promise<FiscalDocumentDto> {
     return this.invoicing.voidDocument(actor, id, body.reason);
+  }
+
+  /**
+   * D-110: anulación **interna** de un comprobante importado (RF-71).
+   *
+   * Ruta aparte de `/void` y no una bandera suya: son dos operaciones distintas sobre dos
+   * clases de documento distintas —una comunica una baja a SUNAT, la otra no habla con
+   * nadie—, y meterlas en el mismo endpoint habría hecho que el permiso, el motivo y el
+   * desenlace dependieran de un `origin` que el llamador no ve. Solo ADMINISTRADOR, igual
+   * que la baja, porque el efecto sobre la cuenta por cobrar es el mismo.
+   */
+  @Post('documents/:id/annul')
+  @Roles(Role.ADMINISTRADOR)
+  async annulImported(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(voidDocumentSchema)) body: VoidDocumentInput,
+  ): Promise<FiscalDocumentDto> {
+    await this.fiscalImport.annulImported(actor, id, body.reason);
+    return this.invoicing.findOne(id);
   }
 }

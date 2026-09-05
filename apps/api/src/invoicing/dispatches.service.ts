@@ -730,9 +730,9 @@ export class DispatchesService {
     // La guía "vigente" es la última que sigue en pie: un rechazo conserva su correlativo
     // y una baja también queda en el historial (D-072), pero ninguno de los dos es la guía
     // del traslado.
-    const note = row.documents.find(
-      (d) => d.status !== FiscalDocumentStatus.REJECTED && d.status !== FiscalDocumentStatus.VOIDED,
-    );
+    // Lista blanca y no lista negra: con `!== REJECTED && !== VOIDED`, cada estado terminal
+    // nuevo (D-110 agregó `ANNULLED`) entraba solo y en silencio como "la guía vigente".
+    const note = row.documents.find((d) => DECLARED_STATUSES.includes(d.status));
     return {
       id: row.id,
       code: dispatchCode(row.seq),

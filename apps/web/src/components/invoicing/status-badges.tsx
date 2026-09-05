@@ -34,7 +34,12 @@ export function FiscalDocumentStatusBadge({
   if (status === 'REJECTED' || status === 'SEND_ERROR') {
     return <Badge variant="destructive">{label}</Badge>;
   }
-  if (status === 'VOIDED') return <Badge variant="outline">{label}</Badge>;
+  // D-110: los dos terminales "anulado" comparten aspecto porque comparten consecuencia
+  // —el documento dejó de deber—, y se distinguen por la etiqueta, que es donde está la
+  // diferencia que importa: uno lo anuló SUNAT y el otro, un administrador acá.
+  if (status === 'VOIDED' || status === 'ANNULLED') {
+    return <Badge variant="outline">{label}</Badge>;
+  }
   if (status === 'ISSUED' || status === 'VOID_PENDING') {
     return <Badge variant={isStalled ? 'destructive' : 'secondary'}>{label}</Badge>;
   }

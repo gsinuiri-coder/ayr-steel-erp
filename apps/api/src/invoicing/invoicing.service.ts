@@ -1905,10 +1905,7 @@ export class InvoicingService {
       }
       // Una guía **rechazada o dada de baja** no es la guía del traslado: se puede emitir
       // otra. Solo bloquea la que sigue en pie.
-      const live = dispatch.documents.find(
-        (d) =>
-          d.status !== FiscalDocumentStatus.REJECTED && d.status !== FiscalDocumentStatus.VOIDED,
-      );
+      const live = dispatch.documents.find((d) => LIVE_DOCUMENT_STATUSES.includes(d.status));
       if (live) {
         throw new ConflictException(`El despacho ya tiene la guía ${live.number ?? 'en borrador'}`);
       }
@@ -2482,6 +2479,9 @@ export class InvoicingService {
           ? voidPathFor(row.docType, issueDate, businessToday())
           : null,
       origin: row.origin,
+      annulledAt: row.annulledAt?.toISOString() ?? null,
+      annulledByName: row.annulledById ? (actors.get(row.annulledById) ?? null) : null,
+      annulReason: row.annulReason,
       archivedAt: row.archivedAt?.toISOString() ?? null,
       supersededByDocumentId: row.supersededBy?.id ?? null,
       supersedesDocumentId: row.supersedesDocumentId,

@@ -106,6 +106,24 @@ describe('documentBalance (D-075)', () => {
     expect(documentBalance({ ...base, status: FiscalDocumentStatus.VOIDED })).toBe('0.0000');
     expect(documentBalance({ ...base, status: FiscalDocumentStatus.REJECTED })).toBe('0.0000');
   });
+
+  it('un importado anulado por dentro tampoco debe nada (D-110)', () => {
+    // Es la mitad que hace útil a la anulación de M-4: sin esto el comprobante quedaba
+    // marcado y su deuda seguía en pie, que es exactamente el agujero que vino a tapar.
+    expect(documentBalance({ ...base, status: FiscalDocumentStatus.ANNULLED })).toBe('0.0000');
+  });
+
+  it('anular no borra lo ya cobrado: el saldo es cero, el cobro se revierte aparte', () => {
+    // Y por eso el servicio bloquea la anulación mientras haya un cobro vigente: si no,
+    // este cero escondería dinero recibido contra un comprobante que dejó de existir.
+    expect(
+      documentBalance({
+        ...base,
+        status: FiscalDocumentStatus.ANNULLED,
+        paidPen: '500.0000',
+      }),
+    ).toBe('0.0000');
+  });
 });
 
 describe('isStalled (D-073)', () => {

@@ -28,7 +28,8 @@
     "monitors": "node scripts/uptimerobot.mjs",
     "db:prod": "node scripts/db-prod.mjs",
     "e2e:prod": "node scripts/e2e-prod.mjs",
-    "prod:purge-e2e": "node scripts/prod-e2e-purge.mjs"
+    "prod:purge-e2e": "node scripts/prod-e2e-purge.mjs",
+    "db:reset-dev": "node scripts/db-reset-dev.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

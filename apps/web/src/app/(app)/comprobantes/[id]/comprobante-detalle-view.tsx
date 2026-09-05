@@ -68,6 +68,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [voidOpen, setVoidOpen] = useState(false);
+  const [annulOpen, setAnnulOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [creditOpen, setCreditOpen] = useState(false);
   const [creditReason, setCreditReason] = useState<CreditNoteReason>('ANULACION_OPERACION');
@@ -162,6 +163,20 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           : 'Baja comunicada: SUNAT todavía no la confirma',
       );
       setVoidOpen(false);
+      refresh();
+    },
+    onError,
+  });
+
+  const annul = useMutation({
+    mutationFn: (reason: string) =>
+      api<FiscalDocumentDto>(`/invoicing/documents/${id}/annul`, {
+        method: 'POST',
+        body: { reason },
+      }),
+    onSuccess: () => {
+      toast.success('Comprobante importado anulado: su saldo pasó a cero');
+      setAnnulOpen(false);
       refresh();
     },
     onError,
@@ -269,11 +284,23 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     (n) => n.status !== 'REJECTED' && n.status !== 'DRAFT',
   );
   const voidBlockedBy = hasLivePayments
-    ? 'tiene cobros vigentes: revierte el cobro antes de darlo de baja'
+    ? // El verbo cambia con el origen: sobre un importado lo que se ofrece es anular por
+      // dentro (D-110), y mandar al usuario a "dar de baja" un botón que no existe es peor
+      // que no decir nada.
+      `tiene cobros vigentes: revierte el cobro antes de ${isImported ? 'anularlo' : 'darlo de baja'}`
     : hasLiveCreditNotes
       ? 'ya tiene nota de crédito: su saldo ya está ajustado'
       : null;
   const canVoid = isAdmin && d.voidPath === 'VOID' && voidBlockedBy === null;
+  // D-110: la anulación interna de un importado. Mismos dos guardrails que la baja —cobro
+  // vigente y nota de crédito viva—, porque el efecto sobre el saldo es el mismo; se apaga
+  // en una versión ya archivada, que salió de todas las cuentas por otro camino (RF-72).
+  const canAnnul =
+    isAdmin &&
+    isImported &&
+    d.status === 'ACCEPTED' &&
+    d.archivedAt === null &&
+    voidBlockedBy === null;
   // Una guía no lleva saldo ni cobros, así que sus dos guardas no aplican: lo único que
   // se le puede hacer es darla de baja.
   const canVoidDispatchNote = isAdmin && !isImported && isDispatchNote && d.status === 'ACCEPTED';
@@ -318,6 +345,14 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             {isImported && <Badge variant="outline">Importado</Badge>}
             {d.archivedAt && <Badge variant="secondary">Versión archivada</Badge>}
           </div>
+          {/* D-110: quién anuló, cuándo y por qué. Es lo primero que se pregunta ante un
+              comprobante que dejó de deber, y el motivo vive en la fila además del audit_log. */}
+          {d.annulledAt && (
+            <p className="text-sm text-muted-foreground">
+              Anulado internamente el {formatDate(d.annulledAt.slice(0, 10))}
+              {d.annulledByName ? ` por ${d.annulledByName}` : ''} — {d.annulReason}
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             {FISCAL_DOC_TYPE_LABELS[d.docType]} · {d.customerName} · {d.customerDocNumber}
             {d.salesOrderId && (
@@ -401,6 +436,16 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Nota de crédito
             </Button>
           )}
+          {canAnnul && (
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setAnnulOpen(true);
+              }}
+            >
+              Anular internamente
+            </Button>
+          )}
           {(canVoid || canVoidDispatchNote) && (
             <Button
               variant="destructive"
@@ -462,7 +507,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             Este comprobante se importó ya emitido: SUNAT lo recibió fuera del ERP. Se puede ver y
             cobrar, pero su baja y su nota de crédito se hacen donde se emitió y el resultado se
             vuelve a importar. Reimportarlo archiva esta versión y deja la nueva en su lugar,
-            mientras todavía no tenga cobros vigentes ni notas de crédito encima.
+            mientras todavía no tenga cobros vigentes ni notas de crédito encima. Si no debió
+            entrar, «Anular internamente» lo saca de las cuentas sin tocar nada ante SUNAT.
             {d.supersedesDocumentId && (
               <>
                 {' '}
@@ -839,6 +885,22 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         pending={voidDocument.isPending}
         onConfirm={(reason) => {
           voidDocument.mutate(reason);
+        }}
+      />
+
+      {/*
+        D-110: la anulación interna de un importado. El texto dice lo que la operación **no**
+        hace, que es la mitad que se malinterpreta: SUNAT sigue teniendo ese comprobante.
+      */}
+      <ReasonDialog
+        open={annulOpen}
+        onOpenChange={setAnnulOpen}
+        title={`Anular ${d.number ?? ''} internamente`}
+        description="Este comprobante entró por planilla y SUNAT lo recibió fuera del ERP: anularlo acá lo da por no existente para el sistema y su saldo pasa a cero, pero no comunica ninguna baja. Si el comprobante existe de verdad ante SUNAT, dalo de baja donde se emitió."
+        confirmLabel="Anular internamente"
+        pending={annul.isPending}
+        onConfirm={(reason) => {
+          annul.mutate(reason);
         }}
       />
 

@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   DocType,
   FiscalDocType,
@@ -16,7 +21,9 @@ import {
   toFixedString,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
+import type { RequestUser } from '../auth/auth.types';
 import { totalTolerance } from '../imports/fiscal-import-math';
+import { PrismaService } from '../prisma/prisma.service';
 import { dueDateFor } from './invoicing-math';
 
 /** Una línea del comprobante importado, ya normalizada por el adaptador de planilla. */
@@ -94,7 +101,119 @@ function toDateOnly(value: string): Date {
  */
 @Injectable()
 export class FiscalImportService {
-  constructor(private readonly audit: AuditService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
+
+  /**
+   * Anula por dentro un comprobante **importado** (D-110): el ERP lo da por no existente y
+   * su cuenta por cobrar desaparece.
+   *
+   * Es la reversa que RF-71 no trajo, y por eso vive acá, al lado de la importación: hasta
+   * la Sesión M-4 un importado equivocado era deuda falsa permanente, porque nace `ACCEPTED`
+   * y el PSE no lo conoce como nuestro (D-105), así que ni la baja ni la nota de crédito lo
+   * alcanzaban. Es la cuarta vez que este proyecto paga la misma lección —D-061 con el pago
+   * a proveedor, D-088 y D-097 con la reserva—: **la reversa se construye en la misma fase
+   * que lo que revierte, o no se construye.**
+   *
+   * No es una baja ante SUNAT y no lo finge: estado propio (`ANNULLED`), columnas propias y
+   * ningún viaje al proveedor. Sobre un comprobante que el ERP emitió, este camino se
+   * rechaza — el suyo es el fiscal de D-072.
+   */
+  async annulImported(
+    actor: RequestUser,
+    id: string,
+    reason: string,
+  ): Promise<{ id: string; number: string | null }> {
+    return this.prisma.$transaction(async (tx) => {
+      // El lock va antes de leer, igual que en `addPayment` y en la nota de crédito: sin él,
+      // un cobro que entra mientras se decide la anulación queda colgado de un comprobante
+      // que dejó de deber, y el guardrail de abajo no lo habría visto.
+      await tx.$queryRaw`
+        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
+      `;
+      const document = await tx.fiscalDocument.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          number: true,
+          origin: true,
+          status: true,
+          totalPen: true,
+          archivedAt: true,
+        },
+      });
+      if (!document) throw new NotFoundException('Comprobante no encontrado');
+
+      if (document.origin !== FiscalDocumentOrigin.IMPORTED) {
+        throw new BadRequestException(
+          'Este comprobante lo emitió el ERP: se deshace con una baja o una nota de crédito ante SUNAT, no con una anulación interna',
+        );
+      }
+      // Idempotencia explícita (D-052): un segundo intento no vuelve a anular ni finge que
+      // hizo algo. 409 y no 400 porque el estado del recurso es el que impide la operación.
+      if (document.status === FiscalDocumentStatus.ANNULLED) {
+        throw new ConflictException(`El comprobante ${document.number ?? ''} ya está anulado`);
+      }
+      if (document.status !== FiscalDocumentStatus.ACCEPTED) {
+        throw new BadRequestException(
+          `Solo se anula un comprobante importado vigente; este está ${document.status}`,
+        );
+      }
+      // Una versión archivada (RF-72) ya salió de todas las cuentas: anularla no cambiaría
+      // ningún saldo y solo agregaría un estado terminal a una fila que es historial.
+      if (document.archivedAt !== null) {
+        throw new BadRequestException(
+          'Esta versión ya fue reemplazada por una reimportación posterior: anula la vigente',
+        );
+      }
+
+      // Los dos guardrails de `voidDocument`, por el mismo motivo y en el mismo orden: un
+      // cobro vigente es dinero recibido —anular el comprobante lo dejaría sin causa— y una
+      // nota de crédito viva ya ajustó este saldo por el otro camino.
+      const payments = await tx.customerPayment.count({
+        where: { documentId: id, reversedAt: null },
+      });
+      if (payments > 0) {
+        throw new BadRequestException(
+          'El comprobante tiene cobros vigentes: revierte los cobros antes de anularlo',
+        );
+      }
+      const creditNotes = await tx.fiscalDocument.findMany({
+        where: { affectedDocumentId: id, status: { in: LIVE_STATUSES }, archivedAt: null },
+        select: { number: true },
+      });
+      if (creditNotes.length > 0) {
+        throw new BadRequestException(
+          `El comprobante tiene notas de crédito vivas (${creditNotes
+            .map((n) => n.number ?? 'sin número')
+            .join(', ')}): anúlalas primero`,
+        );
+      }
+
+      const updated = await tx.fiscalDocument.update({
+        where: { id },
+        data: {
+          status: FiscalDocumentStatus.ANNULLED,
+          annulledAt: new Date(),
+          annulledById: actor.id,
+          annulReason: reason,
+        },
+        select: { id: true, number: true },
+      });
+
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.import.annul',
+        entity: 'fiscal_documents',
+        entityId: id,
+        before: { status: document.status, totalPen: document.totalPen.toFixed(4) },
+        after: { status: FiscalDocumentStatus.ANNULLED, reason, number: document.number },
+      });
+      return updated;
+    });
+  }
 
   /**
    * Crea el comprobante importado dentro de la transacción del llamador (patrón `*InTx`,

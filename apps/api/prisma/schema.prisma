@@ -331,6 +331,10 @@ enum FiscalDocumentStatus {
   SEND_ERROR
   VOID_PENDING
   VOIDED
+  /// D-110: anulado **por dentro**, sin SUNAT. Terminal, y solo para `origin = IMPORTED`
+  /// (`CHECK` en la migración). No es `VOIDED`: ese afirma que SUNAT aceptó una baja, un
+  /// hecho que sobre un importado nunca ocurrió porque el PSE no lo conoce (D-105).
+  ANNULLED
 }
 
 /// De dónde salió el documento (RF-71, D-105). `ISSUED_HERE` tomó correlativo de una serie
@@ -1577,6 +1581,13 @@ model FiscalDocument {
   voidRequestedAt DateTime? @map("void_requested_at") @db.Timestamptz(3)
   voidedAt        DateTime? @map("voided_at") @db.Timestamptz(3)
   voidedById      String?   @map("voided_by_id") @db.Uuid
+  /// D-110: la anulación interna de un importado. Columnas propias y no las de la baja
+  /// (`voided_*`) porque son hechos distintos: una la aceptó SUNAT, la otra la decidió un
+  /// administrador acá. El motivo es obligatorio y va en la fila, además de `audit_log`,
+  /// porque es lo primero que se pregunta al ver un comprobante que dejó de deber.
+  annulledAt      DateTime? @map("annulled_at") @db.Timestamptz(3)
+  annulledById    String?   @map("annulled_by_id") @db.Uuid
+  annulReason     String?   @map("annul_reason") @db.VarChar(240)
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 

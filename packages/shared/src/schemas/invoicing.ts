@@ -121,7 +121,10 @@ export function documentBalance(input: {
 }): string {
   if (
     input.status === FiscalDocumentStatus.VOIDED ||
-    input.status === FiscalDocumentStatus.REJECTED
+    input.status === FiscalDocumentStatus.REJECTED ||
+    // D-110: un importado anulado por dentro tampoco debe nada. Es la mitad que hace útil a
+    // la anulación: sin esto, el comprobante quedaba marcado pero su deuda seguía en pie.
+    input.status === FiscalDocumentStatus.ANNULLED
   ) {
     return '0.0000';
   }
@@ -537,6 +540,10 @@ export const fiscalDocumentSchema = z.object({
   voidPath: z.enum(['VOID', 'CREDIT_NOTE', 'NONE']).nullable(),
   /** RF-71, D-105: emitido acá o importado ya emitido. */
   origin: z.enum(FISCAL_DOCUMENT_ORIGINS),
+  /** D-110: cuándo, quién y por qué se anuló por dentro. Solo en un importado. */
+  annulledAt: z.string().nullable(),
+  annulledByName: z.string().nullable(),
+  annulReason: z.string().nullable(),
   /**
    * RF-72: cuándo lo archivó una reimportación, y la versión que lo reemplazó. Los dos
    * van juntos o no van: solo se archiva reimportando, y reimportar siempre deja sucesor.
