@@ -738,6 +738,22 @@ export const LIVE_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
 ];
 
 /**
+ * Los vivos **más el borrador**: el corte de "este documento sigue en pie" cuando lo que se
+ * pregunta es si hay que crear otro.
+ *
+ * Es el que corresponde a la guía de remisión de un despacho. Una guía nace `DRAFT` dentro
+ * de la transacción que la crea y recién después toma número y sale al PSE (D-073), así que
+ * un fallo entremedio la deja en borrador **para siempre**: si el corte fuera
+ * `LIVE_DOCUMENT_STATUSES`, emitir otra vez crearía una segunda guía para el mismo despacho
+ * en vez de encontrar la que quedó a medias. El mensaje de error que la nombra —"la guía en
+ * borrador"— existe precisamente por ese caso.
+ */
+export const STANDING_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
+  FiscalDocumentStatus.DRAFT,
+  ...LIVE_DOCUMENT_STATUSES,
+];
+
+/**
  * De dónde salió un documento electrónico (RF-71, D-105).
  *
  * `ISSUED_HERE` es todo lo que el ERP emitió: tomó correlativo de una serie propia, pasó

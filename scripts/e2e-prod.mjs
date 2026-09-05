@@ -4,7 +4,8 @@
 // la Fase 5a (fase5a.spec.ts, fase5a-bordes.spec.ts), de la Fase 5b (fase5b.spec.ts,
 // fase5b-bordes.spec.ts), de la Fase 6 (fase6.spec.ts, fase6-bordes.spec.ts) y de la
 // Fase 7 (fase7.spec.ts, fase7-bordes.spec.ts: cola de producción, RF-37/RF-38;
-// fase7b*.spec.ts: mostrador; fase7c*.spec.ts: importación de comprobantes) contra
+// fase7b*.spec.ts: mostrador; fase7c*.spec.ts y m4-*.spec.ts: importación de comprobantes
+// y su anulación) contra
 // producción (Vercel + Cloud Run), incluidos los escenarios que crean datos (RF-03:
 // usuario desactivado, cambio de rol; Fase 1: acabado, producto, importación, margen;
 // Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y flejes; Fase 3b:
@@ -17,12 +18,10 @@
 // `E2E_FISCAL_EMISSION` se fuerza a `'0'` más abajo sin importar qué traiga el entorno de
 // quien invoca este script. Los tests de facturación que emiten (fase5b*.spec.ts) se
 // saltan siempre contra producción; el resto de la suite (despacho, borradores, cobranza
-// sobre lo ya emitido) sigue corriendo igual. Desde la Fase 7c, la misma compuerta apaga
-// `fase7c*.spec.ts`: importar un comprobante ya emitido empuja el correlativo de una serie
-// real y crea un documento que no se puede dar de baja, que es el mismo daño que emitir.
-// Habilitarlo aquí sería emitir comprobantes
-// reales contra SUNAT en cada corrida de E2E — no hay ningún escenario en el que eso sea
-// correcto.
+// sobre lo ya emitido) sigue corriendo igual. Desde la Fase 7c la misma compuerta apaga
+// `fase7c*.spec.ts` y `m4-*.spec.ts`; el motivo está junto a la lista de suites, más abajo.
+// Habilitarlo aquí sería emitir comprobantes reales contra SUNAT en cada corrida de E2E — no
+// hay ningún escenario en el que eso sea correcto.
 //
 // Para no tocar la cuenta real del dueño, crea un ADMINISTRADOR efímero con
 // contraseña aleatoria, corre la suite y lo borra junto con los usuarios que la
@@ -136,14 +135,28 @@ try {
       'e2e/tests/fase7-bordes.spec.ts',
       'e2e/tests/fase7b.spec.ts',
       'e2e/tests/fase7b-bordes.spec.ts',
-      // Fase 7c (importación de comprobantes, RF-71/RF-72). Se listan aunque contra
-      // producción se salten enteras: importar empuja numeración fiscal real y deja
-      // comprobantes que no se pueden dar de baja, así que la suite se apaga con la misma
-      // compuerta que la emisión (D-081). Listarlas igual es lo que hace que el informe
-      // diga "saltadas" en vez de callar — que es el defecto que costó una corrida entera
-      // en la Fase 7b.
+      // Fase 7c y Sesión M-4 (importación de comprobantes y su anulación, RF-71/RF-72,
+      // D-110). Se listan aunque contra producción se salten enteras, porque listarlas es lo
+      // que hace que el informe diga "saltadas" en vez de callar — el defecto que costó una
+      // corrida entera en la Fase 7b.
+      //
+      // **Por qué siguen saltadas, revisado en M-4.** El motivo original —"dejan comprobantes
+      // que no se pueden dar de baja"— dejó de valer: D-110 les dio anulación interna y la
+      // purga la usa. Quedan otros dos, y alcanzan:
+      //
+      //   1. Cada comprobante importado **crea una serie inactiva** (D-106) que no tiene
+      //      borrado: con documentos colgando no se puede eliminar, y son ~14 por corrida
+      //      acumulándose para siempre en un maestro fiscal. Cerrarlo exigiría que la suite
+      //      importara sobre una serie E2E fija en vez de una `Z…` al azar.
+      //   2. Serían los **primeros** comprobantes fiscales de prueba en el registro real de
+      //      la empresa: D-081 apagó la emisión contra producción justo para que no los
+      //      hubiera, y entrar por la otra puerta contradiría esa decisión sin discutirla.
+      //
+      // Lo que estas suites prueban no depende de la infraestructura de producción —no hay
+      // PSE, ni Cloud Run, ni nada específico— y CI ya las corre enteras contra la rama `ci`.
       'e2e/tests/fase7c.spec.ts',
       'e2e/tests/fase7c-bordes.spec.ts',
+      'e2e/tests/m4-anulacion-importado.spec.ts',
       // Cualquier bandera extra que se le pase a `pnpm e2e:prod` viaja a Playwright. Sirve
       // para acotar una corrida —`pnpm e2e:prod --grep "Fase 7b"`— cuando lo que se quiere
       // verificar es una fase concreta y no las dos horas de suite entera. Va **después** de

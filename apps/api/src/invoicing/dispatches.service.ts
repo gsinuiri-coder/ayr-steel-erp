@@ -18,6 +18,7 @@ import {
   Unit,
   dispatchCode,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
+  STANDING_DOCUMENT_STATUSES,
   salesOrderCode,
   toDecimal,
   toFixedString,
@@ -727,8 +728,9 @@ export class DispatchesService {
     // y una baja también queda en el historial (D-072), pero ninguno de los dos es la guía
     // del traslado.
     // Lista blanca y no lista negra: con `!== REJECTED && !== VOIDED`, cada estado terminal
-    // nuevo (D-110 agregó `ANNULLED`) entraba solo y en silencio como "la guía vigente".
-    const note = row.documents.find((d) => DECLARED_STATUSES.includes(d.status));
+    // nuevo (D-110 agregó `ANNULLED`) entraba solo y en silencio como "la guía vigente". Y
+    // **con el borrador dentro**, porque una guía a medio emitir sigue siendo la del despacho.
+    const note = row.documents.find((d) => STANDING_DOCUMENT_STATUSES.includes(d.status));
     return {
       id: row.id,
       code: dispatchCode(row.seq),

@@ -26,6 +26,7 @@ import {
   TransferMode,
   IGV_RATE_PCT,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
+  STANDING_DOCUMENT_STATUSES,
   RETRYABLE_DOCUMENT_STATUSES,
   Role,
   salesOrderCode,
@@ -1901,7 +1902,10 @@ export class InvoicingService {
       }
       // Una guía **rechazada o dada de baja** no es la guía del traslado: se puede emitir
       // otra. Solo bloquea la que sigue en pie.
-      const live = dispatch.documents.find((d) => LIVE_DOCUMENT_STATUSES.includes(d.status));
+      // **Con el borrador dentro**: una guía nace `DRAFT` y solo después toma número, así
+      // que un fallo entremedio la deja así para siempre. Con el corte en los vivos a secas,
+      // reintentar habría creado una segunda guía para el mismo despacho.
+      const live = dispatch.documents.find((d) => STANDING_DOCUMENT_STATUSES.includes(d.status));
       if (live) {
         throw new ConflictException(`El despacho ya tiene la guía ${live.number ?? 'en borrador'}`);
       }

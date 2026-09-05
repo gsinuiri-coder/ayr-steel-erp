@@ -1252,6 +1252,129 @@ SUNAT, series confirmadas por el contador, y `NUBEFACT_URL`/`NUBEFACT_TOKEN` pro
 `.env.setup`. Mientras no haya aviso del dueño, producción sigue sin credenciales del PSE
 (D-080) y toda emisión cae en contingencia.
 
+## Sesión M-4 — mantenimiento: anulación de comprobante importado y limpieza (2026-09-05)
+
+Dos decisiones nuevas, **D-110** y **D-111**. Sesión corta y de una sola idea: **RF-71 había
+entregado una operación sin su reversa.**
+
+Un `fiscal_document` con `origin = IMPORTED` nace `ACCEPTED` con su cuenta por cobrar, y las
+tres salidas del módulo —`send`, `voidDocument`, `createCreditNote`— exigen hablar con el
+PSE, que no lo conoce como nuestro (D-105). Un número mal tecleado en una planilla se
+convertía en una deuda que **nadie podía cancelar nunca**: ni un administrador, ni con SQL
+sin romper las reglas del proyecto.
+
+| #   | Entregable                                                          | Estado                                                                               |
+| --- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 1   | Auditoría de solo lectura de importados (`prod-imported-audit.mjs`) | ✅ producción: **0**; `dev`: 33 con S/ 7080 de deuda inventada                       |
+| 2   | Estado `ANNULLED` + `POST /invoicing/documents/:id/annul` (D-110)   | ✅ solo ADMINISTRADOR, con motivo, saldo a cero, 409 idempotente                     |
+| 3   | Censo de lectores de estado antes de escribirlo                     | ✅ todas las listas de "vivos" ya eran blancas; las negras que quedaban, convertidas |
+| 4   | `LIVE_DOCUMENT_STATUSES` una sola vez, en `@ayr/shared`             | ✅ estaba escrita **siete** veces                                                    |
+| 5   | La purga de producción anula los importados de prueba               | ✅ antes solo podía saltearlos                                                       |
+| 6   | `pnpm db:reset-dev` (D-111)                                         | ✅ `neonctl branches reset --parent`: resetea, no borra                              |
+| 7   | E2E                                                                 | ✅ `m4-anulacion-importado.spec.ts`, 6 escenarios                                    |
+| 8   | Limpieza de `dev`                                                   | ✅ repuesta desde `production`: 0 importados, 0 series inactivas, 0 lotes            |
+| 9   | `pnpm turbo lint typecheck test build` + 38 E2E                     | ✅ verde (257 unit)                                                                  |
+
+### La cuarta vez que falta la reversa
+
+D-061 (pago a proveedor), D-088 y D-097 (la reserva), y ahora D-110. El patrón es idéntico
+las cuatro veces: se construye una operación que **crea** un hecho y su reversa se deja para
+después porque parece un caso raro; el caso raro resulta ser el primer día de uso real.
+
+La regla que queda escrita: **una operación que crea un hecho persistente no está terminada
+hasta que existe la que lo deshace**, y se puede llegar a ella desde la pantalla.
+
+### Por qué `ANNULLED` y no `VOIDED`
+
+Reusar `VOIDED` era la opción barata: el efecto buscado es idéntico y **todos** los filtros
+existentes ya lo trataban como terminal, así que no habría hecho falta tocar nada. Por eso
+estuvo cerca de ser la decisión equivocada.
+
+`VOIDED` no describe un efecto sino un **hecho**: SUNAT aceptó la baja. Sobre un importado
+ese hecho nunca ocurrió, y un contador que viera `VOIDED` en la base concluiría que el
+comprobante está dado de baja ante SUNAT cuando allí sigue vigente. Es la misma trampa que
+D-105 evitó con `ACCEPTED`, y repetirla en el otro extremo del ciclo habría sido peor: un
+estado equivocado sobre un documento fiscal es una afirmación falsa en un registro que se
+audita.
+
+### La regresión que la propia corrección introdujo
+
+El censo de estados salió mejor de lo previsto: casi todos los cortes del módulo eran
+**listas blancas**, y una lista blanca no deja entrar a un estado nuevo por descuido. Las dos
+listas negras que quedaban en el API —cuál es la guía de remisión vigente de un despacho— se
+convirtieron a lista blanca por eso mismo.
+
+Y ahí estuvo el error: se usó la lista de **vivos**, que no incluye `DRAFT`. Una guía nace
+`DRAFT` dentro de su transacción y solo después toma número y sale al PSE (D-073), así que un
+fallo entremedio la deja en borrador para siempre. Con el corte en los vivos, reintentar la
+emisión habría creado una **segunda guía** para el mismo despacho en vez de encontrar la que
+quedó a medias — y el mensaje de error que estaba ahí desde Fase 5b decía "la guía en
+borrador", o sea que el caso estaba previsto desde el principio.
+
+Corregido con `STANDING_DOCUMENT_STATUSES` (borrador + vivos), que es el corte que
+corresponde a la pregunta "¿hace falta crear otra?". La ironía vale anotarla: **el cambio que
+convertía listas negras en blancas para que ningún estado entrara en silencio, metió en
+silencio un estado de menos.** Una lista blanca es más segura que una negra, pero solo si se
+elige la lista correcta; el nombre del conjunto (`LIVE`) no era el que la pregunta pedía.
+
+### Hallazgos corregidos en esta sesión (revisor + qa)
+
+**Altos.** `actorIdsOf` no incluía `annulledById` ni `voidedById`, así que el nombre de quien
+anuló salía `null` **siempre** y el web lo escondía sin fallar: la constancia quedaba muda
+justo en lo primero que se pregunta. Y el web contaba las notas de crédito vivas con una lista
+negra, así que una NC anulada seguía contando como viva ahí y no en el API — el saldo del
+afectado subía del lado del servidor mientras la pantalla escondía el botón de anular y
+explicaba que el saldo ya estaba ajustado.
+
+**Medios y bajos.** Una nota de crédito importada podía acreditar un comprobante anulado, y
+el afectado no se bloqueaba con `FOR UPDATE` antes de leerlo. El `CHECK` de la constancia era
+una implicación y pasa a ser equivalencia: admitía una fila con fecha, autor y motivo de
+anulación **y un estado que sigue debiendo**. El aviso que explica por qué no se puede anular
+era código muerto en un importado —se renderizaba bajo `voidPath === 'VOID'`, que es `null`
+para todos ellos—, así que un importado con cobro vigente perdía el botón sin ninguna
+explicación en pantalla. Y `db-reset-dev.mjs` no verificaba que `dev` colgara de verdad de
+`production`, ni validaba el argumento de `--preserve-under-name` (`--preserve-under-name
+--yes` creaba una rama llamada `--yes`).
+
+### Un patrón de fechas que queda anotado
+
+`formatDate(x.slice(0, 10))` sobre un **timestamp** lo corta en UTC, y Lima va cinco horas
+detrás: todo lo ocurrido después de las 19:00 locales se muestra fechado al día siguiente. Es
+el mismo desfase que `businessToday` existe para evitar (D-069).
+
+Se corrigió en la pantalla de comprobantes (`formatTimestampDate`, nuevo en `lib/format.ts`).
+Quedan **nueve** sitios con el mismo patrón, anotados para la Fase 8 porque cada uno exige
+comprobar si el campo es un instante o una columna `DATE` —donde el corte sí es correcto—:
+`despacho-detalle-view.tsx:179` y `:312`, `pedido-detalle-view.tsx:322` y `:365`,
+`cotizacion-detalle-view.tsx:271`, `corte-view.tsx:155`, `produccion-view.tsx:236`,
+`produccion-detalle-view.tsx:355` y `bobina-detalle-view.tsx:232`.
+
+### La suite de importación sigue sin correr contra producción, con motivo nuevo
+
+El motivo original —"deja comprobantes que no se pueden dar de baja"— **dejó de valer**:
+D-110 les dio anulación y la purga la usa. Quedan otros dos, revisados en esta sesión y
+escritos junto a la lista de suites en `scripts/e2e-prod.mjs`:
+
+1. cada comprobante importado **crea una serie inactiva** (D-106) que no tiene borrado —con
+   documentos colgando no se puede eliminar—, y son unas catorce por corrida acumulándose
+   para siempre en un maestro fiscal;
+2. serían los **primeros** comprobantes fiscales de prueba en el registro real de la empresa,
+   y D-081 apagó la emisión contra producción justo para que no los hubiera.
+
+Lo que estas suites prueban no depende de la infraestructura de producción, y CI ya las corre
+enteras contra la rama `ci`. Cerrar el punto 1 exigiría que la suite importara sobre una serie
+E2E fija en vez de una `Z…` al azar; queda dicho por si algún día se decide.
+
+### Limpieza verificada
+
+- **Producción: cero rastros.** No había ninguno que borrar —la compuerta de D-081 mantuvo la
+  suite de Fase 7c fuera de allí— y sigue en cero tras la sesión, comprobado con
+  `node scripts/prod-imported-audit.mjs`.
+- **`dev`: repuesta desde `production`** con `pnpm db:reset-dev --yes`. Antes: 62 importados
+  y S/ 8614 de deuda inventada. Después: 0 importados, 0 series inactivas, 0 lotes de
+  importación, `prisma migrate status` con las 33 migraciones y "Database schema is up to
+  date!".
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.

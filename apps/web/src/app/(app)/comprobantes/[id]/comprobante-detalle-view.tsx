@@ -541,13 +541,23 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </AlertDescription>
         </Alert>
       )}
-      {voidBlockedBy !== null && isAdmin && d.voidPath === 'VOID' && (
-        <Alert>
-          <AlertDescription>
-            Este comprobante no se puede dar de baja porque {voidBlockedBy}.
-          </AlertDescription>
-        </Alert>
-      )}
+      {/*
+        El aviso vale para los dos caminos de deshacer. Sin la segunda mitad era código
+        muerto en un importado: `voidPath` es `null` para todos ellos (D-105), así que un
+        importado con un cobro vigente perdía el botón «Anular internamente» y **no aparecía
+        ninguna explicación** — justo el caso que el aviso existe para cubrir.
+      */}
+      {voidBlockedBy !== null &&
+        isAdmin &&
+        (d.voidPath === 'VOID' ||
+          (isImported && d.status === 'ACCEPTED' && d.archivedAt === null)) && (
+          <Alert>
+            <AlertDescription>
+              Este comprobante no se puede {isImported ? 'anular' : 'dar de baja'} porque{' '}
+              {voidBlockedBy}.
+            </AlertDescription>
+          </Alert>
+        )}
       {isDispatchNote && (
         <Alert>
           <AlertDescription>
@@ -849,7 +859,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       )}
 
       <div className="text-xs text-muted-foreground">
-        Creado por {d.createdByName ?? '—'} el {formatDate(d.createdAt.slice(0, 10))}.
+        Creado por {d.createdByName ?? '—'} el {formatTimestampDate(d.createdAt)}.
         {d.sunatHash && <> Hash SUNAT: {d.sunatHash}.</>}
         {d.sendAttempts > 0 && <> Intentos de envío: {d.sendAttempts}.</>}
       </div>

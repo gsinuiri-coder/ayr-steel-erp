@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext } from '@playwright/test';
+import { expect, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { resolve } from 'node:path';
 
 /**
@@ -352,4 +352,63 @@ export async function importDocument(
     documentId: ids[0]!,
     number: documentNumber(spec.series, spec.correlative),
   };
+}
+
+// ---------------------------------------------------------------------------
+// La reversa: anulación interna de un importado (Sesión M-4, D-110)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /invoicing/documents/:id/annul`: anula **por dentro** un comprobante importado.
+ *
+ * Devuelve la respuesta cruda y no el DTO a propósito. Media suite de M-4 se trata de
+ * códigos —400 sobre un emitido acá, 409 sobre uno ya anulado, 403 para un vendedor— y un
+ * helper que lanzara al no ser 2xx obligaría a cada uno de esos casos a envolverse en un
+ * `try`, que es donde se pierde el código real.
+ *
+ * Vive acá, junto a la importación, por lo mismo que el servicio del API: la anulación
+ * interna es la vuelta de RF-71 y solo tiene sentido sobre lo que RF-71 creó.
+ */
+export function annulImported(
+  api: APIRequestContext,
+  documentId: string,
+  reason = 'Anulación interna de prueba E2E',
+): Promise<APIResponse> {
+  return api.post(`/api/invoicing/documents/${documentId}/annul`, { data: { reason } });
+}
+
+/**
+ * Limpieza de `finally`: deja en cero lo que la suite importó.
+ *
+ * Antes de M-4 esto no se podía escribir —un importado no tenía camino de vuelta (D-105) y
+ * la única opción era dejarlo vivo—, así que es la primera purga real de la Fase 7c. Revierte
+ * primero los cobros vigentes, porque son el guardrail que bloquea la anulación, y nunca
+ * lanza: un fallo limpiando no puede convertir un test verde en rojo.
+ *
+ * Lo que **no** deshace, porque no se puede: la serie `Z…` que la importación creó inactiva
+ * (D-106) no tiene borrado, y la fila anulada se conserva a propósito (append-only, RF-95).
+ */
+export async function annulImportedTrail(
+  api: APIRequestContext,
+  documentIds: readonly string[],
+  reason = 'Limpieza de prueba E2E',
+): Promise<void> {
+  for (const documentId of documentIds) {
+    const document = await api
+      .get(`/api/invoicing/documents/${documentId}`)
+      .then((r) =>
+        r.ok()
+          ? (r.json() as Promise<{ payments: { id: string; reversedAt: string | null }[] }>)
+          : null,
+      )
+      .catch(() => null);
+    for (const payment of (document?.payments ?? []).filter((p) => p.reversedAt === null)) {
+      await api
+        .post(`/api/invoicing/documents/${documentId}/payments/${payment.id}/reverse`, {
+          data: { reason },
+        })
+        .catch(() => undefined);
+    }
+    await annulImported(api, documentId, reason).catch(() => undefined);
+  }
 }

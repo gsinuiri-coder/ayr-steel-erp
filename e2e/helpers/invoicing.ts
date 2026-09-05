@@ -55,7 +55,18 @@ export interface CustomerPaymentDto {
 }
 
 export type FiscalDocumentStatus =
-  'DRAFT' | 'ISSUED' | 'ACCEPTED' | 'REJECTED' | 'SEND_ERROR' | 'VOID_PENDING' | 'VOIDED';
+  | 'DRAFT'
+  | 'ISSUED'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'SEND_ERROR'
+  | 'VOID_PENDING'
+  | 'VOIDED'
+  /**
+   * D-110: anulado **por dentro**, sin SUNAT. Solo lo alcanza un importado. No es `VOIDED`,
+   * que afirma que SUNAT aceptó una baja: sobre un importado eso nunca ocurrió.
+   */
+  | 'ANNULLED';
 
 export interface FiscalDocumentDto {
   id: string;
@@ -77,6 +88,10 @@ export interface FiscalDocumentDto {
   replacesDocumentNumber: string | null;
   /** RF-71, D-105: emitido por el ERP o importado ya emitido. */
   origin: 'ISSUED_HERE' | 'IMPORTED';
+  /** D-110: cuándo, quién y por qué se anuló por dentro. Los tres van juntos o van los tres nulos. */
+  annulledAt: string | null;
+  annulledByName: string | null;
+  annulReason: string | null;
   /**
    * RF-72: cuándo lo archivó una reimportación, la versión que lo reemplazó y la que
    * **este** archivó al importarse.

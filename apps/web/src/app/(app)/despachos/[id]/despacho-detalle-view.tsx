@@ -5,8 +5,8 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  LIVE_DOCUMENT_STATUSES,
   Role,
+  STANDING_DOCUMENT_STATUSES,
   TRANSFER_MODE_LABELS,
   type DispatchDto,
   type FiscalDocumentDto,
@@ -100,9 +100,10 @@ export function DespachoDetalleView({ id }: { id: string }) {
   const isLive = d.status === 'ISSUED';
   // Lista blanca por el mismo motivo que en el API (D-110): con "todas menos rechazada y
   // dada de baja", cada estado terminal nuevo entraba solo y en silencio como "la guía
-  // vigente", y nada en el diff lo habría delatado.
+  // vigente", y nada en el diff lo habría delatado. El borrador cuenta: una guía a medio
+  // emitir sigue siendo la del despacho, y el API la bloquea igual.
   const noteBlocks =
-    d.dispatchNoteStatus !== null && LIVE_DOCUMENT_STATUSES.includes(d.dispatchNoteStatus);
+    d.dispatchNoteStatus !== null && STANDING_DOCUMENT_STATUSES.includes(d.dispatchNoteStatus);
   const reverseBlockedBy = noteBlocks
     ? `la guía ${d.dispatchNoteNumber ?? ''} está vigente: dala de baja primero`
     : d.blockingDocumentNumbers.length > 0
