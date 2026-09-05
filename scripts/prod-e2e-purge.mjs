@@ -105,76 +105,9 @@ try {
   );
   console.log(`Proveedores E2E: ${e2eSupplierIds.size}`);
 
-  // -2) Órdenes de producción E2E (Fase 4, D-060). Van primero de todo: mientras una OP
-  //     tenga flejes tomados, el guardrail de D-060 bloquea la reversa de la recepción de
-  //     corte, la anulación de la bobina y la de la compra — y mientras tenga reportes
-  //     vigentes, el producto terminado conserva piezas de prueba en el inventario
-  //     valorizado (RF-51). Se deshace en el orden inverso al que se construyó: reabrir
-  //     el cierre, revertir los reportes del más nuevo al más viejo y anular la orden,
-  //     que libera los flejes sin tocar el kardex.
-  const productionOrders = await call('/production');
-  const e2eProductionOrders = (
-    Array.isArray(productionOrders.body) ? productionOrders.body : []
-  ).filter(
-    (o) =>
-      // Con separador, igual que los proveedores `E2E …`: `E2E` a secas alcanzaría a un
-      // SKU legítimo del cliente que empiece con esas tres letras, y esto corre contra
-      // producción reabriendo órdenes y revirtiendo reportes.
-      typeof o.productSku === 'string' &&
-      o.productSku.startsWith('E2E-') &&
-      o.status !== 'CANCELLED',
-  );
-  console.log(`Órdenes de producción E2E vivas: ${e2eProductionOrders.length}`);
-  for (const order of e2eProductionOrders) {
-    if (dryRun) {
-      console.log(`  [simulado] deshacer y anular la orden de producción ${order.code}`);
-      continue;
-    }
-    // D-087: las mutaciones de una orden de coberturas cuelgan de `/production/roofing`.
-    // El listado es uno solo, así que la clase la decide el `kind` de cada fila.
-    const base =
-      order.kind === 'ROOFING' ? `/production/roofing/${order.id}` : `/production/${order.id}`;
-    if (order.status === 'CLOSED') {
-      const res = await call(`${base}/reopen`, {
-        method: 'POST',
-        body: { reason: REASON },
-      });
-      console.log(
-        res.ok
-          ? `  ${order.code} reabierta`
-          : `  ${order.code} NO se pudo reabrir: ${res.body?.message ?? res.status}`,
-      );
-    }
-    const detail = await call(`/production/${order.id}`);
-    const active = (Array.isArray(detail.body?.reports) ? detail.body.reports : []).filter(
-      (r) => r.status === 'ACTIVE',
-    );
-    // Del más nuevo al más viejo: la reversa solo acepta el último reporte vigente.
-    for (const report of [...active].reverse()) {
-      const res = await call(`${base}/reports/${report.id}/reverse`, {
-        method: 'POST',
-        body: { reason: REASON },
-      });
-      console.log(
-        res.ok
-          ? `  ${order.code}: reporte de ${report.pieces} piezas revertido`
-          : `  ${order.code}: reporte de ${report.pieces} piezas NO se pudo revertir: ${res.body?.message ?? res.status}`,
-      );
-    }
-    const cancelled = await call(`${base}/cancel`, {
-      method: 'POST',
-      body: { reason: REASON },
-    });
-    console.log(
-      cancelled.ok
-        ? `  ${order.code} anulada; su material queda libre`
-        : `  ${order.code} NO se pudo anular: ${cancelled.body?.message ?? cancelled.status}`,
-    );
-  }
-
-  // -1.75) Ciclo fiscal y logístico de Fase 5b (D-072..D-075). Va **antes** de los pedidos
-  //        y después de las órdenes de producción, y el orden interno importa tanto como
-  //        el externo:
+  // -1.75) Ciclo fiscal y logístico de Fase 5b (D-072..D-075). Va **primero de todo** —
+  //        antes de las órdenes de producción y de los pedidos, ver el bloque de abajo— y
+  //        el orden interno importa tanto como el externo:
   //
   //        1. Los **cobros** primero: un comprobante con cobros vigentes no se da de baja
   //           (un documento anulado no debe nada, así que la baja dejaría dinero recibido
@@ -281,6 +214,86 @@ try {
       res.ok
         ? `  despacho ${dispatch.code} revertido; su stock vuelve al almacén`
         : `  despacho ${dispatch.code} NO se pudo revertir: ${res.body?.message ?? res.status}`,
+    );
+  }
+
+  // -1.6) Órdenes de producción E2E (Fase 4, D-060; coberturas, D-087). Mientras una OP
+  //     tenga flejes tomados, el guardrail de D-060 bloquea la reversa de la recepción de
+  //     corte, la anulación de la bobina y la de la compra — y mientras tenga reportes
+  //     vigentes, el producto terminado conserva piezas de prueba en el inventario
+  //     valorizado (RF-51). Se deshace en el orden inverso al que se construyó: reabrir
+  //     el cierre, revertir los reportes del más nuevo al más viejo y anular la orden,
+  //     que libera los flejes sin tocar el kardex.
+  //
+  //     **Va después del despacho, no primero (Fase 7b).** Hasta la Fase 7 esta pasada
+  //     abría el script, y alcanzaba mientras ningún E2E despachara un producto que la
+  //     propia purga acababa de fabricar. La primera cobertura despachada lo rompió:
+  //     `reverseReport` bloquea si el producto terminado tuvo movimientos posteriores
+  //     vivos que no sean `IN` (roofing-production.service.ts), y la salida del despacho
+  //     es exactamente eso — así que la orden quedaba **reabierta a medias**, con su
+  //     reporte vigente y sin poder anularse, y la reversa del despacho que venía después
+  //     devolvía los metros al almacén sin que nada volviera a sacarlos: saldo fantasma en
+  //     el kardex del producto terminado, que es justo el rastro que esta purga persigue.
+  //     Con el despacho ya revertido, ese `OUT` deja de estar vivo, la reserva vuelve al
+  //     producto (D-088) y reabrir → revertir el reporte → anular pasa en una sola corrida.
+  //     Sigue antes de los pedidos (-1.5): una OP viva bloquea la anulación del pedido.
+  const productionOrders = await call('/production');
+  const e2eProductionOrders = (
+    Array.isArray(productionOrders.body) ? productionOrders.body : []
+  ).filter(
+    (o) =>
+      // Con separador, igual que los proveedores `E2E …`: `E2E` a secas alcanzaría a un
+      // SKU legítimo del cliente que empiece con esas tres letras, y esto corre contra
+      // producción reabriendo órdenes y revirtiendo reportes.
+      typeof o.productSku === 'string' &&
+      o.productSku.startsWith('E2E-') &&
+      o.status !== 'CANCELLED',
+  );
+  console.log(`Órdenes de producción E2E vivas: ${e2eProductionOrders.length}`);
+  for (const order of e2eProductionOrders) {
+    if (dryRun) {
+      console.log(`  [simulado] deshacer y anular la orden de producción ${order.code}`);
+      continue;
+    }
+    // D-087: las mutaciones de una orden de coberturas cuelgan de `/production/roofing`.
+    // El listado es uno solo, así que la clase la decide el `kind` de cada fila.
+    const base =
+      order.kind === 'ROOFING' ? `/production/roofing/${order.id}` : `/production/${order.id}`;
+    if (order.status === 'CLOSED') {
+      const res = await call(`${base}/reopen`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  ${order.code} reabierta`
+          : `  ${order.code} NO se pudo reabrir: ${res.body?.message ?? res.status}`,
+      );
+    }
+    const detail = await call(`/production/${order.id}`);
+    const active = (Array.isArray(detail.body?.reports) ? detail.body.reports : []).filter(
+      (r) => r.status === 'ACTIVE',
+    );
+    // Del más nuevo al más viejo: la reversa solo acepta el último reporte vigente.
+    for (const report of [...active].reverse()) {
+      const res = await call(`${base}/reports/${report.id}/reverse`, {
+        method: 'POST',
+        body: { reason: REASON },
+      });
+      console.log(
+        res.ok
+          ? `  ${order.code}: reporte de ${report.pieces} piezas revertido`
+          : `  ${order.code}: reporte de ${report.pieces} piezas NO se pudo revertir: ${res.body?.message ?? res.status}`,
+      );
+    }
+    const cancelled = await call(`${base}/cancel`, {
+      method: 'POST',
+      body: { reason: REASON },
+    });
+    console.log(
+      cancelled.ok
+        ? `  ${order.code} anulada; su material queda libre`
+        : `  ${order.code} NO se pudo anular: ${cancelled.body?.message ?? cancelled.status}`,
     );
   }
 
