@@ -45,6 +45,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   assertCoilsNotReserved,
   consumeReservationQty,
+  releaseRemainingReservation,
   restoreReservationQty,
 } from '../sales/reservation-guard';
 import {
@@ -64,6 +65,7 @@ import {
 } from './production-shared';
 import { ProductionService } from './production.service';
 import {
+  derivePiecesPlan,
   metersFromKg,
   roofingCloseAdjustmentPen,
   roofingCloseScrap,
@@ -171,26 +173,13 @@ export class RoofingProductionService {
 
       // D-084: el plan de corte es la copia de lo que el pedido encargó. Una plancha de
       // catálogo no trae subítems (su largo está en el SKU), así que el plan se deriva de la
-      // cantidad pedida y del largo de la receta.
-      const planned = reservation.salesOrderItem.pieces.map((p, i) => ({
-        lineNumber: i + 1,
-        lengthMm: p.lengthMm.toFixed(2),
-        qty: p.qty,
-      }));
-      const items =
-        planned.length > 0
-          ? planned
-          : bom.pieceLengthMm === null
-            ? []
-            : [
-                {
-                  lineNumber: 1,
-                  lengthMm: bom.pieceLengthMm.toFixed(2),
-                  // Hacia arriba y con Decimal (D-003): con `Number(qty.toFixed(0))` el
-                  // redondeo ya había ocurrido y 2.4 planchas quedaban en 2.
-                  qty: toDecimal(reservation.salesOrderItem.qty.toString()).ceil().toNumber(),
-                },
-              ];
+      // cantidad pedida y del largo de la receta. Misma función que usa la cola de Fase 7
+      // para mostrar los mismos subítems antes de que esta OP exista (D-093).
+      const items = derivePiecesPlan(
+        reservation.salesOrderItem.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty })),
+        bom.pieceLengthMm === null ? null : bom.pieceLengthMm.toFixed(2),
+        reservation.salesOrderItem.qty.toString(),
+      );
 
       const order = await tx.productionOrder.create({
         data: {
@@ -891,6 +880,15 @@ export class RoofingProductionService {
           data: { releasedAt: closedAt },
         });
 
+        // Fase 7 (D-093, D-096): con la OP cerrada no hay más material que vaya a salir de
+        // esta reserva de bobina — lo que el pedido fabricó ya está prometido por el lado
+        // del producto (D-088). Sin esto, un pedido cuyo `reserveKg` sobreestimó lo que la
+        // corrida realmente iba a gastar —o cuya bobina montada terminó siendo otra que la
+        // reservada (D-086)— se quedaba `EN_COLA` para siempre, ya despachado y todo.
+        const releasedReservationKg = order.reservationId
+          ? await releaseRemainingReservation(tx, order.reservationId)
+          : new Decimal(0);
+
         const outputQty = reports.reduce(
           (acc, r) =>
             acc.plus(r.metersM === null ? new Decimal(r.pieces) : toDecimal(r.metersM.toString())),
@@ -962,6 +960,9 @@ export class RoofingProductionService {
             materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
             unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
             costAdjusted: adjusted,
+            releasedReservationKg: releasedReservationKg.gt(0)
+              ? toFixedString(releasedReservationKg, 'KG')
+              : null,
           },
         });
       },

@@ -7,6 +7,7 @@ import {
   thicknessWithinTolerance,
 } from '@ayr/shared';
 import {
+  derivePiecesPlan,
   metersFromKg,
   roofingCloseAdjustmentPen,
   roofingCloseScrap,
@@ -43,6 +44,33 @@ describe('roofingTheoreticalKg (D-047)', () => {
     ]);
     const angosto = roofingTheoreticalKg(coil, [{ lengthMm: '4200.00', qty: 1 }]);
     expect(ancho.gt(angosto)).toBe(true);
+  });
+});
+
+describe('derivePiecesPlan (D-084, Fase 7 D-093)', () => {
+  it('copia los subítems del pedido cuando los trae', () => {
+    const pieces = derivePiecesPlan(
+      [
+        { lengthMm: '4200.00', qty: 3 },
+        { lengthMm: '6000.00', qty: 2 },
+      ],
+      null,
+      '10.000',
+    );
+    expect(pieces).toEqual([
+      { lineNumber: 1, lengthMm: '4200.00', qty: 3 },
+      { lineNumber: 2, lengthMm: '6000.00', qty: 2 },
+    ]);
+  });
+
+  it('una plancha de catálogo sin subítems deriva un solo largo de la receta', () => {
+    const pieces = derivePiecesPlan([], '2500.00', '2.4');
+    // Hacia arriba con Decimal (D-003): 2.4 planchas pedidas son 3 planchas a producir.
+    expect(pieces).toEqual([{ lineNumber: 1, lengthMm: '2500.00', qty: 3 }]);
+  });
+
+  it('sin subítems y sin largo de receta no hay plan', () => {
+    expect(derivePiecesPlan([], null, '5.000')).toEqual([]);
   });
 });
 

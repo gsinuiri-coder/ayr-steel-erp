@@ -16,6 +16,7 @@ import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, formatQty, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
+import { QueueAdminControls } from '@/components/production-queue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -115,9 +116,13 @@ export function PedidoDetalleView({ id }: { id: string }) {
     <RoleGate allow={SALES_ROLES}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold">{o.code}</h1>
             <SalesOrderStatusBadge status={o.status} />
+            {/* RF-37 (D-093): "en cola" no es un estado del pedido, es una vista derivada. */}
+            {o.queueStatus === 'EN_COLA' && <Badge variant="outline">En cola de producción</Badge>}
+            {o.queueStatus === 'EN_PRODUCCION' && <Badge variant="secondary">En producción</Badge>}
+            {o.priority && <Badge>Prioridad</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">
             {o.customerName} · {o.customerDocNumber} · {BUSINESS_LINE_LABELS[o.businessLine]}
@@ -130,6 +135,25 @@ export function PedidoDetalleView({ id }: { id: string }) {
               </>
             )}
           </p>
+          <p className="text-sm text-muted-foreground">
+            Fecha prometida: {o.promisedDeliveryDate ? formatDate(o.promisedDeliveryDate) : 'sin fecha'}
+            {o.priority && o.priorityReason && (
+              <> · Prioridad: {o.priorityReason}{o.priorityByName ? ` — ${o.priorityByName}` : ''}</>
+            )}
+          </p>
+          {isAdmin && o.status !== 'CANCELLED' && (
+            <div className="mt-2">
+              <QueueAdminControls
+                entry={{
+                  salesOrderId: o.id,
+                  salesOrderCode: o.code,
+                  customerName: o.customerName,
+                  priority: o.priority,
+                  promisedDeliveryDate: o.promisedDeliveryDate,
+                }}
+              />
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {/*

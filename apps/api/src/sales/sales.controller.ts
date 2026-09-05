@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   cancelQuotationSchema,
   cancelSalesOrderSchema,
+  confirmQuotationSchema,
   createQuotationSchema,
   createSalesOrderSchema,
   quotationQuerySchema,
@@ -11,11 +12,15 @@ import {
   reservationQuerySchema,
   Role,
   salesOrderQuerySchema,
+  setSalesOrderPrioritySchema,
+  updatePromisedDeliveryDateSchema,
   updateQuotationSchema,
   type CancelQuotationInput,
   type CancelSalesOrderInput,
+  type ConfirmQuotationInput,
   type CreateQuotationInput,
   type CreateSalesOrderInput,
+  type ProductionQueueEntryDto,
   type QuotationDto,
   type QuotationListItemDto,
   type QuotationQuery,
@@ -27,6 +32,8 @@ import {
   type SalesOrderDto,
   type SalesOrderListItemDto,
   type SalesOrderQuery,
+  type SetSalesOrderPriorityInput,
+  type UpdatePromisedDeliveryDateInput,
   type UpdateQuotationInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -108,13 +115,17 @@ export class SalesController {
     return this.quotations.emit(actor, id);
   }
 
-  /** RF-62: confirmar crea pedido + reserva en una transacción (D-054). */
+  /**
+   * RF-62: confirmar crea pedido + reserva en una transacción (D-054).
+   * `promisedDeliveryDate` es opcional (D-096): única ventana en la que el vendedor la fija.
+   */
   @Post('quotations/:id/confirm')
   confirmQuotation(
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(confirmQuotationSchema)) body: ConfirmQuotationInput,
   ): Promise<SalesOrderDto> {
-    return this.orders.confirm(actor, id);
+    return this.orders.confirm(actor, id, body.promisedDeliveryDate);
   }
 
   /** RF-65: anular una cotización no confirmada. */
@@ -149,6 +160,17 @@ export class SalesController {
     return this.orders.findAll(query);
   }
 
+  /**
+   * La cola de producción (RF-37, D-092..D-096). **También la lee SUPERVISOR_PLANTA**, por
+   * el mismo motivo que `reservations`: es la pantalla de entrada de `/planta`. Va antes de
+   * `orders/:id` — si no, `ParseUUIDPipe` rechaza "queue" como si fuera un id.
+   */
+  @Get('orders/queue')
+  @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
+  findProductionQueue(): Promise<ProductionQueueEntryDto[]> {
+    return this.orders.findProductionQueue();
+  }
+
   @Get('orders/:id')
   findOrder(@Param('id', ParseUUIDPipe) id: string): Promise<SalesOrderDto> {
     return this.orders.findOne(id);
@@ -172,6 +194,28 @@ export class SalesController {
     @Body(new ZodValidationPipe(cancelSalesOrderSchema)) body: CancelSalesOrderInput,
   ): Promise<SalesOrderDto> {
     return this.orders.cancel(actor, id, body.reason);
+  }
+
+  /** Prioridad manual excepcional de la cola (D-094): solo ADMINISTRADOR, con motivo. */
+  @Patch('orders/:id/priority')
+  @Roles(Role.ADMINISTRADOR)
+  setOrderPriority(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(setSalesOrderPrioritySchema)) body: SetSalesOrderPriorityInput,
+  ): Promise<SalesOrderDto> {
+    return this.orders.setPriority(actor, id, body);
+  }
+
+  /** Fecha prometida, después de creado el pedido (D-096): solo ADMINISTRADOR. */
+  @Patch('orders/:id/promised-delivery-date')
+  @Roles(Role.ADMINISTRADOR)
+  setOrderPromisedDeliveryDate(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(updatePromisedDeliveryDateSchema)) body: UpdatePromisedDeliveryDateInput,
+  ): Promise<SalesOrderDto> {
+    return this.orders.setPromisedDeliveryDate(actor, id, body.promisedDeliveryDate);
   }
 
   // -------------------------------------------------------------------------

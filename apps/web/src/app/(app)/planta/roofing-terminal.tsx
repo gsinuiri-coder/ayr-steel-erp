@@ -16,7 +16,6 @@ import {
   toDecimal,
   Unit,
   type ProductionOrderDto,
-  type ReservationDto,
   type RoofingCoilOptionDto,
   type RoofingPieceDto,
 } from '@ayr/shared';
@@ -24,6 +23,7 @@ import { api, ApiError } from '@/lib/api';
 import { formatQty } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { ColorSwatch } from '@/components/colors/color-swatch';
+import { QueueEntrySummary, useProductionQueue } from '@/components/production-queue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -139,10 +139,7 @@ export function LengthEditor({
  */
 export function RoofingPickerCard({ onSelect }: { onSelect: (id: string) => void }) {
   const queryClient = useQueryClient();
-  const reservations = useQuery({
-    queryKey: ['reservations', 'ACTIVE'],
-    queryFn: () => api<ReservationDto[]>('/sales/reservations?status=ACTIVE'),
-  });
+  const queue = useProductionQueue();
 
   const create = useMutation({
     mutationFn: (reservationId: string) =>
@@ -153,17 +150,14 @@ export function RoofingPickerCard({ onSelect }: { onSelect: (id: string) => void
     onSuccess: (order) => {
       toast.success(`Orden ${order.code} creada con el plan de corte del pedido`);
       invalidateProduction(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['production-queue'] });
       onSelect(order.id);
     },
     onError: (err) =>
       toast.error(err instanceof ApiError ? err.message : 'No se pudo crear la orden'),
   });
 
-  // Solo las que prometen material de una bobina: una línea atendida con stock no tiene
-  // nada que fabricar, y el API la rechaza por el mismo motivo.
-  const pending = (reservations.data ?? []).filter(
-    (r) => r.itemType === 'COIL' && r.productionOrderId === null,
-  );
+  const pending = queue.data ?? [];
 
   return (
     <Card>
@@ -172,39 +166,34 @@ export function RoofingPickerCard({ onSelect }: { onSelect: (id: string) => void
       </CardHeader>
       <CardContent className="grid gap-3">
         <p className="text-sm text-muted-foreground">
-          Una orden de coberturas nace del pedido y copia sus largos como plan de corte, que puedes
-          ajustar antes y durante la corrida (RF-31, D-084).
+          La cola ordena prioridad, luego semáforo de fecha prometida y luego el pedido más
+          antiguo (RF-37, D-094). Una orden de coberturas nace del pedido y copia sus largos
+          como plan de corte, que puedes ajustar antes y durante la corrida (RF-31, D-084).
         </p>
-        {reservations.isPending && <Skeleton className="h-16 w-full" />}
-        {reservations.isError && (
+        {queue.isPending && <Skeleton className="h-16 w-full" />}
+        {queue.isError && (
           <p className="text-sm text-destructive">No se pudieron cargar los pedidos pendientes.</p>
         )}
-        {reservations.isSuccess && pending.length === 0 && (
+        {queue.isSuccess && pending.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No hay pedidos de coberturas esperando producción.
           </p>
         )}
-        {pending.map((r) => (
+        {pending.map((entry) => (
           <div
-            key={r.id}
+            key={entry.reservationId}
             className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
           >
-            <div>
-              <div className="font-mono font-medium">{r.salesOrderCode}</div>
-              <div className="text-sm">{r.customerName}</div>
-              <div className="text-xs text-muted-foreground">
-                {r.itemName} · reserva {formatQty(r.qty, r.unit)} de {r.itemLabel}
-              </div>
-            </div>
+            <QueueEntrySummary entry={entry} />
             <Button
               className="h-12"
-              aria-label={`Crear la orden del pedido ${r.salesOrderCode}`}
+              aria-label={`Iniciar producción del pedido ${entry.salesOrderCode}`}
               disabled={create.isPending}
               onClick={() => {
-                create.mutate(r.id);
+                create.mutate(entry.reservationId);
               }}
             >
-              Crear orden
+              Iniciar producción
             </Button>
           </div>
         ))}

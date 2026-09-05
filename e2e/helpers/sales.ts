@@ -87,6 +87,83 @@ export interface SalesOrderDto {
   totalPen: string;
   items: SalesItemDto[];
   reservations: ReservationDto[];
+  /** Fase 7 (D-092..D-096): entrada del vendedor al confirmar, editable después por ADMINISTRADOR. */
+  promisedDeliveryDate: string | null;
+  /** Prioridad manual excepcional de la cola (D-094). */
+  priority: boolean;
+  priorityReason: string | null;
+  priorityByName: string | null;
+  /** `null` cuando el pedido no tiene nada que fabricar contra el pedido, o ya salió de la cola. */
+  queueStatus: 'EN_COLA' | 'EN_PRODUCCION' | null;
+}
+
+/** Una fila de la cola de producción (RF-37, D-092..D-096): `GET /sales/orders/queue`. */
+export interface ProductionQueueEntryDto {
+  salesOrderId: string;
+  salesOrderCode: string;
+  salesOrderItemId: string;
+  reservationId: string;
+  customerName: string;
+  productId: string;
+  productSku: string;
+  productName: string;
+  pieces: { lineNumber: number; lengthMm: string; qty: number }[];
+  theoreticalKg: string | null;
+  promisedDeliveryDate: string | null;
+  semaphore: 'VENCIDO' | 'PROXIMO' | 'A_TIEMPO' | 'SIN_FECHA';
+  createdAt: string;
+  priority: boolean;
+  priorityAt: string | null;
+  priorityByName: string | null;
+  priorityReason: string | null;
+}
+
+/** La cola de producción (RF-37): pedidos con reserva de bobina activa y sin OP viva. */
+export async function queueOf(api: APIRequestContext): Promise<ProductionQueueEntryDto[]> {
+  return getJson<ProductionQueueEntryDto[]>(api, '/api/sales/orders/queue');
+}
+
+/** Prioridad manual excepcional de la cola (D-094): motivo obligatorio en los dos sentidos. */
+export async function setPriority(
+  api: APIRequestContext,
+  orderId: string,
+  input: { priority: boolean; reason: string },
+): Promise<SalesOrderDto> {
+  const res = await api.patch(`/api/sales/orders/${orderId}/priority`, { data: input });
+  if (!res.ok()) {
+    throw new Error(`PATCH orders/${orderId}/priority falló: ${res.status()} ${await res.text()}`);
+  }
+  return (await res.json()) as SalesOrderDto;
+}
+
+/** Fecha prometida después de creado el pedido (D-096): solo ADMINISTRADOR. `null` la borra. */
+export async function setPromisedDeliveryDate(
+  api: APIRequestContext,
+  orderId: string,
+  promisedDeliveryDate: string | null,
+): Promise<SalesOrderDto> {
+  const res = await api.patch(`/api/sales/orders/${orderId}/promised-delivery-date`, {
+    data: { promisedDeliveryDate },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `PATCH orders/${orderId}/promised-delivery-date falló: ${res.status()} ${await res.text()}`,
+    );
+  }
+  return (await res.json()) as SalesOrderDto;
+}
+
+/** Igual que `postExpectingError`, pero para los `PATCH` de la cola. */
+export async function patchExpectingError(
+  api: APIRequestContext,
+  path: string,
+  data: unknown,
+): Promise<{ status: number; message: string }> {
+  const res = await api.patch(path, { data });
+  expect(res.ok(), `PATCH ${path} debía fallar y devolvió ${res.status()}`).toBe(false);
+  const body = (await res.json()) as { message?: string | string[] };
+  const message = Array.isArray(body.message) ? body.message.join(', ') : (body.message ?? '');
+  return { status: res.status(), message };
 }
 
 export interface DocumentLookupDto {

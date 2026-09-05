@@ -164,6 +164,44 @@ export async function assertNotReserved(
  * el guardrail de D-060: el fleje está asignado a esa OP y ninguna otra operación lo puede
  * tocar mientras la orden viva. La promesa no queda desprotegida, cambia de custodio.
  */
+/**
+ * Libera lo que quedó de una reserva de bobina cuando la producción que la sostenía terminó
+ * (Fase 7, D-093/D-096 dependen de esto: si no, el pedido nunca sale de la cola).
+ *
+ * **No es la liberación manual de D-054** —no hay un ADMINISTRADOR decidiendo soltar
+ * material, ni motivo que registrar en ese sentido— es el cierre de la OP diciendo que ya
+ * no necesita más de esa bobina. Puede haber sobrante por dos motivos, y a los dos les pasa
+ * lo mismo: el vendedor reservó más kilos de los que la corrida terminó necesitando, o
+ * planta roló una bobina distinta a la reservada (D-086 lo permite; en ese caso la reserva
+ * original nunca se tocó y esto la libera entera). El pedido sigue prometido por el lado
+ * del producto terminado que la OP ya fabricó (D-088); esta reserva de materia prima ya no
+ * protege nada.
+ *
+ * Se usa `RELEASED` y no `CONSUMED`: nada de esta bobina se volvió producto por esta vía,
+ * así que "consumida" describiría un hecho que no ocurrió. Es deliberadamente irreversible
+ * —`restoreReservationQty` ya rechaza restaurar una reserva `RELEASED`— porque no hay
+ * ninguna reversa de este cierre que necesite el kilo de vuelta: reabrir la orden no
+ * depende de esta reserva para nada (el material que reabrir necesita es el que las bobinas
+ * montadas todavía tienen, no una promesa comercial).
+ */
+export async function releaseRemainingReservation(
+  tx: Prisma.TransactionClient,
+  reservationId: string,
+): Promise<Decimal> {
+  const reservation = await tx.reservation.findUnique({
+    where: { id: reservationId },
+    select: { id: true, status: true, qty: true },
+  });
+  if (reservation?.status !== ReservationStatus.ACTIVE) return new Decimal(0);
+  const remaining = toDecimal(reservation.qty.toString());
+  if (remaining.lte(0)) return new Decimal(0);
+  await tx.reservation.updateMany({
+    where: { id: reservationId, status: ReservationStatus.ACTIVE },
+    data: { qty: '0', status: ReservationStatus.RELEASED, releasedAt: new Date() },
+  });
+  return remaining;
+}
+
 export async function markReservationConsumed(
   tx: Prisma.TransactionClient,
   reservationId: string,

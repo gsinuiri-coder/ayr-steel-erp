@@ -1058,3 +1058,116 @@ Queda dicho —y esto es lo que importa para la sesión que algún día lo neces
 producción de UPVC entraría como otro `kind` de la OP de D-087, no como una entidad nueva:
 la lección de D-051 es que el hueco que se deja para después cuesta una sesión entera y deja
 residuos en producción mientras tanto.
+
+---
+
+## D-092..D-096 — Fase 7 (cola de producción sobre coberturas contra pedido)
+
+§0.2 tiene la decisión y el motivo de cada una. Acá va el porqué de la parte que no cabe en
+una fila: la trampa de RF-73 sobre la señal "necesita producción", y por qué la cola no es
+una tabla.
+
+### La señal correcta no es "reservó una bobina" (D-093)
+
+La lectura obvia de "pedidos esperando producción" es filtrar reservas activas con
+`itemType = COIL`. Es la que ya usaba `RoofingPickerCard` en el web desde Fase 6, como
+solución provisional. Es **incorrecta** en presencia de RF-73 (D-037): la venta directa de
+bobina —un cliente que compra el rollo tal cual, sin rolarlo— también reserva sobre
+`itemType = COIL`, y esa línea no tiene nada que fabricar. Con el filtro ingenuo, cada venta
+de bobina suelta habría aparecido en la cola de planta como un pedido de cobertura pendiente,
+y nadie en planta tenía forma de distinguir uno de otro sin abrir el pedido.
+
+La sesión de Fase 6 ya se había topado con la misma ambigüedad del otro lado —el
+despacho— y la resolvió en `resolveDispatchTarget` (`apps/api/src/sales/reservation-transfer.ts`,
+D-088) contando recetas activas del producto: si `productBom.count({ productId, isActive: true }) > 0`,
+la línea se fabrica contra el pedido, tenga o no subítems de largo (una plancha de catálogo
+fabricada contra pedido es una línea simple, sin `pieces`). La cola reusa exactamente esa
+función — no una copia con la misma idea escrita dos veces — así que el día que la trampa se
+corrija o se afine, se corrige en un solo lugar y ambos consumidores lo heredan.
+
+### Por qué no hay tabla `production_queue` (D-093)
+
+El estado de un pedido frente a la cola —`EN_COLA`, `EN_PRODUCCION`, o fuera de ella— es una
+función pura de tres hechos que ya se persisten: si existe una reserva `ACTIVE` de tipo
+`COIL` sobre un producto con receta, y si esa reserva tiene o no una OP `DRAFT`/`IN_PROGRESS`
+colgando. Guardarlo en una columna nueva del pedido habría creado una máquina de estados
+paralela a la que ya gobierna `Reservation.status` y `ProductionOrder.status`, con el riesgo
+real de que ambas se desincronicen — exactamente el motivo por el que D-054 puso la reserva
+en un ledger propio y no en una columna de `sales_order_items`. Anular la OP no necesita
+"devolver el pedido a la cola": el pedido nunca salió de ningún lado, solo dejó de tener una
+OP viva y la próxima lectura de la cola lo vuelve a mostrar, sin código nuevo.
+
+### Prioridad y fecha prometida, guardadas en el pedido y no solo en el audit_log (D-094, D-096)
+
+`priorityAt`/`priorityById`/`priorityReason` y `promisedDeliveryDate` viven como columnas de
+`sales_orders`, con el mismo patrón que `cancelledById`/`cancelledAt`: el pedido cachea el
+último valor vigente para poder ordenar y filtrar con una consulta simple, y `audit_log`
+seguirá siendo, por RF-95, el registro de que ese valor cambió, cuándo y por qué. Ninguna de
+las dos reemplaza a la otra.
+
+---
+
+## D-097 — El saldo de la reserva de bobina que sobra al cerrar una OP de coberturas
+
+§0.2 tiene la decisión y el motivo. Acá va el porqué de la parte que no cabe en una fila:
+por qué `RELEASED` y no `CONSUMED`, y por qué no se le pidió nada a `reopen()`.
+
+### El hueco, en la forma exacta en que `revisor` lo encontró
+
+`SalesOrdersService.findProductionQueue()` reusa la señal de "se fabrica contra el pedido"
+de `resolveDispatchTarget` (D-088): reserva `ACTIVE` de tipo `COIL` sobre un producto con
+receta. Es correcta para decidir **si** un pedido entra a la cola. No alcanza para decidir
+**cuándo sale**, porque nada en el ciclo de vida de una OP de coberturas garantiza que esa
+reserva llegue alguna vez a `qty = 0`:
+
+- `report()` descuenta de la reserva los kilos teóricos, pero **solo si la bobina rolada es
+  la reservada** (`consumedFromReservedCoil`, D-086 permite rolar cualquier bobina del mismo
+  color y espesor). Si planta monta otra, la reserva original no se toca nunca.
+- `close()` descuenta el despunte de la misma forma condicional, y **solo hasta
+  `consumedKg`** — que por defecto es exactamente lo reportado, merma cero. Si el vendedor
+  reservó más kilos de los que la corrida terminó gastando (el caso normal: se reserva con
+  margen), la diferencia queda sin dueño.
+
+El resultado: un pedido despachado entero, con su OP cerrada hace semanas, seguía
+apareciendo `EN_COLA` en `/planta`, `/produccion` y el indicador de RF-38, porque la única
+condición que la cola mira —reserva de bobina `ACTIVE`— seguía siendo cierta.
+
+### Por qué `RELEASED` y no `CONSUMED`
+
+`consumeReservationQty`/`markReservationConsumed` narran "esto se convirtió en producto".
+El saldo que sobra no se convirtió en nada — es exactamente lo contrario, kilos que nunca
+salieron de la bobina para esta corrida. Marcarlo `CONSUMED` habría sido una mentira append-
+only: la fila describiría un hecho que no ocurrió. `RELEASED` es el estado que el proyecto ya
+usa para "esto dejó de estar prometido sin haberse ido" (D-054), y es exactamente eso.
+
+La consecuencia de elegir bien: `restoreReservationQty` ya rechaza restaurar una reserva
+`RELEASED` (`if (status === RELEASED) return false`), a propósito, porque D-054 trata liberar
+como un acto deliberado y final. Si `releaseRemainingReservation` hubiera usado `CONSUMED`,
+una futura reversa habría podido "restaurar" kilos que jamás se habían ido — otra vez una
+mentira, esta vez en sentido contrario.
+
+### Por qué `reopen()` no necesita saber nada de esto
+
+`reopen()` deshace el kardex que `close()` escribió (la salida de merma, el ajuste de costo)
+y devuelve la orden a `IN_PROGRESS`. Nada de lo que reabrir necesita depende de la reserva
+de bobina: el material que vuelve a estar disponible para seguir cortando es el que las
+bobinas montadas todavía tienen asignado (`productionOrderConsumption`), no una promesa
+comercial. Pedirle a `reopen()` que restaure el saldo liberado habría exigido guardar cuánto
+se liberó —un dato nuevo, para un caso que no lo necesita— y la propia elección de `RELEASED`
+ya lo bloquea del lado del guardrail. Si algún día reabrir una orden necesitara volver a
+prometer ese kilo, sería una reserva **nueva**, no la resurrección de una que ya se cerró.
+
+### El filtro de `kind` en la señal de la cola
+
+Separado del hueco anterior, pero encontrado en la misma revisión: `resolveSalesLines` no
+impide que una línea de **cualquier** línea de negocio reserve una bobina (`reserveFromCoilId`)
+si esa bobina pertenece a su misma línea de negocio — no exige que el producto sea de
+Metallic Roofing. Un producto `DRYWALL` con receta activa que, por la vía que sea, terminara
+con una reserva de tipo `COIL` habría entrado a la cola de coberturas y se le habría aplicado
+`roofingTheoreticalKg`/`derivePiecesPlan` con la receta y la geometría equivocadas. D-092 ya
+decía "v1 es solo Metallic Roofing"; el filtro de `kind: ROOFING` en el `where` de
+`productBom.findMany` de `findProductionQueue`/`computeQueueStatus` lo hace cierto en el
+código y no solo en la intención. No se tocó `resolveDispatchTarget` (Fase 6, con 101 E2E en
+producción): el mismo hueco teórico existe ahí, pero es una ruta ya probada y en producción,
+y extender el alcance de esta sesión a auditar el despacho completo habría sido el tipo de
+scope creep que el dueño pidió evitar explícitamente.

@@ -362,12 +362,91 @@ export type QuotationQuery = z.infer<typeof quotationQuerySchema>;
  * Pedido directo, sin cotización previa (D-065). Solo se admite en líneas cuya cotización
  * es **opcional**; en las que la exigen (coberturas, RF-31) el API lo rechaza.
  */
-export const createSalesOrderSchema = createQuotationSchema.omit({ validityDays: true });
+export const createSalesOrderSchema = createQuotationSchema
+  .omit({ validityDays: true })
+  .extend({ promisedDeliveryDate: isoDateSchema.optional() });
 export type CreateSalesOrderInput = z.infer<typeof createSalesOrderSchema>;
+
+/**
+ * Confirmar una cotización (RF-62). `promisedDeliveryDate` es la única entrada del vendedor:
+ * D-096 solo la deja fijar en el acto de crear el pedido — antes no hay dónde guardarla (la
+ * cotización no es un pedido) y después es de ADMINISTRADOR (`updatePromisedDeliveryDateSchema`).
+ */
+export const confirmQuotationSchema = z.object({
+  promisedDeliveryDate: isoDateSchema.optional(),
+});
+export type ConfirmQuotationInput = z.infer<typeof confirmQuotationSchema>;
 
 /** Anular un pedido: libera sus reservas activas (D-066). Motivo obligatorio. */
 export const cancelSalesOrderSchema = z.object({ reason: reasonSchema });
 export type CancelSalesOrderInput = z.infer<typeof cancelSalesOrderSchema>;
+
+// --------------------------------------------------------------------------
+// Fase 7 — cola de producción (RF-37, RF-38; D-092..D-096)
+// --------------------------------------------------------------------------
+
+/** Prioridad manual excepcional de la cola (D-094): motivo obligatorio en los dos sentidos. */
+export const setSalesOrderPrioritySchema = z.object({
+  priority: z.boolean(),
+  reason: reasonSchema,
+});
+export type SetSalesOrderPriorityInput = z.infer<typeof setSalesOrderPrioritySchema>;
+
+/** Solo ADMINISTRADOR, y solo después de que el pedido existe (D-096). `null` la borra. */
+export const updatePromisedDeliveryDateSchema = z.object({
+  promisedDeliveryDate: isoDateSchema.nullable(),
+});
+export type UpdatePromisedDeliveryDateInput = z.infer<typeof updatePromisedDeliveryDateSchema>;
+
+export const QUEUE_SEMAPHORES = ['VENCIDO', 'PROXIMO', 'A_TIEMPO', 'SIN_FECHA'] as const;
+export type QueueSemaphore = (typeof QUEUE_SEMAPHORES)[number];
+
+/**
+ * Semáforo de `fechaEntregaPrometida` (D-096). `PROXIMO` es hoy o mañana: la fecha es una
+ * columna `DATE` sin hora, así que "menos de 48 h" solo se puede aproximar por calendario.
+ * Siempre contra `businessToday()` (D-069) — nunca contra UTC.
+ */
+export function queueSemaphore(
+  promisedDeliveryDate: string | null,
+  today: string = businessToday(),
+): QueueSemaphore {
+  if (promisedDeliveryDate === null) return 'SIN_FECHA';
+  if (promisedDeliveryDate < today) return 'VENCIDO';
+  const tomorrow = new Date(`${today}T00:00:00.000Z`);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  return promisedDeliveryDate <= tomorrow.toISOString().slice(0, 10) ? 'PROXIMO' : 'A_TIEMPO';
+}
+
+export const QUEUE_STATUSES = ['EN_COLA', 'EN_PRODUCCION'] as const;
+export type QueueStatus = (typeof QUEUE_STATUSES)[number];
+
+/**
+ * Una fila de la cola (D-093): pedido confirmado, con reserva de bobina activa sobre un
+ * producto que se fabrica contra el pedido, y sin OP viva todavía. No es una tabla — se
+ * recalcula en cada lectura a partir de `Reservation` + `ProductionOrder`.
+ */
+export const productionQueueEntrySchema = z.object({
+  salesOrderId: z.string().uuid(),
+  salesOrderCode: z.string(),
+  salesOrderItemId: z.string().uuid(),
+  reservationId: z.string().uuid(),
+  customerName: z.string(),
+  productId: z.string().uuid(),
+  productSku: z.string(),
+  productName: z.string(),
+  /** Subítems (cantidad × largo), copiados o derivados igual que `create()` de la OP (D-084). */
+  pieces: z.array(roofingPieceSchema),
+  /** Kilos teóricos con la geometría de la bobina reservada al cotizar. `null` si esa bobina ya no existe. */
+  theoreticalKg: z.string().nullable(),
+  promisedDeliveryDate: z.string().nullable(),
+  semaphore: z.enum(QUEUE_SEMAPHORES),
+  createdAt: z.string(),
+  priority: z.boolean(),
+  priorityAt: z.string().nullable(),
+  priorityByName: z.string().nullable(),
+  priorityReason: z.string().nullable(),
+});
+export type ProductionQueueEntryDto = z.infer<typeof productionQueueEntrySchema>;
 
 export const salesOrderSchema = z.object({
   id: z.string().uuid(),
@@ -390,11 +469,20 @@ export const salesOrderSchema = z.object({
   createdAt: z.string(),
   createdByName: z.string().nullable(),
   cancelledAt: z.string().nullable(),
+  promisedDeliveryDate: z.string().nullable(),
+  priority: z.boolean(),
+  priorityReason: z.string().nullable(),
+  priorityByName: z.string().nullable(),
+  /** `null` cuando el pedido no tiene nada que fabricar, o ya dejó la cola (D-093). */
+  queueStatus: z.enum(QUEUE_STATUSES).nullable(),
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 
 export const salesOrderListItemSchema = salesOrderSchema
-  .omit({ items: true, reservations: true })
+  // `queueStatus` exige leer reservas + su OP viva por pedido (D-093); el listado solo
+  // cuenta reservas activas (`activeReservations`) para no pagar ese costo por fila. La
+  // cola en sí (`GET /sales/orders/queue`) es la vista barata para eso.
+  .omit({ items: true, reservations: true, queueStatus: true })
   .extend({
     itemCount: z.number().int(),
     activeReservations: z.number().int(),

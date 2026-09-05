@@ -2,6 +2,7 @@ import {
   DEFAULT_QUOTATION_VALIDITY_DAYS,
   defaultValidUntil,
   IGV_RATE_PCT,
+  queueSemaphore,
   salesLineTotals,
   salesTotals,
 } from '@ayr/shared';
@@ -119,5 +120,30 @@ describe('defaultValidUntil (D-069)', () => {
 
   it('un año bisiesto suma el 29 de febrero', () => {
     expect(defaultValidUntil('2028-02-27', 3)).toBe('2028-03-01');
+  });
+});
+
+describe('queueSemaphore (D-096)', () => {
+  const today = '2026-09-10';
+
+  it('sin fecha prometida, sin fecha', () => {
+    expect(queueSemaphore(null, today)).toBe('SIN_FECHA');
+  });
+
+  it('una fecha pasada está vencida', () => {
+    expect(queueSemaphore('2026-09-09', today)).toBe('VENCIDO');
+  });
+
+  it('hoy o mañana es próximo: el proxy de calendario de "menos de 48 h"', () => {
+    expect(queueSemaphore('2026-09-10', today)).toBe('PROXIMO');
+    expect(queueSemaphore('2026-09-11', today)).toBe('PROXIMO');
+  });
+
+  it('pasado mañana en adelante está a tiempo', () => {
+    expect(queueSemaphore('2026-09-12', today)).toBe('A_TIEMPO');
+  });
+
+  it('cruza el fin de mes sin desbordar', () => {
+    expect(queueSemaphore('2026-10-01', '2026-09-30')).toBe('PROXIMO');
   });
 });

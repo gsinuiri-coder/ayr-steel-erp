@@ -42,6 +42,32 @@ export function roofingTheoreticalKg(
 }
 
 /**
+ * El plan de corte de una OP de coberturas: los largos que el pedido encargó, o —si la
+ * línea es una plancha de catálogo sin subítems— un solo largo derivado de la receta y la
+ * cantidad pedida (D-084). La usan tanto `create()` al nacer la OP como la cola de Fase 7
+ * (D-093) para mostrar los mismos subítems antes de que la OP exista.
+ */
+export function derivePiecesPlan(
+  pieces: readonly PieceLike[],
+  bomPieceLengthMm: string | null,
+  qty: string,
+): (PieceLike & { lineNumber: number })[] {
+  if (pieces.length > 0) {
+    return pieces.map((p, i) => ({ lineNumber: i + 1, lengthMm: p.lengthMm, qty: p.qty }));
+  }
+  if (bomPieceLengthMm === null) return [];
+  return [
+    {
+      lineNumber: 1,
+      lengthMm: bomPieceLengthMm,
+      // Hacia arriba y con Decimal (D-003): con `Number(qty.toFixed(0))` el redondeo ya
+      // había ocurrido y 2.4 planchas quedaban en 2.
+      qty: toDecimal(qty).ceil().toNumber(),
+    },
+  ];
+}
+
+/**
  * Metros que salen de un saldo de kilos con esa geometría: lo que planta necesita ver.
  *
  * El kilo por metro se calcula **sin redondear** y recién el resultado se lleva a escala:

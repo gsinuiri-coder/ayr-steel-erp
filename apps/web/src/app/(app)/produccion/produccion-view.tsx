@@ -15,9 +15,12 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoneyOrDash, formatQty } from '@/lib/format';
+import { QueueAdminControls, QueueEntrySummary, useProductionQueue } from '@/components/production-queue';
 import { RoleGate } from '@/components/role-gate';
+import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -53,8 +56,10 @@ const STATUS_VARIANT: Record<ProductionOrderStatus, 'default' | 'secondary' | 'o
  * fila y con el filtro.
  */
 export function ProduccionView() {
+  const { user } = useSession();
   const [status, setStatus] = useState<ProductionOrderStatus | typeof ALL>(ALL);
   const [kind, setKind] = useState<ProductionOrderKind | typeof ALL>(ALL);
+  const queue = useProductionQueue();
 
   const params = new URLSearchParams();
   if (status !== ALL) params.set('status', status);
@@ -84,6 +89,38 @@ export function ProduccionView() {
           <Link href="/planta">Ir a la terminal de planta</Link>
         </Button>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cola de producción (RF-37)</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <p className="text-sm text-muted-foreground">
+            Pedidos de coberturas contra pedido esperando producción, en el mismo orden que
+            `/planta` (prioridad, semáforo de fecha prometida, luego el más antiguo — D-094).
+            {user.role === Role.ADMINISTRADOR &&
+              ' Solo ADMINISTRADOR puede priorizar o cambiar la fecha prometida.'}
+          </p>
+          {queue.isPending && <Skeleton className="h-16 w-full" />}
+          {queue.isError && (
+            <p className="text-sm text-destructive">No se pudo cargar la cola de producción.</p>
+          )}
+          {queue.isSuccess && queue.data.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No hay pedidos de coberturas esperando producción.
+            </p>
+          )}
+          {queue.data?.map((entry) => (
+            <div
+              key={entry.reservationId}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+            >
+              <QueueEntrySummary entry={entry} />
+              {user.role === Role.ADMINISTRADOR && <QueueAdminControls entry={entry} />}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       <div className="flex flex-wrap items-center gap-3">
         <Select

@@ -1,4 +1,4 @@
-import { Decimal, type Currency } from '@ayr/shared';
+import { BUSINESS_TIME_ZONE, businessToday, Decimal, type Currency } from '@ayr/shared';
 
 /**
  * Formateo para mostrar. Los valores llegan del API como string con su escala fija
@@ -73,6 +73,27 @@ export function todayIso(): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/**
+ * Edad en la cola de producción (D-093), en días calendario **de Lima** (D-069) y no en
+ * milisegundos: contar por `Date.now() - createdAt` corre el riesgo del mismo desfase que
+ * `businessToday` existe para evitar, cerca de la medianoche local.
+ */
+export function queueAgeLabel(createdAtIso: string): string {
+  const createdDay = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(createdAtIso));
+  const days = Math.round(
+    (Date.parse(`${businessToday()}T00:00:00.000Z`) - Date.parse(`${createdDay}T00:00:00.000Z`)) /
+      86_400_000,
+  );
+  if (days <= 0) return 'hoy';
+  if (days === 1) return '1 día';
+  return `${days} días`;
 }
 
 /** `true` si la cadena es un decimal válido y positivo, para no mandar basura al API. */

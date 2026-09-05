@@ -231,6 +231,8 @@ export async function quoteAndOrder(
     reserveKg: string;
     rows: { lengthMm: string; qty: number }[];
     unitPricePen?: string;
+    /** Fase 7 (D-096): única ventana en la que el vendedor la fija, en la confirmación. */
+    promisedDeliveryDate?: string;
   },
 ): Promise<{ quotation: QuotationDto; order: SalesOrderDto }> {
   const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
@@ -249,7 +251,13 @@ export async function quoteAndOrder(
     ],
   });
   await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
-  const order = await postJson<SalesOrderDto>(api, `/api/sales/quotations/${quotation.id}/confirm`);
+  // `confirmQuotationSchema` (Fase 7) valida un objeto; `ZodValidationPipe` trata un body
+  // ausente como `{}`, así que esto funciona con o sin `promisedDeliveryDate`.
+  const order = await postJson<SalesOrderDto>(
+    api,
+    `/api/sales/quotations/${quotation.id}/confirm`,
+    { promisedDeliveryDate: input.promisedDeliveryDate },
+  );
   return { quotation, order };
 }
 

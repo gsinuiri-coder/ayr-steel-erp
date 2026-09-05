@@ -7,7 +7,12 @@ export class ZodValidationPipe<T extends ZodTypeAny> implements PipeTransform<un
   constructor(private readonly schema: T) {}
 
   transform(value: unknown): z.infer<T> {
-    const result = this.schema.safeParse(value);
+    // Un POST/PATCH sin cuerpo llega acá como `undefined` (Express no parsea nada sin
+    // `Content-Type: application/json`, y el cliente del web no lo manda cuando `body` es
+    // `undefined`). Para un schema con todos los campos opcionales eso es exactamente `{}`;
+    // para uno con campos obligatorios, sigue fallando la validación como antes, solo que
+    // con el error por campo en vez del genérico `_form: ["Required"]`.
+    const result = this.schema.safeParse(value ?? {});
     if (!result.success) {
       const flat = result.error.flatten();
       throw new BadRequestException({

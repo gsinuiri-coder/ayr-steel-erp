@@ -15,8 +15,8 @@
 | 4 — Producción drywall + `/planta`                     | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho                        |
 | 5a — Cotización → pedido + reserva                     | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho                        |
 | 5b — Facturación, GRE, despacho y cobranza             | ✅ Cerrada (2026-09-04) | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho |
-| 6 — Producción de coberturas + color                   | 🟡 En curso             | —                                                                      |
-| 7 — Cola, punto de venta e importación de comprobantes | ⚪ Pendiente            | —                                                                      |
+| 6 — Producción de coberturas + color                   | ✅ Cerrada (2026-09-05) | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros   |
+| 7 — Cola, punto de venta e importación de comprobantes | 🟡 En curso (2026-09-05) | Cola de producción cerrada: 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros, deploy de API hecho (web pendiente: token de Vercel vencido). Faltan RF-60 (POS) y RF-71/72 (importación) |
 | 8 — Auditoría, reportes, UAT                           | ⚪ Pendiente            | —                                                                      |
 
 ## Fase 0 — detalle
@@ -831,6 +831,48 @@ el panel de Nubefact— y una corrida completa gasta unos veinte. Esta sesión c
 varias veces mientras se aplicaban las correcciones de la revisión, así que el cupo se agotó.
 **No bloquea el cierre**: `e2e:prod` no emite nunca (D-081 fuerza `E2E_FISCAL_EMISSION=0`).
 
+## Fase 7 — detalle (cola de producción; POS e importación quedan pendientes)
+
+| #   | Entregable                                                                     | Estado                                                                                     |
+| --- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 1   | Cola derivada (D-092, D-093): `GET /sales/orders/queue`, sin tabla nueva        | ✅ reusa `resolveDispatchTarget` (D-088) + filtro `kind=ROOFING`                              |
+| 2   | Prioridad manual + fecha prometida (D-094, D-096)                              | ✅ 4 columnas en `sales_orders`, `PATCH .../priority`, `PATCH .../promised-delivery-date`     |
+| 3   | Semáforo VENCIDO/PROXIMO/A_TIEMPO/SIN_FECHA                                    | ✅ `queueSemaphore()` en `@ayr/shared`, sobre `businessToday()` (D-069)                       |
+| 4   | `/planta` como entrada (D-095), `/produccion` admin, badge en `/pedidos/[id]`  | ✅ `RoofingPickerCard` reescrita, `QueueEntrySummary`/`QueueAdminControls` compartidos         |
+| 5   | Indicador RF-38 en el menú lateral                                              | ✅ badge en "Terminal de planta" con el conteo de la cola                                     |
+| 6   | E2E: los 6 escenarios exigidos + 2 de borde                                    | ✅ `fase7.spec.ts` (7 tests), `fase7-bordes.spec.ts` (2 tests)                                |
+| 7   | `pnpm turbo lint typecheck test build`                                         | ✅ verde                                                                                      |
+| 8   | Migración de mano + `db:prod`                                                 | ✅ `20260905090000_fase7_cola_prioridad_fecha_prometida`, aplicada en `dev` y `production`     |
+| 9   | Revisión: `revisor` + `auditor-seguridad` en paralelo                         | ✅ 1 ALTO (reserva de bobina que sobraba, corregido), 1 MEDIO (filtro `kind`, corregido), 1 BAJO (auditoría antes/después, corregido) |
+| 10  | E2E contra producción + purga                                                  | ✅ 110/110 (13 saltados por D-081), purga sin rastros tras remediar un residuo de la propia purga (ver nota) |
+| 11  | Deploy                                                                         | 🟡 API en Cloud Run hecho; **web pendiente** — token del CLI de Vercel vencido, requiere `vercel login` |
+
+### Hallazgo del revisor: la reserva de bobina que nunca se drenaba (D-097)
+
+`reserveKg` es una estimación del vendedor; casi nunca coincide con lo que la corrida termina
+gastando, y D-086 permite rolar una bobina distinta a la reservada. En los dos casos, la
+reserva de materia prima quedaba `ACTIVE` con saldo para siempre —el pedido no salía nunca de
+la cola, ni despachado entero—, porque nada en `report()`/`close()` la drena si no coincide
+exacto. `close()` ahora libera ese saldo (`releaseRemainingReservation`, `RELEASED` y no
+`CONSUMED`: nada de esa bobina se volvió producto). Deliberadamente sin reversa en `reopen()`
+— reabrir no depende de esa reserva. Detalle completo en `docs/DECISIONES.md` §D-097.
+
+### Un hueco que la purga de producción destapó, no de la aplicación
+
+`pnpm prod:purge-e2e` revierte cualquier despacho E2E "para devolver su stock al almacén"
+(línea ~266 de `scripts/prod-e2e-purge.mjs`), sin distinguir si el ítem despachado es materia
+prima (donde eso libera algo que otra limpieza necesita) o un **producto terminado de SKU
+único de un solo test**, que nunca se vuelve a usar. Revertir el despacho de una cobertura ya
+cerrada reabre en cadena una ventana en la que la orden de producción puede terminar
+reabierta (`IN_PROGRESS`) sin que su reporte se revierta, dejando el kardex del producto con
+saldo fantasma. Esta sesión lo encontró porque sus E2E fueron las primeras en pasar por
+`/planta` → cerrar → **despachar** con un producto de coberturas en el mismo `prod:purge-e2e`
+(el ciclo de Fase 6 nunca despachaba en su E2E). Se remedió a mano (reabrir → revertir el
+reporte → anular, con el mismo criterio "anula por API" que usa el resto del script) y
+`prod:purge-e2e` quedó en cero. **No se tocó el script**: redecidir cuándo conviene revertir
+un despacho E2E (según si el ítem es materia prima o producto terminado de un solo uso)
+excede el alcance de esta sesión y merece su propia revisión, no un parche apurado.
+
 ## Sesión M-3 — mantenimiento: auditoría y guardrail previos al pase a Nubefact real (2026-09-04)
 
 Sesión corta de mantenimiento, fuera del avance por fases: preparar el pase de la cuenta demo
@@ -902,6 +944,8 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
 - El proxy `/api/*` del web es un Route Handler (fetch server-side), no un `rewrite()` de Next: Vercel bloquea rewrites hacia el dominio por defecto de Cloud Run (D-022).
 - Para verificar RF-03 contra producción: `pnpm e2e:prod`. Crea un administrador efímero, corre los 6 escenarios de auth y borra los usuarios `e2e-...@ayr.test` en `finally` (D-024). Nunca usa ni modifica la cuenta del dueño. Si la limpieza fallara, el script lo avisa y hay que revisar `/usuarios` en producción.
 - `spawnSync('algo.cmd', ...)` sin `shell: true` falla con `EINVAL` en esta máquina Windows/Node 24; usar `shell: true` (o invocar `cmd.exe /c` explícito) al lanzar `pnpm`/binarios `.cmd` desde Node.
+- **Fase 7 (2026-09-05):** el token del CLI de Vercel (`%APPDATA%/xdg.data/com.vercel.cli/auth.json`) venció; `pnpm deploy:web` falla con `403 invalidToken`. No bloquea: el proyecto Vercel está ligado al repo de GitHub (ver arriba), así que el push a `main` de esta fase dispara igual el deploy del web. `pnpm deploy:web` vuelve a hacer falta el día que se necesite un deploy fuera de un push (p. ej. reapuntar `API_URL` sin cambiar código) — ahí sí hace falta que el dueño corra `vercel login` primero.
+- **Fase 7 (2026-09-05):** `pnpm prod:purge-e2e` revierte cualquier despacho E2E para "devolver el stock", sin distinguir materia prima de producto terminado de SKU único — revertir el despacho de una cobertura ya cerrada puede reabrir su OP a medias y dejar el kardex del producto con saldo fantasma. Detalle y remediación en "Fase 7 — detalle" arriba. Pendiente decidir si vale la pena enseñarle al script esa distinción.
 - Hallazgos de revisión pendientes (bajos): pinear acciones de GitHub a SHA, CSP en el web, job de limpieza de `sessions` expiradas, `Permissions-Policy`. Registrados aquí para Fase 7 (hardening).
 - SonarCloud: en `.env.setup` `SONAR_ORG` y `SONAR_PROJECT_KEY` venían intercambiados (corregido: org `gsinuiri-coder`, key `gsinuiri-coder_ayr-steel-erp`). El proyecto tenía Automatic Analysis activo; se desactivó por API para que el análisis lo haga CI con cobertura (D-021).
 - Los subagentes de `.claude/agents/` solo aparecen en el selector tras reiniciar la sesión de Claude Code; en esta sesión se ejecutaron como `general-purpose` con la definición como prompt.

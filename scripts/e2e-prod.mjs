@@ -1,13 +1,16 @@
 // Corre los E2E de autenticación (auth.spec.ts), de Fase 1 (fase1.spec.ts), de las fases
 // 2a, 2b, 3, 3b y 4 (fase2a.spec.ts, fase2b.spec.ts, fase3.spec.ts, fase3b.spec.ts,
-// fase4.spec.ts, fase4-bordes.spec.ts), de la Sesión M-2 (m2-reversa-pago.spec.ts) y de
-// la Fase 5a (fase5a.spec.ts, fase5a-bordes.spec.ts) y de la Fase 5b (fase5b.spec.ts,
-// fase5b-bordes.spec.ts) contra producción (Vercel + Cloud Run), incluidos los escenarios
-// que crean datos (RF-03: usuario desactivado, cambio de rol; Fase 1: acabado, producto,
-// importación, margen; Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y
-// flejes; Fase 3b: reversa de recepción de corte; Fase 4: órdenes de producción de
-// drywall, con sus reportes de piezas y su merma de proceso; M-2: anular un pago a
-// proveedor).
+// fase4.spec.ts, fase4-bordes.spec.ts), de la Sesión M-2 (m2-reversa-pago.spec.ts), de
+// la Fase 5a (fase5a.spec.ts, fase5a-bordes.spec.ts), de la Fase 5b (fase5b.spec.ts,
+// fase5b-bordes.spec.ts), de la Fase 6 (fase6.spec.ts, fase6-bordes.spec.ts) y de la
+// Fase 7 (fase7.spec.ts, fase7-bordes.spec.ts: cola de producción, RF-37/RF-38) contra
+// producción (Vercel + Cloud Run), incluidos los escenarios que crean datos (RF-03:
+// usuario desactivado, cambio de rol; Fase 1: acabado, producto, importación, margen;
+// Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y flejes; Fase 3b:
+// reversa de recepción de corte; Fase 4: órdenes de producción de drywall, con sus
+// reportes de piezas y su merma de proceso; M-2: anular un pago a proveedor; Fase 6:
+// producción de coberturas y maestro de colores; Fase 7: cola derivada, prioridad y
+// fecha prometida).
 //
 // D-081 (Sesión M-3): desde que producción puede llevar credenciales reales del PSE,
 // `E2E_FISCAL_EMISSION` se fuerza a `'0'` más abajo sin importar qué traiga el entorno de
@@ -103,6 +106,8 @@ try {
       'e2e/tests/fase5b-bordes.spec.ts',
       'e2e/tests/fase6.spec.ts',
       'e2e/tests/fase6-bordes.spec.ts',
+      'e2e/tests/fase7.spec.ts',
+      'e2e/tests/fase7-bordes.spec.ts',
     ],
     {
       E2E_BASE_URL: baseUrl,

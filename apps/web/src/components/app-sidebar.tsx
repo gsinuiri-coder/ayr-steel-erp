@@ -3,9 +3,10 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LogOut } from 'lucide-react';
-import { ROLE_LABELS } from '@ayr/shared';
+import { ROLE_LABELS, Role } from '@ayr/shared';
 import { navForRole } from '@/lib/nav';
 import { useSession } from '@/lib/session';
+import { useProductionQueue } from '@/components/production-queue';
 import { Button } from '@/components/ui/button';
 import {
   Sidebar,
@@ -27,6 +28,10 @@ export function AppSidebar() {
   const pathname = usePathname();
   const { user, logout, isLoggingOut } = useSession();
   const groups = navForRole(user.role);
+  // RF-38: cuántos pedidos esperan producción. Solo para quien ve `/planta` en el menú.
+  const seesPlanta = ([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA] as Role[]).includes(user.role);
+  const queue = useProductionQueue({ enabled: seesPlanta });
+  const queueCount = queue.data?.length ?? 0;
 
   return (
     <Sidebar collapsible="icon">
@@ -73,6 +78,14 @@ export function AppSidebar() {
                     {item.soon && (
                       <SidebarMenuBadge className="group-data-[collapsible=icon]:hidden">
                         Pronto
+                      </SidebarMenuBadge>
+                    )}
+                    {item.href === '/planta' && queueCount > 0 && (
+                      <SidebarMenuBadge
+                        className="group-data-[collapsible=icon]:hidden"
+                        title={`${String(queueCount)} pedidos esperando producción`}
+                      >
+                        {queueCount}
                       </SidebarMenuBadge>
                     )}
                   </SidebarMenuItem>

@@ -8,6 +8,7 @@ import {
 import {
   CoilStatus,
   Prisma,
+  ProductBomKind,
   ProductionOrderStatus,
   QuotationStatus,
   ReservationStatus,
@@ -18,12 +19,16 @@ import {
 import {
   businessToday,
   productionOrderCode,
+  queueSemaphore,
   Role,
   quotationCode,
   RESERVATION_STALE_DAYS,
   salesOrderCode,
   toDecimal,
   type CreateSalesOrderInput,
+  type ProductionQueueEntryDto,
+  type QueueSemaphore,
+  type QueueStatus,
   type ReservableCoilDto,
   type ReservableCoilQuery,
   type ReservationDto,
@@ -31,6 +36,7 @@ import {
   type SalesOrderDto,
   type SalesOrderListItemDto,
   type SalesOrderQuery,
+  type SetSalesOrderPriorityInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -38,6 +44,7 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
+import { derivePiecesPlan, roofingTheoreticalKg, type CoilGeometry } from '../production/roofing-math';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 
 function toDateOnly(value: string): Date {
@@ -115,7 +122,11 @@ export class SalesOrdersService {
    * comodidad de la lista, no la regla. Si el API estuvo dormido, una cotización vencida
    * seguiría figurando `EMITIDA` y sin este chequeo se podría confirmar.
    */
-  async confirm(actor: RequestUser, quotationId: string): Promise<SalesOrderDto> {
+  async confirm(
+    actor: RequestUser,
+    quotationId: string,
+    promisedDeliveryDate?: string,
+  ): Promise<SalesOrderDto> {
     const orderId = await this.prisma.$transaction(
       async (tx) => {
         const rows = await tx.$queryRaw<
@@ -206,6 +217,8 @@ export class SalesOrdersService {
             totalPen: quotation.totalPen,
             notes: quotation.notes,
             createdById: actor.id,
+            // D-096: única ventana en la que el vendedor la fija; después es de ADMINISTRADOR.
+            promisedDeliveryDate: promisedDeliveryDate ? toDateOnly(promisedDeliveryDate) : null,
             items: {
               create: quotation.items.map((i) => ({
                 lineNumber: i.lineNumber,
@@ -319,6 +332,9 @@ export class SalesOrdersService {
             totalPen: totals.totalPen,
             notes: input.notes ?? null,
             createdById: actor.id,
+            promisedDeliveryDate: input.promisedDeliveryDate
+              ? toDateOnly(input.promisedDeliveryDate)
+              : null,
             items: {
               create: lines.map((l) => ({
                 lineNumber: l.lineNumber,
@@ -684,6 +700,240 @@ export class SalesOrdersService {
   }
 
   // -------------------------------------------------------------------------
+  // Fase 7 — cola de producción (D-092..D-096)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Prioridad manual excepcional (D-094): solo ADMINISTRADOR, siempre con motivo. Cachea
+   * `priorityAt`/`priorityById`/`priorityReason` en el pedido para poder ordenar la cola sin
+   * releer `audit_log`, que sigue siendo la fuente de "quién y cuándo" (RF-95).
+   */
+  async setPriority(
+    actor: RequestUser,
+    id: string,
+    input: SetSalesOrderPriorityInput,
+  ): Promise<SalesOrderDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, id);
+      if (order.status === SalesOrderStatus.CANCELLED) {
+        throw new BadRequestException('El pedido está anulado');
+      }
+      await tx.salesOrder.update({
+        where: { id },
+        data: input.priority
+          ? { priorityAt: new Date(), priorityById: actor.id, priorityReason: input.reason }
+          : { priorityAt: null, priorityById: null, priorityReason: null },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: input.priority ? 'sales.order.priority-set' : 'sales.order.priority-clear',
+        entity: 'sales_orders',
+        entityId: id,
+        before: { priority: order.priorityReason !== null, reason: order.priorityReason },
+        after: { priority: input.priority, reason: input.reason },
+      });
+    });
+    return this.findOne(id);
+  }
+
+  /**
+   * Fecha prometida de entrega, después de que el pedido existe (D-096): el vendedor solo la
+   * fija al confirmar/crear (`confirm`/`createDirect`); de acá en adelante es de
+   * ADMINISTRADOR. `null` la borra.
+   */
+  async setPromisedDeliveryDate(
+    actor: RequestUser,
+    id: string,
+    promisedDeliveryDate: string | null,
+  ): Promise<SalesOrderDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, id);
+      if (order.status === SalesOrderStatus.CANCELLED) {
+        throw new BadRequestException('El pedido está anulado');
+      }
+      await tx.salesOrder.update({
+        where: { id },
+        data: {
+          promisedDeliveryDate: promisedDeliveryDate ? toDateOnly(promisedDeliveryDate) : null,
+        },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.order.promised-delivery-date',
+        entity: 'sales_orders',
+        entityId: id,
+        before: { promisedDeliveryDate: order.promisedDeliveryDate },
+        after: { promisedDeliveryDate },
+      });
+    });
+    return this.findOne(id);
+  }
+
+  /**
+   * La cola (RF-37): pedidos con reserva de bobina activa sobre un producto que se fabrica
+   * contra el pedido (D-093, misma señal que `resolveDispatchTarget`, D-088) y sin OP viva
+   * todavía. No hay tabla: se recalcula acá en cada lectura.
+   */
+  async findProductionQueue(): Promise<ProductionQueueEntryDto[]> {
+    const reservations = await this.prisma.reservation.findMany({
+      where: { status: ReservationStatus.ACTIVE, itemType: InventoryItemTypeEnum.COIL },
+      include: {
+        salesOrder: {
+          select: {
+            id: true,
+            seq: true,
+            createdAt: true,
+            promisedDeliveryDate: true,
+            priorityAt: true,
+            priorityById: true,
+            priorityReason: true,
+            customer: { select: { name: true } },
+          },
+        },
+        salesOrderItem: {
+          include: {
+            product: { select: { id: true, sku: true, name: true } },
+            pieces: { orderBy: { lineNumber: 'asc' } },
+          },
+        },
+        productionOrders: {
+          where: { status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] } },
+          select: { id: true },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const pending = reservations.filter((r) => r.productionOrders.length === 0);
+    if (pending.length === 0) return [];
+
+    const productIds = [...new Set(pending.map((r) => r.salesOrderItem.productId))];
+    const boms = await this.prisma.productBom.findMany({
+      // D-092: v1 es solo Metallic Roofing. `kind` descarta el caso —posible a nivel de
+      // datos, aunque el web nunca lo arma— de una línea reservando bobina para un producto
+      // con receta DRYWALL: sin este filtro, la cola le aplicaría la aritmética de
+      // coberturas (`roofingTheoreticalKg`, `pieceLengthMm` de otra receta) a un perfil.
+      where: { productId: { in: productIds }, isActive: true, kind: ProductBomKind.ROOFING },
+      select: { productId: true, pieceLengthMm: true },
+    });
+    const bomByProduct = new Map(boms.map((b) => [b.productId, b]));
+    // La trampa de RF-73 (D-037, D-088): una venta directa de bobina también reserva
+    // `itemType=COIL` y no tiene receta. Sin este filtro, cada bobina vendida tal cual
+    // aparecía en la cola de planta como un pedido de cobertura pendiente.
+    const eligible = pending.filter((r) => bomByProduct.has(r.salesOrderItem.productId));
+    if (eligible.length === 0) return [];
+
+    const coils = await this.prisma.coil.findMany({
+      where: { id: { in: eligible.map((r) => r.itemId) } },
+      select: {
+        id: true,
+        widthMm: true,
+        thicknessMm: true,
+        finish: { select: { densityFactor: true } },
+      },
+    });
+    const coilById = new Map(coils.map((c) => [c.id, c]));
+
+    const priorityByIds = eligible
+      .map((r) => r.salesOrder.priorityById)
+      .filter((id): id is string => id !== null);
+    const actors = await this.resolveActorNames(priorityByIds);
+
+    const today = businessToday();
+    const entries = eligible.flatMap((r): ProductionQueueEntryDto[] => {
+      const bom = bomByProduct.get(r.salesOrderItem.productId);
+      if (!bom) return [];
+      const coil = coilById.get(r.itemId);
+      const pieces = derivePiecesPlan(
+        r.salesOrderItem.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty })),
+        bom.pieceLengthMm === null ? null : bom.pieceLengthMm.toFixed(2),
+        r.salesOrderItem.qty.toString(),
+      );
+      const geometry: CoilGeometry | null = coil
+        ? {
+            widthMm: coil.widthMm.toFixed(2),
+            thicknessMm: coil.thicknessMm.toFixed(2),
+            densityFactor: coil.finish.densityFactor.toFixed(4),
+          }
+        : null;
+      const promisedDeliveryDate = r.salesOrder.promisedDeliveryDate
+        ? r.salesOrder.promisedDeliveryDate.toISOString().slice(0, 10)
+        : null;
+      return [
+        {
+          salesOrderId: r.salesOrder.id,
+          salesOrderCode: salesOrderCode(r.salesOrder.seq),
+          salesOrderItemId: r.salesOrderItemId,
+          reservationId: r.id,
+          customerName: r.salesOrder.customer.name,
+          productId: r.salesOrderItem.productId,
+          productSku: r.salesOrderItem.product.sku,
+          productName: r.salesOrderItem.product.name,
+          pieces,
+          theoreticalKg: geometry ? roofingTheoreticalKg(geometry, pieces).toFixed(3) : null,
+          promisedDeliveryDate,
+          semaphore: queueSemaphore(promisedDeliveryDate, today),
+          createdAt: r.salesOrder.createdAt.toISOString(),
+          priority: r.salesOrder.priorityById !== null,
+          priorityAt: r.salesOrder.priorityAt?.toISOString() ?? null,
+          priorityByName: r.salesOrder.priorityById
+            ? (actors.get(r.salesOrder.priorityById) ?? null)
+            : null,
+          priorityReason: r.salesOrder.priorityReason,
+        },
+      ];
+    });
+
+    // D-094: prioridad > semáforo > FIFO. Entre dos priorizados, gana el que se priorizó
+    // primero — la misma idea de FIFO, aplicada al momento de priorizar.
+    const semaphoreRank: Record<QueueSemaphore, number> = {
+      VENCIDO: 0,
+      PROXIMO: 1,
+      A_TIEMPO: 2,
+      SIN_FECHA: 3,
+    };
+    return entries.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority ? -1 : 1;
+      if (a.priority && b.priority) return (a.priorityAt ?? '').localeCompare(b.priorityAt ?? '');
+      const rankDiff = semaphoreRank[a.semaphore] - semaphoreRank[b.semaphore];
+      if (rankDiff !== 0) return rankDiff;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+  }
+
+  /**
+   * Estado del pedido frente a la cola (D-093), para el detalle de `/pedidos/[id]`: `null`
+   * cuando no tiene nada que fabricar contra el pedido, o ya salió de la cola.
+   */
+  private async computeQueueStatus(row: OrderRow): Promise<QueueStatus | null> {
+    const productIdByItem = new Map(row.items.map((i) => [i.id, i.productId]));
+    const candidates = row.reservations.filter(
+      (r) => r.status === ReservationStatus.ACTIVE && r.itemType === InventoryItemTypeEnum.COIL,
+    );
+    if (candidates.length === 0) return null;
+    const productIds = [
+      ...new Set(
+        candidates
+          .map((r) => productIdByItem.get(r.salesOrderItemId))
+          .filter((id): id is string => id !== undefined),
+      ),
+    ];
+    if (productIds.length === 0) return null;
+    const boms = await this.prisma.productBom.findMany({
+      // D-092: mismo filtro que `findProductionQueue` — v1 es solo Metallic Roofing.
+      where: { productId: { in: productIds }, isActive: true, kind: ProductBomKind.ROOFING },
+      select: { productId: true },
+    });
+    const madeToOrder = new Set(boms.map((b) => b.productId));
+    const relevant = candidates.filter((r) => {
+      const productId = productIdByItem.get(r.salesOrderItemId);
+      return productId !== undefined && madeToOrder.has(productId);
+    });
+    if (relevant.length === 0) return null;
+    return relevant.some((r) => r.productionOrders.length === 0) ? 'EN_COLA' : 'EN_PRODUCCION';
+  }
+
+  // -------------------------------------------------------------------------
   // Lectura
   // -------------------------------------------------------------------------
 
@@ -721,10 +971,11 @@ export class SalesOrdersService {
       orderBy: { seq: 'desc' },
       take: 500,
     });
-    const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
+    const actorIds = rows.flatMap((r) => [r.createdById, ...(r.priorityById ? [r.priorityById] : [])]);
+    const actors = await this.resolveActorNames(actorIds);
     return rows.map((r) => {
       const dto = this.toDto({ ...r, items: [], reservations: [] }, new Map(), actors);
-      const { items: _items, reservations: _reservations, ...rest } = dto;
+      const { items: _items, reservations: _reservations, queueStatus: _queueStatus, ...rest } = dto;
       return {
         ...rest,
         itemCount: r._count.items,
@@ -737,8 +988,12 @@ export class SalesOrdersService {
     const row = await this.prisma.salesOrder.findUnique({ where: { id }, include: orderInclude });
     if (!row) throw new NotFoundException('Pedido no encontrado');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
-    const actors = await this.resolveActorNames([row.createdById]);
-    return this.toDto(row, labels, actors);
+    const actorIds = [row.createdById, ...(row.priorityById ? [row.priorityById] : [])];
+    const [actors, queueStatus] = await Promise.all([
+      this.resolveActorNames(actorIds),
+      this.computeQueueStatus(row),
+    ]);
+    return this.toDto(row, labels, actors, queueStatus);
   }
 
   /**
@@ -869,15 +1124,36 @@ export class SalesOrdersService {
   private async lockOrder(
     tx: Prisma.TransactionClient,
     id: string,
-  ): Promise<{ id: string; status: SalesOrderStatus; quotationId: string | null }> {
+  ): Promise<{
+    id: string;
+    status: SalesOrderStatus;
+    quotationId: string | null;
+    priorityReason: string | null;
+    promisedDeliveryDate: string | null;
+  }> {
     const rows = await tx.$queryRaw<
-      { id: string; status: SalesOrderStatus; quotation_id: string | null }[]
+      {
+        id: string;
+        status: SalesOrderStatus;
+        quotation_id: string | null;
+        priority_reason: string | null;
+        promised_delivery_date: Date | null;
+      }[]
     >`
-      SELECT "id", "status", "quotation_id" FROM "sales_orders" WHERE "id" = ${id}::uuid FOR UPDATE
+      SELECT "id", "status", "quotation_id", "priority_reason", "promised_delivery_date"
+      FROM "sales_orders" WHERE "id" = ${id}::uuid FOR UPDATE
     `;
     const row = rows[0];
     if (!row) throw new NotFoundException('Pedido no encontrado');
-    return { id: row.id, status: row.status, quotationId: row.quotation_id };
+    return {
+      id: row.id,
+      status: row.status,
+      quotationId: row.quotation_id,
+      priorityReason: row.priority_reason,
+      promisedDeliveryDate: row.promised_delivery_date
+        ? row.promised_delivery_date.toISOString().slice(0, 10)
+        : null,
+    };
   }
 
   private async itemLabel(
@@ -970,6 +1246,7 @@ export class SalesOrdersService {
     row: OrderRow,
     labels: Map<string, { label: string; name: string }>,
     actors: Map<string, string>,
+    queueStatus: QueueStatus | null = null,
   ): SalesOrderDto {
     return {
       id: row.id,
@@ -991,6 +1268,13 @@ export class SalesOrdersService {
       createdAt: row.createdAt.toISOString(),
       createdByName: actors.get(row.createdById) ?? null,
       cancelledAt: row.cancelledAt?.toISOString() ?? null,
+      promisedDeliveryDate: row.promisedDeliveryDate
+        ? row.promisedDeliveryDate.toISOString().slice(0, 10)
+        : null,
+      priority: row.priorityById !== null,
+      priorityReason: row.priorityReason,
+      priorityByName: row.priorityById ? (actors.get(row.priorityById) ?? null) : null,
+      queueStatus,
     };
   }
 }

@@ -1281,6 +1281,14 @@ model SalesOrder {
   createdById    String           @map("created_by_id") @db.Uuid
   cancelledById  String?          @map("cancelled_by_id") @db.Uuid
   cancelledAt    DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  /// Fecha prometida de entrega (Fase 7, D-096). Opcional; el vendedor la fija solo al
+  /// confirmar/crear el pedido, después solo ADMINISTRADOR (`PATCH .../promised-delivery-date`).
+  promisedDeliveryDate DateTime?  @map("promised_delivery_date") @db.Date
+  /// Prioridad manual excepcional de la cola de producción (D-094): cachea el último valor
+  /// vigente para ordenar sin releer `audit_log`, que sigue siendo la fuente de "quién y cuándo".
+  priorityAt     DateTime?        @map("priority_at") @db.Timestamptz(3)
+  priorityById   String?          @map("priority_by_id") @db.Uuid
+  priorityReason String?          @map("priority_reason") @db.VarChar(500)
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
