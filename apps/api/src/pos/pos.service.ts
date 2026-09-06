@@ -222,11 +222,11 @@ export class PosService {
             ? FiscalDocType.FACTURA
             : FiscalDocType.BOLETA;
 
-        // 2. La línea de negocio. Un pedido tiene una sola (`sales_orders.business_line_id`),
-        //    así que un carrito que mezcle líneas no cabe en el modelo — y partirlo en dos
-        //    pedidos daría dos comprobantes por una sola venta de mostrador, que es peor
-        //    para el cliente que la restricción (D-104).
-        const businessLine = await this.resolveBusinessLine(
+        // 2. La línea de negocio. D-104 sigue exigiendo una sola por venta de mostrador —un
+        //    carrito mixto daría dos comprobantes por una sola venta, peor para el cliente
+        //    que la restricción— pero esa regla vive acá, en el carrito: desde D-119 el
+        //    pedido en sí ya no tiene una `business_line_id` propia que la sostenga.
+        await this.resolveBusinessLine(
           tx,
           input.items.map((i) => i.productId),
         );
@@ -237,7 +237,6 @@ export class PosService {
           actor,
           {
             customerId: customer.id,
-            businessLine,
             issueDate: today,
             notes: input.notes,
             items: input.items.map((i) => ({

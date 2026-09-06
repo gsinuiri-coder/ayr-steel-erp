@@ -469,6 +469,36 @@ export class InventoryService {
     };
   }
 
+  /**
+   * D-119 (Fase 7e): la línea de negocio **dueña** de este ítem — la del propio producto,
+   * o la de la bobina física, nunca la del documento comercial que lo reserva o lo
+   * despacha. Antes de la Fase 7e todo pedido tenía una sola línea y coincidía siempre con
+   * la del ítem; una cotización mixta (D-119) o una venta de bobina completa (D-116, donde
+   * el producto es de `trading` pero la bobina es de Drywall o Metallic Roofing) rompen esa
+   * coincidencia, y `lockBalance` rechaza un movimiento cuya `businessLineId` no sea la que
+   * el saldo ya tiene.
+   */
+  async resolveItemBusinessLineId(
+    tx: Prisma.TransactionClient,
+    itemType: InventoryItemType,
+    itemId: string,
+  ): Promise<string> {
+    if (itemType === InventoryItemType.COIL) {
+      const coil = await tx.coil.findUnique({
+        where: { id: itemId },
+        select: { businessLineId: true },
+      });
+      if (!coil) throw new NotFoundException('Bobina no encontrada');
+      return coil.businessLineId;
+    }
+    const product = await tx.product.findUnique({
+      where: { id: itemId },
+      select: { businessLineId: true },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    return product.businessLineId;
+  }
+
   /** Inventario valorizado (RF-51, base de RF-90). */
   async findBalances(query: InventoryQuery, showCosts: boolean): Promise<InventoryBalanceDto[]> {
     const balances = await this.prisma.inventoryBalance.findMany({

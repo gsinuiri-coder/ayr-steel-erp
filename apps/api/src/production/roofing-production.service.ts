@@ -119,7 +119,7 @@ export class RoofingProductionService {
       const reservation = await tx.reservation.findUnique({
         where: { id: input.reservationId },
         include: {
-          salesOrder: { select: { seq: true, status: true, businessLineId: true } },
+          salesOrder: { select: { seq: true, status: true } },
           salesOrderItem: {
             include: {
               product: { include: { businessLine: { select: { code: true } } } },

@@ -122,6 +122,20 @@ export class SalesController {
     return this.quotations.update(actor, id, body);
   }
 
+  /**
+   * D-119: duplica una cotización en cualquier estado a un BORRADOR nuevo (número propio),
+   * con el mismo cliente y las mismas líneas revalidadas contra el catálogo y el kardex
+   * vigentes. Los precios negociados se copian y quedan editables — "recalculables" es
+   * justo eso, no un recálculo automático.
+   */
+  @Post('quotations/:id/duplicate')
+  duplicateQuotation(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<QuotationDto> {
+    return this.quotations.duplicate(actor, id);
+  }
+
   @Post('quotations/:id/emit')
   emitQuotation(
     @CurrentUser() actor: RequestUser,

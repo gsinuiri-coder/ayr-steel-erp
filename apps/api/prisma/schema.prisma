@@ -473,8 +473,6 @@ model BusinessLine {
   coils              Coil[]
   cuttingOrders      CuttingOrder[]
   productionOrders   ProductionOrder[]
-  quotations         Quotation[]
-  salesOrders        SalesOrder[]
 
   @@map("business_lines")
 }
@@ -1222,13 +1220,15 @@ model ProductionReport {
 /// `seq` es el correlativo que la UI muestra como `COT-000123`: un `serial` de Postgres,
 /// igual que `production_orders.seq`, para que dos altas concurrentes no compitan por un
 /// contador propio.
+///
+/// D-119 (Fase 7e): sin `business_line_id` propio — una cotización combina líneas de
+/// cualquier línea de negocio. La línea de cada ítem sale de `quotation_items.product`, y
+/// `QuotationDto.businessLines` la deriva (distinta, por ítem) solo para mostrarla.
 model Quotation {
   id             String          @id @default(uuid()) @db.Uuid
   seq            Int             @unique @default(autoincrement())
   customerId     String          @map("customer_id") @db.Uuid
   customer       Customer        @relation(fields: [customerId], references: [id])
-  businessLineId String          @map("business_line_id") @db.Uuid
-  businessLine   BusinessLine    @relation(fields: [businessLineId], references: [id])
   status         QuotationStatus @default(DRAFT)
   issueDate      DateTime        @map("issue_date") @db.Date
   /// Último día en que la cotización se puede confirmar (D-069). El job diario marca
@@ -1256,7 +1256,6 @@ model Quotation {
   salesOrders SalesOrder[]
 
   @@index([customerId, status])
-  @@index([businessLineId, status])
   @@index([status, validUntil])
   @@map("quotations")
 }
@@ -1300,6 +1299,12 @@ model QuotationItem {
 /// Pedido (D-065). Nace de confirmar una cotización o, en las líneas que no la exigen,
 /// de un alta directa. Confirmar crea el pedido y sus reservas en **una sola
 /// transacción**: si una línea no tiene disponible, no se crea nada (D-054).
+///
+/// D-119 (Fase 7e): igual que `Quotation`, sin `business_line_id` propio. Un pedido
+/// directo (sin cotización) exige que **ninguna** línea venga de una línea de negocio con
+/// `quotation_required` — antes era un chequeo del documento entero; con líneas mixtas es
+/// por línea. El mostrador (D-104) sigue exigiendo una sola línea de negocio, pero esa
+/// regla vive en `PosService` (el carrito), no en esta tabla.
 model SalesOrder {
   id                   String           @id @default(uuid()) @db.Uuid
   seq                  Int              @unique @default(autoincrement())
@@ -1315,8 +1320,6 @@ model SalesOrder {
   quotation            Quotation?       @relation(fields: [quotationId], references: [id])
   customerId           String           @map("customer_id") @db.Uuid
   customer             Customer         @relation(fields: [customerId], references: [id])
-  businessLineId       String           @map("business_line_id") @db.Uuid
-  businessLine         BusinessLine     @relation(fields: [businessLineId], references: [id])
   status               SalesOrderStatus @default(CONFIRMED)
   issueDate            DateTime         @map("issue_date") @db.Date
   subtotalPen          Decimal          @map("subtotal_pen") @db.Decimal(18, 4)
@@ -1345,7 +1348,6 @@ model SalesOrder {
   posSale         PosSale?
 
   @@index([customerId, status])
-  @@index([businessLineId, status])
   @@index([quotationId])
   @@map("sales_orders")
 }

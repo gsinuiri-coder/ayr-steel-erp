@@ -4,6 +4,7 @@ import {
   CoilKind,
   CoilStatus,
   InventoryItemType,
+  InventoryStrategy,
   ReservationStatus,
   type Prisma,
 } from '@prisma/client';
@@ -19,6 +20,7 @@ import {
   type SalesItemDto,
   type SalesItemInput,
 } from '@ayr/shared';
+import { toSharedLineCode } from '../common/business-line-code';
 
 /**
  * Resolución de las líneas de una cotización o de un pedido (D-065, D-068).
@@ -34,6 +36,13 @@ import {
 export interface ResolvedSalesLine {
   lineNumber: number;
   productId: string;
+  /**
+   * D-119: línea de negocio comercial de esta línea (la del producto, siempre — en una
+   * venta de bobina es la del SKU `trading`, D-037). Un documento puede mezclar líneas de
+   * distintas líneas de negocio; esto es lo que cada una declara ser la suya, para el
+   * chequeo de `quotationRequired` de un pedido directo y para mostrarla agrupada.
+   */
+  businessLineId: string;
   description: string;
   qty: string;
   unit: string;
@@ -76,10 +85,16 @@ export interface ResolvedSalesLine {
  * D-083 además distingue las dos formas de línea por la **unidad del producto**: `MTR` es
  * una cobertura a medida y su línea es compuesta (subítems `{cantidad, largo}` cuya suma en
  * metros **es** la cantidad de la línea); cualquier otra unidad es una línea simple.
+ *
+ * **D-119 (Fase 7e): sin `businessLineId` de documento.** Antes cada línea se validaba
+ * contra una única línea de negocio compartida por todo el documento; ahora cada línea
+ * lleva la suya (la de su producto) y no se exige que coincidan entre sí. Lo único que
+ * sigue siendo obligatorio por línea es que su propia bobina de materia prima (si la
+ * tiene) sea de la **misma** línea que su producto — eso nunca fue "una regla del
+ * documento", es una regla física: una cobertura no rola con fleje de drywall.
  */
 export async function resolveSalesLines(
   tx: Prisma.TransactionClient,
-  businessLineId: string,
   items: SalesItemInput[],
 ): Promise<ResolvedSalesLine[]> {
   const productIds = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
@@ -93,6 +108,7 @@ export async function resolveSalesLines(
       isActive: true,
       businessLineId: true,
       listPricePen: true,
+      businessLine: { select: { inventoryStrategy: true } },
     },
   });
   const productById = new Map(products.map((p) => [p.id, p]));
@@ -121,11 +137,6 @@ export async function resolveSalesLines(
     if (item.saleCoilId !== undefined) {
       const sale = saleCoilById.get(item.saleCoilId);
       if (!sale) throw new NotFoundException(`${at}: bobina a vender no encontrada`);
-      if (sale.productBusinessLineId !== businessLineId) {
-        throw new BadRequestException(
-          `${at}: la bobina ${sale.coilCode} se vende como ${sale.productSku} (trading); crea la cotización en esa línea`,
-        );
-      }
       const unitPricePen = item.unitPricePen;
       if (unitPricePen === undefined) {
         throw new BadRequestException(
@@ -137,6 +148,7 @@ export async function resolveSalesLines(
       return {
         lineNumber,
         productId: sale.productId,
+        businessLineId: sale.productBusinessLineId,
         description,
         qty: sale.qty,
         unit: Unit.KGM,
@@ -164,9 +176,9 @@ export async function resolveSalesLines(
     if (!product.isActive) {
       throw new BadRequestException(`${at}: el producto ${product.sku} está desactivado`);
     }
-    if (product.businessLineId !== businessLineId) {
+    if (product.businessLine.inventoryStrategy === InventoryStrategy.NOOP) {
       throw new BadRequestException(
-        `${at}: el producto ${product.sku} es de otra línea de negocio`,
+        `${at}: el producto ${product.sku} es de una línea sin inventario: no se cotiza`,
       );
     }
 
@@ -224,8 +236,13 @@ export async function resolveSalesLines(
           `${at}: ${coil.code} no está disponible (${coil.status}); solo se reserva material de una bobina abierta`,
         );
       }
-      if (coil.businessLineId !== businessLineId) {
-        throw new BadRequestException(`${at}: ${coil.code} es de otra línea de negocio`);
+      // D-119: ya no se compara contra la línea del documento (no existe), pero la bobina
+      // sigue teniendo que ser de la **misma línea que el producto** — una cobertura no
+      // rola con fleje de drywall, sea cual sea la línea del resto del documento.
+      if (coil.businessLineId !== product.businessLineId) {
+        throw new BadRequestException(
+          `${at}: ${coil.code} es de otra línea de negocio que ${product.sku}`,
+        );
       }
       reserveItemType = InventoryItemType.COIL;
       reserveItemId = coil.id;
@@ -243,6 +260,7 @@ export async function resolveSalesLines(
     return {
       lineNumber,
       productId: product.id,
+      businessLineId: product.businessLineId,
       // D-083: los largos viajan en la descripción porque es lo que el cliente lee en la
       // cotización y en el comprobante — vende metros, pero recibe planchas.
       description:
@@ -399,7 +417,7 @@ export function toSalesItemDto(
     reserveQty: Prisma.Decimal;
     reserveUnit: string;
     pieces?: { lineNumber: number; lengthMm: Prisma.Decimal; qty: number }[];
-    product: { sku: string; name: string };
+    product: { sku: string; name: string; businessLine: { code: BusinessLineCode } };
   },
   reserveItemLabel: string,
 ): SalesItemDto {
@@ -409,6 +427,7 @@ export function toSalesItemDto(
     productId: row.productId,
     productSku: row.product.sku,
     productName: row.product.name,
+    businessLine: toSharedLineCode(row.product.businessLine.code),
     description: row.description,
     qty: row.qty.toFixed(3),
     unit: row.unit,

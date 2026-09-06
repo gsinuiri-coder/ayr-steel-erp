@@ -17,6 +17,7 @@ function line(overrides: Partial<ResolvedSalesLine>): ResolvedSalesLine {
   return {
     lineNumber: 1,
     productId: 'p1',
+    businessLineId: 'line1',
     description: 'Perfil',
     qty: '1.000',
     unit: 'NIU',

@@ -64,7 +64,6 @@ const dispatchInclude = {
       id: true,
       seq: true,
       status: true,
-      businessLineId: true,
       customer: { select: { name: true } },
     },
   },
@@ -286,8 +285,15 @@ export class DispatchesService {
         await consumeReservationQty(tx, target.reservationId, reserveQty);
       }
 
+      // D-119: la línea del movimiento es la del ítem que de verdad sale del almacén
+      // (producto o bobina), no la del pedido — un pedido mixto o una venta de bobina
+      // completa (D-116) pueden no coincidir.
       const movement = await this.inventory.record(tx, {
-        businessLineId: order.businessLineId,
+        businessLineId: await this.inventory.resolveItemBusinessLineId(
+          tx,
+          target.itemType,
+          target.itemId,
+        ),
         itemType: target.itemType,
         itemId: target.itemId,
         type: 'OUT',

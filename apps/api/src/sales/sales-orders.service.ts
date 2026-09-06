@@ -64,12 +64,13 @@ function toDateOnly(value: string): Date {
 
 const orderInclude = {
   customer: { select: { id: true, name: true, docNumber: true } },
-  businessLine: { select: { code: true } },
   quotation: { select: { id: true, seq: true } },
   items: {
     orderBy: { lineNumber: 'asc' },
     include: {
-      product: { select: { sku: true, name: true } },
+      // D-119: `businessLine` de cada producto arma `businessLines` del pedido (puede
+      // mezclar líneas).
+      product: { select: { sku: true, name: true, businessLine: { select: { code: true } } } },
       // D-083: copia congelada de los largos que se cotizaron.
       pieces: { orderBy: { lineNumber: 'asc' } },
     },
@@ -220,7 +221,6 @@ export class SalesOrdersService {
           data: {
             quotationId,
             customerId: quotation.customerId,
-            businessLineId: quotation.businessLineId,
             status: SalesOrderStatus.CONFIRMED,
             issueDate: toDateOnly(businessToday()),
             subtotalPen: quotation.subtotalPen,
@@ -265,7 +265,7 @@ export class SalesOrdersService {
           include: { items: { orderBy: { lineNumber: 'asc' } } },
         });
 
-        await this.createReservations(tx, actor, order.id, order.businessLineId, order.items);
+        await this.createReservations(tx, actor, order.id, order.items);
 
         await tx.quotation.update({
           where: { id: quotationId },
@@ -341,21 +341,27 @@ export class SalesOrdersService {
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
 
-    const line = await tx.businessLine.findUnique({
-      where: { code: toPrismaLineCode(input.businessLine) },
-      select: { id: true, quotationRequired: true, inventoryStrategy: true },
-    });
-    if (!line) throw new NotFoundException('Línea de negocio no encontrada');
-    if (line.inventoryStrategy === 'NOOP') {
-      throw new BadRequestException('La línea services no lleva stock: no se vende por acá');
-    }
-    if (line.quotationRequired && options.counterSale !== true) {
-      throw new BadRequestException(
-        'Esta línea de negocio exige una cotización confirmada (RF-31): crea la cotización, emítela y confírmala',
-      );
-    }
+    const lines = await resolveSalesLines(tx, input.items);
 
-    const lines = await resolveSalesLines(tx, line.id, input.items);
+    // D-119: un pedido directo (sin cotización) exige que **ninguna** línea venga de una
+    // línea de negocio que obliga a cotizar (RF-31). Antes era un chequeo del documento
+    // entero contra una sola línea; con líneas mixtas cada una puede venir de una línea de
+    // negocio distinta, así que se comprueba una por una. El mostrador (`counterSale`) no
+    // exige cotización nunca (D-098) y se salta este chequeo por completo.
+    if (options.counterSale !== true) {
+      const lineIds = [...new Set(lines.map((l) => l.businessLineId))];
+      const businessLines = await tx.businessLine.findMany({
+        where: { id: { in: lineIds } },
+        select: { id: true, quotationRequired: true },
+      });
+      const requiredById = new Map(businessLines.map((b) => [b.id, b.quotationRequired]));
+      const blocked = lines.find((l) => requiredById.get(l.businessLineId) === true);
+      if (blocked) {
+        throw new BadRequestException(
+          `Línea ${blocked.lineNumber}: ${blocked.productSku} exige una cotización confirmada (RF-31): crea la cotización, emítela y confírmala`,
+        );
+      }
+    }
 
     // D-098: el mostrador vende **stock del propio producto**. Una línea respaldada por
     // otro ítem —la bobina de una cobertura a medida— es justo la que hay que fabricar,
@@ -381,7 +387,6 @@ export class SalesOrdersService {
       data: {
         quotationId: null,
         customerId: customer.id,
-        businessLineId: line.id,
         status: SalesOrderStatus.CONFIRMED,
         issueDate: toDateOnly(input.issueDate),
         subtotalPen: totals.subtotalPen,
@@ -425,7 +430,7 @@ export class SalesOrdersService {
       include: { items: { orderBy: { lineNumber: 'asc' } } },
     });
 
-    await this.createReservations(tx, actor, order.id, order.businessLineId, order.items);
+    await this.createReservations(tx, actor, order.id, order.items);
 
     await this.audit.write(tx, {
       actorId: actor.id,
@@ -462,7 +467,6 @@ export class SalesOrdersService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     orderId: string,
-    businessLineId: string,
     items: {
       id: string;
       lineNumber: number;
@@ -481,6 +485,11 @@ export class SalesOrdersService {
 
     const coilItems = sorted.filter((i) => i.reserveItemType === InventoryItemTypeEnum.COIL);
     const coilIds = [...new Set(coilItems.map((i) => i.reserveItemId))].sort();
+    // D-119: el saldo de una bobina vive bajo **su propia** línea de negocio (Drywall o
+    // Metallic Roofing), que puede no ser la del producto que la reserva (venta de bobina
+    // completa, D-116: el producto es de `trading`). `lockBalance` exige la línea exacta
+    // que ya tiene el saldo.
+    const coilBusinessLineById = new Map<string, string>();
     if (coilIds.length > 0) {
       await tx.$queryRaw`
         SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
@@ -518,7 +527,7 @@ export class SalesOrdersService {
       // invariante, sin más salida que liberar la reserva a mano.
       const coils = await tx.coil.findMany({
         where: { id: { in: coilIds } },
-        select: { id: true, code: true, status: true },
+        select: { id: true, code: true, status: true, businessLineId: true },
       });
       const unavailable = coils.filter((c) => {
         const allowed: CoilStatus[] = requiresOpenByCoilId.get(c.id)
@@ -533,12 +542,35 @@ export class SalesOrdersService {
         );
       }
       await assertStripsNotAssigned(tx, coilIds, 'reservar su material para un pedido');
+      for (const c of coils) coilBusinessLineById.set(c.id, c.businessLineId);
     }
+
+    // D-119: para un ítem PRODUCT, la línea dueña del saldo es la del propio producto —
+    // siempre coincide con `productId` porque una reserva PRODUCT reserva el producto de
+    // la línea, nunca otro.
+    const productItems = sorted.filter((i) => i.reserveItemType === InventoryItemTypeEnum.PRODUCT);
+    const productLines =
+      productItems.length === 0
+        ? []
+        : await tx.product.findMany({
+            where: { id: { in: [...new Set(productItems.map((i) => i.reserveItemId))] } },
+            select: { id: true, businessLineId: true },
+          });
+    const productBusinessLineById = new Map(productLines.map((p) => [p.id, p.businessLineId]));
 
     for (const item of sorted) {
       const qty = toDecimal(item.reserveQty.toString());
+      const itemBusinessLineId =
+        item.reserveItemType === InventoryItemTypeEnum.COIL
+          ? coilBusinessLineById.get(item.reserveItemId)
+          : productBusinessLineById.get(item.reserveItemId);
+      if (!itemBusinessLineId) {
+        throw new NotFoundException(
+          `Línea ${item.lineNumber}: no se pudo resolver su línea de negocio`,
+        );
+      }
       const availability = await this.inventory.lockAvailability(tx, {
-        businessLineId,
+        businessLineId: itemBusinessLineId,
         itemType: item.reserveItemType,
         itemId: item.reserveItemId,
         unit: item.reserveUnit,
@@ -1023,7 +1055,11 @@ export class SalesOrdersService {
     const where: Prisma.SalesOrderWhereInput = {
       status: query.status,
       customerId: query.customerId,
-      businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
+      // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
+      // línea" — un pedido mixto aparece en el filtro de cualquiera de sus líneas.
+      items: query.businessLine
+        ? { some: { product: { businessLine: { code: toPrismaLineCode(query.businessLine) } } } }
+        : undefined,
       ...(query.search
         ? {
             OR: [
@@ -1441,7 +1477,11 @@ export class SalesOrdersService {
       customerId: row.customer.id,
       customerName: row.customer.name,
       customerDocNumber: row.customer.docNumber,
-      businessLine: toSharedLineCode(row.businessLine.code),
+      // D-119: distintas, en el orden en que aparecen los ítems — sin una línea "del
+      // documento" que ordene de otra forma.
+      businessLines: [
+        ...new Set(row.items.map((i) => toSharedLineCode(i.product.businessLine.code))),
+      ],
       status: row.status,
       issueDate: row.issueDate.toISOString().slice(0, 10),
       subtotalPen: row.subtotalPen.toFixed(4),

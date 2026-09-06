@@ -6,13 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  Prisma,
-  QuotationStatus,
-  SalesOrderStatus,
-  type BusinessLineCode,
-  type InventoryItemType,
-} from '@prisma/client';
+import { Prisma, QuotationStatus, SalesOrderStatus, type InventoryItemType } from '@prisma/client';
 import {
   businessToday,
   defaultValidUntil,
@@ -26,6 +20,7 @@ import {
   type QuotationDto,
   type QuotationListItemDto,
   type QuotationQuery,
+  type SalesItemInput,
   type UpdateQuotationInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -42,11 +37,12 @@ function toDateOnly(value: string): Date {
 
 const quotationInclude = {
   customer: { select: { id: true, name: true, docNumber: true, address: true, docType: true } },
-  businessLine: { select: { code: true } },
   items: {
     orderBy: { lineNumber: 'asc' },
     include: {
-      product: { select: { sku: true, name: true } },
+      // D-119: `businessLine` de cada producto es lo que arma `businessLines` del
+      // documento (una cotización puede mezclar líneas).
+      product: { select: { sku: true, name: true, businessLine: { select: { code: true } } } },
       // D-083: los largos de una línea compuesta. Vacío en el resto del catálogo.
       pieces: { orderBy: { lineNumber: 'asc' } },
     },
@@ -106,19 +102,14 @@ export class QuotationsService {
 
   async create(actor: RequestUser, input: CreateQuotationInput): Promise<QuotationDto> {
     const id = await this.prisma.$transaction(async (tx) => {
-      const { customer, line } = await this.requireHeaderRefs(
-        tx,
-        input.customerId,
-        input.businessLine,
-      );
-      const lines = await resolveSalesLines(tx, line.id, input.items);
+      const customer = await this.requireActiveCustomer(tx, input.customerId);
+      const lines = await resolveSalesLines(tx, input.items);
       const totals = documentTotals(lines);
       const validUntil = defaultValidUntil(input.issueDate, input.validityDays);
 
       const quotation = await tx.quotation.create({
         data: {
           customerId: customer.id,
-          businessLineId: line.id,
           status: QuotationStatus.DRAFT,
           issueDate: toDateOnly(input.issueDate),
           validUntil: toDateOnly(validUntil),
@@ -159,12 +150,8 @@ export class QuotationsService {
           `Solo se edita una cotización en borrador; esta está ${current.status}. Anúlala y crea una nueva.`,
         );
       }
-      const { customer, line } = await this.requireHeaderRefs(
-        tx,
-        input.customerId,
-        toSharedLineCode(current.businessLineCode),
-      );
-      const lines = await resolveSalesLines(tx, line.id, input.items);
+      const customer = await this.requireActiveCustomer(tx, input.customerId);
+      const lines = await resolveSalesLines(tx, input.items);
       const totals = documentTotals(lines);
       const validUntil = defaultValidUntil(input.issueDate, input.validityDays);
 
@@ -193,6 +180,107 @@ export class QuotationsService {
     });
 
     return this.findOne(id);
+  }
+
+  /**
+   * D-119: duplica una cotización **en cualquier estado** —incluida una confirmada o
+   * anulada— a un `BORRADOR` nuevo, con número propio, mismo cliente y las mismas líneas.
+   * No copia las filas tal cual: las vuelve a pasar por `resolveSalesLines`, la misma
+   * puerta que usan `create`/`update`, porque entre la original y hoy puede haber pasado
+   * cualquier cosa (un producto se desactivó, una bobina que vendía entera ya se despachó).
+   * Los precios negociados de la original se copian y quedan editables — es un borrador
+   * nuevo — y el precio de lista se refresca contra el catálogo de hoy.
+   *
+   * Sin chequeo de dueño (RF-66 es sobre **editar/confirmar/anular** la propia; duplicar es
+   * "usa esto de plantilla", abierto al mismo equipo que ya lee cualquier cotización).
+   */
+  async duplicate(actor: RequestUser, id: string): Promise<QuotationDto> {
+    const source = await this.prisma.quotation.findUnique({
+      where: { id },
+      include: {
+        items: {
+          orderBy: { lineNumber: 'asc' },
+          include: { pieces: { orderBy: { lineNumber: 'asc' } } },
+        },
+      },
+    });
+    if (!source) throw new NotFoundException('Cotización no encontrada');
+    if (source.items.length === 0) {
+      throw new BadRequestException('La cotización no tiene líneas que duplicar');
+    }
+
+    // D-116: una línea de bobina completa no tiene receta (RF-73, producto `trading`); una
+    // que reserva materia prima para fabricar sí la tiene (D-088). Es la misma distinción
+    // que usa `resolveDispatchTarget`, y la única forma de reconstruir cuál de las dos era
+    // cada línea `reserveItemType = COIL` ya persistida.
+    const productIds = [...new Set(source.items.map((i) => i.productId))];
+    const boms = await this.prisma.productBom.findMany({
+      where: { productId: { in: productIds }, isActive: true },
+      select: { productId: true },
+    });
+    const madeToOrderProductIds = new Set(boms.map((b) => b.productId));
+
+    const items: SalesItemInput[] = source.items.map((i) => {
+      const unitPricePen = i.unitPricePen.toFixed(4);
+      const pieces =
+        i.pieces.length > 0
+          ? i.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty }))
+          : undefined;
+      if (i.reserveItemType === 'COIL' && !madeToOrderProductIds.has(i.productId)) {
+        // D-116: venta de bobina completa. El API resuelve producto y cantidad solos a
+        // partir del saldo vivo de la bobina; `qty` es obligatoria en el schema pero se
+        // ignora para esta línea, así que basta con un valor no vacío.
+        return { saleCoilId: i.reserveItemId, qty: i.qty.toFixed(3), unitPricePen };
+      }
+      return {
+        productId: i.productId,
+        qty: i.qty.toFixed(3),
+        unitPricePen,
+        ...(pieces ? { pieces } : {}),
+        ...(i.reserveItemType === 'COIL'
+          ? { reserveFromCoilId: i.reserveItemId, reserveKg: i.reserveQty.toFixed(3) }
+          : {}),
+      };
+    });
+
+    const newId = await this.prisma.$transaction(async (tx) => {
+      const customer = await this.requireActiveCustomer(tx, source.customerId);
+      const lines = await resolveSalesLines(tx, items);
+      const totals = documentTotals(lines);
+      const issueDate = businessToday();
+      const validUntil = defaultValidUntil(issueDate);
+
+      const quotation = await tx.quotation.create({
+        data: {
+          customerId: customer.id,
+          status: QuotationStatus.DRAFT,
+          issueDate: toDateOnly(issueDate),
+          validUntil: toDateOnly(validUntil),
+          subtotalPen: totals.subtotalPen,
+          igvPen: totals.igvPen,
+          totalPen: totals.totalPen,
+          notes: source.notes,
+          createdById: actor.id,
+          items: { create: lines.map(toItemCreate) },
+        },
+      });
+
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.quotation.duplicate',
+        entity: 'quotations',
+        entityId: quotation.id,
+        after: {
+          code: quotationCode(quotation.seq),
+          sourceId: id,
+          sourceCode: quotationCode(source.seq),
+          totalPen: totals.totalPen,
+        },
+      });
+      return quotation.id;
+    });
+
+    return this.findOne(newId);
   }
 
   // -------------------------------------------------------------------------
@@ -454,7 +542,11 @@ export class QuotationsService {
     const where: Prisma.QuotationWhereInput = {
       status: query.status,
       customerId: query.customerId,
-      businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
+      // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
+      // línea" — una cotización mixta aparece en el filtro de cualquiera de sus líneas.
+      items: query.businessLine
+        ? { some: { product: { businessLine: { code: toPrismaLineCode(query.businessLine) } } } }
+        : undefined,
       ...(query.search
         ? {
             OR: [
@@ -513,8 +605,6 @@ export class QuotationsService {
     id: string;
     seq: number;
     status: QuotationStatus;
-    businessLineId: string;
-    businessLineCode: BusinessLineCode;
     validUntil: Date;
     createdById: string;
   }> {
@@ -523,55 +613,39 @@ export class QuotationsService {
         id: string;
         seq: number;
         status: QuotationStatus;
-        business_line_id: string;
         valid_until: Date;
         created_by_id: string;
       }[]
     >`
-      SELECT "id", "seq", "status", "business_line_id", "valid_until", "created_by_id"
+      SELECT "id", "seq", "status", "valid_until", "created_by_id"
       FROM "quotations" WHERE "id" = ${id}::uuid FOR UPDATE
     `;
     const row = rows[0];
     if (!row) throw new NotFoundException('Cotización no encontrada');
-    const line = await tx.businessLine.findUniqueOrThrow({
-      where: { id: row.business_line_id },
-      select: { code: true },
-    });
     return {
       id: row.id,
       seq: row.seq,
       status: row.status,
-      businessLineId: row.business_line_id,
-      businessLineCode: line.code,
       validUntil: row.valid_until,
       createdById: row.created_by_id,
     };
   }
 
-  private async requireHeaderRefs(
+  /**
+   * D-119: ya no valida una línea de negocio del documento (no existe); la línea de cada
+   * ítem se valida dentro de `resolveSalesLines`, una por una.
+   */
+  private async requireActiveCustomer(
     tx: Prisma.TransactionClient,
     customerId: string,
-    businessLine: ReturnType<typeof toSharedLineCode>,
-  ): Promise<{
-    customer: { id: string; name: string };
-    line: { id: string; quotationRequired: boolean };
-  }> {
+  ): Promise<{ id: string; name: string }> {
     const customer = await tx.customer.findUnique({
       where: { id: customerId },
       select: { id: true, name: true, isActive: true },
     });
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
-
-    const line = await tx.businessLine.findUnique({
-      where: { code: toPrismaLineCode(businessLine) },
-      select: { id: true, quotationRequired: true, inventoryStrategy: true },
-    });
-    if (!line) throw new NotFoundException('Línea de negocio no encontrada');
-    if (line.inventoryStrategy === 'NOOP') {
-      throw new BadRequestException('La línea services no lleva stock: no se cotiza por acá');
-    }
-    return { customer, line };
+    return customer;
   }
 
   /** Etiqueta legible del ítem reservado: SKU del producto o código de la bobina. */
@@ -624,7 +698,11 @@ export class QuotationsService {
       customerId: row.customer.id,
       customerName: row.customer.name,
       customerDocNumber: row.customer.docNumber,
-      businessLine: toSharedLineCode(row.businessLine.code),
+      // D-119: distintas, en el orden en que aparecen los ítems — no hay una línea "del
+      // documento" que ordene de otra forma.
+      businessLines: [
+        ...new Set(row.items.map((i) => toSharedLineCode(i.product.businessLine.code))),
+      ],
       status: row.status,
       issueDate: row.issueDate.toISOString().slice(0, 10),
       validUntil,

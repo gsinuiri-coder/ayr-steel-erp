@@ -300,6 +300,8 @@ export const salesItemSchema = z.object({
   productId: z.string().uuid(),
   productSku: z.string(),
   productName: z.string(),
+  /** D-119: línea de negocio del producto de esta línea. Una cotización puede mezclar. */
+  businessLine: z.enum(BUSINESS_LINES),
   description: z.string(),
   qty: z.string(),
   unit: unitStringSchema,
@@ -325,11 +327,13 @@ export type SalesItemDto = z.infer<typeof salesItemSchema>;
 // RF-61 — cotización
 // --------------------------------------------------------------------------
 
+/**
+ * D-119 (Fase 7e): sin `businessLine` propio — una cotización o un pedido combina líneas
+ * de cualquier línea de negocio. Cada línea trae la suya (vía su producto o, en una
+ * bobina completa, D-037); el documento ya no exige que coincidan.
+ */
 export const createQuotationSchema = z.object({
   customerId: z.string({ required_error: 'El cliente es obligatorio' }).uuid(),
-  businessLine: z.enum(BUSINESS_LINES, {
-    errorMap: () => ({ message: 'Línea de negocio inválida' }),
-  }),
   issueDate: isoDateSchema,
   validityDays: z
     .number()
@@ -343,7 +347,7 @@ export const createQuotationSchema = z.object({
 export type CreateQuotationInput = z.infer<typeof createQuotationSchema>;
 
 /** Editar una cotización en `BORRADOR` (RF-66). Reemplaza las líneas completas. */
-export const updateQuotationSchema = createQuotationSchema.omit({ businessLine: true });
+export const updateQuotationSchema = createQuotationSchema;
 export type UpdateQuotationInput = z.infer<typeof updateQuotationSchema>;
 
 /** Anular una cotización en cualquier estado no confirmado (RF-65). Motivo obligatorio. */
@@ -357,7 +361,8 @@ export const quotationSchema = z.object({
   customerId: z.string().uuid(),
   customerName: z.string(),
   customerDocNumber: z.string(),
-  businessLine: z.enum(BUSINESS_LINES),
+  /** D-119: líneas de negocio distintas de sus ítems — puede tener más de una. */
+  businessLines: z.array(z.enum(BUSINESS_LINES)),
   status: z.enum(QUOTATION_STATUSES),
   issueDate: z.string(),
   validUntil: z.string(),
@@ -381,14 +386,21 @@ export const quotationSchema = z.object({
 });
 export type QuotationDto = z.infer<typeof quotationSchema>;
 
-export const quotationListItemSchema = quotationSchema.omit({ items: true }).extend({
-  itemCount: z.number().int(),
-});
+// D-119: el listado no carga `items` (perf: 500 cotizaciones con sus líneas es arrastrar
+// miles de filas por pantallazo), así que tampoco puede derivar `businessLines` sin una
+// consulta aparte por fila. Nadie lo muestra en la lista hoy — se omite acá y se recalcula
+// en el detalle (`GET /sales/quotations/:id`), donde `items` ya viaja completo.
+export const quotationListItemSchema = quotationSchema
+  .omit({ items: true, businessLines: true })
+  .extend({
+    itemCount: z.number().int(),
+  });
 export type QuotationListItemDto = z.infer<typeof quotationListItemSchema>;
 
 export const quotationQuerySchema = paginationQuerySchema.extend({
   status: z.enum(QUOTATION_STATUSES).optional(),
   customerId: z.string().uuid().optional(),
+  /** D-119: al menos una línea del documento es de esta línea de negocio. */
   businessLine: z.enum(BUSINESS_LINES).optional(),
   /** Búsqueda por código de cotización o nombre/documento del cliente (RF-84). */
   search: z.string().trim().max(80).optional(),
@@ -498,7 +510,8 @@ export const salesOrderSchema = z.object({
   customerId: z.string().uuid(),
   customerName: z.string(),
   customerDocNumber: z.string(),
-  businessLine: z.enum(BUSINESS_LINES),
+  /** D-119: líneas de negocio distintas de sus ítems — puede tener más de una. */
+  businessLines: z.array(z.enum(BUSINESS_LINES)),
   status: z.enum(SALES_ORDER_STATUSES),
   issueDate: z.string(),
   subtotalPen: z.string(),
@@ -523,7 +536,8 @@ export const salesOrderListItemSchema = salesOrderSchema
   // `queueStatus` exige leer reservas + su OP viva por pedido (D-093); el listado solo
   // cuenta reservas activas (`activeReservations`) para no pagar ese costo por fila. La
   // cola en sí (`GET /sales/orders/queue`) es la vista barata para eso.
-  .omit({ items: true, reservations: true, queueStatus: true })
+  // D-119: `businessLines` sale de `items`, que el listado tampoco carga (mismo motivo).
+  .omit({ items: true, reservations: true, queueStatus: true, businessLines: true })
   .extend({
     itemCount: z.number().int(),
     activeReservations: z.number().int(),
@@ -533,6 +547,7 @@ export type SalesOrderListItemDto = z.infer<typeof salesOrderListItemSchema>;
 export const salesOrderQuerySchema = paginationQuerySchema.extend({
   status: z.enum(SALES_ORDER_STATUSES).optional(),
   customerId: z.string().uuid().optional(),
+  /** D-119: al menos una línea del documento es de esta línea de negocio. */
   businessLine: z.enum(BUSINESS_LINES).optional(),
   search: z.string().trim().max(80).optional(),
 });

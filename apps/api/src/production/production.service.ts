@@ -210,7 +210,6 @@ export class ProductionService {
             salesOrder: {
               select: {
                 status: true,
-                businessLineId: true,
                 seq: true,
                 items: { select: { productId: true } },
               },
@@ -228,7 +227,14 @@ export class ProductionService {
         if (reservation.salesOrder.status === 'CANCELLED') {
           throw new BadRequestException('El pedido de esa reserva está anulado');
         }
-        if (reservation.salesOrder.businessLineId !== product.businessLineId) {
+        // D-119: la línea "de la reserva" es la del ítem que promete (bobina o producto),
+        // no la del pedido — un pedido mixto ya no tiene una sola línea que comparar.
+        const reservedLineId = await this.inventory.resolveItemBusinessLineId(
+          tx,
+          reservation.itemType,
+          reservation.itemId,
+        );
+        if (reservedLineId !== product.businessLineId) {
           throw new BadRequestException(
             'La reserva es de otra línea de negocio que el producto a fabricar',
           );

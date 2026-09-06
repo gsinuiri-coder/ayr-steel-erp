@@ -3,11 +3,10 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
-  BusinessLine as BusinessLineEnum,
   DEFAULT_QUOTATION_VALIDITY_DAYS,
   Decimal,
   MAX_QUOTATION_VALIDITY_DAYS,
@@ -62,6 +61,11 @@ import {
  *
  * La única diferencia visible es la vigencia, que solo tiene sentido en una cotización.
  *
+ * **D-119 (Fase 7e): sin línea de negocio de documento.** Antes el formulario elegía UNA
+ * línea arriba y todas las filas vendían de esa misma línea; ahora cada fila elige la suya
+ * (o ninguna, si vende una bobina completa, que siempre es `trading`). El API ya no exige
+ * que coincidan (`resolveSalesLines` valida cada línea contra su propio producto).
+ *
  * Los totales se calculan con `salesLineTotals` de `@ayr/shared` —la **misma** función que
  * usa el API— para que lo que el vendedor ve mientras tipea sea exactamente lo que se
  * guarda (mismo criterio que el partido de RF-15 y el kilo por pieza de D-059).
@@ -78,6 +82,12 @@ interface LineDraft {
    * tipee. `PRODUCT` es todo lo demás (perfiles, trading normal, coberturas).
    */
   kind: 'PRODUCT' | 'BOBINA';
+  /**
+   * D-119: línea de negocio de **esta fila**, solo para filtrar su propio catálogo y su
+   * propio picker de materia prima — no viaja al API (el producto ya dice la suya).
+   * Sin sentido en una fila `BOBINA` (siempre `trading`, D-037).
+   */
+  businessLine: BusinessLine | '';
   productId: string;
   /** D-116: bobina que esta línea vende entera. Vacío salvo `kind === 'BOBINA'`. */
   saleCoilId: string;
@@ -100,6 +110,7 @@ function emptyLine(key: number): LineDraft {
   return {
     key,
     kind: 'PRODUCT',
+    businessLine: '',
     productId: '',
     saleCoilId: '',
     qty: '',
@@ -127,13 +138,17 @@ function normalizeLine(l: { qty: string; unitPricePen: string }): {
   };
 }
 
+/** D-083: la línea es compuesta cuando el producto se vende por metro lineal. */
+function isMadeToMeasure(product: ProductDto | undefined): boolean {
+  return product?.unit === Unit.MTR;
+}
+
 export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const isQuotation = mode === 'quotation';
 
   const [customerId, setCustomerId] = useState('');
-  const [businessLine, setBusinessLine] = useState<BusinessLine | ''>('');
   const [issueDate, setIssueDate] = useState(todayIso());
   const [validityDays, setValidityDays] = useState(String(DEFAULT_QUOTATION_VALIDITY_DAYS));
   const [notes, setNotes] = useState('');
@@ -149,36 +164,39 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
     queryKey: ['business-lines'],
     queryFn: () => api<BusinessLineDto[]>('/business-lines'),
   });
-  const lineId = businessLines.data?.find((l) => l.code === businessLine)?.id;
+  // D-119: el catálogo completo, una sola vez — cada fila filtra el suyo por su propia
+  // línea. Cachear una copia por línea era pedir lo mismo N veces para descartar casi todo.
   const products = useQuery({
-    queryKey: ['catalog', lineId],
-    // Filtrado en el API: cachear una copia del catálogo completo por cada línea era pedir
-    // lo mismo N veces para descartar casi todo en el cliente.
-    queryFn: () => api<ProductDto[]>(`/catalog?businessLineId=${lineId ?? ''}`),
-    enabled: lineId !== undefined,
+    queryKey: ['catalog'],
+    queryFn: () => api<ProductDto[]>('/catalog'),
   });
-  // Material reservable de la línea: bobinas abiertas con disponible > 0, sin ningún
-  // campo de costo. Va por `/sales` y no por `/coils` porque VENDEDOR no tiene acceso a
-  // esa ruta (§3.4: le oculta costos y proveedor) — y es justo el rol que cotiza.
-  const coils = useQuery({
-    queryKey: ['reservable-coils', businessLine],
-    queryFn: () => api<ReservableCoilDto[]>(`/sales/reservable-coils?businessLine=${businessLine}`),
-    enabled: businessLine !== '',
-  });
-  // D-116: bobinas DISPONIBLES para vender enteras (RF-73). Solo tiene sentido en `trading`,
-  // que es donde vive el SKU `BOB{finishCode}{thicknessMm}` de D-037; trae bobinas de
-  // Drywall y Metallic Roofing por igual, no de la línea del documento.
+  // D-116: bobinas DISPONIBLES para vender enteras (RF-73), siempre `trading` (D-037); trae
+  // bobinas de Drywall y Metallic Roofing por igual, sin depender de ninguna fila.
   const sellableCoils = useQuery({
     queryKey: ['sellable-coils'],
     queryFn: () => api<SellableCoilDto[]>('/sales/sellable-coils'),
-    enabled: businessLine === BusinessLineEnum.TRADING,
   });
 
-  const line = businessLines.data?.find((l) => l.code === businessLine);
-  const requiresQuotation = line?.quotationRequired ?? false;
-  const activeProducts = products.data?.filter(
-    (p) => p.isActive && p.businessLineCode === businessLine,
+  // D-119: material reservable de cada línea de negocio que alguna fila esté usando —
+  // `useQueries` (no un `useQuery` por fila) porque el número de filas cambia en tiempo de
+  // ejecución y los hooks no se pueden condicionar a eso. Sin campo de costo: VENDEDOR no
+  // tiene acceso a `/coils` (§3.4).
+  const distinctLines = [
+    ...new Set(lines.flatMap((l) => (l.businessLine ? [l.businessLine] : []))),
+  ];
+  const coilQueries = useQueries({
+    queries: distinctLines.map((bl) => ({
+      queryKey: ['reservable-coils', bl],
+      queryFn: () => api<ReservableCoilDto[]>(`/sales/reservable-coils?businessLine=${bl}`),
+    })),
+  });
+  const coilsByLine = new Map<string, ReservableCoilDto[]>(
+    distinctLines.map((bl, i) => [bl, coilQueries[i]?.data ?? []]),
   );
+  const coilsLoadedByLine = new Map<string, boolean>(
+    distinctLines.map((bl, i) => [bl, coilQueries[i]?.isSuccess ?? false]),
+  );
+
   const productById = useMemo(
     () => new Map((products.data ?? []).map((p) => [p.id, p])),
     [products.data],
@@ -205,18 +223,16 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       // detalle anterior dejaría de significar nada, y la cantidad se recalcula sola.
       pieces: [EMPTY_PIECE],
       qty: '',
+      reserveFromCoilId: '',
+      reserveKg: '',
     });
-  }
-
-  /** D-083: la línea es compuesta cuando el producto se vende por metro lineal. */
-  function isMadeToMeasure(productId: string): boolean {
-    return productById.get(productId)?.unit === Unit.MTR;
   }
 
   /** D-116: alterna una línea entre producto normal y venta de bobina completa. */
   function setLineKind(key: number, kind: LineDraft['kind']): void {
     patchLine(key, {
       kind,
+      businessLine: '',
       productId: '',
       saleCoilId: '',
       qty: '',
@@ -283,7 +299,6 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
    */
   function validate(): { items: SalesItemInput[] } | { error: string } {
     if (!customerId) return { error: 'Elige un cliente' };
-    if (!businessLine) return { error: 'Elige una línea de negocio' };
     if (isQuotation) {
       const days = Number(validityDays);
       if (!Number.isInteger(days) || days < 1 || days > MAX_QUOTATION_VALIDITY_DAYS) {
@@ -322,7 +337,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       }
 
       if (!l.productId) return { error: `${at}: elige un producto` };
-      const madeToMeasure = isMadeToMeasure(l.productId);
+      const madeToMeasure = isMadeToMeasure(productById.get(l.productId));
       const pieces = madeToMeasure ? toPieces(l.pieces) : null;
       if (madeToMeasure) {
         const parsed = parsePieceRows(l.pieces);
@@ -348,7 +363,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         return { error: `${at}: los kilos a reservar deben ser mayores a cero` };
       }
       if (hasCoil) {
-        const coil = coils.data?.find((c) => c.coilId === l.reserveFromCoilId);
+        const coil = coilsByLine.get(l.businessLine)?.find((c) => c.coilId === l.reserveFromCoilId);
         // Sin la lista cargada no se inventa una validación: el API tiene la última palabra
         // y la comprueba bajo el lock del saldo, que es donde de verdad importa.
         if (coil) {
@@ -391,7 +406,6 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
 
     save.mutate({
       customerId,
-      businessLine,
       issueDate,
       ...(isQuotation ? { validityDays: Number(validityDays) } : {}),
       // `validityDays` ya quedó validado como entero en rango dentro de `validate()`.
@@ -450,37 +464,6 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
           </Select>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="line">Línea de negocio</Label>
-          <Select
-            value={businessLine}
-            onValueChange={(v) => {
-              // Cambiar de línea invalida productos y bobinas ya elegidos: son de otra línea
-              // y el API los rechazaría uno por uno con un mensaje por línea.
-              setBusinessLine(v as BusinessLine);
-              setLines([emptyLine(nextKey)]);
-              setNextKey((k) => k + 1);
-            }}
-          >
-            <SelectTrigger id="line" className="w-full">
-              <SelectValue placeholder="Elige una línea" />
-            </SelectTrigger>
-            <SelectContent>
-              {businessLines.data
-                // D-065: un pedido directo no se admite en una línea que exige cotización.
-                // Ofrecerla llevaba al vendedor a llenar el formulario entero y comerse un
-                // 400 al guardar — el mismo "previsualización verde → 400" del partido (2b).
-                ?.filter(
-                  (l) => l.inventoryStrategy === 'STOCK' && (isQuotation || !l.quotationRequired),
-                )
-                .map((l) => (
-                  <SelectItem key={l.id} value={l.code}>
-                    {BUSINESS_LINE_LABELS[l.code]}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-2">
           <Label htmlFor="issue-date">Fecha de emisión</Label>
           <Input
             id="issue-date"
@@ -519,257 +502,55 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         </div>
       </div>
 
-      {requiresQuotation && (
-        <Alert>
-          <AlertDescription>
-            En {businessLine ? BUSINESS_LINE_LABELS[businessLine] : 'esta línea'} el producto se
-            fabrica contra el pedido (RF-31): la línea reserva kilos de una bobina concreta, y la
-            producción convierte esa promesa en el producto terminado. Si lo que vendes ya está
-            fabricado y en stock, deja la bobina vacía.
-          </AlertDescription>
-        </Alert>
-      )}
-
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[26%]">Producto</TableHead>
-              <TableHead className="w-[12%]">Cantidad</TableHead>
-              <TableHead className="w-[14%]">P. unitario (sin IGV)</TableHead>
-              <TableHead className="w-[22%]">Reserva desde bobina</TableHead>
-              <TableHead className="w-[12%]">Kg a reservar</TableHead>
+              <TableHead className="w-[24%]">Línea de negocio</TableHead>
+              <TableHead className="w-[20%]">Producto</TableHead>
+              <TableHead className="w-[10%]">Cantidad</TableHead>
+              <TableHead className="w-[12%]">P. unitario (sin IGV)</TableHead>
+              <TableHead className="w-[16%]">Reserva desde bobina</TableHead>
+              <TableHead className="w-[10%]">Kg a reservar</TableHead>
               <TableHead className="text-right">Importe</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {lines.flatMap((l, index) => {
-              const product = productById.get(l.productId);
-              const valid = isPositiveDecimal(l.qty) && isPositiveDecimal(l.unitPricePen);
-              const lineTotal = valid
-                ? salesLineTotals({ qty: l.qty, unitPricePen: l.unitPricePen }).subtotal
-                : null;
-              const madeToMeasure = isMadeToMeasure(l.productId);
-              const parsedLine = madeToMeasure ? parsePieceRows(l.pieces) : null;
-              const parsedPieces = parsedLine?.ok === true ? parsedLine.pieces : null;
-              const pieceError = parsedLine?.ok === false ? parsedLine.reason : '';
-              return [
-                <TableRow key={l.key}>
-                  <TableCell>
-                    {/* D-116: solo en trading tiene sentido vender una bobina completa — es
-                        donde vive el SKU de D-037. */}
-                    {businessLine === BusinessLineEnum.TRADING && (
-                      <Select
-                        value={l.kind}
-                        onValueChange={(v) => {
-                          setLineKind(l.key, v as LineDraft['kind']);
-                        }}
-                      >
-                        <SelectTrigger
-                          className="mb-1 h-7 w-full text-xs"
-                          aria-label={`Tipo de línea ${index + 1}`}
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="PRODUCT">Producto</SelectItem>
-                          <SelectItem value="BOBINA">Bobina completa</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    )}
-                    {l.kind === 'BOBINA' ? (
-                      <Select
-                        value={l.saleCoilId}
-                        onValueChange={(v) => {
-                          chooseSaleCoil(l.key, v);
-                        }}
-                      >
-                        <SelectTrigger
-                          className="w-full"
-                          aria-label={`Bobina a vender de la línea ${index + 1}`}
-                        >
-                          <SelectValue placeholder="Bobina" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {sellableCoils.data?.map((c) => (
-                            <SelectItem key={c.coilId} value={c.coilId}>
-                              {c.code} — {formatQty(c.availableQty, 'kg')}
-                            </SelectItem>
-                          ))}
-                          {sellableCoils.isSuccess && sellableCoils.data.length === 0 && (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No hay bobinas disponibles para vender.
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Select
-                        value={l.productId}
-                        onValueChange={(v) => {
-                          chooseProduct(l.key, v);
-                        }}
-                        disabled={businessLine === ''}
-                      >
-                        <SelectTrigger
-                          className="w-full"
-                          aria-label={`Producto de la línea ${index + 1}`}
-                        >
-                          <SelectValue placeholder="Producto" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {activeProducts?.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.sku} — {p.name}
-                            </SelectItem>
-                          ))}
-                          {/* Un desplegable vacío se ve igual que uno que no cargó: se dice. */}
-                          {products.isSuccess && activeProducts?.length === 0 && (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              Esta línea no tiene productos activos.
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      inputMode="decimal"
-                      aria-label={`Cantidad de la línea ${index + 1}`}
-                      value={l.qty}
-                      // D-083: en una línea compuesta la cantidad la manda el detalle de
-                      // largos. D-116: en una venta de bobina la manda el saldo disponible.
-                      // Editarla a mano abriría la puerta a que diga otra cosa, que es
-                      // exactamente lo que el API rechaza (recalcula igual, siempre).
-                      readOnly={madeToMeasure || l.kind === 'BOBINA'}
-                      disabled={madeToMeasure || l.kind === 'BOBINA'}
-                      onChange={(e) => {
-                        patchLine(l.key, { qty: e.target.value });
-                      }}
-                    />
-                    {l.kind === 'BOBINA' ? (
-                      <span className="text-xs text-muted-foreground">kg (saldo completo)</span>
-                    ) : (
-                      product && (
-                        <span className="text-xs text-muted-foreground">
-                          {unitSymbol(product.unit)}
-                          {/* D-118: kg teóricos de la línea (espesor × ancho × densidad),
-                              informativo — el precio no cambia, es peso estimado para el
-                              cliente y para la guía de remisión. */}
-                          {product.theoreticalKgPerUnit && isPositiveDecimal(l.qty) && (
-                            <>
-                              {' '}
-                              · ≈{' '}
-                              {new Decimal(product.theoreticalKgPerUnit).times(l.qty).toFixed(3)} kg
-                            </>
-                          )}
-                        </span>
-                      )
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      inputMode="decimal"
-                      aria-label={`Precio unitario de la línea ${index + 1}`}
-                      value={l.unitPricePen}
-                      onChange={(e) => {
-                        patchLine(l.key, { unitPricePen: e.target.value });
-                      }}
-                    />
-                    {product?.listPricePen && (
-                      <span className="text-xs text-muted-foreground">
-                        Lista: {formatMoney(product.listPricePen, 'PEN', 4)}
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {l.kind === 'BOBINA' ? (
-                      <span className="text-sm text-muted-foreground">—</span>
-                    ) : (
-                      <Select
-                        value={l.reserveFromCoilId}
-                        onValueChange={(v) => {
-                          patchLine(l.key, { reserveFromCoilId: v });
-                        }}
-                        disabled={businessLine === ''}
-                      >
-                        <SelectTrigger
-                          className="w-full"
-                          aria-label={`Bobina a reservar de la línea ${index + 1}`}
-                        >
-                          <SelectValue placeholder="Stock del producto" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {coils.data?.map((c) => (
-                            <SelectItem key={c.coilId} value={c.coilId}>
-                              {c.code} — {formatQty(c.availableQty, 'kg')} disp.
-                            </SelectItem>
-                          ))}
-                          {coils.isSuccess && coils.data.length === 0 && (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No hay bobinas con material disponible en esta línea.
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {l.kind !== 'BOBINA' && (
-                      <Input
-                        inputMode="decimal"
-                        aria-label={`Kilos a reservar de la línea ${index + 1}`}
-                        value={l.reserveKg}
-                        disabled={l.reserveFromCoilId === ''}
-                        onChange={(e) => {
-                          patchLine(l.key, { reserveKg: e.target.value });
-                        }}
-                      />
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {lineTotal ? formatMoney(lineTotal.toFixed(4)) : '—'}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Quitar la línea ${index + 1}`}
-                      disabled={lines.length === 1}
-                      onClick={() => {
-                        setLines((current) => current.filter((x) => x.key !== l.key));
-                      }}
-                    >
-                      Quitar
-                    </Button>
-                  </TableCell>
-                </TableRow>,
-                // D-083: el editor de largos va en su propia fila y no en una celda, porque
-                // en una obra real son varias medidas y no entran en el ancho de la columna.
-                ...(madeToMeasure
-                  ? [
-                      <TableRow key={`${String(l.key)}-pieces`} className="bg-muted/40">
-                        <TableCell colSpan={7} className="py-3">
-                          <PieceEditor
-                            rows={l.pieces}
-                            lineIndex={index}
-                            onChange={(rows) => {
-                              patchPieces(l.key, rows);
-                            }}
-                          />
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            {parsedPieces === null
-                              ? pieceError
-                              : `${describePieces(parsedPieces)} · ${String(piecesCount(parsedPieces))} planchas · ${piecesMeters(parsedPieces).toFixed(3)} m`}
-                          </p>
-                        </TableCell>
-                      </TableRow>,
-                    ]
-                  : []),
-              ];
-            })}
+            {lines.flatMap((l, index) => (
+              <LineRow
+                key={l.key}
+                line={l}
+                index={index}
+                isQuotation={isQuotation}
+                businessLines={businessLines.data}
+                products={products.data}
+                productById={productById}
+                sellableCoils={sellableCoils.data}
+                sellableCoilsLoaded={sellableCoils.isSuccess}
+                reservableCoils={coilsByLine.get(l.businessLine)}
+                reservableCoilsLoaded={coilsLoadedByLine.get(l.businessLine) ?? false}
+                canRemove={lines.length > 1}
+                onPatch={(patch) => {
+                  patchLine(l.key, patch);
+                }}
+                onSetKind={(kind) => {
+                  setLineKind(l.key, kind);
+                }}
+                onChooseProduct={(productId) => {
+                  chooseProduct(l.key, productId);
+                }}
+                onChooseSaleCoil={(coilId) => {
+                  chooseSaleCoil(l.key, coilId);
+                }}
+                onPatchPieces={(rows) => {
+                  patchPieces(l.key, rows);
+                }}
+                onRemove={() => {
+                  setLines((current) => current.filter((x) => x.key !== l.key));
+                }}
+              />
+            ))}
           </TableBody>
         </Table>
       </div>
@@ -820,6 +601,287 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
           {save.isPending ? 'Guardando…' : isQuotation ? 'Crear cotización' : 'Crear pedido'}
         </Button>
       </div>
+    </>
+  );
+}
+
+/**
+ * Una fila del documento (D-119). Vive aparte del formulario porque su picker de materia
+ * prima viene resuelto desde el padre (`useQueries` en `SalesDocumentForm`, D-119): el
+ * número de filas cambia en tiempo de ejecución y los hooks no se pueden condicionar a eso.
+ */
+function LineRow({
+  line: l,
+  index,
+  isQuotation,
+  businessLines,
+  products,
+  productById,
+  sellableCoils,
+  sellableCoilsLoaded,
+  reservableCoils,
+  reservableCoilsLoaded,
+  canRemove,
+  onPatch,
+  onSetKind,
+  onChooseProduct,
+  onChooseSaleCoil,
+  onPatchPieces,
+  onRemove,
+}: {
+  line: LineDraft;
+  index: number;
+  isQuotation: boolean;
+  businessLines: BusinessLineDto[] | undefined;
+  products: ProductDto[] | undefined;
+  productById: Map<string, ProductDto>;
+  sellableCoils: SellableCoilDto[] | undefined;
+  sellableCoilsLoaded: boolean;
+  reservableCoils: ReservableCoilDto[] | undefined;
+  reservableCoilsLoaded: boolean;
+  canRemove: boolean;
+  onPatch: (patch: Partial<LineDraft>) => void;
+  onSetKind: (kind: LineDraft['kind']) => void;
+  onChooseProduct: (productId: string) => void;
+  onChooseSaleCoil: (coilId: string) => void;
+  onPatchPieces: (rows: PieceDraft[]) => void;
+  onRemove: () => void;
+}) {
+  const line = businessLines?.find((b) => b.code === l.businessLine);
+  const requiresQuotation = line?.quotationRequired ?? false;
+  const activeProducts = products?.filter(
+    (p) => p.isActive && p.businessLineCode === l.businessLine,
+  );
+  const product = productById.get(l.productId);
+  const valid = isPositiveDecimal(l.qty) && isPositiveDecimal(l.unitPricePen);
+  const lineTotal = valid
+    ? salesLineTotals({ qty: l.qty, unitPricePen: l.unitPricePen }).subtotal
+    : null;
+  const madeToMeasure = isMadeToMeasure(product);
+  const parsedLine = madeToMeasure ? parsePieceRows(l.pieces) : null;
+  const parsedPieces = parsedLine?.ok === true ? parsedLine.pieces : null;
+  const pieceError = parsedLine?.ok === false ? parsedLine.reason : '';
+
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          {/* D-119: cada fila elige su propia línea; no gobierna el documento entero. */}
+          <Select
+            value={l.kind === 'BOBINA' ? '__BOBINA__' : l.businessLine}
+            onValueChange={(v) => {
+              if (v === '__BOBINA__') {
+                onSetKind('BOBINA');
+                return;
+              }
+              if (l.kind === 'BOBINA') onSetKind('PRODUCT');
+              onPatch({
+                businessLine: v as BusinessLine,
+                productId: '',
+                pieces: [EMPTY_PIECE],
+                qty: '',
+                reserveFromCoilId: '',
+                reserveKg: '',
+              });
+            }}
+          >
+            <SelectTrigger
+              className="w-full"
+              aria-label={`Línea de negocio de la línea ${index + 1}`}
+            >
+              <SelectValue placeholder="Elige una línea" />
+            </SelectTrigger>
+            <SelectContent>
+              {businessLines
+                // D-065: un pedido directo no se admite en una línea que exige cotización.
+                // Ofrecerla llevaba al vendedor a llenar la fila entera y comerse un 400 al
+                // guardar — el mismo "previsualización verde → 400" del partido (2b).
+                ?.filter(
+                  (b) => b.inventoryStrategy === 'STOCK' && (isQuotation || !b.quotationRequired),
+                )
+                .map((b) => (
+                  <SelectItem key={b.id} value={b.code}>
+                    {BUSINESS_LINE_LABELS[b.code]}
+                  </SelectItem>
+                ))}
+              {/* D-116: vender una bobina completa es siempre `trading` (D-037); se ofrece
+                  como una opción más de la lista en vez de un selector aparte. */}
+              <SelectItem value="__BOBINA__">Bobina completa (venta directa)</SelectItem>
+            </SelectContent>
+          </Select>
+          {requiresQuotation && l.kind === 'PRODUCT' && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Se fabrica contra el pedido (RF-31): reserva kilos de una bobina concreta, o deja la
+              bobina vacía si ya está en stock.
+            </p>
+          )}
+        </TableCell>
+        <TableCell>
+          {l.kind === 'BOBINA' ? (
+            <Select value={l.saleCoilId} onValueChange={onChooseSaleCoil}>
+              <SelectTrigger
+                className="w-full"
+                aria-label={`Bobina a vender de la línea ${index + 1}`}
+              >
+                <SelectValue placeholder="Bobina" />
+              </SelectTrigger>
+              <SelectContent>
+                {sellableCoils?.map((c) => (
+                  <SelectItem key={c.coilId} value={c.coilId}>
+                    {c.code} — {formatQty(c.availableQty, 'kg')}
+                  </SelectItem>
+                ))}
+                {sellableCoilsLoaded && sellableCoils?.length === 0 && (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                    No hay bobinas disponibles para vender.
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Select
+              value={l.productId}
+              onValueChange={onChooseProduct}
+              disabled={l.businessLine === ''}
+            >
+              <SelectTrigger className="w-full" aria-label={`Producto de la línea ${index + 1}`}>
+                <SelectValue placeholder="Producto" />
+              </SelectTrigger>
+              <SelectContent>
+                {activeProducts?.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.sku} — {p.name}
+                  </SelectItem>
+                ))}
+                {/* Un desplegable vacío se ve igual que uno que no cargó: se dice. */}
+                {products && activeProducts?.length === 0 && (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                    Esta línea no tiene productos activos.
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
+          )}
+        </TableCell>
+        <TableCell>
+          <Input
+            inputMode="decimal"
+            aria-label={`Cantidad de la línea ${index + 1}`}
+            value={l.qty}
+            // D-083: en una línea compuesta la cantidad la manda el detalle de largos.
+            // D-116: en una venta de bobina la manda el saldo disponible. Editarla a mano
+            // abriría la puerta a que diga otra cosa, que es exactamente lo que el API
+            // rechaza (recalcula igual, siempre).
+            readOnly={madeToMeasure || l.kind === 'BOBINA'}
+            disabled={madeToMeasure || l.kind === 'BOBINA'}
+            onChange={(e) => {
+              onPatch({ qty: e.target.value });
+            }}
+          />
+          {l.kind === 'BOBINA' ? (
+            <span className="text-xs text-muted-foreground">kg (saldo completo)</span>
+          ) : (
+            product && (
+              <span className="text-xs text-muted-foreground">
+                {unitSymbol(product.unit)}
+                {/* D-118: kg teóricos de la línea (espesor × ancho × densidad), informativo
+                    — el precio no cambia, es peso estimado para el cliente y la guía. */}
+                {product.theoreticalKgPerUnit && isPositiveDecimal(l.qty) && (
+                  <> · ≈ {new Decimal(product.theoreticalKgPerUnit).times(l.qty).toFixed(3)} kg</>
+                )}
+              </span>
+            )
+          )}
+        </TableCell>
+        <TableCell>
+          <Input
+            inputMode="decimal"
+            aria-label={`Precio unitario de la línea ${index + 1}`}
+            value={l.unitPricePen}
+            onChange={(e) => {
+              onPatch({ unitPricePen: e.target.value });
+            }}
+          />
+          {product?.listPricePen && (
+            <span className="text-xs text-muted-foreground">
+              Lista: {formatMoney(product.listPricePen, 'PEN', 4)}
+            </span>
+          )}
+        </TableCell>
+        <TableCell>
+          {l.kind === 'BOBINA' ? (
+            <span className="text-sm text-muted-foreground">—</span>
+          ) : (
+            <Select
+              value={l.reserveFromCoilId}
+              onValueChange={(v) => {
+                onPatch({ reserveFromCoilId: v });
+              }}
+              disabled={l.businessLine === ''}
+            >
+              <SelectTrigger
+                className="w-full"
+                aria-label={`Bobina a reservar de la línea ${index + 1}`}
+              >
+                <SelectValue placeholder="Stock del producto" />
+              </SelectTrigger>
+              <SelectContent>
+                {reservableCoils?.map((c) => (
+                  <SelectItem key={c.coilId} value={c.coilId}>
+                    {c.code} — {formatQty(c.availableQty, 'kg')} disp.
+                  </SelectItem>
+                ))}
+                {reservableCoilsLoaded && reservableCoils?.length === 0 && (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                    No hay bobinas con material disponible en esta línea.
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
+          )}
+        </TableCell>
+        <TableCell>
+          {l.kind !== 'BOBINA' && (
+            <Input
+              inputMode="decimal"
+              aria-label={`Kilos a reservar de la línea ${index + 1}`}
+              value={l.reserveKg}
+              disabled={l.reserveFromCoilId === ''}
+              onChange={(e) => {
+                onPatch({ reserveKg: e.target.value });
+              }}
+            />
+          )}
+        </TableCell>
+        <TableCell className="text-right">
+          {lineTotal ? formatMoney(lineTotal.toFixed(4)) : '—'}
+        </TableCell>
+        <TableCell className="text-right">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Quitar la línea ${index + 1}`}
+            disabled={!canRemove}
+            onClick={onRemove}
+          >
+            Quitar
+          </Button>
+        </TableCell>
+      </TableRow>
+      {/* D-083: el editor de largos va en su propia fila y no en una celda, porque en una
+          obra real son varias medidas y no entran en el ancho de la columna. */}
+      {madeToMeasure && (
+        <TableRow className="bg-muted/40">
+          <TableCell colSpan={8} className="py-3">
+            <PieceEditor rows={l.pieces} lineIndex={index} onChange={onPatchPieces} />
+            <p className="mt-2 text-xs text-muted-foreground">
+              {parsedPieces === null
+                ? pieceError
+                : `${describePieces(parsedPieces)} · ${String(piecesCount(parsedPieces))} planchas · ${piecesMeters(parsedPieces).toFixed(3)} m`}
+            </p>
+          </TableCell>
+        </TableRow>
+      )}
     </>
   );
 }

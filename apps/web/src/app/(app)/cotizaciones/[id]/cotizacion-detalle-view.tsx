@@ -76,6 +76,18 @@ export function CotizacionDetalleView({ id }: { id: string }) {
     onError,
   });
 
+  // D-119: duplicar crea un BORRADOR nuevo en cualquier estado — la única acción de esta
+  // pantalla que no depende de `q.status`.
+  const duplicate = useMutation({
+    mutationFn: () => api<QuotationDto>(`/sales/quotations/${id}/duplicate`, { method: 'POST' }),
+    onSuccess: (created) => {
+      toast.success(`Borrador ${created.code} creado`);
+      invalidateSales(queryClient);
+      router.push(`/cotizaciones/${created.id}`);
+    },
+    onError,
+  });
+
   if (quotation.isPending) {
     return <Skeleton className="h-64 w-full" />;
   }
@@ -87,7 +99,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
     );
   }
 
-  const busy = emit.isPending || confirm.isPending || cancel.isPending;
+  const busy = emit.isPending || confirm.isPending || cancel.isPending || duplicate.isPending;
   const canEmit = q.status === 'DRAFT';
   const canConfirm = q.status === 'EMITTED' && !q.isExpired;
   const canCancel = q.status !== 'CONFIRMED' && q.status !== 'CANCELLED';
@@ -101,7 +113,9 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             <QuotationStatusBadge status={q.status} isExpired={q.isExpired} />
           </div>
           <p className="text-sm text-muted-foreground">
-            {q.customerName} · {q.customerDocNumber} · {BUSINESS_LINE_LABELS[q.businessLine]}
+            {q.customerName} · {q.customerDocNumber} ·{' '}
+            {/* D-119: una cotización puede mezclar líneas de negocio. */}
+            {q.businessLines.map((b) => BUSINESS_LINE_LABELS[b]).join(', ')}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -148,6 +162,16 @@ export function CotizacionDetalleView({ id }: { id: string }) {
               Anular
             </Button>
           )}
+          {/* D-119: duplicar funciona en cualquier estado, no solo en los vigentes. */}
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              duplicate.mutate();
+            }}
+          >
+            {duplicate.isPending ? 'Duplicando…' : 'Duplicar'}
+          </Button>
         </div>
       </div>
 

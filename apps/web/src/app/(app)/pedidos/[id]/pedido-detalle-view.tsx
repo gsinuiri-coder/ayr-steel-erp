@@ -126,7 +126,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
             {o.priority && <Badge>Prioridad</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">
-            {o.customerName} · {o.customerDocNumber} · {BUSINESS_LINE_LABELS[o.businessLine]}
+            {o.customerName} · {o.customerDocNumber} ·{' '}
+            {/* D-119: un pedido puede mezclar líneas de negocio. */}
+            {o.businessLines.map((b) => BUSINESS_LINE_LABELS[b]).join(', ')}
             {o.quotationId && (
               <>
                 {' · '}
