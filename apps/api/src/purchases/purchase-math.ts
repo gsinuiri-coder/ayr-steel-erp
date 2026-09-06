@@ -1,4 +1,4 @@
-import { Currency, type Prisma } from '@prisma/client';
+import { Currency, type CoilStatus, type Prisma } from '@prisma/client';
 import { Decimal, money, toDecimal, type CreatePurchaseInput } from '@ayr/shared';
 
 /**
@@ -52,6 +52,8 @@ export interface ComputedItem {
   colorId?: string;
   widthMm?: string;
   thicknessMm?: string;
+  /** D-116: estado con el que nace la bobina. Solo en compras `COIL`. */
+  coilStatus?: CoilStatus;
 }
 
 /**
@@ -78,6 +80,7 @@ export function computeTotals(input: CreatePurchaseInput): PurchaseTotals {
       colorId: item.colorId,
       widthMm: item.widthMm,
       thicknessMm: item.thicknessMm,
+      coilStatus: item.coilStatus,
     } satisfies ComputedItem;
   });
 

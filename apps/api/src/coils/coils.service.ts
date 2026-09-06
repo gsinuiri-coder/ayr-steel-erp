@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import {
   BusinessLineCode,
   CoilKind,
+  CoilStatus,
   Currency,
   InventoryRefType,
   ProductSource,
@@ -13,6 +14,7 @@ import {
   coilProductName,
   coilSku,
   coilTypeKey,
+  equivalentMeters,
   paginate,
   toDecimal,
   toFixedString,
@@ -55,6 +57,13 @@ export interface CreateCoilInput {
   splitId?: string;
   /** `STRIP` cuando la crea un partido interno o una recepción de corte (D-049). */
   kind?: CoilKind;
+  /**
+   * D-116 (Fase 7e): estado con el que nace la bobina. Por defecto `OPEN` — el fleje y la
+   * hija de un partido tienen que poder entrar directo a producción (D-060). Solo el alta
+   * de una bobina nueva por compra o planilla manda `CLOSED` (el default que pide el
+   * dueño); el usuario lo puede editar a `OPEN` en el propio formulario.
+   */
+  status?: CoilStatus;
   /** Fila de recepción de corte tercerizado que originó este fleje (RF-41, D-049). */
   cuttingOrderCoilId?: string;
   /**
@@ -145,6 +154,7 @@ export class CoilsService {
         unitCostPerKg: toFixedString(unitCostPerKg, 'MONEY'),
         totalCost: toFixedString(totalCost, 'MONEY'),
         totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
+        status: input.status ?? CoilStatus.OPEN,
         parentCoilId: input.parentCoilId ?? null,
         splitId: input.splitId ?? null,
         kind: input.kind ?? CoilKind.COIL,
@@ -393,40 +403,48 @@ export class CoilsService {
     });
     const available = new Map(balances.map((b) => [b.itemId, b.qty.toFixed(3)]));
 
-    return coils.map((c) => ({
-      id: c.id,
-      code: c.code,
-      typeKey: c.typeKey,
-      kind: c.kind,
-      businessLine: toSharedLineCode(c.businessLine.code),
-      supplierId: c.supplierId,
-      supplierName: c.supplier.name,
-      purchaseId: c.purchaseId,
-      purchaseLabel: c.purchase ? `${c.purchase.series}-${c.purchase.number}` : null,
-      finishId: c.finishId,
-      finishCode: c.finish.code,
-      finishName: c.finish.name,
-      weightKg: c.weightKg.toFixed(3),
-      widthMm: c.widthMm.toFixed(2),
-      thicknessMm: c.thicknessMm.toFixed(2),
-      colorId: c.colorId,
-      colorCode: c.color?.code ?? null,
-      colorName: c.color?.name ?? null,
-      colorHex: c.color?.hexColor ?? null,
-      currency: c.currency,
-      exchangeRate: c.exchangeRate.toFixed(4),
-      unitCostPerKg: c.unitCostPerKg.toFixed(4),
-      totalCost: c.totalCost.toFixed(4),
-      totalCostPen: c.totalCostPen.toFixed(4),
-      status: c.status,
-      parentCoilId: c.parentCoilId,
-      parentCoilCode: c.parentCoil?.code ?? null,
-      splitId: c.splitId,
-      notes: c.notes,
-      availableKg: available.get(c.id) ?? '0.000',
-      createdAt: c.createdAt.toISOString(),
-      updatedAt: c.updatedAt.toISOString(),
-    }));
+    return coils.map((c) => {
+      const availableKg = available.get(c.id) ?? '0.000';
+      const meters = equivalentMeters(
+        { widthMm: c.widthMm, thicknessMm: c.thicknessMm, densityFactor: c.finish.densityFactor },
+        availableKg,
+      );
+      return {
+        id: c.id,
+        code: c.code,
+        typeKey: c.typeKey,
+        kind: c.kind,
+        businessLine: toSharedLineCode(c.businessLine.code),
+        supplierId: c.supplierId,
+        supplierName: c.supplier.name,
+        purchaseId: c.purchaseId,
+        purchaseLabel: c.purchase ? `${c.purchase.series}-${c.purchase.number}` : null,
+        finishId: c.finishId,
+        finishCode: c.finish.code,
+        finishName: c.finish.name,
+        weightKg: c.weightKg.toFixed(3),
+        widthMm: c.widthMm.toFixed(2),
+        thicknessMm: c.thicknessMm.toFixed(2),
+        colorId: c.colorId,
+        colorCode: c.color?.code ?? null,
+        colorName: c.color?.name ?? null,
+        colorHex: c.color?.hexColor ?? null,
+        currency: c.currency,
+        exchangeRate: c.exchangeRate.toFixed(4),
+        unitCostPerKg: c.unitCostPerKg.toFixed(4),
+        totalCost: c.totalCost.toFixed(4),
+        totalCostPen: c.totalCostPen.toFixed(4),
+        status: c.status,
+        parentCoilId: c.parentCoilId,
+        parentCoilCode: c.parentCoil?.code ?? null,
+        splitId: c.splitId,
+        notes: c.notes,
+        availableKg,
+        equivalentMeters: meters === null ? null : meters.toFixed(3),
+        createdAt: c.createdAt.toISOString(),
+        updatedAt: c.updatedAt.toISOString(),
+      };
+    });
   }
 }
 
@@ -434,7 +452,7 @@ export class CoilsService {
 export const COIL_RELATIONS = {
   businessLine: true,
   supplier: { select: { name: true } },
-  finish: { select: { code: true, name: true } },
+  finish: { select: { code: true, name: true, densityFactor: true } },
   color: { select: { code: true, name: true, hexColor: true } },
   purchase: { select: { series: true, number: true } },
   parentCoil: { select: { code: true } },
@@ -443,7 +461,7 @@ export const COIL_RELATIONS = {
 type CoilWithRelations = Coil & {
   businessLine: { code: BusinessLineCode };
   supplier: { name: string };
-  finish: { code: string; name: string };
+  finish: { code: string; name: string; densityFactor: Prisma.Decimal };
   color: { code: string; name: string; hexColor: string } | null;
   purchase: { series: string; number: string } | null;
   parentCoil: { code: string } | null;

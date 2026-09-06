@@ -23,6 +23,7 @@ import {
   reservationQuerySchema,
   Role,
   salesOrderQuerySchema,
+  sellableCoilQuerySchema,
   setSalesOrderPrioritySchema,
   updatePromisedDeliveryDateSchema,
   updateQuotationSchema,
@@ -44,6 +45,8 @@ import {
   type SalesOrderDto,
   type SalesOrderListItemDto,
   type SalesOrderQuery,
+  type SellableCoilDto,
+  type SellableCoilQuery,
   type SetSalesOrderPriorityInput,
   type UpdatePromisedDeliveryDateInput,
   type UpdateQuotationInput,
@@ -244,6 +247,19 @@ export class SalesController {
     @Query(new ZodValidationPipe(reservableCoilQuerySchema)) query: ReservableCoilQuery,
   ): Promise<ReservableCoilDto[]> {
     return this.orders.findReservableCoils(query);
+  }
+
+  /**
+   * Bobinas DISPONIBLES para vender enteras (D-116): abiertas o cerradas, sin custodia de
+   * corte ni de producción, con saldo. El formulario de cotización/pedido de tipo BOBINA
+   * arma la línea contra `coilId`, así que acá no viaja ningún costo (mismo motivo que
+   * `reservable-coils`).
+   */
+  @Get('sellable-coils')
+  findSellableCoils(
+    @Query(new ZodValidationPipe(sellableCoilQuerySchema)) query: SellableCoilQuery,
+  ): Promise<SellableCoilDto[]> {
+    return this.orders.findSellableCoils(query);
   }
 
   /**

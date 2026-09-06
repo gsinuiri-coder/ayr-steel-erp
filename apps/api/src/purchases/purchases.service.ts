@@ -226,6 +226,9 @@ export class PurchasesService {
                 colorId: colorByLine[index] ?? null,
                 widthMm: item.widthMm ? toFixedString(item.widthMm, 'MM') : null,
                 thicknessMm: item.thicknessMm ? toFixedString(item.thicknessMm, 'MM') : null,
+                // D-116: `null` en compras que no son COIL; `receive()` decide el default
+                // (CLOSED) si la línea COIL no lo trajo.
+                coilStatus: input.type === PurchaseType.COIL ? (item.coilStatus ?? null) : null,
               })),
             },
           },
@@ -301,6 +304,9 @@ export class PurchasesService {
               currency: purchase.currency,
               exchangeRate: purchase.exchangeRate.toFixed(4),
               unitCostPerKg: item.unitPrice.toFixed(4),
+              // D-116: CLOSED por defecto si la línea no lo trajo (compra manual anterior a
+              // esta fase, o XML, que no tiene de dónde leerlo).
+              status: item.coilStatus ?? CoilStatus.CLOSED,
               refType: 'PURCHASE',
               refId: purchase.id,
               actorId: actor.id,
@@ -1371,6 +1377,9 @@ function toItemDto(
     colorHex: item.color?.hexColor ?? null,
     widthMm: item.widthMm ? item.widthMm.toFixed(2) : null,
     thicknessMm: item.thicknessMm ? item.thicknessMm.toFixed(2) : null,
+    // Una línea de compra solo escribe OPEN/CLOSED (D-116); los otros dos valores del enum
+    // son estados de la bobina ya viva, nunca del alta.
+    coilStatus: item.coilStatus === 'OPEN' || item.coilStatus === 'CLOSED' ? item.coilStatus : null,
     coilCode: item.coil?.code ?? null,
   };
 }

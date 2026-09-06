@@ -1,6 +1,14 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { CoilStatus, InventoryItemType, type Prisma } from '@prisma/client';
 import {
+  BusinessLineCode,
+  CoilKind,
+  CoilStatus,
+  InventoryItemType,
+  ReservationStatus,
+  type Prisma,
+} from '@prisma/client';
+import {
+  coilSkuFromTypeKey,
   describePieces,
   piecesMeters,
   salesLineTotals,
@@ -74,7 +82,7 @@ export async function resolveSalesLines(
   businessLineId: string,
   items: SalesItemInput[],
 ): Promise<ResolvedSalesLine[]> {
-  const productIds = [...new Set(items.map((i) => i.productId))];
+  const productIds = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
   const products = await tx.product.findMany({
     where: { id: { in: productIds } },
     select: {
@@ -101,9 +109,56 @@ export async function resolveSalesLines(
         });
   const coilById = new Map(coils.map((c) => [c.id, c]));
 
+  // D-116: venta de bobina completa (RF-73). Se resuelve aparte porque el producto no lo
+  // manda el formulario (es el SKU `trading` de D-037, uno por `typeKey`) y la cantidad no
+  // la decide el vendedor (es el saldo vivo, nunca lo que venga en `item.qty`).
+  const saleCoilById = await resolveSaleCoils(tx, items);
+
   return items.map((item, index) => {
     const lineNumber = index + 1;
     const at = `Línea ${lineNumber}`;
+
+    if (item.saleCoilId !== undefined) {
+      const sale = saleCoilById.get(item.saleCoilId);
+      if (!sale) throw new NotFoundException(`${at}: bobina a vender no encontrada`);
+      if (sale.productBusinessLineId !== businessLineId) {
+        throw new BadRequestException(
+          `${at}: la bobina ${sale.coilCode} se vende como ${sale.productSku} (trading); crea la cotización en esa línea`,
+        );
+      }
+      const unitPricePen = item.unitPricePen;
+      if (unitPricePen === undefined) {
+        throw new BadRequestException(
+          `${at}: la venta de una bobina es a precio negociado, escribe el precio por kg`,
+        );
+      }
+      const totals = salesLineTotals({ qty: sale.qty, unitPricePen });
+      const description = item.description ?? `Bobina ${sale.coilCode} × ${sale.qty} kg`;
+      return {
+        lineNumber,
+        productId: sale.productId,
+        description,
+        qty: sale.qty,
+        unit: Unit.KGM,
+        listPricePen: null,
+        unitPricePen,
+        subtotalPen: toFixedString(totals.subtotal, 'MONEY'),
+        igvPen: toFixedString(totals.igv, 'MONEY'),
+        totalPen: toFixedString(totals.total, 'MONEY'),
+        reserveItemType: InventoryItemType.COIL,
+        reserveItemId: sale.coilId,
+        reserveQty: sale.qty,
+        reserveUnit: Unit.KGM,
+        pieces: [],
+        productSku: sale.productSku,
+        productName: sale.productName,
+        reserveItemLabel: sale.coilCode,
+      };
+    }
+
+    // Garantizado por el `superRefine` del schema (productId o saleCoilId, nunca ninguno);
+    // se repite acá porque el pedido directo también llama a `resolveSalesLines`.
+    if (item.productId === undefined) throw new NotFoundException(`${at}: producto no encontrado`);
     const product = productById.get(item.productId);
     if (!product) throw new NotFoundException(`${at}: producto no encontrado`);
     if (!product.isActive) {
@@ -210,6 +265,104 @@ export async function resolveSalesLines(
       reserveItemLabel,
     };
   });
+}
+
+/** Lo que hace falta para armar una línea de venta de bobina completa (D-116). */
+interface SaleCoilResolution {
+  coilId: string;
+  coilCode: string;
+  productId: string;
+  productSku: string;
+  productName: string;
+  productBusinessLineId: string;
+  /** Saldo vivo (físico menos reservado) al momento de resolver la línea, en kg. */
+  qty: string;
+}
+
+/**
+ * Resuelve las líneas `saleCoilId` de la tanda: cada una vende el saldo **completo y
+ * actual** de esa bobina (decisión del dueño, D-116) contra el SKU `trading` que D-037
+ * crea al dar de alta la bobina — nunca lo que el formulario mande en `qty`, para que "toda
+ * la bobina" no dependa de que el web haya leído el saldo un segundo antes.
+ */
+async function resolveSaleCoils(
+  tx: Prisma.TransactionClient,
+  items: SalesItemInput[],
+): Promise<Map<string, SaleCoilResolution>> {
+  const coilIds = [...new Set(items.flatMap((i) => (i.saleCoilId ? [i.saleCoilId] : [])))];
+  const result = new Map<string, SaleCoilResolution>();
+  if (coilIds.length === 0) return result;
+
+  const coils = await tx.coil.findMany({
+    where: { id: { in: coilIds } },
+    select: { id: true, code: true, kind: true, status: true, typeKey: true },
+  });
+  const coilById = new Map(coils.map((c) => [c.id, c]));
+
+  const trading = await tx.businessLine.findUnique({ where: { code: BusinessLineCode.TRADING } });
+  const skus = [...new Set(coils.map((c) => coilSkuFromTypeKey(c.typeKey)))];
+  const products =
+    trading && skus.length > 0
+      ? await tx.product.findMany({
+          where: { businessLineId: trading.id, sku: { in: skus } },
+          select: { id: true, sku: true, name: true, businessLineId: true },
+        })
+      : [];
+  const productBySku = new Map(products.map((p) => [p.sku, p]));
+
+  const [balances, reserved] = await Promise.all([
+    tx.inventoryBalance.findMany({
+      where: { itemType: InventoryItemType.COIL, itemId: { in: coilIds } },
+      select: { itemId: true, qty: true },
+    }),
+    tx.reservation.groupBy({
+      by: ['itemId'],
+      where: {
+        status: ReservationStatus.ACTIVE,
+        itemType: InventoryItemType.COIL,
+        itemId: { in: coilIds },
+      },
+      _sum: { qty: true },
+    }),
+  ]);
+  const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+  const reservedById = new Map(
+    reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
+  );
+
+  for (const coilId of coilIds) {
+    const coil = coilById.get(coilId);
+    if (!coil) continue; // El `.map` principal lo reporta como "no encontrada".
+    if (coil.kind !== CoilKind.COIL) {
+      throw new BadRequestException(`${coil.code}: solo se vende una bobina completa, no un fleje`);
+    }
+    if (coil.status !== CoilStatus.OPEN && coil.status !== CoilStatus.CLOSED) {
+      throw new BadRequestException(
+        `${coil.code} no está disponible (${coil.status}): solo se vende una bobina abierta o cerrada`,
+      );
+    }
+    const sku = coilSkuFromTypeKey(coil.typeKey);
+    const product = productBySku.get(sku);
+    if (!product) {
+      throw new NotFoundException(`${coil.code}: no existe el producto de venta directa (${sku})`);
+    }
+    const physical = qtyById.get(coilId) ?? toDecimal('0');
+    const alreadyReserved = reservedById.get(coilId) ?? toDecimal('0');
+    const available = physical.minus(alreadyReserved);
+    if (available.lte(0)) {
+      throw new BadRequestException(`${coil.code} no tiene saldo disponible para vender`);
+    }
+    result.set(coilId, {
+      coilId,
+      coilCode: coil.code,
+      productId: product.id,
+      productSku: product.sku,
+      productName: product.name,
+      productBusinessLineId: product.businessLineId,
+      qty: toFixedString(available, 'KG'),
+    });
+  }
+  return result;
 }
 
 /** Totales del documento: Σ subtotales + Σ IGV, nunca Σ de totales ya redondeados. */

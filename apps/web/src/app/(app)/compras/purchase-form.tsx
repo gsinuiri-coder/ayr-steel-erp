@@ -10,6 +10,8 @@ import { z } from 'zod';
 import {
   BUSINESS_LINE_LABELS,
   BUSINESS_LINES,
+  COIL_BUSINESS_LINES,
+  COIL_STATUS_LABELS,
   CURRENCIES,
   CURRENCY_LABELS,
   Decimal,
@@ -77,6 +79,8 @@ const itemSchema = z.object({
   colorId: z.string().optional(),
   widthMm: z.string().trim().optional(),
   thicknessMm: z.string().trim().optional(),
+  /** D-116: estado con el que nace la bobina, editable; CLOSED por defecto. */
+  coilStatus: z.enum(['OPEN', 'CLOSED']).optional(),
 });
 
 const baseFormSchema = z.object({
@@ -184,6 +188,8 @@ export function emptyItem(type: PurchaseType): PurchaseFormValues['items'][numbe
     widthMm: '',
     thicknessMm: '',
     productId: '',
+    // D-116: CERRADA por defecto, editable en el propio formulario.
+    coilStatus: type === PurchaseType.COIL ? 'CLOSED' : undefined,
   };
 }
 
@@ -364,6 +370,14 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                     onValueChange={(v) => {
                       field.onChange(v);
                       items.replace([emptyItem(v as PurchaseType)]);
+                      // D-116: solo Drywall y Metallic Roofing compran bobinas; si la línea
+                      // elegida no aplica, cae a Drywall en vez de dejar un 400 silencioso.
+                      if (
+                        v === PurchaseType.COIL &&
+                        !COIL_BUSINESS_LINES.includes(form.getValues('businessLine'))
+                      ) {
+                        form.setValue('businessLine', 'drywall');
+                      }
                     }}
                     disabled={lockType}
                   >
@@ -442,11 +456,14 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {BUSINESS_LINES.map((line) => (
-                        <SelectItem key={line} value={line}>
-                          {BUSINESS_LINE_LABELS[line]}
-                        </SelectItem>
-                      ))}
+                      {/* D-116: solo Drywall y Metallic Roofing manejan bobinas. */}
+                      {(type === PurchaseType.COIL ? COIL_BUSINESS_LINES : BUSINESS_LINES).map(
+                        (line) => (
+                          <SelectItem key={line} value={line}>
+                            {BUSINESS_LINE_LABELS[line]}
+                          </SelectItem>
+                        ),
+                      )}
                     </SelectContent>
                   </Select>
                   <FormMessage />
@@ -875,6 +892,30 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.coilStatus`}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Estado al alta</FormLabel>
+                          <Select value={field.value ?? 'CLOSED'} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {(['CLOSED', 'OPEN'] as const).map((s) => (
+                                <SelectItem key={s} value={s}>
+                                  {COIL_STATUS_LABELS[s]}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                   </>
                 )}
                 <FormField
@@ -1076,6 +1117,7 @@ function toApiBody(values: PurchaseFormValues): Record<string, unknown> {
       colorId: isCoil && item.colorId?.trim() ? item.colorId : undefined,
       widthMm: item.widthMm?.trim() ? item.widthMm : undefined,
       thicknessMm: item.thicknessMm?.trim() ? item.thicknessMm : undefined,
+      coilStatus: isCoil ? (item.coilStatus ?? 'CLOSED') : undefined,
     })),
   };
 }

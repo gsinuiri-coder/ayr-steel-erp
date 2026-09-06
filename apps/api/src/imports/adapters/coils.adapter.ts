@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { InventoryStrategy, type Prisma } from '@prisma/client';
+import { CoilStatus, InventoryStrategy, type Prisma } from '@prisma/client';
 import {
-  BUSINESS_LINES,
+  COIL_BUSINESS_LINES,
   CURRENCIES,
   Currency,
   decimalStringSchema,
@@ -33,6 +33,12 @@ const COLUMNS = {
   currency: { key: 'currency', header: 'Moneda (PEN/USD)', required: true },
   unitCostPerKg: { key: 'unitCostPerKg', header: 'Costo por kg sin IGV', required: true },
   exchangeRate: { key: 'exchangeRate', header: 'Tipo de cambio', required: false },
+  /**
+   * D-116 (Fase 7e): estado con el que nace la bobina. Opcional — una planilla histórica
+   * anterior a esta fase no trae la columna, y por defecto nace `CLOSED` (el dueño la
+   * quiere cerrada al alta, editable).
+   */
+  status: { key: 'status', header: 'Estado (OPEN/CLOSED)', required: false },
 } satisfies Record<string, ImportColumn>;
 
 const kgSchema = decimalStringSchema('KG', { positive: true });
@@ -63,8 +69,9 @@ export class CoilsImportAdapter implements RowImportAdapter {
     const errors: string[] = [];
 
     let businessLineId: string | undefined;
-    if (!BUSINESS_LINES.includes(businessLineCode as BusinessLine)) {
-      errors.push(`Línea de negocio desconocida: "${businessLineCode}"`);
+    // D-116: solo Drywall y Metallic Roofing manejan bobinas (C, Fase 7e).
+    if (!COIL_BUSINESS_LINES.includes(businessLineCode as BusinessLine)) {
+      errors.push(`Línea de negocio inválida para una bobina: "${businessLineCode}"`);
     } else {
       const line = await this.prisma.businessLine.findUnique({
         where: { code: toPrismaLineCode(businessLineCode as BusinessLine) },
@@ -135,6 +142,16 @@ export class CoilsImportAdapter implements RowImportAdapter {
       exchangeRate = parseField(raw, COLUMNS.exchangeRate, rateSchema, 'El tipo de cambio', errors);
     }
 
+    const rawStatus = getField(raw, COLUMNS.status).toUpperCase();
+    let status: CoilStatus = CoilStatus.CLOSED;
+    if (rawStatus) {
+      if (rawStatus !== CoilStatus.OPEN && rawStatus !== CoilStatus.CLOSED) {
+        errors.push('El estado debe ser OPEN o CLOSED');
+      } else {
+        status = rawStatus;
+      }
+    }
+
     return {
       data: {
         businessLineCode,
@@ -151,6 +168,7 @@ export class CoilsImportAdapter implements RowImportAdapter {
         currency,
         unitCostPerKg,
         exchangeRate,
+        status,
       },
       errors,
     };
@@ -180,6 +198,7 @@ export class CoilsImportAdapter implements RowImportAdapter {
       currency: data.currency as Currency,
       exchangeRate: data.exchangeRate as string,
       unitCostPerKg: data.unitCostPerKg as string,
+      status: data.status as CoilStatus,
       refType: 'IMPORT',
       actorId,
     });

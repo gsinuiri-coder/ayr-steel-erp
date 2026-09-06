@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
+  BusinessLine as BusinessLineEnum,
   DEFAULT_QUOTATION_VALIDITY_DAYS,
   Decimal,
   MAX_QUOTATION_VALIDITY_DAYS,
@@ -26,6 +27,7 @@ import {
   type RoofingPieceDto,
   type SalesItemInput,
   type SalesOrderDto,
+  type SellableCoilDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
@@ -70,7 +72,15 @@ type PieceDraft = PieceRow;
 
 interface LineDraft {
   key: number;
+  /**
+   * D-116 (Fase 7e): `BOBINA` vende una bobina completa (RF-73) — el producto, la cantidad
+   * y la reserva los resuelve el API a partir del `saleCoilId`, nunca lo que esta línea
+   * tipee. `PRODUCT` es todo lo demás (perfiles, trading normal, coberturas).
+   */
+  kind: 'PRODUCT' | 'BOBINA';
   productId: string;
+  /** D-116: bobina que esta línea vende entera. Vacío salvo `kind === 'BOBINA'`. */
+  saleCoilId: string;
   qty: string;
   unitPricePen: string;
   /** D-066: bobina de la que sale el material prometido. Vacío = se reserva el producto. */
@@ -89,7 +99,9 @@ const EMPTY_PIECE = EMPTY_PIECE_ROW;
 function emptyLine(key: number): LineDraft {
   return {
     key,
+    kind: 'PRODUCT',
     productId: '',
+    saleCoilId: '',
     qty: '',
     unitPricePen: '',
     reserveFromCoilId: '',
@@ -153,6 +165,14 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
     queryFn: () => api<ReservableCoilDto[]>(`/sales/reservable-coils?businessLine=${businessLine}`),
     enabled: businessLine !== '',
   });
+  // D-116: bobinas DISPONIBLES para vender enteras (RF-73). Solo tiene sentido en `trading`,
+  // que es donde vive el SKU `BOB{finishCode}{thicknessMm}` de D-037; trae bobinas de
+  // Drywall y Metallic Roofing por igual, no de la línea del documento.
+  const sellableCoils = useQuery({
+    queryKey: ['sellable-coils'],
+    queryFn: () => api<SellableCoilDto[]>('/sales/sellable-coils'),
+    enabled: businessLine === BusinessLineEnum.TRADING,
+  });
 
   const line = businessLines.data?.find((l) => l.code === businessLine);
   const requiresQuotation = line?.quotationRequired ?? false;
@@ -191,6 +211,29 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
   /** D-083: la línea es compuesta cuando el producto se vende por metro lineal. */
   function isMadeToMeasure(productId: string): boolean {
     return productById.get(productId)?.unit === Unit.MTR;
+  }
+
+  /** D-116: alterna una línea entre producto normal y venta de bobina completa. */
+  function setLineKind(key: number, kind: LineDraft['kind']): void {
+    patchLine(key, {
+      kind,
+      productId: '',
+      saleCoilId: '',
+      qty: '',
+      reserveFromCoilId: '',
+      reserveKg: '',
+      pieces: [EMPTY_PIECE],
+    });
+  }
+
+  /**
+   * Al elegir la bobina se congela su saldo disponible como cantidad de la línea: "siempre
+   * el saldo completo, nunca una fracción" es una decisión del dueño, no un campo editable
+   * (el API la vuelve a calcular al confirmar, esto es solo la vista previa).
+   */
+  function chooseSaleCoil(key: number, coilId: string): void {
+    const coil = sellableCoils.data?.find((c) => c.coilId === coilId);
+    patchLine(key, { saleCoilId: coilId, qty: coil?.availableQty ?? '' });
   }
 
   /**
@@ -252,8 +295,32 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
 
     const items: SalesItemInput[] = [];
     const reservedPerCoil = new Map<string, Decimal>();
+    const soldCoilIds = new Set<string>();
     for (const [index, l] of lines.entries()) {
       const at = `Línea ${index + 1}`;
+
+      // D-116: una línea BOBINA no tiene producto que elegir ni largos que detallar — el
+      // API resuelve todo eso a partir del `saleCoilId` y el saldo vivo de esa bobina.
+      if (l.kind === 'BOBINA') {
+        if (!l.saleCoilId) return { error: `${at}: elige qué bobina vender` };
+        if (soldCoilIds.has(l.saleCoilId)) {
+          return {
+            error: `${at}: esa bobina ya se está vendiendo en otra línea de este documento`,
+          };
+        }
+        soldCoilIds.add(l.saleCoilId);
+        if (!isPositiveDecimal(l.unitPricePen)) {
+          return { error: `${at}: escribe el precio por kg` };
+        }
+        const coil = sellableCoils.data?.find((c) => c.coilId === l.saleCoilId);
+        items.push({
+          saleCoilId: l.saleCoilId,
+          qty: toFixedString(coil?.availableQty ?? l.qty, 'KG'),
+          unitPricePen: toFixedString(l.unitPricePen, 'MONEY'),
+        });
+        continue;
+      }
+
       if (!l.productId) return { error: `${at}: elige un producto` };
       const madeToMeasure = isMadeToMeasure(l.productId);
       const pieces = madeToMeasure ? toPieces(l.pieces) : null;
@@ -490,33 +557,82 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
               return [
                 <TableRow key={l.key}>
                   <TableCell>
-                    <Select
-                      value={l.productId}
-                      onValueChange={(v) => {
-                        chooseProduct(l.key, v);
-                      }}
-                      disabled={businessLine === ''}
-                    >
-                      <SelectTrigger
-                        className="w-full"
-                        aria-label={`Producto de la línea ${index + 1}`}
+                    {/* D-116: solo en trading tiene sentido vender una bobina completa — es
+                        donde vive el SKU de D-037. */}
+                    {businessLine === BusinessLineEnum.TRADING && (
+                      <Select
+                        value={l.kind}
+                        onValueChange={(v) => {
+                          setLineKind(l.key, v as LineDraft['kind']);
+                        }}
                       >
-                        <SelectValue placeholder="Producto" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {activeProducts?.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.sku} — {p.name}
-                          </SelectItem>
-                        ))}
-                        {/* Un desplegable vacío se ve igual que uno que no cargó: se dice. */}
-                        {products.isSuccess && activeProducts?.length === 0 && (
-                          <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                            Esta línea no tiene productos activos.
-                          </div>
-                        )}
-                      </SelectContent>
-                    </Select>
+                        <SelectTrigger
+                          className="mb-1 h-7 w-full text-xs"
+                          aria-label={`Tipo de línea ${index + 1}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="PRODUCT">Producto</SelectItem>
+                          <SelectItem value="BOBINA">Bobina completa</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {l.kind === 'BOBINA' ? (
+                      <Select
+                        value={l.saleCoilId}
+                        onValueChange={(v) => {
+                          chooseSaleCoil(l.key, v);
+                        }}
+                      >
+                        <SelectTrigger
+                          className="w-full"
+                          aria-label={`Bobina a vender de la línea ${index + 1}`}
+                        >
+                          <SelectValue placeholder="Bobina" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {sellableCoils.data?.map((c) => (
+                            <SelectItem key={c.coilId} value={c.coilId}>
+                              {c.code} — {formatQty(c.availableQty, 'kg')}
+                            </SelectItem>
+                          ))}
+                          {sellableCoils.isSuccess && sellableCoils.data.length === 0 && (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              No hay bobinas disponibles para vender.
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Select
+                        value={l.productId}
+                        onValueChange={(v) => {
+                          chooseProduct(l.key, v);
+                        }}
+                        disabled={businessLine === ''}
+                      >
+                        <SelectTrigger
+                          className="w-full"
+                          aria-label={`Producto de la línea ${index + 1}`}
+                        >
+                          <SelectValue placeholder="Producto" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {activeProducts?.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.sku} — {p.name}
+                            </SelectItem>
+                          ))}
+                          {/* Un desplegable vacío se ve igual que uno que no cargó: se dice. */}
+                          {products.isSuccess && activeProducts?.length === 0 && (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              Esta línea no tiene productos activos.
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Input
@@ -524,18 +640,23 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
                       aria-label={`Cantidad de la línea ${index + 1}`}
                       value={l.qty}
                       // D-083: en una línea compuesta la cantidad la manda el detalle de
-                      // largos. Editarla a mano abriría la puerta a que diga otra cosa que
-                      // los largos, que es exactamente lo que el API rechaza.
-                      readOnly={madeToMeasure}
-                      disabled={madeToMeasure}
+                      // largos. D-116: en una venta de bobina la manda el saldo disponible.
+                      // Editarla a mano abriría la puerta a que diga otra cosa, que es
+                      // exactamente lo que el API rechaza (recalcula igual, siempre).
+                      readOnly={madeToMeasure || l.kind === 'BOBINA'}
+                      disabled={madeToMeasure || l.kind === 'BOBINA'}
                       onChange={(e) => {
                         patchLine(l.key, { qty: e.target.value });
                       }}
                     />
-                    {product && (
-                      <span className="text-xs text-muted-foreground">
-                        {unitSymbol(product.unit)}
-                      </span>
+                    {l.kind === 'BOBINA' ? (
+                      <span className="text-xs text-muted-foreground">kg (saldo completo)</span>
+                    ) : (
+                      product && (
+                        <span className="text-xs text-muted-foreground">
+                          {unitSymbol(product.unit)}
+                        </span>
+                      )
                     )}
                   </TableCell>
                   <TableCell>
@@ -554,43 +675,49 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Select
-                      value={l.reserveFromCoilId}
-                      onValueChange={(v) => {
-                        patchLine(l.key, { reserveFromCoilId: v });
-                      }}
-                      disabled={businessLine === ''}
-                    >
-                      <SelectTrigger
-                        className="w-full"
-                        aria-label={`Bobina a reservar de la línea ${index + 1}`}
+                    {l.kind === 'BOBINA' ? (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    ) : (
+                      <Select
+                        value={l.reserveFromCoilId}
+                        onValueChange={(v) => {
+                          patchLine(l.key, { reserveFromCoilId: v });
+                        }}
+                        disabled={businessLine === ''}
                       >
-                        <SelectValue placeholder="Stock del producto" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {coils.data?.map((c) => (
-                          <SelectItem key={c.coilId} value={c.coilId}>
-                            {c.code} — {formatQty(c.availableQty, 'kg')} disp.
-                          </SelectItem>
-                        ))}
-                        {coils.isSuccess && coils.data.length === 0 && (
-                          <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                            No hay bobinas con material disponible en esta línea.
-                          </div>
-                        )}
-                      </SelectContent>
-                    </Select>
+                        <SelectTrigger
+                          className="w-full"
+                          aria-label={`Bobina a reservar de la línea ${index + 1}`}
+                        >
+                          <SelectValue placeholder="Stock del producto" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {coils.data?.map((c) => (
+                            <SelectItem key={c.coilId} value={c.coilId}>
+                              {c.code} — {formatQty(c.availableQty, 'kg')} disp.
+                            </SelectItem>
+                          ))}
+                          {coils.isSuccess && coils.data.length === 0 && (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              No hay bobinas con material disponible en esta línea.
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </TableCell>
                   <TableCell>
-                    <Input
-                      inputMode="decimal"
-                      aria-label={`Kilos a reservar de la línea ${index + 1}`}
-                      value={l.reserveKg}
-                      disabled={l.reserveFromCoilId === ''}
-                      onChange={(e) => {
-                        patchLine(l.key, { reserveKg: e.target.value });
-                      }}
-                    />
+                    {l.kind !== 'BOBINA' && (
+                      <Input
+                        inputMode="decimal"
+                        aria-label={`Kilos a reservar de la línea ${index + 1}`}
+                        value={l.reserveKg}
+                        disabled={l.reserveFromCoilId === ''}
+                        onChange={(e) => {
+                          patchLine(l.key, { reserveKg: e.target.value });
+                        }}
+                      />
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     {lineTotal ? formatMoney(lineTotal.toFixed(4)) : '—'}

@@ -201,7 +201,12 @@ export type ReleaseReservationInput = z.infer<typeof releaseReservationSchema>;
  * reserva" (D-054) siga siendo cierto sin perder qué material se prometió.
  */
 export const salesItemInputSchema = z.object({
-  productId: z.string({ required_error: 'El producto es obligatorio' }).uuid(),
+  /**
+   * Obligatorio salvo con `saleCoilId` (D-116): ahí el producto es siempre el SKU `trading`
+   * de esa bobina (D-037) y el API lo resuelve solo, para que el web no tenga que conocer
+   * el SKU generado antes de que la bobina exista.
+   */
+  productId: z.string().uuid().optional(),
   qty: qtySchema,
   /**
    * Precio unitario sin IGV, en soles. Opcional: sin él se usa el precio de lista del
@@ -212,6 +217,16 @@ export const salesItemInputSchema = z.object({
   description: z.string().trim().max(240).optional(),
   reserveFromCoilId: z.string().uuid().optional(),
   reserveKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+  /**
+   * D-116 (Fase 7e): venta de una bobina completa (RF-73), virgen o con saldo parcial. El
+   * producto (el SKU `trading` de D-037), la cantidad y la reserva se resuelven en el API a
+   * partir del saldo **vivo** de esta bobina — nunca de lo que mande el formulario — porque
+   * la regla del dueño es "siempre el saldo completo, nunca una fracción". `qty` viaja igual
+   * en el input (el web la llena con el disponible que acaba de leer) pero el API la
+   * recalcula; no se combina con `reserveFromCoilId`/`reserveKg`, que son la reserva
+   * **parcial** de materia prima para producir contra el pedido.
+   */
+  saleCoilId: z.string().uuid().optional(),
   /**
    * D-083: los largos de una cobertura **a medida**. Con ellos, `qty` deja de ser un
    * número que el vendedor tipea y pasa a ser `Σ cantidad × largo` en metros: la línea es
@@ -249,6 +264,31 @@ const salesItemsSchema = z
           code: z.ZodIssueCode.custom,
           path: [i, 'reserveKg'],
           message: 'Para reservar materia prima hacen falta la bobina y los kilos',
+        });
+      }
+      // D-116: una línea vende un producto del catálogo O una bobina completa, nunca las
+      // dos cosas ni ninguna — sin producto el API no sabría qué facturar y con las dos
+      // reservas a la vez no sabría cuál manda.
+      if (item.saleCoilId !== undefined) {
+        if (item.reserveFromCoilId !== undefined || item.reserveKg !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [i, 'saleCoilId'],
+            message: 'Vender una bobina completa no se combina con reservar materia prima',
+          });
+        }
+        if (item.pieces !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [i, 'saleCoilId'],
+            message: 'La venta de una bobina completa es una línea simple, sin largos',
+          });
+        }
+      } else if (item.productId === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [i, 'productId'],
+          message: 'El producto es obligatorio',
         });
       }
     });
@@ -530,6 +570,41 @@ export const reservableCoilQuerySchema = z.object({
   businessLine: z.enum(BUSINESS_LINES),
 });
 export type ReservableCoilQuery = z.infer<typeof reservableCoilQuerySchema>;
+
+// --------------------------------------------------------------------------
+// Bobinas vendibles completas (D-116, Fase 7e)
+// --------------------------------------------------------------------------
+
+/**
+ * Una bobina DISPONIBLE para vender entera (D-116): abierta o cerrada, no en corte
+ * tercerizado (D-050), no montada en una orden de producción (D-060) y sin otra venta que
+ * ya la haya prometido. `availableQty` es el saldo que la línea va a reservar completo —
+ * "siempre el saldo completo, nunca una fracción" es una decisión del dueño, no una opción
+ * del formulario. Sin costos ni proveedor, mismo motivo que `reservableCoilSchema`: acá
+ * llega VENDEDOR.
+ */
+export const sellableCoilSchema = z.object({
+  coilId: z.string().uuid(),
+  code: z.string(),
+  businessLine: z.enum(BUSINESS_LINES),
+  typeKey: z.string(),
+  finishCode: z.string(),
+  finishName: z.string(),
+  colorCode: z.string().nullable(),
+  colorName: z.string().nullable(),
+  widthMm: z.string(),
+  thicknessMm: z.string(),
+  status: z.enum(['OPEN', 'CLOSED']),
+  availableQty: z.string(),
+});
+export type SellableCoilDto = z.infer<typeof sellableCoilSchema>;
+
+export const sellableCoilQuerySchema = z.object({
+  /** Sin filtro trae bobinas de Drywall y Metallic Roofing, las únicas líneas con bobina. */
+  businessLine: z.enum(BUSINESS_LINES).optional(),
+  search: z.string().trim().max(80).optional(),
+});
+export type SellableCoilQuery = z.infer<typeof sellableCoilQuerySchema>;
 
 // --------------------------------------------------------------------------
 // D-067 — consulta de RUC/DNI contra apis.net.pe

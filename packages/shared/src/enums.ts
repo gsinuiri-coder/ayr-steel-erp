@@ -41,6 +41,16 @@ export const BUSINESS_LINE_LABELS: Record<BusinessLine, string> = {
 /** Líneas cuyo inventario no genera movimientos de kardex. */
 export const NOOP_INVENTORY_LINES: readonly BusinessLine[] = [BusinessLine.SERVICES];
 
+/**
+ * Líneas que manejan bobinas (Fase 7e, D-116). Trading vende la bobina completa como
+ * producto (D-037) pero no la compra ni la registra: el material físico solo entra por
+ * Drywall o Metallic Roofing. UPVC es compra-venta pura (D-091) y no tiene bobina.
+ */
+export const COIL_BUSINESS_LINES: readonly BusinessLine[] = [
+  BusinessLine.DRYWALL,
+  BusinessLine.METALLIC_ROOFING,
+];
+
 /** Estrategia de inventario de una línea de negocio (tabla `business_lines`, D-034). */
 export const InventoryStrategy = {
   STOCK: 'STOCK',

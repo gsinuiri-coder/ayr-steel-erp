@@ -805,6 +805,10 @@ model PurchaseItem {
   color       Color?   @relation(fields: [colorId], references: [id])
   widthMm     Decimal? @map("width_mm") @db.Decimal(8, 2)
   thicknessMm Decimal? @map("thickness_mm") @db.Decimal(6, 2)
+  /// D-116 (Fase 7e): estado con el que nace la bobina que esta línea da de alta. `null` en
+  /// líneas que no son `COIL`; `receive()` usa `CLOSED` si la línea `COIL` no lo trae (el
+  /// dueño quiere que una bobina nueva nazca cerrada por defecto, editable al registrar).
+  coilStatus  CoilStatus? @map("coil_status")
 
   coil Coil?
 

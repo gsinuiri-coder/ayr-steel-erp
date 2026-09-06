@@ -83,6 +83,38 @@ export function theoreticalKg(pieces: number, kgPerPiece: DecimalInput): Decimal
   return roundTo(toDecimal(kgPerPiece).times(pieces), 'KG');
 }
 
+/**
+ * Kilo teórico de un metro lineal de esa geometría (RF-25), **sin redondear**: es un
+ * resultado intermedio de `equivalentMeters`, y redondearlo acá (como sí hace
+ * `theoreticalKgPerPiece`, que es un resultado final) movería la estimación casi un
+ * centímetro por metro antes de dividir.
+ */
+export function kgPerMeter(input: {
+  widthMm: DecimalInput;
+  thicknessMm: DecimalInput;
+  densityFactor: DecimalInput;
+}): Decimal {
+  return toDecimal(input.widthMm)
+    .times(toDecimal(input.thicknessMm))
+    .times(1000)
+    .times(toDecimal(input.densityFactor))
+    .div(1_000_000);
+}
+
+/**
+ * Metro lineal equivalente de un saldo de kilos con esa geometría (Fase 7e, D-116):
+ * `saldo_kg / (ancho_m × espesor_mm × densidad)`, la misma cuenta que `kgPerMeter`
+ * invertida. `null` cuando la geometría no da kilo por metro (ancho o espesor en cero).
+ */
+export function equivalentMeters(
+  geometry: { widthMm: DecimalInput; thicknessMm: DecimalInput; densityFactor: DecimalInput },
+  availableKg: DecimalInput,
+): Decimal | null {
+  const perMeter = kgPerMeter(geometry);
+  if (perMeter.lte(0)) return null;
+  return roundTo(toDecimal(availableKg).div(perMeter), 'KG');
+}
+
 // --------------------------------------------------------------------------
 // D-059 — receta en el maestro de productos
 // --------------------------------------------------------------------------

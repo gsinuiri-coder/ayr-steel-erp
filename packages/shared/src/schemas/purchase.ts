@@ -4,6 +4,7 @@ import { reasonSchema } from './coil';
 import { paginationQuerySchema } from './pagination';
 import {
   BUSINESS_LINES,
+  COIL_BUSINESS_LINES,
   CURRENCIES,
   EXCHANGE_RATE_SOURCES,
   LANDED_COST_SERVICE_KINDS,
@@ -57,6 +58,8 @@ export const purchaseItemSchema = z.object({
   colorHex: z.string().nullable(),
   widthMm: z.string().nullable(),
   thicknessMm: z.string().nullable(),
+  /** D-116: estado con el que nació (o nacerá) la bobina de esta línea. Null si no es COIL. */
+  coilStatus: z.enum(['OPEN', 'CLOSED']).nullable(),
   /** Código de la bobina que esta línea creó al recibirse (null si aún no se recibió). */
   coilCode: z.string().nullable(),
 });
@@ -175,6 +178,12 @@ const purchaseItemInputSchema = z.object({
   colorId: z.string().uuid().optional(),
   widthMm: decimalStringSchema('MM', { positive: true }).optional(),
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
+  /**
+   * D-116 (Fase 7e): estado con el que nace la bobina de esta línea, solo en compras
+   * `COIL`. Sin él, `receive()` usa `CLOSED` — el dueño quiere que una bobina nueva nazca
+   * cerrada por defecto; el formulario lo deja editar a `OPEN`.
+   */
+  coilStatus: z.enum(['OPEN', 'CLOSED']).optional(),
 });
 export type PurchaseItemInput = z.infer<typeof purchaseItemInputSchema>;
 
@@ -244,6 +253,15 @@ export const createPurchaseSchema = z
         code: z.ZodIssueCode.custom,
         path: ['serviceKind'],
         message: 'Indica qué clase de servicio es',
+      });
+    }
+    // D-116: solo Drywall y Metallic Roofing manejan bobinas; las demás líneas no tienen
+    // dónde meterlas (trading la vende como producto, D-037, pero no la compra).
+    if (d.type === PurchaseType.COIL && !COIL_BUSINESS_LINES.includes(d.businessLine)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['businessLine'],
+        message: 'Solo Drywall y Metallic Roofing compran bobinas',
       });
     }
     if (d.relatedPurchaseId) {

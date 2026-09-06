@@ -57,6 +57,13 @@ export const coilSchema = z.object({
   notes: z.string().nullable(),
   /** Kilos disponibles según el kardex; puede diferir de `weightKg` tras consumos. */
   availableKg: z.string(),
+  /**
+   * Metro lineal equivalente del saldo disponible (C, Fase 7e / D-116):
+   * `availableKg / (widthMm × thicknessMm × densityFactor)`. `null` cuando la geometría no
+   * da kilo por metro (no debería pasar con datos reales, pero una bobina histórica
+   * cargada con ancho o espesor en cero no puede convertirse).
+   */
+  equivalentMeters: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CoilKind,
   CoilStatus,
   Prisma,
   ProductBomKind,
@@ -18,6 +19,7 @@ import {
 } from '@prisma/client';
 import {
   businessToday,
+  COIL_BUSINESS_LINES,
   paginate,
   productionOrderCode,
   queueSemaphore,
@@ -39,6 +41,8 @@ import {
   type SalesOrderDto,
   type SalesOrderListItemDto,
   type SalesOrderQuery,
+  type SellableCoilDto,
+  type SellableCoilQuery,
   type SetSalesOrderPriorityInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -462,6 +466,7 @@ export class SalesOrdersService {
     items: {
       id: string;
       lineNumber: number;
+      productId: string;
       reserveItemType: InventoryItemType;
       reserveItemId: string;
       reserveQty: Prisma.Decimal;
@@ -474,17 +479,35 @@ export class SalesOrdersService {
       ),
     );
 
-    const coilIds = [
-      ...new Set(
-        sorted
-          .filter((i) => i.reserveItemType === InventoryItemTypeEnum.COIL)
-          .map((i) => i.reserveItemId),
-      ),
-    ].sort();
+    const coilItems = sorted.filter((i) => i.reserveItemType === InventoryItemTypeEnum.COIL);
+    const coilIds = [...new Set(coilItems.map((i) => i.reserveItemId))].sort();
     if (coilIds.length > 0) {
       await tx.$queryRaw`
         SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
       `;
+
+      // D-116: una línea que reserva kilos de bobina para **producirla** (coberturas a
+      // medida) sigue exigiendo `OPEN` —de acá sale material que todavía tiene que montarse
+      // en una OP—, pero una línea que **vende la bobina tal cual** (RF-73, producto sin
+      // receta) también acepta `CLOSED`: es justo el estado con el que C recomienda dar de
+      // alta una bobina que ya se sabe que se va a vender entera, y bloquearlo la dejaría
+      // sin ninguna forma de reservarse.
+      const boms = await tx.productBom.findMany({
+        where: {
+          productId: { in: [...new Set(coilItems.map((i) => i.productId))] },
+          isActive: true,
+        },
+        select: { productId: true },
+      });
+      const madeToOrderProductIds = new Set(boms.map((b) => b.productId));
+      const requiresOpenByCoilId = new Map<string, boolean>();
+      for (const item of coilItems) {
+        if (madeToOrderProductIds.has(item.productId)) {
+          requiresOpenByCoilId.set(item.reserveItemId, true);
+        } else if (!requiresOpenByCoilId.has(item.reserveItemId)) {
+          requiresOpenByCoilId.set(item.reserveItemId, false);
+        }
+      }
 
       // **La invariante también vale al revés.** Comprobar el disponible no alcanza para
       // decidir si el material se puede prometer: entre cotizar y confirmar, la bobina pudo
@@ -497,7 +520,12 @@ export class SalesOrdersService {
         where: { id: { in: coilIds } },
         select: { id: true, code: true, status: true },
       });
-      const unavailable = coils.filter((c) => c.status !== CoilStatus.OPEN);
+      const unavailable = coils.filter((c) => {
+        const allowed: CoilStatus[] = requiresOpenByCoilId.get(c.id)
+          ? [CoilStatus.OPEN]
+          : [CoilStatus.OPEN, CoilStatus.CLOSED];
+        return !allowed.includes(c.status);
+      });
       if (unavailable.length > 0) {
         const detail = unavailable.map((c) => `${c.code} (${c.status})`).join(', ');
         throw new BadRequestException(
@@ -1150,6 +1178,95 @@ export class SalesOrdersService {
         // Una bobina sin nada disponible tampoco se puede prometer.
         .filter((c) => toDecimal(c.availableQty).gt(0))
     );
+  }
+
+  /**
+   * Bobinas DISPONIBLES para vender enteras (D-116): `OPEN` o `CLOSED` (nunca en corte ni
+   * anulada/vendida), de kind `COIL` (un fleje no se vende como bobina), sin custodia de
+   * producción y con saldo. Solo Drywall y Metallic Roofing tienen bobina (C).
+   */
+  async findSellableCoils(query: SellableCoilQuery): Promise<SellableCoilDto[]> {
+    const lines = query.businessLine ? [query.businessLine] : [...COIL_BUSINESS_LINES];
+    const coils = await this.prisma.coil.findMany({
+      where: {
+        kind: CoilKind.COIL,
+        status: { in: [CoilStatus.OPEN, CoilStatus.CLOSED] },
+        businessLine: { code: { in: lines.map(toPrismaLineCode) } },
+        ...(query.search
+          ? { code: { contains: query.search, mode: Prisma.QueryMode.insensitive } }
+          : {}),
+      },
+      select: {
+        id: true,
+        code: true,
+        typeKey: true,
+        widthMm: true,
+        thicknessMm: true,
+        status: true,
+        businessLine: { select: { code: true } },
+        finish: { select: { code: true, name: true } },
+        color: { select: { code: true, name: true } },
+      },
+      orderBy: { code: 'asc' },
+      take: 500,
+    });
+    if (coils.length === 0) return [];
+
+    const ids = coils.map((c) => c.id);
+    const [balances, reserved, assigned] = await Promise.all([
+      this.prisma.inventoryBalance.findMany({
+        where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
+        select: { itemId: true, qty: true },
+      }),
+      this.prisma.reservation.groupBy({
+        by: ['itemId'],
+        where: {
+          status: ReservationStatus.ACTIVE,
+          itemType: InventoryItemTypeEnum.COIL,
+          itemId: { in: ids },
+        },
+        _sum: { qty: true },
+      }),
+      // D-060: montada en una OP viva (roofing) no se puede vender aunque el saldo esté
+      // intacto — asignar no mueve kardex, así que el disponible no lo delata.
+      this.prisma.productionOrderConsumption.findMany({
+        where: {
+          coilId: { in: ids },
+          releasedAt: null,
+          productionOrder: {
+            status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+          },
+        },
+        select: { coilId: true },
+      }),
+    ]);
+    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const reservedById = new Map(
+      reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
+    );
+    const assignedIds = new Set(assigned.map((a) => a.coilId));
+
+    return coils
+      .filter((c) => !assignedIds.has(c.id))
+      .map((c) => {
+        const qty = qtyById.get(c.id) ?? toDecimal('0');
+        const res = reservedById.get(c.id) ?? toDecimal('0');
+        return {
+          coilId: c.id,
+          code: c.code,
+          businessLine: toSharedLineCode(c.businessLine.code),
+          typeKey: c.typeKey,
+          finishCode: c.finish.code,
+          finishName: c.finish.name,
+          colorCode: c.color?.code ?? null,
+          colorName: c.color?.name ?? null,
+          widthMm: c.widthMm.toFixed(2),
+          thicknessMm: c.thicknessMm.toFixed(2),
+          status: c.status as 'OPEN' | 'CLOSED',
+          availableQty: qty.minus(res).toFixed(3),
+        };
+      })
+      .filter((c) => toDecimal(c.availableQty).gt(0));
   }
 
   async findReservations(query: ReservationQuery): Promise<ReservationDto[]> {

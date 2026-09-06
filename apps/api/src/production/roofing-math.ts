@@ -1,5 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
-import { Decimal, roundTo, theoreticalKgPerPiece, toDecimal, type PieceLike } from '@ayr/shared';
+import {
+  Decimal,
+  equivalentMeters,
+  roundTo,
+  theoreticalKgPerPiece,
+  toDecimal,
+  type PieceLike,
+} from '@ayr/shared';
 
 /**
  * Aritmética de la producción de coberturas (D-047, D-089).
@@ -75,13 +82,7 @@ export function derivePiecesPlan(
  * metro, que sobre un rollo entero son varios metros de diferencia.
  */
 export function metersFromKg(geometry: CoilGeometry, availableKg: string): Decimal {
-  const kgPerMeter = toDecimal(geometry.widthMm)
-    .times(toDecimal(geometry.thicknessMm))
-    .times(1000)
-    .times(toDecimal(geometry.densityFactor))
-    .div(1_000_000);
-  if (kgPerMeter.lte(0)) return new Decimal(0);
-  return roundTo(toDecimal(availableKg).div(kgPerMeter), 'KG');
+  return equivalentMeters(geometry, availableKg) ?? new Decimal(0);
 }
 
 export interface RoofingCloseInput {
