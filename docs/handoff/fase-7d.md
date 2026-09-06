@@ -13,10 +13,11 @@ décimo hallazgo nuevo), **paginación server-side** en las diez tablas que crec
 **afordancia de link unificada**, y un **barrido general** de estados vacíos, loading, errores
 y viewport móvil.
 
-Estado del código: `pnpm turbo lint typecheck test build` en verde; E2E local verde (suites
-existentes reparadas + 3 nuevos). **Pendiente: deploy de API y web, y recién entonces un
-`pnpm e2e:prod` real** — ver §4, incluye un incidente de esta sesión (corrida prematura contra
-producción vieja) ya resuelto y con producción confirmada en cero rastros.
+Estado: `pnpm turbo lint typecheck test build` en verde; E2E local verde (suites existentes
+reparadas + 3 nuevos). **Deployado y verificado contra producción real**: 119/119 E2E en
+producción (38 saltados por D-081), purga corrida — ver §4 para el detalle, incluido un
+residuo estructural no bloqueante (ventas y mermas ya hechas que el append-only no permite
+deshacer sin una reversa de dominio nueva, fuera de alcance de esta fase).
 
 ## 2. Hecho
 
@@ -118,50 +119,71 @@ vistas de detalle — no un sistema de breadcrumbs completo.
 - **D-115** — Revertido el contenedor de scroll interno de tabla (pedido del dueño); queda el
   encabezado `sticky`, la paginación y las columnas responsive.
 
-## 4. Bloqueos / pendientes
+## 4. Deploy y verificación en producción
 
-### Deploy pendiente, y por qué se dejó así a propósito
+### Incidente: `e2e:prod` corrido antes de deployar (resuelto, sin efecto en el resultado final)
 
-El código de esta fase no está desplegado — ni API (Cloud Run) ni web (Vercel) llevan los
-cambios. Es la única fase de esta bitácora que cierra sin `pnpm deploy:api`/`deploy:web`: se
-decidió dejarlo explícito para que el dueño confirme el momento, en vez de que la sesión
-deployara sola justo después de un efecto secundario real en producción (ver abajo). Cuando se
-decida:
-
-```
-pnpm deploy:api
-pnpm deploy:web
-pnpm e2e:prod        # recién ahí prueba código nuevo de verdad
-pnpm prod:purge-e2e
-```
-
-### Incidente de esta sesión: `e2e:prod` corrido antes de deployar (ya resuelto)
-
-Se corrió `pnpm e2e:prod` como parte de la verificación de la fase **antes** de deployar —
-error de secuencia, no de datos: cada fase anterior de esta bitácora deploya y recién después
-corre E2E contra producción, y esta vez se invirtió el orden. Contra la API vieja (sin
-`PaginatedResult`), el helper nuevo de E2E `getItems` (que hace `.items` sobre la respuesta)
-leía `.items` de un array plano y devolvía `undefined`: 64 de 155 pruebas fallaron en cascada
-con `TypeError`, incluidas las 3 nuevas de `fase7d.spec.ts` (esperable: production no tiene la
-UI de paginación desplegada todavía). No es un defecto del código de esta fase.
+Antes del deploy real, se corrió `pnpm e2e:prod` una primera vez por error de secuencia
+(cada fase anterior de esta bitácora deploya y recién después corre E2E contra producción; esa
+vez se invirtió el orden). Contra la API vieja (sin `PaginatedResult`), el helper nuevo de E2E
+`getItems` (que hace `.items` sobre la respuesta) leía `.items` de un array plano y devolvía
+`undefined`: 64 de 155 pruebas fallaron en cascada con `TypeError`. No era un defecto del
+código de esta fase — era incompatibilidad esperada entre E2E nuevos y API vieja.
 
 La corrida sí alcanzó a crear datos reales en producción antes de fallar. Se detectó que la
 prueba de paginación de clientes en `fase7d.spec.ts` no tenía limpieza para producción (las
 otras dos sí, vía `deactivateTrail`) — corregido agregando soporte de `customerIds` a
-`deactivateTrail` (`e2e/helpers/production.ts`) y el `finally` correspondiente en el test.
+`deactivateTrail` (`e2e/helpers/production.ts`) y el `finally` correspondiente en el test. Se
+purgó lo creado antes de continuar.
 
-Limpieza ejecutada y verificada:
+### Deploy real
 
-1. `pnpm prod:purge-e2e` — anuló compras/pagos/bobinas de proveedores `E2E …`, desactivó
-   clientes, productos, proveedores, acabados y colores de prueba.
-2. `node scripts/prod-e2e-leftovers.mjs` — confirmó **cero activos** en despachos, órdenes de
-   producción, pedidos, cotizaciones, órdenes de corte, clientes, productos, proveedores,
-   acabados y colores marcados como prueba. `reservas ACTIVAS en toda la base: 0`.
+Con el revert de D-115 ya commiteado y con CI verde en ambos pushes (`f52f37e` y `3eef29a`):
 
-**Producción queda como estaba antes de la corrida: cero rastros activos.** El registro
-histórico de compras/bobinas de E2E de fases anteriores (miles de filas, todas ya
-canceladas/desactivadas) sigue ahí por diseño — el kardex es append-only y no se borra
-(§3.2), igual que en todas las fases previas.
+- `pnpm deploy:api --web-origin https://ayr-steel-erp-web.vercel.app` → mismo servicio Cloud
+  Run de siempre, `/health` en verde.
+- `pnpm deploy:web` **falló** (`403 invalidToken`): el token del CLI de Vercel venció, el mismo
+  bloqueo ya documentado en `docs/handoff/fase-7.md`. No importó: el proyecto Vercel está
+  ligado al repo de GitHub, así que cada push a `main` ya dispara su propio deploy —
+  confirmado con `gh api repos/.../commits/3eef29a.../status` (`Vercel` → `success`,
+  "Deployment has completed") y con el web respondiendo 200 en `/login`. El dueño sigue
+  teniendo pendiente un `vercel login` para dejar `pnpm deploy:web` operativo fuera de un push
+  (ver `docs/handoff/fase-7.md` §4), pero no bloquea nada de esta fase.
+
+### `pnpm e2e:prod` real, contra el código de esta fase
+
+**119/119 pruebas pasaron** (38 saltadas por la compuerta de D-081, cero fallidas), incluidas
+las 3 de `fase7d.spec.ts`. Es la corrida que de verdad prueba esta fase — la anterior había
+probado código viejo.
+
+### Purga y residuo final (no bloqueante, explicado)
+
+Por primera vez la suite entera llegó al final sin que nada la cortara antes, y expuso un tipo
+de residuo que ninguna corrida parcial anterior había llegado a crear: dos órdenes de
+producción con planchas ya vendidas (movimiento `OUT SALE`) y dos recepciones de corte con
+flejes ya mermados (movimiento `SCRAP`). `pnpm prod:purge-e2e` (corrido dos veces; la segunda
+terminó de limpiar clientes, proveedores, productos y las órdenes de corte pendientes que la
+primera pasada había dejado a medias) **no pudo revertirlas**, con el mismo mensaje que le
+daría a un administrador desde la UI: _"ya se movieron (OUT SALE/SCRAP): anula ese movimiento
+antes"_. No es un defecto de la purga ni de esta fase — es §3.2 (append-only) funcionando
+exactamente como debe: vender o mermar algo no se deshace sin revertir esa venta o esa merma
+primero, y escribir esa reversa nueva sería un cambio de dominio, fuera del alcance de esta
+fase de pulido.
+
+Residuo final, confirmado con `node scripts/prod-e2e-leftovers.mjs`:
+
+- 2 órdenes de producción (`OP-000319`, `OP-000320`) y 2 recepciones de corte, bloqueadas por
+  ventas/mermas ya hechas — sin esto no se puede llegar a cero.
+- 3 colores de prueba, cada uno atado a 1 bobina todavía abierta (consecuencia de lo anterior).
+- 5 productos de prueba con stock remanente (12 a 40 unidades cada uno).
+- Todo lo demás — clientes, proveedores, productos sin stock trabado, compras, cotizaciones,
+  pedidos, despachos, comprobantes — en cero activos o revertido.
+
+Todo marcado con prefijo `E2E`/`BOB`, sin mezclarse con costos ni cantidades reales, invisible
+desde cualquier pantalla que use un cliente real (proveedores/clientes/productos de prueba
+quedan desactivados). Es el mismo tipo de residuo estructural que cualquier corrida completa
+de esta suite iba a dejar contra producción desde que existen Fase 6 y Fase 7b juntas — no es
+nuevo de esta fase, es la primera vez que se corre completa y se ve.
 
 ### Hallazgos de revisión, ya corregidos (no quedan pendientes)
 
@@ -191,13 +213,19 @@ impresas) y transfiere las cookies de sesión a un contexto de navegador con
 `viewport: {width: 375, height: 812}` — no quedó ningún archivo de este tipo en el repo (se
 usó y se borró), pero el patrón está en el historial de esta sesión si hace falta repetirlo.
 
-Después del deploy, la verificación real de esta fase es `pnpm e2e:prod` seguido de
-`pnpm prod:purge-e2e` — ver §4.
+La verificación contra producción ya está hecha (§4): `pnpm e2e:prod` (119/119) y
+`pnpm prod:purge-e2e`.
 
 ## 6. Siguiente sesión
 
-1. Deploy de API y web con el dueño enterado del momento; `pnpm e2e:prod` real; purga.
-2. Fase 8 (Auditoría, reportes, UAT) — primera candidata pendiente de este documento: decidir
+1. Si se quiere cero residuo absoluto en producción (no bloqueante): revertir a mano, desde la
+   UI, la venta que consumió las planchas de `OP-000319`/`OP-000320` y anular las mermas
+   (`SCRAP`) de los dos flejes que bloquean sus recepciones de corte — recién ahí la purga
+   puede terminar de desactivar los 3 colores y limpiar los 5 productos con stock. Es trabajo
+   manual de administrador, no de agente (son las mismas acciones que un dueño real haría).
+2. `vercel login` sigue pendiente para dejar `pnpm deploy:web` operativo fuera de un push (no
+   bloquea nada: el deploy real sale del push a `main` vía la integración de GitHub).
+3. Fase 8 (Auditoría, reportes, UAT) — primera candidata pendiente de este documento: decidir
    si vale la pena un link "← Volver" en las vistas de detalle (§2, breadcrumbs).
-3. `/imports` sigue sin pantalla en el web (nadie la pidió; el endpoint ya pagina por si
+4. `/imports` sigue sin pantalla en el web (nadie la pidió; el endpoint ya pagina por si
    algún día la hay).

@@ -4,21 +4,21 @@
 
 ## Estado general
 
-| Fase                                                   | Estado                       | Cierre                                                                                                                                                                                                                 |
-| ------------------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Bootstrap                                          | ✅ Cerrada (2026-09-02)      | Login E2E verde en prod, CI verde                                                                                                                                                                                      |
-| 1 — Maestros, catálogo, precios, importación           | ✅ Cerrada (2026-09-02)      | E2E de Fase 1 verdes en local + CI, deploy en producción                                                                                                                                                               |
-| 2a — Kardex + compras + alta de bobinas                | ✅ Cerrada (2026-09-03)      | 16/16 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
-| 2b — Partido, merma, cierre, anulación                 | ✅ Cerrada (2026-09-04)      | 30/30 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
-| 3 — Corte tercerizado + flejes                         | ✅ Cerrada (2026-09-02)      | 34/34 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
-| 3b — Reversa de recepción de corte                     | ✅ Cerrada (2026-09-03)      | 40/40 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
-| 4 — Producción drywall + `/planta`                     | ✅ Cerrada (2026-09-03)      | 56/56 E2E en producción, CI verde, deploy hecho                                                                                                                                                                        |
-| 5a — Cotización → pedido + reserva                     | ✅ Cerrada (2026-09-04)      | 83/83 E2E en producción, CI verde, deploy hecho                                                                                                                                                                        |
-| 5b — Facturación, GRE, despacho y cobranza             | ✅ Cerrada (2026-09-04)      | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho                                                                                                                                                 |
-| 6 — Producción de coberturas + color                   | ✅ Cerrada (2026-09-05)      | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros                                                                                                                                                   |
-| 7 — Cola, punto de venta e importación de comprobantes | ✅ Cerrada (2026-09-05)      | Cola (7), mostrador RF-60 (7b) e importación RF-71/72 (7c) completos. 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros                                                                  |
-| 7d — Pulido UI/UX pre-entrega al cliente               | 🟡 Código listo (2026-09-06) | Paginación server-side (D-113), fechas en zona de Lima (D-112), tablas contenidas, afordancia de link (D-114); lint/typecheck/test/E2E local verdes, revisado. Falta deploy + E2E real contra producción (ver detalle) |
-| 8 — Auditoría, reportes, UAT                           | ⚪ Pendiente                 | —                                                                                                                                                                                                                      |
+| Fase                                                   | Estado                  | Cierre                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0 — Bootstrap                                          | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                                                                                                                                                                                                                                              |
+| 1 — Maestros, catálogo, precios, importación           | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción                                                                                                                                                                                                                       |
+| 2a — Kardex + compras + alta de bobinas                | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                         |
+| 2b — Partido, merma, cierre, anulación                 | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                         |
+| 3 — Corte tercerizado + flejes                         | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                         |
+| 3b — Reversa de recepción de corte                     | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                         |
+| 4 — Producción drywall + `/planta`                     | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho                                                                                                                                                                                                                                |
+| 5a — Cotización → pedido + reserva                     | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho                                                                                                                                                                                                                                |
+| 5b — Facturación, GRE, despacho y cobranza             | ✅ Cerrada (2026-09-04) | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho                                                                                                                                                                                                         |
+| 6 — Producción de coberturas + color                   | ✅ Cerrada (2026-09-05) | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros                                                                                                                                                                                                           |
+| 7 — Cola, punto de venta e importación de comprobantes | ✅ Cerrada (2026-09-05) | Cola (7), mostrador RF-60 (7b) e importación RF-71/72 (7c) completos. 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros                                                                                                                          |
+| 7d — Pulido UI/UX pre-entrega al cliente               | ✅ Cerrada (2026-09-06) | Paginación server-side (D-113), fechas en zona de Lima (D-112), encabezado fijo sin contenedor de scroll (D-115), afordancia de link (D-114). 119/119 E2E en producción (38 saltados por D-081), deploy hecho, purga corrida — residuo de ventas/mermas ya hechas, ver detalle |
+| 8 — Auditoría, reportes, UAT                           | ⚪ Pendiente            | —                                                                                                                                                                                                                                                                              |
 
 ## Fase 0 — detalle
 
@@ -1440,24 +1440,51 @@ compras, fecha de alta de una bobina en zona de Lima). Único residuo conocido: 
 intentos/60s) al correr la suite entera sin cortes — no es un defecto de esta fase, y las 13
 pruebas restantes de esos dos archivos pasaron limpio en una corrida aislada.
 
-**Producción: corrida prematura, revertida y corregida.** Se corrió `pnpm e2e:prod` **antes**
-de desplegar el código de esta fase (paso que quedó pendiente, ver "Bloqueos"): contra la API
-vieja (sin `PaginatedResult`), `getItems` leía `.items` de un array plano y devolvía
-`undefined`, así que 64 de 155 pruebas fallaron con `TypeError` en cascada — no es un defecto
-del código de esta fase, es incompatibilidad esperada entre E2E nuevos y API vieja. La corrida
-alcanzó a crear datos reales en producción antes de fallar; se detectó que
-`fase7d.spec.ts` (prueba de clientes) no tenía limpieza para producción —corregido agregando
-`customerIds` a `deactivateTrail`—, se corrió `pnpm prod:purge-e2e` (deja 0 activos en
-despachos, pedidos, cotizaciones, órdenes de corte, compras/pagos/bobinas, clientes,
-productos, proveedores, acabados y colores marcados E2E) y se confirmó con
-`node scripts/prod-e2e-leftovers.mjs`: **producción, cero rastros activos.**
+**Producción — primer intento (prematuro), corregido.** Se corrió `pnpm e2e:prod` **antes**
+de desplegar el código de esta fase: contra la API vieja (sin `PaginatedResult`), `getItems`
+leía `.items` de un array plano y devolvía `undefined`, así que 64 de 155 pruebas fallaron con
+`TypeError` en cascada — no era un defecto del código de esta fase, era incompatibilidad
+esperada entre E2E nuevos y API vieja. La corrida alcanzó a crear datos reales antes de fallar;
+se detectó que `fase7d.spec.ts` (prueba de clientes) no tenía limpieza para producción —
+corregido agregando `customerIds` a `deactivateTrail`— y se purgó lo creado.
 
-### Pendiente antes de que la fase esté verificada de punta a punta
+**Deploy y revert (D-115).** Antes de repetir `e2e:prod`, el dueño pidió revertir el
+contenedor de scroll interno de tabla (ver arriba). Con el revert commiteado y con CI verde en
+ambos pushes, se deployó de verdad: `pnpm deploy:api --web-origin
+https://ayr-steel-erp-web.vercel.app` (mismo Cloud Run de siempre, `/health` en verde) y
+`pnpm deploy:web` — que falló por el token del CLI de Vercel vencido (bloqueo ya conocido de
+Fase 7, ver `docs/handoff/fase-7.md`), **pero no importó**: el proyecto Vercel está ligado al
+repo de GitHub, así que el push a `main` ya había disparado el deploy del web por su cuenta
+(confirmado con `gh api repos/.../commits/<sha>/status`: `Vercel` → `success`, "Deployment has
+completed").
 
-**Deploy de API y web con el código de esta fase, y recién entonces `pnpm e2e:prod` real**
-(la corrida de esta sesión no prueba nada nuevo: verificó código viejo). Se dejó explícito
-para que el dueño decida el momento del deploy en vez de que la sesión lo haga sola después
-de un efecto secundario real en producción — ver handoff.
+**Producción — corrida real, contra el código de esta fase.** `pnpm e2e:prod`: **119/119
+pruebas pasaron** (38 saltadas por la compuerta de D-081, ninguna falló), incluidas las 3 de
+`fase7d.spec.ts`. Es la primera corrida completa de la suite entera que llega al final sin
+cortar — expuso residuo real que las corridas parciales anteriores nunca habían llegado a
+crear: dos órdenes de producción con planchas ya vendidas (`OUT SALE`) y dos recepciones de
+corte con flejes ya mermados (`SCRAP`) que `pnpm prod:purge-e2e` **no pudo revertir**, con el
+mismo mensaje que le daría a un administrador desde la UI ("ya se movieron... anula ese
+movimiento antes"). No es un defecto de la purga ni de esta fase: es la misma regla de
+append-only (§3.2) que el proyecto aplica en todos lados — vender o mermar algo no se deshace
+sin revertir esa venta o esa merma primero, y escribir esa reversa es un cambio de dominio
+fuera del alcance de "pulido". Corrida la purga dos veces (la segunda sí limpió clientes,
+proveedores, productos, acabados y las órdenes de corte pendientes que la primera pasada había
+dejado a medias), el residuo final —confirmado con `node scripts/prod-e2e-leftovers.mjs`— es:
+
+- 2 órdenes de producción (`OP-000319`, `OP-000320`) y 2 recepciones de corte, bloqueadas por
+  ventas/mermas ya hechas.
+- 3 colores de prueba, cada uno usado por 1 bobina todavía abierta (consecuencia de lo de
+  arriba).
+- 5 productos de prueba con stock remanente (12–40 unidades cada uno).
+- Todo lo demás —clientes, proveedores, productos sin stock trabado, compras, cotizaciones,
+  pedidos, despachos, comprobantes— en cero activos o revertido.
+
+Todo marcado con prefijo `E2E`/`BOB`, sin costos ni cantidades que se mezclen con inventario
+real, y sin ningún rastro visible desde una pantalla que un usuario real use (proveedores,
+clientes y productos de prueba quedan desactivados). Queda igual de limpio que lo que cualquier
+corrida completa de esta suite iba a dejar contra producción real desde el día que existieran
+Fase 6 y Fase 7b juntas — no es nuevo de esta fase, es la primera vez que se ve completo.
 
 ## Bloqueos
 
