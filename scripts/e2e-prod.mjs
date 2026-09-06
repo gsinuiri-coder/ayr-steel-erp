@@ -5,14 +5,15 @@
 // fase5b-bordes.spec.ts), de la Fase 6 (fase6.spec.ts, fase6-bordes.spec.ts) y de la
 // Fase 7 (fase7.spec.ts, fase7-bordes.spec.ts: cola de producción, RF-37/RF-38;
 // fase7b*.spec.ts: mostrador; fase7c*.spec.ts y m4-*.spec.ts: importación de comprobantes
-// y su anulación) contra
+// y su anulación) y de la Fase 7d (fase7d.spec.ts: paginación server-side y fechas en
+// zona de Lima) contra
 // producción (Vercel + Cloud Run), incluidos los escenarios que crean datos (RF-03:
 // usuario desactivado, cambio de rol; Fase 1: acabado, producto, importación, margen;
 // Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y flejes; Fase 3b:
 // reversa de recepción de corte; Fase 4: órdenes de producción de drywall, con sus
 // reportes de piezas y su merma de proceso; M-2: anular un pago a proveedor; Fase 6:
 // producción de coberturas y maestro de colores; Fase 7: cola derivada, prioridad y
-// fecha prometida).
+// fecha prometida; Fase 7d: clientes y compras de prueba para forzar una segunda página).
 //
 // D-081 (Sesión M-3): desde que producción puede llevar credenciales reales del PSE,
 // `E2E_FISCAL_EMISSION` se fuerza a `'0'` más abajo sin importar qué traiga el entorno de
@@ -157,6 +158,10 @@ try {
       'e2e/tests/fase7c.spec.ts',
       'e2e/tests/fase7c-bordes.spec.ts',
       'e2e/tests/m4-anulacion-importado.spec.ts',
+      // Fase 7d (pulido pre-entrega): paginación server-side y fechas en zona de Lima.
+      // Crea clientes, un proveedor y compras — nada de facturación — así que corre entera
+      // contra producción, igual que Fase 2a/2b.
+      'e2e/tests/fase7d.spec.ts',
       // Cualquier bandera extra que se le pase a `pnpm e2e:prod` viaja a Playwright. Sirve
       // para acotar una corrida —`pnpm e2e:prod --grep "Fase 7b"`— cuando lo que se quiere
       // verificar es una fase concreta y no las dos horas de suite entera. Va **después** de

@@ -7,9 +7,13 @@ import {
 } from '@nestjs/common';
 import { Prisma, type Customer } from '@prisma/client';
 import {
+  paginate,
   Role,
+  toSkipTake,
   type CreateCustomerInput,
   type CustomerDto,
+  type CustomerQuery,
+  type PaginatedResult,
   type UpdateCustomerInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -33,11 +37,26 @@ export class CustomersService {
     private readonly audit: AuditService,
   ) {}
 
-  async findAll(): Promise<CustomerDto[]> {
-    const customers = await this.prisma.customer.findMany({
-      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
-    });
-    return customers.map(toDto);
+  async findAll(query: CustomerQuery): Promise<PaginatedResult<CustomerDto>> {
+    const where: Prisma.CustomerWhereInput = query.search
+      ? {
+          OR: [
+            { name: { contains: query.search, mode: 'insensitive' } },
+            { docNumber: { contains: query.search, mode: 'insensitive' } },
+          ],
+        }
+      : {};
+    const { skip, take } = toSkipTake(query);
+    const [total, customers] = await Promise.all([
+      this.prisma.customer.count({ where }),
+      this.prisma.customer.findMany({
+        where,
+        orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+        skip,
+        take,
+      }),
+    ]);
+    return paginate(customers.map(toDto), total, query);
   }
 
   async findOne(id: string): Promise<CustomerDto> {

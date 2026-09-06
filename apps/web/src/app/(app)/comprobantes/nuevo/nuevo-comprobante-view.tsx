@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,6 +25,7 @@ import {
   type SalesOrderProgressDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { useSession } from '@/lib/session';
 import { formatMoney, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
@@ -86,13 +88,13 @@ export function NuevoComprobanteView() {
   >([{ key: 'l0', description: '', qty: '', unit: 'NIU', unitPricePen: '' }]);
 
   const customers = useQuery({
-    queryKey: ['customers'],
-    queryFn: () => api<CustomerDto[]>('/customers'),
+    queryKey: ['customers', 'picker'],
+    queryFn: () => fetchAllForPicker<CustomerDto>('/customers'),
   });
 
   const orders = useQuery({
     queryKey: ['sales-orders', 'invoiceable'],
-    queryFn: () => api<SalesOrderListItemDto[]>('/sales/orders'),
+    queryFn: () => fetchAllForPicker<SalesOrderListItemDto>('/sales/orders'),
   });
 
   const progress = useQuery({
@@ -426,9 +428,9 @@ export function NuevoComprobanteView() {
             Se propone facturar todo lo pendiente. Baja la cantidad para facturar en partes; deja
             una línea en blanco para no incluirla.
           </p>
-          <div className="rounded-lg border">
+          <TableScrollArea>
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Producto</TableHead>
                   <TableHead className="text-right">Pedido</TableHead>
@@ -478,7 +480,7 @@ export function NuevoComprobanteView() {
                 )}
               </TableBody>
             </Table>
-          </div>
+          </TableScrollArea>
         </section>
       ) : (
         <section className="space-y-2">

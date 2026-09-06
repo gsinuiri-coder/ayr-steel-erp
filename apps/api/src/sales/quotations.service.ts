@@ -16,10 +16,13 @@ import {
 import {
   businessToday,
   defaultValidUntil,
+  paginate,
   Role,
   quotationCode,
   salesOrderCode,
+  toSkipTake,
   type CreateQuotationInput,
+  type PaginatedResult,
   type QuotationDto,
   type QuotationListItemDto,
   type QuotationQuery,
@@ -442,34 +445,45 @@ export class QuotationsService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: QuotationQuery): Promise<QuotationListItemDto[]> {
-    const rows = await this.prisma.quotation.findMany({
-      where: {
-        status: query.status,
-        customerId: query.customerId,
-        businessLine: query.businessLine
-          ? { code: toPrismaLineCode(query.businessLine) }
-          : undefined,
-        ...(query.search
-          ? {
-              OR: [
-                { customer: { name: { contains: query.search, mode: 'insensitive' as const } } },
-                { customer: { docNumber: { contains: query.search } } },
-              ],
-            }
-          : {}),
-      },
-      // La lista muestra totales, no líneas: traer `items` con su producto para 500
-      // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
-      include: { ...quotationInclude, items: false, _count: { select: { items: true } } },
-      orderBy: { seq: 'desc' },
-      take: 500,
-    });
+  async findAll(query: QuotationQuery): Promise<PaginatedResult<QuotationListItemDto>> {
+    // El código de la cotización (`COT-000123`) es `quotationCode(seq)`, no una columna:
+    // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
+    // quien pega el código de una cotización para encontrarla (el uso más común del
+    // buscador) se quedaba sin resultados (Fase 7d, hallazgo de revisión).
+    const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
+    const where: Prisma.QuotationWhereInput = {
+      status: query.status,
+      customerId: query.customerId,
+      businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
+      ...(query.search
+        ? {
+            OR: [
+              { customer: { name: { contains: query.search, mode: 'insensitive' as const } } },
+              { customer: { docNumber: { contains: query.search } } },
+              ...(searchSeq ? [{ seq: Number(searchSeq) }] : []),
+            ],
+          }
+        : {}),
+    };
+    const { skip, take } = toSkipTake(query);
+    const [total, rows] = await Promise.all([
+      this.prisma.quotation.count({ where }),
+      this.prisma.quotation.findMany({
+        where,
+        // La lista muestra totales, no líneas: traer `items` con su producto para 500
+        // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
+        include: { ...quotationInclude, items: false, _count: { select: { items: true } } },
+        orderBy: { seq: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
     const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
-    return rows.map((r) => {
+    const items = rows.map((r) => {
       const { items: _items, ...rest } = this.toDto({ ...r, items: [] }, new Map(), actors);
       return { ...rest, itemCount: r._count.items };
     });
+    return paginate(items, total, query);
   }
 
   async findOne(id: string): Promise<QuotationDto> {

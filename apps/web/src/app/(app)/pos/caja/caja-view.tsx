@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,6 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -203,9 +205,9 @@ export function CajaView() {
                 )}
               </div>
 
-              <div className="rounded-lg border">
+              <TableScrollArea>
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
                       <TableHead>Venta</TableHead>
                       <TableHead>Cliente</TableHead>
@@ -229,7 +231,7 @@ export function CajaView() {
                         <TableCell>{s.customerName}</TableCell>
                         <TableCell>
                           <Link
-                            className="underline underline-offset-4"
+                            className={LINK_CLASSNAME}
                             href={`/comprobantes/${s.fiscalDocumentId}`}
                           >
                             {s.fiscalDocumentNumber ?? 'borrador'}
@@ -265,7 +267,7 @@ export function CajaView() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
+              </TableScrollArea>
             </CardContent>
           </Card>
 

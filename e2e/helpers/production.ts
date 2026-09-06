@@ -1,6 +1,7 @@
 import { expect, request, type APIRequestContext, type APIResponse } from '@playwright/test';
 import {
   createFinish,
+  getItems,
   getJson,
   postJson,
   type CreatedFinish,
@@ -274,7 +275,7 @@ export async function movementsOf(
   itemType: 'COIL' | 'PRODUCT',
   itemId: string,
 ): Promise<MovementDto[]> {
-  const movements = await getJson<MovementDto[]>(
+  const movements = await getItems<MovementDto>(
     api,
     `/api/inventory/movements?itemType=${itemType}&itemId=${itemId}`,
   );
@@ -423,7 +424,7 @@ export async function setupScenario(
     ],
   });
   await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
-  const coils = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${supplier.id}`);
+  const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
   const mother = coils[0]!;
 
   // Corte tercerizado: es la única vía que produce flejes (`kind=STRIP`, D-049), que es
@@ -528,6 +529,7 @@ export async function deactivateTrail(
     finish?: CreatedFinish;
     productId?: string;
     productIds?: string[];
+    customerIds?: string[];
   },
 ): Promise<void> {
   for (const orderId of [...(trail.productionOrderIds ?? [])].reverse()) {
@@ -570,6 +572,11 @@ export async function deactivateTrail(
   if (trail.finish) {
     await api
       .patch(`/api/finishes/${trail.finish.id}`, { data: { isActive: false } })
+      .catch(() => undefined);
+  }
+  for (const customerId of trail.customerIds ?? []) {
+    await api
+      .patch(`/api/customers/${customerId}`, { data: { isActive: false } })
       .catch(() => undefined);
   }
 }

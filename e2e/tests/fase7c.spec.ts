@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { adminApi, createUser, getJson } from '../helpers/api';
+import { adminApi, createUser, getItems, getJson } from '../helpers/api';
 import {
   createInvoiceableCustomer,
   fiscalEmissionAllowed,
@@ -61,7 +61,7 @@ async function documentsByNumber(
   options: { includeArchived?: boolean } = {},
 ): Promise<DocumentListItem[]> {
   const archived = options.includeArchived ? '&includeArchived=true' : '';
-  const all = await getJson<DocumentListItem[]>(
+  const all = await getItems<DocumentListItem>(
     api,
     `/api/invoicing/documents?search=${number}${archived}`,
   );
@@ -219,7 +219,7 @@ test.describe('Fase 7c — importación de comprobantes ya emitidos', () => {
 
     // La cuenta por cobrar es lo que justifica importar: antes del cobro, el comprobante
     // aparece en "solo con saldo" como cualquier factura emitida acá.
-    const pending = await getJson<DocumentListItem[]>(
+    const pending = await getItems<DocumentListItem>(
       api,
       `/api/invoicing/documents?pendingOnly=true&search=${imported.number}`,
     );
@@ -246,7 +246,7 @@ test.describe('Fase 7c — importación de comprobantes ya emitidos', () => {
     expect(settled.status).toBe('ACCEPTED');
 
     // Ya no debe nada: sale de las cuentas por cobrar.
-    const stillPending = await getJson<DocumentListItem[]>(
+    const stillPending = await getItems<DocumentListItem>(
       api,
       `/api/invoicing/documents?pendingOnly=true&search=${imported.number}`,
     );

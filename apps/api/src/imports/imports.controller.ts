@@ -8,18 +8,22 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   IMPORT_ENTITIES,
+  paginationQuerySchema,
   Role,
   updateImportRowSchema,
   type ImportBatchDto,
   type ImportBatchWithRowsDto,
   type ImportEntity,
   type ImportRowDto,
+  type PaginatedResult,
+  type PaginationQuery,
   type UpdateImportRowInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -37,8 +41,10 @@ export class ImportsController {
   constructor(private readonly imports: ImportsService) {}
 
   @Get()
-  findAll(): Promise<ImportBatchDto[]> {
-    return this.imports.findAll();
+  findAll(
+    @Query(new ZodValidationPipe(paginationQuerySchema)) query: PaginationQuery,
+  ): Promise<PaginatedResult<ImportBatchDto>> {
+    return this.imports.findAll(query);
   }
 
   @Get(':id')

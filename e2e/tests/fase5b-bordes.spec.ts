@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, getJson, postJson } from '../helpers/api';
+import { adminApi, getItems, getJson, postJson } from '../helpers/api';
 import { balanceOf, live, movementsOf, postExpectingError } from '../helpers/production';
 import { availabilityOf, createDirectOrder, type SalesOrderDto } from '../helpers/sales';
 import {
@@ -651,7 +651,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       // RF-88: con saldo vivo, la deuda aparece en las cuentas por cobrar del cliente. Se
       // compara con `>=` porque el receptor de prueba es uno solo para toda la suite y su
       // total agregado puede incluir otros comprobantes.
-      const receivables = await getJson<{ customerId: string; balancePen: string }[]>(
+      const receivables = await getItems<{ customerId: string; balancePen: string }>(
         api,
         '/api/invoicing/receivables',
       );
@@ -690,7 +690,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
 
       // La cobranza mira el saldo, no el estado del envío: cobrado del todo, el
       // comprobante sale de los pendientes aunque el PSE todavía no lo haya visto.
-      const pending = await getJson<{ id: string }[]>(
+      const pending = await getItems<{ id: string }>(
         api,
         `/api/invoicing/documents?pendingOnly=true&customerId=${customer.id}`,
       );

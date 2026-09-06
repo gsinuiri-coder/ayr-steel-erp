@@ -13,7 +13,9 @@ import {
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatQty, isPositiveDecimal } from '@/lib/format';
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { RoleGate } from '@/components/role-gate';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -66,7 +68,7 @@ export function NuevaOrdenCorteView() {
 
   const availableCoils = useQuery({
     queryKey: ['coils', 'kind=COIL&status=OPEN'],
-    queryFn: () => api<CoilDto[]>('/coils?kind=COIL&status=OPEN'),
+    queryFn: () => fetchAllForPicker<CoilDto>('/coils', { kind: 'COIL', status: 'OPEN' }),
   });
   const addedIds = new Set(drafts.map((d) => d.coil.id));
   const candidates = (availableCoils.data ?? []).filter((c) => !addedIds.has(c.id));
@@ -156,66 +158,70 @@ export function NuevaOrdenCorteView() {
           <CardTitle>Bobinas disponibles</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Código</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead className="text-right">Ancho</TableHead>
-                <TableHead className="text-right">Disponible</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {availableCoils.isPending && (
+          <TableScrollArea className="max-h-[40vh] rounded-none border-0">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
-                  <TableCell colSpan={5}>
-                    <Skeleton className="h-5 w-full" />
-                  </TableCell>
+                  <TableHead>Código</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead className="text-right">Ancho</TableHead>
+                  <TableHead className="text-right">Disponible</TableHead>
+                  <TableHead />
                 </TableRow>
-              )}
-              {availableCoils.isError && (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-destructive">
-                    No se pudieron cargar las bobinas disponibles.
-                  </TableCell>
-                </TableRow>
-              )}
-              {candidates.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="font-mono">{c.code}</TableCell>
-                  <TableCell>{c.typeKey}</TableCell>
-                  <TableCell className="text-right">{c.widthMm} mm</TableCell>
-                  <TableCell className="text-right">{formatQty(c.availableKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setDrafts((prev) => [
-                          ...prev,
-                          {
-                            coil: c,
-                            widthPlanMm: [{ widthMm: '', stripsCount: '1' }],
-                            expectedKerfLossMm: '0',
-                          },
-                        ]);
-                      }}
-                    >
-                      Agregar
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!availableCoils.isPending && !availableCoils.isError && candidates.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground">
-                    No hay bobinas abiertas disponibles.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {availableCoils.isPending && (
+                  <TableRow>
+                    <TableCell colSpan={5}>
+                      <Skeleton className="h-5 w-full" />
+                    </TableCell>
+                  </TableRow>
+                )}
+                {availableCoils.isError && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-destructive">
+                      No se pudieron cargar las bobinas disponibles.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {candidates.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-mono">{c.code}</TableCell>
+                    <TableCell>{c.typeKey}</TableCell>
+                    <TableCell className="text-right">{c.widthMm} mm</TableCell>
+                    <TableCell className="text-right">{formatQty(c.availableKg, 'kg')}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setDrafts((prev) => [
+                            ...prev,
+                            {
+                              coil: c,
+                              widthPlanMm: [{ widthMm: '', stripsCount: '1' }],
+                              expectedKerfLossMm: '0',
+                            },
+                          ]);
+                        }}
+                      >
+                        Agregar
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!availableCoils.isPending &&
+                  !availableCoils.isError &&
+                  candidates.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        No hay bobinas abiertas disponibles.
+                      </TableCell>
+                    </TableRow>
+                  )}
+              </TableBody>
+            </Table>
+          </TableScrollArea>
         </CardContent>
       </Card>
 

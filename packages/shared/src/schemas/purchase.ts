@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { decimalStringSchema } from '../decimal';
 import { reasonSchema } from './coil';
+import { paginationQuerySchema } from './pagination';
 import {
   BUSINESS_LINES,
   CURRENCIES,
@@ -320,7 +321,7 @@ export const createPurchaseSchema = z
 export type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>;
 
 /** Filtros de la lista central de compras (D-030). */
-export const purchaseQuerySchema = z.object({
+export const purchaseQuerySchema = paginationQuerySchema.extend({
   businessLine: z.enum(BUSINESS_LINES).optional(),
   type: z.enum(PURCHASE_TYPES).optional(),
   status: z.enum(PURCHASE_STATUSES).optional(),

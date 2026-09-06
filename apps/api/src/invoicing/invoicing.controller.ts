@@ -19,6 +19,7 @@ import {
   createFiscalSeriesSchema,
   createInvoiceSchema,
   fiscalDocumentQuerySchema,
+  paginationQuerySchema,
   reverseCustomerPaymentSchema,
   Role,
   updateFiscalSeriesSchema,
@@ -33,7 +34,10 @@ import {
   type FiscalDocumentQuery,
   type FiscalSeriesDto,
   type InvoicingSettingsDto,
+  type PaginatedResult,
+  type PaginationQuery,
   type ReceivableSummaryDto,
+  type ReceivableTotalsDto,
   type ReverseCustomerPaymentInput,
   type SalesOrderProgressDto,
   type UpdateFiscalSeriesInput,
@@ -163,7 +167,7 @@ export class InvoicingController {
   @Get('documents')
   findAll(
     @Query(new ZodValidationPipe(fiscalDocumentQuerySchema)) query: FiscalDocumentQuery,
-  ): Promise<FiscalDocumentListItemDto[]> {
+  ): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
     return this.invoicing.findAll(query);
   }
 
@@ -288,8 +292,19 @@ export class InvoicingController {
    * distintos y no colisionan.
    */
   @Get('receivables')
-  receivables(): Promise<ReceivableSummaryDto[]> {
-    return this.receivablesService.receivables();
+  receivables(
+    @Query(new ZodValidationPipe(paginationQuerySchema)) query: PaginationQuery,
+  ): Promise<PaginatedResult<ReceivableSummaryDto>> {
+    return this.receivablesService.receivables(query);
+  }
+
+  /**
+   * Totales de cuentas por cobrar (Fase 7d): las tarjetas de resumen de /cobranzas suman
+   * sobre todos los clientes con deuda, no solo la página que devuelve `receivables`.
+   */
+  @Get('receivables/summary')
+  receivablesTotals(): Promise<ReceivableTotalsDto> {
+    return this.receivablesService.totals();
   }
 
   /**

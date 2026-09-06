@@ -19,7 +19,13 @@ import {
   type ProductionReportDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatDate, formatMoney, formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
+import {
+  formatMoney,
+  formatMoneyOrDash,
+  formatQty,
+  formatTimestampDate,
+  unitSymbol,
+} from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -28,6 +34,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -170,10 +177,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
               <>
                 {' '}
                 ·{' '}
-                <Link
-                  className="underline underline-offset-4"
-                  href={`/pedidos/${o.salesOrderId ?? ''}`}
-                >
+                <Link className={LINK_CLASSNAME} href={`/pedidos/${o.salesOrderId ?? ''}`}>
                   {o.salesOrderCode}
                 </Link>{' '}
                 · {o.customerName}
@@ -289,10 +293,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
               {o.consumptions.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <Link
-                      className="font-mono underline underline-offset-4"
-                      href={`/bobinas/${c.coilId}`}
-                    >
+                    <Link className={cn('font-mono', LINK_CLASSNAME)} href={`/bobinas/${c.coilId}`}>
                       {c.coilCode}
                     </Link>
                     <div className="text-xs text-muted-foreground">{c.widthMm} mm</div>
@@ -300,7 +301,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
                   <TableCell>
                     {c.parentCoilId ? (
                       <Link
-                        className="font-mono text-sm underline underline-offset-4"
+                        className={cn('font-mono text-sm', LINK_CLASSNAME)}
                         href={`/bobinas/${c.parentCoilId}`}
                       >
                         {c.parentCoilCode}
@@ -352,7 +353,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             <TableBody>
               {o.reports.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell>{formatDate(r.createdAt.slice(0, 10))}</TableCell>
+                  <TableCell>{formatTimestampDate(r.createdAt)}</TableCell>
                   <TableCell className="text-right font-medium">{r.pieces}</TableCell>
                   <TableCell className="text-right">{formatQty(r.theoreticalKg, 'kg')}</TableCell>
                   <TableCell className="text-right">{formatMoney(r.materialCostPen)}</TableCell>

@@ -24,6 +24,7 @@ import {
   type CreatePurchaseInput,
   type CreateSupplierPaymentInput,
   type InvoiceXmlPreviewDto,
+  type PaginatedResult,
   type PurchaseDto,
   type PurchaseListItemDto,
   type PurchaseQuery,
@@ -54,7 +55,7 @@ export class PurchasesController {
   @Get()
   findAll(
     @Query(new ZodValidationPipe(purchaseQuerySchema)) query: PurchaseQuery,
-  ): Promise<PurchaseListItemDto[]> {
+  ): Promise<PaginatedResult<PurchaseListItemDto>> {
     return this.purchases.findAll(query);
   }
 

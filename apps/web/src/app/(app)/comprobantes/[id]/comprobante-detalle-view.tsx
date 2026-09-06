@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -58,6 +59,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -368,7 +370,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             {d.salesOrderId && (
               <>
                 {' · '}
-                <Link href={`/pedidos/${d.salesOrderId}`} className="underline">
+                <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
                   {d.salesOrderCode}
                 </Link>
               </>
@@ -522,7 +524,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             {d.supersedesDocumentId && (
               <>
                 {' '}
-                <Link href={`/comprobantes/${d.supersedesDocumentId}`} className="underline">
+                <Link href={`/comprobantes/${d.supersedesDocumentId}`} className={LINK_CLASSNAME}>
                   Ver la versión que reemplazó
                 </Link>
                 .
@@ -532,7 +534,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               <>
                 {' '}
                 Ya fue reemplazado:{' '}
-                <Link href={`/comprobantes/${d.supersededByDocumentId}`} className="underline">
+                <Link href={`/comprobantes/${d.supersededByDocumentId}`} className={LINK_CLASSNAME}>
                   ver la versión vigente
                 </Link>
                 .
@@ -563,7 +565,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <AlertDescription>
             Esta es la guía de remisión del despacho{' '}
             {d.dispatchId ? (
-              <Link href={`/despachos/${d.dispatchId}`} className="underline">
+              <Link href={`/despachos/${d.dispatchId}`} className={LINK_CLASSNAME}>
                 {d.dispatchCode}
               </Link>
             ) : (
@@ -680,9 +682,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Líneas</h2>
-        <div className="rounded-lg border">
+        <TableScrollArea>
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>#</TableHead>
                 <TableHead>Descripción</TableHead>
@@ -720,7 +722,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               ))}
             </TableBody>
           </Table>
-        </div>
+        </TableScrollArea>
         <div className="flex justify-end gap-6 text-sm">
           <span>Subtotal {formatMoney(d.subtotalPen)}</span>
           <span>IGV {formatMoney(d.igvPen)}</span>
@@ -749,9 +751,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               </Button>
             )}
           </div>
-          <div className="rounded-lg border">
+          <TableScrollArea>
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Medio</TableHead>
@@ -807,16 +809,16 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 )}
               </TableBody>
             </Table>
-          </div>
+          </TableScrollArea>
         </section>
       )}
 
       {d.creditNotes.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-lg font-medium">Notas de crédito</h2>
-          <div className="rounded-lg border">
+          <TableScrollArea>
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Número</TableHead>
                   <TableHead>Fecha</TableHead>
@@ -828,10 +830,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 {d.creditNotes.map((n) => (
                   <TableRow key={n.id}>
                     <TableCell>
-                      <Link
-                        href={`/comprobantes/${n.id}`}
-                        className="underline-offset-4 hover:underline"
-                      >
+                      <Link href={`/comprobantes/${n.id}`} className={LINK_CLASSNAME}>
                         {n.number ?? 'Borrador'}
                       </Link>
                     </TableCell>
@@ -844,14 +843,14 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </TableScrollArea>
         </section>
       )}
 
       {d.affectedDocumentNumber && (
         <div className="text-sm text-muted-foreground">
           Afecta a{' '}
-          <Link href={`/comprobantes/${d.affectedDocumentId}`} className="underline">
+          <Link href={`/comprobantes/${d.affectedDocumentId}`} className={LINK_CLASSNAME}>
             {d.affectedDocumentNumber}
           </Link>
           {d.creditNoteReason && <> · {CREDIT_NOTE_REASON_LABELS[d.creditNoteReason]}</>}

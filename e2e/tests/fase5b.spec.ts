@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, getJson } from '../helpers/api';
+import { adminApi, getItems, getJson } from '../helpers/api';
 import { balanceOf, live, movementsOf, postExpectingError } from '../helpers/production';
 import { availabilityOf, type SalesOrderDto } from '../helpers/sales';
 import {
@@ -371,7 +371,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
       // RF-88: con saldo cero, el comprobante sale de la lista de pendientes. Se pregunta
       // **por el documento** y no por el cliente: el receptor de prueba es uno solo para
       // toda la suite (`E2E_CUSTOMER_RUC`), así que su total agregado no es de este test.
-      const pending = await getJson<{ id: string }[]>(
+      const pending = await getItems<{ id: string }>(
         api,
         `/api/invoicing/documents?pendingOnly=true&customerId=${sc.customer.id}`,
       );

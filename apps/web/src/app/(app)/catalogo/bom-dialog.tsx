@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 
 const decimalField = (label: string) =>
   z.string().trim().refine(isPositiveDecimal, `${label} debe ser un número mayor a cero`);
@@ -414,7 +415,7 @@ export function BomDialog({
                         {values.kgPerPiece.trim() || '—'}.{' '}
                         <button
                           type="button"
-                          className="underline underline-offset-4"
+                          className={LINK_CLASSNAME}
                           onClick={() => {
                             setManualKg(false);
                             form.setValue('kgPerPiece', suggested, { shouldValidate: true });

@@ -32,6 +32,7 @@ import {
   type CreateQuotationInput,
   type CreateSalesOrderInput,
   type ProductionQueueEntryDto,
+  type PaginatedResult,
   type QuotationDto,
   type QuotationListItemDto,
   type QuotationQuery,
@@ -80,7 +81,7 @@ export class SalesController {
   @Get('quotations')
   findQuotations(
     @Query(new ZodValidationPipe(quotationQuerySchema)) query: QuotationQuery,
-  ): Promise<QuotationListItemDto[]> {
+  ): Promise<PaginatedResult<QuotationListItemDto>> {
     return this.quotations.findAll(query);
   }
 
@@ -167,7 +168,7 @@ export class SalesController {
   @Get('orders')
   findOrders(
     @Query(new ZodValidationPipe(salesOrderQuerySchema)) query: SalesOrderQuery,
-  ): Promise<SalesOrderListItemDto[]> {
+  ): Promise<PaginatedResult<SalesOrderListItemDto>> {
     return this.orders.findAll(query);
   }
 

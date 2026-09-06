@@ -13,12 +13,15 @@ import {
   coilProductName,
   coilSku,
   coilTypeKey,
+  paginate,
   toDecimal,
   toFixedString,
+  toSkipTake,
   Unit,
   type CoilDto,
   type CoilQuery,
   type CoilSplitDto,
+  type PaginatedResult,
 } from '@ayr/shared';
 import { toSharedLineCode, toPrismaLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
@@ -278,36 +281,40 @@ export class CoilsService {
     return tx.coil.findUniqueOrThrow({ where: { id: coilId } });
   }
 
-  async findAll(query: CoilQuery): Promise<CoilDto[]> {
-    const coils = await this.prisma.coil.findMany({
-      where: {
-        businessLine: query.businessLine
-          ? { code: toPrismaLineCode(query.businessLine) }
-          : undefined,
-        finishId: query.finishId,
-        status: query.status,
-        supplierId: query.supplierId,
-        thicknessMm: query.thicknessMm,
-        kind: query.kind,
-        // `sin-color` es un filtro real y no la ausencia de filtro: es como se listan las
-        // galvanizadas, que son justo las que un producto sin color puede montar (D-086).
-        ...(query.colorId === undefined
-          ? {}
-          : { colorId: query.colorId === 'sin-color' ? null : query.colorId }),
-        ...(query.search
-          ? {
-              OR: [
-                { code: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
-                { typeKey: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
-              ],
-            }
-          : {}),
-      },
-      include: COIL_RELATIONS,
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    });
-    return this.toDtos(coils);
+  async findAll(query: CoilQuery): Promise<PaginatedResult<CoilDto>> {
+    const where: Prisma.CoilWhereInput = {
+      businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
+      finishId: query.finishId,
+      status: query.status,
+      supplierId: query.supplierId,
+      thicknessMm: query.thicknessMm,
+      kind: query.kind,
+      // `sin-color` es un filtro real y no la ausencia de filtro: es como se listan las
+      // galvanizadas, que son justo las que un producto sin color puede montar (D-086).
+      ...(query.colorId === undefined
+        ? {}
+        : { colorId: query.colorId === 'sin-color' ? null : query.colorId }),
+      ...(query.search
+        ? {
+            OR: [
+              { code: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+              { typeKey: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+            ],
+          }
+        : {}),
+    };
+    const { skip, take } = toSkipTake(query);
+    const [total, coils] = await Promise.all([
+      this.prisma.coil.count({ where }),
+      this.prisma.coil.findMany({
+        where,
+        include: COIL_RELATIONS,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+    return paginate(await this.toDtos(coils), total, query);
   }
 
   async findOne(id: string): Promise<CoilDto> {

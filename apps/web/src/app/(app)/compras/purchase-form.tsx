@@ -33,6 +33,7 @@ import {
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { ColorSelect } from '@/components/colors/color-select';
 import { formatMoney, isPositiveDecimal, todayIso } from '@/lib/format';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -273,9 +274,11 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
   const coilPurchases = useQuery({
     queryKey: ['purchases', 'coil-received', businessLine],
     queryFn: () =>
-      api<PurchaseListItemDto[]>(
-        `/purchases?type=COIL&status=RECEIVED&businessLine=${businessLine}`,
-      ),
+      fetchAllForPicker<PurchaseListItemDto>('/purchases', {
+        type: 'COIL',
+        status: 'RECEIVED',
+        businessLine,
+      }),
     enabled: canLink,
   });
 

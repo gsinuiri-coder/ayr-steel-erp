@@ -28,6 +28,7 @@ import {
   type SalesOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatMoney, formatQty, isPositiveDecimal, todayIso, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { EMPTY_PIECE_ROW, parsePieceRows, type PieceRow } from '@/lib/pieces';
@@ -130,7 +131,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
 
   const customers = useQuery({
     queryKey: ['customers'],
-    queryFn: () => api<CustomerDto[]>('/customers'),
+    queryFn: () => fetchAllForPicker<CustomerDto>('/customers'),
   });
   const businessLines = useQuery({
     queryKey: ['business-lines'],

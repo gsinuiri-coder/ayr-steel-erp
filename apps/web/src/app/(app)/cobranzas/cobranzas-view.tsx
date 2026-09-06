@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -7,14 +8,19 @@ import {
   Role,
   toDecimal,
   type FiscalDocumentListItemDto,
+  type PaginatedResult,
   type ReceivableSummaryDto,
+  type ReceivableTotalsDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
+import { usePagination } from '@/lib/use-pagination';
+import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -34,24 +40,31 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
  * comprobante, no contra el pedido).
  */
 export function CobranzasView() {
-  const receivables = useQuery({
-    queryKey: ['receivables'],
-    queryFn: () => api<ReceivableSummaryDto[]>('/invoicing/receivables'),
+  const receivablesPage = usePagination();
+  const pendingPage = usePagination();
+
+  const totals = useQuery({
+    queryKey: ['receivables-summary'],
+    queryFn: () => api<ReceivableTotalsDto>('/invoicing/receivables/summary'),
   });
+
+  const receivables = useQuery({
+    queryKey: ['receivables', receivablesPage.page, receivablesPage.pageSize],
+    queryFn: () =>
+      api<PaginatedResult<ReceivableSummaryDto>>(
+        `/invoicing/receivables?page=${receivablesPage.page}&pageSize=${receivablesPage.pageSize}`,
+      ),
+  });
+  const receivableRows = receivables.data?.items ?? [];
 
   const pending = useQuery({
-    queryKey: ['fiscal-documents', 'pending'],
-    queryFn: () => api<FiscalDocumentListItemDto[]>('/invoicing/documents?pendingOnly=true'),
+    queryKey: ['fiscal-documents', 'pending', pendingPage.page, pendingPage.pageSize],
+    queryFn: () =>
+      api<PaginatedResult<FiscalDocumentListItemDto>>(
+        `/invoicing/documents?pendingOnly=true&page=${pendingPage.page}&pageSize=${pendingPage.pageSize}`,
+      ),
   });
-
-  const totalBalance = (receivables.data ?? []).reduce(
-    (acc, r) => acc.plus(toDecimal(r.balancePen)),
-    toDecimal('0'),
-  );
-  const totalOverdue = (receivables.data ?? []).reduce(
-    (acc, r) => acc.plus(toDecimal(r.overduePen)),
-    toDecimal('0'),
-  );
+  const pendingRows = pending.data?.items ?? [];
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -69,7 +82,11 @@ export function CobranzasView() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Por cobrar</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-semibold">
-            {formatMoney(totalBalance.toFixed(4))}
+            {totals.isPending ? (
+              <Skeleton className="h-8 w-24" />
+            ) : (
+              formatMoney(totals.data?.totalBalancePen ?? '0')
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -77,7 +94,11 @@ export function CobranzasView() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Vencido</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-semibold text-destructive">
-            {formatMoney(totalOverdue.toFixed(4))}
+            {totals.isPending ? (
+              <Skeleton className="h-8 w-24" />
+            ) : (
+              formatMoney(totals.data?.totalOverduePen ?? '0')
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -85,7 +106,11 @@ export function CobranzasView() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Clientes</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-semibold">
-            {receivables.data?.length ?? 0}
+            {totals.isPending ? (
+              <Skeleton className="h-8 w-12" />
+            ) : (
+              (totals.data?.customerCount ?? 0)
+            )}
           </CardContent>
         </Card>
       </div>
@@ -95,26 +120,28 @@ export function CobranzasView() {
         {receivables.isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : (
-          <div className="rounded-lg border">
+          <TableScrollArea>
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Cliente</TableHead>
-                  <TableHead className="text-right">Comprobantes</TableHead>
-                  <TableHead>Vencimiento más próximo</TableHead>
+                  <TableHead className="hidden text-right sm:table-cell">Comprobantes</TableHead>
+                  <TableHead className="hidden md:table-cell">Vencimiento más próximo</TableHead>
                   <TableHead className="text-right">Vencido</TableHead>
                   <TableHead className="text-right">Saldo</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(receivables.data ?? []).map((r) => (
+                {receivableRows.map((r) => (
                   <TableRow key={r.customerId}>
                     <TableCell>
                       <div className="font-medium">{r.customerName}</div>
                       <div className="text-xs text-muted-foreground">{r.customerDocNumber}</div>
                     </TableCell>
-                    <TableCell className="text-right">{r.documentCount}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden text-right sm:table-cell">
+                      {r.documentCount}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {r.nextDueDate ? (
                         formatDate(r.nextDueDate)
                       ) : (
@@ -135,7 +162,7 @@ export function CobranzasView() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {(receivables.data?.length ?? 0) === 0 && (
+                {receivables.isSuccess && receivableRows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center text-muted-foreground">
                       No hay nada por cobrar.
@@ -144,7 +171,17 @@ export function CobranzasView() {
                 )}
               </TableBody>
             </Table>
-          </div>
+          </TableScrollArea>
+        )}
+        {!receivables.isPending && (
+          <PaginationBar
+            page={receivablesPage.page}
+            pageSize={receivablesPage.pageSize}
+            total={receivables.data?.total ?? 0}
+            onPageChange={receivablesPage.setPage}
+            onPageSizeChange={receivablesPage.setPageSize}
+            disabled={receivables.isFetching}
+          />
         )}
       </section>
 
@@ -153,26 +190,26 @@ export function CobranzasView() {
         {pending.isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : (
-          <div className="rounded-lg border">
+          <TableScrollArea>
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Número</TableHead>
                   <TableHead>Cliente</TableHead>
-                  <TableHead>Emisión</TableHead>
+                  <TableHead className="hidden sm:table-cell">Emisión</TableHead>
                   <TableHead>Vencimiento</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Cobrado</TableHead>
+                  <TableHead className="hidden text-right md:table-cell">Total</TableHead>
+                  <TableHead className="hidden text-right lg:table-cell">Cobrado</TableHead>
                   <TableHead className="text-right">Saldo</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(pending.data ?? []).map((d) => (
+                {pendingRows.map((d) => (
                   <TableRow key={d.id}>
                     <TableCell>
                       <Link
                         href={`/comprobantes/${d.id}`}
-                        className="font-medium underline-offset-4 hover:underline"
+                        className={cn('font-medium', LINK_CLASSNAME)}
                       >
                         {d.number ?? 'Borrador'}
                       </Link>
@@ -181,7 +218,9 @@ export function CobranzasView() {
                       </div>
                     </TableCell>
                     <TableCell>{d.customerName}</TableCell>
-                    <TableCell>{formatDate(d.issueDate)}</TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      {formatDate(d.issueDate)}
+                    </TableCell>
                     <TableCell>
                       {d.dueDate ? (
                         <span className={d.isOverdue ? 'font-medium text-destructive' : undefined}>
@@ -196,14 +235,18 @@ export function CobranzasView() {
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">{formatMoney(d.totalPen)}</TableCell>
-                    <TableCell className="text-right">{formatMoney(d.paidPen)}</TableCell>
+                    <TableCell className="hidden text-right md:table-cell">
+                      {formatMoney(d.totalPen)}
+                    </TableCell>
+                    <TableCell className="hidden text-right lg:table-cell">
+                      {formatMoney(d.paidPen)}
+                    </TableCell>
                     <TableCell className="text-right font-medium">
                       {formatMoney(d.balancePen)}
                     </TableCell>
                   </TableRow>
                 ))}
-                {(pending.data?.length ?? 0) === 0 && (
+                {pending.isSuccess && pendingRows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center text-muted-foreground">
                       Ningún comprobante tiene saldo pendiente.
@@ -212,7 +255,17 @@ export function CobranzasView() {
                 )}
               </TableBody>
             </Table>
-          </div>
+          </TableScrollArea>
+        )}
+        {!pending.isPending && (
+          <PaginationBar
+            page={pendingPage.page}
+            pageSize={pendingPage.pageSize}
+            total={pending.data?.total ?? 0}
+            onPageChange={pendingPage.setPage}
+            onPageSizeChange={pendingPage.setPageSize}
+            disabled={pending.isFetching}
+          />
         )}
       </section>
     </RoleGate>

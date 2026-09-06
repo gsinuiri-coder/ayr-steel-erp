@@ -18,14 +18,17 @@ import {
   Unit,
   dispatchCode,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
+  paginate,
   STANDING_DOCUMENT_STATUSES,
   salesOrderCode,
   toDecimal,
   toFixedString,
+  toSkipTake,
   type CreateDispatchInput,
   type DispatchDto,
   type DispatchListItemDto,
   type DispatchQuery,
+  type PaginatedResult,
   type TransportSuggestionsDto,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -596,7 +599,7 @@ export class DispatchesService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: DispatchQuery): Promise<DispatchListItemDto[]> {
+  async findAll(query: DispatchQuery): Promise<PaginatedResult<DispatchListItemDto>> {
     const where: Prisma.DispatchWhereInput = {
       status: query.status,
       salesOrderId: query.salesOrderId,
@@ -608,19 +611,29 @@ export class DispatchesService {
         { carrierName: { contains: query.search, mode: 'insensitive' } },
       ];
     }
-    const rows = await this.prisma.dispatch.findMany({
-      where,
-      include: dispatchInclude,
-      orderBy: { createdAt: 'desc' },
-      take: 300,
-    });
+    const { skip, take } = toSkipTake(query);
+    const [total, rows] = await Promise.all([
+      this.prisma.dispatch.count({ where }),
+      this.prisma.dispatch.findMany({
+        where,
+        include: dispatchInclude,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
     const actors = await this.resolveActorNames(
       rows.flatMap((r) => [r.createdById, r.reversedById]),
     );
-    return rows.map((row) => {
-      const { items, blockingDocumentNumbers: _blocking, ...rest } = this.toDto(row, actors, []);
-      return { ...rest, itemCount: items.length };
+    const items = rows.map((row) => {
+      const {
+        items: docItems,
+        blockingDocumentNumbers: _blocking,
+        ...rest
+      } = this.toDto(row, actors, []);
+      return { ...rest, itemCount: docItems.length };
     });
+    return paginate(items, total, query);
   }
 
   async findOne(id: string): Promise<DispatchDto> {

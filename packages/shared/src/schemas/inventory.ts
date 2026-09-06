@@ -6,6 +6,7 @@ import {
   INVENTORY_MOVEMENT_TYPES,
   INVENTORY_REF_TYPES,
 } from '../enums';
+import { paginationQuerySchema } from './pagination';
 
 /**
  * Kardex (§3.2, D-028). Todos los Decimal viajan como string (D-003).
@@ -66,8 +67,12 @@ export const inventoryBalanceSchema = z.object({
 });
 export type InventoryBalanceDto = z.infer<typeof inventoryBalanceSchema>;
 
-/** Filtros del kardex de un ítem (RF-53) y del inventario valorizado (RF-51). */
-export const inventoryQuerySchema = z.object({
+/**
+ * Filtros del kardex de un ítem (RF-53) y del inventario valorizado (RF-51). La paginación
+ * (Fase 7d) solo la usa el kardex **mezclado** (sin `itemId`/`itemType`): el de un ítem
+ * concreto necesita el historial completo para calcular el saldo corrido y no pagina.
+ */
+export const inventoryQuerySchema = paginationQuerySchema.extend({
   itemType: z.enum(INVENTORY_ITEM_TYPES).optional(),
   itemId: z.string().uuid().optional(),
   businessLine: z.enum(BUSINESS_LINES).optional(),

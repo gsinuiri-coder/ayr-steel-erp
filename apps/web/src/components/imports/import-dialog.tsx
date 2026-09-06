@@ -12,6 +12,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { TableScrollArea } from '@/components/table-scroll-area';
 import {
   Dialog,
   DialogContent,
@@ -184,9 +185,9 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
 
           {batch && (
             <div className="grid gap-4">
-              <div className="rounded-lg border">
+              <TableScrollArea className="max-h-[40vh]">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
                       <TableHead className="w-10">#</TableHead>
                       {columns.map((c) => (
@@ -209,7 +210,7 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
                     ))}
                   </TableBody>
                 </Table>
-              </div>
+              </TableScrollArea>
               <p className="text-sm text-muted-foreground">
                 {validCount} de {batch.rows.length} {unit} listas para confirmar.
               </p>

@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +14,7 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
-import { formatDate, formatQty, unitSymbol } from '@/lib/format';
+import { formatDate, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import {
   DispatchStatusBadge,
@@ -25,6 +26,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -125,7 +127,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
           </div>
           <p className="text-sm text-muted-foreground">
             {d.customerName} ·{' '}
-            <Link href={`/pedidos/${d.salesOrderId}`} className="underline">
+            <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
               {d.salesOrderCode}
             </Link>{' '}
             · {formatDate(d.dispatchDate)}
@@ -177,8 +179,8 @@ export function DespachoDetalleView({ id }: { id: string }) {
         <Alert>
           <AlertDescription>
             Revertido por {d.reversedByName ?? '—'} el{' '}
-            {d.reversedAt ? formatDate(d.reversedAt.slice(0, 10)) : '—'}. El stock volvió al almacén
-            y las reservas del pedido se restauraron.
+            {d.reversedAt ? formatTimestampDate(d.reversedAt) : '—'}. El stock volvió al almacén y
+            las reservas del pedido se restauraron.
           </AlertDescription>
         </Alert>
       )}
@@ -264,9 +266,9 @@ export function DespachoDetalleView({ id }: { id: string }) {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Qué salió</h2>
-        <div className="rounded-lg border">
+        <TableScrollArea>
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>#</TableHead>
                 <TableHead>Producto</TableHead>
@@ -297,7 +299,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
               ))}
             </TableBody>
           </Table>
-        </div>
+        </TableScrollArea>
       </section>
 
       {d.notes && (
@@ -310,7 +312,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
       )}
 
       <div className="text-xs text-muted-foreground">
-        Despachado por {d.createdByName ?? '—'} el {formatDate(d.createdAt.slice(0, 10))}.
+        Despachado por {d.createdByName ?? '—'} el {formatTimestampDate(d.createdAt)}.
       </div>
 
       <ReasonDialog

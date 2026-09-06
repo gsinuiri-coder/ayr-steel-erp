@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { TableScrollArea } from '@/components/table-scroll-area';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -9,10 +10,13 @@ import {
   Role,
   TRANSFER_MODE_LABELS,
   type DispatchListItemDto,
+  type PaginatedResult,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatQty } from '@/lib/format';
 import { useDebounced } from '@/lib/use-debounced';
+import { usePagination } from '@/lib/use-pagination';
+import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import {
   DispatchStatusBadge,
@@ -29,6 +33,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -51,18 +56,22 @@ export function DespachosView() {
   const [status, setStatus] = useState<string>(ALL);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounced(search.trim(), 300);
+  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
 
-  const params = new URLSearchParams();
+  useEffect(() => {
+    resetPage();
+  }, [status, debouncedSearch, resetPage]);
+
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (status !== ALL) params.set('status', status);
   if (debouncedSearch) params.set('search', debouncedSearch);
-  const query = params.toString();
 
   const dispatches = useQuery({
-    queryKey: ['dispatches', status, debouncedSearch],
-    queryFn: () => api<DispatchListItemDto[]>(`/dispatches${query ? `?${query}` : ''}`),
+    queryKey: ['dispatches', page, pageSize, status, debouncedSearch],
+    queryFn: () => api<PaginatedResult<DispatchListItemDto>>(`/dispatches?${params.toString()}`),
   });
 
-  const rows = dispatches.data ?? [];
+  const rows = dispatches.data?.items ?? [];
 
   return (
     <RoleGate allow={DISPATCH_ROLES}>
@@ -106,16 +115,16 @@ export function DespachosView() {
       {dispatches.isPending ? (
         <Skeleton className="h-64 w-full" />
       ) : (
-        <div className="rounded-lg border">
+        <TableScrollArea>
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>Despacho</TableHead>
-                <TableHead>Pedido</TableHead>
+                <TableHead className="hidden md:table-cell">Pedido</TableHead>
                 <TableHead>Cliente</TableHead>
-                <TableHead>Fecha</TableHead>
-                <TableHead>Traslado</TableHead>
-                <TableHead className="text-right">Peso</TableHead>
+                <TableHead className="hidden sm:table-cell">Fecha</TableHead>
+                <TableHead className="hidden lg:table-cell">Traslado</TableHead>
+                <TableHead className="hidden text-right lg:table-cell">Peso</TableHead>
                 <TableHead>Guía</TableHead>
                 <TableHead>Estado</TableHead>
               </TableRow>
@@ -124,31 +133,29 @@ export function DespachosView() {
               {rows.map((d) => (
                 <TableRow key={d.id} className={d.status === 'REVERSED' ? 'opacity-60' : undefined}>
                   <TableCell>
-                    <Link
-                      href={`/despachos/${d.id}`}
-                      className="font-medium underline-offset-4 hover:underline"
-                    >
+                    <Link href={`/despachos/${d.id}`} className={cn('font-medium', LINK_CLASSNAME)}>
                       {d.code}
                     </Link>
                     <div className="text-xs text-muted-foreground">{d.itemCount} líneas</div>
                   </TableCell>
-                  <TableCell>
-                    <Link
-                      href={`/pedidos/${d.salesOrderId}`}
-                      className="underline-offset-4 hover:underline"
-                    >
+                  <TableCell className="hidden md:table-cell">
+                    <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
                       {d.salesOrderCode}
                     </Link>
                   </TableCell>
                   <TableCell>{d.customerName}</TableCell>
-                  <TableCell>{formatDate(d.dispatchDate)}</TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    {formatDate(d.dispatchDate)}
+                  </TableCell>
+                  <TableCell className="hidden lg:table-cell">
                     <div className="text-sm">{TRANSFER_MODE_LABELS[d.transferMode]}</div>
                     <div className="text-xs text-muted-foreground">
                       {d.transferMode === 'PRIVATE' ? d.vehiclePlate : d.carrierName}
                     </div>
                   </TableCell>
-                  <TableCell className="text-right">{formatQty(d.totalWeightKg, 'kg')}</TableCell>
+                  <TableCell className="hidden text-right lg:table-cell">
+                    {formatQty(d.totalWeightKg, 'kg')}
+                  </TableCell>
                   <TableCell>
                     {d.dispatchNoteStatus ? (
                       <div className="space-y-1">
@@ -173,7 +180,17 @@ export function DespachosView() {
               )}
             </TableBody>
           </Table>
-        </div>
+        </TableScrollArea>
+      )}
+      {!dispatches.isPending && (
+        <PaginationBar
+          page={page}
+          pageSize={pageSize}
+          total={dispatches.data?.total ?? 0}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          disabled={dispatches.isFetching}
+        />
       )}
     </RoleGate>
   );

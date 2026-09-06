@@ -18,6 +18,7 @@ import {
 } from '@prisma/client';
 import {
   businessToday,
+  paginate,
   productionOrderCode,
   queueSemaphore,
   Role,
@@ -25,7 +26,9 @@ import {
   RESERVATION_STALE_DAYS,
   salesOrderCode,
   toDecimal,
+  toSkipTake,
   type CreateSalesOrderInput,
+  type PaginatedResult,
   type ProductionQueueEntryDto,
   type QueueSemaphore,
   type QueueStatus,
@@ -983,46 +986,56 @@ export class SalesOrdersService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: SalesOrderQuery): Promise<SalesOrderListItemDto[]> {
-    const rows = await this.prisma.salesOrder.findMany({
-      where: {
-        status: query.status,
-        customerId: query.customerId,
-        businessLine: query.businessLine
-          ? { code: toPrismaLineCode(query.businessLine) }
-          : undefined,
-        ...(query.search
-          ? {
-              OR: [
-                { customer: { name: { contains: query.search, mode: 'insensitive' as const } } },
-                { customer: { docNumber: { contains: query.search } } },
-              ],
-            }
-          : {}),
-      },
-      // Igual que la lista de cotizaciones: totales, no detalle. Las reservas activas se
-      // cuentan con un `_count` filtrado en vez de materializar cada una con su pedido, su
-      // cliente y su orden de producción.
-      include: {
-        ...orderInclude,
-        items: false,
-        reservations: false,
-        _count: {
-          select: {
-            items: true,
-            reservations: { where: { status: ReservationStatus.ACTIVE } },
+  async findAll(query: SalesOrderQuery): Promise<PaginatedResult<SalesOrderListItemDto>> {
+    // El código del pedido (`PED-000123`) es `salesOrderCode(seq)`, no una columna: buscar
+    // "PED-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o quien
+    // pega el código de un pedido para encontrarlo (el uso más común del buscador) se
+    // quedaba sin resultados (Fase 7d, hallazgo de revisión).
+    const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
+    const where: Prisma.SalesOrderWhereInput = {
+      status: query.status,
+      customerId: query.customerId,
+      businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
+      ...(query.search
+        ? {
+            OR: [
+              { customer: { name: { contains: query.search, mode: 'insensitive' as const } } },
+              { customer: { docNumber: { contains: query.search } } },
+              ...(searchSeq ? [{ seq: Number(searchSeq) }] : []),
+            ],
+          }
+        : {}),
+    };
+    const { skip, take } = toSkipTake(query);
+    const [total, rows] = await Promise.all([
+      this.prisma.salesOrder.count({ where }),
+      this.prisma.salesOrder.findMany({
+        where,
+        // Igual que la lista de cotizaciones: totales, no detalle. Las reservas activas se
+        // cuentan con un `_count` filtrado en vez de materializar cada una con su pedido,
+        // su cliente y su orden de producción.
+        include: {
+          ...orderInclude,
+          items: false,
+          reservations: false,
+          _count: {
+            select: {
+              items: true,
+              reservations: { where: { status: ReservationStatus.ACTIVE } },
+            },
           },
         },
-      },
-      orderBy: { seq: 'desc' },
-      take: 500,
-    });
+        orderBy: { seq: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
     const actorIds = rows.flatMap((r) => [
       r.createdById,
       ...(r.priorityById ? [r.priorityById] : []),
     ]);
     const actors = await this.resolveActorNames(actorIds);
-    return rows.map((r) => {
+    const items = rows.map((r) => {
       const dto = this.toDto({ ...r, items: [], reservations: [] }, new Map(), actors);
       const {
         items: _items,
@@ -1036,6 +1049,7 @@ export class SalesOrdersService {
         activeReservations: r._count.reservations,
       };
     });
+    return paginate(items, total, query);
   }
 
   async findOne(id: string): Promise<SalesOrderDto> {

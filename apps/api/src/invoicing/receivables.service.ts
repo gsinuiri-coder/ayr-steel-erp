@@ -10,10 +10,14 @@ import {
   businessToday,
   documentBalance,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
+  paginateInMemory,
   toDecimal,
   toFixedString,
   type CreateCustomerPaymentInput,
+  type PaginatedResult,
+  type PaginationQuery,
   type ReceivableSummaryDto,
+  type ReceivableTotalsDto,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -205,7 +209,27 @@ export class ReceivablesService {
    * ya vive en `@ayr/shared`, y esa duplicación es exactamente la que hace que la lista y
    * el detalle empiecen a decir números distintos.
    */
-  async receivables(): Promise<ReceivableSummaryDto[]> {
+  async receivables(query: PaginationQuery): Promise<PaginatedResult<ReceivableSummaryDto>> {
+    const sorted = await this.loadCustomerSummaries();
+    return paginateInMemory(sorted, query);
+  }
+
+  /**
+   * Totales para las tarjetas de resumen de /cobranzas (Fase 7d): sobre **todos** los
+   * clientes con deuda, no solo la página que pagina `receivables()`.
+   */
+  async totals(): Promise<ReceivableTotalsDto> {
+    const sorted = await this.loadCustomerSummaries();
+    const totalBalancePen = sorted
+      .reduce((acc, r) => acc.plus(toDecimal(r.balancePen)), new Decimal(0))
+      .toFixed(4);
+    const totalOverduePen = sorted
+      .reduce((acc, r) => acc.plus(toDecimal(r.overduePen)), new Decimal(0))
+      .toFixed(4);
+    return { totalBalancePen, totalOverduePen, customerCount: sorted.length };
+  }
+
+  private async loadCustomerSummaries(): Promise<ReceivableSummaryDto[]> {
     const documents = await this.prisma.fiscalDocument.findMany({
       where: {
         status: { in: LIVE_STATUSES },
@@ -255,6 +279,9 @@ export class ReceivablesService {
       byCustomer.set(doc.customerId, current);
     }
 
+    // Deuda **por cliente**, no por comprobante (D-075/RF-88): bounded por cuántos
+    // clientes tiene el negocio, no por cuántos documentos emitió alguna vez, así que se
+    // arma entera en memoria; paginar y totalizar son cosa de quien llama.
     return [...byCustomer.values()].sort((a, b) =>
       toDecimal(b.balancePen).cmp(toDecimal(a.balancePen)),
     );

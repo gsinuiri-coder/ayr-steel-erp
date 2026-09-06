@@ -1,5 +1,5 @@
 import { expect, request, test, type APIRequestContext, type Page } from '@playwright/test';
-import { adminApi, createUser, getJson, type CreatedUser } from '../helpers/api';
+import { adminApi, createUser, getItems, getJson, type CreatedUser } from '../helpers/api';
 import {
   fiscalEmissionAllowed,
   FISCAL_EMISSION_REASON,
@@ -71,7 +71,7 @@ async function receivableOf(
   api: APIRequestContext,
   customerId: string,
 ): Promise<ReceivableSummary> {
-  const all = await getJson<ReceivableSummary[]>(api, '/api/invoicing/receivables');
+  const all = await getItems<ReceivableSummary>(api, '/api/invoicing/receivables');
   return (
     all.find((r) => r.customerId === customerId) ?? {
       customerId,
@@ -102,7 +102,7 @@ async function pendingByNumber(
   api: APIRequestContext,
   number: string,
 ): Promise<DocumentListItem[]> {
-  return getJson<DocumentListItem[]>(
+  return getItems<DocumentListItem>(
     api,
     `/api/invoicing/documents?pendingOnly=true&search=${number}`,
   );
@@ -113,7 +113,7 @@ async function documentsByNumber(
   api: APIRequestContext,
   number: string,
 ): Promise<DocumentListItem[]> {
-  const all = await getJson<DocumentListItem[]>(api, `/api/invoicing/documents?search=${number}`);
+  const all = await getItems<DocumentListItem>(api, `/api/invoicing/documents?search=${number}`);
   return all.filter((d) => d.number === number);
 }
 
@@ -435,7 +435,7 @@ test.describe('Sesión M-4 — anulación interna de un comprobante importado', 
     // serie real y, sin PSE, deja un documento sin estado terminal (D-072). Se reusa uno que ya
     // exista en la base, igual que `fase7c-bordes.spec.ts`; si no hay ninguno, se salta.
     const emitted = (
-      await getJson<DocumentListItem[]>(api, '/api/invoicing/documents?origin=ISSUED_HERE')
+      await getItems<DocumentListItem>(api, '/api/invoicing/documents?origin=ISSUED_HERE')
     ).filter((d) => d.number !== null);
     test.skip(
       emitted.length === 0,

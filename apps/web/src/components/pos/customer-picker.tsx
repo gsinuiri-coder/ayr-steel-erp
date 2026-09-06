@@ -11,6 +11,7 @@ import {
   type DocumentLookupDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -70,8 +71,11 @@ export function CustomerPicker({
 
   const search = useMutation({
     mutationFn: async (): Promise<CustomerDto | null> => {
-      // Primero el maestro: un cliente de mostrador que vuelve no se crea dos veces.
-      const all = await api<CustomerDto[]>('/customers');
+      // Primero el maestro: un cliente de mostrador que vuelve no se crea dos veces. Con
+      // `search` acotado al documento tecleado (no "todo el maestro"): sin esto, un cliente
+      // fuera de los primeros `MAX_PAGE_SIZE` alfabéticos quedaba invisible acá, el alta
+      // chocaba con el `@@unique` de Prisma, y el mostrador se quedaba sin salida (RF-60).
+      const all = await fetchAllForPicker<CustomerDto>('/customers', { search: trimmed });
       const existing = all.find((c) => c.docNumber === trimmed && c.docType === docType);
       if (existing) return existing;
       // Y solo si no está, el servicio externo (D-067), que tiene cuota.

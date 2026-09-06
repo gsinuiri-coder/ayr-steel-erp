@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
@@ -14,7 +15,7 @@ import {
   type CuttingOrderStatus,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatDate } from '@/lib/format';
+import { formatTimestampDate } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -115,9 +117,9 @@ export function CorteView() {
         </Select>
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Proveedor</TableHead>
               <TableHead>Línea</TableHead>
@@ -146,13 +148,13 @@ export function CorteView() {
             {orders.data?.map((o) => (
               <TableRow key={o.id}>
                 <TableCell className="font-medium">
-                  <Link href={`/corte/${o.id}`} className="underline-offset-4 hover:underline">
+                  <Link href={`/corte/${o.id}`} className={LINK_CLASSNAME}>
                     {o.supplierName}
                   </Link>
                 </TableCell>
                 <TableCell>{BUSINESS_LINE_LABELS[o.businessLine]}</TableCell>
                 <TableCell className="text-right">{o.coilCount}</TableCell>
-                <TableCell>{formatDate(o.sentAt.slice(0, 10))}</TableCell>
+                <TableCell>{formatTimestampDate(o.sentAt)}</TableCell>
                 <TableCell>
                   <Badge variant={STATUS_VARIANT[o.status]}>
                     {CUTTING_ORDER_STATUS_LABELS[o.status]}
@@ -172,7 +174,7 @@ export function CorteView() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
     </RoleGate>
   );
 }

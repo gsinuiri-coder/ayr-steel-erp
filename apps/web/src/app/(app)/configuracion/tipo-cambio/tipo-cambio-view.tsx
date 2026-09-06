@@ -1,10 +1,12 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import {
+  businessToday,
   CURRENCIES,
   CURRENCY_LABELS,
   Role,
@@ -45,7 +47,12 @@ import {
 
 const EXCHANGE_RATES_QUERY_KEY = ['exchange-rates'] as const;
 
-const today = new Date().toISOString().slice(0, 10);
+/**
+ * El día de hoy en Lima (D-069), no en UTC: entre las 19:00 y la medianoche locales,
+ * `new Date().toISOString()` ya cae en el día siguiente, y el formulario abría
+ * ofreciendo registrar el tipo de cambio de mañana en vez del de hoy.
+ */
+const today = businessToday();
 
 /** D-029/P-06: tipo de cambio SUNAT (apis.net.pe) con caché y fallback manual. */
 export function TipoCambioView() {
@@ -187,9 +194,9 @@ export function TipoCambioView() {
         </CardContent>
       </Card>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Fecha</TableHead>
               <TableHead>Moneda</TableHead>
@@ -238,7 +245,7 @@ export function TipoCambioView() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
     </>
   );
 }

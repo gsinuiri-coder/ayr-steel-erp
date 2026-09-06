@@ -29,6 +29,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { CuttingReceiveDialog } from './cutting-receive-dialog';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 
 /**
  * Detalle de una orden de corte (RF-40..42, RF-22): sus bobinas, el plan de anchos
@@ -146,7 +147,7 @@ export function CorteDetalleView({ id }: { id: string }) {
                 <TableRow key={row.id}>
                   <TableCell>
                     <Link
-                      className="font-mono underline underline-offset-4"
+                      className={cn('font-mono', LINK_CLASSNAME)}
                       href={`/bobinas/${row.coilId}`}
                     >
                       {row.coilCode}
@@ -181,7 +182,7 @@ export function CorteDetalleView({ id }: { id: string }) {
                       {row.strips.map((s) => (
                         <Link
                           key={s.id}
-                          className="font-mono text-xs underline underline-offset-4"
+                          className={cn('font-mono text-xs', LINK_CLASSNAME)}
                           href={`/bobinas/${s.id}`}
                         >
                           {s.code} ({s.widthMm} mm · {formatQty(s.weightKg, 'kg')})
@@ -242,10 +243,7 @@ export function CorteDetalleView({ id }: { id: string }) {
               {o.services.map((s) => (
                 <TableRow key={s.purchaseId}>
                   <TableCell>
-                    <Link
-                      className="underline underline-offset-4"
-                      href={`/compras/${s.purchaseId}`}
-                    >
+                    <Link className={LINK_CLASSNAME} href={`/compras/${s.purchaseId}`}>
                       {s.documentLabel}
                     </Link>
                   </TableCell>

@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -15,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -65,9 +67,9 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
         </CardContent>
       </Card>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Comprobante</TableHead>
               <TableHead>Línea</TableHead>
@@ -84,7 +86,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
             {s.purchases.map((p) => (
               <TableRow key={p.id}>
                 <TableCell className="font-medium">
-                  <Link href={`/compras/${p.id}`} className="underline-offset-4 hover:underline">
+                  <Link href={`/compras/${p.id}`} className={LINK_CLASSNAME}>
                     {p.documentLabel}
                   </Link>
                 </TableCell>
@@ -119,7 +121,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
     </RoleGate>
   );
 }

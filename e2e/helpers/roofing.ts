@@ -1,5 +1,12 @@
 import { expect, type APIRequestContext } from '@playwright/test';
-import { createFinish, getJson, postJson, type CreatedFinish, type CreatedSupplier } from './api';
+import {
+  createFinish,
+  getItems,
+  getJson,
+  postJson,
+  type CreatedFinish,
+  type CreatedSupplier,
+} from './api';
 import {
   businessLineId,
   createCuttingSupplier,
@@ -164,7 +171,7 @@ export async function buyRoofingCoil(
   // Se filtra por `purchaseId` y no por "la primera del proveedor": varios tests compran
   // dos o tres bobinas al mismo proveedor y quedarse con la primera devolvía la del test
   // anterior, con un fallo que no se parecía en nada a su causa.
-  const coils = await getJson<(CoilDto & { purchaseId: string | null })[]>(
+  const coils = await getItems<CoilDto & { purchaseId: string | null }>(
     api,
     `/api/coils?supplierId=${options.supplierId}`,
   );

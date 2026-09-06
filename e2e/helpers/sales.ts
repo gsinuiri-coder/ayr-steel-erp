@@ -1,6 +1,13 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 import { inflateSync } from 'node:zlib';
-import { createFinish, getJson, postJson, type CreatedFinish, type CreatedSupplier } from './api';
+import {
+  createFinish,
+  getItems,
+  getJson,
+  postJson,
+  type CreatedFinish,
+  type CreatedSupplier,
+} from './api';
 import {
   businessLineId,
   createCuttingSupplier,
@@ -249,7 +256,7 @@ export async function setupCoilStock(
     ],
   });
   await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
-  const coils = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${supplier.id}`);
+  const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
   const coil = coils[0]!;
   expect(coil.availableKg).toBe(`${Number(weightKg).toFixed(0)}.000`);
 
@@ -348,7 +355,7 @@ export async function setupCoilBatch(
     })),
   });
   await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
-  const received = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${supplier.id}`);
+  const received = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
   expect(received).toHaveLength(options.weightsKg.length);
 
   // El API no promete un orden concreto: se emparejan por peso, que es lo que el test usa.
@@ -439,7 +446,7 @@ export async function ordersOfCustomer(
   api: APIRequestContext,
   customerId: string,
 ): Promise<{ id: string; code: string; status: string }[]> {
-  return getJson<{ id: string; code: string; status: string }[]>(
+  return getItems<{ id: string; code: string; status: string }>(
     api,
     `/api/sales/orders?customerId=${customerId}`,
   );

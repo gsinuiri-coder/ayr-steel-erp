@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, createUser, getJson } from '../helpers/api';
+import { adminApi, createUser, getItems, getJson } from '../helpers/api';
 import { fiscalEmissionAllowed, FISCAL_EMISSION_REASON, getDocument } from '../helpers/invoicing';
 import {
   batchErrors,
@@ -48,7 +48,7 @@ interface DocumentListItem {
 
 /** Un RUC bien formado que **no** está en el maestro: el que la planilla no debería tener. */
 async function unknownDocNumber(api: APIRequestContext): Promise<string> {
-  const customers = await getJson<CustomerDto[]>(api, '/api/customers');
+  const customers = await getItems<CustomerDto>(api, '/api/customers');
   const known = new Set(customers.map((c) => c.docNumber));
   for (let i = 0; i < 50; i += 1) {
     const candidate = `20${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}`;
@@ -292,7 +292,7 @@ test.describe('Fase 7c — bordes de la importación de comprobantes', () => {
     // documento sin estado terminal (D-072). Así que se reusa uno que ya exista en la base;
     // si no hay ninguno, el escenario se salta en vez de quemar numeración.
     const emitted = (
-      await getJson<DocumentListItem[]>(api, '/api/invoicing/documents?origin=ISSUED_HERE')
+      await getItems<DocumentListItem>(api, '/api/invoicing/documents?origin=ISSUED_HERE')
     ).filter((d) => d.number !== null && d.status !== 'DRAFT');
     test.skip(
       emitted.length === 0,

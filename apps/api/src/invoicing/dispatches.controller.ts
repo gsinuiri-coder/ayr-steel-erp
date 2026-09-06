@@ -9,6 +9,7 @@ import {
   type DispatchListItemDto,
   type DispatchQuery,
   type FiscalDocumentDto,
+  type PaginatedResult,
   type ReverseDispatchInput,
   type TransportSuggestionsDto,
 } from '@ayr/shared';
@@ -49,7 +50,7 @@ export class DispatchesController {
   @Get()
   findAll(
     @Query(new ZodValidationPipe(dispatchQuerySchema)) query: DispatchQuery,
-  ): Promise<DispatchListItemDto[]> {
+  ): Promise<PaginatedResult<DispatchListItemDto>> {
     return this.dispatches.findAll(query);
   }
 

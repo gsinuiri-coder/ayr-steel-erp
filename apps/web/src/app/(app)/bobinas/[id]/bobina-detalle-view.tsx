@@ -15,9 +15,16 @@ import {
   type CoilDto,
   type CoilSplitDto,
   type InventoryMovementDto,
+  type PaginatedResult,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatDate, formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
+import {
+  formatMoney,
+  formatQty,
+  formatTimestampDate,
+  isPositiveDecimal,
+  unitSymbol,
+} from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
@@ -36,6 +43,7 @@ import {
 import { CoilEditDialog } from './coil-edit-dialog';
 import { CoilScrapDialog } from './coil-scrap-dialog';
 import { CoilSplitDialog } from './coil-split-dialog';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 
 type PendingAction =
   | { kind: 'cancel-coil' }
@@ -62,8 +70,12 @@ export function BobinaDetalleView({ id }: { id: string }) {
   });
   const movements = useQuery({
     queryKey: ['inventory', 'movements', `itemId=${id}`],
-    queryFn: () => api<InventoryMovementDto[]>(`/inventory/movements?itemType=COIL&itemId=${id}`),
+    // El kardex de un solo ítem no pagina (calcula el saldo corrido): `PaginatedResult`
+    // acá siempre trae todo el historial en una sola "página".
+    queryFn: () =>
+      api<PaginatedResult<InventoryMovementDto>>(`/inventory/movements?itemType=COIL&itemId=${id}`),
   });
+  const movementRows = movements.data?.items ?? [];
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['coil', id] });
@@ -125,7 +137,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
             {c.parentCoilId && c.parentCoilCode && (
               <>
                 {' · hija de '}
-                <Link className="underline underline-offset-4" href={`/bobinas/${c.parentCoilId}`}>
+                <Link className={LINK_CLASSNAME} href={`/bobinas/${c.parentCoilId}`}>
                   {c.parentCoilCode}
                 </Link>
               </>
@@ -221,7 +233,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
               label="Compra"
               value={
                 c.purchaseId && c.purchaseLabel ? (
-                  <Link className="underline underline-offset-4" href={`/compras/${c.purchaseId}`}>
+                  <Link className={LINK_CLASSNAME} href={`/compras/${c.purchaseId}`}>
                     {c.purchaseLabel}
                   </Link>
                 ) : (
@@ -229,7 +241,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
                 )
               }
             />
-            <Row label="Alta" value={formatDate(c.createdAt.slice(0, 10))} />
+            <Row label="Alta" value={formatTimestampDate(c.createdAt)} />
             <Row label="Observaciones" value={c.notes ?? '—'} />
           </CardContent>
         </Card>
@@ -267,7 +279,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
                       {s.children.map((child) => (
                         <Link
                           key={child.id}
-                          className="font-mono text-xs underline underline-offset-4"
+                          className={cn('font-mono text-xs', LINK_CLASSNAME)}
                           href={`/bobinas/${child.id}`}
                         >
                           {child.code} ({child.widthMm} mm · {formatQty(child.weightKg, 'kg')})
@@ -333,7 +345,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
             </TableHeader>
             <TableBody>
               <QueryStates query={movements} colSpan={7} error="No se pudo cargar el kardex." />
-              {movements.data?.map((m) => (
+              {movementRows.map((m) => (
                 <TableRow key={m.id} className={m.reversedById ? 'opacity-60' : undefined}>
                   <TableCell className="whitespace-nowrap">
                     {new Date(m.at).toLocaleString('es-PE')}
@@ -375,7 +387,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
                   </TableCell>
                 </TableRow>
               ))}
-              {movements.data?.length === 0 && (
+              {movements.isSuccess && movementRows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center text-muted-foreground">
                     Sin movimientos.

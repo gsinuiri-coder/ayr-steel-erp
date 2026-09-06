@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, createUser, getJson, postJson } from '../helpers/api';
+import { adminApi, createUser, getItems, getJson, postJson } from '../helpers/api';
 import {
   apiAs,
   deactivateTrail,
@@ -861,7 +861,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       // Leerla sí: RF-69 pide una lista de cotizaciones, no una lista por vendedor.
       const read = await getJson<QuotationDto>(otherApi, `/api/sales/quotations/${quotation.id}`);
       expect(read.id).toBe(quotation.id);
-      const list = await getJson<{ id: string }[]>(otherApi, '/api/sales/quotations');
+      const list = await getItems<{ id: string }>(otherApi, '/api/sales/quotations');
       expect(list.map((q) => q.id)).toContain(quotation.id);
 
       // Operarla, no. Con solo el id (que la lista le da) podría editar el borrador de un

@@ -20,6 +20,7 @@ import { RoleGate } from '@/components/role-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -171,7 +172,7 @@ function SummaryTable({
                       de un grupo de bobinas distintas no existe como tal (RF-53). */}
                   {row.itemId ? (
                     <Link
-                      className="underline underline-offset-4"
+                      className={LINK_CLASSNAME}
                       href={`/kardex?itemType=${row.itemType}&item=${row.itemId}`}
                     >
                       {row.key}

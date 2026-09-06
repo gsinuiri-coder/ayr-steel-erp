@@ -4,20 +4,21 @@
 
 ## Estado general
 
-| Fase                                                   | Estado                   | Cierre                                                                                                                                                                                                                 |
-| ------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Bootstrap                                          | ✅ Cerrada (2026-09-02)  | Login E2E verde en prod, CI verde                                                                                                                                                                                      |
-| 1 — Maestros, catálogo, precios, importación           | ✅ Cerrada (2026-09-02)  | E2E de Fase 1 verdes en local + CI, deploy en producción                                                                                                                                                               |
-| 2a — Kardex + compras + alta de bobinas                | ✅ Cerrada (2026-09-03)  | 16/16 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
-| 2b — Partido, merma, cierre, anulación                 | ✅ Cerrada (2026-09-04)  | 30/30 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
-| 3 — Corte tercerizado + flejes                         | ✅ Cerrada (2026-09-02)  | 34/34 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
-| 3b — Reversa de recepción de corte                     | ✅ Cerrada (2026-09-03)  | 40/40 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
-| 4 — Producción drywall + `/planta`                     | ✅ Cerrada (2026-09-03)  | 56/56 E2E en producción, CI verde, deploy hecho                                                                                                                                                                        |
-| 5a — Cotización → pedido + reserva                     | ✅ Cerrada (2026-09-04)  | 83/83 E2E en producción, CI verde, deploy hecho                                                                                                                                                                        |
-| 5b — Facturación, GRE, despacho y cobranza             | ✅ Cerrada (2026-09-04)  | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho                                                                                                                                                 |
-| 6 — Producción de coberturas + color                   | ✅ Cerrada (2026-09-05)  | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros                                                                                                                                                   |
-| 7 — Cola, punto de venta e importación de comprobantes | 🟡 En curso (2026-09-05) | Cola de producción cerrada: 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros, deploy de API hecho (web pendiente: token de Vercel vencido). Faltan RF-60 (POS) y RF-71/72 (importación) |
-| 8 — Auditoría, reportes, UAT                           | ⚪ Pendiente             | —                                                                                                                                                                                                                      |
+| Fase                                                   | Estado                       | Cierre                                                                                                                                                                                                                 |
+| ------------------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Bootstrap                                          | ✅ Cerrada (2026-09-02)      | Login E2E verde en prod, CI verde                                                                                                                                                                                      |
+| 1 — Maestros, catálogo, precios, importación           | ✅ Cerrada (2026-09-02)      | E2E de Fase 1 verdes en local + CI, deploy en producción                                                                                                                                                               |
+| 2a — Kardex + compras + alta de bobinas                | ✅ Cerrada (2026-09-03)      | 16/16 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
+| 2b — Partido, merma, cierre, anulación                 | ✅ Cerrada (2026-09-04)      | 30/30 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
+| 3 — Corte tercerizado + flejes                         | ✅ Cerrada (2026-09-02)      | 34/34 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
+| 3b — Reversa de recepción de corte                     | ✅ Cerrada (2026-09-03)      | 40/40 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                 |
+| 4 — Producción drywall + `/planta`                     | ✅ Cerrada (2026-09-03)      | 56/56 E2E en producción, CI verde, deploy hecho                                                                                                                                                                        |
+| 5a — Cotización → pedido + reserva                     | ✅ Cerrada (2026-09-04)      | 83/83 E2E en producción, CI verde, deploy hecho                                                                                                                                                                        |
+| 5b — Facturación, GRE, despacho y cobranza             | ✅ Cerrada (2026-09-04)      | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho                                                                                                                                                 |
+| 6 — Producción de coberturas + color                   | ✅ Cerrada (2026-09-05)      | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros                                                                                                                                                   |
+| 7 — Cola, punto de venta e importación de comprobantes | ✅ Cerrada (2026-09-05)      | Cola (7), mostrador RF-60 (7b) e importación RF-71/72 (7c) completos. 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros                                                                  |
+| 7d — Pulido UI/UX pre-entrega al cliente               | 🟡 Código listo (2026-09-06) | Paginación server-side (D-113), fechas en zona de Lima (D-112), tablas contenidas, afordancia de link (D-114); lint/typecheck/test/E2E local verdes, revisado. Falta deploy + E2E real contra producción (ver detalle) |
+| 8 — Auditoría, reportes, UAT                           | ⚪ Pendiente                 | —                                                                                                                                                                                                                      |
 
 ## Fase 0 — detalle
 
@@ -1374,6 +1375,86 @@ E2E fija en vez de una `Z…` al azar; queda dicho por si algún día se decide.
   y S/ 8614 de deuda inventada. Después: 0 importados, 0 series inactivas, 0 lotes de
   importación, `prisma migrate status` con las 33 migraciones y "Database schema is up to
   date!".
+
+## Fase 7d — detalle (pulido UI/UX pre-entrega al cliente)
+
+Fase de pulido, no de features (cero cambios de dominio/schema salvo lo listado). Cuatro
+tareas: fechas, tablas, afordancias de link/botón, y un barrido general de estados
+vacíos/loading/errores/móvil. Ver handoff completo en `docs/handoff/fase-7d.md`.
+
+### Entregado
+
+- **Fechas (D-112).** Las nueve pantallas pendientes de la Sesión M-4 (`despacho-detalle-view.tsx`
+  ×2, `pedido-detalle-view.tsx` ×2, `cotizacion-detalle-view.tsx`, `corte-view.tsx`,
+  `produccion-view.tsx`, `produccion-detalle-view.tsx`, `bobina-detalle-view.tsx`) más un
+  décimo hallazgo nuevo (`tipo-cambio-view.tsx`, un formulario que ofrecía registrar el tipo
+  de cambio de mañana después de las 19:00) ahora usan `formatTimestampDate`. Regla ESLint
+  nueva que bloquea `slice(0, 10)` sobre un ISO de acá en adelante.
+- **Paginación server-side (D-113).** 10 endpoints (`/customers`, `/coils`, `/sales/orders`,
+  `/sales/quotations`, `/dispatches`, `/purchases`, `/invoicing/documents`,
+  `/invoicing/receivables` + `/invoicing/receivables/summary` nuevo, `/inventory/movements`,
+  `/imports`) devuelven `PaginatedResult<T>`; las 10 vistas correspondientes tienen control de
+  página/tamaño (`<PaginationBar>`). Patrón híbrido (`paginateInMemory` +
+  `DERIVED_FILTER_FETCH_CAP`) para los 3 filtros derivados que no se pueden expresar en SQL sin
+  duplicar D-075. `fetchAllForPicker` para los 4 selectores tipo autocompletado.
+- **Tablas contenidas.** `<TableScrollArea>` (max-height + scroll interno + encabezado
+  `sticky`) en las tablas de listado; columnas secundarias con `hidden md:table-cell` /
+  `lg:table-cell` en las más anchas (bobinas, pedidos, cotizaciones, despachos, compras,
+  comprobantes, kardex, cobranzas, clientes).
+- **Afordancia de link unificada (D-114).** `LINK_CLASSNAME` en `apps/web/src/lib/utils.ts`
+  reemplaza ~50 sitios que tenían 3 variantes distintas de subrayado escritas a mano.
+- **Barrido general.** Loading (`Skeleton`) y estados vacíos ya eran consistentes en casi
+  todas las vistas; se agregó el que faltaba en `margenes-view.tsx`. `/planta` y `/pos`
+  verificados en viewport 375px (capturas locales): sin overflow horizontal, botones e
+  inputs a ancho completo, estados vacíos con mensaje. Breadcrumbs: **no existen en la app**
+  y no se construyeron acá (sería una feature nueva, fuera del alcance de pulido) — la
+  navegación depende del sidebar persistente, que cubre bien el caso de escritorio; una
+  pantalla de detalle en móvil con el sidebar colapsado se queda sin "volver a la lista" más
+  que el botón atrás del navegador. Anotado para Fase 8 si se decide agregar un link "←
+  Volver" en las vistas de detalle.
+
+### Hallazgos corregidos (revisor web + auditor-seguridad)
+
+**Altos (revisor).** Al mover la búsqueda de pedidos y cotizaciones al servidor se perdió sin
+querer el filtro por código (`PED-000123`/`COT-000123`) que antes existía en el cliente —
+corregido extrayendo el número del texto de búsqueda y agregando `seq` al `OR` del `where` en
+`sales-orders.service.ts`/`quotations.service.ts`. Y `customer-picker.tsx` (identificar
+cliente en el mostrador) usaba `fetchAllForPicker` sin `search`, así que un cliente activo
+fuera de los primeros 200 alfabéticos dejaba de encontrarse antes de darlo de alta —corregido
+pasando el documento tecleado como filtro server-side.
+
+**Bajo (auditor-seguridad).** `page` no tenía cota superior a diferencia de `pageSize`: un
+`page` arbitrariamente grande seguía siendo un `OFFSET` arbitrariamente grande para Postgres.
+Corregido con `MAX_PAGE = 10_000` en `paginationQuerySchema`.
+
+### E2E
+
+**Local: verde.** El agente `qa` reparó las suites existentes que asumían la forma vieja del
+API (`getJson` directo sobre un endpoint que ahora envuelve en `PaginatedResult`) con un
+helper nuevo (`getItems`), y agregó `fase7d.spec.ts` (3 pruebas: paginación en clientes y en
+compras, fecha de alta de una bobina en zona de Lima). Único residuo conocido: dos pruebas de
+`fase5b.spec.ts`/`fase5b-bordes.spec.ts` fallaron por el throttle de `/api/auth/login` (10
+intentos/60s) al correr la suite entera sin cortes — no es un defecto de esta fase, y las 13
+pruebas restantes de esos dos archivos pasaron limpio en una corrida aislada.
+
+**Producción: corrida prematura, revertida y corregida.** Se corrió `pnpm e2e:prod` **antes**
+de desplegar el código de esta fase (paso que quedó pendiente, ver "Bloqueos"): contra la API
+vieja (sin `PaginatedResult`), `getItems` leía `.items` de un array plano y devolvía
+`undefined`, así que 64 de 155 pruebas fallaron con `TypeError` en cascada — no es un defecto
+del código de esta fase, es incompatibilidad esperada entre E2E nuevos y API vieja. La corrida
+alcanzó a crear datos reales en producción antes de fallar; se detectó que
+`fase7d.spec.ts` (prueba de clientes) no tenía limpieza para producción —corregido agregando
+`customerIds` a `deactivateTrail`—, se corrió `pnpm prod:purge-e2e` (deja 0 activos en
+despachos, pedidos, cotizaciones, órdenes de corte, compras/pagos/bobinas, clientes,
+productos, proveedores, acabados y colores marcados E2E) y se confirmó con
+`node scripts/prod-e2e-leftovers.mjs`: **producción, cero rastros activos.**
+
+### Pendiente antes de que la fase esté verificada de punta a punta
+
+**Deploy de API y web con el código de esta fase, y recién entonces `pnpm e2e:prod` real**
+(la corrida de esta sesión no prueba nada nuevo: verificó código viejo). Se dejó explícito
+para que el dueño decida el momento del deploy en vez de que la sesión lo haga sola después
+de un efecto secundario real en producción — ver handoff.
 
 ## Bloqueos
 

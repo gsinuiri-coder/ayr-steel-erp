@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -203,10 +204,7 @@ export function CompraDetalleView({ id }: { id: string }) {
               <Row
                 label="Se imputa a"
                 value={
-                  <Link
-                    className="underline underline-offset-4"
-                    href={`/compras/${p.relatedPurchaseId}`}
-                  >
+                  <Link className={LINK_CLASSNAME} href={`/compras/${p.relatedPurchaseId}`}>
                     {p.relatedPurchaseLabel}
                   </Link>
                 }
@@ -334,10 +332,7 @@ export function CompraDetalleView({ id }: { id: string }) {
                 {p.landedCostServices.map((service) => (
                   <TableRow key={service.purchaseId}>
                     <TableCell>
-                      <Link
-                        className="underline underline-offset-4"
-                        href={`/compras/${service.purchaseId}`}
-                      >
+                      <Link className={LINK_CLASSNAME} href={`/compras/${service.purchaseId}`}>
                         {service.documentLabel}
                       </Link>
                     </TableCell>

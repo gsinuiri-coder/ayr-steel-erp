@@ -9,6 +9,7 @@ import {
   type InventoryMovementDto,
   type InventoryQuery,
   type InventorySummaryDto,
+  type PaginatedResult,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -47,7 +48,7 @@ export class InventoryController {
   findMovements(
     @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(inventoryQuerySchema)) query: InventoryQuery,
-  ): Promise<InventoryMovementDto[]> {
+  ): Promise<PaginatedResult<InventoryMovementDto>> {
     return this.inventory.findMovements(query, canSeeCosts(actor));
   }
 

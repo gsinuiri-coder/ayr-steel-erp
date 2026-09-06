@@ -4,6 +4,7 @@ import {
   createFinish,
   createSupplier,
   createUser,
+  getItems,
   getJson,
   postJson,
   type CreatedFinish,
@@ -179,7 +180,7 @@ async function receivedCoilPurchase(
   const received = await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
   expect(received.status).toBe('RECEIVED');
 
-  const coils = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${input.supplier.id}`);
+  const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${input.supplier.id}`);
   expect(coils.length).toBe(input.lines.length);
   return { purchase: received, coils };
 }
@@ -190,7 +191,7 @@ async function receivedCoilPurchase(
  * leer las aserciones en el orden en que ocurrieron los movimientos.
  */
 async function coilMovements(api: APIRequestContext, coilId: string): Promise<MovementDto[]> {
-  const movements = await getJson<MovementDto[]>(
+  const movements = await getItems<MovementDto>(
     api,
     `/api/inventory/movements?itemType=COIL&itemId=${coilId}`,
   );
@@ -1407,7 +1408,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
       expect(summary.totalValuePen).toBeNull();
 
       // RF-53: lo mismo en el kardex del ítem, incluido el promedio del saldo corrido.
-      const movements = await getJson<MovementDto[]>(
+      const movements = await getItems<MovementDto>(
         vendedor,
         `/api/inventory/movements?itemType=COIL&itemId=${coil.id}`,
       );

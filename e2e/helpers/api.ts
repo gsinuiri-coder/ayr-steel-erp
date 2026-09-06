@@ -36,6 +36,31 @@ export async function getJson<T>(api: APIRequestContext, path: string): Promise<
   return (await res.json()) as T;
 }
 
+/**
+ * GET a un listado paginado (Fase 7d, D-113) devolviendo directamente `items`.
+ *
+ * Los 10 endpoints que ahora envuelven su respuesta en `{ items, total, page, pageSize }`
+ * (`/customers`, `/coils`, `/sales/orders`, `/sales/quotations`, `/dispatches`,
+ * `/purchases`, `/invoicing/documents`, `/invoicing/receivables`,
+ * `/inventory/movements` sin `itemId`, `/imports`) se leen con esto en vez de `getJson`
+ * directo. No importa `PaginatedResult` de `@ayr/shared` a propósito (mismo criterio que
+ * el resto de este archivo: los specs no dependen del paquete compartido).
+ *
+ * `pageSize` por defecto pide el máximo que admite el servidor (200): estos tests no
+ * cuentan filas totales de la tabla, solo buscan o comparan las que ellos mismos crearon,
+ * así que un tope generoso evita que un listado alfabético o con muchos años de datos
+ * acumulados en la rama `dev` deje la fila del test fuera de la página.
+ */
+export async function getItems<T>(
+  api: APIRequestContext,
+  path: string,
+  pageSize = 200,
+): Promise<T[]> {
+  const sep = path.includes('?') ? '&' : '?';
+  const result = await getJson<{ items: T[] }>(api, `${path}${sep}pageSize=${pageSize}`);
+  return result.items;
+}
+
 /** POST al API con el contexto ya autenticado; falla con el cuerpo real si no es 2xx. */
 export async function postJson<T>(
   api: APIRequestContext,

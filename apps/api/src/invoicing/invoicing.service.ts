@@ -19,6 +19,7 @@ import {
 import {
   businessToday,
   Decimal,
+  DERIVED_FILTER_FETCH_CAP,
   documentBalance,
   fiscalDocumentNumber,
   GENERIC_CUSTOMER_MAX_TOTAL_PEN,
@@ -26,6 +27,8 @@ import {
   TransferMode,
   IGV_RATE_PCT,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
+  paginate,
+  paginateInMemory,
   STANDING_DOCUMENT_STATUSES,
   RETRYABLE_DOCUMENT_STATUSES,
   Role,
@@ -34,6 +37,7 @@ import {
   serializeSalesTotals,
   toDecimal,
   toFixedString,
+  toSkipTake,
   VOID_WINDOW_DAYS,
   voidPathFor,
   dispatchCode as toDispatchCode,
@@ -42,6 +46,7 @@ import {
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentQuery,
+  type PaginatedResult,
   type CreateFiscalSeriesInput,
   type FiscalSeriesDto,
   type InvoicingSettingsDto,
@@ -2244,7 +2249,7 @@ export class InvoicingService {
     return out;
   }
 
-  async findAll(query: FiscalDocumentQuery): Promise<FiscalDocumentListItemDto[]> {
+  async findAll(query: FiscalDocumentQuery): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
     const where: Prisma.FiscalDocumentWhereInput = {
       status: query.status,
       docType: query.docType,
@@ -2258,8 +2263,8 @@ export class InvoicingService {
     if (query.pendingOnly) {
       // El saldo es derivado (D-075) y no se puede sumar en SQL sin duplicar la regla que
       // vive en `@ayr/shared`. Lo que **sí** se puede acotar en SQL es qué documentos son
-      // capaces de tener saldo: sin esto, el tope de 300 filas se llenaba de borradores y
-      // notas de crédito y las cuentas por cobrar dejaban de ver deudas reales.
+      // capaces de tener saldo: sin esto, el universo a filtrar en memoria se llenaba de
+      // borradores y notas de crédito.
       where.status = { in: LIVE_DOCUMENT_STATUSES };
       where.docType = { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] };
     }
@@ -2270,25 +2275,48 @@ export class InvoicingService {
         { customer: { docNumber: { contains: query.search, mode: 'insensitive' } } },
       ];
     }
+
+    if (!query.pendingOnly) {
+      const { skip, take } = toSkipTake(query);
+      const [total, rows] = await Promise.all([
+        this.prisma.fiscalDocument.count({ where }),
+        this.prisma.fiscalDocument.findMany({
+          where,
+          include: documentInclude,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take,
+        }),
+      ]);
+      return paginate(await this.toListDtos(rows), total, query);
+    }
+
+    // `pendingOnly` es un filtro derivado (D-075): el saldo no es una columna, así que no
+    // se puede paginar en SQL sin duplicar ahí la regla de `@ayr/shared`. Se trae el
+    // universo acotado (`DERIVED_FILTER_FETCH_CAP`) que ya cumple el resto de filtros, se
+    // filtra por saldo en memoria y recién ahí se corta la página.
     const rows = await this.prisma.fiscalDocument.findMany({
       where,
       include: documentInclude,
       orderBy: { createdAt: 'desc' },
-      take: 300,
+      take: DERIVED_FILTER_FETCH_CAP,
     });
+    const pending = (await this.toListDtos(rows)).filter((d) => toDecimal(d.balancePen).gt(0));
+    return paginateInMemory(pending, query);
+  }
+
+  /** El DTO de listado (sin líneas, cobros ni notas) de un lote de comprobantes. */
+  private async toListDtos(rows: DocumentRow[]): Promise<FiscalDocumentListItemDto[]> {
     const settings = await this.settingsRow();
     const actors = await this.resolveActorNames(rows.flatMap((r) => this.actorIdsOf(r)));
     const credited = await this.creditedQtyByItem(rows.flatMap((r) => r.items.map((i) => i.id)));
-    const dtos = rows.map((row) => {
+    return rows.map((row) => {
       const dto = this.toDto(row, settings.alertAfterHours, actors, credited);
       // El listado no lleva líneas, cobros ni notas: la lista muestra totales y estado, y
       // arrastrarlos multiplicaría por diez el tamaño de la respuesta.
       const { items, payments: _payments, creditNotes: _creditNotes, ...rest } = dto;
       return { ...rest, itemCount: items.length };
     });
-    // El filtro de saldo va acá y no en SQL porque el saldo es derivado (D-075): sumarlo
-    // en la consulta obligaría a duplicar en SQL la regla que ya vive en `@ayr/shared`.
-    return query.pendingOnly ? dtos.filter((d) => toDecimal(d.balancePen).gt(0)) : dtos;
   }
 
   async findOne(id: string): Promise<FiscalDocumentDto> {

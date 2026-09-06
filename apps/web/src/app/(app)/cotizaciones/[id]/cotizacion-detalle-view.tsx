@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -7,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BUSINESS_LINE_LABELS, Role, type QuotationDto, type SalesOrderDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatDate, formatMoney, formatQty, unitSymbol } from '@/lib/format';
+import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +26,7 @@ import {
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
@@ -163,7 +165,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         <Alert>
           <AlertDescription>
             Confirmada. Generó el pedido{' '}
-            <Link href={`/pedidos/${q.salesOrderId}`} className="font-medium underline">
+            <Link href={`/pedidos/${q.salesOrderId}`} className={cn('font-medium', LINK_CLASSNAME)}>
               {q.salesOrderCode}
             </Link>{' '}
             con su reserva de material.
@@ -202,9 +204,9 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         </Card>
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>#</TableHead>
               <TableHead>Producto</TableHead>
@@ -256,7 +258,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
 
       {q.notes && (
         <Card>
@@ -268,7 +270,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       )}
 
       <div className="text-xs text-muted-foreground">
-        Creada por {q.createdByName ?? '—'} el {formatDate(q.createdAt.slice(0, 10))}.
+        Creada por {q.createdByName ?? '—'} el {formatTimestampDate(q.createdAt)}.
         {q.cancelledAt && (
           <Badge variant="outline" className="ml-2">
             Anulada

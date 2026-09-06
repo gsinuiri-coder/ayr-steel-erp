@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
@@ -14,7 +15,7 @@ import {
   type ProductionOrderStatus,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatDate, formatMoneyOrDash, formatQty } from '@/lib/format';
+import { formatMoneyOrDash, formatQty, formatTimestampDate } from '@/lib/format';
 import {
   QueueAdminControls,
   QueueEntrySummary,
@@ -33,6 +34,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -83,7 +85,7 @@ export function ProduccionView() {
             Perfiles de drywall desde fleje (RF-34) y coberturas metálicas desde bobina contra
             pedido (RF-30, RF-31), con trazabilidad hasta la bobina madre. La captura del operario
             está en{' '}
-            <Link href="/planta" className="underline underline-offset-4">
+            <Link href="/planta" className={LINK_CLASSNAME}>
               /planta
             </Link>
             .
@@ -165,9 +167,9 @@ export function ProduccionView() {
         </Select>
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Orden</TableHead>
               <TableHead>Producto</TableHead>
@@ -198,7 +200,7 @@ export function ProduccionView() {
             {orders.data?.map((o) => (
               <TableRow key={o.id}>
                 <TableCell className="font-mono font-medium">
-                  <Link href={`/produccion/${o.id}`} className="underline-offset-4 hover:underline">
+                  <Link href={`/produccion/${o.id}`} className={LINK_CLASSNAME}>
                     {o.code}
                   </Link>
                 </TableCell>
@@ -233,7 +235,7 @@ export function ProduccionView() {
                 <TableCell className="text-right">
                   {formatMoneyOrDash(o.unitCostPen, 'PEN', 4)}
                 </TableCell>
-                <TableCell>{formatDate(o.createdAt.slice(0, 10))}</TableCell>
+                <TableCell>{formatTimestampDate(o.createdAt)}</TableCell>
                 <TableCell>
                   <Badge variant={STATUS_VARIANT[o.status]}>
                     {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
@@ -250,7 +252,7 @@ export function ProduccionView() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
     </RoleGate>
   );
 }

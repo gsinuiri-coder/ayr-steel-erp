@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,7 +15,7 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
-import { formatDate, formatMoney, formatQty, unitSymbol } from '@/lib/format';
+import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { QueueAdminControls } from '@/components/production-queue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -33,6 +34,7 @@ import {
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
+import { LINK_CLASSNAME } from '@/lib/utils';
 
 function reservationBadge(r: ReservationDto) {
   const label = RESERVATION_STATUS_LABELS[r.status];
@@ -129,7 +131,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
             {o.quotationId && (
               <>
                 {' · '}
-                <Link href={`/cotizaciones/${o.quotationId}`} className="underline">
+                <Link href={`/cotizaciones/${o.quotationId}`} className={LINK_CLASSNAME}>
                   {o.quotationCode}
                 </Link>
               </>
@@ -238,9 +240,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Líneas</h2>
-        <div className="rounded-lg border">
+        <TableScrollArea>
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>#</TableHead>
                 <TableHead>Producto</TableHead>
@@ -268,7 +270,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
               ))}
             </TableBody>
           </Table>
-        </div>
+        </TableScrollArea>
       </section>
 
       <section className="space-y-2">
@@ -277,9 +279,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
           Una reserva activa descuenta el disponible del ítem sin tocar el kardex (D-054): el
           material sigue físicamente en el almacén, pero ninguna otra operación lo puede tomar.
         </p>
-        <div className="rounded-lg border">
+        <TableScrollArea>
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>Ítem</TableHead>
                 <TableHead className="text-right">Cantidad</TableHead>
@@ -309,17 +311,14 @@ export function PedidoDetalleView({ id }: { id: string }) {
                   </TableCell>
                   <TableCell>
                     {r.productionOrderId ? (
-                      <Link
-                        href={`/produccion/${r.productionOrderId}`}
-                        className="underline-offset-4 hover:underline"
-                      >
+                      <Link href={`/produccion/${r.productionOrderId}`} className={LINK_CLASSNAME}>
                         {r.productionOrderCode}
                       </Link>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell>{formatDate(r.createdAt.slice(0, 10))}</TableCell>
+                  <TableCell>{formatTimestampDate(r.createdAt)}</TableCell>
                   {isAdmin && (
                     <TableCell className="text-right">
                       {r.status === 'ACTIVE' && (
@@ -349,7 +348,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
               )}
             </TableBody>
           </Table>
-        </div>
+        </TableScrollArea>
       </section>
 
       {o.notes && (
@@ -362,7 +361,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
       )}
 
       <div className="text-xs text-muted-foreground">
-        Creado por {o.createdByName ?? '—'} el {formatDate(o.createdAt.slice(0, 10))}.
+        Creado por {o.createdByName ?? '—'} el {formatTimestampDate(o.createdAt)}.
       </div>
 
       <ReasonDialog

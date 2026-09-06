@@ -24,16 +24,21 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
+  DERIVED_FILTER_FETCH_CAP,
   LANDED_COST_SERVICE_KINDS,
+  paginate,
+  paginateInMemory,
   Role,
   SERVICE_KIND_LABELS,
   STOCK_PURCHASE_TYPES,
   toDecimal,
   toFixedString,
+  toSkipTake,
   Unit,
   type CreatePurchaseInput,
   type CreateSupplierPaymentInput,
   type InvoiceXmlPreviewDto,
+  type PaginatedResult,
   type PurchaseDto,
   type PurchaseListItemDto,
   type PurchaseQuery,
@@ -977,40 +982,62 @@ export class PurchasesService {
     return this.findOne(purchaseId);
   }
 
-  async findAll(query: PurchaseQuery): Promise<PurchaseListItemDto[]> {
-    const purchases = await this.prisma.purchase.findMany({
-      where: {
-        businessLine: query.businessLine
-          ? { code: toPrismaLineCode(query.businessLine) }
-          : undefined,
-        type: query.type,
-        status: query.status,
-        supplierId: query.supplierId,
-        issueDate: {
-          gte: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,
-          lte: query.to ? new Date(`${query.to}T00:00:00.000Z`) : undefined,
-        },
-        ...(query.search
-          ? {
-              OR: [
-                { number: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
-                { series: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
-                {
-                  supplier: {
-                    name: { contains: query.search, mode: Prisma.QueryMode.insensitive },
-                  },
-                },
-              ],
-            }
-          : {}),
+  async findAll(query: PurchaseQuery): Promise<PaginatedResult<PurchaseListItemDto>> {
+    const where: Prisma.PurchaseWhereInput = {
+      businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
+      type: query.type,
+      status: query.status,
+      supplierId: query.supplierId,
+      issueDate: {
+        gte: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,
+        lte: query.to ? new Date(`${query.to}T00:00:00.000Z`) : undefined,
       },
-      include: PURCHASE_RELATIONS,
-      orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
-      take: 500,
-    });
+      ...(query.search
+        ? {
+            OR: [
+              { number: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+              { series: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+              {
+                supplier: {
+                  name: { contains: query.search, mode: Prisma.QueryMode.insensitive },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+    const orderBy: Prisma.PurchaseOrderByWithRelationInput[] = [
+      { issueDate: 'desc' },
+      { createdAt: 'desc' },
+    ];
 
-    const dtos = purchases.map((p) => toListDto(p));
-    return query.onlyWithBalance ? dtos.filter((p) => toDecimal(p.balance).gt(0)) : dtos;
+    if (!query.onlyWithBalance) {
+      const { skip, take } = toSkipTake(query);
+      const [total, purchases] = await Promise.all([
+        this.prisma.purchase.count({ where }),
+        this.prisma.purchase.findMany({ where, include: PURCHASE_RELATIONS, orderBy, skip, take }),
+      ]);
+      return paginate(
+        purchases.map((p) => toListDto(p)),
+        total,
+        query,
+      );
+    }
+
+    // `onlyWithBalance` es un filtro derivado (D-039): el saldo no es una columna, así que
+    // no se puede paginar en SQL sin duplicar ahí la regla de `@ayr/shared`. Se trae el
+    // universo acotado (`DERIVED_FILTER_FETCH_CAP`) que ya cumple el resto de filtros, se
+    // filtra por saldo en memoria y recién ahí se corta la página.
+    const purchases = await this.prisma.purchase.findMany({
+      where,
+      include: PURCHASE_RELATIONS,
+      orderBy,
+      take: DERIVED_FILTER_FETCH_CAP,
+    });
+    const withBalance = purchases
+      .map((p) => toListDto(p))
+      .filter((p) => toDecimal(p.balance).gt(0));
+    return paginateInMemory(withBalance, query);
   }
 
   async findOne(id: string): Promise<PurchaseDto> {

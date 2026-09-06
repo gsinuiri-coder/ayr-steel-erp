@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext, type APIResponse } from '@playwri
 import {
   adminApi,
   createFinish,
+  getItems,
   getJson,
   postJson,
   type CreatedFinish,
@@ -158,7 +159,7 @@ async function receivedCoilPurchase(
   const received = await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
   expect(received.status).toBe('RECEIVED');
 
-  const coils = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${input.supplier.id}`);
+  const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${input.supplier.id}`);
   expect(coils.length).toBe(input.lines.length);
   return { purchase: received, coils };
 }

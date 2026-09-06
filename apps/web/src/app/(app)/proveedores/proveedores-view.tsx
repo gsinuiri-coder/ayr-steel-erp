@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -90,9 +91,9 @@ export function ProveedoresView() {
         }}
       />
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Código</TableHead>
               <TableHead>Documento</TableHead>
@@ -184,7 +185,7 @@ export function ProveedoresView() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
 
       {isAdmin && (
         <SupplierDialog

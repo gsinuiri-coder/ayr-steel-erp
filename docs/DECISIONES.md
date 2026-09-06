@@ -1483,3 +1483,61 @@ de un entorno de desarrollo. Y se hace con **reset**, no con `delete` + `create`
 dura del proyecto prohíbe borrar ramas de Neon, y además recrear cambiaría el endpoint y
 dejaría inservibles las cadenas de conexión de `.env`, de los secretos de GitHub y de Cloud
 Run.
+
+## D-113 — Fase 7d (paginación server-side)
+
+**Fecha:** 2026-09-05
+
+**Contexto.** Diez tablas del web (kardex, comprobantes, pedidos, cotizaciones, despachos,
+cobranzas, compras, bobinas, clientes, importaciones) traían la lista entera del API en cada
+carga. Con datos de UAT reales — más de unas pocas decenas de filas — la vista se volvía
+lenta y la tabla forzaba scroll de página entera en vez de quedarse contenida (Tarea 2 de la
+fase). Había que elegir un patrón único y aplicarlo a las diez sin que cada endpoint
+inventara el suyo.
+
+**Decisión — el contrato.** `page`/`pageSize` (1-based) en la query, envueltos en
+`PaginatedResult<T> = { items, total, page, pageSize }`. Se descartó `limit`/`offset` sin
+envoltura porque no hay dónde devolver `total` sin otro viaje, y cursor-based porque la UI
+que ya existía en el proyecto (y que el dueño pidió mantener) es "página N de M con tamaño
+elegible", algo que un cursor no da sin mantener un índice de posiciones aparte.
+`packages/shared/src/schemas/pagination.ts` es el único lugar que define
+`paginationQuerySchema`, `toSkipTake`, `paginate` y las constantes (`DEFAULT_PAGE_SIZE=50`,
+`MAX_PAGE_SIZE=200`).
+
+**El caso derivado.** Tres endpoints filtran por un valor que no es una columna: `pendingOnly`
+en comprobantes y `onlyWithBalance` en compras dependen de `documentBalance`/saldo de compra
+(D-075), y `receivables()` es una agregación por cliente calculada entera en memoria.
+Escribir esos filtros en SQL habría exigido duplicar ahí la fórmula del saldo — exactamente
+la duplicación que D-075 ya había evitado una vez —, y una vista materializada era una
+inversión de infraestructura que esta fase de pulido no necesitaba. La salida es
+`paginateInMemory` + `DERIVED_FILTER_FETCH_CAP` (5000): el `WHERE` de SQL estrecha por todo lo
+que sí es una columna (línea, estado, cliente, rango de fechas), Prisma trae hasta 5000 filas
+de ese universo ya acotado, y recién ahí se aplica el filtro derivado y se corta la página.
+5000 es "el negocio nunca tiene tantos comprobantes o compras con saldo pendiente a la vez"
+— un límite de sanidad, no una paginación real sobre ese eje.
+
+**El conflicto picker-vs-lista.** Cuatro consumidores necesitan "todas las opciones" para un
+selector — clientes en el formulario de venta y en el mostrador, pedidos facturables o
+despachables al emitir un comprobante o un despacho, compras de bobina recibidas para imputar
+un costo vinculado, bobinas abiertas para una orden de corte — sobre el mismo endpoint que
+ahora pagina por defecto. `fetchAllForPicker` (`apps/web/src/lib/fetch-all-for-picker.ts`)
+pide `pageSize=MAX_PAGE_SIZE` (200) y descarta el resto del sobre. No es paginación de
+verdad — es el mismo atajo de "traerse el maestro completo" que estos selectores ya usaban
+antes de que el endpoint paginara, ahora nombrado y en un solo archivo en vez de repetido
+cuatro veces. Un selector con más de 200 opciones no las ve todas; reemplazarlo por búsqueda
+contra el servidor (como `/customers?search=`) queda para cuando alguno lo necesite de
+verdad.
+
+**El kardex de un ítem.** `GET /inventory/movements?itemId=…` calcula un saldo corrido
+(`balanceQty`, `balanceAvgCost`) que solo tiene sentido sobre el historial completo del ítem:
+paginarlo habría cortado el saldo a mitad de camino. Ese modo no pagina — devuelve todo el
+historial como una única "página" que ya lo trae entero —, y solo el modo mezclado (sin
+`itemId`, la tabla de `/kardex` navegando varios ítems) pagina de verdad.
+
+**Por qué no `@tanstack/react-table`.** La tarea original sugería usar su modelo
+server-side, y la librería ya está declarada como dependencia sin usar. Se descartó:
+reescribir diez tablas ya probadas, cada una con columnas condicionales, badges y acciones
+muy particulares, un par de semanas antes de la entrega al cliente, era cambiar más superficie
+de la que la tarea pedía tocar a cambio de nada que el hook liviano (`usePagination` +
+`<PaginationBar>`) no diera ya. Queda anotado para una fase futura si el proyecto necesita
+ordenamiento por columna o selección de filas, que sí justifican la librería.

@@ -5,6 +5,7 @@ import {
   createFinish,
   createSupplier,
   createUser,
+  getItems,
   getJson,
   postJson,
   type CreatedFinish,
@@ -711,11 +712,11 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       // 1000 kg × S/ 4 + 18 % = 4 720.
       expect(received.total).toBe('4720.0000');
 
-      const coils = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${supplier.id}`);
+      const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
       expect(coils).toHaveLength(1);
       const coil = coils[0]!;
 
-      const movementsBefore = await getJson<MovementDto[]>(
+      const movementsBefore = await getItems<MovementDto>(
         api,
         `/api/inventory/movements?itemType=COIL&itemId=${coil.id}`,
       );
@@ -743,7 +744,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
 
       // El pago y su reversa nunca tocan el kardex de la bobina (§3.2): mismos movimientos,
       // mismo saldo, antes y después.
-      const movementsAfter = await getJson<MovementDto[]>(
+      const movementsAfter = await getItems<MovementDto>(
         api,
         `/api/inventory/movements?itemType=COIL&itemId=${coil.id}`,
       );
@@ -754,7 +755,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       expect(movementsAfter).toEqual(movementsBefore);
       expect(balanceAfter).toEqual(balanceBefore);
 
-      const coilAfter = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${supplier.id}`);
+      const coilAfter = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
       expect(coilAfter[0]).toMatchObject({
         status: coil.status,
         weightKg: coil.weightKg,

@@ -15,14 +15,17 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
+  paginate,
   toDecimal,
   toFixedString,
+  toSkipTake,
   type BusinessLine,
   type InventoryBalanceDto,
   type InventoryMovementDto,
   type InventoryQuery,
   type InventorySummaryDto,
   type InventorySummaryRowDto,
+  type PaginatedResult,
 } from '@ayr/shared';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
@@ -603,29 +606,37 @@ export class InventoryService {
    * devuelve además el saldo corrido después de cada movimiento, recalculado en orden
    * cronológico; en un listado mezclado ese saldo no tiene sentido y va en `null`.
    */
-  async findMovements(query: InventoryQuery, showCosts: boolean): Promise<InventoryMovementDto[]> {
+  async findMovements(
+    query: InventoryQuery,
+    showCosts: boolean,
+  ): Promise<PaginatedResult<InventoryMovementDto>> {
     const singleItem = Boolean(query.itemId && query.itemType);
 
-    const movements = await this.prisma.inventoryMovement.findMany({
-      where: {
-        itemType: query.itemType,
-        itemId: query.itemId,
-        businessLine: query.businessLine
-          ? { code: toPrismaLineCode(query.businessLine) }
-          : undefined,
-        at: {
-          gte: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,
-          lte: query.to ? new Date(`${query.to}T23:59:59.999Z`) : undefined,
-        },
+    const where = {
+      itemType: query.itemType,
+      itemId: query.itemId,
+      businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
+      at: {
+        gte: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,
+        lte: query.to ? new Date(`${query.to}T23:59:59.999Z`) : undefined,
       },
-      include: { businessLine: true, reversals: { select: { id: true } } },
-      // El kardex de un ítem concreto se lee completo y en orden cronológico, porque el
-      // saldo corrido solo se puede calcular desde el primer movimiento. El listado
-      // mezclado, en cambio, se recorta a los más RECIENTES: cortar por los más antiguos
-      // mostraba justo lo contrario de lo que dice la vista.
-      orderBy: singleItem ? [{ at: 'asc' }, { id: 'asc' }] : [{ at: 'desc' }, { id: 'desc' }],
-      take: singleItem ? 10_000 : 500,
-    });
+    };
+    // El kardex de un ítem concreto se lee completo y en orden cronológico, porque el saldo
+    // corrido solo se puede calcular desde el primer movimiento: no pagina (D-113), y el
+    // tope de 10 000 es "todo lo que un solo ítem puede acumular", no una página. El
+    // listado mezclado sí pagina, y se recorta a los más RECIENTES: cortar por los más
+    // antiguos mostraba justo lo contrario de lo que dice la vista.
+    const { skip, take } = singleItem ? { skip: 0, take: 10_000 } : toSkipTake(query);
+    const [total, movements] = await Promise.all([
+      singleItem ? Promise.resolve(0) : this.prisma.inventoryMovement.count({ where }),
+      this.prisma.inventoryMovement.findMany({
+        where,
+        include: { businessLine: true, reversals: { select: { id: true } } },
+        orderBy: singleItem ? [{ at: 'asc' }, { id: 'asc' }] : [{ at: 'desc' }, { id: 'desc' }],
+        skip,
+        take,
+      }),
+    ]);
     if (!singleItem) movements.reverse();
 
     const labels = await this.resolveItemLabels(movements);
@@ -686,7 +697,13 @@ export class InventoryService {
     });
 
     // Más reciente primero para la vista; el cálculo del saldo corrido necesitaba el orden inverso.
-    return dtos.reverse();
+    const items = dtos.reverse();
+    // El de un ítem concreto no pagina: es "todo lo que hay", una sola página que lo
+    // contiene entero. Decirlo así (en vez de fingir page/pageSize del pedido) es lo que
+    // hace que `PaginatedResult` no mienta sobre cuántas páginas hay.
+    return singleItem
+      ? { items, total: items.length, page: 1, pageSize: Math.max(items.length, 1) }
+      : paginate(items, total, query);
   }
 
   /**

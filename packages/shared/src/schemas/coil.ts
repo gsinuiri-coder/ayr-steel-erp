@@ -7,6 +7,7 @@ import {
   COIL_STATUSES,
   CURRENCIES,
 } from '../enums';
+import { paginationQuerySchema } from './pagination';
 
 /**
  * Bobina de acero (RF-10..RF-14). Alta siempre por una de las tres vías de Fase 2a
@@ -61,8 +62,8 @@ export const coilSchema = z.object({
 });
 export type CoilDto = z.infer<typeof coilSchema>;
 
-/** Filtros de la lista de bobinas por línea (RF-23). */
-export const coilQuerySchema = z.object({
+/** Filtros de la lista de bobinas por línea (RF-23), paginada (Fase 7d, D-113). */
+export const coilQuerySchema = paginationQuerySchema.extend({
   businessLine: z.enum(BUSINESS_LINES).optional(),
   finishId: z.string().uuid().optional(),
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),

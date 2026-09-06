@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { TableScrollArea } from '@/components/table-scroll-area';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -13,11 +14,14 @@ import {
   INVOICE_DOC_TYPES,
   Role,
   type FiscalDocumentListItemDto,
+  type PaginatedResult,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useDebounced } from '@/lib/use-debounced';
+import { usePagination } from '@/lib/use-pagination';
+import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { ContingencyCard } from '@/components/invoicing/contingency-card';
 import { ImportDialog } from '@/components/imports/import-dialog';
@@ -34,6 +38,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -56,18 +61,22 @@ export function ComprobantesView() {
   const [pendingOnly, setPendingOnly] = useState(false);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounced(search.trim(), 300);
+  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
 
-  const params = new URLSearchParams();
+  useEffect(() => {
+    resetPage();
+  }, [status, docType, pendingOnly, debouncedSearch, resetPage]);
+
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (status !== ALL) params.set('status', status);
   if (docType !== ALL) params.set('docType', docType);
   if (pendingOnly) params.set('pendingOnly', 'true');
   if (debouncedSearch) params.set('search', debouncedSearch);
-  const query = params.toString();
 
   const documents = useQuery({
-    queryKey: ['fiscal-documents', status, docType, pendingOnly, debouncedSearch],
+    queryKey: ['fiscal-documents', page, pageSize, status, docType, pendingOnly, debouncedSearch],
     queryFn: () =>
-      api<FiscalDocumentListItemDto[]>(`/invoicing/documents${query ? `?${query}` : ''}`),
+      api<PaginatedResult<FiscalDocumentListItemDto>>(`/invoicing/documents?${params.toString()}`),
   });
 
   const alerts = useQuery({
@@ -75,7 +84,7 @@ export function ComprobantesView() {
     queryFn: () => api<{ pending: number; stalled: number }>('/invoicing/alerts'),
   });
 
-  const rows = documents.data ?? [];
+  const rows = documents.data?.items ?? [];
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -173,15 +182,15 @@ export function ComprobantesView() {
       {documents.isPending ? (
         <Skeleton className="h-64 w-full" />
       ) : (
-        <div className="rounded-lg border">
+        <TableScrollArea>
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>Número</TableHead>
-                <TableHead>Tipo</TableHead>
+                <TableHead className="hidden md:table-cell">Tipo</TableHead>
                 <TableHead>Cliente</TableHead>
-                <TableHead>Emisión</TableHead>
-                <TableHead>Vencimiento</TableHead>
+                <TableHead className="hidden sm:table-cell">Emisión</TableHead>
+                <TableHead className="hidden md:table-cell">Vencimiento</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right">Saldo</TableHead>
                 <TableHead>Estado</TableHead>
@@ -193,7 +202,7 @@ export function ComprobantesView() {
                   <TableCell>
                     <Link
                       href={`/comprobantes/${d.id}`}
-                      className="font-medium underline-offset-4 hover:underline"
+                      className={cn('font-medium', LINK_CLASSNAME)}
                     >
                       {/* Un borrador todavía no tiene número (D-072): se dice, no se finge. */}
                       {d.number ?? 'Borrador'}
@@ -202,13 +211,15 @@ export function ComprobantesView() {
                       <div className="text-xs text-muted-foreground">{d.salesOrderCode}</div>
                     )}
                   </TableCell>
-                  <TableCell>{FISCAL_DOC_TYPE_LABELS[d.docType]}</TableCell>
+                  <TableCell className="hidden md:table-cell">
+                    {FISCAL_DOC_TYPE_LABELS[d.docType]}
+                  </TableCell>
                   <TableCell>
                     <div>{d.customerName}</div>
                     <div className="text-xs text-muted-foreground">{d.customerDocNumber}</div>
                   </TableCell>
-                  <TableCell>{formatDate(d.issueDate)}</TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell">{formatDate(d.issueDate)}</TableCell>
+                  <TableCell className="hidden md:table-cell">
                     {d.dueDate ? (
                       <span className={d.isOverdue ? 'font-medium text-destructive' : undefined}>
                         {formatDate(d.dueDate)}
@@ -248,7 +259,17 @@ export function ComprobantesView() {
               )}
             </TableBody>
           </Table>
-        </div>
+        </TableScrollArea>
+      )}
+      {!documents.isPending && (
+        <PaginationBar
+          page={page}
+          pageSize={pageSize}
+          total={documents.data?.total ?? 0}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          disabled={documents.isFetching}
+        />
       )}
     </RoleGate>
   );

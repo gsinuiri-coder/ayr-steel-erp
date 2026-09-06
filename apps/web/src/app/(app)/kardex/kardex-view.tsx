@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { TableScrollArea } from '@/components/table-scroll-area';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
@@ -13,13 +14,17 @@ import {
   Role,
   type InventoryItemType,
   type InventoryMovementDto,
+  type PaginatedResult,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
+import { usePagination } from '@/lib/use-pagination';
+import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -47,8 +52,14 @@ export function KardexView() {
     : 'COIL';
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const singleItem = Boolean(itemId);
+  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
 
-  const query = new URLSearchParams();
+  useEffect(() => {
+    resetPage();
+  }, [itemId, itemType, from, to, resetPage]);
+
+  const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (itemId) {
     query.set('itemId', itemId);
     query.set('itemType', itemType);
@@ -60,13 +71,13 @@ export function KardexView() {
   const movements = useQuery({
     queryKey: ['inventory', 'movements', queryString],
     queryFn: () =>
-      api<InventoryMovementDto[]>(`/inventory/movements${queryString ? `?${queryString}` : ''}`),
+      api<PaginatedResult<InventoryMovementDto>>(`/inventory/movements?${queryString}`),
   });
+  const rows = movements.data?.items ?? [];
 
-  const singleItem = Boolean(itemId);
   // 8 columnas base; con un ítem concreto se suman saldo y costo promedio.
   const columnCount = singleItem ? 9 : 8;
-  const header = movements.data?.[0];
+  const header = rows[0];
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR]}>
@@ -105,16 +116,16 @@ export function KardexView() {
         </div>
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Fecha</TableHead>
               {!singleItem && <TableHead>Ítem</TableHead>}
               <TableHead>Movimiento</TableHead>
-              <TableHead>Origen</TableHead>
+              <TableHead className="hidden md:table-cell">Origen</TableHead>
               <TableHead className="text-right">Cantidad</TableHead>
-              <TableHead className="text-right">Costo unit. (S/)</TableHead>
+              <TableHead className="hidden text-right lg:table-cell">Costo unit. (S/)</TableHead>
               <TableHead className="text-right">Total (S/)</TableHead>
               {singleItem && <TableHead className="text-right">Saldo</TableHead>}
               {singleItem && <TableHead className="text-right">Costo prom.</TableHead>}
@@ -136,7 +147,7 @@ export function KardexView() {
                 </TableCell>
               </TableRow>
             )}
-            {movements.data?.map((m) => (
+            {rows.map((m) => (
               <TableRow key={m.id} className={m.reversedById ? 'opacity-60' : undefined}>
                 <TableCell className="whitespace-nowrap">
                   {new Date(m.at).toLocaleString('es-PE')}
@@ -144,7 +155,7 @@ export function KardexView() {
                 {!singleItem && (
                   <TableCell className="font-mono">
                     <Link
-                      className="underline underline-offset-4"
+                      className={LINK_CLASSNAME}
                       href={`/kardex?itemType=${m.itemType}&item=${m.itemId}`}
                     >
                       {m.itemLabel}
@@ -159,7 +170,7 @@ export function KardexView() {
                     <span className="ml-2 text-xs text-muted-foreground">anulación</span>
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   {INVENTORY_REF_TYPE_LABELS[m.refType]}
                   {!singleItem && ` · ${BUSINESS_LINE_LABELS[m.businessLine]}`}
                 </TableCell>
@@ -168,7 +179,7 @@ export function KardexView() {
                       repartió el costo, mostrarlo como movimiento confundiría el saldo. */}
                   {m.type === 'ADJUST' ? '—' : formatQty(m.qty, unitSymbol(m.unit))}
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="hidden text-right lg:table-cell">
                   {formatMoneyOrDash(m.unitCost, 'PEN', 4)}
                 </TableCell>
                 <TableCell className="text-right">{formatMoneyOrDash(m.totalCost)}</TableCell>
@@ -189,7 +200,7 @@ export function KardexView() {
                 </TableCell>
               </TableRow>
             ))}
-            {movements.data?.length === 0 && (
+            {movements.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
                   No hay movimientos para este filtro.
@@ -198,7 +209,19 @@ export function KardexView() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
+      {/* El kardex de un solo ítem trae el historial completo para el saldo corrido
+          (§3.2): no pagina, así que la barra no aplica ahí. */}
+      {!singleItem && (
+        <PaginationBar
+          page={page}
+          pageSize={pageSize}
+          total={movements.data?.total ?? 0}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          disabled={movements.isFetching}
+        />
+      )}
     </RoleGate>
   );
 }

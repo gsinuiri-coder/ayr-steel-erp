@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { AuthUser } from '@ayr/shared';
 import { api, ApiError } from './api';
+import { LINK_CLASSNAME } from './utils';
 
 interface SessionContextValue {
   user: AuthUser;
@@ -66,7 +67,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return (
       <div className="flex min-h-svh flex-col items-center justify-center gap-2" role="alert">
         <p>No se pudo cargar la sesión.</p>
-        <button className="underline" onClick={() => void me.refetch()}>
+        <button className={LINK_CLASSNAME} onClick={() => void me.refetch()}>
           Reintentar
         </button>
       </div>

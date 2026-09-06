@@ -17,6 +17,7 @@ import {
   SALES_ORDER_STATUSES,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { paginationQuerySchema } from './pagination';
 import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing';
 
 /**
@@ -345,7 +346,7 @@ export const quotationListItemSchema = quotationSchema.omit({ items: true }).ext
 });
 export type QuotationListItemDto = z.infer<typeof quotationListItemSchema>;
 
-export const quotationQuerySchema = z.object({
+export const quotationQuerySchema = paginationQuerySchema.extend({
   status: z.enum(QUOTATION_STATUSES).optional(),
   customerId: z.string().uuid().optional(),
   businessLine: z.enum(BUSINESS_LINES).optional(),
@@ -489,7 +490,7 @@ export const salesOrderListItemSchema = salesOrderSchema
   });
 export type SalesOrderListItemDto = z.infer<typeof salesOrderListItemSchema>;
 
-export const salesOrderQuerySchema = z.object({
+export const salesOrderQuerySchema = paginationQuerySchema.extend({
   status: z.enum(SALES_ORDER_STATUSES).optional(),
   customerId: z.string().uuid().optional(),
   businessLine: z.enum(BUSINESS_LINES).optional(),

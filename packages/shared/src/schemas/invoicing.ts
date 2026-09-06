@@ -17,6 +17,7 @@ import {
   TransferMode,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { paginationQuerySchema } from './pagination';
 import { businessToday } from './sales';
 
 /**
@@ -577,7 +578,7 @@ export const fiscalDocumentListItemSchema = fiscalDocumentSchema
   .extend({ itemCount: z.number().int() });
 export type FiscalDocumentListItemDto = z.infer<typeof fiscalDocumentListItemSchema>;
 
-export const fiscalDocumentQuerySchema = z.object({
+export const fiscalDocumentQuerySchema = paginationQuerySchema.extend({
   status: z.enum(FISCAL_DOCUMENT_STATUSES).optional(),
   docType: z.enum(FISCAL_DOC_TYPES).optional(),
   origin: z.enum(FISCAL_DOCUMENT_ORIGINS).optional(),
@@ -784,7 +785,7 @@ export const dispatchListItemSchema = dispatchSchema
   .extend({ itemCount: z.number().int() });
 export type DispatchListItemDto = z.infer<typeof dispatchListItemSchema>;
 
-export const dispatchQuerySchema = z.object({
+export const dispatchQuerySchema = paginationQuerySchema.extend({
   status: z.enum(DISPATCH_STATUSES).optional(),
   salesOrderId: z.string().uuid().optional(),
   search: z.string().trim().max(80).optional(),
@@ -883,3 +884,14 @@ export const receivableSummarySchema = z.object({
   nextDueDate: z.string().nullable(),
 });
 export type ReceivableSummaryDto = z.infer<typeof receivableSummarySchema>;
+
+/**
+ * Totales de cuentas por cobrar (Fase 7d): las tarjetas de resumen de /cobranzas suman
+ * sobre **todos** los clientes con deuda, no solo la página que muestra la tabla.
+ */
+export const receivableTotalsSchema = z.object({
+  totalBalancePen: z.string(),
+  totalOverduePen: z.string(),
+  customerCount: z.number().int(),
+});
+export type ReceivableTotalsDto = z.infer<typeof receivableTotalsSchema>;

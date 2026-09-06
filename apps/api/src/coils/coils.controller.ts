@@ -22,6 +22,7 @@ import {
   type CoilSplitDto,
   type CreateCoilScrapInput,
   type CreateCoilSplitInput,
+  type PaginatedResult,
   type ReverseMovementInput,
   type SetCoilStatusInput,
   type UpdateCoilInput,
@@ -52,7 +53,9 @@ export class CoilsController {
   ) {}
 
   @Get()
-  findAll(@Query(new ZodValidationPipe(coilQuerySchema)) query: CoilQuery): Promise<CoilDto[]> {
+  findAll(
+    @Query(new ZodValidationPipe(coilQuerySchema)) query: CoilQuery,
+  ): Promise<PaginatedResult<CoilDto>> {
     return this.coils.findAll(query);
   }
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,6 +20,7 @@ import {
   type TransportSuggestionsDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { RoleGate } from '@/components/role-gate';
@@ -79,7 +81,7 @@ export function NuevoDespachoView() {
 
   const orders = useQuery({
     queryKey: ['sales-orders', 'dispatchable'],
-    queryFn: () => api<SalesOrderListItemDto[]>('/sales/orders'),
+    queryFn: () => fetchAllForPicker<SalesOrderListItemDto>('/sales/orders'),
   });
 
   const progress = useQuery({
@@ -540,9 +542,9 @@ export function NuevoDespachoView() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Qué sale</h2>
-        <div className="rounded-lg border">
+        <TableScrollArea>
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>Producto</TableHead>
                 <TableHead>Material</TableHead>
@@ -590,7 +592,7 @@ export function NuevoDespachoView() {
               )}
             </TableBody>
           </Table>
-        </div>
+        </TableScrollArea>
       </section>
 
       <div className="flex justify-end gap-2">

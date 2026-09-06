@@ -1,7 +1,7 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { getJson, postJson, type CreatedFinish, type CreatedSupplier } from './api';
+import { getItems, getJson, postJson, type CreatedFinish, type CreatedSupplier } from './api';
 import { deactivateTrail, today, type CoilDto, type ProductDto } from './production';
 import { createDirectOrder, createSellableProduct, setupCoilStock } from './sales';
 import type { CustomerDto, SalesOrderDto } from './sales';
@@ -256,7 +256,10 @@ export async function createInvoiceableCustomer(
   // un entorno sin PSE (D-080)—, y los escenarios de aceptación ya están saltados por
   // `probePse`, así que ese RUC no llega a gastar correlativos buscando un imposible.
   const docNumber = overrides.docNumber ?? invoiceableRucFromEnv() ?? validRuc();
-  const existing = (await getJson<CustomerDto[]>(api, '/api/customers')).find(
+  // Busca por `search` (filtra en el servidor por docNumber) en vez de traer "todo" y
+  // buscar en memoria: con años de clientes acumulados en la rama `dev`, la página por
+  // defecto ya no alcanza para garantizar que este cliente puntual esté adentro.
+  const existing = (await getItems<CustomerDto>(api, `/api/customers?search=${docNumber}`)).find(
     (c) => c.docNumber === docNumber,
   );
   if (existing) {
@@ -771,7 +774,7 @@ export function testSeriesCode(): string {
 
 /** El cliente sembrado por la migración (D-077). Nunca se crea ni se edita desde el test. */
 export async function genericCustomer(api: APIRequestContext): Promise<CustomerDto> {
-  const customers = await getJson<CustomerDto[]>(api, '/api/customers');
+  const customers = await getItems<CustomerDto>(api, '/api/customers?search=00000000');
   const generic = customers.find((c) => c.docNumber === '00000000');
   expect(
     generic,

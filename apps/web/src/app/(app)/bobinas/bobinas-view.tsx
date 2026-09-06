@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { TableScrollArea } from '@/components/table-scroll-area';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -13,16 +14,19 @@ import {
   type CoilDto,
   type CoilStatus,
   type FinishDto,
+  type PaginatedResult,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useSession } from '@/lib/session';
+import { usePagination } from '@/lib/use-pagination';
 import { RoleGate } from '@/components/role-gate';
 import { formatMoney, formatQty, isPositiveDecimal } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PaginationBar } from '@/components/pagination-bar';
 import {
   Select,
   SelectContent,
@@ -31,6 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -53,13 +58,14 @@ export function BobinasView() {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search);
   const debouncedThickness = useDebouncedValue(thicknessMm);
+  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
 
   const finishes = useQuery({
     queryKey: ['finishes'],
     queryFn: () => api<FinishDto[]>('/finishes'),
   });
 
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (businessLine !== ALL) params.set('businessLine', businessLine);
   if (finishId !== ALL) params.set('finishId', finishId);
   // Se manda solo cuando ya es un decimal válido: a medio escribir el API responde 400.
@@ -68,10 +74,17 @@ export function BobinasView() {
   if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
   const queryString = params.toString();
 
+  // Volver a la página 1 cuando cambia cualquier filtro: si no, una búsqueda nueva podía
+  // dejar la pantalla en blanco en una página que el resultado nuevo ya no tiene.
+  useEffect(() => {
+    resetPage();
+  }, [businessLine, finishId, debouncedThickness, status, debouncedSearch, resetPage]);
+
   const coils = useQuery({
     queryKey: ['coils', queryString],
-    queryFn: () => api<CoilDto[]>(`/coils${queryString ? `?${queryString}` : ''}`),
+    queryFn: () => api<PaginatedResult<CoilDto>>(`/coils?${queryString}`),
   });
+  const rows = coils.data?.items ?? [];
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -172,19 +185,19 @@ export function BobinasView() {
         />
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Código</TableHead>
               <TableHead>Tipo</TableHead>
-              <TableHead>Línea</TableHead>
-              <TableHead>Proveedor</TableHead>
+              <TableHead className="hidden md:table-cell">Línea</TableHead>
+              <TableHead className="hidden lg:table-cell">Proveedor</TableHead>
               <TableHead>Color</TableHead>
               <TableHead className="text-right">Ancho</TableHead>
-              <TableHead className="text-right">Peso</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">Peso</TableHead>
               <TableHead className="text-right">Disponible</TableHead>
-              <TableHead className="text-right">Costo/kg</TableHead>
+              <TableHead className="hidden text-right lg:table-cell">Costo/kg</TableHead>
               <TableHead>Estado</TableHead>
             </TableRow>
           </TableHeader>
@@ -204,16 +217,18 @@ export function BobinasView() {
                 </TableCell>
               </TableRow>
             )}
-            {coils.data?.map((c) => (
+            {rows.map((c) => (
               <TableRow key={c.id}>
                 <TableCell className="font-mono font-medium">
-                  <Link className="underline underline-offset-4" href={`/bobinas/${c.id}`}>
+                  <Link className={LINK_CLASSNAME} href={`/bobinas/${c.id}`}>
                     {c.code}
                   </Link>
                 </TableCell>
                 <TableCell>{c.typeKey}</TableCell>
-                <TableCell>{BUSINESS_LINE_LABELS[c.businessLine]}</TableCell>
-                <TableCell>{c.supplierName}</TableCell>
+                <TableCell className="hidden md:table-cell">
+                  {BUSINESS_LINE_LABELS[c.businessLine]}
+                </TableCell>
+                <TableCell className="hidden lg:table-cell">{c.supplierName}</TableCell>
                 <TableCell>
                   <ColorSwatch
                     color={
@@ -222,11 +237,13 @@ export function BobinasView() {
                   />
                 </TableCell>
                 <TableCell className="text-right">{c.widthMm} mm</TableCell>
-                <TableCell className="text-right">{formatQty(c.weightKg, 'kg')}</TableCell>
+                <TableCell className="hidden text-right sm:table-cell">
+                  {formatQty(c.weightKg, 'kg')}
+                </TableCell>
                 <TableCell className="text-right font-medium">
                   {formatQty(c.availableKg, 'kg')}
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="hidden text-right lg:table-cell">
                   {formatMoney(c.unitCostPerKg, c.currency, 4)}
                 </TableCell>
                 <TableCell>
@@ -236,7 +253,7 @@ export function BobinasView() {
                 </TableCell>
               </TableRow>
             ))}
-            {coils.data?.length === 0 && (
+            {coils.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={10} className="text-center text-muted-foreground">
                   No hay bobinas que coincidan con los filtros.
@@ -245,7 +262,15 @@ export function BobinasView() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={coils.data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        disabled={coils.isFetching}
+      />
     </RoleGate>
   );
 }

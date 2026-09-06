@@ -6,6 +6,7 @@ import {
   createFinish,
   createSupplier,
   createUser,
+  getItems,
   getJson,
   postJson,
   type CreatedFinish,
@@ -260,9 +261,9 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       expect(draft.total).toBe('36580.0000');
       expect(draft.items.every((i) => i.coilCode === null)).toBe(true);
 
-      const coilsBefore = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${supplier.id}`);
+      const coilsBefore = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
       expect(coilsBefore).toHaveLength(0);
-      const movementsBefore = await getJson<MovementDto[]>(
+      const movementsBefore = await getItems<MovementDto>(
         api,
         '/api/inventory/movements?businessLine=drywall',
       );
@@ -282,7 +283,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
         await expect(page.getByRole('row').filter({ hasText: code })).toBeVisible();
       }
 
-      const coils = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${supplier.id}`);
+      const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
       expect(coils).toHaveLength(2);
       const gruesa = coils.find((c) => c.code === expectedCodes[0]);
       const delgada = coils.find((c) => c.code === expectedCodes[1]);
@@ -300,7 +301,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
         { coil: delgada, qty: '2000.000', unitCost: '5.5000', totalCost: '11000.0000' },
       ];
       for (const { coil, qty, unitCost, totalCost } of expected) {
-        const movements = await getJson<MovementDto[]>(
+        const movements = await getItems<MovementDto>(
           api,
           `/api/inventory/movements?itemType=COIL&itemId=${coil?.id}`,
         );
@@ -430,7 +431,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       expect(purchase.sourceXmlKey).toMatch(/^purchases\/xml\//);
 
       // Aparece en la lista central de compras buscando por su número.
-      const listed = await getJson<PurchaseDto[]>(api, `/api/purchases?search=${number}`);
+      const listed = await getItems<PurchaseDto>(api, `/api/purchases?search=${number}`);
       expect(listed.some((p) => p.id === purchaseId)).toBe(true);
     } finally {
       if (isProduction) {
@@ -494,13 +495,13 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await expect(dialog).toBeHidden();
 
       // Las 2 bobinas quedaron creadas, con su código RF-13 y su entrada de kardex.
-      const coils = await getJson<CoilDto[]>(api, `/api/coils?supplierId=${supplier.id}`);
+      const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
       expect(coils.map((c) => c.code).sort()).toEqual([...expectedCodes].sort());
       // La carga histórica no genera compra: la bobina entra sin comprobante (RF-12).
       expect(coils.every((c) => c.purchaseId === null)).toBe(true);
 
       const gruesa = coils.find((c) => c.code === expectedCodes[0]);
-      const movements = await getJson<MovementDto[]>(
+      const movements = await getItems<MovementDto>(
         api,
         `/api/inventory/movements?itemType=COIL&itemId=${gruesa?.id}`,
       );
@@ -637,7 +638,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
     });
 
     try {
-      const movementsBefore = await getJson<MovementDto[]>(
+      const movementsBefore = await getItems<MovementDto>(
         api,
         '/api/inventory/movements?businessLine=drywall',
       );
@@ -652,7 +653,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await expect(page.getByText('Compra recibida: el stock ya está en el kardex')).toBeVisible();
       await expect(page.getByText('Recibida', { exact: true })).toBeVisible();
 
-      const movementsAfter = await getJson<MovementDto[]>(
+      const movementsAfter = await getItems<MovementDto>(
         api,
         '/api/inventory/movements?businessLine=drywall',
       );

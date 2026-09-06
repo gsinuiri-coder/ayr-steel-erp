@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DOC_TYPES } from '../enums';
+import { paginationQuerySchema } from './pagination';
 
 /** Cadena vacía tras `trim()` se guarda como `null`, no como `''`. */
 function emptyToNull(v: string | undefined): string | null {
@@ -28,6 +29,17 @@ export const customerSchema = z.object({
   updatedAt: z.string(),
 });
 export type CustomerDto = z.infer<typeof customerSchema>;
+
+/**
+ * Listado paginado de clientes (Fase 7d, D-113). El filtro de texto se mueve al servidor
+ * junto con la paginación: filtrar en el navegador solo funciona mientras se trae la tabla
+ * entera, que es exactamente lo que dejó de pasar. Los inactivos se siguen trayendo (el
+ * orden ya los manda al final): son los que un administrador tiene que poder reactivar.
+ */
+export const customerQuerySchema = paginationQuerySchema.extend({
+  search: z.string().trim().max(80).optional(),
+});
+export type CustomerQuery = z.infer<typeof customerQuerySchema>;
 
 export const partyNameSchema = z
   .string()

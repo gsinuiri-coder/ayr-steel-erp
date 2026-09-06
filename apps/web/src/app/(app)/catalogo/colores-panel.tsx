@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -96,9 +97,9 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
         )}
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Código</TableHead>
               <TableHead>Color</TableHead>
@@ -158,7 +159,7 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
 
       {isAdmin && (creating || editing) && (
         <ColorDialog

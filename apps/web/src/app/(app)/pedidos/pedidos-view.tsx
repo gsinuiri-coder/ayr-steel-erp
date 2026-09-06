@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { TableScrollArea } from '@/components/table-scroll-area';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   SALES_ORDER_STATUS_LABELS,
   SALES_ORDER_STATUSES,
   Role,
+  type PaginatedResult,
   type SalesOrderListItemDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
@@ -14,8 +16,10 @@ import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
 import { useDebounced } from '@/lib/use-debounced';
+import { usePagination } from '@/lib/use-pagination';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PaginationBar } from '@/components/pagination-bar';
 import {
   Select,
   SelectContent,
@@ -24,6 +28,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -41,28 +46,26 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 export function PedidosView() {
   const [status, setStatus] = useState<string>(ALL);
   const [search, setSearch] = useState('');
-  // Igual que en cotizaciones: la búsqueda por cliente va al API (RF-84) para que un pedido
-  // fuera de las 500 más recientes se pueda encontrar.
+  // La búsqueda va al API (RF-84) para que un pedido fuera de la página actual se pueda
+  // encontrar: por nombre/documento del cliente, o por código (extrae el número de "PED-…").
   const debouncedSearch = useDebounced(search.trim(), 300);
+  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
 
-  const params = new URLSearchParams();
+  useEffect(() => {
+    resetPage();
+  }, [status, debouncedSearch, resetPage]);
+
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (status !== ALL) params.set('status', status);
   if (debouncedSearch) params.set('search', debouncedSearch);
-  const query = params.toString();
 
   const orders = useQuery({
-    queryKey: ['sales-orders', status, debouncedSearch],
-    queryFn: () => api<SalesOrderListItemDto[]>(`/sales/orders${query ? `?${query}` : ''}`),
+    queryKey: ['sales-orders', page, pageSize, status, debouncedSearch],
+    queryFn: () =>
+      api<PaginatedResult<SalesOrderListItemDto>>(`/sales/orders?${params.toString()}`),
   });
 
-  const needle = search.trim().toLowerCase();
-  const filtered = orders.data?.filter(
-    (o) =>
-      !needle ||
-      o.code.toLowerCase().includes(needle) ||
-      o.customerName.toLowerCase().includes(needle) ||
-      o.customerDocNumber.includes(needle),
-  );
+  const rows = orders.data?.items ?? [];
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -102,16 +105,16 @@ export function PedidosView() {
         </Select>
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Código</TableHead>
               <TableHead>Cliente</TableHead>
-              <TableHead>Cotización</TableHead>
-              <TableHead>Fecha</TableHead>
+              <TableHead className="hidden md:table-cell">Cotización</TableHead>
+              <TableHead className="hidden sm:table-cell">Fecha</TableHead>
               <TableHead className="text-right">Total</TableHead>
-              <TableHead className="text-right">Reservas activas</TableHead>
+              <TableHead className="hidden text-right lg:table-cell">Reservas activas</TableHead>
               <TableHead>Estado</TableHead>
             </TableRow>
           </TableHeader>
@@ -131,10 +134,10 @@ export function PedidosView() {
                 </TableCell>
               </TableRow>
             )}
-            {filtered?.map((o) => (
+            {rows.map((o) => (
               <TableRow key={o.id}>
                 <TableCell className="font-medium">
-                  <Link href={`/pedidos/${o.id}`} className="underline-offset-4 hover:underline">
+                  <Link href={`/pedidos/${o.id}`} className={LINK_CLASSNAME}>
                     {o.code}
                   </Link>
                 </TableCell>
@@ -142,27 +145,26 @@ export function PedidosView() {
                   <div>{o.customerName}</div>
                   <div className="text-xs text-muted-foreground">{o.customerDocNumber}</div>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   {o.quotationId ? (
-                    <Link
-                      href={`/cotizaciones/${o.quotationId}`}
-                      className="underline-offset-4 hover:underline"
-                    >
+                    <Link href={`/cotizaciones/${o.quotationId}`} className={LINK_CLASSNAME}>
                       {o.quotationCode}
                     </Link>
                   ) : (
                     <span className="text-muted-foreground">Directo</span>
                   )}
                 </TableCell>
-                <TableCell>{formatDate(o.issueDate)}</TableCell>
+                <TableCell className="hidden sm:table-cell">{formatDate(o.issueDate)}</TableCell>
                 <TableCell className="text-right">{formatMoney(o.totalPen)}</TableCell>
-                <TableCell className="text-right">{o.activeReservations}</TableCell>
+                <TableCell className="hidden text-right lg:table-cell">
+                  {o.activeReservations}
+                </TableCell>
                 <TableCell>
                   <SalesOrderStatusBadge status={o.status} />
                 </TableCell>
               </TableRow>
             ))}
-            {filtered?.length === 0 && (
+            {orders.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-muted-foreground">
                   {search || status !== ALL
@@ -173,7 +175,15 @@ export function PedidosView() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={orders.data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        disabled={orders.isFetching}
+      />
     </RoleGate>
   );
 }

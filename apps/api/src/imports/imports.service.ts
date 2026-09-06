@@ -10,10 +10,14 @@ import { Prisma, type ImportRow } from '@prisma/client';
 import {
   ImportBatchStatus,
   ImportRowStatus,
+  paginate,
+  toSkipTake,
   type ImportBatchDto,
   type ImportBatchWithRowsDto,
   type ImportEntity,
   type ImportRowDto,
+  type PaginatedResult,
+  type PaginationQuery,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -234,12 +238,13 @@ export class ImportsService {
     return { ...toBatchDto(batch), rows: batch.rows.map(toRowDto) };
   }
 
-  async findAll(): Promise<ImportBatchDto[]> {
-    const batches = await this.prisma.importBatch.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
-    return batches.map(toBatchDto);
+  async findAll(query: PaginationQuery): Promise<PaginatedResult<ImportBatchDto>> {
+    const { skip, take } = toSkipTake(query);
+    const [total, batches] = await Promise.all([
+      this.prisma.importBatch.count(),
+      this.prisma.importBatch.findMany({ orderBy: { createdAt: 'desc' }, skip, take }),
+    ]);
+    return paginate(batches.map(toBatchDto), total, query);
   }
 
   async updateRow(

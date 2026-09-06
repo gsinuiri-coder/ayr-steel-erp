@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { TableScrollArea } from '@/components/table-scroll-area';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -12,12 +13,15 @@ import {
   PURCHASE_TYPE_LABELS,
   PURCHASE_TYPES,
   type BusinessLine,
+  type PaginatedResult,
   type PurchaseListItemDto,
   type PurchaseStatus,
   type PurchaseType,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { usePagination } from '@/lib/use-pagination';
+import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -56,8 +61,13 @@ export function ComprasView() {
   const [onlyWithBalance, setOnlyWithBalance] = useState(false);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search);
+  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
 
-  const params = new URLSearchParams();
+  useEffect(() => {
+    resetPage();
+  }, [businessLine, type, status, onlyWithBalance, debouncedSearch, resetPage]);
+
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (businessLine !== ALL) params.set('businessLine', businessLine);
   if (type !== ALL) params.set('type', type);
   if (status !== ALL) params.set('status', status);
@@ -67,8 +77,10 @@ export function ComprasView() {
 
   const purchases = useQuery({
     queryKey: ['purchases', queryString],
-    queryFn: () => api<PurchaseListItemDto[]>(`/purchases${queryString ? `?${queryString}` : ''}`),
+    queryFn: () => api<PaginatedResult<PurchaseListItemDto>>(`/purchases?${queryString}`),
   });
+
+  const rows = purchases.data?.items ?? [];
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -163,16 +175,16 @@ export function ComprasView() {
         />
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Comprobante</TableHead>
               <TableHead>Proveedor</TableHead>
-              <TableHead>Línea</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead>Emisión</TableHead>
-              <TableHead>Vence</TableHead>
+              <TableHead className="hidden lg:table-cell">Línea</TableHead>
+              <TableHead className="hidden md:table-cell">Tipo</TableHead>
+              <TableHead className="hidden sm:table-cell">Emisión</TableHead>
+              <TableHead className="hidden md:table-cell">Vence</TableHead>
               <TableHead className="text-right">Total</TableHead>
               <TableHead className="text-right">Saldo</TableHead>
               <TableHead>Estado</TableHead>
@@ -194,18 +206,22 @@ export function ComprasView() {
                 </TableCell>
               </TableRow>
             )}
-            {purchases.data?.map((p) => (
+            {rows.map((p) => (
               <TableRow key={p.id}>
                 <TableCell className="font-medium">
-                  <Link href={`/compras/${p.id}`} className="underline-offset-4 hover:underline">
+                  <Link href={`/compras/${p.id}`} className={LINK_CLASSNAME}>
                     {p.documentLabel}
                   </Link>
                 </TableCell>
                 <TableCell>{p.supplierName}</TableCell>
-                <TableCell>{BUSINESS_LINE_LABELS[p.businessLine]}</TableCell>
-                <TableCell>{PURCHASE_TYPE_LABELS[p.type]}</TableCell>
-                <TableCell>{formatDate(p.issueDate)}</TableCell>
-                <TableCell>{formatDate(p.dueDate)}</TableCell>
+                <TableCell className="hidden lg:table-cell">
+                  {BUSINESS_LINE_LABELS[p.businessLine]}
+                </TableCell>
+                <TableCell className="hidden md:table-cell">
+                  {PURCHASE_TYPE_LABELS[p.type]}
+                </TableCell>
+                <TableCell className="hidden sm:table-cell">{formatDate(p.issueDate)}</TableCell>
+                <TableCell className="hidden md:table-cell">{formatDate(p.dueDate)}</TableCell>
                 <TableCell className="text-right">{formatMoney(p.total, p.currency)}</TableCell>
                 <TableCell className="text-right font-medium">
                   {formatMoney(p.balance, p.currency)}
@@ -217,7 +233,7 @@ export function ComprasView() {
                 </TableCell>
               </TableRow>
             ))}
-            {purchases.data?.length === 0 && (
+            {purchases.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={9} className="text-center text-muted-foreground">
                   No hay compras que coincidan con los filtros.
@@ -226,7 +242,15 @@ export function ComprasView() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={purchases.data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        disabled={purchases.isFetching}
+      />
     </RoleGate>
   );
 }

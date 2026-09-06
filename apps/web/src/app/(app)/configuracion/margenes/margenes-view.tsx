@@ -1,5 +1,6 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -72,9 +73,9 @@ export function MargenesView() {
         </p>
       </div>
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Línea</TableHead>
               <TableHead>Margen sugerido (%)</TableHead>
@@ -151,9 +152,16 @@ export function MargenesView() {
                 </TableRow>
               );
             })}
+            {settings.isSuccess && settings.data.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                  No hay líneas de negocio configuradas todavía.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
     </>
   );
 }

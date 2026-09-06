@@ -12,13 +12,16 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import {
   createCustomerSchema,
+  customerQuerySchema,
   docNumberLengths,
   DocType,
   Role,
   updateCustomerSchema,
   type CreateCustomerInput,
   type CustomerDto,
+  type CustomerQuery,
   type DocumentLookupDto,
+  type PaginatedResult,
   type UpdateCustomerInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -41,8 +44,10 @@ export class CustomersController {
   ) {}
 
   @Get()
-  findAll(): Promise<CustomerDto[]> {
-    return this.customers.findAll();
+  findAll(
+    @Query(new ZodValidationPipe(customerQuerySchema)) query: CustomerQuery,
+  ): Promise<PaginatedResult<CustomerDto>> {
+    return this.customers.findAll(query);
   }
 
   /**

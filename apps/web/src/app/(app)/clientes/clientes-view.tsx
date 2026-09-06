@@ -1,15 +1,25 @@
 'use client';
 
+import { TableScrollArea } from '@/components/table-scroll-area';
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { DOC_TYPE_LABELS, ImportEntity, Role, type CustomerDto } from '@ayr/shared';
+import {
+  DOC_TYPE_LABELS,
+  ImportEntity,
+  Role,
+  type CustomerDto,
+  type PaginatedResult,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
+import { useDebounced } from '@/lib/use-debounced';
+import { usePagination } from '@/lib/use-pagination';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PaginationBar } from '@/components/pagination-bar';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -22,6 +32,12 @@ import {
 import { ImportDialog } from '@/components/imports/import-dialog';
 import { CustomerDialog } from './customer-dialog';
 
+/**
+ * Prefijo de invalidación: React Query hace *match* parcial, así que
+ * `invalidateQueries({ queryKey: CUSTOMERS_QUERY_KEY })` alcanza a la consulta paginada
+ * de abajo sin importar en qué página o búsqueda esté el usuario cuando activa o
+ * desactiva un cliente.
+ */
 const CUSTOMERS_QUERY_KEY = ['customers'] as const;
 
 /**
@@ -43,6 +59,8 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
     setDialog((d) => ({ open: true, customer, nonce: d.nonce + 1 }));
   };
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounced(search.trim(), 300);
+  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
 
   // Solo al montar (y solo si el rol puede dar de alta): cerrar el diálogo no debe
   // reabrirlo, y navegar a /clientes tampoco.
@@ -50,15 +68,14 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
     if (autoOpenNew && isAdmin) setDialog((d) => ({ open: true, nonce: d.nonce + 1 }));
   }, [autoOpenNew, isAdmin]);
 
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (debouncedSearch) params.set('search', debouncedSearch);
+
   const customers = useQuery({
-    queryKey: CUSTOMERS_QUERY_KEY,
-    queryFn: () => api<CustomerDto[]>('/customers'),
+    queryKey: [...CUSTOMERS_QUERY_KEY, page, pageSize, debouncedSearch],
+    queryFn: () => api<PaginatedResult<CustomerDto>>(`/customers?${params.toString()}`),
   });
-  const filtered = customers.data?.filter((c) => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return c.name.toLowerCase().includes(q) || c.docNumber.toLowerCase().includes(q);
-  });
+  const rows = customers.data?.items ?? [];
 
   const toggleActive = useMutation({
     mutationFn: (c: CustomerDto) =>
@@ -111,17 +128,18 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
         value={search}
         onChange={(e) => {
           setSearch(e.target.value);
+          resetPage();
         }}
       />
 
-      <div className="rounded-lg border">
+      <TableScrollArea>
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead>Documento</TableHead>
               <TableHead>Nombre</TableHead>
-              <TableHead>Contacto</TableHead>
-              <TableHead>Días de crédito</TableHead>
+              <TableHead className="hidden md:table-cell">Contacto</TableHead>
+              <TableHead className="hidden sm:table-cell">Días de crédito</TableHead>
               <TableHead>Estado</TableHead>
               {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
             </TableRow>
@@ -142,14 +160,16 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                 </TableCell>
               </TableRow>
             )}
-            {filtered?.map((c) => (
+            {rows.map((c) => (
               <TableRow key={c.id} data-state={c.isActive ? undefined : 'inactive'}>
                 <TableCell className="font-medium">
                   {DOC_TYPE_LABELS[c.docType]} {c.docNumber}
                 </TableCell>
                 <TableCell>{c.name}</TableCell>
-                <TableCell className="text-muted-foreground">{c.email ?? c.phone ?? '—'}</TableCell>
-                <TableCell>{c.creditDays}</TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell">
+                  {c.email ?? c.phone ?? '—'}
+                </TableCell>
+                <TableCell className="hidden sm:table-cell">{c.creditDays}</TableCell>
                 <TableCell>
                   {c.isActive ? (
                     <Badge variant="secondary">Activo</Badge>
@@ -182,7 +202,7 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                 )}
               </TableRow>
             ))}
-            {filtered?.length === 0 && (
+            {customers.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground">
                   {search
@@ -193,7 +213,15 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
             )}
           </TableBody>
         </Table>
-      </div>
+      </TableScrollArea>
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={customers.data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        disabled={customers.isFetching}
+      />
 
       {isAdmin && (
         <CustomerDialog
