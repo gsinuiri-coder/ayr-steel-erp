@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { PRODUCT_SOURCE_LABELS, PRODUCT_SOURCES, type ProductDto } from '@ayr/shared';
+import { BusinessLine, PRODUCT_SOURCE_LABELS, PRODUCT_SOURCES, type ProductDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { ColorSelect } from '@/components/colors/color-select';
 import { isPositiveDecimal } from '@/lib/format';
@@ -52,21 +52,50 @@ const formSchema = z.object({
     .refine((v) => v === '' || isPositiveDecimal(v), 'Debe ser mayor a cero'),
   /** D-085: vacío = sin color, que el API guarda como `null`. */
   colorId: z.string(),
+  /** D-118: vacío = sin dato, que el API guarda como `null`. Obligatorios los valida el API
+   * según la línea; acá solo se muestran los que aplican. */
+  thicknessMm: z.string().trim(),
+  widthMm: z.string().trim(),
+  lengthMm: z.string().trim(),
+  pieceWeightKg: z.string().trim(),
 });
 type FormValues = z.infer<typeof formSchema>;
 
 interface Props {
   open: boolean;
   businessLineId: string;
-  /** D-085: solo coberturas llevan color; en el resto del catálogo el campo no aparece. */
-  usesColor: boolean;
+  businessLineCode: BusinessLine;
   product?: ProductDto;
   onOpenChange: (open: boolean) => void;
 }
 
-export function ProductDialog({ open, businessLineId, usesColor, product, onOpenChange }: Props) {
+/** D-085: solo coberturas llevan color; en el resto del catálogo el campo no aparece. */
+function usesColor(lineCode: BusinessLine): boolean {
+  return lineCode === BusinessLine.METALLIC_ROOFING;
+}
+
+/** D-118: espesor y ancho del SKU, obligatorios solo en Metallic Roofing. */
+function usesRoofingFields(lineCode: BusinessLine): boolean {
+  return lineCode === BusinessLine.METALLIC_ROOFING;
+}
+
+/** D-118: ancho, largo y peso de la pieza terminada, obligatorios solo en Drywall. */
+function usesDrywallFields(lineCode: BusinessLine): boolean {
+  return lineCode === BusinessLine.DRYWALL;
+}
+
+export function ProductDialog({
+  open,
+  businessLineId,
+  businessLineCode,
+  product,
+  onOpenChange,
+}: Props) {
   const queryClient = useQueryClient();
   const editing = !!product;
+  const showColor = usesColor(businessLineCode);
+  const showRoofingFields = usesRoofingFields(businessLineCode);
+  const showDrywallFields = usesDrywallFields(businessLineCode);
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -76,11 +105,21 @@ export function ProductDialog({ open, businessLineId, usesColor, product, onOpen
       source: product?.source ?? 'MANUFACTURED',
       listPricePen: product?.listPricePen ?? '',
       colorId: product?.colorId ?? '',
+      thicknessMm: product?.thicknessMm ?? '',
+      widthMm: product?.widthMm ?? '',
+      lengthMm: product?.lengthMm ?? '',
+      pieceWeightKg: product?.pieceWeightKg ?? '',
     },
   });
 
   const save = useMutation({
     mutationFn: (values: FormValues) => {
+      const structuredFields = {
+        thicknessMm: showRoofingFields ? values.thicknessMm : '',
+        widthMm: showRoofingFields || showDrywallFields ? values.widthMm : '',
+        lengthMm: showDrywallFields ? values.lengthMm : '',
+        pieceWeightKg: showDrywallFields ? values.pieceWeightKg : '',
+      };
       if (editing) {
         return api<ProductDto>(`/catalog/${product.id}`, {
           method: 'PATCH',
@@ -89,13 +128,19 @@ export function ProductDialog({ open, businessLineId, usesColor, product, onOpen
             unit: values.unit,
             source: values.source,
             listPricePen: values.listPricePen,
-            ...(usesColor ? { colorId: values.colorId } : {}),
+            ...(showColor ? { colorId: values.colorId } : {}),
+            ...structuredFields,
           },
         });
       }
       return api<ProductDto>('/catalog', {
         method: 'POST',
-        body: { ...values, colorId: usesColor ? values.colorId : '', businessLineId },
+        body: {
+          ...values,
+          colorId: showColor ? values.colorId : '',
+          ...structuredFields,
+          businessLineId,
+        },
       });
     },
     onSuccess: () => {
@@ -175,7 +220,7 @@ export function ProductDialog({ open, businessLineId, usesColor, product, onOpen
                 </FormItem>
               )}
             />
-            {usesColor && (
+            {showColor && (
               <FormField
                 control={form.control}
                 name="colorId"
@@ -191,6 +236,77 @@ export function ProductDialog({ open, businessLineId, usesColor, product, onOpen
                   </FormItem>
                 )}
               />
+            )}
+            {showRoofingFields && (
+              <FormField
+                control={form.control}
+                name="thicknessMm"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Espesor (mm)</FormLabel>
+                    <FormControl>
+                      <Input inputMode="decimal" autoComplete="off" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            {(showRoofingFields || showDrywallFields) && (
+              <FormField
+                control={form.control}
+                name="widthMm"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {showDrywallFields ? 'Ancho de la pieza (mm)' : 'Ancho (mm)'}
+                    </FormLabel>
+                    <FormControl>
+                      <Input inputMode="decimal" autoComplete="off" {...field} />
+                    </FormControl>
+                    {showRoofingFields && (
+                      <p className="text-xs text-muted-foreground">
+                        Nominal, para cotizar y calcular kg teóricos (D-118). La producción real usa
+                        el ancho del rollo que se monte (D-086), no este dato.
+                      </p>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            {showDrywallFields && (
+              <>
+                <FormField
+                  control={form.control}
+                  name="lengthMm"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Largo de la pieza (mm)</FormLabel>
+                      <FormControl>
+                        <Input inputMode="decimal" autoComplete="off" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="pieceWeightKg"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Peso de la pieza (kg)</FormLabel>
+                      <FormControl>
+                        <Input inputMode="decimal" autoComplete="off" {...field} />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Declarado, no calculado: la sección del perfil no es un prisma simple.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
             )}
             <FormField
               control={form.control}

@@ -238,9 +238,9 @@ export function CatalogoView() {
           key={`${dialog.product?.id ?? 'nuevo'}-${dialog.nonce}`}
           open={dialog.open}
           businessLineId={dialog.lineId}
-          usesColor={usesColor(
-            lines.data.find((l) => l.id === dialog.lineId)?.code ?? BusinessLine.DRYWALL,
-          )}
+          businessLineCode={
+            lines.data.find((l) => l.id === dialog.lineId)?.code ?? BusinessLine.DRYWALL
+          }
           product={dialog.product}
           onOpenChange={(open) => {
             setDialog((d) => ({ ...d, open }));

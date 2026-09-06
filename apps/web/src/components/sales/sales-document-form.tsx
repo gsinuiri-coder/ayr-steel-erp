@@ -655,6 +655,16 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
                       product && (
                         <span className="text-xs text-muted-foreground">
                           {unitSymbol(product.unit)}
+                          {/* D-118: kg teóricos de la línea (espesor × ancho × densidad),
+                              informativo — el precio no cambia, es peso estimado para el
+                              cliente y para la guía de remisión. */}
+                          {product.theoreticalKgPerUnit && isPositiveDecimal(l.qty) && (
+                            <>
+                              {' '}
+                              · ≈{' '}
+                              {new Decimal(product.theoreticalKgPerUnit).times(l.qty).toFixed(3)} kg
+                            </>
+                          )}
                         </span>
                       )
                     )}

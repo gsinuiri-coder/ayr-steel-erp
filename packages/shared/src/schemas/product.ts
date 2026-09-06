@@ -17,6 +17,25 @@ export const productSchema = z.object({
   colorCode: z.string().nullable(),
   colorName: z.string().nullable(),
   colorHex: z.string().nullable(),
+  /**
+   * D-118 (Fase 7e, B): campos estructurados del SKU. Metallic Roofing lleva
+   * `thicknessMm`/`widthMm` (nominales, para cotizar y calcular kg teóricos sin bobina
+   * montada — la producción real usa el rollo que se monte, D-086). Drywall lleva
+   * `widthMm`/`lengthMm`/`pieceWeightKg` de la **pieza terminada**, distintos de los
+   * campos de `product_boms` (que describen el fleje de entrada). Null en el resto.
+   */
+  thicknessMm: z.string().nullable(),
+  widthMm: z.string().nullable(),
+  lengthMm: z.string().nullable(),
+  pieceWeightKg: z.string().nullable(),
+  /**
+   * D-118: kilo teórico por unidad de venta, derivado de `thicknessMm`/`widthMm` y la
+   * densidad del acabado de la receta (`bom.finish.densityFactor`) — `null` si falta
+   * cualquiera de los dos. Con `unit = MTR` es kg **por metro lineal**; con largo fijo
+   * (`bom.pieceLengthMm` presente) es kg **por pieza**. Nunca para Drywall, que declara el
+   * peso directo (`pieceWeightKg`) porque su sección no es un prisma simple.
+   */
+  theoreticalKgPerUnit: z.string().nullable(),
   isActive: z.boolean(),
   source: z.enum(PRODUCT_SOURCES),
   createdAt: z.string(),
@@ -60,6 +79,27 @@ const colorIdSchema = z
   .optional()
   .transform((v) => (v === '' || v === undefined ? null : v));
 
+/** D-118: cadena vacía = "sin dato", igual que el precio de lista y el color. */
+const thicknessMmSchema = z
+  .union([
+    z.literal(''),
+    decimalStringSchema('MM', { positive: true, max: MAX_VALUE.THICKNESS_MM }),
+  ])
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v));
+const widthMmSchema = z
+  .union([z.literal(''), decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM })])
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v));
+const lengthMmSchema = z
+  .union([z.literal(''), decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM })])
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v));
+const pieceWeightKgSchema = z
+  .union([z.literal(''), decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG })])
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v));
+
 export const createProductSchema = z.object({
   businessLineId: z.string().uuid('Selecciona una línea de negocio'),
   sku: skuSchema,
@@ -68,6 +108,10 @@ export const createProductSchema = z.object({
   source: z.enum(PRODUCT_SOURCES, { errorMap: () => ({ message: 'Origen inválido' }) }),
   listPricePen: listPriceSchema,
   colorId: colorIdSchema,
+  thicknessMm: thicknessMmSchema,
+  widthMm: widthMmSchema,
+  lengthMm: lengthMmSchema,
+  pieceWeightKg: pieceWeightKgSchema,
 });
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 
@@ -78,6 +122,10 @@ export const updateProductSchema = z
     source: z.enum(PRODUCT_SOURCES),
     listPricePen: listPriceSchema,
     colorId: colorIdSchema,
+    thicknessMm: thicknessMmSchema,
+    widthMm: widthMmSchema,
+    lengthMm: lengthMmSchema,
+    pieceWeightKg: pieceWeightKgSchema,
     isActive: z.boolean(),
   })
   .partial()

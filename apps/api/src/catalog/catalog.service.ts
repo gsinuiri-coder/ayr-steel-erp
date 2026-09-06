@@ -4,8 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type BusinessLineCode, type Color, type Product } from '@prisma/client';
-import type { CreateProductInput, ProductDto, UpdateProductInput } from '@ayr/shared';
+import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
+import {
+  kgPerMeter,
+  theoreticalKgPerPiece,
+  Unit,
+  type CreateProductInput,
+  type ProductDto,
+  type UpdateProductInput,
+} from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { ColorsService } from '../colors/colors.service';
@@ -43,6 +50,7 @@ export class CatalogService {
     const line = await this.prisma.businessLine.findUnique({ where: { id: input.businessLineId } });
     if (!line) throw new BadRequestException('Línea de negocio inválida');
     const colorId = await this.colors.resolveActive(input.colorId);
+    assertStructuredFields(line.code, input);
 
     try {
       const product = await this.prisma.$transaction(async (tx) => {
@@ -55,6 +63,10 @@ export class CatalogService {
             source: input.source,
             listPricePen: input.listPricePen,
             colorId,
+            thicknessMm: input.thicknessMm,
+            widthMm: input.widthMm,
+            lengthMm: input.lengthMm,
+            pieceWeightKg: input.pieceWeightKg,
           },
           include: PRODUCT_RELATIONS,
         });
@@ -100,6 +112,30 @@ export class CatalogService {
       }
     }
 
+    // D-118: solo se revalida cuando el propio pedido toca uno de los campos
+    // estructurados — un `isActive` suelto no debería exigir completar el catálogo
+    // histórico que nació antes de esta fase.
+    const touchesStructured =
+      input.thicknessMm !== undefined ||
+      input.widthMm !== undefined ||
+      input.lengthMm !== undefined ||
+      input.pieceWeightKg !== undefined;
+    if (touchesStructured) {
+      assertStructuredFields(before.businessLine.code, {
+        thicknessMm:
+          input.thicknessMm !== undefined
+            ? input.thicknessMm
+            : decimalOrNull(before.thicknessMm, 'MM'),
+        widthMm: input.widthMm !== undefined ? input.widthMm : decimalOrNull(before.widthMm, 'MM'),
+        lengthMm:
+          input.lengthMm !== undefined ? input.lengthMm : decimalOrNull(before.lengthMm, 'MM'),
+        pieceWeightKg:
+          input.pieceWeightKg !== undefined
+            ? input.pieceWeightKg
+            : decimalOrNull(before.pieceWeightKg, 'KG'),
+      });
+    }
+
     const data: Prisma.ProductUpdateInput = {};
     if (input.name !== undefined) data.name = input.name;
     if (input.unit !== undefined) data.unit = input.unit;
@@ -107,6 +143,10 @@ export class CatalogService {
     // D-068: `null` es un valor legítimo (quitar el precio de lista), así que no se puede
     // usar el truco de `?? undefined` que sirve para el resto de campos.
     if (input.listPricePen !== undefined) data.listPricePen = input.listPricePen;
+    if (input.thicknessMm !== undefined) data.thicknessMm = input.thicknessMm;
+    if (input.widthMm !== undefined) data.widthMm = input.widthMm;
+    if (input.lengthMm !== undefined) data.lengthMm = input.lengthMm;
+    if (input.pieceWeightKg !== undefined) data.pieceWeightKg = input.pieceWeightKg;
     // D-085: cambiar el color de un producto con receta viva movería el filtro de bobina
     // (D-086) por debajo de las órdenes en curso, que montaron el rollo contra el color
     // anterior. Mismo criterio que la unidad y el origen, unas líneas más arriba.
@@ -152,15 +192,82 @@ export class CatalogService {
   }
 }
 
+/**
+ * D-118 (Fase 7e, B): Metallic Roofing exige espesor y ancho estructurados (SKU); Drywall
+ * exige ancho, largo y peso de la pieza terminada. El resto del catálogo no los usa —igual
+ * que el color (D-085), no se restringe si vienen, solo si faltan donde hacen falta.
+ */
+function assertStructuredFields(
+  lineCode: BusinessLineCode,
+  fields: {
+    thicknessMm: string | null;
+    widthMm: string | null;
+    lengthMm: string | null;
+    pieceWeightKg: string | null;
+  },
+): void {
+  if (lineCode === BusinessLineCode.METALLIC_ROOFING) {
+    if (fields.thicknessMm === null) {
+      throw new BadRequestException('El espesor del SKU es obligatorio en Metallic Roofing');
+    }
+    if (fields.widthMm === null) {
+      throw new BadRequestException('El ancho del SKU es obligatorio en Metallic Roofing');
+    }
+  }
+  if (lineCode === BusinessLineCode.DRYWALL) {
+    if (fields.widthMm === null) {
+      throw new BadRequestException('El ancho de la pieza terminada es obligatorio en Drywall');
+    }
+    if (fields.lengthMm === null) {
+      throw new BadRequestException('El largo de la pieza terminada es obligatorio en Drywall');
+    }
+    if (fields.pieceWeightKg === null) {
+      throw new BadRequestException('El peso de la pieza terminada es obligatorio en Drywall');
+    }
+  }
+}
+
+function decimalOrNull(value: Prisma.Decimal | null, scale: 'MM' | 'KG'): string | null {
+  if (value === null) return null;
+  return scale === 'MM' ? value.toFixed(2) : value.toFixed(3);
+}
+
 const PRODUCT_RELATIONS = {
   businessLine: { select: { code: true } },
   color: true,
+  // D-118: la densidad del acabado y el largo fijo de la receta son lo que
+  // `theoreticalKgPerUnit` necesita para derivar kg/ml o kg/plancha de una cobertura.
+  bom: { select: { pieceLengthMm: true, finish: { select: { densityFactor: true } } } },
 } satisfies Prisma.ProductInclude;
 
 type WithLineCode = Product & {
   businessLine: { code: BusinessLineCode };
   color: Color | null;
+  bom: { pieceLengthMm: Prisma.Decimal | null; finish: { densityFactor: Prisma.Decimal } } | null;
 };
+
+/**
+ * D-118: kg teórico por unidad de venta de una cobertura, derivado de espesor × ancho ×
+ * densidad del acabado (RF-25). `null` si falta el espesor, el ancho o la receta (sin
+ * receta no hay acabado del que sacar la densidad). Drywall nunca lo calcula — declara el
+ * peso directo (`pieceWeightKg`) porque su sección no es un prisma simple.
+ */
+function theoreticalKgPerUnit(p: WithLineCode): string | null {
+  if (p.thicknessMm === null || p.widthMm === null || !p.bom) return null;
+  const geometry = {
+    widthMm: p.widthMm.toFixed(2),
+    thicknessMm: p.thicknessMm.toFixed(2),
+    densityFactor: p.bom.finish.densityFactor.toFixed(4),
+  };
+  if (p.unit === Unit.MTR) return kgPerMeter(geometry).toFixed(3);
+  if (p.bom.pieceLengthMm !== null) {
+    return theoreticalKgPerPiece({
+      ...geometry,
+      pieceLengthMm: p.bom.pieceLengthMm.toFixed(2),
+    }).toFixed(3);
+  }
+  return null;
+}
 
 function toDto(p: WithLineCode): ProductDto {
   return {
@@ -175,6 +282,11 @@ function toDto(p: WithLineCode): ProductDto {
     colorCode: p.color?.code ?? null,
     colorName: p.color?.name ?? null,
     colorHex: p.color?.hexColor ?? null,
+    thicknessMm: p.thicknessMm === null ? null : p.thicknessMm.toFixed(2),
+    widthMm: p.widthMm === null ? null : p.widthMm.toFixed(2),
+    lengthMm: p.lengthMm === null ? null : p.lengthMm.toFixed(2),
+    pieceWeightKg: p.pieceWeightKg === null ? null : p.pieceWeightKg.toFixed(3),
+    theoreticalKgPerUnit: theoreticalKgPerUnit(p),
     isActive: p.isActive,
     source: p.source,
     createdAt: p.createdAt.toISOString(),
@@ -191,6 +303,10 @@ function auditView(p: Product): Prisma.InputJsonObject {
     source: p.source,
     listPricePen: p.listPricePen === null ? null : p.listPricePen.toFixed(4),
     colorId: p.colorId,
+    thicknessMm: p.thicknessMm === null ? null : p.thicknessMm.toFixed(2),
+    widthMm: p.widthMm === null ? null : p.widthMm.toFixed(2),
+    lengthMm: p.lengthMm === null ? null : p.lengthMm.toFixed(2),
+    pieceWeightKg: p.pieceWeightKg === null ? null : p.pieceWeightKg.toFixed(3),
     isActive: p.isActive,
   };
 }

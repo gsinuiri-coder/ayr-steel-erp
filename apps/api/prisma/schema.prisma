@@ -516,6 +516,22 @@ model Product {
   /// parseando el SKU.
   colorId        String?       @map("color_id") @db.Uuid
   color          Color?        @relation(fields: [colorId], references: [id])
+  /// D-118 (Fase 7e, B): espesor del SKU. Obligatorio en Metallic Roofing —es también el
+  /// espesor del producto terminado (rolar no cambia el espesor)—, no aplica al resto.
+  thicknessMm    Decimal?      @map("thickness_mm") @db.Decimal(6, 2)
+  /// D-118: ancho del SKU. Obligatorio en Metallic Roofing (nominal, para cotizar sin
+  /// bobina montada: la producción real usa el ancho del rollo que se monte, D-086, sin
+  /// filtro por ancho) y en Drywall (ancho de la **pieza terminada**, distinto del ancho
+  /// del fleje de entrada que ya vive en `product_boms.input_width_mm`).
+  widthMm        Decimal?      @map("width_mm") @db.Decimal(8, 2)
+  /// D-118: largo de la **pieza terminada** de Drywall, dato de catálogo. En Metallic
+  /// Roofing el largo que discrimina plancha-de-catálogo de a-medida sigue viviendo en
+  /// `product_boms.piece_length_mm` (D-083): acá no se duplica.
+  lengthMm       Decimal?      @map("length_mm") @db.Decimal(8, 2)
+  /// D-118: peso declarado de la pieza terminada de Drywall (no calculado): la sección de
+  /// un perfil no es un prisma simple, así que una fórmula por geometría mentiría. Distinto
+  /// de `product_boms.kg_per_piece`, que es el kilo de **fleje** que la pieza consume.
+  pieceWeightKg  Decimal?      @map("piece_weight_kg") @db.Decimal(12, 3)
   isActive       Boolean       @default(true) @map("is_active")
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
