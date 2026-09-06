@@ -153,6 +153,10 @@ export function ProduccionDetalleView({ id }: { id: string }) {
     (acc, c) => acc.plus(new Decimal(c.assignedKg)),
     new Decimal(0),
   );
+  // D-121: comparación reportado vs. teórico del fleje montado, solo drywall (coberturas
+  // no tiene `kgPerPiece`: su propio card de "Despunte" ya compara declarado vs. teórico).
+  const kgPerPiece = o.bom.kgPerPiece !== null ? new Decimal(o.bom.kgPerPiece) : null;
+  const theoreticalPieces = kgPerPiece?.gt(0) ? assignedKg.div(kgPerPiece) : null;
   // Con mucha merma, cerrar es una baja de inventario y el API pide motivo (D-057).
   // D-089: en coberturas, lo montado y no consumido **no es merma** — vuelve al almacén —
   // y este cierre no declara `consumedKg`, así que el despunte es cero y el API nunca pide
@@ -238,12 +242,19 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <SummaryCard
           title={o.metersReported === null ? 'Piezas buenas' : 'Metros buenos'}
           value={o.metersReported === null ? String(o.piecesReported) : `${o.metersReported} m`}
           hint={o.metersReported === null ? undefined : `${String(o.piecesReported)} planchas`}
         />
+        {theoreticalPieces !== null && (
+          <SummaryCard
+            title="Piezas teóricas"
+            value={theoreticalPieces.toFixed(1)}
+            hint={`Del fleje montado, vs. ${o.piecesReported} reportadas`}
+          />
+        )}
         <SummaryCard title="Material asignado" value={formatQty(o.assignedKg, 'kg')} />
         <SummaryCard
           title={o.kind === ProductionOrderKind.ROOFING ? 'Despunte' : 'Merma de proceso'}

@@ -292,13 +292,27 @@ export class CoilsService {
   }
 
   async findAll(query: CoilQuery): Promise<PaginatedResult<CoilDto>> {
+    // D-121: el saldo vive en el kardex, no en la fila de la bobina, así que el filtro
+    // sale de una subconsulta a `inventory_balances` en vez de una condición SQL directa.
+    let availabilityIds: string[] | undefined;
+    if (query.availability) {
+      const balances = await this.prisma.inventoryBalance.findMany({
+        where: {
+          itemType: 'COIL',
+          qty: query.availability === 'available' ? { gt: 0 } : { lte: 0 },
+        },
+        select: { itemId: true },
+      });
+      availabilityIds = balances.map((b) => b.itemId);
+    }
     const where: Prisma.CoilWhereInput = {
       businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
       finishId: query.finishId,
-      status: query.status,
+      status: query.statusNe ? { equals: query.status, not: query.statusNe } : query.status,
       supplierId: query.supplierId,
       thicknessMm: query.thicknessMm,
       kind: query.kind,
+      ...(availabilityIds ? { id: { in: availabilityIds } } : {}),
       // `sin-color` es un filtro real y no la ausencia de filtro: es como se listan las
       // galvanizadas, que son justo las que un producto sin color puede montar (D-086).
       ...(query.colorId === undefined

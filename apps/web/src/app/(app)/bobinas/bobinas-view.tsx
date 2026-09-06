@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
@@ -46,13 +47,31 @@ import {
 
 const ALL = 'ALL';
 
+/**
+ * Pestañas de la vista (Fase 7e, D-121): el default es lo que planta usa a diario —
+ * disponible y en planta—; lo demás (en corte tercerizado, agotadas) queda a un clic
+ * pero no compite por espacio. Nada se borra: "Todas" trae la lista completa de antes,
+ * con el filtro de Estado fino para cuando alguien necesita ver una anulada puntual.
+ */
+const VIEW_TABS = ['disponibles', 'en-corte', 'agotadas', 'todas'] as const;
+type ViewTab = (typeof VIEW_TABS)[number];
+const VIEW_TAB_LABELS: Record<ViewTab, string> = {
+  disponibles: 'Disponibles',
+  'en-corte': 'En corte',
+  agotadas: 'Agotadas',
+  todas: 'Todas',
+};
+
 /** Inventario de bobinas por línea (RF-23), con filtros de acabado, espesor y estado. */
 export function BobinasView() {
   const { user } = useSession();
   const isAdmin = user.role === Role.ADMINISTRADOR;
+  const [tab, setTab] = useState<ViewTab>('disponibles');
   const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
   const [finishId, setFinishId] = useState<string>(ALL);
   const [thicknessMm, setThicknessMm] = useState('');
+  // Solo se usa en la pestaña "Todas": las otras tres fijan el estado (o su ausencia)
+  // desde la pestaña misma.
   const [status, setStatus] = useState<CoilStatus | typeof ALL>(ALL);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search);
@@ -69,15 +88,25 @@ export function BobinasView() {
   if (finishId !== ALL) params.set('finishId', finishId);
   // Se manda solo cuando ya es un decimal válido: a medio escribir el API responde 400.
   if (isPositiveDecimal(debouncedThickness)) params.set('thicknessMm', debouncedThickness.trim());
-  if (status !== ALL) params.set('status', status);
   if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+  if (tab === 'disponibles') {
+    params.set('statusNe', 'IN_THIRD_PARTY');
+    params.set('availability', 'available');
+  } else if (tab === 'en-corte') {
+    params.set('status', 'IN_THIRD_PARTY');
+  } else if (tab === 'agotadas') {
+    params.set('statusNe', 'IN_THIRD_PARTY');
+    params.set('availability', 'depleted');
+  } else if (status !== ALL) {
+    params.set('status', status);
+  }
   const queryString = params.toString();
 
   // Volver a la página 1 cuando cambia cualquier filtro: si no, una búsqueda nueva podía
   // dejar la pantalla en blanco en una página que el resultado nuevo ya no tiene.
   useEffect(() => {
     resetPage();
-  }, [businessLine, finishId, debouncedThickness, status, debouncedSearch, resetPage]);
+  }, [tab, businessLine, finishId, debouncedThickness, status, debouncedSearch, resetPage]);
 
   const coils = useQuery({
     queryKey: ['coils', queryString],
@@ -108,6 +137,21 @@ export function BobinasView() {
           </Button>
         </div>
       </div>
+
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          setTab(v as ViewTab);
+        }}
+      >
+        <TabsList>
+          {VIEW_TABS.map((t) => (
+            <TabsTrigger key={t} value={t}>
+              {VIEW_TAB_LABELS[t]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       <div className="flex flex-wrap items-center gap-3">
         <Select
@@ -154,24 +198,26 @@ export function BobinasView() {
           }}
         />
 
-        <Select
-          value={status}
-          onValueChange={(v) => {
-            setStatus(v as CoilStatus | typeof ALL);
-          }}
-        >
-          <SelectTrigger className="w-44" aria-label="Estado">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los estados</SelectItem>
-            {COIL_STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {COIL_STATUS_LABELS[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {tab === 'todas' && (
+          <Select
+            value={status}
+            onValueChange={(v) => {
+              setStatus(v as CoilStatus | typeof ALL);
+            }}
+          >
+            <SelectTrigger className="w-44" aria-label="Estado">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Todos los estados</SelectItem>
+              {COIL_STATUSES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {COIL_STATUS_LABELS[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         <Input
           aria-label="Buscar bobinas por código"

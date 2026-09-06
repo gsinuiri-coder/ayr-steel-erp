@@ -428,6 +428,11 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
     assignedKg.gt(0) && pendingKg.div(assignedKg).gt(MAX_SCRAP_RATIO_WITHOUT_REASON);
   const kgPerPiece = new Decimal(o.bom.kgPerPiece ?? '0');
   const maxPieces = kgPerPiece.lte(0) ? 0 : pendingKg.div(kgPerPiece).floor().toNumber();
+  // D-121: piezas teóricas de TODO lo montado en la orden (no solo lo pendiente), para
+  // comparar en vivo contra lo ya reportado — el mismo cálculo que hace el cierre para la
+  // merma de proceso, pero antes de cerrar y sin redondear.
+  const theoreticalPieces = kgPerPiece.gt(0) ? assignedKg.div(kgPerPiece) : new Decimal(0);
+  const theoreticalDelta = theoreticalPieces.minus(o.piecesReported);
   const trimmed = pieces.trim();
   const piecesValid = /^\d+$/.test(trimmed) && Number(trimmed) > 0;
   const overCapacity = piecesValid && Number(trimmed) > maxPieces;
@@ -457,8 +462,17 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <BigStat label="Piezas buenas" value={String(o.piecesReported)} />
+        <BigStat
+          label="Piezas teóricas"
+          value={theoreticalPieces.toFixed(1)}
+          hint={
+            assignedKg.gt(0)
+              ? `Fleje montado: ${theoreticalDelta.gte(0) ? '+' : ''}${theoreticalDelta.toFixed(1)} vs. reportado`
+              : undefined
+          }
+        />
         <BigStat label="Meta" value={o.targetPieces === null ? '—' : String(o.targetPieces)} />
         <BigStat label="Fleje pendiente" value={formatQty(pendingKg.toFixed(3), 'kg')} />
         <BigStat label="Alcanza para" value={`${maxPieces} pzs`} />
@@ -630,11 +644,12 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
   );
 }
 
-function BigStat({ label, value }: { label: string; value: string }) {
+function BigStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-lg border p-4">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="text-2xl font-semibold">{value}</p>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

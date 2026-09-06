@@ -75,11 +75,24 @@ export const coilQuerySchema = paginationQuerySchema.extend({
   finishId: z.string().uuid().optional(),
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
   status: z.enum(COIL_STATUSES).optional(),
+  /**
+   * Exclusión puntual de un estado (Fase 7e, D-121). La pestaña "Disponibles" de la vista
+   * necesita "cualquier estado salvo en corte tercerizado"; agregar un segundo eje de
+   * filtro es más simple que convertir `status` en lista y tener que decidir qué hace la
+   * combinación de las dos formas.
+   */
+  statusNe: z.enum(COIL_STATUSES).optional(),
   supplierId: z.string().uuid().optional(),
   /** D-049: filtra bobinas (`COIL`) o flejes (`STRIP`); sin filtro trae ambos. */
   kind: z.enum(COIL_KINDS).optional(),
   /** D-085: filtra por color. `sin-color` trae las que no lo tienen (galvanizadas). */
   colorId: z.union([z.literal('sin-color'), z.string().uuid()]).optional(),
+  /**
+   * Saldo disponible según el kardex (Fase 7e, D-121): `available` es saldo > 0,
+   * `depleted` es saldo ≤ 0 (incluye anuladas, que quedan en cero por la reversa de
+   * RF-21). Sin filtro trae ambas.
+   */
+  availability: z.enum(['available', 'depleted']).optional(),
   search: z.string().trim().max(80).optional(),
 });
 export type CoilQuery = z.infer<typeof coilQuerySchema>;
