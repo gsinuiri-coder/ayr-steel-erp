@@ -237,23 +237,32 @@ const PRODUCT_RELATIONS = {
   color: true,
   // D-118: la densidad del acabado y el largo fijo de la receta son lo que
   // `theoreticalKgPerUnit` necesita para derivar kg/ml o kg/plancha de una cobertura.
-  bom: { select: { pieceLengthMm: true, finish: { select: { densityFactor: true } } } },
+  // `isActive` decide si esa receta todavía cuenta (hallazgo de `revisor`, Fase 7e).
+  bom: {
+    select: { isActive: true, pieceLengthMm: true, finish: { select: { densityFactor: true } } },
+  },
 } satisfies Prisma.ProductInclude;
 
 type WithLineCode = Product & {
   businessLine: { code: BusinessLineCode };
   color: Color | null;
-  bom: { pieceLengthMm: Prisma.Decimal | null; finish: { densityFactor: Prisma.Decimal } } | null;
+  bom: {
+    isActive: boolean;
+    pieceLengthMm: Prisma.Decimal | null;
+    finish: { densityFactor: Prisma.Decimal };
+  } | null;
 };
 
 /**
  * D-118: kg teórico por unidad de venta de una cobertura, derivado de espesor × ancho ×
- * densidad del acabado (RF-25). `null` si falta el espesor, el ancho o la receta (sin
- * receta no hay acabado del que sacar la densidad). Drywall nunca lo calcula — declara el
- * peso directo (`pieceWeightKg`) porque su sección no es un prisma simple.
+ * densidad del acabado (RF-25). `null` si falta el espesor, el ancho o la receta activa
+ * (sin receta viva no hay acabado del que sacar la densidad — una receta desactivada no
+ * cuenta, mismo criterio que `resolveSalesLines`/`duplicate` usan para "tiene receta").
+ * Drywall nunca lo calcula — declara el peso directo (`pieceWeightKg`) porque su sección
+ * no es un prisma simple.
  */
 function theoreticalKgPerUnit(p: WithLineCode): string | null {
-  if (p.thicknessMm === null || p.widthMm === null || !p.bom) return null;
+  if (p.thicknessMm === null || p.widthMm === null || !p.bom?.isActive) return null;
   const geometry = {
     widthMm: p.widthMm.toFixed(2),
     thicknessMm: p.thicknessMm.toFixed(2),
