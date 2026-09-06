@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -428,7 +427,7 @@ export function NuevoComprobanteView() {
             Se propone facturar todo lo pendiente. Baja la cantidad para facturar en partes; deja
             una línea en blanco para no incluirla.
           </p>
-          <TableScrollArea>
+          <div className="rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
@@ -480,7 +479,7 @@ export function NuevoComprobanteView() {
                 )}
               </TableBody>
             </Table>
-          </TableScrollArea>
+          </div>
         </section>
       ) : (
         <section className="space-y-2">

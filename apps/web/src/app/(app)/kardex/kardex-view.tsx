@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -116,7 +115,7 @@ export function KardexView() {
         </div>
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -209,7 +208,7 @@ export function KardexView() {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
       {/* El kardex de un solo ítem trae el historial completo para el saldo corrido
           (§3.2): no pagina, así que la barra no aplica ahí. */}
       {!singleItem && (

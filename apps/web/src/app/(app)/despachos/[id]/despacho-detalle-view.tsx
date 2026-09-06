@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -266,7 +265,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Qué salió</h2>
-        <TableScrollArea>
+        <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
@@ -299,7 +298,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
               ))}
             </TableBody>
           </Table>
-        </TableScrollArea>
+        </div>
       </section>
 
       {d.notes && (

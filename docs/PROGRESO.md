@@ -1397,10 +1397,13 @@ vacíos/loading/errores/móvil. Ver handoff completo en `docs/handoff/fase-7d.md
   página/tamaño (`<PaginationBar>`). Patrón híbrido (`paginateInMemory` +
   `DERIVED_FILTER_FETCH_CAP`) para los 3 filtros derivados que no se pueden expresar en SQL sin
   duplicar D-075. `fetchAllForPicker` para los 4 selectores tipo autocompletado.
-- **Tablas contenidas.** `<TableScrollArea>` (max-height + scroll interno + encabezado
-  `sticky`) en las tablas de listado; columnas secundarias con `hidden md:table-cell` /
-  `lg:table-cell` en las más anchas (bobinas, pedidos, cotizaciones, despachos, compras,
-  comprobantes, kardex, cobranzas, clientes).
+- **Tablas: encabezado fijo, sin contenedor de scroll (D-115).** Se implementó el contenedor
+  con max-height + scroll interno, pero el dueño pidió revertirlo antes del deploy: vuelve el
+  scroll natural de página (`<div className="rounded-lg border">`, como antes de esta fase).
+  El encabezado `sticky top-0 z-10 bg-background` de `<TableHeader>` se mantuvo — sigue
+  funcionando sin el contenedor. Paginación y columnas responsive (`hidden md:table-cell` /
+  `lg:table-cell` en bobinas, pedidos, cotizaciones, despachos, compras, comprobantes, kardex,
+  cobranzas, clientes) quedaron intactas, no dependían del contenedor.
 - **Afordancia de link unificada (D-114).** `LINK_CLASSNAME` en `apps/web/src/lib/utils.ts`
   reemplaza ~50 sitios que tenían 3 variantes distintas de subrayado escritas a mano.
 - **Barrido general.** Loading (`Skeleton`) y estados vacíos ya eran consistentes en casi

@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -542,7 +541,7 @@ export function NuevoDespachoView() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Qué sale</h2>
-        <TableScrollArea>
+        <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
@@ -592,7 +591,7 @@ export function NuevoDespachoView() {
               )}
             </TableBody>
           </Table>
-        </TableScrollArea>
+        </div>
       </section>
 
       <div className="flex justify-end gap-2">

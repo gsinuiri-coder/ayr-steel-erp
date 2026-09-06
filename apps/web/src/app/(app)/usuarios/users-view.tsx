@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -69,7 +68,7 @@ export function UsersView() {
         </Button>
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -150,7 +149,7 @@ export function UsersView() {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
 
       <UserDialog
         key={`${dialog.user?.id ?? 'nuevo'}-${dialog.nonce}`}

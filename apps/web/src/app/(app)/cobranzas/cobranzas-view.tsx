@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -120,7 +119,7 @@ export function CobranzasView() {
         {receivables.isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : (
-          <TableScrollArea>
+          <div className="rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
@@ -171,7 +170,7 @@ export function CobranzasView() {
                 )}
               </TableBody>
             </Table>
-          </TableScrollArea>
+          </div>
         )}
         {!receivables.isPending && (
           <PaginationBar
@@ -190,7 +189,7 @@ export function CobranzasView() {
         {pending.isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : (
-          <TableScrollArea>
+          <div className="rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
@@ -255,7 +254,7 @@ export function CobranzasView() {
                 )}
               </TableBody>
             </Table>
-          </TableScrollArea>
+          </div>
         )}
         {!pending.isPending && (
           <PaginationBar

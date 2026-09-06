@@ -3,13 +3,15 @@
 ## 1. Resumen
 
 Fase de pulido, no de features: la app queda presentable y operable para UAT con el cliente,
-sin tocar dominio ni schema salvo lo estrictamente listado. Tres decisiones nuevas,
-**D-112..D-114**.
+sin tocar dominio ni schema salvo lo estrictamente listado. Cuatro decisiones nuevas,
+**D-112..D-115** (la última, un pedido del dueño después del cierre inicial: revertir el
+contenedor de scroll interno de tabla).
 
 Cuatro tareas: **fechas** (el pendiente de nueve pantallas que dejó la Sesión M-4, más un
 décimo hallazgo nuevo), **paginación server-side** en las diez tablas que crecen sin techo,
-**tablas contenidas** (scroll interno + encabezado fijo) y **afordancia de link unificada**, y
-un **barrido general** de estados vacíos, loading, errores y viewport móvil.
+**tablas con encabezado fijo** (el contenedor de scroll interno se revirtió — D-115) y
+**afordancia de link unificada**, y un **barrido general** de estados vacíos, loading, errores
+y viewport móvil.
 
 Estado del código: `pnpm turbo lint typecheck test build` en verde; E2E local verde (suites
 existentes reparadas + 3 nuevos). **Pendiente: deploy de API y web, y recién entonces un
@@ -60,20 +62,22 @@ Web: hook `usePagination` + componente `<PaginationBar>` (página/tamaño, "Most
 en las 10 vistas correspondientes. Se descartó adoptar `@tanstack/react-table` (declarada sin
 usar) por el riesgo de reescribir diez tablas ya probadas justo antes de la entrega.
 
-### Tablas contenidas y columnas responsive
+### Tablas: encabezado fijo, columnas responsive (revertido el contenedor de scroll — D-115)
 
-`<TableScrollArea>` (max-height 55vh + scroll interno + `<TableHeader className="sticky
-top-0 z-10 bg-background">`) en las tablas de listado y en el preview de importación
-(`import-dialog.tsx`) y el picker de bobinas de una nueva orden de corte — la página ya no
-scrollea entera en una laptop de 13". Columnas secundarias con `hidden md:table-cell` /
-`lg:table-cell` / `sm:table-cell` en las tablas más anchas (bobinas 10 columnas, despachos,
-compras, comprobantes, kardex, cobranzas, pedidos, cotizaciones, clientes) para priorizar
-columnas clave en pantallas angostas antes que forzar scroll horizontal.
+Se implementó `<TableScrollArea>` (max-height 55vh + scroll interno) en las tablas de listado,
+en el preview de importación (`import-dialog.tsx`) y en el picker de bobinas de una nueva
+orden de corte. **El dueño pidió revertirlo antes del deploy** (desaprovechaba espacio de
+pantalla): las 30 vistas vuelven a `<div className="rounded-lg border">` sin tope de alto, y
+el componente `TableScrollArea` se borró. El encabezado `<TableHeader className="sticky top-0
+z-10 bg-background">` **se mantuvo** — sigue funcionando sin el contenedor de scroll propio
+(se pega al techo del viewport en vez de al de un contenedor propio). Columnas secundarias con
+`hidden md:table-cell` / `lg:table-cell` / `sm:table-cell` en las tablas más anchas (bobinas 10
+columnas, despachos, compras, comprobantes, kardex, cobranzas, pedidos, cotizaciones,
+clientes) quedaron intactas — no dependían del contenedor.
 
-Siete tablas Card-envueltas se revisaron y se dejaron sin este tratamiento a propósito: están
-acotadas por regla de negocio (líneas de un solo documento, servicios de un solo corte, filas
-de un formulario) y no por volumen de transacciones — envolverlas hubiera sido ruido visual
-sin beneficio.
+Siete tablas Card-envueltas se habían revisado y dejado sin el tratamiento de scroll interno a
+propósito (acotadas por regla de negocio, no por volumen); con el revert esa distinción ya no
+aplica — ninguna tabla lleva contenedor de scroll ahora.
 
 ### Afordancia de link unificada (D-114)
 
@@ -111,6 +115,8 @@ vistas de detalle — no un sistema de breadcrumbs completo.
   el patrón híbrido para filtros derivados y `fetchAllForPicker` para selectores. Detalle
   largo (con las alternativas descartadas) en `docs/DECISIONES.md`.
 - **D-114** — Afordancia de link en una sola constante (`LINK_CLASSNAME`), no caso por caso.
+- **D-115** — Revertido el contenedor de scroll interno de tabla (pedido del dueño); queda el
+  encabezado `sticky`, la paginación y las columnas responsive.
 
 ## 4. Bloqueos / pendientes
 

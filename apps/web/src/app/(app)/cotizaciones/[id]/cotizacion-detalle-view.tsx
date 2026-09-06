@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -204,7 +203,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         </Card>
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -258,7 +257,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
 
       {q.notes && (
         <Card>

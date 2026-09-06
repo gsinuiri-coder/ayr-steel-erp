@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -682,7 +681,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Líneas</h2>
-        <TableScrollArea>
+        <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
@@ -722,7 +721,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               ))}
             </TableBody>
           </Table>
-        </TableScrollArea>
+        </div>
         <div className="flex justify-end gap-6 text-sm">
           <span>Subtotal {formatMoney(d.subtotalPen)}</span>
           <span>IGV {formatMoney(d.igvPen)}</span>
@@ -751,7 +750,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               </Button>
             )}
           </div>
-          <TableScrollArea>
+          <div className="rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
@@ -809,14 +808,14 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 )}
               </TableBody>
             </Table>
-          </TableScrollArea>
+          </div>
         </section>
       )}
 
       {d.creditNotes.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-lg font-medium">Notas de crédito</h2>
-          <TableScrollArea>
+          <div className="rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
@@ -843,7 +842,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 ))}
               </TableBody>
             </Table>
-          </TableScrollArea>
+          </div>
         </section>
       )}
 

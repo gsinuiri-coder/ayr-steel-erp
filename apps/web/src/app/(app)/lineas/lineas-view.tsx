@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useQuery } from '@tanstack/react-query';
 import { BUSINESS_LINE_LABELS, type BusinessLineDto } from '@ayr/shared';
 import { api } from '@/lib/api';
@@ -31,7 +30,7 @@ export function LineasView() {
         </p>
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -69,7 +68,7 @@ export function LineasView() {
             ))}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
     </>
   );
 }

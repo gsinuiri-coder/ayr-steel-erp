@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -79,7 +78,7 @@ export function FlejesView() {
         </Select>
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -143,7 +142,7 @@ export function FlejesView() {
             </tfoot>
           )}
         </Table>
-      </TableScrollArea>
+      </div>
     </RoleGate>
   );
 }

@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -67,7 +66,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
         </CardContent>
       </Card>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -121,7 +120,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
     </RoleGate>
   );
 }

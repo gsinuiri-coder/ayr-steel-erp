@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
@@ -117,7 +116,7 @@ export function CorteView() {
         </Select>
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -174,7 +173,7 @@ export function CorteView() {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
     </RoleGate>
   );
 }

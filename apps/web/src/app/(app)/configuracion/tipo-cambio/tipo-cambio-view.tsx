@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -194,7 +193,7 @@ export function TipoCambioView() {
         </CardContent>
       </Card>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -245,7 +244,7 @@ export function TipoCambioView() {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
     </>
   );
 }

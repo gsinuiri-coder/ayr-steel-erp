@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -240,7 +239,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Líneas</h2>
-        <TableScrollArea>
+        <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
@@ -270,7 +269,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
               ))}
             </TableBody>
           </Table>
-        </TableScrollArea>
+        </div>
       </section>
 
       <section className="space-y-2">
@@ -279,7 +278,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
           Una reserva activa descuenta el disponible del ítem sin tocar el kardex (D-054): el
           material sigue físicamente en el almacén, pero ninguna otra operación lo puede tomar.
         </p>
-        <TableScrollArea>
+        <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
@@ -348,7 +347,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
               )}
             </TableBody>
           </Table>
-        </TableScrollArea>
+        </div>
       </section>
 
       {o.notes && (

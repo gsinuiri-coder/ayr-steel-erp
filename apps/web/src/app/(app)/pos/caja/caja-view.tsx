@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -205,7 +204,7 @@ export function CajaView() {
                 )}
               </div>
 
-              <TableScrollArea>
+              <div className="rounded-lg border">
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
@@ -267,7 +266,7 @@ export function CajaView() {
                     )}
                   </TableBody>
                 </Table>
-              </TableScrollArea>
+              </div>
             </CardContent>
           </Card>
 

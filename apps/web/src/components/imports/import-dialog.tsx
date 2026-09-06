@@ -12,7 +12,6 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { TableScrollArea } from '@/components/table-scroll-area';
 import {
   Dialog,
   DialogContent,
@@ -185,7 +184,7 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
 
           {batch && (
             <div className="grid gap-4">
-              <TableScrollArea className="max-h-[40vh]">
+              <div className="rounded-lg border">
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
@@ -210,7 +209,7 @@ export function ImportDialog({ entity, invalidateQueryKey }: Props) {
                     ))}
                   </TableBody>
                 </Table>
-              </TableScrollArea>
+              </div>
               <p className="text-sm text-muted-foreground">
                 {validCount} de {batch.rows.length} {unit} listas para confirmar.
               </p>

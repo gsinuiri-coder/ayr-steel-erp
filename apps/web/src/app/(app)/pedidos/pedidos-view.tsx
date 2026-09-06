@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
@@ -105,7 +104,7 @@ export function PedidosView() {
         </Select>
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -175,7 +174,7 @@ export function PedidosView() {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
       <PaginationBar
         page={page}
         pageSize={pageSize}

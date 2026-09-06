@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
@@ -167,7 +166,7 @@ export function ProduccionView() {
         </Select>
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -252,7 +251,7 @@ export function ProduccionView() {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
     </RoleGate>
   );
 }

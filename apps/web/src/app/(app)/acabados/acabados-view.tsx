@@ -1,6 +1,5 @@
 'use client';
 
-import { TableScrollArea } from '@/components/table-scroll-area';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -70,7 +69,7 @@ export function AcabadosView() {
         )}
       </div>
 
-      <TableScrollArea>
+      <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -143,7 +142,7 @@ export function AcabadosView() {
             )}
           </TableBody>
         </Table>
-      </TableScrollArea>
+      </div>
 
       {isAdmin && (
         <FinishDialog
