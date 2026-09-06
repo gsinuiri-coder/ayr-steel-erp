@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  BusinessLineCode,
   CoilKind,
   CoilStatus,
   CuttingOrderCoilStatus,
@@ -81,6 +82,13 @@ export class CuttingService {
       const coils = await tx.coil.findMany({ where: { id: { in: coilIds } } });
       const byId = new Map(coils.map((c) => [c.id, c]));
 
+      // E (Fase 7e): el corte tercerizado es solo para Drywall — Metallic Roofing no
+      // corta bobina en flejes (se roladora entera, D-086) y trading/UPVC no fabrican.
+      const drywallLine = await tx.businessLine.findUniqueOrThrow({
+        where: { code: BusinessLineCode.DRYWALL },
+        select: { id: true },
+      });
+
       let businessLineId: string | null = null;
       for (const item of input.coils) {
         const coil = byId.get(item.coilId);
@@ -92,6 +100,9 @@ export class CuttingService {
           throw new BadRequestException(
             `${coil.code} no está disponible (${coil.status}): solo bobinas abiertas se envían a corte`,
           );
+        }
+        if (coil.businessLineId !== drywallLine.id) {
+          throw new BadRequestException(`${coil.code}: el corte tercerizado es solo para Drywall`);
         }
         validateWidthBudget(
           coil.widthMm.toString(),

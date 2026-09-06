@@ -7,9 +7,11 @@ import { toast } from 'sonner';
 import {
   Decimal,
   MIN_CHILD_WIDTH_MM,
+  ProductBomKind,
   Role,
   type CoilDto,
   type CuttingOrderDto,
+  type ProductBomDto,
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
@@ -38,6 +40,13 @@ import {
 } from '@/components/ui/table';
 
 interface WidthRow {
+  /**
+   * E (Fase 7e): el ancho ya no se tipea a mano — se elige el SKU de perfil de drywall
+   * cuya receta (`product_boms.input_width_mm`, D-059) necesita ese fleje, y el ancho sale
+   * de ahí. `widthMm` queda derivado, no editable, para que el plan de corte no invente
+   * anchos que ninguna receta consume.
+   */
+  bomProductId: string;
   widthMm: string;
   stripsCount: string;
 }
@@ -65,12 +74,31 @@ export function NuevaOrdenCorteView() {
   });
   const cuttingSuppliers = suppliers.data?.filter((s) => s.isActive && s.providesCuttingService);
 
+  // E (Fase 7e): el corte tercerizado es solo para Drywall — Metallic Roofing se rola
+  // entero (D-086) y trading/UPVC no fabrican, así que no tienen fleje que enviar.
   const availableCoils = useQuery({
-    queryKey: ['coils', 'kind=COIL&status=OPEN'],
-    queryFn: () => fetchAllForPicker<CoilDto>('/coils', { kind: 'COIL', status: 'OPEN' }),
+    queryKey: ['coils', 'kind=COIL&status=OPEN&businessLine=drywall'],
+    queryFn: () =>
+      fetchAllForPicker<CoilDto>('/coils', {
+        kind: 'COIL',
+        status: 'OPEN',
+        businessLine: 'drywall',
+      }),
   });
   const addedIds = new Set(drafts.map((d) => d.coil.id));
   const candidates = (availableCoils.data ?? []).filter((c) => !addedIds.has(c.id));
+
+  // E: el ancho de cada fleje sale de la receta del perfil que lo va a consumir
+  // (`product_boms.input_width_mm`), no de un campo libre — así el plan de corte nunca
+  // pide un ancho que ninguna receta de drywall necesita.
+  const boms = useQuery({
+    queryKey: ['production', 'boms'],
+    queryFn: () => api<ProductBomDto[]>('/production/boms'),
+  });
+  const drywallBoms = (boms.data ?? []).filter(
+    (b) => b.kind === ProductBomKind.DRYWALL && b.isActive && b.inputWidthMm !== null,
+  );
+  const bomById = new Map(drywallBoms.map((b) => [b.productId, b]));
 
   const send = useMutation({
     mutationFn: () =>
@@ -197,7 +225,7 @@ export function NuevaOrdenCorteView() {
                           ...prev,
                           {
                             coil: c,
-                            widthPlanMm: [{ widthMm: '', stripsCount: '1' }],
+                            widthPlanMm: [{ bomProductId: '', widthMm: '', stripsCount: '1' }],
                             expectedKerfLossMm: '0',
                           },
                         ]);
@@ -224,6 +252,8 @@ export function NuevaOrdenCorteView() {
         <DraftCoilCard
           key={draft.coil.id}
           draft={draft}
+          drywallBoms={drywallBoms}
+          bomById={bomById}
           onChange={(next) => {
             setDrafts((prev) => prev.map((d, i) => (i === draftIndex ? next : d)));
           }}
@@ -257,14 +287,27 @@ export function NuevaOrdenCorteView() {
 
 function DraftCoilCard({
   draft,
+  drywallBoms,
+  bomById,
   onChange,
   onRemove,
 }: {
   draft: DraftCoil;
+  drywallBoms: ProductBomDto[];
+  bomById: Map<string, ProductBomDto>;
   onChange: (next: DraftCoil) => void;
   onRemove: () => void;
 }) {
   const fit = planFits(draft);
+  // E: kg teóricos del plan (informativo) — la misma proporción por ancho que
+  // `validateWidthBudget`/`planCoilSplit` ya usan, aplicada al disponible de la bobina en
+  // vez de a un peso recibido (que todavía no existe: RF-41 ajusta contra lo real).
+  const theoreticalKg = draft.widthPlanMm
+    .filter((r) => r.widthMm.trim() && isPositiveDecimal(r.widthMm))
+    .reduce((acc, r) => {
+      const share = new Decimal(r.widthMm).times(stripCount(r.stripsCount));
+      return acc.plus(share.div(draft.coil.widthMm).times(draft.coil.availableKg));
+    }, new Decimal(0));
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between pb-2">
@@ -287,48 +330,73 @@ function DraftCoilCard({
           />
         </div>
         <div className="grid gap-2">
-          <Label>Plan de anchos</Label>
-          {draft.widthPlanMm.map((row, rowIndex) => (
-            <div key={rowIndex} className="flex items-center gap-2">
-              <Input
-                aria-label={`Ancho de la fila ${rowIndex + 1} en mm`}
-                placeholder="Ancho (mm)"
-                inputMode="decimal"
-                value={row.widthMm}
-                onChange={(e) => {
-                  const rows = draft.widthPlanMm.map((r, i) =>
-                    i === rowIndex ? { ...r, widthMm: e.target.value } : r,
-                  );
-                  onChange({ ...draft, widthPlanMm: rows });
-                }}
-              />
-              <Input
-                aria-label={`Cantidad de flejes de la fila ${rowIndex + 1}`}
-                className="w-24"
-                inputMode="numeric"
-                value={row.stripsCount}
-                onChange={(e) => {
-                  const rows = draft.widthPlanMm.map((r, i) =>
-                    i === rowIndex ? { ...r, stripsCount: e.target.value } : r,
-                  );
-                  onChange({ ...draft, widthPlanMm: rows });
-                }}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={draft.widthPlanMm.length === 1}
-                onClick={() => {
-                  onChange({
-                    ...draft,
-                    widthPlanMm: draft.widthPlanMm.filter((_, i) => i !== rowIndex),
-                  });
-                }}
-              >
-                Quitar
-              </Button>
-            </div>
-          ))}
+          <Label>Plan de corte (por SKU de perfil)</Label>
+          {draft.widthPlanMm.map((row, rowIndex) => {
+            const bom = bomById.get(row.bomProductId);
+            return (
+              <div key={rowIndex} className="flex items-center gap-2">
+                <Select
+                  value={row.bomProductId}
+                  onValueChange={(v) => {
+                    const chosen = bomById.get(v);
+                    const rows = draft.widthPlanMm.map((r, i) =>
+                      i === rowIndex
+                        ? { ...r, bomProductId: v, widthMm: chosen?.inputWidthMm ?? '' }
+                        : r,
+                    );
+                    onChange({ ...draft, widthPlanMm: rows });
+                  }}
+                >
+                  <SelectTrigger
+                    className="w-full"
+                    aria-label={`SKU de perfil de la fila ${rowIndex + 1}`}
+                  >
+                    <SelectValue placeholder="Elige el perfil que consume este fleje" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {drywallBoms.map((b) => (
+                      <SelectItem key={b.productId} value={b.productId}>
+                        {b.productSku} — {b.productName} ({b.inputWidthMm} mm)
+                      </SelectItem>
+                    ))}
+                    {drywallBoms.length === 0 && (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        Ningún perfil de drywall tiene receta activa (D-059).
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+                <Input
+                  aria-label={`Cantidad de flejes de la fila ${rowIndex + 1}`}
+                  className="w-24"
+                  inputMode="numeric"
+                  value={row.stripsCount}
+                  onChange={(e) => {
+                    const rows = draft.widthPlanMm.map((r, i) =>
+                      i === rowIndex ? { ...r, stripsCount: e.target.value } : r,
+                    );
+                    onChange({ ...draft, widthPlanMm: rows });
+                  }}
+                />
+                <span className="w-20 shrink-0 text-xs text-muted-foreground">
+                  {bom ? `${bom.inputWidthMm} mm` : '—'}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={draft.widthPlanMm.length === 1}
+                  onClick={() => {
+                    onChange({
+                      ...draft,
+                      widthPlanMm: draft.widthPlanMm.filter((_, i) => i !== rowIndex),
+                    });
+                  }}
+                >
+                  Quitar
+                </Button>
+              </div>
+            );
+          })}
           <Button
             variant="outline"
             size="sm"
@@ -336,16 +404,19 @@ function DraftCoilCard({
             onClick={() => {
               onChange({
                 ...draft,
-                widthPlanMm: [...draft.widthPlanMm, { widthMm: '', stripsCount: '1' }],
+                widthPlanMm: [
+                  ...draft.widthPlanMm,
+                  { bomProductId: '', widthMm: '', stripsCount: '1' },
+                ],
               });
             }}
           >
-            Agregar ancho
+            Agregar fila
           </Button>
         </div>
         <p className={`text-sm ${fit.error ? 'text-destructive' : 'text-muted-foreground'}`}>
           {fit.error ??
-            `Consume ${fit.consumedWidthMm} mm de ${draft.coil.widthMm} mm (queda ${fit.remainingWidthMm} mm).`}
+            `Consume ${fit.consumedWidthMm} mm de ${draft.coil.widthMm} mm (queda ${fit.remainingWidthMm} mm) · ≈ ${theoreticalKg.toFixed(3)} kg teóricos.`}
         </p>
       </CardContent>
     </Card>
