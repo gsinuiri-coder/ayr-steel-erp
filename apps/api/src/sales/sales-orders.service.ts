@@ -664,6 +664,11 @@ export class SalesOrdersService {
         await tx.reservation.updateMany({
           where: { id: { in: active.map((r) => r.id) }, status: ReservationStatus.ACTIVE },
           data: {
+            // D-054: lo que queda "prometido" cuando una reserva deja de estar ACTIVA es
+            // cero — mismo criterio que `reduceReservation`/`releaseRemainingReservation`
+            // (reservation-guard.ts). Sin esto, `reservations.qty` queda mintiendo el monto
+            // original sobre una fila ya RELEASED (hallazgo de `qa`, Fase 7e).
+            qty: '0',
             status: ReservationStatus.RELEASED,
             releasedAt: new Date(),
             releasedById: actor.id,

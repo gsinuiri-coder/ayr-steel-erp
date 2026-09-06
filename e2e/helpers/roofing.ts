@@ -96,6 +96,8 @@ export async function createRoofingProduct(
     finishId: string;
     colorId?: string | null;
     thicknessMm?: string;
+    /** D-118: ancho nominal del SKU (catálogo), independiente del ancho de la bobina real. */
+    catalogWidthMm?: string;
     /** Con largo, es una plancha de catálogo (`NIU`); sin él, una cobertura a medida (`MTR`). */
     pieceLengthMm?: string;
     listPricePen?: string;
@@ -110,6 +112,9 @@ export async function createRoofingProduct(
     unit: madeToMeasure ? 'MTR' : 'NIU',
     source: 'MANUFACTURED',
     listPricePen: options.listPricePen ?? '30',
+    // D-118 (Fase 7e): Metallic Roofing exige espesor y ancho del SKU desde el alta.
+    thicknessMm: options.thicknessMm ?? NOMINAL_THICKNESS,
+    widthMm: options.catalogWidthMm ?? COIL_WIDTH,
     ...(options.colorId ? { colorId: options.colorId } : {}),
   });
   const bom = await putJson<ProductBomDto>(api, `/api/production/boms/${product.id}`, {
@@ -130,6 +135,13 @@ export interface RoofingCoilOptions {
   widthMm?: string;
   unitPrice?: string;
   lineCode?: string;
+  /**
+   * D-117 (Fase 7e): una bobina nueva nace `CLOSED` salvo que se pida `OPEN`. La mayoría
+   * de estos escenarios la montan de inmediato en una OP o la reservan por kilos, y las
+   * dos cosas exigen `OPEN` (D-116 solo admite `CLOSED` en la venta de la bobina entera),
+   * así que el default de este helper sigue siendo `OPEN` para no romper Fase 6.
+   */
+  coilStatus?: 'OPEN' | 'CLOSED';
 }
 
 /**
@@ -164,6 +176,7 @@ export async function buyRoofingCoil(
         widthMm: options.widthMm ?? COIL_WIDTH,
         thicknessMm: options.thicknessMm ?? NOMINAL_THICKNESS,
         ...(options.colorId ? { colorId: options.colorId } : {}),
+        coilStatus: options.coilStatus ?? 'OPEN',
       },
     ],
   });

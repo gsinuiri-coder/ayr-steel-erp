@@ -62,6 +62,12 @@ export interface ProductDto {
   businessLineId: string;
   unit: string;
   colorId?: string | null;
+  /** D-118 (Fase 7e): campos estructurados del SKU. Null salvo en la línea que los exige. */
+  thicknessMm?: string | null;
+  widthMm?: string | null;
+  lengthMm?: string | null;
+  pieceWeightKg?: string | null;
+  theoreticalKgPerUnit?: string | null;
 }
 
 export interface ProductBomDto {
@@ -338,9 +344,32 @@ export async function createCatalogProduct(
     unit?: string;
     source?: 'MANUFACTURED' | 'PURCHASED';
     name?: string;
+    /** D-118: campos estructurados de la pieza terminada; con overrides propios si hacen falta. */
+    widthMm?: string;
+    lengthMm?: string;
+    pieceWeightKg?: string;
+    thicknessMm?: string;
   } = {},
 ): Promise<ProductDto> {
-  const lineId = await businessLineId(api, options.lineCode ?? LINE);
+  const lineCode = options.lineCode ?? LINE;
+  const lineId = await businessLineId(api, lineCode);
+  // D-118 (Fase 7e): Drywall exige ancho/largo/peso de la pieza terminada y Metallic
+  // Roofing exige espesor/ancho del SKU. Sin esto `POST /catalog` rechaza el alta con
+  // "El ancho de la pieza terminada es obligatorio en Drywall" (u homólogo). El resto de
+  // líneas no los usa, así que no se manda nada si `lineCode` no es una de las dos.
+  const structured =
+    lineCode === LINE
+      ? {
+          widthMm: options.widthMm ?? '100',
+          lengthMm: options.lengthMm ?? '3000',
+          pieceWeightKg: options.pieceWeightKg ?? '6',
+        }
+      : lineCode === 'metallic-roofing'
+        ? {
+            thicknessMm: options.thicknessMm ?? '0.50',
+            widthMm: options.widthMm ?? '1000',
+          }
+        : {};
   return postJson<ProductDto>(api, '/api/catalog', {
     businessLineId: lineId,
     // Prefijo con separador, igual que los proveedores `E2E …`: es la marca con la que
@@ -349,6 +378,7 @@ export async function createCatalogProduct(
     name: options.name ?? 'Perfil E2E de drywall',
     unit: options.unit ?? 'NIU',
     source: options.source ?? 'MANUFACTURED',
+    ...structured,
   });
 }
 
@@ -420,6 +450,9 @@ export async function setupScenario(
         finishId: finish.id,
         widthMm: '1200',
         thicknessMm: '0.50',
+        // D-117 (Fase 7e): una bobina nueva nace CLOSED por defecto; este escenario la
+        // manda de inmediato a corte tercerizado, que exige OPEN.
+        coilStatus: 'OPEN',
       },
     ],
   });

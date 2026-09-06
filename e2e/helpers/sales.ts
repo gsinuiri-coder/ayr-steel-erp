@@ -71,7 +71,10 @@ export interface ReservationDto {
 export interface QuotationDto {
   id: string;
   code: string;
+  customerId: string;
   status: 'DRAFT' | 'EMITTED' | 'CONFIRMED' | 'EXPIRED' | 'CANCELLED';
+  /** D-119 (Fase 7e): líneas de negocio distintas de sus ítems — puede tener más de una. */
+  businessLines: string[];
   issueDate: string;
   validUntil: string;
   isExpired: boolean;
@@ -202,12 +205,21 @@ export async function createSellableProduct(
   options: { lineCode: string; listPricePen?: string; unit?: string },
 ): Promise<ProductDto & { listPricePen: string | null }> {
   const lineId = await businessLineId(api, options.lineCode);
+  // D-118 (Fase 7e): Drywall y Metallic Roofing exigen sus campos estructurados desde el
+  // alta del SKU; el resto de líneas no los usa.
+  const structured =
+    options.lineCode === 'drywall'
+      ? { widthMm: '100', lengthMm: '3000', pieceWeightKg: '6' }
+      : options.lineCode === 'metallic-roofing'
+        ? { thicknessMm: '0.50', widthMm: '1000' }
+        : {};
   return postJson<ProductDto & { listPricePen: string | null }>(api, '/api/catalog', {
     businessLineId: lineId,
     sku: `E2E-VTA${randomLetters(5)}`,
     name: `Producto E2E vendible ${randomLetters(3)}`,
     unit: options.unit ?? 'NIU',
     source: 'PURCHASED',
+    ...structured,
     ...(options.listPricePen === undefined ? {} : { listPricePen: options.listPricePen }),
   });
 }
@@ -252,6 +264,9 @@ export async function setupCoilStock(
         finishId: finish.id,
         widthMm: '1200',
         thicknessMm: '0.50',
+        // D-117 (Fase 7e): nace CLOSED por defecto; este escenario reserva kilos de
+        // materia prima de inmediato (`reserveFromCoilId`), que exige OPEN.
+        coilStatus: 'OPEN',
       },
     ],
   });
@@ -261,6 +276,86 @@ export async function setupCoilStock(
   expect(coil.availableKg).toBe(`${Number(weightKg).toFixed(0)}.000`);
 
   return { supplier, finish, purchaseId: purchase.id, coil };
+}
+
+/**
+ * Una bobina propia (`kind=COIL`) comprada y recibida, para venderla **entera** (D-116,
+ * Fase 7e). A diferencia de `setupCoilStock` —pensada para reservar kilos parciales, y por
+ * eso siempre `OPEN`— acá el estado es el que pida el test: `CLOSED` (el default real de
+ * D-117, sin mandar `coilStatus`) o `OPEN` (una bobina que también se puede vender entera,
+ * y que además sirve para ejercitar guardrails que exigen `OPEN` antes de llegar a la
+ * custodia, como enviar a corte o montar en una OP).
+ */
+export async function buyCoilForSale(
+  api: APIRequestContext,
+  options: {
+    lineCode: string;
+    weightKg?: string;
+    unitPrice?: string;
+    coilStatus?: 'OPEN' | 'CLOSED';
+  },
+): Promise<CoilScenario> {
+  const supplier = await createCuttingSupplier(api);
+  const finish = await createFinish(api);
+  const weightKg = options.weightKg ?? '500';
+
+  const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
+    supplierId: supplier.id,
+    businessLine: options.lineCode,
+    type: 'COIL',
+    docType: 'FACTURA',
+    series: 'F001',
+    number: uniqueDocumentNumber(),
+    issueDate: today(),
+    currency: 'PEN',
+    igvRate: '18',
+    paymentTerms: 'CONTADO',
+    items: [
+      {
+        description: 'Bobina E2E Fase 7e para vender entera',
+        qty: weightKg,
+        unit: 'KGM',
+        unitPrice: options.unitPrice ?? '5',
+        finishId: finish.id,
+        widthMm: '1200',
+        thicknessMm: '0.50',
+        // D-117: sin este campo la bobina nace CLOSED (el default real). Se manda solo
+        // cuando el test pide explícitamente OPEN.
+        ...(options.coilStatus ? { coilStatus: options.coilStatus } : {}),
+      },
+    ],
+  });
+  await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
+  const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
+  const coil = coils[0]!;
+  expect(coil.availableKg).toBe(`${Number(weightKg).toFixed(0)}.000`);
+  expect(coil.status).toBe(options.coilStatus ?? 'CLOSED');
+
+  return { supplier, finish, purchaseId: purchase.id, coil };
+}
+
+export interface SellableCoilDto {
+  coilId: string;
+  code: string;
+  businessLine: string;
+  typeKey: string;
+  finishCode: string;
+  finishName: string;
+  colorCode: string | null;
+  colorName: string | null;
+  widthMm: string;
+  thicknessMm: string;
+  status: 'OPEN' | 'CLOSED';
+  availableQty: string;
+}
+
+/** `GET /sales/sellable-coils` (D-116): bobinas DISPONIBLES para vender enteras. */
+export async function sellableCoils(
+  api: APIRequestContext,
+  businessLine?: string,
+): Promise<SellableCoilDto[]> {
+  const qs = businessLine ? `?businessLine=${businessLine}` : '';
+  return getJson<SellableCoilDto[]>(api, `/api/sales/sellable-coils${qs}`);
 }
 
 /** Físico, reservado y disponible de un ítem, tal como los muestra `/inventario`. */
@@ -352,6 +447,8 @@ export async function setupCoilBatch(
       finishId: finish.id,
       widthMm: '1200',
       thicknessMm: '0.50',
+      // D-117 (Fase 7e): nace CLOSED por defecto; estos lotes se reservan por kilos.
+      coilStatus: 'OPEN',
     })),
   });
   await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
