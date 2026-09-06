@@ -175,6 +175,9 @@ async function receivedCoilPurchase(
       finishId: input.finish.id,
       widthMm: line.widthMm,
       thicknessMm: line.thicknessMm,
+      // D-117 (Fase 7e, C): sin esto la bobina nace CLOSED y las operaciones de esta
+      // fase (partido, envío a corte, edición) la rechazan por no estar abierta.
+      coilStatus: 'OPEN',
     })),
   });
   const received = await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);

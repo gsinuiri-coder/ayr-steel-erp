@@ -447,9 +447,11 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
    */
   test('no se confirma una cotización cuya bobina se fue a corte entre medias', async () => {
     const customer = await createCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: COVER_LINE, weightKg: '2000' });
+    // D-120 (Fase 7e, E): el corte tercerizado ahora es exclusivo de Drywall — este caso
+    // de borde es agnóstico a la línea, así que se mueve a PROFILE_LINE en vez de COVER_LINE.
+    const stock = await setupCoilStock(api, { lineCode: PROFILE_LINE, weightKg: '2000' });
     const product = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
+      lineCode: PROFILE_LINE,
       listPricePen: '70.0000',
     });
     const trail = newTrail();
@@ -458,7 +460,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
     try {
       const quotation = await createQuotation(api, {
         customerId: customer.id,
-        businessLine: COVER_LINE,
+        businessLine: PROFILE_LINE,
         productId: product.id,
         qty: '9',
         reserveFromCoilId: stock.coil.id,

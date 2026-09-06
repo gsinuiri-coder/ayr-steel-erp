@@ -490,9 +490,14 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
 
   test('con stock reservado se bloquean merma, envío a corte, cierre y anulación', async () => {
     const customer = await createCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: COVER_LINE, weightKg: '2000' });
+    // D-120 (Fase 7e, E): el corte tercerizado ahora es exclusivo de Drywall. En
+    // Metallic Roofing (b) el 400 de "envío a corte" pasaría a ser el de línea, no el de
+    // custodia (D-050) que este test quiere probar, así que el escenario se mueve entero
+    // a PROFILE_LINE — la reserva de kilos de una bobina madre (`reserveFromCoilId`) es
+    // genérica por `CoilKind.COIL`, no exclusiva de coberturas.
+    const stock = await setupCoilStock(api, { lineCode: PROFILE_LINE, weightKg: '2000' });
     const product = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
+      lineCode: PROFILE_LINE,
       listPricePen: '75.0000',
     });
     const trail: { orderIds: string[]; quotationIds: string[] } = {
@@ -501,10 +506,10 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
     };
 
     try {
-      // Coberturas exige cotización (D-065), así que la reserva nace de confirmarla.
+      // La reserva de kilos de la bobina madre nace de confirmar la cotización (D-066).
       const quotation = await createQuotation(api, {
         customerId: customer.id,
-        businessLine: COVER_LINE,
+        businessLine: PROFILE_LINE,
         productId: product.id,
         qty: '10',
         reserveFromCoilId: stock.coil.id,

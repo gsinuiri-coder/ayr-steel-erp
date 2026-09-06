@@ -190,6 +190,10 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
         unit: 'NIU',
         source: 'PURCHASED',
         listPricePen: '10',
+        // D-118 (Fase 7e, B): obligatorios en Drywall, sin importar el origen.
+        widthMm: '100',
+        lengthMm: '3000',
+        pieceWeightKg: '6',
       });
       const refused = await posSellExpectingError(api, {
         items: [

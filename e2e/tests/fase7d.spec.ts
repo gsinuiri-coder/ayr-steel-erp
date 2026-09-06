@@ -159,7 +159,9 @@ test.describe('Fase 7d — paginación server-side y fechas en zona de Lima', ()
 
     const purchase = await postJson<CreatedPurchase>(api, '/api/purchases', {
       supplierId: supplier.id,
-      businessLine: 'trading',
+      // D-117 (Fase 7e, C): solo Drywall/Metallic Roofing compran bobinas; `trading` la
+      // vende como producto (D-037) pero nunca la compra.
+      businessLine: 'drywall',
       type: 'COIL',
       docType: 'FACTURA',
       series: 'F001',

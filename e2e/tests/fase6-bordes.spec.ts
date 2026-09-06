@@ -9,7 +9,6 @@ import {
   putExpectingError,
   today,
   type CoilDto,
-  type CuttingOrderDto,
   type ProductionOrderDto,
 } from '../helpers/production';
 import { availabilityOf, createCustomer } from '../helpers/sales';
@@ -56,9 +55,8 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
     await api.dispose();
   });
 
-  test('el filtro de bobina descarta espesor fuera de tolerancia, color distinto y rollo en corte (D-086)', async () => {
+  test('el filtro de bobina descarta espesor fuera de tolerancia, color distinto y bobina cerrada (D-086)', async () => {
     const supplier = await createCuttingSupplier(api);
-    const cutter = await createCuttingSupplier(api);
     const scenario = await setupRoofingScenario(api, { weightKg: '800' });
     const otroColor = await createColor(api, '#0033a0');
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
@@ -122,21 +120,15 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       expect(offered).not.toContain(otroColorCoil.coil.id);
       expect(offered).not.toContain(sinColor.coil.id);
 
-      // Una bobina en corte tercerizado tampoco aparece: sigue siendo nuestra (D-050) pero
-      // no está en la planta.
-      await postJson<CuttingOrderDto>(api, '/api/cutting', {
-        supplierId: cutter.id,
-        notes: 'Corte E2E Fase 6 para sacar la bobina del filtro',
-        coils: [
-          {
-            coilId: enTolerancia.coil.id,
-            widthPlanMm: [{ widthMm: '500', stripsCount: 1 }],
-            expectedKerfLossMm: '0',
-          },
-        ],
+      // Una bobina cerrada tampoco aparece: el filtro solo ofrece `OPEN` (D-086). Antes de
+      // D-120 (Fase 7e, E) esto se probaba enviándola a corte tercerizado, pero el corte
+      // ahora es exclusivo de Drywall — coberturas no puede llegar a `IN_THIRD_PARTY`, así
+      // que se prueba con el otro camino real hacia "no OPEN": cerrarla (RF-19).
+      await postJson<CoilDto>(api, `/api/coils/${enTolerancia.coil.id}/status`, {
+        status: 'CLOSED',
       });
-      const afterSend = (await coilOptions(api, scenario.product.id)).map((o) => o.coilId);
-      expect(afterSend).not.toContain(enTolerancia.coil.id);
+      const afterClose = (await coilOptions(api, scenario.product.id)).map((o) => o.coilId);
+      expect(afterClose).not.toContain(enTolerancia.coil.id);
     } finally {
       await purgeRoofingTrail(api, { ...trail, coilIds: [...(trail.coilIds ?? [])] });
       await purgeRoofingTrail(api, {
@@ -144,9 +136,6 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
         purchaseIds: extras.purchaseIds,
         supplierId: supplier.id,
       });
-      await api
-        .patch(`/api/suppliers/${cutter.id}`, { data: { isActive: false } })
-        .catch(() => undefined);
       await api
         .patch(`/api/colors/${otroColor.id}`, { data: { isActive: false } })
         .catch(() => undefined);
