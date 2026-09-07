@@ -12,6 +12,7 @@ import {
   type FiscalDocumentDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import type { ReverseArgs } from '@/lib/reverse-args';
 import { useSession } from '@/lib/session';
 import { formatDate, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
@@ -71,8 +72,11 @@ export function DespachoDetalleView({ id }: { id: string }) {
   });
 
   const reverse = useMutation({
-    mutationFn: (reason: string) =>
-      api<DispatchDto>(`/dispatches/${id}/reverse`, { method: 'POST', body: { reason } }),
+    mutationFn: ({ reason, operationDate }: ReverseArgs) =>
+      api<DispatchDto>(`/dispatches/${id}/reverse`, {
+        method: 'POST',
+        body: { reason, operationDate },
+      }),
     onSuccess: () => {
       toast.success('Despacho revertido: el stock volvió al almacén');
       setReverseOpen(false);
@@ -321,8 +325,9 @@ export function DespachoDetalleView({ id }: { id: string }) {
         description="Devuelve el material al kardex, restaura las reservas del pedido y recalcula si el pedido sigue atendido. La fila del despacho no se borra: queda marcada como revertida."
         confirmLabel="Revertir despacho"
         pending={reverse.isPending}
-        onConfirm={(reason) => {
-          reverse.mutate(reason);
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
+          reverse.mutate({ reason, operationDate });
         }}
       />
     </RoleGate>

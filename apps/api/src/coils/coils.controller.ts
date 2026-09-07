@@ -69,7 +69,7 @@ export class CoilsController {
     @Param('movementId') movementId: string,
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<CoilDto> {
-    return this.operations.cancelScrap(actor, parseMovementId(movementId), body.reason);
+    return this.operations.cancelScrap(actor, parseMovementId(movementId), body);
   }
 
   /** Revertir un partido (RF-16). */
@@ -79,7 +79,7 @@ export class CoilsController {
     @Param('splitId', ParseUUIDPipe) splitId: string,
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<CoilSplitDto[]> {
-    return this.operations.revertSplit(actor, splitId, body.reason);
+    return this.operations.revertSplit(actor, splitId, body);
   }
 
   @Get(':id')
@@ -150,7 +150,7 @@ export class CoilsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<CoilDto> {
-    return this.operations.cancel(actor, id, body.reason);
+    return this.operations.cancel(actor, id, body);
   }
 }
 

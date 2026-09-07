@@ -4,12 +4,13 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  BusinessLine,
   BUSINESS_LINE_LABELS,
+  BusinessLine,
   ImportEntity,
   PRODUCT_SOURCE_LABELS,
   ProductSource,
   Role,
+  ROOFING_PRODUCT_KIND_LABELS,
   Unit,
   type BusinessLineDto,
   type ProductDto,
@@ -148,6 +149,11 @@ export function CatalogoView() {
                       <TableHead>SKU</TableHead>
                       <TableHead>Nombre</TableHead>
                       {usesColor(line.code) && <TableHead>Color</TableHead>}
+                      {/* D-127: el subtipo decide qué hace la confirmación con esta línea,
+                          así que se ve en la lista y no solo dentro del diálogo. */}
+                      {line.code === BusinessLine.METALLIC_ROOFING && (
+                        <TableHead>Subtipo</TableHead>
+                      )}
                       <TableHead>Unidad</TableHead>
                       <TableHead>Origen</TableHead>
                       <TableHead>Estado</TableHead>
@@ -168,6 +174,13 @@ export function CatalogoView() {
                                   : null
                               }
                             />
+                          </TableCell>
+                        )}
+                        {line.code === BusinessLine.METALLIC_ROOFING && (
+                          <TableCell>
+                            {p.roofingKind === null
+                              ? '—'
+                              : ROOFING_PRODUCT_KIND_LABELS[p.roofingKind]}
                           </TableCell>
                         )}
                         <TableCell>{p.unit}</TableCell>

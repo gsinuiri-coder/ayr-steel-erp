@@ -6,6 +6,7 @@ import {
   INVENTORY_MOVEMENT_TYPES,
   INVENTORY_REF_TYPES,
 } from '../enums';
+import { operationDateSchema } from './operation';
 import { paginationQuerySchema } from './pagination';
 
 /**
@@ -34,7 +35,14 @@ export const inventoryMovementSchema = z.object({
   reversedById: z.string().nullable(),
   actorId: z.string().uuid().nullable(),
   actorName: z.string().nullable(),
+  /** Instante en que se grabó, para auditoría. No es la fecha por la que el kardex ordena. */
   at: z.string(),
+  /**
+   * D-124: **día de negocio** del movimiento (`YYYY-MM-DD`, Lima). Es la fecha por la que
+   * el kardex ordena, por la que el filtro `desde/hasta` corta y por la que todo reporte
+   * agrupa. En una operación del día coincide con `at`; en una carga histórica, no.
+   */
+  operationDate: z.string(),
   /**
    * Saldo y costo promedio justo después de este movimiento. Solo vienen cuando la
    * consulta es el kardex de un ítem concreto (RF-53), que es donde el saldo corrido
@@ -76,14 +84,9 @@ export const inventoryQuerySchema = paginationQuerySchema.extend({
   itemType: z.enum(INVENTORY_ITEM_TYPES).optional(),
   itemId: z.string().uuid().optional(),
   businessLine: z.enum(BUSINESS_LINES).optional(),
-  from: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
-    .optional(),
-  to: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
-    .optional(),
+  /** D-124: cortan por `operationDate` (día de negocio), no por el instante de grabación. */
+  from: operationDateSchema.optional(),
+  to: operationDateSchema.optional(),
 });
 export type InventoryQuery = z.infer<typeof inventoryQuerySchema>;
 

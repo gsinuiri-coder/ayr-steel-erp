@@ -936,7 +936,12 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               <Label>Fecha</Label>
               <Input
                 type="date"
+                max={businessToday()}
                 value={payDate}
+                // D-124: es la fecha de operación del cobro. Solo un administrador la mueve
+                // del día; el API le responde 403 a cualquier otro rol, así que la pantalla no
+                // ofrece algo que va a fallar.
+                disabled={user.role !== Role.ADMINISTRADOR}
                 onChange={(e) => {
                   setPayDate(e.target.value);
                 }}

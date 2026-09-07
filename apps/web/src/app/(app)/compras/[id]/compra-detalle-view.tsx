@@ -26,8 +26,12 @@ import {
   type PurchaseDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import type { ReverseArgs } from '@/lib/reverse-args';
 import { formatDate, formatMoney, formatQty, isPositiveDecimal, todayIso } from '@/lib/format';
+import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -97,18 +101,31 @@ export function CompraDetalleView({ id }: { id: string }) {
     void queryClient.invalidateQueries({ queryKey: ['supplier-statement'] });
   };
 
+  // D-124: la recepción es lo que mueve kardex y da de alta las bobinas, así que su fecha
+  // de operación es la de todo lo que crea. Por defecto hoy; solo un administrador la mueve.
+  const [receiveDate, setReceiveDate] = useState<string | undefined>(undefined);
   const receive = useMutation({
-    mutationFn: () => api<PurchaseDto>(`/purchases/${id}/receive`, { method: 'POST' }),
+    mutationFn: (confirmBackdate: boolean) =>
+      api<PurchaseDto>(`/purchases/${id}/receive`, {
+        method: 'POST',
+        body: { operationDate: receiveDate, confirmBackdate: confirmBackdate || undefined },
+      }),
     onSuccess: () => {
       toast.success('Compra recibida: el stock ya está en el kardex');
       invalidate();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo recibir'),
   });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await receive.mutateAsync(confirmBackdate);
+  });
 
   const cancel = useMutation({
-    mutationFn: (reason: string) =>
-      api<PurchaseDto>(`/purchases/${id}/cancel`, { method: 'POST', body: { reason } }),
+    mutationFn: ({ reason, operationDate }: ReverseArgs) =>
+      api<PurchaseDto>(`/purchases/${id}/cancel`, {
+        method: 'POST',
+        body: { reason, operationDate },
+      }),
     onSuccess: () => {
       toast.success('Compra anulada');
       setConfirmCancel(false);
@@ -159,14 +176,17 @@ export function CompraDetalleView({ id }: { id: string }) {
             {PURCHASE_STATUS_LABELS[p.status]}
           </Badge>
           {canReceive && p.status === 'DRAFT' && (
-            <Button
-              disabled={receive.isPending}
-              onClick={() => {
-                receive.mutate();
-              }}
-            >
-              {receive.isPending ? 'Recibiendo…' : 'Recibir'}
-            </Button>
+            <div className="grid justify-items-end gap-1">
+              <Button
+                disabled={receive.isPending}
+                onClick={() => {
+                  void backdate.attempt();
+                }}
+              >
+                {receive.isPending ? 'Recibiendo…' : 'Recibir'}
+              </Button>
+              <OperationDateField value={receiveDate} onChange={setReceiveDate} />
+            </div>
           )}
           {isAdmin && p.status !== 'CANCELLED' && (
             <Button
@@ -430,6 +450,18 @@ export function CompraDetalleView({ id }: { id: string }) {
         </div>
       )}
 
+      <BackdateConfirmDialog
+        open={backdate.open}
+        onOpenChange={(open) => {
+          if (!open) backdate.close();
+        }}
+        detail={backdate.detail ?? ''}
+        pending={receive.isPending}
+        onConfirm={() => {
+          void backdate.confirm();
+        }}
+      />
+
       <ReasonDialog
         open={confirmCancel}
         onOpenChange={setConfirmCancel}
@@ -441,10 +473,11 @@ export function CompraDetalleView({ id }: { id: string }) {
         }
         confirmLabel="Sí, anular"
         pending={cancel.isPending}
-        onConfirm={(reason) => {
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
           // El diálogo se cierra en `onSuccess`: si el API rechaza la anulación —lo hace
           // cuando algo se movió después—, el motivo escrito no se pierde.
-          cancel.mutate(reason);
+          cancel.mutate({ reason, operationDate });
         }}
       />
 

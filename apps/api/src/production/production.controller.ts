@@ -143,7 +143,7 @@ export class ProductionController {
     @Param('reportId', ParseUUIDPipe) reportId: string,
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<ProductionOrderDto> {
-    return this.production.reverseReport(actor, id, reportId, body.reason);
+    return this.production.reverseReport(actor, id, reportId, body);
   }
 
   /** Cerrar la orden: merma de proceso por diferencia y costeo (D-057, D-056). */
@@ -163,7 +163,7 @@ export class ProductionController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<ProductionOrderDto> {
-    return this.production.reopen(actor, id, body.reason);
+    return this.production.reopen(actor, id, body);
   }
 
   /** Anular la orden y liberar los flejes no consumidos (D-046: solo ADMINISTRADOR). */

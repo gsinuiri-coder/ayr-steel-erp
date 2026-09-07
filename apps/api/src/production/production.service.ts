@@ -13,12 +13,14 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
+  fromDateOnly,
   MAX_ORDER_REPORTS,
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   productionOrderCode,
   salesOrderCode,
   theoreticalKg,
+  toDateOnly,
   toDecimal,
   toFixedString,
   Unit,
@@ -31,11 +33,13 @@ import {
   type ProductionOrderQuery,
   type ProductionStripOptionDto,
   type ReportPiecesInput,
+  type ReverseMovementInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
@@ -170,6 +174,7 @@ export class ProductionService {
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
     private readonly boms: BomsService,
+    private readonly operationDate: OperationDateService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -177,6 +182,10 @@ export class ProductionService {
   // -------------------------------------------------------------------------
 
   async create(actor: RequestUser, input: CreateProductionOrderInput): Promise<ProductionOrderDto> {
+    // D-124: fecha en que la corrida arranca. Crear la OP no mueve kardex (D-060: asignar
+    // es custodia, no consumo), así que acá no hay guardrail cronológico; la fecha existe
+    // para que la cola y el reporte de producción ubiquen la orden en su mes.
+    const orderOperationDate = this.operationDate.resolve(actor, input.operationDate);
     const product = await this.prisma.product.findUnique({
       where: { id: input.productId },
       include: { businessLine: { select: { id: true, code: true } } },
@@ -276,6 +285,7 @@ export class ProductionService {
           reservationId: input.reservationId ?? null,
           notes: input.notes ?? null,
           createdById: actor.id,
+          operationDate: toDateOnly(orderOperationDate),
         },
       });
       await this.audit.write(tx, {
@@ -482,6 +492,7 @@ export class ProductionService {
     orderId: string,
     input: ReportPiecesInput,
   ): Promise<ProductionOrderDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const order = await this.lockOrder(tx, orderId);
@@ -560,6 +571,7 @@ export class ProductionService {
             unitCostPen: '0',
             notes: input.notes ?? null,
             createdById: actor.id,
+            operationDate: toDateOnly(operationDate),
           },
         });
 
@@ -577,6 +589,8 @@ export class ProductionService {
             refId: report.id,
             notes: `Consumo de ${productionOrderCode(order.seq)}: ${input.pieces} piezas`,
             actorId: actor.id,
+            operationDate,
+            confirmBackdate: input.confirmBackdate,
           });
           if (!out) {
             throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -606,6 +620,8 @@ export class ProductionService {
           refId: report.id,
           notes: `${productionOrderCode(order.seq)}: ${input.pieces} piezas producidas`,
           actorId: actor.id,
+          operationDate,
+          confirmBackdate: input.confirmBackdate,
         });
         if (!entry) {
           throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -626,6 +642,8 @@ export class ProductionService {
           entityId: orderId,
           after: {
             reportId: report.id,
+            operationDate,
+            confirmedBackdate: input.confirmBackdate === true,
             pieces: input.pieces,
             theoreticalKg: toFixedString(neededKg, 'KG'),
             materialCostPen: toFixedString(materialCostPen, 'MONEY'),
@@ -657,8 +675,10 @@ export class ProductionService {
     actor: RequestUser,
     orderId: string,
     reportId: string,
-    reason: string,
+    input: ReverseMovementInput,
   ): Promise<ProductionOrderDto> {
+    const { reason } = input;
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const order = await this.lockOrder(tx, orderId);
@@ -728,7 +748,7 @@ export class ProductionService {
 
         // Primero salen las piezas y después vuelven los kilos: al revés, los flejes
         // recuperarían material que las piezas todavía están representando.
-        await this.inventory.reverse(tx, entry.id, actor.id, reason);
+        await this.inventory.reverse(tx, entry.id, actor.id, reason, operationDate);
 
         const rows = await tx.productionOrderConsumption.findMany({
           where: { productionOrderId: orderId },
@@ -736,7 +756,7 @@ export class ProductionService {
         });
         for (const movement of stripOuts) {
           await this.coils.lockCoil(tx, movement.itemId);
-          await this.inventory.reverse(tx, movement.id, actor.id, reason);
+          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
           // Una bobina solo puede tener una asignación viva a la vez (el guardrail lo
           // impide), así que el fleje identifica sin ambigüedad la fila a descontar.
           const row = rows.find((r) => r.coilId === movement.itemId && r.releasedAt === null);
@@ -812,6 +832,9 @@ export class ProductionService {
     orderId: string,
     input: CloseProductionOrderInput,
   ): Promise<ProductionOrderDto> {
+    // D-124: el cierre tiene su propia fecha de operación, distinta de la del arranque:
+    // una corrida puede empezar el 12 y cerrarse el 15, y la merma de proceso es del 15.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const order = await this.lockOrder(tx, orderId);
@@ -889,6 +912,8 @@ export class ProductionService {
                 ? `Merma de proceso al cerrar ${productionOrderCode(order.seq)}: ${input.reason}`
                 : `Merma de proceso al cerrar ${productionOrderCode(order.seq)}`,
               actorId: actor.id,
+              operationDate,
+              confirmBackdate: input.confirmBackdate,
             });
             if (!out) {
               throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -930,6 +955,7 @@ export class ProductionService {
             refId: orderId,
             notes: `Cierre de ${productionOrderCode(order.seq)}: merma de proceso ${scrapKg.toFixed(3)} kg imputada a ${pieces} piezas`,
             actorId: actor.id,
+            operationDate,
           });
         }
 
@@ -945,6 +971,7 @@ export class ProductionService {
             notes: input.notes ?? order.notes,
             closedById: actor.id,
             closedAt,
+            closedOperationDate: toDateOnly(operationDate),
           },
         });
 
@@ -956,6 +983,7 @@ export class ProductionService {
           before: { status: order.status },
           after: {
             status: ProductionOrderStatus.CLOSED,
+            operationDate,
             pieces,
             scrapKg: toFixedString(scrapKg, 'KG'),
             // El ratio queda en la auditoría para poder alertar sobre corridas con merma
@@ -992,7 +1020,13 @@ export class ProductionService {
    * o si algún fleje se movió después del cierre, falla completa en vez de dejar el
    * kardex a mitad de camino.
    */
-  async reopen(actor: RequestUser, orderId: string, reason: string): Promise<ProductionOrderDto> {
+  async reopen(
+    actor: RequestUser,
+    orderId: string,
+    input: ReverseMovementInput,
+  ): Promise<ProductionOrderDto> {
+    const { reason } = input;
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const order = await this.lockOrder(tx, orderId);
@@ -1093,11 +1127,11 @@ export class ProductionService {
 
         // Primero el costo y después el material: al revés, el ajuste se prorratearía
         // sobre un saldo que la merma devuelta todavía no terminó de acomodar.
-        if (adjust) await this.inventory.reverse(tx, adjust.id, actor.id, reason);
+        if (adjust) await this.inventory.reverse(tx, adjust.id, actor.id, reason, operationDate);
         const returnedByCoil = new Map<string, Decimal>();
         for (const movement of scrapOuts) {
           await this.coils.lockCoil(tx, movement.itemId);
-          await this.inventory.reverse(tx, movement.id, actor.id, reason);
+          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
           returnedByCoil.set(
             movement.itemId,
             (returnedByCoil.get(movement.itemId) ?? new Decimal(0)).plus(
@@ -1128,6 +1162,7 @@ export class ProductionService {
             unitCostPen: null,
             closedById: null,
             closedAt: null,
+            closedOperationDate: null,
           },
         });
 
@@ -1301,6 +1336,7 @@ export class ProductionService {
         unitCostPen: r.unitCostPen.toFixed(4),
         status: r.status,
         notes: r.notes,
+        operationDate: fromDateOnly(r.operationDate),
         createdAt: r.createdAt.toISOString(),
         createdByName: actors.get(r.createdById) ?? null,
         revertedAt: r.revertedAt ? r.revertedAt.toISOString() : null,
@@ -1459,6 +1495,10 @@ export class ProductionService {
       totalCostPen: order.totalCostPen ? order.totalCostPen.toFixed(4) : null,
       unitCostPen: order.unitCostPen ? order.unitCostPen.toFixed(4) : null,
       stripCount: live.length,
+      operationDate: fromDateOnly(order.operationDate),
+      closedOperationDate: order.closedOperationDate
+        ? fromDateOnly(order.closedOperationDate)
+        : null,
       createdAt: order.createdAt.toISOString(),
       createdByName: actors.get(order.createdById) ?? null,
       closedAt: order.closedAt ? order.closedAt.toISOString() : null,

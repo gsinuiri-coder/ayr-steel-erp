@@ -772,6 +772,39 @@ export const STANDING_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
  * y entró por planilla. La diferencia no es cosmética: un importado no se envía, no se
  * anula ni se corrige contra el PSE desde acá, y es el único que se puede reimportar.
  */
+/**
+ * D-127: subtipo de un producto de coberturas metálicas. Debe coincidir con el enum
+ * `RoofingProductKind` de Prisma.
+ *
+ * Es explícito y no inferido. Antes "a medida" se deducía de `unit = MTR` y "plancha" de
+ * tener largo: dos convenciones que ninguna pantalla mostraba y que nadie podía corregir.
+ * El costo real fue una cotización a medida que al confirmarse exigía stock de producto
+ * terminado —el camino de una plancha— en vez de reservar materia prima.
+ */
+export const RoofingProductKind = {
+  PLANCHA: 'PLANCHA',
+  A_MEDIDA: 'A_MEDIDA',
+} as const;
+export type RoofingProductKind = (typeof RoofingProductKind)[keyof typeof RoofingProductKind];
+export const ROOFING_PRODUCT_KINDS = Object.values(RoofingProductKind) as [
+  RoofingProductKind,
+  ...RoofingProductKind[],
+];
+export const ROOFING_PRODUCT_KIND_LABELS: Record<RoofingProductKind, string> = {
+  PLANCHA: 'Plancha de catálogo',
+  A_MEDIDA: 'A medida',
+};
+export const ROOFING_PRODUCT_KIND_HINTS: Record<RoofingProductKind, string> = {
+  PLANCHA: 'Largo fijo, se vende del stock que ya hay en almacén.',
+  A_MEDIDA: 'Se cotiza por metro lineal con subítems de largo y se fabrica contra pedido.',
+};
+
+/** La unidad de venta que le corresponde a cada subtipo. Subtipo y unidad son el mismo hecho. */
+export const ROOFING_KIND_UNIT: Record<RoofingProductKind, string> = {
+  PLANCHA: 'NIU',
+  A_MEDIDA: 'MTR',
+};
+
 export const FiscalDocumentOrigin = {
   ISSUED_HERE: 'ISSUED_HERE',
   IMPORTED: 'IMPORTED',

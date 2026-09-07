@@ -10,12 +10,15 @@ import {
   type Coil,
 } from '@prisma/client';
 import {
+  businessToday,
   coilCode,
   coilProductName,
   coilSku,
   coilTypeKey,
   equivalentMeters,
+  fromDateOnly,
   paginate,
+  toDateOnly,
   toDecimal,
   toFixedString,
   toSkipTake,
@@ -66,6 +69,12 @@ export interface CreateCoilInput {
   status?: CoilStatus;
   /** Fila de recepción de corte tercerizado que originó este fleje (RF-41, D-049). */
   cuttingOrderCoilId?: string;
+  /**
+   * D-124: día de negocio en que la bobina entró (`YYYY-MM-DD`, Lima). Por defecto hoy.
+   * Una hija de partido, un fleje de corte o una bobina de compra la reciben de la
+   * operación que las crea, para que madre e hija queden fechadas el mismo día.
+   */
+  operationDate?: string;
   /**
    * Costo en soles con el que la bobina entra al kardex, cuando no es simplemente
    * `unitCostPerKg × exchangeRate`. Lo usa el partido: las hijas entran al costo
@@ -161,6 +170,7 @@ export class CoilsService {
         cuttingOrderCoilId: input.cuttingOrderCoilId ?? null,
         notes: input.notes ?? null,
         createdById: input.actorId,
+        operationDate: toDateOnly(input.operationDate ?? businessToday()),
       },
     });
 
@@ -186,6 +196,7 @@ export class CoilsService {
       refType: input.refType,
       refId: input.refId,
       actorId: input.actorId,
+      operationDate: input.operationDate,
     });
     if (!movement) {
       // Solo pasaría en una línea `NOOP` (§2.2), donde una bobina no tiene sentido:
@@ -333,7 +344,9 @@ export class CoilsService {
       this.prisma.coil.findMany({
         where,
         include: COIL_RELATIONS,
-        orderBy: { createdAt: 'desc' },
+        // D-124: por día de negocio, no por instante de grabación. Una bobina de agosto
+        // cargada hoy tiene que aparecer entre las de agosto, no encabezando la lista.
+        orderBy: [{ operationDate: 'desc' }, { createdAt: 'desc' }],
         skip,
         take,
       }),
@@ -455,6 +468,7 @@ export class CoilsService {
         notes: c.notes,
         availableKg,
         equivalentMeters: meters === null ? null : meters.toFixed(3),
+        operationDate: fromDateOnly(c.operationDate),
         createdAt: c.createdAt.toISOString(),
         updatedAt: c.updatedAt.toISOString(),
       };

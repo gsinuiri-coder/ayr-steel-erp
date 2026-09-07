@@ -17,8 +17,9 @@ import {
   TransferMode,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { backdatableFields } from './operation';
 import { paginationQuerySchema } from './pagination';
-import { businessToday } from './sales';
+import { businessToday } from '../business-date';
 
 /**
  * Ciclo fiscal y logístico de Fase 5b (RF-70, RF-74..RF-79, RF-86..RF-89; D-070..D-078).
@@ -616,7 +617,14 @@ export type DispatchItemInput = z.infer<typeof dispatchItemInputSchema>;
 export const createDispatchSchema = z
   .object({
     salesOrderId: z.string({ required_error: 'El pedido es obligatorio' }).uuid(),
+    /**
+     * D-124: **es** la fecha de operación del despacho — la que fecha la salida de kardex y
+     * por la que el reporte de despachos lo ubica en el mes. Retrofecharla es privilegio de
+     * ADMINISTRADOR, igual que cualquier otra fecha de operación.
+     */
     dispatchDate: isoDateSchema,
+    /** D-124: acuse de la advertencia de retrofecha fuera de orden cronológico. */
+    confirmBackdate: z.boolean().optional(),
     originAddress: z.string().trim().min(1, 'La dirección de partida es obligatoria').max(240),
     destinationAddress: z.string().trim().min(1, 'La dirección de llegada es obligatoria').max(240),
     originUbigeo: ubigeoSchema,
@@ -717,7 +725,10 @@ export const createDispatchSchema = z
 export type CreateDispatchInput = z.infer<typeof createDispatchSchema>;
 
 /** Revertir un despacho (RF-79): devuelve stock y estado del pedido. Siempre con motivo. */
-export const reverseDispatchSchema = z.object({ reason: reasonSchema });
+export const reverseDispatchSchema = z.object({
+  ...backdatableFields,
+  reason: reasonSchema,
+});
 export type ReverseDispatchInput = z.infer<typeof reverseDispatchSchema>;
 
 export const dispatchItemSchema = z.object({

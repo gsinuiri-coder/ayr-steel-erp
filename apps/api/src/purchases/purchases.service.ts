@@ -31,10 +31,13 @@ import {
   Role,
   SERVICE_KIND_LABELS,
   STOCK_PURCHASE_TYPES,
+  toDateOnly,
   toDecimal,
   toFixedString,
   toSkipTake,
   Unit,
+  type BackdatableInput,
+  type CancelPurchaseInput,
   type CreatePurchaseInput,
   type CreateSupplierPaymentInput,
   type InvoiceXmlPreviewDto,
@@ -49,6 +52,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { OperationDateService } from '../common/operation-date.service';
 import { CoilsService } from '../coils/coils.service';
 import { ColorsService } from '../colors/colors.service';
 import { StorageService } from '../documents/storage.service';
@@ -80,6 +84,7 @@ export class PurchasesService {
     private readonly colors: ColorsService,
     private readonly exchangeRates: ExchangeRatesService,
     private readonly storage: StorageService,
+    private readonly operationDate: OperationDateService,
   ) {}
 
   /**
@@ -262,7 +267,16 @@ export class PurchasesService {
    * de catálogo, SERVICE y EXPENSE no tocan inventario. Todo en una sola transacción:
    * o la compra queda recibida con sus movimientos, o no cambia nada.
    */
-  async receive(actor: RequestUser, id: string): Promise<PurchaseDto> {
+  async receive(
+    actor: RequestUser,
+    id: string,
+    input: BackdatableInput = {},
+  ): Promise<PurchaseDto> {
+    // D-124: la recepción es lo que mueve kardex y da de alta las bobinas, así que su
+    // fecha de operación es la de todos los movimientos y bobinas que crea. La fecha de
+    // emisión del comprobante del proveedor es otra cosa y no se toca: un flete emitido
+    // el 3 puede recibirse el 12.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const purchase = await this.prisma.purchase.findUnique({
       where: { id },
       include: { items: { orderBy: { lineNumber: 'asc' } } },
@@ -310,6 +324,9 @@ export class PurchasesService {
               refType: 'PURCHASE',
               refId: purchase.id,
               actorId: actor.id,
+              // Sin `confirmBackdate`: una bobina que nace en esta recepción no puede tener
+              // movimientos anteriores, así que el guardrail cronológico nunca la alcanza.
+              operationDate,
             });
           } else if (purchase.type === PurchaseType.FINISHED_GOOD) {
             await this.inventory.record(tx, {
@@ -328,6 +345,8 @@ export class PurchasesService {
               refType: 'PURCHASE',
               refId: purchase.id,
               actorId: actor.id,
+              operationDate,
+              confirmBackdate: input.confirmBackdate,
             });
           }
           // SERVICE y EXPENSE no mueven inventario (D-030): solo generan cuenta por pagar.
@@ -335,11 +354,11 @@ export class PurchasesService {
 
         // Landed cost (D-043): un flete, una aduana o un seguro vinculados a una compra
         // de bobinas reparten su costo sin IGV entre esas bobinas al recibirse.
-        const landed = await this.applyLandedCost(tx, purchase, actor);
+        const landed = await this.applyLandedCost(tx, purchase, actor, operationDate);
         // Costo de corte tercerizado (RF-41): igual que el landed cost, pero prorrateado
         // entre los flejes ya recibidos de la orden de corte vinculada, sin importar si
         // esta compra llega antes o después de la recepción física (D-033).
-        const cuttingCost = await this.applyCuttingOrderCost(tx, purchase, actor);
+        const cuttingCost = await this.applyCuttingOrderCost(tx, purchase, actor, operationDate);
 
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -350,6 +369,7 @@ export class PurchasesService {
           after: {
             status: PurchaseStatus.RECEIVED,
             items: purchase.items.length,
+            operationDate,
             ...(landed ? { landedCost: landed } : {}),
             ...(cuttingCost ? { cuttingCost } : {}),
           },
@@ -367,7 +387,11 @@ export class PurchasesService {
    * creó. Se bloquea si algo de lo que entró con esa compra ya se movió después:
    * revertir el ingreso de kilos que ya salieron dejaría el saldo en negativo.
    */
-  async cancel(actor: RequestUser, id: string, reason: string): Promise<PurchaseDto> {
+  async cancel(actor: RequestUser, id: string, input: CancelPurchaseInput): Promise<PurchaseDto> {
+    const { reason } = input;
+    // D-124: la anulación se fecha hoy salvo que un administrador la retrofeche; no
+    // hereda la fecha de la recepción que deshace.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const purchase = await this.prisma.purchase.findUnique({
       where: { id },
       include: { payments: true },
@@ -423,7 +447,7 @@ export class PurchasesService {
           // Del más nuevo al más viejo: si una compra generó un ingreso y luego un
           // ajuste de costo sobre el mismo ítem, el ajuste tiene que deshacerse primero.
           for (const movement of [...movements].reverse()) {
-            await this.inventory.reverse(tx, movement.id, actor.id, reason);
+            await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
             if (movement.type === 'ADJUST' && movement.itemType === 'COIL') {
               // El kardex ya volvió atrás; el costo del documento de la bobina también
               // tiene que hacerlo, o quedaría mostrando un landed cost que ya no existe.
@@ -570,6 +594,7 @@ export class PurchasesService {
     tx: Prisma.TransactionClient,
     purchase: Purchase,
     actor: RequestUser,
+    operationDate: string,
   ): Promise<{ amountPen: string; coils: number; imputed: boolean } | null> {
     if (purchase.type !== PurchaseType.SERVICE || !purchase.relatedPurchaseId) return null;
     if (!purchase.serviceKind || !LANDED_COST_SERVICE_KINDS.includes(purchase.serviceKind)) {
@@ -654,6 +679,7 @@ export class PurchasesService {
         refId: purchase.id,
         notes: noteLabel,
         actorId: actor.id,
+        operationDate,
       });
       // Si el kardex no aceptó el ajuste (línea NOOP o saldo en cero), el documento de
       // la bobina tampoco se toca: un `unitCostPerKg` sin movimiento detrás no se puede
@@ -706,6 +732,7 @@ export class PurchasesService {
     tx: Prisma.TransactionClient,
     purchase: Purchase,
     actor: RequestUser,
+    operationDate: string,
   ): Promise<{ amountPen: string; strips: number; imputed: boolean } | null> {
     if (purchase.type !== PurchaseType.SERVICE || !purchase.relatedCuttingOrderId) return null;
     if (purchase.serviceKind !== ServiceKind.CUTTING) return null;
@@ -778,6 +805,7 @@ export class PurchasesService {
         refId: purchase.id,
         notes: noteLabel,
         actorId: actor.id,
+        operationDate,
       });
       if (!movement) continue;
 
@@ -863,6 +891,10 @@ export class PurchasesService {
     if (purchase.status === PurchaseStatus.CANCELLED) {
       throw new BadRequestException('La compra está anulada');
     }
+    // D-124: `date` **es** la fecha de operación del pago —es por la que el reporte de
+    // cuentas por pagar lo ubica en el mes—, así que pasa por el mismo control que
+    // cualquier retrofecha: solo administrador, no futura, no antes del piso histórico.
+    const paymentDate = this.operationDate.resolve(actor, input.date);
 
     // El tipo de cambio que convierte el pago es siempre el de la moneda extranjera en
     // juego, no el de la moneda del pago: pagar S/ contra una factura en USD sin este
@@ -870,7 +902,7 @@ export class PurchasesService {
     const rateCurrency = input.currency === Currency.PEN ? purchase.currency : input.currency;
     const rate = input.exchangeRate
       ? toDecimal(input.exchangeRate)
-      : (await this.rateFor(input.date, rateCurrency)).rate;
+      : (await this.rateFor(paymentDate, rateCurrency)).rate;
 
     const applied = toPurchaseCurrency(
       toDecimal(input.amount),
@@ -900,7 +932,7 @@ export class PurchasesService {
       const payment = await tx.supplierPayment.create({
         data: {
           purchaseId,
-          date: new Date(`${input.date}T00:00:00.000Z`),
+          date: toDateOnly(paymentDate),
           amount: toFixedString(input.amount, 'MONEY'),
           currency: input.currency,
           exchangeRate: toFixedString(rate, 'RATE'),
@@ -919,6 +951,8 @@ export class PurchasesService {
           amount: payment.amount.toFixed(4),
           currency: payment.currency,
           method: payment.method,
+          // D-124: con qué fecha de negocio quedó registrado el pago.
+          operationDate: paymentDate,
         },
       });
     });

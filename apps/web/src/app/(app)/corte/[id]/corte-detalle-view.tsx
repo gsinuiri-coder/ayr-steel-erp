@@ -13,6 +13,7 @@ import {
   type CuttingOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import type { ReverseArgs } from '@/lib/reverse-args';
 import { formatMoney, formatQty } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
@@ -57,8 +58,11 @@ export function CorteDetalleView({ id }: { id: string }) {
   };
 
   const cancel = useMutation({
-    mutationFn: (reason: string) =>
-      api<CuttingOrderDto>(`/cutting/${id}/cancel`, { method: 'POST', body: { reason } }),
+    mutationFn: ({ reason, operationDate }: ReverseArgs) =>
+      api<CuttingOrderDto>(`/cutting/${id}/cancel`, {
+        method: 'POST',
+        body: { reason, operationDate },
+      }),
     onSuccess: () => {
       toast.success('Lo pendiente de la orden quedó anulado; las bobinas vuelven a estar abiertas');
       setCancelling(false);
@@ -69,10 +73,10 @@ export function CorteDetalleView({ id }: { id: string }) {
   });
 
   const revert = useMutation({
-    mutationFn: ({ coilId, reason }: { coilId: string; reason: string }) =>
+    mutationFn: ({ coilId, reason, operationDate }: ReverseArgs & { coilId: string }) =>
       api<CuttingOrderDto>(`/cutting/${id}/coils/${coilId}/reverse`, {
         method: 'POST',
-        body: { reason },
+        body: { reason, operationDate },
       }),
     onSuccess: () => {
       toast.success('La recepción quedó revertida: la bobina vuelve a estar en el tercero');
@@ -282,8 +286,9 @@ export function CorteDetalleView({ id }: { id: string }) {
         description="Las bobinas que todavía no volvieron del tercero quedan abiertas otra vez (RF-22). Lo ya recibido no se toca."
         confirmLabel="Sí, cancelar"
         pending={cancel.isPending}
-        onConfirm={(reason) => {
-          cancel.mutate(reason);
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
+          cancel.mutate({ reason, operationDate });
         }}
       />
 
@@ -300,8 +305,9 @@ export function CorteDetalleView({ id }: { id: string }) {
         }
         confirmLabel="Sí, revertir"
         pending={revert.isPending}
-        onConfirm={(reason) => {
-          if (reverting) revert.mutate({ coilId: reverting.coilId, reason });
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
+          if (reverting) revert.mutate({ coilId: reverting.coilId, reason, operationDate });
         }}
       />
     </RoleGate>

@@ -7,16 +7,16 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
-  DEFAULT_QUOTATION_VALIDITY_DAYS,
   Decimal,
+  DEFAULT_QUOTATION_VALIDITY_DAYS,
+  describePieces,
   MAX_QUOTATION_VALIDITY_DAYS,
   MAX_SALES_ITEMS,
-  describePieces,
   piecesCount,
   piecesMeters,
+  RoofingProductKind,
   salesLineTotals,
   toFixedString,
-  Unit,
   type BusinessLine,
   type BusinessLineDto,
   type CustomerDto,
@@ -140,7 +140,7 @@ function normalizeLine(l: { qty: string; unitPricePen: string }): {
 
 /** D-083: la línea es compuesta cuando el producto se vende por metro lineal. */
 function isMadeToMeasure(product: ProductDto | undefined): boolean {
-  return product?.unit === Unit.MTR;
+  return product?.roofingKind === RoofingProductKind.A_MEDIDA;
 }
 
 export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {

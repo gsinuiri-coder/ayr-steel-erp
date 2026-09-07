@@ -11,9 +11,12 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
+  fromDateOnly,
+  toDateOnly,
   toDecimal,
   toFixedString,
   Unit,
+  type CancelCuttingOrderInput,
   type CreateCuttingOrderInput,
   type CuttingOrderDto,
   type CuttingOrderListItemDto,
@@ -25,6 +28,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { OperationDateService } from '../common/operation-date.service';
 import { planCoilSplit } from '../coils/coil-split-math';
 import { CoilsService } from '../coils/coils.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -53,6 +57,7 @@ export class CuttingService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
+    private readonly operationDate: OperationDateService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -60,6 +65,9 @@ export class CuttingService {
   // -------------------------------------------------------------------------
 
   async send(actor: RequestUser, input: CreateCuttingOrderInput): Promise<CuttingOrderDto> {
+    // D-124: el envío no mueve kardex (D-050), así que no hay guardrail cronológico que
+    // aplicar; la fecha existe igual porque el reporte de corte agrupa por ella.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const supplier = await this.prisma.supplier.findUnique({ where: { id: input.supplierId } });
     if (!supplier) throw new NotFoundException('Proveedor no encontrado');
     if (!supplier.isActive) throw new BadRequestException('El proveedor está desactivado');
@@ -137,6 +145,7 @@ export class CuttingService {
           status: CuttingOrderStatus.SENT,
           notes: input.notes ?? null,
           createdById: actor.id,
+          operationDate: toDateOnly(operationDate),
         },
       });
 
@@ -184,6 +193,7 @@ export class CuttingService {
     coilId: string,
     input: ReceiveCuttingOrderCoilInput,
   ): Promise<CuttingOrderDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const row = await tx.cuttingOrderCoil.findFirst({ where: { cuttingOrderId, coilId } });
@@ -230,6 +240,8 @@ export class CuttingService {
           refId: row.id,
           notes: `Recepción de corte tercerizado en ${plan.children.length} flejes`,
           actorId: actor.id,
+          operationDate,
+          confirmBackdate: input.confirmBackdate,
         });
         if (!out) {
           throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
@@ -270,6 +282,7 @@ export class CuttingService {
                 kind: CoilKind.STRIP,
                 cuttingOrderCoilId: row.id,
                 actorId: actor.id,
+                operationDate,
               },
               { ...batch, sequence: batch.sequence + index },
             ),
@@ -289,6 +302,7 @@ export class CuttingService {
           data: {
             status: CuttingOrderCoilStatus.RECEIVED,
             receivedAt: new Date(),
+            receivedOperationDate: toDateOnly(operationDate),
             receivedWidthsMm: input.receivedWidthsMm,
             receivedWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             receivedKerfLossMm: toFixedString(plan.kerfLossMm, 'MM'),
@@ -311,6 +325,9 @@ export class CuttingService {
           before: { coilId, status: fresh.status },
           after: {
             coilId,
+            // D-124: con qué fecha se registró, para poder auditar después quién movió una
+            // recepción a otro mes.
+            operationDate,
             strips: children.map((c) => c.code),
             receivedWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             kerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
@@ -345,8 +362,10 @@ export class CuttingService {
     actor: RequestUser,
     cuttingOrderId: string,
     coilId: string,
-    reason: string,
+    input: CancelCuttingOrderInput,
   ): Promise<CuttingOrderDto> {
+    const { reason } = input;
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const row = await tx.cuttingOrderCoil.findFirst({ where: { cuttingOrderId, coilId } });
@@ -443,9 +462,9 @@ export class CuttingService {
         // Primero las entradas de los flejes y al final la salida de la madre: al
         // revés, la madre recuperaría el peso antes de que los flejes lo devuelvan.
         for (const movement of movements.filter((m) => m.type === 'IN')) {
-          await this.inventory.reverse(tx, movement.id, actor.id, reason);
+          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
         }
-        await this.inventory.reverse(tx, motherOut.id, actor.id, reason);
+        await this.inventory.reverse(tx, motherOut.id, actor.id, reason, operationDate);
 
         await tx.coil.updateMany({
           where: { id: { in: stripIds } },
@@ -457,6 +476,7 @@ export class CuttingService {
           data: {
             status: CuttingOrderCoilStatus.SENT,
             receivedAt: null,
+            receivedOperationDate: null,
             receivedWidthsMm: Prisma.JsonNull,
             receivedWeightKg: null,
             receivedKerfLossMm: null,
@@ -502,8 +522,12 @@ export class CuttingService {
   async cancel(
     actor: RequestUser,
     cuttingOrderId: string,
-    reason: string,
+    input: CancelCuttingOrderInput,
   ): Promise<CuttingOrderDto> {
+    const { reason } = input;
+    // Cancelar lo no recibido no mueve kardex (D-050): no hay fecha de operación que
+    // escribir, pero la validación corre igual para que el contrato no mienta.
+    this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`
         SELECT "id" FROM "cutting_orders" WHERE "id" = ${cuttingOrderId}::uuid FOR UPDATE
@@ -576,7 +600,8 @@ export class CuttingService {
         businessLine: { select: { code: true } },
         _count: { select: { coils: true } },
       },
-      orderBy: { sentAt: 'desc' },
+      // D-124: por día de negocio del envío; `sentAt` desempata dentro del mismo día.
+      orderBy: [{ operationDate: 'desc' }, { sentAt: 'desc' }],
       take: 500,
     });
 
@@ -587,6 +612,7 @@ export class CuttingService {
       businessLine: toSharedLineCode(o.businessLine.code),
       status: o.status,
       sentAt: o.sentAt.toISOString(),
+      operationDate: fromDateOnly(o.operationDate),
       cancelledAt: o.cancelledAt ? o.cancelledAt.toISOString() : null,
       notes: o.notes,
       coilCount: o._count.coils,
@@ -642,6 +668,7 @@ export class CuttingService {
       businessLine: toSharedLineCode(order.businessLine.code),
       status: order.status,
       sentAt: order.sentAt.toISOString(),
+      operationDate: fromDateOnly(order.operationDate),
       cancelledAt: order.cancelledAt ? order.cancelledAt.toISOString() : null,
       notes: order.notes,
       services: order.purchases.map((p) => ({
@@ -665,6 +692,9 @@ export class CuttingService {
         expectedKerfLossMm: row.expectedKerfLossMm.toFixed(2),
         status: row.status,
         receivedAt: row.receivedAt ? row.receivedAt.toISOString() : null,
+        receivedOperationDate: row.receivedOperationDate
+          ? fromDateOnly(row.receivedOperationDate)
+          : null,
         receivedWidthsMm: row.receivedWidthsMm as unknown as WidthCount[] | null,
         receivedWeightKg: row.receivedWeightKg ? row.receivedWeightKg.toFixed(3) : null,
         receivedKerfLossMm: row.receivedKerfLossMm ? row.receivedKerfLossMm.toFixed(2) : null,

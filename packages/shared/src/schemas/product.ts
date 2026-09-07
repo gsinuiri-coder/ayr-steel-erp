@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { decimalStringSchema, MAX_VALUE } from '../decimal';
-import { BUSINESS_LINES, PRODUCT_SOURCES } from '../enums';
+import { BUSINESS_LINES, PRODUCT_SOURCES, ROOFING_PRODUCT_KINDS } from '../enums';
 
 /** Catálogo de productos por línea (RF-50). SKU único dentro de su línea, no global. */
 export const productSchema = z.object({
@@ -28,6 +28,13 @@ export const productSchema = z.object({
   widthMm: z.string().nullable(),
   lengthMm: z.string().nullable(),
   pieceWeightKg: z.string().nullable(),
+  /**
+   * D-127: subtipo de cobertura. `null` fuera de Metallic Roofing. Es lo que decide la rama
+   * de la confirmación de una cotización: `A_MEDIDA` calcula los kilos teóricos y reserva
+   * **materia prima** (una bobina) para fabricar; `PLANCHA` exige stock de producto
+   * terminado, como cualquier otro artículo de catálogo.
+   */
+  roofingKind: z.enum(ROOFING_PRODUCT_KINDS).nullable(),
   /**
    * D-118: kilo teórico por unidad de venta, derivado de `thicknessMm`/`widthMm` y la
    * densidad del acabado de la receta (`bom.finish.densityFactor`) — `null` si falta
@@ -100,6 +107,16 @@ const pieceWeightKgSchema = z
   .optional()
   .transform((v) => (v === '' || v === undefined ? null : v));
 
+/**
+ * D-127: subtipo de cobertura. Opcional en el contrato porque el resto del catálogo no lo
+ * lleva; `CatalogService` lo exige donde corresponde (Metallic Roofing) y lo rechaza donde
+ * no. Cadena vacía = "sin subtipo", igual que el color.
+ */
+const roofingKindSchema = z
+  .enum(ROOFING_PRODUCT_KINDS, { errorMap: () => ({ message: 'Subtipo de cobertura inválido' }) })
+  .nullable()
+  .optional();
+
 export const createProductSchema = z.object({
   businessLineId: z.string().uuid('Selecciona una línea de negocio'),
   sku: skuSchema,
@@ -112,6 +129,7 @@ export const createProductSchema = z.object({
   widthMm: widthMmSchema,
   lengthMm: lengthMmSchema,
   pieceWeightKg: pieceWeightKgSchema,
+  roofingKind: roofingKindSchema,
 });
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 
@@ -126,6 +144,7 @@ export const updateProductSchema = z
     widthMm: widthMmSchema,
     lengthMm: lengthMmSchema,
     pieceWeightKg: pieceWeightKgSchema,
+    roofingKind: roofingKindSchema,
     isActive: z.boolean(),
   })
   .partial()

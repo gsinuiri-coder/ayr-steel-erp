@@ -11,16 +11,21 @@ import {
 import {
   coilSkuFromTypeKey,
   describePieces,
+  kgPerMeter,
   piecesMeters,
+  RoofingProductKind,
   salesLineTotals,
   toDecimal,
   toFixedString,
   Unit,
+  Decimal,
   type RoofingPieceDto,
   type SalesItemDto,
   type SalesItemInput,
 } from '@ayr/shared';
 import { toSharedLineCode } from '../common/business-line-code';
+import { findLiveStripAssignments } from '../production/production-assignments';
+import { roofingCoilWhere } from '../production/roofing-coil-match';
 
 /**
  * Resolución de las líneas de una cotización o de un pedido (D-065, D-068).
@@ -31,6 +36,18 @@ import { toSharedLineCode } from '../common/business-line-code';
  * mismo resultado. Si divergieran, un pedido directo podría admitir líneas que una
  * cotización rechaza, que es justo el agujero por el que se esquivaría RF-31.
  */
+
+/**
+ * D-127: qué materia prima ya se resolvió para cada línea a medida, por `lineNumber`.
+ *
+ * La cotización no manda nada (no reserva, D-054) y la línea guarda su intención; el pedido
+ * —confirmación, alta directa o mostrador— la resuelve con `resolveMadeToMeasureCoils` y la
+ * pasa acá. Separarlo es lo que evita que una cotización congele un rollo que va a estar
+ * cerrado o consumido cuando se confirme, meses después.
+ */
+export interface ResolveSalesLinesOptions {
+  rawMaterialByLine?: Map<number, MadeToMeasureReservation>;
+}
 
 /** Una línea ya validada, lista para persistir en `quotation_items` o `sales_order_items`. */
 export interface ResolvedSalesLine {
@@ -96,6 +113,7 @@ export interface ResolvedSalesLine {
 export async function resolveSalesLines(
   tx: Prisma.TransactionClient,
   items: SalesItemInput[],
+  options: ResolveSalesLinesOptions = {},
 ): Promise<ResolvedSalesLine[]> {
   const productIds = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
   const products = await tx.product.findMany({
@@ -108,7 +126,20 @@ export async function resolveSalesLines(
       isActive: true,
       businessLineId: true,
       listPricePen: true,
+      // D-127: el subtipo decide la rama de la reserva. La geometría y la densidad del
+      // acabado son lo que convierte metros lineales en kilos de bobina.
+      roofingKind: true,
+      thicknessMm: true,
+      widthMm: true,
+      colorId: true,
       businessLine: { select: { inventoryStrategy: true } },
+      bom: {
+        select: {
+          isActive: true,
+          inputThicknessMm: true,
+          finish: { select: { densityFactor: true } },
+        },
+      },
     },
   });
   const productById = new Map(products.map((p) => [p.id, p]));
@@ -190,11 +221,11 @@ export async function resolveSalesLines(
       );
     }
 
-    // D-083: la forma de la línea la fija la unidad del producto, no un flag del input.
-    // Sin este par de chequeos, una cobertura a medida podría cotizarse sin largos —y la OP
-    // no tendría plan de corte que copiar— o un perfil podría llegar con largos que nada
-    // en el sistema volvería a mirar.
-    const madeToMeasure = product.unit === Unit.MTR;
+    // D-127: la forma de la línea la fija el **subtipo declarado** del producto, no la
+    // unidad ni la ausencia de largo. Sin estos chequeos, una cobertura a medida podría
+    // cotizarse sin largos —y la OP no tendría plan de corte que copiar— o una plancha
+    // podría llegar con subítems que nada en el sistema volvería a mirar.
+    const madeToMeasure = isMadeToMeasure(product);
     if (madeToMeasure && item.pieces === undefined) {
       throw new BadRequestException(
         `${at}: ${product.sku} se vende por metro lineal: detalla cuántas planchas de cada largo lleva la línea`,
@@ -249,6 +280,34 @@ export async function resolveSalesLines(
       reserveQty = item.reserveKg;
       reserveUnit = Unit.KGM;
       reserveItemLabel = coil.code;
+    } else if (madeToMeasure) {
+      // **La rama que faltaba (D-127).** Una cobertura a medida no se atiende con stock de
+      // producto terminado: ese producto no existe hasta que planta lo rola. Lo que la línea
+      // promete son los **kilos de bobina** que esos metros van a consumir —
+      // `ml × espesor × ancho × densidad del acabado`, la misma aritmética que usa el
+      // reporte de piezas (D-047)—, y de ahí sale la orden de producción (D-084).
+      //
+      // Sin esto, confirmar una cotización a medida pedía saldo de un SKU que siempre está
+      // en cero y fallaba con "0.000 MTR disponibles"; el pedido nunca llegaba a la cola.
+      const resolved = options.rawMaterialByLine?.get(lineNumber);
+      if (resolved) {
+        reserveItemType = InventoryItemType.COIL;
+        reserveItemId = resolved.coilId;
+        reserveQty = resolved.kg;
+        reserveUnit = Unit.KGM;
+        reserveItemLabel = resolved.coilCode;
+      } else {
+        // **Cotización**: todavía no hay materia prima asignada, y no debe haberla. Una
+        // cotización no reserva nada (D-054) y vive hasta 365 días (D-069); elegir acá la
+        // bobina impediría cotizar sin stock —el caso normal del rubro— y congelaría un rollo
+        // que a los pocos días puede estar cerrado o consumido. La línea guarda su intención
+        // (el producto y los metros) y la materia prima se resuelve al **confirmar**.
+        reserveItemType = InventoryItemType.PRODUCT;
+        reserveItemId = product.id;
+        reserveQty = toFixedString(toDecimal(item.qty), 'KG');
+        reserveUnit = product.unit;
+        reserveItemLabel = product.sku;
+      }
     } else {
       reserveItemType = InventoryItemType.PRODUCT;
       reserveItemId = product.id;
@@ -446,4 +505,225 @@ export function toSalesItemDto(
     reserveQty: row.reserveQty.toFixed(3),
     reserveUnit: row.reserveUnit,
   };
+}
+
+// ---------------------------------------------------------------------------
+// D-127 — la materia prima de una línea a medida
+// ---------------------------------------------------------------------------
+
+/** Lo mínimo del producto que hace falta para decidir la rama y calcular los kilos. */
+interface RoofingProductLike {
+  id: string;
+  sku: string;
+  colorId: string | null;
+  businessLineId: string;
+  thicknessMm: Prisma.Decimal | null;
+  widthMm: Prisma.Decimal | null;
+  roofingKind: RoofingProductKind | null;
+  bom: ActiveRoofingBom | null;
+}
+
+/** La receta de cobertura, con lo que hace falta para filtrar bobina y convertir metros. */
+interface ActiveRoofingBom {
+  isActive: boolean;
+  inputThicknessMm: Prisma.Decimal;
+  finish: { densityFactor: Prisma.Decimal };
+}
+
+/** Lo que `PrismaService`/`tx` tiene que traer de un producto para poder resolverlo acá. */
+export const ROOFING_PRODUCT_SELECT = {
+  id: true,
+  sku: true,
+  colorId: true,
+  businessLineId: true,
+  thicknessMm: true,
+  widthMm: true,
+  roofingKind: true,
+  bom: {
+    select: { isActive: true, inputThicknessMm: true, finish: { select: { densityFactor: true } } },
+  },
+} satisfies Prisma.ProductSelect;
+
+/**
+ * D-127: ¿esta línea se fabrica a medida?
+ *
+ * Es el **subtipo declarado**, no la unidad ni el largo. Se aísla en una función para que la
+ * pregunta se responda igual en todos lados: mientras estuvo desperdigada como
+ * `unit === MTR`, la confirmación y el catálogo podían no coincidir, y de hecho no coincidían.
+ */
+export function isMadeToMeasure(product: { roofingKind: RoofingProductKind | null }): boolean {
+  return product.roofingKind === RoofingProductKind.A_MEDIDA;
+}
+
+/** Una línea que necesita materia prima: lo mínimo para pedirla. */
+export interface MadeToMeasureLine {
+  /** Con qué clave se devuelve el resultado: el índice en `resolveSalesLines`, el `lineNumber` al confirmar. */
+  key: number;
+  productId: string;
+  /** Metros lineales de la línea. */
+  qty: string;
+  /** Etiqueta para los mensajes de error (`Línea 3`). */
+  at: string;
+}
+
+/** La bobina elegida para una línea a medida y los kilos que se le prometen. */
+export interface MadeToMeasureReservation {
+  coilId: string;
+  coilCode: string;
+  /** Kilos teóricos: `ml × espesor × ancho × densityFactor`, con escala de kg. */
+  kg: string;
+}
+
+/**
+ * Elige la materia prima de cada línea **a medida** y calcula los kilos que promete.
+ *
+ * **Cuándo se llama y cuándo no.** Solo al crear un **pedido** (confirmar una cotización, un
+ * pedido directo o una venta de mostrador), nunca al cotizar. Una cotización no reserva nada
+ * (D-054) y vive hasta 365 días (D-069): elegir ahí la bobina tenía dos costos, los dos
+ * inaceptables — no se podría cotizar sin material en stock, que es el caso normal del rubro,
+ * y la bobina elegida quedaría congelada en la línea, así que a los pocos días el pedido
+ * nacería apuntando a un rollo ya cerrado o consumido, sin ninguna forma de re-elegir.
+ *
+ * Por qué elige el API y no el vendedor: quien cotiza sabe cuántos metros y de qué color;
+ * **qué rollo concreto los va a dar es una decisión de planta**, y pedírsela al vendedor fue
+ * lo que dejó cotizaciones sin materia prima asignada, que al confirmarse caían contra el
+ * stock de un producto terminado inexistente.
+ *
+ * El candidato sale del **mismo filtro** que usa el selector de la OP (`roofingCoilWhere`,
+ * D-086): misma línea, `OPEN`, color exacto y espesor de la receta dentro de tolerancia.
+ * Entre los que alcanzan gana el de fecha de operación más antigua (D-124: el material más
+ * viejo sale primero) y el código desempata. Lo que otras líneas **del mismo documento** ya
+ * comprometieron se descuenta sobre la marcha: sin eso, dos líneas del mismo producto elegían
+ * la misma bobina y la segunda se caía después contra `createReservations`.
+ *
+ * No se reparte una línea entre dos bobinas: una reserva apunta a un ítem, y partir la promesa
+ * en dos exigiría partir la línea — que es lo que el mensaje pide.
+ */
+export async function resolveMadeToMeasureCoils(
+  tx: Prisma.TransactionClient,
+  lines: MadeToMeasureLine[],
+  toleranceMm: string,
+): Promise<Map<number, MadeToMeasureReservation>> {
+  const out = new Map<number, MadeToMeasureReservation>();
+  if (lines.length === 0) return out;
+
+  const products = await tx.product.findMany({
+    where: { id: { in: [...new Set(lines.map((l) => l.productId))] } },
+    select: ROOFING_PRODUCT_SELECT,
+  });
+  const productById = new Map(products.map((p) => [p.id, p]));
+
+  // Kilos que las líneas ya resueltas de **este mismo documento** comprometieron sobre cada
+  // bobina. La base todavía no los ve —las reservas se crean después, en una sola
+  // transacción— así que sin este acumulador dos líneas se pisarían entre sí.
+  const committedByCoil = new Map<string, Decimal>();
+
+  for (const line of lines) {
+    const product = productById.get(line.productId);
+    if (!product) throw new NotFoundException(`${line.at}: producto no encontrado`);
+    const bom = product.bom;
+    if (!bom?.isActive) {
+      throw new BadRequestException(
+        `${line.at}: ${product.sku} se fabrica a medida pero no tiene receta activa: sin ella no se sabe con qué acabado ni con qué espesor de bobina rolarlo`,
+      );
+    }
+    const needed = theoreticalKgForMeters(product, line.qty, line.at, bom);
+
+    const candidates = await tx.coil.findMany({
+      where: roofingCoilWhere({
+        businessLineId: product.businessLineId,
+        colorId: product.colorId,
+        inputThicknessMm: bom.inputThicknessMm,
+        toleranceMm,
+      }),
+      select: { id: true, code: true },
+      orderBy: [{ operationDate: 'asc' }, { code: 'asc' }],
+      take: 200,
+    });
+    if (candidates.length === 0) {
+      throw new BadRequestException(
+        `${line.at}: no hay ninguna bobina abierta del color y el espesor que ${product.sku} necesita. Compra o abre una bobina antes de confirmar.`,
+      );
+    }
+
+    const ids = candidates.map((c) => c.id);
+    const [balances, reservations, assignments] = await Promise.all([
+      tx.inventoryBalance.findMany({
+        where: { itemType: InventoryItemType.COIL, itemId: { in: ids } },
+        select: { itemId: true, qty: true },
+      }),
+      tx.reservation.groupBy({
+        by: ['itemId'],
+        where: {
+          status: ReservationStatus.ACTIVE,
+          itemType: InventoryItemType.COIL,
+          itemId: { in: ids },
+        },
+        _sum: { qty: true },
+      }),
+      // D-060: una bobina montada en una OP viva no deja rastro de kardex, así que su saldo
+      // se ve intacto. Prometerla igual haría fallar el reporte de esa OP contra la
+      // invariante. Es la misma pregunta que se hace el partido y la merma, así que va por
+      // la misma función y no por una consulta propia.
+      findLiveStripAssignments(tx, ids),
+    ]);
+    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const reservedById = new Map(
+      reservations.map((r) => [r.itemId, toDecimal(r._sum.qty?.toString() ?? '0')]),
+    );
+    const mounted = new Set(assignments.map((a) => a.coilId));
+
+    let best: { id: string; code: string } | null = null;
+    let bestAvailable = new Decimal(0);
+    for (const c of candidates) {
+      if (mounted.has(c.id)) continue;
+      const available = (qtyById.get(c.id) ?? new Decimal(0))
+        .minus(reservedById.get(c.id) ?? new Decimal(0))
+        .minus(committedByCoil.get(c.id) ?? new Decimal(0));
+      if (available.gt(bestAvailable)) bestAvailable = available;
+      if (available.gte(needed)) {
+        best = { id: c.id, code: c.code };
+        break;
+      }
+    }
+    if (!best) {
+      throw new BadRequestException(
+        `${line.at}: ninguna bobina disponible alcanza para ${product.sku}: hacen falta ${needed.toFixed(3)} kg y la que más tiene libres tiene ${bestAvailable.toFixed(3)} kg. Parte la línea o abre otra bobina.`,
+      );
+    }
+    committedByCoil.set(best.id, (committedByCoil.get(best.id) ?? new Decimal(0)).plus(needed));
+    out.set(line.key, {
+      coilId: best.id,
+      coilCode: best.code,
+      kg: toFixedString(needed, 'KG'),
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Kilos de bobina que consumen `meters` metros lineales de una cobertura a medida:
+ * `ml × espesor × ancho × densityFactor`. Misma aritmética que el reporte de piezas (D-047)
+ * y que el kg teórico del catálogo (D-118), vía `kgPerMeter` de `@ayr/shared`.
+ *
+ * La densidad sale del acabado de la receta activa: es la fuente que D-122 va a mover a
+ * `products.finishId`.
+ */
+function theoreticalKgForMeters(
+  product: RoofingProductLike,
+  meters: string,
+  at: string,
+  bom: ActiveRoofingBom,
+): Decimal {
+  if (product.thicknessMm === null || product.widthMm === null) {
+    throw new BadRequestException(
+      `${at}: ${product.sku} no tiene espesor y ancho en el catálogo: complétalos antes de cotizarlo a medida`,
+    );
+  }
+  return kgPerMeter({
+    widthMm: product.widthMm.toFixed(2),
+    thicknessMm: product.thicknessMm.toFixed(2),
+    densityFactor: bom.finish.densityFactor.toFixed(4),
+  }).times(toDecimal(meters));
 }

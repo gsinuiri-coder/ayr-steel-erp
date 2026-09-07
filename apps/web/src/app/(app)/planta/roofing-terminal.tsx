@@ -20,6 +20,10 @@ import {
   type RoofingPieceDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import type { ReverseArgs } from '@/lib/reverse-args';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { OperationDateField } from '@/components/operation-date-field';
 import { formatQty } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { ColorSwatch } from '@/components/colors/color-swatch';
@@ -141,11 +145,14 @@ export function RoofingPickerCard({ onSelect }: { onSelect: (id: string) => void
   const queryClient = useQueryClient();
   const queue = useProductionQueue();
 
+  // D-124: día en que arranca la corrida. Montar la bobina es custodia y no mueve kardex
+  // (D-060), así que crear la orden solo necesita su fecha.
+  const [orderDate, setOrderDate] = useState<string | undefined>(undefined);
   const create = useMutation({
     mutationFn: (reservationId: string) =>
       api<ProductionOrderDto>('/production/roofing', {
         method: 'POST',
-        body: { reservationId },
+        body: { reservationId, operationDate: orderDate },
       }),
     onSuccess: (order) => {
       toast.success(`Orden ${order.code} creada con el plan de corte del pedido`);
@@ -185,16 +192,19 @@ export function RoofingPickerCard({ onSelect }: { onSelect: (id: string) => void
             className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
           >
             <QueueEntrySummary entry={entry} />
-            <Button
-              className="h-12"
-              aria-label={`Iniciar producción del pedido ${entry.salesOrderCode}`}
-              disabled={create.isPending}
-              onClick={() => {
-                create.mutate(entry.reservationId);
-              }}
-            >
-              Iniciar producción
-            </Button>
+            <div className="grid justify-items-end gap-1">
+              <Button
+                className="h-12"
+                aria-label={`Iniciar producción del pedido ${entry.salesOrderCode}`}
+                disabled={create.isPending}
+                onClick={() => {
+                  create.mutate(entry.reservationId);
+                }}
+              >
+                Iniciar producción
+              </Button>
+              <OperationDateField value={orderDate} onChange={setOrderDate} />
+            </div>
           </div>
         ))}
       </CardContent>
@@ -267,13 +277,23 @@ export function RoofingTerminal({
       toast.error(err instanceof ApiError ? err.message : 'No se pudo bajar la bobina'),
   });
 
+  // D-124: día de negocio del reporte de planchas y del cierre. Solo lo ve un administrador.
+  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const report = useMutation({
-    mutationFn: (pieces: RoofingPieceDto[]) =>
+    mutationFn: ({
+      pieces,
+      confirmBackdate,
+    }: {
+      pieces: RoofingPieceDto[];
+      confirmBackdate: boolean;
+    }) =>
       api<ProductionOrderDto>(`/production/roofing/${id}/report`, {
         method: 'POST',
         body: {
           pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
           ...(coilId ? { coilId } : {}),
+          operationDate,
+          confirmBackdate: confirmBackdate || undefined,
         },
       }),
     onSuccess: () => {
@@ -283,6 +303,9 @@ export function RoofingTerminal({
     },
     onError: (err) =>
       toast.error(err instanceof ApiError ? err.message : 'No se pudieron reportar las planchas'),
+  });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    if (pieces) await report.mutateAsync({ pieces, confirmBackdate });
   });
 
   const savePlan = useMutation({
@@ -301,12 +324,13 @@ export function RoofingTerminal({
   });
 
   const close = useMutation({
-    mutationFn: (reason?: string) =>
+    mutationFn: ({ reason, operationDate: date }: Partial<ReverseArgs>) =>
       api<ProductionOrderDto>(`/production/roofing/${id}/close`, {
         method: 'POST',
         body: {
           ...(consumedKg.trim() ? { consumedKg: consumedKg.trim() } : {}),
           ...(reason ? { reason } : {}),
+          operationDate: date,
         },
       }),
     onSuccess: (updated) => {
@@ -495,11 +519,12 @@ export function RoofingTerminal({
                 pieces === null || report.isPending || (liveCoils.length > 1 && coilId === '')
               }
               onClick={() => {
-                if (pieces) report.mutate(pieces);
+                void backdate.attempt();
               }}
             >
               {report.isPending ? 'Registrando…' : 'Reportar planchas'}
             </Button>
+            <OperationDateField value={operationDate} onChange={setOperationDate} />
           </CardContent>
         </Card>
       )}
@@ -647,7 +672,7 @@ export function RoofingTerminal({
                 // Con mucho despunte, cerrar es una baja de inventario y el API pide motivo
                 // (D-089): se lo pedimos acá en vez de gastar un 400.
                 if (needsReason) setClosing(true);
-                else close.mutate(undefined);
+                else close.mutate({ reason: undefined, operationDate: undefined });
               }}
             >
               {close.isPending ? 'Cerrando…' : 'Cerrar orden'}
@@ -663,8 +688,21 @@ export function RoofingTerminal({
         description={`Se declaran ${formatQty(declared || '0', 'kg')} consumidos y las planchas reportadas representan ${formatQty(reportedKg.toFixed(3), 'kg')}: la diferencia sale del inventario como merma y su costo se reparte entre el producto bueno. Explica por qué.`}
         confirmLabel="Cerrar la orden"
         pending={close.isPending}
-        onConfirm={(reason) => {
-          close.mutate(reason);
+        withOperationDate
+        onConfirm={(reason, date) => {
+          close.mutate({ reason, operationDate: date });
+        }}
+      />
+
+      <BackdateConfirmDialog
+        open={backdate.open}
+        onOpenChange={(open) => {
+          if (!open) backdate.close();
+        }}
+        detail={backdate.detail ?? ''}
+        pending={report.isPending}
+        onConfirm={() => {
+          void backdate.confirm();
         }}
       />
     </>

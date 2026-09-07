@@ -84,7 +84,7 @@ export class CuttingController {
     @Param('coilId', ParseUUIDPipe) coilId: string,
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<CuttingOrderDto> {
-    return this.cutting.reverse(actor, id, coilId, body.reason);
+    return this.cutting.reverse(actor, id, coilId, body);
   }
 
   /** Cancelar lo no recibido de la orden (RF-22). */
@@ -94,7 +94,7 @@ export class CuttingController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(cancelCuttingOrderSchema)) body: CancelCuttingOrderInput,
   ): Promise<CuttingOrderDto> {
-    return this.cutting.cancel(actor, id, body.reason);
+    return this.cutting.cancel(actor, id, body);
   }
 }
 

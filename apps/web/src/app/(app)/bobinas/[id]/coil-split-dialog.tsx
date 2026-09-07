@@ -24,6 +24,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { OperationDateField } from '@/components/operation-date-field';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 
 interface WidthRow {
   widthMm: string;
@@ -56,11 +59,15 @@ export function CoilSplitDialog({
       setRows([{ widthMm: '', count: '1' }]);
       setKerfLossMm('0');
       setSplitWeightKg(coil.availableKg);
+      setOperationDate(undefined);
     }
   }, [open, coil.availableKg]);
 
+  // D-124: una sola fecha para el partido entero — la salida de la madre y las entradas de
+  // todas las hijas quedan el mismo día.
+  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const split = useMutation({
-    mutationFn: () =>
+    mutationFn: (confirmBackdate: boolean) =>
       api<CoilDto[]>(`/coils/${coil.id}/split`, {
         method: 'POST',
         body: {
@@ -70,6 +77,8 @@ export function CoilSplitDialog({
             widthMm: r.widthMm.trim(),
             count: stripCount(r.count),
           })),
+          operationDate,
+          confirmBackdate: confirmBackdate || undefined,
         },
       }),
     onSuccess: (children) => {
@@ -78,6 +87,9 @@ export function CoilSplitDialog({
       onDone();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo partir'),
+  });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await split.mutateAsync(confirmBackdate);
   });
 
   const preview = previewSplit(coil, rows, kerfLossMm, splitWeightKg);
@@ -184,6 +196,8 @@ export function CoilSplitDialog({
           )}
         </div>
 
+        <OperationDateField value={operationDate} onChange={setOperationDate} />
+
         <DialogFooter>
           <Button
             variant="outline"
@@ -196,13 +210,25 @@ export function CoilSplitDialog({
           <Button
             disabled={split.isPending || !preview || Boolean(preview.error)}
             onClick={() => {
-              split.mutate();
+              void backdate.attempt();
             }}
           >
             {split.isPending ? 'Partiendo…' : 'Partir'}
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <BackdateConfirmDialog
+        open={backdate.open}
+        onOpenChange={(open) => {
+          if (!open) backdate.close();
+        }}
+        detail={backdate.detail ?? ''}
+        pending={split.isPending}
+        onConfirm={() => {
+          void backdate.confirm();
+        }}
+      />
     </Dialog>
   );
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessToday } from '../business-date';
 import {
   Decimal,
   decimalStringSchema,
@@ -87,31 +88,10 @@ export function salesTotals(lines: SalesLineInput[]): SalesLineTotals {
   return { subtotal, igv, total: subtotal.plus(igv) };
 }
 
-/**
- * Zona horaria del negocio. La empresa opera en Perú y **todas** las fechas de negocio
- * —emisión, vigencia, vencimiento— son días calendario de Lima, no de UTC.
- */
-export const BUSINESS_TIME_ZONE = 'America/Lima';
-
-/**
- * El día de hoy **en Lima**, en `YYYY-MM-DD`.
- *
- * No es un detalle: Lima va cinco horas detrás de UTC, así que entre las 19:00 y la
- * medianoche hora local, `new Date().toISOString()` ya devuelve la fecha del día siguiente.
- * Con eso, una cotización válida "hasta el 10" se rechazaba por vencida durante las últimas
- * cinco horas del día 10, y el pedido nacía fechado el 11. Vive en `@ayr/shared` para que
- * el API, el job de vencimiento y el web usen exactamente la misma noción de "hoy".
- */
-export function businessToday(now: Date = new Date()): string {
-  // `en-CA` da directamente `YYYY-MM-DD`; `Intl` resuelve el desfase y el horario de verano
-  // (que Perú no tiene, pero no hace falta asumirlo).
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: BUSINESS_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(now);
-}
+// D-130: `BUSINESS_TIME_ZONE` y `businessToday` viven en `../business-date`, un módulo hoja.
+// Estaban acá, y cuando `schemas/operation` pasó a necesitarlas cerraron el ciclo
+// `operation → sales → coil → operation`, que en CommonJS no lanza: deja `undefined` y borra
+// en silencio los campos esparcidos con `{ ...backdatableFields }`.
 
 /** `validUntil` por defecto: `issueDate` + N días, en formato `YYYY-MM-DD`. */
 export function defaultValidUntil(

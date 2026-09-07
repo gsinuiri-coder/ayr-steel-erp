@@ -11,6 +11,9 @@ import {
   type CuttingOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { OperationDateField } from '@/components/operation-date-field';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,6 +59,9 @@ export function CuttingReceiveDialog({
   const [rows, setRows] = useState<WidthRow[]>([{ widthMm: '', stripsCount: '1' }]);
   const [kerfLossMm, setKerfLossMm] = useState('0');
   const [receivedWeightKg, setReceivedWeightKg] = useState('');
+  // D-124: la recepción sí mueve kardex (salida de la madre, entrada de los flejes), así
+  // que además de la fecha lleva el acuse de la advertencia de orden cronológico.
+  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (open) {
@@ -69,11 +75,12 @@ export function CuttingReceiveDialog({
       );
       setKerfLossMm(row.expectedKerfLossMm);
       setReceivedWeightKg(row.coilAvailableKg);
+      setOperationDate(undefined);
     }
   }, [open, row]);
 
   const receive = useMutation({
-    mutationFn: () =>
+    mutationFn: (confirmBackdate: boolean) =>
       api<CuttingOrderDto>(`/cutting/${cuttingOrderId}/coils/${row.coilId}/receive`, {
         method: 'POST',
         body: {
@@ -82,6 +89,8 @@ export function CuttingReceiveDialog({
             .map((r) => ({ widthMm: r.widthMm.trim(), stripsCount: stripCount(r.stripsCount) })),
           receivedWeightKg: receivedWeightKg.trim(),
           kerfLossMm: kerfLossMm.trim() || '0',
+          operationDate,
+          confirmBackdate: confirmBackdate || undefined,
         },
       }),
     onSuccess: () => {
@@ -90,6 +99,9 @@ export function CuttingReceiveDialog({
       onDone();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo recibir'),
+  });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await receive.mutateAsync(confirmBackdate);
   });
 
   const preview = previewReceive(row, rows, kerfLossMm, receivedWeightKg);
@@ -196,6 +208,8 @@ export function CuttingReceiveDialog({
           )}
         </div>
 
+        <OperationDateField value={operationDate} onChange={setOperationDate} />
+
         <DialogFooter>
           <Button
             variant="outline"
@@ -208,13 +222,25 @@ export function CuttingReceiveDialog({
           <Button
             disabled={receive.isPending || !preview || Boolean(preview.error)}
             onClick={() => {
-              receive.mutate();
+              void backdate.attempt();
             }}
           >
             {receive.isPending ? 'Recibiendo…' : 'Recibir'}
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <BackdateConfirmDialog
+        open={backdate.open}
+        onOpenChange={(open) => {
+          if (!open) backdate.close();
+        }}
+        detail={backdate.detail ?? ''}
+        pending={receive.isPending}
+        onConfirm={() => {
+          void backdate.confirm();
+        }}
+      />
     </Dialog>
   );
 }

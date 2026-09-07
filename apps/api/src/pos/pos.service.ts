@@ -537,7 +537,9 @@ export class PosService {
 
     // 3. El despacho: devuelve el stock y restaura la reserva.
     if (sale.dispatch.status === DispatchStatus.ISSUED) {
-      await this.dispatches.reverse(actor, sale.dispatch.id, reason);
+      // D-124: la reversa del mostrador se fecha hoy (default), nunca hereda la fecha de
+      // la venta: anular hoy una venta de agosto es un hecho de hoy.
+      await this.dispatches.reverse(actor, sale.dispatch.id, { reason });
     }
 
     // 4. El pedido: libera lo que quede prometido.

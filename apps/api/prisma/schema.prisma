@@ -243,6 +243,22 @@ enum ProductionOrderKind {
 /// Qué clase de receta es (D-087). `DRYWALL` usa ancho de fleje, largo de pieza y kilo por
 /// pieza; `ROOFING` solo necesita acabado y espesor de entrada, porque el largo lo pone el
 /// pedido y el kilo teórico sale de la bobina que se monta (D-047).
+/// D-127: subtipo de un producto de coberturas metálicas. **Explícito**, no inferido.
+///
+/// Hasta acá "a medida" se deducía de `unit = MTR` y "plancha" de tener largo: dos
+/// convenciones que ninguna pantalla mostraba y que nadie podía corregir. El resultado real
+/// fue una cotización a medida que al confirmarse pedía stock de producto terminado —el
+/// camino de una plancha— en vez de reservar materia prima y entrar a la cola.
+enum RoofingProductKind {
+  /// Plancha de catálogo: largo fijo, se vende del stock que ya existe.
+  PLANCHA
+  /// A medida: se cotiza en metros lineales por subítems de largo y se **fabrica** contra
+  /// pedido reservando kilos de bobina (RF-31, D-084).
+  A_MEDIDA
+
+  @@map("roofing_product_kind")
+}
+
 enum ProductBomKind {
   DRYWALL
   ROOFING
@@ -530,6 +546,10 @@ model Product {
   /// un perfil no es un prisma simple, así que una fórmula por geometría mentiría. Distinto
   /// de `product_boms.kg_per_piece`, que es el kilo de **fleje** que la pieza consume.
   pieceWeightKg  Decimal?      @map("piece_weight_kg") @db.Decimal(12, 3)
+  /// D-127: subtipo de cobertura. Obligatorio en Metallic Roofing, null en el resto. Es lo
+  /// que decide la rama de la confirmación: `A_MEDIDA` reserva kilos de bobina y va a la
+  /// cola de producción; `PLANCHA` exige stock de producto terminado.
+  roofingKind    RoofingProductKind? @map("roofing_kind")
   isActive       Boolean       @default(true) @map("is_active")
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -702,11 +722,19 @@ model InventoryMovement {
   reversals      InventoryMovement[]   @relation("MovementReversal")
   actorId        String?               @map("actor_id") @db.Uuid
   at             DateTime              @default(now()) @db.Timestamptz(3)
+  /// D-124: **día de negocio** del movimiento, en zona de Lima. `at` sigue siendo el
+  /// instante en que se grabó (auditoría) y no se toca nunca; `operationDate` es la fecha
+  /// que el kardex ordena y que todo reporte filtra y agrupa. Por defecto hoy: el flujo
+  /// normal no cambia. Solo un ADMINISTRADOR la puede retrofechar (carga histórica).
+  operationDate  DateTime              @map("operation_date") @db.Date
 
   /// Un movimiento se anula una sola vez (Postgres permite varios NULL en un índice único).
   @@unique([reversalOfId])
   @@index([itemType, itemId, at])
   @@index([businessLineId, at])
+  /// D-124: el kardex de un ítem se ordena y se corta por fecha de operación, no por `at`.
+  @@index([itemType, itemId, operationDate])
+  @@index([businessLineId, operationDate])
   @@index([refType, refId])
   @@map("inventory_movements")
 }
@@ -908,10 +936,14 @@ model Coil {
   /// Observaciones editables mientras la bobina está abierta (RF-20).
   notes              String?                      @db.VarChar(500)
   createdById        String                       @map("created_by_id") @db.Uuid
+  /// D-124: día de negocio en que la bobina entró (Lima). `createdAt` queda como el
+  /// instante de grabación, para auditoría.
+  operationDate      DateTime                     @map("operation_date") @db.Date
   createdAt          DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([businessLineId, status])
+  @@index([operationDate])
   @@index([typeKey])
   @@index([supplierId])
   @@index([parentCoilId])
@@ -972,6 +1004,8 @@ model CuttingOrder {
   businessLine   BusinessLine       @relation(fields: [businessLineId], references: [id])
   status         CuttingOrderStatus @default(SENT)
   sentAt         DateTime           @default(now()) @map("sent_at") @db.Timestamptz(3)
+  /// D-124: día de negocio del **envío** a corte (Lima). `sentAt` es el instante grabado.
+  operationDate  DateTime           @map("operation_date") @db.Date
   cancelledAt    DateTime?          @map("cancelled_at") @db.Timestamptz(3)
   notes          String?            @db.VarChar(500)
   createdById    String             @map("created_by_id") @db.Uuid
@@ -1000,6 +1034,9 @@ model CuttingOrderCoil {
   expectedKerfLossMm Decimal                @map("expected_kerf_loss_mm") @db.Decimal(8, 2)
   status             CuttingOrderCoilStatus @default(SENT)
   receivedAt         DateTime?              @map("received_at") @db.Timestamptz(3)
+  /// D-124: día de negocio de la **recepción** (Lima). Null mientras no se recibe; la
+  /// reversa de recepción lo limpia igual que a `receivedAt`.
+  receivedOperationDate DateTime?           @map("received_operation_date") @db.Date
   receivedWidthsMm   Json?                  @map("received_widths_mm")
   /// Kilos realmente recibidos (input del operario, RF-41); base del prorrateo de `planCoilSplit`.
   receivedWeightKg   Decimal?               @map("received_weight_kg") @db.Decimal(12, 3)
@@ -1117,6 +1154,10 @@ model ProductionOrder {
   totalCostPen    Decimal?              @map("total_cost_pen") @db.Decimal(18, 4)
   unitCostPen     Decimal?              @map("unit_cost_pen") @db.Decimal(18, 4)
   createdById     String                @map("created_by_id") @db.Uuid
+  /// D-124: día de negocio en que la OP **arranca** (Lima).
+  operationDate   DateTime              @map("operation_date") @db.Date
+  /// D-124: día de negocio del **cierre**. Null mientras la OP no se cierra.
+  closedOperationDate DateTime?         @map("closed_operation_date") @db.Date
   closedById      String?               @map("closed_by_id") @db.Uuid
   closedAt        DateTime?             @map("closed_at") @db.Timestamptz(3)
   cancelledById   String?               @map("cancelled_by_id") @db.Uuid
@@ -1196,6 +1237,8 @@ model ProductionReport {
   unitCostPen       Decimal                @map("unit_cost_pen") @db.Decimal(18, 4)
   status            ProductionReportStatus @default(ACTIVE)
   notes             String?                @db.VarChar(240)
+  /// D-124: día de negocio del reporte de piezas (Lima).
+  operationDate     DateTime               @map("operation_date") @db.Date
   createdById       String                 @map("created_by_id") @db.Uuid
   createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   revertedById      String?                @map("reverted_by_id") @db.Uuid

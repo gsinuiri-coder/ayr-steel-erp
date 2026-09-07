@@ -22,6 +22,9 @@ import { api, ApiError } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
+import { useSession } from '@/lib/session';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -59,6 +62,7 @@ export function NuevoDespachoView() {
   const queryClient = useQueryClient();
 
   const [salesOrderId, setSalesOrderId] = useState<string>(searchParams.get('pedido') ?? NONE);
+  const { user } = useSession();
   const [dispatchDate, setDispatchDate] = useState(businessToday());
   const [originAddress, setOriginAddress] = useState('');
   const [originUbigeo, setOriginUbigeo] = useState('');
@@ -154,12 +158,15 @@ export function NuevoDespachoView() {
   }, [suggestedWeight]);
 
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (confirmBackdate: boolean) =>
       api<DispatchDto>('/dispatches', {
         method: 'POST',
         body: {
           salesOrderId,
+          // D-124: `dispatchDate` es la fecha de operación del despacho y la que fecha la
+          // salida de kardex. Un VENDEDOR solo puede mandar hoy (el API le da 403 si no).
           dispatchDate,
+          confirmBackdate: confirmBackdate || undefined,
           originAddress: originAddress.trim(),
           originUbigeo: originUbigeo.trim(),
           destinationAddress: destinationAddress.trim(),
@@ -200,6 +207,9 @@ export function NuevoDespachoView() {
     onError: (err: unknown) => {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo registrar el despacho');
     },
+  });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await create.mutateAsync(confirmBackdate);
   });
 
   const transportComplete =
@@ -261,7 +271,12 @@ export function NuevoDespachoView() {
             <Label>Fecha de traslado</Label>
             <Input
               type="date"
+              max={businessToday()}
               value={dispatchDate}
+              // D-124: es la fecha de operación del despacho. Solo un administrador la puede
+              // mover del día; el API rechaza con 403 a cualquier otro rol que lo intente,
+              // así que la pantalla no ofrece algo que va a fallar.
+              disabled={user.role !== Role.ADMINISTRADOR}
               onChange={(e) => {
                 setDispatchDate(e.target.value);
               }}
@@ -606,12 +621,24 @@ export function NuevoDespachoView() {
         <Button
           disabled={!canSubmit}
           onClick={() => {
-            create.mutate();
+            void backdate.attempt();
           }}
         >
           Despachar
         </Button>
       </div>
+
+      <BackdateConfirmDialog
+        open={backdate.open}
+        onOpenChange={(open) => {
+          if (!open) backdate.close();
+        }}
+        detail={backdate.detail ?? ''}
+        pending={create.isPending}
+        onConfirm={() => {
+          void backdate.confirm();
+        }}
+      />
     </RoleGate>
   );
 }

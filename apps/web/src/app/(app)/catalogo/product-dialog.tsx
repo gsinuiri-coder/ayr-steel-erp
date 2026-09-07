@@ -5,7 +5,17 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { BusinessLine, PRODUCT_SOURCE_LABELS, PRODUCT_SOURCES, type ProductDto } from '@ayr/shared';
+import {
+  BusinessLine,
+  PRODUCT_SOURCE_LABELS,
+  PRODUCT_SOURCES,
+  ROOFING_KIND_UNIT,
+  ROOFING_PRODUCT_KIND_HINTS,
+  ROOFING_PRODUCT_KIND_LABELS,
+  ROOFING_PRODUCT_KINDS,
+  RoofingProductKind,
+  type ProductDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { ColorSelect } from '@/components/colors/color-select';
 import { isPositiveDecimal } from '@/lib/format';
@@ -58,6 +68,11 @@ const formSchema = z.object({
   widthMm: z.string().trim(),
   lengthMm: z.string().trim(),
   pieceWeightKg: z.string().trim(),
+  /**
+   * D-127: subtipo de cobertura. Vacío solo fuera de Metallic Roofing, donde el campo ni
+   * se muestra. Es lo que decide qué hace la confirmación de una cotización con esta línea.
+   */
+  roofingKind: z.string(),
 });
 type FormValues = z.infer<typeof formSchema>;
 
@@ -109,16 +124,24 @@ export function ProductDialog({
       widthMm: product?.widthMm ?? '',
       lengthMm: product?.lengthMm ?? '',
       pieceWeightKg: product?.pieceWeightKg ?? '',
+      // D-127: una cobertura nueva nace A MEDIDA — es el caso habitual del rubro y el que
+      // el sistema hacía mal cuando el subtipo no existía. Una existente muestra el suyo.
+      roofingKind: product?.roofingKind ?? (usesRoofingFields(businessLineCode) ? 'A_MEDIDA' : ''),
     },
   });
 
   const save = useMutation({
     mutationFn: (values: FormValues) => {
+      const roofingKind = showRoofingFields ? (values.roofingKind as RoofingProductKind) : null;
       const structuredFields = {
         thicknessMm: showRoofingFields ? values.thicknessMm : '',
         widthMm: showRoofingFields || showDrywallFields ? values.widthMm : '',
-        lengthMm: showDrywallFields ? values.lengthMm : '',
+        // D-127: el largo fijo es de la plancha. Una cobertura a medida no lo lleva —el
+        // largo va en los subítems de cada línea de venta— y el API lo rechaza si viene.
+        lengthMm:
+          showDrywallFields || roofingKind === RoofingProductKind.PLANCHA ? values.lengthMm : '',
         pieceWeightKg: showDrywallFields ? values.pieceWeightKg : '',
+        roofingKind,
       };
       if (editing) {
         return api<ProductDto>(`/catalog/${product.id}`, {
@@ -240,6 +263,47 @@ export function ProductDialog({
             {showRoofingFields && (
               <FormField
                 control={form.control}
+                name="roofingKind"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Subtipo de cobertura</FormLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        // Subtipo y unidad son el mismo hecho (el API y un CHECK lo exigen):
+                        // elegir el subtipo fija la unidad en vez de dejar que discrepen.
+                        form.setValue('unit', ROOFING_KIND_UNIT[value as RoofingProductKind]);
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Elige el subtipo" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {ROOFING_PRODUCT_KINDS.map((kind) => (
+                          <SelectItem key={kind} value={kind}>
+                            {ROOFING_PRODUCT_KIND_LABELS[kind]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {
+                        ROOFING_PRODUCT_KIND_HINTS[
+                          (field.value || 'A_MEDIDA') as RoofingProductKind
+                        ]
+                      }
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            {showRoofingFields && (
+              <FormField
+                control={form.control}
                 name="thicknessMm"
                 render={({ field }) => (
                   <FormItem>
@@ -270,6 +334,25 @@ export function ProductDialog({
                         el ancho del rollo que se monte (D-086), no este dato.
                       </p>
                     )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            {showRoofingFields && form.watch('roofingKind') === RoofingProductKind.PLANCHA && (
+              <FormField
+                control={form.control}
+                name="lengthMm"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Largo de la plancha (mm)</FormLabel>
+                    <FormControl>
+                      <Input inputMode="decimal" autoComplete="off" {...field} />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      Solo la plancha de catálogo tiene largo fijo. A medida, el largo lo trae cada
+                      línea de la cotización.
+                    </p>
                     <FormMessage />
                   </FormItem>
                 )}

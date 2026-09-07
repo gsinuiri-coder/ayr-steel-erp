@@ -12,12 +12,20 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { OperationDateField } from '@/components/operation-date-field';
 
 /**
  * Confirmación con motivo obligatorio. Toda anulación de Fase 2b (merma, partido,
  * bobina, compra) guarda el motivo en el kardex y en la auditoría (RF-95), así que la
  * UI no puede dejar confirmarla sin escribirlo. El API valida lo mismo: acá solo se
  * evita el viaje de ida y vuelta.
+ *
+ * D-124: con `withOperationDate` lleva además la fecha de operación de **la reversa**,
+ * colapsada y solo para administradores. Es opt-in y no automático porque este diálogo lo
+ * comparten dos clases de confirmación: las que escriben un hecho fechado (una anulación de
+ * kardex, el cierre de una corrida) y las que solo cambian un estado (descartar una
+ * cotización, dar de baja un comprobante ante el PSE, marcar prioridad en la cola). Mostrar
+ * el campo en las segundas ofrecería mover una fecha que nadie guarda.
  */
 export function ReasonDialog({
   open,
@@ -26,6 +34,7 @@ export function ReasonDialog({
   description,
   confirmLabel = 'Confirmar',
   pending = false,
+  withOperationDate = false,
   onConfirm,
 }: {
   open: boolean;
@@ -34,13 +43,20 @@ export function ReasonDialog({
   description: string;
   confirmLabel?: string;
   pending?: boolean;
-  onConfirm: (reason: string) => void;
+  /** D-124: exponer la fecha de operación de la reversa (solo si el hecho queda fechado). */
+  withOperationDate?: boolean;
+  onConfirm: (reason: string, operationDate: string | undefined) => void;
 }) {
   const [reason, setReason] = useState('');
+  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
 
-  // El motivo no se arrastra de una anulación a la siguiente: cada una tiene el suyo.
+  // Ni el motivo ni la fecha se arrastran de una anulación a la siguiente: cada una tiene
+  // los suyos, y una fecha pegada de la anterior es exactamente el error que nadie ve.
   useEffect(() => {
-    if (open) setReason('');
+    if (open) {
+      setReason('');
+      setOperationDate(undefined);
+    }
   }, [open]);
 
   const trimmed = reason.trim();
@@ -67,6 +83,13 @@ export function ReasonDialog({
           {tooShort && (
             <p className="text-sm text-destructive">Explica el motivo en al menos 3 caracteres.</p>
           )}
+          {withOperationDate && (
+            <OperationDateField
+              value={operationDate}
+              onChange={setOperationDate}
+              hint="Se registra con esta fecha, no con la de la operación que corrige."
+            />
+          )}
         </div>
         <DialogFooter>
           <Button
@@ -81,7 +104,7 @@ export function ReasonDialog({
             variant="destructive"
             disabled={pending || trimmed.length < 3}
             onClick={() => {
-              onConfirm(trimmed);
+              onConfirm(trimmed, operationDate);
             }}
           >
             {pending ? 'Procesando…' : confirmLabel}

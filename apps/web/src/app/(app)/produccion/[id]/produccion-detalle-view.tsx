@@ -19,6 +19,7 @@ import {
   type ProductionReportDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import type { ReverseArgs } from '@/lib/reverse-args';
 import {
   formatMoney,
   formatMoneyOrDash,
@@ -78,10 +79,10 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   };
 
   const close = useMutation({
-    mutationFn: (reason?: string) =>
+    mutationFn: ({ reason, operationDate }: Partial<ReverseArgs>) =>
       api<ProductionOrderDto>(`${base}/close`, {
         method: 'POST',
-        body: reason ? { reason } : {},
+        body: { reason: reason ?? undefined, operationDate },
       }),
     onSuccess: (o) => {
       toast.success(
@@ -95,8 +96,11 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   });
 
   const cancel = useMutation({
-    mutationFn: (reason: string) =>
-      api<ProductionOrderDto>(`${base}/cancel`, { method: 'POST', body: { reason } }),
+    mutationFn: ({ reason, operationDate }: ReverseArgs) =>
+      api<ProductionOrderDto>(`${base}/cancel`, {
+        method: 'POST',
+        body: { reason, operationDate },
+      }),
     onSuccess: () => {
       toast.success('Orden anulada: el material que tomó queda libre otra vez');
       setCancelling(false);
@@ -107,8 +111,11 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   });
 
   const reopen = useMutation({
-    mutationFn: (reason: string) =>
-      api<ProductionOrderDto>(`${base}/reopen`, { method: 'POST', body: { reason } }),
+    mutationFn: ({ reason, operationDate }: ReverseArgs) =>
+      api<ProductionOrderDto>(`${base}/reopen`, {
+        method: 'POST',
+        body: { reason, operationDate },
+      }),
     onSuccess: () => {
       toast.success('Orden reabierta: la merma y el costeo del cierre quedaron revertidos');
       setReopening(false);
@@ -119,10 +126,10 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   });
 
   const revert = useMutation({
-    mutationFn: ({ reportId, reason }: { reportId: string; reason: string }) =>
+    mutationFn: ({ reportId, reason, operationDate }: ReverseArgs & { reportId: string }) =>
       api<ProductionOrderDto>(`${base}/reports/${reportId}/reverse`, {
         method: 'POST',
-        body: { reason },
+        body: { reason, operationDate },
       }),
     onSuccess: () => {
       toast.success(
@@ -212,8 +219,10 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             <Button
               disabled={close.isPending}
               onClick={() => {
+                // Cerrar sin merma que explicar no abre diálogo, así que va con la fecha
+                // por defecto (hoy). Para fecharlo distinto está el cierre con motivo.
                 if (closeNeedsReason) setClosing(true);
-                else close.mutate(undefined);
+                else close.mutate({ reason: undefined, operationDate: undefined });
               }}
             >
               {close.isPending ? 'Cerrando…' : 'Cerrar orden'}
@@ -417,8 +426,9 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         }
         confirmLabel="Sí, revertir"
         pending={revert.isPending}
-        onConfirm={(reason) => {
-          if (reverting) revert.mutate({ reportId: reverting.id, reason });
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
+          if (reverting) revert.mutate({ reportId: reverting.id, reason, operationDate });
         }}
       />
 
@@ -429,8 +439,9 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         description={`Quedan ${formatQty(pendingKg.toFixed(3), 'kg')} sin convertir en piezas sobre ${formatQty(assignedKg.toFixed(3), 'kg')} asignados: esa diferencia sale del inventario como merma y su costo se reparte entre las piezas buenas. Explica por qué.`}
         confirmLabel="Cerrar la orden"
         pending={close.isPending}
-        onConfirm={(reason) => {
-          close.mutate(reason);
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
+          close.mutate({ reason, operationDate });
         }}
       />
 
@@ -441,8 +452,9 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         description="Se revierten la merma de proceso y el ajuste de costo del cierre; los flejes vuelven a quedar tomados por la orden. Solo se puede si las piezas y los flejes no se movieron después de cerrarla."
         confirmLabel="Sí, reabrir"
         pending={reopen.isPending}
-        onConfirm={(reason) => {
-          reopen.mutate(reason);
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
+          reopen.mutate({ reason, operationDate });
         }}
       />
 
@@ -453,8 +465,9 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         description={`Los ${liveStrips.length} fleje(s) que la orden tiene tomados quedan libres otra vez. Solo se puede si no le queda ningún reporte de piezas vigente.`}
         confirmLabel="Sí, anular"
         pending={cancel.isPending}
-        onConfirm={(reason) => {
-          cancel.mutate(reason);
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
+          cancel.mutate({ reason, operationDate });
         }}
       />
     </RoleGate>

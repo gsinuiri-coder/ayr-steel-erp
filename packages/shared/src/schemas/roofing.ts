@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Decimal, decimalStringSchema, MAX_VALUE, roundTo, toDecimal } from '../decimal';
 import { reasonSchema } from './coil';
+import { backdatableFields } from './operation';
 
 /**
  * Producción de coberturas metálicas contra pedido (RF-30..RF-33; D-082..D-091).
@@ -169,6 +170,7 @@ export function thicknessWithinTolerance(
  * línea de pedido que esa reserva cubre; no se piden por separado, así no pueden discrepar.
  */
 export const createRoofingOrderSchema = z.object({
+  ...backdatableFields,
   reservationId: z.string({ required_error: 'La reserva del pedido es obligatoria' }).uuid(),
   notes: z.string().trim().max(500).optional(),
 });
@@ -209,6 +211,7 @@ export const reportRoofingPiecesSchema = z.object({
   coilId: z.string().uuid().optional(),
   pieces: roofingPiecesSchema,
   notes: z.string().trim().max(240).optional(),
+  ...backdatableFields,
 });
 export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>;
 
@@ -223,6 +226,7 @@ export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>
  * quien conoce los kilos reales.
  */
 export const closeRoofingOrderSchema = z.object({
+  ...backdatableFields,
   consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   notes: z.string().trim().max(240).optional(),
   reason: reasonSchema.optional(),

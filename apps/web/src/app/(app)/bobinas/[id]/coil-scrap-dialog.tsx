@@ -17,6 +17,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { OperationDateField } from '@/components/operation-date-field';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 
 /**
  * Registrar merma sobre una bobina (RF-17). Es una salida `SCRAP` valorizada al costo
@@ -40,14 +43,22 @@ export function CoilScrapDialog({
     if (open) {
       setQtyKg('');
       setReason('');
+      setOperationDate(undefined);
     }
   }, [open]);
 
+  // D-124: día de negocio de la merma, con su acuse de orden cronológico.
+  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const scrap = useMutation({
-    mutationFn: () =>
+    mutationFn: (confirmBackdate: boolean) =>
       api<CoilDto>(`/coils/${coil.id}/scrap`, {
         method: 'POST',
-        body: { qtyKg: qtyKg.trim(), reason: reason.trim() },
+        body: {
+          qtyKg: qtyKg.trim(),
+          reason: reason.trim(),
+          operationDate,
+          confirmBackdate: confirmBackdate || undefined,
+        },
       }),
     onSuccess: () => {
       toast.success('Merma registrada');
@@ -56,6 +67,9 @@ export function CoilScrapDialog({
     },
     onError: (err) =>
       toast.error(err instanceof ApiError ? err.message : 'No se pudo registrar la merma'),
+  });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await scrap.mutateAsync(confirmBackdate);
   });
 
   const validQty = isPositiveDecimal(qtyKg);
@@ -104,6 +118,8 @@ export function CoilScrapDialog({
           </div>
         </div>
 
+        <OperationDateField value={operationDate} onChange={setOperationDate} />
+
         <DialogFooter>
           <Button
             variant="outline"
@@ -116,13 +132,25 @@ export function CoilScrapDialog({
           <Button
             disabled={!canSubmit || scrap.isPending}
             onClick={() => {
-              scrap.mutate();
+              void backdate.attempt();
             }}
           >
             {scrap.isPending ? 'Registrando…' : 'Registrar merma'}
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <BackdateConfirmDialog
+        open={backdate.open}
+        onOpenChange={(open) => {
+          if (!open) backdate.close();
+        }}
+        detail={backdate.detail ?? ''}
+        pending={scrap.isPending}
+        onConfirm={() => {
+          void backdate.confirm();
+        }}
+      />
     </Dialog>
   );
 }

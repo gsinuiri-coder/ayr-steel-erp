@@ -87,8 +87,16 @@ export function BobinaDetalleView({ id }: { id: string }) {
   };
 
   const runAction = useMutation({
-    mutationFn: ({ action, reason }: { action: PendingAction; reason: string }) => {
-      const body = { reason };
+    mutationFn: ({
+      action,
+      reason,
+      operationDate,
+    }: {
+      action: PendingAction;
+      reason: string;
+      operationDate: string | undefined;
+    }) => {
+      const body = { reason, operationDate };
       if (action.kind === 'cancel-coil') {
         return api(`/coils/${id}/cancel`, { method: 'POST', body });
       }
@@ -434,8 +442,9 @@ export function BobinaDetalleView({ id }: { id: string }) {
         description={pendingDescription(pending)}
         confirmLabel="Sí, anular"
         pending={runAction.isPending}
-        onConfirm={(reason) => {
-          if (pending) runAction.mutate({ action: pending, reason });
+        withOperationDate
+        onConfirm={(reason, operationDate) => {
+          if (pending) runAction.mutate({ action: pending, reason, operationDate });
         }}
       />
     </RoleGate>

@@ -7,6 +7,7 @@ import {
   COIL_STATUSES,
   CURRENCIES,
 } from '../enums';
+import { backdatableFields } from './operation';
 import { paginationQuerySchema } from './pagination';
 
 /**
@@ -64,6 +65,11 @@ export const coilSchema = z.object({
    * cargada con ancho o espesor en cero no puede convertirse).
    */
   equivalentMeters: z.string().nullable(),
+  /**
+   * D-124: día de negocio en que la bobina entró (`YYYY-MM-DD`, Lima). Es la fecha por la
+   * que el reporte mensual de bobinas la ubica; `createdAt` dice cuándo se tipeó.
+   */
+  operationDate: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -174,6 +180,7 @@ const splitChildInputSchema = z.object({
  */
 export const createCoilSplitSchema = z
   .object({
+    ...backdatableFields,
     splitWeightKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
     kerfLossMm: decimalStringSchema('MM', { max: MAX_VALUE.WIDTH_MM }).default('0.00'),
     children: z
@@ -208,13 +215,23 @@ export type CreateCoilSplitInput = z.infer<typeof createCoilSplitSchema>;
 
 /** RF-17, D-040: salida `SCRAP` valorizada al costo promedio vigente. */
 export const createCoilScrapSchema = z.object({
+  ...backdatableFields,
   qtyKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
   reason: reasonSchema,
 });
 export type CreateCoilScrapInput = z.infer<typeof createCoilScrapSchema>;
 
-/** RF-18, RF-21 y anulación de compra: toda reversa exige motivo (RF-95). */
-export const reverseMovementSchema = z.object({ reason: reasonSchema });
+/**
+ * RF-18, RF-21 y anulación de compra: toda reversa exige motivo (RF-95).
+ *
+ * D-124: acepta `operationDate` propia. Una reversa **nunca** hereda la fecha de lo que
+ * anula: anular hoy algo de agosto es un hecho de hoy, y fecharlo en agosto reescribiría
+ * un mes ya reportado.
+ */
+export const reverseMovementSchema = z.object({
+  ...backdatableFields,
+  reason: reasonSchema,
+});
 export type ReverseMovementInput = z.infer<typeof reverseMovementSchema>;
 
 /** RF-19: abrir o cerrar una bobina. Una cerrada no entra a producción ni a partido. */

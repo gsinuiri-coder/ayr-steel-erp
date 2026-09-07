@@ -16,6 +16,7 @@ import {
   PRODUCTION_REPORT_STATUSES,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { backdatableFields } from './operation';
 import { roofingPieceSchema } from './roofing';
 
 /**
@@ -234,6 +235,7 @@ export type ProductBomDto = z.infer<typeof productBomSchema>;
 // --------------------------------------------------------------------------
 
 export const createProductionOrderSchema = z.object({
+  ...backdatableFields,
   productId: z.string({ required_error: 'El producto a fabricar es obligatorio' }).uuid(),
   targetPieces: piecesSchema.optional(),
   notes: z.string().trim().max(500).optional(),
@@ -259,6 +261,7 @@ export type ConsumeStripInput = z.infer<typeof consumeStripSchema>;
 
 /** Reporte parcial de piezas buenas (D-058). */
 export const reportPiecesSchema = z.object({
+  ...backdatableFields,
   pieces: piecesSchema,
   notes: z.string().trim().max(240).optional(),
 });
@@ -270,13 +273,17 @@ export type ReportPiecesInput = z.infer<typeof reportPiecesSchema>;
  * del material asignado — el API es quien decide, porque solo él conoce los kilos reales.
  */
 export const closeProductionOrderSchema = z.object({
+  ...backdatableFields,
   notes: z.string().trim().max(240).optional(),
   reason: reasonSchema.optional(),
 });
 export type CloseProductionOrderInput = z.infer<typeof closeProductionOrderSchema>;
 
 /** Anular la OP y liberar los flejes no consumidos. Motivo obligatorio (RF-95). */
-export const cancelProductionOrderSchema = z.object({ reason: reasonSchema });
+export const cancelProductionOrderSchema = z.object({
+  ...backdatableFields,
+  reason: reasonSchema,
+});
 export type CancelProductionOrderInput = z.infer<typeof cancelProductionOrderSchema>;
 
 // --------------------------------------------------------------------------
@@ -320,6 +327,8 @@ export const productionReportSchema = z.object({
   unitCostPen: z.string(),
   status: z.enum(PRODUCTION_REPORT_STATUSES),
   notes: z.string().nullable(),
+  /** D-124: día de negocio del reporte (Lima). Es la fecha por la que el reporte de piezas agrupa. */
+  operationDate: z.string(),
   createdAt: z.string(),
   createdByName: z.string().nullable(),
   revertedAt: z.string().nullable(),
@@ -367,6 +376,10 @@ export const productionOrderSchema = z.object({
   customerName: z.string().nullable(),
   consumptions: z.array(productionOrderConsumptionSchema),
   reports: z.array(productionReportSchema),
+  /** D-124: día de negocio en que la corrida arrancó (Lima). */
+  operationDate: z.string(),
+  /** D-124: día de negocio del cierre. Null mientras la orden no se cierra. */
+  closedOperationDate: z.string().nullable(),
   createdAt: z.string(),
   createdByName: z.string().nullable(),
   closedAt: z.string().nullable(),

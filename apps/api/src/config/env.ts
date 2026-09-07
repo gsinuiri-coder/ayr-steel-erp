@@ -1,3 +1,4 @@
+import { DEFAULT_HISTORICAL_LOAD_START } from '@ayr/shared';
 import { z } from 'zod';
 
 /**
@@ -63,6 +64,16 @@ const envSchema = z.object({
       (v) => v === '' || (/^\d+(\.\d+)?$/.test(v) && Number(v) > 0 && Number(v) <= 0.5),
       'ROOFING_THICKNESS_TOLERANCE_MM debe ser un número entre 0 y 0.5 mm, o quedar vacío',
     ),
+  /**
+   * D-124: piso de la carga histórica. Ninguna operación se puede retrofechar antes de esta
+   * fecha. Es variable de entorno y no pantalla por el mismo motivo que
+   * `ROOFING_THICKNESS_TOLERANCE_MM`: un tope que la operación no mueve todos los días no
+   * necesita UI, y una UI lo convierte en algo que se afloja hasta que deja de topar nada.
+   */
+  HISTORICAL_LOAD_START: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'HISTORICAL_LOAD_START debe ser una fecha YYYY-MM-DD')
+    .default(DEFAULT_HISTORICAL_LOAD_START),
   /** Storage R2 (D-007) para los archivos de `imports`. Vacío en entornos que no importan planillas. */
   R2_ACCOUNT_ID: z.string().default(''),
   R2_ACCESS_KEY_ID: z.string().default(''),

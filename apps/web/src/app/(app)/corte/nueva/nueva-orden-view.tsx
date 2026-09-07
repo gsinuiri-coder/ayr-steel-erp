@@ -15,6 +15,7 @@ import {
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { OperationDateField } from '@/components/operation-date-field';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatQty, isPositiveDecimal } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
@@ -100,12 +101,16 @@ export function NuevaOrdenCorteView() {
   );
   const bomById = new Map(drywallBoms.map((b) => [b.productId, b]));
 
+  // D-124: día de negocio del envío. Enviar a corte no mueve kardex (D-050), así que acá no
+  // hay advertencia de orden que confirmar: solo la fecha con la que queda la orden.
+  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const send = useMutation({
     mutationFn: () =>
       api<CuttingOrderDto>('/cutting', {
         method: 'POST',
         body: {
           supplierId,
+          operationDate,
           notes: notes.trim() || undefined,
           coils: drafts.map((d) => ({
             coilId: d.coil.id,
@@ -263,7 +268,8 @@ export function NuevaOrdenCorteView() {
         />
       ))}
 
-      <div className="flex justify-end gap-3">
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <OperationDateField value={operationDate} onChange={setOperationDate} />
         <Button
           variant="outline"
           onClick={() => {

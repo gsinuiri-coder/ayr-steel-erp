@@ -10,6 +10,7 @@ import {
 } from '@ayr/shared';
 import { CoilsService } from '../../coils/coils.service';
 import { toPrismaLineCode } from '../../common/business-line-code';
+import { OperationDateService } from '../../common/operation-date.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   getField,
@@ -39,6 +40,13 @@ const COLUMNS = {
    * quiere cerrada al alta, editable).
    */
   status: { key: 'status', header: 'Estado (OPEN/CLOSED)', required: false },
+  /**
+   * D-124: día de negocio en que la bobina entró (`YYYY-MM-DD`, Lima). Opcional — sin ella
+   * la bobina se fecha hoy, que es lo que hacía la planilla antes de esta fase. **Es la
+   * columna que hace posible la carga histórica**: sin ella toda una planilla de agosto
+   * entraba fechada el día en que se subió y ningún reporte de agosto la veía.
+   */
+  operationDate: { key: 'operationDate', header: 'Fecha de operación', required: false },
 } satisfies Record<string, ImportColumn>;
 
 const kgSchema = decimalStringSchema('KG', { positive: true });
@@ -59,6 +67,7 @@ export class CoilsImportAdapter implements RowImportAdapter {
   constructor(
     private readonly prisma: PrismaService,
     private readonly coils: CoilsService,
+    private readonly operationDate: OperationDateService,
   ) {}
 
   async validateRow(raw: Record<string, unknown>): Promise<RowValidation> {
@@ -152,6 +161,20 @@ export class CoilsImportAdapter implements RowImportAdapter {
       }
     }
 
+    // D-124: la fecha de operación de la planilla. El controlador entero es
+    // ADMINISTRADOR-only, así que el control de rol ya está puesto; acá se valida el rango
+    // (no futura, no anterior al piso histórico) fila por fila, para que una planilla con
+    // un año mal tipeado se caiga en la previsualización y no después de confirmarla.
+    const rawOperationDate = getField(raw, COLUMNS.operationDate);
+    let operationDate: string | undefined;
+    if (rawOperationDate) {
+      try {
+        operationDate = this.operationDate.resolveHistorical(rawOperationDate);
+      } catch (err) {
+        errors.push(err instanceof Error ? err.message : 'Fecha de operación inválida');
+      }
+    }
+
     return {
       data: {
         businessLineCode,
@@ -169,6 +192,7 @@ export class CoilsImportAdapter implements RowImportAdapter {
         unitCostPerKg,
         exchangeRate,
         status,
+        operationDate,
       },
       errors,
     };
@@ -201,6 +225,7 @@ export class CoilsImportAdapter implements RowImportAdapter {
       status: data.status as CoilStatus,
       refType: 'IMPORT',
       actorId,
+      operationDate: (data.operationDate as string | undefined) ?? undefined,
     });
     return coil.id;
   }

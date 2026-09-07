@@ -14,6 +14,7 @@ import {
   type InventoryMovement,
 } from '@prisma/client';
 import {
+  fromDateOnly,
   Role,
   toDecimal,
   toFixedString,
@@ -22,12 +23,14 @@ import {
   type CoilSplitDto,
   type CreateCoilScrapInput,
   type CreateCoilSplitInput,
+  type ReverseMovementInput,
   type SetCoilStatusInput,
   type UpdateCoilInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { ColorsService } from '../colors/colors.service';
+import { OperationDateService } from '../common/operation-date.service';
 import { liveMovements } from '../inventory/live-movements';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -53,6 +56,7 @@ export class CoilOperationsService {
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
     private readonly colors: ColorsService,
+    private readonly operationDate: OperationDateService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -60,6 +64,9 @@ export class CoilOperationsService {
   // -------------------------------------------------------------------------
 
   async split(actor: RequestUser, coilId: string, input: CreateCoilSplitInput): Promise<CoilDto[]> {
+    // D-124: una sola fecha para el partido entero — la salida de la madre y las entradas
+    // de todas las hijas. Que difieran dejaría kilos en el aire por un día en el reporte.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const created = await this.prisma.$transaction(
       async (tx) => {
         const coil = await this.coils.lockCoil(tx, coilId);
@@ -109,6 +116,8 @@ export class CoilOperationsService {
           refId: split.id,
           notes: `Partido en ${plan.children.length} bobinas hijas`,
           actorId: actor.id,
+          operationDate,
+          confirmBackdate: input.confirmBackdate,
         });
         if (!out) {
           throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
@@ -157,6 +166,7 @@ export class CoilOperationsService {
                 // de D-060 sobre las hijas de un partido quedaba inalcanzable.
                 kind: coil.kind,
                 actorId: actor.id,
+                operationDate,
               },
               { ...batch, sequence: batch.sequence + index },
             ),
@@ -180,6 +190,7 @@ export class CoilOperationsService {
           entityId: coil.id,
           before: { availableKg: availableKg.toFixed(3), status: coil.status },
           after: {
+            operationDate,
             splitId: split.id,
             splitWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             kerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
@@ -201,7 +212,15 @@ export class CoilOperationsService {
   // RF-16 — revertir un partido
   // -------------------------------------------------------------------------
 
-  async revertSplit(actor: RequestUser, splitId: string, reason: string): Promise<CoilSplitDto[]> {
+  async revertSplit(
+    actor: RequestUser,
+    splitId: string,
+    input: ReverseMovementInput,
+  ): Promise<CoilSplitDto[]> {
+    const { reason } = input;
+    // D-124: la reversa se fecha hoy salvo que un administrador diga otra cosa. No hereda
+    // la fecha del partido: deshacerlo es un hecho propio, con su propia fecha.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const parentCoilId = await this.prisma.$transaction(
       async (tx) => {
         const split = await tx.coilSplit.findUnique({
@@ -266,10 +285,10 @@ export class CoilOperationsService {
         // Primero las entradas de las hijas y al final la salida de la madre: al
         // revés, la madre recuperaría el peso antes de que las hijas lo devuelvan.
         for (const movement of movements.filter((m) => m.type === 'IN')) {
-          await this.inventory.reverse(tx, movement.id, actor.id, reason);
+          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
         }
         for (const movement of movements.filter((m) => m.type === 'OUT')) {
-          await this.inventory.reverse(tx, movement.id, actor.id, reason);
+          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
         }
 
         await tx.coil.updateMany({
@@ -321,6 +340,7 @@ export class CoilOperationsService {
     coilId: string,
     input: CreateCoilScrapInput,
   ): Promise<CoilDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(async (tx) => {
       const coil = await this.coils.lockCoil(tx, coilId);
       if (coil.status === CoilStatus.CANCELLED || coil.status === CoilStatus.IN_THIRD_PARTY) {
@@ -341,6 +361,8 @@ export class CoilOperationsService {
         refId: coil.id,
         notes: input.reason,
         actorId: actor.id,
+        operationDate,
+        confirmBackdate: input.confirmBackdate,
       });
       if (!movement) {
         throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
@@ -352,6 +374,7 @@ export class CoilOperationsService {
         entity: 'coils',
         entityId: coil.id,
         after: {
+          operationDate,
           movementId: movement.id.toString(),
           qtyKg: movement.qty.toFixed(3),
           totalCostPen: movement.totalCost.toFixed(4),
@@ -363,7 +386,13 @@ export class CoilOperationsService {
   }
 
   /** RF-18: anular una merma mal registrada. Reversa con motivo, nunca `DELETE`. */
-  async cancelScrap(actor: RequestUser, movementId: bigint, reason: string): Promise<CoilDto> {
+  async cancelScrap(
+    actor: RequestUser,
+    movementId: bigint,
+    input: ReverseMovementInput,
+  ): Promise<CoilDto> {
+    const { reason } = input;
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const coilId = await this.prisma.$transaction(async (tx) => {
       const movement = await tx.inventoryMovement.findUnique({ where: { id: movementId } });
       if (!movement) throw new NotFoundException('Movimiento no encontrado');
@@ -385,7 +414,13 @@ export class CoilOperationsService {
       // una OP ya reportó piezas contra él, sus reportes siguientes saldrían a otro costo
       // que los anteriores (mismo motivo que bloquea recostear, D-045/D-060).
       await assertStripsNotAssigned(tx, [movement.itemId], 'anular la merma');
-      const reversal = await this.inventory.reverse(tx, movementId, actor.id, reason);
+      const reversal = await this.inventory.reverse(
+        tx,
+        movementId,
+        actor.id,
+        reason,
+        operationDate,
+      );
 
       await this.audit.write(tx, {
         actorId: actor.id,
@@ -393,7 +428,7 @@ export class CoilOperationsService {
         entity: 'coils',
         entityId: movement.itemId,
         before: { movementId: movementId.toString(), qtyKg: movement.qty.toFixed(3) },
-        after: { reversalId: reversal.id.toString(), reason },
+        after: { reversalId: reversal.id.toString(), reason, operationDate },
       });
       return movement.itemId;
     });
@@ -492,7 +527,14 @@ export class CoilOperationsService {
       if (input.notes !== undefined) data.notes = input.notes || null;
 
       if (touchesCost) {
+        // D-045 + D-124: el recosteo es reversa + reingreso, y los dos van con la MISMA
+        // fecha de operación —la del ingreso original—, no con la de hoy. Fecharlos hoy
+        // dejaría la bobina fuera del inventario de su propio mes entre la salida y la
+        // entrada, y el saldo de ese mes cerraría mal por un movimiento que solo corrige
+        // un costo. Es la única reversa del sistema que sí hereda la fecha, y hereda la
+        // del movimiento que corrige, no la de un hecho distinto.
         const initial = await this.initialMovement(tx, coilId);
+        const recostDate = fromDateOnly(initial.operationDate);
         const currency = input.currency ?? coil.currency;
         const exchangeRate = toDecimal(
           input.exchangeRate ?? (currency === 'PEN' ? '1.0000' : coil.exchangeRate.toFixed(4)),
@@ -508,6 +550,8 @@ export class CoilOperationsService {
           initial.id,
           actor.id,
           input.reason ?? 'Corrección de costo de la bobina',
+          recostDate,
+          true,
         );
         await this.inventory.record(tx, {
           businessLineId: coil.businessLineId,
@@ -521,6 +565,11 @@ export class CoilOperationsService {
           refId: initial.refId ?? undefined,
           notes: input.reason,
           actorId: actor.id,
+          operationDate: recostDate,
+          // El recosteo es reversa + reingreso del **mismo** hecho, con la fecha de ese
+          // hecho: el guardrail de orden no aplica por definición, y sin este acuse una
+          // bobina con cualquier movimiento posterior al ingreso no se podría recostear.
+          confirmBackdate: true,
         });
 
         data.currency = currency;
@@ -564,7 +613,9 @@ export class CoilOperationsService {
   // -------------------------------------------------------------------------
 
   /** Solo si no tiene ningún movimiento aparte del ingreso inicial. Reversa ese ingreso. */
-  async cancel(actor: RequestUser, coilId: string, reason: string): Promise<CoilDto> {
+  async cancel(actor: RequestUser, coilId: string, input: ReverseMovementInput): Promise<CoilDto> {
+    const { reason } = input;
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(async (tx) => {
       const coil = await this.coils.lockCoil(tx, coilId);
       if (coil.status === CoilStatus.CANCELLED) {
@@ -583,7 +634,7 @@ export class CoilOperationsService {
       }
 
       const initial = await this.initialMovement(tx, coilId);
-      await this.inventory.reverse(tx, initial.id, actor.id, reason);
+      await this.inventory.reverse(tx, initial.id, actor.id, reason, operationDate);
       await tx.coil.update({ where: { id: coilId }, data: { status: CoilStatus.CANCELLED } });
 
       await this.audit.write(tx, {
@@ -592,7 +643,7 @@ export class CoilOperationsService {
         entity: 'coils',
         entityId: coilId,
         before: { status: coil.status, code: coil.code },
-        after: { status: CoilStatus.CANCELLED, reason },
+        after: { status: CoilStatus.CANCELLED, reason, operationDate },
       });
     });
     return this.coils.findOne(coilId);

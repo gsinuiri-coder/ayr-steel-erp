@@ -17,6 +17,7 @@ import {
   SERVICE_KINDS,
   UNITS,
 } from '../enums';
+import { backdatableFields } from './operation';
 
 /** Fecha en formato ISO corto (YYYY-MM-DD), que es como viajan las fechas de negocio. */
 export const isoDateSchema = z
@@ -401,6 +402,7 @@ export type InvoiceXmlPreviewDto = z.infer<typeof invoiceXmlPreviewSchema>;
  * posteriores; el motivo queda en el kardex y en la auditoría.
  */
 export const cancelPurchaseSchema = z.object({
+  ...backdatableFields,
   reason: z
     .string({ required_error: 'El motivo es obligatorio' })
     .trim()

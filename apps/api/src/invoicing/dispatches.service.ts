@@ -14,25 +14,27 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
-  TransferMode,
-  Unit,
   dispatchCode,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginate,
-  STANDING_DOCUMENT_STATUSES,
   salesOrderCode,
+  STANDING_DOCUMENT_STATUSES,
   toDecimal,
   toFixedString,
   toSkipTake,
+  TransferMode,
+  Unit,
   type CreateDispatchInput,
   type DispatchDto,
   type DispatchListItemDto,
   type DispatchQuery,
   type PaginatedResult,
+  type ReverseMovementInput,
   type TransportSuggestionsDto,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
@@ -104,6 +106,7 @@ export class DispatchesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
+    private readonly operationDate: OperationDateService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -132,6 +135,10 @@ export class DispatchesService {
     actor: RequestUser,
     input: CreateDispatchInput,
   ): Promise<string> {
+    // D-124: `dispatchDate` es la fecha de operación del despacho. Pasa por el control de
+    // retrofecha (solo administrador, no futura, no antes del piso histórico) y de ahí sale
+    // la fecha de la salida de kardex de cada línea.
+    const dispatchDate = this.operationDate.resolve(actor, input.dispatchDate);
     // Lock del pedido primero, igual que `SalesOrdersService.cancel`: dos despachos
     // simultáneos del mismo pedido se serializan en vez de repartirse el pendiente.
     await tx.$queryRaw`
@@ -234,7 +241,7 @@ export class DispatchesService {
       data: {
         salesOrderId: order.id,
         status: DispatchStatus.ISSUED,
-        dispatchDate: toDateOnly(input.dispatchDate),
+        dispatchDate: toDateOnly(dispatchDate),
         originAddress: input.originAddress,
         destinationAddress: input.destinationAddress,
         originUbigeo: input.originUbigeo,
@@ -303,6 +310,11 @@ export class DispatchesService {
         refId: dispatch.id,
         notes: `Despacho ${dispatchCode(dispatch.seq)} de ${salesOrderCode(order.seq)}`,
         actorId: actor.id,
+        confirmBackdate: input.confirmBackdate,
+        // D-124: la salida de kardex se fecha con la **fecha del despacho**, no con hoy.
+        // `dispatchDate` ya era la fecha de negocio de esta operación desde Fase 5b; lo
+        // que faltaba era que el kardex la usara en vez de fecharse por su cuenta.
+        operationDate: dispatchDate,
       });
 
       await tx.dispatchItem.create({
@@ -337,6 +349,10 @@ export class DispatchesService {
         salesOrder: salesOrderCode(order.seq),
         lines: lines.length,
         orderStatus: status,
+        // D-124: con qué fecha de negocio salió el material, y si se confirmó saltando la
+        // advertencia de orden cronológico. Sin esto, mover un despacho de mes no deja rastro.
+        operationDate: dispatchDate,
+        confirmedBackdate: input.confirmBackdate === true,
       },
     });
     return dispatch.id;
@@ -430,7 +446,10 @@ export class DispatchesService {
    * revierte el despacho. Deshacerlo al revés dejaría al kardex diciendo que la mercadería
    * está en el almacén y a SUNAT diciendo que salió.
    */
-  async reverse(actor: RequestUser, id: string, reason: string): Promise<DispatchDto> {
+  async reverse(actor: RequestUser, id: string, input: ReverseMovementInput): Promise<DispatchDto> {
+    const { reason } = input;
+    // D-124: revertir un despacho es un hecho de hoy; no hereda la fecha del despacho.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const rows = await tx.$queryRaw<
@@ -484,7 +503,7 @@ export class DispatchesService {
 
         for (const item of dispatch.items) {
           if (item.movementId !== null) {
-            await this.inventory.reverse(tx, item.movementId, actor.id, reason);
+            await this.inventory.reverse(tx, item.movementId, actor.id, reason, operationDate);
           }
           // Toda reversa aguas abajo restaura la reserva (D-066/D-074): sin esto el
           // material vuelve al almacén sin nada que lo proteja mientras el pedido lo
@@ -623,7 +642,8 @@ export class DispatchesService {
       this.prisma.dispatch.findMany({
         where,
         include: dispatchInclude,
-        orderBy: { createdAt: 'desc' },
+        // D-124: el despacho se ubica por su `dispatchDate`, que es su fecha de operación.
+        orderBy: [{ dispatchDate: 'desc' }, { seq: 'desc' }],
         skip,
         take,
       }),

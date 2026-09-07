@@ -85,6 +85,6 @@ export class DispatchesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(reverseDispatchSchema)) body: ReverseDispatchInput,
   ): Promise<DispatchDto> {
-    return this.dispatches.reverse(actor, id, body.reason);
+    return this.dispatches.reverse(actor, id, body);
   }
 }

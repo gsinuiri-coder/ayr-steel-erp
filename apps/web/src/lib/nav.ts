@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Banknote,
   Boxes,
+  CalendarRange,
   ClipboardList,
   Factory,
   FileText,
@@ -94,6 +95,13 @@ export const NAV: NavGroup[] = [
         title: 'Proveedores',
         href: '/proveedores',
         icon: Truck,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        // D-124: el corte mensual que la fecha de operación hace posible.
+        title: 'Reporte de bobinas',
+        href: '/reportes/bobinas',
+        icon: CalendarRange,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
     ],

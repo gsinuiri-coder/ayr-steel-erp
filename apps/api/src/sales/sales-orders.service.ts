@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -23,12 +24,13 @@ import {
   paginate,
   productionOrderCode,
   queueSemaphore,
-  Role,
   quotationCode,
   RESERVATION_STALE_DAYS,
+  Role,
   salesOrderCode,
   toDecimal,
   toSkipTake,
+  Unit,
   type CreateSalesOrderInput,
   type PaginatedResult,
   type ProductionQueueEntryDto,
@@ -46,6 +48,7 @@ import {
   type SetSalesOrderPriorityInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
+import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
@@ -56,7 +59,15 @@ import {
   roofingTheoreticalKg,
   type CoilGeometry,
 } from '../production/roofing-math';
-import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
+import { roofingToleranceMm } from '../production/roofing-coil-match';
+import {
+  documentTotals,
+  isMadeToMeasure,
+  resolveMadeToMeasureCoils,
+  resolveSalesLines,
+  toSalesItemDto,
+  type MadeToMeasureReservation,
+} from './sales-lines';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -121,6 +132,7 @@ export class SalesOrdersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
+    @Inject(ENV) private readonly env: Env,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -217,6 +229,20 @@ export class SalesOrdersService {
           );
         }
 
+        // D-127: las líneas a medida que la cotización dejó **sin** materia prima asignada
+        // se resuelven ahora, contra el stock de hoy. Copiar lo que la cotización congeló
+        // sería prometer un rollo elegido hace hasta 365 días (D-069), que a esta altura
+        // puede estar cerrado, consumido o prometido a otro pedido.
+        const rawMaterialByLine = await this.resolveRawMaterial(
+          tx,
+          quotation.items.map((i) => ({
+            lineNumber: i.lineNumber,
+            productId: i.productId,
+            qty: i.qty.toString(),
+            alreadyOnCoil: i.reserveItemType === InventoryItemTypeEnum.COIL,
+          })),
+        );
+
         const order = await tx.salesOrder.create({
           data: {
             quotationId,
@@ -231,35 +257,40 @@ export class SalesOrdersService {
             // D-096: única ventana en la que el vendedor la fija; después es de ADMINISTRADOR.
             promisedDeliveryDate: promisedDeliveryDate ? toDateOnly(promisedDeliveryDate) : null,
             items: {
-              create: quotation.items.map((i) => ({
-                lineNumber: i.lineNumber,
-                productId: i.productId,
-                description: i.description,
-                qty: i.qty,
-                unit: i.unit,
-                listPricePen: i.listPricePen,
-                unitPricePen: i.unitPricePen,
-                subtotalPen: i.subtotalPen,
-                igvPen: i.igvPen,
-                totalPen: i.totalPen,
-                reserveItemType: i.reserveItemType,
-                reserveItemId: i.reserveItemId,
-                reserveQty: i.reserveQty,
-                reserveUnit: i.reserveUnit,
-                // D-083: el pedido congela los largos igual que congela el precio; a partir
-                // de acá la cotización puede reemitirse y estos no se mueven.
-                ...(i.pieces.length > 0
-                  ? {
-                      pieces: {
-                        create: i.pieces.map((p) => ({
-                          lineNumber: p.lineNumber,
-                          lengthMm: p.lengthMm,
-                          qty: p.qty,
-                        })),
-                      },
-                    }
-                  : {}),
-              })),
+              create: quotation.items.map((i) => {
+                // D-127: si la línea es a medida, la materia prima que se acaba de resolver
+                // reemplaza lo que la cotización había congelado; el resto se copia tal cual.
+                const raw = rawMaterialByLine.get(i.lineNumber);
+                return {
+                  lineNumber: i.lineNumber,
+                  productId: i.productId,
+                  description: i.description,
+                  qty: i.qty,
+                  unit: i.unit,
+                  listPricePen: i.listPricePen,
+                  unitPricePen: i.unitPricePen,
+                  subtotalPen: i.subtotalPen,
+                  igvPen: i.igvPen,
+                  totalPen: i.totalPen,
+                  reserveItemType: raw ? InventoryItemTypeEnum.COIL : i.reserveItemType,
+                  reserveItemId: raw ? raw.coilId : i.reserveItemId,
+                  reserveQty: raw ? raw.kg : i.reserveQty.toString(),
+                  reserveUnit: raw ? Unit.KGM : i.reserveUnit,
+                  // D-083: el pedido congela los largos igual que congela el precio; a partir
+                  // de acá la cotización puede reemitirse y estos no se mueven.
+                  ...(i.pieces.length > 0
+                    ? {
+                        pieces: {
+                          create: i.pieces.map((p) => ({
+                            lineNumber: p.lineNumber,
+                            lengthMm: p.lengthMm,
+                            qty: p.qty,
+                          })),
+                        },
+                      }
+                    : {}),
+                };
+              }),
             },
           },
           include: { items: { orderBy: { lineNumber: 'asc' } } },
@@ -341,7 +372,13 @@ export class SalesOrdersService {
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
 
-    const lines = await resolveSalesLines(tx, input.items);
+    // D-127: el pedido —a diferencia de la cotización— sí compromete material, así que es
+    // acá donde se elige la bobina de cada línea a medida que no eligió una a mano.
+    const rawMaterialByLine = await this.resolveRawMaterial(
+      tx,
+      input.items.map((item, index) => ({ lineNumber: index + 1, ...item })),
+    );
+    const lines = await resolveSalesLines(tx, input.items, { rawMaterialByLine });
 
     // D-119: un pedido directo (sin cotización) exige que **ninguna** línea venga de una
     // línea de negocio que obliga a cotizar (RF-31). Antes era un chequeo del documento
@@ -440,6 +477,56 @@ export class SalesOrdersService {
       after: { code: salesOrderCode(order.seq), totalPen: totals.totalPen },
     });
     return order.id;
+  }
+
+  /**
+   * D-127: la materia prima de las líneas **a medida** de un pedido.
+   *
+   * Solo entra la línea cuyo producto es `A_MEDIDA` y que **no** trae ya una bobina elegida a
+   * mano (`reserveFromCoilId` en un alta directa, `reserveItemType = COIL` en una cotización
+   * confirmada): esa elección manual es del vendedor y se respeta.
+   *
+   * Vive en este servicio y no en `resolveSalesLines` porque la frontera es exactamente la
+   * que separa cotizar de comprometer: una cotización no reserva nada (D-054) y no debe
+   * quedarse con un rollo; un pedido sí.
+   */
+  private async resolveRawMaterial(
+    tx: Prisma.TransactionClient,
+    lines: {
+      lineNumber: number;
+      productId?: string;
+      qty: string;
+      reserveFromCoilId?: string;
+      alreadyOnCoil?: boolean;
+    }[],
+  ): Promise<Map<number, MadeToMeasureReservation>> {
+    // `flatMap` y no `filter`: además de descartar, estrecha el tipo de `productId`, así que
+    // de acá para abajo no hacen falta aserciones.
+    const candidates = lines.flatMap((l) =>
+      l.productId !== undefined && l.reserveFromCoilId === undefined && l.alreadyOnCoil !== true
+        ? [{ lineNumber: l.lineNumber, productId: l.productId, qty: l.qty }]
+        : [],
+    );
+    if (candidates.length === 0) return new Map();
+
+    const products = await tx.product.findMany({
+      where: { id: { in: [...new Set(candidates.map((l) => l.productId))] } },
+      select: { id: true, roofingKind: true },
+    });
+    const kindById = new Map(products.map((p) => [p.id, p.roofingKind]));
+
+    return resolveMadeToMeasureCoils(
+      tx,
+      candidates
+        .filter((l) => isMadeToMeasure({ roofingKind: kindById.get(l.productId) ?? null }))
+        .map((l) => ({
+          key: l.lineNumber,
+          productId: l.productId,
+          qty: l.qty,
+          at: `Línea ${l.lineNumber}`,
+        })),
+      roofingToleranceMm(this.env),
+    );
   }
 
   // -------------------------------------------------------------------------

@@ -2283,7 +2283,9 @@ export class InvoicingService {
         this.prisma.fiscalDocument.findMany({
           where,
           include: documentInclude,
-          orderBy: { createdAt: 'desc' },
+          // D-124: por fecha de emisión — la fecha de operación de un comprobante, la misma
+          // que trae un importado (RF-71) y la que usan los reportes de ventas.
+          orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
           skip,
           take,
         }),
@@ -2298,7 +2300,7 @@ export class InvoicingService {
     const rows = await this.prisma.fiscalDocument.findMany({
       where,
       include: documentInclude,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
       take: DERIVED_FILTER_FETCH_CAP,
     });
     const pending = (await this.toListDtos(rows)).filter((d) => toDecimal(d.balancePen).gt(0));

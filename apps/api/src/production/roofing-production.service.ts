@@ -20,18 +20,20 @@ import {
   piecesCount,
   piecesMeters,
   productionOrderCode,
-  ROOFING_THICKNESS_TOLERANCE_MM,
   salesOrderCode,
   thicknessWithinTolerance,
+  toDateOnly,
   toDecimal,
   toFixedString,
   Unit,
+  type CancelProductionOrderInput,
   type CloseRoofingOrderInput,
   type CreateRoofingOrderInput,
   type MountRoofingCoilInput,
   type PieceLike,
   type ProductionOrderDto,
   type ReportRoofingPiecesInput,
+  type ReverseMovementInput,
   type RoofingCoilOptionDto,
   type UpdateRoofingPlanInput,
 } from '@ayr/shared';
@@ -39,6 +41,8 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
+import { OperationDateService } from '../common/operation-date.service';
+import { roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
@@ -102,6 +106,7 @@ export class RoofingProductionService {
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
     private readonly production: ProductionService,
+    private readonly operationDate: OperationDateService,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -110,6 +115,9 @@ export class RoofingProductionService {
   // -------------------------------------------------------------------------
 
   async create(actor: RequestUser, input: CreateRoofingOrderInput): Promise<ProductionOrderDto> {
+    // D-124: fecha en que la corrida arranca. Montar la bobina es custodia, no consumo
+    // (D-060), así que crear la OP no mueve kardex y no hay guardrail que aplicar acá.
+    const orderOperationDate = this.operationDate.resolve(actor, input.operationDate);
     const orderId = await this.prisma.$transaction(async (tx) => {
       // Lock antes de mirar: sin él, dos altas concurrentes pasaban las dos el chequeo de
       // "reserva ya tomada" y el material quedaba prometido a dos órdenes.
@@ -194,6 +202,7 @@ export class RoofingProductionService {
           reservationId: input.reservationId,
           notes: input.notes ?? null,
           createdById: actor.id,
+          operationDate: toDateOnly(orderOperationDate),
           items: { create: items },
         },
       });
@@ -456,6 +465,7 @@ export class RoofingProductionService {
     orderId: string,
     input: ReportRoofingPiecesInput,
   ): Promise<ProductionOrderDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const order = await lockOrder(tx, orderId);
@@ -602,6 +612,7 @@ export class RoofingProductionService {
             unitCostPen: '0',
             notes: input.notes ?? null,
             createdById: actor.id,
+            operationDate: toDateOnly(operationDate),
             piecesDetail: { create: pieces },
           },
         });
@@ -620,6 +631,11 @@ export class RoofingProductionService {
             refId: report.id,
             notes: `Rolado de ${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
             actorId: actor.id,
+            // Sin esto, un reporte retrofechado dejaba el consumo de la bobina fechado hoy y
+            // el ingreso de producto en la fecha real: los dos lados del mismo hecho en meses
+            // distintos, en una tabla append-only que no se corrige con un UPDATE.
+            operationDate,
+            confirmBackdate: input.confirmBackdate,
           });
           if (!out) {
             throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -653,6 +669,8 @@ export class RoofingProductionService {
           refId: report.id,
           notes: `${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
           actorId: actor.id,
+          operationDate,
+          confirmBackdate: input.confirmBackdate,
         });
         if (!entry) {
           throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -713,6 +731,8 @@ export class RoofingProductionService {
           entityId: orderId,
           after: {
             reportId: report.id,
+            operationDate,
+            confirmedBackdate: input.confirmBackdate === true,
             coilCode: row.coil.code,
             plan: describePieces(pieces),
             outputQty: toFixedString(outputQty, 'KG'),
@@ -739,6 +759,8 @@ export class RoofingProductionService {
     orderId: string,
     input: CloseRoofingOrderInput,
   ): Promise<ProductionOrderDto> {
+    // D-124: el cierre se fecha aparte del arranque; el despunte es del día del cierre.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const order = await lockOrder(tx, orderId);
@@ -857,6 +879,8 @@ export class RoofingProductionService {
                 ? `Despunte al cerrar ${productionOrderCode(order.seq)}: ${input.reason}`
                 : `Despunte al cerrar ${productionOrderCode(order.seq)}`,
               actorId: actor.id,
+              operationDate,
+              confirmBackdate: input.confirmBackdate,
             });
             if (!out) {
               throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -926,6 +950,7 @@ export class RoofingProductionService {
             refId: orderId,
             notes: `Cierre de ${productionOrderCode(order.seq)}: despunte ${scrapKg.toFixed(3)} kg imputado a ${outputQty.toFixed(3)}`,
             actorId: actor.id,
+            operationDate,
           });
           adjusted = movement !== null;
         }
@@ -943,6 +968,7 @@ export class RoofingProductionService {
             notes: input.notes ?? order.notes,
             closedById: actor.id,
             closedAt,
+            closedOperationDate: toDateOnly(operationDate),
           },
         });
 
@@ -993,8 +1019,10 @@ export class RoofingProductionService {
     actor: RequestUser,
     orderId: string,
     reportId: string,
-    reason: string,
+    input: ReverseMovementInput,
   ): Promise<ProductionOrderDto> {
+    const { reason } = input;
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const order = await lockOrder(tx, orderId);
@@ -1089,7 +1117,7 @@ export class RoofingProductionService {
 
         // Primero sale el producto y después vuelven los kilos: al revés, la bobina
         // recuperaría material que las planchas todavía están representando.
-        await this.inventory.reverse(tx, entry.id, actor.id, reason);
+        await this.inventory.reverse(tx, entry.id, actor.id, reason, operationDate);
 
         const rows = await tx.productionOrderConsumption.findMany({
           where: { productionOrderId: orderId },
@@ -1097,7 +1125,7 @@ export class RoofingProductionService {
         });
         for (const movement of coilOuts) {
           await this.coils.lockCoil(tx, movement.itemId);
-          await this.inventory.reverse(tx, movement.id, actor.id, reason);
+          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
           const row = rows.find((r) => r.coilId === movement.itemId && r.releasedAt === null);
           if (!row) {
             throw new BadRequestException(
@@ -1175,7 +1203,13 @@ export class RoofingProductionService {
    * de drywall: si el producto ya se movió o si alguna bobina se movió después del cierre,
    * falla completa.
    */
-  async reopen(actor: RequestUser, orderId: string, reason: string): Promise<ProductionOrderDto> {
+  async reopen(
+    actor: RequestUser,
+    orderId: string,
+    input: ReverseMovementInput,
+  ): Promise<ProductionOrderDto> {
+    const { reason } = input;
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
         const order = await lockOrder(tx, orderId);
@@ -1264,11 +1298,11 @@ export class RoofingProductionService {
 
         // Primero el costo y después el material: al revés, el ajuste se prorratearía sobre
         // un saldo que el despunte devuelto todavía no terminó de acomodar.
-        if (adjust) await this.inventory.reverse(tx, adjust.id, actor.id, reason);
+        if (adjust) await this.inventory.reverse(tx, adjust.id, actor.id, reason, operationDate);
         const returnedByCoil = new Map<string, Decimal>();
         for (const movement of scrapOuts) {
           await this.coils.lockCoil(tx, movement.itemId);
-          await this.inventory.reverse(tx, movement.id, actor.id, reason);
+          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
           returnedByCoil.set(
             movement.itemId,
             (returnedByCoil.get(movement.itemId) ?? new Decimal(0)).plus(
@@ -1300,6 +1334,7 @@ export class RoofingProductionService {
             unitCostPen: null,
             closedById: null,
             closedAt: null,
+            closedOperationDate: null,
           },
         });
 
@@ -1331,7 +1366,15 @@ export class RoofingProductionService {
    * Como montar no mueve kardex (D-060), anular tampoco tiene nada que revertir: la bobina
    * vuelve a estar disponible tal como estaba, con su saldo intacto.
    */
-  async cancel(actor: RequestUser, orderId: string, reason: string): Promise<ProductionOrderDto> {
+  async cancel(
+    actor: RequestUser,
+    orderId: string,
+    input: CancelProductionOrderInput,
+  ): Promise<ProductionOrderDto> {
+    const { reason } = input;
+    // Anular una OP de coberturas no mueve kardex (D-060: montar es custodia), así que no
+    // hay nada que fechar; la validación corre igual para que el contrato no mienta.
+    this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(async (tx) => {
       const order = await lockOrder(tx, orderId);
       assertKind(order, ProductionOrderKind.ROOFING);
@@ -1416,18 +1459,15 @@ export class RoofingProductionService {
         ? reservationId
         : undefined;
 
-    const tolerance = toDecimal(this.thicknessToleranceMm());
     const coils = await this.prisma.coil.findMany({
-      where: {
-        kind: CoilKind.COIL,
-        status: CoilStatus.OPEN,
+      // D-127: el filtro vive en `roofing-coil-match` porque la confirmación de una
+      // cotización a medida hace la misma pregunta y no puede responderla distinto.
+      where: roofingCoilWhere({
         businessLineId: product.businessLineId,
         colorId: product.colorId,
-        thicknessMm: {
-          gte: bom.inputThicknessMm.minus(tolerance),
-          lte: bom.inputThicknessMm.plus(tolerance),
-        },
-      },
+        inputThicknessMm: bom.inputThicknessMm,
+        toleranceMm: this.thicknessToleranceMm(),
+      }),
       select: {
         id: true,
         code: true,
@@ -1495,7 +1535,7 @@ export class RoofingProductionService {
 
   /** La tolerancia de D-086, con el override de entorno que documenta esa decisión. */
   private thicknessToleranceMm(): string {
-    return this.env.ROOFING_THICKNESS_TOLERANCE_MM || ROOFING_THICKNESS_TOLERANCE_MM;
+    return roofingToleranceMm(this.env);
   }
 }
 

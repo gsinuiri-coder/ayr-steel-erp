@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { decimalStringSchema, MAX_VALUE } from '../decimal';
 import { BUSINESS_LINES, CUTTING_ORDER_COIL_STATUSES, CUTTING_ORDER_STATUSES } from '../enums';
 import { MAX_SPLIT_CHILDREN, MAX_SPLIT_ROWS, MIN_CHILD_WIDTH_MM, reasonSchema } from './coil';
+import { backdatableFields } from './operation';
 
 /**
  * Corte tercerizado (RF-40..42, D-049/D-050). Enviar una bobina a un tercero no mueve
@@ -55,6 +56,7 @@ const cuttingOrderCoilInputSchema = z.object({
 export type CuttingOrderCoilInput = z.infer<typeof cuttingOrderCoilInputSchema>;
 
 export const createCuttingOrderSchema = z.object({
+  ...backdatableFields,
   supplierId: z.string({ required_error: 'El proveedor de corte es obligatorio' }).uuid(),
   notes: z.string().trim().max(500).optional(),
   coils: z
@@ -69,6 +71,7 @@ export type CreateCuttingOrderInput = z.infer<typeof createCuttingOrderSchema>;
 // --------------------------------------------------------------------------
 
 export const receiveCuttingOrderCoilSchema = z.object({
+  ...backdatableFields,
   receivedWidthsMm: widthPlanSchema,
   /** Kilos realmente recibidos; base del prorrateo de `planCoilSplit`. */
   receivedWeightKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
@@ -80,7 +83,10 @@ export type ReceiveCuttingOrderCoilInput = z.infer<typeof receiveCuttingOrderCoi
 // RF-22 — cancelar
 // --------------------------------------------------------------------------
 
-export const cancelCuttingOrderSchema = z.object({ reason: reasonSchema });
+export const cancelCuttingOrderSchema = z.object({
+  ...backdatableFields,
+  reason: reasonSchema,
+});
 export type CancelCuttingOrderInput = z.infer<typeof cancelCuttingOrderSchema>;
 
 // --------------------------------------------------------------------------
@@ -103,6 +109,8 @@ export const cuttingOrderCoilSchema = z.object({
   expectedKerfLossMm: z.string(),
   status: z.enum(CUTTING_ORDER_COIL_STATUSES),
   receivedAt: z.string().nullable(),
+  /** D-124: día de negocio de la recepción (Lima). Null mientras no se recibió. */
+  receivedOperationDate: z.string().nullable(),
   receivedWidthsMm: z.array(widthCountDtoSchema).nullable(),
   receivedWeightKg: z.string().nullable(),
   receivedKerfLossMm: z.string().nullable(),
@@ -130,6 +138,8 @@ export const cuttingOrderSchema = z.object({
   businessLine: z.enum(BUSINESS_LINES),
   status: z.enum(CUTTING_ORDER_STATUSES),
   sentAt: z.string(),
+  /** D-124: día de negocio del envío a corte (Lima). `sentAt` es el instante grabado. */
+  operationDate: z.string(),
   cancelledAt: z.string().nullable(),
   notes: z.string().nullable(),
   /** Servicios de corte (RF-41) ya imputados a esta orden. */

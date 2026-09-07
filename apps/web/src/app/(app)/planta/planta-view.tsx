@@ -22,6 +22,10 @@ import {
   type ProductionStripOptionDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import type { ReverseArgs } from '@/lib/reverse-args';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { OperationDateField } from '@/components/operation-date-field';
 import { formatQty } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
@@ -127,12 +131,16 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
     queryFn: () => api<ReservationDto[]>('/sales/reservations?status=ACTIVE'),
   });
 
+  // D-124: día en que arranca la corrida. Crear la OP no mueve kardex (D-060), así que acá
+  // no hay advertencia de orden: es solo la fecha con la que la orden queda registrada.
+  const [orderDate, setOrderDate] = useState<string | undefined>(undefined);
   const create = useMutation({
     mutationFn: () =>
       api<ProductionOrderDto>('/production', {
         method: 'POST',
         body: {
           productId,
+          operationDate: orderDate,
           ...(targetPieces.trim() ? { targetPieces: Number(targetPieces.trim()) } : {}),
           ...(reservationId ? { reservationId } : {}),
         },
@@ -214,15 +222,18 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
               }}
             />
           </div>
-          <Button
-            className="h-12"
-            disabled={!productId || piecesInvalid || create.isPending}
-            onClick={() => {
-              create.mutate();
-            }}
-          >
-            {create.isPending ? 'Creando…' : 'Crear orden'}
-          </Button>
+          <div className="grid gap-2">
+            <Button
+              className="h-12"
+              disabled={!productId || piecesInvalid || create.isPending}
+              onClick={() => {
+                create.mutate();
+              }}
+            >
+              {create.isPending ? 'Creando…' : 'Crear orden'}
+            </Button>
+            <OperationDateField value={orderDate} onChange={setOrderDate} />
+          </div>
           {productId !== '' && productReservations.length > 0 && (
             <div className="grid gap-2 sm:col-span-3">
               <Label htmlFor="planta-pedido">Pedido a atender (opcional)</Label>
@@ -364,11 +375,14 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo liberar el fleje'),
   });
 
+  // D-124: día de negocio del reporte de piezas y del cierre. Planta no la ve —el campo es
+  // solo para ADMINISTRADOR—; existe para que la carga histórica pueda fechar la corrida.
+  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const report = useMutation({
-    mutationFn: (count: number) =>
+    mutationFn: ({ count, confirmBackdate }: { count: number; confirmBackdate: boolean }) =>
       api<ProductionOrderDto>(`/production/${id}/report`, {
         method: 'POST',
-        body: { pieces: count },
+        body: { pieces: count, operationDate, confirmBackdate: confirmBackdate || undefined },
       }),
     onSuccess: (o) => {
       toast.success(`Reportadas las piezas: ${o.piecesReported} en total`);
@@ -378,12 +392,15 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
     onError: (err) =>
       toast.error(err instanceof ApiError ? err.message : 'No se pudieron reportar las piezas'),
   });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await report.mutateAsync({ count: Number(pieces.trim()), confirmBackdate });
+  });
 
   const close = useMutation({
-    mutationFn: (reason?: string) =>
+    mutationFn: ({ reason, operationDate: date }: Partial<ReverseArgs>) =>
       api<ProductionOrderDto>(`/production/${id}/close`, {
         method: 'POST',
-        body: reason ? { reason } : {},
+        body: { reason: reason ?? undefined, operationDate: date },
       }),
     onSuccess: (o) => {
       toast.success(
@@ -496,15 +513,18 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
                 }}
               />
             </div>
-            <Button
-              className="h-16 text-lg"
-              disabled={!piecesValid || overCapacity || report.isPending}
-              onClick={() => {
-                report.mutate(Number(trimmed));
-              }}
-            >
-              {report.isPending ? 'Registrando…' : 'Reportar'}
-            </Button>
+            <div className="grid gap-2">
+              <Button
+                className="h-16 text-lg"
+                disabled={!piecesValid || overCapacity || report.isPending}
+                onClick={() => {
+                  void backdate.attempt();
+                }}
+              >
+                {report.isPending ? 'Registrando…' : 'Reportar'}
+              </Button>
+              <OperationDateField value={operationDate} onChange={setOperationDate} />
+            </div>
             <p className="text-sm text-muted-foreground sm:col-span-2">
               Cada pieza consume {o.bom.kgPerPiece ?? '—'} kg de fleje según la receta.
               {overCapacity && (
@@ -620,7 +640,7 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
             // Con mucha merma, cerrar es una baja de inventario y el API pide motivo
             // (D-057): se lo pedimos acá en vez de gastar un 400.
             if (needsReason) setClosing(true);
-            else close.mutate(undefined);
+            else close.mutate({ reason: undefined, operationDate: undefined });
           }}
         >
           {close.isPending
@@ -636,8 +656,21 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
         description={`Quedan ${formatQty(pendingKg.toFixed(3), 'kg')} sin convertir en piezas sobre ${formatQty(assignedKg.toFixed(3), 'kg')} montados: esa diferencia sale del inventario como merma y su costo se reparte entre las piezas buenas. Explica por qué.`}
         confirmLabel="Cerrar la orden"
         pending={close.isPending}
-        onConfirm={(reason) => {
-          close.mutate(reason);
+        withOperationDate
+        onConfirm={(reason, date) => {
+          close.mutate({ reason, operationDate: date });
+        }}
+      />
+
+      <BackdateConfirmDialog
+        open={backdate.open}
+        onOpenChange={(open) => {
+          if (!open) backdate.close();
+        }}
+        detail={backdate.detail ?? ''}
+        pending={report.isPending}
+        onConfirm={() => {
+          void backdate.confirm();
         }}
       />
     </>

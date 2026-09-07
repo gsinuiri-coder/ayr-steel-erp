@@ -16,7 +16,13 @@ import {
   type PaginatedResult,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
+import {
+  formatDate,
+  formatMoneyOrDash,
+  formatQty,
+  formatTimestampDate,
+  unitSymbol,
+} from '@/lib/format';
 import { usePagination } from '@/lib/use-pagination';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
@@ -119,7 +125,7 @@ export function KardexView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Fecha</TableHead>
+              <TableHead>Fecha de operación</TableHead>
               {!singleItem && <TableHead>Ítem</TableHead>}
               <TableHead>Movimiento</TableHead>
               <TableHead className="hidden md:table-cell">Origen</TableHead>
@@ -148,8 +154,20 @@ export function KardexView() {
             )}
             {rows.map((m) => (
               <TableRow key={m.id} className={m.reversedById ? 'opacity-60' : undefined}>
+                {/*
+                  D-124: manda la fecha de operación —el día de negocio al que pertenece el
+                  movimiento— porque es por la que esta tabla ordena y por la que el filtro
+                  corta. El instante de grabación queda debajo y solo cuando difieren: en
+                  una operación del día repetirlo sería ruido, y en una carga histórica es
+                  justo lo que permite ver que se registró después.
+                */}
                 <TableCell className="whitespace-nowrap">
-                  {new Date(m.at).toLocaleString('es-PE')}
+                  <div>{formatDate(m.operationDate)}</div>
+                  {formatDate(m.operationDate) !== formatTimestampDate(m.at) && (
+                    <div className="text-xs text-muted-foreground">
+                      registrado {new Date(m.at).toLocaleString('es-PE')}
+                    </div>
+                  )}
                 </TableCell>
                 {!singleItem && (
                   <TableCell className="font-mono">

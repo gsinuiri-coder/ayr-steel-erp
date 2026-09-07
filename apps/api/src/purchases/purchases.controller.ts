@@ -14,12 +14,14 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import {
+  backdatableSchema,
   cancelPurchaseSchema,
   createPurchaseSchema,
   createSupplierPaymentSchema,
   purchaseQuerySchema,
   reversePaymentSchema,
   Role,
+  type BackdatableInput,
   type CancelPurchaseInput,
   type CreatePurchaseInput,
   type CreateSupplierPaymentInput,
@@ -102,13 +104,18 @@ export class PurchasesController {
     return this.purchases.create(actor, body);
   }
 
+  /**
+   * Recibir la compra (D-030). El cuerpo es opcional y solo lleva la fecha de operación
+   * (D-124): sin él, la recepción se fecha hoy, que es el caso de todos los días.
+   */
   @Post(':id/receive')
   @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   receive(
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(backdatableSchema)) body: BackdatableInput,
   ): Promise<PurchaseDto> {
-    return this.purchases.receive(actor, id);
+    return this.purchases.receive(actor, id, body);
   }
 
   @Post(':id/payments')
@@ -140,6 +147,6 @@ export class PurchasesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(cancelPurchaseSchema)) body: CancelPurchaseInput,
   ): Promise<PurchaseDto> {
-    return this.purchases.cancel(actor, id, body.reason);
+    return this.purchases.cancel(actor, id, body);
   }
 }

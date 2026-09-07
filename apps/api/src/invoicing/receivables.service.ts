@@ -6,11 +6,12 @@ import {
 } from '@nestjs/common';
 import { FiscalDocType, FiscalDocumentStatus, Prisma } from '@prisma/client';
 import {
-  Decimal,
   businessToday,
+  Decimal,
   documentBalance,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginateInMemory,
+  toDateOnly,
   toDecimal,
   toFixedString,
   type CreateCustomerPaymentInput,
@@ -21,6 +22,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -54,6 +56,7 @@ export class ReceivablesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly operationDate: OperationDateService,
   ) {}
 
   /**
@@ -135,7 +138,10 @@ export class ReceivablesService {
     const payment = await tx.customerPayment.create({
       data: {
         documentId,
-        date: new Date(`${input.date}T00:00:00.000Z`),
+        // D-124: `date` es la fecha de operación del cobro — la que ubica el cobro en el
+        // mes en la cobranza. Se valida como cualquier retrofecha: solo administrador,
+        // no futura, no anterior al piso de carga histórica.
+        date: toDateOnly(this.operationDate.resolve(actor, input.date)),
         amountPen: toFixedString(input.amountPen, 'MONEY'),
         method: input.method,
         reference: input.reference ?? null,
@@ -153,6 +159,8 @@ export class ReceivablesService {
         number: document.number,
         amountPen: payment.amountPen.toFixed(4),
         method: payment.method,
+        // D-124: con qué fecha de negocio quedó registrado el cobro.
+        operationDate: input.date,
       },
     });
     return payment.id;
@@ -196,7 +204,7 @@ export class ReceivablesService {
           amountPen: payment.amountPen.toFixed(4),
           method: payment.method,
         },
-        after: { reason },
+        after: { reason, operationDate: businessToday() },
       });
     });
   }

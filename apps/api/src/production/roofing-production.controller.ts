@@ -111,7 +111,7 @@ export class RoofingProductionController {
     @Param('reportId', ParseUUIDPipe) reportId: string,
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<ProductionOrderDto> {
-    return this.roofing.reverseReport(actor, id, reportId, body.reason);
+    return this.roofing.reverseReport(actor, id, reportId, body);
   }
 
   /** Cerrar: kilos consumidos declarados y merma por despunte (D-089). */
@@ -131,7 +131,7 @@ export class RoofingProductionController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<ProductionOrderDto> {
-    return this.roofing.reopen(actor, id, body.reason);
+    return this.roofing.reopen(actor, id, body);
   }
 
   /** Anular la orden y liberar las bobinas montadas (D-046: solo ADMINISTRADOR). */
@@ -142,6 +142,6 @@ export class RoofingProductionController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(cancelProductionOrderSchema)) body: CancelProductionOrderInput,
   ): Promise<ProductionOrderDto> {
-    return this.roofing.cancel(actor, id, body.reason);
+    return this.roofing.cancel(actor, id, body);
   }
 }

@@ -14,8 +14,12 @@ import {
   type InventoryRefType,
 } from '@prisma/client';
 import {
+  BACKDATE_OUT_OF_ORDER,
+  businessToday,
   Decimal,
+  fromDateOnly,
   paginate,
+  toDateOnly,
   toDecimal,
   toFixedString,
   toSkipTake,
@@ -51,6 +55,18 @@ export interface RecordMovementInput {
   /** Motivo escrito por el usuario (merma, ajuste). Se guarda tal cual en el kardex. */
   notes?: string;
   actorId: string;
+  /**
+   * D-124: día de negocio del movimiento (`YYYY-MM-DD`, Lima). Por defecto **hoy**, así que
+   * el llamador que no retrofecha nada no cambia. Quien la manda ya la validó con
+   * `OperationDateService.resolve` (rol, no futura, no anterior al piso): el kardex no
+   * repite esa validación, la exige aguas arriba.
+   */
+  operationDate?: string;
+  /**
+   * D-124: acuse de la advertencia de retrofecha fuera de orden. Ver
+   * {@link InventoryService.assertChronological}.
+   */
+  confirmBackdate?: boolean;
 }
 
 /**
@@ -68,6 +84,10 @@ export interface AdjustCostInput {
   refId?: string;
   notes?: string;
   actorId: string;
+  /** D-124: día de negocio del ajuste. Por defecto hoy. */
+  operationDate?: string;
+  /** D-124: acuse de la advertencia de retrofecha fuera de orden. */
+  confirmBackdate?: boolean;
 }
 
 /** Saldo vigente de un ítem, ya en Decimal. */
@@ -115,6 +135,8 @@ export class InventoryService {
     }
 
     const balance = await this.lockBalance(tx, input);
+    const operationDate = input.operationDate ?? businessToday();
+    await this.assertChronological(tx, input, operationDate, input.confirmBackdate);
 
     if (balance.unit !== input.unit && !balance.qty.isZero()) {
       // Mezclar unidades en el mismo saldo (kilos con unidades) haría del promedio y del
@@ -187,7 +209,62 @@ export class InventoryService {
         refId: input.refId ?? null,
         notes: input.notes ?? null,
         actorId: input.actorId,
+        operationDate: toDateOnly(operationDate),
       },
+    });
+  }
+
+  /**
+   * Guardrail de orden cronológico (D-124).
+   *
+   * Vive acá, en el **único escritor** del kardex (§3.2), y no repartido por los diez
+   * servicios que registran movimientos: ahí ninguno se lo puede saltear por olvido, que
+   * es exactamente cómo D-088 se coló entre dos módulos que creían tener la regla puesta.
+   *
+   * Qué protege. El saldo corrido y el costo promedio se construyen en el orden en que los
+   * movimientos se **grabaron**; la vista los muestra ordenados por fecha de operación
+   * (D-124). Mientras la carga histórica vaya en orden cronológico las dos coinciden. Un
+   * movimiento insertado por detrás de otros que el ítem ya tiene las separa: el kardex
+   * pasa a mostrar, para ese día, un saldo que nunca fue el de ese día. Con producción
+   * vacía no se construye un recálculo retroactivo del promedio ponderado —sería una
+   * máquina entera para un caso que hoy no existe—; se corta con el detalle y se exige
+   * confirmación explícita, y la regla escrita es que la carga histórica va en orden.
+   *
+   * Costo cero en el flujo normal: si la fecha es hoy no puede haber nada posterior
+   * (retrofechar al futuro está prohibido), así que no se consulta nada.
+   */
+  private async assertChronological(
+    tx: Prisma.TransactionClient,
+    item: { itemType: InventoryItemType; itemId: string },
+    operationDate: string,
+    confirmed?: boolean,
+  ): Promise<void> {
+    if (confirmed || operationDate >= businessToday()) return;
+    // El más reciente y el conteo, sin traerse el histórico del ítem a memoria: una carga
+    // histórica sobre un ítem con miles de movimientos lo haría en cada llamada.
+    const where = {
+      itemType: item.itemType,
+      itemId: item.itemId,
+      operationDate: { gt: toDateOnly(operationDate) },
+    };
+    const newest = await tx.inventoryMovement.findFirst({
+      where,
+      orderBy: [{ operationDate: 'desc' }, { id: 'desc' }],
+      select: { operationDate: true },
+    });
+    if (!newest) return;
+    const laterCount = await tx.inventoryMovement.count({ where });
+
+    const labels = await this.resolveItemLabels([item]);
+    const label = labels.get(labelKey(item.itemType, item.itemId))?.code ?? item.itemId;
+    throw new BadRequestException({
+      code: BACKDATE_OUT_OF_ORDER,
+      message:
+        `La fecha ${operationDate} queda ANTES de ${laterCount} movimiento(s) que ${label} ya ` +
+        `tiene registrados (el más reciente, del ${fromDateOnly(newest.operationDate)}). La carga ` +
+        'histórica va en orden cronológico: registrá primero lo más antiguo.',
+      statusCode: 400,
+      error: 'Bad Request',
     });
   }
 
@@ -212,6 +289,13 @@ export class InventoryService {
 
     const balance = await this.lockBalance(tx, input);
     if (balance.qty.lte(0)) return null;
+    // D-124: un ajuste mueve valor con una fecha, así que también se ordena. Mismo guardrail.
+    await this.assertChronological(
+      tx,
+      input,
+      input.operationDate ?? businessToday(),
+      input.confirmBackdate,
+    );
 
     // El valor del saldo no puede quedar negativo: un ajuste a la baja mayor que el
     // valor en stock significaría que se está descontando costo que ya salió.
@@ -243,6 +327,7 @@ export class InventoryService {
         refId: input.refId ?? null,
         notes: input.notes ?? null,
         actorId: input.actorId,
+        operationDate: toDateOnly(input.operationDate ?? businessToday()),
       },
     });
   }
@@ -256,12 +341,21 @@ export class InventoryService {
    * Idempotente: `inventory_movements.reversal_of_id` es único, así que dos reversas
    * simultáneas del mismo movimiento no pueden convivir; la segunda choca contra el
    * índice y se traduce a un 409 legible.
+   *
+   * D-124: la reversa tiene **fecha de operación propia** —por defecto hoy— y jamás hereda
+   * la del original en silencio. Anular hoy una entrada de agosto es un hecho de hoy: si la
+   * reversa se fechara en agosto, el saldo de agosto quedaría como si el material nunca
+   * hubiera entrado, y el reporte de un mes ya cerrado cambiaría solo. Quien de verdad
+   * quiera fecharla en agosto (porque la anulación también ocurrió ahí) la manda explícita,
+   * y pasa por las mismas validaciones que cualquier otra retrofecha.
    */
   async reverse(
     tx: Prisma.TransactionClient,
     movementId: bigint,
     actorId: string,
     reason: string,
+    operationDate?: string,
+    confirmBackdate?: boolean,
   ): Promise<InventoryMovement> {
     const original = await tx.inventoryMovement.findUnique({ where: { id: movementId } });
     if (!original) throw new NotFoundException('Movimiento de kardex no encontrado');
@@ -283,6 +377,10 @@ export class InventoryService {
       unit: original.unit,
     };
     const balance = await this.lockBalance(tx, item);
+    // D-124: una reversa retrofechada mete una salida (o una entrada) por detrás del saldo
+    // corrido igual que cualquier otro movimiento, así que pasa por el mismo guardrail. Por
+    // defecto la fecha es hoy y el chequeo ni consulta.
+    await this.assertChronological(tx, item, operationDate ?? businessToday(), confirmBackdate);
     const origQty = toDecimal(original.qty.toString());
     const origValue = toDecimal(original.totalCost.toString());
     const currentValue = balance.qty.times(balance.avgCost);
@@ -383,6 +481,7 @@ export class InventoryService {
           notes: reason,
           reversalOfId: original.id,
           actorId,
+          operationDate: toDateOnly(operationDate ?? businessToday()),
         },
       });
     } catch (err) {
@@ -646,9 +745,11 @@ export class InventoryService {
       itemType: query.itemType,
       itemId: query.itemId,
       businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
-      at: {
-        gte: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,
-        lte: query.to ? new Date(`${query.to}T23:59:59.999Z`) : undefined,
+      // D-124: el corte por fecha es por **día de negocio**, no por el instante de
+      // grabación. Un movimiento de agosto cargado en septiembre tiene que caer en agosto.
+      operationDate: {
+        gte: query.from ? toDateOnly(query.from) : undefined,
+        lte: query.to ? toDateOnly(query.to) : undefined,
       },
     };
     // El kardex de un ítem concreto se lee completo y en orden cronológico, porque el saldo
@@ -662,7 +763,11 @@ export class InventoryService {
       this.prisma.inventoryMovement.findMany({
         where,
         include: { businessLine: true, reversals: { select: { id: true } } },
-        orderBy: singleItem ? [{ at: 'asc' }, { id: 'asc' }] : [{ at: 'desc' }, { id: 'desc' }],
+        // D-124: ordena por fecha de operación; el `id` bigserial (orden real de grabación)
+        // desempata dentro del mismo día, que es lo que hace determinista el saldo corrido.
+        orderBy: singleItem
+          ? [{ operationDate: 'asc' }, { id: 'asc' }]
+          : [{ operationDate: 'desc' }, { id: 'desc' }],
         skip,
         take,
       }),
@@ -721,6 +826,7 @@ export class InventoryService {
         actorId: m.actorId,
         actorName: m.actorId ? (actors.get(m.actorId) ?? null) : null,
         at: m.at.toISOString(),
+        operationDate: fromDateOnly(m.operationDate),
         balanceQty: singleItem ? runningQty.toFixed(3) : null,
         balanceAvgCost: singleItem && showCosts ? toFixedString(runningAvg, 'MONEY') : null,
       } satisfies InventoryMovementDto;
@@ -753,7 +859,7 @@ export class InventoryService {
       FROM "inventory_movements"
       WHERE "item_type" = ${query.itemType}::"InventoryItemType"
         AND "item_id" = ${query.itemId}::uuid
-        AND "at" < ${new Date(`${from}T00:00:00.000Z`)}
+        AND "operation_date" < ${toDateOnly(from)}::date
     `;
     const row = rows[0];
     return {

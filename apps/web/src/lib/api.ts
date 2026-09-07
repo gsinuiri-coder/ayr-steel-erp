@@ -7,6 +7,12 @@ export class ApiError extends Error {
     public readonly status: number,
     message: string,
     public readonly errors?: Record<string, string[] | undefined>,
+    /**
+     * Código de dominio del error, cuando el API lo manda (hoy solo
+     * `BACKDATE_OUT_OF_ORDER`, D-124). Es lo que deja distinguir "esto se puede reintentar
+     * confirmando" de cualquier otro 400, sin reconocer el texto del mensaje.
+     */
+    public readonly code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -16,6 +22,7 @@ export class ApiError extends Error {
 interface ErrorBody {
   message?: string | string[];
   errors?: Record<string, string[] | undefined>;
+  code?: string;
 }
 
 let refreshInFlight: Promise<boolean> | null = null;
@@ -40,7 +47,7 @@ async function toError(res: Response): Promise<ApiError> {
   const message = Array.isArray(body.message)
     ? body.message.join(', ')
     : (body.message ?? `Error ${res.status}`);
-  return new ApiError(res.status, message, body.errors);
+  return new ApiError(res.status, message, body.errors, body.code);
 }
 
 export interface ApiOptions {
