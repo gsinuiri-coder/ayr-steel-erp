@@ -1541,3 +1541,157 @@ muy particulares, un par de semanas antes de la entrega al cliente, era cambiar 
 de la que la tarea pedía tocar a cambio de nada que el hook liviano (`usePagination` +
 `<PaginationBar>`) no diera ya. Queda anotado para una fase futura si el proyecto necesita
 ordenamiento por columna o selección de filas, que sí justifican la librería.
+
+---
+
+## D-124 — La fecha de operación, y por qué el guardrail vive en el kardex
+
+§0.2 tiene la decisión completa. Acá va lo que no cabe en una fila: por qué son dos fechas y
+no una, dónde tenía que vivir el control de orden, y qué se decidió deliberadamente **no**
+construir.
+
+### Dos fechas, dos preguntas
+
+`createdAt` (y su primo `at` en el kardex) responde **cuándo se tipeó esto**. Es auditoría:
+sirve para reconstruir quién hizo qué y en qué orden real, y por eso el kardex sigue
+ordenando sus empates por el `id` bigserial y no por ninguna fecha.
+
+`operationDate` responde **a qué día de negocio pertenece este hecho**. Es la fecha que el
+cliente reconoce como suya: el día que entró la bobina, el día que salió el camión, el día
+que cobraron. Es la que un reporte mensual tiene que usar, y la única que hace posible que
+alguien registre en septiembre lo que ocurrió en agosto.
+
+Mientras las dos coincidieron, mezclarlas no costaba nada y por eso el sistema vivió doce
+fases con una sola. Dejaron de coincidir el día en que se entregó el sistema con el mes
+anterior sin cargar.
+
+### Por qué el guardrail está en `InventoryService.record` y no en cada llamador
+
+El primer diseño lo puso en un servicio aparte y lo llamó desde cada operación retrofechable:
+el partido, la merma, el despacho. Se cambió antes de terminar, por dos motivos.
+
+El primero: hay **treinta y cuatro** puntos que escriben kardex, repartidos en siete
+servicios. Un control que hay que acordarse de llamar en treinta y cuatro lugares es un
+control que un día no se llama, y eso ya pasó una vez — D-088 se coló exactamente así, entre
+dos módulos que cada uno creía que el otro tenía la regla puesta.
+
+El segundo: es del kardex. La regla que protege ("el saldo corrido se construyó en el orden
+en que las cosas se grabaron, así que insertar una por el medio hace que la vista ordenada
+por fecha muestre un saldo que nunca fue el de ese día") es un hecho sobre `inventory_movements`,
+no sobre ventas ni sobre producción. §3.2 ya dice que ese módulo es el único escritor; el
+control tenía que estar del mismo lado de esa frontera.
+
+El costo en el flujo normal es literalmente cero. Si la fecha de operación es hoy no puede
+haber nada posterior —retrofechar al futuro está prohibido, y ese sí es un chequeo de
+entrada—, así que la comprobación sale antes de consultar nada.
+
+### Lo que se decidió no construir
+
+**No hay recálculo retroactivo del promedio ponderado.** Si mañana se inserta un ingreso con
+fecha de la semana pasada sobre un ítem que ya tuvo salidas, lo correcto en teoría sería
+recalcular el costo promedio de todo lo que vino después. Eso es una máquina entera: hay que
+reescribir el `unitCost` de movimientos que son append-only por diseño, propagar el cambio a
+los costos de producción que ya absorbieron ese promedio (D-056) y decidir qué pasa con lo
+que ya se facturó.
+
+No se construyó porque el caso que la justificaría no existe: producción arranca vacía y la
+carga histórica va en orden cronológico. Lo que sí se construyó es el guardrail que hace
+visible el momento en que alguien está por salirse de ese orden, con el detalle suficiente
+para decidir (qué ítem, qué fecha se pidió, cuál es la del movimiento más reciente, cuántos
+quedan por delante) y la confirmación explícita para seguir igual. Si algún día la operación
+necesita cargar fuera de orden de forma habitual, esa es la señal de que hay que construir el
+recálculo — y el guardrail va a haber dejado el rastro de cuántas veces se confirmó.
+
+### La única reversa que sí hereda la fecha
+
+Toda anulación se fecha **hoy** por defecto. Anular en septiembre una entrada de agosto es un
+hecho de septiembre: si la reversa se fechara en agosto, el saldo de agosto quedaría como si
+el material nunca hubiera entrado y un mes ya reportado cambiaría solo.
+
+La excepción es el recosteo de una bobina (D-045), que técnicamente es una reversa más un
+reingreso pero conceptualmente es **una corrección del mismo hecho**. Ahí los dos movimientos
+llevan la fecha del ingreso original: fecharlos hoy dejaría la bobina fuera del inventario de
+su propio mes durante el intervalo entre la salida y la entrada, y el saldo de ese mes
+cerraría mal por un movimiento que solo corrige un número de costo.
+
+### El trigger que hubo que apagar
+
+`inventory_movements` tiene un trigger que rechaza todo `UPDATE` (§3.2, RF-95). Rellenar la
+columna nueva con el día de Lima de cada `at` **es** un `UPDATE`, así que la migración lo
+apaga y lo vuelve a encender antes de terminar.
+
+Es seguro y es la única forma de agregarle una columna a una tabla inmutable: escribe un
+campo que hasta esa migración no existía, derivado de otro de la misma fila, sin tocar un solo
+dato de negocio. Al terminar la migración el trigger está activo de nuevo y `operation_date`
+es tan inmutable como el resto de la fila — ninguna ruta de la aplicación puede repetir esto.
+
+El backfill convierte a **Lima** y no a UTC (`(at AT TIME ZONE 'America/Lima')::date`). Cortar
+en UTC habría fechado al día siguiente todo lo ocurrido después de las 19:00 locales, que es
+el mismo desfase de cinco horas que D-112 costó corregir en nueve pantallas.
+
+---
+
+## D-127 — El subtipo de cobertura, y la rama que nadie veía
+
+### El síntoma y la causa
+
+El dueño confirmó COT-000240 en producción y recibió `0.000 MTR disponibles… necesita 61.000`.
+La cotización era una cobertura **a medida** de 61 metros lineales, con sus subítems de largo
+(cinco de 5 m y seis de 6 m). El error decía que faltaba stock de un producto terminado que
+**no existe hasta que planta lo rola**: no había nada que reponer, ninguna compra que hacer,
+ninguna acción que destrabara el mensaje.
+
+La causa es que `resolveSalesLines` tenía dos ramas y ninguna era la correcta para ese caso:
+si la línea traía una bobina elegida a mano, reservaba esa bobina; si no, reservaba el
+producto terminado. Una cobertura a medida sin bobina elegida caía en la segunda, que es el
+camino de una plancha de catálogo.
+
+### Por qué el subtipo tenía que existir como dato
+
+Hasta hoy "a medida" se deducía de `unit = MTR` y "plancha" de tener largo fijo. Las dos
+convenciones funcionaban, y ninguna estaba escrita en ningún lado que un usuario pudiera ver.
+El diálogo de producto pedía SKU, nombre, unidad, color, espesor, ancho, precio y origen; el
+subtipo —el campo que decide qué hace el sistema entero con ese producto— no aparecía, no se
+podía consultar y no se podía corregir.
+
+Esa es la parte que convirtió un bug en un bug **inexplicable**. Con la regla escondida en una
+inferencia, el usuario no tenía forma de mirar el producto y darse cuenta de que el sistema lo
+consideraba una plancha; solo veía un error de stock sin relación aparente con lo que estaba
+haciendo. La lección es la de siempre en este proyecto, y ya la nombraron D-085 (el color como
+tabla y no como texto) y D-105 (el origen como columna y no como estado): **un dato que
+ramifica el comportamiento se declara, no se deduce.**
+
+Subtipo y unidad quedan atados (`A_MEDIDA` implica `MTR`) con validación de servicio y `CHECK`
+en la base. No es redundancia por descuido: todo el resto del sistema —ventas, producción,
+despacho, facturación— ya lee la unidad, y reescribir esos lectores para que preguntaran por
+el subtipo habría sido cambiar mucha más superficie de la que este arreglo necesita. Lo que no
+se podía dejar es que las dos discreparan, que es la ambigüedad por el otro lado.
+
+### Por qué el API elige la bobina
+
+La rama nueva no le pide al vendedor que elija el rollo. Calcula los kilos teóricos que esos
+metros van a consumir y elige la bobina por su cuenta.
+
+Quien cotiza sabe cuántos metros, de qué color y para cuándo. **Qué rollo concreto los va a
+dar es una decisión de planta**, que depende del saldo del día y de qué otras órdenes están en
+curso — y pedírsela al vendedor es exactamente lo que dejó cotizaciones sin materia prima
+asignada. Que el vendedor _pueda_ elegirla sigue existiendo (`reserveFromCoilId`, la rama de
+Fase 6): lo que cambia es que ya no es obligatorio para que la confirmación haga lo correcto.
+
+El criterio de elección: el mismo filtro que usa el selector de la OP (D-086) —abierta, mismo
+color con igualdad estricta, espesor de la receta dentro de tolerancia—, y entre las que
+alcanzan gana la de fecha de operación más antigua. Que se pueda ordenar por antigüedad real y
+no por fecha de carga es, precisamente, lo que D-124 acaba de hacer posible.
+
+Ese filtro se extrajo a `roofing-coil-match.ts` en lugar de copiarse. Dos definiciones de "qué
+bobina sirve" divergen, y el resultado de que divergieran sería una cotización que promete
+material que la orden de producción después no puede montar: el mismo defecto que D-088 y
+D-097 ya costaron encontrar una vez cada uno.
+
+### Lo que queda pendiente
+
+La densidad del acabado con la que se convierten metros en kilos sale todavía de la **receta**
+(`product_boms.finish.densityFactor`), no del producto. Es la mitad de D-122 que sigue sin
+implementar: mover el acabado a `products.finish_id` y sacarle a coberturas la dependencia del
+`ProductBom`. Hasta que eso pase, una cobertura a medida sin receta activa no se puede
+confirmar, y el mensaje lo dice con esas palabras en vez de reservar una cifra inventada.

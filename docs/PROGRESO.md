@@ -19,6 +19,7 @@
 | 7 — Cola, punto de venta e importación de comprobantes     | ✅ Cerrada (2026-09-05) | Cola (7), mostrador RF-60 (7b) e importación RF-71/72 (7c) completos. 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | 7d — Pulido UI/UX pre-entrega al cliente                   | ✅ Cerrada (2026-09-06) | Paginación server-side (D-113), fechas en zona de Lima (D-112), encabezado fijo sin contenedor de scroll (D-115), afordancia de link (D-114). 119/119 E2E en producción (38 saltados por D-081), deploy hecho, purga corrida — residuo de ventas/mermas ya hechas, ver detalle                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 7e — Venta de bobinas + catálogo estructurado + cotización | ✅ Cerrada (2026-09-06) | A+B+C+D+E (D-116..D-120) + D-121 (pestañas de `/bobinas`, piezas teóricas en planta), aprobados por el dueño y desplegados. D-122 (sacar el `ProductBom` de coberturas) diseñado, diferido al tramo 7e-ii. D-123 documenta la lección del primer push: 25 fallas reales en specs de fases anteriores que asumían comportamiento que D-117/D-118/D-120 cambiaron — corregidas, CI verde (159/159, 9 saltadas). 119/119 E2E en producción (38 saltados por D-081), deploy hecho (API por Cloud Run, web por la integración Vercel-GitHub — el CLI de Vercel sigue con el token expirado), purga corrida — residuo estructural no bloqueante (ventas/producción ya movidas), ver `docs/handoff/fase-7e.md`. |
+| 7 consolidada — backdating, entornos, subtipo de cobertura | ✅ Cerrada (2026-09-06) | D-124 (fecha de operación), D-125/D-126 (rama `demo` y prohibición de `e2e:prod`), D-127 (subtipo de cobertura y rama de confirmación). D-122 sigue diferido.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 8 — Auditoría, reportes, UAT                               | ⚪ Pendiente            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Fase 0 — detalle
@@ -1486,6 +1487,166 @@ real, y sin ningún rastro visible desde una pantalla que un usuario real use (p
 clientes y productos de prueba quedan desactivados). Queda igual de limpio que lo que cualquier
 corrida completa de esta suite iba a dejar contra producción real desde el día que existieran
 Fase 6 y Fase 7b juntas — no es nuevo de esta fase, es la primera vez que se ve completo.
+
+## Sesión 7 consolidada — backdating, entornos y subtipo de cobertura (2026-09-06)
+
+Tres frentes en una sesión, en orden de prioridad: **M1** la fecha de operación (D-124),
+**M2** el entorno de ensayo y la prohibición de correr E2E contra producción (D-125, D-126), y
+**M3** —recortado sobre la marcha por un caso real que apareció en producción— el subtipo de
+cobertura y la rama de confirmación que faltaba (D-127). Lo demás de D-122 sigue diferido.
+
+### M1 — Fecha de operación (D-124)
+
+El disparador: el sistema se entrega mañana y el dueño necesita cargar agosto **después**. Sin
+separar el día de negocio del instante de grabación, todo lo que se registrara hoy quedaba
+fechado hoy y ningún reporte de agosto lo veía.
+
+Columna `operation_date` (DATE, día calendario de Lima) nueva en `inventory_movements`,
+`coils`, `cutting_orders`, `cutting_order_coils` (recepción), `production_orders` (arranque y
+cierre, en dos columnas) y `production_reports`. `dispatches.dispatch_date`,
+`customer_payments.date` y `supplier_payments.date` ya eran fechas de negocio: no ganan
+columna, ganan la misma validación. Los timestamps de auditoría no se tocaron.
+
+Un único validador, `OperationDateService` (en `ConfigModule`, que es `@Global`, para que los
+servicios de cinco módulos lo inyecten sin cablear nada): sin campo → hoy en Lima; con campo →
+solo ADMINISTRADOR, nunca futura, nunca antes de `HISTORICAL_LOAD_START` (env, default
+`2026-08-01`).
+
+El **guardrail de orden cronológico** quedó dentro de `InventoryService.record`, el único
+escritor del kardex. Se escribió primero repartido por los llamadores y se movió antes de
+terminar: son 34 puntos que escriben kardex en siete servicios, y un control que hay que
+acordarse de llamar 34 veces es el hueco de D-088 otra vez. Costo cero en el flujo normal: si
+la fecha es hoy no puede haber nada posterior y ni consulta.
+
+**La migración tuvo que apagar el trigger de append-only** de `inventory_movements` para poder
+backfillear la columna nueva y volver a encenderlo. Se descubrió al aplicarla: `migrate deploy`
+falló con `inventory_movements es append-only: no se permite UPDATE`, que es exactamente la
+regla haciendo su trabajo. Es la única forma de agregarle una columna a una tabla inmutable y
+es seguro (escribe un campo que hasta esa migración no existía, derivado del `at` de la misma
+fila). El backfill convierte a **Lima**, no a UTC: cortar en UTC habría fechado al día
+siguiente todo lo ocurrido después de las 19:00 locales — el desfase de D-112.
+
+**Reporte mensual de bobinas** (`/reportes/bobinas`, `GET /reports/coils?month=YYYY-MM`), que
+es lo que el backdating habilita: la columna "Saldo inicio de mes" sale de sumar los
+movimientos anteriores al corte por su fecha de operación, y antes de D-124 no se podía
+calcular. Se preguntó al dueño y confirmó que el reporte **no existía** y había que construirlo
+(la instrucción original decía "reemplazar la columna EMPRESA", que no estaba en ninguna
+pantalla). "Saldo fin de mes" reemplaza a "Disponible": en un reporte de agosto, mostrar el
+saldo de hoy sería mezclar dos cortes en la misma fila.
+
+### M2 — Entornos (D-125, D-126)
+
+Rama Neon **`demo`** creada desde `production` (`br-solitary-smoke-aegbos8k`), migrada y
+sembrada. `pnpm env:demo` / `db:demo` / `dev:demo`; `dev:demo` inyecta la conexión por entorno
+y no toca `apps/api/.env`, así que convive con `pnpm dev`. `docs/ENTORNOS.md` documenta las
+cuatro ramas y para qué sirve cada una.
+
+**`pnpm e2e:prod` queda prohibido como rutina** (regla dura 9 de `CLAUDE.md`). La verificación
+post-deploy es `pnpm smoke:prod`: `/health` sin sesión, login con el admin efímero de D-024 y
+cinco GET; lo único que escribe es ese usuario, y lo borra en `finally`. La suite completa vive
+en local y en CI. `prod:purge-e2e` queda solo para emergencias documentadas acá.
+
+### M3 (recortado) — Subtipo de cobertura (D-127)
+
+Entró a mitad de sesión con un caso real: COT-000240 fallaba al confirmarse con `0.000 MTR
+disponibles… necesita 61.000`. Era una cobertura **a medida** de 61 ml con subítems de largo, y
+el sistema le estaba pidiendo stock de un producto terminado que no existe hasta que planta lo
+rola.
+
+`products.roofing_kind` (`PLANCHA` / `A_MEDIDA`), obligatorio en Metallic Roofing, visible y
+corregible en el diálogo de producto y en la lista del catálogo; una cobertura nueva nace
+`A_MEDIDA`. Largo fijo obligatorio solo en `PLANCHA` y prohibido en `A_MEDIDA`. Subtipo y
+unidad no pueden discrepar (validación + `CHECK`). El backfill usa la inferencia que regía
+hasta hoy (`unit = MTR` → a medida), así que ningún producto cambia de comportamiento al
+migrar: lo que cambia es que el dato ahora está escrito.
+
+`resolveSalesLines` ramifica por el subtipo: una línea a medida sin bobina elegida calcula los
+kilos teóricos y **reserva materia prima**, eligiendo la bobina con el mismo filtro que el
+selector de la OP (extraído a `roofing-coil-match.ts` para que no diverjan, D-086) y quedándose
+con la más antigua por `operationDate` que alcance. Una plancha sigue exigiendo stock.
+
+Lo que **no** entró de D-122: `products.finish_id` y sacarle a coberturas la dependencia del
+`ProductBom`. La densidad del acabado sigue saliendo de la receta. Queda para su propia sesión.
+
+### Incidente de seguridad de esta sesión: una cadena de conexión de Neon quedó impresa en el log
+
+**Qué pasó, en orden.** Al escribir `scripts/db-demo.mjs` le pasé la conexión a
+`prisma db execute` como argumento (`--url <cadena>`). El comando falló por otro motivo (la
+cadena lleva un `&` que el shell de Windows parte en dos), y el manejador de errores del propio
+guion —que compone el mensaje con `args.join(' ')`— **imprimió la cadena completa, contraseña
+incluida**, en la salida de la terminal.
+
+**Alcance.** La contraseña del rol `neondb_owner` es **la misma en las cuatro ramas** del
+proyecto Neon: se verificó comparando huellas SHA-256 de las contraseñas de `production`, `dev`
+y `demo`, sin imprimir ninguna, y las tres coinciden. Así que lo expuesto no es la credencial de
+demo: es la credencial de **producción**.
+
+Dónde quedó: en la salida de esa terminal y en el registro de la sesión del agente. No se
+commiteó, no salió del equipo por ningún otro canal y no está en ningún archivo del repo
+(`git ls-files` no lista ningún `.env*`; `.env.demo` está cubierto por el `.gitignore`).
+
+**Qué se corrigió en el código, para que no se repita.**
+
+- `scripts/db-demo.mjs` ya no pasa ninguna conexión por `argv`: van solo por el entorno del
+  proceso hijo, y `prisma db execute` toma la suya del `DIRECT_URL` del entorno.
+- El mensaje de error de ese guion dejó de repetir los argumentos. `scripts/lib.mjs#run` ya
+  filtraba `secret|password|token`; el helper local de `db-demo.mjs` no, y esa fue la diferencia.
+
+**Lo que hace falta que hagas vos (no lo puede hacer el agente).** Rotar la contraseña del rol
+en Neon y propagarla:
+
+1. Consola de Neon → proyecto `ayr-steel-erp` → **Roles** → resetear la contraseña de
+   `neondb_owner`.
+2. `pnpm env:local` y `pnpm env:demo` — regeneran los `.env` locales tomando la cadena nueva de
+   `neonctl`.
+3. `pnpm secrets:gcp` — actualiza `DATABASE_URL`/`DIRECT_URL` en Secret Manager, y después
+   `pnpm deploy:api` para que la revisión de Cloud Run tome los secretos nuevos.
+4. `pnpm secrets:gh` — actualiza `CI_DATABASE_URL`/`CI_DIRECT_URL` para las corridas de CI.
+
+Mientras tanto el riesgo real es bajo (la cadena no salió del equipo), pero la credencial es la
+de producción y el sistema se entrega mañana: conviene hacerlo antes del deploy, y el paso 3 ya
+está en el camino de todos modos.
+
+### Los dos defectos que encontró `qa`, y por qué ninguna otra verificación los veía
+
+El agente `qa` escribió 14 casos nuevos (8 de D-124, 6 de D-127) y corrió un smoke de las
+suites que tocan coberturas, ventas y kardex. **No dio verde**: encontró dos defectos reales de
+la implementación, los dos invisibles para `lint`, `typecheck`, `test` y `build`.
+
+**1. Un ciclo de imports en `@ayr/shared` borraba campos de schema en silencio (D-130).**
+`schemas/operation.ts` importaba `businessToday` de `sales.ts`, que importa de `coil.ts` y
+`roofing.ts`, que importan `backdatableFields` de `operation.ts`. En CommonJS un módulo a medio
+inicializar devuelve `undefined`, y `{ ...undefined }` no lanza: esparce nada. Seis schemas
+—`createRoofingOrderSchema`, `reportRoofingPiecesSchema`, `closeRoofingOrderSchema`,
+`reverseMovementSchema`, `createCoilScrapSchema`, `createCoilSplitSchema`— perdían
+`operationDate` y `confirmBackdate`. Toda la rama de coberturas y **todas** las anulaciones
+ignoraban la retrofecha; y como Zod descartaba el campo antes de que llegara a
+`OperationDateService`, **un VENDEDOR no recibía el 403** en esas rutas y una fecha inválida
+devolvía 201 — el control de rol que es el corazón de D-124, abierto en seis lugares.
+Corregido moviendo el reloj del negocio a `packages/shared/src/business-date.ts`, un módulo
+hoja que no importa nada. Verificado: los 15 schemas retrofechables llevan los dos campos.
+
+**2. `500` en vez de `400` con fechas imposibles (D-130, segunda mitad).** El `.refine` de
+calendario —agregado dos horas antes por un hallazgo del auditor— hacía `toISOString()` sobre
+un `Invalid Date`. `2026-02-31` se rechazaba bien (rueda al 2 de marzo y el ida y vuelta la
+delata), pero `2026-08-32` y `2026-13-01` lanzaban `RangeError` dentro del refine. Corregido con
+el guard de `Number.isNaN(getTime())`; las cinco formas de fecha imposible dan 400.
+
+`qa` arregló además `e2e/tests/fase6.spec.ts`, que asumía que un pedido rival a medida chocaba
+contra el disponible del producto terminado — con D-127 choca contra la materia prima. Dejó
+intacta la mitad que sí prueba la protección y cambió solo el motivo del corte.
+
+**Resultado final: 14/14 de los casos nuevos, y 45/45 del smoke** (fase5a, fase5a-bordes,
+fase6, fase6-bordes, fase7e, fase7e-bordes). La suite completa la corre CI.
+
+### Verificación
+
+- `pnpm turbo lint typecheck test build` en verde.
+- `pnpm db:migrate` bloqueado por un desvío **preexistente**: la migración
+  `20260905150937_fase7b_venta_en_anulacion` fue editada en el commit `9438677` **después** de
+  aplicarse a `dev`, así que `prisma migrate dev` exige resetear la rama. No es de esta sesión
+  y no bloqueó nada: `pnpm db:deploy` aplica lo pendiente sin ese chequeo, y es lo que se usó
+  contra `dev` y contra `demo`. Anotado acá para que la próxima sesión no lo descubra de nuevo.
 
 ## Bloqueos
 
