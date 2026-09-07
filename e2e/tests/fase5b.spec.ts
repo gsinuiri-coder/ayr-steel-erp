@@ -83,9 +83,10 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
    * es justo donde más importa saber que el almacén funciona.
    */
   test('despachar el pedido mueve el kardex, consume la reserva y lo deja atendido', async () => {
+    // D-116: la venta de bobina siempre toma el saldo vivo completo, así que el pedido
+    // reserva los 100 kg enteros de la bobina, no una fracción de una más grande.
     const sc = await setupOrderScenario(api, {
-      coilKg: '1000',
-      qty: '100',
+      coilKg: '100',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -112,9 +113,9 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
         itemId: sc.coil.id,
       });
       expect(await availabilityOf(api, 'COIL', sc.coil.id)).toMatchObject({
-        qty: '1000.000',
+        qty: '100.000',
         reservedQty: '100.000',
-        availableQty: '900.000',
+        availableQty: '0.000',
       });
 
       // RF-77: la mercadería sale. Una salida de kardex por línea, por el módulo
@@ -139,11 +140,11 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
 
       // El kardex bajó y la reserva se consumió: el material ya no está prometido porque
       // ya salió (D-074).
-      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '900.000' });
+      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '0.000' });
       expect(await availabilityOf(api, 'COIL', sc.coil.id)).toMatchObject({
-        qty: '900.000',
+        qty: '0.000',
         reservedQty: '0.000',
-        availableQty: '900.000',
+        availableQty: '0.000',
       });
       const movements = live(await movementsOf(api, 'COIL', sc.coil.id));
       expect(movements).toHaveLength(2);
@@ -175,8 +176,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
 
     const sc = await setupOrderScenario(api, {
-      coilKg: '1000',
-      qty: '100',
+      coilKg: '100',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -285,8 +285,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
     test.skip(!pse.accepts, pse.reason);
 
     const sc = await setupOrderScenario(api, {
-      coilKg: '1000',
-      qty: '100',
+      coilKg: '100',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -575,9 +574,10 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
   // -------------------------------------------------------------------------
 
   test('despachar la mitad deja el pedido parcialmente atendido y el resto sigue reservado', async () => {
+    // D-116: la bobina se reserva entera (100 kg), así que "lo que no sale" ya no es un
+    // saldo libre para otro pedido — es el resto de la promesa de este mismo pedido.
     const sc = await setupOrderScenario(api, {
-      coilKg: '1000',
-      qty: '100',
+      coilKg: '100',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -605,9 +605,9 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
       // el físico y lo reservado—, que es exactamente lo que promete D-074.
       expect(partial.reservations[0]).toMatchObject({ status: 'ACTIVE', qty: '50.000' });
       expect(await availabilityOf(api, 'COIL', sc.coil.id)).toMatchObject({
-        qty: '950.000',
+        qty: '50.000',
         reservedQty: '50.000',
-        availableQty: '900.000',
+        availableQty: '0.000',
       });
 
       const progress = await orderProgress(api, sc.order.id);
@@ -640,9 +640,9 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
       expect(done.status).toBe('FULFILLED');
       expect(done.reservations[0]).toMatchObject({ status: 'CONSUMED', qty: '0.000' });
       expect(await availabilityOf(api, 'COIL', sc.coil.id)).toMatchObject({
-        qty: '900.000',
+        qty: '0.000',
         reservedQty: '0.000',
-        availableQty: '900.000',
+        availableQty: '0.000',
       });
     } finally {
       await purgeInvoicingTrail(api, trail);

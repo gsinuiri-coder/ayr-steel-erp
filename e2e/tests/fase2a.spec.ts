@@ -474,7 +474,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
     try {
       await page.goto('/bobinas/importar');
       await expect(page.getByRole('heading', { name: 'Importar bobinas' })).toBeVisible();
-      await page.getByRole('button', { name: 'Importar' }).click();
+      await page.getByRole('button', { name: 'Importar planilla' }).click();
 
       const dialog = page.getByRole('dialog');
       await dialog
