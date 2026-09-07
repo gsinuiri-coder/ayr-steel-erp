@@ -6,7 +6,8 @@
   "exports": {
     "./base.mjs": "./base.mjs",
     "./nest.mjs": "./nest.mjs",
-    "./next.mjs": "./next.mjs"
+    "./next.mjs": "./next.mjs",
+    "./business-date.mjs": "./business-date.mjs"
   },
   "dependencies": {
     "@eslint/js": "9.39.5",

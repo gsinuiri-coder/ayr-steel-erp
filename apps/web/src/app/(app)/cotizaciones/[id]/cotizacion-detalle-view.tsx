@@ -215,7 +215,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Subtotal</CardTitle>
           </CardHeader>
-          <CardContent className="text-lg">{formatMoney(q.subtotalPen)}</CardContent>
+          <CardContent className="text-lg tabular-nums">{formatMoney(q.subtotalPen)}</CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
@@ -223,7 +223,11 @@ export function CotizacionDetalleView({ id }: { id: string }) {
               Total (con IGV)
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-lg font-semibold">{formatMoney(q.totalPen)}</CardContent>
+          {/* El total es el número que se busca de un vistazo: es el único de los cuatro
+              que va en semibold, y ahora también el único más grande. */}
+          <CardContent className="text-xl font-semibold tabular-nums">
+            {formatMoney(q.totalPen)}
+          </CardContent>
         </Card>
       </div>
 
@@ -245,30 +249,39 @@ export function CotizacionDetalleView({ id }: { id: string }) {
               const discounted =
                 item.listPricePen !== null && item.listPricePen !== item.unitPricePen;
               return (
-                <TableRow key={item.id}>
-                  <TableCell>{item.lineNumber}</TableCell>
-                  <TableCell>
+                <TableRow key={item.id} className="align-top">
+                  <TableCell className="text-muted-foreground tabular-nums">
+                    {item.lineNumber}
+                  </TableCell>
+                  {/*
+                    La descripción de una línea a medida lleva los largos («3 de 4.20 m, …»)
+                    y no entra en una sola línea: sin `whitespace-normal` se desbordaba de su
+                    columna y se pintaba sobre la siguiente.
+                  */}
+                  <TableCell className="max-w-xs whitespace-normal">
                     <div className="font-medium">{item.productSku}</div>
                     <div className="text-xs text-muted-foreground">{item.description}</div>
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right tabular-nums">
                     {formatQty(item.qty, unitSymbol(item.unit))}
                   </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
+                  <TableCell className="text-right text-muted-foreground tabular-nums">
                     {item.listPricePen === null ? '—' : formatMoney(item.listPricePen, 'PEN', 4)}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right tabular-nums">
                     <span className={discounted ? 'font-medium text-amber-600' : undefined}>
                       {formatMoney(item.unitPricePen, 'PEN', 4)}
                     </span>
                   </TableCell>
-                  <TableCell className="text-xs">
+                  <TableCell className="max-w-[12rem] text-xs whitespace-normal">
                     {item.reserveItemLabel || item.reserveItemId}
-                    <span className="block text-muted-foreground">
+                    <span className="block text-muted-foreground tabular-nums">
                       {formatQty(item.reserveQty, unitSymbol(item.reserveUnit))}
                     </span>
                   </TableCell>
-                  <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {formatMoney(item.subtotalPen)}
+                  </TableCell>
                 </TableRow>
               );
             })}

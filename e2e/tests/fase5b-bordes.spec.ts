@@ -166,9 +166,10 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
   test('con el PSE en contingencia el comprobante toma correlativo, el despacho sale igual y el barrido lo recupera', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
 
+    // D-134: `setupOrderScenario` vende la bobina entera (RF-73); ya no hay `qty` de por
+    // medio. El escenario compra exactamente los 100 kg que la factura y el despacho usan.
     const sc = await setupOrderScenario(api, {
-      coilKg: '1000',
-      qty: '100',
+      coilKg: '100',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -219,7 +220,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       });
       trail.dispatchIds!.push(dispatch.id);
       expect(dispatch.status).toBe('ISSUED');
-      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '900.000' });
+      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '0.000' });
       const fulfilled = await getJson<SalesOrderDto>(api, `/api/sales/orders/${sc.order.id}`);
       expect(fulfilled.status).toBe('FULFILLED');
 
@@ -373,9 +374,10 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
   // -------------------------------------------------------------------------
 
   test('revertir un despacho sin comprobante devuelve el stock, la reserva y el estado del pedido', async () => {
+    // D-134: el pedido base ya no reserva 100 kg de una bobina de 1000; vende la bobina
+    // entera, así que la promesa del pedido pasa a ser 1000 kg completos.
     const sc = await setupOrderScenario(api, {
       coilKg: '1000',
-      qty: '100',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -414,11 +416,11 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       // lo que el pedido sigue debiendo.
       const restored = await getJson<SalesOrderDto>(api, `/api/sales/orders/${sc.order.id}`);
       expect(restored.status).toBe('CONFIRMED');
-      expect(restored.reservations[0]).toMatchObject({ status: 'ACTIVE', qty: '100.000' });
+      expect(restored.reservations[0]).toMatchObject({ status: 'ACTIVE', qty: '1000.000' });
       expect(await availabilityOf(api, 'COIL', sc.coil.id)).toMatchObject({
         qty: '1000.000',
-        reservedQty: '100.000',
-        availableQty: '900.000',
+        reservedQty: '1000.000',
+        availableQty: '0.000',
       });
 
       // El progreso del pedido lo recalcula desde los despachos vigentes, no desde un
@@ -426,7 +428,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       const progress = await orderProgress(api, sc.order.id);
       expect(progress.lines[0]).toMatchObject({
         dispatchedQty: '0.000',
-        pendingDispatchQty: '100.000',
+        pendingDispatchQty: '1000.000',
       });
 
       // Revertir dos veces no duplica la devolución.
@@ -447,9 +449,10 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     test.skip(!pse.accepts, pse.reason);
 
+    // D-134: el pedido base vende la bobina entera; se compra exactamente lo que se
+    // despacha y factura, para que "todo" siga siendo 100.
     const sc = await setupOrderScenario(api, {
-      coilKg: '1000',
-      qty: '100',
+      coilKg: '100',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -491,7 +494,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       expect(blocked.message).toContain('nota de crédito');
 
       // Y el stock no se movió: el bloqueo corta antes de tocar el kardex.
-      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '900.000' });
+      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '0.000' });
 
       // La baja entra —con un reintento si SUNAT ya recibió hoy el archivo de bajas, que
       // es su forma de trabajar y no un fallo del sistema—.
@@ -516,11 +519,11 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       });
       if (afterVoid.status === 'VOIDED') {
         expect(reverse.ok(), await reverse.text()).toBe(true);
-        expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '1000.000' });
+        expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '100.000' });
       } else {
         // Baja en trámite: el papel sigue vivo ante SUNAT y el stock no vuelve todavía.
         expect(reverse.status()).toBe(400);
-        expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '900.000' });
+        expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '0.000' });
         console.log(
           `[informe] la baja de ${invoice.number} quedó en trámite; la reversa sigue bloqueada, que es lo correcto`,
         );
@@ -543,9 +546,9 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
   test('un despacho con la guía pendiente de envío no se puede revertir hasta resolverla', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
 
+    // D-134: el pedido base vende la bobina entera; se compra exactamente lo despachado.
     const sc = await setupOrderScenario(api, {
-      coilKg: '1000',
-      qty: '100',
+      coilKg: '100',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -579,7 +582,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       expect(blocked.message).toContain('baja');
 
       // Y el corte es antes de tocar el kardex: la mercadería sigue afuera.
-      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '900.000' });
+      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '0.000' });
 
       // Resuelta la guía, la reversa depende de lo que contestó el PSE: una guía rechazada
       // no declaró nada y deja de bloquear; una aceptada —o todavía en camino— sigue
@@ -594,7 +597,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
           data: { reason: 'Reversa con la guía rechazada' },
         });
         expect(now.ok(), await now.text()).toBe(true);
-        expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '1000.000' });
+        expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '100.000' });
       } else {
         const stillBlocked = await postExpectingError(
           api,
@@ -706,17 +709,33 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
   // -------------------------------------------------------------------------
 
   /**
-   * Dos mitades de la misma invariante, sobre una sola bobina:
+   * **Una regla que D-134/D-116 dejó de existir, documentada en vez de sustituida.**
    *
-   * 1. Una reserva **parcialmente consumida** por un despacho sigue protegiendo el resto:
-   *    el disponible no sube cuando sale material que ya estaba prometido.
-   * 2. Lo que otro pedido tiene prometido **no se puede despachar**, aunque el físico
-   *    alcance: quien liberó su reserva y quiso sacarlo igual se choca con la invariante.
+   * La versión original probaba que dos pedidos podían sostener, a la vez, promesas
+   * **parciales** sobre la misma bobina física (600 kg reservados de una de 1000, el resto
+   * disponible para otro pedido) y que un tercero, al despachar de más, chocaba con una
+   * invariante que nombraba a los dos pedidos dueños del material. Esa situación ya no se
+   * puede construir: `reserveFromCoilId`/`reserveKg` desaparecieron (D-134) y el único
+   * mecanismo que queda para reservar una bobina concreta es la venta de bobina entera
+   * (RF-73, `saleCoilId`), que **siempre** toma el saldo vivo completo, nunca una fracción
+   * (`resolveSaleCoils`, `apps/api/src/sales/sales-lines.ts`). Dos pedidos no pueden tener
+   * cada uno una parte de la misma bobina: el primero se la lleva entera y al segundo ya no
+   * le queda saldo que vender. La invariante de `dispatches` que nombraba "lo reservado por
+   * otros pedidos sobre el mismo ítem" (RF-79/D-066) sigue en el código, pero con esta única
+   * vía de reserva por bobina ya no hay forma de tener dos pedidos activos compitiendo por
+   * kilos de una misma bobina: no se decidió que sobrara, es que el camino para llegar ahí
+   * se cerró en otro punto (D-116). Toca al dueño decidir si ese tramo de `dispatches`
+   * pasa a ser código muerto o si conviene dejarlo como defensa en profundidad.
+   *
+   * Lo que **sí** sigue siendo cierto y sigue mereciendo un test es la mitad que no dependía
+   * de esa mecánica: una reserva de bobina entera, dispachada por partes, protege lo que
+   * queda sin volverlo disponible; y una bobina con promesa viva no se puede volver a vender
+   * mientras esa promesa exista — solo se libera y se le vende a otro cuando el primer
+   * pedido la suelta.
    */
-  test('la reserva parcialmente consumida sigue protegiendo el resto y ningún pedido despacha lo de otro', async () => {
+  test('la reserva de una bobina entera protege lo que falta despachar, y nadie más la puede comprar hasta que se libera', async () => {
     const sc = await setupOrderScenario(api, {
       coilKg: '1000',
-      qty: '600',
       unitPricePen: '8.0000',
     });
     const trail: InvoicingTrail = {
@@ -730,7 +749,9 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
     };
 
     try {
-      // (1) Despacho parcial del pedido A: salen 300 de los 600 prometidos.
+      // (1) Despacho parcial del pedido A: salen 300 de los 1000 prometidos (venta de
+      // bobina entera, D-116). Lo que queda sin despachar sigue tan reservado como antes:
+      // el disponible no sube porque bajaron a la vez el físico y lo prometido.
       const partial = await dispatchOrder(api, {
         salesOrderId: sc.order.id,
         items: [{ salesOrderItemId: sc.item.id, qty: '300' }],
@@ -738,89 +759,77 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
       trail.dispatchIds!.push(partial.id);
       expect(await availabilityOf(api, 'COIL', sc.coil.id)).toMatchObject({
         qty: '700.000',
-        reservedQty: '300.000',
-        // El disponible no se mueve: bajaron a la vez el físico y lo prometido.
-        availableQty: '400.000',
+        reservedQty: '700.000',
+        availableQty: '0.000',
       });
 
-      // Un pedido nuevo no puede comprometer más de ese disponible.
-      const tooBig = await postExpectingError(api, '/api/sales/orders', {
+      // (2) Con la promesa de A todavía viva, nadie más puede comprar esta bobina: el saldo
+      // vendible es exactamente cero, y el mensaje lo dice por su código.
+      const cannotResell = await postExpectingError(api, '/api/sales/orders', {
         customerId: sc.customer.id,
         businessLine: DISPATCH_LINE,
         issueDate: partial.dispatchDate,
-        items: [
-          {
-            productId: sc.product.id,
-            qty: '500',
-            reserveFromCoilId: sc.coil.id,
-            reserveKg: '500',
-          },
-        ],
+        items: [{ saleCoilId: sc.coil.id, qty: '700', unitPricePen: '8.0000' }],
       });
-      expect(tooBig.status).toBe(400);
-      expect(tooBig.message).toContain('disponibles');
-      expect(tooBig.message).toContain('400.000');
+      expect(cannotResell.status).toBe(400);
+      expect(cannotResell.message).toContain(sc.coil.code);
+      expect(cannotResell.message).toContain('saldo disponible');
 
-      // (2) Pedido B se lleva justo lo que queda disponible…
+      // (3) A libera lo que le queda (D-054) y recién ahí la bobina vuelve a ser vendible…
+      const released = await api.post(
+        `/api/sales/reservations/${sc.order.reservations[0]!.id}/release`,
+        { data: { reason: 'El cliente pidió postergar el resto de la entrega' } },
+      );
+      expect(released.ok(), await released.text()).toBe(true);
+      // Liberar una reserva no anula el pedido (D-054: es una liberación manual, no una
+      // reversa de todo el pedido): sigue con el estado que ya tenía por el despacho
+      // parcial, solo que ya sin nada que respalde lo que falta.
+      const restored = await getJson<SalesOrderDto>(api, `/api/sales/orders/${sc.order.id}`);
+      expect(restored.status).toBe('PARTIALLY_FULFILLED');
+      expect(restored.reservations[0]!.status).toBe('RELEASED');
+
       const orderB = await createDirectOrder(api, {
         customerId: sc.customer.id,
         businessLine: DISPATCH_LINE,
-        items: [
-          {
-            productId: sc.product.id,
-            qty: '400',
-            description: 'E2E pedido que libera su reserva',
-            reserveFromCoilId: sc.coil.id,
-            reserveKg: '400',
-          },
-        ],
+        items: [{ saleCoilId: sc.coil.id, qty: '700', unitPricePen: '8.0000' }],
       });
       trail.orderIds!.push(orderB.id);
-
-      // …la libera a mano (D-054), y un pedido C se queda con ese material.
-      const released = await api.post(
-        `/api/sales/reservations/${orderB.reservations[0]!.id}/release`,
-        { data: { reason: 'El cliente pidió postergar la entrega' } },
-      );
-      expect(released.ok(), await released.text()).toBe(true);
-
-      const orderC = await createDirectOrder(api, {
-        customerId: sc.customer.id,
-        businessLine: DISPATCH_LINE,
-        items: [
-          {
-            productId: sc.product.id,
-            qty: '400',
-            description: 'E2E pedido que se queda con el material liberado',
-            reserveFromCoilId: sc.coil.id,
-            reserveKg: '400',
-          },
-        ],
+      expect(orderB.reservations[0]).toMatchObject({
+        status: 'ACTIVE',
+        itemType: 'COIL',
+        itemId: sc.coil.id,
+        qty: '700.000',
       });
-      trail.orderIds!.push(orderC.id);
 
-      // B intenta despachar igual: el físico alcanza (700 kg), pero 700 de esos kilos
-      // están prometidos a A y a C. La invariante corta la salida y **nombra los pedidos**.
-      const blocked = await postExpectingError(api, '/api/dispatches', {
-        salesOrderId: orderB.id,
+      // …y A, que ya soltó su promesa, no puede volver a despachar lo que le quedaba.
+      const cannotDispatch = await postExpectingError(api, '/api/dispatches', {
+        salesOrderId: sc.order.id,
         dispatchDate: partial.dispatchDate,
         originAddress: 'Av. Almacén 100, Lima',
         destinationAddress: 'Av. Cliente 200, Lima',
         originUbigeo: '150101',
         destinationUbigeo: '150132',
         transferMode: 'PUBLIC',
-        totalWeightKg: '400',
+        totalWeightKg: '700',
         carrierDocNumber: '20100000001',
         carrierName: 'E2E Transportes',
-        items: [{ salesOrderItemId: orderB.items[0]!.id, qty: '400' }],
+        items: [{ salesOrderItemId: sc.item.id, qty: '700' }],
       });
-      expect(blocked.status).toBe(400);
-      expect(blocked.message).toContain('reservados');
-      expect(blocked.message).toContain(sc.order.code);
-      expect(blocked.message).toContain(orderC.code);
+      // La reserva propia de A ya está RELEASED (consumirla es un no-op silencioso, D-054),
+      // así que quien de verdad corta acá es la invariante por ítem del kardex
+      // (`assertReservationInvariant`, D-066): sacar 700 kg físicos dejaría el saldo en 0
+      // con 700 kg todavía prometidos a B, y el mensaje lo nombra.
+      expect(cannotDispatch.status).toBe(400);
+      expect(cannotDispatch.message).toContain('reservad');
+      expect(cannotDispatch.message).toContain(orderB.code);
 
-      // Y nada se movió: el saldo sigue donde lo dejó el despacho parcial.
-      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '700.000' });
+      // Y B sí puede despachar lo suyo: el material es entero suyo ahora.
+      const dispatchB = await dispatchOrder(api, {
+        salesOrderId: orderB.id,
+        items: [{ salesOrderItemId: orderB.items[0]!.id, qty: '700' }],
+      });
+      trail.dispatchIds!.push(dispatchB.id);
+      expect(await balanceOf(api, 'COIL', sc.coil.id)).toMatchObject({ qty: '0.000' });
     } finally {
       await purgeInvoicingTrail(api, trail);
     }

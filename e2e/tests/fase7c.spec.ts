@@ -72,7 +72,10 @@ async function documentsByNumber(
 async function openImportDialog(page: Page, rows: SheetRow[]) {
   await page.goto('/comprobantes');
   await expect(page.getByRole('heading', { name: 'Comprobantes' })).toBeVisible();
-  await page.getByRole('button', { name: 'Importar' }).click();
+  // El nombre completo, no «Importar» a secas: desde D-138 la pantalla tiene **dos**
+  // importadores —la planilla canónica de RF-71 y el Excel real de ventas— y el nombre
+  // parcial resolvía a los dos botones.
+  await page.getByRole('button', { name: 'Importar planilla' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('heading', { name: /Importar comprobantes/i })).toBeVisible();
   const file = spreadsheetOf(rows);

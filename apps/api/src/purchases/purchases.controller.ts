@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UploadedFile,
@@ -21,6 +22,7 @@ import {
   purchaseQuerySchema,
   reversePaymentSchema,
   Role,
+  updatePurchaseDocumentSchema,
   type BackdatableInput,
   type CancelPurchaseInput,
   type CreatePurchaseInput,
@@ -32,6 +34,7 @@ import {
   type PurchaseQuery,
   type ReversePaymentInput,
   type SupplierStatementDto,
+  type UpdatePurchaseDocumentInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -116,6 +119,20 @@ export class PurchasesController {
     @Body(new ZodValidationPipe(backdatableSchema)) body: BackdatableInput,
   ): Promise<PurchaseDto> {
     return this.purchases.receive(actor, id, body);
+  }
+
+  /**
+   * Corregir serie y número del comprobante (D-132). Dato de cáscara, sin efectos sobre
+   * costos, kardex ni saldos; solo ADMINISTRADOR y queda en `audit_log`.
+   */
+  @Patch(':id/document')
+  @Roles(Role.ADMINISTRADOR)
+  updateDocument(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(updatePurchaseDocumentSchema)) body: UpdatePurchaseDocumentInput,
+  ): Promise<PurchaseDto> {
+    return this.purchases.updateDocument(actor, id, body);
   }
 
   @Post(':id/payments')

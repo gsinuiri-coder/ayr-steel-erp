@@ -122,6 +122,119 @@ export function fiscalDocumentRows(spec: ImportedDocSpec): SheetRow[] {
   }));
 }
 
+// ---------------------------------------------------------------------------
+// SALES_HISTORY — el export real de ventas (D-138) y su pedido (D-141)
+// ---------------------------------------------------------------------------
+
+/**
+ * Encabezados de `SALES_HISTORY`, **tal como los escribe el sistema de facturación del
+ * dueño** (D-138) más las dos columnas que agrega la previsualización (D-141): el SKU al que
+ * se mapea la línea, el toggle del documento y el detalle de largos.
+ *
+ * En mayúsculas y con tildes porque así vienen en el archivo real; `getField` normaliza,
+ * pero escribirlos distinto acá habría dejado de probar que el archivo del dueño entra tal
+ * como está.
+ */
+export const SALES_HISTORY_HEADERS = [
+  'F. EMISIÓN',
+  'TIPO COMPROBANTE',
+  'SERIE - NÚMERO',
+  'CLIENTE',
+  'DOCUMENTO AJUSTADO',
+  'CÓDIGO PRODUCTO',
+  'NOMBRE PRODUCTO',
+  'UNIDAD MEDIDA',
+  'CANTIDAD',
+  'DESCUENTO TOTAL',
+  'VALOR DE VENTA',
+  'IGV',
+  'PRECIO DE VENTA',
+  'SKU',
+  'ENTREGA',
+  'LARGOS',
+] as const;
+
+/** Una línea del export de ventas. Los importes se escriben a mano: que cuadren se prueba. */
+export interface SalesHistoryLineSpec {
+  sku: string;
+  productName?: string;
+  unit?: string;
+  qty: string;
+  /** Valor de venta (neto sin IGV) de la línea entera. */
+  netPen: string;
+  igvPen: string;
+  grossPen: string;
+  discountPen?: string;
+  /** D-141: `3.60x4, 5.00x2`. Solo en una línea a medida de un documento pendiente. */
+  piecesText?: string;
+}
+
+/** Un comprobante del export, con su cabecera repetida en cada línea. */
+export interface SalesHistoryDocSpec {
+  series: string;
+  correlative: number | string;
+  issueDate?: string;
+  docTypeText?: string;
+  /** Texto libre con el RUC adentro, que es como viene: `20512345678 - ACEROS SAC`. */
+  customerText: string;
+  adjustedDocument?: string;
+  /** D-141: el toggle del documento. Vacío = `ENTREGADO`, que es el default del adaptador. */
+  fulfillment?: 'DELIVERED' | 'PENDING' | '';
+  lines: SalesHistoryLineSpec[];
+}
+
+/** Expande el comprobante a sus filas: una por línea, con la cabecera repetida (D-107). */
+export function salesHistoryRows(spec: SalesHistoryDocSpec): SheetRow[] {
+  return spec.lines.map((line, i) => ({
+    'F. EMISIÓN': spec.issueDate ?? today(),
+    'TIPO COMPROBANTE': spec.docTypeText ?? 'FACTURA ELECTRONICA',
+    'SERIE - NÚMERO': `${spec.series} - ${String(spec.correlative).padStart(8, '0')}`,
+    CLIENTE: spec.customerText,
+    'DOCUMENTO AJUSTADO': spec.adjustedDocument ?? '',
+    'CÓDIGO PRODUCTO': line.sku,
+    'NOMBRE PRODUCTO': line.productName ?? `E2E línea de ventas ${i + 1}`,
+    'UNIDAD MEDIDA': line.unit ?? 'NIU',
+    CANTIDAD: line.qty,
+    'DESCUENTO TOTAL': line.discountPen ?? '0',
+    'VALOR DE VENTA': line.netPen,
+    IGV: line.igvPen,
+    'PRECIO DE VENTA': line.grossPen,
+    SKU: line.sku,
+    ENTREGA: spec.fulfillment ?? '',
+    LARGOS: line.piecesText ?? '',
+  }));
+}
+
+/** Previsualiza el export de ventas: sube la planilla y **no** confirma nada. */
+export function previewSalesHistory(
+  api: APIRequestContext,
+  rows: SheetRow[],
+): Promise<ImportBatchDto> {
+  return uploadImport(
+    api,
+    'SALES_HISTORY',
+    spreadsheetOf(rows, SALES_HISTORY_HEADERS, 'ventas.xlsx'),
+  );
+}
+
+/**
+ * `PATCH /imports/:id/group`: el toggle del documento (D-141). Devuelve el lote entero
+ * porque marcar un comprobante como pendiente revalida **todas** sus líneas contra el
+ * material disponible.
+ */
+export async function patchImportGroup(
+  api: APIRequestContext,
+  batchId: string,
+  groupKey: string,
+  data: Record<string, unknown>,
+): Promise<ImportBatchDto> {
+  const res = await api.patch(`/api/imports/${batchId}/group`, { data: { groupKey, data } });
+  if (!res.ok()) {
+    throw new Error(`PATCH /imports/${batchId}/group falló: ${res.status()} ${await res.text()}`);
+  }
+  return (await res.json()) as ImportBatchDto;
+}
+
 export interface SpreadsheetFile {
   name: string;
   mimeType: string;
@@ -144,7 +257,6 @@ interface XlsxModule {
  * agregarse como dependencia del repo raíz: escribir el archivo con otra librería habría
  * dejado la duda de si un fallo es del importador o del generador.
  */
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const XLSX = require(resolve(__dirname, '../../apps/api/node_modules/xlsx')) as XlsxModule;
 
 /**
@@ -315,11 +427,23 @@ export function today(): string {
   }).format(new Date());
 }
 
-/** `today()` desplazado N días; negativo hacia atrás. */
+/**
+ * `today()` desplazado N días; negativo hacia atrás.
+ *
+ * Se parte de mediodía UTC, no de medianoche (D-112/D-131): a medianoche UTC son las 19:00
+ * de ayer en Lima, así que desplazar y volver a leer con `toISOString().slice(0, 10)`
+ * devolvía un día corrido. A mediodía UTC son las 07:00 en Lima — nunca cruza la medianoche
+ * local en ningún sentido — y el resultado se lee con el mismo formateador de `today()`.
+ */
 export function daysFromToday(days: number): string {
-  const d = new Date(`${today()}T00:00:00.000Z`);
+  const d = new Date(`${today()}T12:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
 }
 
 // ---------------------------------------------------------------------------

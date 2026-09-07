@@ -10,6 +10,7 @@ import {
   FISCAL_DOCUMENT_STATUSES,
   FiscalDocType,
   FiscalDocumentStatus,
+  INVENTORY_ITEM_TYPES,
   INVOICE_DOC_TYPES,
   PAYMENT_METHODS,
   PAYMENT_TERMS,
@@ -743,7 +744,13 @@ export const dispatchItemSchema = z.object({
   /** Cantidad en la unidad del ítem de kardex: lo que realmente salió del almacén. */
   reserveQty: z.string(),
   weightKg: z.string(),
-  itemType: z.enum(['PRODUCT', 'COIL']),
+  /**
+   * D-134: incluye `RAW_MATERIAL`. Un despacho nunca sale de un agregado —no hay saldo del
+   * que sacar— pero el tipo es el del par de kardex y estrecharlo acá solo escondía que la
+   * línea de un pedido a medida puede estar respaldada por materia prima hasta que la OP la
+   * convierte en producto (D-088).
+   */
+  itemType: z.enum(INVENTORY_ITEM_TYPES),
   itemId: z.string().uuid(),
 });
 export type DispatchItemDto = z.infer<typeof dispatchItemSchema>;
@@ -854,8 +861,8 @@ export const salesOrderProgressSchema = z.object({
       pendingDispatchQty: z.string(),
       invoicedQty: z.string(),
       pendingInvoiceQty: z.string(),
-      /** Par de kardex del que sale el material de esta línea (D-066). */
-      itemType: z.enum(['PRODUCT', 'COIL']),
+      /** Par de kardex del que sale el material de esta línea (D-066, D-134). */
+      itemType: z.enum(INVENTORY_ITEM_TYPES),
       itemId: z.string().uuid(),
       itemLabel: z.string(),
       reserveQty: z.string(),

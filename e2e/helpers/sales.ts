@@ -49,7 +49,8 @@ export interface SalesItemDto {
   subtotalPen: string;
   igvPen: string;
   totalPen: string;
-  reserveItemType: 'COIL' | 'PRODUCT';
+  /** D-134: una cobertura a medida reserva contra el agregado de materia prima. */
+  reserveItemType: 'COIL' | 'PRODUCT' | 'RAW_MATERIAL';
   reserveItemId: string;
   reserveQty: string;
   reserveUnit: string;
@@ -58,7 +59,9 @@ export interface SalesItemDto {
 export interface ReservationDto {
   id: string;
   salesOrderId: string;
-  itemType: 'COIL' | 'PRODUCT';
+  salesOrderItemId: string;
+  /** D-134: `RAW_MATERIAL` cuando la reserva es genérica (agregado, no una bobina). */
+  itemType: 'COIL' | 'PRODUCT' | 'RAW_MATERIAL';
   itemId: string;
   qty: string;
   unit: string;
@@ -209,12 +212,15 @@ export async function createSellableProduct(
     unit?: string;
     /** D-127: subtipo de cobertura. Sin él se deduce de la unidad (`MTR` = a medida). */
     roofingKind?: 'PLANCHA' | 'A_MEDIDA';
+    /** D-122: acabado del SKU. Obligatorio en Metallic Roofing; de él sale la densidad. */
+    finishId?: string;
   },
 ): Promise<ProductDto & { listPricePen: string | null }> {
   const lineId = await businessLineId(api, options.lineCode);
   const unit = options.unit ?? 'NIU';
   // D-118 (Fase 7e): Drywall y Metallic Roofing exigen sus campos estructurados desde el
-  // alta del SKU; el resto de líneas no los usa. D-127 suma el subtipo a coberturas.
+  // alta del SKU; el resto de líneas no los usa. D-127 suma el subtipo a coberturas y
+  // D-122 el acabado (Metallic Roofing ya no tiene receta de la que sacar la densidad).
   const structured =
     options.lineCode === 'drywall'
       ? { widthMm: '100', lengthMm: '3000', pieceWeightKg: '6' }
@@ -222,6 +228,7 @@ export async function createSellableProduct(
         ? {
             thicknessMm: '0.50',
             widthMm: '1000',
+            ...(options.finishId === undefined ? {} : { finishId: options.finishId }),
             ...roofingKindFields(unit, options.roofingKind),
           }
         : {};
@@ -370,6 +377,52 @@ export async function sellableCoils(
   return getJson<SellableCoilDto[]>(api, `/api/sales/sellable-coils${qs}`);
 }
 
+/** Una fila del agregado de materia prima del panel de stock (D-134/D-136). */
+export interface RawMaterialStockDto {
+  colorId: string | null;
+  colorName: string | null;
+  colorHex: string | null;
+  thicknessMm: string;
+  coils: number;
+  physicalKg: string;
+  reservedKg: string;
+  availableKg: string;
+  theoreticalMeters: string;
+}
+
+/** El disponible de un producto del catálogo, tal como lo muestra el panel de stock. */
+export interface ProductStockDto {
+  productId: string;
+  sku: string;
+  name: string;
+  unit: string;
+  availableQty: string;
+  /** D-134: solo en una cobertura a medida; `null` en cualquier otro producto. */
+  rawMaterialAvailableKg: string | null;
+  rawMaterialLabel: string | null;
+  kgPerMeter: string | null;
+}
+
+export interface StockPanelDto {
+  rawMaterial: RawMaterialStockDto[];
+  products: ProductStockDto[];
+}
+
+/**
+ * `GET /sales/stock-panel` (D-134/D-136), reemplazo de `/sales/reservable-coils`: el
+ * agregado de materia prima de una línea y el disponible de los SKU puestos, sin costos.
+ */
+export async function stockPanel(
+  api: APIRequestContext,
+  options: { businessLine?: string; productIds?: string[] } = {},
+): Promise<StockPanelDto> {
+  const params = new URLSearchParams();
+  if (options.businessLine) params.set('businessLine', options.businessLine);
+  if (options.productIds?.length) params.set('productIds', options.productIds.join(','));
+  const qs = params.toString();
+  return getJson<StockPanelDto>(api, `/api/sales/stock-panel${qs ? `?${qs}` : ''}`);
+}
+
 /** Físico, reservado y disponible de un ítem, tal como los muestra `/inventario`. */
 export async function availabilityOf(
   api: APIRequestContext,
@@ -385,7 +438,14 @@ export async function availabilityOf(
   return balance!;
 }
 
-/** Cotización en borrador con una sola línea. */
+/**
+ * Cotización en borrador con una sola línea.
+ *
+ * D-134: la línea ya no elige qué reservar (`reserveFromCoilId`/`reserveKg` desaparecieron
+ * del schema). Lo decide el producto: una cobertura a medida (`roofingKind = A_MEDIDA`)
+ * reserva kilos del agregado de materia prima compatible; cualquier otro producto reserva
+ * su propio stock (`PRODUCT`).
+ */
 export async function createQuotation(
   api: APIRequestContext,
   input: {
@@ -394,8 +454,7 @@ export async function createQuotation(
     productId: string;
     qty: string;
     unitPricePen?: string;
-    reserveFromCoilId?: string;
-    reserveKg?: string;
+    pieces?: { lengthMm: string; qty: number }[];
     issueDate?: string;
     validityDays?: number;
   },
@@ -410,9 +469,7 @@ export async function createQuotation(
         productId: input.productId,
         qty: input.qty,
         ...(input.unitPricePen === undefined ? {} : { unitPricePen: input.unitPricePen }),
-        ...(input.reserveFromCoilId === undefined
-          ? {}
-          : { reserveFromCoilId: input.reserveFromCoilId, reserveKg: input.reserveKg }),
+        ...(input.pieces === undefined ? {} : { pieces: input.pieces }),
       },
     ],
   });
@@ -480,25 +537,30 @@ export async function setupCoilBatch(
   return { supplier, finish, purchaseId: purchase.id, coils };
 }
 
-/** Una línea de cotización o de pedido, tal como la manda el web. */
+/**
+ * Una línea de cotización o de pedido, tal como la manda el web.
+ *
+ * D-134: `reserveFromCoilId`/`reserveKg` desaparecieron — la línea ya no elige qué
+ * reservar. `saleCoilId` (RF-73) vende una bobina entera; `pieces` arma una línea
+ * compuesta de cobertura a medida (D-083), cuya reserva de materia prima calcula el API.
+ */
 export interface SalesLineInput {
-  productId: string;
+  productId?: string;
   qty: string;
   unitPricePen?: string;
   description?: string;
-  reserveFromCoilId?: string;
-  reserveKg?: string;
+  saleCoilId?: string;
+  pieces?: { lengthMm: string; qty: number }[];
 }
 
 function toLinePayload(line: SalesLineInput): Record<string, unknown> {
   return {
-    productId: line.productId,
+    ...(line.productId === undefined ? {} : { productId: line.productId }),
     qty: line.qty,
     ...(line.unitPricePen === undefined ? {} : { unitPricePen: line.unitPricePen }),
     ...(line.description === undefined ? {} : { description: line.description }),
-    ...(line.reserveFromCoilId === undefined
-      ? {}
-      : { reserveFromCoilId: line.reserveFromCoilId, reserveKg: line.reserveKg }),
+    ...(line.saleCoilId === undefined ? {} : { saleCoilId: line.saleCoilId }),
+    ...(line.pieces === undefined ? {} : { pieces: line.pieces }),
   };
 }
 
@@ -657,11 +719,21 @@ export function pdfText(buffer: Buffer): string {
  * **de Lima** y no de UTC — mismo motivo que `today()`: entre las 19:00 y la medianoche
  * hora local, partir de UTC adelanta un día y una vigencia "hasta mañana" se convierte en
  * "hasta pasado".
+ *
+ * Por el mismo motivo se parte de **mediodía** UTC y no de medianoche (D-112/D-131): a
+ * medianoche UTC son las 19:00 de ayer en Lima, así que desplazar y volver a leer con
+ * `toISOString().slice(0, 10)` corría el resultado un día. A mediodía UTC son las 07:00 en
+ * Lima, y el resultado se lee con el mismo formateador que `today()`.
  */
 export function isoDaysFromToday(days: number): string {
-  const d = new Date(`${today()}T00:00:00.000Z`);
+  const d = new Date(`${today()}T12:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
 }
 
 /**

@@ -29,6 +29,7 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildQuotationPdf } from './quotation-pdf';
+import { rawMaterialSpecLabels } from './raw-material';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 
 function toDateOnly(value: string): Date {
@@ -670,6 +671,16 @@ export class QuotationsService {
         select: { id: true, sku: true },
       });
       for (const p of products) map.set(p.id, p.sku);
+    }
+    // D-134: desde la reserva genérica, **toda** línea a medida de una cotización apunta a
+    // un agregado. Sin esta rama la línea llegaba al DTO y al PDF con la etiqueta vacía.
+    const specIds = items
+      .filter((i) => i.reserveItemType === 'RAW_MATERIAL')
+      .map((i) => i.reserveItemId);
+    if (specIds.length > 0) {
+      for (const [id, label] of await rawMaterialSpecLabels(this.prisma, specIds)) {
+        map.set(id, label);
+      }
     }
     return map;
   }

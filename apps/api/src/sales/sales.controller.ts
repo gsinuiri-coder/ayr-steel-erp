@@ -19,11 +19,11 @@ import {
   createSalesOrderSchema,
   quotationQuerySchema,
   releaseReservationSchema,
-  reservableCoilQuerySchema,
   reservationQuerySchema,
   Role,
   salesOrderQuerySchema,
   sellableCoilQuerySchema,
+  stockPanelQuerySchema,
   setSalesOrderPrioritySchema,
   updatePromisedDeliveryDateSchema,
   updateQuotationSchema,
@@ -38,14 +38,14 @@ import {
   type QuotationListItemDto,
   type QuotationQuery,
   type ReleaseReservationInput,
-  type ReservableCoilDto,
-  type ReservableCoilQuery,
   type ReservationDto,
   type ReservationQuery,
   type SalesOrderDto,
   type SalesOrderListItemDto,
   type SalesOrderQuery,
   type SellableCoilDto,
+  type StockPanelDto,
+  type StockPanelQuery,
   type SellableCoilQuery,
   type SetSalesOrderPriorityInput,
   type UpdatePromisedDeliveryDateInput,
@@ -253,14 +253,15 @@ export class SalesController {
   // -------------------------------------------------------------------------
 
   /**
-   * Material reservable de una línea (D-066): bobinas abiertas con su disponible.
-   * Va antes de `reservations` solo por orden de lectura; son rutas distintas.
+   * Panel de stock en vivo del formulario de cotización (D-136): el agregado de materia
+   * prima de una línea de negocio y el disponible de los SKU que el vendedor tiene puestos.
+   * Solo lectura y sin ningún costo. Va antes de `reservations` solo por orden de lectura.
    */
-  @Get('reservable-coils')
-  findReservableCoils(
-    @Query(new ZodValidationPipe(reservableCoilQuerySchema)) query: ReservableCoilQuery,
-  ): Promise<ReservableCoilDto[]> {
-    return this.orders.findReservableCoils(query);
+  @Get('stock-panel')
+  stockPanel(
+    @Query(new ZodValidationPipe(stockPanelQuerySchema)) query: StockPanelQuery,
+  ): Promise<StockPanelDto> {
+    return this.orders.stockPanel(query);
   }
 
   /**

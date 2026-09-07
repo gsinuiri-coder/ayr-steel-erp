@@ -18,6 +18,15 @@ export const productSchema = z.object({
   colorName: z.string().nullable(),
   colorHex: z.string().nullable(),
   /**
+   * D-122: acabado del SKU, y con él su factor de densidad (RF-25). Obligatorio en Metallic
+   * Roofing; null en el resto. Hasta D-122 la densidad salía de la receta, y eso obligaba a
+   * una cobertura a tener una para poder cotizarse.
+   */
+  finishId: z.string().uuid().nullable(),
+  finishCode: z.string().nullable(),
+  finishName: z.string().nullable(),
+  densityFactor: z.string().nullable(),
+  /**
    * D-118 (Fase 7e, B): campos estructurados del SKU. Metallic Roofing lleva
    * `thicknessMm`/`widthMm` (nominales, para cotizar y calcular kg teóricos sin bobina
    * montada — la producción real usa el rollo que se monte, D-086). Drywall lleva
@@ -36,11 +45,11 @@ export const productSchema = z.object({
    */
   roofingKind: z.enum(ROOFING_PRODUCT_KINDS).nullable(),
   /**
-   * D-118: kilo teórico por unidad de venta, derivado de `thicknessMm`/`widthMm` y la
-   * densidad del acabado de la receta (`bom.finish.densityFactor`) — `null` si falta
-   * cualquiera de los dos. Con `unit = MTR` es kg **por metro lineal**; con largo fijo
-   * (`bom.pieceLengthMm` presente) es kg **por pieza**. Nunca para Drywall, que declara el
-   * peso directo (`pieceWeightKg`) porque su sección no es un prisma simple.
+   * D-118/D-122: kilo teórico por unidad de venta, derivado de `thicknessMm`/`widthMm` y la
+   * densidad del acabado **del propio producto** — `null` si falta cualquiera de los tres.
+   * Con `unit = MTR` es kg **por metro lineal**; con largo fijo (`lengthMm`) es kg **por
+   * pieza**. Nunca para Drywall, que declara el peso directo (`pieceWeightKg`) porque su
+   * sección no es un prisma simple.
    */
   theoreticalKgPerUnit: z.string().nullable(),
   isActive: z.boolean(),
@@ -86,6 +95,12 @@ const colorIdSchema = z
   .optional()
   .transform((v) => (v === '' || v === undefined ? null : v));
 
+/** D-122: mismo criterio que el color — cadena vacía es "sin acabado" y se guarda `null`. */
+const finishIdSchema = z
+  .union([z.literal(''), z.string().uuid('Acabado inválido')])
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v));
+
 /** D-118: cadena vacía = "sin dato", igual que el precio de lista y el color. */
 const thicknessMmSchema = z
   .union([
@@ -125,6 +140,7 @@ export const createProductSchema = z.object({
   source: z.enum(PRODUCT_SOURCES, { errorMap: () => ({ message: 'Origen inválido' }) }),
   listPricePen: listPriceSchema,
   colorId: colorIdSchema,
+  finishId: finishIdSchema,
   thicknessMm: thicknessMmSchema,
   widthMm: widthMmSchema,
   lengthMm: lengthMmSchema,
@@ -140,6 +156,7 @@ export const updateProductSchema = z
     source: z.enum(PRODUCT_SOURCES),
     listPricePen: listPriceSchema,
     colorId: colorIdSchema,
+    finishId: finishIdSchema,
     thicknessMm: thicknessMmSchema,
     widthMm: widthMmSchema,
     lengthMm: lengthMmSchema,

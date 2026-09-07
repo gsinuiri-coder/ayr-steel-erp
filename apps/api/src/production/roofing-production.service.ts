@@ -57,6 +57,7 @@ import {
   reduceReservation,
   upsertItemReservation,
 } from '../sales/reservation-transfer';
+import { assertRawMaterialInvariant } from '../sales/raw-material';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
 import { allocateStripKg, type StripAllocationRow } from './production-math';
 import {
@@ -119,112 +120,231 @@ export class RoofingProductionService {
     // (D-060), así que crear la OP no mueve kardex y no hay guardrail que aplicar acá.
     const orderOperationDate = this.operationDate.resolve(actor, input.operationDate);
     const orderId = await this.prisma.$transaction(async (tx) => {
-      // Lock antes de mirar: sin él, dos altas concurrentes pasaban las dos el chequeo de
-      // "reserva ya tomada" y el material quedaba prometido a dos órdenes.
-      await tx.$queryRaw`
-        SELECT "id" FROM "reservations" WHERE "id" = ${input.reservationId}::uuid FOR UPDATE
-      `;
-      const reservation = await tx.reservation.findUnique({
-        where: { id: input.reservationId },
-        include: {
-          salesOrder: { select: { seq: true, status: true } },
-          salesOrderItem: {
-            include: {
-              product: { include: { businessLine: { select: { code: true } } } },
-              pieces: { orderBy: { lineNumber: 'asc' } },
-            },
-          },
-        },
+      if (input.reservationId === undefined) {
+        return this.createToStock(tx, actor, input, orderOperationDate);
+      }
+      return this.createFromReservationInTx(tx, actor, {
+        reservationId: input.reservationId,
+        operationDate: orderOperationDate,
+        notes: input.notes ?? null,
       });
-      if (!reservation) throw new NotFoundException('Reserva no encontrada');
-      if (reservation.status !== ReservationStatus.ACTIVE) {
-        throw new BadRequestException(
-          reservation.status === ReservationStatus.CONSUMED
-            ? 'Esa reserva ya fue consumida'
-            : 'Esa reserva está liberada: ya no hay material comprometido que fabricar',
-        );
-      }
-      if (reservation.salesOrder.status === SalesOrderStatus.CANCELLED) {
-        throw new BadRequestException('El pedido de esa reserva está anulado');
-      }
-      // Una OP de coberturas rola una bobina. Si la línea reservó el producto terminado, el
-      // material ya existe en el almacén y no hay nada que fabricar: fabricar igual dejaría
-      // el pedido prometiendo dos veces el mismo metro.
-      if (reservation.itemType !== InventoryItemType.COIL) {
-        throw new BadRequestException(
-          'Esa línea del pedido se atiende con stock, no con producción: su reserva es sobre el producto terminado y no sobre una bobina',
-        );
-      }
-
-      const product = reservation.salesOrderItem.product;
-      if (product.businessLine.code !== BusinessLineCode.METALLIC_ROOFING) {
-        throw new BadRequestException(
-          'La producción de coberturas es de la línea Metallic Roofing (RF-31)',
-        );
-      }
-      if (!product.isActive) throw new BadRequestException('El producto está desactivado');
-
-      const bom = await this.production.requireRoofingBom(product.id);
-
-      const taken = await tx.productionOrder.findFirst({
-        where: {
-          reservationId: input.reservationId,
-          status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
-        },
-        select: { seq: true },
-      });
-      if (taken) {
-        throw new BadRequestException(
-          `La reserva ya está tomada por la orden ${productionOrderCode(taken.seq)}`,
-        );
-      }
-
-      // D-084: el plan de corte es la copia de lo que el pedido encargó. Una plancha de
-      // catálogo no trae subítems (su largo está en el SKU), así que el plan se deriva de la
-      // cantidad pedida y del largo de la receta. Misma función que usa la cola de Fase 7
-      // para mostrar los mismos subítems antes de que esta OP exista (D-093).
-      const items = derivePiecesPlan(
-        reservation.salesOrderItem.pieces.map((p) => ({
-          lengthMm: p.lengthMm.toFixed(2),
-          qty: p.qty,
-        })),
-        bom.pieceLengthMm === null ? null : bom.pieceLengthMm.toFixed(2),
-        reservation.salesOrderItem.qty.toString(),
-      );
-
-      const order = await tx.productionOrder.create({
-        data: {
-          kind: ProductionOrderKind.ROOFING,
-          businessLineId: product.businessLineId,
-          productId: product.id,
-          bomId: bom.id,
-          status: ProductionOrderStatus.DRAFT,
-          reservationId: input.reservationId,
-          notes: input.notes ?? null,
-          createdById: actor.id,
-          operationDate: toDateOnly(orderOperationDate),
-          items: { create: items },
-        },
-      });
-
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'production.roofing.create',
-        entity: 'production_orders',
-        entityId: order.id,
-        after: {
-          code: productionOrderCode(order.seq),
-          kind: ProductionOrderKind.ROOFING,
-          productId: product.id,
-          reservationId: input.reservationId,
-          salesOrder: salesOrderCode(reservation.salesOrder.seq),
-          plan: describePieces(items),
-        },
-      });
-      return order.id;
     });
 
     return this.production.findOne(orderId);
+  }
+
+  /**
+   * El cuerpo de `create` cuando la orden nace de una reserva, **dentro de la transacción
+   * del llamador** (patrón `*InTx`, D-099).
+   *
+   * Existe para que la importación de ventas (D-141) cree la OP en la **misma** transacción
+   * en la que crea el pedido y su reserva: si abriera la suya, un documento pendiente podría
+   * quedar con el pedido y la promesa creados y sin orden en la cola, y nadie se enteraría
+   * hasta que planta fuera a buscarla. Es el mismo motivo por el que el mostrador partió
+   * `createDirect` en dos (D-099).
+   *
+   * **No monta ninguna bobina** y no es un olvido: montar es la decisión de planta (D-086),
+   * la que elige el rollo físico del agregado que la reserva prometió (D-134). La orden nace
+   * `DRAFT` —"en cola"— exactamente igual que la que crea el dueño desde `/planta`.
+   */
+  async createFromReservationInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: { reservationId: string; operationDate: string; notes: string | null },
+  ): Promise<string> {
+    // Lock antes de mirar: sin él, dos altas concurrentes pasaban las dos el chequeo de
+    // "reserva ya tomada" y el material quedaba prometido a dos órdenes.
+    await tx.$queryRaw`
+        SELECT "id" FROM "reservations" WHERE "id" = ${input.reservationId}::uuid FOR UPDATE
+      `;
+    const reservation = await tx.reservation.findUnique({
+      where: { id: input.reservationId },
+      include: {
+        salesOrder: { select: { seq: true, status: true } },
+        salesOrderItem: {
+          include: {
+            product: { include: { businessLine: { select: { code: true } } } },
+            pieces: { orderBy: { lineNumber: 'asc' } },
+          },
+        },
+      },
+    });
+    if (!reservation) throw new NotFoundException('Reserva no encontrada');
+    if (reservation.status !== ReservationStatus.ACTIVE) {
+      throw new BadRequestException(
+        reservation.status === ReservationStatus.CONSUMED
+          ? 'Esa reserva ya fue consumida'
+          : 'Esa reserva está liberada: ya no hay material comprometido que fabricar',
+      );
+    }
+    if (reservation.salesOrder.status === SalesOrderStatus.CANCELLED) {
+      throw new BadRequestException('El pedido de esa reserva está anulado');
+    }
+    // Una OP de coberturas rola materia prima. Si la línea reservó el producto terminado,
+    // el material ya existe en el almacén y no hay nada que fabricar: fabricar igual
+    // dejaría el pedido prometiendo dos veces el mismo metro.
+    //
+    // D-134: la reserva que da pie a una OP es la **genérica** (kilos de un agregado), no
+    // una bobina concreta. Cuál rollo la cumple lo decide `mountCoil`, que es donde planta
+    // toma esa decisión — y es la razón entera del cambio.
+    if (reservation.itemType !== InventoryItemType.RAW_MATERIAL) {
+      // Esto solo lo alcanza una **plancha de catálogo** (D-127: reserva stock de producto
+      // terminado, no materia prima). D-140: una plancha de catálogo **nunca** se fabrica
+      // contra el pedido — se vende del saldo que ya hay, y si falta, planta produce a
+      // stock por separado (ver `createToStock`) sin que ningún pedido en particular sea
+      // el dueño de esa corrida.
+      throw new BadRequestException(
+        'Esa línea del pedido se atiende con stock de producto terminado, no con producción: ' +
+          'una plancha de catálogo se vende del saldo que ya hay y nunca se fabrica contra el ' +
+          'pedido (D-140). Si falta stock, producí una orden a stock desde planta; el pedido ' +
+          'queda esperando ese saldo.',
+      );
+    }
+
+    const product = reservation.salesOrderItem.product;
+    if (product.businessLine.code !== BusinessLineCode.METALLIC_ROOFING) {
+      throw new BadRequestException(
+        'La producción de coberturas es de la línea Metallic Roofing (RF-31)',
+      );
+    }
+    if (!product.isActive) throw new BadRequestException('El producto está desactivado');
+
+    // D-122: lo que hace falta para producir una cobertura sale del **producto**: su
+    // acabado (y con él la densidad), su espesor, su ancho y su largo. Ya no hay receta.
+    const roofing = await this.production.requireRoofingProduct(product.id);
+
+    const taken = await tx.productionOrder.findFirst({
+      where: {
+        reservationId: input.reservationId,
+        status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+      },
+      select: { seq: true },
+    });
+    if (taken) {
+      throw new BadRequestException(
+        `La reserva ya está tomada por la orden ${productionOrderCode(taken.seq)}`,
+      );
+    }
+
+    // D-084: el plan de corte es la copia de lo que el pedido encargó. Una plancha de
+    // catálogo no trae subítems (su largo está en el SKU, `products.length_mm` desde
+    // D-122), así que el plan se deriva de la cantidad pedida y de ese largo. Misma
+    // función que usa la cola de Fase 7 para mostrar los mismos subítems antes de que
+    // esta OP exista (D-093).
+    const items = derivePiecesPlan(
+      reservation.salesOrderItem.pieces.map((p) => ({
+        lengthMm: p.lengthMm.toFixed(2),
+        qty: p.qty,
+      })),
+      roofing.lengthMm === null ? null : roofing.lengthMm.toFixed(2),
+      reservation.salesOrderItem.qty.toString(),
+    );
+
+    const order = await tx.productionOrder.create({
+      data: {
+        kind: ProductionOrderKind.ROOFING,
+        businessLineId: product.businessLineId,
+        productId: product.id,
+        // D-122: una OP de coberturas ya no nace de una receta.
+        bomId: null,
+        status: ProductionOrderStatus.DRAFT,
+        reservationId: input.reservationId,
+        notes: input.notes,
+        createdById: actor.id,
+        operationDate: toDateOnly(input.operationDate),
+        items: { create: items },
+      },
+    });
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'production.roofing.create',
+      entity: 'production_orders',
+      entityId: order.id,
+      after: {
+        code: productionOrderCode(order.seq),
+        kind: ProductionOrderKind.ROOFING,
+        productId: product.id,
+        reservationId: input.reservationId,
+        salesOrder: salesOrderCode(reservation.salesOrder.seq),
+        plan: describePieces(items),
+      },
+    });
+    return order.id;
+  }
+
+  /**
+   * D-140: producir una plancha de catálogo **a stock**, sin pedido detrás. Es la mitad de
+   * `create` que no pasa por una reserva: la cotización de esta línea reserva producto
+   * terminado (D-127), nunca materia prima, así que nunca hay una reserva genérica de la que
+   * nacer. `report` y `close` ya tratan `reservationId` como opcional (D-048/D-093 del lado
+   * de drywall, heredado acá); lo único que cambia es de dónde sale el plan de corte.
+   */
+  private async createToStock(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: CreateRoofingOrderInput,
+    orderOperationDate: string,
+  ): Promise<string> {
+    if (input.productId === undefined || input.targetPieces === undefined) {
+      throw new BadRequestException(
+        'Se necesita un producto de catálogo y una cantidad objetivo para producir a stock',
+      );
+    }
+    const product = await tx.product.findUnique({
+      where: { id: input.productId },
+      include: { businessLine: { select: { code: true } } },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    if (product.businessLine.code !== BusinessLineCode.METALLIC_ROOFING) {
+      throw new BadRequestException(
+        'La producción de coberturas es de la línea Metallic Roofing (RF-31)',
+      );
+    }
+    if (!product.isActive) throw new BadRequestException('El producto está desactivado');
+
+    const roofing = await this.production.requireRoofingProduct(product.id);
+    if (roofing.lengthMm === null) {
+      throw new BadRequestException(
+        `${roofing.sku} es una cobertura a medida: no tiene largo fijo para producir a stock. ` +
+          'Solo se fabrica contra el pedido que reserva el material (RF-31, D-134).',
+      );
+    }
+
+    // D-084/D-140: mismo plan de una sola línea que ya arma la cola cuando no hay subítems
+    // de pedido: el largo del SKU repetido tantas veces como la meta pide.
+    const items = derivePiecesPlan([], roofing.lengthMm.toFixed(2), input.targetPieces.toString());
+
+    const order = await tx.productionOrder.create({
+      data: {
+        kind: ProductionOrderKind.ROOFING,
+        businessLineId: product.businessLineId,
+        productId: product.id,
+        bomId: null,
+        status: ProductionOrderStatus.DRAFT,
+        reservationId: null,
+        notes: input.notes ?? null,
+        createdById: actor.id,
+        operationDate: toDateOnly(orderOperationDate),
+        items: { create: items },
+      },
+    });
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'production.roofing.create',
+      entity: 'production_orders',
+      entityId: order.id,
+      after: {
+        code: productionOrderCode(order.seq),
+        kind: ProductionOrderKind.ROOFING,
+        productId: product.id,
+        reservationId: null,
+        targetPieces: input.targetPieces,
+        plan: describePieces(items),
+      },
+    });
+    return order.id;
   }
 
   /**
@@ -282,124 +402,146 @@ export class RoofingProductionService {
     orderId: string,
     input: MountRoofingCoilInput,
   ): Promise<ProductionOrderDto> {
-    await this.prisma.$transaction(async (tx) => {
-      const order = await lockOrder(tx, orderId);
-      assertKind(order, ProductionOrderKind.ROOFING);
-      assertLive(order, 'montar una bobina');
+    // El presupuesto por defecto de Prisma son 5 s, y montar una bobina ya no entra:
+    // además del lock y las lecturas de siempre, D-134 agregó la comprobación del agregado,
+    // que recorre las bobinas compatibles. Contra Neon —con latencia de red real— se pasaba
+    // del límite de forma **intermitente**, y el síntoma era un 500 (`P2028`, "transaction
+    // already closed") en el paso más normal de la corrida. Es el mismo tratamiento que ya
+    // tienen la anulación de compra y la confirmación de un pedido.
+    await this.prisma.$transaction(
+      async (tx) => {
+        const order = await lockOrder(tx, orderId);
+        assertKind(order, ProductionOrderKind.ROOFING);
+        assertLive(order, 'montar una bobina');
 
-      const [bom, product] = await Promise.all([
-        tx.productBom.findUniqueOrThrow({ where: { id: order.bomId } }),
-        tx.product.findUniqueOrThrow({
-          where: { id: order.productId },
-          select: { sku: true, colorId: true, color: { select: { name: true } } },
-        }),
-      ]);
-      const coil = await this.coils.lockCoil(tx, input.coilId);
+        const [product, color] = await Promise.all([
+          this.production.requireRoofingProduct(order.productId),
+          tx.product
+            .findUniqueOrThrow({
+              where: { id: order.productId },
+              select: { color: { select: { name: true } } },
+            })
+            .then((row) => row.color),
+        ]);
+        const coil = await this.coils.lockCoil(tx, input.coilId);
 
-      if (coil.kind !== CoilKind.COIL) {
-        throw new BadRequestException(
-          `${coil.code} es un fleje, no una bobina: la roladora de coberturas consume bobina (D-049)`,
-        );
-      }
-      if (coil.status !== CoilStatus.OPEN) {
-        throw new BadRequestException(
-          `${coil.code} no está disponible (${coil.status}): solo una bobina abierta entra a producción`,
-        );
-      }
-      if (coil.businessLineId !== order.businessLineId) {
-        throw new BadRequestException(
-          `${coil.code} es de otra línea de negocio que la orden de producción`,
-        );
-      }
-      // D-086: espesor dentro de tolerancia (el rollo nunca trae el espesor nominal exacto).
-      if (
-        !thicknessWithinTolerance(
-          coil.thicknessMm.toFixed(2),
-          bom.inputThicknessMm.toFixed(2),
-          this.thicknessToleranceMm(),
-        )
-      ) {
-        throw new BadRequestException(
-          `${coil.code} tiene ${coil.thicknessMm.toFixed(2)} mm de espesor y ${product.sku} necesita ${bom.inputThicknessMm.toFixed(2)} mm (tolerancia ±${this.thicknessToleranceMm()} mm)`,
-        );
-      }
-      // D-085: **igualdad estricta**, null incluido. Con null tratado como comodín, un
-      // producto galvanizado aceptaría cualquier rollo prepintado del almacén, que es
-      // justo el error que no se puede deshacer una vez rolado.
-      if (coil.colorId !== product.colorId) {
-        const need = product.color?.name ?? 'sin color';
-        throw new BadRequestException(
-          `${coil.code} no coincide en color con ${product.sku}, que necesita ${need}`,
-        );
-      }
+        if (coil.kind !== CoilKind.COIL) {
+          throw new BadRequestException(
+            `${coil.code} es un fleje, no una bobina: la roladora de coberturas consume bobina (D-049)`,
+          );
+        }
+        if (coil.status !== CoilStatus.OPEN) {
+          throw new BadRequestException(
+            `${coil.code} no está disponible (${coil.status}): solo una bobina abierta entra a producción`,
+          );
+        }
+        if (coil.businessLineId !== order.businessLineId) {
+          throw new BadRequestException(
+            `${coil.code} es de otra línea de negocio que la orden de producción`,
+          );
+        }
+        // D-086/D-122: espesor dentro de tolerancia contra el espesor **del SKU** (el rollo
+        // nunca trae el espesor nominal exacto). Hasta D-122 se comparaba contra el de la
+        // receta, que era el mismo dato en otro lugar.
+        if (
+          !thicknessWithinTolerance(
+            coil.thicknessMm.toFixed(2),
+            product.thicknessMm.toFixed(2),
+            this.thicknessToleranceMm(),
+          )
+        ) {
+          throw new BadRequestException(
+            `${coil.code} tiene ${coil.thicknessMm.toFixed(2)} mm de espesor y ${product.sku} necesita ${product.thicknessMm.toFixed(2)} mm (tolerancia ±${this.thicknessToleranceMm()} mm)`,
+          );
+        }
+        // D-085: **igualdad estricta**, null incluido. Con null tratado como comodín, un
+        // producto galvanizado aceptaría cualquier rollo prepintado del almacén, que es
+        // justo el error que no se puede deshacer una vez rolado.
+        if (coil.colorId !== product.colorId) {
+          const need = color?.name ?? 'sin color';
+          throw new BadRequestException(
+            `${coil.code} no coincide en color con ${product.sku}, que necesita ${need}`,
+          );
+        }
 
-      // D-066: una bobina reservada por un pedido solo la puede montar la OP que nace de ese
-      // mismo pedido. Sin la excepción, la reserva se bloquearía a sí misma.
-      await assertCoilsNotReserved(
-        tx,
-        [coil.id],
-        'montarla en esta orden',
-        order.reservationId ? [order.reservationId] : [],
-      );
-
-      const [taken] = await findLiveStripAssignments(tx, [coil.id]);
-      if (taken) {
-        throw new BadRequestException(
-          taken.orderId === orderId
-            ? `${coil.code} ya está montada en esta orden`
-            : `${coil.code} ya está montada en la orden de producción ${taken.orderCode}`,
+        // D-066: una bobina reservada por un pedido solo la puede montar la OP que nace de ese
+        // mismo pedido. Sin la excepción, la reserva se bloquearía a sí misma.
+        await assertCoilsNotReserved(
+          tx,
+          [coil.id],
+          'montarla en esta orden',
+          order.reservationId ? [order.reservationId] : [],
         );
-      }
 
-      const liveCount = await tx.productionOrderConsumption.count({
-        where: { productionOrderId: orderId, releasedAt: null },
-      });
-      if (liveCount >= MAX_ORDER_STRIPS) {
-        throw new BadRequestException(
-          `Una orden admite hasta ${MAX_ORDER_STRIPS} bobinas a la vez: ciérrala y abre otra`,
-        );
-      }
+        const [taken] = await findLiveStripAssignments(tx, [coil.id]);
+        if (taken) {
+          throw new BadRequestException(
+            taken.orderId === orderId
+              ? `${coil.code} ya está montada en esta orden`
+              : `${coil.code} ya está montada en la orden de producción ${taken.orderCode}`,
+          );
+        }
 
-      const balance = await tx.inventoryBalance.findUnique({
-        where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
-      });
-      const availableKg = toDecimal(balance?.qty.toString() ?? '0');
-      if (availableKg.lte(0)) {
-        throw new BadRequestException(`${coil.code} no tiene kilos disponibles en el kardex`);
-      }
-      const assignedKg = input.qtyKg ? toDecimal(input.qtyKg) : availableKg;
-      if (assignedKg.gt(availableKg)) {
-        throw new BadRequestException(
-          `${coil.code} tiene ${availableKg.toFixed(3)} kg disponibles y se intentan tomar ${assignedKg.toFixed(3)} kg`,
-        );
-      }
+        const liveCount = await tx.productionOrderConsumption.count({
+          where: { productionOrderId: orderId, releasedAt: null },
+        });
+        if (liveCount >= MAX_ORDER_STRIPS) {
+          throw new BadRequestException(
+            `Una orden admite hasta ${MAX_ORDER_STRIPS} bobinas a la vez: ciérrala y abre otra`,
+          );
+        }
 
-      const consumption = await tx.productionOrderConsumption.create({
-        data: {
-          productionOrderId: orderId,
-          coilId: coil.id,
-          assignedKg: toFixedString(assignedKg, 'KG'),
-          createdById: actor.id,
-        },
-      });
-      await tx.productionOrder.update({
-        where: { id: orderId },
-        data: { status: ProductionOrderStatus.IN_PROGRESS },
-      });
+        const balance = await tx.inventoryBalance.findUnique({
+          where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
+        });
+        const availableKg = toDecimal(balance?.qty.toString() ?? '0');
+        if (availableKg.lte(0)) {
+          throw new BadRequestException(`${coil.code} no tiene kilos disponibles en el kardex`);
+        }
+        const assignedKg = input.qtyKg ? toDecimal(input.qtyKg) : availableKg;
+        if (assignedKg.gt(availableKg)) {
+          throw new BadRequestException(
+            `${coil.code} tiene ${availableKg.toFixed(3)} kg disponibles y se intentan tomar ${assignedKg.toFixed(3)} kg`,
+          );
+        }
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'production.roofing.mount',
-        entity: 'production_orders',
-        entityId: orderId,
-        after: {
-          consumptionId: consumption.id,
-          coilId: coil.id,
-          coilCode: coil.code,
-          assignedKg: toFixedString(assignedKg, 'KG'),
-        },
-      });
-    });
+        const consumption = await tx.productionOrderConsumption.create({
+          data: {
+            productionOrderId: orderId,
+            coilId: coil.id,
+            assignedKg: toFixedString(assignedKg, 'KG'),
+            createdById: actor.id,
+          },
+        });
+        await tx.productionOrder.update({
+          where: { id: orderId },
+          data: { status: ProductionOrderStatus.IN_PROGRESS },
+        });
+
+        // D-134: montar saca la bobina del disponible del agregado sin mover un gramo de
+        // kardex (D-060), así que es exactamente la clase de operación que la invariante por
+        // ítem no ve. La reserva de **este** pedido queda exceptuada: es la que esta OP viene
+        // a cumplir, y contarla la bloquearía a sí misma. Cualquier otra promesa genérica que
+        // quede sin material corta el montaje acá, antes de que nadie role nada.
+        await assertRawMaterialInvariant(tx, [coil.id], this.thicknessToleranceMm(), {
+          exceptReservationIds: order.reservationId ? [order.reservationId] : [],
+        });
+
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'production.roofing.mount',
+          entity: 'production_orders',
+          entityId: orderId,
+          after: {
+            consumptionId: consumption.id,
+            coilId: coil.id,
+            coilCode: coil.code,
+            assignedKg: toFixedString(assignedKg, 'KG'),
+          },
+        });
+      },
+      { timeout: 30_000, maxWait: 10_000 },
+    );
 
     return this.production.findOne(orderId);
   }
@@ -487,18 +629,15 @@ export class RoofingProductionService {
           );
         }
 
-        const [bom, product] = await Promise.all([
-          tx.productBom.findUniqueOrThrow({ where: { id: order.bomId } }),
-          tx.product.findUniqueOrThrow({
-            where: { id: order.productId },
-            select: { sku: true, unit: true },
-          }),
-        ]);
+        const product = await tx.product.findUniqueOrThrow({
+          where: { id: order.productId },
+          select: { sku: true, unit: true, lengthMm: true },
+        });
 
         // D-083: una plancha de catálogo tiene el largo en su SKU. Reportar otro largo la
         // convertiría en un producto distinto metido en el mismo saldo.
-        if (bom.pieceLengthMm !== null) {
-          const fixed = bom.pieceLengthMm.toFixed(2);
+        if (product.lengthMm !== null) {
+          const fixed = product.lengthMm.toFixed(2);
           const off = input.pieces.find((p) => toFixedString(p.lengthMm, 'MM') !== fixed);
           if (off) {
             throw new BadRequestException(
@@ -574,7 +713,6 @@ export class RoofingProductionService {
         // la salida que viene a cumplirla. El pedido pasa a "en producción".
         let salesOrderItemId: string | null = null;
         let salesOrderId: string | null = null;
-        let consumedFromReservedCoil = false;
         if (order.reservationId) {
           const reservation = await tx.reservation.findUniqueOrThrow({
             where: { id: order.reservationId },
@@ -588,14 +726,15 @@ export class RoofingProductionService {
           await tx.$queryRaw`
             SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
           `;
-          // **Solo si el rollo que se roló es el que el pedido reservó.** Nada obliga a
-          // montar el reservado —el filtro admite cualquier bobina del mismo color y
-          // espesor— y descontar la promesa de un rollo del que no salió un gramo la
-          // dejaría por debajo de lo prometido sobre material intacto.
-          consumedFromReservedCoil = reservation.itemId === row.coilId;
-          if (consumedFromReservedCoil) {
-            await consumeReservationQty(tx, order.reservationId, neededKg);
-          }
+          // **Siempre se descuenta** (D-134). Antes había que preguntar si el rollo que se
+          // roló era el que el pedido había reservado, porque la promesa nombraba una bobina
+          // concreta y nada obligaba a montar esa: descontar la promesa de un rollo del que
+          // no salió un gramo la habría dejado por debajo de lo prometido sobre material
+          // intacto. Con la reserva genérica esa pregunta desapareció: `mountCoil` solo
+          // admite bobinas del color y el espesor del producto, que son exactamente las que
+          // cumplen el agregado, así que cualquier kilo que esta orden role es un kilo del
+          // agregado que el pedido prometía.
+          await consumeReservationQty(tx, order.reservationId, neededKg);
           await tx.salesOrder.updateMany({
             where: { id: reservation.salesOrderId, status: SalesOrderStatus.CONFIRMED },
             data: { status: SalesOrderStatus.IN_PRODUCTION },
@@ -631,6 +770,9 @@ export class RoofingProductionService {
             refId: report.id,
             notes: `Rolado de ${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
             actorId: actor.id,
+            // D-134: lo que resta de la promesa que esta orden viene a cumplir no puede
+            // bloquear su propio consumo. Ver `RecordMovementInput.exceptReservationIds`.
+            exceptReservationIds: order.reservationId ? [order.reservationId] : [],
             // Sin esto, un reporte retrofechado dejaba el consumo de la bobina fechado hoy y
             // el ingreso de producto en la fecha real: los dos lados del mismo hecho en meses
             // distintos, en una tabla append-only que no se corrige con un UPDATE.
@@ -740,7 +882,6 @@ export class RoofingProductionService {
             theoreticalKg: toFixedString(neededKg, 'KG'),
             materialCostPen: toFixedString(materialCostPen, 'MONEY'),
             productReservationId,
-            consumedFromReservedCoil,
           },
         });
       },
@@ -843,14 +984,10 @@ export class RoofingProductionService {
             await tx.$queryRaw`
               SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
             `;
-            // Mismo criterio que el reporte: solo se descuenta la promesa del rollo del que
-            // de verdad salió el despunte.
-            const fromReserved = rows.some(
-              (r) => r.coilId === reservation.itemId && r.assignedKg.gt(r.consumedKg),
-            );
-            if (fromReserved) {
-              await consumeReservationQty(tx, order.reservationId, scrapKg);
-            }
+            // Mismo criterio que el reporte (D-134): el despunte sale de una bobina que la
+            // orden montó, y toda bobina que la orden pudo montar cumple el agregado que el
+            // pedido prometía. No hay rollo "ajeno" del que descontar por error.
+            await consumeReservationQty(tx, order.reservationId, scrapKg);
           }
           const allocations = allocateStripKg(
             rows.map((r) => ({
@@ -875,6 +1012,9 @@ export class RoofingProductionService {
               unit: Unit.KGM,
               refType: 'SCRAP',
               refId: orderId,
+              // D-134: igual que el reporte — el despunte sale de la bobina que esta orden
+              // montó para cumplir su propia promesa.
+              exceptReservationIds: order.reservationId ? [order.reservationId] : [],
               notes: input.reason
                 ? `Despunte al cerrar ${productionOrderCode(order.seq)}: ${input.reason}`
                 : `Despunte al cerrar ${productionOrderCode(order.seq)}`,
@@ -1158,16 +1298,15 @@ export class RoofingProductionService {
         // arriba, antes de la salida de kardex.
         let restoredCoilKg: string | null = null;
         if (order.reservationId && reservationLineId !== null) {
-          const reserved = await tx.reservation.findUniqueOrThrow({
-            where: { id: order.reservationId },
-            select: { itemId: true },
-          });
-          // Simétrico a `report`: se devuelven a la promesa solo los kilos que volvieron a
-          // **la bobina reservada**. Si la corrida roló otro rollo, la reserva nunca se
-          // descontó y devolverle kilos la dejaría prometiendo más de lo que hay.
-          const returnedKg = coilOuts
-            .filter((m) => m.itemId === reserved.itemId)
-            .reduce((acc, m) => acc.plus(toDecimal(m.qty.toString())), new Decimal(0));
+          // Simétrico a `report` (D-134): se devuelven **todos** los kilos que volvieron a
+          // materia prima, sin preguntar de qué rollo salieron. La promesa se descontó por
+          // esos mismos kilos cuando el reporte los consumió, así que devolverlos la deja
+          // exactamente donde estaba — que es lo que "toda reversa aguas abajo restaura la
+          // reserva" quiere decir.
+          const returnedKg = coilOuts.reduce(
+            (acc, m) => acc.plus(toDecimal(m.qty.toString())),
+            new Decimal(0),
+          );
           if (
             returnedKg.gt(0) &&
             (await restoreReservationQty(tx, order.reservationId, returnedKg))
@@ -1408,7 +1547,12 @@ export class RoofingProductionService {
       // reserva tiene que volver a `ACTIVA` con él. Es también lo que destraba la anulación
       // del pedido.
       const restored = order.reservationId
-        ? await restoreReservationIfIdle(tx, orderId, order.reservationId)
+        ? await restoreReservationIfIdle(
+            tx,
+            orderId,
+            order.reservationId,
+            this.thicknessToleranceMm(),
+          )
         : false;
 
       await this.audit.write(tx, {
@@ -1441,11 +1585,7 @@ export class RoofingProductionService {
    * que viene a rolar.
    */
   async coilOptions(productId: string, reservationId?: string): Promise<RoofingCoilOptionDto[]> {
-    const bom = await this.production.requireRoofingBom(productId);
-    const product = await this.prisma.product.findUniqueOrThrow({
-      where: { id: productId },
-      select: { businessLineId: true, colorId: true },
-    });
+    const product = await this.production.requireRoofingProduct(productId);
 
     // La excepción solo vale si esa reserva es de una línea que pide **este** producto: un
     // `reservationId` cualquiera listaba como libre una bobina prometida a otro pedido. No
@@ -1465,7 +1605,7 @@ export class RoofingProductionService {
       where: roofingCoilWhere({
         businessLineId: product.businessLineId,
         colorId: product.colorId,
-        inputThicknessMm: bom.inputThicknessMm,
+        inputThicknessMm: product.thicknessMm,
         toleranceMm: this.thicknessToleranceMm(),
       }),
       select: {

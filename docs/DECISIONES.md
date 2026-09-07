@@ -1695,3 +1695,336 @@ La densidad del acabado con la que se convierten metros en kilos sale todavía d
 implementar: mover el acabado a `products.finish_id` y sacarle a coberturas la dependencia del
 `ProductBom`. Hasta que eso pase, una cobertura a medida sin receta activa no se puede
 confirmar, y el mensaje lo dice con esas palabras en vez de reservar una cifra inventada.
+
+## D-134 — La reserva genérica de materia prima, y el censo de lectores que obligó
+
+### El síntoma
+
+El dueño abrió la cotización de una cobertura a medida en producción y encontró una columna
+que decía **«Reserva desde bobina»**, con un desplegable de rollos concretos. Le pedía elegir
+cuál de sus bobinas iba a usar una obra que todavía no había vendido y que planta no iba a
+rolar hasta dentro de semanas.
+
+Es un pedido imposible por dos motivos distintos, y conviene separarlos porque tienen
+consecuencias distintas:
+
+1. **No lo sabe.** Qué rollo entra a la roladora lo decide planta el día que monta la orden,
+   mirando qué hay abierto y qué conviene consumir primero. El vendedor sabe el color y el
+   espesor, que es otra cosa.
+2. **Aunque lo supiera, no duraría.** Una cotización vive hasta 365 días (D-069). El rollo
+   elegido puede estar cerrado, partido, vendido o consumido cuando el cliente diga que sí.
+
+D-127 ya había movido la elección del vendedor al API —el API elegía la bobina al confirmar,
+no al cotizar—, y eso arregló el segundo motivo. El primero seguía en pie: el sistema seguía
+comprometiendo **un rollo**, solo que ahora lo elegía él.
+
+### Qué se promete ahora
+
+Una línea a medida promete **kilos de un agregado**: misma línea de negocio, mismo color
+(igualdad estricta, `null` incluido) y espesor de la receta dentro de la tolerancia de D-086.
+Ese agregado es una fila de `raw_material_specs`, y la reserva la nombra con
+`item_type = 'RAW_MATERIAL'`.
+
+El agregado **no es un ítem de inventario**. No tiene saldo ni movimientos: su disponible es
+la suma de las bobinas que lo cumplen. Las dos tablas del kardex rechazan ese valor del enum
+con un `CHECK`, para que la frontera sea de la base y no de la costumbre.
+
+### Por qué el enum del kardex y no una tabla aparte
+
+La alternativa era un ledger propio para las promesas genéricas. Se descartó por una razón
+concreta: `reservations` tiene un índice único `(línea, itemType, itemId)` que es lo que hace
+**idempotente** el traslado de la promesa al producto terminado (D-088), y lo que permite que
+un despacho parcial, una reversa de producción y una liberación manual se escriban una sola
+vez. Partir el ledger en dos habría duplicado esa mecánica —y con ella cada regla de D-054,
+D-066, D-074 y D-088— para un caso que es el mismo hecho comercial con otro objeto.
+
+El precio es un valor del enum que el kardex no usa. Se paga con dos `CHECK`.
+
+### El censo de lectores
+
+Esto es lo que de verdad costó, y es D-088 repitiéndose: **agregar una coordenada obliga a
+recorrer todo lo que la lee**. El compilador no ayuda, porque agregar un valor a un enum es
+aditivo y no rompe ningún `switch` (de hecho el proyecto no tenía ninguno sobre este enum).
+
+Lo que hubo que tocar, uno por uno:
+
+- **La cola de producción** (`findProductionQueue`, D-093) filtraba `itemType = COIL`. Sin
+  cambiarlo, ningún pedido a medida volvía a aparecer en `/planta`.
+- **El estado de cola del pedido** (`computeQueueStatus`), el mismo filtro en otro lugar.
+- **La creación de la OP de coberturas**, que exigía que la reserva fuera de una bobina.
+- **La etiqueta de la línea** (`itemLabel`, `reserveLabels`), que traducía las coordenadas a
+  un código de bobina o a un SKU: con la spec devolvía el id crudo.
+- **El destino del despacho** (`resolveDispatchTarget`), que cae a las coordenadas congeladas
+  cuando no hay producto terminado reservado. Un agregado no tiene saldo del que sacar, así
+  que ahí hay ahora un corte explícito con mensaje propio.
+- **Los DTO de despacho y de pedido**, que tipaban `itemType` como `"PRODUCT" | "COIL"`.
+
+### La regla que dejó de hacer falta
+
+Antes, al reportar producción, había que preguntar **si el rollo que se roló era el que el
+pedido había reservado** para decidir si descontar la promesa: nada obligaba a montar el
+reservado (el filtro admite cualquier bobina del mismo color y espesor), y descontar la
+promesa de un rollo del que no salió un gramo la habría dejado por debajo de lo prometido
+sobre material intacto. Lo mismo, simétrico, al revertir.
+
+Con el agregado la pregunta desapareció: `mountCoil` solo admite bobinas del color y el
+espesor del producto, que son exactamente las que cumplen la spec, así que **cualquier kilo
+que la orden role es un kilo del agregado que el pedido prometía**. Tres bloques de código
+—dos comparaciones y un filtro— se borraron sin reemplazo. Vale anotarlo porque es la señal
+de que el modelo nuevo es el correcto: la complejidad que se va sola no estaba resolviendo un
+problema del negocio, estaba compensando un modelo que no encajaba.
+
+### Los guardrails nuevos
+
+La invariante `disponible ≥ reservado` no cambió de enunciado, pero sí de sujeto: ahora se
+comprueba sobre la **suma** del agregado. Y como la promesa ya no nombra ninguna bobina, la
+comprobación por ítem de `reservation-guard.ts` no ve nada cuando la operación cae sobre un
+rollo que ninguna reserva menciona — que es el caso normal.
+
+`assertRawMaterialInvariant` se llama en cada punto que le quita kilos al agregado:
+
+| Operación                                                                        | Por qué el guardrail por ítem no alcanza                  |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Salida de kardex sobre una bobina (merma, partido, consumo, anulación de compra) | La promesa no nombra esa bobina                           |
+| Envío a corte tercerizado (D-050)                                                | No mueve kardex: la bobina cambia de estado               |
+| Montaje en una OP ajena (D-060)                                                  | No mueve kardex: la bobina cambia de custodio             |
+| Cerrar una bobina (RF-19)                                                        | No mueve kardex: sale del conjunto `OPEN`                 |
+| Cambiarle el color a una bobina (RF-20)                                          | Se muda de agregado: el que abandona puede quedar corto   |
+| Vender una bobina entera (RF-73)                                                 | La reserva sobre el rollo lo saca del disponible genérico |
+
+El caso del color obligó a una segunda forma de la función: después del cambio la bobina ya
+**no pertenece** al agregado que abandonó, así que leerla de la base no encuentra al que
+quedó corto. El llamador pasa los dos juegos de atributos, el de antes y el de después.
+
+El montaje lleva además la excepción de siempre: la reserva del pedido que la OP viene a
+cumplir queda fuera de la cuenta, o se bloquearía a sí misma.
+
+### Lo que se decidió no construir
+
+- **Repartir una línea entre dos agregados.** Una línea promete kilos de una spec. Si ninguna
+  combinación de color y espesor alcanza, el mensaje dice cuánto hay y pide partir la línea o
+  comprar. Repartir automáticamente escondería que el material no está.
+- **Guardar la tolerancia en la spec.** Es configuración vigente
+  (`ROOFING_THICKNESS_TOLERANCE_MM`): cambiarla cambia qué bobinas cumplen cada spec sin
+  reescribir ninguna fila, y eso es lo que se quiere. Congelarla por fila habría dejado
+  promesas viejas comparándose contra un criterio que ya nadie usa.
+
+---
+
+## D-137 / D-138 — Importar el Excel del negocio, y no una planilla que se le parezca
+
+### Por qué son entidades nuevas y no columnas nuevas
+
+El ERP ya sabía importar bobinas (RF-12) y comprobantes ya emitidos (RF-71). Las dos esperan
+una **planilla canónica**: la que el sistema define, con el proveedor por código corto, la
+línea de negocio por fila, el tipo, la serie y el correlativo en columnas separadas.
+
+El dueño tiene otros dos archivos. Traen RUC en vez de código, `SERIE - NÚMERO` en un solo
+campo, el cliente como texto libre, valorización, stock actual, moneda original. Hacer que
+alguno se disfrazara del otro tenía dos caminos y los dos malos: agregar alias de encabezado
+al adaptador existente (y entonces "CLIENTE" significaría a veces un número de documento y a
+veces un nombre, según el archivo) o pedirle al dueño que retipeara el Excel antes de subirlo
+— que es exactamente el trabajo que la importación viene a ahorrar.
+
+Conviven a propósito. Son dos contratos de archivo, no dos features.
+
+### Las tres reglas que ordenan el resto
+
+**1. Una importación nunca se traba por un tercero.** El proveedor y el cliente que faltan se
+crean consultando el padrón de SUNAT (D-067), y `DocumentLookupService` no lanza nunca: sin
+token, con la API caída o con un documento inexistente devuelve `found: false`. Ahí la fila
+**no** queda inválida: la entidad se crea con el nombre que trae el archivo y con
+`needs_review = true`. Un padrón caído no puede impedir cargar la historia del negocio.
+
+Que el flag sea una columna y no una nota importa: la carga de un mes puede crear decenas de
+proveedores y clientes, y _cuáles hay que completar_ es una pregunta que alguien va a hacer
+semanas después, cuando ya nadie recuerde qué import los creó.
+
+**2. Se auto-crea lo que no hace daño si sale mal.** Un cliente con la dirección incompleta se
+corrige en un minuto y nada depende de ella. Un **acabado** auto-creado entra con un
+`densityFactor` inventado y desde ahí le mete un error a cada kilo teórico que se calcule con
+él, para siempre y sin aviso. Un **SKU** auto-creado entra al catálogo con unidad y línea de
+negocio adivinadas y ensucia stock, precios y kilos teóricos. Los dos se resuelven en el
+preview, eligiendo del maestro o creándolos a mano.
+
+**3. Adivinar es peor que rechazar cuando lo adivinado no se puede desandar.** Una fila del
+export de ventas con `DOCUMENTO AJUSTADO` es una nota de crédito, y una NC importada necesita
+a qué comprobante afecta y con qué motivo del catálogo 09 — el export no trae ninguno de los
+dos. Una NC mal apuntada descuadra la cobranza del comprobante equivocado y no hay reversa
+que lo arregle. La fila queda fuera, con el motivo escrito en su renglón.
+
+### Los dos modos de la carga de bobinas
+
+El Excel trae **dos pesos** —el de compra y el que queda hoy— y ninguna historia en el medio.
+No hay una sola respuesta correcta, así que la elección es del dueño y es del lote entero:
+
+- **`REPLAY`**: la bobina entra con el peso de compra y el stock actual queda **anotado como
+  objetivo**. Es lo que sirve si después se van a cargar los consumos reales (cortes,
+  producción, ventas del período): al terminar, `GET /imports/:id/coil-stock-check` compara
+  saldo contra objetivo y dice bobina por bobina dónde no cuadra.
+- **`ADJUST`**: la bobina entra con el peso de compra y, en el mismo acto, sale una salida de
+  ajuste retrofechada por la diferencia, con la nota «Consumo pre-sistema (carga histórica)».
+  El saldo queda igual al stock actual desde el primer día.
+
+En los dos modos la bobina **entra con el peso de compra**, nunca con el saldo de hoy: una
+bobina que entrara directamente con lo que le queda perdería su costo total y su historia de
+compra, que es justo lo que el valorizado necesita.
+
+El reporte de saldo vs objetivo sirve para los dos y por eso no se restringe a uno: en
+`ADJUST` tiene que dar cero diferencia el mismo día de la carga, y que no la dé es
+exactamente lo que hay que ver.
+
+### Lo que va a las observaciones, y por qué no hay compra
+
+El número de factura, la moneda original y su tipo de cambio van a `coils.notes`. Es la
+decisión del dueño para esta carga: **sin campos nuevos** en el modelo de bobina.
+
+Que la factura no cree un comprobante de compra formal no es una simplificación: la carga
+histórica **no reconstruye compras**. Crear una por cada bobina inventaría cuentas por pagar
+que ya se pagaron, y el estado de cuenta de cada proveedor arrancaría con una deuda falsa.
+Las compras nuevas sí van por Fase 2, con su recepción y su kardex.
+
+## D-141 — El pedido de un comprobante importado, y por qué el bypass no se confía al estado
+
+§0.2 tiene la decisión y su motivo corto. Acá va lo que no cabe en una fila: por qué el
+toggle es del documento, por qué la cáscara es un método propio y no un flag, qué se hace
+con una línea de catálogo sin stock, y qué frena la reimportación.
+
+### El agujero que abre la carga histórica
+
+Hasta acá el importador de ventas (D-138) creaba comprobantes y nada más. Para lo ya
+entregado alcanzaba: la venta ocurrió, se cobró, y el ERP solo la registra para el estado de
+cuenta del cliente.
+
+Para lo **facturado y no entregado** no alcanza, y esa es la mitad que importa. El dueño
+factura por adelantado buena parte de lo que fabrica; el día que arrancó el ERP tenía
+comprobantes emitidos cuyo material todavía no había salido de la planta. Sin pedido detrás,
+esa mitad no existía para el sistema: no aparecía en la cola de producción, no reservaba una
+sola bobina, y el material que la venta ya tenía comprometido quedaba disponible para que
+otra cotización lo prometiera de nuevo. La primera vez que dos pedidos se pelean el mismo
+rollo no se descubre cotizando: se descubre en la roladora.
+
+### Por qué el toggle es del documento, y por qué el default es "entregado"
+
+**El archivo no lo puede decir.** Un export de facturación describe lo que se vendió, no lo
+que falta entregar; ningún sistema de emisión guarda ese dato porque no es fiscal. Así que
+la información entra por donde está: el dueño, que marca sus pendientes uno por uno en la
+previsualización.
+
+**Y es del documento, no de la línea.** Media venta entregada y media pendiente no es un
+estado que este modelo pueda representar —un pedido tiene un solo estado— y partir líneas
+quedó explícitamente fuera de v1. Cuando las filas de un comprobante discrepan, la
+validación de grupo lo dice en vez de elegir una por el usuario.
+
+De ahí sale también la forma del endpoint. Lo natural era marcar fila por fila con el
+`PATCH` que ya existía, y no funciona por un motivo que no es de rendimiento: entre la
+primera petición y la última el comprobante queda marcado a medias, y la validación de
+grupo —que corre en **cada** una— ve ese estado incoherente y marca con un error las filas
+que todavía faltaba tocar. `PATCH /imports/:id/group` cambia el documento de una pieza.
+
+**El default es `ENTREGADO` porque es la elección conservadora.** Un pedido cáscara no toca
+inventario: equivocarse hacia ese lado no compromete material de nadie y se arregla marcando
+el documento y volviéndolo a subir. Al revés, un default "pendiente" habría reservado
+material de decenas de ventas viejas ya entregadas, y cada una de esas promesas habría que
+liberarla a mano.
+
+### El bypass es estructural, y aun así se comprueba
+
+El enunciado del dueño fue explícito: "cero efectos de inventario, bypass explícito de todo
+hook de creación — no confiar solo en el estado". Son dos exigencias distintas y las dos
+están implementadas.
+
+**Estructural:** el pedido cáscara no pasa por `createDirectInTx` con un flag más. Tiene
+método propio (`createImportedShellInTx`), que no llama a `resolveSalesLines`, no llama a
+`createReservations` y no encola nada. Con un flag, la garantía habría dependido de que una
+rama dentro de un método que **sí** crea reservas siguiera siendo correcta cada vez que
+alguien tocara ese método. Acá no hay ninguna línea de código que pueda escribir una
+reserva.
+
+**Comprobado igual:** al terminar, `assertNoInventoryEffects` cuenta las reservas, las
+órdenes de producción, los despachos y los movimientos de kardex que quedaron colgando del
+pedido, y si encuentra alguno lanza y la importación entera se deshace. Hoy no puede
+encontrar ninguno, y ese es exactamente el punto: la comprobación no está para el código de
+hoy sino para el hook que alguien agregue mañana a la creación de un pedido sin acordarse de
+que esta puerta existe. Es la misma idea que D-052 usa para los guardrails de reversa.
+
+Un detalle del cómo: **el kardex se comprueba a través del despacho**, no por su propia
+tabla. Un pedido no escribe `inventory_movements` nunca —por regla dura 2 el único que saca
+stock por una venta es el despacho, con el id del despacho como referencia—, así que "cero
+despachos" _es_ "cero kardex", y buscar el id del pedido entre las referencias no habría
+encontrado nada aunque el pedido hubiera movido stock.
+
+### La línea de catálogo sin stock: por qué se marca en vez de producirse
+
+El pedido pendiente de una **plancha de catálogo** reserva producto terminado (D-127), y esa
+reserva exige que el stock exista hoy: la invariante `disponible ≥ reservado` de D-066 no se
+negocia. D-140 cerró el otro camino: una plancha **nunca** se fabrica contra el pedido.
+
+Quedaban dos salidas y las dos son peores. Crear una OP a stock automática le inventa al
+dueño una corrida que no pidió, con una bobina que planta no eligió. Dejar entrar la reserva
+sin disponible rompe la invariante que sostiene todo el ledger. Así que la fila se **marca**
+con el faltante exacto y el documento solo entra como entregado — que es la misma regla que
+ya vale para el agregado de materia prima insuficiente, y la misma que un pedido normal
+aplica hoy a una plancha sin stock. La diferencia con "no hacer nada" es el mensaje: dice
+cuánto falta y cuáles son las dos salidas.
+
+### Los largos que el export no trae
+
+Una cobertura a medida se vende por metro lineal y su línea es compuesta: subítems
+`{cantidad, largo}` cuya suma **es** la cantidad de la línea (D-083). Ningún export de
+facturación desglosa las planchas, así que un documento pendiente a medida no puede traer
+esos subítems.
+
+La salida no fue inventarlos ni exigirlos. La previsualización tiene una columna `LARGOS`
+opcional (`3.60x4, 5.00x2`): con ella el plan de corte de la OP nace completo; sin ella la
+línea entra igual y el plan nace vacío, para que planta lo llene con `updatePlan` antes de
+rolar. Lo que **no** cambia en ninguno de los dos casos son los kilos prometidos, que salen
+de `metros × espesor × ancho × densidad` y no dependen del desglose.
+
+Esto abre la única excepción de la sesión a una regla existente:
+`ResolveSalesLinesOptions.allowMissingPieces`, apagada en todos los demás caminos. En una
+cotización los largos son lo que el cliente encargó y sin ellos no hay nada que fabricar; en
+un comprobante ya emitido la situación es la contraria, y D-084 ya define el plan de corte
+como una intención que planta corrige.
+
+La otra excepción es hermana: un pedido importado se salta `quotation_required` (RF-31). No
+es un agujero — RF-31 exige cotizar **antes de comprometerse a producir**, y acá el
+compromiso ya se tomó y ya se facturó. Pedir una cotización previa a una venta que ya ocurrió
+no protege nada; solo dejaría fuera del ERP la mitad pendiente de la operación real. Todo lo
+demás del camino normal sigue corriendo, empezando por la invariante.
+
+### Reimportar: qué se archiva y qué se bloquea
+
+D-109 dice que reimportar archiva la versión anterior del comprobante. Con un pedido colgando
+hay que decir qué pasa con él, y la respuesta depende de lo que ese pedido haya dejado:
+
+- **Cáscara:** se archiva con el documento. "Archivar" un pedido es anularlo —`sales_orders`
+  no tiene `archived_at` y no hace falta que lo tenga—: una cáscara sin efectos no dejó nada
+  que deshacer, así que el estado terminal de anulado dice la verdad completa y la fila se
+  conserva con su historial (§3.2).
+- **Vivo con efectos** (reservas activas, una OP viva, algún despacho): **la reimportación
+  del documento se rechaza entera**, con el motivo y el código del pedido. Archivarlo habría
+  dejado material prometido y producción en curso sin nadie que los devuelva, que es
+  exactamente el agujero que D-061, D-088, D-097 y D-110 ya costaron una vez.
+
+El guardrail vive en `sales` (`archiveImportedOrderInTx`) y corre dentro de la transacción,
+bajo el mismo `pg_advisory_xact_lock` sobre el número que ya toma `FiscalImportService`: la
+lectura del pedido anterior y su anulación ocurren bajo el mismo lock, así que dos
+importaciones simultáneas del mismo número no leen cada una un pedido que la otra está por
+anular. La previsualización repite la **lectura** —no la regla— para que el usuario lo vea
+antes de confirmar en vez de descubrirlo con el lote ya caído.
+
+### Lo que esta decisión deja escrito y no hace
+
+**El pedido pendiente factura al 100 % desde el primer segundo.** Sus líneas de comprobante
+apuntan a las del pedido (`fiscal_document_items.sales_order_item_id`), así que
+`orderProgress` —que cuenta desde las filas y no desde un contador— muestra todo facturado y
+nada despachado. Es la verdad exacta de lo que se importó.
+
+**Pendiente parcial queda fuera de v1.** Media línea entregada exigiría partir la línea del
+pedido en dos, con su reserva y su despacho parciales, y el archivo no trae con qué decidir
+dónde parte.
+
+**La OP importada arranca hoy, no el día del comprobante.** La corrida empieza ahora aunque
+la factura sea de hace un mes; retrofecharla haría aparecer producción en un mes en el que la
+roladora no giró (D-124).

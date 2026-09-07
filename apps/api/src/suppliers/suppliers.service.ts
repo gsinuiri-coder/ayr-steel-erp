@@ -121,6 +121,7 @@ function toDto(s: Supplier): SupplierDto {
     phone: s.phone,
     creditDays: s.creditDays,
     providesCuttingService: s.providesCuttingService,
+    needsReview: s.needsReview,
     isActive: s.isActive,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),

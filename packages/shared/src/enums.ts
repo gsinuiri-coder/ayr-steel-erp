@@ -127,6 +127,15 @@ export const ImportEntity = {
   COILS: 'COILS',
   /** RF-71: comprobantes ya emitidos fuera del ERP. Una fila por **línea**, no por documento. */
   FISCAL_DOCUMENTS: 'FISCAL_DOCUMENTS',
+  /**
+   * D-137: el Excel de bobinas con el que el dueño lleva su stock. Trae RUC y nombre del
+   * proveedor, número de factura, valorización y stock actual — nada de eso está en la
+   * planilla canónica de RF-12, y retipear el archivo para que encajara era exactamente
+   * el trabajo que la importación viene a ahorrar.
+   */
+  COILS_HISTORY: 'COILS_HISTORY',
+  /** D-138: el export de ventas del dueño. Una fila por línea, agrupadas por SERIE-NÚMERO. */
+  SALES_HISTORY: 'SALES_HISTORY',
 } as const;
 export type ImportEntity = (typeof ImportEntity)[keyof typeof ImportEntity];
 export const IMPORT_ENTITIES = Object.values(ImportEntity) as [ImportEntity, ...ImportEntity[]];
@@ -135,6 +144,53 @@ export const IMPORT_ENTITY_LABELS: Record<ImportEntity, string> = {
   CUSTOMERS: 'Clientes',
   COILS: 'Bobinas',
   FISCAL_DOCUMENTS: 'Comprobantes ya emitidos',
+  COILS_HISTORY: 'Bobinas (Excel del negocio)',
+  SALES_HISTORY: 'Ventas (Excel del negocio)',
+};
+
+/**
+ * Cómo entra una bobina histórica (D-137). El Excel trae **dos** pesos —el de compra y el
+ * que queda hoy— y no dice qué pasó en el medio; estos son los dos modos honestos de
+ * resolverlo, y la elección es del dueño porque depende de para qué quiere el dato.
+ *
+ * - `REPLAY`: la bobina entra con el **peso de compra** y el stock actual se guarda como
+ *   **objetivo de validación**. Sirve cuando después se van a cargar los consumos reales
+ *   (cortes, producción, ventas): al terminar, el reporte compara saldo contra objetivo y
+ *   dice dónde no cuadra.
+ * - `ADJUST`: la bobina entra con el peso de compra y sale, en el mismo acto, una salida
+ *   de ajuste retrofechada por la diferencia. El saldo queda igual al stock actual desde el
+ *   primer día. Sirve cuando lo que importa es arrancar con el inventario correcto y la
+ *   historia intermedia no se va a cargar.
+ */
+export const CoilImportMode = {
+  REPLAY: 'REPLAY',
+  ADJUST: 'ADJUST',
+} as const;
+export type CoilImportMode = (typeof CoilImportMode)[keyof typeof CoilImportMode];
+export const COIL_IMPORT_MODES = Object.values(CoilImportMode) as [
+  CoilImportMode,
+  ...CoilImportMode[],
+];
+export const COIL_IMPORT_MODE_LABELS: Record<CoilImportMode, string> = {
+  REPLAY: 'Replay: entra el peso de compra y el stock actual queda como objetivo',
+  ADJUST: 'Ajuste: entra el peso de compra y sale la diferencia como consumo pre-sistema',
+};
+
+/** Con qué fecha se registra la salida de ajuste del modo `ADJUST` (D-137). */
+export const CoilAdjustDate = {
+  /** La misma fecha de compra: el consumo queda dentro del mes en que entró la bobina. */
+  PURCHASE_DATE: 'PURCHASE_DATE',
+  /** Fin del mes de la compra (o hoy, si ese fin de mes todavía no llegó). */
+  MONTH_END: 'MONTH_END',
+} as const;
+export type CoilAdjustDate = (typeof CoilAdjustDate)[keyof typeof CoilAdjustDate];
+export const COIL_ADJUST_DATES = Object.values(CoilAdjustDate) as [
+  CoilAdjustDate,
+  ...CoilAdjustDate[],
+];
+export const COIL_ADJUST_DATE_LABELS: Record<CoilAdjustDate, string> = {
+  PURCHASE_DATE: 'La fecha de compra',
+  MONTH_END: 'El fin del mes de la compra',
 };
 
 /** Estado de una fila dentro de un lote de importación. */
@@ -164,10 +220,18 @@ export const IMPORT_BATCH_STATUSES = Object.values(ImportBatchStatus) as [
 // Fase 2a — kardex (§3.2), compras (D-030) y bobinas (RF-10..RF-14)
 // ---------------------------------------------------------------------------
 
-/** Qué clase de ítem mueve el kardex (§3.2). */
+/**
+ * Qué clase de ítem nombra un par `(itemType, itemId)`.
+ *
+ * `PRODUCT` y `COIL` mueven kardex (§3.2). `RAW_MATERIAL` (D-134) **no**: nombra un
+ * agregado de materia prima compatible (línea + color + espesor ± tolerancia) contra el
+ * que una cobertura a medida promete kilos, y solo aparece en el ledger de reservas. Su
+ * disponible es la suma de las bobinas que lo cumplen, no un saldo propio.
+ */
 export const InventoryItemType = {
   PRODUCT: 'PRODUCT',
   COIL: 'COIL',
+  RAW_MATERIAL: 'RAW_MATERIAL',
 } as const;
 export type InventoryItemType = (typeof InventoryItemType)[keyof typeof InventoryItemType];
 export const INVENTORY_ITEM_TYPES = Object.values(InventoryItemType) as [
@@ -177,7 +241,20 @@ export const INVENTORY_ITEM_TYPES = Object.values(InventoryItemType) as [
 export const INVENTORY_ITEM_TYPE_LABELS: Record<InventoryItemType, string> = {
   PRODUCT: 'Producto',
   COIL: 'Bobina',
+  RAW_MATERIAL: 'Materia prima',
 };
+
+/**
+ * Cómo se lee un agregado de materia prima (D-134) en una línea, en la cola de planta y en
+ * cualquier mensaje de error: `Bobina 0.45 mm ROJO`, o `Bobina 0.45 mm sin color`.
+ *
+ * Vive en `@ayr/shared` y no en el API porque el web la arma igual para el panel de stock,
+ * y dos formas distintas de nombrar el mismo agregado es exactamente lo que hace que el
+ * vendedor crea que son dos.
+ */
+export function rawMaterialLabel(spec: { thicknessMm: string; colorName: string | null }): string {
+  return `Bobina ${spec.thicknessMm} mm ${spec.colorName ?? 'sin color'}`;
+}
 
 /** Sentido del movimiento de kardex. La cantidad siempre es positiva. */
 export const InventoryMovementType = {
@@ -607,6 +684,60 @@ export const SALES_ORDER_STATUS_LABELS: Record<SalesOrderStatus, string> = {
   PARTIALLY_FULFILLED: 'Atendido en parte',
   FULFILLED: 'Atendido',
   CANCELLED: 'Anulado',
+};
+
+/**
+ * Quién creó el pedido (D-141). Es el mismo corte que `FiscalDocumentOrigin` hace con el
+ * comprobante (D-105) y por el mismo motivo: **estado y origen responden preguntas
+ * distintas**. El estado dice en qué punto del ciclo está el pedido; el origen, si el ciclo
+ * ocurrió acá o afuera.
+ *
+ * Un pedido `IMPORTED` nace de un comprobante que la empresa ya emitió por fuera. Puede
+ * estar `FULFILLED` desde el primer segundo —la venta ya se entregó y el ERP solo la
+ * registra— o `CONFIRMED` con material prometido y una orden de producción esperando, si lo
+ * que se importó todavía se debe. Sin el campo, las dos cosas serían indistinguibles de un
+ * pedido normal y ningún reporte podría separar lo que el ERP operó de lo que solo heredó.
+ */
+export const SalesOrderOrigin = {
+  CREATED_HERE: 'CREATED_HERE',
+  IMPORTED: 'IMPORTED',
+} as const;
+export type SalesOrderOrigin = (typeof SalesOrderOrigin)[keyof typeof SalesOrderOrigin];
+export const SALES_ORDER_ORIGINS = Object.values(SalesOrderOrigin) as [
+  SalesOrderOrigin,
+  ...SalesOrderOrigin[],
+];
+export const SALES_ORDER_ORIGIN_LABELS: Record<SalesOrderOrigin, string> = {
+  CREATED_HERE: 'Creado en el ERP',
+  IMPORTED: 'Importado',
+};
+
+/**
+ * Qué se hace con el pedido de un comprobante importado (D-141). Es un **toggle por
+ * documento** en la previsualización, no una columna del Excel: el archivo dice qué se
+ * vendió, no qué falta entregar, y eso solo lo sabe el dueño.
+ *
+ * - `DELIVERED` (por defecto): la venta ya se entregó. El pedido nace **cáscara** — estado
+ *   terminal, líneas espejo del comprobante y **cero efectos de inventario**: ni reserva, ni
+ *   despacho, ni movimiento de kardex, ni cola de producción. Existe para que el comprobante
+ *   tenga de dónde colgar y para que el histórico se lea igual que lo nuevo.
+ * - `PENDING`: la venta está facturada pero **no entregada**. El pedido nace vivo y recorre
+ *   el flujo normal: reserva genérica de materia prima en una línea a medida (D-134),
+ *   reserva de producto terminado en una de catálogo (D-054), y una OP en cola por cada
+ *   línea a medida — sin bobina montada, que es decisión de planta (D-086).
+ */
+export const ImportFulfillment = {
+  DELIVERED: 'DELIVERED',
+  PENDING: 'PENDING',
+} as const;
+export type ImportFulfillment = (typeof ImportFulfillment)[keyof typeof ImportFulfillment];
+export const IMPORT_FULFILLMENTS = Object.values(ImportFulfillment) as [
+  ImportFulfillment,
+  ...ImportFulfillment[],
+];
+export const IMPORT_FULFILLMENT_LABELS: Record<ImportFulfillment, string> = {
+  DELIVERED: 'Entregado — pedido cáscara, sin efectos',
+  PENDING: 'Pendiente — pedido vivo, con reserva y OP en cola',
 };
 
 /**

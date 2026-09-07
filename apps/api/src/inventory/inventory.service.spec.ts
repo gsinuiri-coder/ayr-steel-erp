@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { InventoryStrategy, type Prisma } from '@prisma/client';
+import { ENV } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService, type RecordMovementInput } from './inventory.service';
 
@@ -85,6 +86,16 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
     reservation: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { qty: null } }),
       findMany: jest.fn().mockResolvedValue([]),
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
+    // D-134: la invariante del **agregado** de materia prima parte de las bobinas que la
+    // salida toca para saber qué agregados pueden quedar cortos. Sin ningún agregado con
+    // promesas vivas no hay nada que comprobar, que es el caso de estos tests.
+    coil: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    rawMaterialSpec: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     inventoryMovement: {
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
@@ -140,7 +151,13 @@ describe('InventoryService (§3.2, D-028)', () => {
 
   beforeEach(async () => {
     const moduleRef = await Test.createTestingModule({
-      providers: [InventoryService, { provide: PrismaService, useValue: {} }],
+      providers: [
+        InventoryService,
+        { provide: PrismaService, useValue: {} },
+        // D-134: el servicio lee la tolerancia de espesor para la invariante del agregado.
+        // El doble solo necesita la clave que `roofingToleranceMm` mira.
+        { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
+      ],
     }).compile();
     service = moduleRef.get(InventoryService);
   });
@@ -241,7 +258,11 @@ describe('InventoryService (§3.2, D-028)', () => {
     it('escribe saldo y movimiento con el mismo tx que recibe, sin abrir uno propio', async () => {
       const prisma = { $transaction: jest.fn() };
       const moduleRef = await Test.createTestingModule({
-        providers: [InventoryService, { provide: PrismaService, useValue: prisma }],
+        providers: [
+          InventoryService,
+          { provide: PrismaService, useValue: prisma },
+          { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
+        ],
       }).compile();
       const scoped = moduleRef.get(InventoryService);
 

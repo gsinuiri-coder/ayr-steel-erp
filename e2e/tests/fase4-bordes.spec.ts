@@ -42,9 +42,6 @@ const isProduction = !!process.env.E2E_BASE_URL;
  */
 const skipWrites = isProduction && process.env.E2E_ALLOW_WRITES !== '1';
 
-/** Kilo teórico que sale de la geometría del escenario: 600 × 0.50 × 3000 × 7.85 / 1e6. */
-const SUGGESTED_KG_PER_PIECE = '7.065';
-
 /** La merma de proceso del cierre apunta a la orden, no a la bobina (D-060/RF-18). */
 function processScrap(movements: MovementDto[], orderId: string): MovementDto {
   const scrap = live(movements).find((m) => m.refType === 'SCRAP' && m.refId === orderId);
@@ -192,9 +189,12 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
         inputWidthMm?: string;
         inputThicknessMm?: string;
       }): Promise<ProductionOrderDto> => {
-        const product = await createCatalogProduct(api, { name: 'Perfil E2E de otra receta' });
+        const product = await createCatalogProduct(api, {
+          name: 'Perfil E2E de otra receta',
+          pieceWeightKg: KG_PER_PIECE,
+        });
         productIds.push(product.id);
-        await upsertBom(api, product.id, { ...bom, kgPerPiece: KG_PER_PIECE });
+        await upsertBom(api, product.id, bom);
         const op = await postJson<ProductionOrderDto>(api, '/api/production', {
           productId: product.id,
         });
@@ -440,51 +440,52 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
     }
   });
 
-  test('la receta sugiere el kilo por pieza desde la geometría, se bloquea con una OP viva y solo admite productos drywall fabricados en piezas (D-059/D-055)', async ({
+  test('el peso por pieza se carga en el catálogo (D-139), la receta se bloquea con una OP viva y solo admite productos drywall fabricados en piezas (D-059/D-055)', async ({
     baseURL,
   }) => {
-    // No necesita material: la receta y la OP en borrador viven en el maestro.
+    // No necesita material: el catálogo, la receta y la OP en borrador viven en el maestro.
     const api = await adminApi(baseURL!);
     const finish = await createFinish(api);
     const productIds: string[] = [];
     let opId = '';
 
     try {
-      // --- Sin override, el API guarda exactamente el kilo de la geometría (D-047) ---
-      const product = await createCatalogProduct(api);
+      // D-118 ya exige el peso de la pieza terminada **al dar de alta** el SKU de drywall
+      // (`assertStructuredFields`), así que un producto de esta línea nunca llega a existir
+      // sin él; el guardrail de D-139 en la receta ("cárgalo antes de darle receta") queda
+      // como defensa de un dato histórico, no como un camino que la API deje recorrer hoy.
+      // Lo que sí se prueba es lo que cambió de verdad: el peso vive en el catálogo, no en
+      // la receta, y el DTO de la receta lo refleja desde ahí (D-122/D-139: ya no hay
+      // "sugerido" calculado de la geometría del fleje).
+      const product = await createCatalogProduct(api, { pieceWeightKg: KG_PER_PIECE });
       productIds.push(product.id);
-      const suggested = await upsertBom(api, product.id, { finishId: finish.id });
-      expect(suggested.kgPerPiece).toBe(SUGGESTED_KG_PER_PIECE);
-      expect(suggested.suggestedKgPerPiece).toBe(SUGGESTED_KG_PER_PIECE);
+      const bom = await upsertBom(api, product.id, { finishId: finish.id });
+      expect(bom.kgPerPiece).toBe(KG_PER_PIECE);
 
-      // Con override, el maestro manda y la sugerencia queda al lado para comparar.
-      const overridden = await upsertBom(api, product.id, {
-        finishId: finish.id,
-        kgPerPiece: KG_PER_PIECE,
-      });
-      expect(overridden).toMatchObject({
-        kgPerPiece: KG_PER_PIECE,
-        suggestedKgPerPiece: SUGGESTED_KG_PER_PIECE,
-      });
+      // Y el peso se edita en el catálogo, no en la receta: `upsertBom` ya no acepta
+      // `kgPerPiece` (el API lo ignora si se lo mandan).
+      await api.patch(`/api/catalog/${product.id}`, { data: { pieceWeightKg: '2.500' } });
+      expect(
+        (await getJson<ProductBomDto>(api, `/api/production/boms/${product.id}`)).kgPerPiece,
+      ).toBe('2.500');
+      await api.patch(`/api/catalog/${product.id}`, { data: { pieceWeightKg: KG_PER_PIECE } });
 
-      // --- Con una OP viva la receta no se toca (D-059) ---
+      // --- Con una OP viva la receta (acabado/espesor/ancho del fleje) no se toca (D-059) ---
       const op = await postJson<ProductionOrderDto>(api, '/api/production', {
         productId: product.id,
       });
       opId = op.id;
       const locked = await putExpectingError(api, `/api/production/boms/${product.id}`, {
         finishId: finish.id,
-        inputThicknessMm: '0.50',
-        inputWidthMm: '600',
-        pieceLengthMm: '3000',
-        kgPerPiece: '2.500',
+        inputThicknessMm: '0.60',
+        inputWidthMm: '700',
       });
       expect(locked.status).toBe(400);
       expect(locked.message).toContain(op.code);
       expect(locked.message).toContain('en curso');
       expect(
-        (await getJson<ProductBomDto>(api, `/api/production/boms/${product.id}`)).kgPerPiece,
-      ).toBe(KG_PER_PIECE);
+        (await getJson<ProductBomDto>(api, `/api/production/boms/${product.id}`)).inputWidthMm,
+      ).toBe('600.00');
 
       // Anulada la orden, la receta vuelve a ser editable.
       await postJson<ProductionOrderDto>(api, `/api/production/${opId}/cancel`, {
@@ -492,14 +493,17 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
       });
       const edited = await upsertBom(api, product.id, {
         finishId: finish.id,
-        kgPerPiece: '2.500',
+        inputThicknessMm: '0.60',
+        inputWidthMm: '700',
       });
-      expect(edited.kgPerPiece).toBe('2.500');
+      expect(edited.inputWidthMm).toBe('700.00');
 
       // --- Productos que no pueden tener receta en Fase 4 ---
+      // `trading` a propósito: ni Drywall ni Metallic Roofing, y sin campos estructurados
+      // obligatorios (D-118/D-122) que compliquen el alta de este caso negativo.
       const lines = await getJson<BusinessLineDto[]>(api, '/api/business-lines');
-      const otherLine = lines.find((l) => l.code !== 'drywall' && l.code !== 'services');
-      expect(otherLine, 'Hace falta otra línea de negocio para el caso negativo').toBeDefined();
+      const otherLine = lines.find((l) => l.code === 'trading');
+      expect(otherLine, 'Hace falta la línea trading para el caso negativo').toBeDefined();
 
       const cases: { product: ProductDto; expected: string }[] = [];
       cases.push({
@@ -527,7 +531,6 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
           finishId: finish.id,
           inputThicknessMm: '0.50',
           inputWidthMm: '600',
-          pieceLengthMm: '3000',
         });
         expect(error.status).toBe(400);
         expect(error.message).toContain(expected);

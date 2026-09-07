@@ -94,18 +94,35 @@ enum DocType {
 }
 
 /// Entidad destino de un lote de importación masiva (RF-52, base de RF-12/RF-71).
+///
+/// Las entidades `*_HISTORY` (D-137, D-138) son los Excel **reales** del
+/// dueño, con sus encabezados y sus columnas; las otras son las planillas canónicas del ERP.
+/// Conviven a propósito: una plantilla que el sistema define y un export que el negocio ya
+/// tiene son dos contratos distintos, y hacer que uno se disfrace del otro fue justamente lo
+/// que obligaba a retipear el archivo antes de poder cargarlo.
 enum ImportEntity {
   PRODUCTS
   CUSTOMERS
   COILS
   /// RF-71: comprobantes ya emitidos afuera. Una fila por **línea**, agrupadas por número.
   FISCAL_DOCUMENTS
+  /// D-137: el Excel de bobinas del dueño (RUC, factura, valorización, stock actual).
+  COILS_HISTORY
+  /// D-138: el export de ventas del dueño. Una fila por línea, agrupadas por SERIE-NÚMERO.
+  SALES_HISTORY
 }
 
-/// Qué clase de ítem mueve el kardex (§3.2). Un producto de catálogo o una bobina.
+/// Qué clase de ítem nombra un par `(itemType, itemId)`.
+///
+/// `PRODUCT` y `COIL` son ítems de inventario: tienen saldo en `inventory_balances` y
+/// movimientos en `inventory_movements`. `RAW_MATERIAL` (D-134) **no**: nombra una fila de
+/// `raw_material_specs`, que es el agregado de bobinas compatibles contra el que una
+/// cobertura a medida promete kilos. Solo aparece en `reservations`; las dos tablas del
+/// kardex lo rechazan con un `CHECK` puesto en la migración.
 enum InventoryItemType {
   PRODUCT
   COIL
+  RAW_MATERIAL
 }
 
 /// Sentido del movimiento de kardex (§3.3). `ADJUST` corrige el **costo** sin mover la
@@ -312,6 +329,17 @@ enum ReservationStatus {
   RELEASED
 }
 
+/// Origen de un pedido (D-141). `IMPORTED` es el que nace de un comprobante ya emitido
+/// afuera (RF-71): puede ser una **cáscara** terminal —la venta ya se entregó y el ERP solo
+/// la registra— o un pedido **vivo** con reservas y una OP en cola, si lo importado todavía
+/// se debe.
+enum SalesOrderOrigin {
+  CREATED_HERE
+  IMPORTED
+
+  @@map("sales_order_origin")
+}
+
 /// Tipo de documento electrónico que **emitimos** (catálogo 01 de SUNAT, D-072). El de
 /// compras es `PurchaseDocType` y no se mezcla: aquel describe lo que nos emitieron a
 /// nosotros y admite nota de débito, que acá está diferida.
@@ -489,6 +517,7 @@ model BusinessLine {
   coils              Coil[]
   cuttingOrders      CuttingOrder[]
   productionOrders   ProductionOrder[]
+  rawMaterialSpecs   RawMaterialSpec[]
 
   @@map("business_lines")
 }
@@ -506,6 +535,7 @@ model Finish {
   coils         Coil[]
   purchaseItems PurchaseItem[]
   boms          ProductBom[]
+  products      Product[]
 
   @@map("finishes")
 }
@@ -530,6 +560,14 @@ model Product {
   /// parseando el SKU.
   colorId        String?       @map("color_id") @db.Uuid
   color          Color?        @relation(fields: [colorId], references: [id])
+  /// D-122: acabado del SKU, y con él su factor de densidad (RF-25). Obligatorio en
+  /// Metallic Roofing —es lo que convierte metros lineales en kilos—, null en el resto.
+  ///
+  /// Hasta D-122 la densidad salía de `product_boms.finish_id`, y eso obligaba a una
+  /// cobertura a tener receta para poder cotizarse. Acá es del producto, que es de quien
+  /// siempre fue: rolar no cambia el acabado.
+  finishId       String?       @map("finish_id") @db.Uuid
+  finish         Finish?       @relation(fields: [finishId], references: [id])
   /// D-118 (Fase 7e, B): espesor del SKU. Obligatorio en Metallic Roofing —es también el
   /// espesor del producto terminado (rolar no cambia el espesor)—, no aplica al resto.
   thicknessMm    Decimal?      @map("thickness_mm") @db.Decimal(6, 2)
@@ -538,13 +576,18 @@ model Product {
   /// filtro por ancho) y en Drywall (ancho de la **pieza terminada**, distinto del ancho
   /// del fleje de entrada que ya vive en `product_boms.input_width_mm`).
   widthMm        Decimal?      @map("width_mm") @db.Decimal(8, 2)
-  /// D-118: largo de la **pieza terminada** de Drywall, dato de catálogo. En Metallic
-  /// Roofing el largo que discrimina plancha-de-catálogo de a-medida sigue viviendo en
-  /// `product_boms.piece_length_mm` (D-083): acá no se duplica.
+  /// D-118/D-122: largo de la **pieza terminada**. En Drywall es el largo del perfil; en
+  /// Metallic Roofing es el largo fijo de una plancha de catálogo (`PLANCHA`) y queda null
+  /// en una cobertura `A_MEDIDA`, donde el largo lo trae cada línea del pedido (D-083).
+  /// Vivía en `product_boms.piece_length_mm` hasta D-122.
   lengthMm       Decimal?      @map("length_mm") @db.Decimal(8, 2)
   /// D-118: peso declarado de la pieza terminada de Drywall (no calculado): la sección de
-  /// un perfil no es un prisma simple, así que una fórmula por geometría mentiría. Distinto
-  /// de `product_boms.kg_per_piece`, que es el kilo de **fleje** que la pieza consume.
+  /// un perfil no es un prisma simple, así que una fórmula por geometría mentiría.
+  ///
+  /// D-139: es **también** los kilos de fleje que la pieza consume, que hasta D-122 vivían
+  /// aparte en `product_boms.kg_per_piece`. Eran dos números para la misma cantidad
+  /// física: rolar un fleje en un perfil no le saca material, y el despunte se reporta
+  /// aparte.
   pieceWeightKg  Decimal?      @map("piece_weight_kg") @db.Decimal(12, 3)
   /// D-127: subtipo de cobertura. Obligatorio en Metallic Roofing, null en el resto. Es lo
   /// que decide la rama de la confirmación: `A_MEDIDA` reserva kilos de bobina y va a la
@@ -579,6 +622,11 @@ model Customer {
   email      String?  @db.VarChar(160)
   phone      String?  @db.VarChar(30)
   creditDays Int      @default(0) @map("credit_days")
+  /// D-137: lo creó una importación con el padrón de SUNAT caído, así que su nombre es el
+  /// que traía el archivo y le falta todo lo demás. Es un flag y no una nota porque la
+  /// pregunta "cuáles hay que completar" se hace semanas después, cuando ya nadie recuerda
+  /// qué import los creó.
+  needsReview Boolean  @default(false) @map("needs_review")
   /// D-077: cliente sembrado por el sistema ("PÚBLICO EN GENERAL"). No se edita ni se
   /// da de baja desde ninguna ruta; existe para que la boleta sin cliente identificado
   /// sea una venta normal y no un caso especial en todo el ciclo.
@@ -612,6 +660,8 @@ model Supplier {
   creditDays             Int      @default(0) @map("credit_days")
   providesCuttingService Boolean  @default(false) @map("provides_cutting_service")
   coilSeq                Int      @default(0) @map("coil_seq")
+  /// D-137: igual que en `Customer`. Lo creó una importación sin poder consultar el padrón.
+  needsReview            Boolean  @default(false) @map("needs_review")
   isActive               Boolean  @default(true) @map("is_active")
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -665,6 +715,11 @@ model ImportBatch {
   fileKey     String            @map("file_key") @db.VarChar(300)
   fileName    String            @map("file_name") @db.VarChar(200)
   status      ImportBatchStatus @default(PARSED)
+  /// D-137: lo que el usuario elige para **todo** el archivo y no viene en ninguna fila
+  /// (la línea de negocio de las bobinas, el modo REPLAY/AJUSTE). Va acá y no repetido en
+  /// cada fila porque es una decisión del import, no un dato del Excel; y va como JSON
+  /// porque cada entidad tiene opciones propias y no comparten forma.
+  options     Json?
   createdById String            @map("created_by_id") @db.Uuid
   createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -810,8 +865,13 @@ model Purchase {
   payments SupplierPayment[]
   coils    Coil[]
 
-  /// Un mismo comprobante no se registra dos veces para el mismo proveedor.
-  @@unique([supplierId, docType, series, number])
+  /// Un mismo comprobante no se registra dos veces para el mismo proveedor, contando
+  /// solo las compras **vivas** (D-132). La unicidad es **parcial**
+  /// (`WHERE status <> 'CANCELLED'`, índice creado en la migración): una compra anulada
+  /// libera su número para que la corregida se pueda registrar con el mismo que dice el
+  /// papel del proveedor. Prisma no sabe expresar un índice parcial, así que en el modelo
+  /// queda solo el índice común de búsqueda.
+  @@index([supplierId, docType, series, number])
   @@index([businessLineId, issueDate])
   @@index([supplierId, status])
   @@index([relatedPurchaseId])
@@ -1088,14 +1148,6 @@ model ProductBom {
   /// monta la bobina que haya y su ancho real es el que entra al kilo teórico (D-047), así
   /// que fijarlo en la receta solo dejaría fuera rollos válidos.
   inputWidthMm     Decimal?       @map("input_width_mm") @db.Decimal(8, 2)
-  /// Largo de una pieza terminada, en mm. Solo alimenta el cálculo sugerido de `kgPerPiece`.
-  /// **Solo DRYWALL**: en coberturas a medida el largo lo pone el pedido (D-083), y en una
-  /// plancha de catálogo vive en el propio SKU.
-  pieceLengthMm    Decimal?       @map("piece_length_mm") @db.Decimal(8, 2)
-  /// **Solo DRYWALL**. El kilo teórico de una cobertura no es constante: sale del ancho y
-  /// el espesor de la bobina montada por el largo reportado (D-047), así que no hay nada
-  /// que guardar en el maestro.
-  kgPerPiece       Decimal?       @map("kg_per_piece") @db.Decimal(12, 3)
   isActive         Boolean        @default(true) @map("is_active")
   createdById      String         @map("created_by_id") @db.Uuid
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -1122,8 +1174,11 @@ model ProductionOrder {
   businessLine    BusinessLine          @relation(fields: [businessLineId], references: [id])
   productId       String                @map("product_id") @db.Uuid
   product         Product               @relation(fields: [productId], references: [id])
-  bomId           String                @map("bom_id") @db.Uuid
-  bom             ProductBom            @relation(fields: [bomId], references: [id])
+  /// D-122: null en una OP de **coberturas**, que desde entonces nace del pedido y del
+  /// producto y no de una receta. Las de drywall siguen naciendo de la suya, que es lo que
+  /// dice qué fleje consumen.
+  bomId           String?               @map("bom_id") @db.Uuid
+  bom             ProductBom?           @relation(fields: [bomId], references: [id])
   /// D-087: qué línea de transformación es. `DRYWALL` consume flejes y reporta piezas;
   /// `ROOFING` consume bobina y reporta largos. El correlativo, los estados, el ledger de
   /// reservas y la auditoría son los mismos para las dos.
@@ -1364,6 +1419,11 @@ model SalesOrder {
   customerId           String           @map("customer_id") @db.Uuid
   customer             Customer         @relation(fields: [customerId], references: [id])
   status               SalesOrderStatus @default(CONFIRMED)
+  /// D-141: quién creó el pedido. `IMPORTED` es el que nace de un comprobante ya emitido
+  /// afuera; `CREATED_HERE`, todo el resto. Mismo corte que `fiscal_documents.origin`
+  /// (D-105) y por el mismo motivo: el **estado** dice en qué punto del ciclo está el
+  /// pedido, el **origen** dice si ese ciclo ocurrió acá.
+  origin               SalesOrderOrigin @default(CREATED_HERE)
   issueDate            DateTime         @map("issue_date") @db.Date
   subtotalPen          Decimal          @map("subtotal_pen") @db.Decimal(18, 4)
   igvPen               Decimal          @map("igv_pen") @db.Decimal(18, 4)
@@ -1431,6 +1491,38 @@ model SalesOrderItem {
   @@unique([salesOrderId, lineNumber])
   @@index([salesOrderId])
   @@map("sales_order_items")
+}
+
+/// Agregado de materia prima compatible (D-134): "bobina de tal línea, tal color y tal
+/// espesor (± tolerancia)".
+///
+/// No es un ítem de inventario. No tiene saldo ni movimientos: el saldo lo ponen las
+/// bobinas que lo cumplen, y por eso su disponible es una **suma** y no una lectura de
+/// `inventory_balances`. Existe para que una reserva de materia prima tenga a qué apuntar
+/// sin comprometer un rollo físico que todavía no se sabe cuál va a ser — al vendedor le
+/// consta el color y el espesor semanas antes de que planta elija el rollo (D-086).
+///
+/// La tolerancia **no** se guarda acá: es configuración vigente
+/// (`ROOFING_THICKNESS_TOLERANCE_MM`, D-086) y se aplica al comparar, así que cambiarla
+/// cambia qué bobinas cumplen cada spec sin reescribir ninguna fila.
+///
+/// La unicidad de la combinación la sostiene un índice con `COALESCE` sobre el color
+/// creado en la migración: sin color hay **una** spec por línea y espesor, y un `@@unique`
+/// no bastaría porque Postgres trata los NULL como distintos.
+model RawMaterialSpec {
+  id             String       @id @default(uuid()) @db.Uuid
+  businessLineId String       @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine @relation(fields: [businessLineId], references: [id])
+  /// Igualdad estricta, `null` incluido: un producto sin color solo se rola con bobina sin
+  /// color. Es el mismo criterio de `roofingCoilWhere` (D-086) y no puede ser otro.
+  colorId        String?      @map("color_id") @db.Uuid
+  color          Color?       @relation(fields: [colorId], references: [id])
+  /// Espesor de entrada que pide la receta, en mm.
+  thicknessMm    Decimal      @map("thickness_mm") @db.Decimal(6, 2)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([businessLineId, thicknessMm])
+  @@map("raw_material_specs")
 }
 
 /// Ledger de reservas (D-054, D-066). **Fuera del kardex a propósito**: una reserva es una
@@ -1871,9 +1963,10 @@ model Color {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  products      Product[]
-  coils         Coil[]
-  purchaseItems PurchaseItem[]
+  products         Product[]
+  coils            Coil[]
+  purchaseItems    PurchaseItem[]
+  rawMaterialSpecs RawMaterialSpec[]
 
   @@map("colors")
 }

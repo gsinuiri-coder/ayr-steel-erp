@@ -6,18 +6,16 @@ import {
   live,
   movementsOf,
   postExpectingError,
-  putExpectingError,
   today,
   type CoilDto,
   type ProductionOrderDto,
 } from '../helpers/production';
-import { availabilityOf, createCustomer } from '../helpers/sales';
+import { createCustomer, stockPanel } from '../helpers/sales';
 import { createInvoice, dispatchOrder } from '../helpers/invoicing';
 import {
   buyRoofingCoil,
   coilOptions,
   createColor,
-  createRoofingProduct,
   metersOf,
   pieces,
   purgeRoofingTrail,
@@ -164,8 +162,6 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const { quotation, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '60',
         rows,
       });
       trail.quotationIds = [quotation.id];
@@ -269,8 +265,6 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const { quotation, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '60',
         rows,
       });
       trail.quotationIds = [quotation.id];
@@ -303,15 +297,24 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1000.000');
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('0.000');
 
-      // Y la promesa vuelve a la bobina: la reserva sobre el producto se libera y la de
-      // materia prima recupera los kilos. Sin esto, el material volvería al almacén sin
-      // nada que lo proteja mientras el pedido lo sigue prometiendo.
+      // Y la promesa vuelve a la materia prima: la reserva sobre el producto se libera y la
+      // del agregado recupera los kilos. Sin esto, el material volvería al almacén sin nada
+      // que lo proteja mientras el pedido lo sigue prometiendo.
       const after = await reservationsOf(api, order.id);
-      const onCoil = after.find((r) => r.itemType === 'COIL')!;
+      const onRawMaterial = after.find((r) => r.itemType === 'RAW_MATERIAL')!;
       const onProduct = after.find((r) => r.itemType === 'PRODUCT');
-      expect(onCoil).toMatchObject({ qty: '60.000', status: 'ACTIVE' });
+      expect(onRawMaterial).toMatchObject({ qty: '48.000', status: 'ACTIVE' });
       expect(onProduct?.status).toBe('RELEASED');
-      expect((await availabilityOf(api, 'COIL', scenario.coil.id)).reservedQty).toBe('60.000');
+      // La reserva restaurada es del agregado, no de esta bobina puntual — pero el panel de
+      // stock sigue en cero: la bobina compatible sigue **montada** en la OP (revertir el
+      // reporte deshace el kardex, no la custodia), así que el agregado no tiene ninguna
+      // bobina libre de la que sacar los 48 kg, más allá de que la reserva ya los pida de
+      // nuevo. Libre recién queda cuando se anula la OP (caso "anular la OP...", más abajo).
+      const panelAfterRevert = await stockPanel(api, {
+        businessLine: 'metallic-roofing',
+        productIds: [scenario.product.id],
+      });
+      expect(panelAfterRevert.products[0]?.rawMaterialAvailableKg).toBe('0.000');
 
       // El kardex quedó con los pares movimiento + reversa que se anulan entre sí.
       expect(live(await movementsOf(api, 'PRODUCT', scenario.product.id))).toHaveLength(0);
@@ -341,8 +344,6 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const { quotation, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '40',
         rows,
       });
       trail.quotationIds = [quotation.id];
@@ -432,8 +433,6 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const { quotation, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '40',
         rows,
       });
       trail.quotationIds = [quotation.id];
@@ -491,8 +490,6 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const { quotation, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '30',
         rows,
       });
       trail.quotationIds = [quotation.id];
@@ -516,20 +513,19 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       expect(
         (await coilOptions(api, scenario.product.id, reservation.id)).map((o) => o.coilId),
       ).toContain(scenario.coil.id);
-      // Y la reserva del pedido sigue viva, protegiéndola.
+      // Y la reserva del pedido sigue viva, protegiéndola — del agregado, no de esta bobina
+      // puntual (D-134): 3 m × 2 piezas = 6 m × 4 kg/m = 24 kg.
       expect((await reservationsOf(api, order.id))[0]).toMatchObject({
-        itemType: 'COIL',
+        itemType: 'RAW_MATERIAL',
         status: 'ACTIVE',
-        qty: '30.000',
+        qty: '24.000',
       });
     } finally {
       await purgeRoofingTrail(api, trail);
     }
   });
 
-  test('sin pedido no hay producción de coberturas, y la receta no se puede llenar de más (RF-31, D-087)', async () => {
-    const supplier = await createCuttingSupplier(api);
-    const color = await createColor(api);
+  test('sin pedido no hay producción de coberturas, y una cobertura ya no admite receta (RF-31, D-122)', async () => {
     const scenario = await setupRoofingScenario(api, { weightKg: '400' });
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
       supplierId: scenario.supplier.id,
@@ -539,7 +535,6 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       coilIds: [scenario.coil.id],
       purchaseIds: [scenario.purchaseId],
     };
-    const extraProductIds: string[] = [];
 
     try {
       // RF-31: la ruta de drywall rechaza un producto de coberturas.
@@ -553,43 +548,21 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const sinReserva = await postExpectingError(api, '/api/production/roofing', {});
       expect(sinReserva.status).toBe(400);
 
-      // D-087: una receta de cobertura no fija el ancho ni el kilo — la geometría la trae
-      // el rollo que se monte. Mandarlos significa creer lo contrario, y se rechaza.
-      const conAncho = await api.put(`/api/production/boms/${scenario.product.id}`, {
-        data: {
-          kind: 'ROOFING',
-          finishId: scenario.finish.id,
-          inputThicknessMm: '0.50',
-          inputWidthMm: '1000',
-        },
+      // D-122: desde entonces una cobertura no lleva receta —su acabado, su espesor, su
+      // ancho y su color viven en el propio SKU—, así que `PUT /production/boms/:id` la
+      // rechaza aunque los campos sean válidos, antes de mirar ninguno de ellos. El rechazo
+      // sale del `superRefine` del schema: el detalle va en `errors`, no en `message` (es
+      // Zod quien corta, mismo criterio que el resto de la suite).
+      const conReceta = await api.put(`/api/production/boms/${scenario.product.id}`, {
+        data: { kind: 'ROOFING', finishId: scenario.finish.id, inputThicknessMm: '0.50' },
       });
-      expect(conAncho.status()).toBe(400);
-      // El detalle por campo va en `errors`, no en `message`: es Zod quien corta.
-      const detail = (await conAncho.json()) as { errors?: Record<string, string[]> };
-      expect(JSON.stringify(detail.errors ?? {})).toMatch(/ancho/i);
-
-      // D-083: la unidad del producto separa los dos tipos. Una receta **sin** largo es una
-      // cobertura a medida y exige `MTR`; pedirla sobre un producto en piezas se rechaza,
-      // porque en un saldo de piezas dos planchas de largo distinto valdrían lo mismo.
-      const enPiezas = await createRoofingProduct(api, {
-        finishId: scenario.finish.id,
-        colorId: color.id,
-        pieceLengthMm: '3000',
-      });
-      extraProductIds.push(enPiezas.product.id);
-      const unidadMal = await putExpectingError(
-        api,
-        `/api/production/boms/${enPiezas.product.id}`,
-        { kind: 'ROOFING', finishId: scenario.finish.id, inputThicknessMm: '0.50' },
+      expect(conReceta.status()).toBe(400);
+      const detail = (await conReceta.json()) as { errors?: Record<string, string[]> };
+      expect(JSON.stringify(detail.errors ?? {})).toContain(
+        'Una cobertura no lleva receta desde D-122',
       );
-      expect(unidadMal.status).toBe(400);
-      expect(unidadMal.message).toMatch(/metros lineales/i);
     } finally {
-      await purgeRoofingTrail(api, {
-        ...trail,
-        productIds: [...(trail.productIds ?? []), ...extraProductIds],
-      });
-      await purgeRoofingTrail(api, { supplierId: supplier.id, colorId: color.id });
+      await purgeRoofingTrail(api, trail);
     }
   });
 });

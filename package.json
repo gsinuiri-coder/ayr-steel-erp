@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "lint": "turbo run lint",
+    "lint": "turbo run lint && eslint e2e",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml,css}\"",
@@ -30,16 +30,20 @@
     "db:demo": "node scripts/db-demo.mjs",
     "e2e:prod": "node scripts/e2e-prod.mjs",
     "prod:purge-e2e": "node scripts/prod-e2e-purge.mjs",
+    "prod:purge-imported-sales": "node scripts/prod-purge-imported-sales.mjs",
     "db:reset-dev": "node scripts/db-reset-dev.mjs",
     "env:demo": "node scripts/env-demo.mjs",
     "dev:demo": "node scripts/dev-demo.mjs",
     "smoke:prod": "node scripts/smoke-prod.mjs"
   },
   "devDependencies": {
+    "@ayr/eslint-config": "workspace:*",
     "@playwright/test": "1.62.1",
     "prettier": "3.9.6",
     "turbo": "2.10.12",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "eslint": "9.39.5",
+    "typescript-eslint": "8.69.0"
   },
   "pnpm": {
     "overrides": {

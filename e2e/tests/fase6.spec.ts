@@ -4,14 +4,18 @@ import {
   balanceOf,
   live,
   movementsOf,
-  optionalBalanceOf,
   postExpectingError,
   today,
   uniqueDocumentNumber,
   type ProductionOrderDto,
   type PurchaseDto,
 } from '../helpers/production';
-import { availabilityOf, createCustomer, createSellableProduct } from '../helpers/sales';
+import {
+  availabilityOf,
+  createCustomer,
+  createSellableProduct,
+  stockPanel,
+} from '../helpers/sales';
 import {
   UPVC_LINE,
   coilOptions,
@@ -80,8 +84,6 @@ test.describe('Fase 6 — producción de coberturas', () => {
       const { quotation, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '100',
         rows,
         unitPricePen: '30',
       });
@@ -98,18 +100,29 @@ test.describe('Fase 6 — producción de coberturas', () => {
       expect(item.description).toContain('3 × 4.20 m');
       expect(item.description).toContain('2 × 6.00 m');
 
-      // Confirmar reservó **la bobina**: el producto terminado todavía no existe.
+      // D-134: confirmar reservó kilos del **agregado de materia prima** (línea + color +
+      // espesor), no una bobina concreta — la línea ya no elige el rollo, así que el
+      // producto terminado sigue sin existir hasta que planta rola. Los kilos son los
+      // teóricos de la geometría: 24.6 m × 4 kg/m = 98.400 kg.
       const afterConfirm = await reservationsOf(api, order.id);
       expect(afterConfirm).toHaveLength(1);
       expect(afterConfirm[0]).toMatchObject({
-        itemType: 'COIL',
-        itemId: scenario.coil.id,
-        qty: '100.000',
+        itemType: 'RAW_MATERIAL',
+        qty: '98.400',
         status: 'ACTIVE',
       });
-      const coilAfterConfirm = await availabilityOf(api, 'COIL', scenario.coil.id);
-      expect(coilAfterConfirm.reservedQty).toBe('100.000');
-      expect(coilAfterConfirm.availableQty).toBe('1900.000');
+      // El disponible del agregado ya descuenta lo prometido, aunque el físico de la bobina
+      // no se haya movido: 2 000 físicos − 98.400 prometidos = 1 901.600.
+      const panelAfterConfirm = await stockPanel(api, {
+        businessLine: 'metallic-roofing',
+        productIds: [scenario.product.id],
+      });
+      expect(panelAfterConfirm.products[0]).toMatchObject({
+        productId: scenario.product.id,
+        rawMaterialAvailableKg: '1901.600',
+      });
+      const coilAfterConfirm = await balanceOf(api, 'COIL', scenario.coil.id);
+      expect(coilAfterConfirm.qty).toBe('2000.000');
 
       // --- La OP nace del pedido y copia su plan de corte (D-084) ---
       const created = await roofingOrder(api, afterConfirm[0]!.id);
@@ -155,12 +168,13 @@ test.describe('Fase 6 — producción de coberturas', () => {
       // Valor conservado: la bobina entró a S/ 5/kg, así que 98.4 kg son S/ 492.
       expect(productAfterReport.avgCost).toBe('20.0000');
 
-      // **D-088, el corazón de la fase**: la promesa se trasladó. La reserva de bobina bajó
-      // por los kilos consumidos y nació una reserva sobre los metros fabricados.
-      const afterReport = await reservationsOf(api, created.id ? order.id : order.id);
-      const onCoil = afterReport.find((r) => r.itemType === 'COIL')!;
+      // **D-088, el corazón de la fase**: la promesa se trasladó. La reserva de materia
+      // prima se consumió por completo (reservó y gastó exactamente 98.400 kg, D-134) y
+      // nació una reserva sobre los metros fabricados.
+      const afterReport = await reservationsOf(api, order.id);
+      const onRawMaterial = afterReport.find((r) => r.itemType === 'RAW_MATERIAL')!;
       const onProduct = afterReport.find((r) => r.itemType === 'PRODUCT')!;
-      expect(onCoil.qty).toBe('1.600');
+      expect(onRawMaterial).toMatchObject({ qty: '0.000', status: 'CONSUMED' });
       expect(onProduct).toMatchObject({
         itemId: scenario.product.id,
         qty: '24.600',
@@ -227,8 +241,6 @@ test.describe('Fase 6 — producción de coberturas', () => {
       const { quotation, order } = await quoteAndOrder(api, {
         customerId: cliente.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '50',
         rows,
       });
       trail.quotationIds = [quotation.id];
@@ -276,7 +288,9 @@ test.describe('Fase 6 — producción de coberturas', () => {
       // hay otra libre. El pedido rival sigue sin poder nacer, que es lo que este test
       // protege; lo que se movió es el guardrail que lo frena.
       expect(error.message.toLowerCase()).toMatch(/disponible|bobina/);
-      expect(error.message).toContain(scenario.product.sku);
+      // D-134: el mensaje ya no nombra el SKU del producto (la línea a medida ya no reserva
+      // el producto, reserva el agregado): nombra el color y el espesor del agregado corto.
+      expect(error.message).toContain(scenario.color.name);
     } finally {
       await purgeRoofingTrail(api, trail);
     }
@@ -407,11 +421,12 @@ test.describe('Fase 6 — producción de coberturas', () => {
     }
   });
 
-  test('plancha de catálogo: largo fijo, se cuenta en piezas y rechaza otro largo (D-083)', async () => {
+  test('plancha de catálogo: se vende de stock y producirla contra el pedido no tiene ruta (D-140)', async () => {
     const scenario = await setupRoofingScenario(api, {
       weightKg: '1000',
       pieceLengthMm: '3000',
     });
+    const supplier = await createSupplier(api, { name: 'E2E Proveedor plancha de catálogo' });
     const customer = await createCustomer(api);
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
       supplierId: scenario.supplier.id,
@@ -420,12 +435,40 @@ test.describe('Fase 6 — producción de coberturas', () => {
       productIds: [scenario.product.id],
       coilIds: [scenario.coil.id],
       purchaseIds: [scenario.purchaseId],
-      productionOrderIds: [],
       orderIds: [],
       quotationIds: [],
     };
 
     try {
+      // D-127/D-134: una plancha de catálogo (`roofingKind = PLANCHA`) reserva **stock del
+      // propio producto**, no materia prima — así que primero hace falta stock, igual que
+      // la línea UPVC de más arriba (D-091). Sin él, confirmar fallaría por falta de
+      // disponible antes de llegar al punto que este caso prueba.
+      const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
+        supplierId: supplier.id,
+        businessLine: 'metallic-roofing',
+        type: 'FINISHED_GOOD',
+        docType: 'FACTURA',
+        series: 'F001',
+        number: uniqueDocumentNumber(),
+        issueDate: today(),
+        currency: 'PEN',
+        igvRate: '18',
+        paymentTerms: 'CONTADO',
+        items: [
+          {
+            productId: scenario.product.id,
+            description: 'Plancha de catálogo E2E',
+            qty: '10',
+            unit: 'NIU',
+            unitPrice: '50',
+          },
+        ],
+      });
+      trail.purchaseIds = [...(trail.purchaseIds ?? []), purchase.id];
+      await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
+      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('10.000');
+
       // Línea **simple**: se cotizan 4 planchas, sin detalle de largos.
       const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
         customerId: customer.id,
@@ -436,8 +479,6 @@ test.describe('Fase 6 — producción de coberturas', () => {
             productId: scenario.product.id,
             qty: '4',
             unitPricePen: '90',
-            reserveFromCoilId: scenario.coil.id,
-            reserveKg: '60',
           },
         ],
       });
@@ -449,42 +490,32 @@ test.describe('Fase 6 — producción de coberturas', () => {
       );
       trail.orderIds = [order.id];
 
+      // La reserva es sobre el **producto terminado**: el saldo que ya había, no un agregado.
       const reservation = (await reservationsOf(api, order.id))[0]!;
-      const op = await roofingOrder(api, reservation.id);
-      trail.productionOrderIds = [op.id];
-      // El plan se deriva del largo de la receta y de la cantidad pedida.
-      expect(op.items).toHaveLength(1);
-      expect(op.items?.[0]).toMatchObject({ lengthMm: '3000.00', qty: 4 });
+      expect(reservation).toMatchObject({ itemType: 'PRODUCT', itemId: scenario.product.id });
+      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('10.000');
 
-      await postJson<ProductionOrderDto>(api, `/api/production/roofing/${op.id}/coils`, {
-        coilId: scenario.coil.id,
+      // D-140 (resuelto por el dueño): una plancha de catálogo **nunca** se fabrica contra el
+      // pedido. Se produce a stock —`productId` + `targetPieces`, sin reserva— y el pedido
+      // espera ese saldo. Intentar colgarla de la reserva se rechaza nombrando la salida, en
+      // vez de dejar a planta adivinando qué le falta.
+      const rejected = await postExpectingError(api, '/api/production/roofing', {
+        reservationId: reservation.id,
       });
-
-      // Un largo distinto del de la receta la convertiría en otro producto dentro del
-      // mismo saldo: el API lo rechaza.
-      const error = await postExpectingError(api, `/api/production/roofing/${op.id}/report`, {
-        pieces: pieces([4, 1]),
-      });
-      expect(error.status).toBe(400);
-      expect(error.message).toContain('catálogo');
-
-      const reported = await postJson<ProductionOrderDto>(
-        api,
-        `/api/production/roofing/${op.id}/report`,
-        { pieces: pieces([3, 4]) },
+      expect(rejected.status).toBe(400);
+      expect(rejected.message).toContain(
+        'Esa línea del pedido se atiende con stock de producto terminado, no con producción',
       );
-      // Se cuenta en **piezas**, no en metros: la unidad del producto es NIU.
-      expect(reported.piecesReported).toBe(4);
-      expect(reported.metersReported).toBeNull();
-      const balance = await balanceOf(api, 'PRODUCT', scenario.product.id);
-      expect(balance.qty).toBe('4.000');
-      expect(balance.unit).toBe('NIU');
-      // 4 planchas de 3 m a 4 kg/m son 48 kg.
-      expect(reported.reports.find((r) => r.status === 'ACTIVE')?.theoreticalKg).toBe('48.000');
+      expect(rejected.message).toContain('producí una orden a stock desde planta');
+
+      // El rechazo no dejó nada a medias: ni OP, ni cambio en el saldo ni en la reserva.
+      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('10.000');
+      expect((await reservationsOf(api, order.id))[0]!.status).toBe('ACTIVE');
     } finally {
       await purgeRoofingTrail(api, trail);
-      const leftover = await optionalBalanceOf(api, 'PRODUCT', scenario.product.id);
-      expect(leftover?.qty ?? '0.000').toBe('0.000');
+      await api
+        .patch(`/api/suppliers/${supplier.id}`, { data: { isActive: false } })
+        .catch(() => undefined);
     }
   });
 });

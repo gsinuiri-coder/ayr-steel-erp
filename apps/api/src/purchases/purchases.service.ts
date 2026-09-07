@@ -48,6 +48,7 @@ import {
   type ReversePaymentInput,
   type SupplierPaymentDto,
   type SupplierStatementDto,
+  type UpdatePurchaseDocumentInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -256,10 +257,96 @@ export class PurchasesService {
       return await this.findOne(created.id);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('Ese comprobante ya está registrado para este proveedor');
+        // D-132: la unicidad cuenta solo las compras vivas, así que este conflicto es
+        // siempre contra una que no está anulada. Decirlo evita que alguien vuelva a
+        // inventar un sufijo creyendo que choca contra la que acaba de anular.
+        throw new ConflictException(
+          'Ese comprobante ya está registrado para este proveedor en una compra vigente',
+        );
       }
       throw err;
     }
+  }
+
+  /**
+   * Corregir la serie y el número del comprobante (D-132). No mueve nada: es el dato que
+   * identifica el papel del proveedor y no entra en ningún cálculo. Solo ADMINISTRADOR,
+   * y sigue sujeto a la unicidad entre compras vivas.
+   *
+   * Existe por el rastro que dejó el defecto que D-132 corrige: mientras la unicidad
+   * contaba las anuladas, re-registrar una compra corregida obligaba a inventarle un
+   * sufijo al número, y ese número inventado es el que después no cuadra con el
+   * proveedor. Sin esta ruta la única forma de arreglarlo sería anular y volver a
+   * registrar, que en una compra ya recibida arrastra kardex y bobinas por un dato que
+   * no tiene efectos.
+   */
+  async updateDocument(
+    actor: RequestUser,
+    id: string,
+    input: UpdatePurchaseDocumentInput,
+  ): Promise<PurchaseDto> {
+    const purchase = await this.prisma.purchase.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        supplierId: true,
+        docType: true,
+        series: true,
+        number: true,
+        status: true,
+      },
+    });
+    if (!purchase) throw new NotFoundException('Compra no encontrada');
+    if (purchase.status === PurchaseStatus.CANCELLED) {
+      throw new BadRequestException(
+        'La compra está anulada: su número ya no ocupa lugar y no hay nada que corregir',
+      );
+    }
+    if (purchase.series === input.series && purchase.number === input.number) {
+      return this.findOne(id);
+    }
+
+    const clash = await this.prisma.purchase.findFirst({
+      where: {
+        supplierId: purchase.supplierId,
+        docType: purchase.docType,
+        series: input.series,
+        number: input.number,
+        status: { not: PurchaseStatus.CANCELLED },
+        id: { not: id },
+      },
+      select: { id: true },
+    });
+    if (clash) {
+      throw new ConflictException(
+        'Ese comprobante ya está registrado para este proveedor en una compra vigente',
+      );
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.purchase.update({
+          where: { id },
+          data: { series: input.series, number: input.number },
+        });
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'purchases.update-document',
+          entity: 'purchases',
+          entityId: id,
+          before: { document: `${purchase.series}-${purchase.number}` },
+          after: { document: `${input.series}-${input.number}` },
+        });
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException(
+          'Ese comprobante ya está registrado para este proveedor en una compra vigente',
+        );
+      }
+      throw err;
+    }
+    return this.findOne(id);
   }
 
   /**

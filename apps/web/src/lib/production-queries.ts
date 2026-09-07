@@ -29,6 +29,6 @@ export function invalidateProduction(queryClient: QueryClient, orderId?: string)
   // el material reservable que ve el vendedor y el avance del pedido cambian con cada
   // operación de planta. La simetría con `invalidateSales` tiene que valer en los dos
   // sentidos, y estas dos claves faltaban.
-  void queryClient.invalidateQueries({ queryKey: ['reservable-coils'] });
+  void queryClient.invalidateQueries({ queryKey: ['stock-panel'] });
   void queryClient.invalidateQueries({ queryKey: ['order-progress'] });
 }

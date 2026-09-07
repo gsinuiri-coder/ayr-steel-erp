@@ -302,40 +302,54 @@ export interface OrderScenario {
 /**
  * Deja un pedido confirmado con reserva viva sobre una bobina, listo para despachar.
  *
- * El producto se vende en **KGM** y la línea reserva exactamente los kilos que vende: es
- * lo que hace que `qty`, `reserveQty` y la salida de kardex sean el mismo número, y que
- * una aserción sobre el saldo de la bobina no dependa de ninguna conversión.
+ * **D-134 cambió la base de este escenario.** Antes la línea reservaba una fracción
+ * elegida (`reserveFromCoilId`/`reserveKg`) de un producto comprado (`PURCHASED`) vendido
+ * por kilo: eso ya no existe para un producto que no es una cobertura a medida — un SKU
+ * `PURCHASED`/`KGM` de drywall reserva su **propio stock** (`PRODUCT`), no una bobina.
+ *
+ * Este escenario pasó a vender la bobina **entera** (`saleCoilId`, RF-73, D-116), que es la
+ * sustitución que corresponde: sigue siendo una reserva viva de tipo `COIL` sobre esta misma
+ * bobina, lista para despachar y facturar. La diferencia real es que ya no se puede reservar
+ * una fracción — `options.qty` desapareció porque la cantidad ya no la elige el llamador,
+ * la fija el saldo vivo de la bobina (D-116: "siempre el saldo completo, nunca una
+ * fracción"). Los tests que necesitaban vender **parte** de una bobina y dejar el resto
+ * libre ya no tienen un equivalente directo con esta fixture: para eso hace falta un
+ * escenario nuevo con un producto `A_MEDIDA` (D-134) o repensar el caso.
  */
 export async function setupOrderScenario(
   api: APIRequestContext,
-  options: { coilKg?: string; qty?: string; unitPricePen?: string } = {},
+  options: { coilKg?: string; unitPricePen?: string } = {},
 ): Promise<OrderScenario> {
   const customer = await createInvoiceableCustomer(api);
   const stock = await setupCoilStock(api, {
     lineCode: DISPATCH_LINE,
     weightKg: options.coilKg ?? '1000',
   });
-  const product = await createSellableProduct(api, {
-    lineCode: DISPATCH_LINE,
-    unit: 'KGM',
-    listPricePen: options.unitPricePen ?? '8.0000',
-  });
-  const qty = options.qty ?? '100';
   const order = await createDirectOrder(api, {
     customerId: customer.id,
     businessLine: DISPATCH_LINE,
     items: [
       {
-        productId: product.id,
-        qty,
-        description: 'E2E plancha vendida por kilo',
-        reserveFromCoilId: stock.coil.id,
-        reserveKg: qty,
+        saleCoilId: stock.coil.id,
+        qty: stock.coil.availableKg,
+        unitPricePen: options.unitPricePen ?? '8.0000',
       },
     ],
   });
   expect(order.status).toBe('CONFIRMED');
-  expect(order.reservations[0]).toMatchObject({ status: 'ACTIVE', itemId: stock.coil.id });
+  expect(order.reservations[0]).toMatchObject({
+    status: 'ACTIVE',
+    itemType: 'COIL',
+    itemId: stock.coil.id,
+  });
+
+  const item = order.items[0]!;
+  // El SKU `trading` de la bobina (D-037) lo resuelve el API; se relee para que el
+  // llamador tenga un `ProductDto` completo, igual que con `createSellableProduct`.
+  const product = await getJson<ProductDto & { listPricePen: string | null }>(
+    api,
+    `/api/catalog/${item.productId}`,
+  );
 
   return {
     customer,
@@ -345,7 +359,7 @@ export async function setupOrderScenario(
     coil: stock.coil,
     product,
     order,
-    item: order.items[0]!,
+    item,
   };
 }
 

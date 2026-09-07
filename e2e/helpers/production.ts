@@ -64,6 +64,11 @@ export interface ProductDto {
   businessLineId: string;
   unit: string;
   colorId?: string | null;
+  /** D-122: acabado del SKU (obligatorio en Metallic Roofing); de él sale la densidad. */
+  finishId?: string | null;
+  finishCode?: string | null;
+  finishName?: string | null;
+  densityFactor?: string | null;
   /** D-118 (Fase 7e): campos estructurados del SKU. Null salvo en la línea que los exige. */
   thicknessMm?: string | null;
   widthMm?: string | null;
@@ -75,11 +80,12 @@ export interface ProductDto {
 export interface ProductBomDto {
   id: string;
   productId: string;
-  /** D-087: `DRYWALL` o `ROOFING`. Las tres de abajo son null en una receta de cobertura. */
+  /** D-122: desde entonces, solo `DRYWALL` — una cobertura ya no lleva receta. */
   kind: string;
+  /** D-139: sale de `products.pieceWeightKg`, no de la geometría del fleje. */
   kgPerPiece: string | null;
-  suggestedKgPerPiece: string | null;
   inputWidthMm: string | null;
+  /** D-139: sale de `products.lengthMm`. */
   pieceLengthMm: string | null;
   inputThicknessMm: string;
 }
@@ -353,8 +359,15 @@ export async function createCatalogProduct(
     /** D-118: campos estructurados de la pieza terminada; con overrides propios si hacen falta. */
     widthMm?: string;
     lengthMm?: string;
+    /**
+     * D-139: kilos que consume cada pieza terminada (drywall). El default `'6'` sirve para
+     * cualquier test al que no le importe el número; `''` (cadena vacía) lo deja `null` a
+     * propósito — es lo que exige el caso "sin peso por pieza no hay receta" (D-139).
+     */
     pieceWeightKg?: string;
     thicknessMm?: string;
+    /** D-122: acabado del SKU. Obligatorio en Metallic Roofing; de él sale la densidad. */
+    finishId?: string;
     /** D-127: subtipo de cobertura. Sin él se deduce de la unidad (ver `roofingKindFor`). */
     roofingKind?: 'PLANCHA' | 'A_MEDIDA';
   } = {},
@@ -363,9 +376,9 @@ export async function createCatalogProduct(
   const lineId = await businessLineId(api, lineCode);
   const unit = options.unit ?? 'NIU';
   // D-118 (Fase 7e): Drywall exige ancho/largo/peso de la pieza terminada y Metallic
-  // Roofing exige espesor/ancho del SKU. Sin esto `POST /catalog` rechaza el alta con
-  // "El ancho de la pieza terminada es obligatorio en Drywall" (u homólogo). El resto de
-  // líneas no los usa, así que no se manda nada si `lineCode` no es una de las dos.
+  // Roofing exige espesor/ancho/acabado del SKU (D-122). Sin esto `POST /catalog` rechaza
+  // el alta con "El ancho de la pieza terminada es obligatorio en Drywall" (u homólogo). El
+  // resto de líneas no los usa, así que no se manda nada si `lineCode` no es una de las dos.
   const structured =
     lineCode === LINE
       ? {
@@ -377,6 +390,7 @@ export async function createCatalogProduct(
         ? {
             thicknessMm: options.thicknessMm ?? '0.50',
             widthMm: options.widthMm ?? '1000',
+            ...(options.finishId === undefined ? {} : { finishId: options.finishId }),
             ...roofingKindFields(unit, options.roofingKind, options.lengthMm),
           }
         : {};
@@ -411,7 +425,13 @@ export function roofingKindFields(
   return { roofingKind: kind, lengthMm: lengthMm ?? '3000' };
 }
 
-/** Receta del producto (D-059). Sin `kgPerPiece` el API lo deriva de la geometría. */
+/**
+ * Receta de drywall (D-059). Desde D-122/D-139 solo describe el fleje de entrada (acabado,
+ * espesor, ancho): el largo de la pieza y sus kilos ya no viven acá, viven en el propio SKU
+ * (`products.lengthMm`/`products.pieceWeightKg`, D-118/D-139) y `kgPerPiece` en el DTO los
+ * lee de ahí. El producto **necesita `pieceWeightKg` cargado antes** de poder tener receta,
+ * o el API lo rechaza (D-139).
+ */
 export async function upsertBom(
   api: APIRequestContext,
   productId: string,
@@ -419,16 +439,12 @@ export async function upsertBom(
     finishId: string;
     inputThicknessMm?: string;
     inputWidthMm?: string;
-    pieceLengthMm?: string;
-    kgPerPiece?: string;
   },
 ): Promise<ProductBomDto> {
   return putJson<ProductBomDto>(api, `/api/production/boms/${productId}`, {
     finishId: input.finishId,
     inputThicknessMm: input.inputThicknessMm ?? '0.50',
     inputWidthMm: input.inputWidthMm ?? '600',
-    pieceLengthMm: input.pieceLengthMm ?? '3000',
-    ...(input.kgPerPiece === undefined ? {} : { kgPerPiece: input.kgPerPiece }),
   });
 }
 
@@ -519,12 +535,10 @@ export async function setupScenario(
   }
   expect(strips[0]).toMatchObject({ kind: 'STRIP', widthMm: '600.00', availableKg: '2400.000' });
 
-  // Producto terminado: piezas (NIU), fabricado, línea drywall (D-055).
-  const product = await createCatalogProduct(api);
-  const bom = await upsertBom(api, product.id, {
-    finishId: finish.id,
-    kgPerPiece: KG_PER_PIECE,
-  });
+  // Producto terminado: piezas (NIU), fabricado, línea drywall (D-055). D-139: los kilos
+  // por pieza se cargan en el propio SKU, no en la receta.
+  const product = await createCatalogProduct(api, { pieceWeightKg: KG_PER_PIECE });
+  const bom = await upsertBom(api, product.id, { finishId: finish.id });
   expect(bom.kgPerPiece).toBe(KG_PER_PIECE);
 
   return {

@@ -15,6 +15,7 @@ import {
   INVENTORY_ITEM_TYPES,
   QUOTATION_STATUSES,
   RESERVATION_STATUSES,
+  SALES_ORDER_ORIGINS,
   SALES_ORDER_STATUSES,
 } from '../enums';
 import { reasonSchema } from './coil';
@@ -172,13 +173,11 @@ export type ReleaseReservationInput = z.infer<typeof releaseReservationSchema>;
 /**
  * Una línea de cotización o de pedido.
  *
- * `reserveFromCoilId`/`reserveKg` declaran **qué va a reservar** la confirmación cuando
- * el producto se fabrica contra el pedido (coberturas): la reserva cae sobre los kilos de
- * esa bobina, no sobre un producto terminado que todavía no existe. Sin ellos, la reserva
- * es sobre el stock del propio producto, en su unidad de venta (perfiles, trading).
- *
- * Declararlo al cotizar y materializarlo al confirmar es lo que hace que "cotizar no
- * reserva" (D-054) siga siendo cierto sin perder qué material se prometió.
+ * **La línea no dice qué reservar** (D-134). Lo decide el producto: una cobertura a medida
+ * promete kilos del agregado de materia prima compatible (línea + color + espesor ±
+ * tolerancia), una bobina completa se promete a sí misma y todo lo demás promete su propio
+ * stock. El campo `reserveFromCoilId` existió hasta D-134 y le pedía al vendedor que
+ * eligiera el rollo físico: una decisión que es de planta y que se toma semanas después.
  */
 export const salesItemInputSchema = z.object({
   /**
@@ -195,16 +194,14 @@ export const salesItemInputSchema = z.object({
    */
   unitPricePen: priceSchema.optional(),
   description: z.string().trim().max(240).optional(),
-  reserveFromCoilId: z.string().uuid().optional(),
-  reserveKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   /**
    * D-116 (Fase 7e): venta de una bobina completa (RF-73), virgen o con saldo parcial. El
    * producto (el SKU `trading` de D-037), la cantidad y la reserva se resuelven en el API a
    * partir del saldo **vivo** de esta bobina — nunca de lo que mande el formulario — porque
    * la regla del dueño es "siempre el saldo completo, nunca una fracción". `qty` viaja igual
    * en el input (el web la llena con el disponible que acaba de leer) pero el API la
-   * recalcula; no se combina con `reserveFromCoilId`/`reserveKg`, que son la reserva
-   * **parcial** de materia prima para producir contra el pedido.
+   * recalcula. No se combina con los subítems de largo: vender el rollo tal cual y
+   * fabricar a medida son dos líneas distintas.
    */
   saleCoilId: z.string().uuid().optional(),
   /**
@@ -236,27 +233,10 @@ const salesItemsSchema = z
           });
         }
       }
-      // Los dos campos de la reserva de materia prima van juntos o no van: con la bobina
-      // sin kilos el API no sabría cuánto prometer, y con kilos sin bobina no sabría de
-      // dónde. Se valida acá para que el web lo diga antes de mandar.
-      if ((item.reserveFromCoilId === undefined) !== (item.reserveKg === undefined)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [i, 'reserveKg'],
-          message: 'Para reservar materia prima hacen falta la bobina y los kilos',
-        });
-      }
       // D-116: una línea vende un producto del catálogo O una bobina completa, nunca las
       // dos cosas ni ninguna — sin producto el API no sabría qué facturar y con las dos
       // reservas a la vez no sabría cuál manda.
       if (item.saleCoilId !== undefined) {
-        if (item.reserveFromCoilId !== undefined || item.reserveKg !== undefined) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [i, 'saleCoilId'],
-            message: 'Vender una bobina completa no se combina con reservar materia prima',
-          });
-        }
         if (item.pieces !== undefined) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -493,6 +473,15 @@ export const salesOrderSchema = z.object({
   /** D-119: líneas de negocio distintas de sus ítems — puede tener más de una. */
   businessLines: z.array(z.enum(BUSINESS_LINES)),
   status: z.enum(SALES_ORDER_STATUSES),
+  /** D-141: `IMPORTED` cuando el pedido nació de un comprobante ya emitido afuera. */
+  origin: z.enum(SALES_ORDER_ORIGINS),
+  /**
+   * D-141: el comprobante importado del que nació este pedido, y su número. `null` en todo
+   * pedido creado en el ERP. Es la mitad "pedido → documento" del enlace bidireccional; la
+   * otra la sostiene `fiscal_documents.sales_order_id`, que ya existía.
+   */
+  importedDocumentId: z.string().uuid().nullable(),
+  importedDocumentNumber: z.string().nullable(),
   issueDate: z.string(),
   subtotalPen: z.string(),
   igvPen: z.string(),
@@ -517,7 +506,16 @@ export const salesOrderListItemSchema = salesOrderSchema
   // cuenta reservas activas (`activeReservations`) para no pagar ese costo por fila. La
   // cola en sí (`GET /sales/orders/queue`) es la vista barata para eso.
   // D-119: `businessLines` sale de `items`, que el listado tampoco carga (mismo motivo).
-  .omit({ items: true, reservations: true, queueStatus: true, businessLines: true })
+  // D-141: el número del comprobante importado exige un join más por fila y nadie lo
+  // muestra en la lista; `origin` sí queda, que es una columna y es lo que se filtra.
+  .omit({
+    items: true,
+    reservations: true,
+    queueStatus: true,
+    businessLines: true,
+    importedDocumentId: true,
+    importedDocumentNumber: true,
+  })
   .extend({
     itemCount: z.number().int(),
     activeReservations: z.number().int(),
@@ -534,37 +532,87 @@ export const salesOrderQuerySchema = paginationQuerySchema.extend({
 export type SalesOrderQuery = z.infer<typeof salesOrderQuerySchema>;
 
 // --------------------------------------------------------------------------
-// Material reservable (D-066)
+// Panel de stock en vivo (D-136)
 // --------------------------------------------------------------------------
 
 /**
- * Una bobina candidata a respaldar una línea de cotización, con su disponible ya
- * descontado de lo reservado.
+ * Lo que el vendedor tiene disponible mientras arma la cotización.
+ *
+ * Reemplaza al selector "Reserva desde bobina" que D-134 eliminó, y no es lo mismo con otra
+ * forma: aquel pedía **elegir un rollo**, este solo **informa**. La diferencia importa
+ * porque la decisión que el selector pedía —cuál rollo— es de planta y se toma semanas
+ * después; la que el vendedor sí tiene que tomar —¿alcanza el material?— necesita ver
+ * cuánto hay, no cuál es.
  *
  * Existe como ruta propia de `sales` y no como un filtro de `/coils` porque **VENDEDOR no
  * tiene acceso a `/coils`**: esa ruta expone `unitCostPerKg`, `totalCost` y el proveedor,
- * que es justo lo que §3.4 le oculta al vendedor. Acá no viaja ni un campo de costo — solo
- * lo que hace falta para elegir de qué rollo sale el material que se promete.
+ * que es justo lo que §3.4 le oculta al vendedor. Acá no viaja ni un campo de costo.
  */
-export const reservableCoilSchema = z.object({
-  coilId: z.string().uuid(),
-  code: z.string(),
-  /** Acabado + espesor (RF-14): con qué material se está comprometiendo la venta. */
-  typeKey: z.string(),
-  finishCode: z.string(),
-  widthMm: z.string(),
+export const rawMaterialStockSchema = z.object({
+  colorId: z.string().uuid().nullable(),
+  colorName: z.string().nullable(),
+  colorHex: z.string().nullable(),
   thicknessMm: z.string(),
-  /** Saldo físico del kardex. */
-  qty: z.string(),
-  reservedQty: z.string(),
-  availableQty: z.string(),
+  /** Bobinas abiertas del grupo, sin contar las que una OP tiene montadas (D-060). */
+  coils: z.number().int(),
+  physicalKg: z.string(),
+  /**
+   * Lo comprometido que pesa sobre este grupo: las ventas de bobina entera sobre estos
+   * rollos **más** las promesas genéricas de todo agregado compatible.
+   *
+   * Dos grupos de espesor vecino pueden compartir una misma promesa —la tolerancia los
+   * alcanza a los dos— así que la suma de esta columna puede pasarse de lo realmente
+   * prometido. Es a propósito: un panel que guía una promesa tiene que errar mostrando
+   * **menos** disponible, nunca más.
+   */
+  reservedKg: z.string(),
+  availableKg: z.string(),
+  /**
+   * Metros lineales que darían esos kilos, sumando rollo por rollo con su propio ancho y
+   * espesor: `kg / (ancho × espesor × densidad del acabado)`. Es una referencia de venta,
+   * no una promesa: el largo real depende del rollo que planta monte.
+   */
+  theoreticalMeters: z.string(),
 });
-export type ReservableCoilDto = z.infer<typeof reservableCoilSchema>;
+export type RawMaterialStockDto = z.infer<typeof rawMaterialStockSchema>;
 
-export const reservableCoilQuerySchema = z.object({
-  businessLine: z.enum(BUSINESS_LINES),
+/** Disponible de un producto del catálogo, en su unidad de venta. */
+export const productStockSchema = z.object({
+  productId: z.string().uuid(),
+  sku: z.string(),
+  name: z.string(),
+  unit: z.string(),
+  availableQty: z.string(),
+  /**
+   * D-134: solo en una cobertura **a medida**, que no se atiende con stock del producto
+   * sino con materia prima. Es el disponible del agregado que su línea va a prometer, ya
+   * con la tolerancia de espesor aplicada — el mismo número contra el que la confirmación
+   * va a decir que sí o que no.
+   */
+  rawMaterialAvailableKg: z.string().nullable(),
+  rawMaterialLabel: z.string().nullable(),
+  /** Kilos de bobina por metro lineal del producto. Null si no se fabrica a medida. */
+  kgPerMeter: z.string().nullable(),
 });
-export type ReservableCoilQuery = z.infer<typeof reservableCoilQuerySchema>;
+export type ProductStockDto = z.infer<typeof productStockSchema>;
+
+export const stockPanelSchema = z.object({
+  rawMaterial: z.array(rawMaterialStockSchema),
+  products: z.array(productStockSchema),
+});
+export type StockPanelDto = z.infer<typeof stockPanelSchema>;
+
+export const stockPanelQuerySchema = z.object({
+  /** Sin filtro, el agregado de materia prima viene vacío: no hay una línea que mirar. */
+  businessLine: z.enum(BUSINESS_LINES).optional(),
+  /** Productos que el vendedor tiene puestos en las líneas, separados por coma. */
+  productIds: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v === '' ? [] : v.split(',')))
+    .pipe(z.array(z.string().uuid()).max(50)),
+});
+export type StockPanelQuery = z.infer<typeof stockPanelQuerySchema>;
 
 // --------------------------------------------------------------------------
 // Bobinas vendibles completas (D-116, Fase 7e)
@@ -575,7 +623,7 @@ export type ReservableCoilQuery = z.infer<typeof reservableCoilQuerySchema>;
  * tercerizado (D-050), no montada en una orden de producción (D-060) y sin otra venta que
  * ya la haya prometido. `availableQty` es el saldo que la línea va a reservar completo —
  * "siempre el saldo completo, nunca una fracción" es una decisión del dueño, no una opción
- * del formulario. Sin costos ni proveedor, mismo motivo que `reservableCoilSchema`: acá
+ * del formulario. Sin costos ni proveedor, mismo motivo que `rawMaterialStockSchema`: acá
  * llega VENDEDOR.
  */
 export const sellableCoilSchema = z.object({

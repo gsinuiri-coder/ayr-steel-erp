@@ -411,6 +411,22 @@ export const cancelPurchaseSchema = z.object({
 });
 export type CancelPurchaseInput = z.infer<typeof cancelPurchaseSchema>;
 
+/**
+ * Corregir la serie y el número del comprobante de una compra (D-132).
+ *
+ * Es **dato de cáscara**: identifica el papel del proveedor y no entra en ningún cálculo
+ * —ni costo, ni kardex, ni saldo—, así que corregirlo no mueve nada. Existe porque
+ * mientras la unicidad contaba las compras anuladas, la única salida era registrar el
+ * comprobante con un sufijo inventado (`-R`), y un número inventado sí ensucia la
+ * conciliación con el proveedor. Solo ADMINISTRADOR, queda en `audit_log`, y sigue
+ * sujeto a la unicidad entre compras vivas.
+ */
+export const updatePurchaseDocumentSchema = z.object({
+  series: seriesSchema,
+  number: documentNumberSchema,
+});
+export type UpdatePurchaseDocumentInput = z.infer<typeof updatePurchaseDocumentSchema>;
+
 /** Pago parcial o total de una compra (D-039). */
 export const createSupplierPaymentSchema = z.object({
   date: isoDateSchema,

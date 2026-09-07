@@ -125,7 +125,14 @@ export function ProveedoresView() {
                 <TableCell>
                   {DOC_TYPE_LABELS[s.docType]} {s.docNumber}
                 </TableCell>
-                <TableCell>{s.name}</TableCell>
+                <TableCell>
+                  {s.name}
+                  {s.needsReview && (
+                    <Badge variant="outline" className="ml-2 text-amber-600 dark:text-amber-400">
+                      Por completar
+                    </Badge>
+                  )}
+                </TableCell>
                 <TableCell>
                   {s.providesCuttingService ? (
                     <Badge variant="secondary">Sí</Badge>

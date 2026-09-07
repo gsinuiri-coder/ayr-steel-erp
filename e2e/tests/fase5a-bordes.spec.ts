@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, createUser, getItems, getJson, postJson } from '../helpers/api';
 import {
   apiAs,
+  createCuttingSupplier,
   deactivateTrail,
   getExpectingError,
   postExpectingError,
@@ -13,42 +14,62 @@ import {
 } from '../helpers/production';
 import {
   availabilityOf,
-  cancelCoils,
   createCustomer,
   createDirectOrder,
   createQuotation,
-  createQuotationWithLines,
-  createSellableProduct,
-  isoDaysFromToday,
   ordersOfCustomer,
   pdfText,
   purgeSalesTrail,
-  setupCoilBatch,
   setupCoilStock,
+  stockPanel,
   updateQuotationBody,
   type QuotationDto,
   type SalesOrderDto,
 } from '../helpers/sales';
+import {
+  buyRoofingCoil,
+  createColor,
+  createRoofingFinish,
+  createRoofingProduct,
+  metersOf,
+  pieces,
+  purgeRoofingOrder,
+  purgeRoofingTrail,
+  quoteAndOrder,
+  reservationsOf,
+  roofingOrder,
+  setupRoofingScenario,
+} from '../helpers/roofing';
 
 /**
  * Fase 5a — bordes del ciclo comercial (D-054, D-064..D-069).
  *
  * `fase5a.spec.ts` cubre el camino feliz y las reversas con **una sola línea**. Acá van los
- * huecos que quedaron:
+ * huecos que quedaron.
  *
- * - la cotización de varias líneas (misma bobina, bobinas distintas, precio de lista contra
- *   precio editado, y el total del documento como Σ subtotales + Σ IGV);
- * - la reserva sobre el propio producto (`itemType=PRODUCT`), que solo estaba probada de
- *   refilón, y la única operación que hoy saca piezas del almacén;
+ * **D-134 cambió el objeto de la promesa de una cobertura**: una línea a medida ya no
+ * reserva una bobina elegida a mano (`reserveFromCoilId`/`reserveKg` desaparecieron) sino
+ * kilos del agregado de materia prima compatible (línea + color + espesor). Por eso los
+ * escenarios de este archivo arman coberturas **a medida** de verdad (`setupRoofingScenario`,
+ * el mismo fixture de Fase 6) y las aserciones de disponible pasan por
+ * `GET /sales/stock-panel`, nunca por el saldo propio de una bobina puntual.
+ *
+ * - la cotización de varias líneas que **suman contra el mismo agregado** (dos productos
+ *   distintos, mismo color y espesor) y fallan enteras si lo exceden — más fuerte que la
+ *   original, que probaba dos líneas del mismo SKU y por eso no distinguía "por producto"
+ *   de "por agregado" (D-134);
+ * - la cotización de dos líneas que reservan de **dos agregados distintos** (dos colores);
+ * - la reserva sobre el propio producto (`itemType=PRODUCT`), sin cambios: nunca dependió
+ *   de `reserveFromCoilId`;
  * - la reserva sobre material cuya **custodia** ya está comprometida: la bobina se fue a
- *   corte, o el fleje quedó montado en una OP, entre cotizar y confirmar;
+ *   corte (venta de bobina entera, RF-73) o la única bobina del agregado quedó montada en
+ *   una OP ajena (coberturas, D-134);
  * - editar/reemitir/anular una cotización y el rótulo de su PDF;
  * - RF-66: la cotización de otro vendedor se lee pero no se opera;
- * - dos confirmaciones simultáneas sobre la misma bobina.
+ * - dos confirmaciones simultáneas sobre el mismo agregado — la auditoría de esta sesión
+ *   encontró y arregló una carrera real en ese camino.
  *
- * Cada test arma su escenario contra Neon y lo deshace entero en un `finally`: un pedido con
- * una reserva viva bloquea la anulación de la bobina y de su compra, así que dejar basura
- * acá se paga en la purga de producción.
+ * Cada test arma su escenario contra Neon y lo deshace entero en un `finally`.
  */
 
 /** Coberturas metálicas: la línea que exige cotización confirmada (RF-31, D-065). */
@@ -91,42 +112,56 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 1. Varias líneas sobre la misma bobina: la suma es lo que cuenta
+  // 1. Dos productos que caen en el mismo agregado: la suma es lo que cuenta
   // -------------------------------------------------------------------------
 
   /**
    * El agujero que abre la segunda línea: si cada una se comprobara contra el disponible
-   * **inicial**, dos líneas de 600 kg pasarían sobre una bobina de 1 000 y el pedido saldría
-   * prometiendo 1 200 kg que no existen. La comprobación tiene que ver las reservas que la
-   * propia transacción acaba de crear.
+   * **inicial**, dos líneas de 600 kg pasarían sobre un agregado de 1 000 y el pedido
+   * saldría prometiendo 1 200 kg que no existen. La comprobación tiene que ver las reservas
+   * que la propia transacción acaba de crear.
+   *
+   * D-134: se prueba con **dos productos distintos** que comparten color y espesor (la
+   * cobertura y el caballete del mismo techo), no dos líneas del mismo SKU. Dos líneas del
+   * mismo producto es el caso trivial y pasaría igual si la acumulación fuera por producto
+   * en vez de por agregado; dos SKU que caen en el mismo agregado es lo único que prueba de
+   * verdad que la promesa se lleva contra el agregado (D-134), y es además el caso real del
+   * rubro.
    */
-  test('dos líneas sobre la misma bobina suman contra el disponible y fallan enteras si lo exceden', async () => {
+  test('dos productos que comparten el mismo agregado suman contra su disponible y fallan enteros si lo exceden', async () => {
+    const supplier = await createCuttingSupplier(api);
+    const finish = await createRoofingFinish(api);
+    const color = await createColor(api);
+    const cover = await createRoofingProduct(api, { finishId: finish.id, colorId: color.id });
+    const ridge = await createRoofingProduct(api, { finishId: finish.id, colorId: color.id });
+    const { coil, purchaseId } = await buyRoofingCoil(api, {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      colorId: color.id,
+      weightKg: '1000',
+    });
     const customer = await createCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: COVER_LINE, weightKg: '1000' });
-    const cover = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '120.0000',
-    });
-    const ridge = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '80.0000',
-    });
     const trail = newTrail();
 
     try {
-      // Dos líneas de la misma bobina que juntas se pasan: 600 + 600 sobre 1 000 kg.
-      const tooMuch = await createQuotationWithLines(api, {
+      // 150 m de cada uno son 600 kg (4 kg/m): 600 + 600 = 1 200 sobre 1 000 kg del agregado.
+      const rowsBig = pieces([10, 15]); // 15 × 10 m = 150 m (el máximo de una plancha es 20 m)
+      const tooMuch = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
         businessLine: COVER_LINE,
+        issueDate: today(),
         items: [
-          { productId: cover.id, qty: '10', reserveFromCoilId: stock.coil.id, reserveKg: '600' },
           {
-            productId: ridge.id,
-            qty: '7',
-            // Precio editado a mano: la línea tiene que guardar el de lista **y** el pactado.
-            unitPricePen: '55.5000',
-            reserveFromCoilId: stock.coil.id,
-            reserveKg: '600',
+            productId: cover.product.id,
+            qty: metersOf(rowsBig),
+            unitPricePen: '30',
+            pieces: rowsBig,
+          },
+          {
+            productId: ridge.product.id,
+            qty: metersOf(rowsBig),
+            unitPricePen: '25',
+            pieces: rowsBig,
           },
         ],
       });
@@ -134,28 +169,20 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
 
       expect(tooMuch.items).toHaveLength(2);
       expect(tooMuch.items[0]).toMatchObject({
-        lineNumber: 1,
-        listPricePen: '120.0000',
-        unitPricePen: '120.0000',
-        subtotalPen: '1200.0000',
-        igvPen: '216.0000',
-        totalPen: '1416.0000',
+        reserveItemType: 'RAW_MATERIAL',
+        reserveQty: '600.000',
       });
-      // D-068: se guardan los dos precios. Con solo el cotizado se pierde contra qué se dio
-      // el descuento; con solo el de lista se pierde lo que se le prometió al cliente.
       expect(tooMuch.items[1]).toMatchObject({
-        lineNumber: 2,
-        listPricePen: '80.0000',
-        unitPricePen: '55.5000',
-        subtotalPen: '388.5000',
-        igvPen: '69.9300',
-        totalPen: '458.4300',
+        reserveItemType: 'RAW_MATERIAL',
+        reserveQty: '600.000',
       });
-      // Totales del documento: Σ subtotales + Σ IGV, no Σ de totales de línea (D-068).
+      // Las dos líneas caen en el **mismo** agregado: mismo id de reserva prometido.
+      expect(tooMuch.items[0]!.reserveItemId).toBe(tooMuch.items[1]!.reserveItemId);
+      // 150×30=4500 y 150×25=3750 → 8250 subtotal, 1485 igv, 9735 total.
       expect(tooMuch).toMatchObject({
-        subtotalPen: '1588.5000',
-        igvPen: '285.9300',
-        totalPen: '1874.4300',
+        subtotalPen: '8250.0000',
+        igvPen: '1485.0000',
+        totalPen: '9735.0000',
       });
 
       await postJson<QuotationDto>(api, `/api/sales/quotations/${tooMuch.id}/emit`);
@@ -168,26 +195,26 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
 
       // Falla completa: ni pedido, ni una reserva de la línea 1 colgando.
       expect(await ordersOfCustomer(api, customer.id)).toHaveLength(0);
-      expect(await availabilityOf(api, 'COIL', stock.coil.id)).toMatchObject({
-        reservedQty: '0.000',
-        availableQty: '1000.000',
-      });
       const untouched = await getJson<QuotationDto>(api, `/api/sales/quotations/${tooMuch.id}`);
       expect(untouched).toMatchObject({ status: 'EMITTED', salesOrderId: null });
+      const panelUntouched = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [cover.product.id],
+      });
+      expect(panelUntouched.products.find((p) => p.productId === cover.product.id)).toMatchObject({
+        rawMaterialAvailableKg: '1000.000',
+      });
 
-      // La misma cotización con 400 + 500 sí entra: dos reservas sobre la misma bobina.
-      const fits = await createQuotationWithLines(api, {
+      // La misma combinación con 400 + 500 sí entra: dos reservas contra el mismo agregado.
+      const rowsA = pieces([10, 10]); // 10 × 10 m = 100 m ⇒ 400 kg
+      const rowsB = pieces([12.5, 10]); // 10 × 12.5 m = 125 m ⇒ 500 kg
+      const fits = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
         businessLine: COVER_LINE,
+        issueDate: today(),
         items: [
-          { productId: cover.id, qty: '10', reserveFromCoilId: stock.coil.id, reserveKg: '400' },
-          {
-            productId: ridge.id,
-            qty: '7',
-            unitPricePen: '55.5000',
-            reserveFromCoilId: stock.coil.id,
-            reserveKg: '500',
-          },
+          { productId: cover.product.id, qty: metersOf(rowsA), unitPricePen: '30', pieces: rowsA },
+          { productId: ridge.product.id, qty: metersOf(rowsB), unitPricePen: '25', pieces: rowsB },
         ],
       });
       trail.quotationIds.push(fits.id);
@@ -196,64 +223,87 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       trail.orderIds.push(order.id);
 
       expect(order.reservations).toHaveLength(2);
+      expect(order.reservations.every((r) => r.itemType === 'RAW_MATERIAL')).toBe(true);
+      // Las dos reservas son del **mismo** agregado (mismo color y espesor).
+      expect(new Set(order.reservations.map((r) => r.itemId)).size).toBe(1);
       expect(order.reservations.map((r) => r.qty).sort()).toEqual(['400.000', '500.000']);
-      expect(order.reservations.every((r) => r.itemId === stock.coil.id)).toBe(true);
-      // El pedido congela los dos precios de la cotización, no los recalcula.
-      expect(order.items[1]).toMatchObject({ listPricePen: '80.0000', unitPricePen: '55.5000' });
-      expect(order.totalPen).toBe(fits.totalPen);
 
-      // Y el disponible baja por la **suma** de las dos líneas.
-      expect(await availabilityOf(api, 'COIL', stock.coil.id)).toMatchObject({
-        qty: '1000.000',
-        reservedQty: '900.000',
-        availableQty: '100.000',
+      const panelAfter = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [cover.product.id],
+      });
+      expect(panelAfter.products.find((p) => p.productId === cover.product.id)).toMatchObject({
+        rawMaterialAvailableKg: '100.000',
       });
     } finally {
       await purgeSalesTrail(api, trail);
-      await deactivateTrail(api, {
-        motherId: stock.coil.id,
-        purchaseId: stock.purchaseId,
-        supplierId: stock.supplier.id,
-        finish: stock.finish,
-        productIds: [cover.id, ridge.id],
+      await purgeRoofingTrail(api, {
+        supplierId: supplier.id,
+        finishId: finish.id,
+        colorId: color.id,
+        productIds: [cover.product.id, ridge.product.id],
+        coilIds: [coil.id],
+        purchaseIds: [purchaseId],
       });
     }
   });
 
   // -------------------------------------------------------------------------
-  // 2. Varias líneas sobre bobinas distintas
+  // 2. Dos productos con distinto color: cada uno reserva de su propio agregado
   // -------------------------------------------------------------------------
 
-  test('dos líneas sobre bobinas distintas reservan de cada una por separado', async () => {
+  test('dos productos con distinto color reservan cada uno de su propio agregado', async () => {
+    const supplier = await createCuttingSupplier(api);
+    const finish = await createRoofingFinish(api);
+    const colorA = await createColor(api, '#c8102e');
+    const colorB = await createColor(api, '#0033a0');
+    const { product: productA } = await createRoofingProduct(api, {
+      finishId: finish.id,
+      colorId: colorA.id,
+    });
+    const { product: productB } = await createRoofingProduct(api, {
+      finishId: finish.id,
+      colorId: colorB.id,
+    });
+    const { coil: coilA, purchaseId: purchaseA } = await buyRoofingCoil(api, {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      colorId: colorA.id,
+      weightKg: '1000',
+    });
+    const { coil: coilB, purchaseId: purchaseB } = await buyRoofingCoil(api, {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      colorId: colorB.id,
+      weightKg: '1500',
+    });
     const customer = await createCustomer(api);
-    const batch = await setupCoilBatch(api, {
-      lineCode: COVER_LINE,
-      weightsKg: ['1000', '1500'],
-    });
-    const first = batch.coils[0]!;
-    const second = batch.coils[1]!;
-    const cover = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '90.0000',
-    });
     const trail = newTrail();
 
     try {
-      const quotation = await createQuotationWithLines(api, {
+      const rowsA = pieces([17.5, 10]); // 10 × 17.5 m = 175 m ⇒ 700 kg
+      const rowsB = pieces([15, 15]); // 15 × 15 m = 225 m ⇒ 900 kg
+      const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
         businessLine: COVER_LINE,
+        issueDate: today(),
         items: [
-          { productId: cover.id, qty: '8', reserveFromCoilId: first.id, reserveKg: '700' },
-          { productId: cover.id, qty: '12', reserveFromCoilId: second.id, reserveKg: '900' },
+          { productId: productA.id, qty: metersOf(rowsA), unitPricePen: '90', pieces: rowsA },
+          { productId: productB.id, qty: metersOf(rowsB), unitPricePen: '90', pieces: rowsB },
         ],
       });
       trail.quotationIds.push(quotation.id);
-      expect(quotation.items.map((i) => i.reserveItemId)).toEqual([first.id, second.id]);
-      // 8 × 90 = 720 y 12 × 90 = 1 080; el documento suma subtotales e IGV por separado.
+      expect(quotation.items.map((i) => i.reserveItemType)).toEqual([
+        'RAW_MATERIAL',
+        'RAW_MATERIAL',
+      ]);
+      const specIds = quotation.items.map((i) => i.reserveItemId);
+      expect(specIds[0]).not.toBe(specIds[1]); // agregados distintos, por color
+      // 175×90=15750 y 225×90=20250 → 36000 subtotal, 6480 igv, 42480 total.
       expect(quotation).toMatchObject({
-        subtotalPen: '1800.0000',
-        igvPen: '324.0000',
-        totalPen: '2124.0000',
+        subtotalPen: '36000.0000',
+        igvPen: '6480.0000',
+        totalPen: '42480.0000',
       });
 
       await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
@@ -265,18 +315,16 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect(order.reservations).toHaveLength(2);
 
       const byItem = new Map(order.reservations.map((r) => [r.itemId, r]));
-      expect(byItem.get(first.id)).toMatchObject({ qty: '700.000', status: 'ACTIVE' });
-      expect(byItem.get(second.id)).toMatchObject({ qty: '900.000', status: 'ACTIVE' });
+      expect(byItem.get(specIds[0]!)).toMatchObject({ qty: '700.000', status: 'ACTIVE' });
+      expect(byItem.get(specIds[1]!)).toMatchObject({ qty: '900.000', status: 'ACTIVE' });
 
-      expect(await availabilityOf(api, 'COIL', first.id)).toMatchObject({
-        qty: '1000.000',
-        reservedQty: '700.000',
-        availableQty: '300.000',
+      const panelA = await stockPanel(api, { businessLine: COVER_LINE, productIds: [productA.id] });
+      expect(panelA.products.find((p) => p.productId === productA.id)).toMatchObject({
+        rawMaterialAvailableKg: '300.000',
       });
-      expect(await availabilityOf(api, 'COIL', second.id)).toMatchObject({
-        qty: '1500.000',
-        reservedQty: '900.000',
-        availableQty: '600.000',
+      const panelB = await stockPanel(api, { businessLine: COVER_LINE, productIds: [productB.id] });
+      expect(panelB.products.find((p) => p.productId === productB.id)).toMatchObject({
+        rawMaterialAvailableKg: '600.000',
       });
 
       // Anular el pedido libera las dos, no una: la reversa también es "todo o nada".
@@ -284,40 +332,48 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         reason: 'El cliente se echó atrás',
       });
       expect(cancelled.reservations.every((r) => r.status === 'RELEASED')).toBe(true);
-      expect(await availabilityOf(api, 'COIL', first.id)).toMatchObject({
-        reservedQty: '0.000',
+      const panelAAfter = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [productA.id],
       });
-      expect(await availabilityOf(api, 'COIL', second.id)).toMatchObject({
-        reservedQty: '0.000',
+      expect(panelAAfter.products.find((p) => p.productId === productA.id)).toMatchObject({
+        rawMaterialAvailableKg: '1000.000',
+      });
+      const panelBAfter = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [productB.id],
+      });
+      expect(panelBAfter.products.find((p) => p.productId === productB.id)).toMatchObject({
+        rawMaterialAvailableKg: '1500.000',
       });
     } finally {
       await purgeSalesTrail(api, trail);
-      await cancelCoils(
-        api,
-        batch.coils.map((c) => c.id),
-      );
-      await deactivateTrail(api, {
-        purchaseId: batch.purchaseId,
-        supplierId: batch.supplier.id,
-        finish: batch.finish,
-        productId: cover.id,
+      await purgeRoofingTrail(api, {
+        supplierId: supplier.id,
+        finishId: finish.id,
+        colorId: colorA.id,
+        productIds: [productA.id, productB.id],
+        coilIds: [coilA.id, coilB.id],
+        purchaseIds: [purchaseA, purchaseB],
       });
+      await api
+        .patch(`/api/colors/${colorB.id}`, { data: { isActive: false } })
+        .catch(() => undefined);
     }
   });
 
   // -------------------------------------------------------------------------
-  // 3. Reserva sobre el propio producto (`itemType=PRODUCT`)
+  // 3. Reserva sobre el propio producto (`itemType=PRODUCT`) — sin cambios
   // -------------------------------------------------------------------------
 
   /**
-   * El otro caso de D-065: sin `reserveFromCoilId` la línea promete **el propio producto**
-   * en su unidad de venta. Es el perfil que se vende de stock.
+   * El otro caso de D-065: sin `saleCoilId` ni un producto a medida, la línea promete **el
+   * propio producto** en su unidad de venta. Es el perfil que se vende de stock. Este test
+   * nunca dependió de `reserveFromCoilId`, así que D-134 no le cambia nada.
    *
    * La invariante de cantidad tiene que proteger esas piezas igual que protege los kilos de
    * una bobina. Hoy la **única** operación que saca piezas terminadas del almacén es revertir
-   * un reporte de producción (el despacho es Fase 5b y todavía no existe; la otra puerta,
-   * anular una compra de producto terminado, sale por el mismo `InventoryService.reverse`),
-   * así que es esa la que se prueba.
+   * un reporte de producción (el despacho es Fase 5b), así que es esa la que se prueba.
    */
   test('un pedido de perfiles reserva el propio producto y bloquea la reversa que sacaría esas piezas', async () => {
     const customer = await createCustomer(api);
@@ -440,31 +496,26 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
 
   /**
    * Ni el envío a corte (D-050) ni el montaje en una OP (D-060) mueven un gramo de kardex,
-   * así que el saldo de la bobina se ve intacto y el disponible alcanza de sobra. Confirmar
-   * igual dejaría al pedido prometiendo material que ya no está en casa — y, peor, haría que
-   * la recepción del corte o el reporte de esa OP se cayeran después contra la invariante,
-   * sin más salida que liberar la reserva a mano.
+   * así que el saldo se ve intacto y el disponible alcanza de sobra. Confirmar igual dejaría
+   * al pedido prometiendo material que ya no está en casa.
+   *
+   * D-134: ya no se puede reservar una fracción de kilos de una bobina desde una línea de
+   * venta. Lo que sigue vivo, y se comporta igual, es vender la bobina **entera** (RF-73,
+   * `saleCoilId`): reserva su saldo completo, y un envío a corte de por medio la deja
+   * `IN_THIRD_PARTY`, que el mismo guardrail de disponibilidad de `createReservations` sigue
+   * rechazando antes de confirmar.
    */
-  test('no se confirma una cotización cuya bobina se fue a corte entre medias', async () => {
+  test('no se confirma una cotización cuya bobina (vendida entera) se fue a corte entre medias', async () => {
     const customer = await createCustomer(api);
-    // D-120 (Fase 7e, E): el corte tercerizado ahora es exclusivo de Drywall — este caso
-    // de borde es agnóstico a la línea, así que se mueve a PROFILE_LINE en vez de COVER_LINE.
     const stock = await setupCoilStock(api, { lineCode: PROFILE_LINE, weightKg: '2000' });
-    const product = await createSellableProduct(api, {
-      lineCode: PROFILE_LINE,
-      listPricePen: '70.0000',
-    });
     const trail = newTrail();
     let cuttingOrderId: string | undefined;
 
     try {
-      const quotation = await createQuotation(api, {
+      const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
-        businessLine: PROFILE_LINE,
-        productId: product.id,
-        qty: '9',
-        reserveFromCoilId: stock.coil.id,
-        reserveKg: '800',
+        issueDate: today(),
+        items: [{ saleCoilId: stock.coil.id, qty: stock.coil.availableKg, unitPricePen: '6' }],
       });
       trail.quotationIds.push(quotation.id);
       await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
@@ -489,7 +540,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       );
       expect(blocked.status).toBe(400);
       // El mensaje tiene que decir qué bobina y en qué estado quedó, o el vendedor no sabe
-      // si esperar la vuelta del corte o cotizar otro rollo.
+      // si esperar la vuelta del corte o vender otro rollo.
       expect(blocked.message).toContain(stock.coil.code);
       expect(blocked.message).toContain('IN_THIRD_PARTY');
 
@@ -508,74 +559,98 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         purchaseId: stock.purchaseId,
         supplierId: stock.supplier.id,
         finish: stock.finish,
-        productId: product.id,
       });
     }
   });
 
-  test('no se confirma una cotización cuyo fleje quedó montado en una orden de producción', async () => {
-    const customer = await createCustomer(api);
-    const scenario = await setupScenario(api);
-    const strip = scenario.strips[0]!;
-    const trail = newTrail();
+  /**
+   * D-134 retiró el mecanismo sobre el que estaba construido este caso (un producto de
+   * drywall reservando un fleje concreto). La regla de fondo —material bajo custodia de
+   * producción no se puede prometer, D-060— sigue viva, y ahora se alcanza por el agregado:
+   * se monta la única bobina compatible en una OP que no nace de este pedido, y se comprueba
+   * que confirmar otra cotización sobre el mismo agregado falla.
+   */
+  test('no se confirma una cotización cuya única bobina compatible quedó montada en una orden de producción ajena', async () => {
+    const scenario = await setupRoofingScenario(api, { weightKg: '1000' });
+    const customerA = await createCustomer(api);
+    const customerB = await createCustomer(api);
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id],
+      coilIds: [scenario.coil.id],
+      purchaseIds: [scenario.purchaseId],
+      orderIds: [],
+      quotationIds: [],
+    };
     const productionOrderIds: string[] = [];
 
     try {
-      // Drywall no exige cotización, pero admite cotizar: la ruta de confirmación es la
-      // misma para las dos líneas de negocio (D-065), y es la única línea que se produce.
-      const quotation = await createQuotation(api, {
-        customerId: customer.id,
-        businessLine: PROFILE_LINE,
+      // Pedido A: cotiza, confirma y monta la única bobina del agregado en su OP.
+      const rowsA = pieces([10, 5]); // 5 × 10 m = 50 m ⇒ 200 kg
+      const { quotation: qA, order: orderA } = await quoteAndOrder(api, {
+        customerId: customerA.id,
         productId: scenario.product.id,
-        qty: '100',
-        unitPricePen: '35.0000',
-        reserveFromCoilId: strip.id,
-        reserveKg: '1000',
+        rows: rowsA,
       });
-      trail.quotationIds.push(quotation.id);
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
+      trail.quotationIds = [qA.id];
+      trail.orderIds = [orderA.id];
+      const reservationA = (await reservationsOf(api, orderA.id))[0]!;
+      const opA = await roofingOrder(api, reservationA.id);
+      productionOrderIds.push(opA.id);
+      await postJson(api, `/api/production/roofing/${opA.id}/coils`, {
+        coilId: scenario.coil.id,
+      });
 
-      // Planta monta el fleje en una orden que no nació de este pedido.
-      const op = await postJson<ProductionOrderDto>(api, '/api/production', {
+      // Pedido B (otro cliente) cotiza sobre el mismo agregado: montar no mueve kardex
+      // (D-060), pero la única bobina compatible está en custodia de la OP de A, y
+      // `rawMaterialAvailability` la excluye del físico libre.
+      const rowsB = pieces([10, 5]); // 5 × 10 m = 50 m
+      const quotationB = await createQuotation(api, {
+        customerId: customerB.id,
+        businessLine: COVER_LINE,
         productId: scenario.product.id,
+        qty: metersOf(rowsB),
+        unitPricePen: '30',
+        pieces: rowsB,
       });
-      productionOrderIds.push(op.id);
-      await postJson<ProductionOrderDto>(api, `/api/production/${op.id}/consume`, {
-        coilId: strip.id,
-        qtyKg: '1200',
-      });
+      trail.quotationIds = [qA.id, quotationB.id];
+      await postJson(api, `/api/sales/quotations/${quotationB.id}/emit`);
 
       const blocked = await postExpectingError(
         api,
-        `/api/sales/quotations/${quotation.id}/confirm`,
+        `/api/sales/quotations/${quotationB.id}/confirm`,
       );
       expect(blocked.status).toBe(400);
-      expect(blocked.message).toContain(op.code);
-      expect(blocked.message).toContain(strip.code);
+      // D-134: la bobina en custodia de A no aparece en "físicos" ni en "comprometidos" —
+      // montar no mueve kardex (D-060) — así que sin más, el mensaje leía "0.000 kg
+      // disponibles (0.000 físicos menos 0.000 comprometidos)" sobre un almacén con 1000 kg
+      // reales. El hallazgo de Fase 7-final lo corrige: el cálculo ya sabía qué bobinas
+      // estaban montadas, así que ahora nombra la orden y los kilos que tiene.
+      expect(blocked.message).toContain('0.000');
+      expect(blocked.message).toContain('200.000');
+      expect(blocked.message).toContain('montados en');
+      expect(blocked.message).toContain(opA.code);
 
-      expect(await ordersOfCustomer(api, customer.id)).toHaveLength(0);
-      const untouched = await getJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}`);
+      expect(await ordersOfCustomer(api, customerB.id)).toHaveLength(0);
+      const untouched = await getJson<QuotationDto>(api, `/api/sales/quotations/${quotationB.id}`);
       expect(untouched).toMatchObject({ status: 'EMITTED', salesOrderId: null });
-      expect(await availabilityOf(api, 'COIL', strip.id)).toMatchObject({ reservedQty: '0.000' });
 
-      // El fleje montado tampoco se ofrece como material reservable: si se ofreciera, el
-      // vendedor lo elegiría y se comería este mismo 400 al confirmar.
-      const reservable = await getJson<{ coilId: string }[]>(
-        api,
-        `/api/sales/reservable-coils?businessLine=${PROFILE_LINE}`,
-      );
-      expect(reservable.map((c) => c.coilId)).not.toContain(strip.id);
-    } finally {
-      await purgeSalesTrail(api, trail);
-      await deactivateTrail(api, {
-        productionOrderIds,
-        cuttingOrderId: scenario.cuttingOrderId,
-        motherId: scenario.mother.id,
-        purchaseId: scenario.purchaseId,
-        supplierId: scenario.supplier.id,
-        finish: scenario.finish,
-        productId: scenario.product.id,
+      // El reemplazo directo de "el fleje montado no aparece en `reservable-coils`": el
+      // panel de stock tampoco cuenta esa bobina en el disponible del agregado.
+      const panel = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [scenario.product.id],
       });
+      expect(panel.products.find((p) => p.productId === scenario.product.id)).toMatchObject({
+        rawMaterialAvailableKg: '0.000',
+      });
+    } finally {
+      for (const opId of [...productionOrderIds].reverse()) {
+        await purgeRoofingOrder(api, opId).catch(() => undefined);
+      }
+      await purgeRoofingTrail(api, trail);
     }
   });
 
@@ -584,49 +659,69 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
   // -------------------------------------------------------------------------
 
   test('el borrador se edita y no tiene PDF; la emitida no se edita y su anulación sale rotulada', async () => {
+    const supplier = await createCuttingSupplier(api);
+    const finish = await createRoofingFinish(api);
+    const colorA = await createColor(api, '#c8102e');
+    const colorB = await createColor(api, '#0033a0');
+    const cover = await createRoofingProduct(api, {
+      finishId: finish.id,
+      colorId: colorA.id,
+      listPricePen: '120',
+    });
+    const ridge = await createRoofingProduct(api, {
+      finishId: finish.id,
+      colorId: colorB.id,
+      listPricePen: '62.5',
+    });
+    const { coil: coilA, purchaseId: purchaseA } = await buyRoofingCoil(api, {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      colorId: colorA.id,
+      weightKg: '3000',
+    });
+    const { coil: coilB, purchaseId: purchaseB } = await buyRoofingCoil(api, {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      colorId: colorB.id,
+      weightKg: '3000',
+    });
     const customer = await createCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: COVER_LINE, weightKg: '3000' });
-    const cover = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '120.0000',
-    });
-    const ridge = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '80.0000',
-    });
     const trail = newTrail();
 
     try {
+      const initialRows = pieces([10, 1]); // 10 m ⇒ 40 kg
       const draft = await createQuotation(api, {
         customerId: customer.id,
         businessLine: COVER_LINE,
-        productId: cover.id,
-        qty: '10',
-        reserveFromCoilId: stock.coil.id,
-        reserveKg: '500',
+        productId: cover.product.id,
+        qty: metersOf(initialRows),
+        pieces: initialRows,
       });
       trail.quotationIds.push(draft.id);
       expect(draft.totalPen).toBe('1416.0000');
 
-      // Un borrador todavía no es un documento: sin este corte, un vendedor podía armar un
-      // borrador con el precio que quisiera, no emitirlo nunca y mandárselo igual al cliente.
+      // Un borrador todavía no es un documento.
       const noPdf = await getExpectingError(api, `/api/sales/quotations/${draft.id}/pdf`);
       expect(noPdf.status).toBe(400);
 
       // RF-66: editar reemplaza las líneas completas y recalcula los totales.
+      const editedRowsCover = pieces([5, 1]); // 5 m ⇒ 20 kg
+      const editedRowsRidge = pieces([4, 1]); // 4 m ⇒ 16 kg
       const edited = await putJson<QuotationDto>(
         api,
         `/api/sales/quotations/${draft.id}`,
         updateQuotationBody({
           customerId: customer.id,
           items: [
-            { productId: cover.id, qty: '5', reserveFromCoilId: stock.coil.id, reserveKg: '300' },
             {
-              productId: ridge.id,
-              qty: '4',
-              unitPricePen: '62.5000',
-              reserveFromCoilId: stock.coil.id,
-              reserveKg: '200',
+              productId: cover.product.id,
+              qty: metersOf(editedRowsCover),
+              pieces: editedRowsCover,
+            },
+            {
+              productId: ridge.product.id,
+              qty: metersOf(editedRowsRidge),
+              pieces: editedRowsRidge,
             },
           ],
           validityDays: 15,
@@ -634,14 +729,21 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       );
       expect(edited.items).toHaveLength(2);
       expect(edited.items.map((i) => i.lineNumber)).toEqual([1, 2]);
-      // 5 × 120 = 600 y 4 × 62.5 = 250 → 850 de subtotal, 153 de IGV.
+      // 5×120=600 y 4×62.5=250 → 850 de subtotal, 153 de IGV.
       expect(edited).toMatchObject({
         status: 'DRAFT',
         subtotalPen: '850.0000',
         igvPen: '153.0000',
         totalPen: '1003.0000',
       });
-      expect(edited.items[1]).toMatchObject({ listPricePen: '80.0000', unitPricePen: '62.5000' });
+      expect(edited.items[0]).toMatchObject({
+        reserveItemType: 'RAW_MATERIAL',
+        reserveQty: '20.000',
+      });
+      expect(edited.items[1]).toMatchObject({
+        reserveItemType: 'RAW_MATERIAL',
+        reserveQty: '16.000',
+      });
 
       // Emitida: el PDF existe y la edición se cierra.
       const emitted = await postJson<QuotationDto>(api, `/api/sales/quotations/${draft.id}/emit`);
@@ -654,13 +756,18 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         'COTIZACI',
       );
 
+      const cannotEditRows = pieces([1, 1]);
       const cannotEdit = await putExpectingError(
         api,
         `/api/sales/quotations/${draft.id}`,
         updateQuotationBody({
           customerId: customer.id,
           items: [
-            { productId: cover.id, qty: '99', reserveFromCoilId: stock.coil.id, reserveKg: '100' },
+            {
+              productId: cover.product.id,
+              qty: metersOf(cannotEditRows),
+              pieces: cannotEditRows,
+            },
           ],
         }),
       );
@@ -671,8 +778,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect(stillEmitted).toMatchObject({ status: 'EMITTED', totalPen: '1003.0000' });
       expect(stillEmitted.items).toHaveLength(2);
 
-      // Anular una emitida (RF-65) y comprobar que su PDF sale rotulado: sin el rótulo, el
-      // papel de una anulada es idéntico al de una vigente.
+      // Anular una emitida (RF-65) y comprobar que su PDF sale rotulado.
       const cancelled = await postJson<QuotationDto>(
         api,
         `/api/sales/quotations/${draft.id}/cancel`,
@@ -684,13 +790,13 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect(pdfText(await cancelledPdf.body())).toContain('COTIZACI');
 
       // Anular un borrador también entra (RF-65: cualquier estado no confirmado).
+      const scrappedRows = pieces([2, 1]);
       const scrapped = await createQuotation(api, {
         customerId: customer.id,
         businessLine: COVER_LINE,
-        productId: cover.id,
-        qty: '2',
-        reserveFromCoilId: stock.coil.id,
-        reserveKg: '100',
+        productId: cover.product.id,
+        qty: metersOf(scrappedRows),
+        pieces: scrappedRows,
       });
       trail.quotationIds.push(scrapped.id);
       const scrappedCancelled = await postJson<QuotationDto>(
@@ -706,19 +812,33 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect(twice.status).toBe(409);
 
       // Nada de esto tocó el inventario: cotizar no reserva (D-054).
-      expect(await availabilityOf(api, 'COIL', stock.coil.id)).toMatchObject({
-        reservedQty: '0.000',
-        availableQty: '3000.000',
+      const panelCover = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [cover.product.id],
+      });
+      expect(panelCover.products.find((p) => p.productId === cover.product.id)).toMatchObject({
+        rawMaterialAvailableKg: '3000.000',
+      });
+      const panelRidge = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [ridge.product.id],
+      });
+      expect(panelRidge.products.find((p) => p.productId === ridge.product.id)).toMatchObject({
+        rawMaterialAvailableKg: '3000.000',
       });
     } finally {
       await purgeSalesTrail(api, trail);
-      await deactivateTrail(api, {
-        motherId: stock.coil.id,
-        purchaseId: stock.purchaseId,
-        supplierId: stock.supplier.id,
-        finish: stock.finish,
-        productIds: [cover.id, ridge.id],
+      await purgeRoofingTrail(api, {
+        supplierId: supplier.id,
+        finishId: finish.id,
+        colorId: colorA.id,
+        productIds: [cover.product.id, ridge.product.id],
+        coilIds: [coilA.id, coilB.id],
+        purchaseIds: [purchaseA, purchaseB],
       });
+      await api
+        .patch(`/api/colors/${colorB.id}`, { data: { isActive: false } })
+        .catch(() => undefined);
     }
   });
 
@@ -730,41 +850,39 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
    * D-065 puso cotización y pedido directo en **un solo camino** para que el alta directa
    * no pudiera admitir lo que la cotización rechaza. La confirmación es el tercer camino, y
    * es el que de verdad vende: crea el pedido y compromete stock.
-   *
-   * Los otros dos rechazan un cliente desactivado (`requireHeaderRefs`, `createDirect`) y un
-   * producto desactivado (`resolveSalesLines`). Desactivar un cliente es la única palanca
-   * que tiene el negocio para dejar de venderle —moroso, bloqueado, dado de baja— y
-   * desactivar un producto es como se descontinúa. Si confirmar no los mira, basta con
-   * tener una cotización emitida de antes para saltarse las dos.
    */
   test('confirmar rechaza una cotización cuyo cliente o producto se desactivó después de emitirla', async () => {
+    const scenario = await setupRoofingScenario(api, { weightKg: '2000' });
     const customer = await createCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: COVER_LINE, weightKg: '2000' });
-    const product = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '65.0000',
-    });
-    const trail = newTrail();
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id],
+      coilIds: [scenario.coil.id],
+      purchaseIds: [scenario.purchaseId],
+      orderIds: [],
+      quotationIds: [],
+    };
 
     try {
       const emitted: QuotationDto[] = [];
       for (let i = 0; i < 2; i += 1) {
+        const rows = pieces([5, 1]); // 5 m ⇒ 20 kg, generoso frente a los 2000 kg del agregado
         const q = await createQuotation(api, {
           customerId: customer.id,
           businessLine: COVER_LINE,
-          productId: product.id,
-          qty: '5',
-          reserveFromCoilId: stock.coil.id,
-          reserveKg: '300',
+          productId: scenario.product.id,
+          qty: metersOf(rows),
+          unitPricePen: '65',
+          pieces: rows,
         });
-        trail.quotationIds.push(q.id);
+        trail.quotationIds!.push(q.id);
         emitted.push(await postJson<QuotationDto>(api, `/api/sales/quotations/${q.id}/emit`));
       }
 
       /**
-       * Confirma y, si el API deja pasar lo que no debería, apunta el pedido en el rastro:
-       * un pedido con una reserva viva bloquea la anulación de la bobina y de su compra, y
-       * un test que falla no puede además dejar residuo que la purga no sepa deshacer.
+       * Confirma y, si el API deja pasar lo que no debería, apunta el pedido en el rastro.
        */
       const confirmTracking = async (
         quotationId: string,
@@ -772,7 +890,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         const res = await api.post(`/api/sales/quotations/${quotationId}/confirm`);
         if (res.ok()) {
           const order = (await res.json()) as SalesOrderDto;
-          trail.orderIds.push(order.id);
+          trail.orderIds!.push(order.id);
           return { status: res.status(), message: `se creó el pedido ${order.code}` };
         }
         const body = (await res.json()) as { message?: string | string[] };
@@ -788,12 +906,10 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       await api.patch(`/api/customers/${customer.id}`, { data: { isActive: true } });
 
       // (b) El producto se descontinúa entre emitir y confirmar.
-      await api.patch(`/api/catalog/${product.id}`, { data: { isActive: false } });
+      await api.patch(`/api/catalog/${scenario.product.id}`, { data: { isActive: false } });
       const blockedByProduct = await confirmTracking(emitted[1]!.id);
-      await api.patch(`/api/catalog/${product.id}`, { data: { isActive: true } });
+      await api.patch(`/api/catalog/${scenario.product.id}`, { data: { isActive: true } });
 
-      // Las dos se comprueban aunque la primera falle: interesa saber si el hueco es de la
-      // cabecera, de las líneas o de las dos.
       expect
         .soft(
           blockedByCustomer,
@@ -810,23 +926,19 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect.soft(blockedByProduct.message).toContain('desactivado');
 
       // Ninguna de las dos puede haber comprometido material.
-      expect.soft(await availabilityOf(api, 'COIL', stock.coil.id)).toMatchObject({
-        reservedQty: '0.000',
-        availableQty: '2000.000',
+      const panel = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [scenario.product.id],
       });
+      expect
+        .soft(panel.products.find((p) => p.productId === scenario.product.id))
+        .toMatchObject({ rawMaterialAvailableKg: '2000.000' });
       expect.soft(await ordersOfCustomer(api, customer.id)).toHaveLength(0);
     } finally {
       await api
         .patch(`/api/customers/${customer.id}`, { data: { isActive: true } })
         .catch(() => undefined);
-      await purgeSalesTrail(api, trail);
-      await deactivateTrail(api, {
-        motherId: stock.coil.id,
-        purchaseId: stock.purchaseId,
-        supplierId: stock.supplier.id,
-        finish: stock.finish,
-        productId: product.id,
-      });
+      await purgeRoofingTrail(api, trail);
     }
   });
 
@@ -837,28 +949,34 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
   test('un vendedor lee la cotización de otro pero no la edita, emite, confirma ni anula', async ({
     baseURL,
   }) => {
+    const scenario = await setupRoofingScenario(api, { weightKg: '1500' });
     const customer = await createCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: COVER_LINE, weightKg: '1500' });
-    const product = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '45.0000',
-    });
     const author = await createUser(api, 'VENDEDOR');
     const other = await createUser(api, 'VENDEDOR');
     const authorApi = await apiAs(baseURL!, author);
     const otherApi = await apiAs(baseURL!, other);
-    const trail = newTrail();
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id],
+      coilIds: [scenario.coil.id],
+      purchaseIds: [scenario.purchaseId],
+      orderIds: [],
+      quotationIds: [],
+    };
 
     try {
+      const rows = pieces([10, 1]); // 10 m ⇒ 40 kg
       const quotation = await createQuotation(authorApi, {
         customerId: customer.id,
         businessLine: COVER_LINE,
-        productId: product.id,
-        qty: '10',
-        reserveFromCoilId: stock.coil.id,
-        reserveKg: '500',
+        productId: scenario.product.id,
+        qty: metersOf(rows),
+        unitPricePen: '45',
+        pieces: rows,
       });
-      trail.quotationIds.push(quotation.id);
+      trail.quotationIds = [quotation.id];
 
       // Leerla sí: RF-69 pide una lista de cotizaciones, no una lista por vendedor.
       const read = await getJson<QuotationDto>(otherApi, `/api/sales/quotations/${quotation.id}`);
@@ -866,16 +984,14 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       const list = await getItems<{ id: string }>(otherApi, '/api/sales/quotations');
       expect(list.map((q) => q.id)).toContain(quotation.id);
 
-      // Operarla, no. Con solo el id (que la lista le da) podría editar el borrador de un
-      // compañero, emitirlo, confirmarlo a nombre de su cliente o anulárselo.
+      // Operarla, no.
+      const editRows = pieces([1, 1]);
       const cannotEdit = await putExpectingError(
         otherApi,
         `/api/sales/quotations/${quotation.id}`,
         updateQuotationBody({
           customerId: customer.id,
-          items: [
-            { productId: product.id, qty: '1', reserveFromCoilId: stock.coil.id, reserveKg: '10' },
-          ],
+          items: [{ productId: scenario.product.id, qty: metersOf(editRows), pieces: editRows }],
         }),
       );
       expect(cannotEdit.status).toBe(403);
@@ -905,27 +1021,24 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         `/api/sales/quotations/${quotation.id}/confirm`,
       );
       expect(cannotConfirm.status).toBe(403);
-      expect(await availabilityOf(api, 'COIL', stock.coil.id)).toMatchObject({
-        reservedQty: '0.000',
+      const panelBefore = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [scenario.product.id],
+      });
+      expect(panelBefore.products.find((p) => p.productId === scenario.product.id)).toMatchObject({
+        rawMaterialAvailableKg: '1500.000',
       });
 
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
       );
-      trail.orderIds.push(order.id);
+      trail.orderIds = [order.id];
       expect(order.reservations[0]!.status).toBe('ACTIVE');
     } finally {
       await authorApi.dispose();
       await otherApi.dispose();
-      await purgeSalesTrail(api, trail);
-      await deactivateTrail(api, {
-        motherId: stock.coil.id,
-        purchaseId: stock.purchaseId,
-        supplierId: stock.supplier.id,
-        finish: stock.finish,
-        productId: product.id,
-      });
+      await purgeRoofingTrail(api, trail);
     }
   });
 
@@ -933,40 +1046,34 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
   // 8. El PDF de una vencida (D-068 + D-069)
   // -------------------------------------------------------------------------
 
-  /**
-   * El rótulo del PDF existe para que el papel de una cotización que ya no vale no sea
-   * idéntico al de una vigente. Y D-069 dice, con todas las letras, que **el job no es la
-   * regla**: el API escala a cero en Cloud Run, así que una cotización vencida puede seguir
-   * figurando `EMITIDA` indefinidamente, y por eso `confirm()` revalida la fecha por su
-   * cuenta en vez de fiarse del estado.
-   *
-   * La descarga del PDF es la otra puerta por la que esa cotización sale al cliente, y es la
-   * que más se usa: el vendedor la reenvía por correo. Si se fía del estado, durante toda la
-   * ventana en la que el job no corrió entrega un documento sin rótulo — uno que el cliente
-   * lee como vigente y que el propio API ya no dejaría confirmar.
-   */
   test('el PDF de una cotización vencida sale rotulado aunque el job todavía no la haya marcado', async () => {
+    const scenario = await setupRoofingScenario(api, { weightKg: '1200' });
     const customer = await createCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: COVER_LINE, weightKg: '1200' });
-    const product = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '50.0000',
-    });
-    const trail = newTrail();
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id],
+      coilIds: [scenario.coil.id],
+      purchaseIds: [scenario.purchaseId],
+      orderIds: [],
+      quotationIds: [],
+    };
 
     try {
       // Emitida hace 10 días con un día de vigencia: venció hace nueve.
+      const rows = pieces([4, 1]); // 4 m ⇒ 16 kg
       const quotation = await createQuotation(api, {
         customerId: customer.id,
         businessLine: COVER_LINE,
-        productId: product.id,
-        qty: '4',
-        reserveFromCoilId: stock.coil.id,
-        reserveKg: '300',
-        issueDate: isoDaysFromToday(-10),
+        productId: scenario.product.id,
+        qty: metersOf(rows),
+        unitPricePen: '50',
+        pieces: rows,
+        issueDate: isoDaysFromTodayFallback(-10),
         validityDays: 1,
       });
-      trail.quotationIds.push(quotation.id);
+      trail.quotationIds = [quotation.id];
       const emitted = await postJson<QuotationDto>(
         api,
         `/api/sales/quotations/${quotation.id}/emit`,
@@ -994,48 +1101,51 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       const afterJob = await api.get(`/api/sales/quotations/${quotation.id}/pdf`);
       expect(pdfText(await afterJob.body())).toContain('COTIZACI');
     } finally {
-      await purgeSalesTrail(api, trail);
-      await deactivateTrail(api, {
-        motherId: stock.coil.id,
-        purchaseId: stock.purchaseId,
-        supplierId: stock.supplier.id,
-        finish: stock.finish,
-        productId: product.id,
-      });
+      await purgeRoofingTrail(api, trail);
     }
   });
 
   // -------------------------------------------------------------------------
-  // 9. Dos confirmaciones simultáneas sobre la misma bobina
+  // 9. Dos confirmaciones simultáneas sobre el mismo agregado
   // -------------------------------------------------------------------------
 
   /**
-   * El disponible alcanza para una sola. `createReservations` bloquea primero la fila de la
-   * bobina y después el saldo, así que las dos transacciones se serializan: una gana y la
-   * otra tiene que fallar **limpio** (400 del dominio, no un 500 de deadlock) y sin dejar
-   * media reserva.
+   * El disponible alcanza para una sola. `createReservations` bloquea primero las bobinas
+   * del agregado (`rawMaterialAvailability({ lockCoils: true })`) y después crea la reserva,
+   * así que las dos transacciones se serializan: una gana y la otra tiene que fallar
+   * **limpio** (400 del dominio, no un 500 de deadlock) y sin dejar media reserva. Es la
+   * prueba de concurrencia **del agregado**: la auditoría de esta sesión encontró y arregló
+   * una carrera real en este mismo camino.
    */
-  test('dos confirmaciones simultáneas sobre la misma bobina: una gana y la otra falla limpio', async () => {
+  test('dos confirmaciones simultáneas sobre el mismo agregado: una gana y la otra falla limpio', async () => {
+    const scenario = await setupRoofingScenario(api, { weightKg: '1000' });
     const customer = await createCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: COVER_LINE, weightKg: '1000' });
-    const product = await createSellableProduct(api, {
-      lineCode: COVER_LINE,
-      listPricePen: '55.0000',
-    });
-    const trail = newTrail();
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id],
+      coilIds: [scenario.coil.id],
+      purchaseIds: [scenario.purchaseId],
+      orderIds: [],
+      quotationIds: [],
+    };
 
     try {
+      // 150 m y 175 m son 600 y 700 kg: cada una sola entra contra 1000, las dos juntas no.
       const quotations: QuotationDto[] = [];
-      for (const qty of ['6', '7']) {
+      for (const meters of [150, 175]) {
+        // Piezas de 5 m (dentro del máximo de 20 m) hasta sumar el total buscado.
+        const rows = pieces([5, meters / 5]);
         const q = await createQuotation(api, {
           customerId: customer.id,
           businessLine: COVER_LINE,
-          productId: product.id,
-          qty,
-          reserveFromCoilId: stock.coil.id,
-          reserveKg: '800',
+          productId: scenario.product.id,
+          qty: metersOf(rows),
+          unitPricePen: '55',
+          pieces: rows,
         });
-        trail.quotationIds.push(q.id);
+        trail.quotationIds!.push(q.id);
         await postJson<QuotationDto>(api, `/api/sales/quotations/${q.id}/emit`);
         quotations.push(q);
       }
@@ -1045,7 +1155,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       );
       const winners = responses.filter((r) => r.ok());
       const losers = responses.filter((r) => !r.ok());
-      expect(winners, 'solo una confirmación puede ganar 800 de 1 000 kg').toHaveLength(1);
+      expect(winners, 'solo una confirmación puede ganar contra el mismo agregado').toHaveLength(1);
       expect(losers).toHaveLength(1);
 
       const loserBody = (await losers[0]!.json()) as { message?: string };
@@ -1055,29 +1165,49 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       ).toBe(400);
 
       const winner = (await winners[0]!.json()) as SalesOrderDto;
-      trail.orderIds.push(winner.id);
+      trail.orderIds!.push(winner.id);
 
-      // Una sola reserva viva y el disponible que le corresponde: ninguna huérfana.
-      expect(await availabilityOf(api, 'COIL', stock.coil.id)).toMatchObject({
-        qty: '1000.000',
-        reservedQty: '800.000',
-        availableQty: '200.000',
+      const winnerKg = Number(winner.reservations[0]!.qty);
+      const panel = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [scenario.product.id],
       });
+      expect(panel.products.find((p) => p.productId === scenario.product.id)).toMatchObject({
+        rawMaterialAvailableKg: (1000 - winnerKg).toFixed(3),
+      });
+
+      // Una sola reserva viva contra este pedido y ningún pedido huérfano de la perdedora.
+      // `/api/sales/reservations` devuelve un arreglo plano, no la envoltura paginada
+      // ({items, total, ...}) de los otros listados (D-113): no pasa por `getItems`.
       const live = await getJson<{ id: string }[]>(
         api,
-        `/api/sales/reservations?itemId=${stock.coil.id}&status=ACTIVE`,
+        `/api/sales/reservations?salesOrderId=${winner.id}&status=ACTIVE`,
       );
       expect(live).toHaveLength(1);
       expect(await ordersOfCustomer(api, customer.id)).toHaveLength(1);
     } finally {
-      await purgeSalesTrail(api, trail);
-      await deactivateTrail(api, {
-        motherId: stock.coil.id,
-        purchaseId: stock.purchaseId,
-        supplierId: stock.supplier.id,
-        finish: stock.finish,
-        productId: product.id,
-      });
+      await purgeRoofingTrail(api, trail);
     }
   });
 });
+
+/**
+ * `isoDaysFromToday` (de `helpers/sales.ts`) ya evita el corte en UTC (D-112/D-131); se
+ * envuelve acá solo para no importar dos veces el mismo nombre bajo otro alias en este
+ * archivo, que ya usa `today` de `helpers/production`.
+ */
+function isoDaysFromTodayFallback(days: number): string {
+  const [year, month, day] = todayFromProduction().split('-').map(Number);
+  const noonUtc = new Date(Date.UTC(year!, month! - 1, day!, 12, 0, 0));
+  noonUtc.setUTCDate(noonUtc.getUTCDate() + days);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(noonUtc);
+}
+
+function todayFromProduction(): string {
+  return today();
+}

@@ -11,7 +11,6 @@ import {
 } from '@prisma/client';
 import {
   productionOrderCode,
-  theoreticalKgPerPiece,
   toFixedString,
   Unit,
   type ProductBomDto,
@@ -82,16 +81,17 @@ export class BomsService {
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
     const kind = input.kind;
-    const expectedLine =
-      kind === ProductBomKind.DRYWALL
-        ? BusinessLineCode.DRYWALL
-        : BusinessLineCode.METALLIC_ROOFING;
-    if (product.businessLine.code !== expectedLine) {
+    // D-122: la receta es **solo** de drywall. Una cobertura no la necesita: su acabado,
+    // su espesor, su ancho, su largo y su color viven en el SKU, que es de donde salen la
+    // densidad (RF-25) y el filtro de bobina (D-086). Mientras existieron las dos fuentes,
+    // la que mandaba era la que menos se edita.
+    if (kind !== ProductBomKind.DRYWALL) {
       throw new BadRequestException(
-        kind === ProductBomKind.DRYWALL
-          ? 'Una receta de drywall es de un producto de la línea Drywall'
-          : 'Una receta de cobertura es de un producto de la línea Metallic Roofing',
+        'Una cobertura no lleva receta desde D-122: su acabado, su geometría y su color son del propio producto. Completalos en el catálogo.',
       );
+    }
+    if (product.businessLine.code !== BusinessLineCode.DRYWALL) {
+      throw new BadRequestException('Una receta de drywall es de un producto de la línea Drywall');
     }
     if (!product.isActive) {
       throw new BadRequestException('El producto está desactivado: actívalo antes de darle receta');
@@ -105,13 +105,10 @@ export class BomsService {
     // se valida acá y no se deduce después. Un perfil y una plancha de catálogo se cuentan
     // por pieza; una cobertura a medida se lleva en metros porque dos planchas de largo
     // distinto no pueden compartir un promedio ponderado.
-    const expectedUnit =
-      kind === ProductBomKind.DRYWALL || input.pieceLengthMm !== undefined ? Unit.NIU : Unit.MTR;
-    if (product.unit !== expectedUnit) {
+    // D-055: un perfil de drywall se cuenta por pieza, así que su unidad es `NIU`.
+    if (product.unit !== Unit.NIU) {
       throw new BadRequestException(
-        expectedUnit === Unit.NIU
-          ? `El producto se debe medir en unidades (${Unit.NIU}): con largo fijo, la pieza es la unidad del producto terminado (D-055, D-083)`
-          : `Una cobertura a medida se mide en metros lineales (${Unit.MTR}): el largo lo pone el pedido, así que la pieza no es una unidad comparable (D-083)`,
+        `El producto se debe medir en unidades (${Unit.NIU}): la pieza es la unidad del producto terminado (D-055)`,
       );
     }
 
@@ -119,42 +116,25 @@ export class BomsService {
     if (!finish) throw new NotFoundException('Acabado no encontrado');
     if (!finish.isActive) throw new BadRequestException('El acabado está desactivado');
 
-    // El kilo por pieza solo existe en drywall: el schema ya rechaza mandarlo en una
-    // receta de cobertura, donde sale de la bobina montada por el largo reportado (D-047).
-    let kgPerPiece: string | null = null;
-    if (kind === ProductBomKind.DRYWALL) {
-      // El schema ya los exige; el chequeo se repite acá porque es lo que estrecha el tipo,
-      // y porque un servicio no debería depender de que su llamador haya validado — es la
-      // misma red que `drywallShape` pone del lado de la orden.
-      const { inputWidthMm, pieceLengthMm } = input;
-      if (inputWidthMm === undefined || pieceLengthMm === undefined) {
-        throw new BadRequestException(
-          'Una receta de drywall necesita el ancho del fleje y el largo de la pieza',
-        );
-      }
-      const suggested = theoreticalKgPerPiece({
-        widthMm: inputWidthMm,
-        thicknessMm: input.inputThicknessMm,
-        pieceLengthMm,
-        densityFactor: finish.densityFactor.toFixed(4),
-      });
-      if (input.kgPerPiece === undefined && suggested.lte(0)) {
-        throw new BadRequestException(
-          'La geometría de la pieza no llega a un kilo redondeable: revisa ancho, espesor y largo, o escribe el kilo por pieza a mano',
-        );
-      }
-      kgPerPiece = toFixedString(input.kgPerPiece ?? suggested, 'KG');
+    // D-122/D-139: la receta ya no guarda ni el largo de la pieza ni sus kilos. Los dos
+    // viven en el SKU (`products.length_mm`, `products.piece_weight_kg`), que es donde
+    // D-118 ya había puesto el resto de la geometría. Lo que queda acá es el vínculo
+    // fleje → perfil: qué acabado, qué espesor y qué ancho de fleje consume.
+    const { inputWidthMm } = input;
+    if (inputWidthMm === undefined) {
+      throw new BadRequestException('Una receta de drywall necesita el ancho del fleje');
+    }
+    if (product.pieceWeightKg === null || product.pieceWeightKg.lte(0)) {
+      throw new BadRequestException(
+        `${product.sku} no tiene peso por pieza en el catálogo: cárgalo antes de darle receta (es lo que dice cuántos kilos consume cada pieza, D-139)`,
+      );
     }
 
     const data = {
       kind,
       finishId: input.finishId,
       inputThicknessMm: toFixedString(input.inputThicknessMm, 'MM'),
-      inputWidthMm:
-        input.inputWidthMm === undefined ? null : toFixedString(input.inputWidthMm, 'MM'),
-      pieceLengthMm:
-        input.pieceLengthMm === undefined ? null : toFixedString(input.pieceLengthMm, 'MM'),
-      kgPerPiece,
+      inputWidthMm: toFixedString(inputWidthMm, 'MM'),
       isActive: input.isActive ?? true,
     };
 
@@ -238,8 +218,6 @@ function auditView(bom: ProductBom): Prisma.InputJsonObject {
     kind: bom.kind,
     inputThicknessMm: bom.inputThicknessMm.toFixed(2),
     inputWidthMm: bom.inputWidthMm?.toFixed(2) ?? null,
-    pieceLengthMm: bom.pieceLengthMm?.toFixed(2) ?? null,
-    kgPerPiece: bom.kgPerPiece?.toFixed(3) ?? null,
     isActive: bom.isActive,
   };
 }
@@ -259,22 +237,11 @@ export function toDto(bom: BomWithRelations): ProductBomDto {
     densityFactor: bom.finish.densityFactor.toFixed(4),
     inputThicknessMm: bom.inputThicknessMm.toFixed(2),
     inputWidthMm: bom.inputWidthMm?.toFixed(2) ?? null,
-    pieceLengthMm: bom.pieceLengthMm?.toFixed(2) ?? null,
-    kgPerPiece: bom.kgPerPiece?.toFixed(3) ?? null,
-    // Solo tiene sentido donde hay una geometría fija que sugerir: en coberturas la
-    // geometría la trae el rollo que todavía no se montó.
-    suggestedKgPerPiece:
-      bom.inputWidthMm && bom.pieceLengthMm
-        ? toFixedString(
-            theoreticalKgPerPiece({
-              widthMm: bom.inputWidthMm.toFixed(2),
-              thicknessMm: bom.inputThicknessMm.toFixed(2),
-              pieceLengthMm: bom.pieceLengthMm.toFixed(2),
-              densityFactor: bom.finish.densityFactor.toFixed(4),
-            }),
-            'KG',
-          )
-        : null,
+    // D-139: los kilos que consume cada pieza son el peso de la pieza terminada, y viven en
+    // el SKU. El DTO los sigue exponiendo acá porque la pantalla de la receta es donde se
+    // miran, pero la fuente es una sola.
+    kgPerPiece: bom.product.pieceWeightKg?.toFixed(3) ?? null,
+    pieceLengthMm: bom.product.lengthMm?.toFixed(2) ?? null,
     isActive: bom.isActive,
     createdAt: bom.createdAt.toISOString(),
     updatedAt: bom.updatedAt.toISOString(),

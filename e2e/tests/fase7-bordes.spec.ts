@@ -50,8 +50,6 @@ test.describe('Fase 7 — bordes de la cola de producción', () => {
       const { order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '20',
         rows: pieces([2, 1]),
       });
       trail.orderIds = [order.id];
@@ -115,8 +113,6 @@ test.describe('Fase 7 — bordes de la cola de producción', () => {
       const { order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '20',
         rows: pieces([2, 1]),
       });
       trail.orderIds = [order.id];

@@ -10,12 +10,10 @@ import {
 import {
   businessLineId,
   createCuttingSupplier,
-  putJson,
   randomLetters,
   today,
   uniqueDocumentNumber,
   type CoilDto,
-  type ProductBomDto,
   type ProductDto,
   type ProductionOrderDto,
   type PurchaseDto,
@@ -65,11 +63,15 @@ export interface RoofingCoilOptionDto {
 export interface ReservationRow {
   id: string;
   salesOrderItemId: string;
-  itemType: 'COIL' | 'PRODUCT';
+  /** D-134: una cobertura a medida reserva `RAW_MATERIAL` (el agregado), no una bobina. */
+  itemType: 'COIL' | 'PRODUCT' | 'RAW_MATERIAL';
   itemId: string;
   qty: string;
   unit: string;
   status: string;
+  /** D-084: la OP viva que nace de esta reserva, si ya existe. */
+  productionOrderId: string | null;
+  productionOrderCode: string | null;
 }
 
 /** Un color nuevo del maestro (D-085). El prefijo `E2E` es la marca de la purga. */
@@ -87,8 +89,9 @@ export async function createRoofingFinish(api: APIRequestContext): Promise<Creat
 }
 
 /**
- * Producto de cobertura **a medida**: unidad `MTR`, fabricado, con color y con receta de
- * cobertura (sin largo: el largo lo trae el pedido, D-083).
+ * Producto de cobertura **a medida**: unidad `MTR`, fabricado, con color y con el acabado
+ * en el propio SKU (D-122: una cobertura ya no lleva receta; su acabado, su espesor, su
+ * ancho y su color viven en `products`, y de ahí sale la densidad, RF-25).
  */
 export async function createRoofingProduct(
   api: APIRequestContext,
@@ -102,7 +105,7 @@ export async function createRoofingProduct(
     pieceLengthMm?: string;
     listPricePen?: string;
   },
-): Promise<{ product: ProductDto; bom: ProductBomDto }> {
+): Promise<{ product: ProductDto }> {
   const lineId = await businessLineId(api, ROOFING_LINE);
   const madeToMeasure = options.pieceLengthMm === undefined;
   const product = await postJson<ProductDto>(api, '/api/catalog', {
@@ -113,23 +116,19 @@ export async function createRoofingProduct(
     source: 'MANUFACTURED',
     listPricePen: options.listPricePen ?? '30',
     // D-118 (Fase 7e): Metallic Roofing exige espesor y ancho del SKU desde el alta.
+    // D-122: y desde entonces también el acabado, que es de donde sale la densidad.
+    finishId: options.finishId,
     thicknessMm: options.thicknessMm ?? NOMINAL_THICKNESS,
     widthMm: options.catalogWidthMm ?? COIL_WIDTH,
     // D-127: el subtipo es explícito y obligatorio en esta línea; antes se deducía de la
-    // unidad. La plancha además lleva su largo fijo en el catálogo (el mismo que la receta
-    // corta), y la cobertura a medida tiene prohibido llevarlo.
+    // unidad. La plancha además lleva su largo fijo en el catálogo, y la cobertura a
+    // medida tiene prohibido llevarlo.
     ...(madeToMeasure
       ? { roofingKind: 'A_MEDIDA' }
       : { roofingKind: 'PLANCHA', lengthMm: options.pieceLengthMm }),
     ...(options.colorId ? { colorId: options.colorId } : {}),
   });
-  const bom = await putJson<ProductBomDto>(api, `/api/production/boms/${product.id}`, {
-    kind: 'ROOFING',
-    finishId: options.finishId,
-    inputThicknessMm: options.thicknessMm ?? NOMINAL_THICKNESS,
-    ...(madeToMeasure ? {} : { pieceLengthMm: options.pieceLengthMm }),
-  });
-  return { product, bom };
+  return { product };
 }
 
 export interface RoofingCoilOptions {
@@ -213,7 +212,6 @@ export interface RoofingScenario {
   finish: CreatedFinish;
   color: ColorDto;
   product: ProductDto;
-  bom: ProductBomDto;
   coil: CoilDto;
   purchaseId: string;
 }
@@ -225,7 +223,7 @@ export async function setupRoofingScenario(
   const supplier = await createCuttingSupplier(api);
   const finish = await createRoofingFinish(api);
   const color = await createColor(api);
-  const { product, bom } = await createRoofingProduct(api, {
+  const { product } = await createRoofingProduct(api, {
     finishId: finish.id,
     colorId: color.id,
     ...(options.pieceLengthMm === undefined ? {} : { pieceLengthMm: options.pieceLengthMm }),
@@ -236,7 +234,7 @@ export async function setupRoofingScenario(
     colorId: color.id,
     weightKg: options.weightKg ?? '2000',
   });
-  return { supplier, finish, color, product, bom, coil, purchaseId };
+  return { supplier, finish, color, product, coil, purchaseId };
 }
 
 /** Subítems `{cantidad, largo}` en la forma que espera el API (milímetros, D-083). */
@@ -255,14 +253,18 @@ export function metersOf(rows: { lengthMm: string; qty: number }[]): string {
 /**
  * Cotización de coberturas con una línea compuesta, emitida y confirmada, con su OP creada
  * a partir de la reserva. Es el arranque de casi todos los tests de la fase.
+ *
+ * D-134: ya no se elige una bobina al cotizar (`reserveFromCoilId`/`reserveKg`
+ * desaparecieron). La línea solo manda `productId`, `qty` (metros) y `pieces`; el API
+ * resuelve solo el agregado de materia prima (línea + color + espesor de la receta) y
+ * calcula los kilos teóricos (`ml × espesor × ancho × densidad`). Qué bobina cumple esa
+ * promesa lo decide planta al montar la OP (`mountCoil`), no el vendedor acá.
  */
 export async function quoteAndOrder(
   api: APIRequestContext,
   input: {
     customerId: string;
     productId: string;
-    coilId: string;
-    reserveKg: string;
     rows: { lengthMm: string; qty: number }[];
     unitPricePen?: string;
     /** Fase 7 (D-096): única ventana en la que el vendedor la fija, en la confirmación. */
@@ -279,8 +281,6 @@ export async function quoteAndOrder(
         qty: metersOf(input.rows),
         unitPricePen: input.unitPricePen ?? '30',
         pieces: input.rows,
-        reserveFromCoilId: input.coilId,
-        reserveKg: input.reserveKg,
       },
     ],
   });

@@ -9,11 +9,12 @@ import {
 import {
   CoilKind,
   CoilStatus,
+  InventoryRefType,
   Prisma,
-  ProductBomKind,
   ProductionOrderStatus,
   QuotationStatus,
   ReservationStatus,
+  SalesOrderOrigin,
   SalesOrderStatus,
   InventoryItemType as InventoryItemTypeEnum,
   type InventoryItemType,
@@ -21,7 +22,11 @@ import {
 import {
   businessToday,
   COIL_BUSINESS_LINES,
+  Decimal,
+  DERIVED_FILTER_FETCH_CAP,
+  kgPerMeter,
   paginate,
+  rawMaterialLabel,
   productionOrderCode,
   queueSemaphore,
   quotationCode,
@@ -29,21 +34,25 @@ import {
   Role,
   salesOrderCode,
   toDecimal,
+  toFixedString,
   toSkipTake,
   Unit,
+  type BusinessLine,
   type CreateSalesOrderInput,
   type PaginatedResult,
   type ProductionQueueEntryDto,
   type QueueSemaphore,
   type QueueStatus,
-  type ReservableCoilDto,
-  type ReservableCoilQuery,
   type ReservationDto,
   type ReservationQuery,
   type SalesOrderDto,
   type SalesOrderListItemDto,
   type SalesOrderQuery,
+  type ProductStockDto,
+  type RawMaterialStockDto,
   type SellableCoilDto,
+  type StockPanelDto,
+  type StockPanelQuery,
   type SellableCoilQuery,
   type SetSalesOrderPriorityInput,
 } from '@ayr/shared';
@@ -53,7 +62,10 @@ import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { assertStripsNotAssigned } from '../production/production-assignments';
+import {
+  assertStripsNotAssigned,
+  findLiveStripAssignments,
+} from '../production/production-assignments';
 import {
   derivePiecesPlan,
   roofingTheoreticalKg,
@@ -63,11 +75,21 @@ import { roofingToleranceMm } from '../production/roofing-coil-match';
 import {
   documentTotals,
   isMadeToMeasure,
-  resolveMadeToMeasureCoils,
   resolveSalesLines,
+  ROOFING_PRODUCT_SELECT,
+  roofingSpecThicknessMm,
+  theoreticalKgForMeters,
   toSalesItemDto,
-  type MadeToMeasureReservation,
 } from './sales-lines';
+import {
+  assertRawMaterialInvariant,
+  rawMaterialAvailability,
+  rawMaterialSpecLabels,
+  resolveRawMaterialSpec,
+  findRawMaterialSpec,
+  findRawMaterialSpecs,
+  rawMaterialCoilIds,
+} from './raw-material';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -108,10 +130,78 @@ const orderInclude = {
       },
     },
   },
+  /**
+   * D-141: el comprobante importado del que nació el pedido. Es la mitad "pedido →
+   * documento" del enlace bidireccional, y no hay columna nueva: se lee la misma relación
+   * `fiscal_documents.sales_order_id` desde este lado.
+   *
+   * El filtro por `IMPORTED` es lo que la hace 1:1 de verdad. Sin él, un pedido normal que
+   * después se facturó acá —dos comprobantes, uno anulado y otro emitido— habría llenado
+   * este campo con cualquiera de los dos y el detalle habría dicho "importado de F001-…"
+   * sobre un pedido que el ERP creó.
+   */
+  fiscalDocuments: {
+    where: { origin: 'IMPORTED', archivedAt: null },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, number: true },
+    take: 1,
+  },
 } satisfies Prisma.SalesOrderInclude;
 
 type OrderRow = Prisma.SalesOrderGetPayload<{ include: typeof orderInclude }>;
 type ReservationRow = OrderRow['reservations'][number];
+
+/**
+ * Una línea **espejo** del comprobante importado (D-141). Ya viene con sus importes
+ * calculados por la aritmética del comprobante: acá no se recalcula ningún precio contra el
+ * maestro, porque lo que se factura ya se facturó.
+ */
+export interface ImportedShellLine {
+  lineNumber: number;
+  productId: string;
+  description: string;
+  qty: string;
+  unit: string;
+  unitPricePen: string;
+  subtotalPen: string;
+  igvPen: string;
+  totalPen: string;
+}
+
+/** Lo que hace falta para crear el pedido cáscara de un comprobante importado (D-141). */
+export interface ImportedShellOrderInput {
+  customerId: string;
+  /** La del comprobante, no la de hoy. */
+  issueDate: string;
+  notes: string | null;
+  lines: ImportedShellLine[];
+}
+
+/** Lo que puede cambiar el llamador de `createDirectInTx` (ver cada campo). */
+export interface CreateDirectOptions {
+  /**
+   * Venta de mostrador (D-098/D-099). **No relaja nada**: cambia una regla por otra más
+   * estricta — se salta `quotation_required` y a cambio exige que cada línea esté
+   * respaldada por su propio producto.
+   */
+  counterSale?: boolean;
+  /**
+   * D-141: el pedido nace de un comprobante **ya emitido afuera** que el dueño marcó como
+   * pendiente de entrega.
+   *
+   * Hace dos cosas y ninguna toca el inventario: marca el pedido `origin = IMPORTED` y se
+   * salta `quotation_required`. Lo segundo no es un agujero en RF-31 sino la única lectura
+   * posible: RF-31 exige cotizar **antes de comprometerse a producir**, y acá el compromiso
+   * ya se tomó y ya se facturó — el comprobante existe, tiene número y SUNAT lo tiene. Pedir
+   * una cotización previa a una venta que ya ocurrió no protege nada; solo dejaría fuera del
+   * ERP la mitad pendiente de la operación real.
+   *
+   * Todo lo demás sigue igual, y eso es lo que importa: la reserva se crea, la invariante
+   * `disponible ≥ reservado` se comprueba línea por línea y una promesa que no alcanza tira
+   * abajo la importación de ese documento entero.
+   */
+  imported?: boolean;
+}
 
 /** Las dos formas en que una fila nombra al ítem del kardex que reserva. */
 type ReserveRef =
@@ -229,17 +319,19 @@ export class SalesOrdersService {
           );
         }
 
-        // D-127: las líneas a medida que la cotización dejó **sin** materia prima asignada
-        // se resuelven ahora, contra el stock de hoy. Copiar lo que la cotización congeló
-        // sería prometer un rollo elegido hace hasta 365 días (D-069), que a esta altura
-        // puede estar cerrado, consumido o prometido a otro pedido.
+        // D-134: las coordenadas de materia prima de una línea a medida se **recalculan**
+        // acá, no se copian. La cotización ya guarda el agregado y los kilos teóricos, pero
+        // vive hasta 365 días (D-069) y en ese plazo el catálogo puede haber cambiado el
+        // color, la geometría o el espesor de la receta: confirmar contra lo congelado
+        // prometería material que ya no es el que ese SKU necesita. Recalcular contra el
+        // maestro de hoy también es lo que arregla solas las cotizaciones anteriores a
+        // D-134, que guardaron `PRODUCT` + metros.
         const rawMaterialByLine = await this.resolveRawMaterial(
           tx,
           quotation.items.map((i) => ({
             lineNumber: i.lineNumber,
             productId: i.productId,
             qty: i.qty.toString(),
-            alreadyOnCoil: i.reserveItemType === InventoryItemTypeEnum.COIL,
           })),
         );
 
@@ -258,8 +350,9 @@ export class SalesOrdersService {
             promisedDeliveryDate: promisedDeliveryDate ? toDateOnly(promisedDeliveryDate) : null,
             items: {
               create: quotation.items.map((i) => {
-                // D-127: si la línea es a medida, la materia prima que se acaba de resolver
-                // reemplaza lo que la cotización había congelado; el resto se copia tal cual.
+                // D-134: si la línea es a medida, el agregado y los kilos que se acaban de
+                // recalcular reemplazan lo que la cotización había congelado; el resto se
+                // copia tal cual.
                 const raw = rawMaterialByLine.get(i.lineNumber);
                 return {
                   lineNumber: i.lineNumber,
@@ -272,8 +365,8 @@ export class SalesOrdersService {
                   subtotalPen: i.subtotalPen,
                   igvPen: i.igvPen,
                   totalPen: i.totalPen,
-                  reserveItemType: raw ? InventoryItemTypeEnum.COIL : i.reserveItemType,
-                  reserveItemId: raw ? raw.coilId : i.reserveItemId,
+                  reserveItemType: raw ? InventoryItemTypeEnum.RAW_MATERIAL : i.reserveItemType,
+                  reserveItemId: raw ? raw.specId : i.reserveItemId,
                   reserveQty: raw ? raw.kg : i.reserveQty.toString(),
                   reserveUnit: raw ? Unit.KGM : i.reserveUnit,
                   // D-083: el pedido congela los largos igual que congela el precio; a partir
@@ -363,7 +456,7 @@ export class SalesOrdersService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     input: CreateSalesOrderInput,
-    options: { counterSale?: boolean } = {},
+    options: CreateDirectOptions = {},
   ): Promise<string> {
     const customer = await tx.customer.findUnique({
       where: { id: input.customerId },
@@ -372,20 +465,18 @@ export class SalesOrdersService {
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
 
-    // D-127: el pedido —a diferencia de la cotización— sí compromete material, así que es
-    // acá donde se elige la bobina de cada línea a medida que no eligió una a mano.
-    const rawMaterialByLine = await this.resolveRawMaterial(
-      tx,
-      input.items.map((item, index) => ({ lineNumber: index + 1, ...item })),
-    );
-    const lines = await resolveSalesLines(tx, input.items, { rawMaterialByLine });
+    // D-141: solo lo importado entra sin el detalle de largos (ver `ResolveSalesLinesOptions`).
+    const lines = await resolveSalesLines(tx, input.items, {
+      allowMissingPieces: options.imported === true,
+    });
 
     // D-119: un pedido directo (sin cotización) exige que **ninguna** línea venga de una
     // línea de negocio que obliga a cotizar (RF-31). Antes era un chequeo del documento
     // entero contra una sola línea; con líneas mixtas cada una puede venir de una línea de
     // negocio distinta, así que se comprueba una por una. El mostrador (`counterSale`) no
-    // exige cotización nunca (D-098) y se salta este chequeo por completo.
-    if (options.counterSale !== true) {
+    // exige cotización nunca (D-098) y se salta este chequeo por completo; lo importado
+    // (D-141) tampoco, porque la venta ya se facturó y no hay nada que cotizar antes.
+    if (options.counterSale !== true && options.imported !== true) {
       const lineIds = [...new Set(lines.map((l) => l.businessLineId))];
       const businessLines = await tx.businessLine.findMany({
         where: { id: { in: lineIds } },
@@ -425,6 +516,8 @@ export class SalesOrdersService {
         quotationId: null,
         customerId: customer.id,
         status: SalesOrderStatus.CONFIRMED,
+        origin:
+          options.imported === true ? SalesOrderOrigin.IMPORTED : SalesOrderOrigin.CREATED_HERE,
         issueDate: toDateOnly(input.issueDate),
         subtotalPen: totals.subtotalPen,
         igvPen: totals.igvPen,
@@ -471,39 +564,279 @@ export class SalesOrdersService {
 
     await this.audit.write(tx, {
       actorId: actor.id,
-      action: options.counterSale === true ? 'pos.order.create' : 'sales.order.create-direct',
+      action:
+        options.counterSale === true
+          ? 'pos.order.create'
+          : options.imported === true
+            ? 'sales.order.create-imported'
+            : 'sales.order.create-direct',
       entity: 'sales_orders',
       entityId: order.id,
-      after: { code: salesOrderCode(order.seq), totalPen: totals.totalPen },
+      after: {
+        code: salesOrderCode(order.seq),
+        totalPen: totals.totalPen,
+        ...(options.imported === true ? { origin: SalesOrderOrigin.IMPORTED } : {}),
+      },
+    });
+    return order.id;
+  }
+
+  // -------------------------------------------------------------------------
+  // D-141 — el pedido cáscara de un comprobante ya entregado
+  // -------------------------------------------------------------------------
+
+  /**
+   * Pedido **cáscara** de una venta que ya se entregó (D-141).
+   *
+   * Es la mitad de la importación que no tiene que pasar por ningún camino del ciclo
+   * comercial, y por eso no lo reusa: no llama a `resolveSalesLines`, no llama a
+   * `createReservations` y no encola nada. Las líneas son un **espejo** de las del
+   * comprobante —la misma descripción, la misma cantidad, el mismo precio— y el pedido nace
+   * en un estado terminal.
+   *
+   * **Por qué un método propio y no `createDirectInTx` con un flag más.** Un flag habría
+   * dejado el bypass como una rama dentro de un método que sí crea reservas, y la garantía
+   * de "cero efectos" habría dependido de que esa rama siguiera siendo correcta cada vez que
+   * alguien tocara el método. Acá el bypass es estructural: no hay ninguna línea de código
+   * que pueda escribir una reserva, así que no hay nada que se pueda romper por descuido.
+   *
+   * **Y aun así se comprueba.** El pedido del enunciado es "cero efectos de inventario, y no
+   * confiar solo en el estado": al terminar se cuenta lo que este pedido dejó en el ledger,
+   * en el kardex y en producción, y si dejó algo, la transacción entera se cae. Es la misma
+   * idea que D-052 usa para los guardrails de reversa — la comprobación vale justamente en
+   * el día en que alguien agregue un hook nuevo a la creación de pedidos y no se acuerde de
+   * este camino.
+   *
+   * Los precios y las cantidades no se re-resuelven contra el maestro (a diferencia de un
+   * pedido normal, que valida contra el catálogo de hoy): el comprobante es el hecho, y un
+   * SKU cuyo precio de lista cambió el mes pasado no puede cambiar lo que se facturó.
+   */
+  async createImportedShellInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: ImportedShellOrderInput,
+  ): Promise<string> {
+    const customer = await tx.customer.findUnique({
+      where: { id: input.customerId },
+      select: { id: true, isActive: true },
+    });
+    if (!customer) throw new NotFoundException('Cliente no encontrado');
+    if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
+    if (input.lines.length === 0) {
+      throw new BadRequestException('El pedido importado no tiene líneas');
+    }
+
+    // Σ subtotales + Σ IGV, nunca Σ de totales ya redondeados: el mismo criterio que
+    // `documentTotals` aplica a una línea resuelta, sobre líneas que no pasan por ahí.
+    const subtotal = input.lines.reduce(
+      (acc, l) => acc.plus(toDecimal(l.subtotalPen)),
+      toDecimal('0'),
+    );
+    const igv = input.lines.reduce((acc, l) => acc.plus(toDecimal(l.igvPen)), toDecimal('0'));
+    const totals = {
+      subtotalPen: toFixedString(subtotal, 'MONEY'),
+      igvPen: toFixedString(igv, 'MONEY'),
+      totalPen: toFixedString(subtotal.plus(igv), 'MONEY'),
+    };
+
+    const order = await tx.salesOrder.create({
+      data: {
+        quotationId: null,
+        customerId: customer.id,
+        // El estado terminal que ya existe (D-065). No se inventa uno nuevo: para todo lo
+        // que lee pedidos —el despacho, la cobranza, la cola de producción— "atendido" ya
+        // significa exactamente lo que este pedido es.
+        status: SalesOrderStatus.FULFILLED,
+        origin: SalesOrderOrigin.IMPORTED,
+        // La fecha de emisión del comprobante, no la de hoy (D-124): el pedido existió ese
+        // día y ordenarlo por la fecha de carga lo pondría entre los de esta semana.
+        issueDate: toDateOnly(input.issueDate),
+        subtotalPen: totals.subtotalPen,
+        igvPen: totals.igvPen,
+        totalPen: totals.totalPen,
+        notes: input.notes ?? null,
+        createdById: actor.id,
+        items: {
+          create: input.lines.map((l) => ({
+            lineNumber: l.lineNumber,
+            productId: l.productId,
+            description: l.description,
+            qty: l.qty,
+            unit: l.unit,
+            listPricePen: null,
+            unitPricePen: l.unitPricePen,
+            subtotalPen: l.subtotalPen,
+            igvPen: l.igvPen,
+            totalPen: l.totalPen,
+            // `reserve_*` es el registro congelado de lo que se prometió (D-088), no una
+            // reserva: acá se prometió el propio producto y **no se creó ninguna fila** en
+            // el ledger, que es lo que la comprobación de abajo verifica.
+            reserveItemType: InventoryItemTypeEnum.PRODUCT,
+            reserveItemId: l.productId,
+            reserveQty: l.qty,
+            reserveUnit: l.unit,
+          })),
+        },
+      },
+      select: { id: true, seq: true },
+    });
+
+    await this.assertNoInventoryEffects(tx, order.id, salesOrderCode(order.seq));
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'sales.order.create-imported-shell',
+      entity: 'sales_orders',
+      entityId: order.id,
+      after: {
+        code: salesOrderCode(order.seq),
+        totalPen: totals.totalPen,
+        status: SalesOrderStatus.FULFILLED,
+        origin: SalesOrderOrigin.IMPORTED,
+        lines: input.lines.length,
+      },
     });
     return order.id;
   }
 
   /**
-   * D-127: la materia prima de las líneas **a medida** de un pedido.
+   * D-141: el pedido cáscara no dejó **nada** detrás.
    *
-   * Solo entra la línea cuyo producto es `A_MEDIDA` y que **no** trae ya una bobina elegida a
-   * mano (`reserveFromCoilId` en un alta directa, `reserveItemType = COIL` en una cotización
-   * confirmada): esa elección manual es del vendedor y se respeta.
+   * Cuenta las tres cosas que un pedido normal sí crea —reserva, movimiento de kardex y
+   * orden de producción— y se cae si encuentra una. Hoy no puede encontrar ninguna, y ese es
+   * el punto: la comprobación no está para el código de hoy sino para el hook que alguien
+   * agregue mañana a la creación de un pedido sin acordarse de que esta puerta existe.
    *
-   * Vive en este servicio y no en `resolveSalesLines` porque la frontera es exactamente la
-   * que separa cotizar de comprometer: una cotización no reserva nada (D-054) y no debe
-   * quedarse con un rollo; un pedido sí.
+   * **El kardex se comprueba a través del despacho, y no por su propia tabla.** Un pedido no
+   * escribe `inventory_movements` nunca: por regla dura 2 el único que saca stock por una
+   * venta es el despacho (`refType = SALE`, con el id del despacho como referencia), así que
+   * "cero despachos" **es** "cero kardex" y buscar el id del pedido entre las referencias no
+   * habría encontrado nada aunque el pedido hubiera movido stock.
+   */
+  private async assertNoInventoryEffects(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    code: string,
+  ): Promise<void> {
+    const [reservations, productionOrders, dispatchIds] = await Promise.all([
+      tx.reservation.count({ where: { salesOrderId: orderId } }),
+      tx.productionOrder.count({ where: { reservation: { salesOrderId: orderId } } }),
+      tx.dispatch.findMany({ where: { salesOrderId: orderId }, select: { id: true } }),
+    ]);
+    // `refId` es un `VARCHAR` sin FK (el kardex referencia entidades de cinco módulos), así
+    // que la búsqueda va por los ids de los despachos y no por una relación.
+    const movements =
+      dispatchIds.length === 0
+        ? 0
+        : await tx.inventoryMovement.count({
+            where: { refType: InventoryRefType.SALE, refId: { in: dispatchIds.map((d) => d.id) } },
+          });
+    const dispatches = dispatchIds.length;
+    if (reservations === 0 && productionOrders === 0 && dispatches === 0 && movements === 0) {
+      return;
+    }
+    throw new BadRequestException(
+      `El pedido cáscara ${code} quedó con efectos de inventario (` +
+        `${reservations} reservas, ${productionOrders} órdenes de producción, ` +
+        `${dispatches} despachos, ${movements} movimientos de kardex): ` +
+        'un comprobante ya entregado no puede crear ninguno. La importación se deshizo entera.',
+    );
+  }
+
+  /**
+   * D-141 + D-109: reimportar un comprobante **archiva** su pedido cáscara.
+   *
+   * "Archivar" un pedido es anularlo: `sales_orders` no tiene `archived_at` y no hace falta
+   * que lo tenga — una cáscara sin efectos no dejó nada que deshacer, así que el estado
+   * terminal de anulado dice la verdad completa y conserva la fila con su historial (§3.2).
+   *
+   * **Un pedido con efectos no pasa por acá.** El guardrail vuelve a contar lo mismo que
+   * `assertNoInventoryEffects` y, si el pedido está vivo con material prometido o con una
+   * orden de producción encima, lanza con el motivo: la reimportación del comprobante se
+   * bloquea entera en vez de dejar un pedido anulado cuyas reservas alguien tendría que
+   * liberar a mano — que es exactamente el agujero que D-061, D-088, D-097 y D-110 ya
+   * costaron una vez.
+   */
+  async archiveImportedOrderInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    reason: string,
+  ): Promise<void> {
+    const order = await this.lockOrder(tx, orderId);
+    if (order.origin !== SalesOrderOrigin.IMPORTED) {
+      throw new BadRequestException(
+        `El pedido ${salesOrderCode(order.seq)} no nació de una importación: no se puede archivar reimportando un comprobante`,
+      );
+    }
+    if (order.status === SalesOrderStatus.CANCELLED) return;
+
+    const [reservations, productionOrders, dispatches] = await Promise.all([
+      tx.reservation.count({
+        where: { salesOrderId: orderId, status: ReservationStatus.ACTIVE },
+      }),
+      tx.productionOrder.count({
+        where: {
+          reservation: { salesOrderId: orderId },
+          status: {
+            in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS],
+          },
+        },
+      }),
+      tx.dispatch.count({ where: { salesOrderId: orderId } }),
+    ]);
+    if (reservations > 0 || productionOrders > 0 || dispatches > 0) {
+      const detail = [
+        reservations > 0 ? `${reservations} reserva(s) activa(s)` : null,
+        productionOrders > 0 ? `${productionOrders} orden(es) de producción viva(s)` : null,
+        dispatches > 0 ? `${dispatches} despacho(s)` : null,
+      ]
+        .filter((d): d is string => d !== null)
+        .join(', ');
+      throw new ConflictException(
+        `El comprobante tiene un pedido vivo (${salesOrderCode(order.seq)}) con ${detail}: ` +
+          'no se puede reimportar. Libera o anula ese pedido primero — reimportar archivaría ' +
+          'material prometido y producción en curso sin devolver nada.',
+      );
+    }
+
+    await tx.salesOrder.update({
+      where: { id: orderId },
+      data: {
+        status: SalesOrderStatus.CANCELLED,
+        cancelledById: actor.id,
+        cancelledAt: new Date(),
+      },
+    });
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'sales.order.archive-imported',
+      entity: 'sales_orders',
+      entityId: orderId,
+      before: { status: order.status },
+      after: { status: SalesOrderStatus.CANCELLED, reason },
+    });
+  }
+
+  /**
+   * D-134: el agregado de materia prima y los kilos teóricos de las líneas **a medida**.
+   *
+   * Se recalcula contra el maestro de hoy en vez de copiar lo que la cotización congeló,
+   * por la misma razón por la que el precio sí se copia y esto no: el precio es un acuerdo
+   * con el cliente y tiene que quedar quieto; qué material hace falta es un hecho técnico
+   * que depende del catálogo, y si el catálogo cambió, lo congelado está mal.
+   *
+   * Vive en este servicio y no en `resolveSalesLines` solo porque acá la entrada son líneas
+   * ya persistidas de una cotización; la aritmética es la misma y sale del mismo módulo.
    */
   private async resolveRawMaterial(
     tx: Prisma.TransactionClient,
-    lines: {
-      lineNumber: number;
-      productId?: string;
-      qty: string;
-      reserveFromCoilId?: string;
-      alreadyOnCoil?: boolean;
-    }[],
-  ): Promise<Map<number, MadeToMeasureReservation>> {
+    lines: { lineNumber: number; productId?: string; qty: string }[],
+  ): Promise<Map<number, { specId: string; kg: string }>> {
     // `flatMap` y no `filter`: además de descartar, estrecha el tipo de `productId`, así que
     // de acá para abajo no hacen falta aserciones.
     const candidates = lines.flatMap((l) =>
-      l.productId !== undefined && l.reserveFromCoilId === undefined && l.alreadyOnCoil !== true
+      l.productId !== undefined
         ? [{ lineNumber: l.lineNumber, productId: l.productId, qty: l.qty }]
         : [],
     );
@@ -511,22 +844,26 @@ export class SalesOrdersService {
 
     const products = await tx.product.findMany({
       where: { id: { in: [...new Set(candidates.map((l) => l.productId))] } },
-      select: { id: true, roofingKind: true },
+      select: ROOFING_PRODUCT_SELECT,
     });
-    const kindById = new Map(products.map((p) => [p.id, p.roofingKind]));
+    const productById = new Map(products.map((p) => [p.id, p]));
 
-    return resolveMadeToMeasureCoils(
-      tx,
-      candidates
-        .filter((l) => isMadeToMeasure({ roofingKind: kindById.get(l.productId) ?? null }))
-        .map((l) => ({
-          key: l.lineNumber,
-          productId: l.productId,
-          qty: l.qty,
-          at: `Línea ${l.lineNumber}`,
-        })),
-      roofingToleranceMm(this.env),
-    );
+    const out = new Map<number, { specId: string; kg: string }>();
+    for (const line of candidates) {
+      const product = productById.get(line.productId);
+      if (!product || !isMadeToMeasure(product)) continue;
+      const at = `Línea ${line.lineNumber}`;
+      const spec = await resolveRawMaterialSpec(tx, {
+        businessLineId: product.businessLineId,
+        colorId: product.colorId,
+        thicknessMm: roofingSpecThicknessMm(product, at),
+      });
+      out.set(line.lineNumber, {
+        specId: spec.id,
+        kg: toFixedString(theoreticalKgForMeters(product, line.qty, at), 'KG'),
+      });
+    }
+    return out;
   }
 
   // -------------------------------------------------------------------------
@@ -572,16 +909,38 @@ export class SalesOrdersService {
 
     const coilItems = sorted.filter((i) => i.reserveItemType === InventoryItemTypeEnum.COIL);
     const coilIds = [...new Set(coilItems.map((i) => i.reserveItemId))].sort();
+
+    // D-134: las líneas que prometen materia prima genérica. El agregado no es un ítem de
+    // inventario y no tiene saldo propio que bloquear, pero **sí** tiene bobinas: las que
+    // hoy cumplen su spec. Se resuelven acá arriba para poder bloquearlas junto con las demás.
+    const rawItems = sorted.filter((i) => i.reserveItemType === InventoryItemTypeEnum.RAW_MATERIAL);
+    const rawSpecs = await findRawMaterialSpecs(
+      tx,
+      rawItems.map((i) => i.reserveItemId),
+    );
+    const rawCoilIds: string[] = [];
+    for (const spec of rawSpecs.values()) {
+      rawCoilIds.push(...(await rawMaterialCoilIds(tx, spec, roofingToleranceMm(this.env))));
+    }
+
+    // **Un solo lock, sobre la unión y en orden de id.** Dos locks separados —primero las
+    // bobinas nombradas y después las del agregado— se cruzan en un deadlock en cuanto los
+    // conjuntos se solapan: una transacción tiene la #5 y espera la #3 mientras la otra
+    // tiene la #3 y espera la #5. Ordenar dentro de cada lock no alcanza; hay que ordenar
+    // el conjunto entero y pedirlo de una vez.
+    const lockIds = [...new Set([...coilIds, ...rawCoilIds])].sort();
+    if (lockIds.length > 0) {
+      await tx.$queryRaw`
+        SELECT "id" FROM "coils" WHERE "id" = ANY(${lockIds}::uuid[]) ORDER BY "id" FOR UPDATE
+      `;
+    }
+
     // D-119: el saldo de una bobina vive bajo **su propia** línea de negocio (Drywall o
     // Metallic Roofing), que puede no ser la del producto que la reserva (venta de bobina
     // completa, D-116: el producto es de `trading`). `lockBalance` exige la línea exacta
     // que ya tiene el saldo.
     const coilBusinessLineById = new Map<string, string>();
     if (coilIds.length > 0) {
-      await tx.$queryRaw`
-        SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
-      `;
-
       // D-116: una línea que reserva kilos de bobina para **producirla** (coberturas a
       // medida) sigue exigiendo `OPEN` —de acá sale material que todavía tiene que montarse
       // en una OP—, pero una línea que **vende la bobina tal cual** (RF-73, producto sin
@@ -647,6 +1006,55 @@ export class SalesOrdersService {
 
     for (const item of sorted) {
       const qty = toDecimal(item.reserveQty.toString());
+
+      // D-134: la promesa genérica se comprueba contra la **suma** del agregado, no contra
+      // el saldo de un ítem. Es la misma invariante de D-066 —no prometer lo que no está—
+      // aplicada al único objeto que la línea nombra.
+      if (item.reserveItemType === InventoryItemTypeEnum.RAW_MATERIAL) {
+        const spec = rawSpecs.get(item.reserveItemId);
+        if (!spec) {
+          throw new NotFoundException(
+            `Línea ${item.lineNumber}: no se encontró el agregado de materia prima reservado`,
+          );
+        }
+        // Sin `lockCoils`: las bobinas del agregado ya quedaron bloqueadas arriba, junto
+        // con las demás y en un solo orden.
+        const availability = await rawMaterialAvailability(tx, spec, roofingToleranceMm(this.env));
+        if (qty.gt(availability.available)) {
+          const label =
+            (await rawMaterialSpecLabels(tx, [spec.id])).get(spec.id) ?? 'la materia prima';
+          // D-134 (hallazgo de Fase 7-final): una bobina montada en una OP (D-060) no mueve
+          // kardex, así que no aparece en "físicos" ni en "comprometidos" — el vendedor veía
+          // cero material sobre un almacén que sí lo tenía, solo que en la roladora. Si algo
+          // está montado, se lo dice.
+          const mountedNote = availability.mountedKg.gt(0)
+            ? ` y ${availability.mountedKg.toFixed(3)} kg montados en ${availability.mountedOrderCodes.join(', ')}`
+            : '';
+          throw new BadRequestException(
+            `Línea ${item.lineNumber}: ${label} tiene ${availability.available.toFixed(3)} kg disponibles ` +
+              `(${availability.physical.toFixed(3)} físicos menos ${availability.reservedOnCoils
+                .plus(availability.reservedGeneric)
+                .toFixed(
+                  3,
+                )} ya comprometidos${mountedNote}) y el pedido necesita ${qty.toFixed(3)}. ` +
+              'Compra o abre una bobina de ese color y espesor antes de confirmar.',
+          );
+        }
+        await tx.reservation.create({
+          data: {
+            salesOrderId: orderId,
+            salesOrderItemId: item.id,
+            itemType: item.reserveItemType,
+            itemId: item.reserveItemId,
+            qty: item.reserveQty,
+            unit: item.reserveUnit,
+            status: ReservationStatus.ACTIVE,
+            createdById: actor.id,
+          },
+        });
+        continue;
+      }
+
       const itemBusinessLineId =
         item.reserveItemType === InventoryItemTypeEnum.COIL
           ? coilBusinessLineById.get(item.reserveItemId)
@@ -680,6 +1088,14 @@ export class SalesOrdersService {
           createdById: actor.id,
         },
       });
+    }
+
+    // D-134: vender una bobina entera (RF-73) le saca kilos al agregado sin mover un gramo
+    // de kardex — la reserva sobre el rollo lo deja fuera del disponible genérico. Sin esta
+    // comprobación, ese pedido pasaría y el que ya tenía prometidos esos kilos se quedaría
+    // sin material, descubriéndolo recién al montar la OP.
+    if (coilIds.length > 0) {
+      await assertRawMaterialInvariant(tx, coilIds, roofingToleranceMm(this.env));
     }
   }
 
@@ -969,13 +1385,19 @@ export class SalesOrdersService {
   }
 
   /**
-   * La cola (RF-37): pedidos con reserva de bobina activa sobre un producto que se fabrica
-   * contra el pedido (D-093, misma señal que `resolveDispatchTarget`, D-088) y sin OP viva
-   * todavía. No hay tabla: se recalcula acá en cada lectura.
+   * La cola (RF-37): pedidos con reserva de **materia prima** activa sobre un producto que
+   * se fabrica contra el pedido (D-093, misma señal que `resolveDispatchTarget`, D-088) y
+   * sin OP viva todavía. No hay tabla: se recalcula acá en cada lectura.
+   *
+   * D-134: la señal pasó de "reserva sobre una bobina" a "reserva sobre un agregado". Es el
+   * mismo criterio —lo que espera producción es lo que prometió insumo y todavía no lo
+   * convirtió— leído sobre el objeto nuevo. Una venta de bobina entera (RF-73) sigue siendo
+   * una reserva `COIL` y **no** entra a la cola, que es lo que ya pasaba y lo que debe pasar:
+   * ese rollo se despacha, no se fabrica.
    */
   async findProductionQueue(): Promise<ProductionQueueEntryDto[]> {
     const reservations = await this.prisma.reservation.findMany({
-      where: { status: ReservationStatus.ACTIVE, itemType: InventoryItemTypeEnum.COIL },
+      where: { status: ReservationStatus.ACTIVE, itemType: InventoryItemTypeEnum.RAW_MATERIAL },
       include: {
         salesOrder: {
           select: {
@@ -1008,32 +1430,25 @@ export class SalesOrdersService {
     const pending = reservations.filter((r) => r.productionOrders.length === 0);
     if (pending.length === 0) return [];
 
+    // D-092/D-122: v1 es solo Metallic Roofing, y lo que decide si una línea se fabrica es
+    // el **producto**: su subtipo y su geometría. Hasta D-122 esto miraba la receta —el
+    // filtro por `kind` descartaba el caso de una línea de drywall reservando bobina, que
+    // habría recibido la aritmética de coberturas—; desde D-134 la reserva ya es
+    // `RAW_MATERIAL` y solo la abre una cobertura a medida, así que el filtro es directo.
     const productIds = [...new Set(pending.map((r) => r.salesOrderItem.productId))];
-    const boms = await this.prisma.productBom.findMany({
-      // D-092: v1 es solo Metallic Roofing. `kind` descarta el caso —posible a nivel de
-      // datos, aunque el web nunca lo arma— de una línea reservando bobina para un producto
-      // con receta DRYWALL: sin este filtro, la cola le aplicaría la aritmética de
-      // coberturas (`roofingTheoreticalKg`, `pieceLengthMm` de otra receta) a un perfil.
-      where: { productId: { in: productIds }, isActive: true, kind: ProductBomKind.ROOFING },
-      select: { productId: true, pieceLengthMm: true },
-    });
-    const bomByProduct = new Map(boms.map((b) => [b.productId, b]));
-    // La trampa de RF-73 (D-037, D-088): una venta directa de bobina también reserva
-    // `itemType=COIL` y no tiene receta. Sin este filtro, cada bobina vendida tal cual
-    // aparecía en la cola de planta como un pedido de cobertura pendiente.
-    const eligible = pending.filter((r) => bomByProduct.has(r.salesOrderItem.productId));
-    if (eligible.length === 0) return [];
-
-    const coils = await this.prisma.coil.findMany({
-      where: { id: { in: eligible.map((r) => r.itemId) } },
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, roofingKind: { not: null } },
       select: {
         id: true,
-        widthMm: true,
+        lengthMm: true,
         thicknessMm: true,
+        widthMm: true,
         finish: { select: { densityFactor: true } },
       },
     });
-    const coilById = new Map(coils.map((c) => [c.id, c]));
+    const productById = new Map(products.map((p) => [p.id, p]));
+    const eligible = pending.filter((r) => productById.has(r.salesOrderItem.productId));
+    if (eligible.length === 0) return [];
 
     const priorityByIds = eligible
       .map((r) => r.salesOrder.priorityById)
@@ -1042,21 +1457,25 @@ export class SalesOrdersService {
 
     const today = businessToday();
     const entries = eligible.flatMap((r): ProductionQueueEntryDto[] => {
-      const bom = bomByProduct.get(r.salesOrderItem.productId);
-      if (!bom) return [];
-      const coil = coilById.get(r.itemId);
+      const product = productById.get(r.salesOrderItem.productId);
+      if (!product) return [];
       const pieces = derivePiecesPlan(
         r.salesOrderItem.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty })),
-        bom.pieceLengthMm === null ? null : bom.pieceLengthMm.toFixed(2),
+        product.lengthMm === null ? null : product.lengthMm.toFixed(2),
         r.salesOrderItem.qty.toString(),
       );
-      const geometry: CoilGeometry | null = coil
-        ? {
-            widthMm: coil.widthMm.toFixed(2),
-            thicknessMm: coil.thicknessMm.toFixed(2),
-            densityFactor: coil.finish.densityFactor.toFixed(4),
-          }
-        : null;
+      // D-134/D-122: el kilo teórico de la cola sale de la geometría **del SKU**, no de la
+      // bobina reservada — que ya no existe: la reserva nombra un agregado. Es además el
+      // mismo número que el vendedor vio al cotizar, que es lo que planta necesita para
+      // saber cuánto material va a pedir esta orden antes de montar nada.
+      const geometry: CoilGeometry | null =
+        product.thicknessMm !== null && product.widthMm !== null && product.finish !== null
+          ? {
+              widthMm: product.widthMm.toFixed(2),
+              thicknessMm: product.thicknessMm.toFixed(2),
+              densityFactor: product.finish.densityFactor.toFixed(4),
+            }
+          : null;
       const promisedDeliveryDate = r.salesOrder.promisedDeliveryDate
         ? r.salesOrder.promisedDeliveryDate.toISOString().slice(0, 10)
         : null;
@@ -1109,7 +1528,8 @@ export class SalesOrdersService {
   private async computeQueueStatus(row: OrderRow): Promise<QueueStatus | null> {
     const productIdByItem = new Map(row.items.map((i) => [i.id, i.productId]));
     const candidates = row.reservations.filter(
-      (r) => r.status === ReservationStatus.ACTIVE && r.itemType === InventoryItemTypeEnum.COIL,
+      (r) =>
+        r.status === ReservationStatus.ACTIVE && r.itemType === InventoryItemTypeEnum.RAW_MATERIAL,
     );
     if (candidates.length === 0) return null;
     const productIds = [
@@ -1120,12 +1540,13 @@ export class SalesOrdersService {
       ),
     ];
     if (productIds.length === 0) return null;
-    const boms = await this.prisma.productBom.findMany({
-      // D-092: mismo filtro que `findProductionQueue` — v1 es solo Metallic Roofing.
-      where: { productId: { in: productIds }, isActive: true, kind: ProductBomKind.ROOFING },
-      select: { productId: true },
+    // D-122: mismo filtro que `findProductionQueue` — lo que decide si una línea se
+    // fabrica es el **producto**, no una receta que las coberturas ya no tienen.
+    const roofingProducts = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, roofingKind: { not: null } },
+      select: { id: true },
     });
-    const madeToOrder = new Set(boms.map((b) => b.productId));
+    const madeToOrder = new Set(roofingProducts.map((p) => p.id));
     const relevant = candidates.filter((r) => {
       const productId = productIdByItem.get(r.salesOrderItemId);
       return productId !== undefined && madeToOrder.has(productId);
@@ -1174,6 +1595,10 @@ export class SalesOrdersService {
           ...orderInclude,
           items: false,
           reservations: false,
+          // D-141: el número del comprobante importado no se muestra en la lista y traerlo
+          // costaba una consulta más por página. `origin` sí viaja: es una columna de la
+          // propia fila.
+          fiscalDocuments: false,
           _count: {
             select: {
               items: true,
@@ -1192,11 +1617,17 @@ export class SalesOrdersService {
     ]);
     const actors = await this.resolveActorNames(actorIds);
     const items = rows.map((r) => {
-      const dto = this.toDto({ ...r, items: [], reservations: [] }, new Map(), actors);
+      const dto = this.toDto(
+        { ...r, items: [], reservations: [], fiscalDocuments: [] },
+        new Map(),
+        actors,
+      );
       const {
         items: _items,
         reservations: _reservations,
         queueStatus: _queueStatus,
+        importedDocumentId: _importedDocumentId,
+        importedDocumentNumber: _importedDocumentNumber,
         ...rest
       } = dto;
       return {
@@ -1221,33 +1652,57 @@ export class SalesOrdersService {
   }
 
   /**
-   * Bobinas abiertas de una línea con su disponible ya descontado de lo reservado (D-066).
+   * El panel de stock en vivo del formulario de cotización (D-136).
    *
-   * Es lo que el formulario de cotización ofrece al vendedor para elegir de qué rollo sale
-   * el material prometido. Vive acá y no en `coils` porque VENDEDOR no llega a esa ruta:
-   * expone costos y proveedor, que §3.4 le oculta. Acá no viaja ningún costo.
+   * Reemplaza al selector de bobina que D-134 eliminó, y cambia de pregunta: aquel pedía
+   * **cuál rollo**, este responde **cuánto hay**. Vive acá y no en `coils` porque VENDEDOR
+   * no llega a esa ruta —expone costos y proveedor, que §3.4 le oculta— y acá no viaja
+   * ningún costo.
+   *
+   * Dos mitades, porque el vendedor vende dos cosas distintas: el **agregado** de materia
+   * prima (lo que una cobertura a medida va a consumir, en kilos y en metros teóricos) y el
+   * **stock por SKU** (lo que se vende tal cual: planchas, perfiles, UPVC).
    */
-  async findReservableCoils(query: ReservableCoilQuery): Promise<ReservableCoilDto[]> {
+  async stockPanel(query: StockPanelQuery): Promise<StockPanelDto> {
+    const [rawMaterial, products] = await Promise.all([
+      query.businessLine === undefined
+        ? Promise.resolve<RawMaterialStockDto[]>([])
+        : this.rawMaterialStock(query.businessLine),
+      this.productStock(query.productIds),
+    ]);
+    return { rawMaterial, products };
+  }
+
+  /**
+   * Las bobinas abiertas de una línea, agrupadas por **espesor + color**, que es el agregado
+   * contra el que se promete (D-134).
+   *
+   * Se descuentan las bobinas que una OP viva tiene montadas (D-060): su saldo se ve intacto
+   * porque asignar no mueve kardex, y ofrecerlas llevaría al vendedor a un 400 al confirmar
+   * o —peor— a trabar esa corrida de planta.
+   */
+  private async rawMaterialStock(businessLine: BusinessLine): Promise<RawMaterialStockDto[]> {
     const coils = await this.prisma.coil.findMany({
       where: {
+        kind: CoilKind.COIL,
         status: CoilStatus.OPEN,
-        businessLine: { code: toPrismaLineCode(query.businessLine) },
+        businessLine: { code: toPrismaLineCode(businessLine) },
       },
       select: {
         id: true,
-        code: true,
-        typeKey: true,
         widthMm: true,
         thicknessMm: true,
-        finish: { select: { code: true } },
+        colorId: true,
+        color: { select: { name: true, hexColor: true } },
+        finish: { select: { densityFactor: true } },
       },
       orderBy: { code: 'asc' },
-      take: 500,
+      take: DERIVED_FILTER_FETCH_CAP,
     });
     if (coils.length === 0) return [];
 
     const ids = coils.map((c) => c.id);
-    const [balances, reserved] = await Promise.all([
+    const [balances, onCoils, mounted, specs] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
         select: { itemId: true, qty: true },
@@ -1261,51 +1716,193 @@ export class SalesOrdersService {
         },
         _sum: { qty: true },
       }),
+      findLiveStripAssignments(this.prisma, ids),
+      this.prisma.rawMaterialSpec.findMany({
+        where: { businessLine: { code: toPrismaLineCode(businessLine) } },
+        select: { id: true, colorId: true, thicknessMm: true },
+      }),
+    ]);
+    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const reservedById = new Map(
+      onCoils.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
+    );
+    const takenByProduction = new Set(mounted.map((m) => m.coilId));
+
+    // Lo prometido de forma genérica, por spec. Se reparte después entre los grupos que la
+    // tolerancia alcanza (ver el comentario del DTO: el reparto se puede solapar, y ante la
+    // duda el panel muestra de menos).
+    const promisedBySpec = new Map<string, Decimal>();
+    if (specs.length > 0) {
+      const promises = await this.prisma.reservation.groupBy({
+        by: ['itemId'],
+        where: {
+          status: ReservationStatus.ACTIVE,
+          itemType: InventoryItemTypeEnum.RAW_MATERIAL,
+          itemId: { in: specs.map((sp) => sp.id) },
+        },
+        _sum: { qty: true },
+      });
+      for (const promise of promises) {
+        promisedBySpec.set(promise.itemId, toDecimal((promise._sum.qty ?? 0).toString()));
+      }
+    }
+    const tolerance = toDecimal(roofingToleranceMm(this.env));
+
+    const groups = new Map<string, RawMaterialStockDto & { thickness: Decimal }>();
+    for (const coil of coils) {
+      if (takenByProduction.has(coil.id)) continue;
+      const physical = qtyById.get(coil.id) ?? new Decimal(0);
+      const onCoil = reservedById.get(coil.id) ?? new Decimal(0);
+      const thicknessMm = coil.thicknessMm.toFixed(2);
+      const key = `${coil.colorId ?? '-'}|${thicknessMm}`;
+      // Metros por kilo de ESTE rollo: el ancho es suyo, no del grupo, así que los metros se
+      // suman rollo por rollo y no se derivan del total de kilos.
+      const perMeter = kgPerMeter({
+        widthMm: coil.widthMm.toFixed(2),
+        thicknessMm,
+        densityFactor: coil.finish.densityFactor.toFixed(4),
+      });
+      const group = groups.get(key) ?? {
+        colorId: coil.colorId,
+        colorName: coil.color?.name ?? null,
+        colorHex: coil.color?.hexColor ?? null,
+        thicknessMm,
+        coils: 0,
+        physicalKg: '0',
+        reservedKg: '0',
+        availableKg: '0',
+        theoreticalMeters: '0',
+        thickness: toDecimal(thicknessMm),
+      };
+      group.coils += 1;
+      group.physicalKg = toDecimal(group.physicalKg).plus(physical).toFixed(3);
+      group.reservedKg = toDecimal(group.reservedKg).plus(onCoil).toFixed(3);
+      group.theoreticalMeters = toDecimal(group.theoreticalMeters)
+        .plus(
+          perMeter.isZero()
+            ? new Decimal(0)
+            : Decimal.max(physical.minus(onCoil), new Decimal(0)).div(perMeter),
+        )
+        .toFixed(3);
+      groups.set(key, group);
+    }
+
+    const out: RawMaterialStockDto[] = [];
+    for (const group of groups.values()) {
+      const promised = specs
+        .filter(
+          (sp) =>
+            sp.colorId === group.colorId &&
+            toDecimal(sp.thicknessMm.toString()).minus(group.thickness).abs().lte(tolerance),
+        )
+        .reduce((acc, sp) => acc.plus(promisedBySpec.get(sp.id) ?? new Decimal(0)), new Decimal(0));
+      const reserved = toDecimal(group.reservedKg).plus(promised);
+      const { thickness: _thickness, ...dto } = group;
+      out.push({
+        ...dto,
+        reservedKg: reserved.toFixed(3),
+        availableKg: Decimal.max(
+          toDecimal(group.physicalKg).minus(reserved),
+          new Decimal(0),
+        ).toFixed(3),
+      });
+    }
+    return out.sort(
+      (a, b) =>
+        (a.colorName ?? '').localeCompare(b.colorName ?? '') ||
+        a.thicknessMm.localeCompare(b.thicknessMm),
+    );
+  }
+
+  /** Disponible por SKU, en su unidad de venta, más el agregado de las coberturas a medida. */
+  private async productStock(productIds: string[]): Promise<ProductStockDto[]> {
+    if (productIds.length === 0) return [];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: {
+        name: true,
+        unit: true,
+        ...ROOFING_PRODUCT_SELECT,
+      },
+    });
+    if (products.length === 0) return [];
+
+    const [balances, reserved] = await Promise.all([
+      this.prisma.inventoryBalance.findMany({
+        where: { itemType: InventoryItemTypeEnum.PRODUCT, itemId: { in: productIds } },
+        select: { itemId: true, qty: true },
+      }),
+      this.prisma.reservation.groupBy({
+        by: ['itemId'],
+        where: {
+          status: ReservationStatus.ACTIVE,
+          itemType: InventoryItemTypeEnum.PRODUCT,
+          itemId: { in: productIds },
+        },
+        _sum: { qty: true },
+      }),
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
     const reservedById = new Map(
       reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
     );
 
-    // D-060: un fleje montado en una OP viva no se puede prometer aunque su saldo esté
-    // intacto — asignar no mueve kardex, así que el disponible no lo delata. Ofrecerlo
-    // llevaría al vendedor a un 400 al confirmar, o peor, a trabar esa corrida de planta.
-    const assigned = new Set(
-      (
-        await this.prisma.productionOrderConsumption.findMany({
-          where: {
-            coilId: { in: ids },
-            releasedAt: null,
-            productionOrder: {
-              status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
-            },
-          },
-          select: { coilId: true },
-        })
-      ).map((c) => c.coilId),
-    );
-
-    return (
-      coils
-        .filter((c) => !assigned.has(c.id))
-        .map((c) => {
-          const qty = qtyById.get(c.id) ?? toDecimal('0');
-          const res = reservedById.get(c.id) ?? toDecimal('0');
-          return {
-            coilId: c.id,
-            code: c.code,
-            typeKey: c.typeKey,
-            finishCode: c.finish.code,
-            widthMm: c.widthMm.toFixed(2),
-            thicknessMm: c.thicknessMm.toFixed(2),
-            qty: qty.toFixed(3),
-            reservedQty: res.toFixed(3),
-            availableQty: qty.minus(res).toFixed(3),
-          };
-        })
-        // Una bobina sin nada disponible tampoco se puede prometer.
-        .filter((c) => toDecimal(c.availableQty).gt(0))
-    );
+    const out: ProductStockDto[] = [];
+    for (const product of products) {
+      const available = Decimal.max(
+        (qtyById.get(product.id) ?? new Decimal(0)).minus(
+          reservedById.get(product.id) ?? new Decimal(0),
+        ),
+        new Decimal(0),
+      );
+      let rawMaterialAvailableKg: string | null = null;
+      let rawLabel: string | null = null;
+      let perMeter: string | null = null;
+      // D-134: una cobertura a medida no se atiende con stock del producto —siempre cero—
+      // sino con el agregado. Mostrarle al vendedor el cero del SKU sería mentirle sobre lo
+      // único que decide si puede prometer.
+      if (isMadeToMeasure(product) && product.thicknessMm !== null && product.finish !== null) {
+        // D-136: el panel es una **lectura**. `findRawMaterialSpec` no crea la fila si no
+        // existe: el disponible de un agregado que nadie prometió todavía es el mismo.
+        const spec = await findRawMaterialSpec(this.prisma, {
+          businessLineId: product.businessLineId,
+          colorId: product.colorId,
+          thicknessMm: product.thicknessMm.toFixed(2),
+        });
+        const availability = await rawMaterialAvailability(
+          this.prisma,
+          spec,
+          roofingToleranceMm(this.env),
+        );
+        rawMaterialAvailableKg = Decimal.max(availability.available, new Decimal(0)).toFixed(3);
+        // La etiqueta se arma con el propio producto y no consultando el agregado: así vale
+        // igual exista o no todavía su fila —el caso de un SKU nuevo que nadie cotizó— y de
+        // paso se ahorra una consulta por producto en una ruta que el formulario llama en
+        // cada cambio.
+        rawLabel = rawMaterialLabel({
+          thicknessMm: product.thicknessMm.toFixed(2),
+          colorName: product.color?.name ?? null,
+        });
+        if (product.widthMm !== null && product.thicknessMm !== null) {
+          perMeter = kgPerMeter({
+            widthMm: product.widthMm.toFixed(2),
+            thicknessMm: product.thicknessMm.toFixed(2),
+            densityFactor: product.finish.densityFactor.toFixed(4),
+          }).toFixed(3);
+        }
+      }
+      out.push({
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        unit: product.unit,
+        availableQty: available.toFixed(3),
+        rawMaterialAvailableKg,
+        rawMaterialLabel: rawLabel,
+        kgPerMeter: perMeter,
+      });
+    }
+    return out;
   }
 
   /**
@@ -1439,7 +2036,10 @@ export class SalesOrdersService {
     id: string,
   ): Promise<{
     id: string;
+    seq: number;
     status: SalesOrderStatus;
+    /** D-141: quién creó el pedido; lo mira el archivado por reimportación. */
+    origin: SalesOrderOrigin;
     quotationId: string | null;
     priorityReason: string | null;
     promisedDeliveryDate: string | null;
@@ -1447,20 +2047,25 @@ export class SalesOrdersService {
     const rows = await tx.$queryRaw<
       {
         id: string;
+        seq: number;
         status: SalesOrderStatus;
+        origin: SalesOrderOrigin;
         quotation_id: string | null;
         priority_reason: string | null;
         promised_delivery_date: Date | null;
       }[]
     >`
-      SELECT "id", "status", "quotation_id", "priority_reason", "promised_delivery_date"
+      SELECT "id", "seq", "status", "origin", "quotation_id", "priority_reason",
+             "promised_delivery_date"
       FROM "sales_orders" WHERE "id" = ${id}::uuid FOR UPDATE
     `;
     const row = rows[0];
     if (!row) throw new NotFoundException('Pedido no encontrado');
     return {
       id: row.id,
+      seq: row.seq,
       status: row.status,
+      origin: row.origin,
       quotationId: row.quotation_id,
       priorityReason: row.priority_reason,
       promisedDeliveryDate: row.promised_delivery_date
@@ -1477,6 +2082,9 @@ export class SalesOrdersService {
     if (itemType === 'COIL') {
       const coil = await tx.coil.findUnique({ where: { id: itemId }, select: { code: true } });
       return coil?.code ?? 'la bobina';
+    }
+    if (itemType === 'RAW_MATERIAL') {
+      return (await rawMaterialSpecLabels(tx, [itemId])).get(itemId) ?? 'la materia prima';
     }
     const product = await tx.product.findUnique({ where: { id: itemId }, select: { sku: true } });
     return product?.sku ?? 'el producto';
@@ -1497,6 +2105,15 @@ export class SalesOrdersService {
     const map = new Map<string, { label: string; name: string }>();
     const coilIds = refs.filter((r) => r.itemType === 'COIL').map((r) => r.itemId);
     const productIds = refs.filter((r) => r.itemType === 'PRODUCT').map((r) => r.itemId);
+    // D-134: el agregado no es una bobina ni un producto, así que necesita su propia
+    // etiqueta. Sin esta rama la línea de una cobertura a medida se mostraba con el id
+    // crudo, que es lo que D-088 dejó dicho que pasa cuando se agrega una coordenada y no
+    // se recorren todos sus lectores.
+    const specIds = refs.filter((r) => r.itemType === 'RAW_MATERIAL').map((r) => r.itemId);
+    if (specIds.length > 0) {
+      const labels = await rawMaterialSpecLabels(this.prisma, specIds);
+      for (const [id, label] of labels) map.set(id, { label, name: label });
+    }
     if (coilIds.length > 0) {
       const coils = await this.prisma.coil.findMany({
         where: { id: { in: coilIds } },
@@ -1575,6 +2192,9 @@ export class SalesOrdersService {
         ...new Set(row.items.map((i) => toSharedLineCode(i.product.businessLine.code))),
       ],
       status: row.status,
+      origin: row.origin,
+      importedDocumentId: row.fiscalDocuments[0]?.id ?? null,
+      importedDocumentNumber: row.fiscalDocuments[0]?.number ?? null,
       issueDate: row.issueDate.toISOString().slice(0, 10),
       subtotalPen: row.subtotalPen.toFixed(4),
       igvPen: row.igvPen.toFixed(4),

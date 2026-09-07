@@ -1701,6 +1701,257 @@ en local **no se vacía** entre corridas: solo CI lo hace); con `E2E_RESET_DB=1`
 5. Verificado a mano que los dos triggers de append-only (`inventory_movements`, `audit_log`)
    quedaron **activos** tras el reset: `tgenabled = O` en los dos.
 
+## Sesión 7-final (2026-09-07) — hotfix de unicidad, reserva genérica, importadores y D-122
+
+Cinco milestones en el orden que pidió el dueño (M0 → M1 → M3 → M4 → M2). **Los cinco
+implementados.**
+
+### M0 — dos hotfix
+
+- **D-132 — la unicidad del comprobante de compra cuenta solo las compras vivas.** Índice único
+  parcial (`WHERE status <> 'CANCELLED'`): anular una compra libera su número para que la
+  corregida entre con el mismo que dice el papel. Ruta nueva `PATCH /purchases/:id/document`
+  (ADMINISTRADOR, auditada) para corregir el número con sufijo `-R` que el dueño tuvo que
+  inventar como workaround. Auditado el mismo patrón en el resto del modelo: no hay otro caso
+  (los correlativos fiscales no se reutilizan por diseño y los maestros se reactivan, no se
+  re-crean).
+- **D-133 — la fecha de emisión: VENDEDOR solo hoy, retrofechar es de ADMINISTRADOR.** Cierra el
+  hueco que el auditor había dejado anotado: la ventana de 7 días de SUNAT valía para cualquier
+  rol y en los primeros días de un mes alcanzaba para cruzar al mes anterior.
+
+### M1 — reserva genérica de materia prima (D-134..D-136)
+
+- La cotización de coberturas **ya no pide elegir bobina**. Una línea a medida promete kilos
+  contra el **agregado compatible** (línea + color + espesor ± tolerancia), que es una fila de
+  `raw_material_specs` nueva; `reserveFromCoilId` desapareció del schema, del API y del
+  formulario.
+- La invariante `disponible ≥ reservado` pasa a comprobarse sobre la **suma** del agregado, con
+  guardrail nuevo en los seis puntos que le quitan kilos: salida de kardex, envío a corte,
+  montaje en una OP ajena, cierre de bobina, cambio de color y venta de bobina entera.
+- Panel de stock en vivo en el formulario (`GET /sales/stock-panel`), de solo lectura, con el
+  agregado por espesor + color (kg y metros lineales teóricos) y el disponible por SKU.
+- El filtro de material queda escrito como espesor ± tolerancia + **color**; el acabado solo
+  aporta densidad (D-135).
+
+### M3 / M4 — los dos importadores del Excel real del negocio (D-137, D-138)
+
+- `COILS_HISTORY`: el Excel de bobinas tal como está. Proveedor auto-creado por RUC contra el
+  padrón, con fallback marcado `needs_review` si el padrón no responde; acabado que no mapea
+  **no se auto-crea** (se elige del maestro en el preview); dos modos por lote (`REPLAY` con
+  reporte de saldo vs objetivo, `ADJUST` con salida de ajuste retrofechada).
+- `SALES_HISTORY`: el export de ventas, agrupado por `SERIE - NÚMERO`, reusando
+  `FiscalImportService` entero. Cliente auto-creado, SKU no; `DOCUMENTO AJUSTADO` con valor deja
+  la fila fuera con el motivo escrito.
+- Los dos conviven con los importadores canónicos (RF-12, RF-71) en vez de reemplazarlos.
+
+### M2 — D-122 completo, D-139 y la regla de ESLint que faltaba
+
+- **D-122**: `products.finish_id` nuevo con backfill; el largo de la plancha y el peso por pieza
+  pasan al SKU; `coilOptions`/`mountCoil`/el kilo teórico del catálogo/la cola de producción
+  leen del producto; `production_orders.bom_id` pasa a nullable y la receta queda **exclusiva de
+  drywall** (las de coberturas quedan desactivadas y un `CHECK` impide que vuelva a haber una
+  viva).
+- **D-139**: `product_boms.kg_per_piece` y `piece_length_mm` se eliminan — el peso y el largo de
+  la pieza son del SKU.
+- `apps/api/src/sales/raw-material.spec.ts`: 9 tests de la invariante del agregado, que es el
+  guardrail más nuevo y el que el compilador no protege (el enum es aditivo).
+- La regla de ESLint de D-112 ahora cubre `e2e/` (`eslint.config.mjs` en la raíz, `pnpm lint` la
+  corre). Encontró **tres** violaciones reales que habían sobrevivido a la limpieza de D-131.
+
+### Hallazgos de las revisiones, corregidos en la misma sesión
+
+`revisor` (API), `revisor` (web, pasada aparte) y `auditor-seguridad` corrieron en paralelo con
+`qa`. **Los cuatro encontraron el mismo bloqueante por caminos independientes**: tras la
+migración de D-122, `resolveSalesLines` seguía exigiéndole receta activa a una cobertura, así
+que ninguna se podía cotizar. Corregido junto con: la cola de producción que dejaba de ver los
+pedidos (`computeQueueStatus` consultaba la receta), las etiquetas vacías de `RAW_MATERIAL` en
+cotización y despacho, el guardrail que faltaba al revertir una recepción de corte, el partido
+que se rechazaba a sí mismo (el guardrail leía un estado transitorio), un ReDoS medido en
+2,7 s/fila al parsear `SERIE - NÚMERO`, una carrera real del ledger que permitía prometer
+1.000 kg contra 100 físicos (el guardrail no tomaba lock y competía por filas distintas que el
+camino que promete), un `GET` que escribía en la base, la coma decimal que se borraba en
+silencio y el flag `needsReview` que nadie leía.
+
+### Los tres defectos que solo vio la corrida de E2E
+
+Ninguna de las tres revisiones estáticas podía verlos; los dos los introdujo el guardrail del
+agregado. **`mountCoil` se pasaba del presupuesto de 5 s de Prisma** (`P2028`) contra Neon, de
+forma intermitente —que fuera intermitente era la pista de que era presupuesto y no lógica—; se
+revisaron además todas las transacciones a las que esta sesión les sumó el guardrail y seguían
+con el default (`cutting.send`, `coils.setStatus`, `coils.update`). Y **`GET /sales/stock-panel`
+devolvía 500** (`P2023`) para un SKU a medida sin fila de agregado todavía: la spec "virtual" de
+la variante de solo lectura tiene el id vacío y llegaba a una consulta que lo parsea como UUID.
+Y **un reporte de producción parcial se bloqueaba a sí mismo**: la salida que cumple una promesa
+se comprobaba contra lo que resta de esa misma promesa, sobre un agregado cuyo único rollo está
+montado en la propia orden. `RecordMovementInput` gana `exceptReservationIds`, la misma
+excepción que `mountCoil` ya aplicaba.
+
+### Verificación
+
+`pnpm turbo lint typecheck test build` en verde (266/266 unitarios, incluidos 9 nuevos de la
+invariante del agregado). `pnpm format:check` y `pnpm exec eslint e2e` en verde. Seis
+migraciones aplicadas a Neon `dev` y `demo`.
+
+**E2E: 84/84 en las doce suites afectadas**, todas corridas en local antes de la revisión del
+dueño — `fase7final-m0` (8), `fase7final-m1` (5), `fase6` (5), `fase6-bordes` (7),
+`fase4-bordes` (11), `fase7-consolidada` (8), `fase5a` (9), `fase5a-bordes` (10),
+`fase5b-bordes` (11), `fase7` (7), `fase7-bordes` (2) y `fase7e-bordes` (1). Nada quedó para
+descubrir en CI, que es lo que D-123 pide después de un cambio de regla no aditivo.
+
+### Lo que queda abierto, a propósito
+
+- **La fecha de emisión de una cotización y de un pedido directo no se valida** (ni futura ni
+  piso histórico). Es previo a esta sesión y no es fiscal; queda anotado.
+- El importador de comprobantes sigue admitiendo hasta 10 años atrás sin pasar por
+  `HISTORICAL_LOAD_START` (ya estaba anotado en la sesión anterior).
+
+### Continuación 7-final (2026-09-07) — D-140 resuelto, D-139 ratificada, mensaje diagnóstico
+
+El dueño resolvió los dos puntos que habían quedado abiertos y confirmó el fix pendiente de
+diagnóstico:
+
+- **D-140 cerrado: "catálogo siempre a stock".** La producción de una plancha de catálogo
+  nunca se liga a un pedido — el pedido reserva producto terminado (D-054/D-088) y, sin stock
+  suficiente, espera una corrida a stock. `POST /production/roofing` acepta ahora `productId` +
+  `targetPieces` como alternativa a `reservationId` (`RoofingProductionService.createToStock`),
+  el mismo patrón que drywall ya tenía para una corrida sin pedido detrás. `/planta` suma la
+  tarjeta "Nueva orden de coberturas a stock".
+- **D-139 ratificada** sin cambios de código: el peso de pieza terminada sigue siendo el único
+  dato del SKU.
+- **El mensaje de rechazo al confirmar un pedido ahora nombra la OP** cuando el faltante es
+  material montado en producción, en vez de "0.000 físicos menos 0.000 comprometidos" sobre un
+  almacén que sí tiene el material (solo que en la roladora). `RawMaterialAvailability` gana
+  `mountedKg`/`mountedOrderCodes`; `fase5a-bordes` actualizado al texto nuevo.
+- Comentario de defensa en profundidad añadido en `assertReservationInvariant`
+  (`reservation-guard.ts`): para un ítem `COIL`, más de un pedido sosteniendo a la vez una
+  reserva sobre la misma bobina es hoy inalcanzable (D-116/D-134); sigue siendo el caso normal
+  para `PRODUCT`/`RAW_MATERIAL`.
+
+Verificación: `pnpm turbo lint typecheck test build` verde (266/266 unitarios), `pnpm
+format:check` y `pnpm exec eslint e2e` verdes. E2E local: `fase5a-bordes` (10/10) y
+`fase7final-m1` (5/5). Sin migraciones nuevas. Falta la revisión local del dueño con sus Excel
+reales y su caso de compra anulada antes de commit + push + CI + despliegue nocturno.
+
+## Sesión 7-final-B (2026-09-07) — el pedido de un comprobante importado (D-141)
+
+**Estado: implementado y verificado en local; nada commiteado.** Falta la revisión del dueño
+con su Excel real (marcar sus pendientes de verdad) antes de push + CI + despliegue nocturno.
+
+### Lo que se construyó
+
+Cada documento que entra por la importación de ventas (D-138) crea ahora **un pedido enlazado
+1:1**, y un **toggle por documento** en la previsualización decide de qué clase:
+
+- **ENTREGADO (por defecto) — pedido cáscara.** `FULFILLED`, `origin = IMPORTED`, líneas
+  espejo del comprobante, fecha de emisión del papel. **Cero efectos de inventario**: sin
+  reserva, sin despacho, sin kardex, sin cola. El bypass es estructural
+  (`SalesOrdersService.createImportedShellInTx` no tiene código capaz de escribir una reserva)
+  y además se comprueba al terminar (`assertNoInventoryEffects`): si el pedido dejó una
+  reserva, una OP, un despacho o un movimiento, la importación entera se deshace.
+- **PENDIENTE — pedido vivo + OP automática.** `CONFIRMED`, `origin = IMPORTED`, por el flujo
+  normal (`createDirectInTx`, que crea las reservas y comprueba la invariante): línea a medida
+  ⇒ reserva **genérica** por agregado (D-134); línea de catálogo ⇒ reserva de producto
+  terminado (D-054/D-127). Por cada línea a medida el import crea además la **OP en cola**
+  (`DRAFT`) enlazada a la reserva, **sin montar bobina** — montar es del dueño (D-086).
+
+### Piezas nuevas
+
+- **Schema:** enum `SalesOrderOrigin` y `sales_orders.origin` (migración
+  `20260907180000_fase7finalb_origen_del_pedido`). El enlace documento↔pedido **no agrega
+  columna**: `fiscal_documents.sales_order_id` ya existía desde Fase 5b, y se lee desde los
+  dos lados (badge «Importado» y link al comprobante en `/pedidos/[id]`; el link al pedido ya
+  estaba en el detalle del comprobante).
+- **API:** `PATCH /imports/:id/group` (el toggle del documento, que cambia el comprobante de
+  una pieza y revalida el grupo una sola vez); `RoofingProductionService.createFromReservationInTx`
+  (la OP nace en la misma transacción que el pedido);
+  `SalesOrdersService.createImportedShellInTx` / `archiveImportedOrderInTx`;
+  `ImportedDocumentInput.salesOrderId` + `ImportedDocumentLine.salesOrderItemId` (así
+  `orderProgress` muestra el pedido importado facturado al 100 %, que es la verdad).
+- **Web:** cabecera por comprobante en la previsualización con el toggle y la frase de lo que
+  va a pasar; columna opcional `Largos (m x cant.)`.
+
+### Las dos excepciones que la sesión abre, y por qué
+
+1. **`ResolveSalesLinesOptions.allowMissingPieces`**, encendida **solo** en el pedido
+   importado. Ningún export de facturación desglosa las planchas de una línea a medida; los
+   kilos prometidos no dependen del desglose (`metros × espesor × ancho × densidad`) y el plan
+   de corte es una intención que planta corrige (D-084). Con la columna `LARGOS` llena, el
+   plan nace completo; sin ella nace vacío.
+2. **Un pedido importado se salta `quotation_required` (RF-31)**, porque el compromiso ya se
+   tomó y ya se facturó: exigir una cotización previa a una venta que ya ocurrió no protege
+   nada. Todo lo demás del camino normal sigue corriendo, empezando por la invariante
+   `disponible ≥ reservado`.
+
+### Lo que **no** se hizo, a propósito
+
+- **No hay OP a stock automática** para una línea de catálogo sin stock (D-140). La fila se
+  marca con el faltante exacto y ese documento solo entra como ENTREGADO. Las alternativas
+  eran inventarle al dueño una corrida que no pidió o romper la invariante del ledger.
+- **Pendiente parcial** (media línea entregada) queda fuera de v1.
+- No se reconstruyen despachos ni kardex históricos, no se elige bobina concreta en el import,
+  no hay estados nuevos.
+
+### Reimportación (D-109 + D-141)
+
+Reimportar archiva el documento **y anula su pedido cáscara**. Si ese pedido está **vivo** con
+reservas activas, una OP viva o algún despacho, la reimportación del documento **se bloquea
+entera** con el motivo y el código del pedido — archivarlo habría dejado material prometido y
+producción en curso sin nadie que los devuelva (la quinta vez que este proyecto se cruza con
+la misma lección: D-061, D-088, D-097, D-110). El guardrail vive en `sales` y corre bajo el
+mismo `pg_advisory_xact_lock` sobre el número que ya toma `FiscalImportService`; la
+previsualización repite solo la lectura, para que se vea antes de confirmar.
+
+### Verificación
+
+`pnpm turbo lint typecheck test build` verde (266/266 unitarios), `pnpm format:check` y
+`pnpm exec eslint e2e` verdes. Migración aplicada a Neon `dev`.
+
+E2E nuevo: `fase7finalb-pedido-importado` (**3/3**, local) — documento ENTREGADO ⇒ pedido
+cumplido y enlazado con **cero movimientos, cero reservas y cero OP**; documento PENDIENTE a
+medida ⇒ pedido confirmado, reserva genérica de 60.000 kg y OP `DRAFT` sin bobina montada, con
+su plan de corte; y el mismo documento **sin la columna de largos** —el caso realista, porque
+ningún export los trae— que entra igual y deja la orden con el plan vacío. La cadena montar →
+drenar → cerrar ya la cubre `fase7final-m1` y no se repite.
+
+**El tercer caso nació de un defecto propio de esta sesión, encontrado antes de correr nada:**
+`resolveSalesLines` comprueba que los largos sumen la cantidad de la línea, y con
+`allowMissingPieces` una línea sin largos sumaba cero contra sus quince metros — el mismo
+rechazo que la excepción existe para evitar, por la puerta de al lado. La comprobación pasa a
+correr solo cuando los largos vinieron.
+
+### Suites afectadas: 9 fallas heredadas de la sesión anterior, arregladas
+
+Correr las suites que el cambio podía tocar dejó 9 fallas, **ninguna del cambio de hoy**: son
+specs que la sesión 7-final dejó desactualizados con su propio trabajo, todo sin commitear, así
+que CI todavía no los había visto. Es la lección de D-123 otra vez —un cambio de regla no
+aditivo se verifica contra la suite completa— y esta vez el que la pagó fue el archivo que la
+tabla de verificación de aquel handoff no listaba.
+
+- **`fase7-consolidada-subtipo` (5)**: el spec entero seguía escrito para el modelo anterior a
+  D-134 (la cotización reservaba `PRODUCT`, el pedido una bobina concreta) y un caso reescribía
+  una **receta de coberturas**, que D-122 eliminó. Los cinco casos reescritos; dos de ellos
+  probaban un mecanismo que D-134 retiró y se reemplazaron por la regla que prueba lo mismo en
+  el modelo nuevo, en los dos sentidos (ver `docs/handoff/fase-7-final-b.md` §4).
+- **`fase7c` (2)**: desde D-138 hay dos botones «Importar…» en `/comprobantes` y el localizador
+  `name: 'Importar'` resolvía a los dos. Ahora usa el nombre completo.
+- **`fase6` (1)**: el mensaje de rechazo de D-140 cambió al resolverse la decisión.
+- **`fase5a-bordes` (1)**: **flake, no defecto** — el token de acceso dura 15 min y ese archivo
+  tardó 15.1 en la corrida combinada, así que se cayó con un 401 a mitad. Corrido solo, 10/10.
+  **Conviene correr las suites en tandas chicas por este motivo.**
+
+### Pulido de la cotización (pedido aparte del dueño)
+
+Los solapes del formulario tenían **una sola causa**: las celdas heredan `whitespace-nowrap`
+del componente `Table` (pensado para listados de una línea), así que los renglones de ayuda de
+debajo de cada campo —la unidad, el kilo teórico, el precio de lista, los kilos a reservar— no
+podían partirse y se desbordaban **pintando encima de la columna vecina**. Corregido con
+`whitespace-normal` en esas celdas, los renglones en `block` debajo del campo, y un `min-w` en
+la tabla para que en pantalla angosta desplace en vez de aplastar. Además: números a la derecha
+con `tabular-nums` (la convención que ya usa el resto de la app), totales en rejilla con el
+total destacado, anchos rebalanceados y `align-top`. Sin componentes nuevos, sin cambios de
+estructura ni de lógica. Ningún E2E maneja este formulario por navegador, así que el cambio no
+tiene riesgo para la suite.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.

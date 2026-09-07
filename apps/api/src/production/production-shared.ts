@@ -27,7 +27,8 @@ export interface LockedOrder {
   status: ProductionOrderStatus;
   businessLineId: string;
   productId: string;
-  bomId: string;
+  /** D-122: null en una OP de coberturas, que ya no nace de una receta. */
+  bomId: string | null;
   notes: string | null;
   closedAt: Date | null;
   reservationId: string | null;
@@ -127,12 +128,14 @@ export async function restoreReservationIfIdle(
   tx: Prisma.TransactionClient,
   orderId: string,
   reservationId: string,
+  /** D-134: tolerancia de espesor, para revalidar el agregado si la promesa es genérica. */
+  toleranceMm?: string,
 ): Promise<boolean> {
   const stillReported = await tx.productionReport.count({
     where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
   });
   if (stillReported > 0) return false;
-  return restoreReservation(tx, reservationId);
+  return restoreReservation(tx, reservationId, toleranceMm);
 }
 
 /** Nombres de los usuarios que firmaron una orden y sus reportes, para el DTO. */

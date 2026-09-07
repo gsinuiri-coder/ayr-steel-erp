@@ -56,4 +56,45 @@ export const IMPORT_COLUMNS: Record<ImportEntity, { key: string; label: string }
     { key: 'unit', label: 'Unidad' },
     { key: 'unitPricePen', label: 'Precio unitario sin IGV' },
   ],
+  /**
+   * D-137: el Excel real de bobinas. Se muestran las columnas que **se corrigen** —el
+   * acabado y el color que no mapearon, el RUC, los pesos— y no las quince del archivo: un
+   * preview de quince columnas no entra en pantalla y ninguna de las otras se edita.
+   */
+  COILS_HISTORY: [
+    { key: 'supplierRuc', label: 'RUC' },
+    { key: 'supplierName', label: 'Proveedor' },
+    { key: 'finishText', label: 'Acabado (archivo)' },
+    { key: 'finishCode', label: 'Acabado' },
+    { key: 'colorCode', label: 'Color' },
+    { key: 'purchaseDate', label: 'Fecha de compra' },
+    { key: 'thicknessMm', label: 'Espesor (mm)' },
+    { key: 'widthMm', label: 'Ancho (mm)' },
+    { key: 'weightKg', label: 'Peso compra (kg)' },
+    { key: 'stockKg', label: 'Stock actual (kg)' },
+    { key: 'unitCostPerKg', label: 'Costo por kg (S/)' },
+    { key: 'status', label: 'Estado' },
+  ],
+  /**
+   * D-138: el export real de ventas. Una fila por línea, agrupadas por SERIE-NÚMERO. Igual
+   * que arriba: solo lo que se lee o se corrige.
+   */
+  SALES_HISTORY: [
+    { key: 'issueDate', label: 'F. emisión' },
+    { key: 'docTypeText', label: 'Tipo' },
+    { key: 'documentNumber', label: 'Serie - número' },
+    { key: 'customerText', label: 'Cliente' },
+    { key: 'adjustedDocument', label: 'Doc. ajustado' },
+    { key: 'sku', label: 'SKU' },
+    { key: 'productName', label: 'Producto' },
+    { key: 'unit', label: 'Unidad' },
+    { key: 'qty', label: 'Cantidad' },
+    { key: 'netPen', label: 'Valor de venta' },
+    { key: 'igvPen', label: 'IGV' },
+    { key: 'grossPen', label: 'Precio de venta' },
+    // D-141: solo sirve en un documento **pendiente** con una línea a medida, y es opcional
+    // incluso ahí. `fulfillment` no está en esta lista a propósito: es una decisión del
+    // documento entero y se edita en la cabecera de su grupo, no celda por celda.
+    { key: 'piecesText', label: 'Largos (m x cant.)' },
+  ],
 };

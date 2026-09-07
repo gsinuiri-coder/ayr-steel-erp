@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -33,7 +34,24 @@ import {
 } from '@ayr/shared';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
+import { ENV, type Env } from '../config/env';
+import { roofingToleranceMm } from '../production/roofing-coil-match';
+import { assertRawMaterialInvariant, lockRawMaterialCoils } from '../sales/raw-material';
 import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
+
+/**
+ * D-134: los movimientos de un **partido**, que no se comprueban contra el agregado uno por
+ * uno.
+ *
+ * Un partido es una salida de la madre y N entradas de las hijas dentro de la misma
+ * transacción, y las hijas heredan línea, color y espesor: el neto sobre el agregado es
+ * cero. Comprobar la salida por su cuenta lee un estado transitorio en el que el agregado
+ * perdió todo el peso y las hijas todavía no existen, así que partir una bobina con
+ * cualquier promesa viva encima se rechazaba con "la operación dejaría X kg libres" aunque
+ * no cambiara nada. `CoilOperationsService` hace la comprobación **una vez, al final**,
+ * cuando madre e hijas ya están en su estado definitivo.
+ */
+const SPLIT_REF_TYPES: InventoryRefType[] = ['SPLIT'];
 
 /**
  * Entrada de `InventoryService.record`. `qty` siempre positiva: el sentido lo da `type`
@@ -41,6 +59,22 @@ import { assertReservationInvariant, reservedQty } from '../sales/reservation-gu
  * promedio vigente (D-028, D-040).
  */
 export interface RecordMovementInput {
+  /**
+   * D-134: la reserva que **esta misma salida viene a cumplir**, para que la invariante del
+   * agregado no la cuente en su contra.
+   *
+   * Sin esto, un reporte de producción **parcial** se bloqueaba a sí mismo: la orden consume
+   * 8 de los 32 kg prometidos, la promesa baja a 24, y la salida de esos 8 kg se comprueba
+   * contra un agregado cuyo único rollo está montado en esta misma orden —así que no cuenta
+   * como disponible (D-060)— contra los 24 kg que la propia orden todavía debe. El resultado
+   * era 400 en el paso más normal de una corrida, y solo se salvaba quien reportara el 100 %
+   * de lo reservado de una sola vez.
+   *
+   * Es la misma excepción que `mountCoil` y `assertNotReserved` ya aplican, y por el mismo
+   * motivo: una promesa no puede bloquear a la operación que existe para cumplirla. Lo que
+   * resta de ella sigue protegido por la custodia de la orden (D-060), no queda al aire.
+   */
+  exceptReservationIds?: string[];
   businessLineId: string;
   itemType: InventoryItemType;
   itemId: string;
@@ -114,7 +148,10 @@ interface ItemRef {
  */
 @Injectable()
 export class InventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(ENV) private readonly env: Env,
+  ) {}
 
   /**
    * Registra un movimiento y actualiza el saldo con promedio ponderado.
@@ -134,6 +171,13 @@ export class InventoryService {
       throw new BadRequestException('La cantidad de un movimiento debe ser mayor a cero');
     }
 
+    // D-134: **bobinas antes que saldos**, siempre. El guardrail del agregado bloquea las
+    // bobinas compatibles para poder comprobar la invariante sin ventana de carrera, y
+    // confirmar un pedido las bloquea primero; tomarlas acá después del saldo sería el
+    // orden inverso y las dos operaciones se trabarían entre sí.
+    if (input.itemType === InventoryItemType.COIL && input.type !== 'IN') {
+      await lockRawMaterialCoils(tx, [input.itemId], roofingToleranceMm(this.env));
+    }
     const balance = await this.lockBalance(tx, input);
     const operationDate = input.operationDate ?? businessToday();
     await this.assertChronological(tx, input, operationDate, input.confirmBackdate);
@@ -194,6 +238,21 @@ export class InventoryService {
         unit: input.unit,
       },
     });
+
+    // D-134: la mitad genérica de la misma invariante. Una cobertura a medida ya no promete
+    // `esta` bobina sino **kilos del agregado compatible**, así que el chequeo por ítem de
+    // arriba no ve nada cuando la merma cae sobre un rollo que ninguna reserva nombra — y sin
+    // embargo el agregado puede quedar por debajo de lo prometido. Se comprueba después de
+    // escribir el saldo, dentro de la misma transacción, para leer el estado resultante.
+    if (
+      input.itemType === InventoryItemType.COIL &&
+      newQty.lt(balance.qty) &&
+      !SPLIT_REF_TYPES.includes(input.refType)
+    ) {
+      await assertRawMaterialInvariant(tx, [input.itemId], roofingToleranceMm(this.env), {
+        exceptReservationIds: input.exceptReservationIds,
+      });
+    }
 
     return tx.inventoryMovement.create({
       data: {
@@ -465,6 +524,16 @@ export class InventoryService {
       },
     });
 
+    // D-134: igual que en `record`. Anular el ingreso de una bobina baja el agregado sin
+    // que ninguna reserva nombre a esa bobina.
+    if (
+      original.itemType === InventoryItemType.COIL &&
+      newQty.lt(balance.qty) &&
+      !SPLIT_REF_TYPES.includes(original.refType)
+    ) {
+      await assertRawMaterialInvariant(tx, [original.itemId], roofingToleranceMm(this.env));
+    }
+
     try {
       return await tx.inventoryMovement.create({
         data: {
@@ -582,6 +651,17 @@ export class InventoryService {
     itemType: InventoryItemType,
     itemId: string,
   ): Promise<string> {
+    // D-134: un agregado de materia prima no es un ítem de inventario y no tiene línea
+    // propia — la tiene la spec. Sin esta rama caía en la de producto y devolvía un
+    // "Producto no encontrado" que no dice nada de lo que de verdad pasó.
+    if (itemType === InventoryItemType.RAW_MATERIAL) {
+      const spec = await tx.rawMaterialSpec.findUnique({
+        where: { id: itemId },
+        select: { businessLineId: true },
+      });
+      if (!spec) throw new NotFoundException('Agregado de materia prima no encontrado');
+      return spec.businessLineId;
+    }
     if (itemType === InventoryItemType.COIL) {
       const coil = await tx.coil.findUnique({
         where: { id: itemId },

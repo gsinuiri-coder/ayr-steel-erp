@@ -133,8 +133,6 @@ test.describe('Fase 7e — bordes de la venta de bobina completa', () => {
       const { quotation: q3, order: order3 } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: roofing.product.id,
-        coilId: rawCoil.coil.id,
-        reserveKg: '40',
         rows,
       });
       trail.quotationIds.push(q3.id);

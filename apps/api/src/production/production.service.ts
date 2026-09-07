@@ -63,7 +63,10 @@ import {
 
 const ORDER_RELATIONS = {
   businessLine: { select: { code: true } },
-  product: { select: { sku: true, name: true, unit: true } },
+  // D-122: el espesor y el peso por pieza son del SKU desde que la receta dejó de tenerlos.
+  product: {
+    select: { sku: true, name: true, unit: true, thicknessMm: true, pieceWeightKg: true },
+  },
   bom: {
     include: {
       product: { include: { businessLine: { select: { code: true } } } },
@@ -111,7 +114,10 @@ const ORDER_RELATIONS = {
  */
 const LIST_RELATIONS = {
   businessLine: { select: { code: true } },
-  product: { select: { sku: true, name: true, unit: true } },
+  // D-122: el espesor y el peso por pieza son del SKU desde que la receta dejó de tenerlos.
+  product: {
+    select: { sku: true, name: true, unit: true, thicknessMm: true, pieceWeightKg: true },
+  },
   reservation: {
     select: {
       salesOrder: { select: { id: true, seq: true, customer: { select: { name: true } } } },
@@ -130,31 +136,32 @@ type OrderForList = Prisma.ProductionOrderGetPayload<{ include: typeof LIST_RELA
  * tipo — y el mensaje existe para el caso imposible en que alguien escriba en la base sin
  * pasar por `BomsService`.
  */
-function drywallShape<
-  T extends {
-    kind: ProductBomKind;
-    inputWidthMm: Prisma.Decimal | null;
-    pieceLengthMm: Prisma.Decimal | null;
-    kgPerPiece: Prisma.Decimal | null;
-  },
->(
+function drywallShape<T extends { kind: ProductBomKind; inputWidthMm: Prisma.Decimal | null }>(
   bom: T,
-): T & { inputWidthMm: Prisma.Decimal; pieceLengthMm: Prisma.Decimal; kgPerPiece: Prisma.Decimal } {
-  if (
-    bom.kind !== ProductBomKind.DRYWALL ||
-    bom.inputWidthMm === null ||
-    bom.pieceLengthMm === null ||
-    bom.kgPerPiece === null
-  ) {
+): T & { inputWidthMm: Prisma.Decimal } {
+  if (bom.kind !== ProductBomKind.DRYWALL || bom.inputWidthMm === null) {
     throw new BadRequestException(
-      'La receta del producto no es una receta de drywall completa: revisa ancho de fleje, largo de pieza y kilo por pieza',
+      'La receta del producto no es una receta de drywall completa: revisa el ancho del fleje',
     );
   }
-  return bom as T & {
-    inputWidthMm: Prisma.Decimal;
-    pieceLengthMm: Prisma.Decimal;
-    kgPerPiece: Prisma.Decimal;
-  };
+  return bom as T & { inputWidthMm: Prisma.Decimal };
+}
+
+/**
+ * D-139: los kilos que consume una pieza, que desde D-122 viven en el SKU.
+ *
+ * Hasta entonces eran `product_boms.kg_per_piece` y convivían con
+ * `products.piece_weight_kg` como dos números para la misma cantidad física: rolar un
+ * fleje en un perfil no le saca material —el despunte se reporta aparte— así que el peso de
+ * la pieza terminada **es** lo que la pieza consume.
+ */
+function pieceWeightOf(product: { sku: string; pieceWeightKg: Prisma.Decimal | null }): string {
+  if (product.pieceWeightKg === null || product.pieceWeightKg.lte(0)) {
+    throw new BadRequestException(
+      `${product.sku} no tiene peso por pieza en el catálogo: sin él no se puede saber cuántos kilos consume la corrida`,
+    );
+  }
+  return product.pieceWeightKg.toFixed(3);
 }
 
 /**
@@ -326,6 +333,12 @@ export class ProductionService {
       const order = await this.lockOrder(tx, orderId);
       this.assertLive(order, 'consumir flejes');
 
+      // D-122: `bomId` es nullable desde que una OP de coberturas no nace de una receta.
+      // Una de drywall siempre la tiene —`create` la exige— y este chequeo traduce esa
+      // garantía al tipo.
+      if (order.bomId === null) {
+        throw new BadRequestException('La orden de drywall no tiene receta: no se puede consumir');
+      }
       const bom = drywallShape(
         await tx.productBom.findUniqueOrThrow({
           where: { id: order.bomId },
@@ -513,10 +526,13 @@ export class ProductionService {
           );
         }
 
-        const bom = drywallShape(
-          await tx.productBom.findUniqueOrThrow({ where: { id: order.bomId } }),
-        );
-        const neededKg = theoreticalKg(input.pieces, bom.kgPerPiece.toFixed(3));
+        // D-122: la receta sigue diciendo **qué fleje** consume el producto; cuánto pesa
+        // cada pieza es del SKU (D-139).
+        const product = await tx.product.findUniqueOrThrow({
+          where: { id: order.productId },
+          select: { sku: true, pieceWeightKg: true },
+        });
+        const neededKg = theoreticalKg(input.pieces, pieceWeightOf(product));
 
         const rows = await tx.productionOrderConsumption.findMany({
           where: { productionOrderId: orderId, releasedAt: null },
@@ -1299,7 +1315,8 @@ export class ProductionService {
 
     return {
       ...this.toListItem(order, actors),
-      bom: bomToDto(order.bom),
+      // D-122: null en una OP de coberturas, que ya no nace de una receta.
+      bom: order.bom === null ? null : bomToDto(order.bom),
       items: order.items.map((i) => ({
         lineNumber: i.lineNumber,
         lengthMm: i.lengthMm.toFixed(2),
@@ -1350,6 +1367,7 @@ export class ProductionService {
    */
   async stripOptions(productId: string): Promise<ProductionStripOptionDto[]> {
     const bom = drywallShape(await this.boms.requireActiveBom(productId));
+    const kgPerPiece = toDecimal(pieceWeightOf(bom.product));
     const coils = await this.prisma.coil.findMany({
       where: {
         kind: CoilKind.STRIP,
@@ -1384,7 +1402,6 @@ export class ProductionService {
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
     const taken = new Set(assignments.map((a) => a.coilId));
-    const kgPerPiece = toDecimal(bom.kgPerPiece.toFixed(3));
 
     return coils
       .filter((c) => !taken.has(c.id) && (qtyById.get(c.id) ?? new Decimal(0)).gt(0))
@@ -1477,6 +1494,8 @@ export class ProductionService {
       productSku: order.product.sku,
       productName: order.product.name,
       productUnit: order.product.unit,
+      productThicknessMm: order.product.thicknessMm?.toFixed(2) ?? null,
+      productPieceWeightKg: order.product.pieceWeightKg?.toFixed(3) ?? null,
       status: order.status,
       targetPieces: order.targetPieces,
       reservationId: order.reservationId,
@@ -1515,13 +1534,44 @@ export class ProductionService {
    * en aquel servicio porque `BomsService` es de este módulo y porque el chequeo de `kind`
    * es el mismo que `create` hace para drywall, en el otro sentido.
    */
-  async requireRoofingBom(productId: string) {
-    const bom = await this.boms.requireActiveBom(productId);
-    if (bom.kind !== ProductBomKind.ROOFING) {
+  /**
+   * D-122: lo que una OP de coberturas necesita del producto, que desde entonces es todo lo
+   * que necesita — ya no hay receta de cobertura.
+   *
+   * El acabado es obligatorio porque de él sale la densidad (RF-25) con la que se convierten
+   * metros en kilos; el espesor, porque es lo que decide qué bobina se puede montar (D-086).
+   */
+  async requireRoofingProduct(productId: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: {
+        id: true,
+        sku: true,
+        businessLineId: true,
+        colorId: true,
+        thicknessMm: true,
+        widthMm: true,
+        lengthMm: true,
+        roofingKind: true,
+        finish: { select: { id: true, code: true, densityFactor: true, isActive: true } },
+      },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    if (product.thicknessMm === null || product.widthMm === null) {
       throw new BadRequestException(
-        'La receta del producto es de drywall: una orden de coberturas necesita una receta de cobertura',
+        `${product.sku} no tiene espesor y ancho en el catálogo: complétalos antes de producirlo`,
       );
     }
-    return bom;
+    if (!product.finish?.isActive) {
+      throw new BadRequestException(
+        `${product.sku} no tiene un acabado activo en el catálogo: sin él no se sabe con qué densidad convertir metros en kilos`,
+      );
+    }
+    return {
+      ...product,
+      thicknessMm: product.thicknessMm,
+      widthMm: product.widthMm,
+      finish: product.finish,
+    };
   }
 }

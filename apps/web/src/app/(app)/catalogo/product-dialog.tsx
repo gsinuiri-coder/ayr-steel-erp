@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -14,6 +14,7 @@ import {
   ROOFING_PRODUCT_KIND_LABELS,
   ROOFING_PRODUCT_KINDS,
   RoofingProductKind,
+  type FinishDto,
   type ProductDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
@@ -62,6 +63,11 @@ const formSchema = z.object({
     .refine((v) => v === '' || isPositiveDecimal(v), 'Debe ser mayor a cero'),
   /** D-085: vacío = sin color, que el API guarda como `null`. */
   colorId: z.string(),
+  /**
+   * D-122: acabado del SKU. Obligatorio en Metallic Roofing —de él sale la densidad con la
+   * que se convierten metros en kilos (RF-25)—, y el campo ni se muestra en el resto.
+   */
+  finishId: z.string(),
   /** D-118: vacío = sin dato, que el API guarda como `null`. Obligatorios los valida el API
    * según la línea; acá solo se muestran los que aplican. */
   thicknessMm: z.string().trim(),
@@ -111,6 +117,17 @@ export function ProductDialog({
   const showColor = usesColor(businessLineCode);
   const showRoofingFields = usesRoofingFields(businessLineCode);
   const showDrywallFields = usesDrywallFields(businessLineCode);
+  // D-122: los acabados solo hacen falta donde el SKU los lleva.
+  const finishes = useQuery({
+    queryKey: ['finishes'],
+    queryFn: () => api<FinishDto[]>('/finishes'),
+    enabled: open && showRoofingFields,
+  });
+  // El acabado guardado se ofrece siempre, aunque esté desactivado: si no, el `Select` se
+  // vacía y parece que nadie eligió nada, cuando el producto sí tiene uno.
+  const finishOptions = (finishes.data ?? []).filter(
+    (f) => f.isActive || f.id === product?.finishId,
+  );
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -120,6 +137,7 @@ export function ProductDialog({
       source: product?.source ?? 'MANUFACTURED',
       listPricePen: product?.listPricePen ?? '',
       colorId: product?.colorId ?? '',
+      finishId: product?.finishId ?? '',
       thicknessMm: product?.thicknessMm ?? '',
       widthMm: product?.widthMm ?? '',
       lengthMm: product?.lengthMm ?? '',
@@ -152,6 +170,7 @@ export function ProductDialog({
             source: values.source,
             listPricePen: values.listPricePen,
             ...(showColor ? { colorId: values.colorId } : {}),
+            ...(showRoofingFields ? { finishId: values.finishId } : {}),
             ...structuredFields,
           },
         });
@@ -161,6 +180,7 @@ export function ProductDialog({
         body: {
           ...values,
           colorId: showColor ? values.colorId : '',
+          finishId: showRoofingFields ? values.finishId : '',
           ...structuredFields,
           businessLineId,
         },
@@ -254,6 +274,41 @@ export function ProductDialog({
                     <p className="text-xs text-muted-foreground">
                       La orden de producción solo ofrece bobinas de este mismo color (D-086). Un
                       producto sin color solo monta bobinas sin color.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            {showRoofingFields && (
+              <FormField
+                control={form.control}
+                name="finishId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Acabado</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger disabled={finishes.isPending}>
+                          <SelectValue
+                            placeholder={
+                              finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
+                            }
+                          />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {finishOptions.map((f) => (
+                          <SelectItem key={f.id} value={f.id}>
+                            {f.code} — {f.name}
+                            {f.isActive ? '' : ' (desactivado)'}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      De su factor de densidad salen los kilos teóricos por metro lineal (RF-25,
+                      D-122). El acabado ya no vive en la receta: una cobertura no lleva.
                     </p>
                     <FormMessage />
                   </FormItem>

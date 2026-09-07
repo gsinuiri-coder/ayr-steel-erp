@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -44,7 +44,16 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -83,6 +92,7 @@ export function CompraDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [editingDocument, setEditingDocument] = useState(false);
   const [reversingPaymentId, setReversingPaymentId] = useState<string | null>(null);
 
   const purchase = useQuery({
@@ -132,6 +142,24 @@ export function CompraDetalleView({ id }: { id: string }) {
       invalidate();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo anular'),
+  });
+
+  // D-132: corregir serie y número del comprobante. No mueve nada —es el dato que
+  // identifica el papel del proveedor—, y existe para poder limpiar los números con
+  // sufijo inventado que dejó el defecto de unicidad que D-132 corrige.
+  const updateDocument = useMutation({
+    mutationFn: ({ series, number }: { series: string; number: string }) =>
+      api<PurchaseDto>(`/purchases/${id}/document`, {
+        method: 'PATCH',
+        body: { series, number },
+      }),
+    onSuccess: () => {
+      toast.success('Número de comprobante corregido');
+      setEditingDocument(false);
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo corregir el número'),
   });
 
   const reversePayment = useMutation({
@@ -187,6 +215,16 @@ export function CompraDetalleView({ id }: { id: string }) {
               </Button>
               <OperationDateField value={receiveDate} onChange={setReceiveDate} />
             </div>
+          )}
+          {isAdmin && p.status !== 'CANCELLED' && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingDocument(true);
+              }}
+            >
+              Corregir número
+            </Button>
           )}
           {isAdmin && p.status !== 'CANCELLED' && (
             <Button
@@ -481,6 +519,17 @@ export function CompraDetalleView({ id }: { id: string }) {
         }}
       />
 
+      <DocumentNumberDialog
+        open={editingDocument}
+        onOpenChange={setEditingDocument}
+        series={p.series}
+        number={p.number}
+        pending={updateDocument.isPending}
+        onConfirm={(series, number) => {
+          updateDocument.mutate({ series, number });
+        }}
+      />
+
       <ReasonDialog
         open={reversingPaymentId !== null}
         onOpenChange={(open) => {
@@ -495,6 +544,102 @@ export function CompraDetalleView({ id }: { id: string }) {
         }}
       />
     </>
+  );
+}
+
+/**
+ * Corregir serie y número del comprobante (D-132).
+ *
+ * Es el único dato de la compra que se puede editar después de registrarla, y se puede
+ * justamente porque no entra en ningún cálculo: identifica el papel del proveedor. Existe
+ * para limpiar los números con sufijo inventado que dejó el defecto de unicidad —mientras
+ * la unicidad contaba las compras anuladas, re-registrar una corregida obligaba a
+ * inventarle un `-R` al número, y ese número inventado es el que después no cuadra.
+ */
+function DocumentNumberDialog({
+  open,
+  onOpenChange,
+  series,
+  number,
+  pending,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  series: string;
+  number: string;
+  pending: boolean;
+  onConfirm: (series: string, number: string) => void;
+}) {
+  const [nextSeries, setNextSeries] = useState(series);
+  const [nextNumber, setNextNumber] = useState(number);
+
+  // Cada apertura arranca del valor guardado: si el API rechazó el cambio anterior, lo que
+  // se ve tiene que ser lo que está en la base, no lo que se intentó.
+  useEffect(() => {
+    if (open) {
+      setNextSeries(series);
+      setNextNumber(number);
+    }
+  }, [open, series, number]);
+
+  const seriesOk = /^[A-Za-z0-9]{1,10}$/.test(nextSeries.trim());
+  const numberOk = /^[0-9]{1,20}$/.test(nextNumber.trim());
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Corregir el número del comprobante</DialogTitle>
+          <DialogDescription>
+            Solo cambia cómo se identifica la factura del proveedor. No mueve costos, kardex ni
+            saldos. Queda registrado en la auditoría.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-1.5">
+            <Label htmlFor="fix-series">Serie</Label>
+            <Input
+              id="fix-series"
+              value={nextSeries}
+              onChange={(e) => {
+                setNextSeries(e.target.value.toUpperCase());
+              }}
+            />
+            {!seriesOk && <p className="text-xs text-destructive">Serie inválida (ej: F001)</p>}
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="fix-number">Número</Label>
+            <Input
+              id="fix-number"
+              value={nextNumber}
+              onChange={(e) => {
+                setNextNumber(e.target.value);
+              }}
+            />
+            {!numberOk && <p className="text-xs text-destructive">El número solo admite dígitos</p>}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              onOpenChange(false);
+            }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            disabled={pending || !seriesOk || !numberOk}
+            onClick={() => {
+              onConfirm(nextSeries.trim().toUpperCase(), nextNumber.trim());
+            }}
+          >
+            {pending ? 'Guardando…' : 'Guardar'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

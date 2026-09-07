@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -30,11 +31,14 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { ColorsService } from '../colors/colors.service';
+import { ENV, type Env } from '../config/env';
 import { OperationDateService } from '../common/operation-date.service';
 import { liveMovements } from '../inventory/live-movements';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
+import { roofingToleranceMm } from '../production/roofing-coil-match';
+import { assertRawMaterialInvariant } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
 import { CoilsService } from './coils.service';
@@ -57,6 +61,7 @@ export class CoilOperationsService {
     private readonly coils: CoilsService,
     private readonly colors: ColorsService,
     private readonly operationDate: OperationDateService,
+    @Inject(ENV) private readonly env: Env,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -183,6 +188,17 @@ export class CoilOperationsService {
           });
         }
 
+        // D-134: el partido se comprueba **una vez, al final**, con madre e hijas ya en
+        // su estado definitivo. Movimiento por movimiento la salida de la madre se lee
+        // sobre un estado transitorio —el agregado perdió todo el peso y las hijas todavía
+        // no existen— y rechazaría cualquier partido con una promesa viva encima, aunque
+        // las hijas hereden línea, color y espesor y el neto sea cero.
+        await assertRawMaterialInvariant(
+          tx,
+          [coil.id, ...children.map((c) => c.id)],
+          roofingToleranceMm(this.env),
+        );
+
         await this.audit.write(tx, {
           actorId: actor.id,
           action: 'coils.split',
@@ -308,6 +324,15 @@ export class CoilOperationsService {
         if (coil.status === CoilStatus.CLOSED) {
           await tx.coil.update({ where: { id: coil.id }, data: { status: CoilStatus.OPEN } });
         }
+
+        // Igual que el partido, y por lo mismo: las hijas se anulan y la madre recupera
+        // su peso dentro de la misma transacción, así que el único estado que significa
+        // algo es el de después.
+        await assertRawMaterialInvariant(
+          tx,
+          [coil.id, ...split.children.map((c) => c.id)],
+          roofingToleranceMm(this.env),
+        );
 
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -440,42 +465,56 @@ export class CoilOperationsService {
   // -------------------------------------------------------------------------
 
   async setStatus(actor: RequestUser, coilId: string, input: SetCoilStatusInput): Promise<CoilDto> {
-    await this.prisma.$transaction(async (tx) => {
-      const coil = await this.coils.lockCoil(tx, coilId);
-      if (coil.status === CoilStatus.CANCELLED || coil.status === CoilStatus.IN_THIRD_PARTY) {
-        throw new BadRequestException(notOpenMessage(coil.status));
-      }
-      // D-060: cerrar un fleje que una OP tiene montado lo sacaría de producción justo
-      // mientras la orden lo está usando.
-      await assertStripsNotAssigned(tx, [coil.id], 'cambiarle el estado');
-      // D-066: cerrar tampoco mueve kardex, así que la invariante de cantidad no lo ve, y
-      // una bobina cerrada no entra a producción (RF-19): el material prometido a un
-      // pedido quedaría inalcanzable sin que nada avisara.
-      if (input.status === CoilStatus.CLOSED) {
-        await assertNotReserved(
-          tx,
-          [{ itemType: InventoryItemType.COIL, itemId: coil.id }],
-          'cerrarla',
-        );
-      }
-      if (coil.status === input.status) {
-        throw new BadRequestException(
-          input.status === CoilStatus.OPEN
-            ? 'La bobina ya está abierta'
-            : 'La bobina ya está cerrada',
-        );
-      }
+    // D-134: presupuesto explícito. La comprobación del agregado recorre las bobinas
+    // compatibles, y con los 5 s por defecto de Prisma esta transacción se pasaba del
+    // límite contra Neon de forma intermitente — un 500 en una operación normal.
+    await this.prisma.$transaction(
+      async (tx) => {
+        const coil = await this.coils.lockCoil(tx, coilId);
+        if (coil.status === CoilStatus.CANCELLED || coil.status === CoilStatus.IN_THIRD_PARTY) {
+          throw new BadRequestException(notOpenMessage(coil.status));
+        }
+        // D-060: cerrar un fleje que una OP tiene montado lo sacaría de producción justo
+        // mientras la orden lo está usando.
+        await assertStripsNotAssigned(tx, [coil.id], 'cambiarle el estado');
+        // D-066: cerrar tampoco mueve kardex, así que la invariante de cantidad no lo ve, y
+        // una bobina cerrada no entra a producción (RF-19): el material prometido a un
+        // pedido quedaría inalcanzable sin que nada avisara.
+        if (input.status === CoilStatus.CLOSED) {
+          await assertNotReserved(
+            tx,
+            [{ itemType: InventoryItemType.COIL, itemId: coil.id }],
+            'cerrarla',
+          );
+        }
+        if (coil.status === input.status) {
+          throw new BadRequestException(
+            input.status === CoilStatus.OPEN
+              ? 'La bobina ya está abierta'
+              : 'La bobina ya está cerrada',
+          );
+        }
 
-      await tx.coil.update({ where: { id: coilId }, data: { status: input.status } });
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: input.status === CoilStatus.OPEN ? 'coils.open' : 'coils.close',
-        entity: 'coils',
-        entityId: coilId,
-        before: { status: coil.status },
-        after: { status: input.status, reason: input.reason ?? null },
-      });
-    });
+        await tx.coil.update({ where: { id: coilId }, data: { status: input.status } });
+
+        // D-134: cerrar una bobina la saca del agregado sin mover kardex y sin que ninguna
+        // reserva la nombre. `assertNotReserved` de arriba solo ve las promesas que apuntan a
+        // **esta** bobina (la venta de un rollo entero, RF-73); una cobertura a medida promete
+        // el agregado, y el agregado puede quedar corto justamente porque este rollo se fue.
+        if (input.status === CoilStatus.CLOSED) {
+          await assertRawMaterialInvariant(tx, [coil.id], roofingToleranceMm(this.env));
+        }
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: input.status === CoilStatus.OPEN ? 'coils.open' : 'coils.close',
+          entity: 'coils',
+          entityId: coilId,
+          before: { status: coil.status },
+          after: { status: input.status, reason: input.reason ?? null },
+        });
+      },
+      { timeout: 30_000 },
+    );
     return this.coils.findOne(coilId);
   }
 
@@ -494,117 +533,140 @@ export class CoilOperationsService {
       );
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      const coil = await this.coils.lockCoil(tx, coilId);
-      if (coil.status === CoilStatus.CANCELLED) {
-        throw new BadRequestException('La bobina está anulada: no se puede editar');
-      }
-      if (input.widthMm !== undefined && coil.status !== CoilStatus.OPEN) {
-        throw new BadRequestException('El ancho solo se edita con la bobina abierta');
-      }
-      if (input.colorId !== undefined && coil.status !== CoilStatus.OPEN) {
-        throw new BadRequestException('El color solo se edita con la bobina abierta');
-      }
-      // D-060: recostear (D-045) o reanchar un fleje montado en una OP cambiaría, a mitad
-      // de la corrida, el costo con el que ya entraron piezas y el ancho contra el que se
-      // validó la receta.
-      // D-085: el color entra en la misma lista que el ancho. Cambiarlo en un rollo que
-      // una OP ya montó rompería, a mitad de corrida, la igualdad de color contra la que
-      // se validó el montaje (D-086).
-      if (touchesCost || input.widthMm !== undefined || input.colorId !== undefined) {
-        await assertStripsNotAssigned(tx, [coil.id], 'editarlo');
-      }
+    // D-134: presupuesto explícito. La comprobación del agregado recorre las bobinas
+    // compatibles, y con los 5 s por defecto de Prisma esta transacción se pasaba del
+    // límite contra Neon de forma intermitente — un 500 en una operación normal.
+    await this.prisma.$transaction(
+      async (tx) => {
+        const coil = await this.coils.lockCoil(tx, coilId);
+        if (coil.status === CoilStatus.CANCELLED) {
+          throw new BadRequestException('La bobina está anulada: no se puede editar');
+        }
+        if (input.widthMm !== undefined && coil.status !== CoilStatus.OPEN) {
+          throw new BadRequestException('El ancho solo se edita con la bobina abierta');
+        }
+        if (input.colorId !== undefined && coil.status !== CoilStatus.OPEN) {
+          throw new BadRequestException('El color solo se edita con la bobina abierta');
+        }
+        // D-060: recostear (D-045) o reanchar un fleje montado en una OP cambiaría, a mitad
+        // de la corrida, el costo con el que ya entraron piezas y el ancho contra el que se
+        // validó la receta.
+        // D-085: el color entra en la misma lista que el ancho. Cambiarlo en un rollo que
+        // una OP ya montó rompería, a mitad de corrida, la igualdad de color contra la que
+        // se validó el montaje (D-086).
+        if (touchesCost || input.widthMm !== undefined || input.colorId !== undefined) {
+          await assertStripsNotAssigned(tx, [coil.id], 'editarlo');
+        }
 
-      const data: Prisma.CoilUpdateInput = {};
-      if (input.widthMm !== undefined) data.widthMm = input.widthMm;
-      if (input.colorId !== undefined) {
-        // Por `resolveActive` y no por `connect` directo: un id inexistente daba un 500
-        // opaco, y —lo que importa— un color **desactivado** se podía asignar acá,
-        // esquivando a posteriori el guardrail que impide desactivar un color en uso.
-        const resolved = await this.colors.resolveActive(input.colorId);
-        data.color = resolved === null ? { disconnect: true } : { connect: { id: resolved } };
-      }
-      if (input.notes !== undefined) data.notes = input.notes || null;
+        const data: Prisma.CoilUpdateInput = {};
+        if (input.widthMm !== undefined) data.widthMm = input.widthMm;
+        if (input.colorId !== undefined) {
+          // Por `resolveActive` y no por `connect` directo: un id inexistente daba un 500
+          // opaco, y —lo que importa— un color **desactivado** se podía asignar acá,
+          // esquivando a posteriori el guardrail que impide desactivar un color en uso.
+          const resolved = await this.colors.resolveActive(input.colorId);
+          data.color = resolved === null ? { disconnect: true } : { connect: { id: resolved } };
+        }
+        if (input.notes !== undefined) data.notes = input.notes || null;
 
-      if (touchesCost) {
-        // D-045 + D-124: el recosteo es reversa + reingreso, y los dos van con la MISMA
-        // fecha de operación —la del ingreso original—, no con la de hoy. Fecharlos hoy
-        // dejaría la bobina fuera del inventario de su propio mes entre la salida y la
-        // entrada, y el saldo de ese mes cerraría mal por un movimiento que solo corrige
-        // un costo. Es la única reversa del sistema que sí hereda la fecha, y hereda la
-        // del movimiento que corrige, no la de un hecho distinto.
-        const initial = await this.initialMovement(tx, coilId);
-        const recostDate = fromDateOnly(initial.operationDate);
-        const currency = input.currency ?? coil.currency;
-        const exchangeRate = toDecimal(
-          input.exchangeRate ?? (currency === 'PEN' ? '1.0000' : coil.exchangeRate.toFixed(4)),
-        );
-        const unitCostPerKg = toDecimal(input.unitCostPerKg ?? coil.unitCostPerKg.toFixed(4));
-        const weightKg = toDecimal(initial.qty.toString());
-        const totalCost = weightKg.times(unitCostPerKg);
+        if (touchesCost) {
+          // D-045 + D-124: el recosteo es reversa + reingreso, y los dos van con la MISMA
+          // fecha de operación —la del ingreso original—, no con la de hoy. Fecharlos hoy
+          // dejaría la bobina fuera del inventario de su propio mes entre la salida y la
+          // entrada, y el saldo de ese mes cerraría mal por un movimiento que solo corrige
+          // un costo. Es la única reversa del sistema que sí hereda la fecha, y hereda la
+          // del movimiento que corrige, no la de un hecho distinto.
+          const initial = await this.initialMovement(tx, coilId);
+          const recostDate = fromDateOnly(initial.operationDate);
+          const currency = input.currency ?? coil.currency;
+          const exchangeRate = toDecimal(
+            input.exchangeRate ?? (currency === 'PEN' ? '1.0000' : coil.exchangeRate.toFixed(4)),
+          );
+          const unitCostPerKg = toDecimal(input.unitCostPerKg ?? coil.unitCostPerKg.toFixed(4));
+          const weightKg = toDecimal(initial.qty.toString());
+          const totalCost = weightKg.times(unitCostPerKg);
 
-        // D-045: el kardex es append-only, así que recostear es reversar el ingreso y
-        // volver a ingresar al costo corregido, no reescribir el movimiento original.
-        await this.inventory.reverse(
-          tx,
-          initial.id,
-          actor.id,
-          input.reason ?? 'Corrección de costo de la bobina',
-          recostDate,
-          true,
-        );
-        await this.inventory.record(tx, {
-          businessLineId: coil.businessLineId,
-          itemType: 'COIL',
-          itemId: coil.id,
-          type: 'IN',
-          qty: initial.qty.toFixed(3),
-          unit: initial.unit,
-          unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY'),
-          refType: initial.refType,
-          refId: initial.refId ?? undefined,
-          notes: input.reason,
+          // D-045: el kardex es append-only, así que recostear es reversar el ingreso y
+          // volver a ingresar al costo corregido, no reescribir el movimiento original.
+          await this.inventory.reverse(
+            tx,
+            initial.id,
+            actor.id,
+            input.reason ?? 'Corrección de costo de la bobina',
+            recostDate,
+            true,
+          );
+          await this.inventory.record(tx, {
+            businessLineId: coil.businessLineId,
+            itemType: 'COIL',
+            itemId: coil.id,
+            type: 'IN',
+            qty: initial.qty.toFixed(3),
+            unit: initial.unit,
+            unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY'),
+            refType: initial.refType,
+            refId: initial.refId ?? undefined,
+            notes: input.reason,
+            actorId: actor.id,
+            operationDate: recostDate,
+            // El recosteo es reversa + reingreso del **mismo** hecho, con la fecha de ese
+            // hecho: el guardrail de orden no aplica por definición, y sin este acuse una
+            // bobina con cualquier movimiento posterior al ingreso no se podría recostear.
+            confirmBackdate: true,
+          });
+
+          data.currency = currency;
+          data.exchangeRate = toFixedString(exchangeRate, 'RATE');
+          data.unitCostPerKg = toFixedString(unitCostPerKg, 'MONEY');
+          data.totalCost = toFixedString(totalCost, 'MONEY');
+          data.totalCostPen = toFixedString(totalCost.times(exchangeRate), 'MONEY');
+        }
+
+        const updated = await tx.coil.update({ where: { id: coilId }, data });
+
+        // D-134: cambiarle el color a una bobina la **muda de agregado**, y el que abandona
+        // puede quedar por debajo de lo prometido. Hay que comprobar los dos: después del
+        // cambio la bobina ya no pertenece al viejo, así que leerla de la base no lo
+        // encontraría — por eso los atributos anteriores viajan explícitos.
+        if (input.colorId !== undefined && coil.colorId !== updated.colorId) {
+          await assertRawMaterialInvariant(tx, [coil.id], roofingToleranceMm(this.env), {
+            alsoAffecting: [
+              {
+                businessLineId: coil.businessLineId,
+                colorId: coil.colorId,
+                thicknessMm: coil.thicknessMm.toFixed(2),
+              },
+            ],
+          });
+        }
+
+        await this.audit.write(tx, {
           actorId: actor.id,
-          operationDate: recostDate,
-          // El recosteo es reversa + reingreso del **mismo** hecho, con la fecha de ese
-          // hecho: el guardrail de orden no aplica por definición, y sin este acuse una
-          // bobina con cualquier movimiento posterior al ingreso no se podría recostear.
-          confirmBackdate: true,
+          action: 'coils.update',
+          entity: 'coils',
+          entityId: coilId,
+          before: {
+            widthMm: coil.widthMm.toFixed(2),
+            currency: coil.currency,
+            exchangeRate: coil.exchangeRate.toFixed(4),
+            unitCostPerKg: coil.unitCostPerKg.toFixed(4),
+            notes: coil.notes,
+          },
+          // Se construye campo por campo en vez de volcar el `CoilUpdateInput`: ese objeto
+          // puede llevar formas relacionales de Prisma que no son JSON serializable.
+          after: {
+            widthMm: updated.widthMm.toFixed(2),
+            currency: updated.currency,
+            exchangeRate: updated.exchangeRate.toFixed(4),
+            unitCostPerKg: updated.unitCostPerKg.toFixed(4),
+            notes: updated.notes,
+            recosted: touchesCost,
+            reason: input.reason ?? null,
+          },
         });
-
-        data.currency = currency;
-        data.exchangeRate = toFixedString(exchangeRate, 'RATE');
-        data.unitCostPerKg = toFixedString(unitCostPerKg, 'MONEY');
-        data.totalCost = toFixedString(totalCost, 'MONEY');
-        data.totalCostPen = toFixedString(totalCost.times(exchangeRate), 'MONEY');
-      }
-
-      const updated = await tx.coil.update({ where: { id: coilId }, data });
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'coils.update',
-        entity: 'coils',
-        entityId: coilId,
-        before: {
-          widthMm: coil.widthMm.toFixed(2),
-          currency: coil.currency,
-          exchangeRate: coil.exchangeRate.toFixed(4),
-          unitCostPerKg: coil.unitCostPerKg.toFixed(4),
-          notes: coil.notes,
-        },
-        // Se construye campo por campo en vez de volcar el `CoilUpdateInput`: ese objeto
-        // puede llevar formas relacionales de Prisma que no son JSON serializable.
-        after: {
-          widthMm: updated.widthMm.toFixed(2),
-          currency: updated.currency,
-          exchangeRate: updated.exchangeRate.toFixed(4),
-          unitCostPerKg: updated.unitCostPerKg.toFixed(4),
-          notes: updated.notes,
-          recosted: touchesCost,
-          reason: input.reason ?? null,
-        },
-      });
-    });
+      },
+      { timeout: 30_000 },
+    );
     return this.coils.findOne(coilId);
   }
 

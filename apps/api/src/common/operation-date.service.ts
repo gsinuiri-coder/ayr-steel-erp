@@ -77,6 +77,44 @@ export class OperationDateService {
     return requested;
   }
 
+  /**
+   * Fecha de emisión de un comprobante electrónico (D-133).
+   *
+   * `assertIssueDateWindow` (D-072) valida la ventana de SUNAT —hasta
+   * `MAX_BACKDATED_ISSUE_DAYS` días de atraso, nunca futura— y lo hace en el schema, que
+   * no conoce el rol. Esa ventana sigue valiendo: es la que el PSE acepta. Lo que falta es
+   * **quién** la puede usar: en los primeros días de un mes, siete días de atraso alcanzan
+   * para cruzar al mes anterior, y mover un hecho de mes es privilegio de ADMINISTRADOR
+   * desde D-124. Sin esto, un VENDEDOR podía fechar una factura en el mes cerrado.
+   *
+   * Es deliberadamente un **estrechamiento** de lo que ya existía y no una regla nueva de
+   * emisión: la ventana de SUNAT no se toca, solo se le pone el mismo control de rol que
+   * tiene cualquier otro hecho fechado del sistema.
+   */
+  assertIssueDate(actor: Pick<RequestUser, 'role'>, issueDate: string): string {
+    const today = businessToday();
+    if (issueDate === today) return issueDate;
+    if (actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        `Solo un administrador puede emitir con una fecha distinta de hoy (${today} en Lima)`,
+      );
+    }
+    // Las mismas cotas que cualquier otra retrofecha (D-124). La ventana de SUNAT la
+    // sigue poniendo el schema, y es más estrecha que el piso histórico.
+    if (issueDate > today) {
+      throw new BadRequestException(
+        `La fecha de emisión no puede ser futura (hoy es ${today} en Lima)`,
+      );
+    }
+    if (issueDate < this.historicalLoadStart) {
+      throw new BadRequestException(
+        `La fecha de emisión no puede ser anterior al ${this.historicalLoadStart}, ` +
+          'que es el inicio de la carga histórica',
+      );
+    }
+    return issueDate;
+  }
+
   /** Igual que {@link resolve} pero devolviendo el `Date` que espera una columna `DATE`. */
   resolveAsDate(actor: Pick<RequestUser, 'role'>, requested?: string | null): Date {
     return toDateOnly(this.resolve(actor, requested));

@@ -13,19 +13,19 @@ import {
   describePieces,
   kgPerMeter,
   piecesMeters,
+  rawMaterialLabel,
   RoofingProductKind,
   salesLineTotals,
   toDecimal,
   toFixedString,
   Unit,
-  Decimal,
+  type Decimal,
   type RoofingPieceDto,
   type SalesItemDto,
   type SalesItemInput,
 } from '@ayr/shared';
 import { toSharedLineCode } from '../common/business-line-code';
-import { findLiveStripAssignments } from '../production/production-assignments';
-import { roofingCoilWhere } from '../production/roofing-coil-match';
+import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material';
 
 /**
  * Resolución de las líneas de una cotización o de un pedido (D-065, D-068).
@@ -37,16 +37,24 @@ import { roofingCoilWhere } from '../production/roofing-coil-match';
  * cotización rechaza, que es justo el agujero por el que se esquivaría RF-31.
  */
 
-/**
- * D-127: qué materia prima ya se resolvió para cada línea a medida, por `lineNumber`.
- *
- * La cotización no manda nada (no reserva, D-054) y la línea guarda su intención; el pedido
- * —confirmación, alta directa o mostrador— la resuelve con `resolveMadeToMeasureCoils` y la
- * pasa acá. Separarlo es lo que evita que una cotización congele un rollo que va a estar
- * cerrado o consumido cuando se confirme, meses después.
- */
+/** Lo que puede aflojar el llamador, y quién puede (ver cada campo). */
 export interface ResolveSalesLinesOptions {
-  rawMaterialByLine?: Map<number, MadeToMeasureReservation>;
+  /**
+   * **Solo la importación de ventas** (D-141). Deja entrar una línea que se vende por metro
+   * lineal **sin** el detalle de largos.
+   *
+   * Está apagado en todos los demás caminos y tiene que seguir así: para una cotización, los
+   * largos son lo que el cliente encargó y sin ellos no hay nada que fabricar. En un
+   * comprobante ya emitido la situación es la contraria — el export trae los metros
+   * facturados y **nunca** el desglose de planchas —, y los kilos que la línea promete no
+   * dependen de él: salen de `metros × espesor × ancho × densidad`, la misma cuenta con o
+   * sin desglose. Lo único que queda sin llenar es el plan de corte de la OP, que D-084 ya
+   * define como una intención que planta corrige (`updatePlan`) antes de rolar.
+   *
+   * Si el usuario **sí** escribió los largos en la previsualización, viajan como cualquier
+   * otra línea y esta excepción no se usa.
+   */
+  allowMissingPieces?: boolean;
 }
 
 /** Una línea ya validada, lista para persistir en `quotation_items` o `sales_order_items`. */
@@ -83,21 +91,32 @@ export interface ResolvedSalesLine {
 /**
  * Valida y normaliza las líneas contra el maestro.
  *
- * El destino de la reserva se decide acá, una sola vez:
+ * El destino de la reserva se decide acá, una sola vez, y desde D-134 lo decide **el
+ * producto**, no el formulario:
  *
- * - con `reserveFromCoilId`, la línea promete **kilos de esa bobina**. Es el caso de una
- *   cobertura que se fabrica contra el pedido: su producto terminado no tiene stock que
- *   reservar y lo que hay que proteger es la materia prima;
- * - sin él, la línea promete **el propio producto**, en su unidad de venta. Es el caso de
- *   un perfil de drywall, de un producto de trading y —desde D-083— también el de una
+ * - una cobertura **a medida** (`roofingKind = A_MEDIDA`) promete **kilos del agregado de
+ *   materia prima compatible**: misma línea, mismo color, espesor de la receta ±
+ *   tolerancia. Su producto terminado no existe hasta que planta lo rola, así que lo que
+ *   hay que proteger es la bobina — pero *cuál* bobina es una decisión de planta al montar
+ *   la OP (D-086), no del vendedor al cotizar;
+ * - una **venta de bobina entera** (RF-73, `saleCoilId`) promete esa bobina, y ahí apuntar
+ *   al rollo es lo correcto: lo que se vende es ese rollo;
+ * - cualquier otra línea promete **el propio producto**, en su unidad de venta. Es el caso
+ *   de un perfil de drywall, de un producto de trading y —desde D-083— también el de una
  *   cobertura que sale de stock, sea una plancha de catálogo o el sobrante de una corrida
  *   anterior.
  *
- * **Desde D-083 el segundo caso ya no se rechaza en una línea con cotización obligatoria.**
- * Antes se cortaba acá con el argumento de que reservar un producto terminado inexistente
- * fallaría igual al confirmar; el argumento dejó de valer cuando la producción de coberturas
- * empezó a dejar metros y planchas en stock, que son perfectamente vendibles. Quien decide
- * ahora es el disponible real, en `createReservations`, con un mensaje que dice cuánto hay.
+ * **`reserveFromCoilId` desapareció** (D-134). Era la forma de que el vendedor eligiera el
+ * rollo a mano, y el dueño la encontró en producción pidiéndole justo la decisión que no le
+ * toca. No queda ninguna ruta —ni de API ni de formulario— para comprometer una bobina
+ * concreta desde una cotización.
+ *
+ * **Desde D-083 la cobertura que sale de stock ya no se rechaza en una línea con cotización
+ * obligatoria.** Antes se cortaba acá con el argumento de que reservar un producto terminado
+ * inexistente fallaría igual al confirmar; el argumento dejó de valer cuando la producción de
+ * coberturas empezó a dejar metros y planchas en stock, que son perfectamente vendibles. Quien
+ * decide ahora es el disponible real, en `createReservations`, con un mensaje que dice cuánto
+ * hay.
  *
  * D-083 además distingue las dos formas de línea por la **unidad del producto**: `MTR` es
  * una cobertura a medida y su línea es compuesta (subítems `{cantidad, largo}` cuya suma en
@@ -105,10 +124,10 @@ export interface ResolvedSalesLine {
  *
  * **D-119 (Fase 7e): sin `businessLineId` de documento.** Antes cada línea se validaba
  * contra una única línea de negocio compartida por todo el documento; ahora cada línea
- * lleva la suya (la de su producto) y no se exige que coincidan entre sí. Lo único que
- * sigue siendo obligatorio por línea es que su propia bobina de materia prima (si la
- * tiene) sea de la **misma** línea que su producto — eso nunca fue "una regla del
- * documento", es una regla física: una cobertura no rola con fleje de drywall.
+ * lleva la suya (la de su producto) y no se exige que coincidan entre sí. La regla física
+ * que sí sigue valiendo —una cobertura no rola con fleje de drywall— la sostiene ahora el
+ * agregado, que se construye con la línea de negocio **del producto** y por eso no puede
+ * nombrar material de otra.
  */
 export async function resolveSalesLines(
   tx: Prisma.TransactionClient,
@@ -132,29 +151,30 @@ export async function resolveSalesLines(
       thicknessMm: true,
       widthMm: true,
       colorId: true,
+      color: { select: { name: true } },
+      finish: { select: { densityFactor: true } },
       businessLine: { select: { inventoryStrategy: true } },
-      bom: {
-        select: {
-          isActive: true,
-          inputThicknessMm: true,
-          finish: { select: { densityFactor: true } },
-        },
-      },
     },
   });
   const productById = new Map(products.map((p) => [p.id, p]));
 
-  const coilIds = [
-    ...new Set(items.flatMap((i) => (i.reserveFromCoilId ? [i.reserveFromCoilId] : []))),
-  ];
-  const coils =
-    coilIds.length === 0
-      ? []
-      : await tx.coil.findMany({
-          where: { id: { in: coilIds } },
-          select: { id: true, code: true, status: true, businessLineId: true },
-        });
-  const coilById = new Map(coils.map((c) => [c.id, c]));
+  // D-134: el agregado de materia prima de cada producto a medida. Se resuelve **antes** del
+  // `.map` porque crear la spec es asíncrono y el mapa que arma las líneas no lo es; y se
+  // resuelve por producto y no por línea porque dos líneas del mismo SKU prometen contra el
+  // mismo agregado — que es justamente lo que hace que la invariante las sume.
+  const specByProductId = new Map<string, RawMaterialSpecRef>();
+  for (const product of products) {
+    if (!isMadeToMeasure(product)) continue;
+    if (product.thicknessMm === null || product.finish === null) continue;
+    specByProductId.set(
+      product.id,
+      await resolveRawMaterialSpec(tx, {
+        businessLineId: product.businessLineId,
+        colorId: product.colorId,
+        thicknessMm: product.thicknessMm.toFixed(2),
+      }),
+    );
+  }
 
   // D-116: venta de bobina completa (RF-73). Se resuelve aparte porque el producto no lo
   // manda el formulario (es el SKU `trading` de D-037, uno por `typeKey`) y la cantidad no
@@ -236,7 +256,7 @@ export async function resolveSalesLines(
     // fuera de coberturas — y con eso el mostrador pasó a poder vender material a medida.
     const sellsByLength = product.unit === Unit.MTR;
     const madeToMeasure = isMadeToMeasure(product);
-    if (sellsByLength && item.pieces === undefined) {
+    if (sellsByLength && item.pieces === undefined && options.allowMissingPieces !== true) {
       throw new BadRequestException(
         `${at}: ${product.sku} se vende por metro lineal: detalla cuántas planchas de cada largo lleva la línea`,
       );
@@ -255,7 +275,16 @@ export async function resolveSalesLines(
     // Redundante con el `superRefine` del schema, y a propósito: el pedido directo y la
     // edición de cotización pasan por acá con las mismas líneas, y esta es la única puerta
     // por la que las dos entran a la base.
-    if (sellsByLength && !piecesMeters(pieces).equals(toDecimal(item.qty))) {
+    //
+    // Se comprueba contra los largos que **vinieron**, no contra su ausencia: con
+    // `allowMissingPieces` (D-141) una línea a medida puede entrar sin desglose, y sumar una
+    // lista vacía habría dado cero metros contra los quince de la línea — el mismo rechazo
+    // que la excepción existe para evitar, por la puerta de al lado.
+    if (
+      item.pieces !== undefined &&
+      sellsByLength &&
+      !piecesMeters(pieces).equals(toDecimal(item.qty))
+    ) {
       throw new BadRequestException(
         `${at}: los largos suman ${piecesMeters(pieces).toFixed(3)} m y la línea dice ${toDecimal(item.qty).toFixed(3)}`,
       );
@@ -269,55 +298,37 @@ export async function resolveSalesLines(
     let reserveUnit: string;
     let reserveItemLabel: string;
 
-    if (item.reserveFromCoilId !== undefined && item.reserveKg !== undefined) {
-      const coil = coilById.get(item.reserveFromCoilId);
-      if (!coil) throw new NotFoundException(`${at}: bobina a reservar no encontrada`);
-      if (coil.status !== CoilStatus.OPEN) {
-        throw new BadRequestException(
-          `${at}: ${coil.code} no está disponible (${coil.status}); solo se reserva material de una bobina abierta`,
-        );
-      }
-      // D-119: ya no se compara contra la línea del documento (no existe), pero la bobina
-      // sigue teniendo que ser de la **misma línea que el producto** — una cobertura no
-      // rola con fleje de drywall, sea cual sea la línea del resto del documento.
-      if (coil.businessLineId !== product.businessLineId) {
-        throw new BadRequestException(
-          `${at}: ${coil.code} es de otra línea de negocio que ${product.sku}`,
-        );
-      }
-      reserveItemType = InventoryItemType.COIL;
-      reserveItemId = coil.id;
-      reserveQty = item.reserveKg;
-      reserveUnit = Unit.KGM;
-      reserveItemLabel = coil.code;
-    } else if (madeToMeasure) {
-      // **La rama que faltaba (D-127).** Una cobertura a medida no se atiende con stock de
+    if (madeToMeasure) {
+      // **La reserva genérica (D-134).** Una cobertura a medida no se atiende con stock de
       // producto terminado: ese producto no existe hasta que planta lo rola. Lo que la línea
-      // promete son los **kilos de bobina** que esos metros van a consumir —
+      // promete son los **kilos de materia prima** que esos metros van a consumir —
       // `ml × espesor × ancho × densidad del acabado`, la misma aritmética que usa el
-      // reporte de piezas (D-047)—, y de ahí sale la orden de producción (D-084).
+      // reporte de piezas (D-047)— contra el **agregado** de bobinas compatibles, no contra
+      // una bobina concreta.
       //
-      // Sin esto, confirmar una cotización a medida pedía saldo de un SKU que siempre está
-      // en cero y fallaba con "0.000 MTR disponibles"; el pedido nunca llegaba a la cola.
-      const resolved = options.rawMaterialByLine?.get(lineNumber);
-      if (resolved) {
-        reserveItemType = InventoryItemType.COIL;
-        reserveItemId = resolved.coilId;
-        reserveQty = resolved.kg;
-        reserveUnit = Unit.KGM;
-        reserveItemLabel = resolved.coilCode;
-      } else {
-        // **Cotización**: todavía no hay materia prima asignada, y no debe haberla. Una
-        // cotización no reserva nada (D-054) y vive hasta 365 días (D-069); elegir acá la
-        // bobina impediría cotizar sin stock —el caso normal del rubro— y congelaría un rollo
-        // que a los pocos días puede estar cerrado o consumido. La línea guarda su intención
-        // (el producto y los metros) y la materia prima se resuelve al **confirmar**.
-        reserveItemType = InventoryItemType.PRODUCT;
-        reserveItemId = product.id;
-        reserveQty = toFixedString(toDecimal(item.qty), 'KG');
-        reserveUnit = product.unit;
-        reserveItemLabel = product.sku;
+      // Que sea el agregado y no un rollo es lo que permite cotizar meses antes de producir:
+      // el color y el espesor los sabe el vendedor, y son estables; qué rollo los va a dar lo
+      // decide planta al montar la OP (D-086), y entre una cosa y la otra pueden pasar
+      // semanas en las que ese rollo se cierra, se parte o se vende.
+      //
+      // La cotización guarda exactamente lo mismo que el pedido, y eso también es nuevo:
+      // antes guardaba "el producto y los metros" como intención y recién al confirmar
+      // aparecían los kilos. Ahora el vendedor ve desde la cotización los kilos que va a
+      // comprometer, que es el número contra el que se le va a decir que sí o que no.
+      const spec = specByProductId.get(product.id);
+      if (!spec) {
+        throw new BadRequestException(
+          `${at}: ${product.sku} se fabrica a medida pero le falta el espesor o el acabado en el catálogo: sin ellos no se sabe qué material necesita ni cuánto pesa`,
+        );
       }
+      reserveItemType = InventoryItemType.RAW_MATERIAL;
+      reserveItemId = spec.id;
+      reserveQty = toFixedString(theoreticalKgForMeters(product, item.qty, at), 'KG');
+      reserveUnit = Unit.KGM;
+      reserveItemLabel = rawMaterialLabel({
+        thicknessMm: spec.thicknessMm,
+        colorName: product.color?.name ?? null,
+      });
     } else {
       reserveItemType = InventoryItemType.PRODUCT;
       reserveItemId = product.id;
@@ -530,14 +541,8 @@ interface RoofingProductLike {
   thicknessMm: Prisma.Decimal | null;
   widthMm: Prisma.Decimal | null;
   roofingKind: RoofingProductKind | null;
-  bom: ActiveRoofingBom | null;
-}
-
-/** La receta de cobertura, con lo que hace falta para filtrar bobina y convertir metros. */
-interface ActiveRoofingBom {
-  isActive: boolean;
-  inputThicknessMm: Prisma.Decimal;
-  finish: { densityFactor: Prisma.Decimal };
+  color: { name: string } | null;
+  finish: { densityFactor: Prisma.Decimal } | null;
 }
 
 /** Lo que `PrismaService`/`tx` tiene que traer de un producto para poder resolverlo acá. */
@@ -549,9 +554,13 @@ export const ROOFING_PRODUCT_SELECT = {
   thicknessMm: true,
   widthMm: true,
   roofingKind: true,
-  bom: {
-    select: { isActive: true, inputThicknessMm: true, finish: { select: { densityFactor: true } } },
-  },
+  color: { select: { name: true } },
+  // D-122: el acabado —y con él la densidad— es del producto. Mientras salió de la receta
+  // hubo **dos** fuentes para el mismo espesor: la spec del agregado se construía con
+  // `bom.inputThicknessMm` y el filtro de la OP comparaba contra `product.thicknessMm`. En
+  // cuanto las dos columnas difirieran, el pedido prometía kilos de un agregado que planta
+  // no puede montar, y con eso caía la premisa entera de D-134.
+  finish: { select: { densityFactor: true } },
 } satisfies Prisma.ProductSelect;
 
 /**
@@ -565,153 +574,6 @@ export function isMadeToMeasure(product: { roofingKind: RoofingProductKind | nul
   return product.roofingKind === RoofingProductKind.A_MEDIDA;
 }
 
-/** Una línea que necesita materia prima: lo mínimo para pedirla. */
-export interface MadeToMeasureLine {
-  /** Con qué clave se devuelve el resultado: el índice en `resolveSalesLines`, el `lineNumber` al confirmar. */
-  key: number;
-  productId: string;
-  /** Metros lineales de la línea. */
-  qty: string;
-  /** Etiqueta para los mensajes de error (`Línea 3`). */
-  at: string;
-}
-
-/** La bobina elegida para una línea a medida y los kilos que se le prometen. */
-export interface MadeToMeasureReservation {
-  coilId: string;
-  coilCode: string;
-  /** Kilos teóricos: `ml × espesor × ancho × densityFactor`, con escala de kg. */
-  kg: string;
-}
-
-/**
- * Elige la materia prima de cada línea **a medida** y calcula los kilos que promete.
- *
- * **Cuándo se llama y cuándo no.** Solo al crear un **pedido** (confirmar una cotización, un
- * pedido directo o una venta de mostrador), nunca al cotizar. Una cotización no reserva nada
- * (D-054) y vive hasta 365 días (D-069): elegir ahí la bobina tenía dos costos, los dos
- * inaceptables — no se podría cotizar sin material en stock, que es el caso normal del rubro,
- * y la bobina elegida quedaría congelada en la línea, así que a los pocos días el pedido
- * nacería apuntando a un rollo ya cerrado o consumido, sin ninguna forma de re-elegir.
- *
- * Por qué elige el API y no el vendedor: quien cotiza sabe cuántos metros y de qué color;
- * **qué rollo concreto los va a dar es una decisión de planta**, y pedírsela al vendedor fue
- * lo que dejó cotizaciones sin materia prima asignada, que al confirmarse caían contra el
- * stock de un producto terminado inexistente.
- *
- * El candidato sale del **mismo filtro** que usa el selector de la OP (`roofingCoilWhere`,
- * D-086): misma línea, `OPEN`, color exacto y espesor de la receta dentro de tolerancia.
- * Entre los que alcanzan gana el de fecha de operación más antigua (D-124: el material más
- * viejo sale primero) y el código desempata. Lo que otras líneas **del mismo documento** ya
- * comprometieron se descuenta sobre la marcha: sin eso, dos líneas del mismo producto elegían
- * la misma bobina y la segunda se caía después contra `createReservations`.
- *
- * No se reparte una línea entre dos bobinas: una reserva apunta a un ítem, y partir la promesa
- * en dos exigiría partir la línea — que es lo que el mensaje pide.
- */
-export async function resolveMadeToMeasureCoils(
-  tx: Prisma.TransactionClient,
-  lines: MadeToMeasureLine[],
-  toleranceMm: string,
-): Promise<Map<number, MadeToMeasureReservation>> {
-  const out = new Map<number, MadeToMeasureReservation>();
-  if (lines.length === 0) return out;
-
-  const products = await tx.product.findMany({
-    where: { id: { in: [...new Set(lines.map((l) => l.productId))] } },
-    select: ROOFING_PRODUCT_SELECT,
-  });
-  const productById = new Map(products.map((p) => [p.id, p]));
-
-  // Kilos que las líneas ya resueltas de **este mismo documento** comprometieron sobre cada
-  // bobina. La base todavía no los ve —las reservas se crean después, en una sola
-  // transacción— así que sin este acumulador dos líneas se pisarían entre sí.
-  const committedByCoil = new Map<string, Decimal>();
-
-  for (const line of lines) {
-    const product = productById.get(line.productId);
-    if (!product) throw new NotFoundException(`${line.at}: producto no encontrado`);
-    const bom = product.bom;
-    if (!bom?.isActive) {
-      throw new BadRequestException(
-        `${line.at}: ${product.sku} se fabrica a medida pero no tiene receta activa: sin ella no se sabe con qué acabado ni con qué espesor de bobina rolarlo`,
-      );
-    }
-    const needed = theoreticalKgForMeters(product, line.qty, line.at, bom);
-
-    const candidates = await tx.coil.findMany({
-      where: roofingCoilWhere({
-        businessLineId: product.businessLineId,
-        colorId: product.colorId,
-        inputThicknessMm: bom.inputThicknessMm,
-        toleranceMm,
-      }),
-      select: { id: true, code: true },
-      orderBy: [{ operationDate: 'asc' }, { code: 'asc' }],
-      take: 200,
-    });
-    if (candidates.length === 0) {
-      throw new BadRequestException(
-        `${line.at}: no hay ninguna bobina abierta del color y el espesor que ${product.sku} necesita. Compra o abre una bobina antes de confirmar.`,
-      );
-    }
-
-    const ids = candidates.map((c) => c.id);
-    const [balances, reservations, assignments] = await Promise.all([
-      tx.inventoryBalance.findMany({
-        where: { itemType: InventoryItemType.COIL, itemId: { in: ids } },
-        select: { itemId: true, qty: true },
-      }),
-      tx.reservation.groupBy({
-        by: ['itemId'],
-        where: {
-          status: ReservationStatus.ACTIVE,
-          itemType: InventoryItemType.COIL,
-          itemId: { in: ids },
-        },
-        _sum: { qty: true },
-      }),
-      // D-060: una bobina montada en una OP viva no deja rastro de kardex, así que su saldo
-      // se ve intacto. Prometerla igual haría fallar el reporte de esa OP contra la
-      // invariante. Es la misma pregunta que se hace el partido y la merma, así que va por
-      // la misma función y no por una consulta propia.
-      findLiveStripAssignments(tx, ids),
-    ]);
-    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-    const reservedById = new Map(
-      reservations.map((r) => [r.itemId, toDecimal(r._sum.qty?.toString() ?? '0')]),
-    );
-    const mounted = new Set(assignments.map((a) => a.coilId));
-
-    let best: { id: string; code: string } | null = null;
-    let bestAvailable = new Decimal(0);
-    for (const c of candidates) {
-      if (mounted.has(c.id)) continue;
-      const available = (qtyById.get(c.id) ?? new Decimal(0))
-        .minus(reservedById.get(c.id) ?? new Decimal(0))
-        .minus(committedByCoil.get(c.id) ?? new Decimal(0));
-      if (available.gt(bestAvailable)) bestAvailable = available;
-      if (available.gte(needed)) {
-        best = { id: c.id, code: c.code };
-        break;
-      }
-    }
-    if (!best) {
-      throw new BadRequestException(
-        `${line.at}: ninguna bobina disponible alcanza para ${product.sku}: hacen falta ${needed.toFixed(3)} kg y la que más tiene libres tiene ${bestAvailable.toFixed(3)} kg. Parte la línea o abre otra bobina.`,
-      );
-    }
-    committedByCoil.set(best.id, (committedByCoil.get(best.id) ?? new Decimal(0)).plus(needed));
-    out.set(line.key, {
-      coilId: best.id,
-      coilCode: best.code,
-      kg: toFixedString(needed, 'KG'),
-    });
-  }
-
-  return out;
-}
-
 /**
  * Kilos de bobina que consumen `meters` metros lineales de una cobertura a medida:
  * `ml × espesor × ancho × densityFactor`. Misma aritmética que el reporte de piezas (D-047)
@@ -720,20 +582,41 @@ export async function resolveMadeToMeasureCoils(
  * La densidad sale del acabado de la receta activa: es la fuente que D-122 va a mover a
  * `products.finishId`.
  */
-function theoreticalKgForMeters(
+export function theoreticalKgForMeters(
   product: RoofingProductLike,
   meters: string,
   at: string,
-  bom: ActiveRoofingBom,
 ): Decimal {
   if (product.thicknessMm === null || product.widthMm === null) {
     throw new BadRequestException(
       `${at}: ${product.sku} no tiene espesor y ancho en el catálogo: complétalos antes de cotizarlo a medida`,
     );
   }
+  if (product.finish === null) {
+    throw new BadRequestException(
+      `${at}: ${product.sku} no tiene acabado en el catálogo: sin él no se sabe con qué densidad convertir metros en kilos`,
+    );
+  }
   return kgPerMeter({
     widthMm: product.widthMm.toFixed(2),
     thicknessMm: product.thicknessMm.toFixed(2),
-    densityFactor: bom.finish.densityFactor.toFixed(4),
+    densityFactor: product.finish.densityFactor.toFixed(4),
   }).times(toDecimal(meters));
+}
+
+/**
+ * D-122: el espesor con el que se arma el agregado de una cobertura.
+ *
+ * Es el del **SKU**, y tiene que ser exactamente el mismo que compara `roofingCoilWhere` al
+ * ofrecer y al montar la bobina. Mientras la spec salía de la receta y el filtro del
+ * producto, eran dos columnas editables por separado: bastaba con que una se corrigiera
+ * para que el pedido prometiera kilos de un agregado que planta no puede montar.
+ */
+export function roofingSpecThicknessMm(product: RoofingProductLike, at: string): string {
+  if (product.thicknessMm === null) {
+    throw new BadRequestException(
+      `${at}: ${product.sku} no tiene espesor en el catálogo: complétalo antes de cotizarlo a medida`,
+    );
+  }
+  return product.thicknessMm.toFixed(2);
 }

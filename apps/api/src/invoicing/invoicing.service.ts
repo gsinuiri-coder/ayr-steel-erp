@@ -55,6 +55,8 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { OperationDateService } from '../common/operation-date.service';
+import { rawMaterialSpecLabels } from '../sales/raw-material';
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { dueDateFor, isStalled, pendingQty } from './invoicing-math';
@@ -182,6 +184,7 @@ export class InvoicingService {
     private readonly storage: StorageService,
     @Inject(ELECTRONIC_INVOICING_PROVIDER)
     private readonly provider: ElectronicInvoicingProvider,
+    private readonly operationDate: OperationDateService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -387,6 +390,10 @@ export class InvoicingService {
     actor: RequestUser,
     input: CreateInvoiceInput,
   ): Promise<string> {
+    // D-133: la ventana de SUNAT la valida el schema (D-072); acá se decide **quién** la
+    // puede usar. Un VENDEDOR emite con fecha de hoy y nada más.
+    this.operationDate.assertIssueDate(actor, input.issueDate);
+
     const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
@@ -636,6 +643,8 @@ export class InvoicingService {
     affectedId: string,
     input: CreateCreditNoteInput,
   ): Promise<FiscalDocumentDto> {
+    // D-133: mismo control que al emitir. Una nota de crédito también es un hecho fechado.
+    this.operationDate.assertIssueDate(actor, input.issueDate);
     const id = await this.prisma.$transaction(async (tx) => {
       // **El afectado se bloquea antes de leer lo que le queda por acreditar.** Sin esto,
       // dos notas de crédito concurrentes sobre el mismo comprobante calculaban las dos el
@@ -2246,6 +2255,17 @@ export class InvoicingService {
     const out = new Map<string, string>();
     for (const p of products) out.set(`PRODUCT:${p.id}`, p.sku);
     for (const c of coils) out.set(`COIL:${c.id}`, c.code);
+    // D-134: una línea a medida está respaldada por un agregado hasta que la producción la
+    // convierte en producto terminado (D-088). Sin esta rama se mostraba como "—" en el
+    // progreso del pedido y en el armado del despacho.
+    const specIds = items
+      .filter((i) => i.reserveItemType === 'RAW_MATERIAL')
+      .map((i) => i.reserveItemId);
+    if (specIds.length > 0) {
+      for (const [id, label] of await rawMaterialSpecLabels(this.prisma, specIds)) {
+        out.set(`RAW_MATERIAL:${id}`, label);
+      }
+    }
     return out;
   }
 

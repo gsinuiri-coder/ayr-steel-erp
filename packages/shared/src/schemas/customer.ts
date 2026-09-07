@@ -19,6 +19,13 @@ export const customerSchema = z.object({
   phone: z.string().nullable(),
   creditDays: z.number().int(),
   /**
+   * D-137: lo creó una importación con el padrón de SUNAT caído, así que su nombre es el
+   * que traía el archivo y le falta todo lo demás. **Se expone** porque la carga de un mes
+   * crea decenas de estos, y "cuáles hay que completar" es una pregunta que alguien va a
+   * hacer semanas después, cuando ya nadie recuerde qué import los creó.
+   */
+  needsReview: z.boolean(),
+  /**
    * D-077: cliente sembrado por el sistema ("PÚBLICO EN GENERAL"). Viaja al web para que
    * la UI no ofrezca editarlo ni darlo de baja; el API lo rechaza igual, esto es la
    * cortesía de no mostrar un botón que va a fallar.

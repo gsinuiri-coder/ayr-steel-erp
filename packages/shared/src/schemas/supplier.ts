@@ -21,6 +21,13 @@ export const supplierSchema = z.object({
   phone: z.string().nullable(),
   creditDays: z.number().int(),
   providesCuttingService: z.boolean(),
+  /**
+   * D-137: lo creó una importación con el padrón de SUNAT caído, así que su nombre es el
+   * que traía el archivo y le falta todo lo demás. **Se expone** porque la carga de un mes
+   * crea decenas de estos, y "cuáles hay que completar" es una pregunta que alguien va a
+   * hacer semanas después, cuando ya nadie recuerde qué import los creó.
+   */
+  needsReview: z.boolean(),
   isActive: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),

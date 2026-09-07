@@ -124,6 +124,13 @@ export function PedidoDetalleView({ id }: { id: string }) {
             {o.queueStatus === 'EN_COLA' && <Badge variant="outline">En cola de producción</Badge>}
             {o.queueStatus === 'EN_PRODUCCION' && <Badge variant="secondary">En producción</Badge>}
             {o.priority && <Badge>Prioridad</Badge>}
+            {/*
+              D-141: un pedido importado se comporta como cualquier otro, pero no nació acá,
+              y eso cambia lo que se puede esperar de él — el que está atendido nunca tuvo
+              despacho ni movió kardex. Se marca por el mismo motivo por el que se marca un
+              comprobante importado (D-105).
+            */}
+            {o.origin === 'IMPORTED' && <Badge variant="outline">Importado</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">
             {o.customerName} · {o.customerDocNumber} ·{' '}
@@ -134,6 +141,15 @@ export function PedidoDetalleView({ id }: { id: string }) {
                 {' · '}
                 <Link href={`/cotizaciones/${o.quotationId}`} className={LINK_CLASSNAME}>
                   {o.quotationCode}
+                </Link>
+              </>
+            )}
+            {/* D-141: la otra punta del enlace bidireccional documento↔pedido. */}
+            {o.importedDocumentId && (
+              <>
+                {' · '}
+                <Link href={`/comprobantes/${o.importedDocumentId}`} className={LINK_CLASSNAME}>
+                  {o.importedDocumentNumber ?? 'comprobante importado'}
                 </Link>
               </>
             )}

@@ -221,6 +221,18 @@ export async function resolveDispatchTarget(
     }
   }
 
+  // D-134: un agregado de materia prima **no es un ítem de kardex** — no tiene saldo del que
+  // sacar. Caer acá con esas coordenadas significaría intentar despachar "0.45 mm rojo", que
+  // la base rechazaría con un error de bajo nivel en vez de decir qué falta. El caso normal
+  // ya lo cortó el bloque de arriba (una cobertura a medida siempre tiene receta activa);
+  // este es el cinturón por si alguna línea quedara con la receta desactivada después de
+  // haberse confirmado.
+  if (item.reserveItemType === InventoryItemType.RAW_MATERIAL) {
+    throw new BadRequestException(
+      `La línea ${item.lineNumber} está respaldada por materia prima y todavía no por producto terminado: produce lo que falta antes de despacharla`,
+    );
+  }
+
   const frozen = await findLineReservation(tx, item.id, item.reserveItemType, item.reserveItemId);
   return {
     itemType: item.reserveItemType,

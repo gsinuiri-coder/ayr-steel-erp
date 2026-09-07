@@ -164,16 +164,54 @@ export function thicknessWithinTolerance(
 // --------------------------------------------------------------------------
 
 /**
- * Crear la OP de coberturas. **`reservationId` es obligatorio**: no hay corrida sin pedido
- * detrás (RF-31, D-084), y ponerlo en el schema del endpoint es lo que hace que la regla no
- * dependa de que alguien la recuerde. El producto, la receta y el plan de corte salen de la
- * línea de pedido que esa reserva cubre; no se piden por separado, así no pueden discrepar.
+ * Crear la OP de coberturas. Dos caminos (D-140):
+ *
+ * - **Contra pedido** (RF-31, D-084): `reservationId` de la reserva de materia prima que la
+ *   cotización dejó activa. El producto, el acabado y el plan de corte salen de la línea de
+ *   pedido que esa reserva cubre; no se piden por separado, así no pueden discrepar.
+ * - **A stock** (D-140): sin pedido detrás. Solo existe para una **plancha de catálogo**
+ *   (largo fijo en el SKU, D-127; la cotización de esa línea reserva producto terminado, no
+ *   materia prima, así que nunca hay una reserva de la que nacer). `productId` +
+ *   `targetPieces` reemplazan lo que en el camino anterior salía de la reserva; una cobertura
+ *   a medida no tiene este camino porque sin pedido no hay largo que fabricar.
  */
-export const createRoofingOrderSchema = z.object({
-  ...backdatableFields,
-  reservationId: z.string({ required_error: 'La reserva del pedido es obligatoria' }).uuid(),
-  notes: z.string().trim().max(500).optional(),
-});
+export const createRoofingOrderSchema = z
+  .object({
+    ...backdatableFields,
+    reservationId: z.string().uuid().optional(),
+    productId: z.string().uuid().optional(),
+    targetPieces: z
+      .number()
+      .int('Las planchas se cuentan en enteras')
+      .min(1, 'Al menos una plancha')
+      .max(MAX_PIECE_QTY, `Máximo ${MAX_PIECE_QTY} planchas por corrida`)
+      .optional(),
+    notes: z.string().trim().max(500).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.reservationId === undefined && v.productId === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reservationId'],
+        message:
+          'Se necesita la reserva de un pedido, o un producto de catálogo para producir a stock',
+      });
+    }
+    if (v.reservationId !== undefined && v.productId !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['productId'],
+        message: 'Una orden nace de un pedido o se produce a stock: no de las dos formas a la vez',
+      });
+    }
+    if (v.productId !== undefined && v.targetPieces === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['targetPieces'],
+        message: 'La cantidad objetivo es obligatoria para producir a stock',
+      });
+    }
+  });
 export type CreateRoofingOrderInput = z.infer<typeof createRoofingOrderSchema>;
 
 /**
@@ -239,7 +277,7 @@ export type CloseRoofingOrderInput = z.infer<typeof closeRoofingOrderSchema>;
 
 /**
  * Una bobina que la OP puede montar: el filtro de D-086 ya aplicado. No lleva ni un campo
- * de costo, por el mismo motivo que `reservableCoilSchema`: `/planta` la consulta un
+ * de costo, por el mismo motivo que `rawMaterialStockSchema`: `/planta` la consulta un
  * SUPERVISOR_PLANTA y el costo del rollo no es asunto suyo.
  */
 export const roofingCoilOptionSchema = z.object({

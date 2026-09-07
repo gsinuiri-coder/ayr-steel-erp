@@ -165,6 +165,7 @@ function toDto(c: Customer): CustomerDto {
     email: c.email,
     phone: c.phone,
     creditDays: c.creditDays,
+    needsReview: c.needsReview,
     isSystem: c.isSystem,
     isActive: c.isActive,
     createdAt: c.createdAt.toISOString(),

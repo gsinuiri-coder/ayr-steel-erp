@@ -1,13 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, postJson } from '../helpers/api';
-import {
-  createCuttingSupplier,
-  errorFrom,
-  putJson,
-  today,
-  type ProductBomDto,
-  type ProductDto,
-} from '../helpers/production';
+import { createCuttingSupplier, errorFrom, today, type ProductDto } from '../helpers/production';
 import {
   buyRoofingCoil,
   createColor,
@@ -17,7 +10,6 @@ import {
   pieces,
   purgeRoofingTrail,
   reservationsOf,
-  NOMINAL_THICKNESS,
   ROOFING_LINE,
 } from '../helpers/roofing';
 import { createCustomer, queueOf, type QuotationDto, type SalesOrderDto } from '../helpers/sales';
@@ -118,30 +110,40 @@ test.describe('D-127 — subtipo de cobertura', () => {
       });
       trail.quotationIds.push(quotation.id);
 
-      // La **cotización** no congela materia prima: guarda su intención (producto y metros)
-      // y nada más. Elegir la bobina acá impediría cotizar sin stock y dejaría el rollo
-      // apuntado por hasta 365 días (D-069), cuando ya puede estar cerrado o consumido.
+      // D-134: la cotización ya nombra el **agregado** de materia prima y los kilos que va a
+      // comprometer — no el producto terminado (que no existe hasta que planta lo rola) ni un
+      // rollo concreto (que lo elige planta al montar, D-086). Antes de D-134 esto decía
+      // `PRODUCT`: la cotización guardaba solo la intención y los kilos aparecían recién al
+      // confirmar, así que el vendedor no veía el número contra el que se le iba a decir que
+      // sí o que no.
       expect(quotation.items[0]).toMatchObject({
-        reserveItemType: 'PRODUCT',
-        reserveItemId: product.id,
+        reserveItemType: 'RAW_MATERIAL',
+        reserveUnit: 'KGM',
+        reserveQty: (Number(meters) * KG_PER_METER).toFixed(3),
       });
+      expect(quotation.items[0]!.reserveItemId).not.toBe(product.id);
 
       const order = await emitAndConfirm(api, quotation.id);
       trail.orderIds.push(order.id);
       expect(order.status).toBe('CONFIRMED');
-      // Y el **pedido** sí: la línea nace apuntando a la bobina que el API acaba de elegir.
-      expect(order.items[0]).toMatchObject({ reserveItemType: 'COIL', reserveItemId: coil.id });
+      // Y el pedido copia exactamente lo mismo: el agregado que la cotización ya nombraba.
+      expect(order.items[0]).toMatchObject({
+        reserveItemType: 'RAW_MATERIAL',
+        reserveItemId: quotation.items[0]!.reserveItemId,
+      });
 
-      // Lo prometido son **kilos de esa bobina**, no unidades de un producto terminado.
+      // Lo prometido son **kilos del agregado compatible**, no unidades de un producto
+      // terminado ni el rollo que hoy los tiene.
       const reservations = await reservationsOf(api, order.id);
       expect(reservations).toHaveLength(1);
       const reservation = reservations[0]!;
       expect(reservation).toMatchObject({
-        itemType: 'COIL',
-        itemId: coil.id,
+        itemType: 'RAW_MATERIAL',
+        itemId: quotation.items[0]!.reserveItemId,
         unit: 'KGM',
         status: 'ACTIVE',
       });
+      expect(reservation.itemId, 'la promesa no nombra una bobina física').not.toBe(coil.id);
       expect(reservation.qty, '61 ml × 4 kg/ml').toBe((Number(meters) * KG_PER_METER).toFixed(3));
 
       // Y el pedido llega a la cola de producción, que es lo que el defecto impedía: sin
@@ -278,13 +280,10 @@ test.describe('D-127 — subtipo de cobertura', () => {
       const updated = (await patched.json()) as ProductDto & { roofingKind: string | null };
       expect(updated).toMatchObject({ roofingKind: 'A_MEDIDA', unit: 'MTR', lengthMm: null });
 
-      // La receta se reescribe sin `pieceLengthMm`: una cobertura a medida no tiene largo
-      // propio, lo traen los subítems de cada línea (D-083).
-      await putJson<ProductBomDto>(api, `/api/production/boms/${product.id}`, {
-        kind: 'ROOFING',
-        finishId: finish.id,
-        inputThicknessMm: NOMINAL_THICKNESS,
-      });
+      // D-122: acá iba una reescritura de la receta. Ya no hay ninguna que reescribir — una
+      // cobertura no lleva receta desde D-122, porque su acabado, su geometría y su color
+      // son del propio producto, que es justo lo que el PATCH de arriba acaba de dejar
+      // correcto. El API rechaza hoy un `PUT /production/boms/:id` con `kind: 'ROOFING'`.
 
       // (c) La misma venta, ahora por la otra rama: reserva materia prima y no exige stock.
       const meters = metersOf(REAL_CASE_ROWS);
@@ -300,13 +299,16 @@ test.describe('D-127 — subtipo de cobertura', () => {
 
       const reservations = await reservationsOf(api, order.id);
       expect(reservations).toHaveLength(1);
+      // D-134: el agregado compatible, no el rollo. Que la bobina exista sigue importando —
+      // sin ella el agregado tendría cero kilos y esto no se confirmaría—, pero no es lo que
+      // la promesa nombra.
       expect(reservations[0]).toMatchObject({
-        itemType: 'COIL',
-        itemId: coil.id,
+        itemType: 'RAW_MATERIAL',
         unit: 'KGM',
         qty: (Number(meters) * KG_PER_METER).toFixed(3),
         status: 'ACTIVE',
       });
+      expect(reservations[0]!.itemId).not.toBe(coil.id);
     } finally {
       await purgeRoofingTrail(api, {
         orderIds: trail.orderIds,
@@ -355,12 +357,16 @@ test.describe('D-127 — subtipo de cobertura', () => {
         items: [{ productId: product.id, qty: meters, unitPricePen: '30', pieces: REAL_CASE_ROWS }],
       });
       trail.quotationIds.push(quotation.id);
-      expect(quotation.items[0]!.reserveItemType).toBe('PRODUCT');
+      // D-134: la cotización nombra el agregado desde el primer momento, y el agregado
+      // existe aunque no tenga una sola bobina detrás — su disponible es cero, que es
+      // exactamente lo que hace falta decir.
+      expect(quotation.items[0]!.reserveItemType).toBe('RAW_MATERIAL');
 
       // (b) Confirmarla sin material sí se cae, y con el mensaje que dice qué hacer.
       const blocked = await emitAndConfirmExpectingError(api, quotation.id);
       expect(blocked.status).toBe(400);
-      expect(blocked.message).toContain('no hay ninguna bobina abierta');
+      expect(blocked.message).toContain('0.000 kg disponibles');
+      expect(blocked.message).toContain('Compra o abre una bobina de ese color y espesor');
 
       // (c) Se compra la bobina y la misma cotización, sin tocarla, ya se confirma.
       const bought = await buyRoofingCoil(api, {
@@ -381,8 +387,8 @@ test.describe('D-127 — subtipo de cobertura', () => {
       const reservations = await reservationsOf(api, order.id);
       expect(reservations).toHaveLength(1);
       expect(reservations[0]).toMatchObject({
-        itemType: 'COIL',
-        itemId: bought.coil.id,
+        itemType: 'RAW_MATERIAL',
+        itemId: quotation.items[0]!.reserveItemId,
         qty: (Number(meters) * KG_PER_METER).toFixed(3),
         status: 'ACTIVE',
       });
@@ -401,10 +407,17 @@ test.describe('D-127 — subtipo de cobertura', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 5 — La bobina se elige al confirmar, no al cotizar
+  // 5 — Lo que cuenta es el material vivo al confirmar, no el que había al cotizar
+  //
+  // D-134 retiró el mecanismo que este caso probaba: la reserva ya no elige un rollo, así
+  // que "el pedido reserva la otra bobina" dejó de tener sentido. La regla de fondo sigue
+  // viva y es la que importa —**lo que decide es el material disponible en el momento de
+  // confirmar**— y acá se prueba en los dos sentidos, que es más fuerte que el caso que
+  // reemplaza: cerrar la única bobina compatible deja el agregado en cero y la confirmación
+  // se cae; comprar otra lo repone y la misma cotización, sin tocarla, se confirma.
   // -------------------------------------------------------------------------
 
-  test('si la bobina que había al cotizar ya no sirve, el pedido reserva la que sí está disponible al confirmar', async () => {
+  test('cerrar la única bobina compatible deja al agregado sin material, y comprar otra lo repone', async () => {
     const supplier = await createCuttingSupplier(api);
     const finish = await createRoofingFinish(api);
     const color = await createColor(api);
@@ -436,13 +449,19 @@ test.describe('D-127 — subtipo de cobertura', () => {
       });
       trail.quotationIds.push(quotation.id);
 
-      // La primera bobina se cierra (RF-19): sale del filtro de la OP y de la elección de
-      // materia prima, igual que si se hubiera consumido entera. Es lo que pasa de verdad
-      // entre cotizar y confirmar cuando pasan días.
+      // La primera bobina se cierra (RF-19): deja de contar para el agregado, igual que si
+      // se hubiera consumido entera. Es lo que pasa de verdad entre cotizar y confirmar
+      // cuando pasan días.
       await postJson(api, `/api/coils/${first.coil.id}/status`, {
         status: 'CLOSED',
         reason: 'La bobina se agotó en otra corrida (prueba E2E)',
       });
+
+      // Sin material vivo, la misma cotización no se confirma: el agregado quedó en cero
+      // aunque la bobina cerrada siga existiendo con su saldo.
+      const blocked = await emitAndConfirmExpectingError(api, quotation.id);
+      expect(blocked.status).toBe(400);
+      expect(blocked.message).toContain('0.000 kg disponibles');
 
       const second = await buyRoofingCoil(api, {
         supplierId: supplier.id,
@@ -453,16 +472,26 @@ test.describe('D-127 — subtipo de cobertura', () => {
       secondPurchaseId = second.purchaseId;
       trail.coilIds.push(second.coil.id);
 
-      const order = await emitAndConfirm(api, quotation.id);
+      // Y con la bobina nueva, la misma cotización —sin tocarle una línea— se confirma. La
+      // promesa nombra el agregado, así que el rollo que la cumple puede cambiar entre un
+      // intento y el siguiente sin que la cotización se entere.
+      const order = await postJson<SalesOrderDto>(
+        api,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+        {},
+      );
       trail.orderIds.push(order.id);
 
       const reservations = await reservationsOf(api, order.id);
       expect(reservations).toHaveLength(1);
-      expect(
-        reservations[0]!.itemId,
-        'la reserva tiene que apuntar a la bobina viva de hoy, no a la que había al cotizar',
-      ).toBe(second.coil.id);
+      expect(reservations[0]).toMatchObject({
+        itemType: 'RAW_MATERIAL',
+        unit: 'KGM',
+        qty: (Number(meters) * KG_PER_METER).toFixed(3),
+        status: 'ACTIVE',
+      });
       expect(reservations[0]!.itemId).not.toBe(first.coil.id);
+      expect(reservations[0]!.itemId).not.toBe(second.coil.id);
     } finally {
       await purgeRoofingTrail(api, {
         orderIds: trail.orderIds,
@@ -478,10 +507,17 @@ test.describe('D-127 — subtipo de cobertura', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 6 — Dos líneas del mismo producto no se pisan la bobina
+  // 6 — Dos líneas del mismo producto **suman** contra el mismo agregado
+  //
+  // El caso viejo probaba que cada línea eligiera una bobina distinta; con D-134 no hay
+  // elección de bobina y las dos líneas prometen contra el **mismo** agregado. La regla que
+  // de verdad protegía —dos líneas que por separado entran y sumadas no, no pueden dejar un
+  // pedido prometiendo material que no existe— sigue viva y se prueba acá en los dos
+  // sentidos: con dos bobinas alcanza y el pedido nace con las dos reservas sobre la misma
+  // spec; con una sola, la confirmación se cae **entera** y no deja media promesa.
   // -------------------------------------------------------------------------
 
-  test('dos líneas a medida del mismo producto no eligen la misma bobina cuando una sola no alcanza para las dos', async () => {
+  test('dos líneas a medida del mismo producto suman contra el mismo agregado, y si no alcanza fallan las dos', async () => {
     const supplier = await createCuttingSupplier(api);
     const finish = await createRoofingFinish(api);
     const color = await createColor(api);
@@ -492,16 +528,9 @@ test.describe('D-127 — subtipo de cobertura', () => {
     });
     const meters = metersOf(REAL_CASE_ROWS);
     const neededKg = Number(meters) * KG_PER_METER; // 244 kg por línea.
-    // 300 kg cada una: alcanza para **una** línea y no para las dos. Si el API no
-    // descontara lo que la línea anterior ya comprometió, las dos elegirían la primera y el
-    // pedido se caería más abajo, contra la invariante de reservas.
+    // 300 kg: alcanza para **una** línea y no para las dos. Con la segunda bobina el
+    // agregado llega a 600 y las dos entran.
     const first = await buyRoofingCoil(api, {
-      supplierId: supplier.id,
-      finishId: finish.id,
-      colorId: color.id,
-      weightKg: '300',
-    });
-    const second = await buyRoofingCoil(api, {
       supplierId: supplier.id,
       finishId: finish.id,
       colorId: color.id,
@@ -509,14 +538,15 @@ test.describe('D-127 — subtipo de cobertura', () => {
     });
     const orderIds: string[] = [];
     const quotationIds: string[] = [];
+    let second: Awaited<ReturnType<typeof buyRoofingCoil>> | undefined;
 
     try {
       expect(neededKg).toBeLessThan(300);
       expect(neededKg * 2).toBeGreaterThan(300);
 
       // Vía cotización y no alta directa: una cobertura fabricada exige cotización
-      // confirmada (RF-31), que además es donde vive la elección de materia prima.
-      const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
+      // confirmada (RF-31).
+      const twoLines = {
         customerId: customer.id,
         businessLine: ROOFING_LINE,
         issueDate: today(),
@@ -524,19 +554,38 @@ test.describe('D-127 — subtipo de cobertura', () => {
           { productId: product.id, qty: meters, unitPricePen: '30', pieces: REAL_CASE_ROWS },
           { productId: product.id, qty: meters, unitPricePen: '30', pieces: REAL_CASE_ROWS },
         ],
+      };
+
+      // (a) Con una sola bobina de 300 kg, las dos líneas suman 488 y **el pedido entero se
+      // cae**. Es la mitad que más importa: cada línea por separado entra, y si el agregado
+      // no las sumara el pedido nacería prometiendo material que no existe.
+      const short = await postJson<QuotationDto>(api, '/api/sales/quotations', twoLines);
+      quotationIds.push(short.id);
+      const blocked = await emitAndConfirmExpectingError(api, short.id);
+      expect(blocked.status).toBe(400);
+      expect(blocked.message).toContain('300.000');
+      expect(blocked.message).toContain(neededKg.toFixed(3));
+
+      // (b) Con la segunda bobina del **mismo** agregado, las mismas dos líneas entran.
+      second = await buyRoofingCoil(api, {
+        supplierId: supplier.id,
+        finishId: finish.id,
+        colorId: color.id,
+        weightKg: '300',
       });
+      const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', twoLines);
       quotationIds.push(quotation.id);
       const order = await emitAndConfirm(api, quotation.id);
       orderIds.push(order.id);
 
       const reservations = await reservationsOf(api, order.id);
       expect(reservations).toHaveLength(2);
-      const usedCoils = reservations.map((r) => r.itemId);
-      expect(new Set(usedCoils).size, 'cada línea toma una bobina distinta').toBe(2);
-      expect(new Set(usedCoils)).toEqual(new Set([first.coil.id, second.coil.id]));
+      const specs = new Set(reservations.map((r) => r.itemId));
+      expect(specs.size, 'las dos líneas prometen contra el mismo agregado').toBe(1);
+      expect(specs.has(first.coil.id), 'y el agregado no es una bobina').toBe(false);
       for (const reservation of reservations) {
         expect(reservation).toMatchObject({
-          itemType: 'COIL',
+          itemType: 'RAW_MATERIAL',
           unit: 'KGM',
           qty: neededKg.toFixed(3),
           status: 'ACTIVE',
@@ -546,8 +595,8 @@ test.describe('D-127 — subtipo de cobertura', () => {
       await purgeRoofingTrail(api, {
         orderIds,
         quotationIds,
-        coilIds: [first.coil.id, second.coil.id],
-        purchaseIds: [first.purchaseId, second.purchaseId],
+        coilIds: [first.coil.id, ...(second ? [second.coil.id] : [])],
+        purchaseIds: [first.purchaseId, ...(second ? [second.purchaseId] : [])],
         productIds: [product.id],
         supplierId: supplier.id,
         finishId: finish.id,

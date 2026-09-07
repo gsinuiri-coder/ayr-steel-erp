@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import type { ImportEntity } from '@ayr/shared';
+import type { ImportEntity, ImportOptions } from '@ayr/shared';
 
 export interface ImportColumn {
   /** Clave interna, usada como campo de `ImportRow.data` (inglés, D-003 idioma de código). */
@@ -34,7 +34,13 @@ export interface RowIssues {
 interface BaseImportAdapter {
   entity: ImportEntity;
   columns: ImportColumn[];
-  validateRow(raw: Record<string, unknown>): Promise<RowValidation>;
+  /**
+   * D-137: `options` es lo que el usuario eligió para **todo** el archivo (la línea de
+   * negocio de las bobinas, el modo replay/ajuste). Llega hasta acá porque hay validaciones
+   * que dependen de ello —en modo ajuste, un stock actual mayor que el peso de compra no es
+   * un aviso sino un imposible— y un adaptador que no las conociera las dejaría pasar.
+   */
+  validateRow(raw: Record<string, unknown>, options?: ImportOptions): Promise<RowValidation>;
   /**
    * Clave de unicidad de una fila ya normalizada (p. ej. línea+SKU), para detectar
    * duplicados dentro del propio archivo (dos filas válidas contra la DB pero iguales
@@ -53,6 +59,7 @@ export interface RowImportAdapter extends BaseImportAdapter {
     tx: Prisma.TransactionClient,
     data: Record<string, unknown>,
     actorId: string,
+    options?: ImportOptions,
   ): Promise<string>;
 }
 
@@ -89,6 +96,7 @@ export interface GroupedImportAdapter extends BaseImportAdapter {
     tx: Prisma.TransactionClient,
     rows: Record<string, unknown>[],
     actorId: string,
+    options?: ImportOptions,
   ): Promise<string>;
 }
 
@@ -146,6 +154,21 @@ function toCalendarDate(value: Date): string {
  */
 export function getField(raw: Record<string, unknown>, column: ImportColumn): string {
   const byHeader = pickRawValue(raw, column.header);
-  if (byHeader !== undefined) return rawToString(byHeader);
-  return rawToString(raw[column.key]);
+  const value = byHeader !== undefined ? rawToString(byHeader) : rawToString(raw[column.key]);
+  return value.length > MAX_CELL_CHARS ? value.slice(0, MAX_CELL_CHARS) : value;
 }
+
+/**
+ * Tope de lo que se lee de una celda.
+ *
+ * Una celda de Excel admite 32 767 caracteres y ningún dato de estos archivos se acerca:
+ * el más largo es una descripción de 240. Sin tope pasaban dos cosas, las dos medidas:
+ * una expresión regular con cuantificadores de espacio solapados tardaba **segundos** por
+ * fila sobre una celda de relleno —y un regex no se interrumpe, así que el API entero se
+ * queda sin atender—, y el valor entero terminaba interpolado en el mensaje de error, que
+ * se guarda en `import_rows.errors` y vuelve completo en la respuesta.
+ *
+ * Recortar acá y no en cada adaptador es lo que hace que ninguno pueda olvidarse: el dato
+ * completo sigue estando en el archivo guardado en storage, que es donde corresponde.
+ */
+const MAX_CELL_CHARS = 512;

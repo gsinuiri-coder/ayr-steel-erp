@@ -34,6 +34,16 @@ export interface ImportedDocumentLine {
   qty: string;
   unit: string;
   unitPricePen: string;
+  /**
+   * D-141: la línea del pedido que esta línea factura. Null en toda importación que no cree
+   * pedido (RF-71 canónico) y en cualquier línea que no tenga contraparte.
+   *
+   * Vale la pena llenarla: `orderProgress` cuenta lo facturado **desde las filas**
+   * (`fiscal_document_items.sales_order_item_id`) y no desde un contador, así que sin este
+   * enlace un pedido importado —que está facturado al 100 % por definición— habría mostrado
+   * cero facturado y todo pendiente.
+   */
+  salesOrderItemId?: string | null;
 }
 
 /** Un comprobante ya emitido afuera, listo para entrar (RF-71). */
@@ -58,6 +68,13 @@ export interface ImportedDocumentInput {
    * rechazado por "excede el saldo pendiente".
    */
   totalPen: string;
+  /**
+   * D-141: el pedido que este comprobante documenta. Null en la importación canónica de
+   * RF-71, que no crea pedido; con valor en la de ventas (D-138), donde cada documento crea
+   * el suyo. Es la mitad "documento → pedido" del enlace bidireccional y **no es una columna
+   * nueva**: `fiscal_documents.sales_order_id` existe desde Fase 5b para exactamente esto.
+   */
+  salesOrderId?: string | null;
   lines: ImportedDocumentLine[];
 }
 
@@ -251,6 +268,8 @@ export class FiscalImportService {
         correlative: input.correlative,
         number,
         customerId: input.customerId,
+        // D-141: el pedido que este comprobante documenta (null en RF-71 canónico).
+        salesOrderId: input.salesOrderId ?? null,
         affectedDocumentId: input.affectedDocumentId,
         creditNoteReason: input.creditNoteReason,
         supersedesDocumentId: previousId,
@@ -270,6 +289,8 @@ export class FiscalImportService {
             return {
               lineNumber: i + 1,
               productId: line.productId,
+              // D-141: la línea del pedido que esta factura, cuando la hay.
+              salesOrderItemId: line.salesOrderItemId ?? null,
               description: line.description,
               qty: line.qty,
               unit: line.unit,

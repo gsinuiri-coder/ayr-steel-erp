@@ -6,6 +6,8 @@ import { DocumentLookupService } from './document-lookup.service';
 @Module({
   controllers: [CustomersController],
   providers: [CustomersService, DocumentLookupService],
-  exports: [CustomersService],
+  // D-137: los importadores históricos crean el proveedor o el cliente que falta
+  // consultando el mismo padrón que ya usa el alta manual.
+  exports: [CustomersService, DocumentLookupService],
 })
 export class CustomersModule {}

@@ -6,6 +6,7 @@ import {
   type Prisma,
 } from '@prisma/client';
 import { Decimal, salesOrderCode, toDecimal } from '@ayr/shared';
+import { assertRawMaterialInvariantFor, findRawMaterialSpecs } from './raw-material';
 
 /**
  * Guardrail transversal de Fase 5a (D-054, D-066): la invariante `disponible ≥ reservado`.
@@ -117,6 +118,15 @@ export async function assertReservationInvariant(
   if (reserved.isZero() || newQty.gte(reserved)) return;
 
   const holders = await findActiveReservations(tx, [item]);
+  // `holders` puede nombrar varios pedidos a la vez para un PRODUCT (varias órdenes de
+  // catálogo esperando el mismo SKU) o un RAW_MATERIAL (varias cotizaciones sobre el mismo
+  // agregado, D-134): ahí sigue siendo el caso normal. Para un **COIL** que sale por un
+  // despacho de venta de bobina entera (RF-73/D-116), hoy ninguna ruta llega acá con más de
+  // un holder: esa venta siempre toma el saldo vivo completo, así que dos pedidos no pueden
+  // sostener a la vez una reserva sobre la misma bobina (D-134 le sacó al vendedor la única
+  // vía que existía para reservar una fracción). Se deja el `join` genérico como guardrail
+  // defensivo — la lección repetida del proyecto es que un guardrail que "no puede pasar"
+  // se borra y es lo primero que vuelve a pasar cuando el modelo cambie otra vez.
   const detail = holders.map((h) => `${h.orderCode} (${h.qty.toFixed(3)} ${h.unit})`).join(', ');
   throw new BadRequestException(
     `La operación dejaría ${newQty.toFixed(3)} en stock y hay ${reserved.toFixed(3)} reservados para ${detail}. Anula el pedido o libera la reserva antes de continuar.`,
@@ -321,12 +331,22 @@ export async function restoreReservationQty(
 export async function restoreReservation(
   tx: Prisma.TransactionClient,
   reservationId: string,
+  /**
+   * D-134: la tolerancia de espesor, para revalidar el **agregado** al revivir una promesa
+   * genérica. El argumento anterior de "no hace falta revalidar" vale solo para una reserva
+   * por ítem: mientras la OP tuvo la bobina montada, el guardrail de D-060 protegía **esa
+   * bobina**, no el resto del agregado — que en el medio se pudo cerrar, vender o mandar a
+   * corte, porque la promesa estaba `CONSUMIDA` y no sumaba a lo reservado.
+   */
+  toleranceMm?: string,
 ): Promise<boolean> {
   const reservation = await tx.reservation.findUnique({
     where: { id: reservationId },
     select: {
       id: true,
       status: true,
+      itemType: true,
+      itemId: true,
       salesOrderId: true,
       salesOrder: { select: { status: true } },
     },
@@ -346,6 +366,26 @@ export async function restoreReservation(
     where: { id: reservation.salesOrderId, status: SalesOrderStatus.IN_PRODUCTION },
     data: { status: SalesOrderStatus.CONFIRMED },
   });
+
+  // D-134: una promesa genérica que vuelve a estar viva vuelve a pesar sobre el agregado, y
+  // el agregado pudo encogerse mientras ella no contaba. Se comprueba después de revivirla,
+  // que es cuando el estado ya es el definitivo.
+  if (reservation.itemType === InventoryItemType.RAW_MATERIAL && toleranceMm !== undefined) {
+    const spec = (await findRawMaterialSpecs(tx, [reservation.itemId])).get(reservation.itemId);
+    if (spec) {
+      await assertRawMaterialInvariantFor(
+        tx,
+        [
+          {
+            businessLineId: spec.businessLineId,
+            colorId: spec.colorId,
+            thicknessMm: spec.thicknessMm,
+          },
+        ],
+        toleranceMm,
+      );
+    }
+  }
   return true;
 }
 

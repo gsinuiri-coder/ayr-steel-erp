@@ -8,10 +8,17 @@ import {
 } from '@nestjs/common';
 import { Prisma, type ImportRow } from '@prisma/client';
 import {
+  CoilImportMode,
   ImportBatchStatus,
+  ImportEntity as ImportEntityEnum,
   ImportRowStatus,
+  importOptionsSchema,
   paginate,
+  toDecimal,
   toSkipTake,
+  type CoilImportCheckDto,
+  type CoilImportCheckRowDto,
+  type ImportOptions,
   type ImportBatchDto,
   type ImportBatchWithRowsDto,
   type ImportEntity,
@@ -24,6 +31,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoilsImportAdapter } from './adapters/coils.adapter';
+import { CoilsHistoryImportAdapter } from './adapters/coils-history.adapter';
 import { CustomersImportAdapter } from './adapters/customers.adapter';
 import { FiscalDocumentsImportAdapter } from './adapters/fiscal-documents.adapter';
 import {
@@ -34,6 +42,7 @@ import {
   type RowValidation,
 } from './adapters/import-adapter.interface';
 import { ProductsImportAdapter } from './adapters/products.adapter';
+import { SalesHistoryImportAdapter } from './adapters/sales-history.adapter';
 import { parseSpreadsheet } from './parse-spreadsheet';
 
 /**
@@ -150,13 +159,17 @@ export class ImportsService {
     productsAdapter: ProductsImportAdapter,
     customersAdapter: CustomersImportAdapter,
     coilsAdapter: CoilsImportAdapter,
+    coilsHistoryAdapter: CoilsHistoryImportAdapter,
     fiscalDocumentsAdapter: FiscalDocumentsImportAdapter,
+    salesHistoryAdapter: SalesHistoryImportAdapter,
   ) {
     const adapters: ImportAdapter[] = [
       productsAdapter,
       customersAdapter,
       coilsAdapter,
+      coilsHistoryAdapter,
       fiscalDocumentsAdapter,
+      salesHistoryAdapter,
     ];
     this.adapters = Object.fromEntries(adapters.map((a) => [a.entity, a])) as Record<
       ImportEntity,
@@ -174,6 +187,7 @@ export class ImportsService {
     actor: RequestUser,
     entity: ImportEntity,
     file: UploadedFile,
+    options?: ImportOptions,
   ): Promise<ImportBatchWithRowsDto> {
     const adapter = this.adapterFor(entity);
     const rawRows = parseSpreadsheet(file.buffer);
@@ -185,7 +199,7 @@ export class ImportsService {
     // de hasta 2000 filas no debe abrir 2000 conexiones a la vez.
     const validated: RowValidation[] = [];
     for (const raw of rawRows) {
-      validated.push(await adapter.validateRow(raw));
+      validated.push(await adapter.validateRow(raw, options));
     }
     markIntraBatchDuplicates(validated, adapter);
     if (isGroupedAdapter(adapter)) await applyGroupErrors(validated, adapter);
@@ -198,6 +212,7 @@ export class ImportsService {
             fileKey: key,
             fileName,
             status: ImportBatchStatus.PARSED,
+            options: options === undefined ? undefined : (options as Prisma.InputJsonObject),
             createdById: actor.id,
           },
         });
@@ -220,7 +235,7 @@ export class ImportsService {
           action: 'imports.upload',
           entity: 'import_batches',
           entityId: batch.id,
-          after: { entity, fileName, rows: rawRows.length },
+          after: { entity, fileName, rows: rawRows.length, options: options ?? null },
         });
         return batch.id;
       },
@@ -247,6 +262,73 @@ export class ImportsService {
     return paginate(batches.map(toBatchDto), total, query);
   }
 
+  /**
+   * Aplica una corrección a **todas las filas de un grupo** y revalida el grupo una sola vez
+   * (D-141).
+   *
+   * Es la puerta del toggle "entregado / pendiente", que es una decisión del comprobante y
+   * no de una de sus líneas. Hacerlo con N `PATCH` de fila —uno por línea— tenía dos
+   * problemas y ninguno es de rendimiento: entre la primera y la última petición el
+   * comprobante quedaba marcado a medias, y la validación de grupo, que corre en cada una,
+   * veía ese estado incoherente y marcaba con un error las filas que todavía faltaban
+   * tocar. Acá el documento cambia de una pieza.
+   *
+   * `data` se **mezcla** sobre lo que cada fila ya tiene: cambiar el toggle no borra el SKU
+   * que el usuario acababa de corregir en una línea.
+   */
+  async updateGroup(
+    batchId: string,
+    groupKey: string,
+    data: Record<string, unknown>,
+  ): Promise<ImportBatchWithRowsDto> {
+    const batch = await this.prisma.importBatch.findUnique({ where: { id: batchId } });
+    if (!batch) throw new NotFoundException('Lote de importación no encontrado');
+    if (batch.status === ImportBatchStatus.CONFIRMED) {
+      throw new BadRequestException('El lote ya fue confirmado, no se puede editar');
+    }
+    const adapter = this.adapterFor(batch.entity);
+    if (!isGroupedAdapter(adapter)) {
+      throw new BadRequestException(
+        'Esta importación no agrupa filas: corrige cada fila por separado',
+      );
+    }
+    const options = parseOptions(batch.options);
+    const rows = await this.prisma.importRow.findMany({
+      where: { batchId },
+      orderBy: { rowNumber: 'asc' },
+    });
+    const target = rows.filter(
+      (r) => adapter.groupKey(r.data as Record<string, unknown>) === groupKey,
+    );
+    if (target.length === 0) throw new NotFoundException('No hay filas con esa clave de grupo');
+
+    const validated = new Map<string, RowValidation>();
+    for (const row of target) {
+      validated.set(
+        row.id,
+        await adapter.validateRow({ ...(row.data as Record<string, unknown>), ...data }, options),
+      );
+    }
+    const bucket = target.flatMap((row) => {
+      const v = validated.get(row.id);
+      return v ? [v] : [];
+    });
+    const extra = await adapter.validateGroup(
+      bucket.map(({ data: rowData, errors }) => ({ data: rowData, errors: [...errors] })),
+    );
+    bucket.forEach((v, i) => {
+      v.errors.push(...(extra[i]?.errors ?? []));
+      v.warnings = [...(v.warnings ?? []), ...(extra[i]?.warnings ?? [])];
+    });
+
+    await this.prisma.$transaction(
+      [...validated.entries()].map(([id, validation]) =>
+        this.prisma.importRow.update({ where: { id }, data: rowWriteData(validation) }),
+      ),
+    );
+    return this.findOne(batchId);
+  }
+
   async updateRow(
     batchId: string,
     rowId: string,
@@ -261,9 +343,10 @@ export class ImportsService {
     if (!row) throw new NotFoundException('Fila no encontrada');
 
     const adapter = this.adapterFor(batch.entity);
-    const validated = await adapter.validateRow(edited);
+    const options = parseOptions(batch.options);
+    const validated = await adapter.validateRow(edited, options);
     if (isGroupedAdapter(adapter)) {
-      return this.updateGroupedRow(batchId, row, validated, adapter);
+      return this.updateGroupedRow(batchId, row, validated, adapter, options);
     }
     const updated = await this.prisma.importRow.update({
       where: { id: rowId },
@@ -285,6 +368,7 @@ export class ImportsService {
     row: ImportRow,
     validated: RowValidation,
     adapter: GroupedImportAdapter,
+    options: ImportOptions | undefined,
   ): Promise<ImportRowDto> {
     const previousKey = adapter.groupKey(row.data as Record<string, unknown>);
     const nextKey = adapter.groupKey(validated.data);
@@ -311,7 +395,7 @@ export class ImportsService {
     for (const { row: sibling, data } of inScope) {
       revalidated.set(
         sibling.id,
-        sibling.id === row.id ? validated : await adapter.validateRow(data),
+        sibling.id === row.id ? validated : await adapter.validateRow(data, options),
       );
     }
     if (!revalidated.has(row.id)) revalidated.set(row.id, validated);
@@ -369,9 +453,10 @@ export class ImportsService {
 
     let confirmedCount = 0;
     try {
+      const options = parseOptions(batch.options);
       confirmedCount = isGroupedAdapter(adapter)
-        ? await this.confirmGroups(batchId, batch.rows, adapter, actor.id)
-        : await this.confirmRows(batchId, validRows, adapter, actor.id);
+        ? await this.confirmGroups(batchId, batch.rows, adapter, actor.id, options)
+        : await this.confirmRows(batchId, validRows, adapter, actor.id, options);
     } finally {
       if (confirmedCount === 0) {
         // Nada entró: dejar el lote confirmado lo volvía irreparable —ni se puede editar una
@@ -404,6 +489,7 @@ export class ImportsService {
     rows: ImportRow[],
     adapter: GroupedImportAdapter,
     actorId: string,
+    options: ImportOptions | undefined,
   ): Promise<number> {
     let confirmedCount = 0;
     for (const bucket of groupRows(
@@ -418,6 +504,7 @@ export class ImportsService {
               tx,
               bucket.map(({ data }) => data),
               actorId,
+              options,
             );
             await tx.importRow.updateMany({
               where: { id: { in: bucket.map(({ row }) => row.id) } },
@@ -439,12 +526,76 @@ export class ImportsService {
     return confirmedCount;
   }
 
+  /**
+   * Reporte de saldo vs objetivo de una carga de bobinas (D-137).
+   *
+   * Es la contrapartida del modo `REPLAY`: la bobina entró con el peso de compra y el stock
+   * que el Excel decía tener quedó **anotado**, no aplicado. Esto compara ese objetivo con
+   * lo que el kardex dice hoy, después de que se hayan cargado (o no) los consumos.
+   *
+   * Sirve en los dos modos y por eso no se restringe a uno: en `ADJUST` tiene que dar cero
+   * diferencia el mismo día de la carga, y que no la dé es exactamente lo que hay que ver.
+   */
+  async coilStockCheck(batchId: string): Promise<CoilImportCheckDto> {
+    const batch = await this.prisma.importBatch.findUnique({
+      where: { id: batchId },
+      include: { rows: { orderBy: { rowNumber: 'asc' } } },
+    });
+    if (!batch) throw new NotFoundException('Lote de importación no encontrado');
+    if (batch.entity !== ImportEntityEnum.COILS_HISTORY) {
+      throw new BadRequestException('El reporte de saldo solo aplica a una carga de bobinas');
+    }
+    const options = parseOptions(batch.options);
+    // `flatMap` y no `filter`: además de descartar, estrecha el tipo de `createdEntityId`,
+    // así que de acá para abajo no hace falta ninguna aserción.
+    const confirmed = batch.rows.flatMap((r) =>
+      r.createdEntityId === null ? [] : [{ row: r, coilId: r.createdEntityId }],
+    );
+    const coilIds = confirmed.map((c) => c.coilId);
+    const [coils, balances] = await Promise.all([
+      this.prisma.coil.findMany({
+        where: { id: { in: coilIds } },
+        select: { id: true, code: true },
+      }),
+      this.prisma.inventoryBalance.findMany({
+        where: { itemType: 'COIL', itemId: { in: coilIds } },
+        select: { itemId: true, qty: true },
+      }),
+    ]);
+    const codeById = new Map(coils.map((c) => [c.id, c.code]));
+    const qtyById = new Map(balances.map((b) => [b.itemId, b.qty.toString()]));
+
+    const rows: CoilImportCheckRowDto[] = confirmed.map(({ row, coilId }) => {
+      const data = row.data as Record<string, unknown>;
+      const target = toDecimal((data.stockKg as string | undefined) ?? '0');
+      const current = toDecimal(qtyById.get(coilId) ?? '0');
+      const difference = current.minus(target);
+      return {
+        rowNumber: row.rowNumber,
+        coilId,
+        coilCode: codeById.get(coilId) ?? null,
+        targetKg: target.toFixed(3),
+        currentKg: current.toFixed(3),
+        differenceKg: difference.toFixed(3),
+        matches: difference.isZero(),
+      };
+    });
+    return {
+      batchId,
+      mode: options?.mode ?? CoilImportMode.REPLAY,
+      rows,
+      matching: rows.filter((r) => r.matches).length,
+      mismatching: rows.filter((r) => !r.matches).length,
+    };
+  }
+
   /** Confirmación fila a fila, el camino de siempre (RF-52). */
   private async confirmRows(
     batchId: string,
     validRows: ImportRow[],
     adapter: RowImportAdapter,
     actorId: string,
+    options: ImportOptions | undefined,
   ): Promise<number> {
     // Cada fila se confirma en su propia transacción: una fila que choca contra otra del
     // mismo lote (p. ej. dos filas con el mismo SKU, aún no detectable al validar contra la
@@ -457,6 +608,7 @@ export class ImportsService {
             tx,
             row.data as Record<string, unknown>,
             actorId,
+            options,
           );
           await tx.importRow.update({
             where: { id: row.id },
@@ -483,6 +635,7 @@ function toBatchDto(b: {
   entity: ImportEntity;
   fileName: string;
   status: ImportBatchStatus;
+  options: Prisma.JsonValue;
   createdById: string;
   createdAt: Date;
 }): ImportBatchDto {
@@ -491,9 +644,22 @@ function toBatchDto(b: {
     entity: b.entity,
     fileName: b.fileName,
     status: b.status,
+    options: parseOptions(b.options) ?? null,
     createdById: b.createdById,
     createdAt: b.createdAt.toISOString(),
   };
+}
+
+/**
+ * Las opciones guardadas del lote, o `undefined` si no tiene (todos los lotes anteriores a
+ * D-137). Se parsean con el mismo schema con el que entraron: una columna JSON acepta
+ * cualquier forma, y confirmar un lote viejo no puede depender de que alguien la haya
+ * escrito bien.
+ */
+function parseOptions(value: Prisma.JsonValue | null | undefined): ImportOptions | undefined {
+  if (value === null || value === undefined) return undefined;
+  const parsed = importOptionsSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function toRowDto(r: ImportRow): ImportRowDto {

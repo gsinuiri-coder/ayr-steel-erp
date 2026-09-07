@@ -317,9 +317,10 @@ test.describe('D-124 — fecha de operación', () => {
       }
 
       // (c) Una OP abierta el 10, con 100 piezas reportadas el 12 y cerrada el 14.
-      const product = await createCatalogProduct(api);
+      // D-139: los kilos por pieza se cargan en el propio SKU, no en la receta.
+      const product = await createCatalogProduct(api, { pieceWeightKg: KG_PER_PIECE });
       trail.productId = product.id;
-      await upsertBom(api, product.id, { finishId: finish.id, kgPerPiece: KG_PER_PIECE });
+      await upsertBom(api, product.id, { finishId: finish.id });
 
       const order = await postJson<ProductionOrderDto & { operationDate: string }>(
         api,
@@ -563,9 +564,17 @@ test.describe('D-124 — fecha de operación', () => {
     });
 
     try {
-      const future = new Date(`${today()}T00:00:00.000Z`);
+      // Mediodía UTC, no medianoche (D-112/D-131): a medianoche UTC son las 19:00 de ayer
+      // en Lima, así que sumar un día y volver a leer con `toISOString().slice(0, 10)`
+      // corría el resultado. A mediodía UTC son las 07:00 en Lima.
+      const future = new Date(`${today()}T12:00:00.000Z`);
       future.setUTCDate(future.getUTCDate() + 1);
-      const futureDate = future.toISOString().slice(0, 10);
+      const futureDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Lima',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(future);
 
       const futureError = await errorFrom(
         await api.post(`/api/purchases/${purchaseId}/receive`, {
@@ -815,8 +824,10 @@ test.describe('D-124 — fecha de operación', () => {
         {},
       );
       trail.orderIds.push(order.id);
+      // D-134: la reserva es del agregado de materia prima (RAW_MATERIAL), no de esta
+      // bobina puntual — la OP más abajo la monta igual, porque cumple color y espesor.
       const reservation = (await reservationsOf(api, order.id))[0]!;
-      expect(reservation.itemId).toBe(coil.id);
+      expect(reservation.itemType).toBe('RAW_MATERIAL');
 
       const op = await postJson<{ id: string; operationDate: string }>(
         api,

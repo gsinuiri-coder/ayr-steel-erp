@@ -43,7 +43,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { invalidateProduction } from '@/lib/production-queries';
-import { RoofingPickerCard, RoofingTerminal } from './roofing-terminal';
+import { RoofingPickerCard, RoofingStockOrderCard, RoofingTerminal } from './roofing-terminal';
 
 /**
  * Terminal de planta (RF-39, D-013: no hay app nativa, es una ruta web responsive).
@@ -188,6 +188,8 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
       </div>
 
       <RoofingPickerCard onSelect={onSelect} />
+
+      <RoofingStockOrderCard onSelect={onSelect} />
 
       <Card>
         <CardHeader>
@@ -443,7 +445,8 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
   );
   const needsReason =
     assignedKg.gt(0) && pendingKg.div(assignedKg).gt(MAX_SCRAP_RATIO_WITHOUT_REASON);
-  const kgPerPiece = new Decimal(o.bom.kgPerPiece ?? '0');
+  // D-122/D-139: los kilos que consume cada pieza son del SKU, no de la receta.
+  const kgPerPiece = new Decimal(o.productPieceWeightKg ?? '0');
   const maxPieces = kgPerPiece.lte(0) ? 0 : pendingKg.div(kgPerPiece).floor().toNumber();
   // D-121: piezas teóricas de TODO lo montado en la orden (no solo lo pendiente), para
   // comparar en vivo contra lo ya reportado — el mismo cálculo que hace el cierre para la
@@ -526,7 +529,7 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
               <OperationDateField value={operationDate} onChange={setOperationDate} />
             </div>
             <p className="text-sm text-muted-foreground sm:col-span-2">
-              Cada pieza consume {o.bom.kgPerPiece ?? '—'} kg de fleje según la receta.
+              Cada pieza consume {o.productPieceWeightKg ?? '—'} kg de fleje según el catálogo.
               {overCapacity && (
                 <span className="text-destructive">
                   {' '}
@@ -594,8 +597,15 @@ function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
             )}
             {strips.isSuccess && strips.data.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                No hay flejes libres que coincidan con la receta ({o.bom.finishCode},{' '}
-                {o.bom.inputThicknessMm} mm de espesor, {o.bom.inputWidthMm} mm de ancho).
+                No hay flejes libres que coincidan con la receta
+                {o.bom && (
+                  <>
+                    {' '}
+                    ({o.bom.finishCode}, {o.bom.inputThicknessMm} mm de espesor,{' '}
+                    {o.bom.inputWidthMm} mm de ancho)
+                  </>
+                )}
+                .
               </p>
             )}
             {liveStrips.length >= MAX_ORDER_STRIPS && (

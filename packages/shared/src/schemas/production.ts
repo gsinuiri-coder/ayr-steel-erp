@@ -141,59 +141,25 @@ export const upsertProductBomSchema = z
     }),
     /** Ancho exacto del fleje. **Solo DRYWALL**: ver el comentario del schema de Prisma. */
     inputWidthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }).optional(),
-    /**
-     * Largo de la pieza terminada. Obligatorio en DRYWALL. En ROOFING es lo que separa los
-     * dos productos de D-083: **con** largo es una plancha de catálogo (unidad `NIU`, stock
-     * general); **sin** largo es una cobertura a medida (unidad `MTR`, el largo lo trae el
-     * pedido).
-     */
-    pieceLengthMm: decimalStringSchema('MM', {
-      positive: true,
-      max: MAX_VALUE.WIDTH_MM,
-    }).optional(),
-    /**
-     * Kilo teórico por pieza. Si no viene, el API lo calcula con `theoreticalKgPerPiece`
-     * desde la geometría y el `densityFactor` del acabado (D-047); mandarlo es el override
-     * que el maestro usa cuando planta pesó el perfil real. **Solo DRYWALL**: el kilo de una
-     * cobertura sale del ancho y el espesor de la bobina que se monta, no del maestro.
-     */
-    kgPerPiece: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
     isActive: z.boolean().optional(),
   })
   .superRefine((bom, ctx) => {
-    if (bom.kind === ProductBomKind.DRYWALL) {
-      if (bom.inputWidthMm === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['inputWidthMm'],
-          message: 'El ancho del fleje es obligatorio en una receta de drywall',
-        });
-      }
-      if (bom.pieceLengthMm === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['pieceLengthMm'],
-          message: 'El largo de la pieza es obligatorio en una receta de drywall',
-        });
-      }
+    // D-122: la receta es **solo** de drywall. Una cobertura no lleva ninguna: su acabado,
+    // su geometría y su color viven en el SKU.
+    if (bom.kind !== ProductBomKind.DRYWALL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['kind'],
+        message:
+          'Una cobertura no lleva receta desde D-122: su acabado, su geometría y su color son del propio producto',
+      });
       return;
     }
-    // En coberturas, mandar estos campos no es un descuido inofensivo: significa que quien
-    // llama cree que la receta fija el material y el kilo, y esa creencia se convertiría en
-    // una merma mal calculada en el primer cierre.
-    if (bom.inputWidthMm !== undefined) {
+    if (bom.inputWidthMm === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['inputWidthMm'],
-        message: 'Una cobertura no fija el ancho de la bobina: lo pone el rollo que se monte',
-      });
-    }
-    if (bom.kgPerPiece !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['kgPerPiece'],
-        message:
-          'El kilo de una cobertura sale del ancho y el espesor de la bobina montada por el largo reportado (D-047)',
+        message: 'El ancho del fleje es obligatorio en una receta de drywall',
       });
     }
   });
@@ -213,17 +179,14 @@ export const productBomSchema = z.object({
   /** Factor de densidad del acabado (RF-25): lo que convierte geometría en kilos (D-047). */
   densityFactor: z.string(),
   inputThicknessMm: z.string(),
-  /** Null en una receta de cobertura: el ancho lo pone la bobina que se monta. */
   inputWidthMm: z.string().nullable(),
-  /** Null en una cobertura **a medida**: el largo lo trae el pedido (D-083). */
-  pieceLengthMm: z.string().nullable(),
-  /** Null en una receta de cobertura: el kilo sale de la bobina, no del maestro. */
-  kgPerPiece: z.string().nullable(),
   /**
-   * El kilo que sale de la geometría; difiere de `kgPerPiece` si el maestro lo
-   * sobreescribió. Null en coberturas, por el mismo motivo que `kgPerPiece`.
+   * D-122/D-139: los dos salen del **SKU**, no de la receta. Se siguen exponiendo acá
+   * porque la pantalla de la receta es donde se miran, pero se editan en el catálogo y
+   * tienen una sola fuente.
    */
-  suggestedKgPerPiece: z.string().nullable(),
+  pieceLengthMm: z.string().nullable(),
+  kgPerPiece: z.string().nullable(),
   isActive: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -347,6 +310,14 @@ export const productionOrderSchema = z.object({
   productName: z.string(),
   /** Unidad del producto terminado: `NIU` en perfiles y planchas de catálogo, `MTR` a medida. */
   productUnit: z.string(),
+  /**
+   * D-122: espesor y peso por pieza **del SKU**, que es donde viven desde que la receta
+   * dejó de ser la fuente. La terminal los lee para decir con qué bobina se rola y cuántos
+   * kilos consume cada pieza, sin depender de que la orden tenga receta (las de coberturas
+   * ya no la tienen).
+   */
+  productThicknessMm: z.string().nullable(),
+  productPieceWeightKg: z.string().nullable(),
   status: z.enum(PRODUCTION_ORDER_STATUSES),
   targetPieces: z.number().int().nullable(),
   /** D-054: reserva consumida por esta OP. Siempre null en Fase 4. */
@@ -367,7 +338,12 @@ export const productionOrderSchema = z.object({
   overheadCostPen: z.string().nullable(),
   totalCostPen: z.string().nullable(),
   unitCostPen: z.string().nullable(),
-  bom: productBomSchema,
+  /**
+   * D-122: `null` en una OP de **coberturas**, que desde entonces nace del pedido y del
+   * producto y no de una receta. Las de drywall siguen trayendo la suya, que es lo que dice
+   * qué fleje consumen.
+   */
+  bom: productBomSchema.nullable(),
   /** D-084: el plan de corte copiado del pedido, editable. Vacío en drywall. */
   items: z.array(roofingPieceSchema),
   /** Pedido del que nació la orden (D-084). Null en una corrida de stock de drywall. */

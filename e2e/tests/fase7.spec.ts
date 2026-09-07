@@ -1,11 +1,9 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, postJson } from '../helpers/api';
-import type { ProductionOrderDto } from '../helpers/production';
+import { today, type ProductionOrderDto } from '../helpers/production';
 import { dispatchOrder } from '../helpers/invoicing';
 import {
   createCustomer,
-  createQuotation,
-  createSellableProduct,
   isoDaysFromToday,
   purgeSalesTrail,
   queueOf,
@@ -74,8 +72,6 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       const { order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '50',
         rows,
       });
       trail.orderIds = [order.id];
@@ -156,28 +152,32 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
     };
 
     try {
-      // El vendedor reservó 50 kg "para no quedarse corto"; la corrida real solo gasta 8. Sin
-      // el arreglo de esta sesión (`releaseRemainingReservation`), esos 42 kg de sobra
-      // dejaban la reserva ACTIVA para siempre y el pedido no salía de la cola ni despachado.
-      const rows = pieces([2, 1]); // 2 m ⇒ 8 kg teóricos
+      // D-134: la reserva ya no la fija el vendedor a mano (antes podía pedir 50 kg "para no
+      // quedarse corto" aunque el plan pidiera menos); ahora es siempre el kilo teórico del
+      // plan. El sobrante que hay que liberar sale de la misma fuente real de siempre: planta
+      // reporta **menos** de lo que el plan de corte preveía. El pedido promete 8 m (32 kg) y
+      // la corrida real solo entrega 2 m (8 kg). Sin el arreglo de esta sesión
+      // (`releaseRemainingReservation`), los 24 kg de sobra dejaban la reserva ACTIVA para
+      // siempre y el pedido no salía de la cola ni despachado.
+      const plannedRows = pieces([4, 2]); // 8 m ⇒ 32 kg reservados
       const { order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '50',
-        rows,
+        rows: plannedRows,
       });
       trail.orderIds = [order.id];
 
       const reservation = (await reservationsOf(api, order.id))[0]!;
+      expect(reservation.qty).toBe('32.000');
       const op = await roofingOrder(api, reservation.id);
       trail.productionOrderIds = [op.id];
 
       await postJson<ProductionOrderDto>(api, `/api/production/roofing/${op.id}/coils`, {
         coilId: scenario.coil.id,
       });
+      const reportedRows = pieces([2, 1]); // 2 m ⇒ 8 kg: menos de lo que el plan preveía
       await postJson<ProductionOrderDto>(api, `/api/production/roofing/${op.id}/report`, {
-        pieces: rows,
+        pieces: reportedRows,
       });
       // Cierre por defecto: sin `consumedKg`, se declara exactamente lo reportado (merma cero).
       const closed = await postJson<ProductionOrderDto>(
@@ -188,16 +188,19 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       expect(closed.status).toBe('CLOSED');
       expect(closed.scrapKg).toBe('0.000');
 
-      // Los 42 kg que sobraron de la reserva quedan RELEASED, no ACTIVE para siempre.
+      // Los 24 kg que sobraron de la reserva quedan RELEASED, no ACTIVE para siempre.
       const reservationAfter = (await reservationsOf(api, order.id)).find(
         (r) => r.id === reservation.id,
       );
       expect(reservationAfter?.status).toBe('RELEASED');
 
-      // Y aunque el pedido termine despachado entero, ya no vuelve a aparecer en la cola.
+      // Y aunque el pedido quede con menos de lo prometido despachado, ya no vuelve a
+      // aparecer en la cola: no hay más material que rolar contra él.
       const dispatch = await dispatchOrder(api, {
         salesOrderId: order.id,
-        items: [{ salesOrderItemId: order.items[0]!.id, qty: metersOf(rows), weightKg: '8' }],
+        items: [
+          { salesOrderItemId: order.items[0]!.id, qty: metersOf(reportedRows), weightKg: '8' },
+        ],
       });
       expect(dispatch.items[0]).toMatchObject({ itemType: 'PRODUCT', itemId: scenario.product.id });
 
@@ -229,8 +232,6 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       const { order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '30',
         rows,
       });
       trail.orderIds = [order.id];
@@ -279,15 +280,11 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       const { order: orderA } = await quoteAndOrder(api, {
         customerId: customerA.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '20',
         rows: pieces([2, 1]),
       });
       const { order: orderB } = await quoteAndOrder(api, {
         customerId: customerB.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '20',
         rows: pieces([2, 1]),
       });
       trail.orderIds = [orderA.id, orderB.id];
@@ -352,8 +349,6 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       const { order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '20',
         rows,
         promisedDeliveryDate: overdue,
       });
@@ -367,29 +362,24 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
     }
   });
 
-  test('un pedido sin receta detrás nunca aparece en la cola, aunque reserve la bobina y esté confirmado (RF-73)', async () => {
-    // Producto vendible sin `ProductBom` (D-093 exige receta activa: RF-73, la bobina se
-    // vende tal cual, sin transformarla). La línea es la misma de coberturas para que la
-    // única diferencia con el resto de la fase sea, precisamente, la receta.
+  test('un pedido de venta de bobina entera nunca aparece en la cola, aunque reserve la bobina y esté confirmado (RF-73)', async () => {
+    // D-134 retiró `reserveFromCoilId`: ya no hay forma de que una línea con un producto de
+    // catálogo reserve una bobina concreta. El caso "hay reserva de bobina, pero no hay
+    // receta detrás" sigue existiendo, y ahora solo se alcanza por la venta de la bobina
+    // **entera** (RF-73, `saleCoilId`): esa reserva es de tipo `COIL`, tal cual antes, y por
+    // definición no tiene ninguna receta que la produzca — el rollo se vende tal cual.
     const stock = await setupCoilStock(api, { lineCode: ROOFING_LINE, weightKg: '500' });
     const customer = await createCustomer(api);
-    const product = await createSellableProduct(api, {
-      lineCode: ROOFING_LINE,
-      listPricePen: '40',
-    });
     const trail: { orderIds: string[]; quotationIds: string[] } = {
       orderIds: [],
       quotationIds: [],
     };
 
     try {
-      const quotation = await createQuotation(api, {
+      const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
         customerId: customer.id,
-        businessLine: ROOFING_LINE,
-        productId: product.id,
-        qty: '80',
-        reserveFromCoilId: stock.coil.id,
-        reserveKg: '80',
+        issueDate: today(),
+        items: [{ saleCoilId: stock.coil.id, qty: stock.coil.availableKg, unitPricePen: '9' }],
       });
       trail.quotationIds = [quotation.id];
       await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
@@ -405,9 +395,6 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       expect((await queueOf(api)).some((q) => q.salesOrderId === order.id)).toBe(false);
     } finally {
       await purgeSalesTrail(api, trail);
-      await api
-        .patch(`/api/catalog/${product.id}`, { data: { isActive: false } })
-        .catch(() => undefined);
       await api
         .post(`/api/coils/${stock.coil.id}/cancel`, { data: { reason: 'Limpieza de prueba E2E' } })
         .catch(() => undefined);
@@ -444,8 +431,6 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       const { order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        coilId: scenario.coil.id,
-        reserveKg: '20',
         rows,
       });
       // No se agrega a `trail.orderIds`: el pedido se anula dentro del propio test y no hace

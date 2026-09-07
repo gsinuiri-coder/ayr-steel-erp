@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactElement } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
@@ -14,6 +14,7 @@ import {
   MAX_SALES_ITEMS,
   piecesCount,
   piecesMeters,
+  RoofingProductKind,
   salesLineTotals,
   toFixedString,
   Unit,
@@ -22,11 +23,12 @@ import {
   type CustomerDto,
   type ProductDto,
   type QuotationDto,
-  type ReservableCoilDto,
   type RoofingPieceDto,
   type SalesItemInput,
   type SalesOrderDto,
+  type ProductStockDto,
   type SellableCoilDto,
+  type StockPanelDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
@@ -37,6 +39,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import {
   Select,
   SelectContent,
@@ -93,9 +103,6 @@ interface LineDraft {
   saleCoilId: string;
   qty: string;
   unitPricePen: string;
-  /** D-066: bobina de la que sale el material prometido. Vacío = se reserva el producto. */
-  reserveFromCoilId: string;
-  reserveKg: string;
   /**
    * D-083: los largos de una cobertura a medida. La cantidad de la línea deja de tipearse y
    * pasa a ser la suma `Σ cantidad × largo` en metros, que es lo que el API exige que
@@ -115,8 +122,6 @@ function emptyLine(key: number): LineDraft {
     saleCoilId: '',
     qty: '',
     unitPricePen: '',
-    reserveFromCoilId: '',
-    reserveKg: '',
     pieces: [EMPTY_PIECE],
   };
 }
@@ -138,10 +143,15 @@ function normalizeLine(l: { qty: string; unitPricePen: string }): {
   };
 }
 
-/** D-083: la línea es compuesta cuando el producto se vende por metro lineal. */
-function isMadeToMeasure(product: ProductDto | undefined): boolean {
-  // La unidad, no el subtipo: el editor de largos aparece para todo lo que se venda por
-  // metro lineal, que es exactamente lo que el API exige con subítems (D-083).
+/**
+ * D-083: la línea es compuesta cuando el producto se vende por metro lineal.
+ *
+ * El nombre es `sellsByLength` y no `isMadeToMeasure` a propósito (D-131): la unidad y el
+ * subtipo son **dos preguntas distintas**, y en el API `isMadeToMeasure` es la del subtipo.
+ * Compartir el nombre entre las dos es exactamente lo que dejó al mostrador vendiendo
+ * material a medida.
+ */
+function sellsByLength(product: ProductDto | undefined): boolean {
   return product?.unit === Unit.MTR;
 }
 
@@ -179,24 +189,28 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
     queryFn: () => api<SellableCoilDto[]>('/sales/sellable-coils'),
   });
 
-  // D-119: material reservable de cada línea de negocio que alguna fila esté usando —
-  // `useQueries` (no un `useQuery` por fila) porque el número de filas cambia en tiempo de
-  // ejecución y los hooks no se pueden condicionar a eso. Sin campo de costo: VENDEDOR no
-  // tiene acceso a `/coils` (§3.4).
-  const distinctLines = [
-    ...new Set(lines.flatMap((l) => (l.businessLine ? [l.businessLine] : []))),
-  ];
-  const coilQueries = useQueries({
-    queries: distinctLines.map((bl) => ({
-      queryKey: ['reservable-coils', bl],
-      queryFn: () => api<ReservableCoilDto[]>(`/sales/reservable-coils?businessLine=${bl}`),
-    })),
+  // D-136: el panel de stock en vivo. Reemplaza al selector "Reserva desde bobina" que
+  // D-134 eliminó, y responde otra pregunta: no *cuál rollo* —eso lo decide planta al montar
+  // la OP— sino *cuánto hay*, que es lo que el vendedor necesita para prometer.
+  //
+  // La clave de la consulta incluye la selección, así que cambiar de línea o de producto la
+  // reconsulta sola. Se pide la primera línea de negocio con valor porque el agregado de
+  // materia prima es por línea; los SKU van todos juntos.
+  const panelBusinessLine =
+    lines.find((l) => l.kind === 'PRODUCT' && l.businessLine !== '')?.businessLine ?? '';
+  const panelProductIds = [...new Set(lines.flatMap((l) => (l.productId ? [l.productId] : [])))];
+  const stockPanel = useQuery({
+    queryKey: ['stock-panel', panelBusinessLine, panelProductIds.join(',')],
+    queryFn: () =>
+      api<StockPanelDto>(
+        `/sales/stock-panel?${new URLSearchParams({
+          ...(panelBusinessLine === '' ? {} : { businessLine: panelBusinessLine }),
+          ...(panelProductIds.length === 0 ? {} : { productIds: panelProductIds.join(',') }),
+        }).toString()}`,
+      ),
   });
-  const coilsByLine = new Map<string, ReservableCoilDto[]>(
-    distinctLines.map((bl, i) => [bl, coilQueries[i]?.data ?? []]),
-  );
-  const coilsLoadedByLine = new Map<string, boolean>(
-    distinctLines.map((bl, i) => [bl, coilQueries[i]?.isSuccess ?? false]),
+  const stockByProductId = new Map(
+    (stockPanel.data?.products ?? []).map((row) => [row.productId, row]),
   );
 
   const productById = useMemo(
@@ -225,8 +239,6 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       // detalle anterior dejaría de significar nada, y la cantidad se recalcula sola.
       pieces: [EMPTY_PIECE],
       qty: '',
-      reserveFromCoilId: '',
-      reserveKg: '',
     });
   }
 
@@ -238,8 +250,6 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       productId: '',
       saleCoilId: '',
       qty: '',
-      reserveFromCoilId: '',
-      reserveKg: '',
       pieces: [EMPTY_PIECE],
     });
   }
@@ -311,7 +321,6 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
     }
 
     const items: SalesItemInput[] = [];
-    const reservedPerCoil = new Map<string, Decimal>();
     const soldCoilIds = new Set<string>();
     for (const [index, l] of lines.entries()) {
       const at = `Línea ${index + 1}`;
@@ -339,9 +348,9 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       }
 
       if (!l.productId) return { error: `${at}: elige un producto` };
-      const madeToMeasure = isMadeToMeasure(productById.get(l.productId));
-      const pieces = madeToMeasure ? toPieces(l.pieces) : null;
-      if (madeToMeasure) {
+      const sellsMeters = sellsByLength(productById.get(l.productId));
+      const pieces = sellsMeters ? toPieces(l.pieces) : null;
+      if (sellsMeters) {
         const parsed = parsePieceRows(l.pieces);
         if (!parsed.ok) return { error: `${at}: ${parsed.reason}` };
       }
@@ -351,47 +360,15 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
       if (!isPositiveDecimal(l.unitPricePen)) {
         return { error: `${at}: escribe un precio unitario mayor a cero` };
       }
-      // Los dos campos de la reserva de materia prima van juntos o no van (el API valida lo
-      // mismo); acá se dice antes de gastar el viaje.
-      const hasCoil = l.reserveFromCoilId !== '';
-      const hasKg = l.reserveKg !== '';
-      if (hasCoil !== hasKg) {
-        return { error: `${at}: para reservar materia prima hacen falta la bobina y los kilos` };
-      }
-      // Desde D-083 una línea de una línea con cotización obligatoria puede salir de stock
-      // (una plancha de catálogo, o el sobrante de una corrida): quien decide es el
-      // disponible real al confirmar, no un rechazo de forma acá.
-      if (hasKg && !isPositiveDecimal(l.reserveKg)) {
-        return { error: `${at}: los kilos a reservar deben ser mayores a cero` };
-      }
-      if (hasCoil) {
-        const coil = coilsByLine.get(l.businessLine)?.find((c) => c.coilId === l.reserveFromCoilId);
-        // Sin la lista cargada no se inventa una validación: el API tiene la última palabra
-        // y la comprueba bajo el lock del saldo, que es donde de verdad importa.
-        if (coil) {
-          const acc = (reservedPerCoil.get(coil.coilId) ?? new Decimal(0)).plus(
-            toFixedString(l.reserveKg, 'KG'),
-          );
-          reservedPerCoil.set(coil.coilId, acc);
-          if (acc.gt(new Decimal(coil.availableQty))) {
-            return {
-              error: `${at}: ${coil.code} tiene ${coil.availableQty} kg disponibles y las líneas de este documento ya piden ${acc.toFixed(3)}`,
-            };
-          }
-        }
-      }
+      // D-134: la línea ya no dice qué reservar. Una cobertura a medida promete kilos del
+      // agregado compatible y el API los calcula; el aviso de que no alcanzan sale del panel
+      // de stock, y la palabra final la tiene el API bajo el lock, que es donde importa.
       const normalized = normalizeLine(l);
       items.push({
         productId: l.productId,
         qty: normalized.qty,
         unitPricePen: normalized.unitPricePen,
         ...(pieces ? { pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })) } : {}),
-        ...(hasCoil
-          ? {
-              reserveFromCoilId: l.reserveFromCoilId,
-              reserveKg: toFixedString(l.reserveKg, 'KG'),
-            }
-          : {}),
       });
     }
     return { items };
@@ -504,18 +481,38 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         </div>
       </div>
 
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Líneas del documento. El material a medida se compromete por kilos; la bobina la elige
+          planta.
+        </p>
+        <StockPanelSheet
+          data={stockPanel.data}
+          loading={stockPanel.isPending}
+          businessLine={panelBusinessLine === '' ? null : panelBusinessLine}
+        />
+      </div>
+
       <div className="rounded-lg border">
-        <Table>
+        {/*
+          `min-w`: las celdas de esta tabla son `whitespace-nowrap` por defecto y llevan un
+          renglón de ayuda debajo de cada campo (la unidad, el kilo teórico, el precio de
+          lista). Sin un ancho mínimo, en una pantalla angosta las columnas se comprimen
+          hasta que esos renglones se desbordan y pintan **encima** de la columna vecina —
+          que es exactamente el solape que se veía. Con el mínimo, el contenedor
+          (`overflow-x-auto` del propio `Table`) desplaza en lugar de aplastar.
+        */}
+        <Table className="min-w-[68rem]">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[24%]">Línea de negocio</TableHead>
-              <TableHead className="w-[20%]">Producto</TableHead>
-              <TableHead className="w-[10%]">Cantidad</TableHead>
-              <TableHead className="w-[12%]">P. unitario (sin IGV)</TableHead>
-              <TableHead className="w-[16%]">Reserva desde bobina</TableHead>
-              <TableHead className="w-[10%]">Kg a reservar</TableHead>
-              <TableHead className="text-right">Importe</TableHead>
-              <TableHead />
+              <TableHead className="w-[18%]">Línea de negocio</TableHead>
+              <TableHead className="w-[22%]">Producto</TableHead>
+              {/* Los tres numéricos alineados a la derecha, como en el resto de la app. */}
+              <TableHead className="w-[12%] text-right">Cantidad</TableHead>
+              <TableHead className="w-[14%] text-right">P. unitario (sin IGV)</TableHead>
+              <TableHead className="w-[18%]">Materia prima</TableHead>
+              <TableHead className="w-[11%] text-right">Importe</TableHead>
+              <TableHead className="w-[5%]" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -530,8 +527,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
                 productById={productById}
                 sellableCoils={sellableCoils.data}
                 sellableCoilsLoaded={sellableCoils.isSuccess}
-                reservableCoils={coilsByLine.get(l.businessLine)}
-                reservableCoilsLoaded={coilsLoadedByLine.get(l.businessLine) ?? false}
+                stock={l.productId === '' ? undefined : stockByProductId.get(l.productId)}
                 canRemove={lines.length > 1}
                 onPatch={(patch) => {
                   patchLine(l.key, patch);
@@ -568,19 +564,20 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         >
           Agregar línea
         </Button>
-        <div className="min-w-56 space-y-1 text-sm">
-          <div className="flex justify-between gap-8">
-            <span className="text-muted-foreground">Subtotal</span>
-            <span>{formatMoney(subtotal.toFixed(4))}</span>
-          </div>
-          <div className="flex justify-between gap-8">
-            <span className="text-muted-foreground">IGV (18%)</span>
-            <span>{formatMoney(igv.toFixed(4))}</span>
-          </div>
-          <div className="flex justify-between gap-8 border-t pt-1 font-medium">
-            <span>Total</span>
-            <span>{formatMoney(subtotal.plus(igv).toFixed(4))}</span>
-          </div>
+        {/*
+          Los tres importes en una rejilla de dos columnas y no en tres `flex` sueltos: así
+          los números comparten una misma columna derecha y con `tabular-nums` los dígitos
+          quedan uno debajo del otro, que es lo que hace legible una columna de plata.
+        */}
+        <div className="grid min-w-64 grid-cols-[1fr_auto] gap-x-8 gap-y-1 text-sm">
+          <span className="text-muted-foreground">Subtotal</span>
+          <span className="text-right tabular-nums">{formatMoney(subtotal.toFixed(4))}</span>
+          <span className="text-muted-foreground">IGV (18%)</span>
+          <span className="text-right tabular-nums">{formatMoney(igv.toFixed(4))}</span>
+          <span className="border-t pt-1 font-medium">Total</span>
+          <span className="border-t pt-1 text-right text-base font-semibold tabular-nums">
+            {formatMoney(subtotal.plus(igv).toFixed(4))}
+          </span>
         </div>
       </div>
 
@@ -621,8 +618,7 @@ function LineRow({
   productById,
   sellableCoils,
   sellableCoilsLoaded,
-  reservableCoils,
-  reservableCoilsLoaded,
+  stock,
   canRemove,
   onPatch,
   onSetKind,
@@ -639,8 +635,8 @@ function LineRow({
   productById: Map<string, ProductDto>;
   sellableCoils: SellableCoilDto[] | undefined;
   sellableCoilsLoaded: boolean;
-  reservableCoils: ReservableCoilDto[] | undefined;
-  reservableCoilsLoaded: boolean;
+  /** D-136: disponible del SKU y, en una cobertura a medida, del agregado que va a prometer. */
+  stock: ProductStockDto | undefined;
   canRemove: boolean;
   onPatch: (patch: Partial<LineDraft>) => void;
   onSetKind: (kind: LineDraft['kind']) => void;
@@ -659,15 +655,27 @@ function LineRow({
   const lineTotal = valid
     ? salesLineTotals({ qty: l.qty, unitPricePen: l.unitPricePen }).subtotal
     : null;
-  const madeToMeasure = isMadeToMeasure(product);
-  const parsedLine = madeToMeasure ? parsePieceRows(l.pieces) : null;
+  const sellsMeters = sellsByLength(product);
+  const parsedLine = sellsMeters ? parsePieceRows(l.pieces) : null;
   const parsedPieces = parsedLine?.ok === true ? parsedLine.pieces : null;
   const pieceError = parsedLine?.ok === false ? parsedLine.reason : '';
 
   return (
     <>
-      <TableRow>
-        <TableCell>
+      {/*
+        `align-top` en toda la fila: cada celda tiene una altura distinta (unas llevan un
+        renglón de ayuda debajo del campo, otras no) y con el centrado por defecto los
+        campos de una misma fila quedaban a alturas distintas.
+      */}
+      <TableRow className="align-top">
+        {/*
+          `whitespace-normal`: la celda hereda `whitespace-nowrap` del componente `Table`,
+          pensado para listados de una línea. Acá abajo hay frases —el aviso de RF-31, el
+          precio de lista, los kilos a reservar— que en una sola línea se desbordan de su
+          columna y se pintan sobre la de al lado. Se repite en cada celda con texto de
+          ayuda y no se cambia en `TableCell`, que lo usa media aplicación.
+        */}
+        <TableCell className="whitespace-normal">
           {/* D-119: cada fila elige su propia línea; no gobierna el documento entero. */}
           <Select
             value={l.kind === 'BOBINA' ? '__BOBINA__' : l.businessLine}
@@ -682,8 +690,6 @@ function LineRow({
                 productId: '',
                 pieces: [EMPTY_PIECE],
                 qty: '',
-                reserveFromCoilId: '',
-                reserveKg: '',
               });
             }}
           >
@@ -711,10 +717,14 @@ function LineRow({
               <SelectItem value="__BOBINA__">Bobina completa (venta directa)</SelectItem>
             </SelectContent>
           </Select>
+          {/*
+            Una línea y no tres: la frase completa —«la bobina la elige planta; acá solo se
+            comprometen los kilos»— ya está arriba de la tabla, y repetirla por fila hacía
+            que cada línea de coberturas midiera cuatro renglones de alto.
+          */}
           {requiresQuotation && l.kind === 'PRODUCT' && (
             <p className="mt-1 text-xs text-muted-foreground">
-              Se fabrica contra el pedido (RF-31): reserva kilos de una bobina concreta, o deja la
-              bobina vacía si ya está en stock.
+              Se fabrica contra el pedido (RF-31)
             </p>
           )}
         </TableCell>
@@ -765,8 +775,9 @@ function LineRow({
             </Select>
           )}
         </TableCell>
-        <TableCell>
+        <TableCell className="whitespace-normal">
           <Input
+            className="text-right tabular-nums"
             inputMode="decimal"
             aria-label={`Cantidad de la línea ${index + 1}`}
             value={l.qty}
@@ -774,17 +785,24 @@ function LineRow({
             // D-116: en una venta de bobina la manda el saldo disponible. Editarla a mano
             // abriría la puerta a que diga otra cosa, que es exactamente lo que el API
             // rechaza (recalcula igual, siempre).
-            readOnly={madeToMeasure || l.kind === 'BOBINA'}
-            disabled={madeToMeasure || l.kind === 'BOBINA'}
+            readOnly={sellsMeters || l.kind === 'BOBINA'}
+            disabled={sellsMeters || l.kind === 'BOBINA'}
             onChange={(e) => {
               onPatch({ qty: e.target.value });
             }}
           />
+          {/*
+            `block`: el renglón de ayuda va **debajo** del campo, no al lado. Como `span`
+            en línea, seguía al `Input` en el mismo flujo y en una columna angosta se salía
+            por la derecha.
+          */}
           {l.kind === 'BOBINA' ? (
-            <span className="text-xs text-muted-foreground">kg (saldo completo)</span>
+            <span className="mt-1 block text-right text-xs text-muted-foreground">
+              kg (saldo completo)
+            </span>
           ) : (
             product && (
-              <span className="text-xs text-muted-foreground">
+              <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
                 {unitSymbol(product.unit)}
                 {/* D-118: kg teóricos de la línea (espesor × ancho × densidad), informativo
                     — el precio no cambia, es peso estimado para el cliente y la guía. */}
@@ -795,8 +813,9 @@ function LineRow({
             )
           )}
         </TableCell>
-        <TableCell>
+        <TableCell className="whitespace-normal">
           <Input
+            className="text-right tabular-nums"
             inputMode="decimal"
             aria-label={`Precio unitario de la línea ${index + 1}`}
             value={l.unitPricePen}
@@ -805,57 +824,15 @@ function LineRow({
             }}
           />
           {product?.listPricePen && (
-            <span className="text-xs text-muted-foreground">
+            <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
               Lista: {formatMoney(product.listPricePen, 'PEN', 4)}
             </span>
           )}
         </TableCell>
-        <TableCell>
-          {l.kind === 'BOBINA' ? (
-            <span className="text-sm text-muted-foreground">—</span>
-          ) : (
-            <Select
-              value={l.reserveFromCoilId}
-              onValueChange={(v) => {
-                onPatch({ reserveFromCoilId: v });
-              }}
-              disabled={l.businessLine === ''}
-            >
-              <SelectTrigger
-                className="w-full"
-                aria-label={`Bobina a reservar de la línea ${index + 1}`}
-              >
-                <SelectValue placeholder="Stock del producto" />
-              </SelectTrigger>
-              <SelectContent>
-                {reservableCoils?.map((c) => (
-                  <SelectItem key={c.coilId} value={c.coilId}>
-                    {c.code} — {formatQty(c.availableQty, 'kg')} disp.
-                  </SelectItem>
-                ))}
-                {reservableCoilsLoaded && reservableCoils?.length === 0 && (
-                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                    No hay bobinas con material disponible en esta línea.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
-          )}
+        <TableCell className="whitespace-normal">
+          <RawMaterialCell line={l} product={product} stock={stock} />
         </TableCell>
-        <TableCell>
-          {l.kind !== 'BOBINA' && (
-            <Input
-              inputMode="decimal"
-              aria-label={`Kilos a reservar de la línea ${index + 1}`}
-              value={l.reserveKg}
-              disabled={l.reserveFromCoilId === ''}
-              onChange={(e) => {
-                onPatch({ reserveKg: e.target.value });
-              }}
-            />
-          )}
-        </TableCell>
-        <TableCell className="text-right">
+        <TableCell className="text-right font-medium tabular-nums">
           {lineTotal ? formatMoney(lineTotal.toFixed(4)) : '—'}
         </TableCell>
         <TableCell className="text-right">
@@ -872,9 +849,9 @@ function LineRow({
       </TableRow>
       {/* D-083: el editor de largos va en su propia fila y no en una celda, porque en una
           obra real son varias medidas y no entran en el ancho de la columna. */}
-      {madeToMeasure && (
+      {sellsMeters && (
         <TableRow className="bg-muted/40">
-          <TableCell colSpan={8} className="py-3">
+          <TableCell colSpan={7} className="py-3">
             <PieceEditor rows={l.pieces} lineIndex={index} onChange={onPatchPieces} />
             <p className="mt-2 text-xs text-muted-foreground">
               {parsedPieces === null
@@ -957,5 +934,190 @@ function PieceEditor({
         Agregar largo
       </Button>
     </div>
+  );
+}
+
+/**
+ * La celda de materia prima de una línea (D-134/D-136).
+ *
+ * Es informativa y no editable, y esa es toda la diferencia con las dos columnas que
+ * reemplaza: antes el vendedor **elegía** un rollo y tipeaba kilos; ahora ve los kilos que su
+ * línea va a comprometer y contra cuánto se comparan. La elección del rollo se fue a planta,
+ * que es donde se toma (D-086).
+ */
+function RawMaterialCell({
+  line: l,
+  product,
+  stock,
+}: {
+  line: LineDraft;
+  product: ProductDto | undefined;
+  stock: ProductStockDto | undefined;
+}): ReactElement {
+  if (l.kind === 'BOBINA') {
+    return <span className="text-sm text-muted-foreground">La bobina entera</span>;
+  }
+  if (!product) return <span className="text-sm text-muted-foreground">—</span>;
+
+  // D-131: la rama la decide el **subtipo**, no la unidad. Un producto en `MTR` de otra
+  // línea (UPVC, trading) sale de stock y tiene su disponible; mandarlo a la rama de
+  // materia prima le mostraba "—" justo en el dato que sí existe.
+  if (product.roofingKind !== RoofingProductKind.A_MEDIDA) {
+    return (
+      <span className="text-xs text-muted-foreground">
+        Sale de stock
+        {stock && (
+          <>
+            {' · '}
+            {formatQty(stock.availableQty, unitSymbol(stock.unit))} disp.
+          </>
+        )}
+      </span>
+    );
+  }
+
+  // Kilos teóricos de ESTA línea: el mismo `ml × espesor × ancho × densidad` que el API
+  // calcula al confirmar, para que el número que se ve y el que se compromete sean uno.
+  const needed =
+    stock?.kgPerMeter && isPositiveDecimal(l.qty)
+      ? new Decimal(stock.kgPerMeter).times(l.qty)
+      : null;
+  const available =
+    stock?.rawMaterialAvailableKg === null || stock?.rawMaterialAvailableKg === undefined
+      ? null
+      : new Decimal(stock.rawMaterialAvailableKg);
+  const short = needed !== null && available !== null && needed.gt(available);
+
+  return (
+    <div className="grid gap-0.5 text-xs">
+      <span className="font-medium tabular-nums">
+        {needed === null ? 'Kg a reservar: —' : `${needed.toFixed(3)} kg a reservar`}
+      </span>
+      <span
+        className={short ? 'text-destructive tabular-nums' : 'text-muted-foreground tabular-nums'}
+      >
+        {available === null
+          ? 'No se pudo calcular la materia prima de este SKU'
+          : `${available.toFixed(3)} kg disponibles${short ? ' — no alcanza' : ''}`}
+      </span>
+      {stock?.rawMaterialLabel && (
+        <span className="text-muted-foreground">{stock.rawMaterialLabel}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Panel de stock en vivo (D-136): un panel lateral, solo lectura, que se abre desde el
+ * formulario y se actualiza con lo que el vendedor va eligiendo.
+ *
+ * Es lo que quedó en el lugar del selector de bobina, y a propósito no es un selector: la
+ * pregunta que el vendedor sí tiene que responder es "¿alcanza?", y esa se responde mirando
+ * el agregado —espesor + color— y el stock por SKU, no eligiendo un rollo.
+ */
+function StockPanelSheet({
+  data,
+  loading,
+  businessLine,
+}: {
+  data: StockPanelDto | undefined;
+  loading: boolean;
+  businessLine: BusinessLine | null;
+}): ReactElement {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button variant="outline" size="sm">
+          Stock disponible
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="overflow-y-auto p-4">
+        <SheetHeader className="p-0">
+          <SheetTitle>Stock disponible</SheetTitle>
+          <SheetDescription>
+            Se actualiza con lo que vas eligiendo. Solo lectura: la bobina concreta la decide planta
+            al montar la orden.
+          </SheetDescription>
+        </SheetHeader>
+
+        <section className="grid gap-2">
+          <h3 className="text-sm font-semibold">
+            Materia prima
+            {businessLine && (
+              <span className="ml-1 font-normal text-muted-foreground">
+                ({BUSINESS_LINE_LABELS[businessLine]})
+              </span>
+            )}
+          </h3>
+          {businessLine === null ? (
+            <p className="text-xs text-muted-foreground">
+              Elige una línea de negocio para ver las bobinas agrupadas por espesor y color.
+            </p>
+          ) : loading ? (
+            <p className="text-xs text-muted-foreground">Cargando…</p>
+          ) : (data?.rawMaterial ?? []).length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No hay bobinas abiertas en esta línea de negocio.
+            </p>
+          ) : (
+            <ul className="grid gap-2">
+              {data?.rawMaterial.map((row) => (
+                <li
+                  key={`${row.colorId ?? '-'}|${row.thicknessMm}`}
+                  className="rounded-md border p-2"
+                >
+                  <div className="flex items-center gap-2">
+                    {row.colorHex && (
+                      <span
+                        aria-hidden
+                        className="size-3 rounded-full border"
+                        style={{ backgroundColor: row.colorHex }}
+                      />
+                    )}
+                    <span className="text-sm font-medium">
+                      {row.thicknessMm} mm · {row.colorName ?? 'Sin color'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {formatQty(row.availableKg, 'kg')} disponibles de{' '}
+                    {formatQty(row.physicalKg, 'kg')} · ≈ {formatQty(row.theoreticalMeters, 'm')}{' '}
+                    lineales
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {row.coils} bobina{row.coils === 1 ? '' : 's'} ·{' '}
+                    {formatQty(row.reservedKg, 'kg')} comprometidos
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="grid gap-2">
+          <h3 className="text-sm font-semibold">Productos de las líneas</h3>
+          {(data?.products ?? []).length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Elige un producto en alguna línea para ver su disponible.
+            </p>
+          ) : (
+            <ul className="grid gap-2">
+              {data?.products.map((row) => (
+                <li key={row.productId} className="rounded-md border p-2">
+                  <p className="text-sm font-medium">{row.sku}</p>
+                  <p className="text-xs text-muted-foreground">{row.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {row.rawMaterialAvailableKg !== null
+                      ? `${formatQty(row.rawMaterialAvailableKg, 'kg')} de materia prima disponibles`
+                      : row.kgPerMeter !== null
+                        ? 'No se pudo calcular la materia prima de este SKU'
+                        : `${formatQty(row.availableQty, unitSymbol(row.unit))} disponibles`}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </SheetContent>
+    </Sheet>
   );
 }

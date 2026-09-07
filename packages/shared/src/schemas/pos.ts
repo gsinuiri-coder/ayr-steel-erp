@@ -170,10 +170,13 @@ export type CloseCashSessionInput = z.infer<typeof closeCashSessionSchema>;
 /**
  * Línea del carrito.
  *
- * **No tiene `reserveFromCoilId` ni `pieces`, y esa ausencia es la regla** (D-098): el
- * mostrador vende lo que está en stock contra el propio producto, nunca material a medida
- * contra una bobina. Al no existir el campo, no hay forma de que una venta de mostrador
- * arme una línea que la Fase 6 tendría que fabricar.
+ * **No tiene `pieces`, y esa ausencia es la regla** (D-098): el mostrador vende lo que está
+ * en stock contra el propio producto, nunca material a medida. Al no existir el campo, no hay
+ * forma de que una venta de mostrador arme una línea que la Fase 6 tendría que fabricar.
+ *
+ * D-134 le sacó a la línea de venta el campo con el que el vendedor elegía la bobina; desde
+ * entonces la diferencia con el mostrador la sostiene `pieces` y el subtipo del producto,
+ * que es donde D-131 dejó dicho que tiene que estar.
  */
 export const posSaleItemInputSchema = z.object({
   productId: z.string({ required_error: 'El producto es obligatorio' }).uuid(),

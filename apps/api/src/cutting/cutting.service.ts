@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   BusinessLineCode,
   CoilKind,
@@ -33,8 +33,11 @@ import { planCoilSplit } from '../coils/coil-split-math';
 import { CoilsService } from '../coils/coils.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
+import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
+import { roofingToleranceMm } from '../production/roofing-coil-match';
+import { assertRawMaterialInvariant } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
 import { deriveCuttingOrderStatus, expandWidthCounts, validateWidthBudget } from './cutting-math';
 
@@ -58,6 +61,7 @@ export class CuttingService {
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
     private readonly operationDate: OperationDateService,
+    @Inject(ENV) private readonly env: Env,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -80,105 +84,121 @@ export class CuttingService {
       throw new BadRequestException('No se puede enviar la misma bobina dos veces en una orden');
     }
 
-    const orderId = await this.prisma.$transaction(async (tx) => {
-      // Lock en orden determinístico: evita interbloqueos si dos envíos comparten bobinas
-      // (lo cual además fallará más abajo porque una ya no estará OPEN).
-      const sortedIds = [...coilIds].sort();
-      await tx.$queryRaw`
+    // D-134: presupuesto explícito. La comprobación del agregado recorre las bobinas
+    // compatibles, y con los 5 s por defecto de Prisma esta transacción se pasaba del
+    // límite contra Neon de forma intermitente — un 500 en una operación normal.
+    const orderId = await this.prisma.$transaction(
+      async (tx) => {
+        // Lock en orden determinístico: evita interbloqueos si dos envíos comparten bobinas
+        // (lo cual además fallará más abajo porque una ya no estará OPEN).
+        const sortedIds = [...coilIds].sort();
+        await tx.$queryRaw`
         SELECT "id" FROM "coils" WHERE "id" = ANY(${sortedIds}::uuid[]) ORDER BY "id" FOR UPDATE
       `;
-      const coils = await tx.coil.findMany({ where: { id: { in: coilIds } } });
-      const byId = new Map(coils.map((c) => [c.id, c]));
+        const coils = await tx.coil.findMany({ where: { id: { in: coilIds } } });
+        const byId = new Map(coils.map((c) => [c.id, c]));
 
-      // E (Fase 7e): el corte tercerizado es solo para Drywall — Metallic Roofing no
-      // corta bobina en flejes (se roladora entera, D-086) y trading/UPVC no fabrican.
-      const drywallLine = await tx.businessLine.findUniqueOrThrow({
-        where: { code: BusinessLineCode.DRYWALL },
-        select: { id: true },
-      });
+        // E (Fase 7e): el corte tercerizado es solo para Drywall — Metallic Roofing no
+        // corta bobina en flejes (se roladora entera, D-086) y trading/UPVC no fabrican.
+        const drywallLine = await tx.businessLine.findUniqueOrThrow({
+          where: { code: BusinessLineCode.DRYWALL },
+          select: { id: true },
+        });
 
-      let businessLineId: string | null = null;
-      for (const item of input.coils) {
-        const coil = byId.get(item.coilId);
-        if (!coil) throw new NotFoundException(`Bobina ${item.coilId} no encontrada`);
-        if (coil.kind !== CoilKind.COIL) {
-          throw new BadRequestException(`${coil.code}: solo se envían bobinas a corte, no flejes`);
-        }
-        if (coil.status !== CoilStatus.OPEN) {
-          throw new BadRequestException(
-            `${coil.code} no está disponible (${coil.status}): solo bobinas abiertas se envían a corte`,
+        let businessLineId: string | null = null;
+        for (const item of input.coils) {
+          const coil = byId.get(item.coilId);
+          if (!coil) throw new NotFoundException(`Bobina ${item.coilId} no encontrada`);
+          if (coil.kind !== CoilKind.COIL) {
+            throw new BadRequestException(
+              `${coil.code}: solo se envían bobinas a corte, no flejes`,
+            );
+          }
+          if (coil.status !== CoilStatus.OPEN) {
+            throw new BadRequestException(
+              `${coil.code} no está disponible (${coil.status}): solo bobinas abiertas se envían a corte`,
+            );
+          }
+          if (coil.businessLineId !== drywallLine.id) {
+            throw new BadRequestException(
+              `${coil.code}: el corte tercerizado es solo para Drywall`,
+            );
+          }
+          validateWidthBudget(
+            coil.widthMm.toString(),
+            item.widthPlanMm,
+            item.expectedKerfLossMm,
+            coil.code,
           );
+          if (businessLineId === null) businessLineId = coil.businessLineId;
+          else if (businessLineId !== coil.businessLineId) {
+            throw new BadRequestException(
+              'Todas las bobinas de una orden de corte deben ser de la misma línea de negocio',
+            );
+          }
         }
-        if (coil.businessLineId !== drywallLine.id) {
-          throw new BadRequestException(`${coil.code}: el corte tercerizado es solo para Drywall`);
-        }
-        validateWidthBudget(
-          coil.widthMm.toString(),
-          item.widthPlanMm,
-          item.expectedKerfLossMm,
-          coil.code,
+        if (!businessLineId) throw new BadRequestException('La orden necesita al menos una bobina');
+
+        // D-066: enviar a un tercero no mueve kardex (D-050), así que la invariante de
+        // cantidad de `InventoryService` no ve nada — y sin embargo el material prometido a
+        // un pedido deja de estar disponible. Es el mismo hueco que D-060 tapó para las
+        // asignaciones de producción, aplicado ahora al ledger de reservas. Las filas ya
+        // están bloqueadas unas líneas más arriba, en el mismo orden.
+        await assertNotReserved(
+          tx,
+          coilIds.map((id) => ({ itemType: InventoryItemType.COIL, itemId: id })),
+          'enviarla a corte',
         );
-        if (businessLineId === null) businessLineId = coil.businessLineId;
-        else if (businessLineId !== coil.businessLineId) {
-          throw new BadRequestException(
-            'Todas las bobinas de una orden de corte deben ser de la misma línea de negocio',
-          );
-        }
-      }
-      if (!businessLineId) throw new BadRequestException('La orden necesita al menos una bobina');
 
-      // D-066: enviar a un tercero no mueve kardex (D-050), así que la invariante de
-      // cantidad de `InventoryService` no ve nada — y sin embargo el material prometido a
-      // un pedido deja de estar disponible. Es el mismo hueco que D-060 tapó para las
-      // asignaciones de producción, aplicado ahora al ledger de reservas. Las filas ya
-      // están bloqueadas unas líneas más arriba, en el mismo orden.
-      await assertNotReserved(
-        tx,
-        coilIds.map((id) => ({ itemType: InventoryItemType.COIL, itemId: id })),
-        'enviarla a corte',
-      );
-
-      const order = await tx.cuttingOrder.create({
-        data: {
-          supplierId: input.supplierId,
-          businessLineId,
-          status: CuttingOrderStatus.SENT,
-          notes: input.notes ?? null,
-          createdById: actor.id,
-          operationDate: toDateOnly(operationDate),
-        },
-      });
-
-      for (const item of input.coils) {
-        await tx.cuttingOrderCoil.create({
+        const order = await tx.cuttingOrder.create({
           data: {
-            cuttingOrderId: order.id,
-            coilId: item.coilId,
-            widthPlanMm: item.widthPlanMm,
-            expectedKerfLossMm: toFixedString(item.expectedKerfLossMm, 'MM'),
-            status: CuttingOrderCoilStatus.SENT,
+            supplierId: input.supplierId,
+            businessLineId,
+            status: CuttingOrderStatus.SENT,
+            notes: input.notes ?? null,
             createdById: actor.id,
+            operationDate: toDateOnly(operationDate),
           },
         });
-        await tx.coil.update({
-          where: { id: item.coilId },
-          data: { status: CoilStatus.IN_THIRD_PARTY },
+
+        for (const item of input.coils) {
+          await tx.cuttingOrderCoil.create({
+            data: {
+              cuttingOrderId: order.id,
+              coilId: item.coilId,
+              widthPlanMm: item.widthPlanMm,
+              expectedKerfLossMm: toFixedString(item.expectedKerfLossMm, 'MM'),
+              status: CuttingOrderCoilStatus.SENT,
+              createdById: actor.id,
+            },
+          });
+          await tx.coil.update({
+            where: { id: item.coilId },
+            data: { status: CoilStatus.IN_THIRD_PARTY },
+          });
+        }
+
+        // D-134: enviar a corte saca las bobinas del agregado, y una cobertura a medida
+        // prometió el agregado y no una bobina, así que `assertNotReserved` de arriba —que
+        // solo ve promesas apuntadas a estas bobinas— no lo detecta. Se comprueba después de
+        // cambiarles el estado, para leer el disponible que de verdad queda.
+        await assertRawMaterialInvariant(tx, coilIds, roofingToleranceMm(this.env));
+
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'cutting.send',
+          entity: 'cutting_orders',
+          entityId: order.id,
+          after: {
+            supplierId: input.supplierId,
+            coils: input.coils.map((c) => c.coilId),
+          },
         });
-      }
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'cutting.send',
-        entity: 'cutting_orders',
-        entityId: order.id,
-        after: {
-          supplierId: input.supplierId,
-          coils: input.coils.map((c) => c.coilId),
-        },
-      });
-
-      return order.id;
-    });
+        return order.id;
+      },
+      { timeout: 30_000 },
+    );
 
     return this.findOne(orderId);
   }
@@ -492,6 +512,12 @@ export class CuttingService {
           where: { id: coilId },
           data: { status: CoilStatus.IN_THIRD_PARTY },
         });
+
+        // D-134: sacarla del agregado otra vez es el mismo hecho que el envío original, y
+        // entre medio pudo entrar una promesa sobre el remanente que la recepción le
+        // devolvió. Sin esto, revertir una recepción dejaba a ese pedido sin material y
+        // nadie se enteraba hasta que planta fuera a montar.
+        await assertRawMaterialInvariant(tx, [coilId], roofingToleranceMm(this.env));
 
         await this.recomputeOrderStatus(tx, cuttingOrderId);
 

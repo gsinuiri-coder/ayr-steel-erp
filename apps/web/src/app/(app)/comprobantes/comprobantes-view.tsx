@@ -105,6 +105,19 @@ export function ComprobantesView() {
             <ImportDialog
               entity={ImportEntity.FISCAL_DOCUMENTS}
               invalidateQueryKey={['fiscal-documents']}
+              label="Importar planilla"
+            />
+          )}
+          {/*
+            D-138: el mismo hecho leído del export real del sistema de facturación del dueño.
+            Convive con el de arriba en vez de reemplazarlo: son dos formatos de archivo, no
+            dos features.
+          */}
+          {isAdmin && (
+            <ImportDialog
+              entity={ImportEntity.SALES_HISTORY}
+              invalidateQueryKey={['fiscal-documents']}
+              label="Importar ventas (Excel)"
             />
           )}
           <Button asChild>

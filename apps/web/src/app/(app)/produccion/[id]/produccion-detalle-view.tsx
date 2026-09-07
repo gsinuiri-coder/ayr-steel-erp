@@ -161,8 +161,12 @@ export function ProduccionDetalleView({ id }: { id: string }) {
     new Decimal(0),
   );
   // D-121: comparación reportado vs. teórico del fleje montado, solo drywall (coberturas
-  // no tiene `kgPerPiece`: su propio card de "Despunte" ya compara declarado vs. teórico).
-  const kgPerPiece = o.bom.kgPerPiece !== null ? new Decimal(o.bom.kgPerPiece) : null;
+  // no tiene un kilo por pieza fijo: su propio card de "Despunte" ya compara declarado vs.
+  // teórico). D-122/D-139: el dato es del SKU, no de la receta.
+  const kgPerPiece =
+    o.kind === ProductionOrderKind.ROOFING || o.productPieceWeightKg === null
+      ? null
+      : new Decimal(o.productPieceWeightKg);
   const theoreticalPieces = kgPerPiece?.gt(0) ? assignedKg.div(kgPerPiece) : null;
   // Con mucha merma, cerrar es una baja de inventario y el API pide motivo (D-057).
   // D-089: en coberturas, lo montado y no consumido **no es merma** — vuelve al almacén —
@@ -182,8 +186,8 @@ export function ProduccionDetalleView({ id }: { id: string }) {
           <p className="text-sm text-muted-foreground">
             {o.productSku} · {o.productName} ·{' '}
             {o.kind === ProductionOrderKind.ROOFING
-              ? `bobina de ${o.bom.inputThicknessMm} mm (±0.02)`
-              : `receta ${o.bom.kgPerPiece ?? '—'} kg por pieza desde fleje de ${o.bom.inputWidthMm ?? '—'} mm`}
+              ? `bobina de ${o.productThicknessMm ?? '—'} mm (±0.02)`
+              : `${o.productPieceWeightKg ?? '—'} kg por pieza desde fleje de ${o.bom?.inputWidthMm ?? '—'} mm`}
             {o.salesOrderCode !== null && (
               <>
                 {' '}

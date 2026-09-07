@@ -23,6 +23,8 @@ import { RoofingProductionService } from './roofing-production.service';
   imports: [InventoryModule, CoilsModule],
   controllers: [RoofingProductionController, ProductionController],
   providers: [ProductionService, RoofingProductionService, BomsService],
-  exports: [ProductionService, BomsService],
+  // D-141: `imports` crea la OP de coberturas en la misma transacción que el pedido
+  // importado pendiente (`createFromReservationInTx`), así que necesita el servicio.
+  exports: [ProductionService, RoofingProductionService, BomsService],
 })
 export class ProductionModule {}

@@ -164,7 +164,14 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                 <TableCell className="font-medium">
                   {DOC_TYPE_LABELS[c.docType]} {c.docNumber}
                 </TableCell>
-                <TableCell>{c.name}</TableCell>
+                <TableCell>
+                  {c.name}
+                  {c.needsReview && (
+                    <Badge variant="outline" className="ml-2 text-amber-600 dark:text-amber-400">
+                      Por completar
+                    </Badge>
+                  )}
+                </TableCell>
                 <TableCell className="hidden text-muted-foreground md:table-cell">
                   {c.email ?? c.phone ?? '—'}
                 </TableCell>
