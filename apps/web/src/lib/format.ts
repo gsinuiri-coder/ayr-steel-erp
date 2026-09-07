@@ -68,11 +68,17 @@ export function formatDate(iso: string | null): string {
   return y && m && d ? `${d}/${m}/${y}` : iso;
 }
 
-/** Fecha de hoy en formato ISO corto, para prellenar formularios. */
+/**
+ * Fecha de hoy **en Lima**, en `YYYY-MM-DD`, para prellenar formularios.
+ *
+ * Antes leía los componentes locales del navegador, y eso alcanzaba mientras nadie comparara
+ * el valor contra nada. D-124 lo cambió: el API valida las fechas de negocio contra el día de
+ * **Lima**, así que un cliente en un huso por delante prellenaba mañana y recibía "la fecha de
+ * operación no puede ser futura" en una operación perfectamente normal. Es el mismo desfase de
+ * D-112, en el helper que se había quedado afuera de aquella corrección.
+ */
 export function todayIso(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  return businessToday();
 }
 
 /**

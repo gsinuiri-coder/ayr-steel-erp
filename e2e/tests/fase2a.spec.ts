@@ -13,6 +13,7 @@ import {
   type CreatedSupplier,
 } from '../helpers/api';
 import { loginAndSetPassword, selectOption } from '../helpers/ui';
+import { today } from '../helpers/imports';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -547,7 +548,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       docType: 'FACTURA',
       series: 'F001',
       number,
-      issueDate: new Date().toISOString().slice(0, 10),
+      issueDate: today(),
       currency: 'PEN',
       igvRate: '18',
       paymentTerms: 'CONTADO',
@@ -628,7 +629,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       docType: 'FACTURA',
       series: 'F001',
       number,
-      issueDate: new Date().toISOString().slice(0, 10),
+      issueDate: today(),
       currency: 'PEN',
       igvRate: '18',
       paymentTerms: 'CONTADO',

@@ -8,6 +8,7 @@ import {
   type CreatedFinish,
   type CreatedSupplier,
 } from '../helpers/api';
+import { today } from '../helpers/imports';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -94,10 +95,6 @@ interface BalanceDto {
 
 function uniqueDocumentNumber(): string {
   return String(Date.now()).slice(-9);
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function randomLetters(length: number): string {

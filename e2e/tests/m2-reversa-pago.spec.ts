@@ -12,6 +12,7 @@ import {
   type CreatedUser,
 } from '../helpers/api';
 import { loginAndSetPassword } from '../helpers/ui';
+import { today } from '../helpers/imports';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -133,7 +134,7 @@ async function expensePurchase(
     docType: 'FACTURA',
     series: 'F001',
     number: uniqueDocumentNumber(),
-    issueDate: new Date().toISOString().slice(0, 10),
+    issueDate: today(),
     currency,
     igvRate: '18',
     paymentTerms: 'CONTADO',
@@ -330,7 +331,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       purchaseId = purchase.id;
 
       const paid = await postJson<PurchaseDto>(api, `/api/purchases/${purchaseId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '4720',
         currency: 'PEN',
         method: 'TRANSFER',
@@ -402,21 +403,21 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       purchaseId = purchase.id;
 
       await postJson<PurchaseDto>(api, `/api/purchases/${purchaseId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '3000',
         currency: 'PEN',
         method: 'TRANSFER',
         reference: 'E2E-M2-A',
       });
       await postJson<PurchaseDto>(api, `/api/purchases/${purchaseId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '4000',
         currency: 'PEN',
         method: 'TRANSFER',
         reference: 'E2E-M2-B',
       });
       const afterThree = await postJson<PurchaseDto>(api, `/api/purchases/${purchaseId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '2000',
         currency: 'PEN',
         method: 'TRANSFER',
@@ -471,7 +472,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       // y dejar decimales periódicos es lo normal (D-039); lo que interesa acá es que la
       // reversa no arrastre el redondeo de la conversión.
       const paid = await postJson<PurchaseDto>(api, `/api/purchases/${purchaseId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '4000',
         currency: 'PEN',
         exchangeRate: '3.7',
@@ -514,7 +515,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       purchaseId = purchase.id;
 
       const paid = await postJson<PurchaseDto>(api, `/api/purchases/${purchaseId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '4000',
         currency: 'PEN',
         method: 'TRANSFER',
@@ -577,7 +578,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       purchaseId = purchase.id;
 
       const paid = await postJson<PurchaseDto>(api, `/api/purchases/${purchaseId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '1000',
         currency: 'PEN',
         method: 'TRANSFER',
@@ -630,7 +631,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       const purchaseA = await expensePurchase(api, supplier.id, '5000');
       purchaseAId = purchaseA.id;
       const paidA = await postJson<PurchaseDto>(api, `/api/purchases/${purchaseAId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '2000',
         currency: 'PEN',
         method: 'TRANSFER',
@@ -689,7 +690,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
         docType: 'FACTURA',
         series: 'F001',
         number: uniqueDocumentNumber(),
-        issueDate: new Date().toISOString().slice(0, 10),
+        issueDate: today(),
         currency: 'PEN',
         igvRate: '18',
         paymentTerms: 'CONTADO',
@@ -726,7 +727,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       );
 
       const paid = await postJson<PurchaseDto>(api, `/api/purchases/${purchaseId}/payments`, {
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         amount: '2000',
         currency: 'PEN',
         method: 'TRANSFER',

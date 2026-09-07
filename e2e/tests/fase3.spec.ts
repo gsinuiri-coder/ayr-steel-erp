@@ -11,6 +11,7 @@ import {
   type CreatedSupplier,
   type CreatedUser,
 } from '../helpers/api';
+import { today } from '../helpers/imports';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -138,10 +139,6 @@ interface ProductDto {
  *  único (proveedor, tipo, serie, número), que no se resetea fuera de CI. */
 function uniqueDocumentNumber(): string {
   return String(Date.now()).slice(-9);
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 /** Letras mayúsculas al azar: los códigos de proveedor (RF-13) no admiten dígitos. */

@@ -1,4 +1,4 @@
-# Handoff — Sesión 7 consolidada: backdating, entornos y subtipo de cobertura — 2026-09-06
+# Handoff — Sesión 7 consolidada: backdating, entornos y subtipo de cobertura — 2026-09-06/07
 
 ## 1. Resumen
 
@@ -360,6 +360,59 @@ en Neon y propagarla:
 Mientras tanto el riesgo real es bajo (la cadena no salió del equipo), pero la credencial es la
 de producción y el sistema se entrega mañana: conviene hacerlo antes del deploy, y el paso 3 ya
 está en el camino de todos modos.
+
+### Lo que encontró CI, y por qué el smoke acotado no alcanzaba (D-131)
+
+El primer push llegó con la verificación local en verde y **CI falló**: 4 suites, con dos causas
+distintas y las dos reales.
+
+**La regresión del mostrador.** Al hacer el subtipo explícito (D-127) reemplacé
+`product.unit === MTR` por `roofingKind === A_MEDIDA` **en los dos lugares** donde aparecía, y
+eran preguntas distintas: si la línea necesita subítems de largo lo decide la **unidad** y vale
+para cualquier línea de negocio (D-083); si se fabrica desde materia prima lo decide el
+**subtipo** y es exclusivo de coberturas (D-127). Como el subtipo es `null` fuera de coberturas,
+la primera dejó de aplicarse a todo producto en `MTR` de otra línea — y con eso **el mostrador
+pasó a poder vender material a medida**, justo lo que D-098 prohíbe. Corregido con dos
+predicados separados, `sellsByLength` e `isMadeToMeasure`.
+
+Lo importante no es el defecto sino dónde estaba: en `fase7b-bordes`, el spec del mostrador. El
+smoke acotado que corrí (fase5a, fase6, fase7e) no lo incluía porque el mostrador no parecía
+tener nada que ver con el subtipo de una cobertura. Es **D-123 otra vez, y esta vez me tocó a
+mí**: la única muestra que veía este defecto era la completa.
+
+**Las fechas en UTC.** `todayIso()` del web calculaba "hoy" con el reloj del navegador en vez
+del día de Lima; como D-124 pasó a validar contra Lima, un cliente en un huso por delante
+prellenaba mañana y recibía "la fecha de operación no puede ser futura" en una operación normal.
+Y 16 lugares de `e2e/` armaban fechas con `new Date().toISOString().slice(0, 10)` — el corte en
+UTC que D-112 prohibió en el web con una regla de ESLint que **no cubre `e2e/`**. Los tres
+arreglados; extender esa regla a `e2e/` queda anotado como riesgo residual.
+
+Al reparar esos 16 lugares me comí un error propio que vale registrar: un `replaceAll` ciego
+reescribió el **cuerpo** de tres `today()` locales en `return today()` —recursión infinita— y
+encima les agregó el import del helper. Lo delató el primer intento de correr las suites
+(`Duplicate declaration "today"`), no una revisión.
+
+**Verificación final: 38/38** en las cinco suites que CI marcó. Seis de esas fallas eran
+contaminación de una corrida abortada mía (una caja de mostrador que quedó abierta en `dev`, que
+en local **no se vacía** entre corridas: solo CI lo hace); con `E2E_RESET_DB=1` dan 6/6.
+
+### El go-live: reset, deploy y smoke
+
+1. **Producción se cayó a mitad de la sesión** con `{"status":"degraded","db":"error"}`: el API
+   vivo tenía la credencial de Neon anterior a la rotación. Se restauró adelantando
+   `pnpm secrets:gcp` + `pnpm db:prod` + `pnpm deploy:api` sin esperar a CI (decisión del dueño,
+   con nadie operando todavía). `db:prod` no estaba en el plan y era imprescindible: el código
+   nuevo lee `operation_date` y `roofing_kind`, y producción seguía con el esquema anterior.
+2. **Reset de go-live** (D-129): `AYR_CONFIRM_PROD_RESET=1 node scripts/prod-reset-go-live.mjs
+--branch production --yes-destroy production`. Inventario posterior: 0 proveedores, 0
+   productos, 0 bobinas, 0 movimientos, 0 documentos, 0 saldos; el único cliente es
+   `PÚBLICO EN GENERAL`, que crea el seed para el mostrador.
+3. `pnpm deploy:api` con los arreglos de CI.
+4. **`pnpm smoke:prod` en verde**: health, login con admin efímero y cinco GET. La primera
+   corrida encontró un 400 — en el propio guion, que pedía `/api/catalog/products?page=…`, una
+   ruta que nunca existió (el catálogo no pagina, D-113). Corregida a `/api/catalog`.
+5. Verificado a mano que los dos triggers de append-only (`inventory_movements`, `audit_log`)
+   quedaron **activos** tras el reset: `tgenabled = O` en los dos.
 
 ## 7. Siguiente sesión
 

@@ -221,17 +221,27 @@ export async function resolveSalesLines(
       );
     }
 
-    // D-127: la forma de la línea la fija el **subtipo declarado** del producto, no la
-    // unidad ni la ausencia de largo. Sin estos chequeos, una cobertura a medida podría
-    // cotizarse sin largos —y la OP no tendría plan de corte que copiar— o una plancha
-    // podría llegar con subítems que nada en el sistema volvería a mirar.
+    // **Dos preguntas distintas, y hay que no confundirlas** (lo aprendí confundiéndolas:
+    // ver D-130 y el guardrail del mostrador que se cayó en CI).
+    //
+    // (a) ¿Esta línea se vende por metro lineal? La decide la **unidad**, como desde D-083, y
+    //     vale para cualquier línea de negocio: un producto en `MTR` necesita sus subítems de
+    //     largo, sea una cobertura o cualquier otra cosa que se venda por metro. De esto
+    //     depende también que el mostrador la rechace (D-098).
+    // (b) ¿Se fabrica contra pedido a partir de materia prima? La decide el **subtipo**
+    //     (D-127), y es una pregunta exclusiva de Metallic Roofing. De esto depende la rama
+    //     de la reserva, más abajo.
+    //
+    // Haber respondido (a) con el subtipo dejó de exigir subítems a todo producto en `MTR`
+    // fuera de coberturas — y con eso el mostrador pasó a poder vender material a medida.
+    const sellsByLength = product.unit === Unit.MTR;
     const madeToMeasure = isMadeToMeasure(product);
-    if (madeToMeasure && item.pieces === undefined) {
+    if (sellsByLength && item.pieces === undefined) {
       throw new BadRequestException(
         `${at}: ${product.sku} se vende por metro lineal: detalla cuántas planchas de cada largo lleva la línea`,
       );
     }
-    if (!madeToMeasure && item.pieces !== undefined) {
+    if (!sellsByLength && item.pieces !== undefined) {
       throw new BadRequestException(
         `${at}: ${product.sku} no se vende a medida (se mide en ${product.unit}): quita el detalle de largos`,
       );
@@ -245,7 +255,7 @@ export async function resolveSalesLines(
     // Redundante con el `superRefine` del schema, y a propósito: el pedido directo y la
     // edición de cotización pasan por acá con las mismas líneas, y esta es la única puerta
     // por la que las dos entran a la base.
-    if (madeToMeasure && !piecesMeters(pieces).equals(toDecimal(item.qty))) {
+    if (sellsByLength && !piecesMeters(pieces).equals(toDecimal(item.qty))) {
       throw new BadRequestException(
         `${at}: los largos suman ${piecesMeters(pieces).toFixed(3)} m y la línea dice ${toDecimal(item.qty).toFixed(3)}`,
       );

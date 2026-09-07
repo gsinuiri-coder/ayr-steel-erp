@@ -14,9 +14,9 @@ import {
   MAX_SALES_ITEMS,
   piecesCount,
   piecesMeters,
-  RoofingProductKind,
   salesLineTotals,
   toFixedString,
+  Unit,
   type BusinessLine,
   type BusinessLineDto,
   type CustomerDto,
@@ -140,7 +140,9 @@ function normalizeLine(l: { qty: string; unitPricePen: string }): {
 
 /** D-083: la línea es compuesta cuando el producto se vende por metro lineal. */
 function isMadeToMeasure(product: ProductDto | undefined): boolean {
-  return product?.roofingKind === RoofingProductKind.A_MEDIDA;
+  // La unidad, no el subtipo: el editor de largos aparece para todo lo que se venda por
+  // metro lineal, que es exactamente lo que el API exige con subítems (D-083).
+  return product?.unit === Unit.MTR;
 }
 
 export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {

@@ -12,6 +12,7 @@ import {
   type CreatedUser,
 } from '../helpers/api';
 import { loginAndSetPassword } from '../helpers/ui';
+import { today } from '../helpers/imports';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -133,10 +134,6 @@ interface ProductDto {
  *  único (proveedor, tipo, serie, número), que no se resetea fuera de CI. */
 function uniqueDocumentNumber(): string {
   return String(Date.now()).slice(-9);
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 interface CoilLineInput {

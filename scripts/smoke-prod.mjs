@@ -73,7 +73,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 /** Los GET del smoke. Cada uno tiene que responder 200 y traer JSON parseable. */
 const READ_ONLY_CHECKS = [
   { label: 'líneas de negocio', path: '/api/business-lines' },
-  { label: 'catálogo', path: '/api/catalog/products?page=1&pageSize=5' },
+  { label: 'catálogo', path: '/api/catalog' },
   { label: 'inventario valorizado', path: '/api/inventory/balances' },
   { label: 'bobinas', path: '/api/coils?page=1&pageSize=5' },
   { label: 'reporte mensual de bobinas', path: '/api/reports/coils' },
