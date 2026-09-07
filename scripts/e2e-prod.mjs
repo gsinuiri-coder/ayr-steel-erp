@@ -1,3 +1,11 @@
+// **PROHIBIDO COMO RUTINA DESDE D-126.** Producción tiene datos reales: esta suite crea
+// compras, bobinas, órdenes de producción y despachos, y el kardex es append-only (§3.2), así
+// que parte de lo que deja no se puede deshacer sin una reversa de dominio. La verificación
+// post-deploy es `pnpm smoke:prod` (solo lectura); la suite completa vive en local y en CI,
+// contra la rama `ci`.
+//
+// Queda para emergencias documentadas, y por eso exige `AYR_ALLOW_E2E_PROD=1` explícito.
+//
 // Corre los E2E de autenticación (auth.spec.ts), de Fase 1 (fase1.spec.ts), de las fases
 // 2a, 2b, 3, 3b y 4 (fase2a.spec.ts, fase2b.spec.ts, fase3.spec.ts, fase3b.spec.ts,
 // fase4.spec.ts, fase4-bordes.spec.ts), de la Sesión M-2 (m2-reversa-pago.spec.ts), de
@@ -43,6 +51,27 @@ import { resolve } from 'node:path';
 import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
 
 const DEFAULT_BASE_URL = 'https://ayr-steel-erp-web.vercel.app';
+
+// D-126: la compuerta. La regla no puede vivir solo en la documentación — un `pnpm e2e:prod`
+// tecleado por costumbre corría igual contra inventario real.
+if (process.env.AYR_ALLOW_E2E_PROD !== '1') {
+  console.error(
+    [
+      'BLOQUEADO (D-126): la suite E2E no corre contra producción.',
+      '',
+      'Producción tiene datos reales y esta suite crea compras, bobinas, órdenes y despachos',
+      'que el kardex append-only no siempre puede deshacer.',
+      '',
+      '  Verificación post-deploy:   pnpm smoke:prod   (solo lectura)',
+      '  Suite completa:             pnpm e2e          (local, rama ci) — y CI la corre sola',
+      '  Ensayos con datos:          pnpm dev:demo     (rama demo)',
+      '',
+      'Si de verdad es una emergencia, corré con AYR_ALLOW_E2E_PROD=1 y documentá por qué',
+      'en docs/PROGRESO.md.',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
 const E2E_ADMIN_EMAIL = 'e2e-admin@ayr.test';
 
 /**
