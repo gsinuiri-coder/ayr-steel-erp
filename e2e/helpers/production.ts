@@ -43,6 +43,8 @@ export interface CoilDto {
   widthMm: string;
   availableKg: string;
   parentCoilId: string | null;
+  /** D-124: día de negocio en que la bobina entró (`AAAA-MM-DD`, Lima). */
+  operationDate?: string;
 }
 
 export interface CuttingOrderDto {
@@ -161,6 +163,10 @@ export interface MovementDto {
   notes: string | null;
   reversalOfId: string | null;
   reversedById: string | null;
+  /** Instante de grabación (auditoría). D-124: **no** es la fecha por la que el kardex ordena. */
+  at?: string;
+  /** D-124: día de negocio del movimiento (`AAAA-MM-DD`, Lima). Por acá ordena y corta el kardex. */
+  operationDate?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,10 +355,13 @@ export async function createCatalogProduct(
     lengthMm?: string;
     pieceWeightKg?: string;
     thicknessMm?: string;
+    /** D-127: subtipo de cobertura. Sin él se deduce de la unidad (ver `roofingKindFor`). */
+    roofingKind?: 'PLANCHA' | 'A_MEDIDA';
   } = {},
 ): Promise<ProductDto> {
   const lineCode = options.lineCode ?? LINE;
   const lineId = await businessLineId(api, lineCode);
+  const unit = options.unit ?? 'NIU';
   // D-118 (Fase 7e): Drywall exige ancho/largo/peso de la pieza terminada y Metallic
   // Roofing exige espesor/ancho del SKU. Sin esto `POST /catalog` rechaza el alta con
   // "El ancho de la pieza terminada es obligatorio en Drywall" (u homólogo). El resto de
@@ -368,6 +377,7 @@ export async function createCatalogProduct(
         ? {
             thicknessMm: options.thicknessMm ?? '0.50',
             widthMm: options.widthMm ?? '1000',
+            ...roofingKindFields(unit, options.roofingKind, options.lengthMm),
           }
         : {};
   return postJson<ProductDto>(api, '/api/catalog', {
@@ -376,10 +386,29 @@ export async function createCatalogProduct(
     // `pnpm prod:purge-e2e` reconoce lo que puede deshacer en producción.
     sku: `E2E-PERF${randomLetters(5)}`,
     name: options.name ?? 'Perfil E2E de drywall',
-    unit: options.unit ?? 'NIU',
+    unit,
     source: options.source ?? 'MANUFACTURED',
     ...structured,
   });
+}
+
+/**
+ * D-127: los campos de subtipo con los que un SKU de Metallic Roofing entra al catálogo.
+ *
+ * Desde D-127 el subtipo es **obligatorio y explícito** en esa línea, y arrastra dos reglas
+ * más: `A_MEDIDA` se mide en `MTR` y no lleva largo; `PLANCHA` se mide en otra unidad y el
+ * largo es obligatorio. Los helpers de la suite lo deducen de la unidad —que es lo que ya
+ * decían— para que ningún spec anterior tenga que enterarse, y quien necesite el caso raro
+ * (una plancha en `MTR`, que el API debe rechazar) lo pasa a mano.
+ */
+export function roofingKindFields(
+  unit: string,
+  roofingKind?: 'PLANCHA' | 'A_MEDIDA',
+  lengthMm?: string,
+): Record<string, unknown> {
+  const kind = roofingKind ?? (unit === 'MTR' ? 'A_MEDIDA' : 'PLANCHA');
+  if (kind === 'A_MEDIDA') return { roofingKind: kind };
+  return { roofingKind: kind, lengthMm: lengthMm ?? '3000' };
 }
 
 /** Receta del producto (D-059). Sin `kgPerPiece` el API lo deriva de la geometría. */

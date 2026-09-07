@@ -12,6 +12,7 @@ import {
   businessLineId,
   createCuttingSupplier,
   randomLetters,
+  roofingKindFields,
   today,
   uniqueDocumentNumber,
   type CoilDto,
@@ -202,22 +203,33 @@ export async function createCustomer(api: APIRequestContext): Promise<CustomerDt
  */
 export async function createSellableProduct(
   api: APIRequestContext,
-  options: { lineCode: string; listPricePen?: string; unit?: string },
+  options: {
+    lineCode: string;
+    listPricePen?: string;
+    unit?: string;
+    /** D-127: subtipo de cobertura. Sin él se deduce de la unidad (`MTR` = a medida). */
+    roofingKind?: 'PLANCHA' | 'A_MEDIDA';
+  },
 ): Promise<ProductDto & { listPricePen: string | null }> {
   const lineId = await businessLineId(api, options.lineCode);
+  const unit = options.unit ?? 'NIU';
   // D-118 (Fase 7e): Drywall y Metallic Roofing exigen sus campos estructurados desde el
-  // alta del SKU; el resto de líneas no los usa.
+  // alta del SKU; el resto de líneas no los usa. D-127 suma el subtipo a coberturas.
   const structured =
     options.lineCode === 'drywall'
       ? { widthMm: '100', lengthMm: '3000', pieceWeightKg: '6' }
       : options.lineCode === 'metallic-roofing'
-        ? { thicknessMm: '0.50', widthMm: '1000' }
+        ? {
+            thicknessMm: '0.50',
+            widthMm: '1000',
+            ...roofingKindFields(unit, options.roofingKind),
+          }
         : {};
   return postJson<ProductDto & { listPricePen: string | null }>(api, '/api/catalog', {
     businessLineId: lineId,
     sku: `E2E-VTA${randomLetters(5)}`,
     name: `Producto E2E vendible ${randomLetters(3)}`,
-    unit: options.unit ?? 'NIU',
+    unit,
     source: 'PURCHASED',
     ...structured,
     ...(options.listPricePen === undefined ? {} : { listPricePen: options.listPricePen }),

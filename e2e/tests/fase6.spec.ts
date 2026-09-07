@@ -244,8 +244,10 @@ test.describe('Fase 6 — producción de coberturas', () => {
         pieces: rows,
       });
 
-      // Los 10 m existen en el almacén, pero están prometidos. Otro cliente que quiera
-      // cotizarlos de stock se topa con la invariante `disponible ≥ reservado` (D-066).
+      // Los 10 m existen en el almacén, pero están prometidos: la reserva del primer pedido
+      // los protege y el disponible es cero (invariante `disponible ≥ reservado`, D-066).
+      // **Esta es la mitad del test que no cambió con D-127** y la que de verdad dice que la
+      // pieza a medida no se la lleva otro.
       const avail = await availabilityOf(api, 'PRODUCT', scenario.product.id);
       expect(avail.qty).toBe('10.000');
       expect(avail.availableQty).toBe('0.000');
@@ -267,7 +269,14 @@ test.describe('Fase 6 — producción de coberturas', () => {
       await postJson(api, `/api/sales/quotations/${rival.id}/emit`);
       const error = await postExpectingError(api, `/api/sales/quotations/${rival.id}/confirm`);
       expect(error.status).toBe(400);
-      expect(error.message).toContain('disponibles');
+      // D-127 cambió **por qué** se corta, no **si** se corta. Una línea a medida ya no se
+      // atiende con stock de producto terminado (ese SKU vive en cero hasta que planta lo
+      // rola), así que el rival ya no choca contra el disponible del producto sino contra la
+      // materia prima: la única bobina del color está montada en la OP del primer pedido y no
+      // hay otra libre. El pedido rival sigue sin poder nacer, que es lo que este test
+      // protege; lo que se movió es el guardrail que lo frena.
+      expect(error.message.toLowerCase()).toMatch(/disponible|bobina/);
+      expect(error.message).toContain(scenario.product.sku);
     } finally {
       await purgeRoofingTrail(api, trail);
     }

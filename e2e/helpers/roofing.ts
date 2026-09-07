@@ -115,6 +115,12 @@ export async function createRoofingProduct(
     // D-118 (Fase 7e): Metallic Roofing exige espesor y ancho del SKU desde el alta.
     thicknessMm: options.thicknessMm ?? NOMINAL_THICKNESS,
     widthMm: options.catalogWidthMm ?? COIL_WIDTH,
+    // D-127: el subtipo es explícito y obligatorio en esta línea; antes se deducía de la
+    // unidad. La plancha además lleva su largo fijo en el catálogo (el mismo que la receta
+    // corta), y la cobertura a medida tiene prohibido llevarlo.
+    ...(madeToMeasure
+      ? { roofingKind: 'A_MEDIDA' }
+      : { roofingKind: 'PLANCHA', lengthMm: options.pieceLengthMm }),
     ...(options.colorId ? { colorId: options.colorId } : {}),
   });
   const bom = await putJson<ProductBomDto>(api, `/api/production/boms/${product.id}`, {
@@ -142,6 +148,12 @@ export interface RoofingCoilOptions {
    * así que el default de este helper sigue siendo `OPEN` para no romper Fase 6.
    */
   coilStatus?: 'OPEN' | 'CLOSED';
+  /**
+   * D-124: día de negocio en que la bobina entra (`AAAA-MM-DD`). Por defecto hoy. Sirve
+   * para las cargas históricas: un consumo retrofechado a agosto exige que la bobina que lo
+   * soporta también sea de agosto, o el guardrail cronológico lo corta con razón.
+   */
+  operationDate?: string;
 }
 
 /**
@@ -162,7 +174,7 @@ export async function buyRoofingCoil(
     docType: 'FACTURA',
     series: 'F001',
     number: uniqueDocumentNumber(),
-    issueDate: today(),
+    issueDate: options.operationDate ?? today(),
     currency: 'PEN',
     igvRate: '18',
     paymentTerms: 'CONTADO',
@@ -180,7 +192,9 @@ export async function buyRoofingCoil(
       },
     ],
   });
-  await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
+  await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`, {
+    ...(options.operationDate ? { operationDate: options.operationDate } : {}),
+  });
   // Se filtra por `purchaseId` y no por "la primera del proveedor": varios tests compran
   // dos o tres bobinas al mismo proveedor y quedarse con la primera devolvía la del test
   // anterior, con un fallo que no se parecía en nada a su causa.
