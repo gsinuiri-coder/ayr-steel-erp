@@ -60,11 +60,31 @@
  * la OP cancelada y sus reportes revertidos en su lugar. Si una OP tocada no cuelga de
  * ninguna reserva (la OP a stock del déficit consolidado, D-140), no hay pedido al que
  * atribuirle la exclusión — ese caso sigue abortando el lote entero incluso con el flag.
+ *
+ * `--include-reverted` (D-143, necesita `--exclude-touched`): de los pedidos que
+ * `--exclude-touched` acaba de excluir, promueve al borrado físico los que la reversa **de
+ * dominio** ya dejó completamente inertes. No afloja la guarda del historial de montaje —la
+ * verifica— exigiendo las cinco condiciones a la vez, releyendo el propio kardex en vez de
+ * confiar en `production_reports.status`:
+ *   1. el pedido está `CANCELLED` (`SalesOrdersService.cancel`, no un `DELETE`).
+ *   2. su(s) comprobante(s) ya no viven: `ANNULLED` (D-110, importado) o `VOIDED`/`REJECTED` —
+ *      nunca `ACCEPTED`/`DRAFT`/`SEND_ERROR`/`VOID_PENDING`/`ISSUED`.
+ *   3. todas sus reservas están `RELEASED` (ninguna `ACTIVE`).
+ *   4. toda OP que tocó producción real está `CANCELLED`.
+ *   5. **cada movimiento de kardex** (`refType PRODUCTION/SCRAP`, `refId` = un reporte de esa
+ *      OP) que no sea ya una reversa tiene su propia reversa presente — el hecho histórico de
+ *      haber montado la bobina se queda (nunca se borra el movimiento), pero su efecto neto
+ *      sobre el saldo tiene que ser cero.
+ * Un pedido que falla cualquiera de las cinco se queda excluido, con el motivo impreso — sin
+ * forzar nada.
  */
 import {
   PrismaClient,
   SalesOrderOrigin,
+  SalesOrderStatus,
   ProductionOrderStatus,
+  ReservationStatus,
+  FiscalDocumentStatus,
   InventoryRefType,
 } from '@prisma/client';
 
@@ -72,6 +92,14 @@ const prisma = new PrismaClient();
 const execute = process.argv.includes('--execute');
 const batchArg = process.argv.find((a) => a.startsWith('--batch='))?.slice('--batch='.length);
 const excludeTouched = process.argv.includes('--exclude-touched');
+const includeReverted = process.argv.includes('--include-reverted');
+if (includeReverted && !excludeTouched) {
+  throw new Error(
+    '--include-reverted necesita --exclude-touched: decide primero qué se excluye por haber ' +
+      'tocado producción real, y --include-reverted decide después cuál de eso ya se revirtió ' +
+      'por completo y se puede purgar igual.',
+  );
+}
 
 interface Blocker {
   reason: string;
@@ -332,7 +360,7 @@ async function purgeBatch(batchId: string): Promise<void> {
 
   const documents = await prisma.fiscalDocument.findMany({
     where: { importBatchId: batchId },
-    select: { id: true, number: true, salesOrderId: true },
+    select: { id: true, number: true, salesOrderId: true, status: true },
   });
   if (documents.length === 0) {
     console.warn(
@@ -365,7 +393,7 @@ async function purgeBatch(batchId: string): Promise<void> {
 
   const orders = await prisma.salesOrder.findMany({
     where: { importBatchId: batchId },
-    select: { id: true, seq: true, origin: true, customerId: true },
+    select: { id: true, seq: true, origin: true, customerId: true, status: true },
   });
   const orderIds = orders.map((o) => o.id);
   console.warn(`Pedidos del lote: ${orders.length}`);
@@ -397,7 +425,7 @@ async function purgeBatch(batchId: string): Promise<void> {
 
   const reservations = await prisma.reservation.findMany({
     where: { OR: [{ salesOrderId: { in: orderIds } }, { importBatchId: batchId }] },
-    select: { id: true, salesOrderId: true },
+    select: { id: true, salesOrderId: true, status: true },
   });
   const reservationIds = reservations.map((r) => r.id);
   console.warn(`Reservas del lote: ${reservations.length}`);
@@ -428,7 +456,7 @@ async function purgeBatch(batchId: string): Promise<void> {
   const opSeqById = new Map(productionOrders.map((o) => [o.id, o.seq]));
   const reports = await prisma.productionReport.findMany({
     where: { productionOrderId: { in: opIds } },
-    select: { productionOrderId: true },
+    select: { id: true, productionOrderId: true, status: true },
   });
   const touchedOpIds = new Set([
     ...consumptions.map((c) => c.productionOrderId),
@@ -467,6 +495,81 @@ async function purgeBatch(batchId: string): Promise<void> {
     for (const reservation of reservations) {
       if (touchedReservationIds.includes(reservation.id)) {
         excludedOrderIds.add(reservation.salesOrderId);
+      }
+    }
+  }
+
+  // D-143: --include-reverted promueve al borrado los pedidos excluidos que la reversa de
+  // dominio ya dejó inertes — ver el comentario de cabecera para las cinco condiciones.
+  const notPromoted: { seq: number; reasons: string[] }[] = [];
+  if (includeReverted && excludedOrderIds.size > 0) {
+    const touchedOps = productionOrders.filter((o) => touchedOpIds.has(o.id));
+    const touchedReports = reports.filter((r) => touchedOpIds.has(r.productionOrderId));
+    const reportIds = touchedReports.map((r) => r.id);
+    const kardexMovements = reportIds.length
+      ? await prisma.inventoryMovement.findMany({
+          where: {
+            refType: { in: [InventoryRefType.PRODUCTION, InventoryRefType.SCRAP] },
+            refId: { in: reportIds },
+          },
+          select: { id: true, refId: true, reversalOfId: true },
+        })
+      : [];
+    const reversedOriginalIds = new Set(
+      kardexMovements
+        .filter((m): m is typeof m & { reversalOfId: bigint } => m.reversalOfId !== null)
+        .map((m) => m.reversalOfId),
+    );
+    const unreversedReportIds = new Set(
+      kardexMovements
+        .filter(
+          (m): m is typeof m & { refId: string } =>
+            m.reversalOfId === null && m.refId !== null && !reversedOriginalIds.has(m.id),
+        )
+        .map((m) => m.refId),
+    );
+    const reservationOwnerById = new Map(reservations.map((r) => [r.id, r.salesOrderId]));
+
+    for (const orderId of [...excludedOrderIds]) {
+      const order = orders.find((o) => o.id === orderId);
+      const reasons: string[] = [];
+      if (order?.status !== SalesOrderStatus.CANCELLED) {
+        reasons.push('el pedido no está CANCELLED');
+      }
+      const deadDocStatuses: FiscalDocumentStatus[] = [
+        FiscalDocumentStatus.ANNULLED,
+        FiscalDocumentStatus.VOIDED,
+        FiscalDocumentStatus.REJECTED,
+      ];
+      for (const doc of documents.filter((d) => d.salesOrderId === orderId)) {
+        if (!deadDocStatuses.includes(doc.status)) {
+          reasons.push(`el comprobante ${doc.number ?? doc.id} sigue ${doc.status}`);
+        }
+      }
+      for (const reservation of reservations.filter((r) => r.salesOrderId === orderId)) {
+        if (reservation.status === ReservationStatus.ACTIVE) {
+          reasons.push(`la reserva ${reservation.id} sigue ACTIVE`);
+        }
+      }
+      const ownOps = touchedOps.filter(
+        (o) => o.reservationId !== null && reservationOwnerById.get(o.reservationId) === orderId,
+      );
+      for (const op of ownOps) {
+        if (op.status !== ProductionOrderStatus.CANCELLED) {
+          reasons.push(`la OP ${op.seq} no está CANCELLED`);
+        }
+        const opReportIds = touchedReports
+          .filter((r) => r.productionOrderId === op.id)
+          .map((r) => r.id);
+        if (opReportIds.some((id) => unreversedReportIds.has(id))) {
+          reasons.push(`la OP ${op.seq} tiene un movimiento de kardex sin revertir`);
+        }
+      }
+
+      if (reasons.length === 0) {
+        excludedOrderIds.delete(orderId);
+      } else {
+        notPromoted.push({ seq: order?.seq ?? -1, reasons });
       }
     }
   }
@@ -521,6 +624,16 @@ async function purgeBatch(batchId: string): Promise<void> {
         'con producción real — quedan tal cual, sin tocar:',
     );
     for (const o of excludedOrders) console.warn(`    pedido ${o.seq}`);
+  }
+  if (includeReverted && notPromoted.length > 0) {
+    console.warn('');
+    console.warn(
+      `--include-reverted no incluyó ${notPromoted.length} pedido(s) — sin forzar, quedan excluidos:`,
+    );
+    for (const p of notPromoted) {
+      console.warn(`    pedido ${p.seq}:`);
+      for (const reason of p.reasons) console.warn(`      - ${reason}`);
+    }
   }
 
   // Guarda 9: clientes y SKUs que el lote creó, pero solo se borran si nada de **afuera del

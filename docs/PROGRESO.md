@@ -2229,6 +2229,52 @@ y borraron dentro de la misma sesión — nada que archivar en `scripts/oneoff/`
 esta limpieza — a la espera de un nuevo plan del dueño para el pedido 134 y lo que queda
 pendiente de él.
 
+### Descarte total de los pedidos 80 y 131 — reversa por flujo normal, después purge físico (2026-09-08)
+
+El dueño pidió el inventario de los pedidos 80 y 131 antes de ejecutar nada. Resultado:
+ningún despacho, ningún cobro, ninguna nota de crédito, ningún movimiento de kardex que
+referenciara los documentos directamente en ninguno de los dos pedidos — solo las reservas
+de materia prima `ACTIVE` que ya habían quedado de la reversa de las OP 5/6/21, y las dos
+facturas `FFA1-00001354` (pedido 80, S/ 15,840.00) y `FFA1-00001407` (pedido 131, S/
+230.40), ambas `ACCEPTED`, `origin = IMPORTED`.
+
+**Reversa por flujo normal, en el orden pedido:** sin despachos que revertir, se fue directo
+a `FiscalImportService.annulImported` (D-110 — baja **interna**, el PSE nunca conoció estos
+documentos, D-105) sobre las dos facturas, y `SalesOrdersService.cancel` sobre los dos
+pedidos (libera solo las reservas `ACTIVE` que quedaban). Resultado: pedidos 80 y 131
+`CANCELLED`, facturas `ANNULLED`, las 6 reservas de ambos pedidos `RELEASED` con `qty=0`.
+
+**`purge-imported-sales.ts` ganó `--include-reverted` (D-143), que necesita
+`--exclude-touched`.** No afloja la guarda del historial de montaje — la verifica: promueve
+al borrado físico solo el pedido excluido que cumple las cinco condiciones a la vez (pedido
+`CANCELLED`, comprobante `ANNULLED`/`VOIDED`/`REJECTED`, reservas `RELEASED`, OP
+`CANCELLED`, y **cada movimiento de kardex de sus reportes con su reversa presente**,
+releído directo de `inventory_movements` en vez de confiar en `production_reports.status`).
+Dry-run confirmó las cinco condiciones para los dos pedidos, sin ningún motivo de bloqueo.
+Ejecutado `--execute --confirm-production`: **2 `fiscal_documents`, 2 `sales_orders`, 3
+`sales_order_items`, 6 `reservations`, 3 `production_orders`, 8
+`production_order_consumptions`, 9 `production_reports`, 3 `fiscal_document_items`
+borrados físicamente.**
+
+**Verificación final:**
+
+- `origin = IMPORTED` en producción: **0 comprobantes, 0 pedidos.** El lote `d4282f5c-...`
+  no dejó ningún rastro.
+- Kardex cuadrado: las 6 bobinas que tocaron las OP 5, 6 y 21 tienen hoy un saldo **igual a
+  su peso nominal** (4755, 4549, 3348, 3468, 3470 y 3480 kg) — cero kilos netos consumidos
+  por todo el ensayo, de punta a punta.
+- Producción real hoy: 2 `users`, 49 `customers`, 174 `products`, 50 `coils`, 9 `finishes`,
+  **2 `sales_orders`** (seq 1 `CANCELLED`, seq 134 `IN_PRODUCTION` — sin tocar, ver abajo),
+  **2 `quotations`** (seq 4 `CANCELLED`, seq 7 `CONFIRMED` — sin tocar), **1
+  `fiscal_document`** (`F001-00000001`, `REJECTED`, correlativo quemado — SUNAT nunca lo
+  aceptó, ver la sección de arriba), **3 `production_orders`** (las dos del pedido 134 más
+  una fuera de este ensayo).
+
+**Pendiente, sin tocar (fuera de alcance de este pedido — solo cubría 80 y 131):** el pedido
+134 sigue `IN_PRODUCTION`, no anulado; su factura sigue `REJECTED`; la cotización 7 sigue
+bloqueada por el pedido 134 vivo, y la cotización 4 por el pedido 1. Falta un nuevo plan del
+dueño para esos cuatro.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.

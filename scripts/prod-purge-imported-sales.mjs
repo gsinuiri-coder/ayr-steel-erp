@@ -14,9 +14,15 @@
 // aborta el lote entero — con este flag, excluye del borrado físico al pedido dueño de esa
 // OP (y su comprobante) y sigue con el resto. Ver el comentario de cabecera del script real.
 //
+// `--include-reverted` (D-143, necesita `--exclude-touched`): de los pedidos que
+// `--exclude-touched` excluyó, promueve al borrado los que la reversa de dominio ya dejó
+// inertes (pedido CANCELLED, comprobante ANNULLED/VOIDED/REJECTED, reservas RELEASED, OP
+// CANCELLED, kardex con cada movimiento revertido) — verificado, no forzado. Ver el
+// comentario de cabecera del script real para las cinco condiciones.
+//
 // Uso: node scripts/prod-purge-imported-sales.mjs [--branch dev] [--batch=<uuid>] [--execute]
 //      node scripts/prod-purge-imported-sales.mjs --batch=<uuid> [--exclude-touched] \
-//        --execute --confirm-production
+//        [--include-reverted] --execute --confirm-production
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, neonConnectionString } from './lib.mjs';
@@ -26,6 +32,7 @@ const branch = branchArg >= 0 ? process.argv[branchArg + 1] : 'production';
 const execute = process.argv.includes('--execute');
 const batchArg = process.argv.find((a) => a.startsWith('--batch='));
 const excludeTouched = process.argv.includes('--exclude-touched');
+const includeReverted = process.argv.includes('--include-reverted');
 
 if (
   batchArg &&
@@ -50,6 +57,7 @@ const res = spawnSync(
     ...(execute ? ['--execute'] : []),
     ...(batchArg ? [batchArg] : []),
     ...(excludeTouched ? ['--exclude-touched'] : []),
+    ...(includeReverted ? ['--include-reverted'] : []),
   ],
   {
     cwd: resolve(ROOT, 'apps/api'),
