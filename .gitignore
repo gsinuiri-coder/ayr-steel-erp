@@ -1,6 +1,7 @@
 # dependencias y builds
 node_modules/
 dist/
+dist-cli/
 .next/
 out/
 coverage/
@@ -33,3 +34,8 @@ pnpm-debug.log*
 .claude/settings.local.json
 
 .vercel
+
+# archivos de trabajo del CLI de importación de ventas (D-142): datos reales del dueño,
+# nunca al repo (clientes, RUCs, montos)
+/*.xlsx
+*.decisiones.json

@@ -1952,6 +1952,134 @@ total destacado, anchos rebalanceados y `align-top`. Sin componentes nuevos, sin
 estructura ni de lógica. Ningún E2E maneja este formulario por navegador, así que el cambio no
 tiene riesgo para la suite.
 
+## Sesión 7-final-C (2026-09-07) — CLI de importación de ventas (D-142)
+
+**Estado: implementado y verificado en local con el Excel real del dueño; nada commiteado.**
+Falta que el dueño complete el JSON de decisiones (línea de negocio de 40 SKUs, y qué
+documentos marcar `pendientes`) antes de `--execute`, push, CI y despliegue.
+
+### Lo que se construyó
+
+`pnpm import:ventas --file <xlsx> [--branch dev|demo] [--decisions <json>] [--execute]`:
+dry-run por defecto (sube el archivo con `ImportsService.upload`, nunca confirma) y escribe
+un esqueleto de decisiones con lo que el dry-run ya detectó. `--execute` se niega si el JSON
+no cubre todos los huecos, aplica las correcciones con `updateRow`/`updateGroup` y confirma —
+el mismo servicio y el mismo `SalesHistoryImportAdapter` (D-138/D-141) que usa el botón
+«Importar ventas (Excel)» de `/comprobantes`, nunca SQL directo.
+
+- **Fixes de parseo verificados contra el archivo real** (`Ventas Detalladas.xlsx`, 141
+  filas / 71 documentos): fechas texto DD/MM/AAAA (ya eran correctas; se agregó el test que
+  lo fija con día ≤ 12), números con punto decimal y campos opcionales vacíos (ya eran
+  correctos), tipo de comprobante case-insensitive (ya era correcto), cliente
+  `"RUC - NOMBRE"` (ya era correcto — pero encontró un bug real de verdad, ver abajo).
+  **El único gap real era la unidad**: el archivo trae "METRO LINEAL"/"KILOGRAMO"/
+  "UNIDAD"/"TONELADA" y el catálogo usa los códigos UN/EDI (`MTR`/`KGM`/`NIU`/`TNE`);
+  `normalizeUnit` (D-142) los mapea. Contra el archivo real: **0 errores de fecha, ninguna
+  unidad sin mapear.**
+- **Hallazgo real en `parseCustomer`:** la clase de recorte del separador era simétrica
+  (`[\s\-–—:.]` al principio **y al final**), así que un nombre que termina en punto
+  ("...S.A.C.") perdía el punto al auto-crearse. Solo se manifestaba si el padrón de SUNAT no
+  respondía (si responde, el nombre real pisa al del archivo) — un escenario ya documentado
+  en el código, nunca antes con un test. El punto ahora solo se recorta del lado izquierdo.
+- **Diccionario real de SKUs faltantes: 40** (de 41 productos distintos del archivo; uno,
+  `P64GALV045`, ya existe en el catálogo dev). El esqueleto de decisiones sale prellenado con
+  código, nombre y unidad detectada por cada uno; el dueño completa `linea` y, para los que
+  son Metallic Roofing/Drywall (exigen espesor/ancho/acabado que el export no trae), la
+  instrucción del propio JSON sugiere crear el producto a mano y usar `"mapear"`.
+- **OP a stock consolidada (enmienda a D-140), sin tocar la invariante `disponible ≥
+reservado`:** una línea de catálogo pendiente sin stock sigue entrando **solo como
+  ENTREGADO** (igual que D-141); el CLI, aparte, suma el déficit de todas las líneas
+  pendientes de ese producto en el lote y crea **una** `RoofingProductionService.create`
+  a stock por el total, sin ligarla a ninguna reserva — un adelanto de producción para la
+  próxima carga, no un desbloqueo de esta. `data.catalogAvailableQty` (nuevo, en el
+  adaptador) es lo que hace que el CLI no tenga que releer la disponibilidad.
+- **`import_batch_id`** (migración aditiva `20260907190000_fase7finalb_import_batch_id_ventas`,
+  nullable en `fiscal_documents`, `sales_orders`, `reservations`, `production_orders`,
+  `customers` y `products`): el CLI lo estampa **después** de que el servicio ya creó cada
+  fila (documentos/pedidos/reservas/OP en cascada desde el documento — D-141 es 1:1, así que
+  todo lo que cuelga de un documento del lote es del lote; clientes y SKUs con un snapshot de
+  antes de confirmar, porque a esos si puede haberlos creado una corrida anterior).
+- **`purge-imported-sales.ts --batch=<uuid>`**: la misma herramienta de siempre, acotada a un
+  lote. Dos guardas nuevas sobre las siete que ya tenía: una OP del lote (en cola **o a
+  stock**) fuera de DRAFT/CANCELLED-sin-montar aborta todo; un cliente o SKU del lote que algo
+  **de afuera** ya haya usado se conserva y se reporta, nunca se borra a ciegas.
+
+### Un problema de herramientas que no era del dominio: `tsx`/esbuild y la metadata de Nest
+
+El CLI reusa `ImportsService` completo a través de un contexto de Nest standalone
+(`NestFactory.createApplicationContext`), y la primera corrida con `tsx` fallaba **en
+silencio** — `process.exit(1)` sin una sola línea de error, ni con `.catch()`, ni con
+`process.on('uncaughtException', ...)`. Con el logger de Nest encendido apareció la causa
+real: `UndefinedDependencyException` en `AuthService` — esbuild (el transpilador de `tsx`) no
+emite `emitDecoratorMetadata` de forma confiable en un grafo de dependencias con referencias
+circulares de tipos, y Nest no puede resolver el primer argumento del constructor. `nest
+build` no sirve (`tsconfig.build.json` excluye `prisma` a propósito). Solución: un
+`tsconfig.cli.json` propio que compila el CLI con `tsc` real — el mismo compilador que ya usa
+`typecheck` — a `dist-cli/`, y el wrapper (`scripts/import-ventas.mjs`) lo compila antes de
+cada corrida y ejecuta el JS resultante con `node` liso. Quedó documentado en el propio
+`tsconfig.cli.json` para que nadie vuelva a intentar `tsx` acá y pierda una hora en el mismo
+silencio.
+
+**Segundo hallazgo de herramientas, más chico:** `spawnSync('node', args, {shell: true})` en
+Windows le comía el espacio de "Ventas Detalladas.xlsx" (`cmd.exe` repartía la ruta en dos
+argumentos). `node` es un binario real, no un shim `.cmd`; sin `shell: true` el array de
+argumentos llega intacto. Y las rutas de `--file`/`--decisions`/`--out` se resuelven en el
+wrapper contra el directorio **desde el que se invocó** `pnpm import:ventas`, no contra
+`apps/api` (el `cwd` del proceso hijo) — si no, una ruta relativa apuntaba al lugar
+equivocado y el archivo "no existía".
+
+### Lo que no se hizo, a propósito
+
+- **No se corrió `--execute`.** El dry-run local con el Excel real es la verificación de esta
+  sesión; `--execute` lo corre el dueño después de completar el JSON de decisiones.
+- **No se creó ningún SKU en el catálogo.** El diccionario de 40 faltantes queda en el JSON
+  prellenado, sin tocar `dev` más allá de la migración (aditiva) y los lotes `PARSED` que el
+  dry-run dejó (inertes: no tocan ninguna tabla de negocio, igual que dejaría la
+  previsualización web sin confirmar).
+- No se tocó `SalesHistoryImportAdapter.createGroup` ni ninguna de las siete adaptadores de
+  `ImportsModule`: el estampado de `import_batch_id` es enteramente del CLI, por fuera de la
+  transacción de confirmación (una actualización de metadato sobre lo que el servicio acaba
+  de crear, nunca una decisión de negocio).
+
+### Dos ajustes de la revisión del dueño, antes de correr nada de verdad
+
+**`--branch production` con `--confirm-production` (pedido explícito del dueño).** La primera
+versión del wrapper rechazaba `production` de plano. El dueño pidió en cambio que `production`
+sea una rama válida pero que `--execute` contra ella exija además `--confirm-production` (el
+dry-run no, porque solo sube y valida). Aplicado a `import-ventas.mjs` y, para `--batch`, a
+`prod-purge-imported-sales.mjs` — la purga general (sin `--batch`) queda como estaba, sin
+pedir el flag nuevo. Verificado que las tres combinaciones (sin flag aborta, con flag pasa el
+gate, `--batch` sin flag aborta) hacen lo que dicen.
+
+**Un SKU que no se puede `"crear"` ya no tira abajo el lote entero.** El plan del dueño era
+completar con espesor/color solo los SKUs de coberturas que estén en `pendientes[]`, y dejar
+el resto con los datos mínimos del archivo. Eso rompía contra el diseño original: la primera
+vez que `catalog.create` fallara (falta de campos estructurados, lo esperable en Metallic
+Roofing/Drywall) abortaba **todo** el `--execute` antes de tocar un solo documento, sin
+importar cuántos otros SKUs sí se hubieran resuelto bien. Corregido para que un SKU fallido
+solo deje sin resolver las filas que lo usan (conservan el error original de "no existe el
+producto", que ya hace que `confirmGroups` salte ese documento) — el resto del lote sigue su
+curso, igual que cualquier otro documento con un error de validación. El resumen final ahora
+lista los SKUs que fallaron para que quede claro cuáles documentos se excluyeron y por qué.
+
+### Verificación
+
+`pnpm turbo lint typecheck test` verde (286/286 unitarios, +20 nuevos en
+`sales-history.adapter.spec.ts`), `pnpm format:check` y `pnpm exec eslint e2e` verdes.
+`nest build` (compilación real de `src/`) verde; `prisma generate` tuvo un `EPERM` de Windows
+intermitente (`query_engine-windows.dll.node` bloqueado por otro proceso del sistema, no
+relacionado con este cambio — ver "Notas operativas"), sin volver a fallar tras confirmar que
+`tsc --noEmit` y `nest build` ya pasaban limpios por separado. Migración aplicada a Neon
+`dev`.
+
+Dry-run contra `Ventas Detalladas.xlsx` (real, 141 filas / 71 documentos: 119 Factura, 20
+Boleta, 2 líneas de 1 Nota de Crédito): 71 documentos leídos, 1 excluido por ser nota de
+crédito (con el motivo), 40 SKUs faltantes detectados y volcados al JSON prellenado, **0
+errores de fecha, ninguna unidad sin mapear**. El resto de los documentos (68) quedan
+`INVALID` únicamente por SKU faltante — el estado esperado hasta que el dueño complete el
+diccionario; no es una falla de la herramienta, es exactamente lo que el dry-run existe para
+mostrar antes de tocar nada.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
@@ -1975,6 +2103,31 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
 
 ## Notas operativas
 
+- **Sesión 7-final-C.** `pnpm db:migrate` (`prisma migrate dev`) volvió a pedir un `migrate
+reset` contra `dev` ("la migración X fue modificada después de aplicarse", tres migraciones
+  de sesiones anteriores) — el mismo síntoma que D-053 ya había resuelto una vez, de vuelta.
+  **No se investigó la causa ni se resetea nada**: la migración de esta sesión se escribió a
+  mano (mismo formato que las demás, carpeta con timestamp) y se aplicó con `prisma migrate
+deploy` (que no hace el diff contra un shadow DB y no dispara el aviso). Si esto se repite,
+  vale la pena mirarlo con más calma antes de la próxima migración — por ahora, `migrate
+deploy` es la vía de escape que no arriesga los datos de `dev`.
+- **Sesión 7-final-C.** Un script standalone que reusa un servicio de Nest completo
+  (`NestFactory.createApplicationContext`, no un endpoint HTTP) **no se puede correr con
+  `tsx`**: esbuild no emite `emitDecoratorMetadata` de forma confiable en un grafo de
+  dependencias con tipos circulares (síntoma: `UndefinedDependencyException` al resolver
+  `AuthService`, y **sin ningún error visible** — el proceso termina con `process.exit(1)` en
+  silencio incluso con `.catch()` y `process.on('uncaughtException', ...)` puestos, porque
+  Nest lo logea con su propio logger interno y `{logger: false}` lo apaga entero). `nest
+build` tampoco sirve si el script vive en `prisma/` (`tsconfig.build.json` lo excluye a
+  propósito). La solución fue un `tsconfig.cli.json` que compila con `tsc` real a `dist-cli/`
+  y correr el `.js` con `node` liso — ver `apps/api/tsconfig.cli.json` y
+  `scripts/import-ventas.mjs`. Cualquier script futuro que necesite reusar un `Service` de
+  Nest fuera de un request HTTP debería copiar este patrón, no `tsx`.
+- **Sesión 7-final-C.** `prisma generate` puede fallar con `EPERM: ... query_engine-windows.dll.node`
+  si otro proceso de Node (de esta sesión o de otra) todavía tiene el binario abierto — no es
+  un defecto del código, es un lock de Windows. Si pasa, confirmar con `tsc --noEmit` y `nest
+build` por separado (no dependen del binario recién generado si el cliente ya estaba
+  generado de una corrida anterior) antes de asumir que algo se rompió.
 - `gcloud` en Git Bash falla ("Python was not found"); funciona vía `cmd /c gcloud ...` o desde PowerShell/cmd. `scripts/lib.mjs#run` ya lo resuelve.
 - La rama por defecto de Neon se llama `production` (no `main`). Ver D-016.
 - Prisma bloquea `migrate reset` cuando lo invoca un agente. El reset de pruebas es `apps/api/prisma/reset-test-db.ts` (D-018).

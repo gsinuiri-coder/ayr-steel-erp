@@ -34,7 +34,8 @@
     "db:reset-dev": "node scripts/db-reset-dev.mjs",
     "env:demo": "node scripts/env-demo.mjs",
     "dev:demo": "node scripts/dev-demo.mjs",
-    "smoke:prod": "node scripts/smoke-prod.mjs"
+    "smoke:prod": "node scripts/smoke-prod.mjs",
+    "import:ventas": "node scripts/import-ventas.mjs"
   },
   "devDependencies": {
     "@ayr/eslint-config": "workspace:*",

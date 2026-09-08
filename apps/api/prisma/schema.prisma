@@ -543,44 +543,44 @@ model Finish {
 /// Catálogo de productos por línea (RF-50). El SKU es único dentro de su línea,
 /// no globalmente (dos líneas pueden reusar el mismo código de SKU).
 model Product {
-  id             String        @id @default(uuid()) @db.Uuid
-  businessLineId String        @map("business_line_id") @db.Uuid
-  businessLine   BusinessLine  @relation(fields: [businessLineId], references: [id])
-  sku            String        @db.VarChar(40)
-  name           String        @db.VarChar(160)
-  unit           String        @db.VarChar(20)
+  id             String              @id @default(uuid()) @db.Uuid
+  businessLineId String              @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine        @relation(fields: [businessLineId], references: [id])
+  sku            String              @db.VarChar(40)
+  name           String              @db.VarChar(160)
+  unit           String              @db.VarChar(20)
   source         ProductSource
   /// D-068: precio de lista de venta, **sin IGV y en soles** (D-064). Único por producto
   /// en v1; las listas por cliente o por volumen quedan diferidas y entran, si hacen
   /// falta, como una tabla aparte que sobreescriba este valor.
-  listPricePen   Decimal?      @map("list_price_pen") @db.Decimal(18, 4)
+  listPricePen   Decimal?            @map("list_price_pen") @db.Decimal(18, 4)
   /// D-085: color del producto. Solo lo llevan las coberturas prepintadas; el resto del
   /// catálogo va en null. El SKU lo refleja para leerlo a simple vista (espíritu de D-037),
   /// pero **todo filtrado y todo emparejamiento con la bobina es por este id**, nunca
   /// parseando el SKU.
-  colorId        String?       @map("color_id") @db.Uuid
-  color          Color?        @relation(fields: [colorId], references: [id])
+  colorId        String?             @map("color_id") @db.Uuid
+  color          Color?              @relation(fields: [colorId], references: [id])
   /// D-122: acabado del SKU, y con él su factor de densidad (RF-25). Obligatorio en
   /// Metallic Roofing —es lo que convierte metros lineales en kilos—, null en el resto.
   ///
   /// Hasta D-122 la densidad salía de `product_boms.finish_id`, y eso obligaba a una
   /// cobertura a tener receta para poder cotizarse. Acá es del producto, que es de quien
   /// siempre fue: rolar no cambia el acabado.
-  finishId       String?       @map("finish_id") @db.Uuid
-  finish         Finish?       @relation(fields: [finishId], references: [id])
+  finishId       String?             @map("finish_id") @db.Uuid
+  finish         Finish?             @relation(fields: [finishId], references: [id])
   /// D-118 (Fase 7e, B): espesor del SKU. Obligatorio en Metallic Roofing —es también el
   /// espesor del producto terminado (rolar no cambia el espesor)—, no aplica al resto.
-  thicknessMm    Decimal?      @map("thickness_mm") @db.Decimal(6, 2)
+  thicknessMm    Decimal?            @map("thickness_mm") @db.Decimal(6, 2)
   /// D-118: ancho del SKU. Obligatorio en Metallic Roofing (nominal, para cotizar sin
   /// bobina montada: la producción real usa el ancho del rollo que se monte, D-086, sin
   /// filtro por ancho) y en Drywall (ancho de la **pieza terminada**, distinto del ancho
   /// del fleje de entrada que ya vive en `product_boms.input_width_mm`).
-  widthMm        Decimal?      @map("width_mm") @db.Decimal(8, 2)
+  widthMm        Decimal?            @map("width_mm") @db.Decimal(8, 2)
   /// D-118/D-122: largo de la **pieza terminada**. En Drywall es el largo del perfil; en
   /// Metallic Roofing es el largo fijo de una plancha de catálogo (`PLANCHA`) y queda null
   /// en una cobertura `A_MEDIDA`, donde el largo lo trae cada línea del pedido (D-083).
   /// Vivía en `product_boms.piece_length_mm` hasta D-122.
-  lengthMm       Decimal?      @map("length_mm") @db.Decimal(8, 2)
+  lengthMm       Decimal?            @map("length_mm") @db.Decimal(8, 2)
   /// D-118: peso declarado de la pieza terminada de Drywall (no calculado): la sección de
   /// un perfil no es un prisma simple, así que una fórmula por geometría mentiría.
   ///
@@ -588,14 +588,19 @@ model Product {
   /// aparte en `product_boms.kg_per_piece`. Eran dos números para la misma cantidad
   /// física: rolar un fleje en un perfil no le saca material, y el despunte se reporta
   /// aparte.
-  pieceWeightKg  Decimal?      @map("piece_weight_kg") @db.Decimal(12, 3)
+  pieceWeightKg  Decimal?            @map("piece_weight_kg") @db.Decimal(12, 3)
   /// D-127: subtipo de cobertura. Obligatorio en Metallic Roofing, null en el resto. Es lo
   /// que decide la rama de la confirmación: `A_MEDIDA` reserva kilos de bobina y va a la
   /// cola de producción; `PLANCHA` exige stock de producto terminado.
   roofingKind    RoofingProductKind? @map("roofing_kind")
-  isActive       Boolean       @default(true) @map("is_active")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  isActive       Boolean             @default(true) @map("is_active")
+  /// D-142: lote de importación de ventas (CLI) que creó este SKU a partir de una decisión
+  /// del dueño (`decisiones.skus.crear`). Null en todo el resto del catálogo. Referencia
+  /// suelta, sin FK, mismo criterio que `refId` en el kardex: sirve para que la purga de un
+  /// lote sepa qué borrar y qué conservar por estar referenciado fuera de él.
+  importBatchId  String?             @map("import_batch_id") @db.Uuid
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   purchaseItems    PurchaseItem[]
   /// Receta de fabricación (D-059). Solo la tienen los productos fabricados.
@@ -609,37 +614,43 @@ model Product {
   @@unique([businessLineId, sku])
   @@index([businessLineId])
   @@index([colorId])
+  @@index([importBatchId])
   @@map("products")
 }
 
 /// Clientes (RF-80, RF-82). Baja lógica: `isActive`, nunca `DELETE`.
 model Customer {
-  id         String   @id @default(uuid()) @db.Uuid
-  docType    DocType  @map("doc_type")
-  docNumber  String   @map("doc_number") @db.VarChar(20)
-  name       String   @db.VarChar(160)
-  address    String?  @db.VarChar(240)
-  email      String?  @db.VarChar(160)
-  phone      String?  @db.VarChar(30)
-  creditDays Int      @default(0) @map("credit_days")
+  id            String   @id @default(uuid()) @db.Uuid
+  docType       DocType  @map("doc_type")
+  docNumber     String   @map("doc_number") @db.VarChar(20)
+  name          String   @db.VarChar(160)
+  address       String?  @db.VarChar(240)
+  email         String?  @db.VarChar(160)
+  phone         String?  @db.VarChar(30)
+  creditDays    Int      @default(0) @map("credit_days")
   /// D-137: lo creó una importación con el padrón de SUNAT caído, así que su nombre es el
   /// que traía el archivo y le falta todo lo demás. Es un flag y no una nota porque la
   /// pregunta "cuáles hay que completar" se hace semanas después, cuando ya nadie recuerda
   /// qué import los creó.
-  needsReview Boolean  @default(false) @map("needs_review")
+  needsReview   Boolean  @default(false) @map("needs_review")
   /// D-077: cliente sembrado por el sistema ("PÚBLICO EN GENERAL"). No se edita ni se
   /// da de baja desde ninguna ruta; existe para que la boleta sin cliente identificado
   /// sea una venta normal y no un caso especial en todo el ciclo.
-  isSystem   Boolean  @default(false) @map("is_system")
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  isSystem      Boolean  @default(false) @map("is_system")
+  isActive      Boolean  @default(true) @map("is_active")
+  /// D-142: lote de importación de ventas (CLI) que auto-creó este cliente. Null en el
+  /// resto (incluido un cliente que ya existía y esta importación solo referenció).
+  /// Referencia suelta, sin FK — ver `products.importBatchId`.
+  importBatchId String?  @map("import_batch_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   quotations      Quotation[]
   salesOrders     SalesOrder[]
   fiscalDocuments FiscalDocument[]
 
   @@unique([docType, docNumber])
+  @@index([importBatchId])
   @@map("customers")
 }
 
@@ -884,29 +895,29 @@ model Purchase {
 /// sin IGV). En FINISHED_GOOD apunta a un `productId` del catálogo. En SERVICE y
 /// EXPENSE es solo descripción y montos.
 model PurchaseItem {
-  id          String   @id @default(uuid()) @db.Uuid
-  purchaseId  String   @map("purchase_id") @db.Uuid
-  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  lineNumber  Int      @map("line_number")
-  productId   String?  @map("product_id") @db.Uuid
-  product     Product? @relation(fields: [productId], references: [id])
-  description String   @db.VarChar(240)
-  qty         Decimal  @db.Decimal(16, 3)
-  unit        String   @db.VarChar(20)
+  id          String      @id @default(uuid()) @db.Uuid
+  purchaseId  String      @map("purchase_id") @db.Uuid
+  purchase    Purchase    @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  lineNumber  Int         @map("line_number")
+  productId   String?     @map("product_id") @db.Uuid
+  product     Product?    @relation(fields: [productId], references: [id])
+  description String      @db.VarChar(240)
+  qty         Decimal     @db.Decimal(16, 3)
+  unit        String      @db.VarChar(20)
   /// Precio unitario SIN IGV (D-038).
-  unitPrice   Decimal  @map("unit_price") @db.Decimal(18, 4)
-  subtotal    Decimal  @db.Decimal(18, 4)
-  igv         Decimal  @db.Decimal(18, 4)
-  total       Decimal  @db.Decimal(18, 4)
-  finishId    String?  @map("finish_id") @db.Uuid
-  finish      Finish?  @relation(fields: [finishId], references: [id])
+  unitPrice   Decimal     @map("unit_price") @db.Decimal(18, 4)
+  subtotal    Decimal     @db.Decimal(18, 4)
+  igv         Decimal     @db.Decimal(18, 4)
+  total       Decimal     @db.Decimal(18, 4)
+  finishId    String?     @map("finish_id") @db.Uuid
+  finish      Finish?     @relation(fields: [finishId], references: [id])
   /// D-085: color de la bobina que esta línea da de alta. Solo en compras `COIL` de
   /// material prepintado; el XML de factura no lo trae, así que esas bobinas nacen sin
   /// color y se lo pone después la edición de la bobina (RF-20).
-  colorId     String?  @map("color_id") @db.Uuid
-  color       Color?   @relation(fields: [colorId], references: [id])
-  widthMm     Decimal? @map("width_mm") @db.Decimal(8, 2)
-  thicknessMm Decimal? @map("thickness_mm") @db.Decimal(6, 2)
+  colorId     String?     @map("color_id") @db.Uuid
+  color       Color?      @relation(fields: [colorId], references: [id])
+  widthMm     Decimal?    @map("width_mm") @db.Decimal(8, 2)
+  thicknessMm Decimal?    @map("thickness_mm") @db.Decimal(6, 2)
   /// D-116 (Fase 7e): estado con el que nace la bobina que esta línea da de alta. `null` en
   /// líneas que no son `COIL`; `receive()` usa `CLOSED` si la línea `COIL` no lo trae (el
   /// dueño quiere que una bobina nueva nazca cerrada por defecto, editable al registrar).
@@ -1085,32 +1096,32 @@ model CuttingOrder {
 /// `[{ widthMm, stripsCount }]` (mismo shape que el partido interno, RF-15); comparar
 /// ambos es lo que la vista usa para mostrar la diferencia plan vs. real.
 model CuttingOrderCoil {
-  id                 String                 @id @default(uuid()) @db.Uuid
-  cuttingOrderId     String                 @map("cutting_order_id") @db.Uuid
-  cuttingOrder       CuttingOrder           @relation(fields: [cuttingOrderId], references: [id], onDelete: Cascade)
-  coilId             String                 @map("coil_id") @db.Uuid
-  coil               Coil                   @relation("CuttingOrderCoilSource", fields: [coilId], references: [id])
-  widthPlanMm        Json                   @map("width_plan_mm")
-  expectedKerfLossMm Decimal                @map("expected_kerf_loss_mm") @db.Decimal(8, 2)
-  status             CuttingOrderCoilStatus @default(SENT)
-  receivedAt         DateTime?              @map("received_at") @db.Timestamptz(3)
+  id                    String                 @id @default(uuid()) @db.Uuid
+  cuttingOrderId        String                 @map("cutting_order_id") @db.Uuid
+  cuttingOrder          CuttingOrder           @relation(fields: [cuttingOrderId], references: [id], onDelete: Cascade)
+  coilId                String                 @map("coil_id") @db.Uuid
+  coil                  Coil                   @relation("CuttingOrderCoilSource", fields: [coilId], references: [id])
+  widthPlanMm           Json                   @map("width_plan_mm")
+  expectedKerfLossMm    Decimal                @map("expected_kerf_loss_mm") @db.Decimal(8, 2)
+  status                CuttingOrderCoilStatus @default(SENT)
+  receivedAt            DateTime?              @map("received_at") @db.Timestamptz(3)
   /// D-124: día de negocio de la **recepción** (Lima). Null mientras no se recibe; la
   /// reversa de recepción lo limpia igual que a `receivedAt`.
-  receivedOperationDate DateTime?           @map("received_operation_date") @db.Date
-  receivedWidthsMm   Json?                  @map("received_widths_mm")
+  receivedOperationDate DateTime?              @map("received_operation_date") @db.Date
+  receivedWidthsMm      Json?                  @map("received_widths_mm")
   /// Kilos realmente recibidos (input del operario, RF-41); base del prorrateo de `planCoilSplit`.
-  receivedWeightKg   Decimal?               @map("received_weight_kg") @db.Decimal(12, 3)
-  receivedKerfLossMm Decimal?               @map("received_kerf_loss_mm") @db.Decimal(8, 2)
+  receivedWeightKg      Decimal?               @map("received_weight_kg") @db.Decimal(12, 3)
+  receivedKerfLossMm    Decimal?               @map("received_kerf_loss_mm") @db.Decimal(8, 2)
   /// Kilos que se llevó la merma de corte real; `receivedWeightKg` − Σ pesos de flejes.
-  receivedKerfLossKg Decimal?               @map("received_kerf_loss_kg") @db.Decimal(12, 3)
-  cancelledAt        DateTime?              @map("cancelled_at") @db.Timestamptz(3)
+  receivedKerfLossKg    Decimal?               @map("received_kerf_loss_kg") @db.Decimal(12, 3)
+  cancelledAt           DateTime?              @map("cancelled_at") @db.Timestamptz(3)
   /// Última reversa de recepción (Fase 3b). La fila vuelve a `SENT` y estos campos quedan
   /// como rastro de que ya se recibió y se corrigió una vez; `receive()` los limpia si la
   /// fila se vuelve a recibir después.
-  revertedById       String?                @map("reverted_by_id") @db.Uuid
-  revertedAt         DateTime?              @map("reverted_at") @db.Timestamptz(3)
-  createdById        String                 @map("created_by_id") @db.Uuid
-  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  revertedById          String?                @map("reverted_by_id") @db.Uuid
+  revertedAt            DateTime?              @map("reverted_at") @db.Timestamptz(3)
+  createdById           String                 @map("created_by_id") @db.Uuid
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
 
   strips Coil[] @relation("CuttingOrderCoilStrips")
 
@@ -1168,57 +1179,61 @@ model ProductBom {
 /// Los campos de costeo (D-056) se calculan al **cerrar**; mientras la OP está viva son
 /// `null` porque el costo real solo se conoce cuando ya no entra ni sale material.
 model ProductionOrder {
-  id              String                @id @default(uuid()) @db.Uuid
-  seq             Int                   @unique @default(autoincrement())
-  businessLineId  String                @map("business_line_id") @db.Uuid
-  businessLine    BusinessLine          @relation(fields: [businessLineId], references: [id])
-  productId       String                @map("product_id") @db.Uuid
-  product         Product               @relation(fields: [productId], references: [id])
+  id                  String                @id @default(uuid()) @db.Uuid
+  seq                 Int                   @unique @default(autoincrement())
+  businessLineId      String                @map("business_line_id") @db.Uuid
+  businessLine        BusinessLine          @relation(fields: [businessLineId], references: [id])
+  productId           String                @map("product_id") @db.Uuid
+  product             Product               @relation(fields: [productId], references: [id])
   /// D-122: null en una OP de **coberturas**, que desde entonces nace del pedido y del
   /// producto y no de una receta. Las de drywall siguen naciendo de la suya, que es lo que
   /// dice qué fleje consumen.
-  bomId           String?               @map("bom_id") @db.Uuid
-  bom             ProductBom?           @relation(fields: [bomId], references: [id])
+  bomId               String?               @map("bom_id") @db.Uuid
+  bom                 ProductBom?           @relation(fields: [bomId], references: [id])
   /// D-087: qué línea de transformación es. `DRYWALL` consume flejes y reporta piezas;
   /// `ROOFING` consume bobina y reporta largos. El correlativo, los estados, el ledger de
   /// reservas y la auditoría son los mismos para las dos.
-  kind            ProductionOrderKind   @default(DRYWALL)
-  status          ProductionOrderStatus @default(DRAFT)
+  kind                ProductionOrderKind   @default(DRYWALL)
+  status              ProductionOrderStatus @default(DRAFT)
   /// Piezas que la corrida se propone producir. Referencia para planta; no bloquea nada.
-  targetPieces    Int?                  @map("target_pieces")
+  targetPieces        Int?                  @map("target_pieces")
   /// D-054: reserva que esta OP consume cuando nace de un pedido. La columna nació en
   /// Fase 4 sin FK (el ledger no existía todavía); Fase 5a la conecta al ledger y le
   /// agrega la relación. Sigue nullable: una OP de drywall sin pedido detrás no reserva
   /// nada (D-048).
-  reservationId   String?               @map("reservation_id") @db.Uuid
-  reservation     Reservation?          @relation(fields: [reservationId], references: [id])
-  notes           String?               @db.VarChar(500)
+  reservationId       String?               @map("reservation_id") @db.Uuid
+  reservation         Reservation?          @relation(fields: [reservationId], references: [id])
+  notes               String?               @db.VarChar(500)
   /// Cierre (D-057 en drywall, D-089 en coberturas): kilos que salieron como merma de
   /// proceso. En drywall es todo lo asignado que no llegó a ser pieza buena; en coberturas
   /// es el despunte, `consumedKg − Σ kilos teóricos reportados`.
-  scrapKg         Decimal?              @map("scrap_kg") @db.Decimal(12, 3)
+  scrapKg             Decimal?              @map("scrap_kg") @db.Decimal(12, 3)
   /// **Solo ROOFING** (D-089): kilos que planta declara que la bobina consumió de verdad.
   /// Por defecto, la suma de los kilos teóricos reportados (merma cero). Lo que quedó
   /// asignado y no consumido se libera sin merma: la bobina sigue en el almacén, a
   /// diferencia del fleje de drywall, que entra entero a la perfiladora.
-  consumedKg      Decimal?              @map("consumed_kg") @db.Decimal(12, 3)
+  consumedKg          Decimal?              @map("consumed_kg") @db.Decimal(12, 3)
   /// Costeo v1 en soles (D-056, D-042). `overheadCostPen` es el hook de D-035: en v1
   /// siempre 0, porque no hay mano de obra ni overhead estándar todavía.
-  materialCostPen Decimal?              @map("material_cost_pen") @db.Decimal(18, 4)
-  overheadCostPen Decimal?              @map("overhead_cost_pen") @db.Decimal(18, 4)
-  totalCostPen    Decimal?              @map("total_cost_pen") @db.Decimal(18, 4)
-  unitCostPen     Decimal?              @map("unit_cost_pen") @db.Decimal(18, 4)
-  createdById     String                @map("created_by_id") @db.Uuid
+  materialCostPen     Decimal?              @map("material_cost_pen") @db.Decimal(18, 4)
+  overheadCostPen     Decimal?              @map("overhead_cost_pen") @db.Decimal(18, 4)
+  totalCostPen        Decimal?              @map("total_cost_pen") @db.Decimal(18, 4)
+  unitCostPen         Decimal?              @map("unit_cost_pen") @db.Decimal(18, 4)
+  createdById         String                @map("created_by_id") @db.Uuid
   /// D-124: día de negocio en que la OP **arranca** (Lima).
-  operationDate   DateTime              @map("operation_date") @db.Date
+  operationDate       DateTime              @map("operation_date") @db.Date
   /// D-124: día de negocio del **cierre**. Null mientras la OP no se cierra.
-  closedOperationDate DateTime?         @map("closed_operation_date") @db.Date
-  closedById      String?               @map("closed_by_id") @db.Uuid
-  closedAt        DateTime?             @map("closed_at") @db.Timestamptz(3)
-  cancelledById   String?               @map("cancelled_by_id") @db.Uuid
-  cancelledAt     DateTime?             @map("cancelled_at") @db.Timestamptz(3)
-  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  closedOperationDate DateTime?             @map("closed_operation_date") @db.Date
+  closedById          String?               @map("closed_by_id") @db.Uuid
+  closedAt            DateTime?             @map("closed_at") @db.Timestamptz(3)
+  cancelledById       String?               @map("cancelled_by_id") @db.Uuid
+  cancelledAt         DateTime?             @map("cancelled_at") @db.Timestamptz(3)
+  /// D-142: lote de importación de ventas (CLI) que creó esta OP — en cola (ligada a una
+  /// reserva a medida) o a stock (déficit consolidado de catálogo). Null en el resto.
+  /// Referencia suelta, sin FK.
+  importBatchId       String?               @map("import_batch_id") @db.Uuid
+  createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   consumptions ProductionOrderConsumption[]
   reports      ProductionReport[]
@@ -1228,6 +1243,7 @@ model ProductionOrder {
   @@index([businessLineId, status])
   @@index([productId])
   @@index([kind, status])
+  @@index([importBatchId])
   @@map("production_orders")
 }
 
@@ -1323,29 +1339,29 @@ model ProductionReport {
 /// cualquier línea de negocio. La línea de cada ítem sale de `quotation_items.product`, y
 /// `QuotationDto.businessLines` la deriva (distinta, por ítem) solo para mostrarla.
 model Quotation {
-  id             String          @id @default(uuid()) @db.Uuid
-  seq            Int             @unique @default(autoincrement())
-  customerId     String          @map("customer_id") @db.Uuid
-  customer       Customer        @relation(fields: [customerId], references: [id])
-  status         QuotationStatus @default(DRAFT)
-  issueDate      DateTime        @map("issue_date") @db.Date
+  id            String          @id @default(uuid()) @db.Uuid
+  seq           Int             @unique @default(autoincrement())
+  customerId    String          @map("customer_id") @db.Uuid
+  customer      Customer        @relation(fields: [customerId], references: [id])
+  status        QuotationStatus @default(DRAFT)
+  issueDate     DateTime        @map("issue_date") @db.Date
   /// Último día en que la cotización se puede confirmar (D-069). El job diario marca
   /// `EXPIRED` a las que ya pasaron; `confirm()` lo revalida igual, por si el job no corrió.
-  validUntil     DateTime        @map("valid_until") @db.Date
-  subtotalPen    Decimal         @map("subtotal_pen") @db.Decimal(18, 4)
-  igvPen         Decimal         @map("igv_pen") @db.Decimal(18, 4)
-  totalPen       Decimal         @map("total_pen") @db.Decimal(18, 4)
-  notes          String?         @db.VarChar(500)
+  validUntil    DateTime        @map("valid_until") @db.Date
+  subtotalPen   Decimal         @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen        Decimal         @map("igv_pen") @db.Decimal(18, 4)
+  totalPen      Decimal         @map("total_pen") @db.Decimal(18, 4)
+  notes         String?         @db.VarChar(500)
   /// Key en R2 del PDF generado al emitir (D-068). Se regenera si la cotización se reemite.
-  pdfKey         String?         @map("pdf_key") @db.VarChar(300)
-  createdById    String          @map("created_by_id") @db.Uuid
-  emittedAt      DateTime?       @map("emitted_at") @db.Timestamptz(3)
-  confirmedAt    DateTime?       @map("confirmed_at") @db.Timestamptz(3)
-  expiredAt      DateTime?       @map("expired_at") @db.Timestamptz(3)
-  cancelledAt    DateTime?       @map("cancelled_at") @db.Timestamptz(3)
-  cancelledById  String?         @map("cancelled_by_id") @db.Uuid
-  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  pdfKey        String?         @map("pdf_key") @db.VarChar(300)
+  createdById   String          @map("created_by_id") @db.Uuid
+  emittedAt     DateTime?       @map("emitted_at") @db.Timestamptz(3)
+  confirmedAt   DateTime?       @map("confirmed_at") @db.Timestamptz(3)
+  expiredAt     DateTime?       @map("expired_at") @db.Timestamptz(3)
+  cancelledAt   DateTime?       @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById String?         @map("cancelled_by_id") @db.Uuid
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   items       QuotationItem[]
   /// Pedidos nacidos de esta cotización. Es una lista y no uno solo porque anular un
@@ -1440,6 +1456,9 @@ model SalesOrder {
   priorityAt           DateTime?        @map("priority_at") @db.Timestamptz(3)
   priorityById         String?          @map("priority_by_id") @db.Uuid
   priorityReason       String?          @map("priority_reason") @db.VarChar(500)
+  /// D-142: lote de importación de ventas (CLI) que creó este pedido (cáscara o vivo).
+  /// Null en todo pedido que no venga de ese CLI. Referencia suelta, sin FK.
+  importBatchId        String?          @map("import_batch_id") @db.Uuid
   createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1452,6 +1471,7 @@ model SalesOrder {
 
   @@index([customerId, status])
   @@index([quotationId])
+  @@index([importBatchId])
   @@map("sales_orders")
 }
 
@@ -1560,6 +1580,9 @@ model Reservation {
   consumedAt       DateTime?         @map("consumed_at") @db.Timestamptz(3)
   releasedById     String?           @map("released_by_id") @db.Uuid
   releasedAt       DateTime?         @map("released_at") @db.Timestamptz(3)
+  /// D-142: lote de importación de ventas (CLI) que creó esta reserva. Null en el resto.
+  /// Referencia suelta, sin FK.
+  importBatchId    String?           @map("import_batch_id") @db.Uuid
 
   productionOrders ProductionOrder[]
 
@@ -1572,6 +1595,7 @@ model Reservation {
   @@index([itemType, itemId, status])
   @@index([salesOrderId])
   @@index([salesOrderItemId, status])
+  @@index([importBatchId])
   @@map("reservations")
 }
 
@@ -1750,6 +1774,11 @@ model FiscalDocument {
   annulledAt      DateTime? @map("annulled_at") @db.Timestamptz(3)
   annulledById    String?   @map("annulled_by_id") @db.Uuid
   annulReason     String?   @map("annul_reason") @db.VarChar(240)
+  /// D-142: lote de importación de ventas (CLI) que creó este documento. Ya se podía
+  /// derivar de `import_rows.created_entity_id`, pero repetirlo acá es lo que deja a la
+  /// purga por lote consultar `fiscal_documents` directo, sin depender de que la fila del
+  /// lote siga existiendo. Null en un documento que no vino de ese CLI.
+  importBatchId   String?   @map("import_batch_id") @db.Uuid
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1768,6 +1797,7 @@ model FiscalDocument {
   /// RF-71/RF-72: buscar por número al importar, incluidas las versiones ya archivadas
   /// (el índice único parcial solo cubre las vigentes).
   @@index([number])
+  @@index([importBatchId])
   @@map("fiscal_documents")
 }
 

@@ -22,6 +22,7 @@ import {
   salesOrderCode,
   toDecimal,
   toFixedString,
+  Unit,
   type RoofingPieceDto,
 } from '@ayr/shared';
 import type { RequestUser } from '../../auth/auth.types';
@@ -136,6 +137,34 @@ const moneySchema = decimalStringSchema('MONEY', { max: MAX_VALUE.MONEY });
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SERIES_RE = /^[A-Z][A-Z0-9]{3}$/;
 const DEFAULT_UNIT = 'NIU';
+
+/**
+ * D-142: el export real trae la unidad en **nombre largo** ("METRO LINEAL", "KILOGRAMO"),
+ * no en el código UN/EDI que usa el catálogo (`Unit`, `@ayr/shared`). Sin este mapeo, una
+ * línea de METRO LINEAL entraba como unidad literal `"METRO LINEAL"`, distinta de la `MTR`
+ * del producto, y el aviso de descalce (`validatePendingLine`) disparaba en el 100% de las
+ * líneas de coberturas en vez de solo en las que de verdad difieren.
+ *
+ * Solo cubre las cuatro formas que trae el export real (D-142); una unidad que no está acá
+ * se deja tal cual la trajo el archivo, mayúscula y recortada — sigue sin bloquear nada, es
+ * un dato más para que el usuario vea el descalce y decida.
+ */
+const UNIT_ALIASES: Record<string, string> = {
+  'METRO LINEAL': Unit.MTR,
+  METRO: Unit.MTR,
+  KILOGRAMO: Unit.KGM,
+  KILOGRAMOS: Unit.KGM,
+  UNIDAD: Unit.NIU,
+  UNIDADES: Unit.NIU,
+  TONELADA: Unit.TNE,
+  TONELADAS: Unit.TNE,
+};
+
+/** Normaliza la unidad del export al código que usa el catálogo (D-142). */
+export function normalizeUnit(raw: string): string {
+  const text = raw.toUpperCase().trim();
+  return (UNIT_ALIASES[text] ?? text).slice(0, 20);
+}
 /** Tolerancia de los cuadres por línea y por documento, en soles. */
 const TOTAL_TOLERANCE_PEN = '0.10';
 /** Cuánto vive una consulta de padrón en la caché del proceso. */
@@ -296,7 +325,8 @@ export class SalesHistoryImportAdapter implements GroupedImportAdapter {
     data.productName = productName;
     if (!productName) errors.push('El nombre del producto es obligatorio');
 
-    const unit = getField(raw, COLUMNS.unit).toUpperCase().slice(0, 20) || DEFAULT_UNIT;
+    const unitRaw = getField(raw, COLUMNS.unit);
+    const unit = unitRaw ? normalizeUnit(unitRaw) : DEFAULT_UNIT;
     data.unit = unit;
 
     const qty = parseAmount(raw, COLUMNS.qty, qtySchema, 'La cantidad', errors);
@@ -341,6 +371,7 @@ export class SalesHistoryImportAdapter implements GroupedImportAdapter {
     data.rawMaterialKg = null;
     data.rawSpecKey = null;
     data.rawAvailableKg = null;
+    data.catalogAvailableQty = null;
     data.piecesText = getField(raw, COLUMNS.piecesText);
     data.pieces = [];
     if (data.sku) {
@@ -420,6 +451,11 @@ export class SalesHistoryImportAdapter implements GroupedImportAdapter {
       // pueda crear para cubrir el faltante — y crear una OP a stock por su cuenta sería
       // inventarle al dueño una corrida que él no pidió.
       const available = await this.productAvailableQty(product.id);
+      // D-142: el disponible de **hoy**, tal cual lo vio esta validación — al CLI le sirve
+      // tanto si la línea entra (para no volver a leerlo) como si no (es la base de la OP a
+      // stock consolidada, que suma el déficit de todos los documentos `pendientes` sin
+      // volver a golpear la base). No decide nada por su cuenta: es un dato, no una reserva.
+      data.catalogAvailableQty = available.toFixed(3);
       if (toDecimal(qty).gt(available)) {
         errors.push(
           `${product.sku} tiene ${available.toFixed(3)} ${product.unit} disponibles y esta línea ` +
@@ -1123,9 +1159,14 @@ export function parseCustomer(
   const match = ruc ?? dni;
   if (!match) return undefined;
   const docNumber = match[1] ?? '';
+  // D-142 (hallazgo con el archivo real): el separador va **antes** del nombre
+  // ("20606364335 - PROYECTOS...") y ahí sí puede traer un punto ("20606364335. ACEROS...").
+  // Al final, en cambio, un punto no es separador — es la propia razón social ("...S.A.C."),
+  // y una clase de recorte simétrica se lo comía: el nombre creado quedaba "...S.A.C" a
+  // secas. Por eso el punto solo se recorta del lado izquierdo.
   const name = value
     .replace(docNumber, '')
-    .replace(/^[\s\-–—:.]+|[\s\-–—:.]+$/g, '')
+    .replace(/^[\s\-–—:.]+|[\s\-–—:]+$/g, '')
     .trim()
     .slice(0, 160);
   return { docType: ruc ? DocType.RUC : DocType.DNI, docNumber, name };
