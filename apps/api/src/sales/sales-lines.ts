@@ -233,14 +233,14 @@ export async function resolveSalesLines(
     //
     // Haber respondido (a) con el subtipo dejó de exigir subítems a todo producto en `MTR`
     // fuera de coberturas — y con eso el mostrador pasó a poder vender material a medida.
-    const sellsByLength = product.unit === Unit.MTR;
+    const byLength = sellsByLength(product);
     const madeToMeasure = isMadeToMeasure(product);
-    if (sellsByLength && item.pieces === undefined) {
+    if (byLength && item.pieces === undefined) {
       throw new BadRequestException(
         `${at}: ${product.sku} se vende por metro lineal: detalla cuántas planchas de cada largo lleva la línea`,
       );
     }
-    if (!sellsByLength && item.pieces !== undefined) {
+    if (!byLength && item.pieces !== undefined) {
       throw new BadRequestException(
         `${at}: ${product.sku} no se vende a medida (se mide en ${product.unit}): quita el detalle de largos`,
       );
@@ -261,7 +261,7 @@ export async function resolveSalesLines(
     // que la excepción existe para evitar, por la puerta de al lado.
     if (
       item.pieces !== undefined &&
-      sellsByLength &&
+      byLength &&
       !piecesMeters(pieces).equals(toDecimal(item.qty))
     ) {
       throw new BadRequestException(
@@ -551,6 +551,28 @@ export const ROOFING_PRODUCT_SELECT = {
  */
 export function isMadeToMeasure(product: { roofingKind: RoofingProductKind | null }): boolean {
   return product.roofingKind === RoofingProductKind.A_MEDIDA;
+}
+
+/**
+ * D-131, la otra mitad: **¿esta línea necesita el detalle de largos?**
+ *
+ * La decide la **unidad** y nada más. No es lo mismo que `isMadeToMeasure`, y confundirlas ya
+ * costó dos defectos: la primera vez, el mostrador pasó a poder vender material a medida; la
+ * segunda, el importador de cotizaciones (D-152) dejó pasar sin marca toda línea en `MTR` que
+ * no fuera `A_MEDIDA` y el archivo entero moría al confirmar.
+ *
+ * Se venden por metro lineal las coberturas a medida **y** cualquier otro producto que el
+ * maestro mida en `MTR`, de la línea de negocio que sea. Se fabrican a medida solo las
+ * primeras. Toda pregunta sobre subítems se responde con esta función; toda pregunta sobre la
+ * rama de la reserva, con `isMadeToMeasure`.
+ *
+ * El parámetro es `string` y no `Unit` porque `products.unit` es una columna de texto —el
+ * código UN/EDI—, no un enum de Postgres: tipar más fino acá obligaría a un `as` en cada
+ * llamador, que es peor que no tenerlo. La red contra la confusión no es el tipo, entonces,
+ * sino el centinela de `sales-lines.spec.ts`.
+ */
+export function sellsByLength(product: { unit: string }): boolean {
+  return product.unit === Unit.MTR;
 }
 
 /**

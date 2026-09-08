@@ -814,6 +814,16 @@ export const ROOFING_KIND_UNIT: Record<RoofingProductKind, string> = {
 
 export const FiscalDocumentOrigin = {
   ISSUED_HERE: 'ISSUED_HERE',
+  /**
+   * D-153: el papel salió de la otra app, mientras dura la migración. El ERP lo **registra**
+   * en el momento —cuenta por cobrar, pedido, nota de crédito— pero no lo emite: serie y
+   * correlativo se tipean, no hay CDR ni XML, y la baja ante SUNAT se hace donde se emitió.
+   *
+   * Es un valor de `origin` y no un campo aparte porque las guardas que impiden mandar algo
+   * al PSE ya preguntan por `origin`: un valor nuevo las hace cubrir el caso nuevo, mientras
+   * que un campo ortogonal las habría dejado dejando pasar un manual a Nubefact.
+   */
+  MANUAL: 'MANUAL',
   IMPORTED: 'IMPORTED',
 } as const;
 export type FiscalDocumentOrigin = (typeof FiscalDocumentOrigin)[keyof typeof FiscalDocumentOrigin];
@@ -823,6 +833,7 @@ export const FISCAL_DOCUMENT_ORIGINS = Object.values(FiscalDocumentOrigin) as [
 ];
 export const FISCAL_DOCUMENT_ORIGIN_LABELS: Record<FiscalDocumentOrigin, string> = {
   ISSUED_HERE: 'Emitido en el ERP',
+  MANUAL: 'Manual (otra app)',
   IMPORTED: 'Importado',
 };
 

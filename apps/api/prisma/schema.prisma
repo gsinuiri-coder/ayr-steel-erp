@@ -387,6 +387,10 @@ enum FiscalDocumentStatus {
 /// se anula contra el PSE desde acá, y es el único reimportable (RF-72).
 enum FiscalDocumentOrigin {
   ISSUED_HERE
+  /// D-153: el papel salió de la otra app mientras dura la migración. El ERP lo registra
+  /// —con su cuenta por cobrar, su pedido y su nota de crédito— pero no habla con el PSE:
+  /// serie y correlativo se tipean, no hay CDR ni XML, y la baja se hace donde se emitió.
+  MANUAL
   IMPORTED
 }
 
@@ -1659,6 +1663,10 @@ model FiscalSeries {
 model InvoicingSetting {
   id              String   @id @default(uuid()) @db.Uuid
   providerOffline Boolean  @default(false) @map("provider_offline")
+  /// D-153: con qué modo viene pre-seleccionado el terminal de un borrador mientras dura la
+  /// migración desde la otra app. **No decide nada por sí solo** — el modo se elige
+  /// comprobante por comprobante y está siempre a la vista; esto solo evita elegirlo 70 veces.
+  manualByDefault Boolean  @default(false) @map("manual_by_default")
   alertAfterHours Int      @default(6) @map("alert_after_hours")
   updatedById     String?  @map("updated_by_id") @db.Uuid
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1685,6 +1693,10 @@ model FiscalDocument {
   /// Serie, correlativo y número legible. **Null mientras es borrador** (D-072): se
   /// asignan al enviar. `number` es `serie-correlativo` con el correlativo a 8 dígitos
   /// (`F001-00000123`), que es el formato con el que SUNAT identifica el documento.
+  ///
+  /// D-153: `fiscal_documents_number_ck` admite un tercer caso —número sin `series_id`— para el
+  /// comprobante manual, cuya serie es la del papel y no una fila de `fiscal_series`. Prisma no
+  /// sabe declarar un `CHECK`, así que este comentario es su único rastro en el repo.
   ///
   /// La unicidad de `number` es **parcial** desde RF-72 (`WHERE archived_at IS NULL`, índice
   /// creado en la migración): una reimportación deja conviviendo la versión archivada y la

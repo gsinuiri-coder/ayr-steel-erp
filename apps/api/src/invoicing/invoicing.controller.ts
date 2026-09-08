@@ -18,6 +18,7 @@ import {
   createCustomerPaymentSchema,
   createFiscalSeriesSchema,
   createInvoiceSchema,
+  registerManualSchema,
   fiscalDocumentQuerySchema,
   paginationQuerySchema,
   reverseCustomerPaymentSchema,
@@ -29,6 +30,7 @@ import {
   type CreateCustomerPaymentInput,
   type CreateFiscalSeriesInput,
   type CreateInvoiceInput,
+  type RegisterManualInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentQuery,
@@ -242,6 +244,20 @@ export class InvoicingController {
     return this.invoicing.send(actor, id);
   }
 
+  /**
+   * D-153: el **otro terminal** del mismo borrador. Cierra el comprobante con la serie y el
+   * correlativo del papel que salió de la otra app, sin tocar `fiscal_series` y sin hablar
+   * con el PSE. Excluyente con `send`: un borrador sale por una puerta o por la otra.
+   */
+  @Post('documents/:id/register-manual')
+  registerManual(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(registerManualSchema)) body: RegisterManualInput,
+  ): Promise<FiscalDocumentDto> {
+    return this.invoicing.registerManual(actor, id, body);
+  }
+
   /** D-073: reintento manual de un envío que no entró. */
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('documents/:id/retry')
@@ -364,7 +380,7 @@ export class InvoicingController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(voidDocumentSchema)) body: VoidDocumentInput,
   ): Promise<FiscalDocumentDto> {
-    await this.fiscalImport.annulImported(actor, id, body.reason);
+    await this.fiscalImport.annulExternal(actor, id, body.reason);
     return this.invoicing.findOne(id);
   }
 }

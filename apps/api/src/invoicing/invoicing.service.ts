@@ -43,6 +43,7 @@ import {
   dispatchCode as toDispatchCode,
   type CreateCreditNoteInput,
   type CreateInvoiceInput,
+  type RegisterManualInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentQuery,
@@ -168,10 +169,23 @@ function assertIssuedHere(
   document: { origin: FiscalDocumentOrigin; number: string | null },
   action: string,
 ): void {
-  if (document.origin !== FiscalDocumentOrigin.IMPORTED) return;
+  // **La pregunta es la que dice el nombre**, y desde D-153 no es la misma que "¿no es
+  // importado?": hay dos orígenes que el ERP no emitió electrónicamente y los dos tienen que
+  // caer acá. Con la forma vieja (`!== IMPORTED`), un comprobante manual se habría podido
+  // mandar a Nubefact — el papel ya existe, así que serían dos comprobantes para una venta.
+  if (document.origin === FiscalDocumentOrigin.ISSUED_HERE) return;
   throw new BadRequestException(
-    `El comprobante ${document.number ?? ''} se importó ya emitido: ${action} se hace donde se emitió, y el resultado se vuelve a importar`,
+    document.origin === FiscalDocumentOrigin.MANUAL
+      ? `El comprobante ${document.number ?? ''} se registró como manual: ${action} se hace donde se emitió, y el resultado se registra acá`
+      : `El comprobante ${document.number ?? ''} se importó ya emitido: ${action} se hace donde se emitió`,
   );
+}
+
+/** `FFA1-1349` → `FFA1`. Null cuando el documento todavía no tiene número (borrador). */
+function seriesOf(number: string | null): string | null {
+  if (number === null) return null;
+  const [series] = number.split('-');
+  return series ?? null;
 }
 
 @Injectable()
@@ -198,6 +212,7 @@ export class InvoicingService {
   private async settingsRow(): Promise<{
     id: string;
     providerOffline: boolean;
+    manualByDefault: boolean;
     alertAfterHours: number;
     updatedAt: Date;
   }> {
@@ -221,6 +236,7 @@ export class InvoicingService {
     const row = await this.settingsRow();
     return {
       providerOffline: row.providerOffline,
+      manualByDefault: row.manualByDefault,
       alertAfterHours: row.alertAfterHours,
       providerConfigured: this.provider.configured,
       providerName: this.provider.name,
@@ -238,6 +254,7 @@ export class InvoicingService {
         where: { id: row.id },
         data: {
           providerOffline: input.providerOffline ?? row.providerOffline,
+          manualByDefault: input.manualByDefault ?? row.manualByDefault,
           alertAfterHours: input.alertAfterHours ?? row.alertAfterHours,
           updatedById: actor.id,
         },
@@ -247,9 +264,14 @@ export class InvoicingService {
         action: 'invoicing.settings.update',
         entity: 'invoicing_settings',
         entityId: row.id,
-        before: { providerOffline: row.providerOffline, alertAfterHours: row.alertAfterHours },
+        before: {
+          providerOffline: row.providerOffline,
+          manualByDefault: row.manualByDefault,
+          alertAfterHours: row.alertAfterHours,
+        },
         after: {
           providerOffline: input.providerOffline ?? row.providerOffline,
+          manualByDefault: input.manualByDefault ?? row.manualByDefault,
           alertAfterHours: input.alertAfterHours ?? row.alertAfterHours,
         },
       });
@@ -659,7 +681,15 @@ export class InvoicingService {
         include: { items: { orderBy: { lineNumber: 'asc' } }, customer: true },
       });
       if (!affected) throw new NotFoundException('Comprobante no encontrado');
-      assertIssuedHere(affected, 'emitir su nota de crédito');
+      // D-153: sobre un manual **sí** hay nota de crédito, pero manual — el afectado salió de
+      // la otra app y su NC también. Acá solo se corta lo importado, que no tiene vuelta por
+      // ningún lado; que el modo del terminal coincida con el del afectado lo exige `send` y
+      // `registerManual`, que es donde el documento deja de ser un borrador.
+      if (affected.origin === FiscalDocumentOrigin.IMPORTED) {
+        throw new BadRequestException(
+          `El comprobante ${affected.number ?? ''} se importó ya emitido: su nota de crédito se hace donde se emitió`,
+        );
+      }
       if (affected.docType === FiscalDocType.NOTA_CREDITO) {
         throw new BadRequestException(
           'Una nota de crédito no se acredita con otra nota de crédito',
@@ -813,6 +843,151 @@ export class InvoicingService {
     });
 
     return this.findOne(id);
+  }
+
+  /**
+   * **El otro terminal de un borrador** (D-153): registrarlo como manual.
+   *
+   * Un borrador tiene dos salidas y son excluyentes. `send` toma un correlativo de la serie
+   * del ERP y lo manda a Nubefact; esta lo cierra con la serie y el número que ya trae el papel
+   * emitido en la otra app. Que las dos partan del **mismo borrador** no es economía de código:
+   * es lo que garantiza que un manual pase por las mismas validaciones que un electrónico —
+   * cliente activo, líneas contra el pedido, tope de la boleta genérica, detracción, fecha
+   * (D-124/D-133)—, porque son literalmente las de `createInTx`.
+   *
+   * Lo que **no** hace, y por eso es manual: no toca `fiscal_series` —esa es la numeración
+   * propia del ERP y adelantarla quemaría rango de las series con las que se factura de
+   * verdad—, no habla con el PSE, no guarda CDR ni XML. Nace `ACCEPTED` por el mismo motivo
+   * que un importado (D-105): el papel existe y el otro sistema ya lo declaró.
+   */
+  async registerManual(
+    actor: RequestUser,
+    id: string,
+    input: RegisterManualInput,
+  ): Promise<FiscalDocumentDto> {
+    // El mismo control que `send` y `retry`: cerrar un borrador ajeno como comprobante manual
+    // es igual de irreversible que emitirlo, y después solo un ADMINISTRADOR puede anularlo.
+    await this.assertOwnership(actor, id, 'registrarlo como manual');
+
+    await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
+      `;
+      if (rows.length === 0) throw new NotFoundException('Comprobante no encontrado');
+      const document = await tx.fiscalDocument.findUniqueOrThrow({
+        where: { id },
+        include: {
+          items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
+          affectedDocument: { select: { origin: true, number: true } },
+        },
+      });
+
+      if (document.status !== FiscalDocumentStatus.DRAFT) {
+        throw new ConflictException(
+          document.status === FiscalDocumentStatus.REJECTED
+            ? 'Este comprobante fue rechazado: corrígelo para registrar uno nuevo'
+            : 'El comprobante ya dejó de ser un borrador',
+        );
+      }
+      if (document.items.length === 0) {
+        throw new BadRequestException('Un comprobante sin líneas no se registra');
+      }
+      // La simétrica de la guarda de `assignInTx`: la NC de un comprobante electrónico se
+      // emite, no se registra a mano — si no, SUNAT se queda sin la nota de crédito de un
+      // comprobante que sí le mandamos.
+      if (
+        document.affectedDocument !== null &&
+        document.affectedDocument.origin !== FiscalDocumentOrigin.MANUAL
+      ) {
+        throw new BadRequestException(
+          `${document.affectedDocument.number ?? 'El comprobante afectado'} no es manual: su nota de crédito se emite, no se registra a mano`,
+        );
+      }
+
+      // El mismo último control que `send`: dos borradores sobre la misma línea pasan los dos
+      // la validación de creación, y este es el punto en el que todavía se puede decir que no.
+      await this.assertStillAvailable(tx, document);
+
+      const number = fiscalDocumentNumber(input.series, input.correlative);
+      // El índice único parcial de `number` ya lo impide en la base; esto es para que el
+      // usuario lea el motivo en vez de un choque de constraint.
+      const clash = await tx.fiscalDocument.findFirst({
+        where: { number, archivedAt: null, id: { not: id } },
+        select: { id: true, status: true },
+      });
+      if (clash) {
+        throw new ConflictException(
+          `Ya hay un comprobante registrado con el número ${number}: revisa la serie y el correlativo`,
+        );
+      }
+
+      // El `findFirst` de arriba es una lectura sin lock sobre **otra** fila: dos registros
+      // simultáneos con el mismo número lo pasan los dos y el segundo choca contra el índice
+      // único parcial. Se traduce acá para que el usuario lea el motivo y no un 500.
+      try {
+        await this.applyManualNumber(
+          tx,
+          id,
+          input,
+          number,
+          document.status,
+          document.origin,
+          actor,
+        );
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          throw new ConflictException(
+            `Ya hay un comprobante registrado con el número ${number}: revisa la serie y el correlativo`,
+          );
+        }
+        throw err;
+      }
+    });
+
+    return this.findOne(id);
+  }
+
+  /** El cierre del borrador como manual, aparte para que su `P2002` se pueda distinguir. */
+  private async applyManualNumber(
+    tx: Prisma.TransactionClient,
+    id: string,
+    input: RegisterManualInput,
+    number: string,
+    previousStatus: FiscalDocumentStatus,
+    previousOrigin: FiscalDocumentOrigin,
+    actor: RequestUser,
+  ): Promise<void> {
+    await tx.fiscalDocument.update({
+      where: { id },
+      data: {
+        origin: FiscalDocumentOrigin.MANUAL,
+        status: FiscalDocumentStatus.ACCEPTED,
+        // `seriesId` queda en null a propósito: la serie del papel no es una serie del ERP y
+        // no tiene por qué existir en `fiscal_series`.
+        seriesId: null,
+        correlative: input.correlative,
+        number,
+        // Las dos fechas, y no solo `issuedAt`: un manual **está** aceptado desde el momento
+        // en que se registra, y dejar `acceptedAt` nulo no era neutro — Postgres ordena
+        // `DESC` con `NULLS FIRST`, así que un manual ganaba todo desempate por fecha de
+        // aceptación contra comprobantes que sí la tenían.
+        issuedAt: new Date(),
+        acceptedAt: new Date(),
+      },
+    });
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.document.register-manual',
+      entity: 'fiscal_documents',
+      entityId: id,
+      before: { status: previousStatus, origin: previousOrigin },
+      after: {
+        status: FiscalDocumentStatus.ACCEPTED,
+        origin: FiscalDocumentOrigin.MANUAL,
+        number,
+      },
+    });
   }
 
   /**
@@ -1040,11 +1215,19 @@ export class InvoicingService {
       where: { id },
       include: {
         items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
-        affectedDocument: { select: { docType: true } },
+        affectedDocument: { select: { docType: true, origin: true, number: true } },
       },
     });
     if (document.items.length === 0 && document.docType !== FiscalDocType.GUIA_REMISION_REMITENTE) {
       throw new BadRequestException('Un comprobante sin líneas no se emite');
+    }
+    // D-153: una nota de crédito hereda el modo de su afectado. Emitir electrónicamente la NC
+    // de una factura que salió de la otra app dejaría a SUNAT con una nota de crédito sobre un
+    // comprobante que este ERP nunca le mandó.
+    if (document.affectedDocument?.origin === FiscalDocumentOrigin.MANUAL) {
+      throw new BadRequestException(
+        `${document.affectedDocument.number ?? 'El comprobante afectado'} es manual: su nota de crédito se registra manual, no se emite`,
+      );
     }
 
     // **Revalidar antes de tomar el correlativo.** Los topes de "cuánto queda por
@@ -1999,10 +2182,17 @@ export class InvoicingService {
     }
     const transferMode = dispatch.transferMode as Exclude<TransferMode, 'PICKUP'>;
     // El comprobante que respalda el traslado, si el pedido ya tiene uno aceptado.
+    //
+    // D-153: **solo uno que el ERP haya emitido**. Un manual está aceptado y es del mismo
+    // pedido, pero SUNAT no lo recibió de nosotros: ponerlo en la guía sería declarar un
+    // respaldo que del otro lado no existe. Además no tiene `accepted_at`, y Postgres ordena
+    // `DESC` con `NULLS FIRST`, así que ganaba el desempate y desplazaba a la factura
+    // electrónica del mismo pedido que sí podía ir.
     const related = await this.prisma.fiscalDocument.findFirst({
       where: {
         salesOrderId: dispatch.salesOrder.id,
         status: FiscalDocumentStatus.ACCEPTED,
+        origin: FiscalDocumentOrigin.ISSUED_HERE,
         docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
       },
       orderBy: { acceptedAt: 'desc' },
@@ -2479,7 +2669,10 @@ export class InvoicingService {
       docType: row.docType,
       status: row.status,
       number: row.number,
-      series: row.seriesRef?.series ?? null,
+      // D-153: un manual no cuelga de ninguna `fiscal_series` —la serie del papel no es una
+      // serie del ERP—, así que la suya sale de su propio número, que es donde vive. Una sola
+      // fuente: `number` es la identidad del comprobante y la que el índice único protege.
+      series: row.seriesRef?.series ?? seriesOf(row.number),
       correlative: row.correlative,
       customerId: row.customerId,
       customerName: row.customer.name,
@@ -2527,10 +2720,12 @@ export class InvoicingService {
         RETRYABLE_DOCUMENT_STATUSES.includes(row.status) &&
         isStalled(row.issuedAt, alertAfterHours),
       voidPath:
-        // Un importado no tiene camino de baja **desde acá** (D-105): se deshace donde se
-        // emitió y el resultado se vuelve a importar. Sin este corte, la pantalla ofrecía
-        // un botón que solo podía terminar en un error del servicio.
-        row.status === FiscalDocumentStatus.ACCEPTED && row.origin !== FiscalDocumentOrigin.IMPORTED
+        // Solo lo que el ERP **emitió** tiene camino de baja desde acá (D-105/D-153): lo
+        // importado y lo manual se deshacen donde se emitieron. Sin este corte, la pantalla
+        // ofrecía un botón que solo podía terminar en un error del servicio — y con la forma
+        // vieja (`!== IMPORTED`) volvió a ofrecerlo en cuanto apareció el tercer origen.
+        row.status === FiscalDocumentStatus.ACCEPTED &&
+        row.origin === FiscalDocumentOrigin.ISSUED_HERE
           ? voidPathFor(row.docType, issueDate, businessToday())
           : null,
       origin: row.origin,

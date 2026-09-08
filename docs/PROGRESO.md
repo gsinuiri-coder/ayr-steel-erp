@@ -22,6 +22,7 @@
 | 7 consolidada — backdating, entornos, subtipo de cobertura           | ✅ Cerrada (2026-09-06) | D-124 (fecha de operación), D-125/D-126 (rama `demo` y prohibición de `e2e:prod`), D-127 (subtipo de cobertura y rama de confirmación). D-122 sigue diferido.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Sesión Planta — integridad de producción y tanda                     | ✅ Cerrada (2026-09-08) | D-146 (el plan de corte es un tope duro y el kg declarado es dato, no consumo), D-147 (`/planta/tanda`, todo o nada), D-148 (todas las órdenes de un pedido de una vez), D-149 (hoja de planta en PDF). 306/306 unitarios; 149 E2E locales con 3 fallas del cupo del PSE demo. **Sin desplegar**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                             |
 | Sesión Importadores — borrado de los directos y cotizaciones masivas | ✅ Cerrada (2026-09-08) | D-150 (se elimina el módulo de importaciones entero), D-151 (padrón en el alta de proveedor), D-152 (importador de cotizaciones: preview sin estado + alta normal, todo o nada). 272/272 unitarios; 60 E2E locales. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Sesión Comprobantes manuales — D-131 a regla dura y D-153            | ✅ Cerrada (2026-09-08) | D-131 elevada a regla dura 14 con centinela; D-153 (un borrador tiene dos terminales: emitir por el PSE o registrar manual). 279/279 unitarios; E2E de comprobante manual 5/5 y regresión de facturación con las fallas conocidas del cupo del PSE demo. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                        |
 | 8 — Auditoría, reportes, UAT                                         | ⚪ Pendiente            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Fase 0 — detalle
@@ -2850,6 +2851,139 @@ cotización exactamente donde se lo prueba.
 Ahora el seed lleva el dato, y solo lo fuerza donde es una regla del dominio: el resto de la
 configuración de una línea la administra el dueño y el seed no la pisa. Producción nunca estuvo
 afectada (su fila la actualizó la migración y nadie la recreó). `fase5a` volvió a verde.
+
+## Sesión Comprobantes manuales (2026-09-08) — D-131 pasa a regla dura y entra D-153
+
+Todo en **local (Docker)**; producción no se tocó ni para leer, y **no se desplegó ni se hizo
+push**. El diseño de D-153 se presentó al dueño antes de escribir una línea y se implementó lo
+que aprobó.
+
+### D-131 pasa a invariante (regla dura 14)
+
+La confusión entre _"¿esta línea necesita el detalle de largos?"_ y _"¿se fabrica a medida?"_ ya
+costó dos defectos —el mostrador vendiendo material a medida, y el importador de cotizaciones
+dejando pasar sin marca toda línea en `MTR` que no fuera `A_MEDIDA`—, la segunda **el mismo día
+que se escribió el código**. Las dos veces el compilador calló, porque las dos preguntas
+devuelven `boolean`.
+
+Ahora la respuesta tiene **una sola definición**: `sellsByLength(product)` en `sales-lines.ts`,
+que el importador también usa. La regla está en `CLAUDE.md` como la número 14, y el centinela es
+`sales-lines.spec.ts`: la tabla completa de combinaciones de unidad × subtipo, más un caso que
+se cae si alguien define una pregunta en términos de la otra.
+
+### D-153 — el borrador tiene dos terminales
+
+La empresa sigue emitiendo desde otra app mientras dura la migración. Esos comprobantes ahora se
+registran acá, con su cuenta por cobrar y su pedido, sin pasar por Nubefact.
+
+**El modo es un tercer valor de `FiscalDocumentOrigin` (`MANUAL`), no un campo aparte.** El
+motivo se pudo medir antes de decidir: hay siete ramas en todo el código que miran `origin`, y
+la que importa es una función llamada `assertIssuedHere` cuya prueba era `!== IMPORTED`. Con un
+campo ortogonal, esas siete guardas habrían seguido **dejando pasar un manual a Nubefact**; con
+un valor nuevo se dan vuelta a `=== ISSUED_HERE` en una pasada y el comportamiento cae solo.
+
+`POST /invoicing/documents/:id/register-manual` cierra el borrador con la serie y el correlativo
+del papel: `seriesId = null` —la serie del talonario no es una fila de `fiscal_series`, y
+adelantar esa tabla quemaría rango de las series con las que se factura de verdad—,
+`status = ACCEPTED` por el mismo motivo que un importado (D-105), sin CDR ni XML. Que los dos
+terminales partan del **mismo borrador** es lo que garantiza que un manual pase por las mismas
+validaciones que un electrónico: son literalmente las de `createInTx`.
+
+Lo demás que entró: la **nota de crédito hereda el modo de su afectado**, con una guarda en cada
+terminal; la anulación interna de D-110 se generaliza (`annulExternal`) y cubre todo lo que el
+ERP no emitió; el pre-llenado de serie y correlativo desde el `Factura externa: FFA1-1349` que
+el importador (D-152) deja en las observaciones del pedido; un ajuste global
+(`invoicing_settings.manual_by_default`) que solo decide **cuál de los dos botones viene
+destacado**, con los dos siempre a la vista; y en el listado, el badge de origen para todo lo
+que no sea del ERP más un filtro por origen.
+
+### Lo que el dueño pidió y no hizo falta hacer
+
+Pidió que "la salida de stock sea idéntica en ambos modos, misma ruta `InventoryService.record()`".
+**El comprobante no mueve kardex en ningún modo**: lo mueve el despacho (D-074), por un solo
+camino. La garantía ya existía por construcción y no se tocó nada. Queda anotado con su caso de
+prueba porque la pregunta va a volver.
+
+### El defecto de D-145, otra vez — y esta vez lo agarró el E2E
+
+Registrar el primer manual devolvía **`500 Internal server error` sin mensaje**. Dos `CHECK` de
+la base escritos cuando la regla era más angosta:
+
+- `fiscal_documents_number_ck` exigía que el número viniera **siempre** con un `series_id`. Un
+  comprobante manual tiene número —el del papel— y no tiene serie del ERP.
+- `fiscal_documents_annulled_origin_ck` reservaba el estado `ANNULLED` a lo importado, así que
+  un manual mal registrado no tenía vuelta y quedaba como deuda falsa permanente.
+
+Es exactamente D-145: código que ensancha una regla y una base que sigue diciendo la anterior,
+con un 500 mudo como único síntoma. La diferencia es que esta vez **no llegó a desplegarse**,
+porque la sesión escribió el caso feliz y la reversa en el mismo spec. Corregidos en una
+migración aparte (`20260908213000_...`), separada a propósito de la que agrega el modo: editar
+una migración ya aplicada le cambia el checksum y rompe `migrate deploy`, que es un síntoma que
+este proyecto ya se comió dos veces (D-053 y las notas de 7-final-C).
+
+**La lección, que vale más que el fix:** al agregar un valor a un enum que la base conoce, hay
+que ir a leer sus `CHECK`. El compilador no los ve, y son la parte del dominio que vive fuera de
+TypeScript.
+
+### Hallazgos de revisor y qa
+
+**Los dos bloqueantes fueron del agente, no del diseño, y los dos por la misma causa mecánica:**
+las expresiones regulares de la pantalla se escribieron a través de un heredoc de shell, que se
+comió las barras invertidas. `/^\d{1,8}$/` quedó como `/^d{1,8}$/` y el botón «Registrar» **nunca
+se habilitaba**; el patrón del pre-llenado perdió su `\s` y su `\d`, así que **nunca matcheaba**,
+con el fallo tapado por un `catch` silencioso. Los E2E por API no los veían porque no pasan por
+la pantalla. Corregidos con la herramienta de edición. **Regla que queda: el código con
+expresiones regulares se escribe con el editor, nunca por heredoc.**
+
+Cuatro **altos**, todos la misma familia: código que preguntaba `!== IMPORTED` y con el tercer
+valor pasó a decir algo falso. `voidPath` ofrecía «Dar de baja» sobre un manual (una baja ante
+SUNAT de un comprobante que el ERP no emitió), `canAnnul` dejaba la reversa **inaccesible desde
+la UI** —justo la mitad que el `CHECK` prohibía— y `canQuery` mostraba «Consultar al PSE» en
+todos los manuales. Los tres colapsaron en un único `isExternal`, que es la pregunta que las tres
+querían hacer. El cuarto: el terminal manual no llamaba a `assertOwnership`, así que un vendedor
+podía cerrar el borrador de otro; el terminal electrónico sí lo hacía desde siempre.
+
+Medios corregidos: el choque de número entre dos registros simultáneos salía como `500` en vez de
+`409`; `acceptedAt` quedaba nulo y —con `NULLS FIRST` en el desempate— un manual desplazaba a la
+factura electrónica como respaldo de una guía; el badge del detalle seguía marcando solo lo
+importado. Y dos huecos de prueba que el propio revisor nombró como «el mismo hueco de D-145»:
+ahora hay un caso que **anula un manual de verdad** y otro que comprueba que **ninguna de las
+cuatro puertas al PSE lo acepta** (`send`, `retry`, `refresh`, `void`).
+
+Ese último caso se escribió mal la primera vez y vale anotarlo: asertaba que el barrido
+`send-pending` devolviera cero. **`send-pending` es global** —recorre hasta veinte documentos de
+toda la base—, así que el número dependía de lo que otras pruebas hubieran dejado (devolvió 7), y
+peor: **llamarlo mandaba al PSE demo comprobantes ajenos al escenario**, quemando cupo de la
+cuenta y moviéndoles el estado. El barrido salió del test; queda asertado lo que sí es del dato
+—un manual nace `ACCEPTED`, que no está entre los estados reintentables— y la otra mitad del
+filtro la sostienen las cuatro puertas, que son las que un refactor a `!== IMPORTED` rompería.
+**Un test no puede asertar un contador global en una base compartida.**
+
+De `qa`: la suite de UI (`comprobante-manual-ui.spec.ts`, 2 casos) cubre los dos terminales
+visibles a la vez, la validación de serie en el diálogo, la vista previa del número y el
+pre-llenado desde las observaciones. Son exactamente los tests que cazan la regresión de las
+barras invertidas: si vuelven a caerse, el primer caso falla en «Registrar deshabilitado» y el
+segundo en el pre-llenado. `qa` dejó anotado que el E2E local levanta el API con `nest start`, así
+que un `.ts` a medio editar en `apps/api` tumba la corrida con un mensaje que no habla de tests
+—vale saberlo cuando dos agentes trabajan en paralelo—.
+
+**Anotado y no tocado, porque no es de esta sesión:** `scripts/dev-local-view.mjs` arma su mensaje
+de error con `args.join(' ')` en vez de usar `run` de `scripts/lib.mjs`, que es la forma exacta
+que la regla dura 5 nombra como el escape de D-128; hoy no viaja ninguna credencial por `argv`,
+así que está latente y no abierto. Además imprime la contraseña local y numera los pasos «1/3,
+2/4».
+
+### Verificación
+
+- `pnpm turbo lint typecheck test`: **279/279** unitarios (7 nuevos, el centinela de D-131), más
+  `pnpm exec eslint e2e` y Prettier sobre lo tocado.
+- E2E local: **9/9** entre `comprobante-manual` (7 casos por API) y `comprobante-manual-ui`
+  (2 casos por pantalla, de `qa`). La regresión de facturación
+  (`fase7b-bordes m4-anulacion-importado fase5b-bordes`) quedó **19 de 23**, con las 4 fallas del
+  cupo de la cuenta demo del PSE — el mismo límite externo de siempre, ajeno al código.
+- **No se corrió `pnpm e2e:prod`** (regla dura 9, D-126) ni se tocó producción.
+- **Sin desplegar y sin push.** Las dos migraciones de D-153 están escritas y aplicadas en local;
+  producción sigue sin ellas.
 
 ## Bloqueos
 

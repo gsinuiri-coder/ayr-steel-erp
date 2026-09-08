@@ -11,20 +11,19 @@ import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
- * Lo que queda de la importación de comprobantes ya emitidos (RF-71/RF-72) después de D-150:
- * **solo la salida**.
+ * La anulación **interna** de un comprobante que el ERP no emitió electrónicamente
+ * (D-110, ampliada por D-153).
  *
- * Este servicio nació para dar de alta comprobantes emitidos afuera —el histórico anterior al
- * ERP y la contingencia hecha en el portal de SUNAT— y para archivar la versión anterior al
- * reimportar. Todo eso se fue con el módulo de importaciones: eran su único llamador, y la
- * carga histórica pasa a entrar por el flujo real (cotización → pedido → orden → venta).
+ * Este servicio nació con la importación de comprobantes ya emitidos y quedó reducido a su
+ * salida cuando D-150 borró esa puerta. D-153 le devolvió un segundo usuario y con él su razón
+ * de ser permanente: mientras dure la migración desde la otra app, **todos los días entran
+ * comprobantes manuales**, y uno mal registrado necesita vuelta.
  *
- * `annulImported` **se queda**, y no es una inconsistencia con el borrado. No es una vía de
- * ingreso: es el remedio de las filas que ya entraron por una. Un `fiscal_document` con
- * `origin = IMPORTED` nace `ACCEPTED` con su cuenta por cobrar y el PSE no lo conoce como
- * nuestro (D-105), así que ni la baja ni la nota de crédito lo alcanzan — sin este método,
- * una fila mal cargada es deuda falsa permanente. Producción quedó en cero importados
- * (D-144), pero `demo` es un clon anterior a esa limpieza y los conserva.
+ * La regla es una sola y se lee en el guardrail: alcanza a todo lo que el ERP **no** emitió
+ * —`MANUAL` e `IMPORTED`— y a nada de lo que sí. Un comprobante que el ERP mandó a SUNAT se
+ * deshace ante SUNAT, por la baja o por una nota de crédito; uno que salió de otro sistema no
+ * tiene ese camino desde acá, y sin este método su cuenta por cobrar sería deuda falsa
+ * permanente.
  *
  * El estado es `ANNULLED` y no `VOIDED` a propósito: `VOIDED` afirmaría ante una auditoría
  * que SUNAT aceptó una baja que nunca ocurrió.
@@ -37,11 +36,11 @@ export class FiscalImportService {
   ) {}
 
   /**
-   * Anula internamente un comprobante importado (D-110): deja de deber en las tres lecturas
-   * de deuda —su propio saldo, el listado y las cuentas por cobrar— sin decir que SUNAT
-   * intervino.
+   * Anula internamente un comprobante que el ERP no emitió (D-110/D-153): deja de deber en las
+   * tres lecturas de deuda —su propio saldo, el listado y las cuentas por cobrar— sin decir
+   * que SUNAT intervino.
    */
-  async annulImported(
+  async annulExternal(
     actor: RequestUser,
     id: string,
     reason: string,
@@ -66,7 +65,10 @@ export class FiscalImportService {
       });
       if (!document) throw new NotFoundException('Comprobante no encontrado');
 
-      if (document.origin !== FiscalDocumentOrigin.IMPORTED) {
+      // D-153: la anulación interna cubre **todo lo que el ERP no emitió electrónicamente** —
+      // lo importado y lo manual—, y sigue sin alcanzar a lo que sí emitió: eso se deshace ante
+      // SUNAT, por la baja o por una nota de crédito, que es lo único que SUNAT reconoce.
+      if (document.origin === FiscalDocumentOrigin.ISSUED_HERE) {
         throw new BadRequestException(
           'Este comprobante lo emitió el ERP: se deshace con una baja o una nota de crédito ante SUNAT, no con una anulación interna',
         );
@@ -78,7 +80,7 @@ export class FiscalImportService {
       }
       if (document.status !== FiscalDocumentStatus.ACCEPTED) {
         throw new BadRequestException(
-          `Solo se anula un comprobante importado vigente; este está ${document.status}`,
+          `Solo se anula un comprobante vigente; este está ${document.status}`,
         );
       }
       // Una versión archivada (RF-72) ya salió de todas las cuentas: anularla no cambiaría

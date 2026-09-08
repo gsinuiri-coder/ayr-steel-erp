@@ -361,6 +361,7 @@ export type VoidDocumentInput = z.infer<typeof voidDocumentSchema>;
 
 /** D-073: interruptor de contingencia y umbral de alerta. Solo ADMINISTRADOR. */
 export const updateInvoicingSettingsSchema = z.object({
+  manualByDefault: z.boolean().optional(),
   providerOffline: z.boolean().optional(),
   alertAfterHours: z.number().int().min(1).max(168).optional(),
 });
@@ -429,6 +430,11 @@ export const updateFiscalSeriesSchema = z.object({ isActive: z.boolean() });
 export type UpdateFiscalSeriesInput = z.infer<typeof updateFiscalSeriesSchema>;
 
 export const invoicingSettingsSchema = z.object({
+  /**
+   * D-153: con qué modo viene pre-seleccionado el terminal de un borrador. **No decide nada
+   * por sí solo**: el modo se elige comprobante por comprobante y está siempre a la vista.
+   */
+  manualByDefault: z.boolean(),
   providerOffline: z.boolean(),
   alertAfterHours: z.number().int(),
   /** `true` cuando hay credenciales del PSE configuradas; `false` con el proveedor nulo. */
@@ -913,3 +919,30 @@ export const receivableTotalsSchema = z.object({
   customerCount: z.number().int(),
 });
 export type ReceivableTotalsDto = z.infer<typeof receivableTotalsSchema>;
+
+/**
+ * Registrar un borrador como **comprobante manual** (D-153): el papel salió de la otra app
+ * mientras dura la migración, y lo que el ERP guarda es su número, no uno propio.
+ *
+ * Es el otro terminal de `send`, y por eso pide exactamente lo que `send` saca de
+ * `fiscal_series`: la serie y el correlativo. Todo lo demás —cliente, líneas, fecha,
+ * detracción— ya lo validó la creación del borrador, que es la misma para los dos modos.
+ */
+export const registerManualSchema = z.object({
+  /**
+   * Cuatro caracteres, formato SUNAT, el mismo que valida el alta de series del ERP: es el
+   * número de un comprobante real y tiene que poder imprimirse tal cual.
+   */
+  series: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z][A-Z0-9]{3}$/, 'La serie son cuatro caracteres (ej: F001)'),
+  /**
+   * El correlativo del papel. Empieza en 1 —a diferencia del de una serie del ERP, que
+   * arranca en 0 porque cuenta lo ya emitido— porque acá se declara un comprobante que
+   * existe, y no existe el número cero.
+   */
+  correlative: z.number().int().min(1, 'El correlativo empieza en 1').max(99_999_999),
+});
+export type RegisterManualInput = z.infer<typeof registerManualSchema>;

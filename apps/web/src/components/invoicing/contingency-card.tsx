@@ -72,6 +72,28 @@ export function ContingencyCard() {
     onError,
   });
 
+  /**
+   * D-153: el modo con el que viene pre-seleccionado el terminal de un borrador mientras dura
+   * la migración desde la otra app. **No decide nada por sí solo** — los dos botones siguen a
+   * la vista en cada comprobante; esto solo evita elegir el mismo modo setenta veces.
+   */
+  const toggleManual = useMutation({
+    mutationFn: (manualByDefault: boolean) =>
+      api<InvoicingSettingsDto>('/invoicing/settings', {
+        method: 'PATCH',
+        body: { manualByDefault },
+      }),
+    onSuccess: (updated) => {
+      toast.success(
+        updated.manualByDefault
+          ? 'Los comprobantes vienen preparados para registro manual'
+          : 'Los comprobantes vuelven a venir preparados para emisión electrónica',
+      );
+      refresh();
+    },
+    onError,
+  });
+
   const sweep = useMutation({
     mutationFn: () => api<{ sent: number }>('/invoicing/send-pending', { method: 'POST' }),
     onSuccess: (result) => {
@@ -116,6 +138,29 @@ export function ContingencyCard() {
               desactive.
             </AlertDescription>
           </Alert>
+        )}
+        {s.manualByDefault && (
+          <Alert>
+            <AlertDescription>
+              <strong>Modo manual por defecto.</strong> Los borradores vienen preparados para
+              registrarse con el número del comprobante emitido en la otra app. Los dos botones
+              siguen disponibles en cada comprobante: esto solo cambia cuál viene destacado.
+            </AlertDescription>
+          </Alert>
+        )}
+        {isAdmin && (
+          <label className="flex items-center gap-2 text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-4"
+              checked={s.manualByDefault}
+              disabled={toggleManual.isPending}
+              onChange={(e) => {
+                toggleManual.mutate(e.target.checked);
+              }}
+            />
+            Registro manual por defecto (mientras dure la migración desde la otra app)
+          </label>
         )}
         <p className="text-muted-foreground">
           Proveedor: {s.providerName}. {pending === 0 ? 'Sin' : pending} documento

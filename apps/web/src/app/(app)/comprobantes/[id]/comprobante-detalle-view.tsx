@@ -9,6 +9,7 @@ import {
   CREDIT_NOTE_REASON_LABELS,
   CREDIT_NOTE_REASONS,
   FISCAL_DOC_TYPE_LABELS,
+  FISCAL_DOCUMENT_ORIGIN_LABELS,
   FULL_CREDIT_NOTE_REASONS,
   PAYMENT_METHOD_LABELS,
   PAYMENT_METHODS,
@@ -20,6 +21,7 @@ import {
   type CreditNoteReason,
   type CustomerPaymentDto,
   type FiscalDocumentDto,
+  type InvoicingSettingsDto,
   type PaymentMethod,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
@@ -112,6 +114,66 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     },
     onError,
   });
+
+  // Mismo tipo que `contingency-card`, que usa **la misma clave** de caché: dos `TData`
+  // distintos para una sola entrada es una forma silenciosa de leer basura.
+  const settings = useQuery({
+    queryKey: ['invoicing-settings'],
+    queryFn: () => api<InvoicingSettingsDto>('/invoicing/settings'),
+  });
+
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualSeries, setManualSeries] = useState('');
+  const [manualCorrelative, setManualCorrelative] = useState('');
+
+  /**
+   * D-153: el otro terminal del borrador. No manda nada al PSE — cierra el comprobante con la
+   * serie y el número del papel que ya salió de la otra app.
+   */
+  const registerManual = useMutation({
+    mutationFn: () =>
+      api<FiscalDocumentDto>(`/invoicing/documents/${id}/register-manual`, {
+        method: 'POST',
+        body: {
+          series: manualSeries.trim().toUpperCase(),
+          correlative: Number(manualCorrelative.trim()),
+        },
+      }),
+    onSuccess: (updated) => {
+      toast.success(`Comprobante manual registrado: ${updated.number ?? ''}`);
+      setManualOpen(false);
+      // Con el pedido: registrar un manual cambia cuánto le queda por facturar, igual que emitir.
+      refresh();
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo registrar el comprobante');
+    },
+  });
+
+  /**
+   * Abre el diálogo y, si el pedido trae el número del comprobante externo en sus
+   * observaciones, lo pre-llena.
+   *
+   * De dónde sale ese texto: el importador de cotizaciones (D-152) escribe
+   * `Factura externa: FFA1-1349` en la cotización, y confirmarla lo copia al pedido. Se pide
+   * el pedido **solo al abrir el diálogo** y no en cada carga del comprobante: es un dato que
+   * hace falta una vez y en un caso, no en la pantalla entera.
+   */
+  const openManualDialog = async (): Promise<void> => {
+    setManualOpen(true);
+    const orderId = d?.salesOrderId;
+    if (manualSeries !== '' || !orderId) return;
+    try {
+      const order = await api<{ notes: string | null }>(`/sales/orders/${orderId}`);
+      const match = /Factura externa:\s*([A-Z][A-Z0-9]{3})-0*(\d{1,8})/i.exec(order.notes ?? '');
+      if (match) {
+        setManualSeries((match[1] ?? '').toUpperCase());
+        setManualCorrelative(match[2] ?? '');
+      }
+    } catch {
+      // El pre-llenado es una comodidad: si el pedido no se puede leer, se tipea a mano.
+    }
+  };
 
   const send = useMutation({
     mutationFn: () => api<FiscalDocumentDto>(`/invoicing/documents/${id}/send`, { method: 'POST' }),
@@ -277,11 +339,27 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   // arma otro payload y su corrección vive en el despacho.
   const isDispatchNote = d.docType === 'GUIA_REMISION_REMITENTE';
   const isDraft = d.status === 'DRAFT' && !isDispatchNote;
+  const manualIsDefault = settings.data?.manualByDefault === true;
+  // Las mismas cotas que el schema del API (`registerManualSchema`): decirlas acá evita gastar
+  // un 400 en algo que la pantalla ya tiene delante.
+  const manualValid =
+    /^[A-Z][A-Z0-9]{3}$/.test(manualSeries.trim()) &&
+    /^\d{1,8}$/.test(manualCorrelative.trim()) &&
+    Number(manualCorrelative.trim()) >= 1;
+  const manualNumberPreview = manualValid
+    ? `${manualSeries.trim()}-${manualCorrelative.trim().padStart(8, '0')}`
+    : null;
   // D-105: un comprobante importado entró ya emitido y el PSE no lo conoce como nuestro.
   // Todo lo que habla con el proveedor —reintentar, consultar, dar de baja, acreditar— se
   // apaga acá; lo que no habla con él —cobrarlo, verlo, reimportarlo— sigue disponible.
   const isImported = d.origin === 'IMPORTED';
-  const canRetry = !isImported && (d.status === 'ISSUED' || d.status === 'SEND_ERROR');
+  /**
+   * D-153: **lo que el ERP no emitió**, que desde esta sesión son dos orígenes y no uno. Todo
+   * lo que habla con el PSE se apaga con esto y no con `isImported`: un manual tampoco tiene
+   * CDR, ni baja ante SUNAT, ni nota de crédito electrónica.
+   */
+  const isExternal = d.origin !== 'ISSUED_HERE';
+  const canRetry = !isExternal && (d.status === 'ISSUED' || d.status === 'SEND_ERROR');
   // Un rechazado que **ya se corrigió** no se vuelve a corregir: el API lo rechaza con un
   // 409, y lo útil es el enlace a su reemplazo.
   const canCorrect = d.status === 'REJECTED' && !isDispatchNote && d.replacedByDocumentId === null;
@@ -308,13 +386,15 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   // en una versión ya archivada, que salió de todas las cuentas por otro camino (RF-72).
   const canAnnul =
     isAdmin &&
-    isImported &&
+    isExternal &&
     d.status === 'ACCEPTED' &&
     d.archivedAt === null &&
     voidBlockedBy === null;
   // Una guía no lleva saldo ni cobros, así que sus dos guardas no aplican: lo único que
   // se le puede hacer es darla de baja.
-  const canVoidDispatchNote = isAdmin && !isImported && isDispatchNote && d.status === 'ACCEPTED';
+  const canVoidDispatchNote = isAdmin && !isExternal && isDispatchNote && d.status === 'ACCEPTED';
+  // Un **manual sí** admite nota de crédito: la suya, manual. Lo que no la admite es lo
+  // importado, que no tiene vuelta por ningún lado (D-105).
   const canCreditNote =
     !isImported && d.status === 'ACCEPTED' && d.docType !== 'NOTA_CREDITO' && !isDispatchNote;
   const isFullReason = FULL_CREDIT_NOTE_REASONS.includes(creditReason);
@@ -322,7 +402,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   // en trámite, o un aceptado al que le faltan archivos. En `REJECTED` y `VOIDED` la
   // consulta gastaba una llamada al PSE para mostrar un "listo" que no significaba nada.
   const canQuery =
-    !isImported &&
+    !isExternal &&
     (d.status === 'ISSUED' ||
       d.status === 'SEND_ERROR' ||
       d.status === 'VOID_PENDING' ||
@@ -353,7 +433,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold">{d.number ?? 'Borrador'}</h1>
             <FiscalDocumentStatusBadge status={d.status} isStalled={d.isStalled} />
-            {isImported && <Badge variant="outline">Importado</Badge>}
+            {/* D-153: el origen se marca siempre que no sea del ERP, no solo si es importado. */}
+            {isExternal && <Badge variant="outline">{FISCAL_DOCUMENT_ORIGIN_LABELS[d.origin]}</Badge>}
             {d.archivedAt && <Badge variant="secondary">Versión archivada</Badge>}
           </div>
           {/* D-110: quién anuló, cuándo y por qué. Es lo primero que se pregunta ante un
@@ -388,8 +469,25 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Descartar borrador
             </Button>
           )}
+          {/*
+            D-153: los dos terminales del borrador, **los dos siempre visibles**. El ajuste
+            global solo decide cuál es el principal: mientras dure la migración lo normal es
+            registrar manual, pero esconder el otro haría que un descuido pasara inadvertido.
+          */}
           {isDraft && (
             <Button
+              variant={manualIsDefault ? 'default' : 'outline'}
+              disabled={registerManual.isPending}
+              onClick={() => {
+                void openManualDialog();
+              }}
+            >
+              Registrar manual
+            </Button>
+          )}
+          {isDraft && (
+            <Button
+              variant={manualIsDefault ? 'outline' : 'default'}
               disabled={send.isPending}
               onClick={() => {
                 send.mutate();
@@ -889,6 +987,79 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               }}
             >
               Descartar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/*
+        D-153: el terminal manual. Pide lo mismo que `send` saca de la serie del ERP —serie y
+        correlativo— porque es lo único que distingue a los dos caminos: todo lo demás ya lo
+        validó el borrador.
+      */}
+      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Registrar como comprobante manual</DialogTitle>
+            <DialogDescription>
+              El papel salió de la otra app: acá se registra su número tal cual. No se envía nada al
+              PSE, no hay CDR ni XML, y la baja se hace donde se emitió.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-[8rem_1fr]">
+            <div className="grid gap-1.5">
+              <Label htmlFor="manual-series">Serie</Label>
+              <Input
+                id="manual-series"
+                autoComplete="off"
+                placeholder="F001"
+                maxLength={4}
+                value={manualSeries}
+                onChange={(e) => {
+                  setManualSeries(e.target.value.toUpperCase());
+                }}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="manual-correlative">Correlativo</Label>
+              <Input
+                id="manual-correlative"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="1349"
+                value={manualCorrelative}
+                onChange={(e) => {
+                  setManualCorrelative(e.target.value);
+                }}
+              />
+            </div>
+          </div>
+          {manualNumberPreview !== null && (
+            <p className="text-sm text-muted-foreground">
+              Se registrará como <span className="font-mono">{manualNumberPreview}</span>.
+            </p>
+          )}
+          {!manualValid && manualSeries + manualCorrelative !== '' && (
+            <p className="text-sm text-destructive">
+              La serie son cuatro caracteres (ej: F001) y el correlativo un entero mayor a cero.
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setManualOpen(false);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={!manualValid || registerManual.isPending}
+              onClick={() => {
+                registerManual.mutate();
+              }}
+            >
+              {registerManual.isPending ? 'Registrando…' : 'Registrar'}
             </Button>
           </DialogFooter>
         </DialogContent>

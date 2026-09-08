@@ -11,7 +11,6 @@ import {
   quotationCode,
   toDecimal,
   toFixedString,
-  Unit,
   type ImportQuotationsInput,
   type QuotationImportIssueDto,
   type QuotationImportPreviewDto,
@@ -21,6 +20,7 @@ import {
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { sellsByLength } from '../sales/sales-lines';
 import { QuotationsService } from '../sales/quotations.service';
 import { getField, parseSpreadsheet, type ImportColumn } from './parse-spreadsheet';
 
@@ -213,7 +213,7 @@ export class QuotationImportService {
     // subtipo respondía otra cosa. Un SKU en `MTR` que no sea `A_MEDIDA` pasaba el preview sin
     // una sola marca, la pantalla ni siquiera dibujaba la celda del plan, y el archivo entero
     // moría en el confirm con "se vende por metro lineal" y sin forma de arreglarlo.
-    const needsPieces = product?.unit === Unit.MTR;
+    const needsPieces = product !== null && sellsByLength(product);
     // El plan sale de la cantidad **ya redondeada**, que es la que viaja en la fila: el
     // archivo trae diez decimales y el alta exige que los largos sumen exactamente la cantidad
     // de la línea (D-083). Derivarlo del valor sin redondear dejaba las dos cifras separadas

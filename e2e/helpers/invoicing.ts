@@ -87,7 +87,7 @@ export interface FiscalDocumentDto {
   replacesDocumentId: string | null;
   replacesDocumentNumber: string | null;
   /** RF-71, D-105: emitido por el ERP o importado ya emitido. */
-  origin: 'ISSUED_HERE' | 'IMPORTED';
+  origin: 'ISSUED_HERE' | 'MANUAL' | 'IMPORTED';
   /** D-110: cuándo, quién y por qué se anuló por dentro. Los tres van juntos o van los tres nulos. */
   annulledAt: string | null;
   annulledByName: string | null;

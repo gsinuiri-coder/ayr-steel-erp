@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   FISCAL_DOC_TYPE_LABELS,
   FISCAL_DOCUMENT_ORIGIN_LABELS,
+  FISCAL_DOCUMENT_ORIGINS,
   FISCAL_DOCUMENT_STATUS_LABELS,
   FISCAL_DOCUMENT_STATUSES,
   FiscalDocumentOrigin,
@@ -52,6 +53,8 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 export function ComprobantesView() {
   const [status, setStatus] = useState<string>(ALL);
   const [docType, setDocType] = useState<string>(ALL);
+  /** D-153: separar lo que el ERP emitió de lo que solo registró es la pregunta del mes. */
+  const [origin, setOrigin] = useState<string>(ALL);
   const [pendingOnly, setPendingOnly] = useState(false);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounced(search.trim(), 300);
@@ -59,11 +62,12 @@ export function ComprobantesView() {
 
   useEffect(() => {
     resetPage();
-  }, [status, docType, pendingOnly, debouncedSearch, resetPage]);
+  }, [status, docType, origin, pendingOnly, debouncedSearch, resetPage]);
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (status !== ALL) params.set('status', status);
   if (docType !== ALL) params.set('docType', docType);
+  if (origin !== ALL) params.set('origin', origin);
   if (pendingOnly) params.set('pendingOnly', 'true');
   if (debouncedSearch) params.set('search', debouncedSearch);
 
@@ -135,6 +139,19 @@ export function ComprobantesView() {
             {INVOICE_DOC_TYPES.map((t) => (
               <SelectItem key={t} value={t}>
                 {FISCAL_DOC_TYPE_LABELS[t]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={origin} onValueChange={setOrigin}>
+          <SelectTrigger className="w-56">
+            <SelectValue placeholder="Origen" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Todos los orígenes</SelectItem>
+            {FISCAL_DOCUMENT_ORIGINS.map((o) => (
+              <SelectItem key={o} value={o}>
+                {FISCAL_DOCUMENT_ORIGIN_LABELS[o]}
               </SelectItem>
             ))}
           </SelectContent>
@@ -221,11 +238,12 @@ export function ComprobantesView() {
                       </Badge>
                     )}
                     {/*
-                      D-105: "aceptado" quiere decir dos cosas distintas según de dónde
-                      salió el documento. En uno importado, el ERP no vio esa aceptación:
-                      la afirma la planilla.
+                      D-105/D-153: "aceptado" quiere decir tres cosas distintas según de dónde
+                      salió el documento. En uno importado o manual, el ERP no vio esa
+                      aceptación: la afirma el papel. Por eso el origen se marca siempre que no
+                      sea el normal, y no solo para lo importado.
                     */}
-                    {d.origin === FiscalDocumentOrigin.IMPORTED && (
+                    {d.origin !== FiscalDocumentOrigin.ISSUED_HERE && (
                       <Badge variant="secondary" className="ml-2">
                         {FISCAL_DOCUMENT_ORIGIN_LABELS[d.origin]}
                       </Badge>
