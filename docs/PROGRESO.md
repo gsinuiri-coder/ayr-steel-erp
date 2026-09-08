@@ -2275,6 +2275,44 @@ borrados físicamente.**
 bloqueada por el pedido 134 vivo, y la cotización 4 por el pedido 1. Falta un nuevo plan del
 dueño para esos cuatro.
 
+### Limpieza final: borrado físico de lo último que quedaba del ensayo (2026-09-08)
+
+Inventario pedido antes de tocar nada: cotización 4 (`CANCELLED`) y cotización 7
+(`CONFIRMED`); pedido 1 (`CANCELLED`) y pedido 134 (`IN_PRODUCTION` — nunca se había anulado
+del todo, con una reserva de materia prima **`ACTIVE` de 3193.862 kg** todavía viva sobre la
+OP 29); la factura `F001-00000001` (`REJECTED`, sin cobros, sin notas de crédito); las OP 1
+(del pedido 1), 28 y 29 (del pedido 134), las tres `CANCELLED` con sus reportes `REVERTED` y
+sus consumos liberados. Cero despachos en ningún pedido.
+
+**Reversa pendiente, por flujo normal:** el pedido 134 nunca se había anulado —
+`SalesOrdersService.cancel` lo dejó `CANCELLED` y liberó esa última reserva `ACTIVE` (bajó a
+`RELEASED`, `qty=0`). Con eso, los dos pedidos y todo lo suyo quedaron limpios para el
+borrado físico.
+
+**Borrado físico por script puntual con guardas** (mismo patrón que las cotizaciones TEXAS
+CITY y que D-144: sin despachos, sin cobros vigentes, sin notas de crédito, pedidos y OP
+`CANCELLED`, y cada movimiento de kardex de los reportes con su reversa presente, releído
+del propio kardex). Sin bloqueos. Ejecutado en una sola transacción: **2 `sales_orders`
+(seq 1, 134), 1 `fiscal_document` (`F001-00000001`), 2 `quotations` (seq 4, 7), 6
+`reservations`, 3 `production_orders` (seq 1, 28, 29), 3 `production_reports` borrados
+físicamente.** La factura `REJECTED` se borró porque nunca fue un documento vigente (SUNAT
+la rechazó, D-105 dice que el PSE nunca la conoció como propia) — su correlativo
+`F001-00000001` sigue quemado para siempre, no se recupera (mismo criterio que la
+numeración de Fase 5b): la próxima factura real de `production` empieza en `F001-00000002`.
+
+**Verificación final — producción quedó exactamente en:** `quotations = 0`,
+`fiscal_documents = 0`, `sales_orders = 0`, `reservations = 0`, `production_orders = 0`,
+`production_reports = 0`, `dispatches = 0`. Lo único que queda es lo estructural: 2 `users`,
+49 `customers`, 174 `products`, 50 `coils`, 9 `finishes`, 6 `colors`, 5 `business_lines` —
+seed + catálogo + bobinas + acabados. Las 7 bobinas que tocó el ensayo de punta a punta
+(incluida la de la OP 29) tienen su saldo exactamente igual a su peso nominal: cero kilos
+netos consumidos por toda la noche.
+
+Con esto, el ensayo del 2026-09-07/08 no dejó **ningún** rastro en `production` salvo el
+correlativo quemado de `F001-00000001` (documentado acá, irreversible) y las herramientas
+que quedaron (`--exclude-touched`, `--include-reverted`, D-143/D-144) para la próxima vez
+que algo similar haga falta revertir.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
