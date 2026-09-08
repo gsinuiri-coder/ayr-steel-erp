@@ -10,12 +10,15 @@ import {
   RESERVATION_STATUS_LABELS,
   Role,
   type ReservationDto,
+  type RoofingBatchCreateResultDto,
   type SalesOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
+import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
+import { OperationDateField } from '@/components/operation-date-field';
 import { QueueAdminControls } from '@/components/production-queue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -32,6 +35,7 @@ import {
 } from '@/components/ui/table';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
+import { PlantSheetButtons } from '@/components/sales/plant-sheet-buttons';
 import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
 import { LINK_CLASSNAME } from '@/lib/utils';
 
@@ -52,6 +56,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [cancelOpen, setCancelOpen] = useState(false);
   const [releasing, setReleasing] = useState<ReservationDto | null>(null);
+  /** D-124/D-148: día con el que nacen las órdenes que genera el botón. Solo lo ve un admin. */
+  const [ordersDate, setOrdersDate] = useState<string | undefined>(undefined);
 
   const order = useQuery({
     queryKey: ['sales-order', id],
@@ -88,6 +94,33 @@ export function PedidoDetalleView({ id }: { id: string }) {
     onError,
   });
 
+  /**
+   * D-148: generar la OP de cada línea a medida que todavía no la tiene. No es un modo
+   * nuevo de crear órdenes —cada una nace de su reserva como siempre (D-084)—, solo evita
+   * que un pedido de ocho líneas quede con cinco en cola y tres olvidadas.
+   */
+  const generateOrders = useMutation({
+    mutationFn: () =>
+      api<RoofingBatchCreateResultDto>(`/production/roofing/from-sales-order/${id}`, {
+        method: 'POST',
+        // D-124: la corrida se puede fechar como cualquier otro hecho del dominio, igual que
+        // cuando la orden se crea de a una desde `/planta`. Sin esto, las OP de un pedido
+        // importado con fecha vieja nacían fechadas hoy y nadie podía decir otra cosa.
+        body: { operationDate: ordersDate },
+      }),
+    onSuccess: (result) => {
+      toast.success(
+        result.created.length === 1
+          ? `Orden ${result.created[0]?.code ?? ''} creada`
+          : `${String(result.created.length)} órdenes creadas: ${result.created.map((c) => c.code).join(', ')}`,
+      );
+      invalidateSales(queryClient, { orderId: id });
+      invalidateProduction(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['production-queue'] });
+    },
+    onError,
+  });
+
   if (order.isPending) {
     return <Skeleton className="h-64 w-full" />;
   }
@@ -99,6 +132,12 @@ export function PedidoDetalleView({ id }: { id: string }) {
     );
   }
 
+  // D-148: líneas a medida que reservan materia prima, siguen activas y todavía no tienen
+  // OP. Es lo mismo que el API vuelve a resolver al crearlas: acá solo decide si el botón
+  // tiene sentido y con qué número.
+  const pendingRoofingLines = o.reservations.filter(
+    (r) => r.status === 'ACTIVE' && r.itemType === 'RAW_MATERIAL' && r.productionOrderId === null,
+  ).length;
   const consumed = o.reservations.filter((r) => r.status === 'CONSUMED');
   const stale = o.reservations.filter((r) => r.isStale);
   // El botón se apaga cuando una OP viva está fabricando con el material: el propio aviso
@@ -186,6 +225,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
           */}
           {canOperate && (
             <>
+              {/* D-149: el papel que baja al taller, sin importes. */}
+              <PlantSheetButtons orderId={o.id} code={o.code} />
               <Button asChild>
                 <Link href={`/despachos/nuevo?pedido=${o.id}`}>Despachar</Link>
               </Button>
@@ -193,6 +234,27 @@ export function PedidoDetalleView({ id }: { id: string }) {
                 <Link href={`/comprobantes/nuevo?pedido=${o.id}`}>Emitir comprobante</Link>
               </Button>
             </>
+          )}
+          {/*
+            D-148: una OP por cada línea a medida que todavía no la tiene, de una vez y en
+            una transacción. Solo para ADMINISTRADOR porque producción es de ADMINISTRADOR y
+            SUPERVISOR_PLANTA (§3.4), y VENDEDOR —que sí ve este pedido— no llega al endpoint.
+          */}
+          {isAdmin && canOperate && pendingRoofingLines > 0 && (
+            <div className="grid gap-1">
+              <Button
+                variant="outline"
+                disabled={generateOrders.isPending}
+                onClick={() => {
+                  generateOrders.mutate();
+                }}
+              >
+                {generateOrders.isPending
+                  ? 'Generando…'
+                  : `Generar todas las órdenes (${String(pendingRoofingLines)})`}
+              </Button>
+              <OperationDateField value={ordersDate} onChange={setOrdersDate} />
+            </div>
           )}
           {isAdmin && canCancel && (
             <Button

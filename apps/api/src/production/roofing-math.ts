@@ -2,8 +2,8 @@ import { BadRequestException } from '@nestjs/common';
 import {
   Decimal,
   equivalentMeters,
+  piecesTheoreticalKg,
   roundTo,
-  theoreticalKgPerPiece,
   toDecimal,
   type PieceLike,
 } from '@ayr/shared';
@@ -36,16 +36,11 @@ export function roofingTheoreticalKg(
   geometry: CoilGeometry,
   pieces: readonly PieceLike[],
 ): Decimal {
-  const total = pieces.reduce((acc, piece) => {
-    const perPiece = theoreticalKgPerPiece({
-      widthMm: geometry.widthMm,
-      thicknessMm: geometry.thicknessMm,
-      pieceLengthMm: piece.lengthMm,
-      densityFactor: geometry.densityFactor,
-    });
-    return acc.plus(perPiece.times(piece.qty));
-  }, new Decimal(0));
-  return roundTo(total, 'KG');
+  // D-146: el cuerpo vive en `@ayr/shared` porque la pantalla de planta muestra este mismo
+  // número —el kilo teórico del plan— antes de que nadie tipee. Esto quedó como el nombre
+  // que el módulo de coberturas ya usaba, no como una segunda cuenta: dos copias serían dos
+  // topes distintos, que es exactamente lo que el tope de kg declarado no puede permitirse.
+  return piecesTheoreticalKg(geometry, pieces);
 }
 
 /**

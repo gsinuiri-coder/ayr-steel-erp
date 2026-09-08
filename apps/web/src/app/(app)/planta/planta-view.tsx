@@ -278,7 +278,13 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
       </Card>
 
       <div className="grid gap-3">
-        <h2 className="text-lg font-medium">Órdenes en curso</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-medium">Órdenes en curso</h2>
+          {/* D-147: la otra forma de reportar, cuando lo que hay es una hoja y no una orden. */}
+          <Button variant="outline" className="h-12" asChild>
+            <Link href="/planta/tanda">Reportar en tanda</Link>
+          </Button>
+        </div>
         {ordersPending && <Skeleton className="h-24 w-full" />}
         {ordersError && (
           <p className="text-sm text-destructive">No se pudieron cargar las órdenes.</p>
@@ -317,6 +323,16 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
                 {o.targetPieces !== null && <> de {o.targetPieces}</>} ·{' '}
                 {formatQty(o.assignedKg, 'kg')} montados
               </div>
+              {/*
+                D-148: cuántos ML hay que producir. Es el dato con el que planta decide qué
+                orden agarrar primero y hasta acá no estaba en ninguna parte de la tarjeta:
+                había que abrir la orden para ver el plan de corte.
+              */}
+              {o.planMeters !== null && (
+                <div className="text-sm text-muted-foreground">
+                  {formatQty(o.planMeters, 'm')} a producir
+                </div>
+              )}
             </button>
           ))}
         </div>

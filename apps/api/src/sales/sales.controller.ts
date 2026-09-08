@@ -104,6 +104,23 @@ export class SalesController {
     res.send(buffer);
   }
 
+  /**
+   * Hoja de planta del pedido (D-149): sin importes y armada al vuelo. Vive con las rutas
+   * de pedidos —y no con las de producción— porque lo que imprime es el pedido, y quien la
+   * baja es el mismo que lo mira.
+   */
+  @Get('orders/:id/pdf-planta')
+  // El único documento de este controller que **no** es comercial: es el papel del taller, y
+  // por eso suma SUPERVISOR_PLANTA a los roles de la clase (§3.4). No lleva importes, así que
+  // no le abre nada de lo que el resto del módulo le oculta a ese rol.
+  @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
+  async plantOrderPdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
+    const { buffer, filename } = await this.orders.plantPdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
   @Post('quotations')
   createQuotation(
     @CurrentUser() actor: RequestUser,

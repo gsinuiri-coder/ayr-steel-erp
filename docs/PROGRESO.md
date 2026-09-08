@@ -20,6 +20,7 @@
 | 7d — Pulido UI/UX pre-entrega al cliente                   | ✅ Cerrada (2026-09-06) | Paginación server-side (D-113), fechas en zona de Lima (D-112), encabezado fijo sin contenedor de scroll (D-115), afordancia de link (D-114). 119/119 E2E en producción (38 saltados por D-081), deploy hecho, purga corrida — residuo de ventas/mermas ya hechas, ver detalle                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 7e — Venta de bobinas + catálogo estructurado + cotización | ✅ Cerrada (2026-09-06) | A+B+C+D+E (D-116..D-120) + D-121 (pestañas de `/bobinas`, piezas teóricas en planta), aprobados por el dueño y desplegados. D-122 (sacar el `ProductBom` de coberturas) diseñado, diferido al tramo 7e-ii. D-123 documenta la lección del primer push: 25 fallas reales en specs de fases anteriores que asumían comportamiento que D-117/D-118/D-120 cambiaron — corregidas, CI verde (159/159, 9 saltadas). 119/119 E2E en producción (38 saltados por D-081), deploy hecho (API por Cloud Run, web por la integración Vercel-GitHub — el CLI de Vercel sigue con el token expirado), purga corrida — residuo estructural no bloqueante (ventas/producción ya movidas), ver `docs/handoff/fase-7e.md`. |
 | 7 consolidada — backdating, entornos, subtipo de cobertura | ✅ Cerrada (2026-09-06) | D-124 (fecha de operación), D-125/D-126 (rama `demo` y prohibición de `e2e:prod`), D-127 (subtipo de cobertura y rama de confirmación). D-122 sigue diferido.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Sesión Planta — integridad de producción y tanda           | ✅ Cerrada (2026-09-08) | D-146 (el plan de corte es un tope duro y el kg declarado es dato, no consumo), D-147 (`/planta/tanda`, todo o nada), D-148 (todas las órdenes de un pedido de una vez), D-149 (hoja de planta en PDF). 306/306 unitarios; 149 E2E locales con 3 fallas del cupo del PSE demo. **Sin desplegar**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                             |
 | 8 — Auditoría, reportes, UAT                               | ⚪ Pendiente            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Fase 0 — detalle
@@ -2313,6 +2314,373 @@ correlativo quemado de `F001-00000001` (documentado acá, irreversible) y las he
 que quedaron (`--exclude-touched`, `--include-reverted`, D-143/D-144) para la próxima vez
 que algo similar haga falta revertir.
 
+## Sesión de estabilización (2026-09-08) — M0: la OP de coberturas a stock estaba rota en la base (D-145)
+
+**Síntoma:** `POST /api/production/roofing` con `productId` + `targetPieces` (la orden a
+stock de D-140, la que ofrece `/planta` y la que arma el CLI de importación de D-142)
+devolvía **`500 Internal server error`**, sin ningún mensaje. No había repro documentado.
+
+**Reproducido en local (Docker, base `ayr_local_e2e`) antes de tocar código.** El error real,
+que el 500 tapaba:
+
+```
+PrismaClientUnknownRequestError en tx.productionOrder.create()
+  roofing-production.service.ts:318
+PostgresError 23514: new row for relation "production_orders"
+  violates check constraint "production_orders_roofing_contra_pedido"
+```
+
+**Causa raíz, y una segunda que la primera destapó:**
+
+1. **El `CHECK` de Fase 6 nunca se actualizó.** `production_orders_roofing_contra_pedido`
+   (migración `20260904180000_fase6_coberturas_color`, D-084) exige `reservation_id IS NOT
+NULL` en toda OP `ROOFING`. D-140 —resuelta un día antes por el dueño— introdujo
+   `createToStock`, que crea exactamente eso: una OP `ROOFING` **sin reserva**. El código
+   nuevo y la base quedaron diciendo cosas opuestas.
+2. **`createToStock` no guardaba `targetPieces`.** Lo valida (`create` falla sin él) y lo
+   audita, pero no lo pasaba al `data` del `create` — drywall sí lo hace desde D-048
+   (`production.service.ts:291`). Se vio recién al aplicar el fix del constraint: el insert
+   seguía fallando porque `target_pieces` llegaba `null`. Además de romper D-145, dejaba
+   `/planta` y `/produccion` mostrando «Meta: —» en la única clase de orden que la tiene por
+   definición.
+
+**Por qué llegó desplegado sin que nadie lo notara.** Los unitarios de `production` son de
+aritmética pura (Prisma mockeado: un `CHECK` de la base les es invisible), y el E2E de Fase 6
+cubre el **rechazo** de D-140 (`fase6.spec.ts`, «plancha de catálogo: se vende de stock y
+producirla contra el pedido no tiene ruta») y **se detiene en la frase que nombra la salida**
+—"producí una orden a stock desde planta"— sin recorrerla nunca. La mitad prohibida estaba
+probada; la mitad permitida, no.
+
+**Arreglo (D-145).** Migración
+`20260908150000_d145_allow_roofing_production_order_to_stock`: el constraint pasa a
+`production_orders_roofing_contra_pedido_o_a_stock`, con forma `kind <> 'ROOFING' OR
+reservation_id IS NOT NULL OR target_pieces IS NOT NULL` — conserva la garantía de D-084 (una
+OP de coberturas nunca es huérfana) admitiendo las dos formas legítimas de nacer. Más el
+`targetPieces: input.targetPieces` que faltaba. **No se tocó el kardex ni
+`InventoryService.record`**: el resto del ciclo a stock (`mountCoil`, `report`, `close`,
+`reverseReport`, `cancel`) ya trataba `reservationId` como opcional y no necesitó un solo
+cambio.
+
+**Regresión, roja antes y verde después:** `e2e/tests/fase7final-op-a-stock.spec.ts`, 2 casos
+— el ciclo completo a stock (crear sin reserva → montar → rolar 5 planchas de 4 m = 80 kg →
+cerrar con 3 kg de despunte → kardex `IN:PURCHASE`/`OUT:PRODUCTION`/`OUT:SCRAP`) y la
+cobertura a medida, que sigue sin camino a stock. El caso del ciclo **verifica lo que D-140
+decidió**: sin pedido detrás no hay promesa que trasladar (D-088), así que las planchas entran
+como **saldo libre** (`reservedQty = 0.000`, `availableQty = 5.000`) y el pedido de catálogo
+que esperaba puede reservarlas después.
+
+Verificado: `pnpm turbo lint typecheck test` verde (293/293) y `pnpm e2e fase6 fase6-bordes`
+verde (12/12), sin regresiones.
+
+### M1 — la tolerancia de reserva de MP ya estaba en `main`; queda el checklist de deploy
+
+**Verificado, no construido.** La tolerancia de espesor (±0.02 mm) y la igualdad estricta de
+color del agregado genérico de materia prima (D-134) ya estaban commiteadas en `main` — el
+último commit que las tocó es `8bfa5bb`. Cobertura:
+
+- **Unit**: `roofing-math.spec.ts` fija el borde exacto (0.32 y 0.28 pasan contra 0.30; 0.33
+  no) y `raw-material.spec.ts` comprueba que el agregado suma bobinas de 0.44 y 0.46 para una
+  spec de 0.45 y descarta las de otro color. `ROOFING_THICKNESS_TOLERANCE_MM = '0.02'` vive en
+  `@ayr/shared` con override por entorno (`ROOFING_THICKNESS_TOLERANCE_MM`).
+- **E2E**: `fase7final-m1` (5/5) y `fase6-bordes` caso 1 (filtro por espesor/color/estado).
+
+**Smoke contra Docker, sobre el artefacto compilado.** `pnpm build` verde, y después la suite
+`fase7final-op-a-stock` + `fase6` corrida con `CI=true` contra el Postgres de Docker — que es
+lo que hace que Playwright levante `node dist/main.js` + `next start` en vez de `nest start`,
+o sea **la misma forma que corre en Cloud Run**: **14/14 verdes**.
+
+**No se desplegó nada.** Checklist listo para cuando el dueño dé el OK:
+
+```bash
+# 1. Todo verde y commiteado, CI verde en GitHub Actions (D-123)
+pnpm turbo lint typecheck test build && pnpm format:check && pnpm exec eslint e2e
+
+# 2. Migración primero, y esta vez el orden SÍ es seguro (ver abajo)
+pnpm db:prod            # aplica 20260908150000_d145_... (y lo que production tenga pendiente)
+
+# 3. API
+pnpm deploy:api
+
+# 4. Web: por push a main (la integración Vercel-GitHub). `pnpm deploy:web` sigue
+#    necesitando que el dueño corra `vercel login`: el token del CLI está vencido.
+
+# 5. Verificación post-deploy, solo lectura (D-126). NUNCA pnpm e2e:prod (regla dura 9)
+pnpm smoke:prod
+```
+
+**Por qué esta vez el orden sí es seguro,** a diferencia del aviso de la sesión anterior: la
+migración de D-145 **afloja** un `CHECK`, no lo endurece ni cambia ninguna columna. El API
+viejo corriendo contra la base ya migrada sigue funcionando exactamente igual (nunca intenta
+insertar una fila que el constraint nuevo rechace y el viejo aceptara), así que no hay ventana
+de incompatibilidad entre el paso 2 y el paso 3. No hace falta que nadie deje de operar.
+
+### M2 — ensayo de recarga de agosto en `demo`: parado por decisión del dueño
+
+**Paso 0 hecho.** `demo` estaba **3 migraciones atrasada** respecto de `main`:
+`20260907180000_fase7finalb_origen_del_pedido`, `20260907190000_fase7finalb_import_batch_id_ventas`
+y `20260908150000_d145_...` (el fix de M0). Las tres aplicadas con `pnpm db:demo` (migrate
+deploy + purga de sesiones heredadas + seed del admin de demo). Sin incidentes.
+
+**Inventario de `demo` antes de tocar nada** (solo lectura). Demo es el clon de production al
+2026-09-06, o sea **de antes** de la limpieza del ensayo, así que arrastra todo el residuo E2E
+que production tenía entonces: 1 985 bobinas (1 927 `CANCELLED`, 48 `OPEN` con 120 729 kg de
+saldo), 1 617 productos (mayoría `BOBE2E…`/`IMP-OK-…`/`SKU-…`), 968 acabados, 1 070
+proveedores, 6 836 movimientos de kardex, 219 pedidos (215 `CANCELLED`), 2 comprobantes
+`DRAFT`. **Si el ensayo se retoma, conviene rehacer `demo` desde `production`** (que hoy sí
+está limpia) antes de cargar nada — el procedimiento está en `docs/ENTORNOS.md`.
+
+**Dry-run de ventas contra `demo`** (`Ventas Detalladas.xlsx`: 141 filas, 71 documentos,
+03/08/2026 → 31/08/2026 — es el archivo de agosto). Resultado: **40 SKUs faltantes** (los
+mismos 40 del ensayo anterior: demo no tiene los 55 productos de Metallic Roofing que el dueño
+creó en production el 07-09, posteriores al clon), **ninguna unidad sin mapear**, y 1 nota de
+crédito excluida con su motivo (`FFC1-73`). Ningún documento se confirmó: el dry-run no
+escribe negocio.
+
+**No se ejecutó la importación y no se va a reimportar** — decisión del dueño en el chat.
+La mitad de bobinas del ensayo tampoco se corrió: **no existe ningún archivo de bobinas de
+agosto** en `local-data/`, solo el de ventas.
+
+#### Incidente: el dry-run pisó el archivo de decisiones del dueño
+
+Correr el dry-run con `--decisions "local-data/Ventas Detalladas.decisiones.json"` —la forma
+natural de preguntar "con mis decisiones puestas, ¿qué falta?"— **borró ese mismo archivo**:
+el esqueleto que el dry-run escribe va, por defecto, a `<archivo>.decisiones.json`, que es
+exactamente el nombre que el dueño usa para el suyo. Se perdieron las **40 líneas de negocio**
+asignadas SKU por SKU y la lista de **23 comprobantes marcados como pendientes**. No estaba en
+git (`local-data/` es ignorada por completo, D-142) ni en `dev` (los 40 SKUs no existen ahí).
+El dueño decidió rehacerlo a mano en vez de autorizar una lectura de `production` para
+recuperarlo.
+
+**Arreglado para que no pueda repetirse** (`apps/api/prisma/import-ventas-cli.ts`,
+`safeScaffoldPath`): el dry-run **nunca pisa un archivo que ya existe**. Sin `--out`, si el
+destino por defecto existe, no escribe nada y lo dice. Con `--out` explícito manda quien lo
+escribe, salvo que apunte al mismo archivo que `--decisions`, que ahora aborta con el motivo.
+Es la misma clase de defecto que D-128: una herramienta que hace algo destructivo por defecto
+en el camino más natural de usarla.
+
+### Hallazgos de `revisor` corregidos en esta sesión
+
+- **El test nuevo daba por buenas las reversas sin mirarlas.** `purgeRoofingTrail` envuelve
+  cada paso en un `catch` silencioso (es limpieza de `finally`), así que `reopen` →
+  `reverseReport` → `cancel` sobre una OP **sin reserva** —justo las rutas que el flujo a
+  stock estrena— corrían sin que nadie comprobara el resultado: si alguna se rompía, el test
+  seguía verde. Ahora la reversa se corre **dentro del `try`, sin `catch`**, y se comprueba
+  que la bobina vuelve a sus 2 000 kg y el producto a cero.
+- **El spec no miraba el kardex del producto**, solo el de la bobina: se agregó el
+  `ADJUST:PRODUCTION` del cierre y el `avgCost` de 83.0000 que ese ajuste produce.
+- **`--out` vs `--decisions` se comparaba con `===` sobre cadenas.** En NTFS
+  `…DECISIONES.json` y `…decisiones.json` son el mismo archivo, así que el chequeo nuevo
+  dejaba pasar el caso que existe para impedir. Ahora la comparación ignora mayúsculas en
+  Windows (`samePath`) y **corre al parsear argv**, antes de `ImportsService.upload` — si no,
+  abortaba dejando ya creados el lote y sus `import_rows`.
+- **RF-31 en `ARQUITECTURA.md` seguía diciendo que `POST /production/roofing` exige
+  `reservationId`**, falso desde D-140 y contradicho por la fila D-145 del mismo archivo.
+  Corregido con la excepción de la corrida a stock. Lo mismo en el doc de
+  `ProductionOrder.reservationId` del schema, que solo nombraba a drywall.
+- **`targetPieces` estaba duplicado como tipo local en el spec**; se agregó al DTO compartido
+  de `e2e/helpers/production.ts`, que era donde faltaba.
+
+**No corregido, a propósito: el `CHECK` acepta `target_pieces = 0` o negativo.** El revisor
+propuso `("target_pieces" IS NOT NULL AND "target_pieces" > 0)`, que es más fiel al comentario.
+No se aplicó porque **la migración ya está aplicada en `demo`**: editar su SQL cambia el
+checksum y rompe `prisma migrate deploy` contra esa rama con el mismo síntoma que ya apareció
+dos veces (ver D-053 y las notas de la sesión 7-final-C). El piso de 1 lo garantiza hoy
+`piecesSchema` en `@ayr/shared` (`.int().min(1)`), que es por donde entra el único camino que
+crea estas órdenes. Si algún día hace falta en la base, va como migración aparte.
+
+## Sesión Planta (2026-09-08) — integridad de producción y reporte en tanda (D-146..D-149)
+
+Sesión de planta, no una fase. Cinco puntos pedidos por el dueño, los cinco cerrados. Todo
+en **local (Docker)**; producción no se tocó en ningún momento, ni para leer, y **no se
+desplegó nada**.
+
+### M0 — el plan de corte pasa a ser un tope duro (D-146)
+
+**El hueco:** la única cota de un reporte de coberturas era el **material montado**. Una
+orden de 100 ML con un rollo entero encima podía reportar 300 ML y nadie se quejaba; esos
+metros de más nacían reservados a nombre del pedido (D-088) o entraban al almacén como stock
+que ningún pedido encargó.
+
+`RoofingProductionService.reportInTx` compara ahora el acumulado de los reportes **vigentes**
+contra `Σ cantidad × largo` del plan de corte y rechaza el exceso **sin tolerancia** — el
+borde exacto entra y el milímetro siguiente no. Producir más de lo planeado sigue siendo
+posible, pero por donde corresponde: ajustar el plan (`PUT /production/roofing/:id/plan`) y
+recién después reportar.
+
+**Los datos históricos que ya se pasaron del plan no se tocan ni se bloquean para lectura.**
+La regla mira hacia adelante: un acumulado excedido deja el restante en cero y rechaza el
+reporte **siguiente**, nada más. Hay un caso de regresión que lo fija (`roofing-math.spec.ts`).
+
+La aritmética vive en `@ayr/shared` (`roofingPlanProgress`, `roofingPlanOverrun`,
+`remainingPlanPieces`) y la corren los dos lados: el API para rechazar y la terminal para
+mostrar el restante antes de que nadie tipee. Dos copias habrían sido dos topes distintos.
+
+### M1 — kg consumido por reporte, opcional y como dato (D-146, segunda mitad)
+
+`consumedKg` opcional en `POST /production/roofing/:id/report`. Se guarda en
+`production_reports.consumed_kg` (columna nueva, nullable, migración
+`20260908180000_d146_kg_declarado_por_reporte`) y **no toca el kardex**: la salida de la
+bobina sigue siendo el kilo teórico de los largos (D-047) y el consumo real se reconcilia al
+cerrar (D-089), que es donde sale el despunte. Decisión del dueño entre las dos opciones que
+se le plantearon.
+
+El tope es el kilo teórico del **plan completo** con la geometría del rollo montado —también
+elegido por el dueño frente a la alternativa más estricta (el teórico de los largos de ese
+reporte), que no habría dejado declarar ningún despunte.
+
+La tarjeta "Reportar largos rolados" de `/planta` muestra ahora, en una fila compacta de
+cuatro cifras: **ML del plan, ML reportado, ML restante y kg teórico del plan**. El layout se
+rehízo: los campos estaban sueltos y desalineados; ahora el kg y el resumen del reporte
+comparten una fila con `items-end`, y el botón va con la fecha de operación en la siguiente.
+
+### M2 — página "Reportar producción en tanda" (D-147)
+
+`/planta/tanda`. Una fila por orden de coberturas abierta (filtro de texto por orden,
+producto, pedido o cliente; y `?pedido=<id>` para llegar acotado desde el pedido). Cada fila
+muestra orden, ítem, ML plan, ML reportado, ML restante, y captura **ML nuevo** y **kg
+consumido** (opcional).
+
+**Los largos no se tipean.** Se derivan del plan de la propia orden con `piecesFromPlanMeters`
+(`@ayr/shared`), una búsqueda **exacta** —no glotona— que devuelve el desglose en planchas y
+lo muestra bajo el input mientras se escribe. Que sea exacta no es refinamiento: con un plan
+de `2 × 4.20 m` más `1 × 6.00 m`, el reparto glotón por orden de plan no encuentra los 6.00 m
+aunque la respuesta exista. Cuando los metros no salen de un número entero de planchas, la
+fila **falla en vez de redondear**: media plancha no existe.
+
+`POST /production/roofing/batch` escribe las N filas en **una** transacción reusando
+`reportInTx` —no una segunda copia de la lógica de reporte— y devuelve el error de **cada**
+fila cuando alguna no valida, deshaciendo lo que las buenas alcanzaron a escribir. Un error
+que no sea de dominio (una violación de constraint) sí corta en el acto: a partir de ahí
+Postgres aborta la transacción y seguir juntando errores sería inventarlos.
+
+### M3 — "Generar todas las órdenes" desde el pedido (D-148)
+
+`POST /production/roofing/from-sales-order/:id`: una OP por cada línea del pedido que todavía
+no la tiene, en una transacción. No cambia el modelo (**1 ítem = 1 OP**, cada una naciendo de
+su reserva por `createFromReservationInTx`, con el `CHECK` de D-145 intacto); lo que agrega es
+que un pedido de ocho líneas no pueda quedar con cinco en cola y tres olvidadas. Las líneas de
+catálogo se saltan en silencio: su camino es la corrida a stock (D-140), no este botón. Sin
+reversa propia — anular una orden por separado ya existe (RF-33).
+
+`planMeters` entra al DTO de la orden (y al listado, que hasta ahora omitía `items`), así que
+la tarjeta de `/planta` muestra los **ML a producir** sin abrir el detalle.
+
+### M4 — hoja de planta en PDF (D-149)
+
+`GET /sales/orders/:id/pdf-planta`, con `pdfkit` y el mismo patrón que el PDF de la cotización
+(D-068). Lleva número de pedido, cliente, fecha prometida y, por ítem, producto, cuánto hay
+que producir, los largos (`10 × 4.20 m`) y las medidas que deciden qué bobina se monta
+(espesor, ancho, color — D-086), más un pie para firmar. **Sin ningún importe.**
+
+Dos diferencias deliberadas con el PDF de la cotización: se arma **al vuelo y no se guarda en
+R2** (aquel es un documento congelado que se le mandó al cliente; este es una copia de trabajo
+del estado actual, y una versión vieja bajando al taller es justo lo que no se quiere), y no
+lleva precios (una hoja con márgenes circulando por la planta es la forma más barata de que se
+entere todo el mundo). Se descarga desde el pedido y, en el teléfono, se comparte con la Web
+Share API — el botón de compartir solo aparece si el navegador declara poder compartir
+**archivos** (`navigator.canShare({ files })`).
+
+### Verificación
+
+- `pnpm turbo lint typecheck test`: **306/306** unitarios en verde (13 nuevos en
+  `roofing-math.spec.ts` para D-146/D-147: el tope y su borde exacto, el histórico excedido,
+  el descuento por largo, y los cuatro casos de `piecesFromPlanMeters` incluida la vuelta
+  atrás que el glotón no encuentra).
+- E2E local (Docker): `planta-tanda.spec.ts` (API) + `planta-tanda-ui.spec.ts` (pantalla, escrito por `qa`), **7/7** — tope del plan con su borde exacto, kg
+  declarado que no mueve kardex, tanda feliz de dos órdenes, tanda con una fila que se pasa
+  del tope (**rollback comprobado en el kardex**, no en el mensaje), metros que no cierran en
+  planchas enteras, generación de las órdenes de un pedido, descarga de la hoja de planta, y el
+  recorrido de la pantalla de tanda de punta a punta (desglose en vivo, error inline del tope,
+  envío y kardex comprobado por API).
+- Regresión en tandas chicas contra el Postgres local, cubriendo **todo spec que toca
+  `/production/roofing`** (que es lo único que D-146 puede cambiar) más los que leen el DTO de
+  producción: `fase6 fase6-bordes fase7final-m1 fase7final-op-a-stock planta-tanda` (**25/25**),
+  `fase5a-bordes fase7* fase7-consolidada fase7e-bordes` (**84 pasaron, 3 fallaron**) y
+  `fase4 fase4-bordes fase7d fase7e fase7e-ajustes-d121 fase7final-m0 fase7finalb-pedido-importado`
+  (**40/40**). **149 casos, 3 fallas y ninguna del código:** son las tres de `fase7b` que emiten
+  contra el PSE demo y chocan con su cupo (_"No puedes enviar mas de 50 documentos en una cuenta
+  DEMO"_), el mismo límite externo ya anotado en el cierre de la Fase 5b.
+- Tras aplicar los hallazgos de la revisión, la tanda de coberturas se volvió a correr entera
+  (`planta-tanda planta-tanda-ui fase6 fase6-bordes fase7final-m1 fase7final-op-a-stock`):
+  **26/26**.
+- **En tandas y no de una sola corrida, a propósito:** el token de acceso dura 15 minutos y una
+  corrida completa de la suite se pasa de ahí y empieza a caerse con 401 a mitad de camino.
+- **No se corrió `pnpm e2e:prod`** (regla dura 9, D-126) ni se tocó producción.
+- **Nada desplegado.** Falta el visto bueno del dueño; la migración de esta sesión
+  (`20260908180000_d146_kg_declarado_por_reporte`) es **aditiva y nullable**, así que el API
+  viejo contra la base ya migrada funciona igual y no hay ventana de incompatibilidad entre
+  migrar y desplegar.
+
+**Hallazgo del E2E, que es comportamiento correcto y quedó documentado en el spec:** dos
+órdenes del mismo color y espesor no pueden montar cada una un rollo entero mientras la
+promesa de la otra siga viva. D-134 saca del disponible del agregado el rollo **completo** —no
+los kilos asignados—, así que el segundo montaje deja la otra reserva sin material y el
+guardrail lo corta. El test compra la tercera bobina que el propio mensaje del guardrail pide.
+
+### Hallazgos de `revisor` corregidos en esta sesión
+
+Dos pasadas en paralelo (API + `@ayr/shared` por un lado, `apps/web` por el otro) y una de
+`qa`. Ningún bloqueante; lo alto y lo que valía la pena, corregido en el mismo commit.
+
+- **La tanda escribía a medias antes de fallar, y las filas siguientes se validaban contra esa
+  suciedad.** `reportInTx` no es atómica por dentro: descuenta la reserva, mueve el pedido a
+  `EN_PRODUCCION` y crea el reporte **antes** del primer punto que puede fallar por dominio,
+  que es `inventory.record`. Al capturar el error y seguir el bucle, la fila 2 veía la reserva
+  ya consumida por la fila 1 fallida y devolvía un error que era puro efecto colateral. El
+  caso no era exótico: una tanda **retrofechada sin confirmar** hacía fallar a todas las filas
+  en el kardex y devolvía N errores fabricados. No había corrupción —el `throw` final revierte
+  todo—, pero el contrato que la pantalla promete ("el error de **cada** fila") era falso.
+  Corregido con un **`SAVEPOINT` por fila**: la que falla se deshace sola y las que siguen ven
+  el estado real.
+- **Las filas se bloqueaban en el orden que mandaba el cliente.** Cada una toma un `FOR UPDATE`
+  sobre su orden y los acumula hasta el commit, así que dos tandas simultáneas con las mismas
+  órdenes en distinto orden se trababan en deadlock — el mismo defecto que ya había costado un
+  incidente y que motivó el "pedido primero, reserva después" de `report`. Ahora se ordenan por
+  id antes de tocar nada.
+- **`piecesTheoreticalKg` quedó duplicada.** El comentario del código compartido decía que
+  `roofing-math.ts` "la envuelve" y no la envolvía: eran dos copias byte a byte, y el tope de
+  kg declarado usaba la del API. Exactamente las "dos copias serían dos topes distintos" que el
+  propio comentario advertía. `roofingTheoreticalKg` pasó a delegar.
+- **`MAX_BATCH_ROWS` bajó de 50 a 20.** Con 50 filas, el presupuesto de 120 s daba 2.4 s por
+  fila —cada una hace lo que `report` entero, que ya necesita 30 s contra Neon— y la
+  transacción retenía los locks de 50 órdenes, sus pedidos y sus bobinas durante dos minutos.
+- **El cierre ignoraba los kilos que planta declaró por reporte.** `close` seguía asumiendo
+  merma cero cuando no le pasaban `consumedKg`, contradiciendo en silencio la cifra que el
+  encargado se había tomado el trabajo de anotar. Ahora los usa como valor por defecto (con
+  piso en el kilo teórico ya reportado); lo explícito sigue mandando.
+- **`SUPERVISOR_PLANTA` recibía 403 en la hoja de planta**, el único documento que D-149
+  diseñó para el taller. La ruta suma ese rol; no lleva importes, así que no le abre nada de lo
+  que el módulo comercial le oculta.
+- **El mensaje del reparto agotado mentía.** Cuando `piecesFromPlanMeters` se quedaba sin
+  presupuesto de nodos decía "esos metros no salen de un número entero de planchas", que puede
+  ser falso. Ahora distingue los dos casos y manda a reportar los largos a mano.
+- **La tanda del web armaba el envío con las filas visibles.** Escribir tres filas y después
+  tipear en el filtro para buscar la cuarta dejaba las tres primeras fuera del envío, y el
+  éxito borraba esos borradores sin que nadie se enterara — lo contrario exacto de "la hoja
+  entra entera". Ahora el filtro solo decide qué se pinta; además la pantalla avisa cuántas
+  filas con metros quedaron fuera de la vista.
+- **Medios del web corregidos:** el enlace a la orden navegaba fuera y perdía todos los
+  borradores (ahora abre en otra pestaña); la fila no comparaba el kilo teórico contra los
+  kilos montados y dejaba tumbar la tanda entera después de un minuto de transacción; una orden
+  **sin plan de corte** mandaba a "ajustar el plan de corte" en vez de a la terminal; los
+  errores por fila del intento anterior sobrevivían a un segundo intento fallido; y el botón de
+  compartir la hoja de planta moría con un 401 sin salida cuando el token de acceso vencía
+  (ahora reintenta tras el refresh).
+- **Bajos corregidos:** `messageOf` reventaba dentro del `catch` si el cuerpo del error era
+  `null` (la tanda salía como 500 opaco); el DTO de la tanda tipaba `status` y `productUnit`
+  como `string` suelto; el botón de D-148 no ofrecía fecha de operación pese a que el schema la
+  acepta (las OP de un pedido importado con fecha vieja nacían fechadas hoy); la terminal
+  mostraba "ML del plan 0.000" y pedía elegir una bobina ya elegida en una orden sin plan; y
+  quedaban dos formatos de cantidad conviviendo en la misma tarjeta.
+- **Anotado y no corregido:** `GET /production/roofing/batch` corta en 500 órdenes abiertas sin
+  avisar que truncó. Con el volumen real está lejísimos, y el filtro por pedido es la salida;
+  si algún día importa, va como paginación con `hasMore`.
+
+**Lo que la revisión confirmó, y no es menor:** `productionReport.create` existe en exactamente
+dos lugares —el de coberturas, que pasa por el tope, y el de drywall, cuyo `lockOrder` corta por
+`assertKind`—, así que **no hay ningún camino que escriba un reporte de coberturas sin tope**.
+Y el reparto de metros a planchas se fuzzeó con 20 000 casos contra fuerza bruta: 0 discrepancias.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
@@ -2336,6 +2704,16 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
 
 ## Notas operativas
 
+- **Sesión de estabilización (2026-09-08).** Un archivo de trabajo de `local-data/` no está
+  en git y no tiene copia en ningún lado: si una herramienta lo pisa, se perdió. Pasó con
+  `Ventas Detalladas.decisiones.json` (ver el incidente arriba). El CLI ya no puede pisarlo,
+  pero la regla general vale para todo lo que viva ahí: **antes de correr una herramienta que
+  escriba en `local-data/`, copiar a mano lo que costó trabajo llenar.**
+- **Sesión de estabilización (2026-09-08).** Para smokear el artefacto **compilado** (lo que
+  corre en Cloud Run) sin desplegar nada: `pnpm build` y después `pnpm e2e <suite>` con
+  `CI=true` más `DATABASE_URL`/`DIRECT_URL`/`JWT_SECRET`/`ADMIN_EMAIL`/`ADMIN_PASSWORD`
+  apuntando al Postgres de Docker. Con `CI=true`, `playwright.config.ts` levanta
+  `node dist/main.js` + `next start` en vez de `nest start` + `next dev`.
 - **Sesión 7-final-C.** `pnpm db:migrate` (`prisma migrate dev`) volvió a pedir un `migrate
 reset` contra `dev` ("la migración X fue modificada después de aplicarse", tres migraciones
   de sesiones anteriores) — el mismo síntoma que D-053 ya había resuelto una vez, de vuelta.

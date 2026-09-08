@@ -1196,11 +1196,19 @@ model ProductionOrder {
   kind                ProductionOrderKind   @default(DRYWALL)
   status              ProductionOrderStatus @default(DRAFT)
   /// Piezas que la corrida se propone producir. Referencia para planta; no bloquea nada.
+  ///
+  /// D-145: en una OP de **coberturas** sí decide algo. El `CHECK`
+  /// `production_orders_roofing_contra_pedido_o_a_stock` (que Prisma no sabe declarar, vive
+  /// en la migración) exige que una OP `ROOFING` traiga `reservationId` **o** `targetPieces`:
+  /// o nace del pedido que viene a cumplir (D-084), o es una corrida a stock con su meta
+  /// declarada (D-140). Sin ninguno de los dos sería una orden huérfana.
   targetPieces        Int?                  @map("target_pieces")
   /// D-054: reserva que esta OP consume cuando nace de un pedido. La columna nació en
   /// Fase 4 sin FK (el ledger no existía todavía); Fase 5a la conecta al ledger y le
-  /// agrega la relación. Sigue nullable: una OP de drywall sin pedido detrás no reserva
-  /// nada (D-048).
+  /// agrega la relación. Sigue nullable, hoy por **dos** motivos: una OP de drywall sin
+  /// pedido detrás no reserva nada (D-048), y desde D-140 una plancha de catálogo se
+  /// produce a stock —tampoco contra un pedido— con `targetPieces` en vez de reserva
+  /// (D-145 es el `CHECK` que exige uno de los dos).
   reservationId       String?               @map("reservation_id") @db.Uuid
   reservation         Reservation?          @relation(fields: [reservationId], references: [id])
   notes               String?               @db.VarChar(500)
@@ -1302,6 +1310,15 @@ model ProductionReport {
   /// Kilos de material que esas piezas consumen. En drywall, `pieces × bom.kgPerPiece`; en
   /// coberturas, la geometría de la bobina montada por los largos reportados (D-047).
   theoreticalKg     Decimal                @map("theoretical_kg") @db.Decimal(12, 3)
+  /// **Solo ROOFING** (D-146): kilos que planta declara que la bobina consumió en **este**
+  /// reporte. Dato observado, no consumo: el kardex sigue saliendo por `theoreticalKg` y el
+  /// consumo real de la corrida se reconcilia al cerrar (`ProductionOrder.consumedKg`,
+  /// D-089). Null cuando no se declaró — que es todo reporte anterior a D-146.
+  ///
+  /// El tope lo pone el servicio y no la base: el máximo es el kilo teórico del **plan
+  /// completo** con la geometría de la bobina montada, un número que ninguna columna de
+  /// esta tabla conoce.
+  consumedKg        Decimal?               @map("consumed_kg") @db.Decimal(12, 3)
   /// Valor en soles que salió de los flejes por este reporte (D-042).
   materialCostPen   Decimal                @map("material_cost_pen") @db.Decimal(18, 4)
   /// `materialCostPen / pieces`: costo con el que las piezas entraron al kardex.

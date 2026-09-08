@@ -84,6 +84,38 @@ export function theoreticalKg(pieces: number, kgPerPiece: DecimalInput): Decimal
   return roundTo(toDecimal(kgPerPiece).times(pieces), 'KG');
 }
 
+/** Geometría de la que sale el kilo teórico: el rollo montado, no el maestro (D-047). */
+export interface PieceGeometry {
+  widthMm: DecimalInput;
+  thicknessMm: DecimalInput;
+  /** `densityFactor` del acabado (RF-25). */
+  densityFactor: DecimalInput;
+}
+
+/**
+ * Kilos teóricos de una lista de largos rolados con esa geometría (D-047).
+ *
+ * Vive acá —y no en `apps/api/.../roofing-math.ts`, que ahora la envuelve— porque desde
+ * D-146 el número lo necesitan los dos lados: el API para topar el kg declarado de un
+ * reporte contra el kilo teórico del plan, y la pantalla de planta para **mostrar** ese
+ * mismo tope antes de que nadie tipee. Dos copias de esta cuenta serían dos topes distintos.
+ */
+export function piecesTheoreticalKg(
+  geometry: PieceGeometry,
+  pieces: readonly { lengthMm: DecimalInput; qty: number }[],
+): Decimal {
+  const total = pieces.reduce((acc, piece) => {
+    const perPiece = theoreticalKgPerPiece({
+      widthMm: geometry.widthMm,
+      thicknessMm: geometry.thicknessMm,
+      pieceLengthMm: piece.lengthMm,
+      densityFactor: geometry.densityFactor,
+    });
+    return acc.plus(perPiece.times(piece.qty));
+  }, toDecimal('0'));
+  return roundTo(total, 'KG');
+}
+
 /**
  * Kilo teórico de un metro lineal de esa geometría (RF-25), **sin redondear**: es un
  * resultado intermedio de `equivalentMeters`, y redondearlo acá (como sí hace
@@ -258,6 +290,13 @@ export const productionOrderConsumptionSchema = z.object({
   coilId: z.string().uuid(),
   coilCode: z.string(),
   widthMm: z.string(),
+  /**
+   * D-146: el resto de la geometría del rollo montado. Con el ancho alcanzaba mientras el
+   * kilo teórico lo calculara solo el API; desde que la pantalla muestra el tope de kilos
+   * del plan antes de que nadie tipee, necesita la cuenta completa (`piecesTheoreticalKg`).
+   */
+  thicknessMm: z.string(),
+  densityFactor: z.string(),
   assignedKg: z.string(),
   consumedKg: z.string(),
   /** `assignedKg − consumedKg`: lo que todavía puede convertirse en piezas o en merma. */
@@ -280,6 +319,12 @@ export const productionReportSchema = z.object({
   /** Solo en coberturas: los largos que de verdad salieron. Vacío en drywall. */
   piecesDetail: z.array(roofingPieceSchema),
   theoreticalKg: z.string(),
+  /**
+   * D-146: kilos que planta declaró para **este** reporte, si los declaró. Es un dato
+   * observado, no un consumo: lo que salió del kardex son los `theoreticalKg` (D-047), y el
+   * consumo real de la corrida se reconcilia al cerrar (D-089).
+   */
+  consumedKg: z.string().nullable(),
   /**
    * Costos en soles (D-042). No van enmascarados por rol como en `/inventory`: el módulo
    * entero está cerrado a ADMINISTRADOR y SUPERVISOR_PLANTA (§3.4), VENDEDOR no llega
@@ -334,6 +379,13 @@ export const productionOrderSchema = z.object({
   consumedDeclaredKg: z.string().nullable(),
   /** Metros lineales buenos acumulados de los reportes vigentes. Null en drywall. */
   metersReported: z.string().nullable(),
+  /**
+   * D-146/D-148: metros lineales que el plan de corte encarga (`Σ cantidad × largo`). Null
+   * en drywall, que no tiene plan de largos. Va en el DTO —y no derivado de `items` en la
+   * pantalla— porque el **listado** omite `items` y la tarjeta de la orden tiene que decir
+   * cuántos ML hay que producir sin pedir el detalle de cada orden.
+   */
+  planMeters: z.string().nullable(),
   materialCostPen: z.string().nullable(),
   overheadCostPen: z.string().nullable(),
   totalCostPen: z.string().nullable(),

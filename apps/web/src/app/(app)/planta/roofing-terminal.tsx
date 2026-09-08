@@ -16,6 +16,9 @@ import {
   describePieces,
   piecesCount,
   piecesMeters,
+  piecesTheoreticalKg,
+  roofingPlanOverrun,
+  roofingPlanProgress,
   toDecimal,
   Unit,
   type BusinessLineDto,
@@ -360,6 +363,8 @@ export function RoofingTerminal({
   const id = o.id;
   const queryClient = useQueryClient();
   const [rows, setRows] = useState<LengthRow[]>([EMPTY_ROW]);
+  /** D-146: kilos que planta declara para **este** reporte. Opcional y solo dato. */
+  const [reportKg, setReportKg] = useState('');
   const [coilId, setCoilId] = useState('');
   const [closing, setClosing] = useState(false);
   const [consumedKg, setConsumedKg] = useState('');
@@ -426,6 +431,7 @@ export function RoofingTerminal({
         body: {
           pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
           ...(coilId ? { coilId } : {}),
+          ...(reportKg.trim() ? { consumedKg: toDecimal(reportKg.trim()).toFixed(3) } : {}),
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
         },
@@ -433,6 +439,7 @@ export function RoofingTerminal({
     onSuccess: () => {
       toast.success('Planchas reportadas y reservadas para el pedido');
       setRows([EMPTY_ROW]);
+      setReportKg('');
       invalidate();
     },
     onError: (err) =>
@@ -480,9 +487,44 @@ export function RoofingTerminal({
   const parsed = parsePieceRows(rows);
   const pieces = parsed.ok ? parsed.pieces : null;
   const parsedPlan = parsePieceRows(planRows);
-  const reportedKg = o.reports
-    .filter((r) => r.revertedAt === null)
-    .reduce((acc, r) => acc.plus(new Decimal(r.theoreticalKg)), new Decimal(0));
+  const liveReports = o.reports.filter((r) => r.revertedAt === null);
+  const reportedKg = liveReports.reduce(
+    (acc, r) => acc.plus(new Decimal(r.theoreticalKg)),
+    new Decimal(0),
+  );
+
+  // D-146: el plan de corte es un tope duro, y la pantalla lo dice antes de que el API lo
+  // rechace. Las mismas funciones que usa el servicio (`@ayr/shared`), no una segunda cuenta.
+  const reportedPieces = liveReports.flatMap((r) => r.piecesDetail);
+  const progress = roofingPlanProgress(o.items, piecesMeters(reportedPieces));
+  const newMeters = pieces === null ? new Decimal(0) : piecesMeters(pieces);
+  const overrun = pieces === null ? new Decimal(0) : roofingPlanOverrun(progress, newMeters);
+
+  // La geometría del rollo del que va a salir este reporte: con una sola bobina montada es
+  // esa, y con varias, la que el operario eligió. Sin ella no hay kilo teórico que mostrar.
+  const selectedCoil =
+    liveCoils.length === 1 ? liveCoils[0] : liveCoils.find((c) => c.coilId === coilId);
+  const geometry =
+    selectedCoil === undefined
+      ? null
+      : {
+          widthMm: selectedCoil.widthMm,
+          thicknessMm: selectedCoil.thicknessMm,
+          densityFactor: selectedCoil.densityFactor,
+        };
+  const planKg =
+    geometry === null || o.items.length === 0 ? null : piecesTheoreticalKg(geometry, o.items);
+  const newKg = geometry === null || pieces === null ? null : piecesTheoreticalKg(geometry, pieces);
+  const declaredKgSoFar = liveReports.reduce(
+    (acc, r) => acc.plus(r.consumedKg === null ? new Decimal(0) : new Decimal(r.consumedKg)),
+    new Decimal(0),
+  );
+  const reportKgValue = reportKg.trim();
+  const reportKgValid =
+    reportKgValue === '' ||
+    (/^\d+(\.\d{1,3})?$/.test(reportKgValue) &&
+      toDecimal(reportKgValue).gt(0) &&
+      (planKg === null || declaredKgSoFar.plus(toDecimal(reportKgValue)).lte(planKg)));
   const declared = consumedKg.trim();
   // Las dos cotas que el API comprueba: no menos de lo que las planchas ya consumieron, ni
   // más de lo que la orden tiene montado. La segunda es un dato que la pantalla ya tiene, y
@@ -617,9 +659,43 @@ export function RoofingTerminal({
           <CardHeader>
             <CardTitle className="text-base">Reportar largos rolados</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-3">
+          <CardContent className="grid gap-4">
+            {/*
+              D-146: las cuatro cifras que deciden si este reporte entra, juntas y arriba de
+              los campos. Antes había que salir de la tarjeta —o esperar un 400— para saber
+              cuánto faltaba del plan.
+            */}
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4">
+              <MiniStat
+                label="ML del plan"
+                value={progress.hasPlan ? `${progress.planMeters.toFixed(3)} m` : '—'}
+              />
+              <MiniStat label="ML reportado" value={`${progress.reportedMeters.toFixed(3)} m`} />
+              <MiniStat
+                label="ML restante"
+                value={progress.hasPlan ? `${progress.remainingMeters.toFixed(3)} m` : 'sin tope'}
+                // Rojo y no gris cuando el plan ya está cubierto: es el estado que bloquea el
+                // botón, así que apagarlo escondía justamente el motivo.
+                tone={progress.hasPlan && progress.remainingMeters.lte(0) ? 'alert' : 'strong'}
+                hint={progress.hasPlan ? undefined : 'La orden no tiene plan de corte'}
+              />
+              <MiniStat
+                label="kg teórico del plan"
+                value={planKg === null ? '—' : `${planKg.toFixed(3)} kg`}
+                // Dos motivos distintos para el mismo guion, y confundirlos hacía que la
+                // pantalla pidiera elegir una bobina que ya estaba elegida.
+                hint={
+                  !progress.hasPlan
+                    ? 'Sin plan de corte'
+                    : geometry === null
+                      ? 'Elige la bobina'
+                      : undefined
+                }
+              />
+            </div>
+
             {liveCoils.length > 1 && (
-              <div className="grid gap-2">
+              <div className="grid gap-1.5">
                 <Label htmlFor="roofing-bobina">¿De qué bobina salieron?</Label>
                 <select
                   id="roofing-bobina"
@@ -641,24 +717,78 @@ export function RoofingTerminal({
                 </p>
               </div>
             )}
+
             <LengthEditor rows={rows} onChange={setRows} idPrefix="reporte" />
-            <p className="text-sm text-muted-foreground">
-              {parsed.ok
-                ? `${String(piecesCount(parsed.pieces))} planchas · ${piecesMeters(parsed.pieces).toFixed(3)} m`
-                : parsed.reason}
-            </p>
-            <Button
-              className="h-16 text-lg"
-              disabled={
-                pieces === null || report.isPending || (liveCoils.length > 1 && coilId === '')
-              }
-              onClick={() => {
-                void backdate.attempt();
-              }}
-            >
-              {report.isPending ? 'Registrando…' : 'Reportar planchas'}
-            </Button>
-            <OperationDateField value={operationDate} onChange={setOperationDate} />
+
+            {/*
+              El kg consumido y el resumen del reporte comparten fila: son las dos cosas que
+              se miran juntas antes de apretar. Con `items-end` los dos bloques apoyan sobre
+              la misma línea base, que es lo que la tarjeta no tenía.
+            */}
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-end">
+              <div className="grid gap-1.5">
+                <Label htmlFor="roofing-reporte-kg">kg consumido (opcional)</Label>
+                <Input
+                  id="roofing-reporte-kg"
+                  inputMode="decimal"
+                  className="h-12 text-lg"
+                  placeholder={newKg === null ? '' : newKg.toFixed(3)}
+                  value={reportKg}
+                  onChange={(e) => {
+                    setReportKg(e.target.value);
+                  }}
+                />
+              </div>
+              <div className="grid gap-1 text-sm">
+                <p className={parsed.ok ? 'text-muted-foreground' : 'text-destructive'}>
+                  {parsed.ok
+                    ? `${String(piecesCount(parsed.pieces))} planchas · ${piecesMeters(parsed.pieces).toFixed(3)} m` +
+                      (newKg === null ? '' : ` · ${newKg.toFixed(3)} kg teóricos`)
+                    : parsed.reason}
+                </p>
+                {overrun.gt(0) && (
+                  <p className="text-destructive">
+                    Se pasa {overrun.toFixed(3)} m del plan de corte. Ajusta el plan si de verdad
+                    hay que producir más.
+                  </p>
+                )}
+                {!reportKgValid && (
+                  <p className="text-destructive">
+                    Los kilos van con hasta tres decimales y el acumulado declarado no puede pasar
+                    de los {planKg?.toFixed(3) ?? '—'} kg teóricos del plan
+                    {declaredKgSoFar.gt(0) && (
+                      <> (ya hay {declaredKgSoFar.toFixed(3)} kg declarados)</>
+                    )}
+                    .
+                  </p>
+                )}
+                {reportKgValid && reportKg.trim() !== '' && (
+                  <p className="text-muted-foreground">
+                    Se guarda como dato de planta: el kardex sale por el kilo teórico y el consumo
+                    real se reconcilia al cerrar.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+              <Button
+                className="h-16 text-lg"
+                disabled={
+                  pieces === null ||
+                  report.isPending ||
+                  overrun.gt(0) ||
+                  !reportKgValid ||
+                  (liveCoils.length > 1 && coilId === '')
+                }
+                onClick={() => {
+                  void backdate.attempt();
+                }}
+              >
+                {report.isPending ? 'Registrando…' : 'Reportar planchas'}
+              </Button>
+              <OperationDateField value={operationDate} onChange={setOperationDate} />
+            </div>
           </CardContent>
         </Card>
       )}
@@ -848,6 +978,39 @@ function BigStat({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg border p-4">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="text-2xl font-semibold">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * Una cifra de la fila de control del reporte (D-146). Comparte el borde con sus vecinas
+ * (`gap-px` sobre el color del borde) para que las cuatro se lean como un solo bloque y no
+ * como cuatro tarjetas sueltas separadas por aire.
+ */
+function MiniStat({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: 'alert' | 'strong';
+}) {
+  return (
+    <div className="bg-background px-3 py-2">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p
+        className={
+          tone === 'alert'
+            ? 'text-lg font-semibold tabular-nums text-destructive'
+            : 'text-lg font-semibold tabular-nums'
+        }
+      >
+        {value}
+      </p>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

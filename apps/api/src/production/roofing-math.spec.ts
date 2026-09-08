@@ -3,7 +3,12 @@ import {
   Decimal,
   describePieces,
   piecesCount,
+  piecesFromPlanMeters,
   piecesMeters,
+  piecesTheoreticalKg,
+  remainingPlanPieces,
+  roofingPlanOverrun,
+  roofingPlanProgress,
   thicknessWithinTolerance,
 } from '@ayr/shared';
 import {
@@ -201,5 +206,127 @@ describe('metersFromKg', () => {
 
   it('no divide por cero cuando la geometría no da kilo', () => {
     expect(metersFromKg({ ...coil, thicknessMm: '0.00' }, '100.000').toFixed(3)).toBe('0.000');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-146 — el plan de corte es un tope duro
+// ---------------------------------------------------------------------------
+
+describe('roofingPlanProgress / roofingPlanOverrun (D-146)', () => {
+  // El ejemplo del pedido, tal cual: 100 ML de plan, 80 ya reportados, el nuevo no puede
+  // pasar de 20.
+  const plan = [{ lengthMm: '4000.00', qty: 25 }]; // 25 × 4 m = 100 ML
+
+  it('deja pasar exactamente lo que falta y rechaza un metro más', () => {
+    const progress = roofingPlanProgress(plan, '80.000');
+    expect(progress.planMeters.toFixed(3)).toBe('100.000');
+    expect(progress.remainingMeters.toFixed(3)).toBe('20.000');
+    expect(roofingPlanOverrun(progress, '20.000').toFixed(3)).toBe('0.000');
+    expect(roofingPlanOverrun(progress, '20.001').toFixed(3)).toBe('0.001');
+  });
+
+  it('no tiene tolerancia: el borde exacto pasa y el siguiente milímetro no', () => {
+    const progress = roofingPlanProgress(plan, '99.999');
+    expect(roofingPlanOverrun(progress, '0.001').isZero()).toBe(true);
+    expect(roofingPlanOverrun(progress, '0.002').gt(0)).toBe(true);
+  });
+
+  it('un histórico ya excedido deja el restante en cero y rechaza el siguiente reporte', () => {
+    // Datos anteriores a D-146: se reportaron 120 ML contra un plan de 100. No se tocan —
+    // la regla mira hacia adelante y solo corta lo que venga después.
+    const progress = roofingPlanProgress(plan, '120.000');
+    expect(progress.reportedMeters.toFixed(3)).toBe('120.000');
+    expect(progress.remainingMeters.toFixed(3)).toBe('0.000');
+    expect(roofingPlanOverrun(progress, '4.000').toFixed(3)).toBe('24.000');
+  });
+
+  it('sin plan de corte no hay tope que aplicar', () => {
+    const progress = roofingPlanProgress([], '0.000');
+    expect(progress.hasPlan).toBe(false);
+    expect(roofingPlanOverrun(progress, '999.000').isZero()).toBe(true);
+  });
+});
+
+describe('remainingPlanPieces (D-146)', () => {
+  it('descuenta por largo y nunca baja de cero', () => {
+    const plan = [
+      { lengthMm: '4200.00', qty: 10 },
+      { lengthMm: '6000.00', qty: 5 },
+    ];
+    const left = remainingPlanPieces(plan, [
+      { lengthMm: '4200.00', qty: 3 },
+      // Un largo que el plan no tiene: no descuenta de ninguna línea (el plan es editable y
+      // el reporte es libre). El tope global de metros sí lo cuenta.
+      { lengthMm: '3000.00', qty: 2 },
+      { lengthMm: '6000.00', qty: 9 },
+    ]);
+    expect(left).toEqual([
+      { lengthMm: '4200.00', qty: 7 },
+      { lengthMm: '6000.00', qty: 0 },
+    ]);
+  });
+});
+
+describe('piecesFromPlanMeters (D-147)', () => {
+  const plan = [
+    { lengthMm: '4200.00', qty: 10 },
+    { lengthMm: '6000.00', qty: 5 },
+  ];
+
+  it('reparte en el orden del plan cuando el reparto glotón cierra', () => {
+    const split = piecesFromPlanMeters(plan, [], '42.000');
+    expect(split.ok && split.pieces).toEqual([{ lengthMm: '4200.00', qty: 10 }]);
+  });
+
+  it('completa con la línea siguiente', () => {
+    const split = piecesFromPlanMeters(plan, [], '48.000');
+    expect(split.ok && split.pieces).toEqual([
+      { lengthMm: '4200.00', qty: 10 },
+      { lengthMm: '6000.00', qty: 1 },
+    ]);
+  });
+
+  it('retrocede cuando el glotón no cierra pero la respuesta existe', () => {
+    // Glotón por orden de plan se lleva una plancha de 4.20 y se queda con 1.80 m que no
+    // cierran; la respuesta es una sola plancha de 6.00 m.
+    const split = piecesFromPlanMeters(plan, [], '6.000');
+    expect(split.ok && split.pieces).toEqual([{ lengthMm: '6000.00', qty: 1 }]);
+  });
+
+  it('no reofrece planchas que ya se reportaron', () => {
+    const split = piecesFromPlanMeters(plan, [{ lengthMm: '4200.00', qty: 10 }], '12.000');
+    expect(split.ok && split.pieces).toEqual([{ lengthMm: '6000.00', qty: 2 }]);
+  });
+
+  it('falla en vez de redondear cuando no sale un número entero de planchas', () => {
+    // 45.500 no sale de ninguna combinación de 4.20 y 6.00 (45.000 sí: 5 × 4.20 + 4 × 6.00,
+    // y por eso la búsqueda es exacta y no glotona).
+    const split = piecesFromPlanMeters(plan, [], '45.500');
+    expect(split.ok).toBe(false);
+    expect(!split.ok && split.reason).toContain('no salen de un número entero de planchas');
+  });
+
+  it('no deja pasar más metros de los que el plan tiene pendientes', () => {
+    const split = piecesFromPlanMeters(plan, [], '100.000');
+    expect(split.ok).toBe(false);
+    expect(!split.ok && split.reason).toContain('72.000 m pendientes');
+  });
+
+  it('una orden sin plan no admite captura por metros', () => {
+    const split = piecesFromPlanMeters([], [], '10.000');
+    expect(split.ok).toBe(false);
+  });
+});
+
+describe('piecesTheoreticalKg (D-146)', () => {
+  it('es la misma cuenta que usa el API para el kardex', () => {
+    const plan = [{ lengthMm: '4200.00', qty: 10 }];
+    expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe(
+      roofingTheoreticalKg(coil, plan).toFixed(3),
+    );
+    // El kilo se redondea **por plancha** (10.8801 → 10.880) y recién después se suma, que
+    // es lo que hace el kardex: 10 × 10.880.
+    expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe('108.800');
   });
 });

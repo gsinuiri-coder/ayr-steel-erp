@@ -17,6 +17,7 @@ import {
   MAX_ORDER_REPORTS,
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
+  piecesMeters,
   productionOrderCode,
   salesOrderCode,
   theoreticalKg,
@@ -90,6 +91,10 @@ const ORDER_RELATIONS = {
         select: {
           code: true,
           widthMm: true,
+          // D-146: la pantalla calcula el kilo teórico del plan con la geometría del rollo
+          // montado, así que necesita las tres cifras, no solo el ancho.
+          thicknessMm: true,
+          finish: { select: { densityFactor: true } },
           parentCoilId: true,
           parentCoil: { select: { code: true } },
         },
@@ -123,6 +128,12 @@ const LIST_RELATIONS = {
       salesOrder: { select: { id: true, seq: true, customer: { select: { name: true } } } },
     },
   },
+  /**
+   * D-148: el plan de corte también en el listado. Son unas pocas filas por orden (`MAX_PIECE_LINES`)
+   * y es lo único que hace falta para que la tarjeta diga cuántos ML hay que producir sin
+   * pedir el detalle de cada orden por separado.
+   */
+  items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
   consumptions: { select: { assignedKg: true, consumedKg: true, releasedAt: true } },
   reports: { select: { pieces: true, metersM: true, status: true } },
 } satisfies Prisma.ProductionOrderInclude;
@@ -1327,6 +1338,8 @@ export class ProductionService {
         coilId: c.coilId,
         coilCode: c.coil.code,
         widthMm: c.coil.widthMm.toFixed(2),
+        thicknessMm: c.coil.thicknessMm.toFixed(2),
+        densityFactor: c.coil.finish.densityFactor.toFixed(4),
         assignedKg: c.assignedKg.toFixed(3),
         consumedKg: c.consumedKg.toFixed(3),
         remainingKg: toFixedString(
@@ -1349,6 +1362,7 @@ export class ProductionService {
           qty: p.qty,
         })),
         theoreticalKg: r.theoreticalKg.toFixed(3),
+        consumedKg: r.consumedKg === null ? null : r.consumedKg.toFixed(3),
         materialCostPen: r.materialCostPen.toFixed(4),
         unitCostPen: r.unitCostPen.toFixed(4),
         status: r.status,
@@ -1505,6 +1519,13 @@ export class ProductionService {
       notes: order.notes,
       piecesReported: activeReports.reduce((acc, r) => acc + r.pieces, 0),
       metersReported: reportedMeters === null ? null : toFixedString(reportedMeters, 'KG'),
+      // D-148: lo que el plan de corte encarga. Null en drywall, que no tiene plan de largos.
+      planMeters:
+        order.kind === ProductionOrderKind.ROOFING
+          ? piecesMeters(
+              order.items.map((i) => ({ lengthMm: i.lengthMm.toFixed(2), qty: i.qty })),
+            ).toFixed(3)
+          : null,
       assignedKg: toFixedString(assignedKg, 'KG'),
       consumedKg: toFixedString(consumedKg, 'KG'),
       scrapKg: order.scrapKg ? order.scrapKg.toFixed(3) : null,

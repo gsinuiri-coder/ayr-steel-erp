@@ -3,7 +3,9 @@ import {
   cancelProductionOrderSchema,
   closeRoofingOrderSchema,
   createRoofingOrderSchema,
+  createRoofingOrdersFromSalesOrderSchema,
   mountRoofingCoilSchema,
+  reportRoofingBatchSchema,
   reportRoofingPiecesSchema,
   reverseMovementSchema,
   Role,
@@ -11,10 +13,15 @@ import {
   type CancelProductionOrderInput,
   type CloseRoofingOrderInput,
   type CreateRoofingOrderInput,
+  type CreateRoofingOrdersFromSalesOrderInput,
   type MountRoofingCoilInput,
   type ProductionOrderDto,
+  type ReportRoofingBatchInput,
   type ReportRoofingPiecesInput,
   type ReverseMovementInput,
+  type RoofingBatchCreateResultDto,
+  type RoofingBatchOrderDto,
+  type RoofingBatchResultDto,
   type RoofingCoilOptionDto,
   type UpdateRoofingPlanInput,
 } from '@ayr/shared';
@@ -52,6 +59,40 @@ export class RoofingProductionController {
     @Query('reservationId', new ParseUUIDPipe({ optional: true })) reservationId?: string,
   ): Promise<RoofingCoilOptionDto[]> {
     return this.roofing.coilOptions(productId, reservationId);
+  }
+
+  /**
+   * Las órdenes abiertas con lo que la tanda necesita por fila (D-147). `salesOrderId`
+   * acota a un pedido, que es como el encargado busca cuando la hoja es de un cliente.
+   */
+  @Get('batch')
+  batchOrders(
+    @Query('salesOrderId', new ParseUUIDPipe({ optional: true })) salesOrderId?: string,
+  ): Promise<RoofingBatchOrderDto[]> {
+    return this.roofing.batchOrders(salesOrderId);
+  }
+
+  /**
+   * Reportar una tanda entera (D-147): N órdenes en una transacción todo o nada, con el
+   * error de **cada** fila cuando alguna no valida.
+   */
+  @Post('batch')
+  reportBatch(
+    @CurrentUser() actor: RequestUser,
+    @Body(new ZodValidationPipe(reportRoofingBatchSchema)) body: ReportRoofingBatchInput,
+  ): Promise<RoofingBatchResultDto> {
+    return this.roofing.reportBatch(actor, body);
+  }
+
+  /** Generar la OP de cada línea del pedido que todavía no la tiene (D-148). */
+  @Post('from-sales-order/:salesOrderId')
+  createFromSalesOrder(
+    @CurrentUser() actor: RequestUser,
+    @Param('salesOrderId', ParseUUIDPipe) salesOrderId: string,
+    @Body(new ZodValidationPipe(createRoofingOrdersFromSalesOrderSchema))
+    body: CreateRoofingOrdersFromSalesOrderInput,
+  ): Promise<RoofingBatchCreateResultDto> {
+    return this.roofing.createFromSalesOrder(actor, salesOrderId, body);
   }
 
   /** Crear la OP desde la reserva de un pedido (RF-31, D-084). */

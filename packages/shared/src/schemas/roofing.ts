@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Decimal, decimalStringSchema, MAX_VALUE, roundTo, toDecimal } from '../decimal';
+import { PRODUCTION_ORDER_STATUSES } from '../enums';
 import { reasonSchema } from './coil';
 import { backdatableFields } from './operation';
 
@@ -142,6 +143,203 @@ export function describePieces(pieces: readonly PieceLike[]): string {
   return pieces.map((p) => `${p.qty} × ${toDecimal(p.lengthMm).div(1000).toFixed(2)} m`).join(', ');
 }
 
+// --------------------------------------------------------------------------
+// D-146 — el plan de corte es un tope duro, no una intención
+// --------------------------------------------------------------------------
+
+/**
+ * Tope de filas de una tanda (D-147). Es el papel que el encargado transcribe de una
+ * sentada: un puñado de órdenes, no el listado entero de la planta.
+ *
+ * El número lo fija la transacción, no la ergonomía: cada fila hace lo que `report` entero
+ * —que ya necesita 30 s de presupuesto contra Neon— y la tanda retiene el lock de cada
+ * orden, de su pedido y de sus bobinas hasta el commit. Con 50 filas el presupuesto de
+ * 120 s daba 2.4 s por fila y bloqueaba el producto durante dos minutos.
+ */
+export const MAX_BATCH_ROWS = 20;
+
+/** Lo que el plan de corte de un ítem promete, lo que ya se reportó y lo que queda (D-146). */
+export interface RoofingPlanProgress {
+  /** `Σ cantidad × largo` del plan de corte, en metros lineales. */
+  planMeters: Decimal;
+  /** Metros ya reportados por los reportes **vigentes** de la orden. */
+  reportedMeters: Decimal;
+  /** `planMeters − reportedMeters`, nunca negativo. */
+  remainingMeters: Decimal;
+  /**
+   * `false` cuando la orden no tiene plan de corte: sin plan no hay tope que aplicar, y es
+   * distinto de un plan de cero metros. Hoy solo lo alcanzan órdenes anteriores a D-146.
+   */
+  hasPlan: boolean;
+}
+
+/**
+ * El estado del plan de un ítem contra lo ya reportado (D-146).
+ *
+ * `remainingMeters` puede quedar en cero sobre datos históricos que ya se pasaron del plan
+ * —los reportes anteriores a D-146 no tenían tope y no se tocan—, y eso es a propósito: la
+ * regla mira hacia adelante, así que lo único que hace un acumulado excedido es dejar el
+ * restante en cero y rechazar el **siguiente** reporte.
+ */
+export function roofingPlanProgress(
+  planItems: readonly PieceLike[],
+  reportedMeters: Decimal | string,
+): RoofingPlanProgress {
+  const planMeters = piecesMeters(planItems);
+  const reported = toDecimal(reportedMeters);
+  return {
+    planMeters,
+    reportedMeters: reported,
+    remainingMeters: Decimal.max(planMeters.minus(reported), new Decimal(0)),
+    hasPlan: planItems.length > 0,
+  };
+}
+
+/**
+ * ¿Cuánto se pasa del plan un reporte nuevo? (D-146)
+ *
+ * Positivo ⇒ hay que rechazarlo. **Sin tolerancia**: el plan y el reporte se miden con la
+ * misma escala de tres decimales, así que "casi" no existe — un metro de más es un metro
+ * que el pedido no encargó y que nadie va a pagar.
+ */
+export function roofingPlanOverrun(
+  progress: RoofingPlanProgress,
+  newMeters: Decimal | string,
+): Decimal {
+  if (!progress.hasPlan) return new Decimal(0);
+  return progress.reportedMeters.plus(toDecimal(newMeters)).minus(progress.planMeters);
+}
+
+/**
+ * Cuántas planchas de cada largo del plan quedan por reportar (D-146).
+ *
+ * Se compara **por largo**: el plan es editable y los reportes son libres, así que un largo
+ * reportado que el plan no tiene simplemente no descuenta de ninguna línea. El tope global
+ * sigue siendo el de metros, que sí los cuenta a todos.
+ */
+export function remainingPlanPieces(
+  planItems: readonly PieceLike[],
+  reportedPieces: readonly PieceLike[],
+): (PieceLike & { qty: number })[] {
+  const reported = new Map<string, number>();
+  for (const piece of reportedPieces) {
+    const key = toDecimal(piece.lengthMm).toFixed(2);
+    reported.set(key, (reported.get(key) ?? 0) + piece.qty);
+  }
+  return planItems.map((item) => {
+    const key = toDecimal(item.lengthMm).toFixed(2);
+    const already = reported.get(key) ?? 0;
+    const left = Math.max(item.qty - already, 0);
+    reported.set(key, Math.max(already - item.qty, 0));
+    return { lengthMm: key, qty: left };
+  });
+}
+
+export type PlanMetersSplit =
+  { ok: true; pieces: (PieceLike & { qty: number })[] } | { ok: false; reason: string };
+
+/**
+ * Reparte unos metros lineales sobre los largos que el plan todavía debe (D-147).
+ *
+ * Es lo que hace posible capturar una tanda escribiendo **un solo número por orden**: el
+ * papel de planta dice "de la OP-000123 salieron 42 m", no cómo se repartieron.
+ *
+ * La búsqueda es **exacta y no glotona**, y la diferencia importa: con un plan de
+ * `2 × 4.20 m` y `1 × 6.00 m`, glotón por orden de plan no encuentra los 6.00 m —se lleva
+ * una plancha de 4.20 y se queda con 1.80 m que no cierran— aunque la respuesta exista.
+ * El recorrido prueba primero la cantidad **mayor** de cada línea en el orden del plan, así
+ * que cuando la solución glotona sirve es la que devuelve, y solo retrocede cuando no.
+ *
+ * Falla en vez de redondear cuando los metros no caen en un número entero de planchas: media
+ * plancha no existe, y elegir por el operario cuál largo recortar sería inventarle un
+ * producto.
+ */
+export function piecesFromPlanMeters(
+  planItems: readonly PieceLike[],
+  reportedPieces: readonly PieceLike[],
+  meters: Decimal | string,
+): PlanMetersSplit {
+  const target = toDecimal(meters);
+  if (target.lte(0)) return { ok: false, reason: 'Los metros van en un número mayor a cero.' };
+  if (planItems.length === 0) {
+    return {
+      ok: false,
+      reason: 'La orden no tiene plan de corte: reporta los largos uno por uno desde la terminal.',
+    };
+  }
+
+  // Todo el reparto se resuelve en **centésimas de milímetro enteras** y no con `Decimal`:
+  // el largo tiene escala 2 y los metros escala 3, así que ×100 000 los deja enteros
+  // exactos, y la búsqueda necesita comparar e ir restando miles de veces sin que aparezca
+  // un residuo de redondeo que convierta un reparto válido en "no cierra".
+  const lines = remainingPlanPieces(planItems, reportedPieces)
+    .filter((line) => line.qty > 0 && toDecimal(line.lengthMm).gt(0))
+    .map((line) => ({
+      lengthMm: line.lengthMm,
+      qty: line.qty,
+      units: toDecimal(line.lengthMm).times(100).toNumber(),
+    }));
+  const reachable = lines.reduce((acc, l) => acc + l.units * l.qty, 0);
+  const targetUnits = target.times(100_000).toNumber();
+
+  const toMeters = (units: number) => new Decimal(units).div(100_000).toFixed(3);
+  if (lines.length === 0 || targetUnits > reachable) {
+    return {
+      ok: false,
+      reason:
+        reachable === 0
+          ? 'El plan de corte ya no tiene planchas pendientes.'
+          : `El plan solo tiene ${toMeters(reachable)} m pendientes y se reportan ${target.toFixed(3)} m.`,
+    };
+  }
+
+  // Presupuesto de nodos: el problema es una mochila acotada y una orden patológica (30
+  // largos distintos con miles de planchas cada uno) podría hacerla explotar. Una orden
+  // real tiene dos o tres medidas y se resuelve en decenas de nodos; el tope existe para
+  // que el caso raro devuelva "no cierra" en vez de colgar la transacción.
+  let budget = 50_000;
+  const taken: number[] = new Array<number>(lines.length).fill(0);
+  const search = (index: number, left: number): boolean => {
+    if (left === 0) return true;
+    if (index >= lines.length || budget-- <= 0) return false;
+    const line = lines[index];
+    if (line === undefined) return false;
+    const max = Math.min(line.qty, Math.floor(left / line.units));
+    for (let qty = max; qty >= 0; qty -= 1) {
+      taken[index] = qty;
+      if (search(index + 1, left - qty * line.units)) return true;
+    }
+    taken[index] = 0;
+    return false;
+  };
+
+  if (!search(0, targetUnits)) {
+    // El presupuesto agotado y "no hay reparto" son dos respuestas distintas, y decir la
+    // segunda cuando pasó la primera es mentirle al operario: puede que su número esté bien
+    // y que lo que se agotó sea la búsqueda. Se distingue, y la salida es reportar los
+    // largos a mano desde la terminal.
+    if (budget <= 0) {
+      return {
+        ok: false,
+        reason:
+          `No se pudo repartir ${target.toFixed(3)} m entre los largos pendientes de esta orden: ` +
+          'reporta los largos uno por uno desde la terminal de planta.',
+      };
+    }
+    return {
+      ok: false,
+      reason:
+        `${target.toFixed(3)} m no salen de un número entero de planchas del plan ` +
+        `(${lines.map((l) => `${String(l.qty)} × ${toDecimal(l.lengthMm).div(1000).toFixed(2)} m`).join(', ')} pendientes).`,
+    };
+  }
+
+  const pieces = lines
+    .map((line, i) => ({ lengthMm: line.lengthMm, qty: taken[i] ?? 0 }))
+    .filter((p) => p.qty > 0);
+  return { ok: true, pieces };
+}
+
 /**
  * ¿El espesor de esta bobina sirve para esta receta? (D-086)
  *
@@ -248,10 +446,156 @@ export const reportRoofingPiecesSchema = z.object({
    */
   coilId: z.string().uuid().optional(),
   pieces: roofingPiecesSchema,
+  /**
+   * D-146: kilos que planta dice que la bobina consumió en **este** reporte. Opcional, y
+   * cuando viene es **dato declarado, no consumo**: el kardex sigue sacando de la bobina el
+   * kilo teórico de los largos (D-047), y el consumo real se reconcilia al cerrar (D-089),
+   * que es donde sale el despunte. Existe para que el papel de planta entre entero y se
+   * pueda comparar contra lo teórico sin esperar al cierre.
+   *
+   * El tope lo pone el servicio, que es el único que conoce la geometría de la bobina
+   * montada: el acumulado declarado no puede pasar del kilo teórico del **plan completo**.
+   */
+  consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   notes: z.string().trim().max(240).optional(),
   ...backdatableFields,
 });
 export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>;
+
+// --------------------------------------------------------------------------
+// D-147 — reportar producción en tanda
+// --------------------------------------------------------------------------
+
+/**
+ * Una fila del papel de planta: una orden, los metros que salieron y —opcional— los kilos
+ * que la bobina se comió. Los largos no se tipean: salen del plan de la propia orden
+ * (`piecesFromPlanMeters`), que es lo que hace que la tanda se transcriba de una sentada.
+ */
+export const roofingBatchRowSchema = z.object({
+  orderId: z.string().uuid(),
+  /** Bobina de la que salieron. Opcional cuando la orden tiene una sola montada. */
+  coilId: z.string().uuid().optional(),
+  /**
+   * Metros lineales, con la escala de tres decimales de `KG` (la de `piecesMeters`).
+   *
+   * La cota no es cosmética: `piecesFromPlanMeters` resuelve el reparto en centésimas de
+   * milímetro **enteras** (`metros × 100 000`), y eso es exacto solo mientras el producto
+   * quede por debajo de 2^53. Con `MAX_VALUE.KG` da 1e14 y sobra; si alguien sube esa cota,
+   * el reparto empieza a perder precisión en silencio.
+   */
+  meters: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
+  consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+  notes: z.string().trim().max(240).optional(),
+});
+export type RoofingBatchRowInput = z.infer<typeof roofingBatchRowSchema>;
+
+/**
+ * La tanda entera (D-147). **Todo o nada**: una fila que no valida deja la tanda sin
+ * escribir y el API devuelve el error de **cada** fila, no el de la primera — quien
+ * transcribe una hoja de papel necesita corregirla toda de una vez, no descubrir un error
+ * por intento.
+ */
+export const reportRoofingBatchSchema = z
+  .object({
+    ...backdatableFields,
+    rows: z
+      .array(roofingBatchRowSchema)
+      .min(1, 'La tanda no tiene ninguna fila')
+      .max(MAX_BATCH_ROWS, `Máximo ${MAX_BATCH_ROWS} órdenes por tanda`),
+  })
+  .superRefine((v, ctx) => {
+    const seen = new Set<string>();
+    v.rows.forEach((row, i) => {
+      if (seen.has(row.orderId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rows', i, 'orderId'],
+          message: 'Esa orden ya está en la tanda: súmalo a los metros de esa fila',
+        });
+      }
+      seen.add(row.orderId);
+    });
+  });
+export type ReportRoofingBatchInput = z.infer<typeof reportRoofingBatchSchema>;
+
+// --------------------------------------------------------------------------
+// D-148 — todas las órdenes de un pedido de una vez
+// --------------------------------------------------------------------------
+
+/**
+ * Generar la OP de cada ítem del pedido que todavía no la tiene (D-148).
+ *
+ * No cambia el modelo: sigue siendo **1 ítem = 1 OP** naciendo de su reserva (D-084), con
+ * las mismas validaciones y el mismo `CHECK` de D-145. Lo único que agrega es que las N
+ * órdenes se crean en **una transacción**, así que un pedido de ocho líneas no puede quedar
+ * con cinco en cola y tres olvidadas. No tiene reversa propia: anular una orden por
+ * separado ya existe (RF-33).
+ */
+export const createRoofingOrdersFromSalesOrderSchema = z.object({
+  ...backdatableFields,
+  notes: z.string().trim().max(500).optional(),
+});
+export type CreateRoofingOrdersFromSalesOrderInput = z.infer<
+  typeof createRoofingOrdersFromSalesOrderSchema
+>;
+
+export const roofingBatchCreateResultSchema = z.object({
+  /** Órdenes creadas, con su código, en el orden de las líneas del pedido. */
+  created: z.array(z.object({ orderId: z.string().uuid(), code: z.string() })),
+  /** Líneas que ya tenían una orden viva y por eso no generaron otra. */
+  alreadyQueued: z.number().int(),
+});
+export type RoofingBatchCreateResultDto = z.infer<typeof roofingBatchCreateResultSchema>;
+
+/** Lo que la tanda dejó escrito. La pantalla recarga las filas después de esto. */
+export const roofingBatchResultSchema = z.object({
+  orders: z.number().int(),
+  pieces: z.number().int(),
+  meters: z.string(),
+});
+export type RoofingBatchResultDto = z.infer<typeof roofingBatchResultSchema>;
+
+/** Una bobina montada, con la geometría que da el kilo teórico (D-047). */
+export const roofingBatchCoilSchema = z.object({
+  coilId: z.string().uuid(),
+  coilCode: z.string(),
+  widthMm: z.string(),
+  thicknessMm: z.string(),
+  densityFactor: z.string(),
+  remainingKg: z.string(),
+});
+export type RoofingBatchCoilDto = z.infer<typeof roofingBatchCoilSchema>;
+
+/**
+ * Una orden de coberturas abierta, con todo lo que la fila de la tanda necesita mostrar sin
+ * pedir el detalle de cada orden por separado (D-147).
+ */
+export const roofingBatchOrderSchema = z.object({
+  orderId: z.string().uuid(),
+  code: z.string(),
+  status: z.enum(PRODUCTION_ORDER_STATUSES),
+  productId: z.string().uuid(),
+  productSku: z.string(),
+  productName: z.string(),
+  /** Unidad del producto terminado: `NIU` en una plancha de catálogo, `MTR` a medida. */
+  productUnit: z.string().max(20),
+  salesOrderId: z.string().uuid().nullable(),
+  salesOrderCode: z.string().nullable(),
+  customerName: z.string().nullable(),
+  planItems: z.array(roofingPieceSchema),
+  planMeters: z.string(),
+  reportedMeters: z.string(),
+  remainingMeters: z.string(),
+  /** Largos del plan que todavía no se reportaron, para que la fila diga qué falta. */
+  remainingPieces: z.array(roofingPieceSchema),
+  /** Kilos ya declarados por los reportes vigentes (D-146). */
+  declaredKg: z.string(),
+  /** Kilos teóricos que las planchas reportadas consumieron. */
+  reportedKg: z.string(),
+  coils: z.array(roofingBatchCoilSchema),
+  operationDate: z.string(),
+});
+export type RoofingBatchOrderDto = z.infer<typeof roofingBatchOrderSchema>;
 
 /**
  * Cerrar la corrida (D-089).

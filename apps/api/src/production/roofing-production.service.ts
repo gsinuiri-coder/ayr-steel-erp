@@ -1,4 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   BusinessLineCode,
   CoilKind,
@@ -14,12 +20,18 @@ import {
 import {
   Decimal,
   describePieces,
+  fromDateOnly,
   MAX_ORDER_REPORTS,
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   piecesCount,
+  piecesFromPlanMeters,
   piecesMeters,
   productionOrderCode,
+  remainingPlanPieces,
+  roofingPiecesSchema,
+  roofingPlanOverrun,
+  roofingPlanProgress,
   salesOrderCode,
   thicknessWithinTolerance,
   toDateOnly,
@@ -29,11 +41,16 @@ import {
   type CancelProductionOrderInput,
   type CloseRoofingOrderInput,
   type CreateRoofingOrderInput,
+  type CreateRoofingOrdersFromSalesOrderInput,
   type MountRoofingCoilInput,
   type PieceLike,
   type ProductionOrderDto,
+  type ReportRoofingBatchInput,
   type ReportRoofingPiecesInput,
   type ReverseMovementInput,
+  type RoofingBatchCreateResultDto,
+  type RoofingBatchOrderDto,
+  type RoofingBatchResultDto,
   type RoofingCoilOptionDto,
   type UpdateRoofingPlanInput,
 } from '@ayr/shared';
@@ -323,6 +340,12 @@ export class RoofingProductionService {
         bomId: null,
         status: ProductionOrderStatus.DRAFT,
         reservationId: null,
+        // La meta se guarda, no solo se valida: es lo único que dice **por qué** existe esta
+        // orden cuando no hay pedido detrás, y es la mitad viva del `CHECK` de D-145. Sin
+        // ella `/planta` y `/produccion` mostraban «Meta: —» en la única clase de orden que
+        // la tiene por definición (drywall la persiste desde D-048; ver
+        // `ProductionService.create`).
+        targetPieces: input.targetPieces,
         notes: input.notes ?? null,
         createdById: actor.id,
         operationDate: toDateOnly(orderOperationDate),
@@ -610,44 +633,402 @@ export class RoofingProductionService {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
-        const order = await lockOrder(tx, orderId);
-        assertKind(order, ProductionOrderKind.ROOFING);
-        if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
-          throw new BadRequestException(
-            order.status === ProductionOrderStatus.DRAFT
-              ? 'La orden todavía no tiene bobina montada: monta el material antes de reportar'
-              : `La orden está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}: no admite reportes`,
-          );
-        }
+        await this.reportInTx(tx, actor, orderId, input, operationDate);
+      },
+      { timeout: 30_000 },
+    );
 
-        const liveReports = await tx.productionReport.count({
-          where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
+    return this.production.findOne(orderId);
+  }
+
+  /**
+   * El cuerpo de `report`, **dentro de la transacción del llamador** (patrón `*InTx`,
+   * D-099).
+   *
+   * Existe para que la tanda (D-147) escriba sus N filas en **una** transacción todo o nada
+   * sin una segunda copia de esta lógica: con dos, el tope del plan (D-146) y el traslado de
+   * la promesa (D-088) vivirían en dos lugares y divergirían — que es exactamente cómo
+   * llegó desplegado D-145.
+   */
+  private async reportInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    input: ReportRoofingPiecesInput,
+    operationDate: string,
+  ): Promise<void> {
+    const order = await lockOrder(tx, orderId);
+    assertKind(order, ProductionOrderKind.ROOFING);
+    if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        order.status === ProductionOrderStatus.DRAFT
+          ? 'La orden todavía no tiene bobina montada: monta el material antes de reportar'
+          : `La orden está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}: no admite reportes`,
+      );
+    }
+
+    const liveReports = await tx.productionReport.count({
+      where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
+    });
+    if (liveReports >= MAX_ORDER_REPORTS) {
+      throw new BadRequestException(
+        `La orden ya tiene ${MAX_ORDER_REPORTS} reportes vigentes: ciérrala y abre otra`,
+      );
+    }
+
+    const product = await tx.product.findUniqueOrThrow({
+      where: { id: order.productId },
+      select: { sku: true, unit: true, lengthMm: true },
+    });
+
+    // D-083: una plancha de catálogo tiene el largo en su SKU. Reportar otro largo la
+    // convertiría en un producto distinto metido en el mismo saldo.
+    if (product.lengthMm !== null) {
+      const fixed = product.lengthMm.toFixed(2);
+      const off = input.pieces.find((p) => toFixedString(p.lengthMm, 'MM') !== fixed);
+      if (off) {
+        throw new BadRequestException(
+          `${product.sku} es una plancha de catálogo de ${toDecimal(fixed).div(1000).toFixed(2)} m: no admite un largo de ${toDecimal(off.lengthMm).div(1000).toFixed(2)} m`,
+        );
+      }
+    }
+
+    const rows = await tx.productionOrderConsumption.findMany({
+      where: { productionOrderId: orderId, releasedAt: null },
+      include: {
+        coil: {
+          select: {
+            code: true,
+            widthMm: true,
+            thicknessMm: true,
+            finish: { select: { densityFactor: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (rows.length === 0) {
+      throw new BadRequestException('La orden no tiene ninguna bobina montada');
+    }
+    const row =
+      input.coilId === undefined
+        ? rows.length === 1
+          ? rows[0]
+          : undefined
+        : rows.find((r) => r.coilId === input.coilId);
+    if (!row) {
+      throw new BadRequestException(
+        input.coilId === undefined
+          ? 'La orden tiene varias bobinas montadas: indica de cuál salieron estas planchas'
+          : 'Esa bobina no está montada en la orden',
+      );
+    }
+
+    const geometry: CoilGeometry = {
+      widthMm: row.coil.widthMm.toFixed(2),
+      thicknessMm: row.coil.thicknessMm.toFixed(2),
+      densityFactor: row.coil.finish.densityFactor.toFixed(4),
+    };
+    const pieces = input.pieces.map((p, i) => ({
+      lineNumber: i + 1,
+      lengthMm: toFixedString(p.lengthMm, 'MM'),
+      qty: p.qty,
+    }));
+    const neededKg = roofingTheoreticalKg(geometry, pieces);
+
+    // -----------------------------------------------------------------------
+    // D-146 — el plan de corte es un tope duro, no una intención
+    // -----------------------------------------------------------------------
+    //
+    // Hasta acá la única cota de un reporte era el **material montado**: una orden de 100 ML
+    // con un rollo entero encima podía reportar 300 ML sin que nada se quejara, y esos metros
+    // de más nacían reservados a nombre del pedido (D-088) o entraban como stock que nadie
+    // encargó. El plan dejó de ser solo una intención para esto: cambiar lo que hay que
+    // producir es `updatePlan`, no reportar de más.
+    const planRows = await tx.productionOrderItem.findMany({
+      where: { productionOrderId: orderId },
+      orderBy: { lineNumber: 'asc' },
+      select: { lengthMm: true, qty: true },
+    });
+    const liveReportRows = await tx.productionReport.findMany({
+      where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
+      select: {
+        consumedKg: true,
+        piecesDetail: { select: { lengthMm: true, qty: true } },
+      },
+    });
+    const planPieces = planRows.map(toPieceLike);
+    const reportedPieces = liveReportRows.flatMap((r) => r.piecesDetail.map(toPieceLike));
+    const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
+    const newMeters = piecesMeters(pieces);
+    const overrun = roofingPlanOverrun(progress, newMeters);
+    if (overrun.gt(0)) {
+      throw new BadRequestException(
+        `${productionOrderCode(order.seq)} tiene un plan de ${progress.planMeters.toFixed(3)} m y ` +
+          `${progress.reportedMeters.toFixed(3)} m ya reportados: ` +
+          (progress.remainingMeters.isZero()
+            ? 'el plan ya está cubierto y este reporte no entra. '
+            : `quedan ${progress.remainingMeters.toFixed(3)} m y este reporte suma ${newMeters.toFixed(3)} m. `) +
+          'Si de verdad hay que producir más, ajusta primero el plan de corte (RF-31).',
+      );
+    }
+
+    // D-146, segunda mitad: los kilos que planta declara para este reporte. **No es un
+    // consumo** —el kardex sale por `neededKg`, y el consumo real se reconcilia al cerrar
+    // (D-089)—, así que lo único que hace falta es que el acumulado declarado no supere lo
+    // que el plan entero puede pesar con la geometría del rollo montado. Ese techo deja
+    // margen para el despunte real de cada reporte sin admitir una cifra imposible.
+    const declaredKg = input.consumedKg === undefined ? null : toDecimal(input.consumedKg);
+    if (declaredKg !== null && progress.hasPlan) {
+      const alreadyDeclaredKg = liveReportRows.reduce(
+        (acc, r) =>
+          acc.plus(r.consumedKg === null ? new Decimal(0) : toDecimal(r.consumedKg.toString())),
+        new Decimal(0),
+      );
+      const planKg = roofingTheoreticalKg(geometry, planPieces);
+      if (alreadyDeclaredKg.plus(declaredKg).gt(planKg)) {
+        throw new BadRequestException(
+          `El plan de ${productionOrderCode(order.seq)} pesa ${planKg.toFixed(3)} kg teóricos con ` +
+            `${row.coil.code} montada y ya hay ${alreadyDeclaredKg.toFixed(3)} kg declarados: ` +
+            `no se pueden declarar ${declaredKg.toFixed(3)} kg más.`,
+        );
+      }
+    }
+
+    // Un solo rollo por reporte, así que el reparto es trivial — pero pasa por el mismo
+    // `allocateStripKg` que drywall para heredar su mensaje cuando el material no
+    // alcanza, en vez de escribir una segunda versión del mismo chequeo.
+    const allocationRows: StripAllocationRow[] = [
+      {
+        consumptionId: row.id,
+        coilId: row.coilId,
+        coilCode: row.coil.code,
+        remainingKg: toDecimal(row.assignedKg.toString()).minus(
+          toDecimal(row.consumedKg.toString()),
+        ),
+      },
+    ];
+    const allocations = allocateStripKg(allocationRows, neededKg);
+
+    const madeToMeasure = product.unit === Unit.MTR;
+    const outputQty = madeToMeasure ? piecesMeters(pieces) : new Decimal(piecesCount(pieces));
+    const outputUnit = madeToMeasure ? Unit.MTR : Unit.NIU;
+
+    // D-088, primera mitad: la reserva de bobina se descuenta **antes** de la salida de
+    // kardex. Si fuera al revés, la propia reserva bloquearía contra la invariante justo
+    // la salida que viene a cumplirla. El pedido pasa a "en producción".
+    let salesOrderItemId: string | null = null;
+    let salesOrderId: string | null = null;
+    if (order.reservationId) {
+      const reservation = await tx.reservation.findUniqueOrThrow({
+        where: { id: order.reservationId },
+        select: { salesOrderId: true, salesOrderItemId: true, itemId: true },
+      });
+      salesOrderId = reservation.salesOrderId;
+      salesOrderItemId = reservation.salesOrderItemId;
+      // Pedido primero, reserva después: `SalesOrdersService.cancel` toma esos dos
+      // recursos en ese mismo orden, y con el orden invertido anular un pedido y
+      // reportar producción a la vez se trababan en un deadlock.
+      await tx.$queryRaw`
+        SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
+      `;
+      // **Siempre se descuenta** (D-134). Antes había que preguntar si el rollo que se
+      // roló era el que el pedido había reservado, porque la promesa nombraba una bobina
+      // concreta y nada obligaba a montar esa: descontar la promesa de un rollo del que
+      // no salió un gramo la habría dejado por debajo de lo prometido sobre material
+      // intacto. Con la reserva genérica esa pregunta desapareció: `mountCoil` solo
+      // admite bobinas del color y el espesor del producto, que son exactamente las que
+      // cumplen el agregado, así que cualquier kilo que esta orden role es un kilo del
+      // agregado que el pedido prometía.
+      await consumeReservationQty(tx, order.reservationId, neededKg);
+      await tx.salesOrder.updateMany({
+        where: { id: reservation.salesOrderId, status: SalesOrderStatus.CONFIRMED },
+        data: { status: SalesOrderStatus.IN_PRODUCTION },
+      });
+    }
+
+    const report = await tx.productionReport.create({
+      data: {
+        productionOrderId: orderId,
+        pieces: piecesCount(pieces),
+        metersM: madeToMeasure ? toFixedString(piecesMeters(pieces), 'KG') : null,
+        theoreticalKg: toFixedString(neededKg, 'KG'),
+        // D-146: lo declarado se guarda tal cual y no toca ningún cálculo del kardex.
+        consumedKg: declaredKg === null ? null : toFixedString(declaredKg, 'KG'),
+        materialCostPen: '0',
+        unitCostPen: '0',
+        notes: input.notes ?? null,
+        createdById: actor.id,
+        operationDate: toDateOnly(operationDate),
+        piecesDetail: { create: pieces },
+      },
+    });
+
+    let materialCostPen = new Decimal(0);
+    for (const allocation of allocations) {
+      await this.coils.lockCoil(tx, allocation.coilId);
+      const out = await this.inventory.record(tx, {
+        businessLineId: order.businessLineId,
+        itemType: 'COIL',
+        itemId: allocation.coilId,
+        type: 'OUT',
+        qty: toFixedString(allocation.kg, 'KG'),
+        unit: Unit.KGM,
+        refType: 'PRODUCTION',
+        refId: report.id,
+        notes: `Rolado de ${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
+        actorId: actor.id,
+        // D-134: lo que resta de la promesa que esta orden viene a cumplir no puede
+        // bloquear su propio consumo. Ver `RecordMovementInput.exceptReservationIds`.
+        exceptReservationIds: order.reservationId ? [order.reservationId] : [],
+        // Sin esto, un reporte retrofechado dejaba el consumo de la bobina fechado hoy y
+        // el ingreso de producto en la fecha real: los dos lados del mismo hecho en meses
+        // distintos, en una tabla append-only que no se corrige con un UPDATE.
+        operationDate,
+        confirmBackdate: input.confirmBackdate,
+      });
+      if (!out) {
+        throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
+      }
+      materialCostPen = materialCostPen.plus(toDecimal(out.totalCost.toString()));
+
+      await tx.productionOrderConsumption.update({
+        where: { id: allocation.consumptionId },
+        data: {
+          consumedKg: toFixedString(toDecimal(row.consumedKg.toString()).plus(allocation.kg), 'KG'),
+        },
+      });
+    }
+
+    // D-083: el producto a medida entra en METROS y la plancha de catálogo en piezas.
+    // El costo unitario es el material que acaba de salir dividido entre lo que entró;
+    // el residuo de redondeo lo reconcilia el ajuste del cierre.
+    const unitCostPen = materialCostPen.div(outputQty);
+    const entry = await this.inventory.record(tx, {
+      businessLineId: order.businessLineId,
+      itemType: 'PRODUCT',
+      itemId: order.productId,
+      type: 'IN',
+      qty: toFixedString(outputQty, 'KG'),
+      unit: outputUnit,
+      unitCost: toFixedString(unitCostPen, 'MONEY'),
+      refType: 'PRODUCTION',
+      refId: report.id,
+      notes: `${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
+      actorId: actor.id,
+      operationDate,
+      confirmBackdate: input.confirmBackdate,
+    });
+    if (!entry) {
+      throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
+    }
+
+    // D-088, segunda mitad: las planchas **nacen reservadas** para el pedido que las
+    // encargó. Sin esto el material volvería al almacén desprotegido mientras el pedido
+    // lo sigue prometiendo, y la primera merma o venta se lo llevaría.
+    let productReservationId: string | null = null;
+    if (salesOrderId && salesOrderItemId) {
+      // **Topado a lo que la línea todavía debe.** Los largos reales difieren del plan
+      // (D-084), así que sobre-producir es normal y esperable; prometer de más no lo es:
+      // esos metros sobrantes quedarían `ACTIVA` para siempre —el pedido pasa a atendido
+      // sin que nada los libere— y ninguna otra venta ni merma podría tocarlos. Lo que
+      // sobra entra al kardex como stock libre, que es lo que de verdad es.
+      const line = await tx.salesOrderItem.findUniqueOrThrow({
+        where: { id: salesOrderItemId },
+        select: { qty: true },
+      });
+      const alreadyHeld = await findLineReservation(
+        tx,
+        salesOrderItemId,
+        InventoryItemType.PRODUCT,
+        order.productId,
+      );
+      const promised = toDecimal(line.qty.toString());
+      const held =
+        alreadyHeld?.status === ReservationStatus.ACTIVE ? alreadyHeld.qty : new Decimal(0);
+      const toReserve = Decimal.min(outputQty, Decimal.max(promised.minus(held), new Decimal(0)));
+      if (toReserve.gt(0)) {
+        productReservationId = await upsertItemReservation(tx, {
+          salesOrderId,
+          salesOrderItemId,
+          itemType: InventoryItemType.PRODUCT,
+          itemId: order.productId,
+          qty: toReserve,
+          unit: outputUnit,
+          actorId: actor.id,
         });
-        if (liveReports >= MAX_ORDER_REPORTS) {
-          throw new BadRequestException(
-            `La orden ya tiene ${MAX_ORDER_REPORTS} reportes vigentes: ciérrala y abre otra`,
-          );
-        }
+      }
+    }
 
-        const product = await tx.product.findUniqueOrThrow({
-          where: { id: order.productId },
-          select: { sku: true, unit: true, lengthMm: true },
-        });
+    await tx.productionReport.update({
+      where: { id: report.id },
+      data: {
+        materialCostPen: toFixedString(materialCostPen, 'MONEY'),
+        unitCostPen: toFixedString(unitCostPen, 'MONEY'),
+      },
+    });
 
-        // D-083: una plancha de catálogo tiene el largo en su SKU. Reportar otro largo la
-        // convertiría en un producto distinto metido en el mismo saldo.
-        if (product.lengthMm !== null) {
-          const fixed = product.lengthMm.toFixed(2);
-          const off = input.pieces.find((p) => toFixedString(p.lengthMm, 'MM') !== fixed);
-          if (off) {
-            throw new BadRequestException(
-              `${product.sku} es una plancha de catálogo de ${toDecimal(fixed).div(1000).toFixed(2)} m: no admite un largo de ${toDecimal(off.lengthMm).div(1000).toFixed(2)} m`,
-            );
-          }
-        }
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'production.roofing.report',
+      entity: 'production_orders',
+      entityId: orderId,
+      after: {
+        reportId: report.id,
+        operationDate,
+        confirmedBackdate: input.confirmBackdate === true,
+        coilCode: row.coil.code,
+        plan: describePieces(pieces),
+        outputQty: toFixedString(outputQty, 'KG'),
+        outputUnit,
+        theoreticalKg: toFixedString(neededKg, 'KG'),
+        declaredKg: declaredKg === null ? null : toFixedString(declaredKg, 'KG'),
+        planMeters: progress.planMeters.toFixed(3),
+        reportedMetersAfter: progress.reportedMeters.plus(newMeters).toFixed(3),
+        materialCostPen: toFixedString(materialCostPen, 'MONEY'),
+        productReservationId,
+      },
+    });
+  }
 
-        const rows = await tx.productionOrderConsumption.findMany({
-          where: { productionOrderId: orderId, releasedAt: null },
+  // -------------------------------------------------------------------------
+  // D-147 — reportar producción en tanda
+  // -------------------------------------------------------------------------
+
+  /**
+   * Las órdenes de coberturas abiertas, con lo que la tanda necesita por fila (D-147).
+   *
+   * Es una consulta propia y no el listado de `/production` porque la fila necesita tres
+   * cosas que el listado omite a propósito: el plan de corte, los largos ya reportados y la
+   * geometría de la bobina montada. Pedirlas orden por orden con `findOne` serían N+1
+   * requests desde el navegador, que es justo lo que la pantalla viene a evitar.
+   */
+  async batchOrders(salesOrderId?: string): Promise<RoofingBatchOrderDto[]> {
+    const orders = await this.prisma.productionOrder.findMany({
+      where: {
+        kind: ProductionOrderKind.ROOFING,
+        status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+        ...(salesOrderId ? { reservation: { salesOrderId } } : {}),
+      },
+      include: {
+        product: { select: { sku: true, name: true, unit: true } },
+        items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
+        reservation: {
+          select: {
+            salesOrder: { select: { id: true, seq: true, customer: { select: { name: true } } } },
+          },
+        },
+        reports: {
+          where: { status: ProductionReportStatus.ACTIVE },
+          select: {
+            theoreticalKg: true,
+            consumedKg: true,
+            piecesDetail: { select: { lengthMm: true, qty: true } },
+          },
+        },
+        consumptions: {
+          where: { releasedAt: null },
+          orderBy: { createdAt: 'asc' },
           include: {
             coil: {
               select: {
@@ -658,237 +1039,299 @@ export class RoofingProductionService {
               },
             },
           },
-          orderBy: { createdAt: 'asc' },
-        });
-        if (rows.length === 0) {
-          throw new BadRequestException('La orden no tiene ninguna bobina montada');
-        }
-        const row =
-          input.coilId === undefined
-            ? rows.length === 1
-              ? rows[0]
-              : undefined
-            : rows.find((r) => r.coilId === input.coilId);
-        if (!row) {
-          throw new BadRequestException(
-            input.coilId === undefined
-              ? 'La orden tiene varias bobinas montadas: indica de cuál salieron estas planchas'
-              : 'Esa bobina no está montada en la orden',
-          );
-        }
+        },
+      },
+      orderBy: { seq: 'asc' },
+      take: 500,
+    });
 
-        const geometry: CoilGeometry = {
-          widthMm: row.coil.widthMm.toFixed(2),
-          thicknessMm: row.coil.thicknessMm.toFixed(2),
-          densityFactor: row.coil.finish.densityFactor.toFixed(4),
-        };
-        const pieces = input.pieces.map((p, i) => ({
-          lineNumber: i + 1,
-          lengthMm: toFixedString(p.lengthMm, 'MM'),
-          qty: p.qty,
-        }));
-        const neededKg = roofingTheoreticalKg(geometry, pieces);
+    return orders.map((order) => {
+      const planPieces = order.items.map(toPieceLike);
+      const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
+      const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
+      const salesOrder = order.reservation?.salesOrder ?? null;
+      return {
+        orderId: order.id,
+        code: productionOrderCode(order.seq),
+        status: order.status,
+        productId: order.productId,
+        productSku: order.product.sku,
+        productName: order.product.name,
+        productUnit: order.product.unit,
+        salesOrderId: salesOrder?.id ?? null,
+        salesOrderCode: salesOrder ? salesOrderCode(salesOrder.seq) : null,
+        customerName: salesOrder?.customer.name ?? null,
+        planItems: order.items.map((i, n) => ({
+          lineNumber: n + 1,
+          lengthMm: i.lengthMm.toFixed(2),
+          qty: i.qty,
+        })),
+        planMeters: progress.planMeters.toFixed(3),
+        reportedMeters: progress.reportedMeters.toFixed(3),
+        remainingMeters: progress.remainingMeters.toFixed(3),
+        remainingPieces: remainingPlanPieces(planPieces, reportedPieces)
+          .filter((p) => p.qty > 0)
+          .map((p, n) => ({ lineNumber: n + 1, lengthMm: p.lengthMm, qty: p.qty })),
+        declaredKg: order.reports
+          .reduce(
+            (acc, r) =>
+              acc.plus(r.consumedKg === null ? new Decimal(0) : toDecimal(r.consumedKg.toString())),
+            new Decimal(0),
+          )
+          .toFixed(3),
+        reportedKg: order.reports
+          .reduce((acc, r) => acc.plus(toDecimal(r.theoreticalKg.toString())), new Decimal(0))
+          .toFixed(3),
+        coils: order.consumptions.map((c) => ({
+          coilId: c.coilId,
+          coilCode: c.coil.code,
+          widthMm: c.coil.widthMm.toFixed(2),
+          thicknessMm: c.coil.thicknessMm.toFixed(2),
+          densityFactor: c.coil.finish.densityFactor.toFixed(4),
+          remainingKg: toFixedString(
+            toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
+            'KG',
+          ),
+        })),
+        operationDate: fromDateOnly(order.operationDate),
+      };
+    });
+  }
 
-        // Un solo rollo por reporte, así que el reparto es trivial — pero pasa por el mismo
-        // `allocateStripKg` que drywall para heredar su mensaje cuando el material no
-        // alcanza, en vez de escribir una segunda versión del mismo chequeo.
-        const allocationRows: StripAllocationRow[] = [
-          {
-            consumptionId: row.id,
-            coilId: row.coilId,
-            coilCode: row.coil.code,
-            remainingKg: toDecimal(row.assignedKg.toString()).minus(
-              toDecimal(row.consumedKg.toString()),
-            ),
-          },
-        ];
-        const allocations = allocateStripKg(allocationRows, neededKg);
+  /**
+   * Reportar una tanda entera: N órdenes, un número de metros por orden (D-147).
+   *
+   * **Todo o nada, y con todos los errores de una vez.** Una fila que no valida no aborta en
+   * el acto: se anota, la tanda sigue evaluándose y al final se lanza un único 400 con el
+   * error de cada fila. Quien está transcribiendo una hoja de papel necesita corregirla toda
+   * junta, no descubrir un error por intento — y como todo ocurre dentro de la misma
+   * transacción, lo que las filas buenas alcanzaron a escribir se deshace entero.
+   *
+   * Un error que **no** sea de dominio (una violación de constraint, un deadlock) sí corta en
+   * el acto: a partir de ahí Postgres aborta la transacción y cualquier consulta siguiente
+   * fallaría con un error que no dice nada. Seguir juntando errores ahí sería inventarlos.
+   */
+  async reportBatch(
+    actor: RequestUser,
+    input: ReportRoofingBatchInput,
+  ): Promise<RoofingBatchResultDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
 
-        const madeToMeasure = product.unit === Unit.MTR;
-        const outputQty = madeToMeasure ? piecesMeters(pieces) : new Decimal(piecesCount(pieces));
-        const outputUnit = madeToMeasure ? Unit.MTR : Unit.NIU;
+    return this.prisma.$transaction(
+      async (tx) => {
+        const failures: Record<string, string[]> = {};
+        let pieces = 0;
+        let meters = new Decimal(0);
 
-        // D-088, primera mitad: la reserva de bobina se descuenta **antes** de la salida de
-        // kardex. Si fuera al revés, la propia reserva bloquearía contra la invariante justo
-        // la salida que viene a cumplirla. El pedido pasa a "en producción".
-        let salesOrderItemId: string | null = null;
-        let salesOrderId: string | null = null;
-        if (order.reservationId) {
-          const reservation = await tx.reservation.findUniqueOrThrow({
-            where: { id: order.reservationId },
-            select: { salesOrderId: true, salesOrderItemId: true, itemId: true },
-          });
-          salesOrderId = reservation.salesOrderId;
-          salesOrderItemId = reservation.salesOrderItemId;
-          // Pedido primero, reserva después: `SalesOrdersService.cancel` toma esos dos
-          // recursos en ese mismo orden, y con el orden invertido anular un pedido y
-          // reportar producción a la vez se trababan en un deadlock.
-          await tx.$queryRaw`
-            SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
-          `;
-          // **Siempre se descuenta** (D-134). Antes había que preguntar si el rollo que se
-          // roló era el que el pedido había reservado, porque la promesa nombraba una bobina
-          // concreta y nada obligaba a montar esa: descontar la promesa de un rollo del que
-          // no salió un gramo la habría dejado por debajo de lo prometido sobre material
-          // intacto. Con la reserva genérica esa pregunta desapareció: `mountCoil` solo
-          // admite bobinas del color y el espesor del producto, que son exactamente las que
-          // cumplen el agregado, así que cualquier kilo que esta orden role es un kilo del
-          // agregado que el pedido prometía.
-          await consumeReservationQty(tx, order.reservationId, neededKg);
-          await tx.salesOrder.updateMany({
-            where: { id: reservation.salesOrderId, status: SalesOrderStatus.CONFIRMED },
-            data: { status: SalesOrderStatus.IN_PRODUCTION },
-          });
-        }
+        // **Ordenadas por id antes de tocar nada.** Cada fila toma un `FOR UPDATE` sobre su
+        // orden y los va acumulando hasta el commit; con el orden que mande el cliente, dos
+        // tandas simultáneas que compartan órdenes en distinto orden se traban en deadlock.
+        // Es el mismo motivo por el que `report` fija el orden pedido → reserva.
+        const rows = [...input.rows].sort((a, b) => a.orderId.localeCompare(b.orderId));
 
-        const report = await tx.productionReport.create({
-          data: {
-            productionOrderId: orderId,
-            pieces: piecesCount(pieces),
-            metersM: madeToMeasure ? toFixedString(piecesMeters(pieces), 'KG') : null,
-            theoreticalKg: toFixedString(neededKg, 'KG'),
-            materialCostPen: '0',
-            unitCostPen: '0',
-            notes: input.notes ?? null,
-            createdById: actor.id,
-            operationDate: toDateOnly(operationDate),
-            piecesDetail: { create: pieces },
-          },
-        });
-
-        let materialCostPen = new Decimal(0);
-        for (const allocation of allocations) {
-          await this.coils.lockCoil(tx, allocation.coilId);
-          const out = await this.inventory.record(tx, {
-            businessLineId: order.businessLineId,
-            itemType: 'COIL',
-            itemId: allocation.coilId,
-            type: 'OUT',
-            qty: toFixedString(allocation.kg, 'KG'),
-            unit: Unit.KGM,
-            refType: 'PRODUCTION',
-            refId: report.id,
-            notes: `Rolado de ${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
-            actorId: actor.id,
-            // D-134: lo que resta de la promesa que esta orden viene a cumplir no puede
-            // bloquear su propio consumo. Ver `RecordMovementInput.exceptReservationIds`.
-            exceptReservationIds: order.reservationId ? [order.reservationId] : [],
-            // Sin esto, un reporte retrofechado dejaba el consumo de la bobina fechado hoy y
-            // el ingreso de producto en la fecha real: los dos lados del mismo hecho en meses
-            // distintos, en una tabla append-only que no se corrige con un UPDATE.
-            operationDate,
-            confirmBackdate: input.confirmBackdate,
-          });
-          if (!out) {
-            throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
+        for (const [index, row] of rows.entries()) {
+          // **Un savepoint por fila.** `reportInTx` no es atómica por dentro: descuenta la
+          // reserva y crea el reporte **antes** del primer punto que puede fallar por dominio
+          // (`inventory.record`). Sin el savepoint, una fila que falla deja esas escrituras
+          // vivas dentro de la transacción y las filas siguientes se validan contra un estado
+          // que no ocurrió — el caso concreto es una tanda retrofechada sin confirmar, donde
+          // todas las filas fallaban en el kardex y devolvían N errores fabricados. El
+          // resultado final era correcto (el `throw` de abajo revierte todo), pero el contrato
+          // que esta pantalla promete —"el error de **cada** fila"— era falso.
+          const savepoint = `tanda_${String(index)}`;
+          await tx.$executeRawUnsafe(`SAVEPOINT ${savepoint}`);
+          try {
+            const split = await this.splitBatchRow(tx, row);
+            await this.reportInTx(
+              tx,
+              actor,
+              row.orderId,
+              {
+                coilId: row.coilId,
+                pieces: split,
+                consumedKg: row.consumedKg,
+                notes: row.notes,
+                confirmBackdate: input.confirmBackdate,
+              },
+              operationDate,
+            );
+            await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
+            pieces += piecesCount(split);
+            meters = meters.plus(piecesMeters(split));
+          } catch (err) {
+            // Un error que no es de dominio (deadlock, constraint, P2028) corta en el acto:
+            // ahí sí la transacción quedó abortada y seguir juntando errores sería inventarlos.
+            if (!(err instanceof HttpException)) throw err;
+            await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+            failures[row.orderId] = [messageOf(err)];
           }
-          materialCostPen = materialCostPen.plus(toDecimal(out.totalCost.toString()));
+        }
 
-          await tx.productionOrderConsumption.update({
-            where: { id: allocation.consumptionId },
-            data: {
-              consumedKg: toFixedString(
-                toDecimal(row.consumedKg.toString()).plus(allocation.kg),
-                'KG',
-              ),
+        if (Object.keys(failures).length > 0) {
+          throw new BadRequestException({
+            statusCode: 400,
+            message:
+              `${String(Object.keys(failures).length)} de ${String(input.rows.length)} filas no entraron: ` +
+              'la tanda no se guardó, corrígelas y vuelve a enviarla',
+            errors: failures,
+          });
+        }
+
+        return { orders: input.rows.length, pieces, meters: meters.toFixed(3) };
+      },
+      // Una tanda es hasta `MAX_BATCH_ROWS` reportes con su kardex completo cada uno, y cada
+      // uno hace lo que `report` hacía solo. El presupuesto es el de `close` por orden de
+      // magnitud, no el de un reporte suelto.
+      { timeout: 120_000, maxWait: 15_000 },
+    );
+  }
+
+  /**
+   * Los metros de una fila de la tanda, convertidos a los largos del plan de esa orden
+   * (D-147). Vive acá y no en `reportBatch` para que el error de la fila —"42.5 m no salen
+   * de un número entero de planchas"— llegue por el mismo camino que cualquier otro error de
+   * dominio y termine en el mapa de fallas, no en un 500.
+   */
+  private async splitBatchRow(
+    tx: Prisma.TransactionClient,
+    row: { orderId: string; meters: string },
+  ): Promise<PieceLike[]> {
+    const order = await tx.productionOrder.findUnique({
+      where: { id: row.orderId },
+      select: {
+        kind: true,
+        items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
+        reports: {
+          where: { status: ProductionReportStatus.ACTIVE },
+          select: { piecesDetail: { select: { lengthMm: true, qty: true } } },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException('Orden de producción no encontrada');
+    if (order.kind !== ProductionOrderKind.ROOFING) {
+      throw new BadRequestException(
+        'Esa orden es de perfiles de drywall: opérala desde producción de drywall',
+      );
+    }
+
+    const split = piecesFromPlanMeters(
+      order.items.map(toPieceLike),
+      order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike)),
+      row.meters,
+    );
+    if (!split.ok) throw new BadRequestException(split.reason);
+
+    // Los largos de la tanda **no los tipea nadie**: los deriva el reparto, así que no pasan
+    // por el `ZodValidationPipe` del controller como sí pasan los de un reporte suelto. Se
+    // validan acá con el mismo schema. Hoy no puede fallar —el plan ya cumple esas cotas y lo
+    // derivado es un subconjunto—, y por eso mismo es el chequeo que hay que dejar puesto: si
+    // mañana el plan deja de acotarse en algún camino nuevo, el error sale acá y no como una
+    // fila imposible en `production_report_pieces`.
+    const parsed = roofingPiecesSchema.safeParse(split.pieces);
+    if (!parsed.success) {
+      throw new BadRequestException(
+        `Los largos que salen de esos metros no son válidos: ${parsed.error.issues[0]?.message ?? 'revisa el plan de corte'}`,
+      );
+    }
+    return split.pieces;
+  }
+
+  // -------------------------------------------------------------------------
+  // D-148 — todas las órdenes de un pedido de una vez
+  // -------------------------------------------------------------------------
+
+  /**
+   * Crea la OP de cada línea del pedido que todavía no la tiene, en una transacción (D-148).
+   *
+   * No es un modo nuevo de crear órdenes: cada una pasa por `createFromReservationInTx`, la
+   * misma que usa el botón de una sola orden y la importación de ventas (D-141). Lo que
+   * agrega es que un pedido de ocho líneas no pueda quedar con cinco en cola y tres
+   * olvidadas porque alguien se distrajo a mitad de la lista.
+   *
+   * Las líneas que **no** se fabrican contra el pedido —una plancha de catálogo, que reserva
+   * producto terminado (D-127/D-140)— no son un error: se saltan en silencio, porque su
+   * camino es la corrida a stock y no este botón.
+   */
+  async createFromSalesOrder(
+    actor: RequestUser,
+    salesOrderId: string,
+    input: CreateRoofingOrdersFromSalesOrderInput,
+  ): Promise<RoofingBatchCreateResultDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const salesOrder = await tx.salesOrder.findUnique({
+          where: { id: salesOrderId },
+          select: { id: true, seq: true, status: true },
+        });
+        if (!salesOrder) throw new NotFoundException('Pedido no encontrado');
+        if (salesOrder.status === SalesOrderStatus.CANCELLED) {
+          throw new BadRequestException('El pedido está anulado');
+        }
+
+        const reservations = await tx.reservation.findMany({
+          where: {
+            salesOrderId,
+            status: ReservationStatus.ACTIVE,
+            itemType: InventoryItemType.RAW_MATERIAL,
+          },
+          select: {
+            id: true,
+            salesOrderItem: { select: { lineNumber: true } },
+            productionOrders: {
+              where: {
+                status: {
+                  in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS],
+                },
+              },
+              select: { id: true },
             },
-          });
-        }
-
-        // D-083: el producto a medida entra en METROS y la plancha de catálogo en piezas.
-        // El costo unitario es el material que acaba de salir dividido entre lo que entró;
-        // el residuo de redondeo lo reconcilia el ajuste del cierre.
-        const unitCostPen = materialCostPen.div(outputQty);
-        const entry = await this.inventory.record(tx, {
-          businessLineId: order.businessLineId,
-          itemType: 'PRODUCT',
-          itemId: order.productId,
-          type: 'IN',
-          qty: toFixedString(outputQty, 'KG'),
-          unit: outputUnit,
-          unitCost: toFixedString(unitCostPen, 'MONEY'),
-          refType: 'PRODUCTION',
-          refId: report.id,
-          notes: `${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
-          actorId: actor.id,
-          operationDate,
-          confirmBackdate: input.confirmBackdate,
-        });
-        if (!entry) {
-          throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
-        }
-
-        // D-088, segunda mitad: las planchas **nacen reservadas** para el pedido que las
-        // encargó. Sin esto el material volvería al almacén desprotegido mientras el pedido
-        // lo sigue prometiendo, y la primera merma o venta se lo llevaría.
-        let productReservationId: string | null = null;
-        if (salesOrderId && salesOrderItemId) {
-          // **Topado a lo que la línea todavía debe.** Los largos reales difieren del plan
-          // (D-084), así que sobre-producir es normal y esperable; prometer de más no lo es:
-          // esos metros sobrantes quedarían `ACTIVA` para siempre —el pedido pasa a atendido
-          // sin que nada los libere— y ninguna otra venta ni merma podría tocarlos. Lo que
-          // sobra entra al kardex como stock libre, que es lo que de verdad es.
-          const line = await tx.salesOrderItem.findUniqueOrThrow({
-            where: { id: salesOrderItemId },
-            select: { qty: true },
-          });
-          const alreadyHeld = await findLineReservation(
-            tx,
-            salesOrderItemId,
-            InventoryItemType.PRODUCT,
-            order.productId,
-          );
-          const promised = toDecimal(line.qty.toString());
-          const held =
-            alreadyHeld?.status === ReservationStatus.ACTIVE ? alreadyHeld.qty : new Decimal(0);
-          const toReserve = Decimal.min(
-            outputQty,
-            Decimal.max(promised.minus(held), new Decimal(0)),
-          );
-          if (toReserve.gt(0)) {
-            productReservationId = await upsertItemReservation(tx, {
-              salesOrderId,
-              salesOrderItemId,
-              itemType: InventoryItemType.PRODUCT,
-              itemId: order.productId,
-              qty: toReserve,
-              unit: outputUnit,
-              actorId: actor.id,
-            });
-          }
-        }
-
-        await tx.productionReport.update({
-          where: { id: report.id },
-          data: {
-            materialCostPen: toFixedString(materialCostPen, 'MONEY'),
-            unitCostPen: toFixedString(unitCostPen, 'MONEY'),
           },
+          orderBy: { salesOrderItem: { lineNumber: 'asc' } },
         });
+
+        const pending = reservations.filter((r) => r.productionOrders.length === 0);
+        const alreadyQueued = reservations.length - pending.length;
+        if (pending.length === 0) {
+          throw new BadRequestException(
+            alreadyQueued > 0
+              ? `Las ${String(alreadyQueued)} líneas a medida de ${salesOrderCode(salesOrder.seq)} ya tienen su orden en cola`
+              : `${salesOrderCode(salesOrder.seq)} no tiene ninguna línea que se fabrique contra el pedido: ` +
+                  'una plancha de catálogo se atiende con stock y, si falta, se produce a stock (D-140)',
+          );
+        }
+
+        const created: { orderId: string; code: string }[] = [];
+        for (const reservation of pending) {
+          const orderId = await this.createFromReservationInTx(tx, actor, {
+            reservationId: reservation.id,
+            operationDate,
+            notes: input.notes ?? null,
+          });
+          const order = await tx.productionOrder.findUniqueOrThrow({
+            where: { id: orderId },
+            select: { seq: true },
+          });
+          created.push({ orderId, code: productionOrderCode(order.seq) });
+        }
 
         await this.audit.write(tx, {
           actorId: actor.id,
-          action: 'production.roofing.report',
-          entity: 'production_orders',
-          entityId: orderId,
+          action: 'production.roofing.create_batch',
+          entity: 'sales_orders',
+          entityId: salesOrderId,
           after: {
-            reportId: report.id,
-            operationDate,
-            confirmedBackdate: input.confirmBackdate === true,
-            coilCode: row.coil.code,
-            plan: describePieces(pieces),
-            outputQty: toFixedString(outputQty, 'KG'),
-            outputUnit,
-            theoreticalKg: toFixedString(neededKg, 'KG'),
-            materialCostPen: toFixedString(materialCostPen, 'MONEY'),
-            productReservationId,
+            salesOrder: salesOrderCode(salesOrder.seq),
+            created: created.map((c) => c.code),
+            alreadyQueued,
           },
         });
-      },
-      { timeout: 30_000 },
-    );
 
-    return this.production.findOne(orderId);
+        return { created, alreadyQueued };
+      },
+      { timeout: 60_000, maxWait: 15_000 },
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -943,7 +1386,25 @@ export class RoofingProductionService {
             ),
           new Decimal(0),
         );
-        const declaredKg = input.consumedKg ? toDecimal(input.consumedKg) : reportedKg;
+        // D-146: cuando planta declaró kilos **reporte a reporte**, el cierre los usa como
+        // valor por defecto en vez de asumir merma cero. Sin esto, la cifra que el encargado
+        // se tomó el trabajo de anotar quedaba de adorno: cerrar sin `consumedKg` la
+        // contradecía en silencio y el despunte real desaparecía. Lo explícito sigue
+        // mandando: `input.consumedKg` gana siempre.
+        //
+        // El piso es `reportedKg` porque lo declarado por reporte se topa contra el kilo
+        // teórico del **plan**, no contra el de sus propios largos: puede quedar por debajo
+        // de lo que las planchas ya representan, y ese material salió de verdad (D-089).
+        const declaredByReportsKg = reports.some((r) => r.consumedKg !== null)
+          ? Decimal.max(
+              reports.reduce(
+                (acc, r) => acc.plus(toDecimal((r.consumedKg ?? r.theoreticalKg).toString())),
+                new Decimal(0),
+              ),
+              reportedKg,
+            )
+          : reportedKg;
+        const declaredKg = input.consumedKg ? toDecimal(input.consumedKg) : declaredByReportsKg;
 
         // D-089: lo declarado no puede ser menos que lo que las planchas ya representan (el
         // material salió de verdad), ni más de lo que la orden tenía montado.
@@ -1680,6 +2141,24 @@ export class RoofingProductionService {
 }
 
 /** Fila persistida de largos → la forma mínima que la aritmética compartida necesita. */
+/**
+ * El texto que un error de dominio le tiene que dejar a la fila de la tanda (D-147). El
+ * cuerpo de un `HttpException` de Nest es una cadena o un objeto con `message`, y sin esto
+ * el mapa de fallas guardaba "[object Object]" justo en el caso que la pantalla necesita
+ * leer.
+ */
+function messageOf(err: HttpException): string {
+  const body: unknown = err.getResponse();
+  if (typeof body === 'string') return body;
+  // `null` incluido: sin este chequeo, leer `.message` lanzaba **dentro** del `catch` de la
+  // tanda y una fila con un error raro salía como 500 opaco en vez de como su motivo.
+  if (body === null || typeof body !== 'object') return err.message;
+  const message: unknown = (body as { message?: unknown }).message;
+  if (typeof message === 'string') return message;
+  if (Array.isArray(message)) return message.join(', ');
+  return err.message;
+}
+
 function toPieceLike(row: { lengthMm: Prisma.Decimal; qty: number }): PieceLike {
   return { lengthMm: row.lengthMm.toFixed(2), qty: row.qty };
 }

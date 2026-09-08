@@ -24,6 +24,8 @@ import {
   COIL_BUSINESS_LINES,
   Decimal,
   DERIVED_FILTER_FETCH_CAP,
+  describePieces,
+  fromDateOnly,
   kgPerMeter,
   paginate,
   rawMaterialLabel,
@@ -81,6 +83,7 @@ import {
   theoreticalKgForMeters,
   toSalesItemDto,
 } from './sales-lines';
+import { buildPlantOrderPdf } from './plant-order-pdf';
 import {
   assertRawMaterialInvariant,
   rawMaterialAvailability,
@@ -1649,6 +1652,92 @@ export class SalesOrdersService {
       this.computeQueueStatus(row),
     ]);
     return this.toDto(row, labels, actors, queueStatus);
+  }
+
+  /**
+   * Hoja de planta del pedido (D-149): el papel que baja al taller.
+   *
+   * Se arma al vuelo y **no** se guarda en R2, a diferencia del PDF de la cotización
+   * (D-068): aquel es un documento que se le manda al cliente y tiene que quedar congelado
+   * tal como se envió; este es una copia de trabajo del estado actual del pedido, y una
+   * versión vieja guardada sería justamente lo que no se quiere que baje a la planta.
+   *
+   * Sin importes, a propósito: ver `plant-order-pdf.ts`.
+   */
+  async plantPdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    const row = await this.prisma.salesOrder.findUnique({
+      where: { id },
+      select: {
+        seq: true,
+        status: true,
+        issueDate: true,
+        promisedDeliveryDate: true,
+        notes: true,
+        priorityAt: true,
+        priorityReason: true,
+        customer: { select: { name: true, docType: true, docNumber: true } },
+        items: {
+          orderBy: { lineNumber: 'asc' },
+          select: {
+            lineNumber: true,
+            qty: true,
+            unit: true,
+            pieces: { orderBy: { lineNumber: 'asc' } },
+            product: {
+              select: {
+                sku: true,
+                name: true,
+                thicknessMm: true,
+                widthMm: true,
+                lengthMm: true,
+                color: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!row) throw new NotFoundException('Pedido no encontrado');
+    if (row.status === SalesOrderStatus.CANCELLED) {
+      throw new BadRequestException('El pedido está anulado: no hay nada que producir');
+    }
+
+    const buffer = await buildPlantOrderPdf({
+      code: salesOrderCode(row.seq),
+      issueDate: fromDateOnly(row.issueDate),
+      promisedDeliveryDate: row.promisedDeliveryDate
+        ? fromDateOnly(row.promisedDeliveryDate)
+        : null,
+      customerName: row.customer.name,
+      customerDoc: `${row.customer.docType} ${row.customer.docNumber}`,
+      // Solo cuando el pedido está priorizado: el motivo sin la marca no significa nada.
+      priorityReason: row.priorityAt === null ? null : (row.priorityReason ?? 'sin motivo escrito'),
+      notes: row.notes,
+      lines: row.items.map((item) => {
+        const pieces = item.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty }));
+        const product = item.product;
+        // Lo que decide qué bobina se monta (D-086): espesor, ancho y color. El largo fijo
+        // solo lo tiene una plancha de catálogo (D-127).
+        const measures = [
+          product.thicknessMm === null ? null : `${product.thicknessMm.toFixed(2)} mm`,
+          product.widthMm === null ? null : `${product.widthMm.toFixed(2)} mm de ancho`,
+          product.lengthMm === null
+            ? null
+            : `largo fijo ${toDecimal(product.lengthMm.toString()).div(1000).toFixed(2)} m`,
+          product.color?.name ?? null,
+        ].filter((v): v is string => v !== null);
+        return {
+          lineNumber: item.lineNumber,
+          productSku: product.sku,
+          productName: product.name,
+          quantity: toDecimal(item.qty.toString()).toFixed(item.unit === Unit.MTR ? 3 : 0),
+          unitLabel: item.unit === Unit.MTR ? 'm' : 'u',
+          pieces: pieces.length === 0 ? '—' : describePieces(pieces),
+          measures: measures.length === 0 ? '—' : measures.join(' · '),
+        };
+      }),
+    });
+    return { buffer, filename: `${salesOrderCode(row.seq)}-planta.pdf` };
   }
 
   /**
