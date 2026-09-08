@@ -123,6 +123,11 @@ export interface ProductionOrderDto {
   status: string;
   productId: string;
   productUnit: string;
+  /**
+   * D-048/D-140: piezas que la corrida se propone producir. En una OP **a stock** —drywall
+   * sin pedido, o plancha de catálogo (D-145)— es lo único que dice por qué existe la orden.
+   */
+  targetPieces: number | null;
   /** D-084: el pedido del que nació. Null en una corrida de stock de drywall. */
   salesOrderId: string | null;
   salesOrderCode: string | null;

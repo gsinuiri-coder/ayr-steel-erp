@@ -52,7 +52,9 @@ pnpm build | lint | typecheck | test
 pnpm db:migrate              # prisma migrate dev (rama dev)
 pnpm db:deploy               # prisma migrate deploy (CI/prod)
 pnpm db:seed                 # admin desde ADMIN_EMAIL/ADMIN_PASSWORD
-pnpm e2e                     # Playwright (levanta api+web contra Neon rama ci)
+pnpm dev:local                       # Postgres en Docker + migrate + seed + api+web, sin Neon (docs/ENTORNOS.md)
+pnpm db:local reset|snapshot <n>|restore <n>   # operar el Postgres local (Docker)
+pnpm e2e                     # Playwright, por defecto contra el Postgres local (Docker); en CI, Neon rama ci
 pnpm env:demo | db:demo | dev:demo   # entorno de ensayo (rama Neon demo, D-125)
 pnpm smoke:prod              # verificación post-deploy de SOLO LECTURA (D-126)
 pnpm secrets:gh              # gh secret set desde .env.setup

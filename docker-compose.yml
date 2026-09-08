@@ -1,0 +1,48 @@
+# Postgres local para desarrollo del día a día ("pnpm dev:local") y para la suite E2E local
+# ("pnpm e2e"), en dos bases separadas del mismo contenedor (ver docker/postgres-init).
+# Nunca se usa contra producción/demo/ci: esas siguen en Neon (docs/ENTORNOS.md).
+#
+# Los valores por defecto de abajo están duplicados a propósito (documentado) en
+# scripts/local-docker-env.mjs: si cambian acá, cambian ahí también.
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: ayr-local-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ayr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ayr_local}
+      POSTGRES_DB: ${POSTGRES_DB:-ayr_local}
+    ports:
+      - '${DB_PORT:-5434}:5432'
+    volumes:
+      - ayr_pg_data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-ayr} -d ${POSTGRES_DB:-ayr_local}']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Opcional: solo hace falta si algo local necesita probar contra almacenamiento tipo R2
+  # (imports guarda ahí el xlsx/csv original, ver apps/api/src/documents/storage.service.ts).
+  # Sin este perfil, R2_* queda vacío y StorageService responde 503 — degradación ya prevista,
+  # no un fallo de arranque. Levantar con: docker compose --profile storage up -d
+  minio:
+    image: minio/minio:latest
+    container_name: ayr-local-minio
+    profiles: ['storage']
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ayr}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-ayr_local_minio}
+    ports:
+      - '${MINIO_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - ayr_minio_data:/data
+
+volumes:
+  ayr_pg_data:
+  ayr_minio_data:

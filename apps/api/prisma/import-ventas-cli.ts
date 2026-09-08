@@ -25,7 +25,7 @@
  */
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { BusinessLineCode, PrismaClient, ProductSource, Role, type Prisma } from '@prisma/client';
@@ -60,6 +60,16 @@ function argValue(flag: string): string | undefined {
 const decisionsPath = argValue('--decisions');
 const outPath = argValue('--out');
 const execute = process.argv.includes('--execute');
+
+// Antes de tocar nada: un `--out` que apunte al archivo de decisiones lo borraría. Es un
+// error de línea de comandos y se ve sin abrir la base, así que se corta acá y no después de
+// haber subido el archivo y creado el lote.
+if (outPath !== undefined) {
+  assertOutIsNotDecisions(
+    resolve(outPath),
+    decisionsPath === undefined ? null : resolve(decisionsPath),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // El archivo de decisiones del dueño
@@ -337,7 +347,14 @@ async function main(): Promise<void> {
         for (const d of report.catalogDeficits) d.sku = skuById.get(d.productId) ?? d.productId;
       }
       printDryRun(report);
-      const out = resolve(outPath ?? decisionScaffoldPath(filePath));
+      const out = safeScaffoldPath(outPath, filePath, decisionsPath);
+      if (out === null) {
+        console.warn(
+          `\nNo se escribió ningún esqueleto: el destino por defecto ya existe y no se pisa. ` +
+            `Si querés uno nuevo, pasá --out <ruta.json> a una ruta que no uses.`,
+        );
+        return;
+      }
       writeFileSync(out, JSON.stringify(scaffoldDecisions(report), null, 2), 'utf8');
       console.warn(`\nEsqueleto de decisiones escrito en ${out}`);
       return;
@@ -610,6 +627,61 @@ async function main(): Promise<void> {
 
 function decisionScaffoldPath(source: string): string {
   return source.replace(/\.[^.]+$/, '') + '.decisiones.json';
+}
+
+/**
+ * Dónde escribir el esqueleto de decisiones — o `null` para no escribir ninguno.
+ *
+ * **El dry-run no pisa un archivo que ya existe.** El destino por defecto
+ * (`<archivo>.decisiones.json`) es exactamente el nombre que el dueño usa para *su* archivo
+ * completado, así que un `--decisions "Ventas.decisiones.json"` (la forma natural de correr
+ * un dry-run con las decisiones ya puestas, para ver qué falta) escribía el esqueleto vacío
+ * encima y **borraba el trabajo del dueño sin preguntar**: 40 líneas de negocio y la lista de
+ * comprobantes pendientes, que son juicio de negocio y no se recalculan desde ningún lado.
+ * Pasó de verdad, en esta sesión, contra `local-data/Ventas Detalladas.decisiones.json`.
+ *
+ * Reglas, en orden:
+ * 1. `--out` explícito manda siempre: quien lo escribe sabe a dónde apunta. Aun así, nunca
+ *    puede ser el mismo archivo que `--decisions`.
+ * 2. Sin `--out`, el destino por defecto se usa **solo si no existe**.
+ *
+ * La comparación de rutas **ignora mayúsculas en Windows**: NTFS no las distingue, así que
+ * `--out "…DECISIONES.json"` contra `--decisions "…decisiones.json"` son el mismo archivo y
+ * una comparación de cadenas cruda dejaba pasar exactamente el caso que esto viene a impedir.
+ */
+function samePath(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+function safeScaffoldPath(
+  explicitOut: string | undefined,
+  source: string,
+  decisions: string | undefined,
+): string | null {
+  const decisionsResolved = decisions === undefined ? null : resolve(decisions);
+  if (explicitOut !== undefined) {
+    const out = resolve(explicitOut);
+    assertOutIsNotDecisions(out, decisionsResolved);
+    return out;
+  }
+  const out = resolve(decisionScaffoldPath(source));
+  if (existsSync(out)) return null;
+  return out;
+}
+
+/**
+ * Se comprueba **al parsear argv**, antes de subir nada: si abortara recién al escribir el
+ * esqueleto, ya habría dejado el lote y sus `import_rows` persistidos por `ImportsService.upload`
+ * — basura inerte, pero basura que nadie pidió, por un error de línea de comandos que se
+ * podía ver sin tocar la base.
+ */
+function assertOutIsNotDecisions(out: string, decisionsResolved: string | null): void {
+  if (decisionsResolved !== null && samePath(out, decisionsResolved)) {
+    throw new Error(
+      '--out apunta al mismo archivo que --decisions: sobrescribirlo borraría las decisiones ' +
+        'que vas a necesitar para --execute. Elegí otra ruta.',
+    );
+  }
 }
 
 /**

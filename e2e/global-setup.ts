@@ -2,9 +2,12 @@ import { execSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 /**
- * Prepara la base de pruebas. En CI (rama Neon `ci`): migraciones + vaciado + seed.
- * En local (rama `dev`): solo migraciones + seed (idempotente); los tests crean sus
- * propios datos con correos únicos. Con E2E_RESET_DB=1 también vacía en local.
+ * Prepara la base de pruebas: migraciones + vaciado + seed. En CI, contra la rama Neon `ci`.
+ * En local, contra el Postgres de docker-compose.yml (base "ayr_local_e2e", ver
+ * playwright.config.ts) — descartable y de uso exclusivo de la suite, así que el vaciado va
+ * por defecto ahí también (E2E_RESET_DB=1, seteado por playwright.config.ts). Con
+ * E2E_RESET_DB=0 se salta el vaciado y solo aplica migraciones + seed (idempotente); sirve
+ * para apuntar la suite a otra base a mano sin perder lo que tenga.
  */
 export default function globalSetup(): void {
   const apiDir = resolve(__dirname, '../apps/api');
