@@ -23,7 +23,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
-import { totalTolerance } from '../imports/fiscal-import-math';
+import { totalMismatch } from '../imports/fiscal-import-math';
 import { PrismaService } from '../prisma/prisma.service';
 import { dueDateFor } from './invoicing-math';
 
@@ -75,6 +75,12 @@ export interface ImportedDocumentInput {
    * nueva**: `fiscal_documents.sales_order_id` existe desde Fase 5b para exactamente esto.
    */
   salesOrderId?: string | null;
+  /**
+   * D-142: pisa la tolerancia de "no cuadra" (`totalTolerance`, RF-71) con la del import de
+   * ventas históricas (`SALES_HISTORY_TOTAL_TOLERANCE_PEN`). `undefined` en la importación
+   * canónica de RF-71, que no la necesita — su precio ya viene impreso en el papel.
+   */
+  totalTolerancePen?: string;
   lines: ImportedDocumentLine[];
 }
 
@@ -338,23 +344,29 @@ export class FiscalImportService {
    * El subtotal sale de las líneas (es lo único que las líneas pueden decir) y el total, de
    * la planilla. Guardar el recalculado habría dejado el saldo por cobrar unos céntimos
    * lejos del comprobante real, y cobrar el importe exacto del papel se habría rechazado
-   * por "excede el saldo pendiente". La diferencia admitida es la misma tolerancia que
-   * valida el adaptador; acá se vuelve a comprobar porque este servicio es la autoridad, no
-   * la pantalla.
+   * por "excede el saldo pendiente". La comprobación es `totalMismatch` (RF-71 canónico: un
+   * céntimo por línea) salvo que `input.totalTolerancePen` la pise — D-142, para la
+   * importación de ventas históricas, que tiene su propio perfil de redondeo
+   * (`SALES_HISTORY_TOTAL_TOLERANCE_PEN`). Se vuelve a comprobar acá, y no solo en el
+   * adaptador, porque este servicio es la autoridad, no la pantalla.
    */
   private resolveTotals(input: ImportedDocumentInput): {
     subtotalPen: string;
     igvPen: string;
     totalPen: string;
   } {
-    const computed = serializeSalesTotals(salesTotals(input.lines));
-    const declared = toDecimal(input.totalPen);
-    const diff = declared.minus(toDecimal(computed.totalPen)).abs();
-    if (diff.gt(totalTolerance(input.lines.length))) {
+    const mismatch = totalMismatch(
+      input.lines,
+      input.totalPen,
+      input.totalTolerancePen === undefined ? undefined : toDecimal(input.totalTolerancePen),
+    );
+    if (mismatch) {
       throw new BadRequestException(
-        `Las líneas suman ${toDecimal(computed.totalPen).toFixed(2)} y el comprobante declara ${declared.toFixed(2)}`,
+        `Las líneas suman ${mismatch.computed.toFixed(2)} y el comprobante declara ${mismatch.declared.toFixed(2)}`,
       );
     }
+    const declared = toDecimal(input.totalPen);
+    const computed = serializeSalesTotals(salesTotals(input.lines));
     const subtotal = toDecimal(computed.subtotalPen);
     const igv = declared.minus(subtotal);
     if (igv.isNegative()) {

@@ -1,7 +1,10 @@
+import { Decimal } from '@ayr/shared';
 import {
   asText,
   isDecimalText,
   mismatchedHeaderLabels,
+  SALES_HISTORY_TOTAL_TOLERANCE_PEN,
+  salesHistoryTotalMismatch,
   totalMismatch,
   totalTolerance,
 } from './fiscal-import-math';
@@ -113,5 +116,47 @@ describe('totalMismatch', () => {
     const lines = [{ qty: '1', unitPricePen: '100' }];
     expect(totalMismatch(lines, '100.0000')).not.toBeNull();
     expect(totalMismatch(lines, '118.0000')).toBeNull();
+  });
+
+  it('acepta una tolerancia explícita, en vez de la de RF-71 (D-142)', () => {
+    // 118 + 0.20 de desvío: la tolerancia de RF-71 (un céntimo, una sola línea) lo rechaza;
+    // una tolerancia explícita de 0.25 lo acepta. Es la misma función, dos umbrales.
+    const lines = [{ qty: '1', unitPricePen: '100' }];
+    expect(totalMismatch(lines, '118.2000')).not.toBeNull();
+    expect(totalMismatch(lines, '118.2000', new Decimal('0.25'))).toBeNull();
+  });
+});
+
+describe('SALES_HISTORY_TOTAL_TOLERANCE_PEN + salesHistoryTotalMismatch (D-142)', () => {
+  it('es 0.25 — el peor desvío real medido (0.21) más un margen chico', () => {
+    expect(SALES_HISTORY_TOTAL_TOLERANCE_PEN).toBe('0.25');
+  });
+
+  it('acepta el peor caso real (0.21) y rechaza uno más grande (0.30)', () => {
+    // Mismo caso que tumbó 18/71 documentos en producción (sesión 7-final-C): el papel
+    // declara 129000.00 y las líneas sumaban 129000.08 — un desvío bien por debajo de 0.21.
+    expect(salesHistoryTotalMismatch('100000.00', '18000.00', '118000.21')).toBeNull();
+    expect(salesHistoryTotalMismatch('100000.00', '18000.00', '118000.30')).not.toBeNull();
+  });
+
+  it('devuelve los dos números cuando no cuadra, para el mensaje', () => {
+    const mismatch = salesHistoryTotalMismatch('100.00', '18.00', '119.00');
+    expect(mismatch?.computed.toFixed(2)).toBe('118.00');
+    expect(mismatch?.declared.toFixed(2)).toBe('119.00');
+  });
+
+  /**
+   * Canario de divergencia (pedido explícito del dueño, sesión 7-final-C): si el día de
+   * mañana alguien le pone a la previsualización o a la confirmación una tolerancia propia
+   * en vez de leer esta constante, este test dinámico —construido contra el valor real de
+   * `SALES_HISTORY_TOTAL_TOLERANCE_PEN` y no contra un número copiado a mano— es el que
+   * revienta primero.
+   */
+  it('el borde de la tolerancia compartida es exacto, no aproximado', () => {
+    const tol = new Decimal(SALES_HISTORY_TOTAL_TOLERANCE_PEN);
+    const grossJustInside = new Decimal('100').plus(tol).minus('0.01').toFixed(2);
+    const grossJustOutside = new Decimal('100').plus(tol).plus('0.01').toFixed(2);
+    expect(salesHistoryTotalMismatch('100.00', '0.00', grossJustInside)).toBeNull();
+    expect(salesHistoryTotalMismatch('100.00', '0.00', grossJustOutside)).not.toBeNull();
   });
 });

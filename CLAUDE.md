@@ -40,6 +40,7 @@ ERP web para una empresa peruana de transformación y venta de acero. Fuente de 
 10. **Fecha de operación (D-124).** Todo hecho fechado del dominio —movimiento de kardex, bobina, corte, OP, reporte de piezas, despacho, cobranza, pago— lleva `operationDate` (día de negocio en Lima), por defecto hoy y editable solo por ADMINISTRADOR vía `OperationDateService.resolve`. `createdAt`/`at` no se tocan: son auditoría. Todo reporte, listado o agrupado por fecha lee `operationDate`, nunca el timestamp de grabación.
 11. Si un comando externo falla 3 veces, documentar el bloqueo en `docs/PROGRESO.md` y seguir con lo que no dependa de él.
 12. Dudas de diseño: aplicar la recomendación de `docs/ARQUITECTURA.md` §5 y registrar la decisión en §0.2. Preguntar al dueño solo si un servicio externo exige acción humana.
+13. **Datos reales de un cliente/importación** (Excel, CSV, JSON de decisiones — clientes, RUCs, montos): nunca sueltos en la raíz del repo, aunque `.gitignore` los cubra. Viven en `local-data/` (ignorada por completo). Un script de un solo uso (reversa puntual, purge ad hoc) se escribe, corre y borra dentro de la misma sesión; si por algo tiene que sobrevivir a la sesión, va a `scripts/oneoff/` con fecha en el nombre — nunca queda suelto en `apps/api/prisma/` ni en la raíz.
 
 ## Comandos
 

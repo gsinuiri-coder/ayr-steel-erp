@@ -46,6 +46,45 @@ export function totalTolerance(lineCount: number): Decimal {
 }
 
 /**
+ * Tolerancia de "no cuadra" para la importación de ventas históricas (D-138/D-142) —
+ * **no** la canónica de RF-71, que sigue con `totalTolerance` de arriba.
+ *
+ * Acá el precio unitario no viene impreso en el papel: sale de dividir VALOR DE VENTA entre
+ * CANTIDAD (D-138) y se guarda a la escala del proyecto (D-003), así que el redondeo
+ * compuesto de volver a sumar las líneas se acumula más de lo que "un céntimo por línea"
+ * asume — ese número se calibró para RF-71, donde el importe de cada línea ya viene
+ * redondeado del papel. El peor caso real medido contra el Excel del dueño (D-142, sesión
+ * 7-final-C) fue 0.21 en un comprobante de varias líneas; 0.25 deja un margen chico sin
+ * abrir la puerta a un total inventado.
+ *
+ * Es **una sola constante** que lee tanto la previsualización
+ * (`SalesHistoryImportAdapter.validateGroup`, que solo avisa) como la confirmación
+ * (`FiscalImportService.resolveTotals`, que de verdad manda) — la lección de D-088 otra
+ * vez: dos números que dicen lo mismo puestos a mano en dos archivos terminan, tarde o
+ * temprano, diciendo cosas distintas.
+ */
+export const SALES_HISTORY_TOTAL_TOLERANCE_PEN = '0.25';
+
+/**
+ * Igual que `salesHistoryTotalMismatch` compara neto+IGV contra el precio de venta, para el
+ * import de ventas históricas: acá el neto, el IGV y el bruto son columnas propias del
+ * export (D-138), así que no hay nada que recalcular a una tarifa fija — solo comprobar que
+ * las tres sumas cuadran entre sí, con la tolerancia compartida de arriba.
+ */
+export function salesHistoryTotalMismatch(
+  netPen: string,
+  igvPen: string,
+  grossPen: string,
+): { computed: Decimal; declared: Decimal } | null {
+  const computed = toDecimal(netPen).plus(igvPen);
+  const declared = toDecimal(grossPen);
+  if (computed.minus(declared).abs().lte(toDecimal(SALES_HISTORY_TOTAL_TOLERANCE_PEN))) {
+    return null;
+  }
+  return { computed, declared };
+}
+
+/**
  * Qué campos de cabecera **no** dicen lo mismo en todas las filas del comprobante.
  *
  * Devuelve las etiquetas de los que difieren, en el orden en que se declararon. Si alguno
@@ -65,13 +104,24 @@ export function mismatchedHeaderLabels(
  * Diferencia entre lo que suman las líneas y el total que declara el archivo, o `null`
  * cuando cuadra dentro de la tolerancia. Devuelve además el calculado, que es la mitad
  * útil del mensaje: sin él, el usuario sabe que no cuadra pero no por cuánto.
+ *
+ * `tolerance` es opcional y por defecto es la de RF-71 (`totalTolerance`, un céntimo por
+ * línea); D-142 la pisa con `SALES_HISTORY_TOTAL_TOLERANCE_PEN` para la importación de
+ * ventas históricas, que tiene su propio perfil de redondeo (ver esa constante).
  */
 export function totalMismatch(
   lines: SalesLineInput[],
   declaredTotalPen: string,
+  tolerance?: Decimal,
 ): { computed: Decimal; declared: Decimal } | null {
   const computed = salesTotals(lines).total;
   const declared = toDecimal(declaredTotalPen);
-  if (computed.minus(declared).abs().lte(totalTolerance(lines.length))) return null;
+  if (
+    computed
+      .minus(declared)
+      .abs()
+      .lte(tolerance ?? totalTolerance(lines.length))
+  )
+    return null;
   return { computed, declared };
 }

@@ -35,7 +35,9 @@ pnpm-debug.log*
 
 .vercel
 
-# archivos de trabajo del CLI de importación de ventas (D-142): datos reales del dueño,
-# nunca al repo (clientes, RUCs, montos)
+# archivos de trabajo del CLI de importación de ventas (D-142): datos reales del dueño
+# (clientes, RUCs, montos), nunca al repo. Viven en local-data/ (ignorada por completo);
+# las dos reglas de abajo son red de seguridad si alguno queda suelto en la raíz.
+/local-data/
 /*.xlsx
 *.decisiones.json

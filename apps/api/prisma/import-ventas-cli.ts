@@ -31,6 +31,7 @@ import { NestFactory } from '@nestjs/core';
 import { BusinessLineCode, PrismaClient, ProductSource, Role, type Prisma } from '@prisma/client';
 import {
   businessToday,
+  fiscalDocumentNumber,
   ImportEntity,
   ImportFulfillment,
   ImportRowStatus,
@@ -435,10 +436,35 @@ async function main(): Promise<void> {
         });
       }
     }
+    // `decisions.pendientes` trae el número tal como lo muestra el reporte de dry-run
+    // ("FFA1-1349", el texto crudo de "SERIE - NÚMERO" en el archivo) — pero
+    // `ImportsService.updateGroup` compara contra la clave canónica del adaptador
+    // (`fiscalDocumentNumber`, con el correlativo relleno a 8 dígitos: "FFA1-00001349").
+    // Sin esta traducción, la primera entrada de `pendientes` que no coincidiera al pie de
+    // la letra tiraba un 404 sin capturar y abortaba la corrida entera después de ya haber
+    // intentado los SKUs — encontrado en producción, sesión 7-final-C.
+    const groupKeyByDocumentNumber = new Map(
+      batch.rows.map((row) => {
+        const d = rowData(row);
+        return [d.documentNumber, fiscalDocumentNumber(d.series, d.correlative ?? 0)] as const;
+      }),
+    );
+    const unmatchedPendientes: string[] = [];
     for (const documentNumber of decisions.pendientes) {
-      await imports.updateGroup(batch.id, documentNumber, {
-        fulfillment: ImportFulfillment.PENDING,
-      });
+      const groupKey = groupKeyByDocumentNumber.get(documentNumber) ?? documentNumber;
+      try {
+        await imports.updateGroup(batch.id, groupKey, { fulfillment: ImportFulfillment.PENDING });
+      } catch (err) {
+        unmatchedPendientes.push(documentNumber);
+        console.error(
+          `No se pudo marcar pendiente "${documentNumber}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    if (unmatchedPendientes.length > 0) {
+      console.error(
+        `Documentos de "pendientes" que no coinciden con ninguna fila del lote: ${unmatchedPendientes.join(', ')}`,
+      );
     }
 
     // 3) `eliminar`: excluir el documento entero. Es metadato del propio andamiaje de

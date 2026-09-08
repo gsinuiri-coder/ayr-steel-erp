@@ -29,7 +29,11 @@ import type { RequestUser } from '../../auth/auth.types';
 import { OperationDateService } from '../../common/operation-date.service';
 import { ENV, type Env } from '../../config/env';
 import { DocumentLookupService } from '../../customers/document-lookup.service';
-import { asText } from '../fiscal-import-math';
+import {
+  asText,
+  SALES_HISTORY_TOTAL_TOLERANCE_PEN,
+  salesHistoryTotalMismatch,
+} from '../fiscal-import-math';
 import {
   FiscalImportService,
   type ImportedDocumentLine,
@@ -165,8 +169,13 @@ export function normalizeUnit(raw: string): string {
   const text = raw.toUpperCase().trim();
   return (UNIT_ALIASES[text] ?? text).slice(0, 20);
 }
-/** Tolerancia de los cuadres por línea y por documento, en soles. */
-const TOTAL_TOLERANCE_PEN = '0.10';
+/**
+ * Tolerancia del cuadre de **una sola línea** (neto + IGV vs. precio de venta), en soles.
+ * El cuadre del **documento** entero usa `SALES_HISTORY_TOTAL_TOLERANCE_PEN` (D-142) — son
+ * dos comprobaciones distintas y no hay ninguna del lado de la confirmación que dependa de
+ * esta, así que no hace falta que compartan constante.
+ */
+const LINE_TOTAL_TOLERANCE_PEN = '0.10';
 /** Cuánto vive una consulta de padrón en la caché del proceso. */
 const LOOKUP_TTL_MS = 10 * 60 * 1000;
 const LOOKUP_CACHE_MAX = 500;
@@ -352,7 +361,7 @@ export class SalesHistoryImportAdapter implements GroupedImportAdapter {
     // propio export no puede impedir cargar la venta — pero tiene que verse.
     if (netPen !== undefined && igvPen !== undefined && grossPen !== undefined) {
       const expected = toDecimal(netPen).plus(igvPen);
-      if (expected.minus(grossPen).abs().gt(TOTAL_TOLERANCE_PEN)) {
+      if (expected.minus(grossPen).abs().gt(LINE_TOTAL_TOLERANCE_PEN)) {
         warnings.push(
           `La línea no cuadra: valor ${netPen} + IGV ${igvPen} = ${expected.toFixed(2)} y el precio de venta dice ${grossPen}`,
         );
@@ -620,13 +629,16 @@ export class SalesHistoryImportAdapter implements GroupedImportAdapter {
 
     // El total del documento es la suma de sus líneas: el export no trae una columna de
     // total por comprobante, así que no hay contra qué contrastarla más que consigo misma.
-    // Lo que sí se comprueba es que el neto + IGV de todas las líneas dé el bruto de todas.
+    // Lo que sí se comprueba es que el neto + IGV de todas las líneas dé el bruto de todas,
+    // con la misma tolerancia que `resolveTotals` va a exigir al confirmar (D-142) — para
+    // que este aviso no calle algo que la confirmación va a rechazar de verdad.
     const sum = (key: string): ReturnType<typeof toDecimal> =>
       rows.reduce((acc, r) => acc.plus(toDecimal((r.data[key] as string) || '0')), toDecimal('0'));
     const net = sum('netPen');
     const igv = sum('igvPen');
     const gross = sum('grossPen');
-    if (net.plus(igv).minus(gross).abs().gt(TOTAL_TOLERANCE_PEN)) {
+    const mismatch = salesHistoryTotalMismatch(net.toString(), igv.toString(), gross.toString());
+    if (mismatch) {
       for (const issue of issues) {
         issue.warnings.push(
           `El comprobante no cuadra: valor ${net.toFixed(2)} + IGV ${igv.toFixed(2)} = ${net
@@ -860,6 +872,9 @@ export class SalesHistoryImportAdapter implements GroupedImportAdapter {
         creditNoteReason: null,
         notes: discount.gt(0) ? `Descuento del comprobante: S/ ${discount.toFixed(2)}` : null,
         totalPen,
+        // D-142: la tolerancia de "no cuadra" de esta importación, no la de RF-71 — ver
+        // `SALES_HISTORY_TOTAL_TOLERANCE_PEN`.
+        totalTolerancePen: SALES_HISTORY_TOTAL_TOLERANCE_PEN,
         // D-141: el enlace bidireccional. El documento apunta al pedido y cada una de sus
         // líneas a la del pedido que factura.
         salesOrderId,

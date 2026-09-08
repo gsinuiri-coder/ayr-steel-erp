@@ -47,6 +47,19 @@
  *      y se reporta — solo se borra si nada de afuera lo tocó.
  *
  * Uso: `node scripts/prod-purge-imported-sales.mjs --batch=<uuid> [--branch <rama>] [--execute]`
+ *
+ * `--exclude-touched` (D-142-ii): un lote de ensayo puede haber llegado a montar bobinas
+ * reales y reportar planchas reales antes de que el dueño decidiera revertirlo — la reversa
+ * de dominio (revertir reporte, anular OP) deja todo consistente, pero la OP **sigue**
+ * disparando la guarda 8/2/3 porque el hecho de haber montado una bobina alguna vez es
+ * unconditional (`aunque ya esté liberada`, ver arriba) y no se borra nunca. Sin este flag,
+ * eso sigue abortando el lote entero, como siempre. Con él: el pedido **entero** que posee
+ * esa OP (vía su reserva) —y su comprobante 1:1— se **excluye** del borrado físico en vez de
+ * abortar todo; el resto del lote se purga igual. Un pedido excluido no se toca de ninguna
+ * forma (no se anula, no se edita): sigue existiendo tal cual, para que quien lo audite vea
+ * la OP cancelada y sus reportes revertidos en su lugar. Si una OP tocada no cuelga de
+ * ninguna reserva (la OP a stock del déficit consolidado, D-140), no hay pedido al que
+ * atribuirle la exclusión — ese caso sigue abortando el lote entero incluso con el flag.
  */
 import {
   PrismaClient,
@@ -58,6 +71,7 @@ import {
 const prisma = new PrismaClient();
 const execute = process.argv.includes('--execute');
 const batchArg = process.argv.find((a) => a.startsWith('--batch='))?.slice('--batch='.length);
+const excludeTouched = process.argv.includes('--exclude-touched');
 
 interface Blocker {
   reason: string;
@@ -383,7 +397,7 @@ async function purgeBatch(batchId: string): Promise<void> {
 
   const reservations = await prisma.reservation.findMany({
     where: { OR: [{ salesOrderId: { in: orderIds } }, { importBatchId: batchId }] },
-    select: { id: true },
+    select: { id: true, salesOrderId: true },
   });
   const reservationIds = reservations.map((r) => r.id);
   console.warn(`Reservas del lote: ${reservations.length}`);
@@ -392,7 +406,7 @@ async function purgeBatch(batchId: string): Promise<void> {
   // déficit consolidado (D-142; no cuelgan de ninguna reserva, solo llevan `import_batch_id`).
   const productionOrders = await prisma.productionOrder.findMany({
     where: { OR: [{ reservationId: { in: reservationIds } }, { importBatchId: batchId }] },
-    select: { id: true, seq: true, status: true },
+    select: { id: true, seq: true, status: true, reservationId: true },
   });
   const opIds = productionOrders.map((o) => o.id);
   console.warn(`Órdenes de producción del lote: ${productionOrders.length}`);
@@ -412,20 +426,49 @@ async function purgeBatch(batchId: string): Promise<void> {
     select: { productionOrderId: true },
   });
   const opSeqById = new Map(productionOrders.map((o) => [o.id, o.seq]));
-  for (const c of consumptions) {
-    blockers.push({
-      reason: `la OP ${opSeqById.get(c.productionOrderId) ?? c.productionOrderId} tiene (o tuvo) una bobina montada`,
-    });
-  }
-
   const reports = await prisma.productionReport.findMany({
     where: { productionOrderId: { in: opIds } },
     select: { productionOrderId: true },
   });
-  for (const r of reports) {
-    blockers.push({
-      reason: `la OP ${opSeqById.get(r.productionOrderId) ?? r.productionOrderId} tiene un reporte de piezas`,
-    });
+  const touchedOpIds = new Set([
+    ...consumptions.map((c) => c.productionOrderId),
+    ...reports.map((r) => r.productionOrderId),
+  ]);
+
+  // D-142-ii: sin `--exclude-touched`, cualquier OP tocada aborta el lote entero, como
+  // siempre. Con el flag, se excluye del borrado el pedido dueño de esa OP (vía su reserva)
+  // en vez de abortar — salvo que la OP no cuelgue de ninguna reserva (la OP a stock del
+  // déficit consolidado, D-140): ahí no hay pedido al que atribuirle la exclusión y se aborta
+  // igual, con el flag o sin él.
+  const excludedOrderIds = new Set<string>();
+  if (touchedOpIds.size > 0 && !excludeTouched) {
+    for (const opId of touchedOpIds) {
+      const seq = opSeqById.get(opId) ?? opId;
+      if (consumptions.some((c) => c.productionOrderId === opId)) {
+        blockers.push({ reason: `la OP ${seq} tiene (o tuvo) una bobina montada` });
+      }
+      if (reports.some((r) => r.productionOrderId === opId)) {
+        blockers.push({ reason: `la OP ${seq} tiene un reporte de piezas` });
+      }
+    }
+  } else if (touchedOpIds.size > 0) {
+    const touchedOps = productionOrders.filter((o) => touchedOpIds.has(o.id));
+    const orphanTouched = touchedOps.filter((o) => o.reservationId === null);
+    for (const op of orphanTouched) {
+      blockers.push({
+        reason:
+          `la OP ${op.seq} tocó producción real pero no cuelga de ninguna reserva: ` +
+          '--exclude-touched no tiene a qué pedido atribuirle la exclusión',
+      });
+    }
+    const touchedReservationIds = touchedOps
+      .map((o) => o.reservationId)
+      .filter((id): id is string => id !== null);
+    for (const reservation of reservations) {
+      if (touchedReservationIds.includes(reservation.id)) {
+        excludedOrderIds.add(reservation.salesOrderId);
+      }
+    }
   }
 
   const movements =
@@ -454,8 +497,35 @@ async function purgeBatch(batchId: string): Promise<void> {
     return;
   }
 
-  // Guarda 9: clientes y SKUs que el lote creó, pero solo se borran si nada de **afuera** del
-  // lote los usa. `import_batch_id` dice quién los creó, no quién los sigue usando hoy.
+  // Un pedido excluido (D-142-ii) sigue "en el lote" para toda invariante de arriba — solo no
+  // entra al DELETE. De acá para abajo, "borrable" filtra a los excluidos.
+  const excludedOrders = orders.filter((o) => excludedOrderIds.has(o.id));
+  const deletableOrders = orders.filter((o) => !excludedOrderIds.has(o.id));
+  const deletableOrderIds = deletableOrders.map((o) => o.id);
+  const deletableDocs = documents.filter(
+    (d) => d.salesOrderId === null || !excludedOrderIds.has(d.salesOrderId),
+  );
+  const deletableDocIds = deletableDocs.map((d) => d.id);
+  const deletableReservations = reservations.filter((r) => !excludedOrderIds.has(r.salesOrderId));
+  const deletableReservationIds = deletableReservations.map((r) => r.id);
+  const deletableReservationIdSet = new Set(deletableReservationIds);
+  const deletableProductionOrders = productionOrders.filter(
+    (o) => o.reservationId === null || deletableReservationIdSet.has(o.reservationId),
+  );
+  const deletableOpIds = deletableProductionOrders.map((o) => o.id);
+
+  if (excludedOrders.length > 0) {
+    console.warn('');
+    console.warn(
+      `Excluidos del borrado físico (--exclude-touched): ${excludedOrders.length} pedido(s) ` +
+        'con producción real — quedan tal cual, sin tocar:',
+    );
+    for (const o of excludedOrders) console.warn(`    pedido ${o.seq}`);
+  }
+
+  // Guarda 9: clientes y SKUs que el lote creó, pero solo se borran si nada de **afuera del
+  // borrado** los usa. Un pedido/comprobante excluido cuenta como "afuera" — sigue existiendo
+  // y sigue apuntándolos.
   const customers = await prisma.customer.findMany({
     where: { importBatchId: batchId },
     select: { id: true, name: true, docNumber: true },
@@ -464,11 +534,11 @@ async function purgeBatch(batchId: string): Promise<void> {
   for (const c of customers) {
     const [otherOrder, otherDoc] = await Promise.all([
       prisma.salesOrder.findFirst({
-        where: { customerId: c.id, id: { notIn: orderIds } },
+        where: { customerId: c.id, id: { notIn: deletableOrderIds } },
         select: { id: true },
       }),
       prisma.fiscalDocument.findFirst({
-        where: { customerId: c.id, id: { notIn: docIds } },
+        where: { customerId: c.id, id: { notIn: deletableDocIds } },
         select: { id: true },
       }),
     ]);
@@ -483,15 +553,15 @@ async function purgeBatch(batchId: string): Promise<void> {
   for (const p of products) {
     const [otherItem, otherInvoiceItem, otherOp, balance] = await Promise.all([
       prisma.salesOrderItem.findFirst({
-        where: { productId: p.id, salesOrderId: { notIn: orderIds } },
+        where: { productId: p.id, salesOrderId: { notIn: deletableOrderIds } },
         select: { id: true },
       }),
       prisma.fiscalDocumentItem.findFirst({
-        where: { productId: p.id, documentId: { notIn: docIds } },
+        where: { productId: p.id, documentId: { notIn: deletableDocIds } },
         select: { id: true },
       }),
       prisma.productionOrder.findFirst({
-        where: { productId: p.id, id: { notIn: opIds } },
+        where: { productId: p.id, id: { notIn: deletableOpIds } },
         select: { id: true },
       }),
       prisma.inventoryBalance.findFirst({
@@ -507,10 +577,10 @@ async function purgeBatch(batchId: string): Promise<void> {
 
   console.warn('');
   console.warn('Sin bloqueos. Conjunto a borrar:');
-  console.warn(`  comprobantes: ${documents.length}`);
-  console.warn(`  pedidos: ${orders.length}`);
-  console.warn(`  reservas: ${reservations.length}`);
-  console.warn(`  órdenes de producción: ${productionOrders.length}`);
+  console.warn(`  comprobantes: ${deletableDocs.length}`);
+  console.warn(`  pedidos: ${deletableOrders.length}`);
+  console.warn(`  reservas: ${deletableReservations.length}`);
+  console.warn(`  órdenes de producción: ${deletableProductionOrders.length}`);
   console.warn(
     `  clientes: ${deletableCustomers.length} de ${customers.length} ` +
       `(${keepCustomerIds.size} conservados por estar referenciados fuera del lote)`,
@@ -534,35 +604,41 @@ async function purgeBatch(batchId: string): Promise<void> {
 
   const counts = await prisma.$transaction(async (tx) => {
     const reportsDeleted = await tx.productionReport.deleteMany({
-      where: { productionOrderId: { in: opIds } },
+      where: { productionOrderId: { in: deletableOpIds } },
     });
     const consumptionsDeleted = await tx.productionOrderConsumption.deleteMany({
-      where: { productionOrderId: { in: opIds } },
+      where: { productionOrderId: { in: deletableOpIds } },
     });
     const opItemsDeleted = await tx.productionOrderItem.deleteMany({
-      where: { productionOrderId: { in: opIds } },
+      where: { productionOrderId: { in: deletableOpIds } },
     });
-    const opsDeleted = await tx.productionOrder.deleteMany({ where: { id: { in: opIds } } });
+    const opsDeleted = await tx.productionOrder.deleteMany({
+      where: { id: { in: deletableOpIds } },
+    });
 
     const docItemsDeleted = await tx.fiscalDocumentItem.deleteMany({
-      where: { documentId: { in: docIds } },
+      where: { documentId: { in: deletableDocIds } },
     });
     const paymentsDeleted = await tx.customerPayment.deleteMany({
-      where: { documentId: { in: docIds } },
+      where: { documentId: { in: deletableDocIds } },
     });
-    const documentsDeleted = await tx.fiscalDocument.deleteMany({ where: { id: { in: docIds } } });
+    const documentsDeleted = await tx.fiscalDocument.deleteMany({
+      where: { id: { in: deletableDocIds } },
+    });
 
     const reservationsDeleted = await tx.reservation.deleteMany({
-      where: { id: { in: reservationIds } },
+      where: { id: { in: deletableReservationIds } },
     });
 
     const orderPiecesDeleted = await tx.salesOrderItemPiece.deleteMany({
-      where: { salesOrderItem: { salesOrderId: { in: orderIds } } },
+      where: { salesOrderItem: { salesOrderId: { in: deletableOrderIds } } },
     });
     const orderItemsDeleted = await tx.salesOrderItem.deleteMany({
-      where: { salesOrderId: { in: orderIds } },
+      where: { salesOrderId: { in: deletableOrderIds } },
     });
-    const ordersDeleted = await tx.salesOrder.deleteMany({ where: { id: { in: orderIds } } });
+    const ordersDeleted = await tx.salesOrder.deleteMany({
+      where: { id: { in: deletableOrderIds } },
+    });
 
     // Clientes y SKUs, al final: para entonces ya no queda nada del propio lote que los
     // referencie, y lo que los referenciaba desde afuera ya se comprobó que no existe.

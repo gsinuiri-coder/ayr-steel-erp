@@ -1,4 +1,5 @@
 import { DocType, FiscalDocType } from '@prisma/client';
+import { SALES_HISTORY_TOTAL_TOLERANCE_PEN } from '../fiscal-import-math';
 import {
   normalizeDate,
   normalizeDecimal,
@@ -8,6 +9,7 @@ import {
   parseFulfillment,
   parsePieces,
   parseSeriesNumber,
+  SalesHistoryImportAdapter,
 } from './sales-history.adapter';
 
 /**
@@ -146,5 +148,48 @@ describe('parsePieces', () => {
 
   it('no adivina un formato que no reconoce', () => {
     expect(parsePieces('tres metros')).toBeUndefined();
+  });
+});
+
+describe('validateGroup — el cuadre del documento usa la tolerancia compartida (D-142)', () => {
+  // `prisma` es la única dependencia que `validateGroup` toca, y solo si el grupo trae
+  // `series`/`correlative` (para el chequeo de reimportación) — estas filas no los traen,
+  // así que ese chequeo se salta y el mock nunca se llama. El resto de las dependencias del
+  // adaptador no participan de este camino.
+  const adapter = new SalesHistoryImportAdapter(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+
+  /** Dos líneas cuya suma de neto/IGV declarada difiere del precio de venta en `diffPen`. */
+  function rowsWithDiff(diffPen: string): { data: Record<string, unknown>; errors: string[] }[] {
+    const shared = {
+      issueDate: '2026-08-03',
+      docType: FiscalDocType.FACTURA,
+      customerDocNumber: '20606364335',
+    };
+    return [
+      {
+        data: { ...shared, netPen: '100000.00', igvPen: '18000.00', grossPen: '118000.00' },
+        errors: [],
+      },
+      { data: { ...shared, netPen: '0.00', igvPen: '0.00', grossPen: diffPen }, errors: [] },
+    ];
+  }
+
+  it('acepta el peor desvío real medido (0.21) sin avisar', async () => {
+    const issues = await adapter.validateGroup(rowsWithDiff('0.21'));
+    expect(issues.every((i) => i.warnings.length === 0)).toBe(true);
+  });
+
+  it('avisa "no cuadra" por encima de la tolerancia compartida — el mismo umbral que rechazaría al confirmar', async () => {
+    const tolerance = Number(SALES_HISTORY_TOTAL_TOLERANCE_PEN);
+    const issues = await adapter.validateGroup(rowsWithDiff((tolerance + 0.05).toFixed(2)));
+    expect(issues.every((i) => i.warnings.some((w) => w.includes('no cuadra')))).toBe(true);
   });
 });

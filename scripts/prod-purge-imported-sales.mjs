@@ -9,8 +9,14 @@
 // gate que `import-ventas.mjs`); la purga general (sin `--batch`) no lo pedía antes de esta
 // sesión y sigue sin pedirlo, para no cambiarle el contrato a una herramienta que ya se usó.
 //
+// `--exclude-touched` (D-142-ii): con `--batch`, si alguna OP del lote tocó producción real
+// alguna vez (bobina montada o reporte de piezas) aunque ya esté revertida, por defecto
+// aborta el lote entero — con este flag, excluye del borrado físico al pedido dueño de esa
+// OP (y su comprobante) y sigue con el resto. Ver el comentario de cabecera del script real.
+//
 // Uso: node scripts/prod-purge-imported-sales.mjs [--branch dev] [--batch=<uuid>] [--execute]
-//      node scripts/prod-purge-imported-sales.mjs --batch=<uuid> --execute --confirm-production
+//      node scripts/prod-purge-imported-sales.mjs --batch=<uuid> [--exclude-touched] \
+//        --execute --confirm-production
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, neonConnectionString } from './lib.mjs';
@@ -19,6 +25,7 @@ const branchArg = process.argv.indexOf('--branch');
 const branch = branchArg >= 0 ? process.argv[branchArg + 1] : 'production';
 const execute = process.argv.includes('--execute');
 const batchArg = process.argv.find((a) => a.startsWith('--batch='));
+const excludeTouched = process.argv.includes('--exclude-touched');
 
 if (
   batchArg &&
@@ -42,6 +49,7 @@ const res = spawnSync(
     'prisma/purge-imported-sales.ts',
     ...(execute ? ['--execute'] : []),
     ...(batchArg ? [batchArg] : []),
+    ...(excludeTouched ? ['--exclude-touched'] : []),
   ],
   {
     cwd: resolve(ROOT, 'apps/api'),

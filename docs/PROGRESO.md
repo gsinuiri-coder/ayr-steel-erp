@@ -2080,6 +2080,155 @@ errores de fecha, ninguna unidad sin mapear**. El resto de los documentos (68) q
 diccionario; no es una falla de la herramienta, es exactamente lo que el dry-run existe para
 mostrar antes de tocar nada.
 
+### Despliegue a producción y el backfill de D-122 que faltaba (mismo día, con autorización explícita del dueño)
+
+Con luz verde del dueño se corrió, en este orden: commit + push (CI verde, 25 min), `pnpm
+db:prod` (sin migraciones pendientes — production ya estaba al día, incluida D-142) y `pnpm
+deploy:api`.
+
+**Antes de `smoke:prod`, el chequeo de "cero bobinas sin finish_id" que el dueño pidió
+encontró 55 de 56 productos de Metallic Roofing con `finish_id = NULL`.** No era un caso
+aislado: era casi todo el catálogo real de coberturas. Causa: el backfill de D-122 copia
+`finish_id` desde la receta (`product_boms`) **activa** de cada producto, y estos 55 se
+crearon hoy mismo por el dueño, a través del catálogo, **antes de que este mismo deploy
+subiera el código de D-122** (que es el que exige `finish_id` en `CatalogService.create`)
+— con la API de producción corriendo la revisión anterior, nada se lo pedía. `COB028ROJO`
+es el único con `finish_id` porque es el único que tenía una receta activa de la que el
+backfill pudo copiarlo (un vínculo fleje→perfil de un flujo más viejo); su propio
+`audit_log` no muestra `finishId` en el `after` de su creación, consistente con que se creó
+bajo el código anterior.
+
+**Reparado con autorización explícita, mismo día, sin esperar aprobación línea por línea:**
+cada uno de los 56 productos ya tenía `colorId` correcto (estructurado, no texto libre), así
+que el mapeo color → acabado salió de ahí y no de heurística de nombre — más confiable que
+parsear el SKU. AZUL/BLANCO/GRIS/NATURAL tienen una sola opción de acabado (confianza ALTA,
+35 productos); ROJO tiene dos variantes RAL y se usó la que ya estaba cargada en `COB028ROJO`
+como precedente (confianza MEDIA, 13 productos); VERDE tiene dos variantes sin ningún
+precedente en la base, elegida arbitrariamente (confianza BAJA, 7 productos — **el dueño
+debería revisar estos 7 por UI**: `COB025VERDE`, `COB030VERDE`, `COB035VERDE`, `COB040VERD`,
+`COB040VERDE`, `COB045VERDE`, `COB050VERDE`, todos con `ALZ-VERDE-6002`). Aplicado vía
+`CatalogService.update` (audita, corre `assertStructuredFields` y `assertNoLiveRoofingOrders`
+— nunca SQL directo): **55 de 55**. Verificado después: **0 productos de Metallic Roofing sin
+`finish_id`** en producción. El `pendientes[]` del JSON de decisiones estaba vacío en ese
+momento, así que la excepción que pidió el dueño (no tocar sin confirmar los SKUs que
+terminen en un documento pendiente) no tuvo ningún caso que aplicar — queda anotado para la
+próxima vez que se recalcule `pendientes[]` con datos reales.
+
+**Ticket 7f (registrado, no implementado esta sesión): la creación y la importación de
+Metallic Roofing deberían exigir `finish_id` de forma más visible, no solo por el `throw` de
+`assertStructuredFields`.** El código ya lo exige desde D-122 (por eso el problema fue de
+_despliegue_ — código viejo corriendo contra catálogo nuevo — y no de una brecha en la
+validación de hoy en adelante); lo que falta es blindar el camino de **datos existentes que
+llegan sin pasar por el formulario** (una importación masiva futura, una migración de otro
+sistema) con el mismo `check-roofing-catalog.mjs` que ya existe para D-127, extendido a
+`finish_id`. Anotado para Fase 8, no urgente: el catálogo real ya quedó limpio.
+
+### La ejecución real destapó un segundo defecto, ajeno a los SKUs: la tolerancia de "no cuadra" (D-142)
+
+El primer `--execute` del dueño contra producción (`pendientes[]` vacío, todo cáscara)
+confirmó 52 de 71 documentos. Los 19 restantes: 1 nota de crédito (esperado) y **18 por un
+`BadRequestException` de `FiscalImportService.resolveTotals`** — una capa de validación que
+solo corre al confirmar, invisible para el dry-run. Compara el total recalculado (`qty ×
+unitPricePen × IGV`, D-003) contra el declarado con una tolerancia de **un céntimo por
+línea** (`totalTolerance`), calibrada para RF-71, donde el importe de cada línea ya viene
+impreso y redondeado del papel. Acá el precio unitario **se deriva** (VALOR DE VENTA /
+CANTIDAD, D-138), y ese redondeo compuesto se acumula más — los 18 diffs reales fueron de
+0.02 a 0.21 soles, evidentemente redondeo del propio Excel, no errores de captura.
+
+**Arreglado con una sola fuente de verdad, pedida explícitamente por el dueño**:
+`SALES_HISTORY_TOTAL_TOLERANCE_PEN = '0.25'` en `imports/fiscal-import-math.ts` (peor caso
+real 0.21 + margen chico), que lee tanto `SalesHistoryImportAdapter.validateGroup` (avisa)
+como `FiscalImportService.resolveTotals` (rechaza, vía el nuevo campo opcional
+`ImportedDocumentInput.totalTolerancePen`) — antes eran dos números independientes y ahora es
+uno solo. RF-71 sigue con su `totalTolerance` de un céntimo por línea, intacta. Tests nuevos
+en `fiscal-import-math.spec.ts` y `sales-history.adapter.spec.ts`: el peor caso real (0.21)
+pasa, un desvío mayor (0.30) falla, y un canario dinámico que compara contra el valor real
+de la constante — si algún día alguien pone un número a mano en vez de leerla, ese test es
+el que revienta primero. `pnpm turbo lint typecheck test` verde (293/293), `dist-cli`
+recompilado.
+
+**Aviso operativo: el API desplegado en producción todavía corre el umbral viejo (1
+céntimo/línea) hasta el próximo `deploy:api`.** El CLI (`dist-cli`, recompilado en esta
+sesión) ya tiene el fix y lo usará en el próximo `--execute`; la previsualización web
+(`/comprobantes` → «Importar ventas») seguiría rechazando al confirmar lo mismo que hoy
+rechazó el CLI, hasta que el deploy de cierre de esta sesión suba el código nuevo. No es un
+problema mientras el dueño siga operando por CLI contra este mismo commit.
+
+**Reversa del primer intento:** los 52 documentos que sí habían confirmado (batch
+`60bc83ca-3354-4a6c-a5c6-67cbbd2da92c`) se revirtieron con `purge-imported-sales.ts
+--batch=<id> --execute --confirm-production` antes de este fix — 52 `fiscal_documents`, 52
+`sales_orders`, 101 líneas, cero reservas/OP (todo cáscara). Verificado post-purga: cero
+residuo del lote. El dueño está completando `pendientes[]` a mano en el JSON antes del
+próximo `--execute`.
+
+### Vuelta atrás completa del segundo ensayo (lote `d4282f5c-...`) y limpieza de la noche (2026-09-08)
+
+El dueño pidió descartar **todo** lo del ensayo de esa noche por flujo normal, nunca
+forzando guardas. El lote `d4282f5c-8145-47da-baaf-0b5dafa8e013` (62 documentos/pedidos, 23
+reservas, 20 OP) no era "cáscara pura": 3 OP (seq 5, 6, 21) habían llegado a montar bobinas
+reales y reportar planchas reales antes de que el dueño decidiera revertir. El primer
+dry-run del purge lo confirmó bloqueado (guardas 1/2/3 de `purge-imported-sales.ts`).
+
+**Reversa por flujo normal, no por SQL:** las 3 OP se revirtieron con
+`RoofingProductionService.reverseReport` (los reportes ACTIVE más recientes primero) +
+`.cancel` (libera las bobinas montadas automáticamente, D-066), vía un CLI standalone
+temporal con el mismo patrón de contexto de Nest que D-142. Consumos en `0 kg`, reservas
+restauradas a `ACTIVE`. Aun así, el purge seguía bloqueado: **la guarda "bobina montada
+alguna vez" es incondicional** — no importa que la reversa esté completa, el hecho
+histórico de haber montado una bobina real no se borra nunca. Es diseño, no un estado
+corregible.
+
+**`purge-imported-sales.ts` se extendió con `--exclude-touched` (D-143/D-142-ii)** para
+cubrir justo este caso: excluye del borrado físico al pedido dueño de una OP tocada (vía su
+reserva) en vez de abortar el lote entero. Dry-run confirmó 60 pedidos/comprobantes a
+borrar y 2 excluidos (pedido **80**, dueño de las OP 5 y 6; pedido **131**, dueño de la OP 21) — ambos con factura `ACCEPTED` real (`FFA1-00001354`, `FFA1-00001407`). Ejecutado
+`--execute --confirm-production`: **60 `fiscal_documents`, 60 `sales_orders`, 121 líneas, 17
+reservas, 17 OP borrados físicamente. Cero clientes/SKU afectados** (el lote no creó
+ninguno que no existiera ya). Verificado post-purga: `origin = IMPORTED` en producción quedó
+en exactamente 2 (los pedidos 80 y 131, intactos, sin tocar de ninguna otra forma). **Los
+pedidos 80 y 131 existen hoy en producción porque su producción fue real** (bobinas
+montadas y planchas reportadas, luego revertidas) y la herramienta de purga no borra eso
+nunca — no porque falte hacer algo más con ellos.
+
+**Hallazgo aparte, no relacionado al CLI de importación: datos de ensayo `CREATED_HERE`
+de la misma noche.** Al revisar qué más había en producción sin ser del lote, aparecieron 7
+cotizaciones (6 de "TEXAS CITY SELVA S.A.C.", 1 de "3AAMSEQ S.A.") y 2 pedidos directos
+(seq 1 CANCELLED, seq 134 IN_PRODUCTION) creados a mano esa misma noche, ajenos al CLI.
+
+- **Cotizaciones:** borradas físicamente por un script puntual con guarda (bloquea si algún
+  `sales_orders.quotation_id` la referencia, de cualquier estado — la FK lo rechazaría
+  igual). **5 de 7 borradas** (seq 1, 2, 3, 5, 6). Excluidas: seq 4 (la referencia el pedido
+  1, CANCELLED) y seq 7 (la referencia el pedido 134, **vivo**).
+- **Pedido 134** tenía una factura real emitida, `F001-00000001` (FACTURA, `ISSUED_HERE`,
+  `SEND_ERROR`) — tomó correlativo pero el envío nunca se confirmó. Se consultó su estado
+  real al PSE (`InvoicingService.refreshStatus`, solo lectura del lado de SUNAT) antes de
+  tocar nada: **SUNAT la rechazó** (`rejectionCode 400`, "la fecha del documento debe ser la
+  fecha de HOY" — se emitió con la fecha de ensayo, no la de hoy). Nunca fue un documento
+  vigente; el correlativo `F001-00000001` queda quemado (no se reutiliza), pero sin ninguna
+  obligación fiscal detrás.
+- Con la factura confirmada como no vigente, se revirtieron por flujo normal las OP 28
+  (CLOSED → `reopen` deshace el cierre → `reverseReport` → `cancel`) y 29 (`reverseReport` →
+  `cancel`) del pedido 134.
+- **Pendiente de decisión del dueño, sin tocar:** el pedido 134 en sí (sigue
+  `IN_PRODUCTION` — sus OP ya están anuladas, sólo falta `SalesOrdersService.cancel` si se
+  quiere anular también el pedido), la factura `F001-00000001` (queda `REJECTED`, registro
+  histórico del intento — no hay un camino de "anular" para un `REJECTED`, y borrarla no fue
+  parte de lo pedido), la cotización 7 (bloqueada mientras el pedido 134 exista) y el pedido
+  1 (bloquea la cotización 4).
+
+**Limpieza de archivos.** Los tres archivos de datos reales del ensayo (`Ventas
+Detalladas.xlsx` y sus dos `.decisiones.json`) vivían sueltos en la raíz del repo —
+ignorados por `.gitignore` desde D-142, nunca llegaron a commitearse, pero sueltos igual.
+Se movieron a `local-data/` (carpeta nueva, ignorada por completo) y `.gitignore`/`CLAUDE.md`
+quedaron con la regla explícita: los archivos de trabajo de una importación real viven ahí,
+nunca en la raíz. No quedó ningún script de un solo uso en el repo: los CLI temporales de
+esta noche (reversas de OP, refresh de PSE, purge de cotizaciones) se escribieron, corrieron
+y borraron dentro de la misma sesión — nada que archivar en `scripts/oneoff/`.
+
+**Nada más se tocó.** Sin reimport, sin otros fixes, sin más commits que el de cierre de
+esta limpieza — a la espera de un nuevo plan del dueño para el pedido 134 y lo que queda
+pendiente de él.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
