@@ -51,8 +51,10 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
   ],
   // `ReceivablesService` se exporta desde Fase 7b: el mostrador registra el cobro dentro
   // de la misma transacción que crea la venta (D-099), no por HTTP contra este módulo.
-  // `FiscalImportService` desde Fase 7c, por el mismo motivo: el adaptador de planilla
   // (RF-71) crea el comprobante dentro de la transacción del lote de importación.
-  exports: [InvoicingService, DispatchesService, ReceivablesService, FiscalImportService],
+  // D-150: `FiscalImportService` ya no se exporta — el adaptador de planilla que lo inyectaba
+  // desde fuera se fue con el módulo de importaciones, y lo que queda del servicio (la
+  // anulación de un importado) lo usa el controller de este mismo módulo.
+  exports: [InvoicingService, DispatchesService, ReceivablesService],
 })
 export class InvoicingModule {}

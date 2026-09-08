@@ -41,3 +41,8 @@ pnpm-debug.log*
 /local-data/
 /*.xlsx
 *.decisiones.json
+
+# Salidas de Playwright que quedan sueltas en la raíz (regla dura 13: nada de esto se
+# commitea, y además rompen `pnpm format:check`).
+/e2e-report.json
+/subset.json

@@ -8,7 +8,7 @@ import {
   type CreatedFinish,
   type CreatedSupplier,
 } from '../helpers/api';
-import { today } from '../helpers/imports';
+import { today } from '../helpers/production';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**

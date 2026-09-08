@@ -12,8 +12,8 @@ import {
   type CreatedFinish,
   type CreatedSupplier,
 } from '../helpers/api';
+import { today } from '../helpers/production';
 import { loginAndSetPassword, selectOption } from '../helpers/ui';
-import { today } from '../helpers/imports';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -448,86 +448,10 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
     }
   });
 
-  test('la planilla de bobinas marca la fila mala, se corrige en la UI y se confirman las 2 (RF-12, RF-52)', async ({
-    page,
-    baseURL,
-  }) => {
-    const api = await adminApi(baseURL!);
-    const admin = await createUser(api, 'ADMINISTRADOR');
-    await loginAndSetPassword(page, admin, ADMIN_PASSWORD);
-
-    const supplier = await createSupplier(api);
-    const finish = await createFinish(api);
-
-    // Fila 1 válida; fila 2 con un código de proveedor que no existe.
-    const csv = [
-      'Línea,Proveedor (código),Acabado,Peso (kg),Ancho (mm),Espesor (mm),Moneda (PEN/USD),Costo por kg sin IGV,Tipo de cambio',
-      `drywall,${supplier.code},${finish.code},3000,1200,2,PEN,4.5,`,
-      `drywall,NOEXIS,${finish.code},1000,900,0.9,PEN,6,`,
-    ].join('\n');
-
-    const expectedCodes = [
-      `${supplier.code}-${finish.code}-2.00-3000-1`,
-      `${supplier.code}-${finish.code}-0.90-1000-2`,
-    ];
-
-    try {
-      await page.goto('/bobinas/importar');
-      await expect(page.getByRole('heading', { name: 'Importar bobinas' })).toBeVisible();
-      await page.getByRole('button', { name: 'Importar planilla' }).click();
-
-      const dialog = page.getByRole('dialog');
-      await dialog
-        .locator('input[type="file"]')
-        .setInputFiles({ name: 'bobinas.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
-
-      await expect(dialog.getByText('No existe un proveedor con código "NOEXIS"')).toBeVisible();
-      await expect(dialog.getByText('1 de 2 filas listas para confirmar.')).toBeVisible();
-
-      // Corrige la fila 2 con el proveedor real y vuelve a validarse al salir del campo.
-      const badRowSupplier = dialog.getByLabel('Proveedor (código) fila 2');
-      await badRowSupplier.fill(supplier.code);
-      await badRowSupplier.blur();
-      await expect(dialog.getByText('2 de 2 filas listas para confirmar.')).toBeVisible();
-
-      await dialog.getByRole('button', { name: 'Confirmar 2 filas' }).click();
-      await expect(page.getByText('2 de 2 filas importadas')).toBeVisible();
-      await dialog.getByRole('button', { name: 'Cerrar' }).click();
-      await expect(dialog).toBeHidden();
-
-      // Las 2 bobinas quedaron creadas, con su código RF-13 y su entrada de kardex.
-      const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
-      expect(coils.map((c) => c.code).sort()).toEqual([...expectedCodes].sort());
-      // La carga histórica no genera compra: la bobina entra sin comprobante (RF-12).
-      expect(coils.every((c) => c.purchaseId === null)).toBe(true);
-
-      const gruesa = coils.find((c) => c.code === expectedCodes[0]);
-      const movements = await getItems<MovementDto>(
-        api,
-        `/api/inventory/movements?itemType=COIL&itemId=${gruesa?.id}`,
-      );
-      expect(movements).toHaveLength(1);
-      expect(movements[0]).toMatchObject({
-        type: 'IN',
-        qty: '3000.000',
-        unitCost: '4.5000',
-        totalCost: '13500.0000',
-        refType: 'IMPORT',
-      });
-
-      await page.goto('/bobinas');
-      await expect(page.getByRole('heading', { name: 'Bobinas' })).toBeVisible();
-      for (const code of expectedCodes) {
-        await expect(page.getByRole('row').filter({ hasText: code })).toBeVisible();
-      }
-    } finally {
-      if (isProduction) {
-        // Las bobinas importadas no se borran: quedan bajo un proveedor y un acabado
-        // desactivados, reconocibles por el prefijo del código.
-        await deactivateTrail(api, { supplierId: supplier.id, finish });
-      }
-    }
-  });
+  // El caso 'la planilla de bobinas marca la fila mala, se corrige en la UI y se confirman
+  // las 2 (RF-12, RF-52)' se retiró con D-150: el importador de planilla y su diálogo ya no
+  // existen. El alta de bobinas por compra —que es la ruta que quedó— la cubren los casos de
+  // recepción de este mismo archivo.
 
   test('un pago parcial baja el saldo de la compra y el estado de cuenta del proveedor (D-039)', async ({
     page,

@@ -32,12 +32,10 @@
     "db:demo": "node scripts/db-demo.mjs",
     "e2e:prod": "node scripts/e2e-prod.mjs",
     "prod:purge-e2e": "node scripts/prod-e2e-purge.mjs",
-    "prod:purge-imported-sales": "node scripts/prod-purge-imported-sales.mjs",
     "db:reset-dev": "node scripts/db-reset-dev.mjs",
     "env:demo": "node scripts/env-demo.mjs",
     "dev:demo": "node scripts/dev-demo.mjs",
-    "smoke:prod": "node scripts/smoke-prod.mjs",
-    "import:ventas": "node scripts/import-ventas.mjs"
+    "smoke:prod": "node scripts/smoke-prod.mjs"
   },
   "devDependencies": {
     "@ayr/eslint-config": "workspace:*",

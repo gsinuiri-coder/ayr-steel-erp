@@ -86,60 +86,10 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
     }
   });
 
-  test('importar planilla con una fila mala, corregirla y confirmar (RF-52)', async ({
-    page,
-    baseURL,
-  }) => {
-    const api = await adminApi(baseURL!);
-    const admin = await createUser(api, 'ADMINISTRADOR');
-    await loginAndSetPassword(page, admin, 'ClaveAdminE2E-2026');
-
-    const goodSku = `IMP-OK-${Date.now()}`;
-    const badSku = `IMP-BAD-${Date.now()}`;
-    const csv = [
-      'Línea,SKU,Nombre,Unidad,Origen (MANUFACTURED/PURCHASED)',
-      `drywall,${goodSku},Producto bueno,unidad,MANUFACTURED`,
-      `zzz,${badSku},Producto malo,kg,PURCHASED`,
-    ].join('\n');
-
-    try {
-      await page.goto('/catalogo');
-      await expect(page.getByRole('heading', { name: 'Catálogo' })).toBeVisible();
-      await page.getByRole('button', { name: 'Importar' }).click();
-
-      const dialog = page.getByRole('dialog');
-      await dialog
-        .locator('input[type="file"]')
-        .setInputFiles({ name: 'productos.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
-
-      // Fila 1 válida, fila 2 con línea de negocio desconocida.
-      await expect(dialog.getByText('Línea de negocio desconocida: "zzz"')).toBeVisible();
-      await expect(dialog.getByText('1 de 2 filas listas para confirmar.')).toBeVisible();
-
-      // Corrige la fila 2: línea válida.
-      const badRowLineField = dialog.getByLabel(`Línea fila 2`);
-      await badRowLineField.fill('drywall');
-      await badRowLineField.blur();
-      await expect(dialog.getByText('2 de 2 filas listas para confirmar.')).toBeVisible();
-
-      await dialog.getByRole('button', { name: 'Confirmar 2 filas' }).click();
-      await expect(page.getByText('2 de 2 filas importadas')).toBeVisible();
-      await dialog.getByRole('button', { name: 'Cerrar' }).click();
-
-      await expect(dialog).toBeHidden();
-      await expect(page.getByRole('row').filter({ hasText: goodSku })).toBeVisible();
-      await expect(page.getByRole('row').filter({ hasText: badSku })).toBeVisible();
-    } finally {
-      if (isProduction) {
-        const list = await api.get('/api/catalog');
-        const products = (await list.json()) as { id: string; sku: string }[];
-        for (const sku of [goodSku, badSku]) {
-          const found = products.find((p) => p.sku === sku);
-          if (found) await api.patch(`/api/catalog/${found.id}`, { data: { isActive: false } });
-        }
-      }
-    }
-  });
+  // El caso 'importar planilla con una fila mala, corregirla y confirmar (RF-52)' se retiró
+  // con D-150: el importador genérico —su diálogo, su ciclo de lote y la edición fila por
+  // fila que este test recorría— ya no existe. El alta de un producto de catálogo, que es lo
+  // que aquel caso terminaba comprobando, la cubre el test de arriba.
 
   test('un administrador cambia el margen de una línea (D-032)', async ({ page, baseURL }) => {
     const api = await adminApi(baseURL!);

@@ -50,12 +50,6 @@ import {
   purgeInvoicingTrail,
   setupOrderScenario,
 } from '../helpers/invoicing';
-import {
-  importCorrelative,
-  importDocument,
-  importSeriesCode,
-  annulImportedTrail,
-} from '../helpers/imports';
 
 /**
  * Fase 7 consolidada — **fecha de operación** (D-124).
@@ -86,7 +80,6 @@ const AUG_PRODUCTION_OPEN = '2026-08-10';
 const AUG_PRODUCTION_REPORT = '2026-08-12';
 const AUG_PRODUCTION_CLOSE = '2026-08-14';
 const AUG_DISPATCH = '2026-08-20';
-const AUG_INVOICE = '2026-08-11';
 
 /** Un movimiento de kardex tal como lo devuelve el API, ya con la fecha de operación (D-124). */
 interface DatedMovement extends MovementDto {
@@ -642,57 +635,14 @@ test.describe('D-124 — fecha de operación', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 5 — El importado cae en el mes de su emisión
+  // 5 — (retirado con D-150)
   // -------------------------------------------------------------------------
-
-  test('un comprobante importado con fecha de emisión de agosto cae en agosto y el listado ordena por ella', async () => {
-    const customer = await createCustomer(api);
-    const documentIds: string[] = [];
-
-    try {
-      // Se importa **primero** el de agosto y después el de hoy: si el listado ordenara por
-      // el instante de creación (lo que hacía antes de D-124), el de agosto saldría segundo
-      // por accidente y el test pasaría sin probar nada. Al invertir el orden de carga, la
-      // única forma de que el de hoy salga primero es que ordene por `issueDate`.
-      const old = await importDocument(api, {
-        series: importSeriesCode(),
-        correlative: importCorrelative(),
-        customerDocNumber: customer.docNumber,
-        issueDate: AUG_INVOICE,
-        totalPen: '236.00',
-        lines: [{ description: 'E2E factura de agosto', qty: '2', unitPricePen: '100.00' }],
-      });
-      documentIds.push(old.documentId);
-
-      const recent = await importDocument(api, {
-        series: importSeriesCode(),
-        correlative: importCorrelative(),
-        customerDocNumber: customer.docNumber,
-        issueDate: today(),
-        totalPen: '118.00',
-        lines: [{ description: 'E2E factura de hoy', qty: '1', unitPricePen: '100.00' }],
-      });
-      documentIds.push(recent.documentId);
-
-      const listed = await getItems<{ id: string; issueDate: string }>(
-        api,
-        `/api/invoicing/documents?customerId=${customer.id}`,
-      );
-      const ours = listed.filter((d) => documentIds.includes(d.id));
-      expect(ours).toHaveLength(2);
-      expect(
-        ours.map((d) => d.id),
-        'el listado ordena por fecha de emisión descendente, no por cuándo se importó',
-      ).toEqual([recent.documentId, old.documentId]);
-
-      // El de agosto conserva la fecha del papel: es lo que lo ubica en el mes de agosto y
-      // no en el de la importación.
-      const august = ours.find((d) => d.id === old.documentId)!;
-      expect(august.issueDate.slice(0, 10)).toBe(AUG_INVOICE);
-    } finally {
-      await annulImportedTrail(api, documentIds);
-    }
-  });
+  //
+  // Acá vivía "un comprobante importado con fecha de emisión de agosto cae en agosto y el
+  // listado ordena por ella". Se fue con el importador de comprobantes: montarlo exigía
+  // **importar** dos documentos, que es justamente el camino que D-150 eliminó. Lo que el
+  // caso protegía —que el listado ordene por `issueDate` y no por el instante de carga—
+  // sigue cubierto por el caso 6, que fecha el hecho hacia atrás por el flujo normal.
 
   // -------------------------------------------------------------------------
   // 6 — El guardrail cronológico

@@ -1,11 +1,18 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { DOC_TYPE_LABELS, DOC_TYPES, type SupplierDto } from '@ayr/shared';
+import {
+  DOC_TYPE_LABELS,
+  DOC_TYPES,
+  docNumberLengths,
+  type DocumentLookupDto,
+  type SupplierDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -61,6 +68,15 @@ interface Props {
 export function SupplierDialog({ open, supplier, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const editing = !!supplier;
+  const [lookupNote, setLookupNote] = useState<string | null>(null);
+
+  // La nota del proveedor anterior no se arrastra al siguiente: el diálogo puede quedar
+  // montado entre un alta y otra, y "No se encontró ese documento" aparecía sobre un
+  // formulario recién abierto. Mismo defecto que ya se corrigió en el alta de cliente.
+  useEffect(() => {
+    if (open) setLookupNote(null);
+  }, [open]);
+
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -75,6 +91,49 @@ export function SupplierDialog({ open, supplier, onOpenChange }: Props) {
       providesCuttingService: supplier?.providesCuttingService ?? false,
     },
   });
+
+  /**
+   * D-151: autocompletar razón social y dirección desde el padrón, igual que el alta de
+   * cliente (D-067) y con la misma promesa: es **opcional** de punta a punta. Si el servicio
+   * no responde, no está configurado o el documento no existe, se avisa y la captura manual
+   * sigue igual de disponible — nada bloquea el formulario.
+   */
+  const lookup = useMutation({
+    mutationFn: ({ docType, docNumber }: { docType: string; docNumber: string }) =>
+      api<DocumentLookupDto>(
+        `/suppliers/lookup?docType=${encodeURIComponent(docType)}&docNumber=${encodeURIComponent(docNumber)}`,
+      ),
+    onSuccess: (result) => {
+      if (result.found && result.name) {
+        form.setValue('name', result.name, { shouldValidate: true });
+        if (result.address) form.setValue('address', result.address, { shouldValidate: true });
+        setLookupNote(null);
+        toast.success('Datos traídos del padrón');
+        return;
+      }
+      setLookupNote(
+        result.reason === 'UNAVAILABLE'
+          ? 'El servicio de consulta no respondió. Escribe los datos a mano.'
+          : result.reason === 'NOT_CONFIGURED'
+            ? 'La consulta automática no está configurada. Escribe los datos a mano.'
+            : 'No se encontró ese documento. Escribe los datos a mano.',
+      );
+    },
+    onError: () => {
+      setLookupNote('No se pudo consultar el documento. Escribe los datos a mano.');
+    },
+  });
+
+  const docType = form.watch('docType');
+  const docNumber = form.watch('docNumber');
+  const lengths = docNumberLengths[docType];
+  // Un CE no está en el padrón, y editar no vuelve a pedir el documento: en los dos casos el
+  // botón no tendría nada que consultar.
+  const canLookup =
+    !editing &&
+    docType !== 'CE' &&
+    docNumber.trim().length >= lengths.min &&
+    docNumber.trim().length <= lengths.max;
 
   const save = useMutation({
     mutationFn: (values: FormValues) => {
@@ -153,14 +212,34 @@ export function SupplierDialog({ open, supplier, onOpenChange }: Props) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Número</FormLabel>
-                    <FormControl>
-                      <Input disabled={editing} autoComplete="off" {...field} />
-                    </FormControl>
+                    <div className="flex gap-2">
+                      <FormControl>
+                        <Input disabled={editing} autoComplete="off" {...field} />
+                      </FormControl>
+                      {!editing && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={!canLookup || lookup.isPending}
+                          onClick={() => {
+                            setLookupNote(null);
+                            lookup.mutate({ docType, docNumber: docNumber.trim() });
+                          }}
+                        >
+                          {lookup.isPending ? 'Buscando…' : 'Buscar'}
+                        </Button>
+                      )}
+                    </div>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
+            {lookupNote && (
+              <p className="text-sm text-muted-foreground" role="status">
+                {lookupNote}
+              </p>
+            )}
             <FormField
               control={form.control}
               name="code"

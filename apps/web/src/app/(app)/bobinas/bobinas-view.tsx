@@ -18,7 +18,6 @@ import {
 import { api } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import { useSession } from '@/lib/session';
 import { usePagination } from '@/lib/use-pagination';
 import { RoleGate } from '@/components/role-gate';
 import { formatMoney, formatQty, isPositiveDecimal } from '@/lib/format';
@@ -64,8 +63,6 @@ const VIEW_TAB_LABELS: Record<ViewTab, string> = {
 
 /** Inventario de bobinas por línea (RF-23), con filtros de acabado, espesor y estado. */
 export function BobinasView() {
-  const { user } = useSession();
-  const isAdmin = user.role === Role.ADMINISTRADOR;
   const [tab, setTab] = useState<ViewTab>('disponibles');
   const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
   const [finishId, setFinishId] = useState<string>(ALL);
@@ -124,11 +121,6 @@ export function BobinasView() {
           </p>
         </div>
         <div className="flex gap-2">
-          {isAdmin && (
-            <Button variant="outline" asChild>
-              <Link href="/bobinas/importar">Importar planilla</Link>
-            </Button>
-          )}
           <Button variant="outline" asChild>
             <Link href="/bobinas/nueva-xml">Desde XML</Link>
           </Button>

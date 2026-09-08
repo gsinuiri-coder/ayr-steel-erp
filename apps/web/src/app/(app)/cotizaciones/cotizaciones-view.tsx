@@ -13,6 +13,7 @@ import {
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
+import { useSession } from '@/lib/session';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
 import { useDebounced } from '@/lib/use-debounced';
 import { usePagination } from '@/lib/use-pagination';
@@ -43,6 +44,8 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** RF-61/RF-69: listado de cotizaciones. */
 export function CotizacionesView() {
+  const { user } = useSession();
+  const isAdmin = user.role === Role.ADMINISTRADOR;
   const [status, setStatus] = useState<string>(ALL);
   const [search, setSearch] = useState('');
   // La búsqueda va al API (RF-84) para que una cotización fuera de la página actual se
@@ -76,9 +79,17 @@ export function CotizacionesView() {
             Cotizar no reserva stock; confirmar crea el pedido y la reserva (RF-61, RF-62).
           </p>
         </div>
-        <Button asChild>
-          <Link href="/cotizaciones/nueva">Nueva cotización</Link>
-        </Button>
+        <div className="flex gap-2">
+          {/* D-152: la carga histórica entra por acá y termina en cotizaciones en borrador. */}
+          {isAdmin && (
+            <Button variant="outline" asChild>
+              <Link href="/cotizaciones/importar">Importar desde Excel</Link>
+            </Button>
+          )}
+          <Button asChild>
+            <Link href="/cotizaciones/nueva">Nueva cotización</Link>
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3">

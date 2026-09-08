@@ -1,6 +1,5 @@
 import * as XLSX from 'xlsx';
-import { parseSpreadsheet } from './parse-spreadsheet';
-import { getField, rawToString } from './adapters/import-adapter.interface';
+import { getField, parseSpreadsheet, rawToString } from './parse-spreadsheet';
 
 /**
  * Lectura de planillas (RF-52). Las dos cosas que ya rompieron una importación entera en
@@ -56,5 +55,17 @@ describe('rawToString', () => {
   it('formatea una fecha como día calendario en AAAA-MM-DD', () => {
     expect(rawToString(new Date(2026, 8, 5, 23, 30))).toBe('2026-09-05');
     expect(rawToString(new Date(2026, 0, 1, 0, 0))).toBe('2026-01-01');
+  });
+});
+
+describe('la fecha de un csv no se reinterpreta (D-152)', () => {
+  it('03/08/2026 llega como texto y no como el 8 de marzo', () => {
+    // El defecto que este caso fija: SheetJS lee las fechas de un csv como M/D/Y, así que el
+    // 3 de agosto del archivo del negocio entraba como el 8 de marzo — sin error, sin señal, y
+    // con el comprobante en el mes equivocado. Con `raw: true` la celda llega tal cual y la
+    // interpreta el importador, que sí conoce el formato del archivo.
+    const csv = 'F. EMISIÓN,CANTIDAD\n03/08/2026,10\n';
+    const rows = parseSpreadsheet(Buffer.from(csv, 'utf8'));
+    expect(rows[0]?.['F. EMISIÓN']).toBe('03/08/2026');
   });
 });

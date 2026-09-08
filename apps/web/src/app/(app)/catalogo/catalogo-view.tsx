@@ -6,7 +6,6 @@ import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
-  ImportEntity,
   PRODUCT_SOURCE_LABELS,
   ProductSource,
   Role,
@@ -29,7 +28,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ImportDialog } from '@/components/imports/import-dialog';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { BomDialog } from './bom-dialog';
 import { ColoresPanel } from './colores-panel';
@@ -109,9 +107,6 @@ export function CatalogoView() {
           <h1 className="text-2xl font-semibold">Catálogo</h1>
           <p className="text-sm text-muted-foreground">Productos por línea de negocio (RF-50).</p>
         </div>
-        {isAdmin && (
-          <ImportDialog entity={ImportEntity.PRODUCTS} invalidateQueryKey={CATALOG_QUERY_KEY} />
-        )}
       </div>
 
       <Tabs defaultValue={lines.data[0]?.id}>

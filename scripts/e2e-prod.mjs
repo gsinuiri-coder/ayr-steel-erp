@@ -12,11 +12,11 @@
 // la Fase 5a (fase5a.spec.ts, fase5a-bordes.spec.ts), de la Fase 5b (fase5b.spec.ts,
 // fase5b-bordes.spec.ts), de la Fase 6 (fase6.spec.ts, fase6-bordes.spec.ts) y de la
 // Fase 7 (fase7.spec.ts, fase7-bordes.spec.ts: cola de producción, RF-37/RF-38;
-// fase7b*.spec.ts: mostrador; fase7c*.spec.ts y m4-*.spec.ts: importación de comprobantes
-// y su anulación) y de la Fase 7d (fase7d.spec.ts: paginación server-side y fechas en
+// fase7b*.spec.ts: mostrador; m4-*.spec.ts: anulación interna de un comprobante importado,
+// D-110 — la importación en sí se fue con D-150) y de la Fase 7d (fase7d.spec.ts: paginación server-side y fechas en
 // zona de Lima) contra
 // producción (Vercel + Cloud Run), incluidos los escenarios que crean datos (RF-03:
-// usuario desactivado, cambio de rol; Fase 1: acabado, producto, importación, margen;
+// usuario desactivado, cambio de rol; Fase 1: acabado, producto, margen;
 // Fase 2a: compras, bobinas y kardex; Fase 3: corte tercerizado y flejes; Fase 3b:
 // reversa de recepción de corte; Fase 4: órdenes de producción de drywall, con sus
 // reportes de piezas y su merma de proceso; M-2: anular un pago a proveedor; Fase 6:
@@ -28,7 +28,7 @@
 // quien invoca este script. Los tests de facturación que emiten (fase5b*.spec.ts) se
 // saltan siempre contra producción; el resto de la suite (despacho, borradores, cobranza
 // sobre lo ya emitido) sigue corriendo igual. Desde la Fase 7c la misma compuerta apaga
-// `fase7c*.spec.ts` y `m4-*.spec.ts`; el motivo está junto a la lista de suites, más abajo.
+// `m4-*.spec.ts`; el motivo está junto a la lista de suites, más abajo.
 // Habilitarlo aquí sería emitir comprobantes reales contra SUNAT en cada corrida de E2E — no
 // hay ningún escenario en el que eso sea correcto.
 //
@@ -184,8 +184,6 @@ try {
       //
       // Lo que estas suites prueban no depende de la infraestructura de producción —no hay
       // PSE, ni Cloud Run, ni nada específico— y CI ya las corre enteras contra la rama `ci`.
-      'e2e/tests/fase7c.spec.ts',
-      'e2e/tests/fase7c-bordes.spec.ts',
       'e2e/tests/m4-anulacion-importado.spec.ts',
       // Fase 7d (pulido pre-entrega): paginación server-side y fechas en zona de Lima.
       // Crea clientes, un proveedor y compras — nada de facturación — así que corre entera

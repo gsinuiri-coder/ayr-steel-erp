@@ -37,26 +37,6 @@ import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material'
  * cotización rechaza, que es justo el agujero por el que se esquivaría RF-31.
  */
 
-/** Lo que puede aflojar el llamador, y quién puede (ver cada campo). */
-export interface ResolveSalesLinesOptions {
-  /**
-   * **Solo la importación de ventas** (D-141). Deja entrar una línea que se vende por metro
-   * lineal **sin** el detalle de largos.
-   *
-   * Está apagado en todos los demás caminos y tiene que seguir así: para una cotización, los
-   * largos son lo que el cliente encargó y sin ellos no hay nada que fabricar. En un
-   * comprobante ya emitido la situación es la contraria — el export trae los metros
-   * facturados y **nunca** el desglose de planchas —, y los kilos que la línea promete no
-   * dependen de él: salen de `metros × espesor × ancho × densidad`, la misma cuenta con o
-   * sin desglose. Lo único que queda sin llenar es el plan de corte de la OP, que D-084 ya
-   * define como una intención que planta corrige (`updatePlan`) antes de rolar.
-   *
-   * Si el usuario **sí** escribió los largos en la previsualización, viajan como cualquier
-   * otra línea y esta excepción no se usa.
-   */
-  allowMissingPieces?: boolean;
-}
-
 /** Una línea ya validada, lista para persistir en `quotation_items` o `sales_order_items`. */
 export interface ResolvedSalesLine {
   lineNumber: number;
@@ -132,7 +112,6 @@ export interface ResolvedSalesLine {
 export async function resolveSalesLines(
   tx: Prisma.TransactionClient,
   items: SalesItemInput[],
-  options: ResolveSalesLinesOptions = {},
 ): Promise<ResolvedSalesLine[]> {
   const productIds = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
   const products = await tx.product.findMany({
@@ -256,7 +235,7 @@ export async function resolveSalesLines(
     // fuera de coberturas — y con eso el mostrador pasó a poder vender material a medida.
     const sellsByLength = product.unit === Unit.MTR;
     const madeToMeasure = isMadeToMeasure(product);
-    if (sellsByLength && item.pieces === undefined && options.allowMissingPieces !== true) {
+    if (sellsByLength && item.pieces === undefined) {
       throw new BadRequestException(
         `${at}: ${product.sku} se vende por metro lineal: detalla cuántas planchas de cada largo lleva la línea`,
       );
@@ -277,7 +256,7 @@ export async function resolveSalesLines(
     // por la que las dos entran a la base.
     //
     // Se comprueba contra los largos que **vinieron**, no contra su ausencia: con
-    // `allowMissingPieces` (D-141) una línea a medida puede entrar sin desglose, y sumar una
+    // Una línea a medida siempre trae su desglose (D-083), y sumar una
     // lista vacía habría dado cero metros contra los quince de la línea — el mismo rechazo
     // que la excepción existe para evitar, por la puerta de al lado.
     if (

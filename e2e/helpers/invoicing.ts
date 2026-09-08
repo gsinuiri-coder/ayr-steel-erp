@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext } from '@playwright/test';
+import { expect, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { getItems, getJson, postJson, type CreatedFinish, type CreatedSupplier } from './api';
@@ -1000,4 +1000,19 @@ export async function purgeInvoicingTrail(
     finish: trail.finish,
     productIds: trail.productIds,
   });
+}
+
+/**
+ * Anulación **interna** de un comprobante importado (D-110).
+ *
+ * Vino de `helpers/imports.ts`, que se fue con el módulo de importaciones (D-150). Se
+ * conserva porque el endpoint sigue vivo y por el mismo motivo por el que sigue vivo: es el
+ * remedio de las filas que ya entraron, no una vía de ingreso.
+ */
+export function annulImported(
+  api: APIRequestContext,
+  documentId: string,
+  reason = 'Anulación interna de prueba E2E',
+): Promise<APIResponse> {
+  return api.post(`/api/invoicing/documents/${documentId}/annul`, { data: { reason } });
 }

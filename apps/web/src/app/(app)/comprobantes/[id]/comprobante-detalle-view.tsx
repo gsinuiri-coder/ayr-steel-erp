@@ -509,17 +509,17 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         </Alert>
       )}
       {/*
-        RF-71/RF-72: lo que un comprobante importado sí y no admite, dicho una vez y arriba,
-        en vez de dejar que el usuario lo descubra botón por botón.
+        Lo que un comprobante importado sí y no admite, dicho una vez y arriba, en vez de
+        dejar que el usuario lo descubra botón por botón. D-150: la importación ya no existe,
+        así que el aviso dejó de ofrecer reimportar — mandaba a hacer algo imposible.
       */}
       {isImported && (
         <Alert>
           <AlertDescription>
             Este comprobante se importó ya emitido: SUNAT lo recibió fuera del ERP. Se puede ver y
-            cobrar, pero su baja y su nota de crédito se hacen donde se emitió y el resultado se
-            vuelve a importar. Reimportarlo archiva esta versión y deja la nueva en su lugar,
-            mientras todavía no tenga cobros vigentes ni notas de crédito encima. Si no debió
-            entrar, «Anular internamente» lo saca de las cuentas sin tocar nada ante SUNAT.
+            cobrar, pero su baja y su nota de crédito se hacen donde se emitió — el ERP no las
+            registra. Si no debió entrar, «Anular internamente» lo saca de las cuentas sin tocar
+            nada ante SUNAT.
             {d.supersedesDocumentId && (
               <>
                 {' '}

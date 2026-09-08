@@ -3,13 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  DOC_TYPE_LABELS,
-  ImportEntity,
-  Role,
-  type CustomerDto,
-  type PaginatedResult,
-} from '@ayr/shared';
+import { DOC_TYPE_LABELS, Role, type CustomerDto, type PaginatedResult } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useDebounced } from '@/lib/use-debounced';
@@ -28,7 +22,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ImportDialog } from '@/components/imports/import-dialog';
 import { CustomerDialog } from './customer-dialog';
 
 /**
@@ -94,12 +87,6 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
           <p className="text-sm text-muted-foreground">Alta, edición y baja de clientes (RF-80).</p>
         </div>
         <div className="flex gap-2">
-          {isAdmin && (
-            <ImportDialog
-              entity={ImportEntity.CUSTOMERS}
-              invalidateQueryKey={CUSTOMERS_QUERY_KEY}
-            />
-          )}
           {isAdmin && (
             <Button
               onClick={() => {

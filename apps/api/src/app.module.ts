@@ -16,7 +16,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
 import { FinishesModule } from './finishes/finishes.module';
 import { HealthController } from './health/health.controller';
-import { ImportsModule } from './imports/imports.module';
+import { QuotationImportModule } from './imports/quotation-import.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { InvoicingModule } from './invoicing/invoicing.module';
 import { JobsModule } from './jobs/jobs.module';
@@ -56,8 +56,8 @@ import { UsersModule } from './users/users.module';
     PricingModule,
     ExchangeRatesModule,
     DocumentsModule,
-    ImportsModule,
     InventoryModule,
+    QuotationImportModule,
     CoilsModule,
     PurchasesModule,
     CuttingModule,

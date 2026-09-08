@@ -102,43 +102,56 @@ export class QuotationsService {
   // -------------------------------------------------------------------------
 
   async create(actor: RequestUser, input: CreateQuotationInput): Promise<QuotationDto> {
-    const id = await this.prisma.$transaction(async (tx) => {
-      const customer = await this.requireActiveCustomer(tx, input.customerId);
-      const lines = await resolveSalesLines(tx, input.items);
-      const totals = documentTotals(lines);
-      const validUntil = defaultValidUntil(input.issueDate, input.validityDays);
+    const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input));
+    return this.findOne(id);
+  }
 
-      const quotation = await tx.quotation.create({
-        data: {
-          customerId: customer.id,
-          status: QuotationStatus.DRAFT,
-          issueDate: toDateOnly(input.issueDate),
-          validUntil: toDateOnly(validUntil),
-          subtotalPen: totals.subtotalPen,
-          igvPen: totals.igvPen,
-          totalPen: totals.totalPen,
-          notes: input.notes ?? null,
-          createdById: actor.id,
-          items: { create: lines.map(toItemCreate) },
-        },
-      });
+  /**
+   * El cuerpo de `create`, **dentro de la transacción del llamador** (patrón `*InTx`, D-099).
+   *
+   * Existe para que el importador de cotizaciones (D-152) escriba sus N cotizaciones en una
+   * sola transacción todo o nada. Que reuse esto y no una copia es la mitad de lo que D-150
+   * vino a arreglar: un importador que reimplementa el alta contra la tabla no hereda ninguna
+   * de sus invariantes — las copia, y las copias envejecen.
+   */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: CreateQuotationInput,
+  ): Promise<string> {
+    const customer = await this.requireActiveCustomer(tx, input.customerId);
+    const lines = await resolveSalesLines(tx, input.items);
+    const totals = documentTotals(lines);
+    const validUntil = defaultValidUntil(input.issueDate, input.validityDays);
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'sales.quotation.create',
-        entity: 'quotations',
-        entityId: quotation.id,
-        after: {
-          code: quotationCode(quotation.seq),
-          customerId: customer.id,
-          totalPen: totals.totalPen,
-          items: lines.length,
-        },
-      });
-      return quotation.id;
+    const quotation = await tx.quotation.create({
+      data: {
+        customerId: customer.id,
+        status: QuotationStatus.DRAFT,
+        issueDate: toDateOnly(input.issueDate),
+        validUntil: toDateOnly(validUntil),
+        subtotalPen: totals.subtotalPen,
+        igvPen: totals.igvPen,
+        totalPen: totals.totalPen,
+        notes: input.notes ?? null,
+        createdById: actor.id,
+        items: { create: lines.map(toItemCreate) },
+      },
     });
 
-    return this.findOne(id);
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'sales.quotation.create',
+      entity: 'quotations',
+      entityId: quotation.id,
+      after: {
+        code: quotationCode(quotation.seq),
+        customerId: customer.id,
+        totalPen: totals.totalPen,
+        items: lines.length,
+      },
+    });
+    return quotation.id;
   }
 
   /** RF-66: editar una cotización propia mientras siga en borrador. Reemplaza las líneas. */

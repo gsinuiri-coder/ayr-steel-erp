@@ -4,24 +4,25 @@
 
 ## Estado general
 
-| Fase                                                       | Estado                  | Cierre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Bootstrap                                              | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1 — Maestros, catálogo, precios, importación               | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 2a — Kardex + compras + alta de bobinas                    | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 2b — Partido, merma, cierre, anulación                     | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 3 — Corte tercerizado + flejes                             | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 3b — Reversa de recepción de corte                         | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 4 — Producción drywall + `/planta`                         | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 5a — Cotización → pedido + reserva                         | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 5b — Facturación, GRE, despacho y cobranza                 | ✅ Cerrada (2026-09-04) | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 6 — Producción de coberturas + color                       | ✅ Cerrada (2026-09-05) | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 7 — Cola, punto de venta e importación de comprobantes     | ✅ Cerrada (2026-09-05) | Cola (7), mostrador RF-60 (7b) e importación RF-71/72 (7c) completos. 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 7d — Pulido UI/UX pre-entrega al cliente                   | ✅ Cerrada (2026-09-06) | Paginación server-side (D-113), fechas en zona de Lima (D-112), encabezado fijo sin contenedor de scroll (D-115), afordancia de link (D-114). 119/119 E2E en producción (38 saltados por D-081), deploy hecho, purga corrida — residuo de ventas/mermas ya hechas, ver detalle                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 7e — Venta de bobinas + catálogo estructurado + cotización | ✅ Cerrada (2026-09-06) | A+B+C+D+E (D-116..D-120) + D-121 (pestañas de `/bobinas`, piezas teóricas en planta), aprobados por el dueño y desplegados. D-122 (sacar el `ProductBom` de coberturas) diseñado, diferido al tramo 7e-ii. D-123 documenta la lección del primer push: 25 fallas reales en specs de fases anteriores que asumían comportamiento que D-117/D-118/D-120 cambiaron — corregidas, CI verde (159/159, 9 saltadas). 119/119 E2E en producción (38 saltados por D-081), deploy hecho (API por Cloud Run, web por la integración Vercel-GitHub — el CLI de Vercel sigue con el token expirado), purga corrida — residuo estructural no bloqueante (ventas/producción ya movidas), ver `docs/handoff/fase-7e.md`. |
-| 7 consolidada — backdating, entornos, subtipo de cobertura | ✅ Cerrada (2026-09-06) | D-124 (fecha de operación), D-125/D-126 (rama `demo` y prohibición de `e2e:prod`), D-127 (subtipo de cobertura y rama de confirmación). D-122 sigue diferido.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Sesión Planta — integridad de producción y tanda           | ✅ Cerrada (2026-09-08) | D-146 (el plan de corte es un tope duro y el kg declarado es dato, no consumo), D-147 (`/planta/tanda`, todo o nada), D-148 (todas las órdenes de un pedido de una vez), D-149 (hoja de planta en PDF). 306/306 unitarios; 149 E2E locales con 3 fallas del cupo del PSE demo. **Sin desplegar**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                             |
-| 8 — Auditoría, reportes, UAT                               | ⚪ Pendiente            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Fase                                                                 | Estado                  | Cierre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Bootstrap                                                        | ✅ Cerrada (2026-09-02) | Login E2E verde en prod, CI verde                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1 — Maestros, catálogo, precios, importación                         | ✅ Cerrada (2026-09-02) | E2E de Fase 1 verdes en local + CI, deploy en producción                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2a — Kardex + compras + alta de bobinas                              | ✅ Cerrada (2026-09-03) | 16/16 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 2b — Partido, merma, cierre, anulación                               | ✅ Cerrada (2026-09-04) | 30/30 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 3 — Corte tercerizado + flejes                                       | ✅ Cerrada (2026-09-02) | 34/34 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 3b — Reversa de recepción de corte                                   | ✅ Cerrada (2026-09-03) | 40/40 E2E verdes en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 4 — Producción drywall + `/planta`                                   | ✅ Cerrada (2026-09-03) | 56/56 E2E en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 5a — Cotización → pedido + reserva                                   | ✅ Cerrada (2026-09-04) | 83/83 E2E en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 5b — Facturación, GRE, despacho y cobranza                           | ✅ Cerrada (2026-09-04) | 19 E2E contra el PSE demo, 89/89 en producción, CI verde, deploy hecho                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 6 — Producción de coberturas + color                                 | ✅ Cerrada (2026-09-05) | 101/101 E2E en producción, CI verde, deploy hecho, purga sin rastros                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 7 — Cola, punto de venta e importación de comprobantes               | ✅ Cerrada (2026-09-05) | Cola (7), mostrador RF-60 (7b) e importación RF-71/72 (7c) completos. 110/110 E2E en producción (13 saltados por D-081, no emiten), purga sin rastros                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 7d — Pulido UI/UX pre-entrega al cliente                             | ✅ Cerrada (2026-09-06) | Paginación server-side (D-113), fechas en zona de Lima (D-112), encabezado fijo sin contenedor de scroll (D-115), afordancia de link (D-114). 119/119 E2E en producción (38 saltados por D-081), deploy hecho, purga corrida — residuo de ventas/mermas ya hechas, ver detalle                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 7e — Venta de bobinas + catálogo estructurado + cotización           | ✅ Cerrada (2026-09-06) | A+B+C+D+E (D-116..D-120) + D-121 (pestañas de `/bobinas`, piezas teóricas en planta), aprobados por el dueño y desplegados. D-122 (sacar el `ProductBom` de coberturas) diseñado, diferido al tramo 7e-ii. D-123 documenta la lección del primer push: 25 fallas reales en specs de fases anteriores que asumían comportamiento que D-117/D-118/D-120 cambiaron — corregidas, CI verde (159/159, 9 saltadas). 119/119 E2E en producción (38 saltados por D-081), deploy hecho (API por Cloud Run, web por la integración Vercel-GitHub — el CLI de Vercel sigue con el token expirado), purga corrida — residuo estructural no bloqueante (ventas/producción ya movidas), ver `docs/handoff/fase-7e.md`. |
+| 7 consolidada — backdating, entornos, subtipo de cobertura           | ✅ Cerrada (2026-09-06) | D-124 (fecha de operación), D-125/D-126 (rama `demo` y prohibición de `e2e:prod`), D-127 (subtipo de cobertura y rama de confirmación). D-122 sigue diferido.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Sesión Planta — integridad de producción y tanda                     | ✅ Cerrada (2026-09-08) | D-146 (el plan de corte es un tope duro y el kg declarado es dato, no consumo), D-147 (`/planta/tanda`, todo o nada), D-148 (todas las órdenes de un pedido de una vez), D-149 (hoja de planta en PDF). 306/306 unitarios; 149 E2E locales con 3 fallas del cupo del PSE demo. **Sin desplegar**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                             |
+| Sesión Importadores — borrado de los directos y cotizaciones masivas | ✅ Cerrada (2026-09-08) | D-150 (se elimina el módulo de importaciones entero), D-151 (padrón en el alta de proveedor), D-152 (importador de cotizaciones: preview sin estado + alta normal, todo o nada). 272/272 unitarios; 60 E2E locales. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 8 — Auditoría, reportes, UAT                                         | ⚪ Pendiente            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Fase 0 — detalle
 
@@ -2680,6 +2681,175 @@ Dos pasadas en paralelo (API + `@ayr/shared` por un lado, `apps/web` por el otro
 dos lugares —el de coberturas, que pasa por el tope, y el de drywall, cuyo `lockOrder` corta por
 `assertKind`—, así que **no hay ningún camino que escriba un reporte de coberturas sin tope**.
 Y el reparto de metros a planchas se fuzzeó con 20 000 casos contra fuerza bruta: 0 discrepancias.
+
+## Sesión Importadores (2026-09-08) — se borran los directos y entra el de cotizaciones (D-150..D-152)
+
+Sesión de limpieza y reemplazo, no una fase. Todo en **local (Docker)**; producción no se tocó
+ni para leer, y **no se desplegó ni se hizo push** (un push a `main` dispara el deploy del web).
+
+### M0 — se elimina el módulo de importaciones entero (D-150)
+
+**Decisión del dueño**, tomada sobre dos opciones y eligiendo la amplia: no solo los dos
+importadores de 7-final (bobinas D-137 y ventas D-138/D-141), sino **todo** el módulo. Se le
+planteó explícitamente que la opción amplia da de baja RF-52 y RF-71/72, que están desplegados
+y no son legacy de 7-final; lo confirmó igual.
+
+**10 313 líneas menos en 49 archivos.** Se fueron los cinco adaptadores (`PRODUCTS`,
+`CUSTOMERS`, `COILS`, `FISCAL_DOCUMENTS`, `COILS_HISTORY`, `SALES_HISTORY`), el ciclo de lote
+`import_batches`/`import_rows` con su previsualización fila por fila, el `ImportDialog` del web
+y las cuatro puertas que lo abrían (catálogo, clientes, comprobantes ×2, bobinas), el CLI
+`pnpm import:ventas` (D-142) con `purge-imported-sales` (D-143/D-144) y la auditoría de
+importados, los schemas y enums de `@ayr/shared`, `tsconfig.cli.json`, y tres specs E2E
+completos (`fase7c`, `fase7c-bordes`, `fase7finalb-pedido-importado`) más dos casos sueltos
+(el de RF-52 en `fase1` y el de RF-12 en `fase2a`).
+
+**Tres piezas conservadas, cada una con su motivo escrito en el código:**
+
+- `apps/api/src/imports/parse-spreadsheet.ts`, con los lectores de celda por encabezado
+  rescatados del adaptador borrado (tolerantes a tildes y mayúsculas, tope de 512 caracteres,
+  la fecha como día calendario). No son del importador viejo: son la parte aburrida y ya
+  probada de leer una planilla que llenó un humano.
+- `customers/document-lookup.service.ts` (padrón apis.net), que nunca fue del importador — lo
+  usa el alta de cliente y ahora también la de proveedor.
+- `FiscalImportService.annulImported` (D-110). **No es una vía de ingreso, es el remedio de las
+  filas que ya entraron por una**: un `fiscal_document` con `origin = IMPORTED` nace `ACCEPTED`
+  con su cuenta por cobrar y el PSE no lo conoce como nuestro (D-105), así que sin este método
+  una fila mal cargada es deuda falsa permanente. Producción quedó en cero importados (D-144),
+  pero `demo` es un clon anterior a esa limpieza y los conserva. El resto del servicio —el alta
+  y el archivado al reimportar— se recortó: eran 400 líneas sin llamador.
+
+**Dos cosas que quedaron a propósito y hay que saber:**
+
+- **Las tablas `import_batches`/`import_rows` y las columnas `import_batch_id` no se tocaron.**
+  Borrarlas es irreversible y son el único rastro de las cargas que sí ocurrieron.
+- **El spec de M-4 quedó con un solo caso**, el que no necesitaba importar: que la anulación
+  interna no alcanza a un comprobante emitido por el ERP. Los otros cinco —el camino feliz, los
+  dos guardrails, la idempotencia y el 403 del vendedor— empezaban importando y no hay forma de
+  montarlos. Está anotado en el propio archivo.
+
+### M1 — importador masivo de cotizaciones (D-152)
+
+Lo que reemplaza a lo borrado, y cambia de idea, no de implementación: **no escribe contra la
+tabla, escribe una cotización**. `QuotationsService.create` se partió con el patrón `*InTx`
+(D-099) y el importador llama a `createInTx`, la misma que el formulario.
+
+- `POST /imports/quotations/preview` (multipart) lee el export real de ventas detalladas —una
+  fila por línea, agrupadas por `SERIE - NÚMERO`—, resuelve el cliente por su documento y el
+  producto por su SKU, y devuelve las filas con lo que no pudo resolver marcado por campo. **No
+  escribe nada**: ni el archivo, ni un lote, ni una fila.
+- `/cotizaciones/importar` pinta esas filas en una tabla editable en el navegador —cliente,
+  producto, cantidad, precio y plan de corte, más quitar filas— y revalida en vivo.
+- `POST /imports/quotations` crea una cotización **en BORRADOR** por comprobante, en una
+  transacción con un `SAVEPOINT` por documento: todo o nada, con el error de cada uno (mismo
+  contrato que D-147).
+
+**Las tres reglas, que son las lecciones de lo que se borró.** Cero creación silenciosa: un
+cliente o un SKU que falta detiene su fila y se da de alta por su propio maestro (D-138 los
+auto-creaba y por eso terminó necesitando un purge). Nada se adivina: el plan de corte por
+defecto es `1 × los ML de la línea`, y **cuando no cabe en una plancha la fila pide el plan
+real** en vez de repartirlo — el archivo de agosto tiene 23 de 27 líneas a medida por encima
+del tope de 20 m, una de 1 832 m, y ese plan es después el tope duro de lo que planta puede
+reportar (D-146). Y el importador **para en la cotización**: emitir y confirmar comprometen
+inventario, y eso se mira documento por documento. Decisiones del dueño las dos últimas.
+
+Detalles del contrato con el archivo real (141 filas, 71 comprobantes, 48 clientes, 41 SKUs):
+el precio unitario sale de `VALOR DE VENTA ÷ CANTIDAD` (el archivo no lo trae); un documento en
+dólares se lleva a soles con **su propio** tipo de cambio, no con el de hoy; el número del
+comprobante viaja a las observaciones como `Factura externa: FFA1-1349`; la fecha del papel es
+la de la cotización (D-124); y las notas de crédito y las filas con `DOCUMENTO AJUSTADO` se
+excluyen diciendo por qué.
+
+**Un defecto real que el E2E destapó de paso.** SheetJS lee las fechas de un csv como M/D/Y:
+`03/08/2026` —el 3 de agosto del archivo del negocio— entraba como el **8 de marzo**, sin error
+y sin ninguna señal, y el comprobante terminaba en el mes equivocado. El csv pasa a leerse con
+`raw: true` y la fecha la interpreta quien conoce el formato del archivo. Tiene su caso de
+regresión en `parse-spreadsheet.spec.ts`.
+
+### M2 — el padrón en el alta de proveedor (D-151)
+
+`GET /suppliers/lookup` reusando el `DocumentLookupService` que M0 conservó: `SuppliersModule`
+importa `CustomersModule` en vez de duplicar el cliente. Mismo throttle y mismo fallback
+silencioso que el alta de cliente (D-067), con el rol **más estrecho** —solo ADMINISTRADOR—
+porque el token de apis.net.pe es el mismo que sirve el tipo de cambio (D-029) y la cuota es
+una sola.
+
+### Verificación
+
+- `pnpm turbo lint typecheck test`: **272/272** unitarios en verde (el total baja de 306 porque
+  se fueron los 22 del adaptador de ventas y los 12 de la aritmética de importación fiscal;
+  entran 6 nuevos del plan por defecto y 1 de regresión de la fecha del csv).
+- E2E local: `import-cotizaciones` (API) + `import-cotizaciones-ui` (pantalla, escrito por
+  `qa`) **7/7**, y `fase5a` de vuelta en verde tras el fix del seed; regresión del borrado sobre
+  `fase1 fase2a fase2b fase3 fase3b m2-reversa-pago m4-anulacion-importado fase7-consolidada`,
+  **55/55** una vez retirados los dos casos que probaban el importador eliminado.
+- `pnpm exec eslint e2e` y `prettier --check` limpios sobre todo lo de esta sesión.
+- **No se corrió `pnpm e2e:prod`** (regla dura 9, D-126) ni se tocó producción.
+
+**Trampa del entorno local, que costó tres diagnósticos falsos en esta sesión:**
+`playwright.config.ts` usa `reuseExistingServer` en local, así que un servidor colgado en
+:3000/:3001 —de `pnpm dev:local`, de otra corrida o de otra sesión— se **reusa** y apunta a
+otra base. El síntoma es `Login admin falló: 401 Credenciales inválidas` en el primer test, que
+no se parece en nada a su causa. Antes de correr la suite:
+`netstat -ano | grep LISTENING | grep ":300"` y matar lo que haya.
+
+### Hallazgos de `revisor` y `qa` corregidos en esta sesión
+
+Una pasada de `revisor` sobre el diff completo y una de `qa` sobre la pantalla. Ningún
+bloqueante, pero **tres altos que dejaban el importador inservible justo en las líneas de
+coberturas**, que son las que motivaron la sesión.
+
+- **Quien exige los largos es la unidad, no el subtipo — otra vez.** El preview decidía
+  `needsPieces` con `roofingKind === A_MEDIDA`, mientras el alta lo decide con
+  `unit === 'MTR'` (`sellsByLength`). Es **exactamente** la confusión que D-131 documentó y
+  que ya había costado que el mostrador pudiera vender material a medida: son dos preguntas
+  distintas y una respondía por la otra. Un SKU en `MTR` que no fuera `A_MEDIDA` pasaba el
+  preview sin una marca, la pantalla ni dibujaba la celda del plan, y el archivo entero moría
+  en el confirm sin forma de arreglarlo salvo quitando la fila.
+- **Un SKU repetido se resolvía solo, y mal.** El índice del catálogo es
+  `(business_line_id, sku)`: el mismo código puede existir en dos líneas de negocio, y un
+  `new Map(...)` se quedaba con el último — otra línea, otro precio de lista, otra rama de
+  reserva, en silencio. Ahora un duplicado devuelve "elige el producto" en vez de adivinar.
+  Mismo tratamiento para el documento del cliente, cuyo par único es `(doc_type, doc_number)`.
+- **La pantalla no recalculaba los largos al cambiar el producto.** Reasignar una fila a un
+  producto por metro lineal dejaba la celda del plan apagada, y a uno simple mandaba `pieces`
+  que el API rechaza. Ahora se recalcula con el producto elegido.
+- **El desplegable de clientes estaba siempre vacío** (lo encontró `qa` corriendo la pantalla,
+  no el revisor leyendo el código): pedía `pageSize=500` y el tope de `paginationQuerySchema`
+  es 200, así que el request devolvía 400. Una fila sin cliente **no se podía corregir**: la
+  única salida era quitarla. Ahora se pagina de a 200 hasta traer el maestro y se avisa si no
+  entró entero.
+- **Código muerto que podía revivir mal.** `createImportedShellInTx`, `assertNoInventoryEffects`
+  y `archiveImportedOrderInTx` (~180 líneas capaces de escribir pedidos `origin = IMPORTED` sin
+  pasar por reservas) y la opción `allowMissingPieces` de `resolveSalesLines` —la relajación que
+  D-141 justificaba— se quedaron sin llamador con el borrado. Se fueron con él: una relajación
+  latente sin el contexto que la hacía segura es peor que no tenerla.
+- **Medios corregidos:** el aviso de unidad bloqueaba el botón como si fuera un error (los
+  avisos pasan a tener severidad y solo los errores bloquean); el detalle del comprobante seguía
+  instruyendo a "reimportarlo", que ya no existe; `parsePlan` no comprobaba las cotas del schema
+  y el error volvía como un Zod que la pantalla no sabía atribuir a ninguna fila; el plan por
+  defecto se derivaba de la cantidad **sin** redondear y los largos no sumaban la cantidad de la
+  línea; los desplegables ofrecían maestros inactivos, que tumban el archivo entero; y nada
+  avisaba al subir dos veces el mismo archivo — ahora el preview marca el comprobante que ya
+  tiene cotización viva.
+- **Bajos corregidos:** la descripción se recorta a 240 (el tope del schema) y no a 512 (el del
+  lector de celdas); `confirm` gana su `@Throttle`; volver a elegir el mismo archivo vuelve a
+  disparar la lectura; un campo con dos avisos los muestra los dos; `FiscalImportService` deja
+  de exportarse; `scripts/e2e-prod.mjs` deja de nombrar suites borradas; y `e2e-report.json` y
+  `subset.json` entran al `.gitignore` (regla dura 13) en vez de quedar sueltos en la raíz.
+
+### Un defecto viejo que apareció de paso: el seed apagaba RF-31
+
+`fase5a.spec.ts` fallaba desde antes de esta sesión con _"POST /api/sales/orders debía fallar y
+devolvió 201"_ — el caso que comprueba que **en coberturas no hay pedido directo** (RF-31,
+D-065). No era el guardrail: era el dato. `quotation_required = true` para `metallic-roofing` lo
+pone un `UPDATE` de la migración de Fase 5a, o sea sobre las filas que existían entonces; en una
+base **recién reseteada** —el E2E local y la rama `ci` en cada corrida— las líneas de negocio las
+crea el seed, y nacían todas con el `false` por defecto. Con eso, coberturas dejaba de exigir
+cotización exactamente donde se lo prueba.
+
+Ahora el seed lleva el dato, y solo lo fuerza donde es una regla del dominio: el resto de la
+configuración de una línea la administra el dueño y el seed no la pisa. Producción nunca estuvo
+afectada (su fila la actualizó la migración y nadie la recreó). `fase5a` volvió a verde.
 
 ## Bloqueos
 

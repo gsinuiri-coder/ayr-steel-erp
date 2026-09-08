@@ -11,8 +11,8 @@ import {
   type CreatedFinish,
   type CreatedUser,
 } from '../helpers/api';
+import { today } from '../helpers/production';
 import { loginAndSetPassword } from '../helpers/ui';
-import { today } from '../helpers/imports';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**

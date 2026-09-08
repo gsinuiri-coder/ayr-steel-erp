@@ -11,7 +11,7 @@ import {
   type CreatedSupplier,
   type CreatedUser,
 } from '../helpers/api';
-import { today } from '../helpers/imports';
+import { today } from '../helpers/production';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**

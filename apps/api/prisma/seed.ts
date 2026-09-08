@@ -10,17 +10,29 @@ import argon2 from 'argon2';
 
 const prisma = new PrismaClient();
 
-/** Las cinco líneas de negocio (§2.2). `services` es la única `NOOP` (sin kardex). */
+/**
+ * Las cinco líneas de negocio (§2.2). `services` es la única `NOOP` (sin kardex).
+ *
+ * `quotationRequired` viaja acá y no solo en su migración (D-065), y **no es redundante**: esa
+ * migración es un `UPDATE` sobre las filas que existían, así que en una base recién reseteada
+ * —el E2E local y la rama `ci` en cada corrida— las líneas las crea este seed y nacían todas
+ * con el `false` por defecto. Con eso, `metallic-roofing` dejaba de exigir cotización y RF-31
+ * quedaba apagado justo donde se lo prueba: el caso "el pedido directo se rechaza en coberturas"
+ * fallaba con un 201, y el guardrail parecía roto cuando lo que faltaba era el dato.
+ */
 const BUSINESS_LINES: {
   code: BusinessLineCode;
   name: string;
   inventoryStrategy: InventoryStrategy;
+  quotationRequired?: boolean;
 }[] = [
   { code: BusinessLineCode.DRYWALL, name: 'Drywall', inventoryStrategy: InventoryStrategy.STOCK },
   {
     code: BusinessLineCode.METALLIC_ROOFING,
     name: 'Metallic Roofing',
     inventoryStrategy: InventoryStrategy.STOCK,
+    // D-065: coberturas no admite pedido directo, siempre pasa por cotización (RF-31).
+    quotationRequired: true,
   },
   {
     code: BusinessLineCode.ROOFING,
@@ -39,8 +51,14 @@ async function seedBusinessLinesAndPricing(): Promise<void> {
   for (const line of BUSINESS_LINES) {
     const businessLine = await prisma.businessLine.upsert({
       where: { code: line.code },
-      create: line,
-      update: { name: line.name, inventoryStrategy: line.inventoryStrategy },
+      create: { ...line, quotationRequired: line.quotationRequired ?? false },
+      update: {
+        name: line.name,
+        inventoryStrategy: line.inventoryStrategy,
+        // Solo se fuerza donde el dato es una regla del dominio: en una base que ya existe, el
+        // resto lo administra el dueño desde la UI y el seed no tiene por qué pisarlo.
+        ...(line.quotationRequired === true ? { quotationRequired: true } : {}),
+      },
     });
     await prisma.pricingSetting.upsert({
       where: { businessLineId: businessLine.id },

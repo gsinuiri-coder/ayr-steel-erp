@@ -120,102 +120,6 @@ export const DOC_TYPE_LABELS: Record<DocType, string> = {
   CE: 'Carné de extranjería',
 };
 
-/** Entidad destino de una importación masiva (RF-52; base para RF-12/RF-71). */
-export const ImportEntity = {
-  PRODUCTS: 'PRODUCTS',
-  CUSTOMERS: 'CUSTOMERS',
-  COILS: 'COILS',
-  /** RF-71: comprobantes ya emitidos fuera del ERP. Una fila por **línea**, no por documento. */
-  FISCAL_DOCUMENTS: 'FISCAL_DOCUMENTS',
-  /**
-   * D-137: el Excel de bobinas con el que el dueño lleva su stock. Trae RUC y nombre del
-   * proveedor, número de factura, valorización y stock actual — nada de eso está en la
-   * planilla canónica de RF-12, y retipear el archivo para que encajara era exactamente
-   * el trabajo que la importación viene a ahorrar.
-   */
-  COILS_HISTORY: 'COILS_HISTORY',
-  /** D-138: el export de ventas del dueño. Una fila por línea, agrupadas por SERIE-NÚMERO. */
-  SALES_HISTORY: 'SALES_HISTORY',
-} as const;
-export type ImportEntity = (typeof ImportEntity)[keyof typeof ImportEntity];
-export const IMPORT_ENTITIES = Object.values(ImportEntity) as [ImportEntity, ...ImportEntity[]];
-export const IMPORT_ENTITY_LABELS: Record<ImportEntity, string> = {
-  PRODUCTS: 'Catálogo (productos)',
-  CUSTOMERS: 'Clientes',
-  COILS: 'Bobinas',
-  FISCAL_DOCUMENTS: 'Comprobantes ya emitidos',
-  COILS_HISTORY: 'Bobinas (Excel del negocio)',
-  SALES_HISTORY: 'Ventas (Excel del negocio)',
-};
-
-/**
- * Cómo entra una bobina histórica (D-137). El Excel trae **dos** pesos —el de compra y el
- * que queda hoy— y no dice qué pasó en el medio; estos son los dos modos honestos de
- * resolverlo, y la elección es del dueño porque depende de para qué quiere el dato.
- *
- * - `REPLAY`: la bobina entra con el **peso de compra** y el stock actual se guarda como
- *   **objetivo de validación**. Sirve cuando después se van a cargar los consumos reales
- *   (cortes, producción, ventas): al terminar, el reporte compara saldo contra objetivo y
- *   dice dónde no cuadra.
- * - `ADJUST`: la bobina entra con el peso de compra y sale, en el mismo acto, una salida
- *   de ajuste retrofechada por la diferencia. El saldo queda igual al stock actual desde el
- *   primer día. Sirve cuando lo que importa es arrancar con el inventario correcto y la
- *   historia intermedia no se va a cargar.
- */
-export const CoilImportMode = {
-  REPLAY: 'REPLAY',
-  ADJUST: 'ADJUST',
-} as const;
-export type CoilImportMode = (typeof CoilImportMode)[keyof typeof CoilImportMode];
-export const COIL_IMPORT_MODES = Object.values(CoilImportMode) as [
-  CoilImportMode,
-  ...CoilImportMode[],
-];
-export const COIL_IMPORT_MODE_LABELS: Record<CoilImportMode, string> = {
-  REPLAY: 'Replay: entra el peso de compra y el stock actual queda como objetivo',
-  ADJUST: 'Ajuste: entra el peso de compra y sale la diferencia como consumo pre-sistema',
-};
-
-/** Con qué fecha se registra la salida de ajuste del modo `ADJUST` (D-137). */
-export const CoilAdjustDate = {
-  /** La misma fecha de compra: el consumo queda dentro del mes en que entró la bobina. */
-  PURCHASE_DATE: 'PURCHASE_DATE',
-  /** Fin del mes de la compra (o hoy, si ese fin de mes todavía no llegó). */
-  MONTH_END: 'MONTH_END',
-} as const;
-export type CoilAdjustDate = (typeof CoilAdjustDate)[keyof typeof CoilAdjustDate];
-export const COIL_ADJUST_DATES = Object.values(CoilAdjustDate) as [
-  CoilAdjustDate,
-  ...CoilAdjustDate[],
-];
-export const COIL_ADJUST_DATE_LABELS: Record<CoilAdjustDate, string> = {
-  PURCHASE_DATE: 'La fecha de compra',
-  MONTH_END: 'El fin del mes de la compra',
-};
-
-/** Estado de una fila dentro de un lote de importación. */
-export const ImportRowStatus = {
-  VALID: 'VALID',
-  INVALID: 'INVALID',
-  CONFIRMED: 'CONFIRMED',
-} as const;
-export type ImportRowStatus = (typeof ImportRowStatus)[keyof typeof ImportRowStatus];
-export const IMPORT_ROW_STATUSES = Object.values(ImportRowStatus) as [
-  ImportRowStatus,
-  ...ImportRowStatus[],
-];
-
-/** Estado de un lote de importación completo. */
-export const ImportBatchStatus = {
-  PARSED: 'PARSED',
-  CONFIRMED: 'CONFIRMED',
-} as const;
-export type ImportBatchStatus = (typeof ImportBatchStatus)[keyof typeof ImportBatchStatus];
-export const IMPORT_BATCH_STATUSES = Object.values(ImportBatchStatus) as [
-  ImportBatchStatus,
-  ...ImportBatchStatus[],
-];
-
 // ---------------------------------------------------------------------------
 // Fase 2a — kardex (§3.2), compras (D-030) y bobinas (RF-10..RF-14)
 // ---------------------------------------------------------------------------
@@ -710,34 +614,6 @@ export const SALES_ORDER_ORIGINS = Object.values(SalesOrderOrigin) as [
 export const SALES_ORDER_ORIGIN_LABELS: Record<SalesOrderOrigin, string> = {
   CREATED_HERE: 'Creado en el ERP',
   IMPORTED: 'Importado',
-};
-
-/**
- * Qué se hace con el pedido de un comprobante importado (D-141). Es un **toggle por
- * documento** en la previsualización, no una columna del Excel: el archivo dice qué se
- * vendió, no qué falta entregar, y eso solo lo sabe el dueño.
- *
- * - `DELIVERED` (por defecto): la venta ya se entregó. El pedido nace **cáscara** — estado
- *   terminal, líneas espejo del comprobante y **cero efectos de inventario**: ni reserva, ni
- *   despacho, ni movimiento de kardex, ni cola de producción. Existe para que el comprobante
- *   tenga de dónde colgar y para que el histórico se lea igual que lo nuevo.
- * - `PENDING`: la venta está facturada pero **no entregada**. El pedido nace vivo y recorre
- *   el flujo normal: reserva genérica de materia prima en una línea a medida (D-134),
- *   reserva de producto terminado en una de catálogo (D-054), y una OP en cola por cada
- *   línea a medida — sin bobina montada, que es decisión de planta (D-086).
- */
-export const ImportFulfillment = {
-  DELIVERED: 'DELIVERED',
-  PENDING: 'PENDING',
-} as const;
-export type ImportFulfillment = (typeof ImportFulfillment)[keyof typeof ImportFulfillment];
-export const IMPORT_FULFILLMENTS = Object.values(ImportFulfillment) as [
-  ImportFulfillment,
-  ...ImportFulfillment[],
-];
-export const IMPORT_FULFILLMENT_LABELS: Record<ImportFulfillment, string> = {
-  DELIVERED: 'Entregado — pedido cáscara, sin efectos',
-  PENDING: 'Pendiente — pedido vivo, con reserva y OP en cola',
 };
 
 /**

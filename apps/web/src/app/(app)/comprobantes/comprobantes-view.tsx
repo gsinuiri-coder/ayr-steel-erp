@@ -9,21 +9,18 @@ import {
   FISCAL_DOCUMENT_STATUS_LABELS,
   FISCAL_DOCUMENT_STATUSES,
   FiscalDocumentOrigin,
-  ImportEntity,
   INVOICE_DOC_TYPES,
   Role,
   type FiscalDocumentListItemDto,
   type PaginatedResult,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { useSession } from '@/lib/session';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useDebounced } from '@/lib/use-debounced';
 import { usePagination } from '@/lib/use-pagination';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { ContingencyCard } from '@/components/invoicing/contingency-card';
-import { ImportDialog } from '@/components/imports/import-dialog';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -53,8 +50,6 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** RF-70: listado de comprobantes electrónicos, con el aviso de contingencia (D-073). */
 export function ComprobantesView() {
-  const { user } = useSession();
-  const isAdmin = user.role === Role.ADMINISTRADOR;
   const [status, setStatus] = useState<string>(ALL);
   const [docType, setDocType] = useState<string>(ALL);
   const [pendingOnly, setPendingOnly] = useState(false);
@@ -96,30 +91,6 @@ export function ComprobantesView() {
           </p>
         </div>
         <div className="flex gap-2">
-          {/*
-            RF-71: importar comprobantes **ya emitidos** (histórico o contingencia en el
-            portal de SUNAT). No es la ruta normal de facturar (D-025), y por eso vive acá
-            al lado y no en el formulario de emisión. Solo ADMINISTRADOR, igual que el API.
-          */}
-          {isAdmin && (
-            <ImportDialog
-              entity={ImportEntity.FISCAL_DOCUMENTS}
-              invalidateQueryKey={['fiscal-documents']}
-              label="Importar planilla"
-            />
-          )}
-          {/*
-            D-138: el mismo hecho leído del export real del sistema de facturación del dueño.
-            Convive con el de arriba en vez de reemplazarlo: son dos formatos de archivo, no
-            dos features.
-          */}
-          {isAdmin && (
-            <ImportDialog
-              entity={ImportEntity.SALES_HISTORY}
-              invalidateQueryKey={['fiscal-documents']}
-              label="Importar ventas (Excel)"
-            />
-          )}
           <Button asChild>
             <Link href="/comprobantes/nuevo">Nuevo comprobante</Link>
           </Button>

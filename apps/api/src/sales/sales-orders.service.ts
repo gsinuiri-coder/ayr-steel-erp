@@ -9,7 +9,6 @@ import {
 import {
   CoilKind,
   CoilStatus,
-  InventoryRefType,
   Prisma,
   ProductionOrderStatus,
   QuotationStatus,
@@ -154,32 +153,6 @@ const orderInclude = {
 type OrderRow = Prisma.SalesOrderGetPayload<{ include: typeof orderInclude }>;
 type ReservationRow = OrderRow['reservations'][number];
 
-/**
- * Una línea **espejo** del comprobante importado (D-141). Ya viene con sus importes
- * calculados por la aritmética del comprobante: acá no se recalcula ningún precio contra el
- * maestro, porque lo que se factura ya se facturó.
- */
-export interface ImportedShellLine {
-  lineNumber: number;
-  productId: string;
-  description: string;
-  qty: string;
-  unit: string;
-  unitPricePen: string;
-  subtotalPen: string;
-  igvPen: string;
-  totalPen: string;
-}
-
-/** Lo que hace falta para crear el pedido cáscara de un comprobante importado (D-141). */
-export interface ImportedShellOrderInput {
-  customerId: string;
-  /** La del comprobante, no la de hoy. */
-  issueDate: string;
-  notes: string | null;
-  lines: ImportedShellLine[];
-}
-
 /** Lo que puede cambiar el llamador de `createDirectInTx` (ver cada campo). */
 export interface CreateDirectOptions {
   /**
@@ -188,22 +161,6 @@ export interface CreateDirectOptions {
    * respaldada por su propio producto.
    */
   counterSale?: boolean;
-  /**
-   * D-141: el pedido nace de un comprobante **ya emitido afuera** que el dueño marcó como
-   * pendiente de entrega.
-   *
-   * Hace dos cosas y ninguna toca el inventario: marca el pedido `origin = IMPORTED` y se
-   * salta `quotation_required`. Lo segundo no es un agujero en RF-31 sino la única lectura
-   * posible: RF-31 exige cotizar **antes de comprometerse a producir**, y acá el compromiso
-   * ya se tomó y ya se facturó — el comprobante existe, tiene número y SUNAT lo tiene. Pedir
-   * una cotización previa a una venta que ya ocurrió no protege nada; solo dejaría fuera del
-   * ERP la mitad pendiente de la operación real.
-   *
-   * Todo lo demás sigue igual, y eso es lo que importa: la reserva se crea, la invariante
-   * `disponible ≥ reservado` se comprueba línea por línea y una promesa que no alcanza tira
-   * abajo la importación de ese documento entero.
-   */
-  imported?: boolean;
 }
 
 /** Las dos formas en que una fila nombra al ítem del kardex que reserva. */
@@ -468,18 +425,14 @@ export class SalesOrdersService {
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
 
-    // D-141: solo lo importado entra sin el detalle de largos (ver `ResolveSalesLinesOptions`).
-    const lines = await resolveSalesLines(tx, input.items, {
-      allowMissingPieces: options.imported === true,
-    });
+    const lines = await resolveSalesLines(tx, input.items);
 
     // D-119: un pedido directo (sin cotización) exige que **ninguna** línea venga de una
     // línea de negocio que obliga a cotizar (RF-31). Antes era un chequeo del documento
     // entero contra una sola línea; con líneas mixtas cada una puede venir de una línea de
     // negocio distinta, así que se comprueba una por una. El mostrador (`counterSale`) no
-    // exige cotización nunca (D-098) y se salta este chequeo por completo; lo importado
-    // (D-141) tampoco, porque la venta ya se facturó y no hay nada que cotizar antes.
-    if (options.counterSale !== true && options.imported !== true) {
+    // exige cotización nunca (D-098) y se salta este chequeo por completo.
+    if (options.counterSale !== true) {
       const lineIds = [...new Set(lines.map((l) => l.businessLineId))];
       const businessLines = await tx.businessLine.findMany({
         where: { id: { in: lineIds } },
@@ -519,8 +472,9 @@ export class SalesOrdersService {
         quotationId: null,
         customerId: customer.id,
         status: SalesOrderStatus.CONFIRMED,
-        origin:
-          options.imported === true ? SalesOrderOrigin.IMPORTED : SalesOrderOrigin.CREATED_HERE,
+        // D-150: `IMPORTED` ya no lo escribe nadie — el pedido cáscara se fue con el módulo
+        // de importaciones. El valor sigue en el enum porque describe filas que existen.
+        origin: SalesOrderOrigin.CREATED_HERE,
         issueDate: toDateOnly(input.issueDate),
         subtotalPen: totals.subtotalPen,
         igvPen: totals.igvPen,
@@ -567,18 +521,12 @@ export class SalesOrdersService {
 
     await this.audit.write(tx, {
       actorId: actor.id,
-      action:
-        options.counterSale === true
-          ? 'pos.order.create'
-          : options.imported === true
-            ? 'sales.order.create-imported'
-            : 'sales.order.create-direct',
+      action: options.counterSale === true ? 'pos.order.create' : 'sales.order.create-direct',
       entity: 'sales_orders',
       entityId: order.id,
       after: {
         code: salesOrderCode(order.seq),
         totalPen: totals.totalPen,
-        ...(options.imported === true ? { origin: SalesOrderOrigin.IMPORTED } : {}),
       },
     });
     return order.id;
@@ -587,239 +535,6 @@ export class SalesOrdersService {
   // -------------------------------------------------------------------------
   // D-141 — el pedido cáscara de un comprobante ya entregado
   // -------------------------------------------------------------------------
-
-  /**
-   * Pedido **cáscara** de una venta que ya se entregó (D-141).
-   *
-   * Es la mitad de la importación que no tiene que pasar por ningún camino del ciclo
-   * comercial, y por eso no lo reusa: no llama a `resolveSalesLines`, no llama a
-   * `createReservations` y no encola nada. Las líneas son un **espejo** de las del
-   * comprobante —la misma descripción, la misma cantidad, el mismo precio— y el pedido nace
-   * en un estado terminal.
-   *
-   * **Por qué un método propio y no `createDirectInTx` con un flag más.** Un flag habría
-   * dejado el bypass como una rama dentro de un método que sí crea reservas, y la garantía
-   * de "cero efectos" habría dependido de que esa rama siguiera siendo correcta cada vez que
-   * alguien tocara el método. Acá el bypass es estructural: no hay ninguna línea de código
-   * que pueda escribir una reserva, así que no hay nada que se pueda romper por descuido.
-   *
-   * **Y aun así se comprueba.** El pedido del enunciado es "cero efectos de inventario, y no
-   * confiar solo en el estado": al terminar se cuenta lo que este pedido dejó en el ledger,
-   * en el kardex y en producción, y si dejó algo, la transacción entera se cae. Es la misma
-   * idea que D-052 usa para los guardrails de reversa — la comprobación vale justamente en
-   * el día en que alguien agregue un hook nuevo a la creación de pedidos y no se acuerde de
-   * este camino.
-   *
-   * Los precios y las cantidades no se re-resuelven contra el maestro (a diferencia de un
-   * pedido normal, que valida contra el catálogo de hoy): el comprobante es el hecho, y un
-   * SKU cuyo precio de lista cambió el mes pasado no puede cambiar lo que se facturó.
-   */
-  async createImportedShellInTx(
-    tx: Prisma.TransactionClient,
-    actor: RequestUser,
-    input: ImportedShellOrderInput,
-  ): Promise<string> {
-    const customer = await tx.customer.findUnique({
-      where: { id: input.customerId },
-      select: { id: true, isActive: true },
-    });
-    if (!customer) throw new NotFoundException('Cliente no encontrado');
-    if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
-    if (input.lines.length === 0) {
-      throw new BadRequestException('El pedido importado no tiene líneas');
-    }
-
-    // Σ subtotales + Σ IGV, nunca Σ de totales ya redondeados: el mismo criterio que
-    // `documentTotals` aplica a una línea resuelta, sobre líneas que no pasan por ahí.
-    const subtotal = input.lines.reduce(
-      (acc, l) => acc.plus(toDecimal(l.subtotalPen)),
-      toDecimal('0'),
-    );
-    const igv = input.lines.reduce((acc, l) => acc.plus(toDecimal(l.igvPen)), toDecimal('0'));
-    const totals = {
-      subtotalPen: toFixedString(subtotal, 'MONEY'),
-      igvPen: toFixedString(igv, 'MONEY'),
-      totalPen: toFixedString(subtotal.plus(igv), 'MONEY'),
-    };
-
-    const order = await tx.salesOrder.create({
-      data: {
-        quotationId: null,
-        customerId: customer.id,
-        // El estado terminal que ya existe (D-065). No se inventa uno nuevo: para todo lo
-        // que lee pedidos —el despacho, la cobranza, la cola de producción— "atendido" ya
-        // significa exactamente lo que este pedido es.
-        status: SalesOrderStatus.FULFILLED,
-        origin: SalesOrderOrigin.IMPORTED,
-        // La fecha de emisión del comprobante, no la de hoy (D-124): el pedido existió ese
-        // día y ordenarlo por la fecha de carga lo pondría entre los de esta semana.
-        issueDate: toDateOnly(input.issueDate),
-        subtotalPen: totals.subtotalPen,
-        igvPen: totals.igvPen,
-        totalPen: totals.totalPen,
-        notes: input.notes ?? null,
-        createdById: actor.id,
-        items: {
-          create: input.lines.map((l) => ({
-            lineNumber: l.lineNumber,
-            productId: l.productId,
-            description: l.description,
-            qty: l.qty,
-            unit: l.unit,
-            listPricePen: null,
-            unitPricePen: l.unitPricePen,
-            subtotalPen: l.subtotalPen,
-            igvPen: l.igvPen,
-            totalPen: l.totalPen,
-            // `reserve_*` es el registro congelado de lo que se prometió (D-088), no una
-            // reserva: acá se prometió el propio producto y **no se creó ninguna fila** en
-            // el ledger, que es lo que la comprobación de abajo verifica.
-            reserveItemType: InventoryItemTypeEnum.PRODUCT,
-            reserveItemId: l.productId,
-            reserveQty: l.qty,
-            reserveUnit: l.unit,
-          })),
-        },
-      },
-      select: { id: true, seq: true },
-    });
-
-    await this.assertNoInventoryEffects(tx, order.id, salesOrderCode(order.seq));
-
-    await this.audit.write(tx, {
-      actorId: actor.id,
-      action: 'sales.order.create-imported-shell',
-      entity: 'sales_orders',
-      entityId: order.id,
-      after: {
-        code: salesOrderCode(order.seq),
-        totalPen: totals.totalPen,
-        status: SalesOrderStatus.FULFILLED,
-        origin: SalesOrderOrigin.IMPORTED,
-        lines: input.lines.length,
-      },
-    });
-    return order.id;
-  }
-
-  /**
-   * D-141: el pedido cáscara no dejó **nada** detrás.
-   *
-   * Cuenta las tres cosas que un pedido normal sí crea —reserva, movimiento de kardex y
-   * orden de producción— y se cae si encuentra una. Hoy no puede encontrar ninguna, y ese es
-   * el punto: la comprobación no está para el código de hoy sino para el hook que alguien
-   * agregue mañana a la creación de un pedido sin acordarse de que esta puerta existe.
-   *
-   * **El kardex se comprueba a través del despacho, y no por su propia tabla.** Un pedido no
-   * escribe `inventory_movements` nunca: por regla dura 2 el único que saca stock por una
-   * venta es el despacho (`refType = SALE`, con el id del despacho como referencia), así que
-   * "cero despachos" **es** "cero kardex" y buscar el id del pedido entre las referencias no
-   * habría encontrado nada aunque el pedido hubiera movido stock.
-   */
-  private async assertNoInventoryEffects(
-    tx: Prisma.TransactionClient,
-    orderId: string,
-    code: string,
-  ): Promise<void> {
-    const [reservations, productionOrders, dispatchIds] = await Promise.all([
-      tx.reservation.count({ where: { salesOrderId: orderId } }),
-      tx.productionOrder.count({ where: { reservation: { salesOrderId: orderId } } }),
-      tx.dispatch.findMany({ where: { salesOrderId: orderId }, select: { id: true } }),
-    ]);
-    // `refId` es un `VARCHAR` sin FK (el kardex referencia entidades de cinco módulos), así
-    // que la búsqueda va por los ids de los despachos y no por una relación.
-    const movements =
-      dispatchIds.length === 0
-        ? 0
-        : await tx.inventoryMovement.count({
-            where: { refType: InventoryRefType.SALE, refId: { in: dispatchIds.map((d) => d.id) } },
-          });
-    const dispatches = dispatchIds.length;
-    if (reservations === 0 && productionOrders === 0 && dispatches === 0 && movements === 0) {
-      return;
-    }
-    throw new BadRequestException(
-      `El pedido cáscara ${code} quedó con efectos de inventario (` +
-        `${reservations} reservas, ${productionOrders} órdenes de producción, ` +
-        `${dispatches} despachos, ${movements} movimientos de kardex): ` +
-        'un comprobante ya entregado no puede crear ninguno. La importación se deshizo entera.',
-    );
-  }
-
-  /**
-   * D-141 + D-109: reimportar un comprobante **archiva** su pedido cáscara.
-   *
-   * "Archivar" un pedido es anularlo: `sales_orders` no tiene `archived_at` y no hace falta
-   * que lo tenga — una cáscara sin efectos no dejó nada que deshacer, así que el estado
-   * terminal de anulado dice la verdad completa y conserva la fila con su historial (§3.2).
-   *
-   * **Un pedido con efectos no pasa por acá.** El guardrail vuelve a contar lo mismo que
-   * `assertNoInventoryEffects` y, si el pedido está vivo con material prometido o con una
-   * orden de producción encima, lanza con el motivo: la reimportación del comprobante se
-   * bloquea entera en vez de dejar un pedido anulado cuyas reservas alguien tendría que
-   * liberar a mano — que es exactamente el agujero que D-061, D-088, D-097 y D-110 ya
-   * costaron una vez.
-   */
-  async archiveImportedOrderInTx(
-    tx: Prisma.TransactionClient,
-    actor: RequestUser,
-    orderId: string,
-    reason: string,
-  ): Promise<void> {
-    const order = await this.lockOrder(tx, orderId);
-    if (order.origin !== SalesOrderOrigin.IMPORTED) {
-      throw new BadRequestException(
-        `El pedido ${salesOrderCode(order.seq)} no nació de una importación: no se puede archivar reimportando un comprobante`,
-      );
-    }
-    if (order.status === SalesOrderStatus.CANCELLED) return;
-
-    const [reservations, productionOrders, dispatches] = await Promise.all([
-      tx.reservation.count({
-        where: { salesOrderId: orderId, status: ReservationStatus.ACTIVE },
-      }),
-      tx.productionOrder.count({
-        where: {
-          reservation: { salesOrderId: orderId },
-          status: {
-            in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS],
-          },
-        },
-      }),
-      tx.dispatch.count({ where: { salesOrderId: orderId } }),
-    ]);
-    if (reservations > 0 || productionOrders > 0 || dispatches > 0) {
-      const detail = [
-        reservations > 0 ? `${reservations} reserva(s) activa(s)` : null,
-        productionOrders > 0 ? `${productionOrders} orden(es) de producción viva(s)` : null,
-        dispatches > 0 ? `${dispatches} despacho(s)` : null,
-      ]
-        .filter((d): d is string => d !== null)
-        .join(', ');
-      throw new ConflictException(
-        `El comprobante tiene un pedido vivo (${salesOrderCode(order.seq)}) con ${detail}: ` +
-          'no se puede reimportar. Libera o anula ese pedido primero — reimportar archivaría ' +
-          'material prometido y producción en curso sin devolver nada.',
-      );
-    }
-
-    await tx.salesOrder.update({
-      where: { id: orderId },
-      data: {
-        status: SalesOrderStatus.CANCELLED,
-        cancelledById: actor.id,
-        cancelledAt: new Date(),
-      },
-    });
-    await this.audit.write(tx, {
-      actorId: actor.id,
-      action: 'sales.order.archive-imported',
-      entity: 'sales_orders',
-      entityId: orderId,
-      before: { status: order.status },
-      after: { status: SalesOrderStatus.CANCELLED, reason },
-    });
-  }
 
   /**
    * D-134: el agregado de materia prima y los kilos teóricos de las líneas **a medida**.
