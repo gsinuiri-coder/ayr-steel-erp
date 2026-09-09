@@ -305,16 +305,21 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const onProduct = after.find((r) => r.itemType === 'PRODUCT');
       expect(onRawMaterial).toMatchObject({ qty: '48.000', status: 'ACTIVE' });
       expect(onProduct?.status).toBe('RELEASED');
-      // La reserva restaurada es del agregado, no de esta bobina puntual — pero el panel de
-      // stock sigue en cero: la bobina compatible sigue **montada** en la OP (revertir el
-      // reporte deshace el kardex, no la custodia), así que el agregado no tiene ninguna
-      // bobina libre de la que sacar los 48 kg, más allá de que la reserva ya los pida de
-      // nuevo. Libre recién queda cuando se anula la OP (caso "anular la OP...", más abajo).
+      // La reserva restaurada es del agregado, no de esta bobina puntual, y el panel de stock
+      // lo dice con el número que corresponde: los 1 000 kg físicos del rollo menos los 48
+      // que la promesa volvió a pedir.
+      //
+      // **D-154 cambió este número, y a propósito.** Hasta entonces la bobina montada salía
+      // **entera** del disponible del agregado y el panel mostraba `0.000` sobre un almacén
+      // con un rollo intacto: el mismo kilo descontado dos veces, una como custodia de la OP y
+      // otra como la promesa del pedido que esa OP viene a cumplir. Hoy la custodia de una
+      // orden **contra pedido** no descuenta nada —su compromiso ya está contado en la
+      // reserva—, así que lo único que baja del disponible es lo prometido.
       const panelAfterRevert = await stockPanel(api, {
         businessLine: 'metallic-roofing',
         productIds: [scenario.product.id],
       });
-      expect(panelAfterRevert.products[0]?.rawMaterialAvailableKg).toBe('0.000');
+      expect(panelAfterRevert.products[0]?.rawMaterialAvailableKg).toBe('952.000');
 
       // El kardex quedó con los pares movimiento + reversa que se anulan entre sí.
       expect(live(await movementsOf(api, 'PRODUCT', scenario.product.id))).toHaveLength(0);

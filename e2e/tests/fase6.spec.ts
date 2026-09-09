@@ -221,7 +221,12 @@ test.describe('Fase 6 — producción de coberturas', () => {
   });
 
   test('la pieza a medida no se la puede llevar otro pedido: la reserva la protege', async () => {
-    const scenario = await setupRoofingScenario(api, { weightKg: '1000' });
+    // Una bobina **chica** (50 kg) y a propósito: el pedido se lleva 40 rolando, y los 10 que
+    // sobran no alcanzan para el rival. Hasta D-154 el rollo podía ser de 1 000 kg y el rival
+    // se cortaba igual, porque una bobina montada salía entera del agregado; eso era el doble
+    // descuento (custodia + promesa del mismo pedido) y ya no pasa. La escasez de este caso
+    // ahora tiene que ser **real**, que es lo que el guardrail de verdad protege.
+    const scenario = await setupRoofingScenario(api, { weightKg: '50' });
     const cliente = await createCustomer(api);
     const otro = await createCustomer(api);
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
@@ -284,9 +289,9 @@ test.describe('Fase 6 — producción de coberturas', () => {
       // D-127 cambió **por qué** se corta, no **si** se corta. Una línea a medida ya no se
       // atiende con stock de producto terminado (ese SKU vive en cero hasta que planta lo
       // rola), así que el rival ya no choca contra el disponible del producto sino contra la
-      // materia prima: la única bobina del color está montada en la OP del primer pedido y no
-      // hay otra libre. El pedido rival sigue sin poder nacer, que es lo que este test
-      // protege; lo que se movió es el guardrail que lo frena.
+      // materia prima: del único rollo del color quedan 10 kg —los otros 40 ya se rolaron para
+      // el primer pedido— y el rival necesita 40. El pedido rival sigue sin poder nacer, que
+      // es lo que este test protege; lo que se movió es el guardrail que lo frena.
       expect(error.message.toLowerCase()).toMatch(/disponible|bobina/);
       // D-134: el mensaje ya no nombra el SKU del producto (la línea a medida ya no reserva
       // el producto, reserva el agregado): nombra el color y el espesor del agregado corto.

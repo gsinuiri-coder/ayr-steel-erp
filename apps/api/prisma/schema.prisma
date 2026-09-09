@@ -1323,6 +1323,12 @@ model ProductionReport {
   /// completo** con la geometría de la bobina montada, un número que ninguna columna de
   /// esta tabla conoce.
   consumedKg        Decimal?               @map("consumed_kg") @db.Decimal(12, 3)
+  /// **Solo ROOFING** (D-154): el aviso que el reporte dejó anotado, si lo dejó. Dos cosas
+  /// caben acá y las dos son avisos, nunca rechazos: la desviación del kilo declarado contra
+  /// el teórico de los largos, y el agregado de materia prima que quedó por debajo de lo
+  /// prometido a otros pedidos. Se guarda en la fila y no solo en `audit_log` porque quien
+  /// audita una corrida corta de material mira sus reportes, no el log.
+  rawMaterialWarning String?               @map("raw_material_warning") @db.Text
   /// Valor en soles que salió de los flejes por este reporte (D-042).
   materialCostPen   Decimal                @map("material_cost_pen") @db.Decimal(18, 4)
   /// `materialCostPen / pieces`: costo con el que las piezas entraron al kardex.

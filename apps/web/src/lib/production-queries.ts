@@ -12,6 +12,10 @@ import type { QueryClient } from '@tanstack/react-query';
 export function invalidateProduction(queryClient: QueryClient, orderId?: string): void {
   if (orderId) void queryClient.invalidateQueries({ queryKey: ['production-order', orderId] });
   void queryClient.invalidateQueries({ queryKey: ['production-orders'] });
+  // D-155: el espacio de producción del pedido (`/planta/producir`) lee su propia consulta.
+  // Va acá y no en esa pantalla porque quien la desactualiza es cualquier operación de
+  // producción —reportar desde la terminal, cerrar, revertir, anular—, no solo ella misma.
+  void queryClient.invalidateQueries({ queryKey: ['roofing-batch'] });
   void queryClient.invalidateQueries({ queryKey: ['production-strips'] });
   void queryClient.invalidateQueries({ queryKey: ['coils'] });
   void queryClient.invalidateQueries({ queryKey: ['coil'] });

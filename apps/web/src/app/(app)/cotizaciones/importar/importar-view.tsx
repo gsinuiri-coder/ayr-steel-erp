@@ -14,6 +14,7 @@ import {
   MIN_PIECE_LENGTH_MM,
   Role,
   toDecimal,
+  type Decimal,
   type CustomerDto,
   type ProductDto,
   type QuotationImportPreviewDto,
@@ -22,8 +23,12 @@ import {
   type RoofingPieceDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
+import { ExpressCreateCustomer, ExpressCreateProduct } from '@/components/express-create';
+import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -40,9 +45,14 @@ import { Skeleton } from '@/components/ui/skeleton';
  * hay lote a medio confirmar que alguien tenga que limpiar después.
  *
  * Dos reglas que la pantalla no afloja porque el API tampoco: **nada se crea solo** —un cliente
- * o un SKU que no está en el maestro detiene su fila y hay que darlo de alta por su formulario—
- * y **nada se adivina**: cuando el plan de corte por defecto (1 × los ML de la línea) no cabe
- * en una plancha, la fila pide el plan real en vez de repartirlo por su cuenta.
+ * o un SKU que no está en el maestro detiene su fila— y **nada se adivina**: cuando el plan de
+ * corte por defecto (1 × los ML de la línea) no cabe en una plancha, la fila pide el plan real
+ * en vez de repartirlo por su cuenta.
+ *
+ * **D-156** no afloja la primera, le saca el callejón: la fila sigue detenida hasta que una
+ * persona decida, pero ahora puede decidir **desde acá**, con el formulario de alta completo
+ * del maestro y sin perder el archivo revisado. Lo que D-152 prohibió fue la creación
+ * silenciosa, no que el botón estuviera cerca.
  *
  * El guardado es **todo o nada** por archivo, con el error de cada documento cuando alguno
  * falla: mismo contrato que la tanda de planta (D-147).
@@ -71,6 +81,12 @@ export function ImportarCotizacionesView() {
   const [edits, setEdits] = useState<Record<number, RowEdit>>({});
   const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
   const [result, setResult] = useState<QuotationImportResultDto | null>(null);
+  /**
+   * D-156: qué comprobantes están desplegados. Solo lo que el usuario tocó a mano: lo que
+   * no está acá se abre solo si tiene algo sin resolver, que es el único caso en que hay
+   * trabajo que hacer adentro.
+   */
+  const [openDocuments, setOpenDocuments] = useState<Record<string, boolean>>({});
 
   // Los maestros completos, una sola vez: son los desplegables con los que se resuelve a mano
   // una fila que el archivo no pudo mapear.
@@ -131,6 +147,11 @@ export function ImportarCotizacionesView() {
       setPreview(data);
       setEdits({});
       setDocumentErrors({});
+      // Un archivo nuevo empieza con todos los acordeones en su estado por defecto: si no,
+      // un comprobante que el usuario había colapsado a mano en el archivo anterior seguía
+      // colapsado acá aunque ahora tenga líneas sin resolver, y el aviso rojo mandaba a
+      // corregir filas que no se ven.
+      setOpenDocuments({});
       setResult(null);
       toast.success(`${String(data.rows.length)} filas leídas`);
     },
@@ -139,30 +160,85 @@ export function ImportarCotizacionesView() {
     },
   });
 
-  const productsById = useMemo(
-    () => new Map((products.data ?? []).map((p) => [p.id, p])),
-    [products.data],
+  /**
+   * D-156: lo que el alta express acaba de crear, **sumado a mano al maestro**. La
+   * invalidación de la query es asincrónica, así que entre que el diálogo devuelve el
+   * registro y la lista se refresca hay una ventana en la que la fila apunta a un id que su
+   * desplegable todavía no ofrece: el campo se ve vacío y el error de "elige el cliente"
+   * vuelve a aparecer sobre algo que ya está elegido.
+   */
+  const [createdCustomers, setCreatedCustomers] = useState<CustomerDto[]>([]);
+  const [createdProducts, setCreatedProducts] = useState<ProductDto[]>([]);
+  const allCustomers = useMemo(
+    () => mergeById(customers.data?.items ?? [], createdCustomers),
+    [customers.data, createdCustomers],
   );
+  const allProducts = useMemo(
+    () => mergeById(products.data ?? [], createdProducts),
+    [products.data, createdProducts],
+  );
+  // Las opciones de los dos maestros, una sola vez para las 141 filas: rearmarlas por celda
+  // era un recorrido del catálogo entero por render de cada fila.
+  const customerOptions = useMemo(
+    () => allCustomers.map((c) => ({ id: c.id, label: `${c.docNumber} — ${c.name}` })),
+    [allCustomers],
+  );
+  const productOptions = useMemo(
+    () => allProducts.map((p) => ({ id: p.id, label: p.sku, hint: p.name })),
+    [allProducts],
+  );
+  const productsById = useMemo(() => new Map(allProducts.map((p) => [p.id, p])), [allProducts]);
+  const customerIds = useMemo(() => new Set(allCustomers.map((c) => c.id)), [allCustomers]);
   const rows = useMemo(
     () =>
-      (preview?.rows ?? []).map((row) => resolveRow(row, edits[row.rowNumber] ?? {}, productsById)),
-    [preview, edits, productsById],
+      (preview?.rows ?? []).map((row) =>
+        resolveRow(row, edits[row.rowNumber] ?? {}, productsById, customerIds),
+      ),
+    [preview, edits, productsById, customerIds],
   );
   const live = rows.filter((r) => !r.removed && r.raw.excludedReason === null);
   // Solo los **errores** bloquean: un aviso (la unidad del papel que no coincide con la del
   // producto) hay que verlo, no impide crear la cotización — el API la acepta igual.
   const blocking = live.filter((r) => r.issues.some((i) => i.severity === 'error'));
   const documents = new Set(live.map((r) => r.raw.documentKey));
+  // D-156: las filas agrupadas por comprobante, en el orden en que aparecen en el archivo.
+  const documentGroups = useMemo(() => groupByDocument(rows), [rows]);
+  /**
+   * Qué comprobantes se abren solos, decidido **sobre el archivo tal como llegó** y no sobre
+   * el estado de cada render. Derivarlo de los errores vivos hacía que el acordeón se
+   * cerrara en el instante en que se resolvía su última línea: elegir un cliente colapsaba
+   * la factura entera y tapaba las otras tres líneas que quedaban por revisar, y tipear el
+   * plan de corte desmontaba la tabla a media palabra y se llevaba el foco.
+   */
+  const autoOpen = useMemo(
+    () =>
+      new Set(
+        groupByDocument(
+          (preview?.rows ?? []).map((row) => resolveRow(row, {}, productsById, customerIds)),
+        )
+          .filter((g) => g.blocking > 0)
+          .map((g) => g.key),
+      ),
+    // A propósito **sin** `edits`: es el estado inicial del archivo, no el actual.
+    [preview, productsById, customerIds],
+  );
 
-  const setEdit = (rowNumber: number, patch: RowEdit) => {
+  const setEdit = (rowNumber: number, documentKey: string, patch: RowEdit) => {
     setEdits((prev) => ({ ...prev, [rowNumber]: { ...prev[rowNumber], ...patch } }));
-    setDocumentErrors({});
+    // Solo el de **este** comprobante: corregir una línea de F001-15 no puede borrar el
+    // motivo por el que el servidor rechazó F001-22, que sigue sin corregirse.
+    setDocumentErrors((prev) => {
+      if (prev[documentKey] === undefined) return prev;
+      return Object.fromEntries(Object.entries(prev).filter(([key]) => key !== documentKey));
+    });
   };
 
   const confirm = useMutation({
-    mutationFn: () => {
+    onMutate: () => {
       setDocumentErrors({});
-      return api<QuotationImportResultDto>('/imports/quotations', {
+    },
+    mutationFn: () =>
+      api<QuotationImportResultDto>('/imports/quotations', {
         method: 'POST',
         body: {
           rows: live.map((r) => ({
@@ -177,8 +253,7 @@ export function ImportarCotizacionesView() {
             ...(r.pieces ? { pieces: r.pieces } : {}),
           })),
         },
-      });
-    },
+      }),
     onSuccess: (data) => {
       setResult(data);
       setPreview(null);
@@ -301,40 +376,38 @@ export function ImportarCotizacionesView() {
                 </Alert>
               )}
 
-              <div
-                className="overflow-x-auto"
-                tabIndex={0}
-                role="region"
-                aria-label="Líneas del archivo"
-              >
-                <table className="w-full min-w-[70rem] text-sm">
-                  <thead className="text-left text-xs uppercase text-muted-foreground">
-                    <tr className="border-b">
-                      <th className="py-2 pr-3 font-medium">Comprobante</th>
-                      <th className="py-2 pr-3 font-medium">Cliente</th>
-                      <th className="py-2 pr-3 font-medium">Producto</th>
-                      <th className="py-2 pr-3 text-right font-medium">Cantidad</th>
-                      <th className="py-2 pr-3 text-right font-medium">P. unit. S/</th>
-                      <th className="py-2 pr-3 font-medium">Plan de corte</th>
-                      <th className="py-2 font-medium" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <ImportRow
-                        key={row.raw.rowNumber}
-                        row={row}
-                        customers={customers.data?.items ?? []}
-                        products={products.data ?? []}
-                        documentError={documentErrors[row.raw.documentKey] ?? null}
-                        disabled={confirm.isPending}
-                        onChange={(patch) => {
-                          setEdit(row.raw.rowNumber, patch);
-                        }}
-                      />
-                    ))}
-                  </tbody>
-                </table>
+              {/*
+                D-156: **un acordeón por comprobante**, no 141 filas sueltas. El archivo de
+                un mes son decenas de facturas de tres o cuatro líneas cada una, y en una
+                tabla plana no había forma de ver de qué factura era una fila ni cuánto
+                sumaba: la cabecera dice el número, el cliente, el total y si le falta algo,
+                y solo se abre la que hay que tocar.
+              */}
+              <div className="grid gap-2">
+                {documentGroups.map((group) => (
+                  <DocumentGroup
+                    key={group.key}
+                    group={group}
+                    open={openDocuments[group.key] ?? autoOpen.has(group.key)}
+                    customerOptions={customerOptions}
+                    productOptions={productOptions}
+                    documentError={documentErrors[group.key] ?? null}
+                    disabled={confirm.isPending}
+                    onToggle={() => {
+                      setOpenDocuments((prev) => ({
+                        ...prev,
+                        [group.key]: !(prev[group.key] ?? autoOpen.has(group.key)),
+                      }));
+                    }}
+                    onChange={setEdit}
+                    onCreatedCustomer={(created) => {
+                      setCreatedCustomers((prev) => [...prev, created]);
+                    }}
+                    onCreatedProduct={(created) => {
+                      setCreatedProducts((prev) => [...prev, created]);
+                    }}
+                  />
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -366,23 +439,184 @@ export function ImportarCotizacionesView() {
 }
 
 // ---------------------------------------------------------------------------
+// D-156 — un comprobante del archivo, con sus líneas adentro
+// ---------------------------------------------------------------------------
+
+interface DocumentGroup {
+  key: string;
+  issueDate: string;
+  /** El cliente tal como vino en el papel: la cabecera lo dice aunque falte el mapeo. */
+  rawCustomer: string;
+  /** `Σ cantidad × precio` de las líneas vivas, en soles. */
+  totalPen: Decimal;
+  rows: ResolvedRow[];
+  /** Líneas vivas del comprobante y cuántas tienen algo sin resolver. */
+  live: number;
+  blocking: number;
+}
+
+/**
+ * Agrupa por `documentKey` conservando el orden del archivo. La clave del agrupado es la
+ * misma que usa el mapa de errores del servidor —el comprobante, no la fila—, así que un
+ * rechazo del confirm cae sobre la cabecera correcta sin traducir nada.
+ */
+function groupByDocument(rows: readonly ResolvedRow[]): DocumentGroup[] {
+  const byKey = new Map<string, DocumentGroup>();
+  for (const row of rows) {
+    const key = row.raw.documentKey;
+    let group = byKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        issueDate: row.raw.issueDate,
+        rawCustomer: row.raw.rawCustomer,
+        totalPen: toDecimal('0'),
+        rows: [],
+        live: 0,
+        blocking: 0,
+      };
+      byKey.set(key, group);
+    }
+    group.rows.push(row);
+    if (row.removed || row.raw.excludedReason !== null) continue;
+    group.live += 1;
+    if (row.issues.some((i) => i.severity === 'error')) group.blocking += 1;
+    // Un importe con el precio o la cantidad mal tipeados no se suma: el total de la
+    // cabecera diría un número inventado justo cuando hay que compararlo con el papel.
+    if (/^\d+(\.\d+)?$/.test(row.qty.trim()) && /^\d+(\.\d+)?$/.test(row.unitPricePen.trim())) {
+      group.totalPen = group.totalPen.plus(
+        toDecimal(row.qty.trim()).times(toDecimal(row.unitPricePen.trim())),
+      );
+    }
+  }
+  return [...byKey.values()];
+}
+
+function DocumentGroup({
+  group,
+  open,
+  customerOptions,
+  productOptions,
+  documentError,
+  disabled,
+  onToggle,
+  onChange,
+  onCreatedCustomer,
+  onCreatedProduct,
+}: {
+  group: DocumentGroup;
+  open: boolean;
+  customerOptions: readonly SearchSelectOption[];
+  productOptions: readonly SearchSelectOption[];
+  documentError: string | null;
+  disabled: boolean;
+  onToggle: () => void;
+  onChange: (rowNumber: number, documentKey: string, patch: RowEdit) => void;
+  onCreatedCustomer: (customer: CustomerDto) => void;
+  onCreatedProduct: (product: ProductDto) => void;
+}) {
+  const status =
+    group.live === 0
+      ? { label: 'Sin líneas', variant: 'outline' as const }
+      : group.blocking > 0
+        ? {
+            label:
+              group.blocking === 1
+                ? '1 línea sin resolver'
+                : `${String(group.blocking)} líneas sin resolver`,
+            variant: 'destructive' as const,
+          }
+        : { label: 'Lista', variant: 'secondary' as const };
+
+  return (
+    <div className="rounded-lg border">
+      <button
+        type="button"
+        className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted/50"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <span aria-hidden className="text-muted-foreground">
+            {open ? '▾' : '▸'}
+          </span>
+          <span className="font-mono font-medium">{group.key}</span>
+          <span className="text-sm text-muted-foreground">
+            {group.issueDate || 'sin fecha'} · {group.rawCustomer}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-sm tabular-nums">
+            {formatMoney(group.totalPen.toFixed(4))} ·{' '}
+            {group.live === 1 ? '1 línea' : `${String(group.live)} líneas`}
+          </span>
+          <Badge variant={status.variant}>{status.label}</Badge>
+        </div>
+      </button>
+      {documentError !== null && (
+        <p className="px-4 pb-2 text-xs text-destructive">{documentError}</p>
+      )}
+      {open && (
+        <div
+          className="overflow-x-auto border-t px-4 pb-3"
+          tabIndex={0}
+          role="region"
+          aria-label={`Líneas de ${group.key}`}
+        >
+          <table className="w-full min-w-[60rem] text-sm">
+            <thead className="text-left text-xs uppercase text-muted-foreground">
+              <tr className="border-b">
+                <th className="py-2 pr-3 font-medium">Cliente</th>
+                <th className="py-2 pr-3 font-medium">Producto</th>
+                <th className="py-2 pr-3 text-right font-medium">Cantidad</th>
+                <th className="py-2 pr-3 text-right font-medium">P. unit. S/</th>
+                <th className="py-2 pr-3 font-medium">Plan de corte</th>
+                <th className="py-2 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {group.rows.map((row) => (
+                <ImportRow
+                  key={row.raw.rowNumber}
+                  row={row}
+                  customerOptions={customerOptions}
+                  productOptions={productOptions}
+                  disabled={disabled}
+                  onChange={(patch) => {
+                    onChange(row.raw.rowNumber, group.key, patch);
+                  }}
+                  onCreatedCustomer={onCreatedCustomer}
+                  onCreatedProduct={onCreatedProduct}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Una fila
 // ---------------------------------------------------------------------------
 
 function ImportRow({
   row,
-  customers,
-  products,
-  documentError,
+  customerOptions,
+  productOptions,
   disabled,
   onChange,
+  onCreatedCustomer,
+  onCreatedProduct,
 }: {
   row: ResolvedRow;
-  customers: readonly CustomerDto[];
-  products: readonly ProductDto[];
-  documentError: string | null;
+  customerOptions: readonly SearchSelectOption[];
+  productOptions: readonly SearchSelectOption[];
   disabled: boolean;
   onChange: (patch: RowEdit) => void;
+  onCreatedCustomer: (customer: CustomerDto) => void;
+  onCreatedProduct: (product: ProductDto) => void;
 }) {
   const { raw } = row;
   const excluded = raw.excludedReason !== null;
@@ -390,7 +624,6 @@ function ImportRow({
   if (row.removed) {
     return (
       <tr className="border-b text-muted-foreground">
-        <td className="py-2 pr-3 font-mono">{raw.documentKey}</td>
         <td className="py-2 pr-3" colSpan={5}>
           Fila quitada de la importación.
         </td>
@@ -413,36 +646,39 @@ function ImportRow({
   return (
     <tr className={`border-b align-top ${excluded ? 'text-muted-foreground' : ''}`}>
       <td className="py-3 pr-3">
-        <div className="font-mono">{raw.documentKey}</div>
-        <div className="text-xs text-muted-foreground">{raw.issueDate || 'sin fecha'}</div>
-        {excluded && (
-          <div className="mt-1 w-56 text-xs text-muted-foreground">{raw.excludedReason}</div>
-        )}
-        {documentError !== null && (
-          <div className="mt-1 w-56 text-xs text-destructive">{documentError}</div>
-        )}
-      </td>
-      <td className="py-3 pr-3">
         {excluded ? (
-          <span className="text-xs">{raw.rawCustomer}</span>
+          <div className="text-xs">
+            <div>{raw.rawCustomer}</div>
+            <div className="mt-1 w-56 text-muted-foreground">{raw.excludedReason}</div>
+          </div>
         ) : (
           <>
-            <select
-              aria-label={`Cliente de la fila ${String(raw.rowNumber)}`}
-              className="h-9 w-52 rounded-md border bg-background px-2 text-xs"
-              value={row.customerId ?? ''}
-              disabled={disabled}
-              onChange={(e) => {
-                onChange({ customerId: e.target.value });
-              }}
-            >
-              <option value="">Elige el cliente</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.docNumber} — {c.name}
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <SearchSelectField
+                label={`Cliente de la fila ${String(raw.rowNumber)}`}
+                placeholder="Elige el cliente"
+                options={customerOptions}
+                value={row.customerId}
+                disabled={disabled}
+                onChange={(id) => {
+                  onChange({ customerId: id });
+                }}
+              />
+              {/*
+                D-156: el botón que saca el callejón. Un cliente que no está en el maestro
+                ya no obliga a irse de la pantalla y perder el archivo revisado; se da de
+                alta acá con el **mismo** formulario, y la fila se rellena sola. Sigue sin
+                crearse nada solo (D-152): es un acto explícito de una persona.
+              */}
+              <ExpressCreateCustomer
+                initial={{ name: raw.rawCustomer }}
+                disabled={disabled}
+                onCreated={(created) => {
+                  onCreatedCustomer(created);
+                  onChange({ customerId: created.id });
+                }}
+              />
+            </div>
             <div className="mt-1 w-52 text-xs text-muted-foreground">{raw.rawCustomer}</div>
           </>
         )}
@@ -453,22 +689,26 @@ function ImportRow({
           <span className="text-xs">{raw.rawSku}</span>
         ) : (
           <>
-            <select
-              aria-label={`Producto de la fila ${String(raw.rowNumber)}`}
-              className="h-9 w-52 rounded-md border bg-background px-2 text-xs"
-              value={row.productId ?? ''}
-              disabled={disabled}
-              onChange={(e) => {
-                onChange({ productId: e.target.value });
-              }}
-            >
-              <option value="">Elige el producto</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.sku} — {p.name}
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <SearchSelectField
+                label={`Producto de la fila ${String(raw.rowNumber)}`}
+                placeholder="Elige el producto"
+                options={productOptions}
+                value={row.productId}
+                disabled={disabled}
+                onChange={(id) => {
+                  onChange({ productId: id });
+                }}
+              />
+              <ExpressCreateProduct
+                initial={{ sku: raw.rawSku, name: raw.rawProductName || raw.rawSku }}
+                disabled={disabled}
+                onCreated={(created) => {
+                  onCreatedProduct(created);
+                  onChange({ productId: created.id });
+                }}
+              />
+            </div>
             <div className="mt-1 w-52 text-xs text-muted-foreground">
               {raw.rawSku} · {raw.rawUnit}
             </div>
@@ -558,6 +798,18 @@ function ImportRow({
   );
 }
 
+/**
+ * El maestro con lo recién creado encima, sin duplicar por id. Lo creado gana: es la versión
+ * más nueva, y mientras la query no se refresca es la **única** que existe del lado del
+ * navegador.
+ */
+function mergeById<T extends { id: string }>(base: readonly T[], extra: readonly T[]): T[] {
+  if (extra.length === 0) return [...base];
+  const byId = new Map(base.map((item) => [item.id, item]));
+  for (const item of extra) byId.set(item.id, item);
+  return [...byId.values()];
+}
+
 function Issue({ row, field }: { row: ResolvedRow; field: string }) {
   // Todos los del campo, no el primero: un producto puede faltar **y** traer el aviso de
   // unidad, y esconder uno de los dos deja al usuario resolviendo a ciegas.
@@ -603,6 +855,7 @@ function resolveRow(
   raw: QuotationImportRowDto,
   edit: RowEdit,
   productsById: ReadonlyMap<string, ProductDto>,
+  customerIds: ReadonlySet<string>,
 ): ResolvedRow {
   const customerId = edit.customerId ?? raw.customerId;
   const productId = edit.productId ?? raw.productId;
@@ -626,18 +879,29 @@ function resolveRow(
     }
   }
 
-  if (!customerId) {
+  // **Un id que el maestro no ofrece cuenta como faltante.** El preview puede haber mapeado
+  // la fila a un cliente o un SKU **desactivado**, que las consultas de esta pantalla
+  // filtran: el campo se veía vacío, la fila no marcaba nada, y el archivo entero moría en
+  // el confirm con "el cliente está desactivado" —justo el error que desde acá no se puede
+  // arreglar—.
+  const customersLoaded = customerIds.size > 0;
+  const productsLoaded = productsById.size > 0;
+  if (!customerId || (customersLoaded && !customerIds.has(customerId))) {
     issues.unshift({
       field: 'customer',
       severity: 'error',
-      message: 'Elige el cliente: no se crea ninguno desde el importador.',
+      message: customerId
+        ? 'Ese cliente no está entre los activos: elige otro o dalo de alta.'
+        : 'Elige el cliente o créalo con el botón de al lado.',
     });
   }
-  if (!productId) {
+  if (!productId || (productsLoaded && !productsById.has(productId))) {
     issues.unshift({
       field: 'product',
       severity: 'error',
-      message: 'Elige el producto: no se crea ninguno desde el importador.',
+      message: productId
+        ? 'Ese producto no está entre los activos: elige otro o dalo de alta.'
+        : 'Elige el producto o créalo con el botón de al lado.',
     });
   }
   if (!/^\d+(\.\d{1,3})?$/.test(qty.trim()) || toDecimal(qty.trim() || '0').lte(0)) {
@@ -740,7 +1004,9 @@ function parsePlan(text: string): PlanParse {
     if (meters.times(1000).lt(MIN_PIECE_LENGTH_MM) || meters.times(1000).gt(MAX_PIECE_LENGTH_MM)) {
       return {
         ok: false,
-        reason: `El largo va entre ${String(MIN_PIECE_LENGTH_MM / 1000)} y ${String(MAX_PIECE_LENGTH_MM / 1000)} metros.`,
+        reason:
+          `El largo va entre ${toDecimal(String(MIN_PIECE_LENGTH_MM)).div(1000).toFixed(2)} y ` +
+          `${toDecimal(String(MAX_PIECE_LENGTH_MM)).div(1000).toFixed(2)} metros.`,
       };
     }
     if (seen.has(lengthMm)) {

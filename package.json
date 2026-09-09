@@ -22,6 +22,7 @@
     "db:reset": "pnpm --filter @ayr/api db:reset",
     "env:local": "node scripts/write-local-env.mjs",
     "dev:local": "node scripts/dev-local.mjs",
+    "dev:preview": "node scripts/dev-preview.mjs",
     "db:local": "node scripts/db-local.mjs",
     "secrets:gh": "node scripts/gh-secrets.mjs",
     "secrets:gcp": "node scripts/gcp-secrets.mjs",

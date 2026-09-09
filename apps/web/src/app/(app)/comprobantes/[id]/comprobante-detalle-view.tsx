@@ -434,7 +434,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             <h1 className="text-2xl font-semibold">{d.number ?? 'Borrador'}</h1>
             <FiscalDocumentStatusBadge status={d.status} isStalled={d.isStalled} />
             {/* D-153: el origen se marca siempre que no sea del ERP, no solo si es importado. */}
-            {isExternal && <Badge variant="outline">{FISCAL_DOCUMENT_ORIGIN_LABELS[d.origin]}</Badge>}
+            {isExternal && (
+              <Badge variant="outline">{FISCAL_DOCUMENT_ORIGIN_LABELS[d.origin]}</Badge>
+            )}
             {d.archivedAt && <Badge variant="secondary">Versión archivada</Badge>}
           </div>
           {/* D-110: quién anuló, cuándo y por qué. Es lo primero que se pregunta ante un

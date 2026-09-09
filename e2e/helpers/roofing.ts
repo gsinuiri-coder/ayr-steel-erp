@@ -271,18 +271,51 @@ export async function quoteAndOrder(
     promisedDeliveryDate?: string;
   },
 ): Promise<{ quotation: QuotationDto; order: SalesOrderDto }> {
+  return quoteAndOrderLines(api, {
+    customerId: input.customerId,
+    lines: [
+      {
+        productId: input.productId,
+        rows: input.rows,
+        ...(input.unitPricePen === undefined ? {} : { unitPricePen: input.unitPricePen }),
+      },
+    ],
+    ...(input.promisedDeliveryDate === undefined
+      ? {}
+      : { promisedDeliveryDate: input.promisedDeliveryDate }),
+  });
+}
+
+/**
+ * Lo mismo, con **varias líneas a medida en el mismo pedido**.
+ *
+ * Es el escenario que D-155 puso en el centro y que D-154 vino a arreglar: un pedido de
+ * coberturas tiene una reserva por línea y una OP por reserva, así que montar la bobina de la
+ * línea 1 se comprobaba contra la promesa —viva y del mismo pedido— de la línea 2. Un pedido
+ * de una sola línea no puede reproducirlo.
+ */
+export async function quoteAndOrderLines(
+  api: APIRequestContext,
+  input: {
+    customerId: string;
+    lines: {
+      productId: string;
+      rows: { lengthMm: string; qty: number }[];
+      unitPricePen?: string;
+    }[];
+    promisedDeliveryDate?: string;
+  },
+): Promise<{ quotation: QuotationDto; order: SalesOrderDto }> {
   const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
     customerId: input.customerId,
     businessLine: ROOFING_LINE,
     issueDate: today(),
-    items: [
-      {
-        productId: input.productId,
-        qty: metersOf(input.rows),
-        unitPricePen: input.unitPricePen ?? '30',
-        pieces: input.rows,
-      },
-    ],
+    items: input.lines.map((line) => ({
+      productId: line.productId,
+      qty: metersOf(line.rows),
+      unitPricePen: line.unitPricePen ?? '30',
+      pieces: line.rows,
+    })),
   });
   await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
   // `confirmQuotationSchema` (Fase 7) valida un objeto; `ZodValidationPipe` trata un body
@@ -293,6 +326,93 @@ export async function quoteAndOrder(
     { promisedDeliveryDate: input.promisedDeliveryDate },
   );
   return { quotation, order };
+}
+
+/** D-148: la OP de cada línea del pedido que todavía no la tiene, de una sola vez. */
+export async function roofingOrdersFromSalesOrder(
+  api: APIRequestContext,
+  salesOrderId: string,
+): Promise<{ created: { orderId: string; code: string }[]; alreadyQueued: number }> {
+  return postJson<{ created: { orderId: string; code: string }[]; alreadyQueued: number }>(
+    api,
+    `/api/production/roofing/from-sales-order/${salesOrderId}`,
+    {},
+  );
+}
+
+/**
+ * Una fila de `GET /production/roofing/batch`: lo que el espacio de producción del pedido
+ * (D-155) pinta en cada pestaña. El `POST` de la tanda (D-147) ya no existe; el guardado es
+ * por orden, con `POST /production/roofing/:id/report`.
+ */
+export interface BatchOrderRow {
+  orderId: string;
+  code: string;
+  status: string;
+  /** D-155: la reserva de la orden, para pedir las bobinas candidatas sin esconder su material. */
+  reservationId: string | null;
+  productId: string;
+  productSku: string;
+  salesOrderId: string | null;
+  salesOrderCode: string | null;
+  planMeters: string;
+  reportedMeters: string;
+  remainingMeters: string;
+  declaredKg: string;
+  reportedKg: string;
+  planItems: { lineNumber: number; lengthMm: string; qty: number }[];
+  remainingPieces: { lineNumber: number; lengthMm: string; qty: number }[];
+  coils: {
+    coilId: string;
+    /** D-155: la asignación, para poder bajar la bobina desde la propia pestaña. */
+    consumptionId: string;
+    coilCode: string;
+    consumedKg: string;
+    remainingKg: string;
+  }[];
+}
+
+export async function batchOrders(
+  api: APIRequestContext,
+  salesOrderId?: string,
+): Promise<BatchOrderRow[]> {
+  return getJson<BatchOrderRow[]>(
+    api,
+    `/api/production/roofing/batch${salesOrderId ? `?salesOrderId=${salesOrderId}` : ''}`,
+  );
+}
+
+/** Montar una bobina en la roladora (D-086). Devuelve la orden con los avisos de D-154. */
+export async function mountCoil(
+  api: APIRequestContext,
+  orderId: string,
+  input: { coilId: string; qtyKg?: string },
+): Promise<ProductionOrderDto> {
+  return postJson<ProductionOrderDto>(api, `/api/production/roofing/${orderId}/coils`, input);
+}
+
+/** Reportar los largos que salieron (D-083). Devuelve la orden con los avisos de D-154. */
+export async function reportPieces(
+  api: APIRequestContext,
+  orderId: string,
+  input: {
+    pieces: { lengthMm: string; qty: number }[];
+    coilId?: string;
+    consumedKg?: string;
+  },
+): Promise<ProductionOrderDto> {
+  return postJson<ProductionOrderDto>(api, `/api/production/roofing/${orderId}/report`, input);
+}
+
+/** El reporte vigente más reciente de la orden, que es donde D-154 deja su aviso. */
+export async function lastActiveReport(
+  api: APIRequestContext,
+  orderId: string,
+): Promise<ProductionOrderDto['reports'][number]> {
+  const order = await getJson<ProductionOrderDto>(api, `/api/production/${orderId}`);
+  const active = order.reports.filter((r) => r.status === 'ACTIVE');
+  expect(active.length, `${orderId} no tiene ningún reporte vigente`).toBeGreaterThan(0);
+  return active[active.length - 1]!;
 }
 
 /** Reservas del pedido, tal como las devuelve el detalle. */

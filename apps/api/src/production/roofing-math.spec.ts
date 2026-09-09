@@ -7,6 +7,7 @@ import {
   piecesMeters,
   piecesTheoreticalKg,
   remainingPlanPieces,
+  roofingConsumptionDeviation,
   roofingPlanOverrun,
   roofingPlanProgress,
   thicknessWithinTolerance,
@@ -328,5 +329,53 @@ describe('piecesTheoreticalKg (D-146)', () => {
     // El kilo se redondea **por plancha** (10.8801 → 10.880) y recién después se suma, que
     // es lo que hace el kardex: 10 × 10.880.
     expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe('108.800');
+  });
+});
+
+/**
+ * D-154. La desviación del kilo declarado es lo único que quedó del tope duro de D-146, y
+ * la diferencia es entera: antes había que **falsear** el dato para poder guardarlo.
+ */
+describe('roofingConsumptionDeviation (D-154)', () => {
+  const base = { theoreticalKg: '100.000', alreadyDeclaredKg: '0', planKg: null };
+
+  it('calla dentro de la banda de ±10 %', () => {
+    expect(roofingConsumptionDeviation({ ...base, declaredKg: '109.000' })).toBeNull();
+    expect(roofingConsumptionDeviation({ ...base, declaredKg: '91.000' })).toBeNull();
+    expect(roofingConsumptionDeviation({ ...base, declaredKg: '100.000' })).toBeNull();
+  });
+
+  it('avisa por encima y dice cuánto', () => {
+    const note = roofingConsumptionDeviation({ ...base, declaredKg: '125.000' });
+    expect(note).toContain('25.0 % por encima');
+  });
+
+  it('avisa por debajo y sugiere el dígito que falta', () => {
+    // El caso real: 12.5 en vez de 125. Sin aviso, el cierre reconcilia contra una cifra
+    // que nadie miró y el despunte sale con signo cambiado.
+    const note = roofingConsumptionDeviation({ ...base, declaredKg: '12.500' });
+    expect(note).toContain('por debajo');
+    expect(note).toContain('falte un dígito');
+  });
+
+  it('avisa cuando el acumulado pasa el kilo teórico del plan, y no lanza', () => {
+    const note = roofingConsumptionDeviation({
+      theoreticalKg: '100.000',
+      declaredKg: '100.000',
+      alreadyDeclaredKg: '400.000',
+      planKg: '450.000',
+    });
+    expect(note).toContain('pasa los 450.000 kg');
+  });
+
+  it('sin plan de corte no inventa el segundo aviso', () => {
+    expect(
+      roofingConsumptionDeviation({
+        theoreticalKg: '100.000',
+        declaredKg: '100.000',
+        alreadyDeclaredKg: '9999.000',
+        planKg: null,
+      }),
+    ).toBeNull();
   });
 });

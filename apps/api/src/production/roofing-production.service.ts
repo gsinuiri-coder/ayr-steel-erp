@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  HttpException,
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   BusinessLineCode,
   CoilKind,
@@ -25,11 +19,10 @@ import {
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   piecesCount,
-  piecesFromPlanMeters,
   piecesMeters,
   productionOrderCode,
   remainingPlanPieces,
-  roofingPiecesSchema,
+  roofingConsumptionDeviation,
   roofingPlanOverrun,
   roofingPlanProgress,
   salesOrderCode,
@@ -45,12 +38,11 @@ import {
   type MountRoofingCoilInput,
   type PieceLike,
   type ProductionOrderDto,
-  type ReportRoofingBatchInput,
+  type RawMaterialWarningDto,
   type ReportRoofingPiecesInput,
   type ReverseMovementInput,
   type RoofingBatchCreateResultDto,
   type RoofingBatchOrderDto,
-  type RoofingBatchResultDto,
   type RoofingCoilOptionDto,
   type UpdateRoofingPlanInput,
 } from '@ayr/shared';
@@ -74,7 +66,7 @@ import {
   reduceReservation,
   upsertItemReservation,
 } from '../sales/reservation-transfer';
-import { assertRawMaterialInvariant } from '../sales/raw-material';
+import { findRawMaterialShortfalls, type RawMaterialShortfall } from '../sales/raw-material';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
 import { allocateStripKg, type StripAllocationRow } from './production-math';
 import {
@@ -127,6 +119,36 @@ export class RoofingProductionService {
     private readonly operationDate: OperationDateService,
     @Inject(ENV) private readonly env: Env,
   ) {}
+
+  // -------------------------------------------------------------------------
+  // D-154 — de quién es la promesa que esta orden no tiene que respetar
+  // -------------------------------------------------------------------------
+
+  /**
+   * El alcance que la invariante del agregado (D-134) **no** cuenta en contra de esta orden:
+   * su propia reserva y todas las hermanas del mismo pedido.
+   *
+   * La segunda mitad es la que faltaba. Un pedido de coberturas reserva materia prima **una
+   * vez por línea** y genera una OP por reserva (D-084/D-148), así que montar la bobina de la
+   * primera línea se comprobaba contra la promesa —viva, del mismo pedido— de la segunda y
+   * salía "hay 150.000 kg prometidos a PED-000003" sobre el pedido que planta estaba
+   * fabricando. Un pedido no puede bloquearse a sí mismo: si el material no alcanza para sus
+   * propias líneas, eso se ve al confirmarlo, no en la roladora.
+   */
+  private async ownPromiseScope(
+    tx: Prisma.TransactionClient,
+    order: { reservationId: string | null },
+  ): Promise<{ exceptReservationIds: string[]; exceptSalesOrderIds: string[] }> {
+    if (!order.reservationId) return { exceptReservationIds: [], exceptSalesOrderIds: [] };
+    const reservation = await tx.reservation.findUnique({
+      where: { id: order.reservationId },
+      select: { salesOrderId: true },
+    });
+    return {
+      exceptReservationIds: [order.reservationId],
+      exceptSalesOrderIds: reservation ? [reservation.salesOrderId] : [],
+    };
+  }
 
   // -------------------------------------------------------------------------
   // D-084 — la orden nace del pedido, con su plan de corte copiado
@@ -425,6 +447,7 @@ export class RoofingProductionService {
     orderId: string,
     input: MountRoofingCoilInput,
   ): Promise<ProductionOrderDto> {
+    let warnings: RawMaterialShortfall[] = [];
     // El presupuesto por defecto de Prisma son 5 s, y montar una bobina ya no entra:
     // además del lock y las lecturas de siempre, D-134 agregó la comprobación del agregado,
     // que recorre las bobinas compatibles. Contra Neon —con latencia de red real— se pasaba
@@ -541,14 +564,22 @@ export class RoofingProductionService {
           data: { status: ProductionOrderStatus.IN_PROGRESS },
         });
 
-        // D-134: montar saca la bobina del disponible del agregado sin mover un gramo de
-        // kardex (D-060), así que es exactamente la clase de operación que la invariante por
-        // ítem no ve. La reserva de **este** pedido queda exceptuada: es la que esta OP viene
-        // a cumplir, y contarla la bloquearía a sí misma. Cualquier otra promesa genérica que
-        // quede sin material corta el montaje acá, antes de que nadie role nada.
-        await assertRawMaterialInvariant(tx, [coil.id], this.thicknessToleranceMm(), {
-          exceptReservationIds: order.reservationId ? [order.reservationId] : [],
-        });
+        // D-134: montar saca del disponible del agregado los kilos que la orden retiene, sin
+        // mover un gramo de kardex (D-060), así que es exactamente la clase de operación que
+        // la invariante por ítem no ve.
+        //
+        // **D-154: avisa, nunca bloquea.** Las promesas del propio pedido no cuentan (ver
+        // `ownPromiseScope`), y si aun así el agregado queda corto para pedidos ajenos, el
+        // montaje entra igual y el aviso viaja en la respuesta y al `audit_log`. Cortar acá
+        // era pedirle al operario de la roladora que anulara el pedido de otro cliente o
+        // liberara su reserva —dos cosas que no puede hacer y que no debería—, y el resultado
+        // medido fue material rolado que nunca se registró.
+        warnings = await findRawMaterialShortfalls(
+          tx,
+          [coil.id],
+          this.thicknessToleranceMm(),
+          await this.ownPromiseScope(tx, order),
+        );
 
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -560,13 +591,28 @@ export class RoofingProductionService {
             coilId: coil.id,
             coilCode: coil.code,
             assignedKg: toFixedString(assignedKg, 'KG'),
+            rawMaterialWarnings:
+              warnings.length === 0 ? null : dedupeWarnings(warnings).map((w) => w.message),
           },
         });
       },
       { timeout: 30_000, maxWait: 10_000 },
     );
 
-    return this.production.findOne(orderId);
+    return this.withWarnings(await this.production.findOne(orderId), warnings);
+  }
+
+  /**
+   * Cuelga de la respuesta los avisos que dejó **esta** operación (D-154). No toca la orden
+   * en la base: es un campo de la respuesta, y un `GET` posterior no lo trae.
+   */
+  private withWarnings(
+    order: ProductionOrderDto,
+    warnings: RawMaterialShortfall[],
+  ): ProductionOrderDto {
+    const unique = dedupeWarnings(warnings);
+    if (unique.length === 0) return order;
+    return { ...order, rawMaterialWarnings: unique.map(toWarningDto) };
   }
 
   /** Bajar una bobina montada por error. Solo si todavía no roló nada. */
@@ -631,24 +677,24 @@ export class RoofingProductionService {
     input: ReportRoofingPiecesInput,
   ): Promise<ProductionOrderDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    await this.prisma.$transaction(
-      async (tx) => {
-        await this.reportInTx(tx, actor, orderId, input, operationDate);
-      },
+    const warnings = await this.prisma.$transaction(
+      async (tx) => this.reportInTx(tx, actor, orderId, input, operationDate),
       { timeout: 30_000 },
     );
 
-    return this.production.findOne(orderId);
+    return this.withWarnings(await this.production.findOne(orderId), warnings);
   }
 
   /**
    * El cuerpo de `report`, **dentro de la transacción del llamador** (patrón `*InTx`,
    * D-099).
    *
-   * Existe para que la tanda (D-147) escriba sus N filas en **una** transacción todo o nada
-   * sin una segunda copia de esta lógica: con dos, el tope del plan (D-146) y el traslado de
-   * la promesa (D-088) vivirían en dos lugares y divergirían — que es exactamente cómo
-   * llegó desplegado D-145.
+   * Sigue partido en dos aunque la tanda de D-147 ya no exista: la importación de ventas y el
+   * espacio de producción del pedido (D-155) entran por acá, y con dos copias el tope del
+   * plan (D-146) y el traslado de la promesa (D-088) vivirían en dos lugares y divergirían —
+   * que es exactamente cómo llegó desplegado D-145.
+   *
+   * Devuelve los avisos del agregado que dejó (D-154): el llamador los cuelga de la respuesta.
    */
   private async reportInTx(
     tx: Prisma.TransactionClient,
@@ -656,7 +702,7 @@ export class RoofingProductionService {
     orderId: string,
     input: ReportRoofingPiecesInput,
     operationDate: string,
-  ): Promise<void> {
+  ): Promise<RawMaterialShortfall[]> {
     const order = await lockOrder(tx, orderId);
     assertKind(order, ProductionOrderKind.ROOFING);
     if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
@@ -773,26 +819,28 @@ export class RoofingProductionService {
       );
     }
 
-    // D-146, segunda mitad: los kilos que planta declara para este reporte. **No es un
-    // consumo** —el kardex sale por `neededKg`, y el consumo real se reconcilia al cerrar
-    // (D-089)—, así que lo único que hace falta es que el acumulado declarado no supere lo
-    // que el plan entero puede pesar con la geometría del rollo montado. Ese techo deja
-    // margen para el despunte real de cada reporte sin admitir una cifra imposible.
+    // D-146, segunda mitad, **corregida por D-154**: los kilos que planta declara para este
+    // reporte. **No es un consumo** —el kardex sale por `neededKg`, y el consumo real se
+    // reconcilia al cerrar (D-089)—, así que pasarse del kilo teórico del plan no rompe nada:
+    // solo describe una corrida que gastó más de lo que la geometría dice, que es justamente
+    // lo que hay que poder anotar. Como tope duro convertía el dato observado en un dato que
+    // había que falsear para poder guardarlo. Queda como **aviso de desviación**, del mismo
+    // lado que el aviso del agregado.
     const declaredKg = input.consumedKg === undefined ? null : toDecimal(input.consumedKg);
-    if (declaredKg !== null && progress.hasPlan) {
+    const deviation: string[] = [];
+    if (declaredKg !== null) {
       const alreadyDeclaredKg = liveReportRows.reduce(
         (acc, r) =>
           acc.plus(r.consumedKg === null ? new Decimal(0) : toDecimal(r.consumedKg.toString())),
         new Decimal(0),
       );
-      const planKg = roofingTheoreticalKg(geometry, planPieces);
-      if (alreadyDeclaredKg.plus(declaredKg).gt(planKg)) {
-        throw new BadRequestException(
-          `El plan de ${productionOrderCode(order.seq)} pesa ${planKg.toFixed(3)} kg teóricos con ` +
-            `${row.coil.code} montada y ya hay ${alreadyDeclaredKg.toFixed(3)} kg declarados: ` +
-            `no se pueden declarar ${declaredKg.toFixed(3)} kg más.`,
-        );
-      }
+      const note = roofingConsumptionDeviation({
+        declaredKg,
+        theoreticalKg: neededKg,
+        alreadyDeclaredKg,
+        planKg: progress.hasPlan ? roofingTheoreticalKg(geometry, planPieces) : null,
+      });
+      if (note !== null) deviation.push(note);
     }
 
     // Un solo rollo por reporte, así que el reparto es trivial — pero pasa por el mismo
@@ -826,6 +874,7 @@ export class RoofingProductionService {
       });
       salesOrderId = reservation.salesOrderId;
       salesOrderItemId = reservation.salesOrderItemId;
+      // La misma fila que necesita `ownPromiseScope` (D-154): se lee una vez.
       // Pedido primero, reserva después: `SalesOrdersService.cancel` toma esos dos
       // recursos en ese mismo orden, y con el orden invertido anular un pedido y
       // reportar producción a la vez se trababan en un deadlock.
@@ -865,8 +914,24 @@ export class RoofingProductionService {
     });
 
     let materialCostPen = new Decimal(0);
+    const warnings: RawMaterialShortfall[] = [];
+    const scope = {
+      exceptReservationIds: order.reservationId ? [order.reservationId] : [],
+      exceptSalesOrderIds: salesOrderId === null ? [] : [salesOrderId],
+    };
     for (const allocation of allocations) {
       await this.coils.lockCoil(tx, allocation.coilId);
+      // **La custodia se actualiza ANTES de emitir el kardex.** El saldo baja con el
+      // movimiento y `heldKg` sale de `assignedKg − consumedKg`: con el orden invertido, en
+      // el instante en que la invariante lee el agregado el saldo ya bajó y el consumo
+      // todavía no, así que el disponible salía subestimado en exactamente los kilos que
+      // este reporte acaba de sacar — un aviso falso, y encima persistido en el reporte.
+      await tx.productionOrderConsumption.update({
+        where: { id: allocation.consumptionId },
+        data: {
+          consumedKg: toFixedString(toDecimal(row.consumedKg.toString()).plus(allocation.kg), 'KG'),
+        },
+      });
       const out = await this.inventory.record(tx, {
         businessLineId: order.businessLineId,
         itemType: 'COIL',
@@ -878,9 +943,12 @@ export class RoofingProductionService {
         refId: report.id,
         notes: `Rolado de ${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
         actorId: actor.id,
-        // D-134: lo que resta de la promesa que esta orden viene a cumplir no puede
-        // bloquear su propio consumo. Ver `RecordMovementInput.exceptReservationIds`.
-        exceptReservationIds: order.reservationId ? [order.reservationId] : [],
+        // D-134/D-154: ni lo que resta de la promesa que esta orden viene a cumplir ni la de
+        // sus hermanas del mismo pedido pueden bloquear su propio consumo, y el faltante de
+        // un pedido ajeno **avisa en vez de cortar**. Ver `ownPromiseScope` y
+        // `RecordMovementInput.rawMaterialWarnings`.
+        ...scope,
+        rawMaterialWarnings: warnings,
         // Sin esto, un reporte retrofechado dejaba el consumo de la bobina fechado hoy y
         // el ingreso de producto en la fecha real: los dos lados del mismo hecho en meses
         // distintos, en una tabla append-only que no se corrige con un UPDATE.
@@ -891,13 +959,6 @@ export class RoofingProductionService {
         throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
       }
       materialCostPen = materialCostPen.plus(toDecimal(out.totalCost.toString()));
-
-      await tx.productionOrderConsumption.update({
-        where: { id: allocation.consumptionId },
-        data: {
-          consumedKg: toFixedString(toDecimal(row.consumedKg.toString()).plus(allocation.kg), 'KG'),
-        },
-      });
     }
 
     // D-083: el producto a medida entra en METROS y la plancha de catálogo en piezas.
@@ -960,11 +1021,18 @@ export class RoofingProductionService {
       }
     }
 
+    // D-154: el aviso queda **en la fila del reporte**, no solo en el log. Quien audita una
+    // corrida corta de material mira sus reportes; obligarlo a cruzar `audit_log` para
+    // enterarse de que el sistema ya lo había avisado es la diferencia entre un dato y una
+    // arqueología. `null` cuando no hubo nada que avisar, que es el caso normal.
+    const warningNote =
+      [...deviation, ...dedupeWarnings(warnings).map((w) => w.message)].join(' ') || null;
     await tx.productionReport.update({
       where: { id: report.id },
       data: {
         materialCostPen: toFixedString(materialCostPen, 'MONEY'),
         unitCostPen: toFixedString(unitCostPen, 'MONEY'),
+        rawMaterialWarning: warningNote,
       },
     });
 
@@ -987,21 +1055,27 @@ export class RoofingProductionService {
         reportedMetersAfter: progress.reportedMeters.plus(newMeters).toFixed(3),
         materialCostPen: toFixedString(materialCostPen, 'MONEY'),
         productReservationId,
+        rawMaterialWarning: warningNote,
       },
     });
+
+    return warnings;
   }
 
   // -------------------------------------------------------------------------
-  // D-147 — reportar producción en tanda
+  // D-155 — el espacio de producción: todas las órdenes abiertas de un pedido
   // -------------------------------------------------------------------------
 
   /**
-   * Las órdenes de coberturas abiertas, con lo que la tanda necesita por fila (D-147).
+   * Las órdenes de coberturas abiertas con todo lo que el espacio de producción (D-155)
+   * necesita por pestaña. Sin `salesOrderId` son todas; con él, las de ese pedido.
    *
-   * Es una consulta propia y no el listado de `/production` porque la fila necesita tres
-   * cosas que el listado omite a propósito: el plan de corte, los largos ya reportados y la
-   * geometría de la bobina montada. Pedirlas orden por orden con `findOne` serían N+1
-   * requests desde el navegador, que es justo lo que la pantalla viene a evitar.
+   * Es una consulta propia y no el listado de `/production` porque cada pestaña necesita
+   * cuatro cosas que el listado omite a propósito: el plan de corte, los largos ya
+   * reportados, la geometría de la bobina montada y la reserva de la orden (para pedirle al
+   * selector las bobinas candidatas sin que la promesa propia se excluya a sí misma).
+   * Pedirlas orden por orden con `findOne` serían N+1 requests desde el navegador, que es
+   * justo lo que la pantalla viene a evitar.
    */
   async batchOrders(salesOrderId?: string): Promise<RoofingBatchOrderDto[]> {
     const orders = await this.prisma.productionOrder.findMany({
@@ -1054,6 +1128,9 @@ export class RoofingProductionService {
         orderId: order.id,
         code: productionOrderCode(order.seq),
         status: order.status,
+        // D-155: la pestaña monta bobinas, y `GET /production/roofing/coils` necesita la
+        // reserva propia para no esconder el material que este mismo pedido prometió.
+        reservationId: order.reservationId,
         productId: order.productId,
         productSku: order.product.sku,
         productName: order.product.name,
@@ -1084,10 +1161,12 @@ export class RoofingProductionService {
           .toFixed(3),
         coils: order.consumptions.map((c) => ({
           coilId: c.coilId,
+          consumptionId: c.id,
           coilCode: c.coil.code,
           widthMm: c.coil.widthMm.toFixed(2),
           thicknessMm: c.coil.thicknessMm.toFixed(2),
           densityFactor: c.coil.finish.densityFactor.toFixed(4),
+          consumedKg: c.consumedKg.toFixed(3),
           remainingKg: toFixedString(
             toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
             'KG',
@@ -1096,144 +1175,6 @@ export class RoofingProductionService {
         operationDate: fromDateOnly(order.operationDate),
       };
     });
-  }
-
-  /**
-   * Reportar una tanda entera: N órdenes, un número de metros por orden (D-147).
-   *
-   * **Todo o nada, y con todos los errores de una vez.** Una fila que no valida no aborta en
-   * el acto: se anota, la tanda sigue evaluándose y al final se lanza un único 400 con el
-   * error de cada fila. Quien está transcribiendo una hoja de papel necesita corregirla toda
-   * junta, no descubrir un error por intento — y como todo ocurre dentro de la misma
-   * transacción, lo que las filas buenas alcanzaron a escribir se deshace entero.
-   *
-   * Un error que **no** sea de dominio (una violación de constraint, un deadlock) sí corta en
-   * el acto: a partir de ahí Postgres aborta la transacción y cualquier consulta siguiente
-   * fallaría con un error que no dice nada. Seguir juntando errores ahí sería inventarlos.
-   */
-  async reportBatch(
-    actor: RequestUser,
-    input: ReportRoofingBatchInput,
-  ): Promise<RoofingBatchResultDto> {
-    const operationDate = this.operationDate.resolve(actor, input.operationDate);
-
-    return this.prisma.$transaction(
-      async (tx) => {
-        const failures: Record<string, string[]> = {};
-        let pieces = 0;
-        let meters = new Decimal(0);
-
-        // **Ordenadas por id antes de tocar nada.** Cada fila toma un `FOR UPDATE` sobre su
-        // orden y los va acumulando hasta el commit; con el orden que mande el cliente, dos
-        // tandas simultáneas que compartan órdenes en distinto orden se traban en deadlock.
-        // Es el mismo motivo por el que `report` fija el orden pedido → reserva.
-        const rows = [...input.rows].sort((a, b) => a.orderId.localeCompare(b.orderId));
-
-        for (const [index, row] of rows.entries()) {
-          // **Un savepoint por fila.** `reportInTx` no es atómica por dentro: descuenta la
-          // reserva y crea el reporte **antes** del primer punto que puede fallar por dominio
-          // (`inventory.record`). Sin el savepoint, una fila que falla deja esas escrituras
-          // vivas dentro de la transacción y las filas siguientes se validan contra un estado
-          // que no ocurrió — el caso concreto es una tanda retrofechada sin confirmar, donde
-          // todas las filas fallaban en el kardex y devolvían N errores fabricados. El
-          // resultado final era correcto (el `throw` de abajo revierte todo), pero el contrato
-          // que esta pantalla promete —"el error de **cada** fila"— era falso.
-          const savepoint = `tanda_${String(index)}`;
-          await tx.$executeRawUnsafe(`SAVEPOINT ${savepoint}`);
-          try {
-            const split = await this.splitBatchRow(tx, row);
-            await this.reportInTx(
-              tx,
-              actor,
-              row.orderId,
-              {
-                coilId: row.coilId,
-                pieces: split,
-                consumedKg: row.consumedKg,
-                notes: row.notes,
-                confirmBackdate: input.confirmBackdate,
-              },
-              operationDate,
-            );
-            await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
-            pieces += piecesCount(split);
-            meters = meters.plus(piecesMeters(split));
-          } catch (err) {
-            // Un error que no es de dominio (deadlock, constraint, P2028) corta en el acto:
-            // ahí sí la transacción quedó abortada y seguir juntando errores sería inventarlos.
-            if (!(err instanceof HttpException)) throw err;
-            await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-            failures[row.orderId] = [messageOf(err)];
-          }
-        }
-
-        if (Object.keys(failures).length > 0) {
-          throw new BadRequestException({
-            statusCode: 400,
-            message:
-              `${String(Object.keys(failures).length)} de ${String(input.rows.length)} filas no entraron: ` +
-              'la tanda no se guardó, corrígelas y vuelve a enviarla',
-            errors: failures,
-          });
-        }
-
-        return { orders: input.rows.length, pieces, meters: meters.toFixed(3) };
-      },
-      // Una tanda es hasta `MAX_BATCH_ROWS` reportes con su kardex completo cada uno, y cada
-      // uno hace lo que `report` hacía solo. El presupuesto es el de `close` por orden de
-      // magnitud, no el de un reporte suelto.
-      { timeout: 120_000, maxWait: 15_000 },
-    );
-  }
-
-  /**
-   * Los metros de una fila de la tanda, convertidos a los largos del plan de esa orden
-   * (D-147). Vive acá y no en `reportBatch` para que el error de la fila —"42.5 m no salen
-   * de un número entero de planchas"— llegue por el mismo camino que cualquier otro error de
-   * dominio y termine en el mapa de fallas, no en un 500.
-   */
-  private async splitBatchRow(
-    tx: Prisma.TransactionClient,
-    row: { orderId: string; meters: string },
-  ): Promise<PieceLike[]> {
-    const order = await tx.productionOrder.findUnique({
-      where: { id: row.orderId },
-      select: {
-        kind: true,
-        items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
-        reports: {
-          where: { status: ProductionReportStatus.ACTIVE },
-          select: { piecesDetail: { select: { lengthMm: true, qty: true } } },
-        },
-      },
-    });
-    if (!order) throw new NotFoundException('Orden de producción no encontrada');
-    if (order.kind !== ProductionOrderKind.ROOFING) {
-      throw new BadRequestException(
-        'Esa orden es de perfiles de drywall: opérala desde producción de drywall',
-      );
-    }
-
-    const split = piecesFromPlanMeters(
-      order.items.map(toPieceLike),
-      order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike)),
-      row.meters,
-    );
-    if (!split.ok) throw new BadRequestException(split.reason);
-
-    // Los largos de la tanda **no los tipea nadie**: los deriva el reparto, así que no pasan
-    // por el `ZodValidationPipe` del controller como sí pasan los de un reporte suelto. Se
-    // validan acá con el mismo schema. Hoy no puede fallar —el plan ya cumple esas cotas y lo
-    // derivado es un subconjunto—, y por eso mismo es el chequeo que hay que dejar puesto: si
-    // mañana el plan deja de acotarse en algún camino nuevo, el error sale acá y no como una
-    // fila imposible en `production_report_pieces`.
-    const parsed = roofingPiecesSchema.safeParse(split.pieces);
-    if (!parsed.success) {
-      throw new BadRequestException(
-        `Los largos que salen de esos metros no son válidos: ${parsed.error.issues[0]?.message ?? 'revisa el plan de corte'}`,
-      );
-    }
-    return split.pieces;
   }
 
   // -------------------------------------------------------------------------
@@ -1345,6 +1286,7 @@ export class RoofingProductionService {
   ): Promise<ProductionOrderDto> {
     // D-124: el cierre se fecha aparte del arranque; el despunte es del día del cierre.
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
+    const warnings: RawMaterialShortfall[] = [];
     await this.prisma.$transaction(
       async (tx) => {
         const order = await lockOrder(tx, orderId);
@@ -1462,8 +1404,24 @@ export class RoofingProductionService {
             })),
             scrapKg,
           );
+          // Fuera del bucle: es la misma para todas las asignaciones y adentro sería una
+          // consulta por rollo dentro de una transacción con presupuesto acotado.
+          const scope = await this.ownPromiseScope(tx, order);
           for (const allocation of allocations) {
             await this.coils.lockCoil(tx, allocation.coilId);
+            // La custodia primero, por el mismo motivo que en el reporte: con el orden
+            // invertido la invariante lee un agregado al que ya le bajaron el saldo y
+            // todavía no el consumo, y avisa por kilos que este mismo cierre acaba de sacar.
+            const consumed = rows.find((r) => r.id === allocation.consumptionId);
+            await tx.productionOrderConsumption.update({
+              where: { id: allocation.consumptionId },
+              data: {
+                consumedKg: toFixedString(
+                  toDecimal(consumed?.consumedKg.toString() ?? '0').plus(allocation.kg),
+                  'KG',
+                ),
+              },
+            });
             const out = await this.inventory.record(tx, {
               businessLineId: order.businessLineId,
               itemType: 'COIL',
@@ -1473,9 +1431,12 @@ export class RoofingProductionService {
               unit: Unit.KGM,
               refType: 'SCRAP',
               refId: orderId,
-              // D-134: igual que el reporte — el despunte sale de la bobina que esta orden
-              // montó para cumplir su propia promesa.
-              exceptReservationIds: order.reservationId ? [order.reservationId] : [],
+              // D-134/D-154: igual que el reporte — el despunte sale de la bobina que esta
+              // orden montó para cumplir la promesa de su pedido, y un faltante ajeno avisa
+              // en vez de cortar. Bloquear acá dejaba la orden imposible de cerrar y el
+              // material montado retenido para siempre, que es el peor de los dos males.
+              ...scope,
+              rawMaterialWarnings: warnings,
               notes: input.reason
                 ? `Despunte al cerrar ${productionOrderCode(order.seq)}: ${input.reason}`
                 : `Despunte al cerrar ${productionOrderCode(order.seq)}`,
@@ -1488,16 +1449,6 @@ export class RoofingProductionService {
             }
             scrapCostPen = scrapCostPen.plus(toDecimal(out.totalCost.toString()));
             scrapped.push(`${allocation.coilCode}: ${allocation.kg.toFixed(3)} kg`);
-            const consumed = rows.find((r) => r.id === allocation.consumptionId);
-            await tx.productionOrderConsumption.update({
-              where: { id: allocation.consumptionId },
-              data: {
-                consumedKg: toFixedString(
-                  toDecimal(consumed?.consumedKg.toString() ?? '0').plus(allocation.kg),
-                  'KG',
-                ),
-              },
-            });
           }
         }
 
@@ -1593,13 +1544,15 @@ export class RoofingProductionService {
             releasedReservationKg: releasedReservationKg.gt(0)
               ? toFixedString(releasedReservationKg, 'KG')
               : null,
+            rawMaterialWarnings:
+              warnings.length === 0 ? null : dedupeWarnings(warnings).map((w) => w.message),
           },
         });
       },
       { timeout: 60_000 },
     );
 
-    return this.production.findOne(orderId);
+    return this.withWarnings(await this.production.findOne(orderId), warnings);
   }
 
   // -------------------------------------------------------------------------
@@ -2140,25 +2093,28 @@ export class RoofingProductionService {
   }
 }
 
-/** Fila persistida de largos → la forma mínima que la aritmética compartida necesita. */
 /**
- * El texto que un error de dominio le tiene que dejar a la fila de la tanda (D-147). El
- * cuerpo de un `HttpException` de Nest es una cadena o un objeto con `message`, y sin esto
- * el mapa de fallas guardaba "[object Object]" justo en el caso que la pantalla necesita
- * leer.
+ * Un aviso por agregado, y no uno por bobina (D-154). Una orden con tres rollos de la misma
+ * spec montados emite una salida de kardex por rollo, y cada una comprueba el **mismo**
+ * agregado: sin esto, el operario leía tres veces la misma frase y el `audit_log` guardaba
+ * tres copias. Gana el último, que es el que describe el estado final de la operación.
  */
-function messageOf(err: HttpException): string {
-  const body: unknown = err.getResponse();
-  if (typeof body === 'string') return body;
-  // `null` incluido: sin este chequeo, leer `.message` lanzaba **dentro** del `catch` de la
-  // tanda y una fila con un error raro salía como 500 opaco en vez de como su motivo.
-  if (body === null || typeof body !== 'object') return err.message;
-  const message: unknown = (body as { message?: unknown }).message;
-  if (typeof message === 'string') return message;
-  if (Array.isArray(message)) return message.join(', ');
-  return err.message;
+function dedupeWarnings(warnings: readonly RawMaterialShortfall[]): RawMaterialShortfall[] {
+  const bySpec = new Map<string, RawMaterialShortfall>();
+  for (const w of warnings) bySpec.set(w.specId, w);
+  return [...bySpec.values()];
 }
 
+/**
+ * El faltante del agregado tal como sale a la respuesta (D-154): sin `specId`, que es una
+ * llave interna y no le dice nada a quien lee el aviso en pantalla.
+ */
+function toWarningDto(shortfall: RawMaterialShortfall): RawMaterialWarningDto {
+  const { specId: _specId, ...dto } = shortfall;
+  return dto;
+}
+
+/** Fila persistida de largos → la forma mínima que la aritmética compartida necesita. */
 function toPieceLike(row: { lengthMm: Prisma.Decimal; qty: number }): PieceLike {
   return { lengthMm: row.lengthMm.toFixed(2), qty: row.qty };
 }

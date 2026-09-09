@@ -5,7 +5,6 @@ import {
   createRoofingOrderSchema,
   createRoofingOrdersFromSalesOrderSchema,
   mountRoofingCoilSchema,
-  reportRoofingBatchSchema,
   reportRoofingPiecesSchema,
   reverseMovementSchema,
   Role,
@@ -16,12 +15,10 @@ import {
   type CreateRoofingOrdersFromSalesOrderInput,
   type MountRoofingCoilInput,
   type ProductionOrderDto,
-  type ReportRoofingBatchInput,
   type ReportRoofingPiecesInput,
   type ReverseMovementInput,
   type RoofingBatchCreateResultDto,
   type RoofingBatchOrderDto,
-  type RoofingBatchResultDto,
   type RoofingCoilOptionDto,
   type UpdateRoofingPlanInput,
 } from '@ayr/shared';
@@ -62,26 +59,20 @@ export class RoofingProductionController {
   }
 
   /**
-   * Las órdenes abiertas con lo que la tanda necesita por fila (D-147). `salesOrderId`
-   * acota a un pedido, que es como el encargado busca cuando la hoja es de un cliente.
+   * Las órdenes abiertas con todo lo que el espacio de producción necesita por pestaña
+   * (D-155). `salesOrderId` acota a un pedido, que es como se entra desde el detalle del
+   * pedido; sin él son todas las órdenes abiertas.
+   *
+   * **No hay `POST /batch`.** La tanda de D-147 reportaba N órdenes en una transacción todo
+   * o nada y quedó retirada por D-155: el guardado es por orden, porque montar la bobina ya
+   * lo era y una hoja de ocho órdenes no puede volver a cero porque la séptima tenga un
+   * número mal tipeado.
    */
   @Get('batch')
   batchOrders(
     @Query('salesOrderId', new ParseUUIDPipe({ optional: true })) salesOrderId?: string,
   ): Promise<RoofingBatchOrderDto[]> {
     return this.roofing.batchOrders(salesOrderId);
-  }
-
-  /**
-   * Reportar una tanda entera (D-147): N órdenes en una transacción todo o nada, con el
-   * error de **cada** fila cuando alguna no valida.
-   */
-  @Post('batch')
-  reportBatch(
-    @CurrentUser() actor: RequestUser,
-    @Body(new ZodValidationPipe(reportRoofingBatchSchema)) body: ReportRoofingBatchInput,
-  ): Promise<RoofingBatchResultDto> {
-    return this.roofing.reportBatch(actor, body);
   }
 
   /** Generar la OP de cada línea del pedido que todavía no la tiene (D-148). */

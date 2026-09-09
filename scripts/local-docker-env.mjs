@@ -25,3 +25,12 @@ export const LOCAL_JWT_SECRET =
   'ayr-local-docker-secreto-de-desarrollo-nunca-usar-fuera-de-localhost';
 export const LOCAL_ADMIN_EMAIL = 'admin@ayr.local';
 export const LOCAL_ADMIN_PASSWORD = 'AyrLocal-2026!';
+
+// Segundo usuario, exclusivo de `pnpm dev:preview` (apps/api/prisma/seed-view.ts): admin@ayr.local
+// vive en la misma base que "pnpm dev:local" y su contraseña puede haber cambiado — cualquiera con
+// sesión abierta ahí puede haber pasado por el flujo de cambio obligatorio (RF-03), lo que deja a
+// LOCAL_ADMIN_PASSWORD desactualizada sin que nada lo avise. Este usuario es solo para mirar la app
+// en :4001 y su contraseña se reafirma en cada arranque, así el login nunca depende de lo que haga
+// el otro proceso sobre la misma fila.
+export const LOCAL_VIEWER_EMAIL = 'viewer@ayr.local';
+export const LOCAL_VIEWER_PASSWORD = 'AyrLocalView-2026!';

@@ -109,10 +109,30 @@ export interface ProductionReportDto {
   metersM?: string | null;
   piecesDetail?: { lineNumber: number; lengthMm: string; qty: number }[];
   theoreticalKg: string;
+  /** D-146: kilos que planta declaró para este reporte. Dato observado, no consumo. */
+  consumedKg?: string | null;
+  /**
+   * D-154: el aviso que este reporte dejó anotado — desviación del kilo declarado y/o
+   * faltante del agregado de materia prima. `null` cuando no hubo nada que avisar.
+   */
+  rawMaterialWarning?: string | null;
   materialCostPen: string | null;
   unitCostPen: string | null;
   status: string;
   revertedAt: string | null;
+}
+
+/**
+ * D-154: un agregado de materia prima que quedó por debajo de lo prometido a **otros**
+ * pedidos después de una operación de producción. Es aviso, no rechazo.
+ */
+export interface RawMaterialWarningDto {
+  label: string;
+  freeKg: string;
+  promisedKg: string;
+  shortfallKg: string;
+  orders: { code: string; qtyKg: string }[];
+  message: string;
 }
 
 export interface ProductionOrderDto {
@@ -148,6 +168,12 @@ export interface ProductionOrderDto {
   unitCostPen: string | null;
   consumptions: ProductionConsumptionDto[];
   reports: ProductionReportDto[];
+  /**
+   * D-154: avisos que dejó **la operación que devolvió esta respuesta** (montar, reportar,
+   * cerrar). Es un dato de la respuesta y no del recurso: un `GET` nunca lo trae, y por eso
+   * es opcional.
+   */
+  rawMaterialWarnings?: RawMaterialWarningDto[];
 }
 
 export interface StripOptionDto {

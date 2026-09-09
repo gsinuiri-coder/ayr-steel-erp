@@ -87,6 +87,14 @@ interface Props {
   businessLineId: string;
   businessLineCode: BusinessLine;
   product?: ProductDto;
+  /**
+   * D-156: valores con los que abrir un alta **nueva** — el SKU y la descripción que el
+   * importador leyó del archivo, para no volver a tipear lo que ya está en pantalla. Se
+   * ignora al editar, donde manda el producto cargado.
+   */
+  initial?: { sku?: string; name?: string };
+  /** D-156: el producto recién creado, para que quien abrió el diálogo lo use en el acto. */
+  onCreated?: (product: ProductDto) => void;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -110,6 +118,8 @@ export function ProductDialog({
   businessLineId,
   businessLineCode,
   product,
+  initial,
+  onCreated,
   onOpenChange,
 }: Props) {
   const queryClient = useQueryClient();
@@ -131,8 +141,8 @@ export function ProductDialog({
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      sku: product?.sku ?? '',
-      name: product?.name ?? '',
+      sku: product?.sku ?? initial?.sku ?? '',
+      name: product?.name ?? initial?.name ?? '',
       unit: product?.unit ?? '',
       source: product?.source ?? 'MANUFACTURED',
       listPricePen: product?.listPricePen ?? '',
@@ -186,9 +196,10 @@ export function ProductDialog({
         },
       });
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
       toast.success(editing ? 'Producto actualizado' : 'Producto creado');
       void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
+      if (!editing) onCreated?.(saved);
       onOpenChange(false);
     },
     onError: (err) => {

@@ -1,6 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
 import { InventoryItemType, ReservationStatus, type Prisma } from '@prisma/client';
-import { Decimal, rawMaterialLabel, salesOrderCode, toDecimal, toFixedString } from '@ayr/shared';
+import {
+  Decimal,
+  rawMaterialLabel,
+  salesOrderCode,
+  toDecimal,
+  toFixedString,
+  type RawMaterialWarningDto,
+} from '@ayr/shared';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
 
@@ -53,14 +60,16 @@ export interface RawMaterialAvailability {
   reservedGeneric: Decimal;
   /** `physical − reservedOnCoils − reservedGeneric`. Puede ser negativo si algo lo rompió. */
   available: Decimal;
-  /** Las bobinas que hoy cumplen la spec y no están bajo custodia de nadie. */
-  coilIds: string[];
   /**
-   * Kilos de bobinas compatibles que están **montadas en una OP viva** (D-060) y por eso no
-   * cuentan en `physical` ni en `reservedOnCoils`/`reservedGeneric`: el faltante no es que el
-   * material no exista, es que está en la roladora. D-134 (hallazgo de Fase 7-final): sin
-   * este número, un rechazo por agregado corto decía "0.000 físicos menos 0.000
-   * comprometidos" sobre un almacén con material real, sin decir dónde estaba.
+   * Kilos de bobinas compatibles que una OP viva retiene y el agregado no puede contar
+   * (D-060). Ver {@link StripAssignment.heldKg}: **la corrida que nace de un pedido aporta
+   * cero**, porque su compromiso ya está contado como reserva genérica y sumarlo dos veces
+   * era lo que dejaba el pool en cero sobre un almacén lleno (D-154). Lo que llega acá es la
+   * custodia de las corridas **a stock**, que no tienen reserva que las represente.
+   *
+   * D-134 (hallazgo de Fase 7-final): sin este número, un rechazo por agregado corto decía
+   * "0.000 físicos menos 0.000 comprometidos" sobre un almacén con material real, sin decir
+   * dónde estaba.
    */
   mountedKg: Decimal;
   /** Las órdenes de producción que tienen algo de ese material montado, para nombrarlas. */
@@ -236,7 +245,7 @@ export async function rawMaterialAvailability(
   tx: Prisma.TransactionClient,
   spec: RawMaterialSpecRef,
   toleranceMm: string,
-  options: { lockCoils?: boolean; exceptReservationIds?: string[] } = {},
+  options: RawMaterialScope & { lockCoils?: boolean } = {},
 ): Promise<RawMaterialAvailability> {
   const candidates = await tx.coil.findMany({
     where: roofingCoilWhere({
@@ -256,7 +265,7 @@ export async function rawMaterialAvailability(
     `;
   }
 
-  const except = options.exceptReservationIds ?? [];
+  const scope = reservationScopeWhere(options);
   const [balances, onCoils, mounted, generic] = await Promise.all([
     ids.length === 0
       ? []
@@ -271,7 +280,7 @@ export async function rawMaterialAvailability(
             status: ReservationStatus.ACTIVE,
             itemType: InventoryItemType.COIL,
             itemId: { in: ids },
-            ...(except.length === 0 ? {} : { id: { notIn: except } }),
+            ...scope,
           },
           select: { itemId: true, qty: true },
         }),
@@ -283,29 +292,50 @@ export async function rawMaterialAvailability(
             status: ReservationStatus.ACTIVE,
             itemType: InventoryItemType.RAW_MATERIAL,
             itemId: spec.id,
-            ...(except.length === 0 ? {} : { id: { notIn: except } }),
+            ...scope,
           },
           _sum: { qty: true },
         }),
   ]);
 
-  const takenByProduction = new Set(mounted.map((m) => m.coilId));
-  const free = ids.filter((id) => !takenByProduction.has(id));
-  const freeSet = new Set(free);
-
-  const physical = balances
-    .filter((b) => freeSet.has(b.itemId))
-    .reduce((acc, b) => acc.plus(toDecimal(b.qty.toString())), new Decimal(0));
-  const reservedOnCoils = onCoils
-    .filter((r) => freeSet.has(r.itemId))
-    .reduce((acc, r) => acc.plus(toDecimal(r.qty.toString())), new Decimal(0));
-  const reservedGeneric = toDecimal(generic._sum.qty?.toString() ?? '0');
-
+  // D-154: lo que una OP retiene de cada rollo, que **no** es el rollo entero. Una bobina
+  // puede aparecer en una sola asignación viva (`mountCoil` lo garantiza), pero se suma por
+  // las dudas: si esa garantía cambiara, la cuenta seguiría siendo la correcta.
+  const heldByCoilId = new Map<string, Decimal>();
+  for (const m of mounted) {
+    heldByCoilId.set(m.coilId, (heldByCoilId.get(m.coilId) ?? new Decimal(0)).plus(m.heldKg));
+  }
   const balanceByCoilId = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-  const mountedKg = mounted.reduce(
-    (acc, m) => acc.plus(balanceByCoilId.get(m.coilId) ?? new Decimal(0)),
+
+  // El disponible del agregado es, rollo por rollo, su saldo menos lo que una OP retiene.
+  // Nunca negativo: un consumo ya emitido baja el saldo antes de bajar `consumedKg`, y esa
+  // ventana no puede restarle kilos a los rollos vecinos.
+  const freeByCoilId = new Map(
+    ids.map((id) => [
+      id,
+      Decimal.max(
+        (balanceByCoilId.get(id) ?? new Decimal(0)).minus(heldByCoilId.get(id) ?? new Decimal(0)),
+        new Decimal(0),
+      ),
+    ]),
+  );
+  const physical = [...freeByCoilId.values()].reduce((acc, kg) => acc.plus(kg), new Decimal(0));
+  // **Sobre las mismas bobinas que `physical`, no sobre todas.** Una bobina cuyo aporte
+  // quedó en cero —retenida entera por una corrida a stock— no puede además descontar por
+  // una reserva de ítem: sería restar un compromiso sin respaldo físico y saldría un
+  // faltante fantasma de exactamente esos kilos. Hoy la combinación la impiden
+  // `assertCoilsNotReserved` y `assertStripsNotAssigned`, pero la invariante no puede
+  // depender de que dos guardrails ajenos sigan siendo herméticos.
+  const reservedOnCoils = onCoils.reduce(
+    (acc, r) =>
+      (freeByCoilId.get(r.itemId) ?? new Decimal(0)).lte(0)
+        ? acc
+        : acc.plus(toDecimal(r.qty.toString())),
     new Decimal(0),
   );
+  const reservedGeneric = toDecimal(generic._sum.qty?.toString() ?? '0');
+
+  const mountedKg = [...heldByCoilId.values()].reduce((acc, kg) => acc.plus(kg), new Decimal(0));
   const mountedOrderCodes = [...new Set(mounted.map((m) => m.orderCode))];
 
   return {
@@ -314,9 +344,33 @@ export async function rawMaterialAvailability(
     reservedOnCoils,
     reservedGeneric,
     available: physical.minus(reservedOnCoils).minus(reservedGeneric),
-    coilIds: free,
     mountedKg,
     mountedOrderCodes,
+  };
+}
+
+/**
+ * De quién **no** es la promesa que se está comprobando (D-134, ampliado por D-154).
+ *
+ * Dos formas de decir lo mismo, y las dos hacen falta. `exceptReservationIds` es la reserva
+ * concreta que la operación viene a cumplir. `exceptSalesOrderIds` es **el pedido entero**:
+ * un pedido de coberturas tiene una reserva por línea y una OP por reserva, así que montar
+ * la bobina de la línea 1 se comprobaba contra la promesa —viva y del mismo pedido— de la
+ * línea 2 y se rechazaba con "hay 150.000 kg prometidos a PED-000003", que era el pedido que
+ * planta estaba fabricando. **Una promesa no puede bloquear al pedido que la hizo**, ni por
+ * su propia línea ni por sus hermanas.
+ */
+export interface RawMaterialScope {
+  exceptReservationIds?: string[];
+  exceptSalesOrderIds?: string[];
+}
+
+function reservationScopeWhere(scope: RawMaterialScope): Prisma.ReservationWhereInput {
+  const reservationIds = scope.exceptReservationIds ?? [];
+  const salesOrderIds = scope.exceptSalesOrderIds ?? [];
+  return {
+    ...(reservationIds.length === 0 ? {} : { id: { notIn: reservationIds } }),
+    ...(salesOrderIds.length === 0 ? {} : { salesOrderId: { notIn: salesOrderIds } }),
   };
 }
 
@@ -333,16 +387,40 @@ export async function rawMaterialAvailability(
  * cambio de estado) y dentro de la misma transacción: así lee el estado resultante y no
  * hay que anticiparlo. Si falla, la transacción entera se deshace.
  *
- * `exceptReservationIds` es la promesa **propia**: la OP que nace del pedido tiene que
- * poder montar el material que ese mismo pedido reservó. Sin la excepción, la reserva se
- * bloquearía a sí misma — el mismo problema y la misma solución que `assertNotReserved`.
+ * `exceptReservationIds` / `exceptSalesOrderIds` son la promesa **propia**: la OP que nace
+ * del pedido tiene que poder montar el material que ese mismo pedido reservó. Sin la
+ * excepción, la reserva se bloquearía a sí misma — el mismo problema y la misma solución que
+ * `assertNotReserved`. Ver {@link RawMaterialScope} para por qué hacen falta las dos.
  */
 export async function assertRawMaterialInvariant(
   tx: Prisma.TransactionClient,
   coilIds: string[],
   toleranceMm: string,
-  options: { exceptReservationIds?: string[]; alsoAffecting?: CoilAttributes[] } = {},
+  options: RawMaterialScope & { alsoAffecting?: CoilAttributes[] } = {},
 ): Promise<void> {
+  // `firstOnly`: el camino que lanza no necesita el resto. Sin esto, una operación que rompe
+  // tres agregados bloqueaba con `FOR UPDATE` las bobinas de los tres para después descartar
+  // dos con el `throw` — locks y latencia que la transacción se lleva a la tumba igual.
+  assertNoShortfall(
+    await findRawMaterialShortfalls(tx, coilIds, toleranceMm, { ...options, firstOnly: true }),
+  );
+}
+
+/**
+ * Los agregados que quedaron cortos, **sin lanzar** (D-154).
+ *
+ * Es la misma cuenta que `assertRawMaterialInvariant`, partida en dos porque la severidad
+ * dejó de ser una sola. Fuera de producción sigue siendo un rechazo: quien registra una
+ * merma o vende un rollo entero puede elegir otro rollo, y dejarlo romper una promesa es un
+ * pedido que se descubre sin material el día de la entrega. Dentro de producción es un
+ * **aviso**: ver `RoofingProductionService.mountCoil`.
+ */
+export async function findRawMaterialShortfalls(
+  tx: Prisma.TransactionClient,
+  coilIds: string[],
+  toleranceMm: string,
+  options: ShortfallOptions & { alsoAffecting?: CoilAttributes[] } = {},
+): Promise<RawMaterialShortfall[]> {
   const ids = [...new Set(coilIds)];
   const attributes =
     ids.length === 0
@@ -351,7 +429,7 @@ export async function assertRawMaterialInvariant(
           where: { id: { in: ids } },
           select: { businessLineId: true, colorId: true, thicknessMm: true },
         });
-  return assertRawMaterialInvariantFor(
+  return findRawMaterialShortfallsFor(
     tx,
     [
       ...attributes.map((a) => ({
@@ -364,6 +442,35 @@ export async function assertRawMaterialInvariant(
     toleranceMm,
     options,
   );
+}
+
+/** Un agregado que quedó por debajo de lo que le prometió a **otros** pedidos. */
+export interface RawMaterialShortfall extends RawMaterialWarningDto {
+  specId: string;
+}
+
+/** Alcance de la lectura, más el corte temprano que solo le sirve al camino que lanza. */
+interface ShortfallOptions extends RawMaterialScope {
+  /** Devolver el primer agregado corto y parar. Lo usan los `assert*`. */
+  firstOnly?: boolean;
+}
+
+/**
+ * El rechazo, cuando la severidad es de rechazo. Un solo lugar para el texto: el aviso de
+ * producción y el 400 del resto del sistema dicen lo mismo y difieren solo en qué hacer.
+ */
+function assertNoShortfall(shortfalls: RawMaterialShortfall[]): void {
+  const first = shortfalls[0];
+  if (!first) return;
+  throw new BadRequestException(
+    `La operación dejaría ${first.freeKg} kg libres de ${first.label} y hay ${first.promisedKg} kg ` +
+      `prometidos a ${describeHolders(first.orders)}. ` +
+      'Anula el pedido, libera la reserva o abre otra bobina de ese color y espesor antes de continuar.',
+  );
+}
+
+function describeHolders(orders: RawMaterialWarningDto['orders']): string {
+  return orders.map((o) => `${o.code} (${o.qtyKg} kg)`).join(', ');
 }
 
 /** Los atributos de una bobina que deciden a qué agregados pertenece. */
@@ -385,11 +492,27 @@ export async function assertRawMaterialInvariantFor(
   tx: Prisma.TransactionClient,
   attributes: CoilAttributes[],
   toleranceMm: string,
-  options: { exceptReservationIds?: string[] } = {},
+  options: RawMaterialScope = {},
 ): Promise<void> {
-  const specs = await findSpecsAffectedByAttributes(tx, attributes, toleranceMm);
-  if (specs.length === 0) return;
+  assertNoShortfall(
+    await findRawMaterialShortfallsFor(tx, attributes, toleranceMm, {
+      ...options,
+      firstOnly: true,
+    }),
+  );
+}
 
+/** La misma lectura que `findRawMaterialShortfalls`, partiendo de **atributos**. */
+export async function findRawMaterialShortfallsFor(
+  tx: Prisma.TransactionClient,
+  attributes: CoilAttributes[],
+  toleranceMm: string,
+  options: ShortfallOptions = {},
+): Promise<RawMaterialShortfall[]> {
+  const specs = await findSpecsAffectedByAttributes(tx, attributes, toleranceMm);
+  if (specs.length === 0) return [];
+
+  const shortfalls: RawMaterialShortfall[] = [];
   for (const spec of specs) {
     // **Con `lockCoils`, y esa es la parte que faltaba.** Sin el lock, el camino que
     // consume (una salida de kardex, que bloquea `inventory_balances`) y el que promete
@@ -402,8 +525,8 @@ export async function assertRawMaterialInvariantFor(
     // segunda ve lo que la primera dejó. El orden es siempre id ascendente, acá y en
     // `createReservations`.
     const availability = await rawMaterialAvailability(tx, spec, toleranceMm, {
+      ...options,
       lockCoils: true,
-      exceptReservationIds: options.exceptReservationIds,
     });
     if (availability.available.gte(0)) continue;
 
@@ -412,24 +535,34 @@ export async function assertRawMaterialInvariantFor(
         status: ReservationStatus.ACTIVE,
         itemType: InventoryItemType.RAW_MATERIAL,
         itemId: spec.id,
-        ...(options.exceptReservationIds?.length
-          ? { id: { notIn: options.exceptReservationIds } }
-          : {}),
+        ...reservationScopeWhere(options),
       },
       select: { qty: true, salesOrder: { select: { seq: true } } },
       orderBy: { createdAt: 'asc' },
     });
-    const detail = holders
-      .map((h) => `${salesOrderCode(h.salesOrder.seq)} (${h.qty.toFixed(3)} kg)`)
-      .join(', ');
     const label = (await rawMaterialSpecLabels(tx, [spec.id])).get(spec.id) ?? 'materia prima';
-    const promised = availability.reservedGeneric.toFixed(3);
-    const left = availability.physical.minus(availability.reservedOnCoils).toFixed(3);
-    throw new BadRequestException(
-      `La operación dejaría ${left} kg libres de ${label} y hay ${promised} kg prometidos a ${detail}. ` +
-        'Anula el pedido, libera la reserva o abre otra bobina de ese color y espesor antes de continuar.',
-    );
+    const orders = holders.map((h) => ({
+      code: salesOrderCode(h.salesOrder.seq),
+      qtyKg: h.qty.toFixed(3),
+    }));
+    const freeKg = availability.physical.minus(availability.reservedOnCoils).toFixed(3);
+    const promisedKg = availability.reservedGeneric.toFixed(3);
+    const shortfallKg = availability.available.negated().toFixed(3);
+    shortfalls.push({
+      specId: spec.id,
+      label,
+      freeKg,
+      promisedKg,
+      shortfallKg,
+      orders,
+      message:
+        `Quedan ${freeKg} kg libres de ${label} y hay ${promisedKg} kg prometidos a ` +
+        `${describeHolders(orders)}: faltan ${shortfallKg} kg. La operación se registró igual — ` +
+        'abre otra bobina de ese color y espesor o avisa a ventas antes de que esos pedidos venzan.',
+    });
+    if (options.firstOnly === true) break;
   }
+  return shortfalls;
 }
 
 /**

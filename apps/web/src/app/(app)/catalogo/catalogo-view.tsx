@@ -31,7 +31,7 @@ import {
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { BomDialog } from './bom-dialog';
 import { ColoresPanel } from './colores-panel';
-import { ProductDialog } from './product-dialog';
+import { ProductDialog } from '@/components/catalog/product-dialog';
 
 /**
  * Qué productos llevan receta (D-059, D-087). Las mismas condiciones que valida

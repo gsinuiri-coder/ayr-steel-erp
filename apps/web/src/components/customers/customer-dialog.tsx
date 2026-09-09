@@ -55,10 +55,22 @@ type FormValues = z.infer<typeof formSchema>;
 interface Props {
   open: boolean;
   customer?: CustomerDto;
+  /**
+   * D-156: valores con los que abrir un alta **nueva** — lo que el importador leyó del
+   * archivo, para no volver a tipear el RUC y la razón social que ya están en pantalla. Se
+   * ignora al editar, donde manda el cliente cargado.
+   */
+  initial?: { docNumber?: string; name?: string };
+  /**
+   * D-156: el cliente recién creado, para que quien abrió el diálogo lo use en el acto.
+   * Sin esto, el importador tenía que adivinar cuál de los N clientes del maestro
+   * refrescado era el que acababa de dar de alta.
+   */
+  onCreated?: (customer: CustomerDto) => void;
   onOpenChange: (open: boolean) => void;
 }
 
-export function CustomerDialog({ open, customer, onOpenChange }: Props) {
+export function CustomerDialog({ open, customer, initial, onCreated, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const editing = !!customer;
   const [lookupNote, setLookupNote] = useState<string | null>(null);
@@ -73,8 +85,8 @@ export function CustomerDialog({ open, customer, onOpenChange }: Props) {
     resolver: zodResolver(formSchema),
     defaultValues: {
       docType: customer?.docType ?? 'RUC',
-      docNumber: customer?.docNumber ?? '',
-      name: customer?.name ?? '',
+      docNumber: customer?.docNumber ?? initial?.docNumber ?? '',
+      name: customer?.name ?? initial?.name ?? '',
       address: customer?.address ?? '',
       email: customer?.email ?? '',
       phone: customer?.phone ?? '',
@@ -131,9 +143,10 @@ export function CustomerDialog({ open, customer, onOpenChange }: Props) {
       }
       return api<CustomerDto>('/customers', { method: 'POST', body: values });
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
       toast.success(editing ? 'Cliente actualizado' : 'Cliente creado');
       void queryClient.invalidateQueries({ queryKey: CUSTOMERS_QUERY_KEY });
+      if (!editing) onCreated?.(saved);
       onOpenChange(false);
     },
     onError: (err) => {

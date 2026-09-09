@@ -78,11 +78,24 @@ otra cosa en el equipo).
 
 ```
 pnpm dev:local                # Postgres (docker compose) + migrate deploy + seed + api :3000 + web :3001
+pnpm dev:preview              # segundo api+web (api :4000, web :4001) contra la MISMA base "ayr_local",
+                              # para que el dueño mire la app sin tocar los procesos del agente
 pnpm db:local reset           # borra el volumen entero y repone migrate+seed
 pnpm db:local snapshot <n>    # pg_dump de "ayr_local" a local-data/db-local-snapshots/<n>.sql
 pnpm db:local restore <n>     # restaura ese volcado sobre "ayr_local"
 pnpm e2e                      # por defecto ahora corre contra "ayr_local_e2e" (ver abajo)
 ```
+
+### Puertos: quién usa cuáles
+
+`3000` (api) y `3001` (web) son del **agente** y de Playwright: `pnpm dev:local` y `pnpm e2e`
+viven ahí, y una corrida de la suite mata y relevanta esos procesos.
+
+`4000` (api) y `4001` (web) son del **dueño**: `pnpm dev:preview` los levanta contra la misma
+`ayr_local` para poder mirar la app en el navegador mientras el agente trabaja. El agente
+nunca los usa ni los mata (regla dura 15 de `CLAUDE.md`). La cuenta de esa vista es
+`viewer@ayr.local`, con contraseña propia que se reafirma en cada arranque, así que el flujo
+de cambio obligatorio de contraseña (RF-03) del otro proceso no la deja afuera.
 
 `pnpm dev:local` no toca `apps/api/.env`: el override de conexión viaja por entorno al proceso
 hijo (regla dura 5), igual que `dev-demo.mjs`, así que `pnpm dev` (contra Neon `dev`) sigue

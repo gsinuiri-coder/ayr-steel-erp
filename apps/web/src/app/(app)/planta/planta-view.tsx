@@ -280,9 +280,9 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
       <div className="grid gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-medium">Órdenes en curso</h2>
-          {/* D-147: la otra forma de reportar, cuando lo que hay es una hoja y no una orden. */}
+          {/* D-155: la otra forma de operar, cuando lo que hay es un pedido y no una orden. */}
           <Button variant="outline" className="h-12" asChild>
-            <Link href="/planta/tanda">Reportar en tanda</Link>
+            <Link href="/planta/producir">Producir un pedido</Link>
           </Button>
         </div>
         {ordersPending && <Skeleton className="h-24 w-full" />}

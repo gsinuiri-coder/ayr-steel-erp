@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState, type ReactElement } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -31,6 +30,7 @@ import {
   type StockPanelDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { ExpressCreateCustomer, ExpressCreateProduct } from '@/components/express-create';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatMoney, formatQty, isPositiveDecimal, todayIso, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
@@ -418,14 +418,18 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         <div className="grid gap-2 md:col-span-2">
           <div className="flex items-center justify-between">
             <Label htmlFor="customer">Cliente</Label>
-            {/* El cliente nuevo se da de alta sin perder el borrador de la cotización. */}
-            <Link
-              href="/clientes/nuevo"
-              target="_blank"
-              className="text-xs underline underline-offset-4 text-muted-foreground"
-            >
-              Registrar un cliente nuevo
-            </Link>
+            {/*
+              D-156: el alta pasa a ser un diálogo sobre esta misma pantalla. El enlace a
+              `/clientes/nuevo` en otra pestaña conservaba el borrador —la pantalla no se
+              desmontaba— pero dejaba al vendedor volver a mano, buscar el cliente recién
+              creado en un desplegable que además puede estar cacheado, y elegirlo. Acá el
+              formulario es el mismo y la fila queda elegida sola.
+            */}
+            <ExpressCreateCustomer
+              onCreated={(created) => {
+                setCustomerId(created.id);
+              }}
+            />
           </div>
           <Select value={customerId} onValueChange={setCustomerId}>
             <SelectTrigger id="customer" className="w-full">
@@ -751,28 +755,43 @@ function LineRow({
               </SelectContent>
             </Select>
           ) : (
-            <Select
-              value={l.productId}
-              onValueChange={onChooseProduct}
-              disabled={l.businessLine === ''}
-            >
-              <SelectTrigger className="w-full" aria-label={`Producto de la línea ${index + 1}`}>
-                <SelectValue placeholder="Producto" />
-              </SelectTrigger>
-              <SelectContent>
-                {activeProducts?.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.sku} — {p.name}
-                  </SelectItem>
-                ))}
-                {/* Un desplegable vacío se ve igual que uno que no cargó: se dice. */}
-                {products && activeProducts?.length === 0 && (
-                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                    Esta línea no tiene productos activos.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
+            <div className="grid gap-1">
+              <Select
+                value={l.productId}
+                onValueChange={onChooseProduct}
+                disabled={l.businessLine === ''}
+              >
+                <SelectTrigger className="w-full" aria-label={`Producto de la línea ${index + 1}`}>
+                  <SelectValue placeholder="Producto" />
+                </SelectTrigger>
+                <SelectContent>
+                  {activeProducts?.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.sku} — {p.name}
+                    </SelectItem>
+                  ))}
+                  {/* Un desplegable vacío se ve igual que uno que no cargó: se dice. */}
+                  {products && activeProducts?.length === 0 && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      Esta línea no tiene productos activos.
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+              {/*
+                D-156: el SKU que falta se da de alta desde acá, con la línea de la fila ya
+                elegida. Es el callejón más caro del sistema: hasta ahora había que salir al
+                catálogo con la cotización a medio llenar.
+              */}
+              {l.businessLine !== '' && (
+                <ExpressCreateProduct
+                  businessLine={l.businessLine}
+                  onCreated={(created) => {
+                    onChooseProduct(created.id);
+                  }}
+                />
+              )}
+            </div>
           )}
         </TableCell>
         <TableCell className="whitespace-normal">

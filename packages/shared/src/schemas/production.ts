@@ -59,6 +59,18 @@ export const MAX_ORDER_REPORTS = 200;
 export const MAX_SCRAP_RATIO_WITHOUT_REASON = 0.1;
 
 /**
+ * Banda dentro de la cual el kilo declarado por planta no dice nada (D-154).
+ *
+ * Un reporte de coberturas declara los kilos que la bobina se comió y el sistema conoce los
+ * teóricos de esos largos (D-047). Nunca coinciden: el despunte, el ancho real del rollo y la
+ * balanza de planta los separan siempre un poco. Fuera de ±10 % ya no es ruido — por arriba
+ * es una corrida que gastó de más, por abajo casi siempre es un dígito de menos al tipear.
+ * En **ningún** caso bloquea (D-154): es un dato observado, y un dato que hay que falsear
+ * para poder guardarlo deja de ser un dato.
+ */
+export const MAX_CONSUMPTION_DEVIATION_RATIO = 0.1;
+
+/**
  * Kilo teórico de una pieza desde su geometría y el factor de densidad del acabado
  * (D-047, RF-25). `widthMm × thicknessMm × lengthMm` da mm³; el factor viene en t/m³
  * (acero ≈ 7.85), así que dividir entre 1 000 000 deja kilos:
@@ -281,6 +293,87 @@ export const cancelProductionOrderSchema = z.object({
 });
 export type CancelProductionOrderInput = z.infer<typeof cancelProductionOrderSchema>;
 
+/**
+ * El aviso de desviación del kilo declarado, o `null` si no hay nada que decir (D-154).
+ *
+ * Vive acá y no en el servicio por el mismo motivo que `piecesTheoreticalKg`: la pantalla lo
+ * muestra **mientras se tipea** y el API lo guarda con el reporte. Dos redacciones del mismo
+ * aviso serían dos umbrales distintos en cuanto alguien tocara uno.
+ */
+export function roofingConsumptionDeviation(input: {
+  /** Kilos que planta declara para **este** reporte. */
+  declaredKg: DecimalInput;
+  /** Kilos teóricos de los largos de **este** reporte, con la geometría del rollo montado. */
+  theoreticalKg: DecimalInput;
+  /** Kilos ya declarados por los reportes vigentes anteriores. */
+  alreadyDeclaredKg: DecimalInput;
+  /** Kilos teóricos del plan de corte completo, o `null` si la orden no tiene plan. */
+  planKg: DecimalInput | null;
+}): string | null {
+  const declared = toDecimal(input.declaredKg);
+  const theoretical = toDecimal(input.theoreticalKg);
+  const notes: string[] = [];
+
+  if (theoretical.gt(0)) {
+    const ratio = declared.div(theoretical).minus(1);
+    const pct = ratio.abs().times(100).toFixed(1);
+    if (ratio.gt(MAX_CONSUMPTION_DEVIATION_RATIO)) {
+      notes.push(
+        `Consumo declarado ${declared.toFixed(3)} kg contra ${theoretical.toFixed(3)} kg teóricos ` +
+          `de los largos reportados: ${pct} % por encima.`,
+      );
+    } else if (ratio.lt(-MAX_CONSUMPTION_DEVIATION_RATIO)) {
+      notes.push(
+        `Consumo declarado ${declared.toFixed(3)} kg contra ${theoretical.toFixed(3)} kg teóricos ` +
+          `de los largos reportados: ${pct} % por debajo. Revisa que no falte un dígito.`,
+      );
+    }
+  }
+
+  if (input.planKg !== null) {
+    const planKg = toDecimal(input.planKg);
+    const accumulated = toDecimal(input.alreadyDeclaredKg).plus(declared);
+    if (accumulated.gt(planKg)) {
+      notes.push(
+        `El acumulado declarado (${accumulated.toFixed(3)} kg) pasa los ${planKg.toFixed(3)} kg ` +
+          'teóricos del plan de corte con la bobina montada.',
+      );
+    }
+  }
+
+  return notes.length === 0 ? null : notes.join(' ');
+}
+
+// --------------------------------------------------------------------------
+// D-154 — el aviso del agregado de materia prima
+// --------------------------------------------------------------------------
+
+/**
+ * Un agregado de materia prima (D-134) que quedó por debajo de lo prometido a **otros**
+ * pedidos después de una operación de producción.
+ *
+ * Es un **aviso, no un rechazo** (D-154): montar una bobina o reportar planchas nunca se
+ * bloquea por esto. Quien está en la roladora no puede anular un pedido ajeno ni liberar
+ * una reserva, así que cortarle la corrida solo lograba que el material quedara sin
+ * registrar; lo que sí puede hacer es avisar a ventas, y para eso necesita saber **qué
+ * pedidos** quedan en riesgo y **por cuántos kilos**.
+ */
+export const rawMaterialWarningSchema = z.object({
+  /** `Bobina 0.45 mm ROJO`: el agregado, como lo nombra `rawMaterialLabel`. */
+  label: z.string(),
+  /** Kilos libres del agregado después de la operación. */
+  freeKg: z.string(),
+  /** Kilos prometidos a otros pedidos sobre ese mismo agregado. */
+  promisedKg: z.string(),
+  /** `promisedKg − freeKg`, siempre positivo: lo que falta para cubrir esas promesas. */
+  shortfallKg: z.string(),
+  /** Los pedidos en riesgo, del más viejo al más nuevo. */
+  orders: z.array(z.object({ code: z.string(), qtyKg: z.string() })),
+  /** El aviso ya redactado, para mostrarlo sin rearmarlo en cada pantalla. */
+  message: z.string(),
+});
+export type RawMaterialWarningDto = z.infer<typeof rawMaterialWarningSchema>;
+
 // --------------------------------------------------------------------------
 // DTOs
 // --------------------------------------------------------------------------
@@ -325,6 +418,12 @@ export const productionReportSchema = z.object({
    * consumo real de la corrida se reconcilia al cerrar (D-089).
    */
   consumedKg: z.string().nullable(),
+  /**
+   * D-154: el aviso del agregado que este reporte dejó anotado, si lo dejó. Se guarda en la
+   * fila y no solo en `audit_log` porque es la mitad que le falta al cierre para explicar
+   * por qué el material no alcanzó: quien audita la corrida mira sus reportes, no el log.
+   */
+  rawMaterialWarning: z.string().nullable(),
   /**
    * Costos en soles (D-042). No van enmascarados por rol como en `/inventory`: el módulo
    * entero está cerrado a ADMINISTRADOR y SUPERVISOR_PLANTA (§3.4), VENDEDOR no llega
@@ -412,6 +511,16 @@ export const productionOrderSchema = z.object({
   createdByName: z.string().nullable(),
   closedAt: z.string().nullable(),
   cancelledAt: z.string().nullable(),
+  /**
+   * D-154: avisos del agregado de materia prima que dejó **la operación que devolvió esta
+   * respuesta** (montar una bobina, reportar planchas, cerrar la corrida). Es un dato de la
+   * respuesta y no del recurso: un `GET` nunca lo trae, y por eso es opcional.
+   *
+   * Va acá y no en un DTO de resultado propio porque las tres operaciones devuelven la orden
+   * entera: envolverla obligaría a cambiar cada llamador —incluidos veinte casos de E2E— para
+   * leer un campo que casi ninguno mira.
+   */
+  rawMaterialWarnings: z.array(rawMaterialWarningSchema).optional(),
 });
 export type ProductionOrderDto = z.infer<typeof productionOrderSchema>;
 

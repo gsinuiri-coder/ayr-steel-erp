@@ -113,7 +113,7 @@ async function loginAsAdmin(page: Page) {
   expect((await logged).ok(), 'El login del admin debía responder 2xx').toBe(true);
   // Con el App Router la URL cambia recién cuando llega el RSC del destino, y en modo dev el
   // tablero se compila en el primer visitante de la corrida: el minuto es holgura de
-  // compilación, no de la app (mismo motivo que en `planta-tanda-ui.spec.ts`).
+  // compilación, no de la app (mismo motivo que en `planta-producir-ui.spec.ts`).
   await expect(page).toHaveURL(/\/(cambiar-contrasena)?$/, { timeout: 60_000 });
 }
 

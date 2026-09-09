@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { ProductionOrderStatus, type Prisma } from '@prisma/client';
-import { productionOrderCode } from '@ayr/shared';
+import { Decimal, productionOrderCode, toDecimal } from '@ayr/shared';
 
 /**
  * Guardrail transversal de Fase 4 (D-060).
@@ -25,6 +25,22 @@ export interface StripAssignment {
   coilCode: string;
   orderId: string;
   orderCode: string;
+  /**
+   * D-154: kilos del rollo que el agregado de materia prima tiene que dar por perdidos
+   * mientras esta orden lo retenga. **No es el rollo entero, y casi nunca es `assignedKg`.**
+   *
+   * Una OP que nace de un pedido (D-084) ya tiene su compromiso contado: es la reserva
+   * genérica de ese pedido, que sigue viva sobre la spec y que el disponible resta como
+   * `reservedGeneric`. Contar además la custodia sería **contar dos veces el mismo kilo**, y
+   * ese era el defecto: planta monta el rollo entero —5 000 kg— para cortar los 200 que el
+   * pedido prometió, y el agregado quedaba en cero sobre un almacén con 4 800 kg libres. Lo
+   * que la orden vaya consumiendo baja las dos cifras a la vez (`consumeReservationQty` con
+   * la salida de kardex), así que la cuenta se mantiene sola.
+   *
+   * Una corrida **a stock** (D-140) no tiene reserva que la represente, así que ahí sí manda
+   * la custodia: `assignedKg − consumedKg`.
+   */
+  heldKg: Decimal;
 }
 
 /** Asignaciones vivas de esos flejes, si las hay. Lista vacía cuando ninguno está tomado. */
@@ -41,8 +57,10 @@ export async function findLiveStripAssignments(
     },
     select: {
       coilId: true,
+      assignedKg: true,
+      consumedKg: true,
       coil: { select: { code: true } },
-      productionOrder: { select: { id: true, seq: true } },
+      productionOrder: { select: { id: true, seq: true, reservationId: true } },
     },
     orderBy: { createdAt: 'asc' },
   });
@@ -51,6 +69,13 @@ export async function findLiveStripAssignments(
     coilCode: r.coil.code,
     orderId: r.productionOrder.id,
     orderCode: productionOrderCode(r.productionOrder.seq),
+    heldKg:
+      r.productionOrder.reservationId !== null
+        ? new Decimal(0)
+        : Decimal.max(
+            toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
+            new Decimal(0),
+          ),
   }));
 }
 

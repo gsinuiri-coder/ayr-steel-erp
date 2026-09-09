@@ -1363,6 +1363,7 @@ export class ProductionService {
         })),
         theoreticalKg: r.theoreticalKg.toFixed(3),
         consumedKg: r.consumedKg === null ? null : r.consumedKg.toFixed(3),
+        rawMaterialWarning: r.rawMaterialWarning,
         materialCostPen: r.materialCostPen.toFixed(4),
         unitCostPen: r.unitCostPen.toFixed(4),
         status: r.status,

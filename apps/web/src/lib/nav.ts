@@ -6,6 +6,7 @@ import {
   ClipboardList,
   Factory,
   FileText,
+  Hammer,
   HardHat,
   Home,
   Layers,
@@ -79,10 +80,23 @@ export const NAV: NavGroup[] = [
         icon: Scissors,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
+      /*
+        D-155: los tres sitios de producción, nombrados por lo que se hace en cada uno. Antes
+        eran "Producción" y "Terminal de planta", y nadie podía decir de un vistazo cuál era
+        cuál: los dos sonaban al lugar donde se produce. Ahora el sustantivo dice el objeto —
+        una orden se **gestiona**, un pedido se **produce**— y solo la terminal conserva su
+        nombre, que ya era el único inconfundible.
+      */
       {
-        title: 'Producción',
+        title: 'Órdenes de producción',
         href: '/produccion',
         icon: Factory,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        title: 'Producir un pedido',
+        href: '/planta/producir',
+        icon: Hammer,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
       {

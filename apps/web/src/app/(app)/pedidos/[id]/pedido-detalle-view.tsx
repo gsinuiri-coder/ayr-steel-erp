@@ -138,6 +138,16 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const pendingRoofingLines = o.reservations.filter(
     (r) => r.status === 'ACTIVE' && r.itemType === 'RAW_MATERIAL' && r.productionOrderId === null,
   ).length;
+  // D-155: líneas a medida que ya tienen su OP viva. Es lo que hace que "Producir" tenga
+  // algo que abrir: sin una sola orden, el espacio de producción llega vacío.
+  //
+  // **`ACTIVE` también acá**, igual que arriba: una reserva `CONSUMED` conserva su
+  // `productionOrderId`, así que un pedido ya producido y cerrado ofrecía "Producir (3)" y
+  // llevaba a una pantalla que dice "este pedido no tiene órdenes abiertas" — el espacio de
+  // producción solo trae las órdenes en borrador o en curso.
+  const queuedRoofingLines = o.reservations.filter(
+    (r) => r.status === 'ACTIVE' && r.itemType === 'RAW_MATERIAL' && r.productionOrderId !== null,
+  ).length;
   const consumed = o.reservations.filter((r) => r.status === 'CONSUMED');
   const stale = o.reservations.filter((r) => r.isStale);
   // El botón se apaga cuando una OP viva está fabricando con el material: el propio aviso
@@ -255,6 +265,18 @@ export function PedidoDetalleView({ id }: { id: string }) {
               </Button>
               <OperationDateField value={ordersDate} onChange={setOrdersDate} />
             </div>
+          )}
+          {/*
+            D-155: el espacio de producción del pedido. Es donde se monta la bobina y se
+            reporta cada orden sin salir de la pantalla; la terminal (`/planta`) sigue siendo
+            para operar **una** orden suelta.
+          */}
+          {isAdmin && canOperate && queuedRoofingLines > 0 && (
+            <Button variant="outline" asChild>
+              <Link href={`/planta/producir?pedido=${o.id}`}>
+                Producir ({String(queuedRoofingLines)})
+              </Link>
+            </Button>
           )}
           {isAdmin && canCancel && (
             <Button

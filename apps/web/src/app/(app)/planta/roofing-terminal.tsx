@@ -17,6 +17,7 @@ import {
   piecesCount,
   piecesMeters,
   piecesTheoreticalKg,
+  roofingConsumptionDeviation,
   roofingPlanOverrun,
   roofingPlanProgress,
   toDecimal,
@@ -24,6 +25,7 @@ import {
   type BusinessLineDto,
   type ProductDto,
   type ProductionOrderDto,
+  type RawMaterialWarningDto,
   type RoofingCoilOptionDto,
   type RoofingPieceDto,
 } from '@ayr/shared';
@@ -36,6 +38,7 @@ import { formatQty } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { QueueEntrySummary, useProductionQueue } from '@/components/production-queue';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -370,6 +373,8 @@ export function RoofingTerminal({
   const [consumedKg, setConsumedKg] = useState('');
   const [editingPlan, setEditingPlan] = useState(false);
   const [planRows, setPlanRows] = useState<LengthRow[]>([EMPTY_ROW]);
+  /** D-154: los avisos del agregado que dejó la última operación. No bloquean nada. */
+  const [warnings, setWarnings] = useState<RawMaterialWarningDto[]>([]);
 
   const isLive = o.status === 'DRAFT' || o.status === 'IN_PROGRESS';
   const liveCoils = o.consumptions.filter((c) => c.releasedAt === null);
@@ -394,8 +399,9 @@ export function RoofingTerminal({
         method: 'POST',
         body: { coilId: coil },
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       toast.success('Bobina montada en la roladora');
+      setWarnings(updated.rawMaterialWarnings ?? []);
       invalidate();
     },
     onError: (err) =>
@@ -436,10 +442,11 @@ export function RoofingTerminal({
           confirmBackdate: confirmBackdate || undefined,
         },
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       toast.success('Planchas reportadas y reservadas para el pedido');
       setRows([EMPTY_ROW]);
       setReportKg('');
+      setWarnings(updated.rawMaterialWarnings ?? []);
       invalidate();
     },
     onError: (err) =>
@@ -520,11 +527,21 @@ export function RoofingTerminal({
     new Decimal(0),
   );
   const reportKgValue = reportKg.trim();
+  // D-154: lo único que el kilo declarado tiene que cumplir es ser un número. Pasarse del
+  // teórico del plan dejó de ser un tope duro —era un dato observado que había que falsear
+  // para poder guardarlo— y pasó a ser el aviso de abajo.
   const reportKgValid =
     reportKgValue === '' ||
-    (/^\d+(\.\d{1,3})?$/.test(reportKgValue) &&
-      toDecimal(reportKgValue).gt(0) &&
-      (planKg === null || declaredKgSoFar.plus(toDecimal(reportKgValue)).lte(planKg)));
+    (/^\d+(\.\d{1,3})?$/.test(reportKgValue) && toDecimal(reportKgValue).gt(0));
+  const reportKgDeviation =
+    !reportKgValid || reportKgValue === '' || newKg === null
+      ? null
+      : roofingConsumptionDeviation({
+          declaredKg: reportKgValue,
+          theoreticalKg: newKg,
+          alreadyDeclaredKg: declaredKgSoFar,
+          planKg,
+        });
   const declared = consumedKg.trim();
   // Las dos cotas que el API comprueba: no menos de lo que las planchas ya consumieron, ni
   // más de lo que la orden tiene montado. La segunda es un dato que la pantalla ya tiene, y
@@ -574,6 +591,21 @@ export function RoofingTerminal({
           </Button>
         </div>
       </div>
+
+      {/*
+        D-154: el faltante del agregado avisa y no corta. Va acá arriba, fuera de la tarjeta
+        de reporte, porque también lo deja montar la bobina — y porque quien tiene que verlo
+        es el encargado, que es quien puede avisarle a ventas.
+      */}
+      {warnings.length > 0 && (
+        <Alert>
+          <AlertDescription className="grid gap-1">
+            {warnings.map((w, i) => (
+              <span key={i}>⚠ {w.message}</span>
+            ))}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <BigStat
@@ -754,13 +786,11 @@ export function RoofingTerminal({
                 )}
                 {!reportKgValid && (
                   <p className="text-destructive">
-                    Los kilos van con hasta tres decimales y el acumulado declarado no puede pasar
-                    de los {planKg?.toFixed(3) ?? '—'} kg teóricos del plan
-                    {declaredKgSoFar.gt(0) && (
-                      <> (ya hay {declaredKgSoFar.toFixed(3)} kg declarados)</>
-                    )}
-                    .
+                    Los kilos van con hasta tres decimales y mayores a cero.
                   </p>
+                )}
+                {reportKgDeviation !== null && (
+                  <p className="text-amber-700 dark:text-amber-500">⚠ {reportKgDeviation}</p>
                 )}
                 {reportKgValid && reportKg.trim() !== '' && (
                   <p className="text-muted-foreground">

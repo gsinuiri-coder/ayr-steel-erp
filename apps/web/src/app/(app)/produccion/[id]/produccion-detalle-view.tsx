@@ -219,6 +219,18 @@ export function ProduccionDetalleView({ id }: { id: string }) {
               <Link href={`/planta?op=${o.id}`}>Abrir en planta</Link>
             </Button>
           )}
+          {/*
+            D-155: las hermanas. Un pedido de coberturas genera una OP por línea (D-148) y se
+            fabrican juntas; desde una sola no había forma de llegar a las otras salvo volver
+            al pedido y buscarlas de a una en el listado.
+          */}
+          {isLive && o.salesOrderId !== null && (
+            <Button asChild variant="outline">
+              <Link href={`/planta/producir?pedido=${o.salesOrderId}`}>
+                Órdenes de {o.salesOrderCode ?? 'este pedido'}
+              </Link>
+            </Button>
+          )}
           {o.status === 'IN_PROGRESS' && activeReports.length > 0 && (
             <Button
               disabled={close.isPending}

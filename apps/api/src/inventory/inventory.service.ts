@@ -36,7 +36,12 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { PrismaService } from '../prisma/prisma.service';
 import { ENV, type Env } from '../config/env';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
-import { assertRawMaterialInvariant, lockRawMaterialCoils } from '../sales/raw-material';
+import {
+  assertRawMaterialInvariant,
+  findRawMaterialShortfalls,
+  lockRawMaterialCoils,
+  type RawMaterialShortfall,
+} from '../sales/raw-material';
 import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
 
 /**
@@ -75,6 +80,20 @@ export interface RecordMovementInput {
    * resta de ella sigue protegido por la custodia de la orden (D-060), no queda al aire.
    */
   exceptReservationIds?: string[];
+  /**
+   * D-154: el **pedido entero** cuya promesa no se cuenta en contra, no solo la reserva de
+   * la línea. Un pedido de coberturas reserva una vez por línea y produce una OP por reserva,
+   * así que la salida de kardex de la línea 1 se comprobaba contra la promesa viva de la
+   * línea 2 —del mismo pedido— y se rechazaba nombrándolo. Ver `RawMaterialScope`.
+   */
+  exceptSalesOrderIds?: string[];
+  /**
+   * D-154: cuando el llamador pasa un arreglo, la invariante del agregado **no bloquea**:
+   * los faltantes se empujan acá y quien llamó decide qué hacer con ellos. Lo usa producción
+   * de coberturas, donde cortar la corrida por una promesa ajena solo lograba que el material
+   * rolado quedara sin registrar. El resto del sistema no lo pasa y sigue recibiendo un 400.
+   */
+  rawMaterialWarnings?: RawMaterialShortfall[];
   businessLineId: string;
   itemType: InventoryItemType;
   itemId: string;
@@ -249,9 +268,18 @@ export class InventoryService {
       newQty.lt(balance.qty) &&
       !SPLIT_REF_TYPES.includes(input.refType)
     ) {
-      await assertRawMaterialInvariant(tx, [input.itemId], roofingToleranceMm(this.env), {
+      const scope = {
         exceptReservationIds: input.exceptReservationIds,
-      });
+        exceptSalesOrderIds: input.exceptSalesOrderIds,
+      };
+      const tolerance = roofingToleranceMm(this.env);
+      if (input.rawMaterialWarnings) {
+        input.rawMaterialWarnings.push(
+          ...(await findRawMaterialShortfalls(tx, [input.itemId], tolerance, scope)),
+        );
+      } else {
+        await assertRawMaterialInvariant(tx, [input.itemId], tolerance, scope);
+      }
     }
 
     return tx.inventoryMovement.create({

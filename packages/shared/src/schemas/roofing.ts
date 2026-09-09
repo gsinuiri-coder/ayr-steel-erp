@@ -144,19 +144,8 @@ export function describePieces(pieces: readonly PieceLike[]): string {
 }
 
 // --------------------------------------------------------------------------
-// D-146 — el plan de corte es un tope duro, no una intención
+// D-146 — el plan de corte acota los METROS; el kg declarado solo avisa (D-154)
 // --------------------------------------------------------------------------
-
-/**
- * Tope de filas de una tanda (D-147). Es el papel que el encargado transcribe de una
- * sentada: un puñado de órdenes, no el listado entero de la planta.
- *
- * El número lo fija la transacción, no la ergonomía: cada fila hace lo que `report` entero
- * —que ya necesita 30 s de presupuesto contra Neon— y la tanda retiene el lock de cada
- * orden, de su pedido y de sus bobinas hasta el commit. Con 50 filas el presupuesto de
- * 120 s daba 2.4 s por fila y bloqueaba el producto durante dos minutos.
- */
-export const MAX_BATCH_ROWS = 20;
 
 /** Lo que el plan de corte de un ítem promete, lo que ya se reportó y lo que queda (D-146). */
 export interface RoofingPlanProgress {
@@ -463,60 +452,18 @@ export const reportRoofingPiecesSchema = z.object({
 export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>;
 
 // --------------------------------------------------------------------------
-// D-147 — reportar producción en tanda
+// D-155 — el espacio de producción del pedido
 // --------------------------------------------------------------------------
 
 /**
- * Una fila del papel de planta: una orden, los metros que salieron y —opcional— los kilos
- * que la bobina se comió. Los largos no se tipean: salen del plan de la propia orden
- * (`piecesFromPlanMeters`), que es lo que hace que la tanda se transcriba de una sentada.
+ * Órdenes por encima de las cuales el espacio de producción deja las pestañas y pasa a lista
+ * lateral (D-155). Seis pestañas todavía se leen de un vistazo en una tablet; ocho ya se
+ * amontonan y hay que buscar la orden en vez de verla.
+ *
+ * Es una constante de presentación y el API no la lee: vive acá porque es el único lugar que
+ * las dos mitades comparten, igual que las cotas de largos.
  */
-export const roofingBatchRowSchema = z.object({
-  orderId: z.string().uuid(),
-  /** Bobina de la que salieron. Opcional cuando la orden tiene una sola montada. */
-  coilId: z.string().uuid().optional(),
-  /**
-   * Metros lineales, con la escala de tres decimales de `KG` (la de `piecesMeters`).
-   *
-   * La cota no es cosmética: `piecesFromPlanMeters` resuelve el reparto en centésimas de
-   * milímetro **enteras** (`metros × 100 000`), y eso es exacto solo mientras el producto
-   * quede por debajo de 2^53. Con `MAX_VALUE.KG` da 1e14 y sobra; si alguien sube esa cota,
-   * el reparto empieza a perder precisión en silencio.
-   */
-  meters: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
-  consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
-  notes: z.string().trim().max(240).optional(),
-});
-export type RoofingBatchRowInput = z.infer<typeof roofingBatchRowSchema>;
-
-/**
- * La tanda entera (D-147). **Todo o nada**: una fila que no valida deja la tanda sin
- * escribir y el API devuelve el error de **cada** fila, no el de la primera — quien
- * transcribe una hoja de papel necesita corregirla toda de una vez, no descubrir un error
- * por intento.
- */
-export const reportRoofingBatchSchema = z
-  .object({
-    ...backdatableFields,
-    rows: z
-      .array(roofingBatchRowSchema)
-      .min(1, 'La tanda no tiene ninguna fila')
-      .max(MAX_BATCH_ROWS, `Máximo ${MAX_BATCH_ROWS} órdenes por tanda`),
-  })
-  .superRefine((v, ctx) => {
-    const seen = new Set<string>();
-    v.rows.forEach((row, i) => {
-      if (seen.has(row.orderId)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['rows', i, 'orderId'],
-          message: 'Esa orden ya está en la tanda: súmalo a los metros de esa fila',
-        });
-      }
-      seen.add(row.orderId);
-    });
-  });
-export type ReportRoofingBatchInput = z.infer<typeof reportRoofingBatchSchema>;
+export const MAX_ORDER_TABS = 6;
 
 // --------------------------------------------------------------------------
 // D-148 — todas las órdenes de un pedido de una vez
@@ -547,33 +494,39 @@ export const roofingBatchCreateResultSchema = z.object({
 });
 export type RoofingBatchCreateResultDto = z.infer<typeof roofingBatchCreateResultSchema>;
 
-/** Lo que la tanda dejó escrito. La pantalla recarga las filas después de esto. */
-export const roofingBatchResultSchema = z.object({
-  orders: z.number().int(),
-  pieces: z.number().int(),
-  meters: z.string(),
-});
-export type RoofingBatchResultDto = z.infer<typeof roofingBatchResultSchema>;
-
 /** Una bobina montada, con la geometría que da el kilo teórico (D-047). */
 export const roofingBatchCoilSchema = z.object({
   coilId: z.string().uuid(),
+  /**
+   * D-155: la fila de `production_order_consumptions`, que es lo que hace falta para bajar
+   * la bobina desde la propia pestaña. Sin esto había que pedir el detalle de la orden solo
+   * para traducir bobina → asignación, que es el N+1 que este DTO existe para evitar.
+   */
+  consumptionId: z.string().uuid(),
   coilCode: z.string(),
   widthMm: z.string(),
   thicknessMm: z.string(),
   densityFactor: z.string(),
+  /** Kilos ya rolados de esa asignación: por encima de cero la bobina ya no se puede bajar. */
+  consumedKg: z.string(),
   remainingKg: z.string(),
 });
 export type RoofingBatchCoilDto = z.infer<typeof roofingBatchCoilSchema>;
 
 /**
- * Una orden de coberturas abierta, con todo lo que la fila de la tanda necesita mostrar sin
- * pedir el detalle de cada orden por separado (D-147).
+ * Una orden de coberturas abierta, con todo lo que su pestaña del espacio de producción
+ * necesita mostrar y operar sin pedir el detalle de cada orden por separado (D-147, D-155).
  */
 export const roofingBatchOrderSchema = z.object({
   orderId: z.string().uuid(),
   code: z.string(),
   status: z.enum(PRODUCTION_ORDER_STATUSES),
+  /**
+   * D-155: la reserva que la orden viene a cumplir, para pedirle a
+   * `GET /production/roofing/coils` las bobinas candidatas sin que la promesa del propio
+   * pedido esconda su material. Null en una corrida a stock (D-140).
+   */
+  reservationId: z.string().uuid().nullable(),
   productId: z.string().uuid(),
   productSku: z.string(),
   productName: z.string(),

@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { CustomerDialog } from './customer-dialog';
+import { CustomerDialog } from '@/components/customers/customer-dialog';
 
 /**
  * Prefijo de invalidación: React Query hace *match* parcial, así que

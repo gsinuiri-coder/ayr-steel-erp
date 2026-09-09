@@ -1,16 +1,18 @@
-import { Suspense } from 'react';
-import type { Metadata } from 'next';
-import { Skeleton } from '@/components/ui/skeleton';
-import { TandaView } from './tanda-view';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Reportar producción en tanda' };
-
-export default function TandaPage() {
-  // `useSearchParams` (para llegar filtrado por pedido desde `/pedidos/[id]`) obliga a un
-  // límite de Suspense en el App Router; sin él el build falla al prerenderizar la ruta.
-  return (
-    <Suspense fallback={<Skeleton className="h-64 w-full" />}>
-      <TandaView />
-    </Suspense>
-  );
+/**
+ * D-155: la tanda de D-147 se reconvirtió en el espacio de producción del pedido, y esta
+ * ruta queda solo como redirección. No es una segunda puerta: es la vieja, que cualquiera
+ * pudo dejar guardada, apuntando a la única que existe. El `?pedido=` viaja tal cual —era el
+ * único parámetro que la tanda entendía— y con él la vista nueva abre acotada al mismo
+ * pedido en vez de a la planta entera.
+ */
+export default async function TandaRedirectPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const pedido = (await searchParams).pedido;
+  const id = Array.isArray(pedido) ? pedido[0] : pedido;
+  redirect(id ? `/planta/producir?pedido=${id}` : '/planta/producir');
 }
