@@ -12,8 +12,10 @@ import {
   coilSkuFromTypeKey,
   describePieces,
   fixedLengthUnitValue,
+  isPlausiblePieceLength,
   kgPerMeter,
   money,
+  PIECE_LENGTH_RANGE_LABEL,
   piecesMeters,
   rawMaterialLabel,
   RoofingProductKind,
@@ -257,6 +259,11 @@ export async function resolveSalesLines(
     // manda valor por metro: el importador de históricos (D-152), que trae el valor unitario
     // tal como salió en el papel, y una plancha sin largo en el catálogo, que no se puede
     // multiplicar por nada.
+    assertUsableFixedLength(
+      { sku: product.sku, roofingKind: product.roofingKind, unit: product.unit },
+      product.lengthMm === null ? null : product.lengthMm.toFixed(2),
+      at,
+    );
     const byFixedLength = sellsByFixedLength({
       roofingKind: product.roofingKind,
       unit: product.unit,
@@ -724,4 +731,35 @@ export function roofingSpecThicknessMm(product: RoofingProductLike, at: string):
     );
   }
   return product.thicknessMm.toFixed(2);
+}
+
+/**
+ * D-166: **el largo de catálogo de una plancha tiene que ser un largo posible antes de que
+ * D-161 multiplique el precio por él.**
+ *
+ * No es una cuarta pregunta de la familia de D-131 —no decide ninguna rama— sino una
+ * precondición de `sellsByFixedLength`: esa responde *en qué unidad se negocia* y para eso le
+ * alcanza con `largo > 0`. Con `3.00` mm donde iban 3 000 dice que sí y multiplica igual, y la
+ * línea sale **mil veces más barata sin un solo error**: diez planchas a S/ 11 el metro daban
+ * S/ 0.28 en vez de S/ 330. Es lo que le pasó a las tres planchas del catálogo del dueño,
+ * porque el campo pide milímetros y el resto de la pantalla de coberturas trabaja en metros.
+ *
+ * Vive acá y no dentro de `sellsByFixedLength` a propósito: si el predicado devolviera `false`
+ * con un largo imposible, la línea caería en el camino viejo —valor por plancha tipeado a
+ * mano— y el vendedor escribiría 11 pensando «por metro». Volvería a estar mal, en silencio y
+ * por otro lado. Lo que hace falta es **cortar**, no elegir otra rama.
+ */
+export function assertUsableFixedLength(
+  product: { sku: string; roofingKind: string | null; unit: string },
+  lengthMm: string | null,
+  at: string,
+): void {
+  if (product.roofingKind !== RoofingProductKind.PLANCHA || product.unit !== Unit.NIU) return;
+  if (lengthMm === null || isPlausiblePieceLength(lengthMm)) return;
+  throw new BadRequestException(
+    `${at}: ${product.sku} tiene ${toDecimal(lengthMm).toFixed(2)} mm de largo en el catálogo ` +
+      `(${toDecimal(lengthMm).div(1000).toFixed(3)} m), y el largo de una plancha va entre ` +
+      `${PIECE_LENGTH_RANGE_LABEL}. Corrígelo en el catálogo —el campo va en milímetros, una ` +
+      'plancha de 3 metros son 3000— antes de cotizarlo.',
+  );
 }

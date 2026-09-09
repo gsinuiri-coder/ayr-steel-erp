@@ -11,6 +11,7 @@
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
+import { isPlausiblePieceLength, PIECE_LENGTH_RANGE_LABEL } from '@ayr/shared';
 
 const prisma = new PrismaClient();
 
@@ -42,6 +43,17 @@ async function main(): Promise<void> {
       (p.roofingKind === 'A_MEDIDA' && p.unit !== 'MTR') ||
       (p.roofingKind === 'PLANCHA' && p.unit !== 'NIU'),
   );
+  // D-166: el largo que **está** pero no se puede creer. El campo del catálogo pide
+  // milímetros y el resto de la pantalla de coberturas trabaja en metros, así que un "3" por
+  // 3 000 entra sin que nada avise — y D-161 multiplica el precio por ese número, dejando la
+  // cotización mil veces más barata. Estos ya no se pueden cotizar (el API los rechaza) y hay
+  // que corregirlos a mano en el catálogo.
+  const largoImposible = products.filter(
+    (p) =>
+      p.roofingKind === 'PLANCHA' &&
+      p.lengthMm !== null &&
+      !isPlausiblePieceLength(p.lengthMm.toFixed(2)),
+  );
 
   const report = (title: string, rows: typeof products) => {
     if (rows.length === 0) {
@@ -59,9 +71,24 @@ async function main(): Promise<void> {
   report('sin subtipo', sinSubtipo);
   report('PLANCHA sin largo fijo (no se van a poder editar)', planchaSinLargo);
   report('con unidad incoherente con su subtipo', unidadIncoherente);
+  report(
+    `PLANCHA con largo IMPOSIBLE — no se pueden cotizar, el largo va entre ${PIECE_LENGTH_RANGE_LABEL} (D-166)`,
+    largoImposible,
+  );
+  if (largoImposible.length > 0) {
+    console.log('');
+    console.log('  El campo del catálogo va en MILÍMETROS: una plancha de 3 metros son 3000.');
+    console.log('  Corrígelos en Catálogo antes de cotizarlos; el largo de arriba está en mm.');
+  }
 
-  if (sinSubtipo.length + planchaSinLargo.length + unidadIncoherente.length === 0) {
-    console.log('Nada que corregir antes de desplegar D-127.');
+  if (
+    sinSubtipo.length +
+      planchaSinLargo.length +
+      unidadIncoherente.length +
+      largoImposible.length ===
+    0
+  ) {
+    console.log('Nada que corregir.');
   }
 }
 

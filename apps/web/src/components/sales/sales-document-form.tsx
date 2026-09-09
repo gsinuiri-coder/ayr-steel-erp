@@ -12,9 +12,11 @@ import {
   fixedLengthMeters,
   fixedLengthUnitValue,
   fixedLengthValuePerMeter,
+  isPlausiblePieceLength,
   MAX_QUOTATION_VALIDITY_DAYS,
   MAX_SALES_ITEMS,
   money,
+  PIECE_LENGTH_RANGE_LABEL,
   piecesCount,
   piecesMeters,
   RoofingProductKind,
@@ -213,6 +215,23 @@ function sellsByLength(product: ProductDto | undefined): boolean {
  */
 function byFixedLength(product: ProductDto | undefined): boolean {
   return product !== undefined && sellsByFixedLength(product);
+}
+
+/**
+ * D-166: **¿el largo de catálogo de esta plancha es imposible?**
+ *
+ * Es una pregunta distinta de las tres de la familia de D-131, y por eso es una función más:
+ * `sellsByFixedLength` responde *en qué unidad se negocia* y para eso le alcanza con
+ * `largo > 0`; esta responde *si el número del maestro se puede creer*. Con `3.00` mm donde
+ * iban 3 000 la primera dice que sí —y multiplica— y solo esta dice que no.
+ */
+function brokenFixedLength(product: ProductDto | undefined): boolean {
+  return (
+    product?.roofingKind === 'PLANCHA' &&
+    product.unit === Unit.NIU &&
+    product.lengthMm !== null &&
+    !isPlausiblePieceLength(product.lengthMm)
+  );
 }
 
 export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
@@ -446,6 +465,17 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
 
       if (!l.productId) return { error: `${at}: elige un producto` };
       const product = productById.get(l.productId);
+      // D-166: una plancha cuyo largo de catálogo es imposible no se cotiza. El API también lo
+      // rechaza, pero decirlo acá señala **qué línea** y, sobre todo, llega antes de que el
+      // vendedor mande un documento cuyo importe salió mil veces más chico sin avisar.
+      if (brokenFixedLength(product)) {
+        return {
+          error:
+            `${at}: ${product?.sku ?? 'este producto'} tiene ${product?.lengthMm ?? '?'} mm de largo ` +
+            `en el catálogo, y el largo de una plancha va entre ${PIECE_LENGTH_RANGE_LABEL}. ` +
+            'Corrígelo en Catálogo — el campo va en milímetros, una plancha de 3 metros son 3000.',
+        };
+      }
       const sellsMeters = sellsByLength(product);
       const pieces = sellsMeters ? toPieces(l.pieces) : null;
       if (sellsMeters) {
@@ -798,6 +828,8 @@ function LineRow({
   const fixedLength = byFixedLength(product);
   /** El largo del SKU, ya estrechado: `byFixedLength` garantiza que exista, el tipo no. */
   const fixedLengthMm = product?.lengthMm ?? null;
+  /** D-166: el largo está, pero no se puede creer. Ver `brokenFixedLength`. */
+  const brokenLength = brokenFixedLength(product);
   const { valuePerMeterPen, unitValuePen } = lineValues(l, product);
   const parsedLine = sellsMeters ? parsePieceRows(l.pieces) : null;
   const parsedPieces = parsedLine?.ok === true ? parsedLine.pieces : null;
@@ -1088,11 +1120,22 @@ function LineRow({
                   }}
                 />
               </div>
-              <p className="pb-2 text-xs text-muted-foreground tabular-nums">
-                {isPositiveDecimal(l.qty)
-                  ? `${fixedLengthMeters(fixedLengthMm, l.qty).toFixed(3)} m lineales`
-                  : 'Escribe cuántas planchas lleva la línea'}
-              </p>
+              {/* D-166: con un largo de catálogo imposible no se muestran metros lineales —
+                  serían 0.030 m para diez planchas de 3 metros, que es justo el número que
+                  nadie miró. Se dice qué está mal y dónde se arregla. */}
+              {brokenLength ? (
+                <p className="pb-2 text-xs text-destructive">
+                  El catálogo dice {fixedLengthMm} mm de largo, y una plancha va entre{' '}
+                  {PIECE_LENGTH_RANGE_LABEL}. Corrígelo en Catálogo: el campo va en{' '}
+                  <strong>milímetros</strong> — una plancha de 3 metros son 3000.
+                </p>
+              ) : (
+                <p className="pb-2 text-xs text-muted-foreground tabular-nums">
+                  {isPositiveDecimal(l.qty)
+                    ? `${fixedLengthMeters(fixedLengthMm, l.qty).toFixed(3)} m lineales`
+                    : 'Escribe cuántas planchas lleva la línea'}
+                </p>
+              )}
             </div>
           </TableCell>
         </TableRow>

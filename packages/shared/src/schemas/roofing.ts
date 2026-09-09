@@ -45,6 +45,32 @@ export const MIN_PIECE_LENGTH_MM = 100;
 /** Largo máximo de una plancha, en mm. Ninguna roladora del rubro pasa de esto. */
 export const MAX_PIECE_LENGTH_MM = 20_000;
 
+/**
+ * D-166: **¿este largo es un largo posible para una plancha?**
+ *
+ * Existe como función y no como dos comparaciones sueltas porque la misma pregunta se hace en
+ * tres lugares que hasta D-166 no se hablaban: el largo de un subítem del plan de corte (que
+ * ya la tenía, inline), el **largo fijo de una plancha en el catálogo** (que no la tenía, y
+ * ahí estaba el defecto) y la línea de venta que multiplica por ese largo.
+ *
+ * El defecto que la trajo: el catálogo pide el largo **en milímetros** y el resto de la
+ * pantalla de coberturas trabaja en **metros**, así que las tres planchas cargadas por el
+ * dueño tenían `3.00` y `6.00` donde iban 3 000 y 6 000. Un largo de 3 mm pasa `> 0`, así que
+ * `sellsByFixedLength` decía que sí y la línea salía **mil veces más barata**: diez planchas a
+ * S/ 11 el metro daban S/ 0.28 en vez de S/ 330, sin un solo error por ningún lado.
+ *
+ * El rango no es una cota de seguridad inventada para esto: es el mismo que el plan de corte
+ * ya exigía a cada largo que se tipea a mano. Lo único nuevo es que ahora también lo cumple el
+ * largo que vive en el maestro, que es de donde salía el número que nadie miraba.
+ */
+export function isPlausiblePieceLength(lengthMm: string): boolean {
+  const length = toDecimal(lengthMm);
+  return length.gte(MIN_PIECE_LENGTH_MM) && length.lte(MAX_PIECE_LENGTH_MM);
+}
+
+/** El rango de largos, en metros, para los mensajes de error. */
+export const PIECE_LENGTH_RANGE_LABEL = `${MIN_PIECE_LENGTH_MM / 1000} y ${MAX_PIECE_LENGTH_MM / 1000} metros`;
+
 /** Tope de planchas de un mismo largo en una línea. */
 export const MAX_PIECE_QTY = 10_000;
 
@@ -55,11 +81,8 @@ export const MAX_PIECE_QTY = 10_000;
 export const roofingPieceInputSchema = z.object({
   /** Largo de la plancha en mm (escala MM, D-003). La UI lo muestra en metros. */
   lengthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }).refine(
-    (v) => {
-      const d = toDecimal(v);
-      return d.gte(MIN_PIECE_LENGTH_MM) && d.lte(MAX_PIECE_LENGTH_MM);
-    },
-    `El largo tiene que estar entre ${MIN_PIECE_LENGTH_MM / 1000} y ${MAX_PIECE_LENGTH_MM / 1000} metros`,
+    isPlausiblePieceLength,
+    `El largo tiene que estar entre ${PIECE_LENGTH_RANGE_LABEL}`,
   ),
   qty: z
     .number({ required_error: 'La cantidad es obligatoria' })

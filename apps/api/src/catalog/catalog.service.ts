@@ -6,10 +6,13 @@ import {
 } from '@nestjs/common';
 import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
+  isPlausiblePieceLength,
   kgPerMeter,
+  PIECE_LENGTH_RANGE_LABEL,
   ROOFING_KIND_UNIT,
   RoofingProductKind,
   theoreticalKgPerPiece,
+  toDecimal,
   Unit,
   type CreateProductInput,
   type ProductDto,
@@ -305,6 +308,22 @@ function assertStructuredFields(
     // largo propio — lo traen los subítems de cada línea de venta (D-083).
     if (fields.roofingKind === RoofingProductKind.PLANCHA && fields.lengthMm === null) {
       throw new BadRequestException('El largo de la plancha es obligatorio');
+    }
+    // D-166: y tiene que ser un largo **posible**, el mismo rango que el plan de corte ya
+    // exigía a cada largo tipeado a mano. El campo pide milímetros y el resto de la pantalla
+    // de coberturas trabaja en metros, así que "3" por 3 000 entraba sin que nada avisara — y
+    // de ahí salía una cotización mil veces más barata (D-161 multiplica por este número).
+    if (
+      fields.roofingKind === RoofingProductKind.PLANCHA &&
+      fields.lengthMm !== null &&
+      !isPlausiblePieceLength(fields.lengthMm)
+    ) {
+      throw new BadRequestException(
+        `El largo de la plancha tiene que estar entre ${PIECE_LENGTH_RANGE_LABEL}: ` +
+          `${toDecimal(fields.lengthMm).toFixed(2)} mm son ` +
+          `${toDecimal(fields.lengthMm).div(1000).toFixed(3)} m. El campo va en **milímetros** ` +
+          '(una plancha de 3 metros son 3000).',
+      );
     }
     if (fields.roofingKind === RoofingProductKind.A_MEDIDA && fields.lengthMm !== null) {
       throw new BadRequestException(

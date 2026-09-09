@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import {
   BusinessLine,
+  isPlausiblePieceLength,
+  PIECE_LENGTH_RANGE_LABEL,
   PRODUCT_SOURCE_LABELS,
   PRODUCT_SOURCES,
   ROOFING_KIND_UNIT,
@@ -14,6 +16,7 @@ import {
   ROOFING_PRODUCT_KIND_LABELS,
   ROOFING_PRODUCT_KINDS,
   RoofingProductKind,
+  toDecimal,
   type FinishDto,
   type ProductDto,
 } from '@ayr/shared';
@@ -413,8 +416,15 @@ export function ProductDialog({
                   <FormItem>
                     <FormLabel>Largo de la plancha (mm)</FormLabel>
                     <FormControl>
-                      <Input inputMode="decimal" autoComplete="off" {...field} />
+                      <Input inputMode="decimal" autoComplete="off" placeholder="3000" {...field} />
                     </FormControl>
+                    {/* D-166: el equivalente en metros, en vivo. El campo pide milímetros y
+                        todo el resto de la pantalla de coberturas trabaja en metros, así que
+                        las tres planchas del catálogo terminaron con "3" y "6" donde iban
+                        3 000 y 6 000 — y la cotización salía mil veces más barata sin que
+                        nada avisara. Ver el número traducido mientras se tipea lo hace obvio
+                        en el momento, que es cuando se puede corregir sin consecuencias. */}
+                    <PlateLengthHint lengthMm={field.value} />
                     <p className="text-xs text-muted-foreground">
                       Solo la plancha de catálogo tiene largo fijo. A medida, el largo lo trae cada
                       línea de la cotización.
@@ -521,5 +531,33 @@ export function ProductDialog({
         </Form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * D-166: el largo tipeado, traducido a metros en vivo, y un aviso cuando cae fuera del rango
+ * de una plancha real.
+ *
+ * Es la mitad barata del arreglo: el API rechaza el largo imposible, pero el rechazo llega
+ * al guardar y no dice de dónde salió la confusión. Ver «3.00 mm = 0.003 m» debajo del campo
+ * mientras se tipea la desarma en el momento — que es exactamente lo que faltó cuando las
+ * tres planchas del catálogo se cargaron en metros.
+ */
+function PlateLengthHint({ lengthMm }: { lengthMm: string }) {
+  const typed = lengthMm.trim().replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(typed)) return null;
+  const meters = toDecimal(typed).div(1000);
+  const plausible = isPlausiblePieceLength(typed);
+  return (
+    <p className={plausible ? 'text-xs text-muted-foreground' : 'text-xs text-destructive'}>
+      = {meters.toFixed(3)} m
+      {!plausible && (
+        <>
+          {' '}
+          · fuera de rango: el largo de una plancha va entre {PIECE_LENGTH_RANGE_LABEL}. El campo va
+          en <strong>milímetros</strong> — una plancha de 3 metros son 3000.
+        </>
+      )}
+    </p>
   );
 }

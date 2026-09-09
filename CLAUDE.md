@@ -64,7 +64,8 @@ pnpm db:local reset|snapshot <n>|restore <n>   # operar el Postgres local (Docke
 pnpm e2e                     # Playwright, por defecto contra el Postgres local (Docker); en CI, Neon rama ci
 pnpm env:demo | db:demo | dev:demo   # entorno de ensayo (rama Neon demo, D-125)
 pnpm smoke:prod              # verificación post-deploy de SOLO LECTURA (D-126)
-pnpm check:price-floor [--branch production|demo|dev|local]   # SKU bajo el piso de D-163, solo lectura
+pnpm check:price-floor [--branch production|demo|dev|local|local-e2e]      # SKU bajo el piso de D-163, solo lectura
+pnpm check:roofing-catalog [--branch production|demo|dev|local|local-e2e]  # coberturas mal cargadas (D-127, D-166), solo lectura
 pnpm secrets:gh              # gh secret set desde .env.setup
 pnpm deploy:api | deploy:web # Cloud Run / Vercel
 pnpm monitors                # UptimeRobot

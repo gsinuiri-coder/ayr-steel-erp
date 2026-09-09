@@ -27,6 +27,7 @@
 | Sesión Planta III — importador asentado y una sola forma de producir           | ✅ Cerrada (2026-09-09) | D-157 (una cotización puede no vencer), D-158 (el cliente se crea del padrón), D-159 (plan de corte con largo bloqueado), D-160 (producir queda en un solo lugar). **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Sesión Precios — plancha por metro, valor contra precio y piso duro            | ✅ Cerrada (2026-09-09) | D-161 (la plancha de catálogo se cotiza por metro lineal), D-162 («valor de venta» sin IGV contra «precio de venta» con IGV), D-163 (piso duro con el margen sobre la venta, para todos los roles). 341/341 unitarios; 69/69 E2E de los specs afectados. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                        |
 | Sesión Cierre de bobina — remanente liquidado y merma normal en el estándar    | ✅ Cerrada (2026-09-09) | D-164 (cerrar una bobina liquida su remanente como movimiento `CLOSE_ADJUSTMENT` en la misma transacción; reabrir lo revierte), D-165 (el 1 % de merma normal se absorbe en la densidad estándar, en código y en un solo lugar). `pnpm check:price-floor` (solo lectura) para decidir el aviso de mínimo en el POS. Regla dura 16 (ningún texto largo pasa por la shell). 352/352 unitarios; 5/5 E2E de D-164. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                  |
+| Sesión Largo de la plancha — el campo pedía mm y el catálogo tenía metros      | ✅ Cerrada (2026-09-09) | D-166 (el largo fijo de una plancha tiene que ser posible, y el campo dice en qué unidad va). Bugfix de la captura del dueño: las tres planchas del catálogo estaban en metros y D-161 multiplicaba por ese número — S/ 0.28 en vez de S/ 330. 357/357 unitarios; 3/3 E2E de pantalla y 33/33 de regresión. **Sin desplegar y sin push.**                                                                                                                                                                                                                                                                                                                                                                |
 | 8 — Auditoría, reportes, UAT                                                   | ⚪ Pendiente            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Fase 0 — detalle
@@ -3924,6 +3925,83 @@ generados al azar. **Ninguno de esta sesión.**
 **Lo que costó llegar ahí está arriba** («El precio de D-165»): ocho tandas de corrección de
 fixtures, porque cada aserción arreglada destapaba la siguiente del mismo caso. Vale anotarlo
 como método: para un cambio de factor, presupuestar varias corridas completas, no una.
+
+## Sesión Largo de la plancha (2026-09-09) — el campo pedía milímetros y el catálogo tenía metros (D-166)
+
+Bugfix de una captura del dueño, y de los que más enseñan: **no había ningún error en el
+código de D-161**. La cuenta era correcta; lo que estaba mal era el número del maestro, y el
+sistema lo multiplicaba sin preguntarse si se podía creer.
+
+### El defecto
+
+En Nueva cotización, `PL028ROJO` —una plancha de 3 metros— mostraba el largo bloqueado en
+**0.00** y la línea calculaba **0.030 m lineales** y **S/ 0.28** para diez planchas a S/ 11 el
+metro. Debía dar 30 m y S/ 330.
+
+La causa **no** fue la que parecía. El largo sí se hidrataba del catálogo; lo que pasaba es que
+el catálogo tenía `length_mm = 3.00`. El campo del maestro pide **milímetros** y todo el resto
+de la pantalla de coberturas trabaja en **metros**, así que «3» entró queriendo decir 3 metros.
+Y no fue un desliz: las **tres** planchas del catálogo del dueño estaban así (`3.00`, `6.00`,
+`6.00`). El campo es una trampa, no hubo un error de tipeo.
+
+De ahí en adelante todo funcionó como estaba escrito: 3 mm ÷ 1000 = 0.003 m por plancha, × 10 =
+0.030 m, × S/ 9.3220 el metro (el valor sin IGV de S/ 11) = S/ 0.28. **Dos números correctos en
+pantalla que había que saber leer**, y ningún error por ningún lado.
+
+### Lo que decidió la forma del arreglo (D-166)
+
+**El corte no podía ser que `sellsByFixedLength` devolviera `false`.** Es lo primero que uno
+piensa —si el largo es imposible, que no cotice por metro— y está mal: con `false` la línea cae
+en el camino viejo, el del valor por plancha tipeado a mano, y el vendedor escribe 11 pensando
+«por metro». Vuelve a estar mal, en silencio y por otro lado. Hace falta **cortar**, no elegir
+otra rama, y por eso la precondición (`assertUsableFixedLength`) vive aparte del predicado.
+
+**El rango no se inventó para este caso.** `MIN_PIECE_LENGTH_MM`..`MAX_PIECE_LENGTH_MM` (0.1 a
+20 m) es exactamente el que la rama **a medida** ya exigía a cada largo de su plan de corte
+desde D-083. La asimetría era el defecto: el largo que se tipea línea por línea estaba
+validado, y el que vive en el maestro —el único que nadie mira al cotizar— no. Unificarlos en
+`isPlausiblePieceLength` deja una sola definición para las tres preguntas.
+
+### Tres cortes, en los tres momentos
+
+1. **Al cargar el producto** (`assertStructuredFields`): el catálogo no guarda un largo
+   imposible, y el mensaje **traduce el número y nombra la unidad** («3.00 mm son 0.003 m; el
+   campo va en milímetros, una plancha de 3 metros son 3000»). Decir solo «fuera de rango»
+   dejaba a quien lo lee sin saber qué esperaba el campo, que es la mitad de la confusión.
+2. **Al tipearlo** (`PlateLengthHint` en el diálogo del catálogo): el equivalente en metros,
+   en vivo, debajo del campo. Es la mitad barata del arreglo y la que de verdad previene: ver
+   «= 0.003 m» mientras se escribe desarma la confusión en el momento, que es cuando corregirla
+   no cuesta nada.
+3. **Al cotizar** (`assertUsableFixedLength`): un producto **ya guardado** con el largo roto no
+   se cotiza — la línea lo dice en pantalla y el API la rechaza nombrando el SKU. Es el corte
+   que importa de verdad, porque los tres productos del dueño siguen rotos hasta que alguien
+   los corrija, y sin esto seguirían produciendo documentos mil veces más baratos.
+
+Y `pnpm check:roofing-catalog` los lista, que es cómo encontrarlos en una base que ya los
+tiene. Se le agregó además `--branch local|local-e2e`, como ya tenía `check-price-floor`.
+
+### Lo que NO se hizo, a propósito
+
+**No se migró ni un dato.** Multiplicar por 1000 los largos que están por debajo del mínimo
+sería casi siempre correcto y ocasionalmente desastroso, y es una decisión del dueño sobre sus
+propios datos, no de una migración. Son tres productos y se corrigen en el catálogo en menos de
+un minuto; el reporte los nombra.
+
+### Verificación
+
+`pnpm turbo lint typecheck test` en verde (**357/357** unitarios, 25 suites), `prettier --check`
+y `eslint e2e` limpios. Tests nuevos: `apps/api/src/sales/fixed-length-plausible.spec.ts`, ocho
+casos — el importe **exacto de la captura** con el largo bien cargado (S/ 330), el defecto
+reproducido (S/ 0.28 y `sellsByFixedLength` diciendo que sí), los bordes del rango, el par
+cruzado contra `sellsByFixedLength`, y los tres casos del guard.
+
+E2E: `e2e/tests/plancha-largo-d166.spec.ts`, **3/3 por pantalla** — el catálogo rechazando el
+largo en metros, el diálogo traduciendo mientras se tipea, y la cotización de una plancha de
+3 m mostrando **30.000 m lineales** y cobrando **S/ 330.00**, que es la regresión directa de la
+captura. Regresión de ventas y catálogo: `precios-d161-d163`, `fase7e`, `fase1` y
+`fase7-consolidada-subtipo`, **33/33**.
+
+**Sin desplegar y sin push.**
 
 ## Bloqueos
 
