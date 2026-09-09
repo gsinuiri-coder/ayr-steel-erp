@@ -390,7 +390,7 @@ export function PosView() {
                           </div>
                           <div className="grid gap-1">
                             <Label className="text-xs" htmlFor={`price-${line.product.productId}`}>
-                              Precio sin IGV
+                              Valor unitario (sin IGV)
                             </Label>
                             <Input
                               id={`price-${line.product.productId}`}

@@ -1,5 +1,8 @@
 import {
   defaultRoofingPlan,
+  EXTERNAL_INVOICE_NOTES_PREFIX,
+  isImportedQuotation,
+  keepImportMarker,
   importDocTypeOf,
   MAX_PIECE_LENGTH_MM,
   piecesMeters,
@@ -93,5 +96,58 @@ describe('importDocTypeOf (D-158)', () => {
     expect(importDocTypeOf('123456')).toBeNull();
     expect(importDocTypeOf('X0123456')).toBeNull();
     expect(importDocTypeOf('')).toBeNull();
+  });
+});
+
+/**
+ * La marca de procedencia del comprobante externo (D-152), y por qué sobrevive a una edición
+ * (D-163).
+ *
+ * De ella dependen dos cosas que no se ven: el aviso de reimportación del preview, y que el
+ * piso duro de precio **no** se le aplique a un documento histórico. El `PUT` reemplazaba las
+ * observaciones con lo que viniera en el cuerpo, así que editar una cotización importada sin
+ * reenviarlas la dejaba sin marca — y el **segundo** guardado, con el mismo precio histórico,
+ * rebotaba contra el piso. Un documento que se vuelve inválido por haberlo guardado dos veces.
+ */
+describe('la marca del comprobante externo (D-152/D-163)', () => {
+  const MARKER = `${EXTERNAL_INVOICE_NOTES_PREFIX}F001-000123`;
+
+  it('reconoce una cotización importada por el prefijo, y solo por el prefijo', () => {
+    expect(isImportedQuotation(MARKER)).toBe(true);
+    expect(isImportedQuotation(`${MARKER}\nRevisada por ventas`)).toBe(true);
+    expect(isImportedQuotation(null)).toBe(false);
+    expect(isImportedQuotation('Observaciones del vendedor')).toBe(false);
+    // No alcanza con nombrarla en el medio: la marca es un prefijo.
+    expect(isImportedQuotation(`Nota: ${MARKER}`)).toBe(false);
+  });
+
+  it('una edición que borra las observaciones no borra la marca', () => {
+    expect(keepImportMarker(MARKER, null)).toBe(MARKER);
+    expect(keepImportMarker(MARKER, '   ')).toBe(MARKER);
+  });
+
+  it('la marca queda primero y el texto del vendedor debajo', () => {
+    expect(keepImportMarker(MARKER, 'Cliente pidió reponer')).toBe(
+      `${MARKER}\nCliente pidió reponer`,
+    );
+  });
+
+  it('si el texto nuevo ya trae la marca no se duplica', () => {
+    const withMarker = `${MARKER}\nYa venía`;
+    expect(keepImportMarker(MARKER, withMarker)).toBe(withMarker);
+  });
+
+  it('una cotización que no es importada no gana ninguna marca', () => {
+    expect(keepImportMarker(null, 'Observaciones')).toBe('Observaciones');
+    expect(keepImportMarker('Observaciones viejas', null)).toBeNull();
+  });
+
+  it('lo que se recorta al tope de la columna es el texto, nunca la marca', () => {
+    const long = 'x'.repeat(600);
+    const result = keepImportMarker(MARKER, long);
+    expect(result?.length).toBe(500);
+    expect(result?.startsWith(MARKER)).toBe(true);
+    // Y sigue siendo reconocible como importada después del recorte, que es todo el punto.
+    expect(isImportedQuotation(result)).toBe(true);
   });
 });

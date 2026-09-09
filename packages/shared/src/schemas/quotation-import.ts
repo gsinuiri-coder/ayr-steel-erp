@@ -343,3 +343,57 @@ export const quotationImportResultSchema = z.object({
   createdCustomers: z.array(z.string()),
 });
 export type QuotationImportResultDto = z.infer<typeof quotationImportResultSchema>;
+
+/**
+ * El prefijo con el que el número del comprobante externo viaja a las observaciones de la
+ * cotización que crea el importador (D-152).
+ *
+ * Vive acá y no en el importador desde D-163: dejó de ser un detalle suyo el día que **otro**
+ * módulo tuvo que preguntar «¿esta cotización la trajo el importador?». Hoy lo preguntan tres
+ * lugares —el importador para avisar de una reimportación, y `QuotationsService` para no
+ * aplicarle a un histórico ni el vencimiento ni el piso de precio— y tres literales separados
+ * habrían dejado a dos de ellos mudos sin que nadie lo note.
+ */
+export const EXTERNAL_INVOICE_NOTES_PREFIX = 'Factura externa: ';
+
+/**
+ * `true` si esta cotización la creó el importador de comprobantes históricos (D-152).
+ *
+ * Es una lectura de las observaciones porque así se marcó desde el principio: D-152 eligió a
+ * propósito no agregarle una columna al modelo por un dato de procedencia. La contrapartida
+ * conocida es que alguien puede tipear ese prefijo a mano en las observaciones de una
+ * cotización nueva; el peor caso es que esa cotización se salte el piso de precio, que es una
+ * decisión que el mismo usuario podía tomar cambiando el margen mínimo.
+ */
+export function isImportedQuotation(notes: string | null): boolean {
+  return notes?.startsWith(EXTERNAL_INVOICE_NOTES_PREFIX) === true;
+}
+
+/** Tope de `quotations.notes` (`VarChar(500)`). El texto del usuario se recorta, la marca no. */
+const NOTES_MAX = 500;
+
+/**
+ * Las observaciones que quedan al editar una cotización, **conservando la marca de
+ * procedencia** si la tenía (D-152/D-163).
+ *
+ * La marca no es una observación que alguien escribió: es de dónde salió el documento. Y de
+ * ella dependen dos cosas —que el importador avise de una reimportación y que el piso de
+ * precio no se le aplique a un histórico— así que una edición que no reenvíe las
+ * observaciones no la puede borrar. Sin esto, editar una cotización importada la dejaba sin
+ * marca, y el **segundo** `PUT` con el mismo precio histórico rebotaba contra el piso: un
+ * documento que se vuelve inválido por haberlo guardado dos veces.
+ *
+ * Si el texto nuevo ya trae la marca se respeta tal cual; si no, la marca va primero y el
+ * texto del usuario debajo. Lo que se recorta al tope de la columna es el texto, nunca la
+ * marca — al revés, perderla es justamente el defecto que esta función existe para evitar.
+ */
+export function keepImportMarker(
+  currentNotes: string | null,
+  newNotes: string | null,
+): string | null {
+  if (!isImportedQuotation(currentNotes) || currentNotes === null) return newNotes;
+  const marker = currentNotes.split('\n')[0] ?? '';
+  if (newNotes === null || newNotes.trim() === '') return marker;
+  if (newNotes.startsWith(marker)) return newNotes.slice(0, NOTES_MAX);
+  return `${marker}\n${newNotes}`.slice(0, NOTES_MAX);
+}

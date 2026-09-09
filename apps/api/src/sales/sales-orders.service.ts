@@ -52,6 +52,7 @@ import {
   type SalesOrderQuery,
   type ProductStockDto,
   type RawMaterialStockDto,
+  sellsByFixedLength,
   type SellableCoilDto,
   type StockPanelDto,
   type StockPanelQuery,
@@ -84,6 +85,7 @@ import {
   toSalesItemDto,
 } from './sales-lines';
 import { buildPlantOrderPdf } from './plant-order-pdf';
+import { computePriceFloors, type PriceFloorCandidate } from './price-floor';
 import {
   assertRawMaterialInvariant,
   rawMaterialAvailability,
@@ -331,6 +333,8 @@ export class SalesOrdersService {
                   unit: i.unit,
                   listPricePen: i.listPricePen,
                   unitPricePen: i.unitPricePen,
+                  // D-161: el pedido congela el valor por metro igual que congela el unitario.
+                  valuePerMeterPen: i.valuePerMeterPen,
                   subtotalPen: i.subtotalPen,
                   igvPen: i.igvPen,
                   totalPen: i.totalPen,
@@ -434,7 +438,23 @@ export class SalesOrdersService {
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');
 
-    const lines = await resolveSalesLines(tx, input.items);
+    const lines = await resolveSalesLines(tx, input.items, {
+      // D-163: un pedido directo es una venta nueva, así que tiene el mismo piso que una
+      // cotización. Confirmar una cotización ya validada no vuelve a pasar por acá: copia las
+      // líneas tal como se cotizaron, y el precio se congeló cuando el piso ya lo había visto.
+      //
+      // **El mostrador queda fuera, y a propósito.** El alcance de D-163 es la cotización, y
+      // el carrito de caja no tiene dónde mostrar el mínimo: el cajero lo descubriría al
+      // cobrar, con el cliente delante, y el rechazo tira abajo la transacción entera de
+      // D-099 —pedido, despacho, comprobante y cobro—. Como además el piso nuevo es **más
+      // alto** que el de D-032, todo SKU cuyo precio de lista quedó entre los dos dejaría de
+      // venderse en caja sin aviso. Antes de esta sesión el mostrador tampoco tenía piso, así
+      // que dejarlo afuera no abre nada que no estuviera abierto; ponerlo sí rompería algo
+      // que hoy funciona. Queda anotado para el dueño en `docs/PROGRESO.md`.
+      ...(options.counterSale === true
+        ? {}
+        : { priceFloor: { toleranceMm: roofingToleranceMm(this.env) } }),
+    });
 
     // D-119: un pedido directo (sin cotización) exige que **ninguna** línea venga de una
     // línea de negocio que obliga a cotizar (RF-31). Antes era un chequeo del documento
@@ -502,6 +522,7 @@ export class SalesOrdersService {
             unit: l.unit,
             listPricePen: l.listPricePen,
             unitPricePen: l.unitPricePen,
+            valuePerMeterPen: l.valuePerMeterPen,
             subtotalPen: l.subtotalPen,
             igvPen: l.igvPen,
             totalPen: l.totalPen,
@@ -1636,6 +1657,10 @@ export class SalesOrdersService {
       select: {
         name: true,
         unit: true,
+        // D-161: el largo fijo decide si el mínimo se muestra por metro o por unidad.
+        lengthMm: true,
+        // D-163: `ROOFING_PRODUCT_SELECT` ya trae `businessLineId`, que es lo que el piso de
+        // precio necesita para encontrar el margen mínimo de la línea.
         ...ROOFING_PRODUCT_SELECT,
       },
     });
@@ -1661,6 +1686,14 @@ export class SalesOrdersService {
       reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
     );
 
+    // D-163: el piso de precio de cada SKU, con la **misma** función que lo va a exigir al
+    // guardar. Los candidatos se arman **dentro** del bucle de abajo y no en uno propio, para
+    // reusar el agregado que ese bucle ya resuelve: en una cobertura a medida el costo por
+    // metro sale de las mismas bobinas cuyo disponible se está leyendo, y resolver la spec dos
+    // veces era duplicar la consulta más cara de una ruta que el formulario llama en cada
+    // cambio de selección.
+    const floorCandidates: PriceFloorCandidate[] = [];
+
     const out: ProductStockDto[] = [];
     for (const product of products) {
       const available = Decimal.max(
@@ -1672,6 +1705,16 @@ export class SalesOrdersService {
       let rawMaterialAvailableKg: string | null = null;
       let rawLabel: string | null = null;
       let perMeter: string | null = null;
+      // D-161: si el SKU se cotiza por metro contra su largo fijo, el mínimo se calcula —y se
+      // muestra— **por metro**, que es la unidad en la que el vendedor lo va a tipear.
+      const basis: PriceFloorCandidate['basis'] =
+        sellsByFixedLength({
+          roofingKind: product.roofingKind,
+          unit: product.unit,
+          lengthMm: product.lengthMm === null ? null : product.lengthMm.toFixed(2),
+        }) && product.lengthMm !== null
+          ? { kind: 'PER_METER', lengthMm: product.lengthMm.toFixed(2) }
+          : { kind: 'UNIT', unitLabel: product.unit };
       // D-134: una cobertura a medida no se atiende con stock del producto —siempre cero—
       // sino con el agregado. Mostrarle al vendedor el cero del SKU sería mentirle sobre lo
       // único que decide si puede prometer.
@@ -1703,7 +1746,31 @@ export class SalesOrdersService {
             thicknessMm: product.thicknessMm.toFixed(2),
             densityFactor: product.finish.densityFactor.toFixed(4),
           }).toFixed(3);
+          // D-163: el costo por metro de la cobertura, contra el agregado que se acaba de
+          // resolver arriba. Sin `widthMm` no hay kilo por metro y por lo tanto no hay piso.
+          floorCandidates.push({
+            at: product.id,
+            sku: product.sku,
+            businessLineId: product.businessLineId,
+            basis,
+            // La lectura no compara contra nada: el valor propuesto es irrelevante y va en cero.
+            unitValuePen: '0.0000',
+            cost: {
+              kind: 'RAW_MATERIAL',
+              spec,
+              kgPerUnit: theoreticalKgForMeters(product, '1', product.sku),
+            },
+          });
         }
+      } else {
+        floorCandidates.push({
+          at: product.id,
+          sku: product.sku,
+          businessLineId: product.businessLineId,
+          basis,
+          unitValuePen: '0.0000',
+          cost: { kind: 'PRODUCT', productId: product.id },
+        });
       }
       out.push({
         productId: product.id,
@@ -1714,9 +1781,24 @@ export class SalesOrdersService {
         rawMaterialAvailableKg,
         rawMaterialLabel: rawLabel,
         kgPerMeter: perMeter,
+        // Se completan abajo, cuando estén todos los candidatos juntos: el piso se calcula en
+        // una tanda para no repetir por SKU la consulta de márgenes y la de costos.
+        minPricePen: null,
+        minValuePen: null,
       });
     }
-    return out;
+
+    const floors = await computePriceFloors(
+      this.prisma,
+      floorCandidates,
+      roofingToleranceMm(this.env),
+    );
+    return out.map((row) => {
+      const floor = floors.get(row.productId);
+      return floor === undefined
+        ? row
+        : { ...row, minPricePen: floor.minPricePen, minValuePen: floor.minValuePen };
+    });
   }
 
   /**
@@ -1742,6 +1824,8 @@ export class SalesOrdersService {
         widthMm: true,
         thicknessMm: true,
         status: true,
+        // D-163: el margen mínimo del piso es por línea de negocio.
+        businessLineId: true,
         businessLine: { select: { code: true } },
         finish: { select: { code: true, name: true } },
         color: { select: { code: true, name: true } },
@@ -1785,8 +1869,24 @@ export class SalesOrdersService {
     );
     const assignedIds = new Set(assigned.map((a) => a.coilId));
 
-    return coils
-      .filter((c) => !assignedIds.has(c.id))
+    // D-163: el piso por kg de cada rollo vendible, con la misma función que lo va a exigir
+    // al guardar. Se calcula sobre los que sobreviven al filtro, no sobre los 500 leídos.
+    const sellable = coils.filter((c) => !assignedIds.has(c.id));
+    const floors = await computePriceFloors(
+      this.prisma,
+      sellable.map((c) => ({
+        at: c.id,
+        sku: c.code,
+        businessLineId: c.businessLineId,
+        basis: { kind: 'UNIT' as const, unitLabel: 'kg' },
+        // La lectura no compara contra nada: el valor propuesto es irrelevante y va en cero.
+        unitValuePen: '0.0000',
+        cost: { kind: 'COIL' as const, coilId: c.id },
+      })),
+      roofingToleranceMm(this.env),
+    );
+
+    return sellable
       .map((c) => {
         const qty = qtyById.get(c.id) ?? toDecimal('0');
         const res = reservedById.get(c.id) ?? toDecimal('0');
@@ -1803,6 +1903,7 @@ export class SalesOrdersService {
           thicknessMm: c.thicknessMm.toFixed(2),
           status: c.status as 'OPEN' | 'CLOSED',
           availableQty: qty.minus(res).toFixed(3),
+          minPricePen: floors.get(c.id)?.minPricePen ?? null,
         };
       })
       .filter((c) => toDecimal(c.availableQty).gt(0));

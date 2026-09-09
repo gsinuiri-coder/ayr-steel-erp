@@ -788,7 +788,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 <TableHead>#</TableHead>
                 <TableHead>Descripción</TableHead>
                 <TableHead className="text-right">Cantidad</TableHead>
-                <TableHead className="text-right">P. unitario</TableHead>
+                {/* D-162: sin IGV, que es sobre lo que SUNAT factura. */}
+                <TableHead className="text-right">Valor unitario</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
                 <TableHead className="text-right">IGV</TableHead>
                 <TableHead className="text-right">Acreditado</TableHead>

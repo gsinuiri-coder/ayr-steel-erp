@@ -64,11 +64,27 @@ export function MargenesView() {
 
   return (
     <>
-      <div>
+      <div className="space-y-2">
         <h1 className="text-2xl font-semibold">Márgenes</h1>
+        {/*
+          D-163: la página dejó de ser informativa. El margen mínimo es ahora el **piso duro**
+          de toda cotización y pedido nuevos, así que la fórmula tiene que estar a la vista de
+          quien la edita: subirla un punto sube el mínimo de todo el catálogo de esa línea.
+        */}
         <p className="text-sm text-muted-foreground">
-          Precio sugerido = costo promedio × (1 + margen%). El margen mínimo es el piso que un
-          VENDEDOR no puede bajar (D-032).
+          El margen es <strong>sobre la venta</strong>, no sobre el costo:{' '}
+          <span className="tabular-nums">precio mínimo = costo promedio ÷ (1 − margen) × 1.18</span>
+          . Con un costo de S/ 100 y un 20%, el valor de venta es S/ 125 (no S/ 120) y el precio con
+          IGV, S/ 147.50.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          El <strong>margen mínimo</strong> es el piso: ninguna cotización ni pedido nuevo se puede
+          guardar por debajo de él, tampoco un administrador. Bajar un precio legítimamente se hace
+          acá, y queda auditado. El <strong>margen sugerido</strong> es solo el objetivo.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Un SKU que nunca entró al kardex no tiene costo promedio y por lo tanto no tiene piso. Los
+          documentos ya emitidos y los que carga el importador no se recalculan.
         </p>
       </div>
 
@@ -78,7 +94,7 @@ export function MargenesView() {
             <TableRow>
               <TableHead>Línea</TableHead>
               <TableHead>Margen sugerido (%)</TableHead>
-              <TableHead>Margen mínimo (%)</TableHead>
+              <TableHead>Margen mínimo (%) — piso duro</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>

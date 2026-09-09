@@ -1,12 +1,21 @@
 import {
+  Decimal,
   DEFAULT_QUOTATION_VALIDITY_DAYS,
   defaultValidUntil,
+  fixedLengthMeters,
+  fixedLengthUnitValue,
+  fixedLengthValuePerMeter,
   IGV_RATE_PCT,
   isQuotationExpired,
+  money,
+  piecesMeters,
   quotationValidUntil,
   queueSemaphore,
+  salePriceFromValue,
+  saleValueFromPrice,
   salesLineTotals,
   salesTotals,
+  toFixedString,
 } from '@ayr/shared';
 import { documentTotals, type ResolvedSalesLine } from './sales-lines';
 
@@ -25,6 +34,7 @@ function line(overrides: Partial<ResolvedSalesLine>): ResolvedSalesLine {
     unit: 'NIU',
     listPricePen: null,
     unitPricePen: '0.0000',
+    valuePerMeterPen: null,
     subtotalPen: '0.0000',
     igvPen: '0.0000',
     totalPen: '0.0000',
@@ -181,5 +191,70 @@ describe('queueSemaphore (D-096)', () => {
 
   it('cruza el fin de mes sin desbordar', () => {
     expect(queueSemaphore('2026-10-01', '2026-09-30')).toBe('PROXIMO');
+  });
+});
+
+describe('D-162 — valor de venta (sin IGV) y precio de venta (con IGV)', () => {
+  it('el valor sale del precio dividiendo por 1.18, sin redondear en el camino', () => {
+    // El ejemplo del enunciado: precio 10.00 → valor 8.474576271186…
+    expect(saleValueFromPrice('10.00').toFixed(6)).toBe('8.474576');
+    expect(toFixedString(money(saleValueFromPrice('10.00')), 'MONEY')).toBe('8.4746');
+  });
+
+  it('ida y vuelta: el precio de un valor vuelve a ser el precio', () => {
+    expect(salePriceFromValue('8.4746').toFixed(4)).toBe('10.0000');
+    expect(salePriceFromValue(saleValueFromPrice('123.45')).toFixed(2)).toBe('123.45');
+  });
+
+  it('el IGV que separa los dos es el mismo de la línea, no un número suelto', () => {
+    const value = saleValueFromPrice('118.00');
+    expect(value.toFixed(4)).toBe('100.0000');
+    expect(salesLineTotals({ qty: '1.000', unitPricePen: value }).total.toFixed(4)).toBe(
+      '118.0000',
+    );
+  });
+});
+
+describe('D-161 — la plancha cotiza por metro; la cobertura a medida, también (lado a lado)', () => {
+  // Una plancha de catálogo de 3.60 m y una cobertura a medida de la misma línea, cotizadas
+  // las dos a S/ 7.00 el metro sin IGV. Es el par que hace visible la diferencia: la plancha
+  // cuenta en planchas y la a medida cuenta en metros, y aun así el importe por metro es el
+  // mismo.
+  const LARGO_MM = '3600.00';
+  const VALOR_METRO = '7.0000';
+
+  it('plancha: 10 planchas de 3.60 m a S/ 7.00 el metro son 36 ML y S/ 252.00 de valor', () => {
+    const unitario = toFixedString(money(fixedLengthUnitValue(LARGO_MM, VALOR_METRO)), 'MONEY');
+    expect(unitario).toBe('25.2000');
+    expect(fixedLengthMeters(LARGO_MM, '10').toFixed(3)).toBe('36.000');
+    const totals = salesLineTotals({ qty: '10.000', unitPricePen: unitario });
+    expect(totals.subtotal.toFixed(4)).toBe('252.0000');
+    expect(totals.total.toFixed(4)).toBe('297.3600');
+  });
+
+  it('a medida: 10 planchas de 3.60 m a S/ 7.00 el metro dan el mismo importe, en metros', () => {
+    const pieces = [{ lengthMm: LARGO_MM, qty: 10 }];
+    expect(piecesMeters(pieces).toFixed(3)).toBe('36.000');
+    const totals = salesLineTotals({ qty: '36.000', unitPricePen: VALOR_METRO });
+    expect(totals.subtotal.toFixed(4)).toBe('252.0000');
+    expect(totals.total.toFixed(4)).toBe('297.3600');
+  });
+
+  it('la cuenta vieja —cantidad × valor directo— daba una plancha por el precio de un metro', () => {
+    // Lo que D-161 vino a corregir: con 10 planchas a S/ 7.00 el importe salía S/ 70.00, o
+    // sea 3.6 veces menos de lo cotizado. El factor es exactamente el largo del SKU.
+    const viejo = salesLineTotals({ qty: '10.000', unitPricePen: VALOR_METRO });
+    expect(viejo.subtotal.toFixed(4)).toBe('70.0000');
+    expect(new Decimal('252.0000').div(viejo.subtotal).toFixed(2)).toBe('3.60');
+  });
+
+  it('el camino inverso recupera el valor por metro de un valor por plancha', () => {
+    expect(fixedLengthValuePerMeter(LARGO_MM, '25.2000').toFixed(4)).toBe('7.0000');
+  });
+
+  it('un largo que no divide redondo no arrastra el redondeo al importe', () => {
+    // 4.13 m a S/ 7.7777 el metro: 32.1219 por plancha (32.12189… redondeado una sola vez).
+    const unitario = toFixedString(money(fixedLengthUnitValue('4130.00', '7.7777')), 'MONEY');
+    expect(unitario).toBe('32.1219');
   });
 });

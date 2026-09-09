@@ -46,6 +46,11 @@ export interface SalesItemDto {
   unit: string;
   listPricePen: string | null;
   unitPricePen: string;
+  /**
+   * D-161: valor por metro con el que se cotizó una plancha de catálogo, del que sale
+   * `unitPricePen = largo del SKU × este número`. Null en cualquier otra línea.
+   */
+  valuePerMeterPen: string | null;
   subtotalPen: string;
   igvPen: string;
   totalPen: string;
@@ -401,6 +406,14 @@ export interface ProductStockDto {
   rawMaterialAvailableKg: string | null;
   rawMaterialLabel: string | null;
   kgPerMeter: string | null;
+  /**
+   * D-163: el piso duro de precio de este SKU, calculado por la **misma** función que después
+   * lo exige al guardar. `minPricePen` es el precio con IGV con dos decimales —lo que el
+   * vendedor tipea— y `minValuePen` el valor sin IGV contra el que el API compara. Null
+   * cuando no hay piso (SKU sin costo en el kardex, o línea sin márgenes configurados).
+   */
+  minPricePen: string | null;
+  minValuePen: string | null;
 }
 
 export interface StockPanelDto {
@@ -548,6 +561,11 @@ export interface SalesLineInput {
   productId?: string;
   qty: string;
   unitPricePen?: string;
+  /**
+   * D-161: valor por metro lineal de una plancha de catálogo. Va **en lugar** de
+   * `unitPricePen` (mandar los dos es un 400) y el API deriva el unitario del largo del SKU.
+   */
+  valuePerMeterPen?: string;
   description?: string;
   saleCoilId?: string;
   pieces?: { lengthMm: string; qty: number }[];
@@ -558,6 +576,7 @@ function toLinePayload(line: SalesLineInput): Record<string, unknown> {
     ...(line.productId === undefined ? {} : { productId: line.productId }),
     qty: line.qty,
     ...(line.unitPricePen === undefined ? {} : { unitPricePen: line.unitPricePen }),
+    ...(line.valuePerMeterPen === undefined ? {} : { valuePerMeterPen: line.valuePerMeterPen }),
     ...(line.description === undefined ? {} : { description: line.description }),
     ...(line.saleCoilId === undefined ? {} : { saleCoilId: line.saleCoilId }),
     ...(line.pieces === undefined ? {} : { pieces: line.pieces }),

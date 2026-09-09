@@ -14,6 +14,12 @@ export interface QuotationPdfLine {
   qty: string;
   unit: string;
   unitPricePen: string;
+  /**
+   * D-161: el valor por metro con el que se cotizó una plancha de catálogo. `null` en el
+   * resto. Va al papel debajo del valor unitario porque **es el número que el cliente
+   * compara** —el acero se cotiza por metro— y el papel era el único lugar donde no estaba.
+   */
+  valuePerMeterPen: string | null;
   totalPen: string;
 }
 
@@ -134,8 +140,12 @@ export function buildQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
     doc.text('Descripción', MARGIN + COLS.description.x, y, { width: COLS.description.width });
     doc.text('Cantidad', MARGIN + COLS.qty.x, y, { width: COLS.qty.width, align: 'right' });
     doc.text('Unidad', MARGIN + COLS.unit.x, y, { width: COLS.unit.width });
-    doc.text('P. unit.', MARGIN + COLS.price.x, y, { width: COLS.price.width, align: 'right' });
-    doc.text('Importe', MARGIN + COLS.total.x, y, { width: COLS.total.width, align: 'right' });
+    // D-162: «valor», no «precio»: la columna es sin IGV, y el IGV va aparte en el pie.
+    doc.text('Valor unit.', MARGIN + COLS.price.x, y, { width: COLS.price.width, align: 'right' });
+    doc.text('Valor venta', MARGIN + COLS.total.x, y, {
+      width: COLS.total.width,
+      align: 'right',
+    });
     y += 14;
     doc
       .moveTo(MARGIN, y)
@@ -166,11 +176,23 @@ export function buildQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
         width: COLS.price.width,
         align: 'right',
       });
+      if (item.valuePerMeterPen !== null) {
+        // Un renglón más chico y gris debajo del unitario, en la misma columna: no agrega una
+        // columna al ancho de la tabla y queda pegado al número del que se deriva.
+        doc.fontSize(7).fillColor('#666');
+        doc.text(`${formatMoney(item.valuePerMeterPen)} /m`, MARGIN + COLS.price.x, y + 10, {
+          width: COLS.price.width,
+          align: 'right',
+        });
+        doc.fontSize(9).fillColor('#000');
+      }
       doc.text(formatMoney(item.totalPen), MARGIN + COLS.total.x, y, {
         width: COLS.total.width,
         align: 'right',
       });
-      y += Math.max(height, 12) + 6;
+      // El renglón del valor por metro **cuenta para el alto de la fila**: sin sumarlo, en una
+      // línea de descripción corta el renglón de abajo se pintaba encima de la fila siguiente.
+      y += Math.max(height, 12, item.valuePerMeterPen === null ? 0 : 20) + 6;
     }
 
     // Totales
@@ -180,13 +202,16 @@ export function buildQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
       .lineTo(MARGIN + CONTENT_WIDTH, y)
       .stroke();
     y += 8;
+    // D-162: el pie del papel usa las mismas dos palabras que el resto del sistema. «Valor
+    // de venta» es la suma sin IGV —lo que decía «Subtotal»— y «Precio de venta» es lo que el
+    // cliente paga; «Total» a secas no decía cuál de los dos era.
     const totalRows: [string, string][] = [
-      ['Subtotal', input.subtotalPen],
+      ['Valor de venta', input.subtotalPen],
       ['IGV (18%)', input.igvPen],
-      ['Total', input.totalPen],
+      ['Precio de venta', input.totalPen],
     ];
     for (const [label, value] of totalRows) {
-      const bold = label === 'Total';
+      const bold = label === 'Precio de venta';
       doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 11 : 9);
       doc.text(label, MARGIN + COLS.price.x - 60, y, {
         width: COLS.price.width + 60,
@@ -208,7 +233,7 @@ export function buildQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
       .fontSize(8)
       .fillColor('#555')
       .text(
-        `Precios expresados en soles (PEN), sin incluir IGV en el detalle de líneas. ${
+        `Importes en soles (PEN). El detalle de líneas muestra el valor de venta (sin IGV); el precio de venta lo incluye. ${
           input.validUntil === null
             ? 'Cotización sin fecha de vencimiento.'
             : `Cotización válida hasta el ${input.validUntil}.`

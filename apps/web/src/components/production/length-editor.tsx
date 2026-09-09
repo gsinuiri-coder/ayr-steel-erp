@@ -32,15 +32,27 @@ export function LengthEditor({
   disabled?: boolean;
   qtyLabel?: string;
 }) {
+  // El `+` vive dentro del `map`, al costado de la última fila, así que con `rows` vacío
+  // el editor quedaría sin forma de agregar ninguna. Hoy ningún llamador pasa un array vacío
+  // —la ✕ de la única fila la **vacía** en vez de sacarla— pero antes esa invariante no hacía
+  // falta y ahora sí, así que se sostiene acá en vez de confiar en los llamadores.
+  const visible: readonly PieceRow[] = rows.length === 0 ? [EMPTY_PIECE_ROW] : rows;
+
   const set = (i: number, patch: Partial<PieceRow>) => {
-    onChange(rows.map((r, j) => (i === j ? { ...r, ...patch } : r)));
+    onChange(visible.map((r, j) => (i === j ? { ...r, ...patch } : r)));
   };
 
   return (
     <div className="grid gap-2">
-      {rows.map((row, i) => (
+      {visible.map((row, i) => (
         <div key={i} className="flex items-end gap-2">
-          <div className="grid flex-1 gap-1">
+          {/*
+            Ancho acotado y no `flex-1`: el largo es un número de cuatro caracteres («4.20») y
+            estirado ocupaba casi todo el contenedor, dejando la cantidad y los botones
+            apretados contra el borde derecho. Los dos campos miden ahora lo mismo, que es lo
+            que alinea la columna cuando hay varios largos.
+          */}
+          <div className="grid w-32 gap-1">
             {i === 0 && <Label htmlFor={`${idPrefix}-largo-${String(i)}`}>Largo (m)</Label>}
             <Input
               id={`${idPrefix}-largo-${String(i)}`}
@@ -83,28 +95,44 @@ export function LengthEditor({
           <Button
             type="button"
             variant="outline"
-            className="h-12"
+            className="h-12 w-12"
             aria-label={`Quitar el largo de la fila ${String(i + 1)}`}
             disabled={disabled}
             onClick={() => {
-              onChange(rows.length === 1 ? [EMPTY_PIECE_ROW] : rows.filter((_, j) => j !== i));
+              onChange(
+                visible.length === 1 ? [EMPTY_PIECE_ROW] : visible.filter((_, j) => j !== i),
+              );
             }}
           >
             ✕
           </Button>
+          {/*
+            El `+` va **al costado de la última fila** y no en un botón ancho debajo. El botón
+            ancho medía lo mismo que los dos campos juntos y rompía la columna: se leía como un
+            campo más de la fila siguiente. Acá queda alineado con la ✕, que es la acción
+            gemela, y solo aparece una vez.
+          */}
+          {i === visible.length - 1 ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 w-12"
+              aria-label="Agregar otro largo"
+              title="Agregar otro largo"
+              disabled={disabled}
+              onClick={() => {
+                onChange([...visible, EMPTY_PIECE_ROW]);
+              }}
+            >
+              +
+            </Button>
+          ) : (
+            // Un hueco del mismo ancho: sin él, la ✕ de las filas de arriba queda desalineada
+            // respecto de la última, que sí lleva el `+` al lado.
+            <span aria-hidden className="h-12 w-12" />
+          )}
         </div>
       ))}
-      <Button
-        type="button"
-        variant="outline"
-        className="h-12 justify-self-start"
-        disabled={disabled}
-        onClick={() => {
-          onChange([...rows, EMPTY_PIECE_ROW]);
-        }}
-      >
-        Agregar otro largo
-      </Button>
     </div>
   );
 }

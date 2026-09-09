@@ -742,7 +742,7 @@ function DocumentGroupCard({
               <tr className="border-b">
                 <th className="py-2 pr-3 font-medium">Producto</th>
                 <th className="py-2 pr-3 text-right font-medium">Cantidad</th>
-                <th className="py-2 pr-3 text-right font-medium">P. unit. S/</th>
+                <th className="py-2 pr-3 text-right font-medium">Valor unit. S/</th>
                 <th className="py-2 pr-3 font-medium">Plan de corte</th>
                 <th className="py-2 font-medium" />
               </tr>

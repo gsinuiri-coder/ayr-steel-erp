@@ -345,7 +345,10 @@ test.describe('D-124 — fecha de operación', () => {
       const sale = await createDirectOrder(api, {
         customerId: customer.id,
         businessLine: LINE,
-        items: [{ productId: product.id, qty: '20', unitPricePen: '10' }],
+        // D-163: por encima del piso. La pieza absorbió 2 400 kg de fleje en 100 unidades, así
+        // que su costo promedio quedó en S/ 96.00 y el mínimo en S/ 106.6667 de valor. El 10.00
+        // que había acá era un número arbitrario en un caso que habla de **fechas**.
+        items: [{ productId: product.id, qty: '20', unitPricePen: '150' }],
       });
       trail.orderIds.push(sale.id);
       const dispatch = await dispatchOrder(api, {

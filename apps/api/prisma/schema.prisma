@@ -1424,6 +1424,16 @@ model QuotationItem {
   unit            String            @db.VarChar(20)
   listPricePen    Decimal?          @map("list_price_pen") @db.Decimal(18, 4)
   unitPricePen    Decimal           @map("unit_price_pen") @db.Decimal(18, 4)
+  /// D-161: valor de venta **por metro lineal** con el que se cotizó una plancha de
+  /// catálogo. `unitPricePen` sigue siendo el valor por plancha (`largo del SKU × este
+  /// número`) porque es lo que la línea factura y lo que el kardex mueve, en `NIU`; esta
+  /// columna guarda el número que el vendedor negoció de verdad, para poder mostrarlo y
+  /// reabrirlo a editar sin tener que dividir y arrastrar el redondeo.
+  ///
+  /// `NULL` en todo lo demás: una línea a medida ya cotiza por metro en `unitPricePen`, y
+  /// un perfil o un producto de trading se cotizan por unidad. También queda `NULL` en las
+  /// planchas cotizadas antes de D-161 y en las que importó D-152, que no se recalculan.
+  valuePerMeterPen Decimal?         @map("value_per_meter_pen") @db.Decimal(18, 4)
   subtotalPen     Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
   igvPen          Decimal           @map("igv_pen") @db.Decimal(18, 4)
   totalPen        Decimal           @map("total_pen") @db.Decimal(18, 4)
@@ -1520,6 +1530,9 @@ model SalesOrderItem {
   unit            String            @db.VarChar(20)
   listPricePen    Decimal?          @map("list_price_pen") @db.Decimal(18, 4)
   unitPricePen    Decimal           @map("unit_price_pen") @db.Decimal(18, 4)
+  /// D-161: copia congelada del valor por metro con el que se cotizó una plancha. Ver
+  /// `QuotationItem.valuePerMeterPen`.
+  valuePerMeterPen Decimal?         @map("value_per_meter_pen") @db.Decimal(18, 4)
   subtotalPen     Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
   igvPen          Decimal           @map("igv_pen") @db.Decimal(18, 4)
   totalPen        Decimal           @map("total_pen") @db.Decimal(18, 4)

@@ -3393,6 +3393,273 @@ workspace), `roofing-order-panel.tsx`, `drywall-order-panel.tsx`, `coil-picker.t
 `new-order-cards.tsx` y `components/production/length-editor.tsx` — el editor de largos, que
 ahora usan el plan y el reporte y por eso salió de la terminal.
 
+## Sesión Precios (2026-09-09) — la plancha por metro, valor contra precio y el piso que no existía (D-161..D-163)
+
+### M0 — La plancha de catálogo se cotiza por metro lineal (D-161)
+
+El defecto: una plancha se cobraba `cantidad × valor unitario` con un valor que el vendedor
+pensaba **por metro**. Diez planchas de 3.60 m a S/ 7.00 el metro salían **S/ 70.00** en vez de
+S/ 252.00 — 3.6 veces menos, que es exactamente el largo del SKU.
+
+Lo que se descartó importa tanto como lo que se hizo. La forma "natural" era pasar la línea a
+metros, como una cobertura a medida: cantidad 36.000 MTR, valor unitario 7.0000. **No se
+hizo**, y el motivo es de dominio: el kardex, la reserva, la producción y el despacho de una
+plancha están en **planchas** (`roofing-production.service.ts` reporta `piecesCount(pieces)` a
+stock para todo lo que no es a medida). Meter la línea en metros obligaba a derivar la reserva
+y a que un SKU en `NIU` llevara subítems de largo — que es justo lo que la regla dura 14
+(D-131) prohíbe, y por la puerta de atrás.
+
+Lo que quedó: la línea sigue en `NIU`, viaja un campo nuevo y explícito (`valuePerMeterPen`) y
+el API calcula `unitPricePen = largo del SKU × valor por metro`. Los dos son un decimal en
+soles y el compilador nunca avisaría de la confusión, así que **son dos campos y mandar los dos
+es un 400** del schema.
+
+En la cotización, el bloque nuevo es el espejo del plan de corte de D-159: **largo bloqueado
+con el del SKU, solo la cantidad editable, sin botón para agregar filas** (una plancha de
+catálogo tiene un largo y uno solo). El campo de cantidad de la fila queda de solo lectura,
+igual que en una línea a medida.
+
+La familia de predicados de D-131 pasa a **tres**, y las tres devuelven `boolean`:
+
+| Pregunta                                              | Función              | La decide                                                     |
+| ----------------------------------------------------- | -------------------- | ------------------------------------------------------------- |
+| ¿La línea necesita el detalle de largos?              | `sellsByLength`      | la **unidad** (`MTR`)                                         |
+| ¿Se fabrica contra pedido desde bobina?               | `isMadeToMeasure`    | el **subtipo** (`A_MEDIDA`)                                   |
+| ¿El precio se negocia por metro contra un largo fijo? | `sellsByFixedLength` | el **subtipo y el largo juntos** (`PLANCHA` + `lengthMm > 0`) |
+
+`sellsByFixedLength` pide **dos** campos a propósito: una plancha sin largo en el catálogo
+—las hay, ver `roofing-catalog-report.ts`— cae en el camino viejo en vez de multiplicar por
+cero y dejar la línea en S/ 0. El centinela `sales-lines.spec.ts` se amplió a la tabla de las
+tres y a los tres pares cruzados; el par más peligroso es `sellsByFixedLength` contra
+`isMadeToMeasure`, que miran el **mismo** campo y dan lo contrario.
+
+Migración `20260909210000_d161_plancha_por_metro_lineal`, aditiva: `value_per_meter_pen`
+nullable en `quotation_items` y `sales_order_items`. **Nada se recalcula** — lo histórico y lo
+que carga el importador quedan como están.
+
+### M1 — Valor contra precio, y el piso que la página de márgenes prometía (D-162, D-163)
+
+**Lo que estaba vivo, medido antes de tocar nada:** la fórmula era **markup**,
+`costo × (1 + margen)`, en `suggestedPrice`/`minAllowedPrice` de
+`packages/shared/src/schemas/pricing.ts`. Y **`minAllowedPrice` no tenía un solo llamador fuera
+de su propio test**: D-032 escribía la regla —«un VENDEDOR no puede bajar del margen mínimo»— y
+no la aplicaba en ninguna parte. La página `/configuracion/margenes` guardaba dos números que
+nadie leía.
+
+**D-162 — el vocabulario.** «Valor de venta» es **sin** IGV; «precio de venta» es **con** IGV.
+La fuente de verdad interna no se movió: `unit_price_pen` y `subtotal_pen` siguen siendo
+valores, que es sobre lo que factura SUNAT, y no se migró un dato. Lo que cambió es que en la
+cotización y el pedido se **tipea el precio con IGV** —el número que el vendedor le promete al
+cliente— y el valor se deriva y se muestra debajo. Mientras las dos palabras fueron sinónimas,
+el vendedor tipeaba lo acordado bajo el rótulo «P. unitario» y el documento salía 18% más caro.
+
+La traducción vive en `packages/shared/src/tax.ts`, módulo **hoja**, junto con `IGV_RATE_PCT`,
+que se mudó ahí desde `schemas/sales`. Es por D-130: `schemas/pricing` lo necesita y se carga
+**antes** que `sales` en el índice; el ciclo en CommonJS no lanza, deja `undefined` y borra el
+factor en silencio.
+
+**D-163 — el piso duro.** `mínimo = costo promedio del kardex ÷ (1 − margen mínimo) × 1.18`,
+con el **margen mínimo** (el margen a secas queda como objetivo sugerido). Es un cambio de
+política comercial y los mínimos suben: con 20% sobre un costo de 100, el markup daba 120 y
+dejaba un margen real del 16.67%; la fórmula nueva da 125.
+
+Tres cosas que decidieron la forma, y que valen para la próxima:
+
+1. **Se compara valor contra valor, no precio contra precio.** El valor guardado es el precio
+   dividido por 1.18 y redondeado a cuatro decimales. Comparando precios, tipear **exactamente**
+   el mínimo que la pantalla muestra podía caer una diezmilésima por debajo y rebotar — el caso
+   del borde, que es justo el que el usuario prueba. El precio con IGV aparece solo en el
+   mensaje.
+2. **Sin costo no hay piso.** Un SKU que nunca entró al kardex tiene costo cero. Bloquear con
+   «el mínimo es S/ 0.00» no protege ningún margen y sí impide cotizar un producto nuevo.
+3. **El mismo código calcula el piso que se muestra y el que rechaza.** `computePriceFloors`
+   alimenta el panel de stock del formulario y `assertPriceFloor` lo usa para tirar el 400. Que
+   fueran dos cuentas era garantizar que la pantalla prometiera un mínimo y el `POST` exigiera
+   otro.
+
+Alcance: alta, edición y **duplicado** de cotización, y pedido directo. **Para todos los
+roles, incluido el ADMINISTRADOR**: D-032
+dejaba la excepción por línea y D-163 la cierra, porque una excepción por línea no queda en
+ningún lado y un cambio de margen sí queda auditado. Quedan **exentos por código**: lo que importa D-152 —y también
+su edición, ver más abajo— por la misma razón por la que su cotización no vence (D-157), y el
+**mostrador**, que se decidió dejar afuera durante la revisión.
+
+El costo de una cobertura **a medida** no puede salir de su SKU —no tiene saldo hasta que
+planta lo rola— así que sale de la bobina: `kg por metro × costo por kg **ponderado por
+kilos** del agregado compatible`. El promedio simple habría corrido el piso hacia el rollo más
+chico: con 900 kg a S/ 4.00 y 100 kg a S/ 8.00, el ponderado es 4.40 y el simple 6.00.
+
+**Contrapartida asumida y anotada:** el piso viaja al formulario (`minPricePen` en
+`ProductStockDto`), y de él se puede despejar el costo, porque el margen lo lee todo el equipo
+comercial. Es el precio de que el vendedor vea su piso antes de tipear en vez de descubrirlo
+chocando contra un 400.
+
+El margen se acota a **menos de 100%** en el schema (es sobre la venta: 100% es una división
+por cero) y una fila vieja fuera de rango rebota con un mensaje legible en vez de un 500.
+
+### M2 — Cierre de bobina con ajuste de remanente: **el flujo no existe** (sin implementar)
+
+Verificado y **reportado al dueño sin tocar nada**, como pedía el alcance. Estado real:
+
+- `CoilOperationsService.setStatus` (RF-19) cambia `coils.status` a `CLOSED` y **no mueve
+  kardex**. El comentario del código lo dice explícitamente: «cerrar tampoco mueve kardex, así
+  que la invariante de cantidad no lo ve». El saldo remanente queda en `inventory_balances`
+  para esa bobina, indefinidamente.
+- La herramienta para liquidarlo **sí existe pero es un acto aparte**: `registerScrap` (RF-17)
+  escribe un `OUT` con `refType: 'SCRAP'` valorizado al costo promedio vigente, vía
+  `InventoryService.record`. En la UI son dos botones vecinos y sin relación: «Registrar merma»
+  y «Cerrar».
+- Nada avisa del remanente al cerrar, nada lo exige, y una bobina cerrada con saldo positivo
+  sigue sumando kilos y valor al inventario valorizado.
+
+**Propuesta para el OK del dueño** (no implementada): que «Cerrar» pregunte por el remanente
+cuando el saldo sea distinto de cero y ofrezca liquidarlo **en la misma transacción**, como un
+movimiento propio vía `InventoryService.record` —`OUT` si sobra material teórico
+(merma/despunte), `IN` si el conteo real da de más (sobrante)—, con motivo obligatorio y
+`operationDate` (D-124). Nunca una edición del saldo: append-only (regla dura 2). Queda por
+decidir el `refType` (`CLOSE_ADJUSTMENT` nuevo, distinguible del `SCRAP` de RF-17 para que su
+anulación no se confunda, que es el mismo cuidado que ya obligó a separar la merma de proceso
+del cierre de OP en `cancelScrap`) y si el ajuste positivo necesita permiso de ADMINISTRADOR.
+
+### M3 — Pulido de formularios
+
+- **El botón ancho de «Agregar otro largo» pasa a un `+` al costado de la última fila**, en
+  `components/production/length-editor.tsx` (plan de corte y reporte del espacio de producción)
+  y en el editor de largos de la cotización. Medía lo mismo que los dos campos juntos y se leía
+  como un campo más de la fila siguiente. Queda alineado con la ✕, que es la acción gemela, y
+  las filas que no son la última llevan un hueco del mismo ancho para que la ✕ no se desalinee.
+- **El `+` funciona también con el editor vacío**: como vive al costado de la última fila, una
+  lista sin filas lo dejaba inalcanzable. Hoy ningún llamador pasa un array vacío, pero antes
+  esa invariante no hacía falta y ahora sí, así que la sostiene el propio editor.
+- **El campo de largo del espacio de producción deja de ser `flex-1`** y pasa a `w-32`, el mismo
+  ancho que la cantidad: es un número de cuatro caracteres y estirado ocupaba casi todo el
+  contenedor.
+- Barrido de rótulos de D-162 en cotización, pedido, comprobantes, el importador y el PDF de
+  cotización («P. unit.» → «Valor unit.», «Subtotal»/«Total» del pie → «Valor de venta»/«Precio
+  de venta»). Las compras **no** se tocaron: su «precio unitario sin IGV» es un precio de compra
+  y la regla de D-162 es sobre la venta.
+
+### Lo que la revisión encontró y se corrigió
+
+Dos pasadas de `revisor` sobre el diff. Dos bloqueantes, cuatro altos y una docena de menores.
+Los que importan:
+
+**Bloqueante 1 — el precio mínimo que se mostraba no era tipeable.** El piso se compara en
+**valor** (cuatro decimales) y se muestra en **precio** (dos, que es lo que una persona
+tipea). Recortando el precio hacia abajo, tipear exactamente el número de la pantalla daba un
+valor por debajo del piso y el sistema respondía «sube el precio» sobre el precio que él mismo
+acababa de pedir. Medido con las funciones reales: costo 17.50 y 10% de mínimo → se mostraba
+S/ 22.94, que vuelve como 19.4407 contra un piso de 19.4444. **Pasaba en cerca de la mitad de
+las combinaciones costo/margen**, y es el mismo callejón sin salida que D-156 vino a cerrar.
+
+La corrección no fue redondear hacia arriba y confiar. `minTypeablePrice` **prueba el
+candidato contra la cadena de vuelta** —la misma función que convierte lo tipeado en el valor
+guardado— y sube de a un céntimo hasta que alcanza. Es la única forma de que el número no
+dependa de cuántos redondeos haya en el camino, que en una plancha son tres.
+
+El test que debía haberlo cazado existía y no podía fallar: partía del precio con **cuatro**
+decimales, que es lo que ningún vendedor tipea, y comparaba con `Number` y una tolerancia de
+`0.0001` —exactamente la diezmilésima que decía vigilar— en un test sobre precisión Decimal.
+Se reemplazó por una tabla de cinco combinaciones que tipea el mínimo mostrado y verifica que
+pase, más el céntimo de abajo que tiene que bloquear.
+
+**Bloqueante 2 — el cartel de rechazo de una plancha mostraba el mínimo por plancha rotulado
+«por metro»**: el mismo factor ×largo que D-161 vino a corregir, reintroducido en el mensaje
+de error. El renglón de ayuda debajo del campo sí convertía, así que la pantalla mostraba dos
+números que decían ser lo mismo y diferían 3.6 veces. La conversión salió del web: el piso
+viaja **ya expresado en la unidad en la que se tipea** (`PriceBasis`), y el web solo lo pinta.
+
+**Alto — una cotización importada nacía exenta del piso pero no se podía volver a guardar.**
+El importador crea en borrador y `update` aplicaba el piso sin excepción: corregir el producto
+de una línea en una de las 71 de agosto rebotaba con «el precio mínimo es S/ X» sobre una
+línea que nadie tocó. La exención pasó a ser del **documento** y no del momento: la marca de
+D-152 (`EXTERNAL_INVOICE_NOTES_PREFIX`) se mudó a `@ayr/shared` con la función que la lee, y
+la edición de una importada hereda la exención igual que hereda no vencer (D-157).
+
+**Alto — `sellsByFixedLength` ignoraba la unidad.** El CHECK de la base solo prohíbe que una
+`PLANCHA` esté en `MTR`, así que una en `KGM` o `MTK` es legal y el catálogo la admite a
+propósito (SKU legados). Para ese SKU el formulario pasaba a pedir «Planchas» y precio «por
+metro», y el importe salía multiplicado por el largo. Es la regla dura 14 mirada al revés —una
+pregunta sobre la aritmética de la unidad respondida con el subtipo— así que el predicado pide
+ahora los **tres** campos y el centinela cubre la combinación.
+
+**Alto — el mostrador quedaba bloqueado por precios que hoy funcionan.** El POS siembra el
+precio de lista y comparte `createDirectInTx`, así que heredaba el piso. Como D-163 **sube**
+los mínimos respecto de D-032, todo SKU cuyo precio de lista quedó entre el piso viejo y el
+nuevo dejaba de venderse en caja — y el cajero lo descubriría al cobrar, con el cliente
+delante, tirando abajo la transacción entera de D-099 (pedido, despacho, comprobante y cobro).
+**El mostrador quedó exento**, con el flag `counterSale` que ya existía. Antes de esta sesión
+tampoco tenía piso, así que no abre nada que no estuviera abierto; ponerlo sí rompía algo que
+funciona. **Queda para el dueño**: si quiere piso en caja, hay que mostrar el mínimo en el
+carrito y medir antes cuántos SKU activos quedan por debajo.
+
+**Otros que se corrigieron:** el valor por metro no llegaba al PDF —justamente el papel que el
+cliente compara—; la venta de bobina entera tenía piso en el API y ningún aviso en la pantalla
+(ahora el mínimo por kg viaja en `/sales/sellable-coils`); el bloque de totales del propio
+formulario de D-162 seguía diciendo «Subtotal»/«Total»; el mostrador seguía rotulando «Precio
+sin IGV», que bajo el vocabulario nuevo es una contradicción; `chooseProduct` conservaba el
+precio al cambiar a un producto que se negocia en **otra** unidad (antes era un rótulo
+desactualizado, con D-161 es un factor de 3.6); el panel de stock resolvía el agregado dos
+veces por SKU a medida; el `+` del editor de largos quedaba inalcanzable con la lista vacía; y
+el docstring de `stock-panel` seguía diciendo «sin ningún costo», que dejó de ser cierto.
+
+### Lo que la escritura de los E2E encontró
+
+`e2e/tests/precios-d161-d163.spec.ts` (nuevo, diez casos): la plancha por metro con su
+propagación al pedido y al despacho, la plancha y la a-medida **lado a lado** dando el mismo
+importe con distinta unidad, los dos rechazos de `valuePerMeterPen` (junto al unitario y sobre
+un producto que no es plancha con largo), el contrato del API en valores sin IGV, el piso leído
+del panel de stock, el mínimo exacto y el céntimo de abajo, **tipear el mínimo que muestra la
+pantalla**, el mostrador vendiendo por debajo del costo sin rebotar y la cotización importada
+que entra bajo el piso y se puede volver a guardar.
+
+Dos detalles del método que valen para la próxima: el caso del mínimo tipeable usa el costo
+17.50, que es la combinación que destapaba el defecto —con redondeo simple la pantalla decía
+22.94 y el API exigía 22.95—, así que **el test se cae si alguien vuelve a redondear y
+confiar**; y la conversión precio→valor del test se hace con enteros (`P céntimos ÷ 118`,
+half-up) y no con `Number(p) / 1.18`, porque el caso vive en la cuarta decimal y un ulp de coma
+flotante lo volvería verde por accidente.
+
+**Un defecto que apareció escribiéndolos, y se corrigió:** `PUT /sales/quotations/:id`
+reemplazaba las observaciones con lo que viniera en el cuerpo, **y con ellas la marca de
+procedencia** del comprobante externo. Como de esa marca dependen el aviso de reimportación
+(D-152) y la exención del piso (D-163), editar una cotización importada sin reenviar las
+observaciones la dejaba sin marca — y el **segundo** guardado, con el mismo precio histórico,
+rebotaba contra el piso. Un documento que se vuelve inválido por haberlo guardado dos veces.
+La marca la conserva ahora `keepImportMarker`: es procedencia y no un texto que alguien
+escribió, así que sobrevive a la edición y lo que se recorta al tope de la columna es el texto
+del vendedor, nunca la marca. Hoy no hay ningún formulario que llame a ese `PUT` —el único
+camino es HTTP directo— así que el defecto no llegó a producción; era una trampa puesta para el
+primer formulario de edición que se escriba.
+
+**Sin cubrir:** el piso por kg de la venta de bobina entera (`minPricePen` en
+`/sales/sellable-coils`). Está implementado y probado en unitarios, pero montar una bobina
+vendible entera en E2E cuesta una compra `COIL` más y no entró en esta tanda.
+
+### Verificación
+
+`pnpm turbo lint typecheck test` en verde (**341/341** unitarios, 22 suites), `prettier --check`
+y `eslint e2e` limpios. Tests nuevos: la tabla de tres predicados y sus pares cruzados
+(`sales-lines.spec.ts`), la plancha y la a-medida **lado a lado** con el mismo importe
+(`sales-math.spec.ts`), la conversión valor⇄precio con el caso `10.00 → 8.4746`, la marca de
+procedencia que sobrevive a una edición (`quotation-import.spec.ts`), y el piso con sus casos de
+borde en `price-floor.spec.ts`: exactamente en el mínimo pasa, un céntimo abajo bloquea, sin
+costo no hay piso, el agregado ponderado por kilos, y **el mínimo que se muestra es tipeable**
+en cinco combinaciones costo/margen — que es el defecto que la revisión encontró.
+
+**E2E local.** La suite completa dio **183 pasados, 20 fallos y 2 saltados**, y de los 20 solo
+**dos** eran de esta sesión: dos fixtures que vendían por debajo del costo —una pieza de S/ 96
+de costo vendida a S/ 10 en el caso de fechas de operación, y S/ 20 de costo a S/ 10 en el del
+disponible del mostrador—. En los dos el precio era un número arbitrario en un caso que habla de
+otra cosa, así que se subieron por encima del piso con el comentario de por qué ahora importa.
+
+Los otros 18 son los dos bloqueos ya conocidos y ajenos a esta sesión: **nueve** por
+`409 Ya existe un proveedor con ese documento` —la base `ayr_local_e2e` envejecida, anotada
+abajo en Notas operativas— y **nueve** por `No puedes enviar mas de 50 documentos en una cuenta
+DEMO`, el cupo de la cuenta demo de Nubefact.
+
+`pnpm e2e precios-d161-d163` → **10/10**, dos corridas seguidas.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.

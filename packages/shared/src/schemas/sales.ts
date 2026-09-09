@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import { businessToday } from '../business-date';
+// D-162: el IGV se mudó a `../tax`, junto con la traducción valor ⇄ precio, para que
+// `schemas/pricing` —que se carga antes que este módulo— pueda usarlo sin cerrar un ciclo.
+import { IGV_RATE_PCT } from '../tax';
 import {
   Decimal,
   decimalStringSchema,
@@ -36,9 +39,6 @@ import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing
 // --------------------------------------------------------------------------
 // Constantes y aritmética compartida entre web y API
 // --------------------------------------------------------------------------
-
-/** IGV en puntos porcentuales. Fijo en ventas (D-068); en compras es un input (D-030). */
-export const IGV_RATE_PCT = '18.0000';
 
 /** Vigencia por defecto de una cotización, en días (D-069). El vendedor la puede cambiar. */
 export const DEFAULT_QUOTATION_VALIDITY_DAYS = 7;
@@ -208,11 +208,31 @@ export const salesItemInputSchema = z.object({
   productId: z.string().uuid().optional(),
   qty: qtySchema,
   /**
-   * Precio unitario sin IGV, en soles. Opcional: sin él se usa el precio de lista del
-   * maestro. Mandarlo es el override del vendedor (D-068), que queda registrado junto al
-   * precio de lista vigente al momento de cotizar.
+   * **Valor** de venta unitario, o sea SIN IGV (D-162), en soles. Opcional: sin él se usa el
+   * valor de lista del maestro. Mandarlo es el override del vendedor (D-068), que queda
+   * registrado junto al valor de lista vigente al momento de cotizar.
+   *
+   * El nombre dice «price» y el contenido es un valor: se mantiene porque es una columna con
+   * datos reales desde 2026-09-07 y renombrarla no cambiaría ni un número. La palabra de
+   * D-162 vale para lo que se ve y para lo que se escribe de acá en adelante.
    */
   unitPricePen: priceSchema.optional(),
+  /**
+   * D-161: **valor por metro lineal** (sin IGV) de una plancha de catálogo.
+   *
+   * Con él, el valor unitario de la línea deja de ser un número suelto y pasa a ser
+   * `largo del SKU × este valor`: la plancha se negocia por metro —es como se compra el
+   * acero— pero se cuenta, se reserva y se despacha en planchas.
+   *
+   * Es un campo **aparte** de `unitPricePen` y no el mismo con otro significado, a propósito:
+   * los dos son un decimal en soles y el compilador nunca avisaría de la confusión, que en
+   * una plancha de 3.60 m es un factor de 3.6 en el importe. Mandar los dos es un 400; el
+   * API calcula el unitario y lo guarda.
+   *
+   * Solo lo acepta un producto `PLANCHA` con largo en el catálogo (`sellsByFixedLength`). El
+   * importador de históricos (D-152) no lo manda: importa el valor unitario tal como salió.
+   */
+  valuePerMeterPen: priceSchema.optional(),
   description: z.string().trim().max(240).optional(),
   /**
    * D-116 (Fase 7e): venta de una bobina completa (RF-73), virgen o con saldo parcial. El
@@ -253,6 +273,25 @@ const salesItemsSchema = z
           });
         }
       }
+      // D-161: el valor por metro y el valor por plancha son dos formas de decir el precio de
+      // la misma línea, y una sale de la otra. Admitir las dos dejaría al API eligiendo cuál
+      // gana en silencio, que es exactamente la clase de ambigüedad que la línea compuesta ya
+      // rechaza más arriba.
+      if (item.valuePerMeterPen !== undefined && item.unitPricePen !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [i, 'valuePerMeterPen'],
+          message: 'Manda el valor por metro o el valor unitario, no los dos',
+        });
+      }
+      if (item.valuePerMeterPen !== undefined && item.pieces !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [i, 'valuePerMeterPen'],
+          message:
+            'Una línea con detalle de largos ya cotiza por metro: no lleva valor por metro aparte',
+        });
+      }
       // D-116: una línea vende un producto del catálogo O una bobina completa, nunca las
       // dos cosas ni ninguna — sin producto el API no sabría qué facturar y con las dos
       // reservas a la vez no sabría cuál manda.
@@ -285,10 +324,16 @@ export const salesItemSchema = z.object({
   description: z.string(),
   qty: z.string(),
   unit: unitStringSchema,
-  /** Precio de lista del maestro al momento de cotizar (D-068). Null si no tenía. */
+  /** Valor de lista del maestro al momento de cotizar (D-068). Null si no tenía. */
   listPricePen: z.string().nullable(),
-  /** Precio efectivamente cotizado. Difiere del de lista cuando el vendedor lo editó. */
+  /** Valor unitario (sin IGV) efectivamente cotizado. Difiere del de lista si se editó. */
   unitPricePen: z.string(),
+  /**
+   * D-161: valor por metro con el que se cotizó una plancha de catálogo, del que sale
+   * `unitPricePen = largo del SKU × este número`. Null en el resto de las líneas y en todo
+   * lo cotizado antes de D-161.
+   */
+  valuePerMeterPen: z.string().nullable(),
   subtotalPen: z.string(),
   igvPen: z.string(),
   totalPen: z.string(),
@@ -628,6 +673,21 @@ export const productStockSchema = z.object({
   rawMaterialLabel: z.string().nullable(),
   /** Kilos de bobina por metro lineal del producto. Null si no se fabrica a medida. */
   kgPerMeter: z.string().nullable(),
+  /**
+   * D-163: el **precio de venta mínimo** (CON IGV) de este SKU en su unidad de venta —
+   * `costo promedio ÷ (1 − margen mínimo) × 1.18`— y el valor sin IGV equivalente.
+   *
+   * `null` cuando no hay piso que aplicar: un SKU que nunca entró al kardex (costo cero) o
+   * una línea de negocio sin márgenes configurados. Es exactamente el mismo número que el
+   * API va a exigir al guardar, calculado por la misma función: el formulario no puede
+   * prometer un mínimo distinto del que el `POST` rechaza.
+   *
+   * El costo se puede despejar de acá (margen mínimo ÷ precio), y el margen lo lee todo el
+   * equipo comercial. Es el costo de que el vendedor pueda ver su piso antes de tipear;
+   * sin eso el piso solo se descubre chocando contra el 400.
+   */
+  minPricePen: z.string().nullable(),
+  minValuePen: z.string().nullable(),
 });
 export type ProductStockDto = z.infer<typeof productStockSchema>;
 
@@ -674,6 +734,16 @@ export const sellableCoilSchema = z.object({
   thicknessMm: z.string(),
   status: z.enum(['OPEN', 'CLOSED']),
   availableQty: z.string(),
+  /**
+   * D-163: el **precio por kg mínimo** (con IGV) al que se puede vender este rollo, del
+   * costo promedio de su propio saldo. `null` cuando no hay piso que aplicar.
+   *
+   * Sigue siendo cierto que acá no viaja el costo, pero de este número se despeja: es la
+   * misma contrapartida asumida en D-163 para el panel de stock. Se manda porque una venta
+   * de bobina entera es a precio negociado y el vendedor tipea el número a mano — sin el
+   * mínimo a la vista, lo único que le dice que se pasó es el 400 al guardar.
+   */
+  minPricePen: z.string().nullable(),
 });
 export type SellableCoilDto = z.infer<typeof sellableCoilSchema>;
 

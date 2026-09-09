@@ -4,6 +4,7 @@ import {
   Decimal,
   defaultRoofingPlan,
   importDocTypeOf,
+  EXTERNAL_INVOICE_NOTES_PREFIX,
   MAX_PADRON_LOOKUPS,
   MAX_QUOTATION_IMPORT_ROWS,
   PADRON_LOOKUP_CONCURRENCY,
@@ -97,12 +98,14 @@ export class QuotationImportService {
     const already = await this.prisma.quotation.findMany({
       where: {
         status: { not: QuotationStatus.CANCELLED },
-        OR: keys.map((k) => ({ notes: { contains: `${NOTES_PREFIX}${k}` } })),
+        OR: keys.map((k) => ({ notes: { contains: `${EXTERNAL_INVOICE_NOTES_PREFIX}${k}` } })),
       },
       select: { notes: true },
     });
     const importedKeys = new Set(
-      already.flatMap((q) => keys.filter((k) => q.notes?.includes(`${NOTES_PREFIX}${k}`) === true)),
+      already.flatMap((q) =>
+        keys.filter((k) => q.notes?.includes(`${EXTERNAL_INVOICE_NOTES_PREFIX}${k}`) === true),
+      ),
     );
 
     // D-158: los documentos del papel que el maestro **no** tiene se consultan contra el
@@ -511,27 +514,39 @@ export class QuotationImportService {
               );
             }
 
-            const id = await this.quotations.createInTx(tx, actor, {
-              customerId,
-              issueDate: first.issueDate,
-              // D-157: **sin vencimiento**. Una cotización importada nace de un comprobante
-              // que ya se vendió: no hay vigencia que respetar, y las dos alternativas eran
-              // peores — inventar una fecha, o darle los 7 días por defecto sobre una emisión
-              // de agosto y crear 71 cotizaciones que nacen vencidas y que ninguna validación
-              // deja confirmar.
-              validityDays: null,
-              // D-152: el número del comprobante externo viaja a las observaciones con un
-              // formato reconocible, para que la venta que se registre después pueda decir de
-              // qué papel salió sin que haga falta una columna nueva en el modelo.
-              notes: `${NOTES_PREFIX}${documentKey}`,
-              items: rows.map((r) => ({
-                productId: r.productId,
-                qty: r.qty,
-                unitPricePen: r.unitPricePen,
-                ...(r.description ? { description: r.description } : {}),
-                ...(r.pieces ? { pieces: r.pieces } : {}),
-              })),
-            });
+            const id = await this.quotations.createInTx(
+              tx,
+              actor,
+              {
+                customerId,
+                issueDate: first.issueDate,
+                // D-157: **sin vencimiento**. Una cotización importada nace de un comprobante
+                // que ya se vendió: no hay vigencia que respetar, y las dos alternativas eran
+                // peores — inventar una fecha, o darle los 7 días por defecto sobre una emisión
+                // de agosto y crear 71 cotizaciones que nacen vencidas y que ninguna validación
+                // deja confirmar.
+                validityDays: null,
+                // D-152: el número del comprobante externo viaja a las observaciones con un
+                // formato reconocible, para que la venta que se registre después pueda decir de
+                // qué papel salió sin que haga falta una columna nueva en el modelo.
+                notes: `${EXTERNAL_INVOICE_NOTES_PREFIX}${documentKey}`,
+                items: rows.map((r) => ({
+                  productId: r.productId,
+                  qty: r.qty,
+                  unitPricePen: r.unitPricePen,
+                  ...(r.description ? { description: r.description } : {}),
+                  ...(r.pieces ? { pieces: r.pieces } : {}),
+                })),
+              },
+              {
+                // D-163: **sin piso de precio**. Estos documentos ya se vendieron, a los
+                // precios a los que se vendieron; el margen mínimo de hoy es una política
+                // comercial hacia adelante y aplicarla hacia atrás dejaría agosto sin cargar.
+                // Es la misma razón por la que la cotización importada no vence (D-157): lo que
+                // entra por acá es un hecho consumado, no una oferta.
+                enforcePriceFloor: false,
+              },
+            );
             await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
             const created = await tx.quotation.findUniqueOrThrow({
               where: { id },
@@ -565,13 +580,6 @@ export class QuotationImportService {
     );
   }
 }
-
-/**
- * El prefijo con el que el número del comprobante externo viaja a las observaciones. Está en
- * una constante porque se **escribe** al confirmar y se **busca** en el preview para avisar de
- * una reimportación: dos literales separados dejarían el aviso mudo sin que nadie lo note.
- */
-const NOTES_PREFIX = 'Factura externa: ';
 
 // ---------------------------------------------------------------------------
 // Lectura del archivo

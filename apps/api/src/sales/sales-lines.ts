@@ -11,11 +11,14 @@ import {
 import {
   coilSkuFromTypeKey,
   describePieces,
+  fixedLengthUnitValue,
   kgPerMeter,
+  money,
   piecesMeters,
   rawMaterialLabel,
   RoofingProductKind,
   salesLineTotals,
+  sellsByFixedLength,
   toDecimal,
   toFixedString,
   Unit,
@@ -25,6 +28,7 @@ import {
   type SalesItemInput,
 } from '@ayr/shared';
 import { toSharedLineCode } from '../common/business-line-code';
+import { assertPriceFloor, type PriceFloorCandidate } from './price-floor';
 import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material';
 
 /**
@@ -53,6 +57,8 @@ export interface ResolvedSalesLine {
   unit: string;
   listPricePen: string | null;
   unitPricePen: string;
+  /** D-161: valor por metro de una plancha de catálogo. Null en el resto de las líneas. */
+  valuePerMeterPen: string | null;
   subtotalPen: string;
   igvPen: string;
   totalPen: string;
@@ -109,9 +115,21 @@ export interface ResolvedSalesLine {
  * agregado, que se construye con la línea de negocio **del producto** y por eso no puede
  * nombrar material de otra.
  */
+export interface ResolveSalesLinesOptions {
+  /**
+   * D-163: comprueba el piso duro de precio de cada línea. `undefined` es **sin piso**, y el
+   * único que lo usa así es el importador de cotizaciones históricas (D-152): esos
+   * documentos ya se vendieron, a los precios a los que se vendieron, y rechazarlos por un
+   * margen de hoy dejaría agosto sin cargar. El alta, la edición, la duplicación y el pedido
+   * directo pasan siempre con el piso puesto.
+   */
+  priceFloor?: { toleranceMm: string };
+}
+
 export async function resolveSalesLines(
   tx: Prisma.TransactionClient,
   items: SalesItemInput[],
+  options: ResolveSalesLinesOptions = {},
 ): Promise<ResolvedSalesLine[]> {
   const productIds = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
   const products = await tx.product.findMany({
@@ -127,6 +145,9 @@ export async function resolveSalesLines(
       // D-127: el subtipo decide la rama de la reserva. La geometría y la densidad del
       // acabado son lo que convierte metros lineales en kilos de bobina.
       roofingKind: true,
+      // D-161: el largo fijo de una plancha de catálogo, con el que su valor por metro se
+      // convierte en el valor por plancha que la línea factura.
+      lengthMm: true,
       thicknessMm: true,
       widthMm: true,
       colorId: true,
@@ -160,7 +181,12 @@ export async function resolveSalesLines(
   // la decide el vendedor (es el saldo vivo, nunca lo que venga en `item.qty`).
   const saleCoilById = await resolveSaleCoils(tx, items);
 
-  return items.map((item, index) => {
+  // D-163: las líneas a comprobar contra su piso, con la coordenada del costo que le
+  // corresponde a cada una. Se juntan durante el `.map` —que es síncrono— y se comprueban
+  // todas juntas después, en tres consultas, en vez de una por línea.
+  const floorCandidates: PriceFloorCandidate[] = [];
+
+  const lines = items.map((item, index) => {
     const lineNumber = index + 1;
     const at = `Línea ${lineNumber}`;
 
@@ -175,6 +201,14 @@ export async function resolveSalesLines(
       }
       const totals = salesLineTotals({ qty: sale.qty, unitPricePen });
       const description = item.description ?? `Bobina ${sale.coilCode} × ${sale.qty} kg`;
+      floorCandidates.push({
+        at,
+        sku: sale.coilCode,
+        businessLineId: sale.productBusinessLineId,
+        basis: { kind: 'UNIT', unitLabel: 'kg' },
+        unitValuePen: unitPricePen,
+        cost: { kind: 'COIL', coilId: sale.coilId },
+      });
       return {
         lineNumber,
         productId: sale.productId,
@@ -184,6 +218,7 @@ export async function resolveSalesLines(
         unit: Unit.KGM,
         listPricePen: null,
         unitPricePen,
+        valuePerMeterPen: null,
         subtotalPen: toFixedString(totals.subtotal, 'MONEY'),
         igvPen: toFixedString(totals.igv, 'MONEY'),
         totalPen: toFixedString(totals.total, 'MONEY'),
@@ -213,10 +248,36 @@ export async function resolveSalesLines(
     }
 
     const listPricePen = product.listPricePen === null ? null : product.listPricePen.toFixed(4);
-    const unitPricePen = item.unitPricePen ?? listPricePen;
+
+    // D-161: la plancha de catálogo se negocia **por metro lineal** y se factura por plancha.
+    // El valor unitario deja de ser un número que el formulario manda y pasa a ser una cuenta
+    // del API: `largo del SKU × valor por metro`, con un solo redondeo al final.
+    //
+    // El camino viejo sigue vivo para todo lo demás y, dentro de las planchas, para lo que no
+    // manda valor por metro: el importador de históricos (D-152), que trae el valor unitario
+    // tal como salió en el papel, y una plancha sin largo en el catálogo, que no se puede
+    // multiplicar por nada.
+    const byFixedLength = sellsByFixedLength({
+      roofingKind: product.roofingKind,
+      unit: product.unit,
+      lengthMm: product.lengthMm === null ? null : product.lengthMm.toFixed(2),
+    });
+    if (item.valuePerMeterPen !== undefined && !byFixedLength) {
+      throw new BadRequestException(
+        `${at}: ${product.sku} no se cotiza por metro con largo fijo (eso es una plancha de catálogo con largo en el maestro): escribe el valor unitario`,
+      );
+    }
+    const valuePerMeterPen = item.valuePerMeterPen ?? null;
+    const unitPricePen =
+      valuePerMeterPen !== null && product.lengthMm !== null
+        ? toFixedString(
+            money(fixedLengthUnitValue(product.lengthMm.toFixed(2), valuePerMeterPen)),
+            'MONEY',
+          )
+        : (item.unitPricePen ?? listPricePen);
     if (unitPricePen === null) {
       throw new BadRequestException(
-        `${at}: el producto ${product.sku} no tiene precio de lista; escribe el precio en la línea`,
+        `${at}: el producto ${product.sku} no tiene valor de lista; escribe el ${byFixedLength ? 'valor por metro' : 'valor unitario'} en la línea`,
       );
     }
 
@@ -308,12 +369,44 @@ export async function resolveSalesLines(
         thicknessMm: spec.thicknessMm,
         colorName: product.color?.name ?? null,
       });
+      // D-163: el costo por metro de una cobertura a medida sale de la bobina, no del SKU:
+      // su producto terminado no tiene saldo hasta que planta lo rola. Se pide **el kilo de
+      // un metro** y no `reserveQty / qty`, que ya viene redondeado a tres decimales.
+      floorCandidates.push({
+        at,
+        sku: product.sku,
+        businessLineId: product.businessLineId,
+        // Una cobertura a medida ya se cotiza por metro en su valor unitario (su unidad **es**
+        // `MTR`), así que la base es la unidad de venta y no `PER_METER`: no hay largo por el
+        // que multiplicar, la línea entera está en metros.
+        basis: { kind: 'UNIT', unitLabel: product.unit },
+        unitValuePen: unitPricePen,
+        cost: {
+          kind: 'RAW_MATERIAL',
+          spec,
+          kgPerUnit: theoreticalKgForMeters(product, '1', at),
+        },
+      });
     } else {
       reserveItemType = InventoryItemType.PRODUCT;
       reserveItemId = product.id;
       reserveQty = toFixedString(toDecimal(item.qty), 'KG');
       reserveUnit = product.unit;
       reserveItemLabel = product.sku;
+      floorCandidates.push({
+        at,
+        sku: product.sku,
+        businessLineId: product.businessLineId,
+        // D-161: en una plancha lo que se tipea es el precio **por metro**, así que el mínimo
+        // se muestra y se rechaza en esa misma unidad. El piso en sí sigue siendo por plancha,
+        // que es la unidad del costo del kardex.
+        basis:
+          valuePerMeterPen !== null && product.lengthMm !== null
+            ? { kind: 'PER_METER', lengthMm: product.lengthMm.toFixed(2) }
+            : { kind: 'UNIT', unitLabel: product.unit },
+        unitValuePen: unitPricePen,
+        cost: { kind: 'PRODUCT', productId: product.id },
+      });
     }
 
     return {
@@ -329,6 +422,7 @@ export async function resolveSalesLines(
       unit: product.unit,
       listPricePen,
       unitPricePen,
+      valuePerMeterPen,
       subtotalPen: toFixedString(totals.subtotal, 'MONEY'),
       igvPen: toFixedString(totals.igv, 'MONEY'),
       totalPen: toFixedString(totals.total, 'MONEY'),
@@ -342,6 +436,14 @@ export async function resolveSalesLines(
       reserveItemLabel,
     };
   });
+
+  // D-163: al final y no línea por línea, para que el vendedor vea el primer rechazo con el
+  // documento entero ya validado — un 400 por precio sobre una línea que además tenía el
+  // producto desactivado lo mandaría a corregir dos veces.
+  if (options.priceFloor) {
+    await assertPriceFloor(tx, floorCandidates, options.priceFloor.toleranceMm);
+  }
+  return lines;
 }
 
 /** Lo que hace falta para armar una línea de venta de bobina completa (D-116). */
@@ -468,6 +570,7 @@ export function toSalesItemDto(
     unit: string;
     listPricePen: Prisma.Decimal | null;
     unitPricePen: Prisma.Decimal;
+    valuePerMeterPen: Prisma.Decimal | null;
     subtotalPen: Prisma.Decimal;
     igvPen: Prisma.Decimal;
     totalPen: Prisma.Decimal;
@@ -492,6 +595,7 @@ export function toSalesItemDto(
     unit: row.unit,
     listPricePen: row.listPricePen === null ? null : row.listPricePen.toFixed(4),
     unitPricePen: row.unitPricePen.toFixed(4),
+    valuePerMeterPen: row.valuePerMeterPen === null ? null : row.valuePerMeterPen.toFixed(4),
     subtotalPen: row.subtotalPen.toFixed(4),
     igvPen: row.igvPen.toFixed(4),
     totalPen: row.totalPen.toFixed(4),

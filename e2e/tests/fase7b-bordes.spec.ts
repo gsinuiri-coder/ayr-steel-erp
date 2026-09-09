@@ -81,7 +81,7 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
   });
 
   test('el disponible manda: la venta se bloquea y la reserva de otro pedido queda intacta (D-066, D-088)', async () => {
-    const stock = await setupPosStock(api, { qty: '10', listPricePen: '10.0000' });
+    const stock = await setupPosStock(api, { qty: '10', listPricePen: '50.0000' });
     const customer = await createCustomer(api);
     let session: CashSessionDto | undefined;
     const orderIds: string[] = [];
@@ -91,7 +91,11 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
       const order = await createDirectOrder(api, {
         customerId: customer.id,
         businessLine: POS_LINE,
-        items: [{ productId: stock.product.id, qty: '8', unitPricePen: '10' }],
+        // D-163: por encima del piso (costo 20 el kg, margen mínimo 10% ⇒ 22.2222 de valor).
+        // El 10.00 que había acá vendía por debajo del costo: un número arbitrario en un caso
+        // que habla de **disponible**, no de precio, y con el piso duro el pedido de la
+        // preparación dejó de crearse.
+        items: [{ productId: stock.product.id, qty: '8', unitPricePen: '50' }],
       });
       orderIds.push(order.id);
       const held = await reservationsOf(api, order.id);
@@ -110,7 +114,7 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
 
       session = await openCashSession(api, '0.00');
       const refused = await posSellExpectingError(api, {
-        items: [{ productId: stock.product.id, qty: '3.000', unitPricePen: '10.0000' }],
+        items: [{ productId: stock.product.id, qty: '3.000', unitPricePen: '50.0000' }],
       });
       expect(refused.status).toBe(400);
       expect(refused.message).toContain('disponibles');
@@ -152,7 +156,7 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
   });
 
   test('el mostrador no vende material a medida ni mezcla líneas de negocio (D-098, D-104)', async () => {
-    const stock = await setupPosStock(api, { qty: '10', listPricePen: '10.0000' });
+    const stock = await setupPosStock(api, { qty: '10', listPricePen: '50.0000' });
     let session: CashSessionDto | undefined;
 
     try {

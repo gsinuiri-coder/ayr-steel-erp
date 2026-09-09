@@ -435,7 +435,7 @@ export function NuevoComprobanteView() {
                   <TableHead className="text-right">Pedido</TableHead>
                   <TableHead className="text-right">Ya facturado</TableHead>
                   <TableHead className="text-right">Pendiente</TableHead>
-                  <TableHead className="text-right">P. unitario</TableHead>
+                  <TableHead className="text-right">Valor unitario</TableHead>
                   <TableHead className="w-36 text-right">A facturar</TableHead>
                 </TableRow>
               </TableHeader>
@@ -539,7 +539,7 @@ export function NuevoComprobanteView() {
                   </Select>
                 </div>
                 <div className="w-36 space-y-1">
-                  <Label className="text-xs">P. unitario sin IGV</Label>
+                  <Label className="text-xs">Valor unitario (sin IGV)</Label>
                   <Input
                     inputMode="decimal"
                     value={line.unitPricePen}

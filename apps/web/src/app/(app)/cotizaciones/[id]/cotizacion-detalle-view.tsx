@@ -242,10 +242,12 @@ export function CotizacionDetalleView({ id }: { id: string }) {
               <TableHead>#</TableHead>
               <TableHead>Producto</TableHead>
               <TableHead className="text-right">Cantidad</TableHead>
-              <TableHead className="text-right">P. lista</TableHead>
-              <TableHead className="text-right">P. cotizado</TableHead>
+              {/* D-162: «valor» es sin IGV y «precio» es con IGV. Lo que la línea guarda y
+                  lo que el comprobante factura es el valor, así que la columna lo dice. */}
+              <TableHead className="text-right">Valor de lista</TableHead>
+              <TableHead className="text-right">Valor cotizado</TableHead>
               <TableHead>Reservará</TableHead>
-              <TableHead className="text-right">Importe</TableHead>
+              <TableHead className="text-right">Valor de venta</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -276,6 +278,15 @@ export function CotizacionDetalleView({ id }: { id: string }) {
                     <span className={discounted ? 'font-medium text-amber-600' : undefined}>
                       {formatMoney(item.unitPricePen, 'PEN', 4)}
                     </span>
+                    {/* D-161: en una plancha lo que se negoció es el valor por metro; el
+                        unitario sale de multiplicarlo por el largo del SKU. Mostrar solo el
+                        unitario escondía justo el número que el vendedor y el cliente
+                        acordaron. */}
+                    {item.valuePerMeterPen !== null && (
+                      <span className="block text-xs text-muted-foreground tabular-nums">
+                        {formatMoney(item.valuePerMeterPen, 'PEN', 4)} /m
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="max-w-[12rem] text-xs whitespace-normal">
                     {item.reserveItemLabel || item.reserveItemId}

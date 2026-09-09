@@ -272,7 +272,14 @@ export class SalesController {
   /**
    * Panel de stock en vivo del formulario de cotización (D-136): el agregado de materia
    * prima de una línea de negocio y el disponible de los SKU que el vendedor tiene puestos.
-   * Solo lectura y sin ningún costo. Va antes de `reservations` solo por orden de lectura.
+   * Va antes de `reservations` solo por orden de lectura.
+   *
+   * **Ya no es "sin ningún costo"** (D-163). Devuelve el precio mínimo de cada SKU, y de ahí
+   * el costo se despeja: `costo = valor mínimo × (1 − margen mínimo)`, con el margen mínimo
+   * legible por cualquier rol en `GET /pricing`. Es una contrapartida asumida por escrito en
+   * D-163 —el vendedor tiene que ver su piso **antes** de tipear, no descubrirlo con un 400—
+   * pero está anotada acá porque este comentario decía lo contrario y es el que va a leer
+   * quien agregue el próximo campo.
    */
   @Get('stock-panel')
   stockPanel(

@@ -1,4 +1,5 @@
 export * from './business-date';
+export * from './tax';
 export * from './enums';
 export * from './decimal';
 export * from './coil-code';

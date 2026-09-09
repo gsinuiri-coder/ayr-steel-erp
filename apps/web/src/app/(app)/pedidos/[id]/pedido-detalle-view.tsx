@@ -345,8 +345,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
                 <TableHead>#</TableHead>
                 <TableHead>Producto</TableHead>
                 <TableHead className="text-right">Cantidad</TableHead>
-                <TableHead className="text-right">P. unitario</TableHead>
-                <TableHead className="text-right">Importe</TableHead>
+                {/* D-162: valor = sin IGV. Es lo que la línea congeló al confirmarse. */}
+                <TableHead className="text-right">Valor unitario</TableHead>
+                <TableHead className="text-right">Valor de venta</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -362,6 +363,12 @@ export function PedidoDetalleView({ id }: { id: string }) {
                   </TableCell>
                   <TableCell className="text-right">
                     {formatMoney(item.unitPricePen, 'PEN', 4)}
+                    {/* D-161: el valor por metro con el que se cotizó la plancha. */}
+                    {item.valuePerMeterPen !== null && (
+                      <span className="block text-xs text-muted-foreground tabular-nums">
+                        {formatMoney(item.valuePerMeterPen, 'PEN', 4)} /m
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
                 </TableRow>

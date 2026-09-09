@@ -144,6 +144,91 @@ export function describePieces(pieces: readonly PieceLike[]): string {
 }
 
 // --------------------------------------------------------------------------
+// D-161 — la plancha de catálogo se vende por metro lineal
+// --------------------------------------------------------------------------
+
+/** Lo mínimo de un producto que hace falta para saber si se cotiza por largo fijo. */
+export interface FixedLengthProductLike {
+  roofingKind: string | null;
+  lengthMm: string | null;
+  unit: string;
+}
+
+/**
+ * D-161: **¿esta línea se cotiza por metro lineal contra un largo fijo del SKU?**
+ *
+ * Es la **tercera** pregunta de la familia de D-131, y las tres se responden con funciones
+ * distintas porque las tres devuelven `boolean` y el compilador no avisa cuando se contesta
+ * una con otra:
+ *
+ * - `sellsByLength` (unidad `MTR`) — *¿la línea necesita el detalle de largos?* La cantidad
+ *   de la línea **son** metros y el vendedor los compone plancha por plancha.
+ * - `isMadeToMeasure` (subtipo `A_MEDIDA`) — *¿se fabrica contra pedido desde bobina?* Decide
+ *   la rama de la reserva.
+ * - `sellsByFixedLength` (esta) — *¿el precio se negocia por metro pero la cantidad se cuenta
+ *   en planchas?* La cantidad sigue siendo `NIU` —el kardex, la reserva y el despacho de una
+ *   plancha están en planchas— y lo único que cambia es de dónde sale el valor unitario.
+ *
+ * Pide **tres** campos a propósito, y ninguno sobra:
+ *
+ * - `roofingKind === 'PLANCHA'` — es el subtipo el que dice que hay un largo de catálogo;
+ * - `lengthMm > 0` — un `PLANCHA` sin largo en el maestro (los hay, ver
+ *   `roofing-catalog-report.ts`) tiene que caer en el camino viejo —valor por plancha tipeado
+ *   a mano— en vez de en un largo cero que dejaría toda la línea en S/ 0;
+ * - `unit === 'NIU'` — y este es el que menos se ve venir. El CHECK de la base solo exige que
+ *   una `PLANCHA` **no** esté en `MTR`, así que una en `KGM` o `MTK` es legal y el catálogo la
+ *   admite a propósito (hay SKU legados). Multiplicar el largo por el precio solo significa
+ *   algo si la cantidad de la línea son **piezas**: en una plancha vendida por kilo, ese
+ *   producto no es el valor unitario de nada y el importe saldría multiplicado por el largo.
+ *   Es la regla dura 14 mirada al revés — una pregunta sobre la aritmética de la unidad no se
+ *   responde con el subtipo.
+ */
+export function sellsByFixedLength(product: FixedLengthProductLike): boolean {
+  return (
+    product.roofingKind === 'PLANCHA' &&
+    product.unit === 'NIU' &&
+    product.lengthMm !== null &&
+    toDecimal(product.lengthMm).gt(0)
+  );
+}
+
+/**
+ * D-161: valor unitario (sin IGV) de **una** plancha = `largo del SKU en metros × valor por
+ * metro`. Sin redondear: lo redondea el llamador, una sola vez, al persistir.
+ */
+export function fixedLengthUnitValue(
+  lengthMm: string,
+  valuePerMeterPen: Decimal | string,
+): Decimal {
+  return toDecimal(lengthMm).div(1000).times(toDecimal(valuePerMeterPen));
+}
+
+/**
+ * D-161: el camino inverso — el valor por metro que corresponde a un valor por plancha ya
+ * guardado. Es como se muestra el precio de lista del maestro (que es por plancha) en un
+ * campo que se negocia por metro, y como se reabre para editar una línea existente.
+ */
+export function fixedLengthValuePerMeter(
+  lengthMm: string,
+  unitValuePen: Decimal | string,
+): Decimal {
+  const meters = toDecimal(lengthMm).div(1000);
+  // Sin la guarda, un largo cero devuelve `Infinity` y `toFixedString` lo serializa como
+  // texto: un precio "Infinity" viajando a una pantalla o a la base. Hoy todos los llamadores
+  // pasan por `sellsByFixedLength`, que ya lo descarta, pero esta es una función exportada del
+  // paquete compartido y esa garantía no viaja con ella.
+  if (meters.lte(0)) {
+    throw new RangeError(`Largo inválido (${lengthMm} mm): no se puede repartir por metro`);
+  }
+  return toDecimal(unitValuePen).div(meters);
+}
+
+/** D-161: los metros lineales de una línea de planchas = `largo del SKU × cantidad`. */
+export function fixedLengthMeters(lengthMm: string, qty: Decimal | string): Decimal {
+  return roundTo(toDecimal(lengthMm).div(1000).times(toDecimal(qty)), 'KG');
+}
+
+// --------------------------------------------------------------------------
 // D-146 — el plan de corte acota los METROS; el kg declarado solo avisa (D-154)
 // --------------------------------------------------------------------------
 

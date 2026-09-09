@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,6 +11,8 @@ import { Prisma, QuotationStatus, SalesOrderStatus, type InventoryItemType } fro
 import {
   businessToday,
   defaultValidUntil,
+  isImportedQuotation,
+  keepImportMarker,
   isQuotationExpired,
   quotationValidUntil,
   paginate,
@@ -29,8 +32,10 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { ENV, type Env } from '../config/env';
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { roofingToleranceMm } from '../production/roofing-coil-match';
 import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
@@ -80,7 +85,17 @@ export class QuotationsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly storage: StorageService,
+    @Inject(ENV) private readonly env: Env,
   ) {}
+
+  /**
+   * D-163: el piso duro de precio, tal como lo recibe `resolveSalesLines`. La tolerancia es
+   * la del agregado de materia prima (D-134), que es de donde sale el costo de una cobertura
+   * a medida.
+   */
+  private priceFloor(): { toleranceMm: string } {
+    return { toleranceMm: roofingToleranceMm(this.env) };
+  }
 
   /**
    * RF-66 dice "una cotización **propia**": un vendedor no toca las de otro.
@@ -123,9 +138,15 @@ export class QuotationsService {
     // D-157: el tipo interno, que **sí** admite `validityDays: null` (sin vencimiento). El
     // cuerpo HTTP no lo admite: el único que pasa `null` es el importador, por código.
     input: CreateQuotationInternalInput,
+    // D-163: el piso duro se aplica **salvo** que el llamador diga que no, y el único que
+    // dice que no es el importador de históricos (D-152). El defecto es enforcar a propósito:
+    // un alta nueva que se olvide de pasar el flag queda protegida, no desprotegida.
+    options: { enforcePriceFloor?: boolean } = {},
   ): Promise<string> {
     const customer = await this.requireActiveCustomer(tx, input.customerId);
-    const lines = await resolveSalesLines(tx, input.items);
+    const lines = await resolveSalesLines(tx, input.items, {
+      ...((options.enforcePriceFloor ?? true) ? { priceFloor: this.priceFloor() } : {}),
+    });
     const totals = documentTotals(lines);
     // D-157: `null` es **sin vencimiento** y se guarda como `NULL`, no como una fecha lejana.
     const validUntil = quotationValidUntil(input.issueDate, input.validityDays);
@@ -171,7 +192,15 @@ export class QuotationsService {
         );
       }
       const customer = await this.requireActiveCustomer(tx, input.customerId);
-      const lines = await resolveSalesLines(tx, input.items);
+      // D-163: una cotización que trajo el importador (D-152) **nace exenta del piso**, y
+      // editarla tiene que seguir estando exenta. Sin esto, corregir el producto de una línea
+      // en una de las 71 de agosto rebotaba con "el precio mínimo es S/ X" sobre una línea que
+      // nadie tocó y cuyo precio es un hecho consumado: la única salida habría sido falsear el
+      // precio histórico o mover el margen mínimo de toda la línea de negocio.
+      const imported = isImportedQuotation(current.notes);
+      const lines = await resolveSalesLines(tx, input.items, {
+        ...(imported ? {} : { priceFloor: this.priceFloor() }),
+      });
       const totals = documentTotals(lines);
       const validUntil = quotationValidUntil(input.issueDate, input.validityDays);
 
@@ -185,7 +214,11 @@ export class QuotationsService {
           subtotalPen: totals.subtotalPen,
           igvPen: totals.igvPen,
           totalPen: totals.totalPen,
-          notes: input.notes ?? null,
+          // D-152/D-163: la marca del comprobante externo sobrevive a la edición. Es
+          // procedencia, no una observación que alguien escribió, y de ella dependen el aviso
+          // de reimportación y la exención del piso de precio: borrarla dejaba el documento
+          // inválido a partir del **segundo** guardado, con el mismo precio histórico.
+          notes: keepImportMarker(current.notes, input.notes ?? null),
           items: { create: lines.map(toItemCreate) },
         },
       });
@@ -241,7 +274,13 @@ export class QuotationsService {
     const madeToOrderProductIds = new Set(boms.map((b) => b.productId));
 
     const items: SalesItemInput[] = source.items.map((i) => {
-      const unitPricePen = i.unitPricePen.toFixed(4);
+      // D-161: si la línea se cotizó por metro (una plancha de catálogo), el duplicado se
+      // vuelve a cotizar por metro y el unitario se recalcula. Mandar los dos es un 400 del
+      // schema, y mandar solo el unitario perdería el número que el vendedor negoció.
+      const valuePerMeterPen =
+        i.valuePerMeterPen === null ? undefined : i.valuePerMeterPen.toFixed(4);
+      const unitPricePen = valuePerMeterPen === undefined ? i.unitPricePen.toFixed(4) : undefined;
+      const price = valuePerMeterPen === undefined ? { unitPricePen } : { valuePerMeterPen };
       const pieces =
         i.pieces.length > 0
           ? i.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty }))
@@ -250,12 +289,16 @@ export class QuotationsService {
         // D-116: venta de bobina completa. El API resuelve producto y cantidad solos a
         // partir del saldo vivo de la bobina; `qty` es obligatoria en el schema pero se
         // ignora para esta línea, así que basta con un valor no vacío.
-        return { saleCoilId: i.reserveItemId, qty: i.qty.toFixed(3), unitPricePen };
+        return {
+          saleCoilId: i.reserveItemId,
+          qty: i.qty.toFixed(3),
+          unitPricePen: i.unitPricePen.toFixed(4),
+        };
       }
       return {
         productId: i.productId,
         qty: i.qty.toFixed(3),
-        unitPricePen,
+        ...price,
         ...(pieces ? { pieces } : {}),
         ...(i.reserveItemType === 'COIL'
           ? { reserveFromCoilId: i.reserveItemId, reserveKg: i.reserveQty.toFixed(3) }
@@ -265,7 +308,10 @@ export class QuotationsService {
 
     const newId = await this.prisma.$transaction(async (tx) => {
       const customer = await this.requireActiveCustomer(tx, source.customerId);
-      const lines = await resolveSalesLines(tx, items);
+      // D-163: el duplicado **sí** pasa por el piso, por el mismo motivo por el que vence
+      // (D-157): lo que sale es una cotización viva de hoy. Duplicar una importada cuyo
+      // precio quedó por debajo del mínimo de hoy rebota, y así tiene que ser.
+      const lines = await resolveSalesLines(tx, items, { priceFloor: this.priceFloor() });
       const totals = documentTotals(lines);
       const issueDate = businessToday();
       // D-157: **el duplicado sí vence**, aunque la original no venciera. Duplicar es "usá
@@ -399,6 +445,7 @@ export class QuotationsService {
         qty: i.qty.toFixed(3),
         unit: i.unit,
         unitPricePen: i.unitPricePen.toFixed(4),
+        valuePerMeterPen: i.valuePerMeterPen === null ? null : i.valuePerMeterPen.toFixed(4),
         totalPen: i.subtotalPen.toFixed(4),
       })),
       subtotalPen: row.subtotalPen.toFixed(4),
@@ -639,6 +686,7 @@ export class QuotationsService {
     status: QuotationStatus;
     validUntil: Date | null;
     createdById: string;
+    notes: string | null;
   }> {
     const rows = await tx.$queryRaw<
       {
@@ -647,9 +695,10 @@ export class QuotationsService {
         status: QuotationStatus;
         valid_until: Date | null;
         created_by_id: string;
+        notes: string | null;
       }[]
     >`
-      SELECT "id", "seq", "status", "valid_until", "created_by_id"
+      SELECT "id", "seq", "status", "valid_until", "created_by_id", "notes"
       FROM "quotations" WHERE "id" = ${id}::uuid FOR UPDATE
     `;
     const row = rows[0];
@@ -660,6 +709,7 @@ export class QuotationsService {
       status: row.status,
       validUntil: row.valid_until,
       createdById: row.created_by_id,
+      notes: row.notes,
     };
   }
 
@@ -777,6 +827,9 @@ function toItemCreate(
     unit: line.unit,
     listPricePen: line.listPricePen,
     unitPricePen: line.unitPricePen,
+    // D-161: el valor por metro con el que se cotizó una plancha se guarda **junto** al valor
+    // unitario que sale de él, no en su lugar: lo que se factura es el unitario.
+    valuePerMeterPen: line.valuePerMeterPen,
     subtotalPen: line.subtotalPen,
     igvPen: line.igvPen,
     totalPen: line.totalPen,
