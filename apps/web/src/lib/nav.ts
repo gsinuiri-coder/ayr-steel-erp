@@ -7,7 +7,6 @@ import {
   Factory,
   FileText,
   Hammer,
-  HardHat,
   Home,
   Layers,
   PackageSearch,
@@ -81,28 +80,23 @@ export const NAV: NavGroup[] = [
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
       /*
-        D-155: los tres sitios de producción, nombrados por lo que se hace en cada uno. Antes
-        eran "Producción" y "Terminal de planta", y nadie podía decir de un vistazo cuál era
-        cuál: los dos sonaban al lugar donde se produce. Ahora el sustantivo dice el objeto —
-        una orden se **gestiona**, un pedido se **produce**— y solo la terminal conserva su
-        nombre, que ya era el único inconfundible.
+        D-160: **dos** sitios de producción y no tres. D-155 había intentado distinguir la
+        terminal del espacio del pedido por el nombre —"Producir un pedido" contra "Terminal
+        de planta"—, pero el problema no era el rótulo: eran dos pantallas que hacían lo mismo
+        con la mitad de las herramientas cada una. Se fundieron en `/planta`, que es la única
+        entrada a **producir**; `/produccion` queda para **gestionar** las órdenes (costos,
+        kardex y correcciones), que es lo que nunca se hace con guantes puestos.
       */
       {
-        title: 'Órdenes de producción',
-        href: '/produccion',
-        icon: Factory,
-        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-      },
-      {
-        title: 'Producir un pedido',
-        href: '/planta/producir',
+        title: 'Producción',
+        href: '/planta',
         icon: Hammer,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
       {
-        title: 'Terminal de planta',
-        href: '/planta',
-        icon: HardHat,
+        title: 'Órdenes de producción',
+        href: '/produccion',
+        icon: Factory,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
       {

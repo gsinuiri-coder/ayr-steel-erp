@@ -267,15 +267,12 @@ export function PedidoDetalleView({ id }: { id: string }) {
             </div>
           )}
           {/*
-            D-155: el espacio de producción del pedido. Es donde se monta la bobina y se
-            reporta cada orden sin salir de la pantalla; la terminal (`/planta`) sigue siendo
-            para operar **una** orden suelta.
+            D-160: el espacio de producción, acotado a este pedido. Es la única entrada a
+            producir: ahí se monta la bobina, se reporta y se cierra cada orden.
           */}
           {isAdmin && canOperate && queuedRoofingLines > 0 && (
             <Button variant="outline" asChild>
-              <Link href={`/planta/producir?pedido=${o.id}`}>
-                Producir ({String(queuedRoofingLines)})
-              </Link>
+              <Link href={`/planta?pedido=${o.id}`}>Producir ({String(queuedRoofingLines)})</Link>
             </Button>
           )}
           {isAdmin && canCancel && (

@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import {
   describePieces,
   piecesMeters,
+  suggestedRoofingPlanText,
   MAX_PAGE_SIZE,
   MAX_PIECE_LENGTH_MM,
   MAX_PIECE_LINES,
@@ -14,9 +15,11 @@ import {
   MIN_PIECE_LENGTH_MM,
   Role,
   toDecimal,
+  Unit,
   type Decimal,
   type CustomerDto,
   type ProductDto,
+  type QuotationImportPadronDto,
   type QuotationImportPreviewDto,
   type QuotationImportResultDto,
   type QuotationImportRowDto,
@@ -44,15 +47,21 @@ import { Skeleton } from '@/components/ui/skeleton';
  * manda lo revisado. Entre el preview y la confirmación no hay ni un byte guardado, así que no
  * hay lote a medio confirmar que alguien tenga que limpiar después.
  *
- * Dos reglas que la pantalla no afloja porque el API tampoco: **nada se crea solo** —un cliente
- * o un SKU que no está en el maestro detiene su fila— y **nada se adivina**: cuando el plan de
- * corte por defecto (1 × los ML de la línea) no cabe en una plancha, la fila pide el plan real
- * en vez de repartirlo por su cuenta.
+ * Dos reglas que la pantalla no afloja porque el API tampoco: **nada se crea solo sin que una
+ * persona lo vea** y **nada se adivina** — cuando el plan de corte sugerido (1 × los ML de la
+ * línea) no cabe en una plancha, la fila lo dice y hay que corregirlo antes de importar.
  *
- * **D-156** no afloja la primera, le saca el callejón: la fila sigue detenida hasta que una
- * persona decida, pero ahora puede decidir **desde acá**, con el formulario de alta completo
- * del maestro y sin perder el archivo revisado. Lo que D-152 prohibió fue la creación
- * silenciosa, no que el botón estuviera cerca.
+ * **D-156** le sacó el callejón a los campos que exigen elegir de un maestro: el alta está a
+ * un botón, con el formulario completo y sin perder el archivo revisado. **D-158** va un paso
+ * más: cuando el documento del papel no está en el maestro pero **sí en el padrón**, el
+ * comprobante muestra el nombre real que devolvió SUNAT y el cliente se crea al confirmar.
+ * Sigue sin ser creación silenciosa —está a la vista, con nombre y documento, antes de
+ * apretar— y sigue sin inventarse nada: si el padrón no responde, la fila queda como estaba.
+ *
+ * **El cliente es del comprobante, no de la línea** (D-158): una factura es de un solo
+ * cliente, así que el campo vive en la cabecera del acordeón y sus diez líneas lo heredan.
+ * Repetirlo por línea era pedir diez veces el mismo dato y dejar abierta la única forma de
+ * armar un documento imposible.
  *
  * El guardado es **todo o nada** por archivo, con el error de cada documento cuando alguno
  * falla: mismo contrato que la tanda de planta (D-147).
@@ -65,9 +74,8 @@ import { Skeleton } from '@/components/ui/skeleton';
  */
 const MAX_CUSTOMER_PAGES = 10;
 
-/** Lo que el usuario puede cambiar de una fila antes de confirmar. */
+/** Lo que el usuario puede cambiar de una **línea** antes de confirmar. */
 interface RowEdit {
-  customerId?: string;
   productId?: string;
   qty?: string;
   unitPricePen?: string;
@@ -79,6 +87,11 @@ interface RowEdit {
 export function ImportarCotizacionesView() {
   const [preview, setPreview] = useState<QuotationImportPreviewDto | null>(null);
   const [edits, setEdits] = useState<Record<number, RowEdit>>({});
+  /**
+   * D-158: el cliente elegido a mano **por comprobante**. Lo que no está acá lo resuelve el
+   * archivo: el cliente que el preview mapeó, o el que el padrón devolvió para dar de alta.
+   */
+  const [documentCustomers, setDocumentCustomers] = useState<Record<string, string>>({});
   const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
   const [result, setResult] = useState<QuotationImportResultDto | null>(null);
   /**
@@ -146,6 +159,7 @@ export function ImportarCotizacionesView() {
     onSuccess: (data) => {
       setPreview(data);
       setEdits({});
+      setDocumentCustomers({});
       setDocumentErrors({});
       // Un archivo nuevo empieza con todos los acordeones en su estado por defecto: si no,
       // un comprobante que el usuario había colapsado a mano en el archivo anterior seguía
@@ -191,18 +205,24 @@ export function ImportarCotizacionesView() {
   const customerIds = useMemo(() => new Set(allCustomers.map((c) => c.id)), [allCustomers]);
   const rows = useMemo(
     () =>
-      (preview?.rows ?? []).map((row) =>
-        resolveRow(row, edits[row.rowNumber] ?? {}, productsById, customerIds),
-      ),
-    [preview, edits, productsById, customerIds],
+      (preview?.rows ?? []).map((row) => resolveRow(row, edits[row.rowNumber] ?? {}, productsById)),
+    [preview, edits, productsById],
   );
-  const live = rows.filter((r) => !r.removed && r.raw.excludedReason === null);
+  // D-158: las filas agrupadas por comprobante, con **su** cliente resuelto en la cabecera.
+  const documentGroups = useMemo(
+    () => groupByDocument(rows, documentCustomers, customerIds),
+    [rows, documentCustomers, customerIds],
+  );
+  const live = documentGroups.flatMap((g) => g.rows.filter(isLive));
   // Solo los **errores** bloquean: un aviso (la unidad del papel que no coincide con la del
   // producto) hay que verlo, no impide crear la cotización — el API la acepta igual.
-  const blocking = live.filter((r) => r.issues.some((i) => i.severity === 'error'));
-  const documents = new Set(live.map((r) => r.raw.documentKey));
-  // D-156: las filas agrupadas por comprobante, en el orden en que aparecen en el archivo.
-  const documentGroups = useMemo(() => groupByDocument(rows), [rows]);
+  const blockingRows = live.filter((r) => r.issues.some((i) => i.severity === 'error')).length;
+  const blockingDocuments = documentGroups.filter(
+    (g) => g.live > 0 && g.customerError !== null,
+  ).length;
+  const blocking = blockingRows + blockingDocuments;
+  const documents = documentGroups.filter((g) => g.live > 0);
+  const newCustomers = documents.filter((g) => g.customerId === null && g.padron !== null);
   /**
    * Qué comprobantes se abren solos, decidido **sobre el archivo tal como llegó** y no sobre
    * el estado de cada render. Derivarlo de los errores vivos hacía que el acordeón se
@@ -214,23 +234,35 @@ export function ImportarCotizacionesView() {
     () =>
       new Set(
         groupByDocument(
-          (preview?.rows ?? []).map((row) => resolveRow(row, {}, productsById, customerIds)),
+          (preview?.rows ?? []).map((row) => resolveRow(row, {}, productsById)),
+          {},
+          customerIds,
         )
-          .filter((g) => g.blocking > 0)
+          .filter((g) => g.blocking > 0 || g.customerError !== null)
           .map((g) => g.key),
       ),
-    // A propósito **sin** `edits`: es el estado inicial del archivo, no el actual.
+    // A propósito **sin** `edits` ni `documentCustomers`: es el estado inicial del archivo.
     [preview, productsById, customerIds],
   );
+
+  /** Olvida el rechazo del servidor sobre **este** comprobante, que acaba de cambiar. */
+  const clearDocumentError = (documentKey: string) => {
+    setDocumentErrors((prev) => {
+      if (prev[documentKey] === undefined) return prev;
+      return Object.fromEntries(Object.entries(prev).filter(([key]) => key !== documentKey));
+    });
+  };
 
   const setEdit = (rowNumber: number, documentKey: string, patch: RowEdit) => {
     setEdits((prev) => ({ ...prev, [rowNumber]: { ...prev[rowNumber], ...patch } }));
     // Solo el de **este** comprobante: corregir una línea de F001-15 no puede borrar el
     // motivo por el que el servidor rechazó F001-22, que sigue sin corregirse.
-    setDocumentErrors((prev) => {
-      if (prev[documentKey] === undefined) return prev;
-      return Object.fromEntries(Object.entries(prev).filter(([key]) => key !== documentKey));
-    });
+    clearDocumentError(documentKey);
+  };
+
+  const setDocumentCustomer = (documentKey: string, customerId: string) => {
+    setDocumentCustomers((prev) => ({ ...prev, [documentKey]: customerId }));
+    clearDocumentError(documentKey);
   };
 
   const confirm = useMutation({
@@ -241,23 +273,37 @@ export function ImportarCotizacionesView() {
       api<QuotationImportResultDto>('/imports/quotations', {
         method: 'POST',
         body: {
-          rows: live.map((r) => ({
-            rowNumber: r.raw.rowNumber,
-            documentKey: r.raw.documentKey,
-            issueDate: r.raw.issueDate,
-            customerId: r.customerId,
-            productId: r.productId,
-            qty: r.qty,
-            unitPricePen: r.unitPricePen,
-            ...(r.raw.rawProductName ? { description: r.raw.rawProductName } : {}),
-            ...(r.pieces ? { pieces: r.pieces } : {}),
-          })),
+          rows: documents.flatMap((group) =>
+            group.rows.filter(isLive).map((r) => ({
+              rowNumber: r.raw.rowNumber,
+              documentKey: group.key,
+              issueDate: r.raw.issueDate,
+              // D-158: el cliente es del comprobante. Y cuando no hay ninguno en el maestro,
+              // viaja **el documento y nada más**: el nombre lo pone el padrón del lado del
+              // servidor, para que nadie pueda dar de alta una razón social inventada.
+              customerId: group.customerId,
+              ...(group.customerId === null && group.padron
+                ? {
+                    newCustomer: {
+                      docType: group.padron.docType,
+                      docNumber: group.padron.docNumber,
+                    },
+                  }
+                : {}),
+              productId: r.productId,
+              qty: r.qty,
+              unitPricePen: r.unitPricePen,
+              ...(r.raw.rawProductName ? { description: r.raw.rawProductName } : {}),
+              ...(r.pieces ? { pieces: r.pieces } : {}),
+            })),
+          ),
         },
       }),
     onSuccess: (data) => {
       setResult(data);
       setPreview(null);
       setEdits({});
+      setDocumentCustomers({});
       toast.success(`${String(data.quotations)} cotizaciones creadas en borrador`);
     },
     onError: (err) => {
@@ -279,10 +325,10 @@ export function ImportarCotizacionesView() {
           <div>
             <h1 className="text-2xl font-semibold">Importar cotizaciones</h1>
             <p className="max-w-3xl text-sm text-muted-foreground">
-              Sube el export de ventas detalladas y revisa cada línea antes de crear nada. Cada
-              comprobante del archivo se convierte en una <strong>cotización en borrador</strong>{' '}
-              con su número anotado en las observaciones; de ahí en adelante el camino es el normal:
-              emitir, confirmar, producir y vender.
+              Sube el export de ventas detalladas y revisa cada comprobante antes de crear nada.
+              Cada uno se convierte en una <strong>cotización en borrador</strong> sin fecha de
+              vencimiento, con su número anotado en las observaciones; de ahí en adelante el camino
+              es el normal: emitir, confirmar, producir y vender.
             </p>
           </div>
           <Button variant="outline" asChild>
@@ -329,6 +375,13 @@ export function ImportarCotizacionesView() {
                 cotizaciones
               </Link>
               .
+              {result.createdCustomers.length > 0 && (
+                <>
+                  {' '}
+                  Y se dieron de alta {result.createdCustomers.length} clientes desde el padrón:{' '}
+                  {result.createdCustomers.join(', ')}.
+                </>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -341,7 +394,7 @@ export function ImportarCotizacionesView() {
               <CardTitle className="text-base">
                 2. Revisar y corregir{' '}
                 <span className="text-sm font-normal text-muted-foreground">
-                  ({String(live.length)} líneas · {String(documents.size)} cotizaciones ·{' '}
+                  ({String(live.length)} líneas · {String(documents.length)} cotizaciones ·{' '}
                   {String(preview.excluded)} excluidas)
                 </span>
               </CardTitle>
@@ -356,14 +409,24 @@ export function ImportarCotizacionesView() {
                   </AlertDescription>
                 </Alert>
               )}
-              {blocking.length > 0 && (
+              {newCustomers.length > 0 && (
+                <Alert>
+                  <AlertDescription>
+                    {newCustomers.length === 1
+                      ? 'Un comprobante trae un cliente que no está en el maestro y sí en el padrón: se dará de alta al importar, con la razón social que devolvió SUNAT.'
+                      : `${String(newCustomers.length)} comprobantes traen clientes que no están en el maestro y sí en el padrón: se darán de alta al importar, con la razón social que devolvió SUNAT.`}{' '}
+                    Si preferís otro, elegilo en la cabecera del comprobante.
+                  </AlertDescription>
+                </Alert>
+              )}
+              {blocking > 0 && (
                 <Alert variant="destructive">
                   <AlertDescription>
-                    {blocking.length === 1
-                      ? 'Una línea tiene algo sin resolver'
-                      : `${String(blocking.length)} líneas tienen algo sin resolver`}
-                    . Corrígelas o quítalas: un cliente o un producto que falta se da de alta en su
-                    propio maestro, nunca desde acá.
+                    {blocking === 1
+                      ? 'Un comprobante tiene algo sin resolver'
+                      : `${String(blocking)} cosas quedan sin resolver`}
+                    . Corrígelas o quita la línea: un cliente o un producto que falta se crea con el
+                    botón de al lado, sin salir de acá.
                   </AlertDescription>
                 </Alert>
               )}
@@ -371,7 +434,7 @@ export function ImportarCotizacionesView() {
                 <Alert variant="destructive">
                   <AlertDescription>
                     No se importó nada. {Object.keys(documentErrors).length} comprobantes fueron
-                    rechazados por el servidor; el motivo está en su fila.
+                    rechazados por el servidor; el motivo está en su cabecera.
                   </AlertDescription>
                 </Alert>
               )}
@@ -385,7 +448,7 @@ export function ImportarCotizacionesView() {
               */}
               <div className="grid gap-2">
                 {documentGroups.map((group) => (
-                  <DocumentGroup
+                  <DocumentGroupCard
                     key={group.key}
                     group={group}
                     open={openDocuments[group.key] ?? autoOpen.has(group.key)}
@@ -399,9 +462,13 @@ export function ImportarCotizacionesView() {
                         [group.key]: !(prev[group.key] ?? autoOpen.has(group.key)),
                       }));
                     }}
+                    onCustomer={(id) => {
+                      setDocumentCustomer(group.key, id);
+                    }}
                     onChange={setEdit}
                     onCreatedCustomer={(created) => {
                       setCreatedCustomers((prev) => [...prev, created]);
+                      setDocumentCustomer(group.key, created.id);
                     }}
                     onCreatedProduct={(created) => {
                       setCreatedProducts((prev) => [...prev, created]);
@@ -419,11 +486,14 @@ export function ImportarCotizacionesView() {
               <p className="text-sm text-muted-foreground">
                 {live.length === 0
                   ? 'No queda ninguna línea para importar.'
-                  : `Se crearán ${String(documents.size)} cotizaciones en borrador con ${String(live.length)} líneas.`}
+                  : `Se crearán ${String(documents.length)} cotizaciones en borrador con ${String(live.length)} líneas` +
+                    (newCustomers.length === 0
+                      ? '.'
+                      : `, y ${String(newCustomers.length)} clientes nuevos desde el padrón.`)}
               </p>
               <Button
                 className="h-12"
-                disabled={live.length === 0 || blocking.length > 0 || confirm.isPending}
+                disabled={live.length === 0 || blocking > 0 || confirm.isPending}
                 onClick={() => {
                   confirm.mutate();
                 }}
@@ -439,7 +509,7 @@ export function ImportarCotizacionesView() {
 }
 
 // ---------------------------------------------------------------------------
-// D-156 — un comprobante del archivo, con sus líneas adentro
+// D-156 / D-158 — un comprobante del archivo, con su cliente y sus líneas
 // ---------------------------------------------------------------------------
 
 interface DocumentGroup {
@@ -447,6 +517,14 @@ interface DocumentGroup {
   issueDate: string;
   /** El cliente tal como vino en el papel: la cabecera lo dice aunque falte el mapeo. */
   rawCustomer: string;
+  /** `true` cuando las líneas del comprobante no traen todas el mismo cliente en el papel. */
+  mixedRawCustomer: boolean;
+  /** Cliente del maestro con el que se creará la cotización. `null` = se crea del padrón. */
+  customerId: string | null;
+  /** D-158: lo que el padrón devolvió, cuando no hay cliente en el maestro. */
+  padron: QuotationImportPadronDto | null;
+  /** Qué le falta al cliente del comprobante. `null` cuando está resuelto. */
+  customerError: string | null;
   /** `Σ cantidad × precio` de las líneas vivas, en soles. */
   totalPen: Decimal;
   rows: ResolvedRow[];
@@ -455,12 +533,22 @@ interface DocumentGroup {
   blocking: number;
 }
 
+/** Una línea que sí se va a importar: ni quitada a mano ni excluida por el archivo. */
+function isLive(row: ResolvedRow): boolean {
+  return !row.removed && row.raw.excludedReason === null;
+}
+
 /**
- * Agrupa por `documentKey` conservando el orden del archivo. La clave del agrupado es la
- * misma que usa el mapa de errores del servidor —el comprobante, no la fila—, así que un
- * rechazo del confirm cae sobre la cabecera correcta sin traducir nada.
+ * Agrupa por `documentKey` conservando el orden del archivo y **resuelve el cliente del
+ * comprobante** (D-158). La clave del agrupado es la misma que usa el mapa de errores del
+ * servidor —el comprobante, no la fila—, así que un rechazo del confirm cae sobre la cabecera
+ * correcta sin traducir nada.
  */
-function groupByDocument(rows: readonly ResolvedRow[]): DocumentGroup[] {
+function groupByDocument(
+  rows: readonly ResolvedRow[],
+  chosen: Readonly<Record<string, string>>,
+  customerIds: ReadonlySet<string>,
+): DocumentGroup[] {
   const byKey = new Map<string, DocumentGroup>();
   for (const row of rows) {
     const key = row.raw.documentKey;
@@ -470,6 +558,12 @@ function groupByDocument(rows: readonly ResolvedRow[]): DocumentGroup[] {
         key,
         issueDate: row.raw.issueDate,
         rawCustomer: row.raw.rawCustomer,
+        mixedRawCustomer: false,
+        customerId: null,
+        // Se llena abajo, y **solo desde una línea viva**: el `padron` de una fila excluida
+        // daría de alta un cliente para un comprobante que no se importa.
+        padron: null,
+        customerError: null,
         totalPen: toDecimal('0'),
         rows: [],
         live: 0,
@@ -478,7 +572,18 @@ function groupByDocument(rows: readonly ResolvedRow[]): DocumentGroup[] {
       byKey.set(key, group);
     }
     group.rows.push(row);
-    if (row.removed || row.raw.excludedReason !== null) continue;
+    // **Solo las líneas vivas deciden el cliente.** Antes se miraba toda fila del
+    // comprobante, así que una nota de crédito excluida por el archivo —o una que el usuario
+    // acababa de quitar— podía imponerle su cliente a las líneas que sí se importan, y el
+    // aviso de "más de un cliente" comparaba textos de filas que no iban a entrar.
+    if (!isLive(row)) continue;
+    // El cliente del comprobante sale de la **primera** línea viva que lo trae mapeado; que
+    // las demás traigan otro texto es un aviso, no una segunda cotización.
+    if (group.customerId === null && row.raw.customerId !== null) {
+      group.customerId = row.raw.customerId;
+    }
+    if (group.padron === null && row.raw.padron !== null) group.padron = row.raw.padron;
+    if (row.raw.rawCustomer !== group.rawCustomer) group.mixedRawCustomer = true;
     group.live += 1;
     if (row.issues.some((i) => i.severity === 'error')) group.blocking += 1;
     // Un importe con el precio o la cantidad mal tipeados no se suma: el total de la
@@ -489,10 +594,31 @@ function groupByDocument(rows: readonly ResolvedRow[]): DocumentGroup[] {
       );
     }
   }
+
+  const customersLoaded = customerIds.size > 0;
+  for (const group of byKey.values()) {
+    // Lo elegido a mano gana sobre lo que el archivo resolvió, y sobre el padrón: elegir un
+    // cliente del maestro es decir "ese, no el nuevo".
+    const picked = chosen[group.key];
+    if (picked !== undefined && picked !== '') {
+      group.customerId = picked;
+      group.padron = null;
+    }
+    // **Un id que el maestro no ofrece cuenta como faltante.** El preview puede haber mapeado
+    // el comprobante a un cliente **desactivado**, que las consultas de esta pantalla filtran:
+    // el campo se veía vacío, nada se marcaba, y el archivo entero moría en el confirm con "el
+    // cliente está desactivado" —justo el error que desde acá no se puede arreglar—.
+    if (group.customerId !== null && customersLoaded && !customerIds.has(group.customerId)) {
+      group.customerError = 'Ese cliente no está entre los activos: elige otro o dalo de alta.';
+      group.customerId = null;
+    } else if (group.customerId === null && group.padron === null) {
+      group.customerError = 'Elige el cliente del comprobante o créalo con el botón de al lado.';
+    }
+  }
   return [...byKey.values()];
 }
 
-function DocumentGroup({
+function DocumentGroupCard({
   group,
   open,
   customerOptions,
@@ -500,6 +626,7 @@ function DocumentGroup({
   documentError,
   disabled,
   onToggle,
+  onCustomer,
   onChange,
   onCreatedCustomer,
   onCreatedProduct,
@@ -511,6 +638,7 @@ function DocumentGroup({
   documentError: string | null;
   disabled: boolean;
   onToggle: () => void;
+  onCustomer: (customerId: string) => void;
   onChange: (rowNumber: number, documentKey: string, patch: RowEdit) => void;
   onCreatedCustomer: (customer: CustomerDto) => void;
   onCreatedProduct: (product: ProductDto) => void;
@@ -518,25 +646,32 @@ function DocumentGroup({
   const status =
     group.live === 0
       ? { label: 'Sin líneas', variant: 'outline' as const }
-      : group.blocking > 0
+      : group.blocking > 0 || group.customerError !== null
         ? {
             label:
-              group.blocking === 1
-                ? '1 línea sin resolver'
-                : `${String(group.blocking)} líneas sin resolver`,
+              group.customerError !== null && group.blocking === 0
+                ? 'Sin cliente'
+                : group.blocking === 1
+                  ? '1 línea sin resolver'
+                  : `${String(group.blocking)} líneas sin resolver`,
             variant: 'destructive' as const,
           }
         : { label: 'Lista', variant: 'secondary' as const };
 
   return (
     <div className="rounded-lg border">
-      <button
-        type="button"
-        className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted/50"
-        aria-expanded={open}
-        onClick={onToggle}
-      >
-        <div className="flex flex-wrap items-center gap-3">
+      {/*
+        La cabecera **no** es un botón entero: adentro va el campo de cliente, y un `<select>`
+        o un diálogo dentro de un `<button>` no es HTML válido ni se puede operar. El botón es
+        solo el disparador de la izquierda, que es también lo único que abre y cierra.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <button
+          type="button"
+          className="flex flex-1 flex-wrap items-center gap-3 rounded text-left hover:opacity-80"
+          aria-expanded={open}
+          onClick={onToggle}
+        >
           <span aria-hidden className="text-muted-foreground">
             {open ? '▾' : '▸'}
           </span>
@@ -544,7 +679,7 @@ function DocumentGroup({
           <span className="text-sm text-muted-foreground">
             {group.issueDate || 'sin fecha'} · {group.rawCustomer}
           </span>
-        </div>
+        </button>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm tabular-nums">
             {formatMoney(group.totalPen.toFixed(4))} ·{' '}
@@ -552,7 +687,46 @@ function DocumentGroup({
           </span>
           <Badge variant={status.variant}>{status.label}</Badge>
         </div>
-      </button>
+      </div>
+
+      {/*
+        D-158: **el cliente del comprobante**, una sola vez. Una factura es de un solo
+        cliente y sus diez líneas lo heredan; pedirlo por línea era repetir el mismo dato diez
+        veces y dejar abierta la única forma de armar un documento que el API no acepta.
+      */}
+      <div className="flex flex-wrap items-center gap-2 border-t px-4 py-2">
+        <span className="text-xs uppercase text-muted-foreground">Cliente</span>
+        <SearchSelectField
+          label={`Cliente de ${group.key}`}
+          placeholder={group.padron === null ? 'Elige el cliente' : 'Se creará desde el padrón'}
+          options={customerOptions}
+          value={group.customerId}
+          disabled={disabled}
+          onChange={onCustomer}
+        />
+        <ExpressCreateCustomer
+          initial={{
+            docNumber: group.padron?.docNumber ?? docNumberOf(group.rawCustomer),
+            name: group.padron?.name ?? nameOf(group.rawCustomer),
+          }}
+          disabled={disabled}
+          onCreated={onCreatedCustomer}
+        />
+        {group.customerId === null && group.padron !== null && (
+          <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-500">
+            Nuevo — se creará desde padrón: {group.padron.name}
+          </Badge>
+        )}
+        {group.customerError !== null && (
+          <span className="text-xs text-destructive">{group.customerError}</span>
+        )}
+        {group.mixedRawCustomer && (
+          <span className="text-xs text-muted-foreground">
+            ⚠ El archivo trae más de un cliente en este comprobante: se importa con el de arriba.
+          </span>
+        )}
+      </div>
+
       {documentError !== null && (
         <p className="px-4 pb-2 text-xs text-destructive">{documentError}</p>
       )}
@@ -563,10 +737,9 @@ function DocumentGroup({
           role="region"
           aria-label={`Líneas de ${group.key}`}
         >
-          <table className="w-full min-w-[60rem] text-sm">
+          <table className="w-full min-w-[52rem] text-sm">
             <thead className="text-left text-xs uppercase text-muted-foreground">
               <tr className="border-b">
-                <th className="py-2 pr-3 font-medium">Cliente</th>
                 <th className="py-2 pr-3 font-medium">Producto</th>
                 <th className="py-2 pr-3 text-right font-medium">Cantidad</th>
                 <th className="py-2 pr-3 text-right font-medium">P. unit. S/</th>
@@ -579,13 +752,11 @@ function DocumentGroup({
                 <ImportRow
                   key={row.raw.rowNumber}
                   row={row}
-                  customerOptions={customerOptions}
                   productOptions={productOptions}
                   disabled={disabled}
                   onChange={(patch) => {
                     onChange(row.raw.rowNumber, group.key, patch);
                   }}
-                  onCreatedCustomer={onCreatedCustomer}
                   onCreatedProduct={onCreatedProduct}
                 />
               ))}
@@ -597,25 +768,32 @@ function DocumentGroup({
   );
 }
 
+/** `20606364335 - RAZÓN SOCIAL S.A.C.` → `20606364335`. Vacío cuando el papel no lo trae. */
+function docNumberOf(rawCustomer: string): string | undefined {
+  return /^(\d{8,11})\s*-/.exec(rawCustomer.trim())?.[1];
+}
+
+/** `20606364335 - RAZÓN SOCIAL S.A.C.` → `RAZÓN SOCIAL S.A.C.`. */
+function nameOf(rawCustomer: string): string {
+  const cut = rawCustomer.indexOf('-');
+  return cut === -1 ? rawCustomer.trim() : rawCustomer.slice(cut + 1).trim();
+}
+
 // ---------------------------------------------------------------------------
-// Una fila
+// Una línea
 // ---------------------------------------------------------------------------
 
 function ImportRow({
   row,
-  customerOptions,
   productOptions,
   disabled,
   onChange,
-  onCreatedCustomer,
   onCreatedProduct,
 }: {
   row: ResolvedRow;
-  customerOptions: readonly SearchSelectOption[];
   productOptions: readonly SearchSelectOption[];
   disabled: boolean;
   onChange: (patch: RowEdit) => void;
-  onCreatedCustomer: (customer: CustomerDto) => void;
   onCreatedProduct: (product: ProductDto) => void;
 }) {
   const { raw } = row;
@@ -624,7 +802,7 @@ function ImportRow({
   if (row.removed) {
     return (
       <tr className="border-b text-muted-foreground">
-        <td className="py-2 pr-3" colSpan={5}>
+        <td className="py-2 pr-3" colSpan={4}>
           Fila quitada de la importación.
         </td>
         <td className="py-2">
@@ -648,45 +826,9 @@ function ImportRow({
       <td className="py-3 pr-3">
         {excluded ? (
           <div className="text-xs">
-            <div>{raw.rawCustomer}</div>
+            <div>{raw.rawSku}</div>
             <div className="mt-1 w-56 text-muted-foreground">{raw.excludedReason}</div>
           </div>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <SearchSelectField
-                label={`Cliente de la fila ${String(raw.rowNumber)}`}
-                placeholder="Elige el cliente"
-                options={customerOptions}
-                value={row.customerId}
-                disabled={disabled}
-                onChange={(id) => {
-                  onChange({ customerId: id });
-                }}
-              />
-              {/*
-                D-156: el botón que saca el callejón. Un cliente que no está en el maestro
-                ya no obliga a irse de la pantalla y perder el archivo revisado; se da de
-                alta acá con el **mismo** formulario, y la fila se rellena sola. Sigue sin
-                crearse nada solo (D-152): es un acto explícito de una persona.
-              */}
-              <ExpressCreateCustomer
-                initial={{ name: raw.rawCustomer }}
-                disabled={disabled}
-                onCreated={(created) => {
-                  onCreatedCustomer(created);
-                  onChange({ customerId: created.id });
-                }}
-              />
-            </div>
-            <div className="mt-1 w-52 text-xs text-muted-foreground">{raw.rawCustomer}</div>
-          </>
-        )}
-        <Issue row={row} field="customer" />
-      </td>
-      <td className="py-3 pr-3">
-        {excluded ? (
-          <span className="text-xs">{raw.rawSku}</span>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
@@ -836,7 +978,6 @@ function Issue({ row, field }: { row: ResolvedRow; field: string }) {
 interface ResolvedRow {
   raw: QuotationImportRowDto;
   removed: boolean;
-  customerId: string | null;
   productId: string | null;
   qty: string;
   unitPricePen: string;
@@ -849,25 +990,44 @@ interface ResolvedRow {
 /**
  * Reaplica sobre la fila del preview lo que el usuario cambió y **vuelve a validar todo**:
  * los avisos que trajo el servidor se recalculan acá en vez de arrastrarse, porque elegir el
- * cliente que faltaba tiene que apagar su propio error sin ir y volver al API.
+ * producto que faltaba tiene que apagar su propio error sin ir y volver al API.
+ *
+ * El cliente ya no se resuelve acá: es del comprobante (D-158) y lo decide `groupByDocument`.
  */
 function resolveRow(
   raw: QuotationImportRowDto,
   edit: RowEdit,
   productsById: ReadonlyMap<string, ProductDto>,
-  customerIds: ReadonlySet<string>,
 ): ResolvedRow {
-  const customerId = edit.customerId ?? raw.customerId;
   const productId = edit.productId ?? raw.productId;
   const qty = edit.qty ?? raw.qty;
   const unitPricePen = edit.unitPricePen ?? raw.unitPricePen;
-  const planText = edit.plan ?? (raw.pieces ? formatPlan(raw.pieces) : '');
   // **Con el producto elegido, no con el del archivo.** Quien exige los largos es la unidad
   // (D-131), y cambiar el producto en el desplegable cambia la respuesta: sin recalcular, una
   // fila reasignada a un producto por metro lineal dejaba la celda del plan apagada y el
   // archivo entero moría en el confirm.
   const unit = productId === null ? null : (productsById.get(productId)?.unit ?? raw.productUnit);
-  const needsPieces = unit === null ? raw.needsPieces : unit === 'MTR';
+  const needsPieces = unit === null ? raw.needsPieces : unit === Unit.MTR;
+  /**
+   * El plan **llega relleno**: el que el preview resolvió, o la sugerencia `1 × los ML de la
+   * línea` cuando el archivo no traía ninguno posible. La sugerencia no siempre es válida
+   * —una línea de 1 832 m no cabe en una plancha de 20— y en ese caso la celda muestra el
+   * error de siempre; lo que cambia es que corregirla sea editar un número y no transcribir
+   * la cifra del papel a mano. **La regla de D-152 sigue viva**: el importador no reparte
+   * esos metros en planchas por su cuenta.
+   *
+   * La cantidad se comprueba **antes** de derivar nada: `toDecimal` lanza con lo que no es un
+   * número, y acá se ejecuta dentro del `useMemo` que arma las 141 filas. Una coma del
+   * teclado latino tipeada en una cantidad tumbaba la pantalla entera y se llevaba el archivo
+   * revisado — el callejón exacto que D-156 vino a sacar, reaparecido por otra puerta.
+   */
+  const planText =
+    edit.plan ??
+    (raw.pieces
+      ? formatPlan(raw.pieces)
+      : isNumeric(qty)
+        ? suggestedRoofingPlanText(qty.trim())
+        : '');
 
   const issues: { field: string; severity: 'error' | 'warning'; message: string }[] = [];
   // Los avisos del servidor que **no** dependen de lo editable se conservan tal cual: el
@@ -879,22 +1039,7 @@ function resolveRow(
     }
   }
 
-  // **Un id que el maestro no ofrece cuenta como faltante.** El preview puede haber mapeado
-  // la fila a un cliente o un SKU **desactivado**, que las consultas de esta pantalla
-  // filtran: el campo se veía vacío, la fila no marcaba nada, y el archivo entero moría en
-  // el confirm con "el cliente está desactivado" —justo el error que desde acá no se puede
-  // arreglar—.
-  const customersLoaded = customerIds.size > 0;
   const productsLoaded = productsById.size > 0;
-  if (!customerId || (customersLoaded && !customerIds.has(customerId))) {
-    issues.unshift({
-      field: 'customer',
-      severity: 'error',
-      message: customerId
-        ? 'Ese cliente no está entre los activos: elige otro o dalo de alta.'
-        : 'Elige el cliente o créalo con el botón de al lado.',
-    });
-  }
   if (!productId || (productsLoaded && !productsById.has(productId))) {
     issues.unshift({
       field: 'product',
@@ -904,17 +1049,15 @@ function resolveRow(
         : 'Elige el producto o créalo con el botón de al lado.',
     });
   }
-  if (!/^\d+(\.\d{1,3})?$/.test(qty.trim()) || toDecimal(qty.trim() || '0').lte(0)) {
+  if (!isNumeric(qty) || toDecimal(qty.trim()).lte(0)) {
     issues.push({
       field: 'qty',
       severity: 'error',
       message: 'La cantidad va con hasta tres decimales.',
     });
   }
-  if (
-    !/^\d+(\.\d{1,4})?$/.test(unitPricePen.trim()) ||
-    toDecimal(unitPricePen.trim() || '0').lte(0)
-  ) {
+  // Mismo motivo que la cantidad: el patrón corta **antes** de que `toDecimal` vea la coma.
+  if (!/^\d+(\.\d{1,4})?$/.test(unitPricePen.trim()) || toDecimal(unitPricePen.trim()).lte(0)) {
     issues.push({
       field: 'unitPrice',
       severity: 'error',
@@ -938,7 +1081,7 @@ function resolveRow(
       // D-083: con largos, la cantidad de la línea **es** su suma. El API lo rechaza igual;
       // decirlo acá evita mandar 141 filas para que vuelva una.
       const meters = piecesMeters(parsed.pieces);
-      if (/^\d+(\.\d{1,3})?$/.test(qty.trim()) && !meters.equals(toDecimal(qty.trim()))) {
+      if (isNumeric(qty) && !meters.equals(toDecimal(qty.trim()))) {
         issues.push({
           field: 'pieces',
           severity: 'error',
@@ -951,7 +1094,6 @@ function resolveRow(
   return {
     raw,
     removed: edit.removed === true,
-    customerId,
     productId,
     qty,
     unitPricePen,
@@ -960,6 +1102,18 @@ function resolveRow(
     pieces,
     issues,
   };
+}
+
+/**
+ * La cantidad, tal como el API la acepta: hasta tres decimales y **con punto**.
+ *
+ * Está en una función porque es la guarda de todo lo que después llama a `toDecimal`, que
+ * **lanza** con cualquier otra cosa —una coma del teclado latino, un `4.` a medio tipear— y
+ * corre dentro del `useMemo` que arma las 141 filas: una excepción ahí no marca una celda en
+ * rojo, tumba la pantalla y se lleva el archivo revisado.
+ */
+function isNumeric(value: string): boolean {
+  return /^\d+(\.\d{1,3})?$/.test(value.trim());
 }
 
 /** `[{4.20 m ×10}]` → `10x4.2`, que es como se vuelve a tipear. */
@@ -1006,7 +1160,8 @@ function parsePlan(text: string): PlanParse {
         ok: false,
         reason:
           `El largo va entre ${toDecimal(String(MIN_PIECE_LENGTH_MM)).div(1000).toFixed(2)} y ` +
-          `${toDecimal(String(MAX_PIECE_LENGTH_MM)).div(1000).toFixed(2)} metros.`,
+          `${toDecimal(String(MAX_PIECE_LENGTH_MM)).div(1000).toFixed(2)} metros: reparte la línea ` +
+          'en las planchas que de verdad se cortaron.',
       };
     }
     if (seen.has(lengthMm)) {

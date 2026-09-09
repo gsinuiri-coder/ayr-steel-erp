@@ -7,11 +7,17 @@ import { deactivateTrail, purgeProductionOrder, setupScenario } from '../helpers
  *
  * a) `/bobinas` con pestañas (Disponibles/En corte/Agotadas/Todas) que mandan distintos
  *    query params al API, y el `<select>` de Estado que solo vive en "Todas".
- * b) el stat "Piezas teóricas" (derivado, sin cambio de backend) en la terminal de planta
+ * b) el stat "Piezas teóricas" (derivado, sin cambio de backend) en el espacio de producción
  *    y en el detalle de una OP de drywall.
  *
  * No es cobertura de fase: es la comprobación mínima de que ambos ajustes quedaron
  * cableados de punta a punta.
+ *
+ * D-160 movió el (b) de sitio sin cambiar lo que mide: la terminal de planta y el espacio de
+ * producción se fundieron en `/planta`, así que la corrida de drywall ya no tiene una pantalla
+ * propia —es uno de los dos paneles que la orden seleccionada puede tomar— y el `<h1>` de la
+ * pantalla pasó a ser el de la lista ("Producción"), no el código de la orden. El código sigue
+ * a la vista, dentro del panel, y por ahí se lo busca.
  */
 
 async function loginAsAdmin(page: import('@playwright/test').Page) {
@@ -83,7 +89,7 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
     await expect(page.getByRole('combobox', { name: 'Estado' })).toBeVisible();
   });
 
-  test('una OP de drywall en curso muestra "Piezas teóricas" en /planta y en /produccion/[id]', async ({
+  test('una OP de drywall en curso muestra "Piezas teóricas" en el espacio de producción y en /produccion/[id]', async ({
     page,
     baseURL,
   }) => {
@@ -101,10 +107,18 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
     try {
       await loginAsAdmin(page);
 
+      // D-160: `?op=` sigue abriendo la orden, pero ahora la enfoca dentro de la lista de
+      // todas las abiertas en vez de abrir una pantalla dedicada.
       await page.goto(`/planta?op=${order.id}`);
-      await expect(page.getByRole('heading', { name: order.code })).toBeVisible();
-      await expect(page.getByText('Piezas teóricas', { exact: true })).toBeVisible();
-      await expect(page.getByText('1200.0', { exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Producción', exact: true })).toBeVisible({
+        timeout: 60_000,
+      });
+      // El panel se busca por su id y no por texto: el código de la orden también está en el
+      // botón que la selecciona, y una búsqueda suelta encontraría los dos.
+      const panel = page.locator(`#panel-${order.id}`);
+      await expect(panel.getByText(order.code, { exact: true })).toBeVisible();
+      await expect(panel.getByText('Piezas teóricas', { exact: true })).toBeVisible();
+      await expect(panel.getByText('1200.0', { exact: true })).toBeVisible();
 
       await page.goto(`/produccion/${order.id}`);
       await expect(page.getByRole('heading', { name: order.code })).toBeVisible();

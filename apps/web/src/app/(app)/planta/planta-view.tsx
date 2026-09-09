@@ -1,115 +1,102 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { useSearchParams } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import {
-  Decimal,
-  MAX_ORDER_STRIPS,
-  MAX_REPORT_PIECES,
-  MAX_SCRAP_RATIO_WITHOUT_REASON,
-  ProductBomKind,
-  PRODUCTION_ORDER_KIND_LABELS,
+  MAX_ORDER_TABS,
   ProductionOrderKind,
-  PRODUCTION_ORDER_STATUS_LABELS,
   Role,
-  type ProductBomDto,
-  type ProductionOrderDto,
-  type ReservationDto,
   type ProductionOrderListItemDto,
-  type ProductionStripOptionDto,
+  type RoofingBatchOrderDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
-import type { ReverseArgs } from '@/lib/reverse-args';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
-import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
-import { OperationDateField } from '@/components/operation-date-field';
+import { api } from '@/lib/api';
 import { formatQty } from '@/lib/format';
-import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { invalidateProduction } from '@/lib/production-queries';
-import { RoofingPickerCard, RoofingStockOrderCard, RoofingTerminal } from './roofing-terminal';
+import { DrywallOrderPanel } from './drywall-order-panel';
+import { DrywallOrderCard, RoofingQueueCard, RoofingStockOrderCard } from './new-order-cards';
+import {
+  EMPTY_DRAFT,
+  NO_NOTES,
+  RoofingOrderPanel,
+  StateBadge,
+  stateOf,
+  type OrderDraft,
+  type SavedNotes,
+} from './roofing-order-panel';
 
 /**
- * Terminal de planta (RF-39, D-013: no hay app nativa, es una ruta web responsive).
- * Mobile-first a propósito: el operario la usa de pie, con guantes y en una tablet, así
- * que todo son tarjetas de una columna y botones altos; el escritorio solo ensancha la
- * grilla. Lo que no es captura —costos, kardex, correcciones— vive en `/produccion`.
+ * El espacio de producción: **la única entrada a producir** (RF-39; D-155, D-159, D-160).
  *
- * Desde Fase 6 atiende las **dos** líneas de transformación (D-087). El selector muestra
- * ambas —crear una corrida de drywall se hace eligiendo el perfil, y una de coberturas
- * eligiendo el pedido que viene a cumplir (D-084)— y el listado de órdenes en curso es uno
- * solo, porque para el operario una orden es una orden. La captura sí se parte: los largos
- * y el consumo declarado de coberturas viven en `roofing-terminal.tsx`.
+ * Hasta D-159 había dos. `/planta` era la terminal —una orden por vez, elegida de una grilla—
+ * y `/planta/producir` el espacio del pedido —una pestaña por orden—, y las dos hacían lo
+ * mismo con la mitad de las herramientas cada una: la terminal montaba y cerraba pero no
+ * mostraba las hermanas del pedido; el espacio mostraba las hermanas pero no cerraba. Quien
+ * producía un pedido de cuatro líneas terminaba yendo y viniendo entre las dos, y ninguna de
+ * las dos era la de verdad.
+ *
+ * Ahora es una sola pantalla con un **filtro**: todas las órdenes abiertas, o las de un pedido
+ * (`?pedido=`). Adentro, cada orden es una pestaña con su ciclo completo, y la clase de la
+ * orden decide qué panel se dibuja —coberturas o perfiles—, que es la única diferencia real
+ * entre las dos ramas (D-087).
+ *
+ * El detalle de una orden (`/produccion/:id`) queda de **solo lectura**: costos, kardex y
+ * correcciones. Producir es acá, y en un solo lugar.
  */
+
+/** §3.4: producción es de ADMINISTRADOR y SUPERVISOR_PLANTA. */
+const PLANT_ROLES = [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA] as const;
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function PlantaView() {
-  const searchParams = useSearchParams();
-  // `?op=` es lo que usa el enlace "Abrir en planta" del detalle. Se valida antes de
-  // meterlo en una URL del API, y se re-lee cuando cambia: sin el efecto, navegar de
-  // `?op=A` a `?op=B` sin desmontar la ruta dejaba la terminal en la orden anterior.
-  const fromUrl = searchParams.get('op');
-  const [selectedId, setSelectedId] = useState<string | null>(
-    fromUrl && UUID.test(fromUrl) ? fromUrl : null,
-  );
-  useEffect(() => {
-    if (fromUrl && UUID.test(fromUrl)) setSelectedId(fromUrl);
-  }, [fromUrl]);
-
-  // Volver al selector limpia también el `?op=`, o un refresh reabriría la orden que el
-  // operario acababa de dejar.
-  const router = useRouter();
-  const onBack = () => {
-    setSelectedId(null);
-    if (fromUrl) router.replace('/planta');
-  };
-
-  return (
-    <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
-      {selectedId ? (
-        <OrderTerminal id={selectedId} onBack={onBack} />
-      ) : (
-        <OrderPicker onSelect={setSelectedId} />
-      )}
-    </RoleGate>
-  );
+/** Una orden del selector, de cualquiera de las dos ramas. */
+interface WorkspaceOrder {
+  orderId: string;
+  code: string;
+  kind: ProductionOrderKind;
+  salesOrderId: string | null;
+  salesOrderCode: string | null;
+  customerName: string | null;
+  /** Segunda línea de la pestaña: qué falta producir. */
+  subtitle: string;
+  /** Solo coberturas: el DTO completo que su panel necesita. */
+  roofing: RoofingBatchOrderDto | null;
 }
 
-// ---------------------------------------------------------------------------
-// Pantalla 1 — elegir o abrir una orden
-// ---------------------------------------------------------------------------
+export function PlantaView() {
+  const params = useSearchParams();
+  const salesOrderId = params.get('pedido');
+  const focused = params.get('op');
+  const [activeId, setActiveId] = useState<string | null>(
+    focused && UUID.test(focused) ? focused : null,
+  );
+  /** D-124: día de negocio de todo lo que se reporte en esta sesión. Solo lo ve un admin. */
+  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
+  const [creating, setCreating] = useState(false);
+  /**
+   * Los borradores y los avisos viven acá y no en la pestaña **a propósito**: con estado
+   * local, saltar a otra orden para verificar de qué bobina salió algo y volver borraba lo
+   * transcripto sin ningún aviso.
+   */
+  const [drafts, setDrafts] = useState<Record<string, OrderDraft>>({});
+  const [saved, setSaved] = useState<Record<string, SavedNotes>>({});
 
-function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
-  const queryClient = useQueryClient();
-  const [productId, setProductId] = useState('');
-  const [targetPieces, setTargetPieces] = useState('');
-  /** D-066: pedido contra el que se fabrica. Vacío = corrida de stock, sin reserva detrás. */
-  const [reservationId, setReservationId] = useState('');
-
-  const boms = useQuery({
-    queryKey: ['production-boms'],
-    queryFn: () => api<ProductBomDto[]>('/production/boms'),
+  const roofing = useQuery({
+    queryKey: ['roofing-batch', salesOrderId],
+    queryFn: () =>
+      api<RoofingBatchOrderDto[]>(
+        `/production/roofing/batch${salesOrderId === null ? '' : `?salesOrderId=${salesOrderId}`}`,
+      ),
   });
-  // Solo las órdenes vivas, y filtradas por el API: traer las 500 más recientes para
-  // quedarse con tres es caro en una tablet, y con el historial acumulado una orden
-  // abierta vieja se caía del listado sin ningún aviso.
-  const draft = useQuery({
+  // Las dos consultas de siempre de la terminal: el API filtra por estado, porque traer las
+  // 500 más recientes para quedarse con tres es caro en una tablet.
+  const draftOrders = useQuery({
     queryKey: ['production-orders', 'planta', 'DRAFT'],
     queryFn: () => api<ProductionOrderListItemDto[]>('/production?status=DRAFT'),
   });
@@ -117,598 +104,295 @@ function OrderPicker({ onSelect }: { onSelect: (id: string) => void }) {
     queryKey: ['production-orders', 'planta', 'IN_PROGRESS'],
     queryFn: () => api<ProductionOrderListItemDto[]>('/production?status=IN_PROGRESS'),
   });
+
+  const rows = useMemo<WorkspaceOrder[]>(() => {
+    const roofingRows = (roofing.data ?? []).map(toRoofingRow);
+    const drywallRows = [...(inProgress.data ?? []), ...(draftOrders.data ?? [])]
+      .filter((o) => o.kind === ProductionOrderKind.DRYWALL)
+      // Con el filtro por pedido, una corrida de stock de otro producto no tiene nada que
+      // hacer en la lista: lo que se está produciendo es **ese** pedido.
+      .filter((o) => salesOrderId === null || o.salesOrderId === salesOrderId)
+      .map(toDrywallRow);
+    return [...roofingRows, ...drywallRows];
+  }, [roofing.data, inProgress.data, draftOrders.data, salesOrderId]);
+
+  const pending = roofing.isPending || draftOrders.isPending || inProgress.isPending;
+  const failed = roofing.isError || draftOrders.isError || inProgress.isError;
   /**
-   * Reservas activas: los pedidos que esperan que planta fabrique (D-066).
-   *
-   * Sin esto la reserva no tenía consumidor en la UI y el guardrail se volvía en contra: al
-   * confirmar un pedido, el material quedaba bloqueado para **toda** orden que no fuera la
-   * nacida de esa reserva, y planta no tenía forma de crear esa orden. El fleje prometido se
-   * volvía inmovilizable hasta que un administrador liberara la reserva a mano — lo contrario
-   * de para qué se reserva.
+   * Alguna de las tres listas está viajando. Es distinto de `pending`, que solo es cierto la
+   * primera vez: acá también cuenta el refetch que dispara crear, montar, reportar o cerrar.
    */
-  const reservations = useQuery({
-    queryKey: ['reservations', 'ACTIVE'],
-    queryFn: () => api<ReservationDto[]>('/sales/reservations?status=ACTIVE'),
-  });
+  const refreshing =
+    pending || roofing.isFetching || draftOrders.isFetching || inProgress.isFetching;
 
-  // D-124: día en que arranca la corrida. Crear la OP no mueve kardex (D-060), así que acá
-  // no hay advertencia de orden: es solo la fecha con la que la orden queda registrada.
-  const [orderDate, setOrderDate] = useState<string | undefined>(undefined);
-  const create = useMutation({
-    mutationFn: () =>
-      api<ProductionOrderDto>('/production', {
-        method: 'POST',
-        body: {
-          productId,
-          operationDate: orderDate,
-          ...(targetPieces.trim() ? { targetPieces: Number(targetPieces.trim()) } : {}),
-          ...(reservationId ? { reservationId } : {}),
-        },
-      }),
-    onSuccess: (order) => {
-      toast.success(`Orden ${order.code} creada`);
-      setProductId('');
-      setTargetPieces('');
-      setReservationId('');
-      invalidateProduction(queryClient);
-      onSelect(order.id);
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo crear la orden'),
-  });
+  /**
+   * `?op=` **se re-lee cuando cambia**, no solo al montar: con dos enlaces «Producir esta
+   * orden» en la app, navegar de `?op=A` a `?op=B` no desmonta esta ruta y la pantalla se
+   * quedaba en la orden anterior. Es el mismo efecto que tenía la terminal antes de D-160.
+   */
+  useEffect(() => {
+    if (focused !== null && UUID.test(focused)) setActiveId(focused);
+  }, [focused]);
 
-  // Solo las recetas de drywall: una corrida de coberturas no se crea eligiendo el
-  // producto (D-084), y ofrecerla acá terminaría en un 400 del API.
-  const activeBoms = (boms.data ?? []).filter(
-    (b) => b.isActive && b.kind === ProductBomKind.DRYWALL,
-  );
-  // Solo las reservas de pedidos que piden **este** perfil: el API rechaza cualquier otra
-  // (una reserva solo autoriza a fabricar lo que su propio pedido encargó).
-  const productReservations = (reservations.data ?? []).filter((r) =>
-    r.orderProductIds.includes(productId),
-  );
-  const liveOrders = [...(inProgress.data ?? []), ...(draft.data ?? [])];
-  const ordersPending = draft.isPending || inProgress.isPending;
-  const ordersError = draft.isError || inProgress.isError;
-  const piecesValue = targetPieces.trim();
-  // Las mismas cotas que el API (`piecesSchema`): 1 .. MAX_REPORT_PIECES enteras.
-  const piecesInvalid =
-    piecesValue !== '' &&
-    (!/^\d+$/.test(piecesValue) ||
-      Number(piecesValue) < 1 ||
-      Number(piecesValue) > MAX_REPORT_PIECES);
+  /**
+   * La pestaña activa se elige sola la primera vez y se recompone si la orden que estaba
+   * abierta desaparece de la lista (se cerró, se anuló).
+   *
+   * **Nada de esto corre mientras las listas viajan**, y ese guardia es la mitad del efecto:
+   * durante el primer render `rows` está vacío y el `?op=` que vino por URL se descartaba
+   * —la pantalla abría la primera orden en vez de la pedida, y solo con la caché fría, así
+   * que parecía un defecto de red—; y tras crear una orden, el refetch todavía no la trae,
+   * así que «crear» terminaba abriendo otra con el toast nombrando la que no se ve.
+   */
+  useEffect(() => {
+    if (refreshing) return;
+    if (rows.length === 0) {
+      if (activeId !== null) setActiveId(null);
+      return;
+    }
+    if (activeId === null || !rows.some((r) => r.orderId === activeId)) {
+      setActiveId(rows[0]?.orderId ?? null);
+    }
+  }, [rows, activeId, refreshing]);
+
+  const active = rows.find((r) => r.orderId === activeId) ?? null;
+  const roofingRows = rows.filter((r) => r.roofing !== null);
+  const done = roofingRows.filter(
+    (r) => r.roofing !== null && stateOf(r.roofing) === 'reportada',
+  ).length;
+  const asList = rows.length > MAX_ORDER_TABS;
+  // Solo con un pedido acotado: sin `?pedido=` la lista mezcla clientes, y colgar el de la
+  // primera orden del subtítulo lo haría pasar por el de todas.
+  const customerName = salesOrderId === null ? null : (rows[0]?.customerName ?? null);
+  const salesOrderCode = salesOrderId === null ? null : (rows[0]?.salesOrderCode ?? null);
 
   return (
-    <>
-      <div>
-        <h1 className="text-2xl font-semibold">Planta</h1>
-        <p className="text-sm text-muted-foreground">
-          Captura de la corrida: montar material, reportar lo producido y cerrar (RF-39).
-        </p>
-      </div>
-
-      <RoofingPickerCard onSelect={onSelect} />
-
-      <RoofingStockOrderCard onSelect={onSelect} />
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Nueva orden de perfiles (drywall)</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
-          <div className="grid gap-2">
-            <Label htmlFor="planta-producto">Perfil a fabricar</Label>
-            <Select value={productId} onValueChange={setProductId}>
-              <SelectTrigger id="planta-producto" className="h-12">
-                <SelectValue placeholder="Elige el perfil" />
-              </SelectTrigger>
-              <SelectContent>
-                {activeBoms.map((b) => (
-                  <SelectItem key={b.productId} value={b.productId}>
-                    {b.productSku} — {b.productName}
-                    {b.inputWidthMm !== null && <> ({b.inputWidthMm} mm)</>}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="planta-meta">Meta de piezas (opcional)</Label>
-            <Input
-              id="planta-meta"
-              inputMode="numeric"
-              className="h-12 text-lg"
-              value={targetPieces}
-              onChange={(e) => {
-                setTargetPieces(e.target.value);
-              }}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Button
-              className="h-12"
-              disabled={!productId || piecesInvalid || create.isPending}
-              onClick={() => {
-                create.mutate();
-              }}
-            >
-              {create.isPending ? 'Creando…' : 'Crear orden'}
-            </Button>
-            <OperationDateField value={orderDate} onChange={setOrderDate} />
-          </div>
-          {productId !== '' && productReservations.length > 0 && (
-            <div className="grid gap-2 sm:col-span-3">
-              <Label htmlFor="planta-pedido">Pedido a atender (opcional)</Label>
-              <Select value={reservationId} onValueChange={setReservationId}>
-                <SelectTrigger id="planta-pedido" className="h-12">
-                  <SelectValue placeholder="Corrida de stock, sin pedido" />
-                </SelectTrigger>
-                <SelectContent>
-                  {productReservations.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
-                      {r.salesOrderCode} — {r.customerName} — {r.itemLabel} ({r.qty} {r.unit})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-sm text-muted-foreground">
-                Con un pedido elegido, la orden puede montar el material que ese pedido reservó —
-                que para cualquier otra orden está bloqueado.
-              </p>
-            </div>
-          )}
-          {boms.isPending && <Skeleton className="h-5 w-full sm:col-span-3" />}
-          {boms.isError && (
-            <p className="text-sm text-destructive sm:col-span-3">
-              No se pudieron cargar las recetas de fabricación.
+    <RoleGate allow={PLANT_ROLES}>
+      <div className="grid gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold">
+              {salesOrderId === null ? 'Producción' : `Producir ${salesOrderCode ?? 'el pedido'}`}
+            </h1>
+            <p className="max-w-3xl text-sm text-muted-foreground">
+              {salesOrderId === null
+                ? 'Todas las órdenes abiertas. Cada una monta su material, reporta lo suyo y se cierra por separado.'
+                : 'Una pestaña por orden del pedido. Monta la bobina y reporta sin salir de acá; cada orden se guarda por su cuenta.'}
+              {customerName !== null && <> · {customerName}</>}
             </p>
-          )}
-          {boms.isSuccess && activeBoms.length === 0 && (
-            <p className="text-sm text-muted-foreground sm:col-span-3">
-              Ningún perfil tiene receta cargada todavía: pídesela a un administrador desde el
-              catálogo.
-            </p>
-          )}
-          {piecesInvalid && (
-            <p className="text-sm text-destructive sm:col-span-3">
-              La meta de piezas es un número entero entre 1 y {MAX_REPORT_PIECES}.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-medium">Órdenes en curso</h2>
-          {/* D-155: la otra forma de operar, cuando lo que hay es un pedido y no una orden. */}
-          <Button variant="outline" className="h-12" asChild>
-            <Link href="/planta/producir">Producir un pedido</Link>
-          </Button>
-        </div>
-        {ordersPending && <Skeleton className="h-24 w-full" />}
-        {ordersError && (
-          <p className="text-sm text-destructive">No se pudieron cargar las órdenes.</p>
-        )}
-        {!ordersPending && !ordersError && liveOrders.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            No hay ninguna orden abierta. Crea una arriba para empezar.
-          </p>
-        )}
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {liveOrders.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className="rounded-lg border p-4 text-left transition hover:bg-accent"
-              onClick={() => {
-                onSelect(o.id);
-              }}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-lg font-semibold">{o.code}</span>
-                <Badge variant={o.status === 'IN_PROGRESS' ? 'default' : 'outline'}>
-                  {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
-                </Badge>
-              </div>
-              <div className="mt-1 text-sm">{o.productSku}</div>
-              <div className="text-xs text-muted-foreground">{o.productName}</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {PRODUCTION_ORDER_KIND_LABELS[o.kind]}
-                {o.salesOrderCode !== null && <> · {o.salesOrderCode}</>}
-              </div>
-              <div className="mt-3 text-sm">
-                {o.kind === ProductionOrderKind.ROOFING && o.metersReported !== null
-                  ? `${o.metersReported} m`
-                  : `${String(o.piecesReported)} piezas`}
-                {o.targetPieces !== null && <> de {o.targetPieces}</>} ·{' '}
-                {formatQty(o.assignedKg, 'kg')} montados
-              </div>
-              {/*
-                D-148: cuántos ML hay que producir. Es el dato con el que planta decide qué
-                orden agarrar primero y hasta acá no estaba en ninguna parte de la tarjeta:
-                había que abrir la orden para ver el plan de corte.
-              */}
-              {o.planMeters !== null && (
-                <div className="text-sm text-muted-foreground">
-                  {formatQty(o.planMeters, 'm')} a producir
-                </div>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Pantalla 2 — operar una orden
-// ---------------------------------------------------------------------------
-
-function OrderTerminal({ id, onBack }: { id: string; onBack: () => void }) {
-  const queryClient = useQueryClient();
-  const [pieces, setPieces] = useState('');
-  const [closing, setClosing] = useState(false);
-
-  const order = useQuery({
-    queryKey: ['production-order', id],
-    queryFn: () => api<ProductionOrderDto>(`/production/${id}`),
-  });
-  const productId = order.data?.productId ?? '';
-  const strips = useQuery({
-    queryKey: ['production-strips', productId],
-    queryFn: () => api<ProductionStripOptionDto[]>(`/production/strips?productId=${productId}`),
-    enabled:
-      productId !== '' &&
-      order.data?.kind === ProductionOrderKind.DRYWALL &&
-      order.data.status !== 'CLOSED' &&
-      order.data.status !== 'CANCELLED',
-  });
-
-  const invalidate = () => {
-    invalidateProduction(queryClient, id);
-  };
-
-  const consume = useMutation({
-    mutationFn: (coilId: string) =>
-      api<ProductionOrderDto>(`/production/${id}/consume`, { method: 'POST', body: { coilId } }),
-    onSuccess: () => {
-      toast.success('Fleje montado en la orden');
-      invalidate();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo consumir el fleje'),
-  });
-
-  const release = useMutation({
-    mutationFn: (consumptionId: string) =>
-      api<ProductionOrderDto>(`/production/${id}/consumptions/${consumptionId}/release`, {
-        method: 'POST',
-      }),
-    onSuccess: () => {
-      toast.success('Fleje liberado de la orden');
-      invalidate();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo liberar el fleje'),
-  });
-
-  // D-124: día de negocio del reporte de piezas y del cierre. Planta no la ve —el campo es
-  // solo para ADMINISTRADOR—; existe para que la carga histórica pueda fechar la corrida.
-  const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
-  const report = useMutation({
-    mutationFn: ({ count, confirmBackdate }: { count: number; confirmBackdate: boolean }) =>
-      api<ProductionOrderDto>(`/production/${id}/report`, {
-        method: 'POST',
-        body: { pieces: count, operationDate, confirmBackdate: confirmBackdate || undefined },
-      }),
-    onSuccess: (o) => {
-      toast.success(`Reportadas las piezas: ${o.piecesReported} en total`);
-      setPieces('');
-      invalidate();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudieron reportar las piezas'),
-  });
-  const backdate = useBackdateConfirm(async (confirmBackdate) => {
-    await report.mutateAsync({ count: Number(pieces.trim()), confirmBackdate });
-  });
-
-  const close = useMutation({
-    mutationFn: ({ reason, operationDate: date }: Partial<ReverseArgs>) =>
-      api<ProductionOrderDto>(`/production/${id}/close`, {
-        method: 'POST',
-        body: { reason: reason ?? undefined, operationDate: date },
-      }),
-    onSuccess: (o) => {
-      toast.success(
-        `Orden cerrada: ${o.piecesReported} piezas y ${formatQty(o.scrapKg ?? '0.000', 'kg')} de merma`,
-      );
-      setClosing(false);
-      invalidate();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden'),
-  });
-
-  if (order.isPending) return <Skeleton className="h-64 w-full" />;
-  if (order.isError || !order.data) {
-    return (
-      <div className="grid gap-3">
-        <p className="text-destructive">No se pudo cargar la orden.</p>
-        <Button variant="outline" onClick={onBack}>
-          Volver
-        </Button>
-      </div>
-    );
-  }
-
-  const o = order.data;
-  // D-087: la captura de coberturas es otra pantalla. La bifurcación va **después** de
-  // todos los hooks para que el orden de hooks no cambie entre renders.
-  if (o.kind === ProductionOrderKind.ROOFING) {
-    return <RoofingTerminal order={o} onBack={onBack} />;
-  }
-
-  const liveStrips = o.consumptions.filter((c) => c.releasedAt === null);
-  const pendingKg = liveStrips.reduce(
-    (acc, c) => acc.plus(new Decimal(c.remainingKg)),
-    new Decimal(0),
-  );
-  const assignedKg = liveStrips.reduce(
-    (acc, c) => acc.plus(new Decimal(c.assignedKg)),
-    new Decimal(0),
-  );
-  const needsReason =
-    assignedKg.gt(0) && pendingKg.div(assignedKg).gt(MAX_SCRAP_RATIO_WITHOUT_REASON);
-  // D-122/D-139: los kilos que consume cada pieza son del SKU, no de la receta.
-  const kgPerPiece = new Decimal(o.productPieceWeightKg ?? '0');
-  const maxPieces = kgPerPiece.lte(0) ? 0 : pendingKg.div(kgPerPiece).floor().toNumber();
-  // D-121: piezas teóricas de TODO lo montado en la orden (no solo lo pendiente), para
-  // comparar en vivo contra lo ya reportado — el mismo cálculo que hace el cierre para la
-  // merma de proceso, pero antes de cerrar y sin redondear.
-  const theoreticalPieces = kgPerPiece.gt(0) ? assignedKg.div(kgPerPiece) : new Decimal(0);
-  const theoreticalDelta = theoreticalPieces.minus(o.piecesReported);
-  const trimmed = pieces.trim();
-  const piecesValid = /^\d+$/.test(trimmed) && Number(trimmed) > 0;
-  const overCapacity = piecesValid && Number(trimmed) > maxPieces;
-  const isLive = o.status === 'DRAFT' || o.status === 'IN_PROGRESS';
-
-  return (
-    <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-mono text-2xl font-semibold">{o.code}</h1>
-            <Badge variant={o.status === 'IN_PROGRESS' ? 'default' : 'secondary'}>
-              {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
-            </Badge>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {o.productSku} · {o.productName}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" className="h-12" onClick={onBack}>
-            Otra orden
-          </Button>
-          <Button variant="outline" className="h-12" asChild>
-            <Link href={`/produccion/${o.id}`}>Ver detalle</Link>
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <BigStat label="Piezas buenas" value={String(o.piecesReported)} />
-        <BigStat
-          label="Piezas teóricas"
-          value={theoreticalPieces.toFixed(1)}
-          hint={
-            assignedKg.gt(0)
-              ? `Fleje montado: ${theoreticalDelta.gte(0) ? '+' : ''}${theoreticalDelta.toFixed(1)} vs. reportado`
-              : undefined
-          }
-        />
-        <BigStat label="Meta" value={o.targetPieces === null ? '—' : String(o.targetPieces)} />
-        <BigStat label="Fleje pendiente" value={formatQty(pendingKg.toFixed(3), 'kg')} />
-        <BigStat label="Alcanza para" value={`${maxPieces} pzs`} />
-      </div>
-
-      {isLive && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Reportar piezas</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-            <div className="grid gap-2">
-              <Label htmlFor="planta-piezas">Piezas buenas de esta tanda</Label>
-              <Input
-                id="planta-piezas"
-                inputMode="numeric"
-                className="h-16 text-3xl"
-                value={pieces}
-                onChange={(e) => {
-                  setPieces(e.target.value);
-                }}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Button
-                className="h-16 text-lg"
-                disabled={!piecesValid || overCapacity || report.isPending}
-                onClick={() => {
-                  void backdate.attempt();
-                }}
-              >
-                {report.isPending ? 'Registrando…' : 'Reportar'}
+          <div className="flex flex-wrap gap-2">
+            {salesOrderId !== null && (
+              <Button variant="outline" className="h-12" asChild>
+                <Link href="/planta">Todas las órdenes abiertas</Link>
               </Button>
-              <OperationDateField value={operationDate} onChange={setOperationDate} />
-            </div>
-            <p className="text-sm text-muted-foreground sm:col-span-2">
-              Cada pieza consume {o.productPieceWeightKg ?? '—'} kg de fleje según el catálogo.
-              {overCapacity && (
-                <span className="text-destructive">
-                  {' '}
-                  Con el fleje montado solo alcanza para {maxPieces} piezas: consume otro fleje
-                  antes de reportar.
-                </span>
-              )}
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Flejes montados</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          {liveStrips.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              La orden no tiene ningún fleje montado todavía.
-            </p>
-          )}
-          {liveStrips.map((c) => (
-            <div
-              key={c.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+            )}
+            <Button
+              variant="outline"
+              className="h-12"
+              aria-expanded={creating}
+              onClick={() => {
+                setCreating((v) => !v);
+              }}
             >
-              <div>
-                <div className="font-mono font-medium">{c.coilCode}</div>
-                <div className="text-sm text-muted-foreground">
-                  {c.widthMm} mm · pendiente {formatQty(c.remainingKg, 'kg')} de{' '}
-                  {formatQty(c.assignedKg, 'kg')}
-                  {c.parentCoilCode && <> · madre {c.parentCoilCode}</>}
-                </div>
-              </div>
-              {isLive && new Decimal(c.consumedKg).lte(0) && (
-                <Button
-                  variant="outline"
-                  className="h-12"
-                  aria-label={`Liberar el fleje ${c.coilCode}`}
-                  disabled={release.isPending}
-                  onClick={() => {
-                    release.mutate(c.id);
+              {creating ? 'Ocultar' : 'Abrir una orden nueva'}
+            </Button>
+            <Button variant="outline" className="h-12" asChild>
+              <Link href="/produccion">Órdenes de producción</Link>
+            </Button>
+          </div>
+        </div>
+
+        {/*
+          D-160: crear la orden dejó de ser el paso 1 de la pantalla y pasó a ser una sección
+          que se abre cuando hace falta. Lo que se hace todos los días es producir lo que ya
+          está abierto; abrir una orden nueva es lo excepcional, y ocupaba la mitad de arriba.
+        */}
+        {creating && (
+          <div className="grid gap-4">
+            <RoofingQueueCard onCreated={setActiveId} />
+            <RoofingStockOrderCard onCreated={setActiveId} />
+            <DrywallOrderCard onCreated={setActiveId} />
+          </div>
+        )}
+
+        {pending && <Skeleton className="h-64 w-full" />}
+        {failed && (
+          <Alert variant="destructive">
+            <AlertDescription>No se pudieron cargar las órdenes abiertas.</AlertDescription>
+          </Alert>
+        )}
+        {!pending && !failed && rows.length === 0 && (
+          <Alert>
+            <AlertDescription>
+              {salesOrderId === null
+                ? 'No hay ninguna orden abierta. Abre una con el botón de arriba.'
+                : 'Este pedido no tiene órdenes abiertas. Genéralas desde el detalle del pedido.'}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {rows.length > 0 && (
+          <>
+            {roofingRows.length > 0 && <Progress done={done} total={roofingRows.length} />}
+            <div
+              className={
+                asList
+                  ? 'grid gap-4 lg:grid-cols-[minmax(0,18rem)_1fr] lg:items-start'
+                  : 'grid gap-4'
+              }
+            >
+              <OrderPicker rows={rows} activeId={activeId} asList={asList} onSelect={setActiveId} />
+              {active?.roofing && (
+                <RoofingOrderPanel
+                  key={active.orderId}
+                  order={active.roofing}
+                  asList={asList}
+                  refreshing={refreshing}
+                  draft={drafts[active.orderId] ?? EMPTY_DRAFT}
+                  notes={saved[active.orderId] ?? NO_NOTES}
+                  operationDate={operationDate}
+                  onOperationDate={setOperationDate}
+                  onDraft={(patch) => {
+                    setDrafts((prev) => ({
+                      ...prev,
+                      [active.orderId]: { ...EMPTY_DRAFT, ...prev[active.orderId], ...patch },
+                    }));
                   }}
-                >
-                  Liberar
-                </Button>
+                  onNotes={(next) => {
+                    setSaved((prev) => ({ ...prev, [active.orderId]: next }));
+                  }}
+                />
+              )}
+              {active?.roofing === null && (
+                <DrywallOrderPanel key={active.orderId} orderId={active.orderId} asList={asList} />
               )}
             </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      {isLive && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Consumir otro fleje</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            {strips.isPending && <Skeleton className="h-16 w-full" />}
-            {strips.isError && (
-              <p className="text-sm text-destructive">
-                No se pudieron cargar los flejes disponibles.
-              </p>
-            )}
-            {strips.isSuccess && strips.data.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No hay flejes libres que coincidan con la receta
-                {o.bom && (
-                  <>
-                    {' '}
-                    ({o.bom.finishCode}, {o.bom.inputThicknessMm} mm de espesor,{' '}
-                    {o.bom.inputWidthMm} mm de ancho)
-                  </>
-                )}
-                .
-              </p>
-            )}
-            {liveStrips.length >= MAX_ORDER_STRIPS && (
-              <p className="text-sm text-destructive">
-                La orden ya tiene los {MAX_ORDER_STRIPS} flejes que admite a la vez: ciérrala y abre
-                otra.
-              </p>
-            )}
-            {strips.data?.map((s) => (
-              <div
-                key={s.coilId}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-              >
-                <div>
-                  <div className="font-mono font-medium">{s.code}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {formatQty(s.availableKg, 'kg')} · alcanza para {s.estimatedPieces} piezas
-                    {s.parentCoilCode && <> · madre {s.parentCoilCode}</>}
-                  </div>
-                </div>
-                <Button
-                  className="h-12"
-                  aria-label={`Montar el fleje ${s.code}`}
-                  disabled={consume.isPending || liveStrips.length >= MAX_ORDER_STRIPS}
-                  onClick={() => {
-                    consume.mutate(s.coilId);
-                  }}
-                >
-                  Montar
-                </Button>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      {o.status === 'IN_PROGRESS' && o.piecesReported > 0 && (
-        <Button
-          className="h-16 text-lg"
-          disabled={close.isPending}
-          onClick={() => {
-            // Con mucha merma, cerrar es una baja de inventario y el API pide motivo
-            // (D-057): se lo pedimos acá en vez de gastar un 400.
-            if (needsReason) setClosing(true);
-            else close.mutate({ reason: undefined, operationDate: undefined });
-          }}
-        >
-          {close.isPending
-            ? 'Cerrando…'
-            : `Cerrar orden (${formatQty(pendingKg.toFixed(3), 'kg')} irán a merma)`}
-        </Button>
-      )}
-
-      <ReasonDialog
-        open={closing}
-        onOpenChange={setClosing}
-        title="Cerrar con merma de proceso"
-        description={`Quedan ${formatQty(pendingKg.toFixed(3), 'kg')} sin convertir en piezas sobre ${formatQty(assignedKg.toFixed(3), 'kg')} montados: esa diferencia sale del inventario como merma y su costo se reparte entre las piezas buenas. Explica por qué.`}
-        confirmLabel="Cerrar la orden"
-        pending={close.isPending}
-        withOperationDate
-        onConfirm={(reason, date) => {
-          close.mutate({ reason, operationDate: date });
-        }}
-      />
-
-      <BackdateConfirmDialog
-        open={backdate.open}
-        onOpenChange={(open) => {
-          if (!open) backdate.close();
-        }}
-        detail={backdate.detail ?? ''}
-        pending={report.isPending}
-        onConfirm={() => {
-          void backdate.confirm();
-        }}
-      />
-    </>
+          </>
+        )}
+      </div>
+    </RoleGate>
   );
 }
 
-function BigStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function toRoofingRow(order: RoofingBatchOrderDto): WorkspaceOrder {
+  return {
+    orderId: order.orderId,
+    code: order.code,
+    kind: ProductionOrderKind.ROOFING,
+    salesOrderId: order.salesOrderId,
+    salesOrderCode: order.salesOrderCode,
+    customerName: order.customerName,
+    // El cliente va en la pestaña **siempre que exista**, no solo con `?pedido=`: sin él, la
+    // lista de todas las órdenes abiertas es una columna de códigos de OP y SKU, y para saber
+    // de quién es cada corrida había que abrirla. La terminal vieja lo mostraba siempre.
+    subtitle:
+      `${order.productSku} · faltan ${order.remainingMeters} m` +
+      (order.customerName === null ? '' : ` · ${order.customerName}`),
+    roofing: order,
+  };
+}
+
+function toDrywallRow(order: ProductionOrderListItemDto): WorkspaceOrder {
+  return {
+    orderId: order.id,
+    code: order.code,
+    kind: order.kind,
+    salesOrderId: order.salesOrderId,
+    salesOrderCode: order.salesOrderCode,
+    customerName: order.customerName,
+    subtitle:
+      `${order.productSku} · ${String(order.piecesReported)} piezas` +
+      (order.targetPieces === null ? '' : ` de ${String(order.targetPieces)}`) +
+      ` · ${formatQty(order.assignedKg, 'kg')} montados` +
+      (order.customerName === null ? '' : ` · ${order.customerName}`),
+    roofing: null,
+  };
+}
+
+function Progress({ done, total }: { done: number; total: number }) {
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
   return (
-    <div className="rounded-lg border p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-2xl font-semibold">{value}</p>
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    <Card>
+      <CardContent className="grid gap-2 pt-6">
+        <div className="flex items-center justify-between text-sm">
+          <span className="font-medium">
+            {done} de {total}{' '}
+            {total === 1 ? 'orden con su plan cubierto' : 'órdenes con su plan cubierto'}
+          </span>
+          <span className="tabular-nums text-muted-foreground">{pct} %</span>
+        </div>
+        <div
+          className="h-2 w-full overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={done}
+          aria-label="Órdenes reportadas"
+        >
+          <div className="h-full bg-primary transition-all" style={{ width: `${String(pct)}%` }} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Pestañas hasta `MAX_ORDER_TABS`, lista lateral por encima. El corte no es estético: con
+ * ocho pestañas en una tablet hay que **buscar** la orden en vez de verla, que es
+ * exactamente el trabajo que esta pantalla vino a sacar del medio.
+ *
+ * Con la forma de lista deja de anunciarse como `tablist`: la semántica de pestañas trae
+ * expectativas de teclado (flechas para moverse entre ellas) que una lista lateral no
+ * cumple, y anunciarla igual sería mentirle al lector de pantalla.
+ */
+function OrderPicker({
+  rows,
+  activeId,
+  asList,
+  onSelect,
+}: {
+  rows: readonly WorkspaceOrder[];
+  activeId: string | null;
+  asList: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div
+      role={asList ? undefined : 'tablist'}
+      aria-label="Órdenes del pedido"
+      className={asList ? 'grid gap-2' : 'flex flex-wrap gap-2'}
+    >
+      {rows.map((row) => {
+        const selected = row.orderId === activeId;
+        return (
+          <button
+            key={row.orderId}
+            type="button"
+            id={`tab-${row.orderId}`}
+            role={asList ? undefined : 'tab'}
+            aria-selected={asList ? undefined : selected}
+            aria-controls={`panel-${row.orderId}`}
+            aria-current={asList ? selected : undefined}
+            onClick={() => {
+              onSelect(row.orderId);
+            }}
+            className={`rounded-lg border px-3 py-2 text-left ${
+              selected ? 'border-primary bg-primary/5' : 'hover:bg-muted'
+            } ${asList ? 'w-full' : ''}`}
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-sm font-medium">{row.code}</span>
+              {row.roofing ? (
+                <StateBadge state={stateOf(row.roofing)} />
+              ) : (
+                <Badge variant="outline">Perfiles</Badge>
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground">{row.subtitle}</div>
+          </button>
+        );
+      })}
     </div>
   );
 }

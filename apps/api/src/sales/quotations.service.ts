@@ -10,12 +10,15 @@ import { Prisma, QuotationStatus, SalesOrderStatus, type InventoryItemType } fro
 import {
   businessToday,
   defaultValidUntil,
+  isQuotationExpired,
+  quotationValidUntil,
   paginate,
   Role,
   quotationCode,
   salesOrderCode,
   toSkipTake,
   type CreateQuotationInput,
+  type CreateQuotationInternalInput,
   type PaginatedResult,
   type QuotationDto,
   type QuotationListItemDto,
@@ -117,19 +120,22 @@ export class QuotationsService {
   async createInTx(
     tx: Prisma.TransactionClient,
     actor: RequestUser,
-    input: CreateQuotationInput,
+    // D-157: el tipo interno, que **sí** admite `validityDays: null` (sin vencimiento). El
+    // cuerpo HTTP no lo admite: el único que pasa `null` es el importador, por código.
+    input: CreateQuotationInternalInput,
   ): Promise<string> {
     const customer = await this.requireActiveCustomer(tx, input.customerId);
     const lines = await resolveSalesLines(tx, input.items);
     const totals = documentTotals(lines);
-    const validUntil = defaultValidUntil(input.issueDate, input.validityDays);
+    // D-157: `null` es **sin vencimiento** y se guarda como `NULL`, no como una fecha lejana.
+    const validUntil = quotationValidUntil(input.issueDate, input.validityDays);
 
     const quotation = await tx.quotation.create({
       data: {
         customerId: customer.id,
         status: QuotationStatus.DRAFT,
         issueDate: toDateOnly(input.issueDate),
-        validUntil: toDateOnly(validUntil),
+        validUntil: validUntil === null ? null : toDateOnly(validUntil),
         subtotalPen: totals.subtotalPen,
         igvPen: totals.igvPen,
         totalPen: totals.totalPen,
@@ -167,7 +173,7 @@ export class QuotationsService {
       const customer = await this.requireActiveCustomer(tx, input.customerId);
       const lines = await resolveSalesLines(tx, input.items);
       const totals = documentTotals(lines);
-      const validUntil = defaultValidUntil(input.issueDate, input.validityDays);
+      const validUntil = quotationValidUntil(input.issueDate, input.validityDays);
 
       await tx.quotationItem.deleteMany({ where: { quotationId: id } });
       await tx.quotation.update({
@@ -175,7 +181,7 @@ export class QuotationsService {
         data: {
           customerId: customer.id,
           issueDate: toDateOnly(input.issueDate),
-          validUntil: toDateOnly(validUntil),
+          validUntil: validUntil === null ? null : toDateOnly(validUntil),
           subtotalPen: totals.subtotalPen,
           igvPen: totals.igvPen,
           totalPen: totals.totalPen,
@@ -262,6 +268,10 @@ export class QuotationsService {
       const lines = await resolveSalesLines(tx, items);
       const totals = documentTotals(lines);
       const issueDate = businessToday();
+      // D-157: **el duplicado sí vence**, aunque la original no venciera. Duplicar es "usá
+      // esto de plantilla": lo que sale es una cotización viva de hoy, y la ausencia de
+      // vencimiento de la original era un hecho de su origen —un comprobante ya vendido que
+      // el importador cargó (D-152)—, no una condición comercial que se herede.
       const validUntil = defaultValidUntil(issueDate);
 
       const quotation = await tx.quotation.create({
@@ -354,9 +364,15 @@ export class QuotationsService {
    * durante esa ventana se reenviaba un papel indistinguible de uno vigente sobre una
    * cotización que el propio API ya no dejaba confirmar.
    */
-  private effectiveStatus(row: { status: QuotationStatus; validUntil: Date }): QuotationStatus {
-    const validUntil = row.validUntil.toISOString().slice(0, 10);
-    return row.status === QuotationStatus.EMITTED && validUntil < businessToday()
+  private effectiveStatus(row: {
+    status: QuotationStatus;
+    validUntil: Date | null;
+  }): QuotationStatus {
+    // D-157: sin vencimiento no hay estado efectivo que corregir. `isQuotationExpired` es la
+    // única función que responde la pregunta, para que la ausencia de fecha no termine
+    // comparándose como cadena vacía en algún lugar suelto.
+    const validUntil = row.validUntil?.toISOString().slice(0, 10) ?? null;
+    return row.status === QuotationStatus.EMITTED && isQuotationExpired(validUntil, businessToday())
       ? QuotationStatus.EXPIRED
       : row.status;
   }
@@ -373,7 +389,7 @@ export class QuotationsService {
       // indistinguible de uno vigente y se le puede reenviar al cliente como si valiera.
       status: this.effectiveStatus(row),
       issueDate: row.issueDate.toISOString().slice(0, 10),
-      validUntil: row.validUntil.toISOString().slice(0, 10),
+      validUntil: row.validUntil?.toISOString().slice(0, 10) ?? null,
       customerName: row.customer.name,
       customerDoc: `${row.customer.docType} ${row.customer.docNumber}`,
       customerAddress: row.customer.address,
@@ -513,6 +529,8 @@ export class QuotationsService {
   async expireDue(actorId: string | null = null): Promise<number> {
     const cutoff = toDateOnly(businessToday());
     const due = await this.prisma.quotation.findMany({
+      // D-157: `valid_until < cutoff` es `NULL` para una cotización sin vencimiento, y en SQL
+      // eso no es verdadero: las sin vencimiento quedan fuera del barrido sin filtro extra.
       where: { status: QuotationStatus.EMITTED, validUntil: { lt: cutoff } },
       select: { id: true, seq: true },
       // De la más vencida a la más reciente: con más de 500 pendientes, un tope sin orden
@@ -619,7 +637,7 @@ export class QuotationsService {
     id: string;
     seq: number;
     status: QuotationStatus;
-    validUntil: Date;
+    validUntil: Date | null;
     createdById: string;
   }> {
     const rows = await tx.$queryRaw<
@@ -627,7 +645,7 @@ export class QuotationsService {
         id: string;
         seq: number;
         status: QuotationStatus;
-        valid_until: Date;
+        valid_until: Date | null;
         created_by_id: string;
       }[]
     >`
@@ -714,7 +732,7 @@ export class QuotationsService {
     labels: Map<string, string>,
     actors: Map<string, string>,
   ): QuotationDto {
-    const validUntil = row.validUntil.toISOString().slice(0, 10);
+    const validUntil = row.validUntil?.toISOString().slice(0, 10) ?? null;
     const liveOrder = row.salesOrders[0];
     return {
       id: row.id,
@@ -730,7 +748,7 @@ export class QuotationsService {
       status: row.status,
       issueDate: row.issueDate.toISOString().slice(0, 10),
       validUntil,
-      isExpired: validUntil < businessToday(),
+      isExpired: isQuotationExpired(validUntil, businessToday()),
       subtotalPen: row.subtotalPen.toFixed(4),
       igvPen: row.igvPen.toFixed(4),
       totalPen: row.totalPen.toFixed(4),

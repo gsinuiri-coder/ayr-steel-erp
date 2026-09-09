@@ -42,8 +42,9 @@ import {
  * - **D-148**: generar las órdenes de un pedido de una vez no crea órdenes distintas de las
  *   que crea el botón de a una.
  *
- * El reparto ML→largos (`piecesFromPlanMeters`) ya no lo hace el API: desde D-155 lo resuelve
- * la pantalla y manda los largos. Su cobertura vive en `planta-producir-ui.spec.ts`.
+ * La captura de los largos ya no la hace el API: desde D-155 la resuelve la pantalla y manda
+ * los largos, y desde D-159 esa captura es el editor de filas sembrado con el plan que falta.
+ * Su cobertura vive en `planta-espacio-produccion-ui.spec.ts`.
  *
  * Aritmética a ojo, la misma de Fase 6: bobina de 1 000 mm × 0.50 mm con densidad 8.0 ⇒
  * **4 kg por metro lineal**. Una plancha de 4 m son 16 kg; una de 6 m, 24 kg.
@@ -298,7 +299,7 @@ test.describe('D-146/D-155 — tope del plan y guardado por orden', () => {
       expect(after.find((r) => r.orderId === opB.id)!.remainingMeters).toBe('18.000');
 
       // El filtro por pedido acota a las órdenes de ese pedido y a ninguna más: es lo que
-      // `/planta/producir?pedido=…` abre.
+      // `/planta?pedido=…` abre (D-160: la ruta vieja quedó como redirección).
       const filtered = await batchOrders(api, first.order.id);
       expect(filtered.map((r) => r.orderId)).toEqual([opA.id]);
 

@@ -171,7 +171,7 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
       trail.productionOrderIds = [op.id];
 
       // Se monta el rollo **entero** de 2 000 kg para rolar 40, que es exactamente lo que la
-      // pantalla hace: `/planta/producir` manda solo el `coilId` y el API asigna todo el
+      // pantalla hace: `/planta` manda solo el `coilId` y el API asigna todo el
       // saldo. **D-154:** el compromiso de esta orden ya está contado como la reserva
       // genérica de su pedido, así que su custodia no descuenta nada y quedan 2 000 kg libres
       // contra los 200 prometidos al pedido ajeno. Antes, el rollo salía entero del agregado

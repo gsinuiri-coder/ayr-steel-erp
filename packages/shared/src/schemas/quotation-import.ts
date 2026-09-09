@@ -79,6 +79,31 @@ export const QUOTATION_IMPORT_UNITS: Record<string, string> = {
 /** Tope de filas de un archivo. Una carga mensual real ronda las 150. */
 export const MAX_QUOTATION_IMPORT_ROWS = 1_000;
 
+/**
+ * Cuántos documentos desconocidos se consultan contra el padrón en un preview (D-158).
+ *
+ * El archivo de un mes trae unos 48 clientes distintos y la cuota de apis.net.pe es **una
+ * sola para todo el sistema** —la comparte con el tipo de cambio (D-029)—, así que un archivo
+ * armado a mano con mil documentos inventados no puede quemarla entera. Por encima del tope
+ * las filas restantes quedan como estaban: sin cliente y con su error de siempre.
+ */
+export const MAX_PADRON_LOOKUPS = 80;
+
+/** Consultas al padrón en paralelo. Cada una tarda hasta 5 s y son 48 en un archivo real. */
+export const PADRON_LOOKUP_CONCURRENCY = 6;
+
+/**
+ * `20606364335` → `RUC`, `41234567` → `DNI`. `null` cuando no es ninguno de los dos.
+ *
+ * El carné de extranjería no se deriva del número (6 a 12 caracteres, se solapa con todo) ni
+ * está en ningún padrón consultable: esa fila se resuelve con el alta express.
+ */
+export function importDocTypeOf(docNumber: string): 'RUC' | 'DNI' | null {
+  if (/^\d{11}$/.test(docNumber)) return 'RUC';
+  if (/^\d{8}$/.test(docNumber)) return 'DNI';
+  return null;
+}
+
 // --------------------------------------------------------------------------
 // El plan de corte por defecto
 // --------------------------------------------------------------------------
@@ -116,6 +141,26 @@ export function defaultRoofingPlan(meters: Decimal | string): DefaultPlan {
   return { ok: true, pieces: [{ lengthMm: lengthMm.toFixed(2), qty: 1 }] };
 }
 
+/**
+ * El plan que el preview **propone** cuando el archivo no trae ninguno: `1 × los ML de la
+ * línea`, escrito en el mismo formato que se tipea en la celda (`1x81.9`).
+ *
+ * Es una sugerencia, no un plan válido: cuando esos metros no caben en una plancha —el tope
+ * son 20 m y el archivo del dueño tiene líneas de 1 832— la celda queda con el error de
+ * siempre y hay que corregirla. **La regla de D-152 sigue viva**: el importador no reparte
+ * 1 832 m en planchas de 6 por su cuenta, porque el plan de corte es después el tope duro de
+ * lo que planta puede reportar (D-146). Lo único que cambia es que el campo llega **relleno**
+ * con la cifra del papel en vez de vacío, así que corregirlo es editar un número y no
+ * transcribirlo.
+ */
+export function suggestedRoofingPlanText(meters: Decimal | string): string {
+  const value = toDecimal(meters);
+  if (value.lte(0)) return '';
+  // Sin ceros a la derecha: la cantidad viaja con tres decimales (`81.900`) y el plan se
+  // relee con `cantidad x largo`, donde `81.9` es lo que una persona escribiría.
+  return `1x${value.toFixed(3).replace(/\.?0+$/, '')}`;
+}
+
 // --------------------------------------------------------------------------
 // La fila: lo que el preview muestra y lo que vuelve al confirmar
 // --------------------------------------------------------------------------
@@ -140,6 +185,31 @@ export type QuotationImportIssueDto = z.infer<typeof quotationImportIssueSchema>
  * texto crudo del Excel no vuelve — lo que decide qué se crea es el id del cliente, el del
  * producto y los números, no el nombre que traía el papel.
  */
+/**
+ * El documento con el que se pide dar de alta un cliente **desde el padrón** (D-158).
+ *
+ * Viaja **sin nombre a propósito**: el nombre lo trae el servidor de la consulta al padrón,
+ * no el navegador. Aceptar la razón social del cliente sería exactamente la creación de
+ * datos inventados que D-152 prohibió — bastaría con editar el request para dar de alta a
+ * "PROVEEDOR S.A.C." bajo un RUC ajeno.
+ */
+export const quotationImportPadronRefSchema = z.object({
+  docType: z.enum(['RUC', 'DNI']),
+  docNumber: z
+    .string()
+    .trim()
+    .regex(/^\d{8,11}$/, 'El documento son 8 u 11 dígitos'),
+});
+export type QuotationImportPadronRef = z.infer<typeof quotationImportPadronRefSchema>;
+
+/** Lo que el padrón respondió sobre un documento que el maestro no tiene (D-158). */
+export const quotationImportPadronSchema = quotationImportPadronRefSchema.extend({
+  /** Razón social o nombre tal como lo devolvió el padrón. Nunca se compone acá. */
+  name: z.string(),
+  address: z.string().nullable(),
+});
+export type QuotationImportPadronDto = z.infer<typeof quotationImportPadronSchema>;
+
 export const quotationImportRowInputSchema = z.object({
   /** Fila del Excel (1-based sobre los datos, sin contar el encabezado). Solo para el reporte. */
   rowNumber: z.number().int().positive(),
@@ -147,7 +217,13 @@ export const quotationImportRowInputSchema = z.object({
   documentKey: z.string().trim().min(1).max(60),
   /** D-124: día de negocio de la cotización, tomado de `F. EMISIÓN`. */
   issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va en formato YYYY-MM-DD'),
-  customerId: z.string().uuid(),
+  /**
+   * El cliente del maestro. `null` **solo** cuando la fila viene con `newCustomer`: el
+   * servicio exige uno de los dos y rechaza el documento entero si no llega ninguno.
+   */
+  customerId: z.string().uuid().nullable(),
+  /** D-158: dar de alta al cliente desde el padrón al confirmar. Excluyente con `customerId`. */
+  newCustomer: quotationImportPadronRefSchema.optional(),
   productId: z.string().uuid(),
   qty: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
   /** Precio unitario **sin IGV y en soles**, ya convertido si el documento venía en dólares. */
@@ -163,6 +239,13 @@ export const quotationImportRowSchema = quotationImportRowInputSchema
   .extend({
     customerId: z.string().uuid().nullable(),
     productId: z.string().uuid().nullable(),
+    /**
+     * D-158: lo que el padrón contestó sobre el documento del papel cuando el maestro no lo
+     * tiene. `null` es "no hay a quién dar de alta" —el padrón no respondió, el documento no
+     * existe, o el cliente ya está en el maestro—, y en ese caso la fila queda con su error
+     * normal y se resuelve con el alta express.
+     */
+    padron: quotationImportPadronSchema.nullable(),
     /** Texto crudo del archivo, para que la fila sea reconocible aunque no resuelva. */
     rawCustomer: z.string(),
     rawSku: z.string(),
@@ -212,12 +295,39 @@ export type QuotationImportPreviewDto = z.infer<typeof quotationImportPreviewSch
  * el mismo contrato que la tanda de planta (D-147), y por el mismo motivo — quien revisó 141
  * filas necesita corregirlas de una vez y no descubrir un error por intento.
  */
-export const importQuotationsSchema = z.object({
-  rows: z
-    .array(quotationImportRowInputSchema)
-    .min(1, 'No hay ninguna fila para importar')
-    .max(MAX_QUOTATION_IMPORT_ROWS, `Máximo ${MAX_QUOTATION_IMPORT_ROWS} filas por archivo`),
-});
+export const importQuotationsSchema = z
+  .object({
+    rows: z
+      .array(quotationImportRowInputSchema)
+      .min(1, 'No hay ninguna fila para importar')
+      .max(MAX_QUOTATION_IMPORT_ROWS, `Máximo ${MAX_QUOTATION_IMPORT_ROWS} filas por archivo`),
+  })
+  /**
+   * D-158: `customerId` y `newCustomer` son **excluyentes**, y el schema lo impone en vez de
+   * dejarlo escrito en un comentario. La fila con los dos puestos es el resultado normal de
+   * cambiar de opinión en el preview —el comprobante llegó como "nuevo desde padrón" y el
+   * usuario eligió un cliente existente—, y el servicio se queda con el `customerId`: el alta
+   * del padrón habría creado igual un cliente que ya nadie va a usar, contado además entre
+   * los que la pantalla informa como creados.
+   */
+  .superRefine((body, ctx) => {
+    for (const [i, row] of body.rows.entries()) {
+      if (row.customerId === null && row.newCustomer === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rows', i, 'customerId'],
+          message: 'La fila no tiene cliente: elígelo o marca que se cree desde el padrón',
+        });
+      }
+      if (row.customerId !== null && row.newCustomer !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rows', i, 'newCustomer'],
+          message: 'La fila trae cliente elegido y alta desde el padrón a la vez: manda uno solo',
+        });
+      }
+    }
+  });
 export type ImportQuotationsInput = z.infer<typeof importQuotationsSchema>;
 
 export const quotationImportResultSchema = z.object({
@@ -225,5 +335,11 @@ export const quotationImportResultSchema = z.object({
   rows: z.number().int(),
   /** Los códigos creados, en el orden en que se crearon. */
   codes: z.array(z.string()),
+  /**
+   * D-158: los clientes que la importación dio de alta desde el padrón, con su nombre real.
+   * Se devuelven porque son el efecto de esta operación que **no** se ve en el listado de
+   * cotizaciones, y el único momento en que alguien puede revisarlos es justo después.
+   */
+  createdCustomers: z.array(z.string()),
 });
 export type QuotationImportResultDto = z.infer<typeof quotationImportResultSchema>;

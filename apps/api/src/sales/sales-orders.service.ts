@@ -25,6 +25,7 @@ import {
   DERIVED_FILTER_FETCH_CAP,
   describePieces,
   fromDateOnly,
+  isQuotationExpired,
   kgPerMeter,
   paginate,
   rawMaterialLabel,
@@ -208,7 +209,7 @@ export class SalesOrdersService {
             id: string;
             seq: number;
             status: QuotationStatus;
-            valid_until: Date;
+            valid_until: Date | null;
             created_by_id: string;
           }[]
         >`
@@ -233,8 +234,16 @@ export class SalesOrdersService {
               : `Solo se confirma una cotización emitida; esta está ${head.status}`,
           );
         }
-        const validUntil = head.valid_until.toISOString().slice(0, 10);
-        if (validUntil < businessToday()) {
+        // D-157: `null` es **sin vencimiento** y nunca bloquea. Es lo que hace confirmable una
+        // cotización importada (D-152): el comprobante que la originó ya se vendió, así que
+        // no hay vigencia que respetar, y con una fecha inventada este chequeo la rechazaba
+        // en el paso siguiente a haberla creado.
+        const validUntil = head.valid_until?.toISOString().slice(0, 10) ?? null;
+        // `validUntil !== null` y no `isQuotationExpired`: son la misma condición, pero escrita
+        // así el compilador sabe que el mensaje tiene una fecha que mostrar. Con la función,
+        // el `?? ''` que hacía falta para compilar era otra vez la cadena vacía que D-157 vino
+        // a sacar del medio — una rama muerta que el día que deje de serlo no avisa.
+        if (validUntil !== null && isQuotationExpired(validUntil, businessToday())) {
           throw new BadRequestException(
             `La cotización venció el ${validUntil}: no se puede confirmar`,
           );
@@ -911,9 +920,10 @@ export class SalesOrdersService {
           where: { id: order.quotationId },
           select: { validUntil: true, status: true },
         });
-        const validUntil = quotation.validUntil.toISOString().slice(0, 10);
-        const back =
-          validUntil < businessToday() ? QuotationStatus.EXPIRED : QuotationStatus.EMITTED;
+        const validUntil = quotation.validUntil?.toISOString().slice(0, 10) ?? null;
+        const back = isQuotationExpired(validUntil, businessToday())
+          ? QuotationStatus.EXPIRED
+          : QuotationStatus.EMITTED;
         await tx.quotation.update({
           where: { id: order.quotationId },
           data: {

@@ -22,7 +22,8 @@ export interface QuotationPdfInput {
   /** Estado actual de la cotización; se imprime cuando no es una vigente. */
   status: 'DRAFT' | 'EMITTED' | 'CONFIRMED' | 'EXPIRED' | 'CANCELLED';
   issueDate: string;
-  validUntil: string;
+  /** D-157: `null` cuando la cotización no vence (una importada, por ejemplo). */
+  validUntil: string | null;
   customerName: string;
   customerDoc: string;
   customerAddress: string | null;
@@ -99,7 +100,7 @@ export function buildQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
         width: CONTENT_WIDTH,
         align: 'right',
       });
-    doc.text(`Válida hasta: ${input.validUntil}`, MARGIN, MARGIN + 33, {
+    doc.text(`Válida hasta: ${input.validUntil ?? 'sin vencimiento'}`, MARGIN, MARGIN + 33, {
       width: CONTENT_WIDTH,
       align: 'right',
     });
@@ -207,7 +208,11 @@ export function buildQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
       .fontSize(8)
       .fillColor('#555')
       .text(
-        `Precios expresados en soles (PEN), sin incluir IGV en el detalle de líneas. Cotización válida hasta el ${input.validUntil}. La confirmación de esta cotización genera el pedido y reserva el material correspondiente.`,
+        `Precios expresados en soles (PEN), sin incluir IGV en el detalle de líneas. ${
+          input.validUntil === null
+            ? 'Cotización sin fecha de vencimiento.'
+            : `Cotización válida hasta el ${input.validUntil}.`
+        } La confirmación de esta cotización genera el pedido y reserva el material correspondiente.`,
         MARGIN,
         y,
         { width: CONTENT_WIDTH },

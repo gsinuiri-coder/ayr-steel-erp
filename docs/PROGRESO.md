@@ -3139,6 +3139,260 @@ agente trabaja. Es **regla dura 15**: el agente no usa ni mata esos puertos; su 
 su mensaje de error con `args.join(' ')` — la forma exacta que la regla dura 5 nombra como el
 escape de D-128. Hoy no viajaba ninguna credencial por `argv` ahí; se cerró antes de que sí.
 
+## Sesión Planta III (2026-09-09) — el importador se termina de asentar y producción queda en un solo lugar (D-157..D-160)
+
+Cuatro decisiones y un tema común: **terminar de sacar los pasos que el sistema inventaba**.
+D-157 y D-158 cierran el importador de cotizaciones (una cotización importada ya no nace
+vencida, y el cliente que falta se da de alta desde el padrón sin salir de la pantalla);
+D-159 y D-160 terminan el espacio de producción (el plan se edita ahí, el reporte llega
+relleno, la bobina se elige buscando, y cerrar libera el rollo para la orden hermana en la
+misma transacción) y **funden las dos entradas a producir en una sola**.
+
+### D-157 — una cotización puede no vencer
+
+El importador creaba las 71 cotizaciones de agosto con la vigencia por defecto —siete días—
+sobre una fecha de emisión de hace un mes: **nacían vencidas**, y `confirm()` las rechazaba
+una por una en el paso siguiente al que acababa de crearlas. Las tres salidas posibles eran
+inventar una fecha lejana, subir la vigencia por defecto (mentirle a todo el resto del
+sistema), o decir la verdad: ese comprobante ya se vendió y **no hay vigencia que respetar**.
+
+`quotations.valid_until` pasa a nullable
+(`20260909180000_d157_cotizacion_sin_vencimiento`, aditiva: aflojar un `NOT NULL` no toca
+ninguna fila y el API viejo contra la base migrada sigue funcionando).
+`createQuotationSchema.validityDays` acepta `null` y el importador manda `null`; el formulario
+sigue exigiendo la vigencia y el PDF imprime «sin vencimiento».
+
+**Lo que vale del cambio no es el `null` sino la función.** `validUntil < businessToday()`
+escrito suelto convierte la ausencia en `'' < hoy`, o sea en «vencida desde siempre», y el
+compilador no avisa nunca: las dos son comparaciones de cadenas perfectamente válidas. Por
+eso hay **una sola** función que responde la pregunta —`isQuotationExpired(validUntil, hoy)`
+en `@ayr/shared`— y los lugares que la hacían pasan por ella: la confirmación del pedido
+(`sales-orders.service.ts`), el estado efectivo del listado y del PDF, el `isExpired` del DTO
+y la reapertura de la cotización al anular su pedido. El job diario ya las excluía solo, y no
+por diseño: `valid_until < cutoff` es `NULL` en SQL cuando la columna lo es, y `NULL` no es
+verdadero. Queda anotado en el código para que nadie le agregue un `OR IS NULL` de más.
+
+### D-158 — el padrón en el importador, y el cliente es del comprobante
+
+Dos cambios de la misma pantalla.
+
+**(a) El alta desde el padrón.** Cuando el RUC/DNI del archivo no está en el maestro, el
+preview consulta apis.net.pe —el mismo servicio de D-029/D-067, con `MAX_PADRON_LOOKUPS = 80`
+y concurrencia 6, porque la cuota es una sola para todo el sistema— y la cabecera del
+comprobante muestra **«Nuevo — se creará desde padrón: \<razón social\>»**. Al confirmar, el
+cliente se crea con `CustomersService.createInTx` (extraído con el patrón `*InTx`, D-099)
+**dentro de la transacción del archivo**: si el archivo no entra, no queda ningún cliente
+suelto en el maestro.
+
+Es una **excepción controlada** a la regla de D-152, y lo que la separa de la creación
+silenciosa de D-138 son tres cosas concretas: está a la vista antes de apretar, con nombre y
+documento; la decide una persona, que puede elegir otro cliente en el mismo campo; y **lo que
+se escribe no lo elige el navegador**. Esto último es lo que costó pensar: la fila manda al
+servidor **solo el documento**, nunca la razón social. Con el nombre en el request, editar el
+cuerpo alcanzaba para dar de alta «PROVEEDOR S.A.C.» bajo un RUC ajeno. Las consultas al
+padrón se resuelven **antes** de abrir la transacción —hasta 48 llamadas de 5 s cada una— y si
+falta una sola, no se importa nada y esa fila se resuelve con el alta express de D-156.
+
+**(b) El cliente sube a la cabecera.** Una factura es de un solo cliente, y sus diez líneas lo
+heredan. Pedir el mismo dato diez veces no era redundancia: era **la única forma de armar un
+documento imposible**, y el API lo rechazaba con un error que la pantalla no sabía atribuir a
+ninguna fila. Cuando el archivo trae textos de cliente distintos dentro del mismo comprobante,
+la cabecera lo dice y se importa con el de arriba.
+
+De paso, el **plan de corte llega relleno** con la sugerencia `1 × los ML de la línea`
+(`suggestedRoofingPlanText`). No vuelve válido lo que no lo es —una línea de 81.9 m sigue sin
+caber en una plancha de 20 y la celda lo dice—: lo único que cambia es que corregirla sea
+editar un número en vez de transcribir la cifra del papel. La regla de D-152 sigue viva y
+`defaultRoofingPlan` sigue siendo su centinela, con su test.
+
+### D-159 — el espacio de producción v2
+
+Cuatro cambios sobre el panel de una orden, y el que los obliga a todos es de dominio:
+
+1. **El plan de corte se edita desde el panel** — cantidad y largo en una cobertura a medida,
+   **solo cantidad** en una plancha de catálogo, donde el largo lo trae el SKU (D-118) y
+   volver a pedirlo es ofrecer un campo cuya única respuesta correcta el sistema ya conoce.
+   Hasta acá corregirlo obligaba a irse a la terminal, que era la otra mitad del flujo.
+2. **Montar la bobina rellena el reporte con los largos que el plan todavía debe.** El campo
+   único de metros/planchas desaparece: el caso normal es rolar lo que el pedido pide, y
+   transcribirlo largo por largo era trabajo que el sistema inventaba. Las líneas quedan
+   editables y **se pueden borrar** — lo primero que hace quien roló la mitad es sacar las que
+   no salieron.
+3. **El selector de bobina es un modal de búsqueda con tabla** (código, espesor, color, kg
+   disponibles, «Montar»), reusando el `SearchSelectModal` de D-156 con columnas. Lo que
+   decide cuál montar no es un nombre sino cuatro cifras que hay que **comparar entre filas**,
+   y una lista de tarjetas apiladas no se compara: se recorre.
+4. **«Guardar» y «Guardar y cerrar».** El segundo es
+   `POST /production/roofing/:id/report-and-close`, que corre `reportInTx` + `closeInTx`
+   (extraído acá) en **una transacción**. Cuando lo que se va a reportar cubre el plan, es el
+   botón destacado.
+
+**El caso que obliga al cierre atómico**: un pedido de coberturas genera una OP por línea
+(D-084/D-148) y todas se rolan **del mismo rollo**, pero mientras la primera siga abierta con
+la bobina montada, `assertStripsNotAssigned` no la deja montar en la segunda. Producir un
+pedido de cuatro líneas obligaba a cerrar cada orden desde otra pantalla antes de seguir. Y
+partido en dos endpoints, el cierre podía fallar con el reporte ya escrito.
+
+El motivo del despunte (D-089) se pide **antes** de mandar cuando la pantalla estima que el
+API lo va a exigir; como la estimación puede quedarse corta —el API suma reporte a reporte y
+la pantalla solo tiene los totales—, el 400 sigue teniendo su camino de vuelta al mismo
+diálogo. Está anotado en el código como lo que es: una estimación, no la regla.
+
+### D-160 — una sola entrada a producción
+
+`/planta` (terminal) y `/planta/producir` (espacio del pedido) se funden en **`/planta`**, con
+filtro por pedido (`?pedido=`) o todas las órdenes abiertas, y con las dos clases de orden en
+el mismo selector: la de coberturas abre el panel de D-159 y la de drywall el de piezas.
+Crear una orden deja de ser el paso 1 de la pantalla y pasa a una sección que se despliega —lo
+que se hace todos los días es producir lo que ya está abierto—.
+
+El sidebar queda con **Producción** (producir) y **Órdenes de producción** (gestionar).
+`/planta/producir` y `/planta/tanda` quedan como redirecciones conservando `?pedido=`.
+
+El detalle de la orden (`/produccion/:id`) queda de **lectura más corrección** —anular,
+revertir un reporte, reabrir— y **pierde el cierre**, que era lo único que estaba en los dos
+sitios; sus dos enlaces a planta se unifican en «Producir esta orden», que lleva a `/planta`
+con la orden enfocada.
+
+**Lo que vale como criterio:** D-155 había intentado arreglar esto **con los rótulos**
+—«Producir un pedido» contra «Terminal de planta»— y el problema no era de nombres. Eran dos
+pantallas que hacían lo mismo con la mitad de las herramientas cada una: la terminal montaba y
+cerraba pero no mostraba las hermanas del pedido; el espacio mostraba las hermanas pero no
+cerraba. Cuando dos pantallas comparten el objeto y se reparten los verbos, no son dos
+pantallas: es una partida al medio, y el rótulo no la junta. El corolario sobre el cierre
+duplicado es más fino: dos botones que hacen lo mismo en dos sitios terminan divergiendo en lo
+que validan **antes** de llamar al API, que es donde vive la mitad de la lógica de una
+pantalla.
+
+### Lo que la revisión encontró y se corrigió
+
+Dos pasadas del revisor —API/`shared` y web por separado, que es la separación que ya había
+pagado antes— sobre el trabajo sin commitear. Un bloqueante del web, un alto del API y cuatro
+altos del web, más una docena de medios y bajos.
+
+**Los dos que rompían el flujo principal.**
+
+1. **«Guardar y cerrar» mandaba lo que había apretado el botón anterior.** El flag que decide
+   si el envío cierra la orden vivía en un `useState` que el manejador seteaba y **leía en el
+   mismo tick**: React no lo ve hasta el render siguiente, así que el primer clic en «Guardar
+   y cerrar» pegaba a `POST /report` —la orden quedaba abierta con la bobina montada, o sea
+   justo la atomicidad que D-159 vino a dar— y el clic siguiente en «Guardar» cerraba la orden
+   que nadie quiso cerrar. Los dos datos que deciden el envío (cerrar o no, y el motivo del
+   despunte) pasaron a `useRef`; el estado quedó solo para el rótulo del botón, que sí se
+   pinta en el render siguiente.
+2. **El importador se caía en render al tipear una coma.** La sugerencia del plan llamaba a
+   `toDecimal(qty)` sin guarda, dentro del `useMemo` que arma las 141 filas: una coma del
+   teclado latino en una cantidad lanzaba, la pantalla se caía y **se perdía el archivo
+   revisado entero** — el callejón exacto que D-156 vino a sacar, reaparecido por otra puerta.
+   Toda comparación de cantidad pasa ahora por `isNumeric`, que corta antes de `toDecimal`.
+
+**Los altos.**
+
+- **Un cliente desactivado con el mismo RUC volvía un 500.** `createFromPadron` buscaba por
+  `(docNumber, isActive)` y el índice único de la tabla es `(doc_type, doc_number)`: el
+  preview no ve al desactivado —filtra activos—, el padrón sí devuelve el documento, y el alta
+  chocaba con un `P2002` que nadie traduce, porque esto corre **antes** del bucle de savepoints
+  y por lo tanto fuera del `try` que atribuye errores por documento. Ahora se busca por el par
+  único, un desactivado se dice con su nombre en vez de reventar, y el `P2002` de dos
+  importaciones simultáneas tiene su propio mensaje.
+- **`validityDays: null` se coló en el schema público.** `createQuotationSchema` es también el
+  cuerpo de `POST`/`PUT /sales/quotations`: cualquier vendedor podía crear una cotización que
+  no vence nunca, que el job no marca y que `confirm()` no rechaza — lo contrario de D-069.
+  El `null` volvió a quedar fuera del schema y viaja por un tipo interno que solo acepta
+  `createInTx`.
+- **Una orden que produjo menos que su plan no se podía cerrar desde ninguna pantalla.** El
+  cierre suelto estaba atado a «plan cubierto» y el detalle de la orden ya no cierra (D-160),
+  así que el caso más común de todos —la bobina se acaba a los 28 m de un plan de 40— dejaba
+  como únicas salidas bajar el plan a mano o reportar 12 m que nadie produjo. El botón existe
+  ahora siempre que la orden haya producido algo; el API nunca había exigido el plan cubierto.
+- **El `consumedKg` del cierre (D-089) había desaparecido con la terminal**, y con él las dos
+  cotas que el API comprueba dentro de la transacción. Volvió como campo propio del cierre,
+  con sus cotas y el despunte a la vista, separado del kg declarado **por reporte** (D-146),
+  que es otra cosa.
+- **`?op=` se descartaba con la caché fría.** El efecto que elige la pestaña no distinguía «no
+  hay órdenes» de «todavía no cargaron», así que llegar desde el detalle de una orden abría la
+  primera de la lista, y crear una orden abría otra. El efecto no corre mientras las consultas
+  viajan, y `?op=` se re-lee cuando cambia.
+
+**De los medios y bajos**, los que valen la pena nombrar: una orden **sin plan de corte** se
+mostraba como «Reportada» y contaba en la barra de progreso sin haber producido nada (tiene
+`remainingMeters = 0.000`, igual que una cubierta) — ahora tiene su propio estado; las líneas
+**excluidas o quitadas** del importador podían imponerle su cliente al comprobante; el editor
+se re-sembraba con el DTO viejo entre guardar y el refetch, invitando a duplicar el reporte;
+el asiento del cierre repetía en el `audit_log` los faltantes que ya había anotado el del
+reporte; y el motivo del despunte sobrevivía a un envío fallido para justificar el siguiente.
+
+**Lo que la revisión confirmó que no se perdió** al borrar la terminal y la vista de la tanda:
+el tope duro del plan, la validación y el aviso del kg declarado, el tope de bobinas por
+orden, el bloqueo de bajar una bobina que ya roló, los avisos de faltante de materia prima y
+las cotas de las tarjetas de alta. Y que D-157 está completo: los cuatro lugares del API que
+comparan el vencimiento pasan por `isQuotationExpired`, y ni el mostrador, ni la facturación,
+ni los reportes tocan el campo.
+
+### E2E
+
+Los tres specs de planta se renombraron —su nombre nombraba una ruta que D-160 borró—:
+`planta-producir-ui` → `planta-espacio-produccion-ui` (reescrito entero),
+`planta-producir` → `planta-espacio-produccion` y
+`planta-producir-avisos` → `planta-avisos-materia-prima`. `import-cotizaciones-ui` también se
+rehízo (acordeón, cliente en la cabecera) y `fase7e-ajustes-d121` dejó de buscar el código de
+la OP como `<h1>`: el encabezado de `/planta` ahora es «Producción».
+
+**El caso que el dueño pidió y que justifica «Guardar y cerrar»**: un pedido de dos líneas a
+medida, sus dos OP, montar la bobina en la orden 1, guardar y cerrar, y montar **la misma
+bobina** en la orden 2 **sin salir de la pantalla** —lo que hasta esta sesión rechazaba
+`assertStripsNotAssigned` mientras la primera siguiera abierta—, reportar y cerrar. El kardex
+se verifica en las dos puntas: 40 m y 30 m de producto, y la bobina en 1 720 kg
+(2 000 − 160 − 120).
+
+Se cubrió además el sembrado del reporte al montar, borrar una línea sembrada antes de
+confirmar, el plan de corte editado desde el panel en sus dos formas (largos en «a medida»,
+sola cantidad en una plancha `NIU`), el modal de bobinas con su filtro, el cierre «sin
+reportar más» con su kg declarado y su despunte, y **D-157** por API: una cotización importada
+de un papel de marzo nace con `validUntil: null`, se emite sin degradarse a `VENCIDA` y se
+confirma.
+
+**Lo que no se pudo probar**: el badge «Nuevo — se creará desde padrón» (D-158). El entorno
+local no tiene token de apis.net.pe, así que todo documento desconocido cae en la rama del
+error normal. No se montó un mock: probaría el mock.
+
+**Un spec en rojo que no era de esta sesión.** `fase5a-bordes` —que la sesión de D-154 no
+corrió— tenía un caso que codificaba **el comportamiento que D-154 vino a quitar**: «no se
+confirma una cotización cuya única bobina compatible quedó montada en una orden de producción
+ajena». Con D-154 esa confirmación **entra**, y tiene que entrar: el rollo tiene 1 000 kg y la
+orden que lo montó prometió 200, así que hay 800 libres de verdad. Bloquearla era el mismo
+defecto que, mirado desde planta, disparó D-154 («la operación dejaría 0.000 kg libres» sobre
+una bobina llena). El caso se reescribió para codificar la separación que quedó: **el material
+se promete por lo prometido** —el panel muestra 800 y el pedido de otro cliente confirma— y lo
+que sigue reservado es **la agenda**, o sea que la OP del segundo pedido no puede montar la
+bobina que la primera tiene puesta (`assertStripsNotAssigned`, con el 400 nombrando la orden
+que la retiene). Se le sumó un tercer pedido de 1 000 kg que **sí** rebota, para que el caso
+siga probando que el agregado corta cuando el faltante es real. Verificado que no venía de
+esta sesión: ningún archivo del camino de disponibilidad se tocó, y el último cambio de
+`production-assignments.ts` es el commit de D-154.
+
+**Dos defectos que la escritura de los E2E encontró en la pantalla, y que se corrigieron:**
+
+1. **«Cerrar sin reportar más» validaba los kilos contra un reporte que ese botón no manda.**
+   El piso del consumo declarado se calculaba una sola vez, con los largos del editor sumados
+   — y el editor **se re-siembra solo** con el plan que falta. Escenario medido: plan de 36 m,
+   se reportan 30 (120 kg teóricos), el editor vuelve a mostrar las dos planchas que faltan, y
+   declarar los 130 kg que la bobina de verdad consumió respondía «las planchas reportadas ya
+   consumieron **144.000** kg» y apagaba el botón. O sea: el caso que el botón vino a resolver
+   quedaba bloqueado. Ahora cada cierre tiene su propio piso (`closeOnly` / `closeWithReport`)
+   y cada botón valida contra el suyo.
+2. **La ✕ de la única fila estaba apagada**, así que vaciar el editor obligaba a borrar el
+   largo y la cantidad campo por campo. Vacía la fila en vez de sacarla —el editor siempre
+   muestra al menos una—, que es lo que el rótulo ya decía.
+
+### Archivos que dejaron de existir
+
+`apps/web/src/app/(app)/planta/roofing-terminal.tsx` y
+`apps/web/src/app/(app)/planta/producir/producir-view.tsx`. En su lugar: `planta-view.tsx` (el
+workspace), `roofing-order-panel.tsx`, `drywall-order-panel.tsx`, `coil-picker.tsx`,
+`new-order-cards.tsx` y `components/production/length-editor.tsx` — el editor de largos, que
+ahora usan el plan y el reporte y por eso salió de la terminal.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
@@ -3162,6 +3416,27 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
 
 ## Notas operativas
 
+- **Sesión Planta III (2026-09-09). La base de E2E envejece y produce 409 al azar.**
+  `apps/api/prisma/reset-test-db.ts` trunca el kardex, las bobinas, las compras, los pagos, las
+  sesiones, la auditoría y los usuarios; **no** trunca `customers`, `products`, `suppliers`,
+  `colors` ni `finishes`, y esas tablas tampoco caen por CASCADE. Medido en esta sesión sobre
+  `ayr_local_e2e`: **1 019 proveedores, 1 582 productos, 860 acabados, 627 clientes y 471
+  colores** acumulados entre corridas. Dos consecuencias reales, las dos observadas:
+  (a) `409 Ya existe un proveedor con ese documento` y `409 Ya existe un color con ese código`
+  lanzados **desde dentro de `setupRoofingScenario`**, en casos que no hablan ni de proveedores
+  ni de colores — los helpers generan códigos de 6 caracteres al azar contra un maestro de mil
+  filas; se mitigó agregando un correlativo de proceso a los generadores de `e2e/helpers`, pero
+  la causa sigue en el reset. (b) Con 627 clientes, el `SearchSelectField` de D-156 está
+  **siempre en modo modal** en local y en modo `<select>` en una base recién creada: el
+  importador cambia de forma según la edad de la base, y un spec que asuma una sola forma pasa
+  en una máquina y falla en CI. Sigue sin tocarse por el mismo motivo que la sesión anterior:
+  cambiar qué trunca el reset puede romper specs que hoy dependen de que algo sobreviva, y eso
+  se mira con la suite completa delante, no de paso.
+- **Sesión Planta III (2026-09-09).** En una corrida de Playwright el API de `:3000` **murió a
+  mitad**: todo pasó a `500` y después el puerto quedó sin escuchar, tumbando once casos con
+  `Login admin falló: 500`. Al relanzar, verde. No se encontró causa y no se reprodujo; queda
+  anotado por si vuelve, porque el síntoma (`500` en el login) no se parece en nada a "el
+  servidor se cayó".
 - **Sesión de estabilización (2026-09-08).** Un archivo de trabajo de `local-data/` no está
   en git y no tiene copia en ningún lado: si una herramienta lo pisa, se perdió. Pasó con
   `Ventas Detalladas.decisiones.json` (ver el incidente arriba). El CLI ya no puede pisarlo,

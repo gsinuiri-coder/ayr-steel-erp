@@ -1374,7 +1374,11 @@ model Quotation {
   issueDate     DateTime        @map("issue_date") @db.Date
   /// Último día en que la cotización se puede confirmar (D-069). El job diario marca
   /// `EXPIRED` a las que ya pasaron; `confirm()` lo revalida igual, por si el job no corrió.
-  validUntil    DateTime        @map("valid_until") @db.Date
+  ///
+  /// D-157: `NULL` es **sin vencimiento** — una cotización así no vence nunca y siempre se
+  /// puede confirmar. Lo usa el importador (D-152) para los comprobantes ya vendidos, cuya
+  /// vigencia no existe: darles una fecha obligaba a inventarla o a nacer vencidos.
+  validUntil    DateTime?       @map("valid_until") @db.Date
   subtotalPen   Decimal         @map("subtotal_pen") @db.Decimal(18, 4)
   igvPen        Decimal         @map("igv_pen") @db.Decimal(18, 4)
   totalPen      Decimal         @map("total_pen") @db.Decimal(18, 4)

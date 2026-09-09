@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PlantaView } from './planta-view';
 
-export const metadata: Metadata = { title: 'Planta' };
+export const metadata: Metadata = { title: 'Producción' };
 
 export default function PlantaPage() {
   // `useSearchParams` (para abrir una OP concreta con `?op=`) obliga a un límite de

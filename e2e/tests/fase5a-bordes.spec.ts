@@ -564,13 +564,24 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
   });
 
   /**
-   * D-134 retiró el mecanismo sobre el que estaba construido este caso (un producto de
-   * drywall reservando un fleje concreto). La regla de fondo —material bajo custodia de
-   * producción no se puede prometer, D-060— sigue viva, y ahora se alcanza por el agregado:
-   * se monta la única bobina compatible en una OP que no nace de este pedido, y se comprueba
-   * que confirmar otra cotización sobre el mismo agregado falla.
+   * Qué bloquea —y qué **no**— una bobina montada en una orden de producción ajena.
+   *
+   * Este caso cambió dos veces. D-134 retiró el mecanismo sobre el que estaba construido (un
+   * producto de drywall reservando un fleje concreto) y lo reescribió contra el agregado; y
+   * **D-154 invirtió su resultado**, que es lo que codifica ahora.
+   *
+   * Hasta D-154, montar sacaba del disponible el **rollo entero**, así que un pedido de 200 kg
+   * que montaba un rollo de 1 000 dejaba el agregado en cero y ningún otro pedido podía
+   * prometer nada. Eso era el defecto, no la regla: el rollo tiene 1 000 kg reales y ese
+   * pedido solo prometió 200. El mismo error, visto desde planta, era el «la operación dejaría
+   * 0.000 kg libres» sobre una bobina llena que disparó D-154.
+   *
+   * Lo que queda es la separación que importa: **el material se promete por lo prometido**
+   * —800 kg siguen libres— y lo que sigue reservado es **la agenda**: mientras A la tenga
+   * montada, la OP de B no puede montar esa misma bobina (`assertStripsNotAssigned`). Y el
+   * agregado sigue cortando cuando el faltante es de verdad.
    */
-  test('no se confirma una cotización cuya única bobina compatible quedó montada en una orden de producción ajena', async () => {
+  test('la bobina montada en una OP ajena no bloquea prometer, pero sí bloquea montarla otra vez', async () => {
     const scenario = await setupRoofingScenario(api, { weightKg: '1000' });
     const customerA = await createCustomer(api);
     const customerB = await createCustomer(api);
@@ -603,10 +614,21 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         coilId: scenario.coil.id,
       });
 
-      // Pedido B (otro cliente) cotiza sobre el mismo agregado: montar no mueve kardex
-      // (D-060), pero la única bobina compatible está en custodia de la OP de A, y
-      // `rawMaterialAvailability` la excluye del físico libre.
-      const rowsB = pieces([10, 5]); // 5 × 10 m = 50 m
+      // D-154: con el rollo entero montado en la OP de A, el disponible del agregado son los
+      // 1 000 kg físicos menos los 200 que A prometió. **800, no cero**: los kilos que A no
+      // prometió siguen siendo del almacén y vuelven a él cuando la orden cierre.
+      const afterMount = await stockPanel(api, {
+        businessLine: COVER_LINE,
+        productIds: [scenario.product.id],
+      });
+      expect(afterMount.products.find((p) => p.productId === scenario.product.id)).toMatchObject({
+        rawMaterialAvailableKg: '800.000',
+      });
+
+      // Pedido B (otro cliente) sobre el mismo agregado: **confirma sin problema**, porque hay
+      // material de verdad para los dos. Hasta D-154 esto era un 400 que nombraba la orden de
+      // A, y era el defecto: le decía que no a un pedido que el almacén podía cumplir.
+      const rowsB = pieces([10, 5]); // 5 × 10 m = 50 m ⇒ 200 kg
       const quotationB = await createQuotation(api, {
         customerId: customerB.id,
         businessLine: COVER_LINE,
@@ -617,35 +639,45 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       });
       trail.quotationIds = [qA.id, quotationB.id];
       await postJson(api, `/api/sales/quotations/${quotationB.id}/emit`);
-
-      const blocked = await postExpectingError(
+      const orderB = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotationB.id}/confirm`,
       );
-      expect(blocked.status).toBe(400);
-      // D-134: la bobina en custodia de A no aparece en "físicos" ni en "comprometidos" —
-      // montar no mueve kardex (D-060) — así que sin más, el mensaje leía "0.000 kg
-      // disponibles (0.000 físicos menos 0.000 comprometidos)" sobre un almacén con 1000 kg
-      // reales. El hallazgo de Fase 7-final lo corrige: el cálculo ya sabía qué bobinas
-      // estaban montadas, así que ahora nombra la orden y los kilos que tiene.
-      expect(blocked.message).toContain('0.000');
-      expect(blocked.message).toContain('200.000');
-      expect(blocked.message).toContain('montados en');
-      expect(blocked.message).toContain(opA.code);
+      trail.orderIds = [orderA.id, orderB.id];
+      expect(await ordersOfCustomer(api, customerB.id)).toHaveLength(1);
 
-      expect(await ordersOfCustomer(api, customerB.id)).toHaveLength(0);
-      const untouched = await getJson<QuotationDto>(api, `/api/sales/quotations/${quotationB.id}`);
-      expect(untouched).toMatchObject({ status: 'EMITTED', salesOrderId: null });
+      // **Lo que sigue bloqueado es la agenda, no el material**: la OP de B no puede montar la
+      // bobina que A tiene puesta, y el 400 nombra la orden que la retiene. Es la mitad de
+      // D-060 que D-154 no tocó, y la que de verdad protege una corrida en marcha.
+      const reservationB = (await reservationsOf(api, orderB.id))[0]!;
+      const opB = await roofingOrder(api, reservationB.id);
+      productionOrderIds.push(opB.id);
+      const busy = await postExpectingError(api, `/api/production/roofing/${opB.id}/coils`, {
+        coilId: scenario.coil.id,
+      });
+      expect(busy.status).toBe(400);
+      expect(busy.message).toContain(opA.code);
 
-      // El reemplazo directo de "el fleje montado no aparece en `reservable-coils`": el
-      // panel de stock tampoco cuenta esa bobina en el disponible del agregado.
-      const panel = await stockPanel(api, {
+      // Y el agregado sigue cortando cuando el faltante es real: con 400 kg ya prometidos,
+      // un tercer pedido de 1 000 kg no entra.
+      const rowsC = pieces([10, 25]); // 25 × 10 m = 250 m ⇒ 1 000 kg
+      const quotationC = await createQuotation(api, {
+        customerId: customerB.id,
         businessLine: COVER_LINE,
-        productIds: [scenario.product.id],
+        productId: scenario.product.id,
+        qty: metersOf(rowsC),
+        unitPricePen: '30',
+        pieces: rowsC,
       });
-      expect(panel.products.find((p) => p.productId === scenario.product.id)).toMatchObject({
-        rawMaterialAvailableKg: '0.000',
-      });
+      trail.quotationIds = [qA.id, quotationB.id, quotationC.id];
+      await postJson(api, `/api/sales/quotations/${quotationC.id}/emit`);
+      const blocked = await postExpectingError(
+        api,
+        `/api/sales/quotations/${quotationC.id}/confirm`,
+      );
+      expect(blocked.status).toBe(400);
+      const untouched = await getJson<QuotationDto>(api, `/api/sales/quotations/${quotationC.id}`);
+      expect(untouched).toMatchObject({ status: 'EMITTED', salesOrderId: null });
     } finally {
       for (const opId of [...productionOrderIds].reverse()) {
         await purgeRoofingOrder(api, opId).catch(() => undefined);

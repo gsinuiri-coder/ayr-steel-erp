@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -43,6 +43,14 @@ export interface SearchSelectOption {
   label: string;
   /** Segunda línea, opcional: la descripción larga que no entra en el label. */
   hint?: string;
+  /**
+   * Columnas extra de la fila, alineadas con `columns` (D-159). Existen para el selector de
+   * bobinas, donde lo que decide cuál montar no es un nombre sino cuatro cifras —espesor,
+   * color, kilos, alcance— que en un `label` concatenado no se pueden ni comparar ni alinear.
+   */
+  cells?: readonly ReactNode[];
+  /** Texto por el que se filtra cuando las celdas no son texto (un color, por ejemplo). */
+  searchText?: string;
 }
 
 export function SearchSelectModal({
@@ -50,6 +58,8 @@ export function SearchSelectModal({
   title,
   description,
   options,
+  columns,
+  actionLabel = 'Seleccionar',
   selectedId,
   onSelect,
   onOpenChange,
@@ -58,6 +68,10 @@ export function SearchSelectModal({
   title: string;
   description?: string;
   options: readonly SearchSelectOption[];
+  /** Encabezados de las columnas extra, en el orden de `cells`. */
+  columns?: readonly string[];
+  /** Rótulo de la última columna y de su botón. `Montar` en el selector de bobinas. */
+  actionLabel?: string;
   selectedId?: string | null;
   onSelect: (id: string) => void;
   onOpenChange: (open: boolean) => void;
@@ -65,10 +79,21 @@ export function SearchSelectModal({
   const [filter, setFilter] = useState('');
   const [shown, setShown] = useState(PAGE);
 
+  // El filtro no sobrevive al cierre: reabrir el modal con el texto de la búsqueda anterior
+  // lo muestra vacío ("0 de 12 opciones") sobre una lista que sí tiene lo que se busca.
+  useEffect(() => {
+    if (open) {
+      setFilter('');
+      setShown(PAGE);
+    }
+  }, [open]);
+
   const matches = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     if (needle === '') return options;
-    return options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(needle));
+    return options.filter((o) =>
+      `${o.label} ${o.hint ?? ''} ${o.searchText ?? ''}`.toLowerCase().includes(needle),
+    );
   }, [options, filter]);
 
   return (
@@ -97,7 +122,10 @@ export function SearchSelectModal({
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Opción</TableHead>
-                  <TableHead className="w-32 text-right">Seleccionar</TableHead>
+                  {(columns ?? []).map((column) => (
+                    <TableHead key={column}>{column}</TableHead>
+                  ))}
+                  <TableHead className="w-32 text-right">{actionLabel}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -109,23 +137,32 @@ export function SearchSelectModal({
                         <div className="text-xs text-muted-foreground">{option.hint}</div>
                       )}
                     </TableCell>
+                    {(columns ?? []).map((column, i) => (
+                      <TableCell key={column} className="text-sm">
+                        {option.cells?.[i] ?? '—'}
+                      </TableCell>
+                    ))}
                     <TableCell className="text-right">
                       <Button
                         size="sm"
                         variant={option.id === selectedId ? 'default' : 'outline'}
+                        aria-label={`${actionLabel} ${option.label}`}
                         onClick={() => {
                           onSelect(option.id);
                           onOpenChange(false);
                         }}
                       >
-                        {option.id === selectedId ? 'Elegida' : 'Elegir'}
+                        {option.id === selectedId ? 'Elegida' : actionLabel}
                       </Button>
                     </TableCell>
                   </TableRow>
                 ))}
                 {matches.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={2} className="text-center text-muted-foreground">
+                    <TableCell
+                      colSpan={2 + (columns?.length ?? 0)}
+                      className="text-center text-muted-foreground"
+                    >
                       Ninguna opción coincide con ese texto.
                     </TableCell>
                   </TableRow>

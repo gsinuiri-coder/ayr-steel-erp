@@ -1,4 +1,10 @@
-import { defaultRoofingPlan, MAX_PIECE_LENGTH_MM, piecesMeters } from '@ayr/shared';
+import {
+  defaultRoofingPlan,
+  importDocTypeOf,
+  MAX_PIECE_LENGTH_MM,
+  piecesMeters,
+  suggestedRoofingPlanText,
+} from '@ayr/shared';
 
 /**
  * Lo que el importador de cotizaciones decide **sin base de datos** (D-152): el plan de corte
@@ -42,5 +48,50 @@ describe('defaultRoofingPlan (D-152)', () => {
     expect(plan.ok).toBe(false);
     if (plan.ok !== false) return;
     expect(plan.reason).toContain('no baja de');
+  });
+});
+
+/**
+ * La sugerencia que el preview escribe en la celda del plan.
+ *
+ * Es lo que hace que corregir una línea imposible sea **editar un número** y no transcribir
+ * la cifra del papel a mano. Lo que **no** hace es volver válido lo que no lo es: una línea
+ * de 81.9 m sigue sin caber en una plancha y la celda lo dice — la regla de D-152 sigue viva,
+ * y `defaultRoofingPlan` (arriba) es su centinela.
+ */
+describe('suggestedRoofingPlanText', () => {
+  it('siempre es 1 × los metros de la línea', () => {
+    expect(suggestedRoofingPlanText('12.500')).toBe('1x12.5');
+    expect(suggestedRoofingPlanText('4.000')).toBe('1x4');
+  });
+
+  it('sugiere igual lo que no cabe en una plancha: la celda avisa, no se queda vacía', () => {
+    // La línea más larga del archivo de agosto. `defaultRoofingPlan` la rechaza y así queda:
+    // lo único que cambia es que el campo llega con `1x1832` en vez de en blanco.
+    expect(suggestedRoofingPlanText('1832.000')).toBe('1x1832');
+    expect(defaultRoofingPlan('1832.000').ok).toBe(false);
+  });
+
+  it('sin cantidad no hay nada que sugerir', () => {
+    expect(suggestedRoofingPlanText('0')).toBe('');
+  });
+});
+
+/**
+ * D-158 — a qué padrón se le pregunta por un documento del archivo.
+ *
+ * El carné de extranjería no está en ningún padrón consultable y su longitud se solapa con
+ * todo, así que no se deriva: esa fila se resuelve con el alta express.
+ */
+describe('importDocTypeOf (D-158)', () => {
+  it('once dígitos son RUC y ocho son DNI', () => {
+    expect(importDocTypeOf('20606364335')).toBe('RUC');
+    expect(importDocTypeOf('41234567')).toBe('DNI');
+  });
+
+  it('cualquier otra cosa no se consulta: gastaría cuota para recibir un 404', () => {
+    expect(importDocTypeOf('123456')).toBeNull();
+    expect(importDocTypeOf('X0123456')).toBeNull();
+    expect(importDocTypeOf('')).toBeNull();
   });
 });

@@ -104,6 +104,26 @@ export function defaultValidUntil(
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * El `validUntil` que se guarda, **incluido el caso sin vencimiento** (D-157).
+ *
+ * Existe aparte de `defaultValidUntil` para que el `null` viaje explícito por el tipo: con
+ * `days` opcional, un `undefined` accidental caía en la vigencia por defecto y una cotización
+ * importada nacía con siete días que nadie pidió.
+ */
+export function quotationValidUntil(issueDate: string, days: number | null): string | null {
+  return days === null ? null : defaultValidUntil(issueDate, days);
+}
+
+/**
+ * `true` cuando la vigencia ya pasó. `null` —sin vencimiento, D-157— **nunca** vence: es la
+ * única función que responde esta pregunta, para que la ausencia de fecha no se lea como
+ * `'' < hoy` en algún lugar suelto y convierta lo que no vence en lo que venció siempre.
+ */
+export function isQuotationExpired(validUntil: string | null, today: string): boolean {
+  return validUntil !== null && validUntil < today;
+}
+
 const isoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
@@ -306,6 +326,20 @@ export const createQuotationSchema = z.object({
 });
 export type CreateQuotationInput = z.infer<typeof createQuotationSchema>;
 
+/**
+ * El alta de una cotización **desde adentro del API**, que sí puede crearla sin vencimiento
+ * (D-157).
+ *
+ * Es un tipo y no una variante del schema **a propósito**: `createQuotationSchema` es el
+ * cuerpo de `POST`/`PUT /sales/quotations`, así que admitir ahí `validityDays: null` le daría
+ * a cualquier vendedor una cotización que no vence nunca, que el job diario no marca y que
+ * `confirm()` no rechaza — justo lo que D-069 existe para impedir. El único llamador que pasa
+ * `null` es el importador (D-152/D-158), y lo hace por código, no por HTTP.
+ */
+export type CreateQuotationInternalInput = Omit<CreateQuotationInput, 'validityDays'> & {
+  validityDays: number | null;
+};
+
 /** Editar una cotización en `BORRADOR` (RF-66). Reemplaza las líneas completas. */
 export const updateQuotationSchema = createQuotationSchema;
 export type UpdateQuotationInput = z.infer<typeof updateQuotationSchema>;
@@ -325,7 +359,8 @@ export const quotationSchema = z.object({
   businessLines: z.array(z.enum(BUSINESS_LINES)),
   status: z.enum(QUOTATION_STATUSES),
   issueDate: z.string(),
-  validUntil: z.string(),
+  /** D-157: `null` = sin vencimiento. Una cotización así no vence nunca y siempre se confirma. */
+  validUntil: z.string().nullable(),
   /** `true` cuando `validUntil` ya pasó, aunque el job todavía no la haya marcado. */
   isExpired: z.boolean(),
   subtotalPen: z.string(),

@@ -157,7 +157,10 @@ export function CotizacionesView() {
                   <div className="text-xs text-muted-foreground">{q.customerDocNumber}</div>
                 </TableCell>
                 <TableCell className="hidden sm:table-cell">{formatDate(q.issueDate)}</TableCell>
-                <TableCell className="hidden md:table-cell">{formatDate(q.validUntil)}</TableCell>
+                {/* D-157: `null` es "no vence", no "falta el dato". */}
+                <TableCell className="hidden md:table-cell">
+                  {q.validUntil === null ? 'Sin vencimiento' : formatDate(q.validUntil)}
+                </TableCell>
                 <TableCell className="text-right">{formatMoney(q.totalPen)}</TableCell>
                 <TableCell>
                   {<QuotationStatusBadge status={q.status} isExpired={q.isExpired} />}

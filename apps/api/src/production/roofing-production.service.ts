@@ -39,6 +39,7 @@ import {
   type PieceLike,
   type ProductionOrderDto,
   type RawMaterialWarningDto,
+  type ReportAndCloseRoofingInput,
   type ReportRoofingPiecesInput,
   type ReverseMovementInput,
   type RoofingBatchCreateResultDto,
@@ -1085,7 +1086,7 @@ export class RoofingProductionService {
         ...(salesOrderId ? { reservation: { salesOrderId } } : {}),
       },
       include: {
-        product: { select: { sku: true, name: true, unit: true } },
+        product: { select: { sku: true, name: true, unit: true, lengthMm: true } },
         items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
         reservation: {
           select: {
@@ -1135,6 +1136,8 @@ export class RoofingProductionService {
         productSku: order.product.sku,
         productName: order.product.name,
         productUnit: order.product.unit,
+        // D-159: `null` en una cobertura a medida — el largo lo trae cada línea del pedido.
+        productLengthMm: order.product.lengthMm?.toFixed(2) ?? null,
         salesOrderId: salesOrder?.id ?? null,
         salesOrderCode: salesOrder ? salesOrderCode(salesOrder.seq) : null,
         customerName: salesOrder?.customer.name ?? null,
@@ -1289,270 +1292,338 @@ export class RoofingProductionService {
     const warnings: RawMaterialShortfall[] = [];
     await this.prisma.$transaction(
       async (tx) => {
-        const order = await lockOrder(tx, orderId);
-        assertKind(order, ProductionOrderKind.ROOFING);
-        if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
-          throw new BadRequestException(
-            order.status === ProductionOrderStatus.DRAFT
-              ? 'La orden no tiene material ni planchas: anúlala en vez de cerrarla'
-              : `La orden ya está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}`,
-          );
-        }
-
-        const reports = await tx.productionReport.findMany({
-          where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
-        });
-        if (reports.length === 0) {
-          throw new BadRequestException(
-            'La orden no tiene planchas reportadas: anúlala para liberar la bobina en vez de cerrarla',
-          );
-        }
-
-        const rows = await tx.productionOrderConsumption.findMany({
-          where: { productionOrderId: orderId, releasedAt: null },
-          include: { coil: { select: { code: true } } },
-          orderBy: { createdAt: 'asc' },
-        });
-
-        const reportedKg = reports.reduce(
-          (acc, r) => acc.plus(toDecimal(r.theoreticalKg.toString())),
-          new Decimal(0),
-        );
-        const remainingKg = rows.reduce(
-          (acc, r) =>
-            acc.plus(
-              Decimal.max(
-                toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
-                new Decimal(0),
-              ),
-            ),
-          new Decimal(0),
-        );
-        // D-146: cuando planta declaró kilos **reporte a reporte**, el cierre los usa como
-        // valor por defecto en vez de asumir merma cero. Sin esto, la cifra que el encargado
-        // se tomó el trabajo de anotar quedaba de adorno: cerrar sin `consumedKg` la
-        // contradecía en silencio y el despunte real desaparecía. Lo explícito sigue
-        // mandando: `input.consumedKg` gana siempre.
-        //
-        // El piso es `reportedKg` porque lo declarado por reporte se topa contra el kilo
-        // teórico del **plan**, no contra el de sus propios largos: puede quedar por debajo
-        // de lo que las planchas ya representan, y ese material salió de verdad (D-089).
-        const declaredByReportsKg = reports.some((r) => r.consumedKg !== null)
-          ? Decimal.max(
-              reports.reduce(
-                (acc, r) => acc.plus(toDecimal((r.consumedKg ?? r.theoreticalKg).toString())),
-                new Decimal(0),
-              ),
-              reportedKg,
-            )
-          : reportedKg;
-        const declaredKg = input.consumedKg ? toDecimal(input.consumedKg) : declaredByReportsKg;
-
-        // D-089: lo declarado no puede ser menos que lo que las planchas ya representan (el
-        // material salió de verdad), ni más de lo que la orden tenía montado.
-        if (declaredKg.lt(reportedKg)) {
-          throw new BadRequestException(
-            `Las planchas reportadas ya consumieron ${reportedKg.toFixed(3)} kg: no se puede declarar un consumo de ${declaredKg.toFixed(3)} kg`,
-          );
-        }
-        if (declaredKg.gt(reportedKg.plus(remainingKg))) {
-          throw new BadRequestException(
-            `La orden tiene ${reportedKg.plus(remainingKg).toFixed(3)} kg montados y se declaran ${declaredKg.toFixed(3)} kg consumidos: monta más material o corrige la cifra`,
-          );
-        }
-
-        const { scrapKg, scrapRatio } = roofingCloseScrap({ declaredKg, reportedKg, remainingKg });
-        if (!input.reason && scrapRatio.gt(MAX_SCRAP_RATIO_WITHOUT_REASON)) {
-          throw new BadRequestException(
-            `El cierre deja ${scrapKg.toFixed(3)} kg de despunte sobre ${declaredKg.toFixed(3)} kg consumidos (${scrapRatio.times(100).toFixed(1)} %): explica el motivo para cerrar con esa merma`,
-          );
-        }
-
-        // Un solo instante para el cierre y para la liberación de sus bobinas: es lo que le
-        // permite a `reopen` distinguir las que soltó el cierre de las que planta bajó a mano.
-        const closedAt = new Date();
-        let scrapCostPen = new Decimal(0);
-        const scrapped: string[] = [];
-        if (scrapKg.gt(0)) {
-          // Los kilos del despunte también salen de lo que el pedido prometía, así que la
-          // reserva se descuenta **antes** de emitirlos — igual que en `report`. Sin esto,
-          // una orden que reservó el rollo entero no se podía cerrar con merma: la propia
-          // promesa bloqueaba la salida contra la invariante, y planta veía "anula el pedido
-          // o libera la reserva" en el paso más normal de la corrida.
-          if (order.reservationId) {
-            const reservation = await tx.reservation.findUniqueOrThrow({
-              where: { id: order.reservationId },
-              select: { salesOrderId: true, itemId: true },
-            });
-            await tx.$queryRaw`
-              SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
-            `;
-            // Mismo criterio que el reporte (D-134): el despunte sale de una bobina que la
-            // orden montó, y toda bobina que la orden pudo montar cumple el agregado que el
-            // pedido prometía. No hay rollo "ajeno" del que descontar por error.
-            await consumeReservationQty(tx, order.reservationId, scrapKg);
-          }
-          const allocations = allocateStripKg(
-            rows.map((r) => ({
-              consumptionId: r.id,
-              coilId: r.coilId,
-              coilCode: r.coil.code,
-              remainingKg: Decimal.max(
-                toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
-                new Decimal(0),
-              ),
-            })),
-            scrapKg,
-          );
-          // Fuera del bucle: es la misma para todas las asignaciones y adentro sería una
-          // consulta por rollo dentro de una transacción con presupuesto acotado.
-          const scope = await this.ownPromiseScope(tx, order);
-          for (const allocation of allocations) {
-            await this.coils.lockCoil(tx, allocation.coilId);
-            // La custodia primero, por el mismo motivo que en el reporte: con el orden
-            // invertido la invariante lee un agregado al que ya le bajaron el saldo y
-            // todavía no el consumo, y avisa por kilos que este mismo cierre acaba de sacar.
-            const consumed = rows.find((r) => r.id === allocation.consumptionId);
-            await tx.productionOrderConsumption.update({
-              where: { id: allocation.consumptionId },
-              data: {
-                consumedKg: toFixedString(
-                  toDecimal(consumed?.consumedKg.toString() ?? '0').plus(allocation.kg),
-                  'KG',
-                ),
-              },
-            });
-            const out = await this.inventory.record(tx, {
-              businessLineId: order.businessLineId,
-              itemType: 'COIL',
-              itemId: allocation.coilId,
-              type: 'OUT',
-              qty: toFixedString(allocation.kg, 'KG'),
-              unit: Unit.KGM,
-              refType: 'SCRAP',
-              refId: orderId,
-              // D-134/D-154: igual que el reporte — el despunte sale de la bobina que esta
-              // orden montó para cumplir la promesa de su pedido, y un faltante ajeno avisa
-              // en vez de cortar. Bloquear acá dejaba la orden imposible de cerrar y el
-              // material montado retenido para siempre, que es el peor de los dos males.
-              ...scope,
-              rawMaterialWarnings: warnings,
-              notes: input.reason
-                ? `Despunte al cerrar ${productionOrderCode(order.seq)}: ${input.reason}`
-                : `Despunte al cerrar ${productionOrderCode(order.seq)}`,
-              actorId: actor.id,
-              operationDate,
-              confirmBackdate: input.confirmBackdate,
-            });
-            if (!out) {
-              throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
-            }
-            scrapCostPen = scrapCostPen.plus(toDecimal(out.totalCost.toString()));
-            scrapped.push(`${allocation.coilCode}: ${allocation.kg.toFixed(3)} kg`);
-          }
-        }
-
-        // **Aquí está la diferencia con D-057.** Lo que quedó montado y no se consumió NO es
-        // merma: la bobina sigue en el almacén con su saldo, solo se baja de la roladora.
-        await tx.productionOrderConsumption.updateMany({
-          where: { productionOrderId: orderId, releasedAt: null },
-          data: { releasedAt: closedAt },
-        });
-
-        // Fase 7 (D-093, D-096): con la OP cerrada no hay más material que vaya a salir de
-        // esta reserva de bobina — lo que el pedido fabricó ya está prometido por el lado
-        // del producto (D-088). Sin esto, un pedido cuyo `reserveKg` sobreestimó lo que la
-        // corrida realmente iba a gastar —o cuya bobina montada terminó siendo otra que la
-        // reservada (D-086)— se quedaba `EN_COLA` para siempre, ya despachado y todo.
-        const releasedReservationKg = order.reservationId
-          ? await releaseRemainingReservation(tx, order.reservationId)
-          : new Decimal(0);
-
-        const outputQty = reports.reduce(
-          (acc, r) =>
-            acc.plus(r.metersM === null ? new Decimal(r.pieces) : toDecimal(r.metersM.toString())),
-          new Decimal(0),
-        );
-        const reportsCostPen = reports.reduce(
-          (acc, r) => acc.plus(toDecimal(r.materialCostPen.toString())),
-          new Decimal(0),
-        );
-        const cost = roofingCost({ reportsCostPen, scrapCostPen, outputQty });
-
-        const adjustPen = roofingCloseAdjustmentPen(
-          cost.totalCostPen,
-          reports.map((r) => ({
-            qty: r.metersM === null ? new Decimal(r.pieces) : toDecimal(r.metersM.toString()),
-            unitCostPen: r.unitCostPen.toFixed(4),
-          })),
-        );
-        let adjusted = false;
-        if (!adjustPen.isZero()) {
-          const product = await tx.product.findUniqueOrThrow({
-            where: { id: order.productId },
-            select: { unit: true },
-          });
-          const movement = await this.inventory.adjustCost(tx, {
-            businessLineId: order.businessLineId,
-            itemType: 'PRODUCT',
-            itemId: order.productId,
-            unit: product.unit,
-            amountPen: toFixedString(adjustPen, 'MONEY'),
-            refType: 'PRODUCTION',
-            refId: orderId,
-            notes: `Cierre de ${productionOrderCode(order.seq)}: despunte ${scrapKg.toFixed(3)} kg imputado a ${outputQty.toFixed(3)}`,
-            actorId: actor.id,
-            operationDate,
-          });
-          adjusted = movement !== null;
-        }
-
-        await tx.productionOrder.update({
-          where: { id: orderId },
-          data: {
-            status: ProductionOrderStatus.CLOSED,
-            scrapKg: toFixedString(scrapKg, 'KG'),
-            consumedKg: toFixedString(declaredKg, 'KG'),
-            materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
-            overheadCostPen: toFixedString(cost.overheadCostPen, 'MONEY'),
-            totalCostPen: toFixedString(cost.totalCostPen, 'MONEY'),
-            unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
-            notes: input.notes ?? order.notes,
-            closedById: actor.id,
-            closedAt,
-            closedOperationDate: toDateOnly(operationDate),
-          },
-        });
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'production.roofing.close',
-          entity: 'production_orders',
-          entityId: orderId,
-          before: { status: order.status },
-          after: {
-            status: ProductionOrderStatus.CLOSED,
-            outputQty: toFixedString(outputQty, 'KG'),
-            consumedKg: toFixedString(declaredKg, 'KG'),
-            scrapKg: toFixedString(scrapKg, 'KG'),
-            scrapRatioPct: scrapRatio.times(100).toFixed(2),
-            scrapReason: input.reason ?? null,
-            scrapped,
-            materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
-            unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
-            costAdjusted: adjusted,
-            releasedReservationKg: releasedReservationKg.gt(0)
-              ? toFixedString(releasedReservationKg, 'KG')
-              : null,
-            rawMaterialWarnings:
-              warnings.length === 0 ? null : dedupeWarnings(warnings).map((w) => w.message),
-          },
-        });
+        await this.closeInTx(tx, actor, orderId, input, operationDate, warnings);
       },
       { timeout: 60_000 },
     );
 
     return this.withWarnings(await this.production.findOne(orderId), warnings);
+  }
+
+  /**
+   * Reportar los últimos largos **y cerrar la orden en la misma transacción** (D-159).
+   *
+   * Las dos mitades ya existían y son las mismas: `reportInTx` y `closeInTx`, sin una línea de
+   * lógica propia acá. Lo que aporta es la atomicidad — hasta acá el cierre era un segundo
+   * viaje que podía fallar con el reporte ya escrito, y la bobina quedaba montada en una
+   * orden a medio cerrar mientras la orden hermana del mismo pedido la esperaba.
+   */
+  async reportAndClose(
+    actor: RequestUser,
+    orderId: string,
+    input: ReportAndCloseRoofingInput,
+  ): Promise<ProductionOrderDto> {
+    // Una sola fecha para las dos mitades: es un solo acto de planta, y resolverla dos veces
+    // dejaba el reporte y su cierre en días distintos si la corrida cruzaba la medianoche.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
+    // **Un arreglo por mitad.** Compartirlo hacía que el asiento del cierre repitiera en su
+    // `after` los faltantes que ya había anotado el asiento del reporte (y su propia columna
+    // `production_reports.raw_material_warning`), o sea que el `audit_log` —que es
+    // append-only y se lee para reconstruir qué pasó— dijera que el cierre avisó de algo que
+    // avisó el reporte. Para la respuesta se juntan, que ahí sí son "lo que dejó esta
+    // operación" (D-154).
+    const reportWarnings: RawMaterialShortfall[] = [];
+    const closeWarnings: RawMaterialShortfall[] = [];
+    await this.prisma.$transaction(
+      async (tx) => {
+        reportWarnings.push(...(await this.reportInTx(tx, actor, orderId, input, operationDate)));
+        await this.closeInTx(
+          tx,
+          actor,
+          orderId,
+          {
+            consumedKg: input.closeConsumedKg,
+            reason: input.closeReason,
+            confirmBackdate: input.confirmBackdate,
+          },
+          operationDate,
+          closeWarnings,
+        );
+      },
+      // El presupuesto del cierre, no el del reporte: las dos mitades entran en la misma
+      // transacción y la que manda es la más cara.
+      { timeout: 60_000, maxWait: 15_000 },
+    );
+
+    return this.withWarnings(await this.production.findOne(orderId), [
+      ...reportWarnings,
+      ...closeWarnings,
+    ]);
+  }
+
+  /**
+   * El cuerpo de `close`, **dentro de la transacción del llamador** (patrón `*InTx`, D-099).
+   *
+   * `warnings` se recibe y se **muta**: es el mismo arreglo que `InventoryService.record`
+   * llena con los faltantes del agregado (D-154), y el llamador lo cuelga de la respuesta.
+   */
+  private async closeInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    input: CloseRoofingOrderInput,
+    operationDate: string,
+    warnings: RawMaterialShortfall[],
+  ): Promise<void> {
+    const order = await lockOrder(tx, orderId);
+    assertKind(order, ProductionOrderKind.ROOFING);
+    if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        order.status === ProductionOrderStatus.DRAFT
+          ? 'La orden no tiene material ni planchas: anúlala en vez de cerrarla'
+          : `La orden ya está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}`,
+      );
+    }
+
+    const reports = await tx.productionReport.findMany({
+      where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
+    });
+    if (reports.length === 0) {
+      throw new BadRequestException(
+        'La orden no tiene planchas reportadas: anúlala para liberar la bobina en vez de cerrarla',
+      );
+    }
+
+    const rows = await tx.productionOrderConsumption.findMany({
+      where: { productionOrderId: orderId, releasedAt: null },
+      include: { coil: { select: { code: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const reportedKg = reports.reduce(
+      (acc, r) => acc.plus(toDecimal(r.theoreticalKg.toString())),
+      new Decimal(0),
+    );
+    const remainingKg = rows.reduce(
+      (acc, r) =>
+        acc.plus(
+          Decimal.max(
+            toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
+            new Decimal(0),
+          ),
+        ),
+      new Decimal(0),
+    );
+    // D-146: cuando planta declaró kilos **reporte a reporte**, el cierre los usa como
+    // valor por defecto en vez de asumir merma cero. Sin esto, la cifra que el encargado
+    // se tomó el trabajo de anotar quedaba de adorno: cerrar sin `consumedKg` la
+    // contradecía en silencio y el despunte real desaparecía. Lo explícito sigue
+    // mandando: `input.consumedKg` gana siempre.
+    //
+    // El piso es `reportedKg` porque lo declarado por reporte se topa contra el kilo
+    // teórico del **plan**, no contra el de sus propios largos: puede quedar por debajo
+    // de lo que las planchas ya representan, y ese material salió de verdad (D-089).
+    const declaredByReportsKg = reports.some((r) => r.consumedKg !== null)
+      ? Decimal.max(
+          reports.reduce(
+            (acc, r) => acc.plus(toDecimal((r.consumedKg ?? r.theoreticalKg).toString())),
+            new Decimal(0),
+          ),
+          reportedKg,
+        )
+      : reportedKg;
+    const declaredKg = input.consumedKg ? toDecimal(input.consumedKg) : declaredByReportsKg;
+
+    // D-089: lo declarado no puede ser menos que lo que las planchas ya representan (el
+    // material salió de verdad), ni más de lo que la orden tenía montado.
+    if (declaredKg.lt(reportedKg)) {
+      throw new BadRequestException(
+        `Las planchas reportadas ya consumieron ${reportedKg.toFixed(3)} kg: no se puede declarar un consumo de ${declaredKg.toFixed(3)} kg`,
+      );
+    }
+    if (declaredKg.gt(reportedKg.plus(remainingKg))) {
+      throw new BadRequestException(
+        `La orden tiene ${reportedKg.plus(remainingKg).toFixed(3)} kg montados y se declaran ${declaredKg.toFixed(3)} kg consumidos: monta más material o corrige la cifra`,
+      );
+    }
+
+    const { scrapKg, scrapRatio } = roofingCloseScrap({ declaredKg, reportedKg, remainingKg });
+    if (!input.reason && scrapRatio.gt(MAX_SCRAP_RATIO_WITHOUT_REASON)) {
+      throw new BadRequestException(
+        `El cierre deja ${scrapKg.toFixed(3)} kg de despunte sobre ${declaredKg.toFixed(3)} kg consumidos (${scrapRatio.times(100).toFixed(1)} %): explica el motivo para cerrar con esa merma`,
+      );
+    }
+
+    // Un solo instante para el cierre y para la liberación de sus bobinas: es lo que le
+    // permite a `reopen` distinguir las que soltó el cierre de las que planta bajó a mano.
+    const closedAt = new Date();
+    let scrapCostPen = new Decimal(0);
+    const scrapped: string[] = [];
+    if (scrapKg.gt(0)) {
+      // Los kilos del despunte también salen de lo que el pedido prometía, así que la
+      // reserva se descuenta **antes** de emitirlos — igual que en `report`. Sin esto,
+      // una orden que reservó el rollo entero no se podía cerrar con merma: la propia
+      // promesa bloqueaba la salida contra la invariante, y planta veía "anula el pedido
+      // o libera la reserva" en el paso más normal de la corrida.
+      if (order.reservationId) {
+        const reservation = await tx.reservation.findUniqueOrThrow({
+          where: { id: order.reservationId },
+          select: { salesOrderId: true, itemId: true },
+        });
+        await tx.$queryRaw`
+              SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
+            `;
+        // Mismo criterio que el reporte (D-134): el despunte sale de una bobina que la
+        // orden montó, y toda bobina que la orden pudo montar cumple el agregado que el
+        // pedido prometía. No hay rollo "ajeno" del que descontar por error.
+        await consumeReservationQty(tx, order.reservationId, scrapKg);
+      }
+      const allocations = allocateStripKg(
+        rows.map((r) => ({
+          consumptionId: r.id,
+          coilId: r.coilId,
+          coilCode: r.coil.code,
+          remainingKg: Decimal.max(
+            toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
+            new Decimal(0),
+          ),
+        })),
+        scrapKg,
+      );
+      // Fuera del bucle: es la misma para todas las asignaciones y adentro sería una
+      // consulta por rollo dentro de una transacción con presupuesto acotado.
+      const scope = await this.ownPromiseScope(tx, order);
+      for (const allocation of allocations) {
+        await this.coils.lockCoil(tx, allocation.coilId);
+        // La custodia primero, por el mismo motivo que en el reporte: con el orden
+        // invertido la invariante lee un agregado al que ya le bajaron el saldo y
+        // todavía no el consumo, y avisa por kilos que este mismo cierre acaba de sacar.
+        const consumed = rows.find((r) => r.id === allocation.consumptionId);
+        await tx.productionOrderConsumption.update({
+          where: { id: allocation.consumptionId },
+          data: {
+            consumedKg: toFixedString(
+              toDecimal(consumed?.consumedKg.toString() ?? '0').plus(allocation.kg),
+              'KG',
+            ),
+          },
+        });
+        const out = await this.inventory.record(tx, {
+          businessLineId: order.businessLineId,
+          itemType: 'COIL',
+          itemId: allocation.coilId,
+          type: 'OUT',
+          qty: toFixedString(allocation.kg, 'KG'),
+          unit: Unit.KGM,
+          refType: 'SCRAP',
+          refId: orderId,
+          // D-134/D-154: igual que el reporte — el despunte sale de la bobina que esta
+          // orden montó para cumplir la promesa de su pedido, y un faltante ajeno avisa
+          // en vez de cortar. Bloquear acá dejaba la orden imposible de cerrar y el
+          // material montado retenido para siempre, que es el peor de los dos males.
+          ...scope,
+          rawMaterialWarnings: warnings,
+          notes: input.reason
+            ? `Despunte al cerrar ${productionOrderCode(order.seq)}: ${input.reason}`
+            : `Despunte al cerrar ${productionOrderCode(order.seq)}`,
+          actorId: actor.id,
+          operationDate,
+          confirmBackdate: input.confirmBackdate,
+        });
+        if (!out) {
+          throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
+        }
+        scrapCostPen = scrapCostPen.plus(toDecimal(out.totalCost.toString()));
+        scrapped.push(`${allocation.coilCode}: ${allocation.kg.toFixed(3)} kg`);
+      }
+    }
+
+    // **Aquí está la diferencia con D-057.** Lo que quedó montado y no se consumió NO es
+    // merma: la bobina sigue en el almacén con su saldo, solo se baja de la roladora.
+    await tx.productionOrderConsumption.updateMany({
+      where: { productionOrderId: orderId, releasedAt: null },
+      data: { releasedAt: closedAt },
+    });
+
+    // Fase 7 (D-093, D-096): con la OP cerrada no hay más material que vaya a salir de
+    // esta reserva de bobina — lo que el pedido fabricó ya está prometido por el lado
+    // del producto (D-088). Sin esto, un pedido cuyo `reserveKg` sobreestimó lo que la
+    // corrida realmente iba a gastar —o cuya bobina montada terminó siendo otra que la
+    // reservada (D-086)— se quedaba `EN_COLA` para siempre, ya despachado y todo.
+    const releasedReservationKg = order.reservationId
+      ? await releaseRemainingReservation(tx, order.reservationId)
+      : new Decimal(0);
+
+    const outputQty = reports.reduce(
+      (acc, r) =>
+        acc.plus(r.metersM === null ? new Decimal(r.pieces) : toDecimal(r.metersM.toString())),
+      new Decimal(0),
+    );
+    const reportsCostPen = reports.reduce(
+      (acc, r) => acc.plus(toDecimal(r.materialCostPen.toString())),
+      new Decimal(0),
+    );
+    const cost = roofingCost({ reportsCostPen, scrapCostPen, outputQty });
+
+    const adjustPen = roofingCloseAdjustmentPen(
+      cost.totalCostPen,
+      reports.map((r) => ({
+        qty: r.metersM === null ? new Decimal(r.pieces) : toDecimal(r.metersM.toString()),
+        unitCostPen: r.unitCostPen.toFixed(4),
+      })),
+    );
+    let adjusted = false;
+    if (!adjustPen.isZero()) {
+      const product = await tx.product.findUniqueOrThrow({
+        where: { id: order.productId },
+        select: { unit: true },
+      });
+      const movement = await this.inventory.adjustCost(tx, {
+        businessLineId: order.businessLineId,
+        itemType: 'PRODUCT',
+        itemId: order.productId,
+        unit: product.unit,
+        amountPen: toFixedString(adjustPen, 'MONEY'),
+        refType: 'PRODUCTION',
+        refId: orderId,
+        notes: `Cierre de ${productionOrderCode(order.seq)}: despunte ${scrapKg.toFixed(3)} kg imputado a ${outputQty.toFixed(3)}`,
+        actorId: actor.id,
+        operationDate,
+      });
+      adjusted = movement !== null;
+    }
+
+    await tx.productionOrder.update({
+      where: { id: orderId },
+      data: {
+        status: ProductionOrderStatus.CLOSED,
+        scrapKg: toFixedString(scrapKg, 'KG'),
+        consumedKg: toFixedString(declaredKg, 'KG'),
+        materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
+        overheadCostPen: toFixedString(cost.overheadCostPen, 'MONEY'),
+        totalCostPen: toFixedString(cost.totalCostPen, 'MONEY'),
+        unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
+        notes: input.notes ?? order.notes,
+        closedById: actor.id,
+        closedAt,
+        closedOperationDate: toDateOnly(operationDate),
+      },
+    });
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'production.roofing.close',
+      entity: 'production_orders',
+      entityId: orderId,
+      before: { status: order.status },
+      after: {
+        status: ProductionOrderStatus.CLOSED,
+        outputQty: toFixedString(outputQty, 'KG'),
+        consumedKg: toFixedString(declaredKg, 'KG'),
+        scrapKg: toFixedString(scrapKg, 'KG'),
+        scrapRatioPct: scrapRatio.times(100).toFixed(2),
+        scrapReason: input.reason ?? null,
+        scrapped,
+        materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
+        unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
+        costAdjusted: adjusted,
+        releasedReservationKg: releasedReservationKg.gt(0)
+          ? toFixedString(releasedReservationKg, 'KG')
+          : null,
+        rawMaterialWarnings:
+          warnings.length === 0 ? null : dedupeWarnings(warnings).map((w) => w.message),
+      },
+    });
   }
 
   // -------------------------------------------------------------------------

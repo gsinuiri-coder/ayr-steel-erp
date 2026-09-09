@@ -75,27 +75,7 @@ export class CustomersService {
       );
     }
     try {
-      const customer = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.customer.create({
-          data: {
-            docType: input.docType,
-            docNumber: input.docNumber,
-            name: input.name,
-            address: input.address,
-            email: input.email,
-            phone: input.phone,
-            creditDays: input.creditDays,
-          },
-        });
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'customers.create',
-          entity: 'customers',
-          entityId: created.id,
-          after: auditView(created),
-        });
-        return created;
-      });
+      const customer = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input));
       return toDto(customer);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -103,6 +83,42 @@ export class CustomersService {
       }
       throw err;
     }
+  }
+
+  /**
+   * El cuerpo de `create`, **dentro de la transacción del llamador** (patrón `*InTx`, D-099).
+   *
+   * Existe para el alta desde el padrón del importador de cotizaciones (D-158): esos clientes
+   * se crean en la misma transacción todo-o-nada que las cotizaciones, así que un archivo que
+   * no entra no puede dejar clientes sueltos en el maestro. Que reuse esto y no una copia es
+   * lo que hace que hereden la auditoría y el índice único en vez de volver a escribirlos.
+   *
+   * No comprueba el rol: eso lo hace `create`, y el importador ya es solo ADMINISTRADOR.
+   */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: CreateCustomerInput,
+  ): Promise<Customer> {
+    const created = await tx.customer.create({
+      data: {
+        docType: input.docType,
+        docNumber: input.docNumber,
+        name: input.name,
+        address: input.address,
+        email: input.email,
+        phone: input.phone,
+        creditDays: input.creditDays,
+      },
+    });
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'customers.create',
+      entity: 'customers',
+      entityId: created.id,
+      after: auditView(created),
+    });
+    return created;
   }
 
   async update(actor: RequestUser, id: string, input: UpdateCustomerInput): Promise<CustomerDto> {

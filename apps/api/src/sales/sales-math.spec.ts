@@ -2,6 +2,8 @@ import {
   DEFAULT_QUOTATION_VALIDITY_DAYS,
   defaultValidUntil,
   IGV_RATE_PCT,
+  isQuotationExpired,
+  quotationValidUntil,
   queueSemaphore,
   salesLineTotals,
   salesTotals,
@@ -121,6 +123,39 @@ describe('defaultValidUntil (D-069)', () => {
 
   it('un año bisiesto suma el 29 de febrero', () => {
     expect(defaultValidUntil('2028-02-27', 3)).toBe('2028-03-01');
+  });
+});
+
+/**
+ * D-157 — la cotización **sin vencimiento**.
+ *
+ * `null` no es "falta el dato" ni "vence hoy": es "no vence". Lo pide el importador (D-152),
+ * que carga comprobantes ya vendidos; con la vigencia por defecto sobre una emisión de agosto,
+ * las 71 cotizaciones nacían vencidas y ninguna se podía confirmar.
+ *
+ * El centinela de verdad es `isQuotationExpired`: es la **única** función que responde la
+ * pregunta, y existe justamente porque la forma natural de escribirla suelta —`validUntil <
+ * hoy`— convierte el `null` en `'' < hoy`, o sea en vencida para siempre, y sin que nada avise.
+ */
+describe('cotización sin vencimiento (D-157)', () => {
+  it('con días de vigencia, `quotationValidUntil` es el `defaultValidUntil` de siempre', () => {
+    expect(quotationValidUntil('2026-09-03', 7)).toBe('2026-09-10');
+    expect(quotationValidUntil('2026-09-03', 30)).toBe('2026-10-03');
+  });
+
+  it('`null` días es `null` fecha: no se inventa ninguna', () => {
+    expect(quotationValidUntil('2026-08-03', null)).toBeNull();
+  });
+
+  it('sin vencimiento nunca está vencida, por vieja que sea la emisión', () => {
+    // El caso exacto del importador: un comprobante de agosto cargado en septiembre.
+    expect(isQuotationExpired(null, '2026-09-09')).toBe(false);
+    expect(isQuotationExpired(null, '2099-01-01')).toBe(false);
+  });
+
+  it('con fecha, vence el día siguiente al último válido', () => {
+    expect(isQuotationExpired('2026-09-10', '2026-09-10')).toBe(false);
+    expect(isQuotationExpired('2026-09-10', '2026-09-11')).toBe(true);
   });
 });
 

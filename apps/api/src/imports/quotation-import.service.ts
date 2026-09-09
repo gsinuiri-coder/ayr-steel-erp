@@ -1,10 +1,12 @@
 import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
-import { QuotationStatus } from '@prisma/client';
+import { DocType, Prisma, QuotationStatus } from '@prisma/client';
 import {
   Decimal,
-  DEFAULT_QUOTATION_VALIDITY_DAYS,
   defaultRoofingPlan,
+  importDocTypeOf,
+  MAX_PADRON_LOOKUPS,
   MAX_QUOTATION_IMPORT_ROWS,
+  PADRON_LOOKUP_CONCURRENCY,
   QUOTATION_IMPORT_COLUMNS,
   QUOTATION_IMPORT_REQUIRED_COLUMNS,
   QUOTATION_IMPORT_UNITS,
@@ -13,12 +15,15 @@ import {
   toFixedString,
   type ImportQuotationsInput,
   type QuotationImportIssueDto,
+  type QuotationImportPadronDto,
   type QuotationImportPreviewDto,
   type QuotationImportResultDto,
   type QuotationImportRowDto,
   type QuotationImportRowInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
+import { CustomersService } from '../customers/customers.service';
+import { DocumentLookupService } from '../customers/document-lookup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { sellsByLength } from '../sales/sales-lines';
 import { QuotationsService } from '../sales/quotations.service';
@@ -42,6 +47,8 @@ export class QuotationImportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly quotations: QuotationsService,
+    private readonly customers: CustomersService,
+    private readonly padron: DocumentLookupService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -98,7 +105,15 @@ export class QuotationImportService {
       already.flatMap((q) => keys.filter((k) => q.notes?.includes(`${NOTES_PREFIX}${k}`) === true)),
     );
 
-    const rows = raw.map((r, i) => this.toPreviewRow(r, i + 1, byDoc, bySku, importedKeys));
+    // D-158: los documentos del papel que el maestro **no** tiene se consultan contra el
+    // padrón, una vez cada uno. No crea nada: lo que devuelve es el nombre real que la
+    // pantalla muestra en el badge "Nuevo — se creará desde padrón", para que quien revisa
+    // decida sobre un dato verificado y no sobre la razón social del Excel.
+    // Solo los que **faltan**: un documento con dos clientes activos (`unique: false`) no se
+    // resuelve dando de alta un tercero, se resuelve eligiendo cuál de los dos es.
+    const padron = await this.lookupPadron(docNumbers.filter((d) => byDoc.get(d) === undefined));
+
+    const rows = raw.map((r, i) => this.toPreviewRow(r, i + 1, byDoc, bySku, importedKeys, padron));
     const importable = rows.filter((r) => r.excludedReason === null);
     return {
       fileName,
@@ -115,6 +130,7 @@ export class QuotationImportService {
     byDoc: Map<string, Match<{ id: string; docNumber: string; name: string }>>,
     bySku: Map<string, Match<{ id: string; sku: string; name: string; unit: string }>>,
     importedKeys: ReadonlySet<string>,
+    padronByDoc: ReadonlyMap<string, QuotationImportPadronDto>,
   ): QuotationImportRowDto {
     const rawCustomer = field(raw, 'customer');
     const rawSku = field(raw, 'sku');
@@ -142,7 +158,9 @@ export class QuotationImportService {
     const docNumber = customerDocOf(rawCustomer);
     const customerMatch = docNumber === null ? undefined : byDoc.get(docNumber);
     const customer = customerMatch?.unique === true ? customerMatch.value : null;
-    if (!customer) {
+    // D-158: el padrón solo cuenta cuando el maestro no tiene a nadie con ese documento.
+    const padron = (docNumber === null ? undefined : padronByDoc.get(docNumber)) ?? null;
+    if (!customer && padron === null) {
       issues.push({
         field: 'customer',
         severity: 'error',
@@ -150,7 +168,7 @@ export class QuotationImportService {
           customerMatch?.unique === false
             ? 'Hay más de un cliente activo con ese documento: elige cuál es.'
             : rawCustomer
-              ? 'No hay ningún cliente activo con ese documento: créalo en el maestro y vuelve a subir el archivo.'
+              ? 'No hay ningún cliente activo con ese documento y el padrón no lo devolvió: elige uno o créalo con el botón de al lado.'
               : 'La fila no trae cliente.',
       });
     }
@@ -249,6 +267,7 @@ export class QuotationImportService {
       documentKey: field(raw, 'documentKey'),
       issueDate: parseIssueDate(field(raw, 'issueDate')) ?? '',
       customerId: customer?.id ?? null,
+      padron,
       productId: product?.id ?? null,
       qty: roundedQty === null ? '' : toFixedString(roundedQty, 'KG'),
       unitPricePen: unitPricePen === null ? '' : toFixedString(unitPricePen, 'MONEY'),
@@ -283,6 +302,152 @@ export class QuotationImportService {
   }
 
   // -------------------------------------------------------------------------
+  // D-158 — el padrón
+  // -------------------------------------------------------------------------
+
+  /**
+   * Consulta el padrón por cada documento que el maestro no tiene, con tope y en paralelo
+   * acotado. **Nunca lanza**: `DocumentLookupService` devuelve `found: false` cuando el token
+   * no está configurado, cuando la API no responde o cuando el documento no existe, y esa
+   * fila queda con su error de siempre.
+   */
+  private async lookupPadron(
+    docNumbers: readonly string[],
+  ): Promise<Map<string, QuotationImportPadronDto>> {
+    const found = new Map<string, QuotationImportPadronDto>();
+    // Un CE no está en ningún padrón consultable, y un número que no es ni RUC ni DNI no se
+    // consulta: gastaría cuota para recibir un 404.
+    const targets = docNumbers
+      .map((docNumber) => ({ docNumber, docType: importDocTypeOf(docNumber) }))
+      .filter((t): t is { docNumber: string; docType: 'RUC' | 'DNI' } => t.docType !== null)
+      .slice(0, MAX_PADRON_LOOKUPS);
+    if (targets.length === 0) return found;
+
+    let next = 0;
+    const workers = Array.from(
+      { length: Math.min(PADRON_LOOKUP_CONCURRENCY, targets.length) },
+      async () => {
+        for (let i = next++; i < targets.length; i = next++) {
+          const target = targets[i];
+          if (!target) continue;
+          const result = await this.padron.lookup(DocType[target.docType], target.docNumber);
+          // **Nada se compone acá.** Si el padrón no devolvió nombre, no hay alta: inventar
+          // uno con la razón social del Excel es la creación silenciosa que D-152 prohibió.
+          if (!result.found || result.name === null) continue;
+          found.set(target.docNumber, {
+            docType: target.docType,
+            docNumber: target.docNumber,
+            name: result.name,
+            address: result.address,
+          });
+        }
+      },
+    );
+    await Promise.all(workers);
+    return found;
+  }
+
+  /**
+   * Da de alta los clientes que el archivo pidió crear desde el padrón (D-158).
+   *
+   * **Vuelve a consultar el padrón**, y el nombre que guarda es el que el padrón devuelve —no
+   * el que trajo el navegador, que ni siquiera viaja—. Es lo que separa esta excepción de la
+   * creación silenciosa de D-138: quién decide es una persona que vio el badge en el preview,
+   * y qué se escribe lo decide SUNAT. Si el padrón no responde ahora, **no se importa nada**:
+   * el archivo entero vuelve con el motivo, que es lo mismo que hace cualquier otro fallo.
+   *
+   * Las altas van **dentro** de la transacción del archivo, así que un documento que no entra
+   * no deja clientes sueltos en el maestro.
+   */
+  private async resolvePadronRefs(
+    refs: readonly { docType: 'RUC' | 'DNI'; docNumber: string }[],
+  ): Promise<Map<string, QuotationImportPadronDto>> {
+    // **Fuera de la transacción a propósito.** Son hasta 48 llamadas de 5 s cada una contra
+    // un tercero; hacerlas con la transacción abierta retiene una conexión del pool durante
+    // toda esa espera, y el archivo entero se juega contra el `timeout` de Prisma en vez de
+    // contra sus propias reglas.
+    const unique = new Map(refs.map((r) => [r.docNumber, r]));
+    // El tope vive en `lookupPadron`, así que por encima de él los documentos sobrantes **no
+    // se consultan**: sin este corte el archivo moría diciendo "el padrón no devolvió los
+    // datos de X", que le atribuye al padrón un límite que es nuestro y manda a dar de alta a
+    // mano un cliente que la consulta habría encontrado.
+    if (unique.size > MAX_PADRON_LOOKUPS) {
+      throw new BadRequestException(
+        `El archivo pide crear ${String(unique.size)} clientes desde el padrón y el máximo por importación es ${String(MAX_PADRON_LOOKUPS)}: ` +
+          'da de alta algunos en el maestro o parte el archivo',
+      );
+    }
+    const found = await this.lookupPadron([...unique.keys()]);
+    for (const [docNumber, ref] of unique) {
+      if (!found.has(docNumber)) {
+        throw new BadRequestException(
+          `El padrón no devolvió los datos de ${ref.docType} ${docNumber}: da de alta ese cliente a mano y vuelve a importar`,
+        );
+      }
+    }
+    return found;
+  }
+
+  private async createFromPadron(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    resolved: ReadonlyMap<string, QuotationImportPadronDto>,
+  ): Promise<{ byDoc: Map<string, string>; names: string[] }> {
+    const byDoc = new Map<string, string>();
+    const names: string[] = [];
+    for (const [docNumber, data] of resolved) {
+      // **Se busca por el par único de la tabla, `(doc_type, doc_number)`, sin filtrar por
+      // activo.** Filtrar por `isActive` acá era mirar por una puerta distinta de la que
+      // valida Postgres: un cliente **desactivado** con ese RUC no aparecía ni en el preview
+      // (que solo trae activos) ni en esta búsqueda, el padrón sí lo devolvía, y el alta
+      // chocaba contra el índice único con un `P2002` que nadie traduce —esto corre antes del
+      // bucle de savepoints, o sea fuera del `try` que atribuye errores por documento—, así
+      // que el archivo entero volvía como un 500 de Prisma.
+      const existing = await tx.customer.findUnique({
+        where: { docType_docNumber: { docType: DocType[data.docType], docNumber } },
+        select: { id: true, name: true, isActive: true },
+      });
+      if (existing) {
+        // Reactivarlo por su cuenta sería devolver al maestro a alguien que un administrador
+        // dio de baja, y en silencio: se dice y se corta.
+        if (!existing.isActive) {
+          throw new BadRequestException(
+            `${data.docType} ${docNumber} (${existing.name}) ya existe en el maestro pero está desactivado: reactívalo o elige otro cliente para ese comprobante`,
+          );
+        }
+        byDoc.set(docNumber, existing.id);
+        continue;
+      }
+      try {
+        const created = await this.customers.createInTx(tx, actor, {
+          docType: DocType[data.docType],
+          docNumber,
+          name: data.name,
+          address: data.address,
+          email: null,
+          phone: null,
+          // Al contado: los días de crédito son una condición comercial que el padrón no dice
+          // y que el importador no puede adivinar (D-076).
+          creditDays: 0,
+        });
+        byDoc.set(docNumber, created.id);
+        names.push(`${docNumber} — ${data.name}`);
+      } catch (err) {
+        // Dos importaciones simultáneas con el mismo RUC nuevo: la lectura de arriba no
+        // encontró nada en ninguna de las dos y el índice único rechaza a la segunda. Sin
+        // esto, ese `P2002` sube sin traducir —estamos fuera del bucle de savepoints, que es
+        // el único lugar que atribuye errores a un documento— y el archivo vuelve como 500.
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002')
+          throw err;
+        throw new BadRequestException(
+          `${data.docType} ${docNumber} se dio de alta mientras se importaba este archivo: vuelve a subirlo y esa fila se resolverá sola`,
+        );
+      }
+    }
+    return { byDoc, names };
+  }
+
+  // -------------------------------------------------------------------------
   // Paso 2 — confirmar: una transacción, todo o nada
   // -------------------------------------------------------------------------
 
@@ -299,11 +464,29 @@ export class QuotationImportService {
     input: ImportQuotationsInput,
   ): Promise<QuotationImportResultDto> {
     const groups = groupByDocument(input.rows);
+    // D-158: el padrón se consulta **antes** de abrir la transacción, y si falta uno solo no
+    // se importa nada. Es el mismo todo-o-nada del archivo: quien revisó 141 filas no puede
+    // descubrir de a un cliente por intento que el padrón está caído.
+    // Solo las filas que **no** tienen cliente elegido: el schema ya rechaza las que traen los
+    // dos, y el `customerId === null` de acá es la segunda cerradura sobre lo mismo — dar de
+    // alta al cliente del padrón de una fila que terminó usando otro deja en el maestro un
+    // registro que nadie pidió.
+    const resolvedPadron = await this.resolvePadronRefs(
+      input.rows.flatMap((r) => (r.customerId === null && r.newCustomer ? [r.newCustomer] : [])),
+    );
 
     return this.prisma.$transaction(
       async (tx) => {
         const failures: Record<string, string[]> = {};
         const codes: string[] = [];
+        const { byDoc: padronCustomers, names: createdCustomers } = await this.createFromPadron(
+          tx,
+          actor,
+          resolvedPadron,
+        );
+        const customerIdOf = (row: QuotationImportRowInput): string | null =>
+          row.customerId ??
+          (row.newCustomer ? (padronCustomers.get(row.newCustomer.docNumber) ?? null) : null);
 
         for (const [index, [documentKey, rows]] of [...groups.entries()].entries()) {
           const savepoint = `cotizacion_${String(index)}`;
@@ -311,8 +494,13 @@ export class QuotationImportService {
           try {
             const first = rows[0];
             if (!first) throw new BadRequestException('Documento sin líneas');
-            const customerId = first.customerId;
-            if (rows.some((r) => r.customerId !== customerId)) {
+            const customerId = customerIdOf(first);
+            if (customerId === null) {
+              throw new BadRequestException(
+                'Este documento no tiene cliente: elígelo o créalo antes de importar.',
+              );
+            }
+            if (rows.some((r) => customerIdOf(r) !== customerId)) {
               throw new BadRequestException(
                 'Las líneas de este documento apuntan a clientes distintos: una cotización es de un solo cliente.',
               );
@@ -326,9 +514,12 @@ export class QuotationImportService {
             const id = await this.quotations.createInTx(tx, actor, {
               customerId,
               issueDate: first.issueDate,
-              // El default del schema, explícito acá: `createInTx` recibe el input ya parseado y
-              // los `.default()` de Zod no se aplican a un objeto construido a mano.
-              validityDays: DEFAULT_QUOTATION_VALIDITY_DAYS,
+              // D-157: **sin vencimiento**. Una cotización importada nace de un comprobante
+              // que ya se vendió: no hay vigencia que respetar, y las dos alternativas eran
+              // peores — inventar una fecha, o darle los 7 días por defecto sobre una emisión
+              // de agosto y crear 71 cotizaciones que nacen vencidas y que ninguna validación
+              // deja confirmar.
+              validityDays: null,
               // D-152: el número del comprobante externo viaja a las observaciones con un
               // formato reconocible, para que la venta que se registre después pueda decir de
               // qué papel salió sin que haga falta una columna nueva en el modelo.
@@ -366,7 +557,7 @@ export class QuotationImportService {
           });
         }
 
-        return { quotations: groups.size, rows: input.rows.length, codes };
+        return { quotations: groups.size, rows: input.rows.length, codes, createdCustomers };
       },
       // Hasta `MAX_QUOTATION_IMPORT_ROWS` líneas repartidas en sus documentos, cada uno con su
       // alta completa. Es el presupuesto de una carga mensual entera, no el de un formulario.

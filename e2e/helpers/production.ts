@@ -241,12 +241,39 @@ export function randomLetters(length: number): string {
   return out;
 }
 
+/**
+ * Correlativo del proceso para los proveedores que la suite crea.
+ *
+ * `suppliers.code` es `VarChar(6)` **y único**, y con seis caracteres puramente al azar la
+ * corrida se cae con un `409 Ya existe un proveedor con ese documento o con ese código corto`
+ * lanzado desde dentro de `setupRoofingScenario` — o sea, en un test que no habla de
+ * proveedores y con un mensaje que no se parece en nada a su causa. Un correlativo hace que
+ * dos proveedores del **mismo proceso** no puedan chocar nunca; las letras al azar siguen
+ * separando corridas distintas contra una base que no se vació.
+ */
+let cuttingSupplierSeq = 0;
+
+/** `1` → `AAAB`: el correlativo en cuatro letras, para que entre en un `code` de seis. */
+function base26(value: number, length: number): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let out = '';
+  let rest = value;
+  for (let i = 0; i < length; i += 1) {
+    out = (alphabet[rest % 26] ?? 'A') + out;
+    rest = Math.floor(rest / 26);
+  }
+  return out;
+}
+
 export async function createCuttingSupplier(api: APIRequestContext): Promise<CreatedSupplier> {
-  const code = `EP${randomLetters(4)}`;
+  cuttingSupplierSeq += 1;
+  const code = `${randomLetters(2)}${base26(cuttingSupplierSeq, 4)}`;
   return postJson<CreatedSupplier>(api, '/api/suppliers', {
     code,
     docType: 'RUC',
-    docNumber: `20${String(Date.now()).slice(-6)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`,
+    // Mismo criterio para el RUC: el correlativo garantiza que dos del mismo proceso no
+    // colisionen aunque los milisegundos coincidan (el `slice(-6)` se repite cada 1 000 s).
+    docNumber: `20${String(Date.now()).slice(-6)}${String(cuttingSupplierSeq % 1000).padStart(3, '0')}`,
     name: `E2E Proveedor de corte ${code}`,
     creditDays: 0,
     providesCuttingService: true,

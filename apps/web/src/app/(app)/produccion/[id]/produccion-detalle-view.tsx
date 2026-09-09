@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Decimal,
-  MAX_SCRAP_RATIO_WITHOUT_REASON,
   PRODUCTION_ORDER_KIND_LABELS,
   PRODUCTION_ORDER_STATUS_LABELS,
   ProductionOrderKind,
@@ -48,8 +47,12 @@ import {
 /**
  * Detalle de una orden de producción (RF-34/RF-35): los flejes que tomó, los reportes de
  * piezas con su kardex y —una vez cerrada— la merma de proceso y el costo por pieza.
- * Las acciones de planta (consumir, reportar) viven en `/planta`; acá están las de
- * corrección y cierre.
+ *
+ * **D-160: acá no se produce.** Montar, reportar y cerrar viven en `/planta`, que es la única
+ * entrada a producir; este detalle es de lectura, más las tres operaciones que **no** tienen
+ * otro lugar y que no son captura sino corrección: anular la orden, revertir un reporte y
+ * reabrir una cerrada. El cierre se fue de acá porque era el único que estaba en los dos
+ * sitios, y dos botones que hacen lo mismo terminan divergiendo en lo que validan antes.
  */
 export function ProduccionDetalleView({ id }: { id: string }) {
   const { user } = useSession();
@@ -57,7 +60,6 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   const [reverting, setReverting] = useState<ProductionReportDto | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [reopening, setReopening] = useState(false);
-  const [closing, setClosing] = useState(false);
 
   const order = useQuery({
     queryKey: ['production-order', id],
@@ -77,23 +79,6 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   const invalidate = () => {
     invalidateProduction(queryClient, id);
   };
-
-  const close = useMutation({
-    mutationFn: ({ reason, operationDate }: Partial<ReverseArgs>) =>
-      api<ProductionOrderDto>(`${base}/close`, {
-        method: 'POST',
-        body: { reason: reason ?? undefined, operationDate },
-      }),
-    onSuccess: (o) => {
-      toast.success(
-        `Orden cerrada: ${o.piecesReported} piezas, ${formatQty(o.scrapKg ?? '0.000', 'kg')} de merma de proceso`,
-      );
-      setClosing(false);
-      invalidate();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden'),
-  });
 
   const cancel = useMutation({
     mutationFn: ({ reason, operationDate }: ReverseArgs) =>
@@ -152,10 +137,6 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   const activeReports = o.reports.filter((r) => r.status === 'ACTIVE');
   const lastActive = activeReports[activeReports.length - 1];
   const liveStrips = o.consumptions.filter((c) => c.releasedAt === null);
-  const pendingKg = liveStrips.reduce(
-    (acc, c) => acc.plus(new Decimal(c.remainingKg)),
-    new Decimal(0),
-  );
   const assignedKg = liveStrips.reduce(
     (acc, c) => acc.plus(new Decimal(c.assignedKg)),
     new Decimal(0),
@@ -168,15 +149,6 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       ? null
       : new Decimal(o.productPieceWeightKg);
   const theoreticalPieces = kgPerPiece?.gt(0) ? assignedKg.div(kgPerPiece) : null;
-  // Con mucha merma, cerrar es una baja de inventario y el API pide motivo (D-057).
-  // D-089: en coberturas, lo montado y no consumido **no es merma** — vuelve al almacén —
-  // y este cierre no declara `consumedKg`, así que el despunte es cero y el API nunca pide
-  // motivo. Aplicar la fórmula de drywall acá exigía explicar una merma que no existe, con
-  // un texto que además afirmaba lo contrario de lo que iba a pasar.
-  const closeNeedsReason =
-    o.kind === ProductionOrderKind.ROOFING
-      ? false
-      : assignedKg.gt(0) && pendingKg.div(assignedKg).gt(MAX_SCRAP_RATIO_WITHOUT_REASON);
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -214,34 +186,23 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
           </Badge>
           <Badge variant="outline">{PRODUCTION_ORDER_KIND_LABELS[o.kind]}</Badge>
+          {/*
+            D-160: **el detalle no produce.** Montar, reportar y cerrar viven en un solo
+            lugar —`/planta`—, y este enlace lleva ahí con la orden ya enfocada. Tener el
+            cierre también acá era el segundo camino vivo que la unificación vino a sacar:
+            dos botones que hacen lo mismo terminan divergiendo en lo que validan antes.
+          */}
           {isLive && (
             <Button asChild variant="outline">
-              <Link href={`/planta?op=${o.id}`}>Abrir en planta</Link>
-            </Button>
-          )}
-          {/*
-            D-155: las hermanas. Un pedido de coberturas genera una OP por línea (D-148) y se
-            fabrican juntas; desde una sola no había forma de llegar a las otras salvo volver
-            al pedido y buscarlas de a una en el listado.
-          */}
-          {isLive && o.salesOrderId !== null && (
-            <Button asChild variant="outline">
-              <Link href={`/planta/producir?pedido=${o.salesOrderId}`}>
-                Órdenes de {o.salesOrderCode ?? 'este pedido'}
+              <Link
+                href={
+                  o.salesOrderId === null
+                    ? `/planta?op=${o.id}`
+                    : `/planta?pedido=${o.salesOrderId}&op=${o.id}`
+                }
+              >
+                Producir esta orden
               </Link>
-            </Button>
-          )}
-          {o.status === 'IN_PROGRESS' && activeReports.length > 0 && (
-            <Button
-              disabled={close.isPending}
-              onClick={() => {
-                // Cerrar sin merma que explicar no abre diálogo, así que va con la fecha
-                // por defecto (hoy). Para fecharlo distinto está el cierre con motivo.
-                if (closeNeedsReason) setClosing(true);
-                else close.mutate({ reason: undefined, operationDate: undefined });
-              }}
-            >
-              {close.isPending ? 'Cerrando…' : 'Cerrar orden'}
             </Button>
           )}
           {o.status === 'CLOSED' && (
@@ -445,19 +406,6 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         withOperationDate
         onConfirm={(reason, operationDate) => {
           if (reverting) revert.mutate({ reportId: reverting.id, reason, operationDate });
-        }}
-      />
-
-      <ReasonDialog
-        open={closing}
-        onOpenChange={setClosing}
-        title="Cerrar con merma de proceso"
-        description={`Quedan ${formatQty(pendingKg.toFixed(3), 'kg')} sin convertir en piezas sobre ${formatQty(assignedKg.toFixed(3), 'kg')} asignados: esa diferencia sale del inventario como merma y su costo se reparte entre las piezas buenas. Explica por qué.`}
-        confirmLabel="Cerrar la orden"
-        pending={close.isPending}
-        withOperationDate
-        onConfirm={(reason, operationDate) => {
-          close.mutate({ reason, operationDate });
         }}
       />
 

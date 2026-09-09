@@ -532,6 +532,15 @@ export const roofingBatchOrderSchema = z.object({
   productName: z.string(),
   /** Unidad del producto terminado: `NIU` en una plancha de catálogo, `MTR` a medida. */
   productUnit: z.string().max(20),
+  /**
+   * D-159: largo fijo de la plancha de catálogo (`null` en una cobertura a medida, D-118).
+   *
+   * El workspace lo necesita para editar el plan de una corrida a stock **por cantidad**: en
+   * una plancha el largo no se elige, lo trae el SKU, y pedirlo otra vez es ofrecer un campo
+   * cuya única respuesta correcta el sistema ya conoce. Con el plan vacío no hay ninguna
+   * línea de la que sacarlo, que es justo cuando hace falta.
+   */
+  productLengthMm: z.string().nullable(),
   salesOrderId: z.string().uuid().nullable(),
   salesOrderCode: z.string().nullable(),
   customerName: z.string().nullable(),
@@ -567,6 +576,26 @@ export const closeRoofingOrderSchema = z.object({
   reason: reasonSchema.optional(),
 });
 export type CloseRoofingOrderInput = z.infer<typeof closeRoofingOrderSchema>;
+
+/**
+ * Reportar **y cerrar** en una sola transacción (D-159).
+ *
+ * No es una comodidad de pantalla: es lo que le devuelve la bobina al pedido en el acto. Un
+ * pedido de coberturas genera una OP por línea (D-084/D-148) y todas se rolan del mismo
+ * rollo; mientras la primera siga abierta con la bobina montada, `assertStripsNotAssigned`
+ * no deja montarla en la segunda, y hasta acá el encargado tenía que reportar, salir, cerrar
+ * desde otra pantalla y volver. Partido en dos endpoints, además, el cierre podía fallar con
+ * el reporte ya escrito y la orden quedaba a mitad de camino.
+ *
+ * El cuerpo es el del reporte más los dos campos del cierre, con prefijo `close` para que
+ * ninguno se confunda con el `consumedKg` **del reporte**, que es otra cosa: aquel es el kilo
+ * declarado de esta pasada (D-146) y este el consumo total de la corrida (D-089).
+ */
+export const reportAndCloseRoofingSchema = reportRoofingPiecesSchema.extend({
+  closeConsumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+  closeReason: reasonSchema.optional(),
+});
+export type ReportAndCloseRoofingInput = z.infer<typeof reportAndCloseRoofingSchema>;
 
 // --------------------------------------------------------------------------
 // DTOs

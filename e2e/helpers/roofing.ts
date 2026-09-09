@@ -74,11 +74,37 @@ export interface ReservationRow {
   productionOrderCode: string | null;
 }
 
+/**
+ * Correlativo del proceso para los colores de la suite. Mismo motivo que el de
+ * `createCuttingSupplier`: `colors.code` es único y el maestro **no se vacía entre corridas**
+ * —`reset-test-db.ts` trunca inventario, compras y usuarios, no los maestros—, así que en una
+ * máquina que ya corrió la suite muchas veces hay cientos de códigos `E2E····` vivos y cuatro
+ * letras al azar chocan cada tanto. El 409 sale desde dentro de `setupRoofingScenario`, en un
+ * test que no habla de colores.
+ */
+let colorSeq = 0;
+
+/** `1` → `AAAB`: un correlativo en letras, que es lo que el código del color admite. */
+function letterSeq(value: number, length: number): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let out = '';
+  let rest = value;
+  for (let i = 0; i < length; i += 1) {
+    out = (alphabet[rest % 26] ?? 'A') + out;
+    rest = Math.floor(rest / 26);
+  }
+  return out;
+}
+
 /** Un color nuevo del maestro (D-085). El prefijo `E2E` es la marca de la purga. */
 export async function createColor(api: APIRequestContext, hex = '#c8102e'): Promise<ColorDto> {
+  colorSeq += 1;
+  // Dos letras al azar separan corridas distintas contra la misma base; el correlativo hace
+  // que dos colores del mismo proceso no puedan chocar nunca.
+  const code = `E2E${randomLetters(2)}${letterSeq(colorSeq, 4)}`;
   return postJson<ColorDto>(api, '/api/colors', {
-    code: `E2E${randomLetters(4)}`,
-    name: `E2E Color ${randomLetters(4)}`,
+    code,
+    name: `E2E Color ${code}`,
     hexColor: hex,
   });
 }

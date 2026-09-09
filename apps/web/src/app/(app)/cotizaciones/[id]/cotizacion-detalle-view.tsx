@@ -209,7 +209,11 @@ export function CotizacionDetalleView({ id }: { id: string }) {
               Válida hasta
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-lg">{formatDate(q.validUntil)}</CardContent>
+          {/* D-157: sin vencimiento no es una fecha faltante, es una cotización que no vence
+              (una importada). El guion de `formatDate` diría lo contrario. */}
+          <CardContent className="text-lg">
+            {q.validUntil === null ? 'Sin vencimiento' : formatDate(q.validUntil)}
+          </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">

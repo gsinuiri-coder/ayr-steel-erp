@@ -1,17 +1,18 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, getItems, getJson, postJson } from '../helpers/api';
+import { setupPosStock } from '../helpers/pos';
 import { createCatalogProduct, randomLetters, type ProductDto } from '../helpers/production';
 import { createCustomer, type CustomerDto } from '../helpers/sales';
 
 /**
- * Importador masivo de cotizaciones (D-152).
+ * Importador masivo de cotizaciones (D-152, D-157, D-158).
  *
  * Lo que estos casos protegen, en una línea: **la carga histórica entra por la misma puerta que
  * una venta normal**. El importador no escribe contra la tabla — llama a
  * `QuotationsService.createInTx`, la misma del formulario— así que hereda sus validaciones en
  * vez de copiarlas, que es exactamente lo que los importadores que D-150 borró no hacían.
  *
- * Los cuatro comportamientos que no se pueden aflojar:
+ * Los cinco comportamientos que no se pueden aflojar:
  *
  * - **Cero creación silenciosa**: un cliente o un SKU que no está en el maestro detiene su fila.
  * - **Todo o nada**: una fila mala deja el archivo entero sin escribir, y eso se comprueba
@@ -19,6 +20,10 @@ import { createCustomer, type CustomerDto } from '../helpers/sales';
  * - **La edición del preview manda**: lo que se confirma es lo que el usuario dejó en la tabla,
  *   no lo que el archivo decía.
  * - **Una fila quitada no entra**, y si era la única de su comprobante, ese comprobante tampoco.
+ * - **D-157: la cotización importada nace sin vencimiento y se puede confirmar** por más viejo
+ *   que sea el comprobante que la originó. Es la decisión entera en un caso: sin él, el
+ *   `validUntil < hoy` que la rechazaba puede volver sin que nadie se entere, y la carga
+ *   histórica queda otra vez en un callejón —cotizaciones creadas que no se pueden convertir—.
  *
  * Se usa CSV y no xlsx a propósito: el endpoint acepta los dos y `parseSpreadsheet` trata el csv
  * como texto UTF-8 (el defecto de la Fase 1 con los encabezados con tilde), así que el archivo
@@ -296,6 +301,110 @@ test.describe('D-152 — importador masivo de cotizaciones', () => {
     // Y lo que se guardó es lo editado (7 unidades a 33), no lo que traía el archivo.
     expect(detail.items).toHaveLength(1);
     expect(detail.items[0]!.qty).toBe('7.000');
+  });
+
+  test('D-157: la cotización importada nace sin vencimiento y se emite y confirma aunque el papel sea de hace meses', async () => {
+    /**
+     * **El caso que justifica D-157.** El importador carga comprobantes que ya se vendieron:
+     * un papel de marzo no tiene vigencia que respetar. Mientras `validUntil` fue obligatorio
+     * había que elegir entre dos mentiras —una vigencia inventada, o una cotización que nace
+     * vencida— y la segunda era además un callejón: `confirm()` comparaba `validUntil < hoy`
+     * y rechazaba la cotización en el paso siguiente a haberla creado.
+     *
+     * Se comprueba el ciclo completo (importar → emitir → confirmar) y no solo el `null` en la
+     * fila, porque el `null` por sí solo no prueba nada: lo que se rompía era la confirmación,
+     * y hay tres lugares distintos que leen esa fecha (`effectiveStatus`, el DTO y `confirm`).
+     *
+     * El producto llega **con saldo** a propósito: confirmar reserva contra el disponible
+     * (D-054), así que sin stock el pedido se caería por un motivo que no tiene nada que ver
+     * con la vigencia y el caso pasaría a probar otra cosa.
+     */
+    const stock = await setupPosStock(api, { qty: '40' });
+    const documentKey = `FFA1-${randomLetters(4)}`;
+    const orderIds: string[] = [];
+    const quotationIds: string[] = [];
+
+    try {
+      const parsed = await preview(api, [
+        line({
+          documentKey,
+          // Casi seis meses atrás: muy por fuera de cualquier vigencia por defecto.
+          issueDate: '15/03/2026',
+          sku: stock.product.sku,
+          productName: stock.product.name.replace(/,/g, ' '),
+          qty: '10.000',
+          netAmount: '500.00',
+        }),
+      ]);
+      expect(parsed.rows[0]!.issueDate).toBe('2026-03-15');
+      expect(parsed.rows[0]!.customerId).toBe(customer.id);
+      expect(parsed.rows[0]!.issues.filter((i) => i.severity === 'error')).toEqual([]);
+
+      const result = await postJson<{ codes: string[]; createdCustomers: string[] }>(
+        api,
+        '/api/imports/quotations',
+        { rows: parsed.rows.map(toInput) },
+      );
+      const all = await getItems<QuotationListItem>(api, '/api/sales/quotations');
+      const mine = all.find((q) => result.codes.includes(q.code))!;
+      quotationIds.push(mine.id);
+      // D-158: nada se dio de alta desde el padrón — el cliente ya estaba en el maestro.
+      expect(result.createdCustomers).toEqual([]);
+
+      // 1. Nace **sin** vencimiento, y sin vencimiento no vence: `isExpired` es la bandera que
+      //    la pantalla usa para pintarla en rojo, y un `null` leído como cadena vacía la
+      //    dejaría "vencida desde siempre".
+      const draft = await getJson<{
+        status: string;
+        validUntil: string | null;
+        isExpired: boolean;
+      }>(api, `/api/sales/quotations/${mine.id}`);
+      expect(draft.status).toBe('DRAFT');
+      expect(draft.validUntil).toBeNull();
+      expect(draft.isExpired).toBe(false);
+
+      // 2. Emitida sigue EMITIDA: `effectiveStatus` no la degrada a EXPIRED al vuelo.
+      await postJson(api, `/api/sales/quotations/${mine.id}/emit`);
+      const emitted = await getJson<{ status: string; validUntil: string | null }>(
+        api,
+        `/api/sales/quotations/${mine.id}`,
+      );
+      expect(emitted.status).toBe('EMITTED');
+      expect(emitted.validUntil).toBeNull();
+
+      // 3. **Y se confirma**, que es lo que la regla vieja impedía.
+      const order = await postJson<{ id: string; code: string; status: string }>(
+        api,
+        `/api/sales/quotations/${mine.id}/confirm`,
+        {},
+      );
+      orderIds.push(order.id);
+      expect(order.status).toBe('CONFIRMED');
+    } finally {
+      for (const id of orderIds) {
+        await api
+          .post(`/api/sales/orders/${id}/cancel`, { data: { reason: 'Limpieza de prueba E2E' } })
+          .catch(() => undefined);
+      }
+      for (const id of quotationIds) {
+        await api
+          .post(`/api/sales/quotations/${id}/cancel`, {
+            data: { reason: 'Limpieza de prueba E2E' },
+          })
+          .catch(() => undefined);
+      }
+      await api
+        .post(`/api/purchases/${stock.purchaseId}/cancel`, {
+          data: { reason: 'Limpieza de prueba E2E' },
+        })
+        .catch(() => undefined);
+      await api
+        .patch(`/api/catalog/${stock.product.id}`, { data: { isActive: false } })
+        .catch(() => undefined);
+      await api
+        .patch(`/api/suppliers/${stock.supplier.id}`, { data: { isActive: false } })
+        .catch(() => undefined);
+    }
   });
 
   test('una nota de crédito no se importa y el preview dice por qué', async () => {

@@ -14,5 +14,6 @@ export default async function TandaRedirectPage({
 }) {
   const pedido = (await searchParams).pedido;
   const id = Array.isArray(pedido) ? pedido[0] : pedido;
-  redirect(id ? `/planta/producir?pedido=${id}` : '/planta/producir');
+  // D-160: el destino pasó a ser `/planta`, la única entrada a producir.
+  redirect(id ? `/planta?pedido=${id}` : '/planta');
 }
