@@ -185,6 +185,8 @@ export const InventoryRefType = {
   PRODUCTION: 'PRODUCTION',
   SPLIT: 'SPLIT',
   SCRAP: 'SCRAP',
+  /** D-164: liquidación del remanente al cerrar una bobina (RF-19). */
+  CLOSE_ADJUSTMENT: 'CLOSE_ADJUSTMENT',
   CUTTING: 'CUTTING',
   ADJUSTMENT: 'ADJUSTMENT',
   IMPORT: 'IMPORT',
@@ -200,6 +202,7 @@ export const INVENTORY_REF_TYPE_LABELS: Record<InventoryRefType, string> = {
   PRODUCTION: 'Producción',
   SPLIT: 'Partido de bobina',
   SCRAP: 'Merma',
+  CLOSE_ADJUSTMENT: 'Cierre de bobina',
   CUTTING: 'Corte tercerizado',
   ADJUSTMENT: 'Ajuste manual',
   IMPORT: 'Carga inicial',

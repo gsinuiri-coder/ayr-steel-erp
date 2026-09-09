@@ -234,7 +234,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       // Y como cubre exactamente lo que falta, la pantalla lo dice y ofrece cerrar de una vez.
       await expect(panelA.getByText('Con esto el plan queda cubierto')).toBeVisible();
       await expect(
-        panelA.getByText(/10 × 4\.00 m · 40\.000 m · 160\.000 kg teóricos/),
+        panelA.getByText(/10 × 4\.00 m · 40\.000 m · 161\.600 kg teóricos/),
       ).toBeVisible();
 
       // ---------------------------------------------------------------------
@@ -327,7 +327,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await panelB.getByRole('button', { name: 'Quitar el largo de la fila 2' }).click();
       await expect(panelB.getByLabel('Largo 2 en metros')).toHaveCount(0);
       await expect(
-        panelB.getByText(/5 × 6\.00 m · 30\.000 m · 120\.000 kg teóricos/),
+        panelB.getByText(/5 × 6\.00 m · 30\.000 m · 121\.200 kg teóricos/),
       ).toBeVisible();
       // 30 de 36: esto **no** cubre el plan, así que la pantalla no promete cerrarlo.
       await expect(panelB.getByText('Con esto el plan queda cubierto')).toHaveCount(0);
@@ -359,18 +359,18 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       const closeKgB = panelB.getByLabel(`Kilos consumidos al cerrar ${codeB}`);
       await closeKgB.fill('100');
       await expect(
-        panelB.getByText(/Las planchas reportadas ya consumieron 120\.000 kg/),
+        panelB.getByText(/Las planchas reportadas ya consumieron 121\.200 kg/),
       ).toBeVisible();
       await expect(closeB).toBeDisabled();
 
       // **Cada cierre valida contra su propio piso, y este es el caso que lo prueba.** El
-      // editor sigue sembrado con las dos planchas que faltan (24 kg), pero este botón no las
-      // manda: su piso son los 120 kg ya reportados, no 144. Con un solo piso —el de la
+      // editor sigue sembrado con las dos planchas que faltan (24.24 kg), pero este botón no
+      // las manda: su piso son los 121.2 kg ya reportados, no 145.44. Con un solo piso —el de la
       // versión con reporte— declarar los 130 kg que la bobina de verdad consumió apagaba el
       // botón, y el caso que el botón vino a resolver quedaba sin salida.
       await closeKgB.fill('130');
       await expect(panelB.getByLabel('Largo 1 en metros')).toHaveValue('3.000');
-      await expect(panelB.getByText('Despunte al cerrar ahora: 10.000 kg.')).toBeVisible();
+      await expect(panelB.getByText('Despunte al cerrar ahora: 8.800 kg.')).toBeVisible();
       await expect(closeB).toBeEnabled();
 
       // Y la ✕ de la **única** fila vacía el editor en vez de estar apagada: sin eso había que
@@ -395,7 +395,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       expect((await balanceOf(api, 'PRODUCT', other.id)).qty).toBe('30.000');
       // Las bobinas salieron por el kilo **teórico** (4 kg/m), no por los 900 declarados:
       // 40 m × 4 en la primera; en la segunda, 30 m × 4 más los 10 kg de despunte del cierre.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1840.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1838.400');
       expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('1870.000');
 
       // Y el kg declarado quedó guardado con su aviso (D-146 + D-154).
@@ -493,14 +493,14 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       // El editor del reporte se sembró **del plan nuevo**: lo que había era el viejo.
       await expect(panel.getByLabel('Largo 1 en metros')).toHaveValue('4.200');
       await expect(panel.getByLabel('Planchas del largo 1')).toHaveValue('9');
-      await expect(panel.getByText(/9 × 4\.20 m · 37\.800 m · 151\.200 kg teóricos/)).toBeVisible();
+      await expect(panel.getByText(/9 × 4\.20 m · 37\.800 m · 152\.712 kg teóricos/)).toBeVisible();
 
       await panel.getByRole('button', { name: 'Guardar y cerrar' }).click();
       await expect(page.getByText('Este pedido no tiene órdenes abiertas')).toBeVisible();
 
       // El kardex sale por los largos de verdad: 37.8 m de producto y 151.2 kg de bobina.
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('37.800');
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1848.800');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1847.288');
     } finally {
       await purgeRoofingTrail(api, trail);
       await api.dispose();
@@ -602,9 +602,10 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       ).toBeVisible();
       await expect(save).toBeDisabled();
 
-      // 3 planchas de 4 m = 12 ML ⇒ 48 kg teóricos. Es la conversión que el kardex confirma.
+      // 3 planchas de 4 m = 12 ML ⇒ 48.48 kg teóricos con el 1 % de D-165. Es la conversión que
+      // el kardex confirma.
       await sheets.fill('3');
-      await expect(panel.getByText(/3 × 4\.00 m · 12\.000 m · 48\.000 kg teóricos/)).toBeVisible();
+      await expect(panel.getByText(/3 × 4\.00 m · 12\.000 m · 48\.480 kg teóricos/)).toBeVisible();
       await expect(save).toBeEnabled();
       await save.click();
 
@@ -619,11 +620,11 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       // de catálogo no entra al kardex en metros.
       expect(product.qty).toBe('3.000');
       expect(product.unit).toBe('NIU');
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1952.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1951.520');
 
       const report = await lastActiveReport(api, op.id);
       expect(report.pieces).toBe(3);
-      expect(report.theoreticalKg).toBe('48.000');
+      expect(report.theoreticalKg).toBe('48.480');
       // D-083: el producto se cuenta en piezas, así que el reporte no lleva metros.
       expect(report.metersM).toBeNull();
     } finally {
@@ -719,13 +720,13 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
         panelB.getByRole('button', { name: `Bajar la bobina ${scenario.coil.code} de ${codeB}` }),
       ).toBeVisible();
       // Y llega con **lo que quedó del rollo**, no con los 2 000 originales: la primera orden
-      // ya se llevó sus 160 kg.
-      await expect(panelB.getByText('pendiente 1,840.000 kg')).toBeVisible();
+      // ya se llevó sus 161.6 kg (40 m × 4.04 kg/m, D-165).
+      await expect(panelB.getByText('pendiente 1,838.400 kg')).toBeVisible();
 
       await expect(panelB.getByLabel('Largo 1 en metros')).toHaveValue('6.000');
       await expect(panelB.getByLabel('Planchas del largo 1')).toHaveValue('5');
       await expect(
-        panelB.getByText(/5 × 6\.00 m · 30\.000 m · 120\.000 kg teóricos/),
+        panelB.getByText(/5 × 6\.00 m · 30\.000 m · 121\.200 kg teóricos/),
       ).toBeVisible();
       await panelB.getByRole('button', { name: 'Guardar y cerrar' }).click();
 
@@ -738,7 +739,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('40.000');
       expect((await balanceOf(api, 'PRODUCT', other.id)).qty).toBe('30.000');
       // 2 000 − 160 − 120: los dos consumos salieron de la **misma** bobina.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1720.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1717.200');
     } finally {
       await purgeRoofingTrail(api, trail);
       await api.dispose();

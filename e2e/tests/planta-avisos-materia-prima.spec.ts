@@ -127,7 +127,7 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
       expect((await lastActiveReport(api, opA)).rawMaterialWarning).toBeNull();
 
       // El kardex salió por los 160 kg teóricos: 300 − 160.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('140.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('138.400');
     } finally {
       await purgeRoofingTrail(api, trail);
     }
@@ -180,11 +180,11 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
       expect(mounted.rawMaterialWarnings ?? []).toEqual([]);
       expect(mounted.assignedKg).toBe('2000.000');
 
-      // Reportar los 10 ML tampoco avisa, y el kardex sale por los 40 kg teóricos.
+      // Reportar los 10 ML tampoco avisa, y el kardex sale por los 40.4 kg teóricos (D-165).
       const reported = await reportPieces(api, op.id, { pieces: pieces([5, 2]) });
       expect(reported.rawMaterialWarnings ?? []).toEqual([]);
       expect((await lastActiveReport(api, op.id)).rawMaterialWarning).toBeNull();
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1960.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1959.600');
     } finally {
       await purgeRoofingTrail(api, trail);
     }
@@ -272,9 +272,9 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
       const warning = (mounted.rawMaterialWarnings ?? [])[0];
       expect(warning, 'Montar debía avisar del pedido ajeno que queda sin material').toBeDefined();
       expect(warning!.freeKg).toBe('300.000');
-      expect(warning!.promisedKg).toBe('500.000');
-      expect(warning!.shortfallKg).toBe('200.000');
-      expect(warning!.orders).toEqual([{ code: foreign.order.code, qtyKg: '500.000' }]);
+      expect(warning!.promisedKg).toBe('505.000');
+      expect(warning!.shortfallKg).toBe('205.000');
+      expect(warning!.orders).toEqual([{ code: foreign.order.code, qtyKg: '505.000' }]);
       expect(warning!.label).toContain(scenario.color.name);
       expect(warning!.message).toContain('La operación se registró igual');
       // Y montó de verdad: el aviso no es un rechazo con otro nombre.
@@ -292,19 +292,19 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
       const reportWarning = (reported.rawMaterialWarnings ?? [])[0];
       expect(reportWarning, 'Reportar debía avisar del mismo pedido en riesgo').toBeDefined();
       expect(reportWarning!.orders.map((o) => o.code)).toContain(foreign.order.code);
-      expect(reportWarning!.freeKg).toBe('260.000');
-      expect(reportWarning!.shortfallKg).toBe('240.000');
+      expect(reportWarning!.freeKg).toBe('259.600');
+      expect(reportWarning!.shortfallKg).toBe('245.400');
 
       // El aviso queda **en la fila del reporte**: quien audita la corrida mira sus reportes,
       // no el `audit_log`.
       const report = await lastActiveReport(api, op.id);
       expect(report.rawMaterialWarning).not.toBeNull();
       expect(report.rawMaterialWarning).toContain(foreign.order.code);
-      expect(report.rawMaterialWarning).toContain('faltan 240.000 kg');
+      expect(report.rawMaterialWarning).toContain('faltan 245.400 kg');
 
-      // Y el kardex se escribió: la bobina bajó por los 40 kg teóricos (10 ML × 4 kg/m), no
+      // Y el kardex se escribió: la bobina bajó por los 40.4 kg teóricos (10 ML × 4.04 kg/m, D-165), no
       // por los 42 declarados, y el producto entró por sus 10 m.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('260.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('259.600');
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('10.000');
     } finally {
       await purgeRoofingTrail(api, trail);

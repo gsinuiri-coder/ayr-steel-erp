@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, postJson } from '../helpers/api';
+import { adminApi, closeCoilKeepingStock, postJson } from '../helpers/api';
 import {
   balanceOf,
   createCuttingSupplier,
@@ -7,7 +7,6 @@ import {
   movementsOf,
   postExpectingError,
   today,
-  type CoilDto,
   type ProductionOrderDto,
 } from '../helpers/production';
 import { createCustomer, stockPanel } from '../helpers/sales';
@@ -122,9 +121,9 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       // D-120 (Fase 7e, E) esto se probaba enviándola a corte tercerizado, pero el corte
       // ahora es exclusivo de Drywall — coberturas no puede llegar a `IN_THIRD_PARTY`, así
       // que se prueba con el otro camino real hacia "no OPEN": cerrarla (RF-19).
-      await postJson<CoilDto>(api, `/api/coils/${enTolerancia.coil.id}/status`, {
-        status: 'CLOSED',
-      });
+      // D-164: se declara el saldo entero — lo que se prueba es el filtro por estado, no la
+      // liquidación, y una baja de kilos acá movería el agregado que el caso está midiendo.
+      await closeCoilKeepingStock(api, enTolerancia.coil.id);
       const afterClose = (await coilOptions(api, scenario.product.id)).map((o) => o.coilId);
       expect(afterClose).not.toContain(enTolerancia.coil.id);
     } finally {
@@ -281,8 +280,8 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
         { pieces: rows },
       );
       const report = reported.reports.find((r) => r.status === 'ACTIVE')!;
-      expect(report.theoreticalKg).toBe('48.000');
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('952.000');
+      expect(report.theoreticalKg).toBe('48.480');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('951.520');
 
       const reverted = await postJson<ProductionOrderDto>(
         api,
@@ -303,7 +302,7 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const after = await reservationsOf(api, order.id);
       const onRawMaterial = after.find((r) => r.itemType === 'RAW_MATERIAL')!;
       const onProduct = after.find((r) => r.itemType === 'PRODUCT');
-      expect(onRawMaterial).toMatchObject({ qty: '48.000', status: 'ACTIVE' });
+      expect(onRawMaterial).toMatchObject({ qty: '48.480', status: 'ACTIVE' });
       expect(onProduct?.status).toBe('RELEASED');
       // La reserva restaurada es del agregado, no de esta bobina puntual, y el panel de stock
       // lo dice con el número que corresponde: los 1 000 kg físicos del rollo menos los 48
@@ -319,7 +318,7 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
         businessLine: 'metallic-roofing',
         productIds: [scenario.product.id],
       });
-      expect(panelAfterRevert.products[0]?.rawMaterialAvailableKg).toBe('952.000');
+      expect(panelAfterRevert.products[0]?.rawMaterialAvailableKg).toBe('951.520');
 
       // El kardex quedó con los pares movimiento + reversa que se anulan entre sí.
       expect(live(await movementsOf(api, 'PRODUCT', scenario.product.id))).toHaveLength(0);
@@ -519,11 +518,11 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
         (await coilOptions(api, scenario.product.id, reservation.id)).map((o) => o.coilId),
       ).toContain(scenario.coil.id);
       // Y la reserva del pedido sigue viva, protegiéndola — del agregado, no de esta bobina
-      // puntual (D-134): 3 m × 2 piezas = 6 m × 4 kg/m = 24 kg.
+      // puntual (D-134): 3 m × 2 piezas = 6 m × 4.04 kg/m = 24.24 kg (D-165).
       expect((await reservationsOf(api, order.id))[0]).toMatchObject({
         itemType: 'RAW_MATERIAL',
         status: 'ACTIVE',
-        qty: '24.000',
+        qty: '24.240',
       });
     } finally {
       await purgeRoofingTrail(api, trail);

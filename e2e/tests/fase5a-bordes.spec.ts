@@ -144,7 +144,8 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
     const trail = newTrail();
 
     try {
-      // 150 m de cada uno son 600 kg (4 kg/m): 600 + 600 = 1 200 sobre 1 000 kg del agregado.
+      // 150 m de cada uno son 606 kg (4.04 kg/m con el 1 % de D-165): 606 + 606 = 1 212 sobre
+      // los 1 000 kg del agregado.
       const rowsBig = pieces([10, 15]); // 15 × 10 m = 150 m (el máximo de una plancha es 20 m)
       const tooMuch = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
@@ -170,11 +171,11 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect(tooMuch.items).toHaveLength(2);
       expect(tooMuch.items[0]).toMatchObject({
         reserveItemType: 'RAW_MATERIAL',
-        reserveQty: '600.000',
+        reserveQty: '606.000',
       });
       expect(tooMuch.items[1]).toMatchObject({
         reserveItemType: 'RAW_MATERIAL',
-        reserveQty: '600.000',
+        reserveQty: '606.000',
       });
       // Las dos líneas caen en el **mismo** agregado: mismo id de reserva prometido.
       expect(tooMuch.items[0]!.reserveItemId).toBe(tooMuch.items[1]!.reserveItemId);
@@ -188,10 +189,10 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       await postJson<QuotationDto>(api, `/api/sales/quotations/${tooMuch.id}/emit`);
       const failed = await postExpectingError(api, `/api/sales/quotations/${tooMuch.id}/confirm`);
       expect(failed.status).toBe(400);
-      // La línea 1 ya reservó 600 dentro de la misma transacción: la 2 tiene que verlo.
+      // La línea 1 ya reservó 606 dentro de la misma transacción: la 2 tiene que verlo.
       expect(failed.message).toContain('Línea 2');
-      expect(failed.message).toContain('400.000');
-      expect(failed.message).toContain('600.000');
+      expect(failed.message).toContain('394.000');
+      expect(failed.message).toContain('606.000');
 
       // Falla completa: ni pedido, ni una reserva de la línea 1 colgando.
       expect(await ordersOfCustomer(api, customer.id)).toHaveLength(0);
@@ -205,9 +206,9 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         rawMaterialAvailableKg: '1000.000',
       });
 
-      // La misma combinación con 400 + 500 sí entra: dos reservas contra el mismo agregado.
-      const rowsA = pieces([10, 10]); // 10 × 10 m = 100 m ⇒ 400 kg
-      const rowsB = pieces([12.5, 10]); // 10 × 12.5 m = 125 m ⇒ 500 kg
+      // La misma combinación, 404 + 505, sí entra: dos reservas contra el mismo agregado.
+      const rowsA = pieces([10, 10]); // 10 × 10 m = 100 m ⇒ 404 kg (4.04 kg/m, D-165)
+      const rowsB = pieces([12.5, 10]); // 10 × 12.5 m = 125 m ⇒ 505 kg (4.04 kg/m, D-165)
       const fits = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
         businessLine: COVER_LINE,
@@ -226,14 +227,15 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect(order.reservations.every((r) => r.itemType === 'RAW_MATERIAL')).toBe(true);
       // Las dos reservas son del **mismo** agregado (mismo color y espesor).
       expect(new Set(order.reservations.map((r) => r.itemId)).size).toBe(1);
-      expect(order.reservations.map((r) => r.qty).sort()).toEqual(['400.000', '500.000']);
+      expect(order.reservations.map((r) => r.qty).sort()).toEqual(['404.000', '505.000']);
 
       const panelAfter = await stockPanel(api, {
         businessLine: COVER_LINE,
         productIds: [cover.product.id],
       });
+      // 1 000 físicos − 404 − 505 = 91 disponibles (D-165).
       expect(panelAfter.products.find((p) => p.productId === cover.product.id)).toMatchObject({
-        rawMaterialAvailableKg: '100.000',
+        rawMaterialAvailableKg: '91.000',
       });
     } finally {
       await purgeSalesTrail(api, trail);
@@ -281,8 +283,8 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
     const trail = newTrail();
 
     try {
-      const rowsA = pieces([17.5, 10]); // 10 × 17.5 m = 175 m ⇒ 700 kg
-      const rowsB = pieces([15, 15]); // 15 × 15 m = 225 m ⇒ 900 kg
+      const rowsA = pieces([17.5, 10]); // 10 × 17.5 m = 175 m ⇒ 707 kg (4.04 kg/m, D-165)
+      const rowsB = pieces([15, 15]); // 15 × 15 m = 225 m ⇒ 909 kg (4.04 kg/m, D-165)
       const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
         businessLine: COVER_LINE,
@@ -315,16 +317,17 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect(order.reservations).toHaveLength(2);
 
       const byItem = new Map(order.reservations.map((r) => [r.itemId, r]));
-      expect(byItem.get(specIds[0]!)).toMatchObject({ qty: '700.000', status: 'ACTIVE' });
-      expect(byItem.get(specIds[1]!)).toMatchObject({ qty: '900.000', status: 'ACTIVE' });
+      expect(byItem.get(specIds[0]!)).toMatchObject({ qty: '707.000', status: 'ACTIVE' });
+      expect(byItem.get(specIds[1]!)).toMatchObject({ qty: '909.000', status: 'ACTIVE' });
 
+      // 1 000 físicos del agregado de A − 707 prometidos (D-165: 175 m × 4.04 kg/m).
       const panelA = await stockPanel(api, { businessLine: COVER_LINE, productIds: [productA.id] });
       expect(panelA.products.find((p) => p.productId === productA.id)).toMatchObject({
-        rawMaterialAvailableKg: '300.000',
+        rawMaterialAvailableKg: '293.000',
       });
       const panelB = await stockPanel(api, { businessLine: COVER_LINE, productIds: [productB.id] });
       expect(panelB.products.find((p) => p.productId === productB.id)).toMatchObject({
-        rawMaterialAvailableKg: '600.000',
+        rawMaterialAvailableKg: '591.000',
       });
 
       // Anular el pedido libera las dos, no una: la reversa también es "todo o nada".
@@ -622,7 +625,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         productIds: [scenario.product.id],
       });
       expect(afterMount.products.find((p) => p.productId === scenario.product.id)).toMatchObject({
-        rawMaterialAvailableKg: '800.000',
+        rawMaterialAvailableKg: '798.000',
       });
 
       // Pedido B (otro cliente) sobre el mismo agregado: **confirma sin problema**, porque hay
@@ -770,11 +773,11 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       });
       expect(edited.items[0]).toMatchObject({
         reserveItemType: 'RAW_MATERIAL',
-        reserveQty: '20.000',
+        reserveQty: '20.200',
       });
       expect(edited.items[1]).toMatchObject({
         reserveItemType: 'RAW_MATERIAL',
-        reserveQty: '16.000',
+        reserveQty: '16.160',
       });
 
       // Emitida: el PDF existe y la edición se cierra.

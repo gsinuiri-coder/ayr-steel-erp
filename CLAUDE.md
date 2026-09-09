@@ -44,6 +44,10 @@ ERP web para una empresa peruana de transformación y venta de acero. Fuente de 
 14. **Los subítems de largo los decide la UNIDAD, nunca el subtipo (D-131).** `sellsByLength(product)` —`unit === MTR`— responde _¿esta línea necesita el detalle de largos?_, y vale para cualquier línea de negocio. `isMadeToMeasure(product)` —`roofingKind === A_MEDIDA`— responde _¿se fabrica contra pedido desde materia prima?_, y es exclusiva de Metallic Roofing. **Son dos preguntas distintas y las dos devuelven `boolean`, así que el compilador nunca avisa cuando se responde una con la otra.** Ya pasó dos veces: la primera dejó al mostrador vender material a medida; la segunda dejó pasar sin marca toda línea en `MTR` que no fuera `A_MEDIDA` en el importador de cotizaciones. Ninguna pregunta sobre subítems se responde con el subtipo. El centinela es `apps/api/src/sales/sales-lines.spec.ts`: si alguien define una en términos de la otra, se cae.
 15. **Los puertos 4000/4001 son del dueño.** `pnpm dev:preview` levanta api `:4000` + web `:4001` contra `ayr_local` para que el dueño mire la app mientras el agente trabaja. **El agente nunca los usa, nunca los mata y nunca corre nada ahí**: su entorno es `pnpm dev:local` (`:3000`/`:3001`), que es también donde corre Playwright — y una corrida de la suite mata y relevanta esos dos. Antes de matar un proceso por puerto, mirar cuál es: matar el `:4001` del dueño le tira la sesión del navegador sin ningún aviso. `dev:preview` va **siempre** contra `ayr_local`, nunca contra `ayr_local_e2e`, que la suite vacía en cada corrida.
 
+16. **Ningún texto largo pasa por la shell.** Nunca `node -e "..."`, `python -c`, `echo` ni interpolación de shell para escribir contenido de `docs/`, un bloque de código, un mensaje de commit de varias líneas ni nada que lleve adentro backticks, `$`, `!` o comillas. **El texto se escribe en un archivo** (con Write) y lo inserta un script que lo lee de ahí; si de verdad hace falta un heredoc, va con el delimitador **entre comillas simples** (`<<'EOF'`), que es lo único que apaga la expansión.
+    - Lo que pasó (sesión Precios, 2026-09-09): un `node -e` con backticks en el texto se lo comió la shell, que **ejecutó lo que había adentro** y disparó un `pnpm e2e` accidental. La suite vacía `ayr_local_e2e` al arrancar, así que **borró la base a mitad de otra corrida que estaba en curso**. El comando falló al instante por un regex inválido y no llegó a correr un solo test, pero la corrida viva se cortó y hubo que relanzarla.
+    - Por qué es una regla de forma y no de criterio: el daño no lo hace el comando que uno quiso correr, sino **otro** que la shell arma sola con pedazos del texto. Releer el texto no alcanza, porque hay que darse cuenta de que el texto también es código.
+
 ## Comandos
 
 ```
@@ -60,6 +64,7 @@ pnpm db:local reset|snapshot <n>|restore <n>   # operar el Postgres local (Docke
 pnpm e2e                     # Playwright, por defecto contra el Postgres local (Docker); en CI, Neon rama ci
 pnpm env:demo | db:demo | dev:demo   # entorno de ensayo (rama Neon demo, D-125)
 pnpm smoke:prod              # verificación post-deploy de SOLO LECTURA (D-126)
+pnpm check:price-floor [--branch production|demo|dev|local]   # SKU bajo el piso de D-163, solo lectura
 pnpm secrets:gh              # gh secret set desde .env.setup
 pnpm deploy:api | deploy:web # Cloud Run / Vercel
 pnpm monitors                # UptimeRobot

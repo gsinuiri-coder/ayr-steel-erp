@@ -1473,12 +1473,15 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
       purchaseId = purchase.id;
       const coil = coils[0]!;
 
+      // D-164: cerrar con saldo declara qué queda. Acá el rollo se guarda entero, así que
+      // se declaran sus 5 000 kg y no se liquida nada — el saldo tiene que quedar intacto.
       const closed = await postJson<CoilDto>(api, `/api/coils/${coil.id}/status`, {
         status: 'CLOSED',
+        physicalKg: '5000.000',
         reason: 'Se reserva para el pedido del mes que viene',
       });
       expect(closed.status).toBe('CLOSED');
-      // Cerrarla no toca el kardex: conserva sus kilos, solo que no se operan.
+      // Cerrarla sin liquidar no toca el kardex: conserva sus kilos, solo que no se operan.
       expect(closed.availableKg).toBe('5000.000');
 
       const splitBody = {

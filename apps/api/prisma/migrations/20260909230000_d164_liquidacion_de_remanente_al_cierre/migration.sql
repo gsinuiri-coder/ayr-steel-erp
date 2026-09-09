@@ -1,0 +1,19 @@
+-- D-164: el cierre de una bobina liquida su remanente como movimiento de kardex propio.
+--
+-- Hasta acá, cerrar una bobina (RF-19) cambiaba un estado y **no movía un gramo de kardex**:
+-- el saldo teórico que quedaba en `inventory_balances` se quedaba ahí para siempre, sumando
+-- kilos y valor a un inventario valorizado de material que ya no existe. Ahora el cierre
+-- emite un `OUT` (o un `IN`, si el conteo físico da de más) por la diferencia, en la misma
+-- transacción, vía `InventoryService.record` — nunca una edición del saldo (regla dura 2).
+--
+-- El valor nuevo del enum es **`CLOSE_ADJUSTMENT` y no `SCRAP`** a propósito. Son dos hechos
+-- distintos y se deshacen de dos formas distintas: la merma de RF-17 se anula con RF-18
+-- (`coils.scrap-cancel`), y este ajuste se deshace **reabriendo la bobina**, que revierte el
+-- movimiento entero. Mezclarlos repetiría el defecto que ya obligó a separar la merma de
+-- proceso del cierre de una OP dentro de `cancelScrap` (D-057), donde dos hechos bajo el
+-- mismo `refType` dejaban que la anulación equivocada creara valor de la nada.
+--
+-- Aditiva: agregar un valor a un enum no toca ninguna fila existente, y el API viejo contra
+-- la base migrada funciona igual mientras nadie escriba el valor nuevo. Lo que rompe es el
+-- API nuevo contra la base sin migrar, así que **la migración va primero**.
+ALTER TYPE "InventoryRefType" ADD VALUE 'CLOSE_ADJUSTMENT';

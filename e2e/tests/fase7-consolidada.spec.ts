@@ -752,7 +752,7 @@ test.describe('D-124 — fecha de operación', () => {
       weightKg: '2000',
       operationDate: AUG_COIL_IN,
     });
-    // 2 planchas de 5 m + 2 de 6 m = 22 m; a 4 kg/m, 88 kg de bobina.
+    // 2 planchas de 5 m + 2 de 6 m = 22 m; a 4.04 kg/m (D-165), 88.88 kg de bobina.
     const rows = pieces([5, 2], [6, 2]);
     const meters = metersOf(rows);
     const trail: { orderIds: string[]; quotationIds: string[]; productionOrderIds: string[] } = {
@@ -810,7 +810,7 @@ test.describe('D-124 — fecha de operación', () => {
       const coilOut = coilKardex.find((m) => m.type === 'OUT');
       expect(coilOut, 'el reporte descuenta kilos de la bobina').toBeDefined();
       expect(coilOut!.operationDate).toBe(AUG_PRODUCTION_REPORT);
-      expect(coilOut!.qty).toBe('88.000');
+      expect(coilOut!.qty).toBe('88.880');
 
       const productIn = productKardex.find((m) => m.type === 'IN');
       expect(productIn, 'el reporte da de alta los metros fabricados').toBeDefined();

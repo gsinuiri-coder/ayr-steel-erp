@@ -144,6 +144,9 @@ enum InventoryRefType {
   SPLIT
   /// Merma (RF-17, D-040, Fase 2b). "SCRAP" por §0.1; la UI lo llama merma.
   SCRAP
+  /// Liquidación del remanente al cerrar una bobina (RF-19, D-164). Separado de `SCRAP`
+  /// a propósito: se deshace **reabriendo** la bobina, no con la anulación de RF-18.
+  CLOSE_ADJUSTMENT
   /// Corte tercerizado (RF-40/41, Fase 3).
   CUTTING
   /// Ajuste manual de inventario.

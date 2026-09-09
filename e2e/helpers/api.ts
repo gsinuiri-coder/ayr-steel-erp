@@ -163,3 +163,27 @@ export async function createUser(
   const body = (await res.json()) as { id: string };
   return { id: body.id, email, password, role };
 }
+
+/**
+ * Cierra una bobina **sin liquidar nada** (RF-19 + D-164).
+ *
+ * Desde D-164 cerrar una bobina con saldo exige declarar cuántos kilos quedan de verdad: la
+ * diferencia se liquida como movimiento de kardex. Los escenarios que cierran un rollo para
+ * sacarlo de producción —y no porque se haya agotado— quieren el saldo intacto, así que
+ * declaran el saldo entero. El helper lo lee de la propia bobina en vez de repetir el número
+ * en cada spec, que se desincroniza en cuanto el fixture cambia de peso.
+ *
+ * El cierre que **sí** liquida se prueba explícitamente en `cierre-bobina-d164.spec.ts`.
+ */
+export async function closeCoilKeepingStock(
+  api: APIRequestContext,
+  coilId: string,
+  reason?: string,
+): Promise<{ status: string; availableKg: string }> {
+  const coil = await getJson<{ availableKg: string }>(api, `/api/coils/${coilId}`);
+  return postJson(api, `/api/coils/${coilId}/status`, {
+    status: 'CLOSED',
+    physicalKg: coil.availableKg,
+    reason,
+  });
+}

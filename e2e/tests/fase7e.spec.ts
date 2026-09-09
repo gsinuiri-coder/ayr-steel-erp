@@ -509,8 +509,10 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
       expect(catalog.thicknessMm).toBe('0.50');
       expect(catalog.widthMm).toBe('1000.00');
       // 1000 mm de ancho × 0.50 mm de espesor × 3000 mm de largo × 8.0 de densidad / 1e6
-      // = 12 kg por plancha.
-      expect(catalog.theoreticalKgPerUnit).toBe('12.000');
+      // = 12 kg de geometría pura, y 12.12 con el 1 % de merma normal que D-165 absorbe en
+      // la densidad estándar. El número dice cuánta bobina se lleva la plancha, no cuánto
+      // pesa la plancha.
+      expect(catalog.theoreticalKgPerUnit).toBe('12.120');
 
       const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,

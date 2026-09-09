@@ -15,6 +15,10 @@ Cuatro ramas de Neon, cuatro propósitos que no se mezclan. **Ninguna se borra n
 - API en Cloud Run `us-central1`, web en Vercel; el web llama al API por `/api/*` (D-015, D-022).
 - Migraciones y seed: `pnpm db:prod` (solo `migrate deploy`, nunca `reset`).
 - **Verificación post-deploy: `pnpm smoke:prod`** — solo lectura. Ver abajo.
+- **Diagnóstico de precios: `pnpm check:price-floor --branch production`** — solo lectura
+  (D-163/D-164). Lista los SKU activos cuyo precio de lista quedó por debajo del piso duro.
+  Es el insumo para decidir el aviso de mínimo en el mostrador; no escribe nada. Con
+  `--branch local` o `--branch local-e2e` corre contra las bases de Docker.
 - Nunca se usa la cuenta real del dueño para verificar nada: se crea un ADMINISTRADOR
   efímero `e2e-...@ayr.test` y se borra al terminar (D-024).
 

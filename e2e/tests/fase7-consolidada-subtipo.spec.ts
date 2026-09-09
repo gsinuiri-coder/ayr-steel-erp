@@ -1,11 +1,12 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, postJson } from '../helpers/api';
+import { adminApi, closeCoilKeepingStock, postJson } from '../helpers/api';
 import { createCuttingSupplier, errorFrom, today, type ProductDto } from '../helpers/production';
 import {
   buyRoofingCoil,
   createColor,
   createRoofingFinish,
   createRoofingProduct,
+  KG_PER_METER,
   metersOf,
   pieces,
   purgeRoofingTrail,
@@ -27,11 +28,11 @@ import { createCustomer, queueOf, type QuotationDto, type SalesOrderDto } from '
  * defecto no se veía como un error de catálogo sino como una venta que se perdía.
  *
  * Los números están elegidos para comprobarse a ojo: bobina de 1 000 mm × 0.50 mm con un
- * acabado de densidad 8.0 son **4 kg por metro lineal** (helpers/roofing).
+ * acabado de densidad 8.0 son 4 kg por metro de geometría, y **4.04 con el 1 % de merma
+ * normal que D-165 metió en la densidad estándar** — que es lo que de verdad sale del rollo,
+ * y por eso los 61 m del caso real reservan 246.44 kg y no 244 (`KG_PER_METER` en
+ * helpers/roofing).
  */
-
-/** Kilos por metro lineal de la geometría de prueba. Ver el encabezado. */
-const KG_PER_METER = 4;
 
 /** Los subítems del caso real: 5 planchas de 5 m + 6 de 6 m = 61 metros lineales. */
 const REAL_CASE_ROWS = pieces([5, 5], [6, 6]);
@@ -144,7 +145,9 @@ test.describe('D-127 — subtipo de cobertura', () => {
         status: 'ACTIVE',
       });
       expect(reservation.itemId, 'la promesa no nombra una bobina física').not.toBe(coil.id);
-      expect(reservation.qty, '61 ml × 4 kg/ml').toBe((Number(meters) * KG_PER_METER).toFixed(3));
+      expect(reservation.qty, '61 ml × 4.04 kg/ml (D-165)').toBe(
+        (Number(meters) * KG_PER_METER).toFixed(3),
+      );
 
       // Y el pedido llega a la cola de producción, que es lo que el defecto impedía: sin
       // reserva de materia prima no había nada que fabricar y la orden nunca aparecía.
@@ -452,10 +455,14 @@ test.describe('D-127 — subtipo de cobertura', () => {
       // La primera bobina se cierra (RF-19): deja de contar para el agregado, igual que si
       // se hubiera consumido entera. Es lo que pasa de verdad entre cotizar y confirmar
       // cuando pasan días.
-      await postJson(api, `/api/coils/${first.coil.id}/status`, {
-        status: 'CLOSED',
-        reason: 'La bobina se agotó en otra corrida (prueba E2E)',
-      });
+      // D-164: el caso mide que una bobina **cerrada** sale del agregado aunque conserve su
+      // saldo, así que se declara el saldo entero. Liquidarlo probaría otra cosa —que el
+      // agregado baja porque los kilos se fueron—, que es justo lo que este caso descarta.
+      await closeCoilKeepingStock(
+        api,
+        first.coil.id,
+        'La bobina se guarda para otra corrida (prueba E2E)',
+      );
 
       // Sin material vivo, la misma cotización no se confirma: el agregado quedó en cero
       // aunque la bobina cerrada siga existiendo con su saldo.
@@ -527,7 +534,7 @@ test.describe('D-127 — subtipo de cobertura', () => {
       colorId: color.id,
     });
     const meters = metersOf(REAL_CASE_ROWS);
-    const neededKg = Number(meters) * KG_PER_METER; // 244 kg por línea.
+    const neededKg = Number(meters) * KG_PER_METER; // 246.44 kg por línea (61 m × 4.04, D-165).
     // 300 kg: alcanza para **una** línea y no para las dos. Con la segunda bobina el
     // agregado llega a 600 y las dos entran.
     const first = await buyRoofingCoil(api, {

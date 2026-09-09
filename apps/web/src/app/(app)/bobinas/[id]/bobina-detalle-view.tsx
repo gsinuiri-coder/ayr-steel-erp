@@ -11,6 +11,7 @@ import {
   INVENTORY_REF_TYPE_LABELS,
   COIL_STATUS_LABELS,
   CURRENCY_LABELS,
+  Decimal,
   Role,
   type CoilDto,
   type CoilSplitDto,
@@ -40,6 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { CoilCloseDialog } from './coil-close-dialog';
 import { CoilEditDialog } from './coil-edit-dialog';
 import { CoilScrapDialog } from './coil-scrap-dialog';
 import { CoilSplitDialog } from './coil-split-dialog';
@@ -48,7 +50,13 @@ import { cn, LINK_CLASSNAME } from '@/lib/utils';
 type PendingAction =
   | { kind: 'cancel-coil' }
   | { kind: 'revert-split'; splitId: string; label: string }
-  | { kind: 'cancel-scrap'; movementId: string; qty: string };
+  | { kind: 'cancel-scrap'; movementId: string; qty: string }
+  /**
+   * D-164: reabrir. `qty` son los kilos que el cierre liquidó y que vuelven al kardex, o
+   * `null` cuando no hay ajuste que revertir (o el kardex todavía no cargó): el motivo se
+   * pide igual, y lo único que cambia es el texto del diálogo.
+   */
+  | { kind: 'reopen'; qty: string | null };
 
 /**
  * Detalle de una bobina (RF-15..RF-21): datos, hijas, kardex y las acciones de Fase 2b
@@ -60,7 +68,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
 
-  const [dialog, setDialog] = useState<'split' | 'scrap' | 'edit' | null>(null);
+  const [dialog, setDialog] = useState<'split' | 'scrap' | 'edit' | 'close' | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
 
   const coil = useQuery({ queryKey: ['coil', id], queryFn: () => api<CoilDto>(`/coils/${id}`) });
@@ -103,6 +111,12 @@ export function BobinaDetalleView({ id }: { id: string }) {
       if (action.kind === 'revert-split') {
         return api(`/coils/splits/${action.splitId}/revert`, { method: 'POST', body });
       }
+      if (action.kind === 'reopen') {
+        return api(`/coils/${id}/status`, {
+          method: 'POST',
+          body: { status: 'OPEN', ...body },
+        });
+      }
       return api(`/coils/scraps/${action.movementId}/cancel`, { method: 'POST', body });
     },
     onSuccess: () => {
@@ -114,17 +128,6 @@ export function BobinaDetalleView({ id }: { id: string }) {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo completar la operación'),
   });
 
-  const setStatus = useMutation({
-    mutationFn: (status: 'OPEN' | 'CLOSED') =>
-      api<CoilDto>(`/coils/${id}/status`, { method: 'POST', body: { status } }),
-    onSuccess: (_data, status) => {
-      toast.success(status === 'CLOSED' ? 'Bobina cerrada' : 'Bobina reabierta');
-      invalidate();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cambiar el estado'),
-  });
-
   if (coil.isPending) return <Skeleton className="h-64 w-full" />;
   if (coil.isError || !coil.data) {
     return <p className="text-destructive">No se pudo cargar la bobina.</p>;
@@ -134,6 +137,20 @@ export function BobinaDetalleView({ id }: { id: string }) {
   const isOpen = c.status === 'OPEN';
   const hasStock = isPositiveDecimal(c.availableKg);
   const canOperate = isOpen && hasStock;
+  /**
+   * D-164: el ajuste que reabrir va a revertir, si lo hay. Solo sirve para **decir cuántos
+   * kilos vuelven** en el diálogo; que haya o no motivo no depende de esto (ver abajo).
+   *
+   * El criterio es el mismo que aplica el API: el ajuste se revierte únicamente si es el
+   * **último movimiento del kardex**, a secas, y no fue anulado todavía. `movementRows` viene
+   * del más reciente al más antiguo —así lo pinta la tabla—, así que ese movimiento es el
+   * **primero** de la lista.
+   */
+  const lastMovement = movementRows[0];
+  const liveCloseAdjustment =
+    lastMovement?.refType === 'CLOSE_ADJUSTMENT' && !lastMovement.reversedById
+      ? lastMovement
+      : undefined;
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -175,9 +192,25 @@ export function BobinaDetalleView({ id }: { id: string }) {
           {c.status !== 'CANCELLED' && (
             <Button
               variant="outline"
-              disabled={setStatus.isPending}
+              disabled={runAction.isPending}
               onClick={() => {
-                setStatus.mutate(isOpen ? 'CLOSED' : 'OPEN');
+                // D-164: cerrar **siempre** pregunta cuánto queda, también con el saldo en
+                // cero. Es la misma pregunta en los dos casos, el diálogo muestra "no se
+                // liquida nada" cuando no hay nada, y es lo único que deja declarar un
+                // sobrante sobre una bobina que el kardex ya dio por consumida.
+                //
+                // Reabrir **también** pasa siempre por el diálogo de motivo, aunque no haya
+                // ajuste que revertir. Decidirlo mirando el kardex era un error: mientras esa
+                // consulta carga —o si falló, o durante el refetch posterior al cierre—
+                // `movementRows` está vacío, así que se mandaba un `OPEN` sin motivo y el API
+                // lo rechazaba pidiendo algo que la pantalla nunca había ofrecido; con el
+                // kardex caído, la bobina no se podía reabrir. El motivo de más no hace daño
+                // cuando no hay nada que deshacer, y el kardex solo decide **el texto**.
+                if (isOpen) {
+                  setDialog('close');
+                } else {
+                  setPending({ kind: 'reopen', qty: liveCloseAdjustment?.qty ?? null });
+                }
               }}
             >
               {isOpen ? 'Cerrar' : 'Abrir'}
@@ -229,6 +262,13 @@ export function BobinaDetalleView({ id }: { id: string }) {
             <Row label="Costo por kg" value={formatMoney(c.unitCostPerKg, c.currency, 4)} />
             <Row label="Costo total" value={formatMoney(c.totalCost, c.currency)} />
             <Row label="Costo total en soles" value={formatMoney(c.totalCostPen)} />
+            {/* D-164: el promedio del kardex, que puede diferir del costo de compra tras un
+                landed cost (D-043) o un partido, y es con el que se valoriza lo que salga. */}
+            <Row label="Promedio del kardex" value={`${formatMoney(c.avgCostPen, 'PEN', 4)}/kg`} />
+            <Row
+              label="Saldo valorizado"
+              value={formatMoney(new Decimal(c.availableKg).times(c.avgCostPen).toFixed(4))}
+            />
           </CardContent>
         </Card>
 
@@ -376,7 +416,8 @@ export function BobinaDetalleView({ id }: { id: string }) {
                   </TableCell>
                   <TableCell className="text-right">
                     {/* Solo la merma se anula desde acá: un ingreso se deshace anulando la
-                        bobina o la compra, y un partido se revierte entero (RF-16). */}
+                        bobina o la compra, un partido se revierte entero (RF-16) y el ajuste
+                        del cierre se deshace reabriendo la bobina (D-164), no por RF-18. */}
                     {m.refType === 'SCRAP' && !m.reversalOfId && !m.reversedById && (
                       <Button
                         variant="outline"
@@ -423,6 +464,14 @@ export function BobinaDetalleView({ id }: { id: string }) {
         }}
         onDone={invalidate}
       />
+      <CoilCloseDialog
+        coil={c}
+        open={dialog === 'close'}
+        onOpenChange={(open) => {
+          setDialog(open ? 'close' : null);
+        }}
+        onDone={invalidate}
+      />
       <CoilEditDialog
         coil={c}
         canEditCost={isAdmin}
@@ -440,7 +489,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
         }}
         title={pendingTitle(pending)}
         description={pendingDescription(pending)}
-        confirmLabel="Sí, anular"
+        confirmLabel={pending?.kind === 'reopen' ? 'Sí, reabrir' : 'Sí, anular'}
         pending={runAction.isPending}
         withOperationDate
         onConfirm={(reason, operationDate) => {
@@ -454,6 +503,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 function pendingTitle(action: PendingAction | null): string {
   if (action?.kind === 'revert-split') return 'Revertir el partido';
   if (action?.kind === 'cancel-scrap') return 'Anular la merma';
+  if (action?.kind === 'reopen') return 'Reabrir la bobina';
   return 'Anular la bobina';
 }
 
@@ -463,6 +513,11 @@ function pendingDescription(action: PendingAction | null): string {
   }
   if (action?.kind === 'cancel-scrap') {
     return `Se devuelven ${action.qty} kg al saldo con un movimiento inverso. El movimiento original no se borra.`;
+  }
+  if (action?.kind === 'reopen') {
+    return action.qty === null
+      ? 'La bobina vuelve a estar disponible para producción y partido. Si su cierre había liquidado un remanente, esos kilos vuelven al saldo con un movimiento inverso (D-164).'
+      : `Al cerrarla se liquidaron ${action.qty} kg: reabrirla los devuelve al saldo con un movimiento inverso (D-164). El ajuste original no se borra.`;
   }
   return 'La bobina queda anulada y su ingreso se revierte en el kardex. Solo se puede si no tiene ningún otro movimiento.';
 }

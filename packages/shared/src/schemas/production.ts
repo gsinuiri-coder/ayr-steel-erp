@@ -71,10 +71,46 @@ export const MAX_SCRAP_RATIO_WITHOUT_REASON = 0.1;
 export const MAX_CONSUMPTION_DEVIATION_RATIO = 0.1;
 
 /**
+ * D-165 — **la merma normal, en puntos porcentuales**, absorbida dentro del estándar.
+ *
+ * Regla del cliente confirmada por el dueño: convertir geometría en kilos rinde siempre un
+ * 1 % menos de material del que el prisma perfecto promete. Recorte lateral, despunte de
+ * arranque y el propio espesor real del rollo son pérdidas que ocurren **todas las veces**,
+ * así que no son un hecho a registrar: son parte del costo de hacer un metro.
+ */
+export const NORMAL_SCRAP_RATE_PCT = '1.0000';
+
+/**
+ * D-165 — la densidad del acabado **con la merma normal adentro**: `densidad × 1.01`.
+ *
+ * Vive en una función y no como un `× 1.01` repetido en las dos cuentas de abajo, y sobre
+ * todo **no** como un valor tipeado a mano en `finishes.density_factor`, por tres motivos:
+ *
+ * 1. La densidad del acero es un dato físico (7.85 t/m³) y la merma es una política de la
+ *    empresa. Multiplicarlos en el maestro deja un número que no es ninguna de las dos cosas
+ *    y que nadie puede volver a separar: revisar el 1 % obligaría a dividir cada acabado por
+ *    1.01 primero, adivinando cuáles ya lo tenían.
+ * 2. El factor entra por **un solo lugar**, así que el kilo teórico del reporte, el metro
+ *    equivalente de la bobina, los kilos que reserva una cobertura a medida y el costo por
+ *    metro del piso de precio (D-163) se mueven todos juntos. Aplicado a mano en los datos,
+ *    se movían solo los acabados que alguien se acordó de editar.
+ * 3. Es lo que hace medible la merma **anormal**: con el 1 % adentro del estándar, el
+ *    remanente que D-164 liquida al cerrar la bobina ya no mezcla las dos.
+ */
+export function standardDensityFactor(densityFactor: DecimalInput): Decimal {
+  return toDecimal(densityFactor).times(
+    toDecimal('1').plus(toDecimal(NORMAL_SCRAP_RATE_PCT).div(100)),
+  );
+}
+
+/**
  * Kilo teórico de una pieza desde su geometría y el factor de densidad del acabado
  * (D-047, RF-25). `widthMm × thicknessMm × lengthMm` da mm³; el factor viene en t/m³
  * (acero ≈ 7.85), así que dividir entre 1 000 000 deja kilos:
  * `mm³ / 1e9 = m³`, `× (factor × 1000) = kg` ⇒ `mm³ × factor / 1e6`.
+ *
+ * D-165: la densidad que entra en la cuenta es la **estándar**, con el 1 % de merma normal
+ * adentro. El número que sale es lo que la bobina entrega de menos, no lo que la pieza pesa.
  *
  * Vive acá y no en el API para que el maestro (web) sugiera exactamente el mismo número
  * que el API valida, igual que las constantes del partido (RF-15).
@@ -88,7 +124,7 @@ export function theoreticalKgPerPiece(input: {
   const volume = toDecimal(input.widthMm)
     .times(toDecimal(input.thicknessMm))
     .times(toDecimal(input.pieceLengthMm));
-  return roundTo(volume.times(toDecimal(input.densityFactor)).div(1_000_000), 'KG');
+  return roundTo(volume.times(standardDensityFactor(input.densityFactor)).div(1_000_000), 'KG');
 }
 
 /** `piezas × kgPerPiece`, redondeado a la escala de kilos (D-003). */
@@ -133,6 +169,11 @@ export function piecesTheoreticalKg(
  * resultado intermedio de `equivalentMeters`, y redondearlo acá (como sí hace
  * `theoreticalKgPerPiece`, que es un resultado final) movería la estimación casi un
  * centímetro por metro antes de dividir.
+ *
+ * D-165: con la densidad **estándar**, igual que `theoreticalKgPerPiece`. Es la misma
+ * pregunta —cuánto material se lleva esto— y tiene que dar el mismo factor: si una de las
+ * dos llevara la merma normal y la otra no, los kilos que un pedido reserva por metro y los
+ * que el reporte de planta descuenta por metro serían distintos.
  */
 export function kgPerMeter(input: {
   widthMm: DecimalInput;
@@ -142,7 +183,7 @@ export function kgPerMeter(input: {
   return toDecimal(input.widthMm)
     .times(toDecimal(input.thicknessMm))
     .times(1000)
-    .times(toDecimal(input.densityFactor))
+    .times(standardDensityFactor(input.densityFactor))
     .div(1_000_000);
 }
 

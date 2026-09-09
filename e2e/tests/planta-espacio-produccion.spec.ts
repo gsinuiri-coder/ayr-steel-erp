@@ -116,12 +116,12 @@ test.describe('D-146/D-155 — tope del plan y guardado por orden', () => {
       expect(rejected.message).toContain('quedan 8.000 m');
 
       // El rechazo no dejó rastro: la bobina sigue con los 32 × 4 kg del primer reporte.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1872.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1870.720');
 
       // El borde exacto sí entra: 2 planchas de 4 m completan los 40 ML clavados.
       const complete = await reportPieces(api, op.id, { pieces: pieces([4, 2]) });
       expect(complete.metersReported).toBe('40.000');
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1840.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1838.400');
 
       // Con el plan cubierto, cualquier reporte siguiente se rechaza diciendo justamente eso.
       const covered = await postExpectingError(api, `/api/production/roofing/${op.id}/report`, {
@@ -168,14 +168,14 @@ test.describe('D-146/D-155 — tope del plan y guardado por orden', () => {
         consumedKg: '70.000',
       });
       const first = reported.reports.find((r) => r.status === 'ACTIVE')!;
-      expect(first.theoreticalKg).toBe('64.000');
+      expect(first.theoreticalKg).toBe('64.640');
       expect(first.consumedKg).toBe('70.000');
       expect(first.rawMaterialWarning).toBeNull();
       // **Lo que decide la decisión:** salieron 64 kg, no 70. El consumo real se reconcilia
       // al cerrar (D-089); el kg declarado es dato de planta, no un movimiento.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1936.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1935.360');
 
-      // D-154: por encima del kilo teórico del plan (40 ML × 4 kg/m = 160 kg) **entra igual**.
+      // D-154: por encima del kilo teórico del plan (40 ML × 4.04 kg/m = 161.6 kg, D-165) **entra igual**.
       // Como tope duro, D-146 convertía el dato observado en un dato que había que falsear
       // para poder guardarlo: una corrida que de verdad gastó de más no se podía anotar.
       const over = await reportPieces(api, op.id, {
@@ -184,16 +184,16 @@ test.describe('D-146/D-155 — tope del plan y guardado por orden', () => {
       });
       const second = await lastActiveReport(api, op.id);
       expect(second.consumedKg).toBe('120.000');
-      expect(second.theoreticalKg).toBe('32.000');
+      expect(second.theoreticalKg).toBe('32.320');
       // Y queda anotado: 120 kg declarados contra 32 teóricos, y 190 acumulados sobre 160.
       expect(second.rawMaterialWarning).not.toBeNull();
       expect(second.rawMaterialWarning).toContain('Consumo declarado 120.000 kg');
-      expect(second.rawMaterialWarning).toContain('160.000 kg');
+      expect(second.rawMaterialWarning).toContain('161.600 kg');
 
       // El aviso es del kilo declarado, no del agregado: no hay ningún pedido en riesgo.
       expect(over.rawMaterialWarnings ?? []).toEqual([]);
       // Y el kardex siguió saliendo por el teórico de los largos: 1936 − 32.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1904.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1903.040');
     } finally {
       await purgeRoofingTrail(api, trail);
     }
@@ -284,18 +284,18 @@ test.describe('D-146/D-155 — tope del plan y guardado por orden', () => {
 
       // Kardex: 4 planchas de 4 m (64 kg) de la primera bobina y 2 de 6 m (48 kg) de la
       // segunda; el producto entra por los 28 m que salieron de las dos.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1936.000');
-      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('1952.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1935.360');
+      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('1951.520');
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('28.000');
 
       const after = await batchOrders(api);
       const afterA = after.find((r) => r.orderId === opA.id)!;
       expect(afterA.remainingMeters).toBe('24.000');
       expect(afterA.declaredKg).toBe('70.000');
-      expect(afterA.reportedKg).toBe('64.000');
+      expect(afterA.reportedKg).toBe('64.640');
       // La bobina que ya roló no se puede bajar, y la pestaña lo sabe por este número.
-      expect(afterA.coils[0]!.consumedKg).toBe('64.000');
-      expect(afterA.coils[0]!.remainingKg).toBe('1936.000');
+      expect(afterA.coils[0]!.consumedKg).toBe('64.640');
+      expect(afterA.coils[0]!.remainingKg).toBe('1935.360');
       expect(after.find((r) => r.orderId === opB.id)!.remainingMeters).toBe('18.000');
 
       // El filtro por pedido acota a las órdenes de ese pedido y a ninguna más: es lo que

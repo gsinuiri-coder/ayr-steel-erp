@@ -59,6 +59,15 @@ export const coilSchema = z.object({
   /** Kilos disponibles según el kardex; puede diferir de `weightKg` tras consumos. */
   availableKg: z.string(),
   /**
+   * D-164: costo promedio vigente del saldo, en soles por kilo (D-028/D-043). Es lo que
+   * permite mostrar el remanente **valorizado** antes de confirmar el cierre, con el mismo
+   * número con el que el kardex lo va a sacar. `"0.0000"` cuando la bobina no tiene saldo.
+   *
+   * No abre nada: este módulo ya es solo de ADMINISTRADOR y SUPERVISOR_PLANTA justamente
+   * porque el DTO lleva el costo de compra por kilo.
+   */
+  avgCostPen: z.string(),
+  /**
    * Metro lineal equivalente del saldo disponible (C, Fase 7e / D-116):
    * `availableKg / (widthMm × thicknessMm × densityFactor)`. `null` cuando la geometría no
    * da kilo por metro (no debería pasar con datos reales, pero una bobina histórica
@@ -234,11 +243,43 @@ export const reverseMovementSchema = z.object({
 });
 export type ReverseMovementInput = z.infer<typeof reverseMovementSchema>;
 
-/** RF-19: abrir o cerrar una bobina. Una cerrada no entra a producción ni a partido. */
-export const setCoilStatusSchema = z.object({
-  status: z.enum(['OPEN', 'CLOSED'], { errorMap: () => ({ message: 'Estado inválido' }) }),
-  reason: reasonSchema.optional(),
-});
+/**
+ * RF-19: abrir o cerrar una bobina. Una cerrada no entra a producción ni a partido.
+ *
+ * D-164: cerrar con saldo teórico obliga a decir **qué queda de verdad** (`physicalKg`) y a
+ * dar un motivo si eso difiere del saldo; la diferencia se liquida como movimiento de kardex
+ * dentro de la misma transacción. Reabrir una bobina que se cerró liquidando revierte ese
+ * movimiento, y por eso también pide motivo. `backdatableFields` (D-124) porque el ajuste es
+ * un hecho fechado como cualquier otro.
+ */
+export const setCoilStatusSchema = z
+  .object({
+    ...backdatableFields,
+    status: z.enum(['OPEN', 'CLOSED'], { errorMap: () => ({ message: 'Estado inválido' }) }),
+    /**
+     * Kilos que quedan físicamente en el rollo al cerrarlo. Solo se lee al cerrar. Ausente
+     * significa **cerrar sin liquidar nada**, que es lo que hace un cierre sobre una bobina
+     * ya en cero; con saldo vivo, el servicio lo exige y nombra el remanente en el 400.
+     */
+    physicalKg: decimalStringSchema('KG', { max: MAX_VALUE.KG }).optional(),
+    reason: reasonSchema.optional(),
+  })
+  .superRefine((d, ctx) => {
+    if (d.physicalKg !== undefined && toDecimal(d.physicalKg).isNegative()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['physicalKg'],
+        message: 'Los kilos que quedan en la bobina no pueden ser negativos',
+      });
+    }
+    if (d.status === 'OPEN' && d.physicalKg !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['physicalKg'],
+        message: 'Los kilos que quedan solo se declaran al cerrar la bobina',
+      });
+    }
+  });
 export type SetCoilStatusInput = z.infer<typeof setCoilStatusSchema>;
 
 /**

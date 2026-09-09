@@ -1,5 +1,12 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, createSupplier, createUser, getJson, postJson } from '../helpers/api';
+import {
+  adminApi,
+  closeCoilKeepingStock,
+  createSupplier,
+  createUser,
+  getJson,
+  postJson,
+} from '../helpers/api';
 import {
   apiAs,
   balanceOf,
@@ -99,7 +106,8 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
     };
 
     try {
-      // 2 planchas de 5 m = 10 m. A 4 kg/m (densidad 8.0, 1 000 mm, 0.50 mm) son 40 kg.
+      // 2 planchas de 5 m = 10 m. La geometría (densidad 8.0, 1 000 mm, 0.50 mm) da 4 kg/m, y
+      // D-165 los deja en 4.04 con el 1 % de merma normal adentro: 40.4 kg.
       const rows = pieces([5, 2]);
       expect(metersOf(rows)).toBe('10.000');
 
@@ -122,7 +130,7 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         igvPen: '216.0000',
         totalPen: '1416.0000',
         reserveItemType: 'RAW_MATERIAL',
-        reserveQty: '40.000',
+        reserveQty: '40.400',
         reserveUnit: 'KGM',
       });
       expect(quotation.totalPen).toBe('1416.0000');
@@ -161,7 +169,7 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
       expect(order.reservations).toHaveLength(1);
       expect(order.reservations[0]).toMatchObject({
         itemType: 'RAW_MATERIAL',
-        qty: '40.000',
+        qty: '40.400',
         unit: 'KGM',
         status: 'ACTIVE',
         productionOrderId: null,
@@ -175,8 +183,9 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         businessLine: COVER_LINE,
         productIds: [scenario.product.id],
       });
+      // 5 000 físicos − 40.4 prometidos (D-165: 10 m × 4.04 kg/m).
       expect(afterConfirm.products.find((p) => p.productId === scenario.product.id)).toMatchObject({
-        rawMaterialAvailableKg: '4960.000',
+        rawMaterialAvailableKg: '4959.600',
       });
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('5000.000');
 
@@ -403,8 +412,8 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
       expect(failed.status).toBe(400);
       // El mensaje tiene que decir disponible y necesitado: sin eso el vendedor no sabe si
       // liberar una reserva o comprar/abrir otra bobina de ese color y espesor.
-      expect(failed.message).toContain('20.000');
-      expect(failed.message).toContain('40.000');
+      expect(failed.message).toContain('19.200');
+      expect(failed.message).toContain('40.400');
 
       // Falla completa: la cotización sigue emitida, sin pedido ni reserva colgando.
       const untouched = await getJson<QuotationDto>(api, `/api/sales/quotations/${second.id}`);
@@ -414,7 +423,7 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         productIds: [scenario.product.id],
       });
       expect(panel.products.find((p) => p.productId === scenario.product.id)).toMatchObject({
-        rawMaterialAvailableKg: '20.000',
+        rawMaterialAvailableKg: '19.200',
       });
     } finally {
       await purgeRoofingTrail(api, trail);
@@ -553,7 +562,7 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
       });
       expect(
         panelAfterConfirm.products.find((p) => p.productId === scenario.product.id),
-      ).toMatchObject({ rawMaterialAvailableKg: '2452.000' });
+      ).toMatchObject({ rawMaterialAvailableKg: '2451.520' });
 
       // Una cotización confirmada no se anula por su cuenta: primero el pedido.
       const wrongOrder = await postExpectingError(
@@ -615,7 +624,9 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
 
       // Y ahora que no hay reservas vivas, la bobina se puede cerrar sin problema: el
       // bloqueo era la reserva, no la bobina.
-      await postJson(api, `/api/coils/${scenario.coil.id}/status`, { status: 'CLOSED' });
+      // D-164: se cierra declarando el saldo entero, así que no hay ajuste que liquidar y
+      // reabrir tampoco necesita motivo. Lo que se prueba acá es el bloqueo por reserva.
+      await closeCoilKeepingStock(api, scenario.coil.id);
       await postJson(api, `/api/coils/${scenario.coil.id}/status`, { status: 'OPEN' });
     } finally {
       await purgeRoofingTrail(api, trail);

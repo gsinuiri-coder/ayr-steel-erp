@@ -24,6 +24,9 @@
 | Sesión Importadores — borrado de los directos y cotizaciones masivas           | ✅ Cerrada (2026-09-08) | D-150 (se elimina el módulo de importaciones entero), D-151 (padrón en el alta de proveedor), D-152 (importador de cotizaciones: preview sin estado + alta normal, todo o nada). 272/272 unitarios; 60 E2E locales. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Sesión Comprobantes manuales — D-131 a regla dura y D-153                      | ✅ Cerrada (2026-09-08) | D-131 elevada a regla dura 14 con centinela; D-153 (un borrador tiene dos terminales: emitir por el PSE o registrar manual). 279/279 unitarios; E2E de comprobante manual 5/5 y regresión de facturación con las fallas conocidas del cupo del PSE demo. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                        |
 | Sesión Planta II — guard de reservas, espacio de producción, UX del importador | ✅ Cerrada (2026-09-09) | D-154 (el faltante de materia prima avisa y no bloquea en producción; un pedido no se bloquea a sí mismo), D-155 (`/planta/producir`: una pestaña por orden, guardado por orden, retira la tanda de D-147), D-156 (ningún campo obligatorio es un callejón: alta express y selects buscables). Regla dura 15 (puertos 4000/4001 del dueño) y `pnpm dev:preview`. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                |
+| Sesión Planta III — importador asentado y una sola forma de producir           | ✅ Cerrada (2026-09-09) | D-157 (una cotización puede no vencer), D-158 (el cliente se crea del padrón), D-159 (plan de corte con largo bloqueado), D-160 (producir queda en un solo lugar). **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Sesión Precios — plancha por metro, valor contra precio y piso duro            | ✅ Cerrada (2026-09-09) | D-161 (la plancha de catálogo se cotiza por metro lineal), D-162 («valor de venta» sin IGV contra «precio de venta» con IGV), D-163 (piso duro con el margen sobre la venta, para todos los roles). 341/341 unitarios; 69/69 E2E de los specs afectados. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                                                                                                                                                                        |
+| Sesión Cierre de bobina — remanente liquidado y merma normal en el estándar    | ✅ Cerrada (2026-09-09) | D-164 (cerrar una bobina liquida su remanente como movimiento `CLOSE_ADJUSTMENT` en la misma transacción; reabrir lo revierte), D-165 (el 1 % de merma normal se absorbe en la densidad estándar, en código y en un solo lugar). `pnpm check:price-floor` (solo lectura) para decidir el aviso de mínimo en el POS. Regla dura 16 (ningún texto largo pasa por la shell). 352/352 unitarios; 5/5 E2E de D-164. **Sin desplegar y sin push**, esperando el OK del dueño.                                                                                                                                                                                                                                  |
 | 8 — Auditoría, reportes, UAT                                                   | ⚪ Pendiente            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Fase 0 — detalle
@@ -3660,6 +3663,268 @@ DEMO`, el cupo de la cuenta demo de Nubefact.
 
 `pnpm e2e precios-d161-d163` → **10/10**, dos corridas seguidas.
 
+## Sesión Cierre de bobina (2026-09-09) — el remanente se liquida y la merma normal entra al estándar (D-164, D-165)
+
+Las dos decisiones son una sola idea partida en dos: **separar la merma normal de la anormal**.
+D-165 mete el 1 % que toda corrida pierde adentro de la densidad estándar, así que deja de ser
+una sorpresa; D-164 hace que lo que quede por encima de eso salga del inventario al cerrar la
+bobina, en vez de quedarse ahí para siempre. Ninguna de las dos sirve sola: sin D-165 el
+remanente mezclaba dos cosas y no medía nada, y sin D-164 el 1 % bien calculado igual dejaba
+kilos fantasma en el valorizado.
+
+### M0 — El cierre de una bobina liquida su remanente (D-164)
+
+**El defecto.** `CoilOperationsService.setStatus` (RF-19) cambiaba el estado a `CLOSED` y **no
+movía un gramo de kardex**. El saldo teórico que quedaba en `inventory_balances` se quedaba ahí
+indefinidamente: la bobina cerrada desaparecía de producción y del partido, pero **seguía
+sumando kilos y valor al inventario valorizado** de material que ya no existe, y nada avisaba.
+La única herramienta era la merma de RF-17 (`registerScrap`), un acto aparte, en un botón
+vecino y sin ninguna relación con el cierre.
+
+**La forma.** Cerrar pide ahora **cuántos kilos quedan de verdad** (`physicalKg`) y liquida la
+diferencia contra el saldo, en la misma transacción, por el único camino que el kardex admite
+(`InventoryService.record`, regla dura 2) y nunca editando el saldo:
+
+- `apps/api/src/coils/coil-close-math.ts` — la aritmética pura, aparte del servicio como
+  `coil-split-math.ts`, con su spec de siete casos.
+- `refType` propio **`CLOSE_ADJUSTMENT`** (migración `20260909230000_...`, aditiva) y su
+  rótulo «Cierre de bobina» en el kardex.
+- `CoilDto.avgCostPen` — el promedio vigente del saldo, para poder mostrar el remanente
+  **valorizado** con el mismo número con el que el kardex lo va a sacar.
+- `apps/web/.../coil-close-dialog.tsx` — el diálogo muestra kg y soles antes de confirmar.
+- Reabrir revierte el ajuste con un movimiento inverso, **solo si es el último movimiento vivo
+  del rollo** (ver «Alto 1» más abajo: la primera versión decía «el último ajuste vivo» y eso
+  creaba inventario de la nada). `cancelScrap` (RF-18) lo rechaza a propósito: es el mismo
+  corte que D-057 ya había tenido que hacer para la merma de proceso de una OP.
+
+**Tres decisiones que no eran obvias.**
+
+1. **Se tipea cuánto queda, no cuánto se da de baja.** Es lo que planta ve mirando el rollo, y
+   con un solo campo quedan cubiertos los dos sentidos: sobra saldo teórico → `OUT` (merma
+   anormal), el conteo da de más → `IN` (sobrante). Preguntar «cuántos kilos mermar» obligaba a
+   un segundo formulario para el sentido contrario.
+2. **El kardex se mueve ANTES de marcar `CLOSED`.** `assertRawMaterialInvariant` lee el
+   agregado desde la base: con la bobina ya cerrada, la salida se comprobaría contra un
+   agregado que **acaba de perder ese rollo entero** y rechazaría por kilos que el propio
+   cierre sacó de la vista. Es el mismo orden que ya respetaba el partido.
+3. **`registerScrap` (RF-17) se queda.** Se evaluó retirarlo para no dejar dos caminos y **no
+   conviene**: responden preguntas distintas y se deshacen distinto. RF-17 es la pérdida
+   puntual durante la vida del rollo (borde oxidado, empalme fallado), se registra cuando pasa
+   y se anula por RF-18; el ajuste del cierre es el corte de cuentas del rollo y se deshace
+   reabriendo la bobina. Fusionarlos obligaría a cerrar la bobina para poder registrar una
+   merma, o a que una anulación devolviera kilos de un hecho que no ocurrió.
+
+**Un defecto que encontró el propio E2E, en mi guard.** El corte «no hay nada que liquidar»
+estaba escrito como `balanceKg <= 0`, y eso mataba justamente el caso del **sobrante sobre una
+bobina en cero** — planta encuentra material que el kardex ya dio por consumido—, que es el
+caso para el que existe la rama `IN` y para el que se había escrito la valorización al costo
+del documento. El síntoma no se parecía a la causa: el cierre **pasaba** y devolvía `CLOSED`,
+los kilos simplemente no volvían. El corte correcto es `physicalKg === undefined`: **una
+declaración explícita se respeta siempre, en los dos sentidos**; lo que se corta es la ausencia
+de declaración. De paso cambió la UI: el diálogo se abre **siempre** al cerrar, también con
+saldo cero, que además es la confirmación que el alcance pedía.
+
+**Lo que esto rompe, y es un cambio no aditivo (D-123).** Cerrar una bobina con saldo ahora
+exige `physicalKg`. Cinco escenarios E2E de fases anteriores cerraban un rollo **para
+guardarlo** —no porque se hubiera agotado— y pasaron a declarar su saldo entero, vía el helper
+nuevo `closeCoilKeepingStock`. Los tres que esperaban un error al cerrar (fleje montado en una
+OP, bobina reservada) no cambian: esos guardrails corren antes.
+
+**Lo que NO cambia:** el cierre automático del partido (RF-15) y de la recepción de corte
+(D-052). Los dos ocurren con el saldo ya en cero y no tienen nada que liquidar, así que no
+pasan por este camino.
+
+### M1 — La merma normal del 1 % entra en la densidad estándar (D-165)
+
+**Lo primero que se verificó:** el factor **no estaba en ninguna parte** — ni en código, ni en
+las migraciones, ni en los docs. `grep` de `1.01` sobre el repo entero: cero resultados. Así
+que M1 no era verificar, era implementar.
+
+Se aplica en **un solo lugar**, `standardDensityFactor` en `@ayr/shared`, dentro de las dos
+únicas funciones que traducen geometría a kilos (`theoreticalKgPerPiece` y `kgPerMeter`), y
+**nunca** editando `finishes.density_factor`. El motivo de fondo: la densidad del acero es un
+dato físico y la merma es una política de la empresa; multiplicarlos en el maestro deja un
+número que no es ninguna de las dos cosas y **que nadie puede volver a separar** —revisar el
+1 % obligaría a dividir cada acabado por 1.01 primero, adivinando cuáles ya lo tenían— además
+de que cada acabado nuevo nacería sin el factor.
+
+Entrando por un punto, se mueven juntos los cuatro números que dependen de él: el kilo teórico
+del reporte de planta, el metro equivalente de una bobina, los kilos que reserva una cobertura
+a medida y el costo por metro del piso de precio de D-163. **Los cuatro suben ~1 %, y el metro
+equivalente baja ~1 %** — el mismo rollo promete menos metros, que es exactamente el sentido de
+la decisión.
+
+El centinela es `apps/api/src/production/normal-scrap-factor.spec.ts`, y lo que vigila no es la
+multiplicación (es trivial) sino que **las dos cuentas apliquen el mismo factor**: si el kilo
+por metro y el kilo por pieza divergieran, los kilos que un pedido promete por metro y los que
+el reporte descuenta por metro serían dos números para el mismo hecho.
+
+Cinco expectativas de `roofing-math.spec.ts` y `production-math.spec.ts` cambiaron de valor.
+Están actualizadas con el comentario de por qué, no solo con el número nuevo.
+
+### M2 — Query de solo lectura: SKU bajo el mínimo de D-163
+
+`pnpm check:price-floor [--branch production|demo|dev|local]` →
+`apps/api/prisma/price-floor-report.ts`. Es el número que le falta al dueño para decidir si el
+mostrador lleva aviso de mínimo en el carrito: D-163 lo dejó **exento a propósito** y ponerle
+el piso sin medir antes rompe ventas que hoy funcionan.
+
+Compara **valor contra valor** y no precio contra precio, exactamente como `assertPriceFloor`:
+`list_price_pen` es el valor sin IGV (D-068, D-162) y el piso es `costo ÷ (1 − margen mínimo)`.
+Comparar los precios con IGV metería dos redondeos por 1.18 en una cuenta que se decide en la
+cuarta decimal. Los precios se **imprimen** con IGV, que es como el dueño los lee. Los SKU sin
+costo en el kardex no salen como infractores (sin costo no hay piso, D-163) pero se cuentan
+aparte, para que el total cierre. **No toca el POS.**
+
+### M3 — Regla dura 16: ningún texto largo pasa por la shell
+
+`CLAUDE.md` gana la regla dura **16**, con el incidente de la sesión anterior escrito: un
+`node -e` con backticks se lo comió la shell, que ejecutó lo que había adentro y disparó un
+`pnpm e2e` accidental que **vació `ayr_local_e2e` a mitad de otra corrida**. Es una regla de
+**forma y no de criterio**: el daño no lo hace el comando que uno quiso correr, sino otro que
+la shell arma sola con pedazos del texto, y releer el texto no alcanza porque hay que darse
+cuenta de que el texto también es código. Se numeró como 16 y no se insertó en el medio a
+propósito: hay referencias vivas a «regla dura 15» en `CLAUDE.md` y en `docs/ENTORNOS.md`.
+
+### El precio de D-165: unos setenta kilos esperados escritos a mano
+
+Lo que el 1 % costó de verdad no fue el código —tres líneas en `@ayr/shared`— sino los tests.
+La primera corrida completa devolvió **16 fallos**, todos con la misma forma: un kilo esperado
+que ahora sale exactamente ×1.01 (`40.000 → 40.400`, `98.400 → 99.384`, `244.000 → 246.440`).
+Ninguno era un defecto; todos eran el número viejo escrito como literal.
+
+Y **16 no era el final**: corregir una aserción destapaba la siguiente del mismo caso, que
+antes ni se ejecutaba. Hicieron falta **ocho tandas** hasta que la suite paró de encontrar
+números, repartidas en doce specs y unos setenta literales. El arrastre llega más lejos de lo
+que parece porque el kilo teórico alimenta cuatro cosas encadenadas: los kilos reservados, el
+saldo de la bobina después de cada reporte, el **despunte** del cierre (que es `declarado −
+teórico`, así que **baja** cuando el teórico sube) y el **costo unitario** del producto
+terminado. En una pantalla del espacio de producción hasta el texto que se busca a ojo
+(`«pendiente 1,838.400 kg»`) cambia.
+
+**Un cambio de más, que también enseña algo.** Un reemplazo masivo de `qty: '24.600'` agarró,
+junto con los kilos, la reserva que nace al reportar — que está en **metros de producto
+terminado**, no en kilos de bobina, y a la que el 1 % no la toca. La suite lo cazó en la
+corrida siguiente. La lección para la próxima: al mover números por un cambio de factor, **la
+unidad manda**; kilos de materia prima sí, metros o planchas de producto no.
+
+**Por qué había tantos.** Los fixtures de coberturas eligieron a propósito una geometría
+redonda —1 000 mm × 0.50 mm con densidad 8.0— para que «la aritmética se pueda comprobar a
+ojo»: 4 kg por metro exactos. Esa decisión, que hace los tests legibles, es la que multiplica
+el costo de mover el factor: cada spec que escribió `'40.000'` en vez de derivarlo quedó atado
+a la densidad. Con D-165 el consumo real pasa a **4.04 kg/m** y ningún número redondo sobrevive.
+
+**Cómo quedó.** El factor vive ahora en `e2e/helpers/roofing.ts` como `NORMAL_SCRAP_FACTOR` y
+`KG_PER_METER = 4 × 1.01`, y `fase7-consolidada-subtipo.spec.ts` —el único que ya derivaba en
+vez de hardcodear— se arregló solo cambiando de dónde importa la constante. Los demás siguen
+con el literal actualizado y el comentario al lado diciendo de dónde sale
+(`24.6 m × 4.04 kg/m = 99.384`). **El pendiente de revisar el 1 % con datos reales debería
+empezar por convertir esos literales a `KG_PER_METER`**, o la próxima revisión del porcentaje
+vuelve a costar lo mismo.
+
+**La lección, que es la de D-123 otra vez, con un agregado:** un cambio de regla no aditivo se
+mide contra la suite completa y no contra los tests del cambio —los 352 unitarios estaban en
+verde y los 9 casos nuevos de D-164 también—, **y una sola corrida completa no alcanza**,
+porque cada aserción arreglada destapa la siguiente. Hay que iterar hasta que una corrida
+limpia no encuentre ninguna.
+
+### Lo que encontró la revisión
+
+Dos pasadas en paralelo (API + `@ayr/shared` por un lado, web + E2E por el otro, que es lo que
+enseñó una sesión anterior: la del web encuentra cosas que la del API no puede ver). **Tres
+altos, todos corregidos**, ninguno bloqueante.
+
+**Alto 1 — el ajuste de cierre podía crear inventario de la nada.** La reversa buscaba «el
+último `CLOSE_ADJUSTMENT` vivo» de la bobina, sin ningún vínculo con el cierre que se estaba
+deshaciendo. Pero una bobina puede volver a `OPEN` por un camino que no es `setStatus`:
+**`revertSplit` (RF-16) reabre a la madre con un `update` directo**. La secuencia completa:
+madre de 500 kg → partido de 400 → cierre declarando cero (ajuste de 100 kg) → `revertSplit`
+devuelve los 400 y la reabre, dejando el ajuste **vivo y sin dueño** → cierre declarando los
+400 (sin ajuste nuevo) → **la reapertura adopta el ajuste viejo y mete 100 kg y su valor que
+ningún cierre había sacado**. Es exactamente la creación de valor que D-057 ya había tenido que
+evitar una vez, con la misma forma: dos hechos que se parecen y una anulación que agarra el
+equivocado.
+
+La corrección no fue guardar el vínculo en la bobina sino cambiar la pregunta: **se revierte
+solo si el ajuste es el último movimiento vivo del rollo**. Como el kardex es append-only, un
+ajuste que dejó de ser el último **nunca vuelve a serlo** y queda inerte para siempre; y la
+condición además es la que hace segura la reversa, porque si algo movió la bobina después del
+cierre, el saldo ya no es el que el ajuste dejó. Cubierto por un caso E2E que reproduce la
+adopción indebida.
+
+**Alto 2 — la pantalla prometía un número que el API rechazaba.** El diálogo normalizaba la
+coma decimal para validar y para calcular, pero mandaba el texto **crudo**: con `12,5` el panel
+mostraba la liquidación, el botón se habilitaba y el `POST` rebotaba con un 400 del schema. Es
+el defecto de D-163 otra vez, en el campo de al lado. Ahora se manda el valor normalizado, y la
+validación se acotó a tres decimales —la escala de kilos— porque con más la pantalla mostraba
+una liquidación y el API redondeaba y movía otra.
+
+**Alto 3 — reabrir sin motivo cuando el kardex no había cargado.** El botón decidía si pedir
+motivo mirando el kardex de la página, y esa lista está vacía mientras la consulta carga, si
+falló, y durante el refetch posterior al cierre. En los tres casos se mandaba un `OPEN` sin
+motivo y el API respondía «explica el motivo» sobre algo que la pantalla nunca había ofrecido
+— y con el kardex caído la bobina no se podía reabrir. Ahora reabrir **siempre** pasa por el
+diálogo de motivo; el kardex solo decide el texto.
+
+**Medios corregidos.** `physicalKg` no tenía cota superior: un `5000` tipeado donde iba `500`
+daba de alta 4 500 kg valorizados en una sola llamada, así que ahora se rechaza declarar más
+kilos de los que la bobina ingresó. El campo del diálogo venía **prellenado en cero**, o sea
+con la baja total del saldo, reintroduciendo por la ventana el default que el API rechaza a
+propósito: arranca vacío. Y el `findLast` del web recorría la lista al revés de como viene
+(del más reciente al más antiguo), así que habría citado los kilos del ajuste equivocado el día
+que convivan dos.
+
+**Menores corregidos:** el sobrante no mostraba soles (ahora sí, cuando hay saldo vivo y el
+promedio es el que el API va a usar); el panel calculado no tenía `aria-live` ni el campo
+`aria-invalid`/`aria-describedby`; la mutación de cambio de estado quedó con una rama muerta
+tras mover el cierre al diálogo; un `import` sin uso en `fase6-bordes`; una firma de índice en
+el tipo del resumen de auditoría que apagaba el chequeo de propiedades de toda la interfaz; y
+el sentido del ajuste se re-derivaba con una comparación propia en vez de leer `plan.kind`.
+
+**El spec de D-164 pasó de 5 a 9 casos** con lo que la revisión marcó como sin cubrir: la
+liquidación **parcial**, el sobrante sobre **saldo vivo** (que se valoriza al promedio y no al
+costo del documento, una rama que no tocaba ningún test), los rechazos del schema y el caso del
+ajuste inerte. Y ganó limpieza contra producción, que le faltaba pese a declararse ejecutable
+con `E2E_ALLOW_WRITES=1`.
+
+**Anotado y no hecho:**
+
+- **El diálogo de cierre no tiene E2E de UI.** Los nueve casos son por API; ningún spec aprieta
+  el botón «Cerrar» de `/bobinas/:id`. Es el único punto de la interfaz que emite una baja de
+  inventario nueva.
+- **Los pedidos ya confirmados reservaron kilos con la densidad vieja** y producción ahora
+  consume ~1 % más (D-165). No revienta nada —`consumeReservationQty` recorta con
+  `Decimal.min`—, pero ese 1 % sale de stock libre y puede disparar el aviso de faltante de
+  D-154 sobre pedidos que nadie tocó. Vale mirarlo el día del deploy.
+- **`theoreticalKgPerUnit` del catálogo** se muestra en el formulario de venta como «≈ N kg» y,
+  con el 1 % adentro, el rótulo quedó ambiguo: es el material que consume, no lo que la plancha
+  pesa. No corrompe nada (el peso de la guía de remisión se tipea a mano), pero el texto merece
+  una pasada.
+- **El reporte de precios cuenta las coberturas a medida como «sin costo en el kardex»**, y el
+  API sí les calcula piso por el agregado de materia prima. Para la pregunta del POS no cambia
+  la decisión —el mostrador no vende a medida—, pero el total de infractores queda
+  subestimado.
+
+### Verificación
+
+`pnpm turbo lint typecheck test` en verde (**352/352** unitarios, 24 suites), `prettier --check`
+sobre `apps packages docs CLAUDE.md scripts e2e` y `eslint e2e` limpios. Tests nuevos: los siete
+casos de `coil-close-math.spec.ts` (D-164) y los cuatro de `normal-scrap-factor.spec.ts`
+(D-165), más cinco expectativas de `roofing-math.spec.ts` y `production-math.spec.ts`
+actualizadas con el comentario de por qué, no solo con el número.
+
+**E2E local, corrida completa sobre una base recién creada: 208 pasados, 14 fallos, 2
+saltados.** Los 14 son las dos clases conocidas y ajenas a esta sesión: **doce** por el cupo de
+50 documentos de la cuenta demo de Nubefact (ocho lo dicen explícito y cuatro son su
+consecuencia, un comprobante que no llega a `ACCEPTED`) y **dos** por el 409 de códigos
+generados al azar. **Ninguno de esta sesión.**
+
+`pnpm e2e cierre-bobina-d164` → **9/9**. `pnpm e2e planta-espacio` → **8/8**.
+
+**Lo que costó llegar ahí está arriba** («El precio de D-165»): ocho tandas de corrección de
+fixtures, porque cada aserción arreglada destapaba la siguiente del mismo caso. Vale anotarlo
+como método: para un cambio de factor, presupuestar varias corridas completas, no una.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
@@ -3681,7 +3946,57 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
 
 **Hallazgo — IAM insuficiente para `deploy --source` (D-023).** La service account de Compute por defecto (`<project-number>-compute@developer.gserviceaccount.com`) tenía `roles/editor` a nivel de proyecto, pero eso no bastó para: (a) que Cloud Build leyera el zip fuente subido al bucket `run-sources-*`, ni (b) que la revisión de Cloud Run leyera los secretos de Secret Manager. `scripts/gcp-secrets.mjs` ahora otorga explícitamente `roles/secretmanager.secretAccessor` (por secreto) y `roles/{storage.objectViewer,cloudbuild.builds.builder,artifactregistry.writer,logging.logWriter}` (a nivel proyecto) a esa cuenta, así que un proyecto GCP nuevo no debería repetir este bloqueo.
 
+## Pendientes abiertos de la Sesión Cierre de bobina (2026-09-09)
+
+- **Revisar el 1 % de merma normal con datos reales (D-165).** El factor lo fijó el dueño como
+  regla del cliente, sin datos detrás. Ahora que D-164 hace visible la merma **anormal** —el
+  remanente que se liquida al cerrar, con su `refType` propio en el kardex—, con **2 o 3
+  cierres reales** se puede comparar lo liquidado contra lo que el estándar ya absorbió y ver
+  si el 1 % está bien puesto. La pregunta que sigue abierta es si conviene que sea **por
+  acabado** en vez de uno solo: un prepintado delgado y un galvanizado grueso no tienen por qué
+  perder lo mismo. Si se decide por acabado, la forma **no** es tipearlo en
+  `finishes.density_factor` (ver el porqué en D-165) sino una columna propia de merma normal
+  que `standardDensityFactor` lea. **Antes de tocar el porcentaje**, convertir a
+  `KG_PER_METER` los kilos que los fixtures de coberturas todavía escriben como literal (ver
+  «El precio de D-165» arriba): son 16 y hoy atan la suite a este 1 % concreto.
+- **Decidir el aviso de mínimo en el mostrador.** El insumo ya está: `pnpm check:price-floor`
+  dice cuántos SKU activos quedan por debajo del piso de D-163. Correrlo contra `production`
+  necesita el OK del dueño (es solo lectura, pero contra la base real). Si la respuesta es
+  "pocos", el aviso en el carrito es barato; si es "muchos", primero hay que revisar la lista
+  de precios o los márgenes mínimos, no poner el bloqueo.
+- **Migraciones pendientes de desplegar**, acumuladas de esta sesión y las anteriores: D-145,
+  D-146, las dos de D-153, la de D-154, la de D-157, la de D-161
+  (`20260909210000_d161_plancha_por_metro_lineal`) y la de esta sesión
+  (`20260909230000_d164_liquidacion_de_remanente_al_cierre`). **La de D-164 va antes que el
+  API nuevo**: es aditiva (un valor más en el enum `InventoryRefType`), así que el API viejo
+  contra la base migrada funciona igual, pero el API nuevo contra la base sin migrar escribe
+  `CLOSE_ADJUSTMENT` y revienta.
+
 ## Notas operativas
+
+- **Sesión Cierre de bobina (2026-09-09). La base de E2E se recreó desde cero, y conviene
+  volver a hacerlo.** El 409 anotado abajo (proveedores/colores repetidos al azar contra un
+  maestro que el reset no trunca) dejó de ser ruido de fondo y pasó a tapar la señal: con
+  varias corridas seguidas en una misma sesión, `ayr_local_e2e` llegó a **1 874 proveedores,
+  841 colores, 2 902 productos, 1 576 acabados y 1 195 clientes**, y los 409 aleatorios se
+  llevaban puestos una decena de casos por corrida, en specs que no hablan ni de proveedores
+  ni de colores. Verificar un cambio no aditivo con ese ruido encima es imposible.
+
+  La salida fue **recrear la base**, que no es lo mismo que cambiar qué trunca el reset (eso
+  sigue sin tocarse, por el motivo de siempre): `ayr_local_e2e` es descartable y de uso
+  exclusivo de la suite, y una base recién creada es exactamente lo que tiene CI, que está en
+  verde. Con el contenedor arriba:
+
+  ```bash
+  docker exec ayr-local-db psql -U ayr -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='ayr_local_e2e' AND pid <> pg_backend_pid();"
+  docker exec ayr-local-db psql -U ayr -d postgres -c "DROP DATABASE ayr_local_e2e;"
+  docker exec ayr-local-db psql -U ayr -d postgres -c "CREATE DATABASE ayr_local_e2e OWNER ayr;"
+  ```
+
+  El `globalSetup` de Playwright aplica migraciones y seed en la corrida siguiente, así que no
+  hay nada más que hacer. **Nunca contra `ayr_local`**, que es la base de `pnpm dev:preview` y
+  del dueño (regla dura 15). Vale la pena correr esto **antes** de una tanda larga de E2E, no
+  después de pelear con los 409.
 
 - **Sesión Planta III (2026-09-09). La base de E2E envejece y produce 409 al azar.**
   `apps/api/prisma/reset-test-db.ts` trunca el kardex, las bobinas, las compras, los pagos, las

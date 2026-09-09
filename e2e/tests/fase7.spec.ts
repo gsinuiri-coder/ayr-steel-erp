@@ -83,7 +83,7 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
         salesOrderCode: order.code,
         customerName: customer.name,
         productId: scenario.product.id,
-        theoreticalKg: '32.000',
+        theoreticalKg: '32.320',
         semaphore: 'SIN_FECHA',
         priority: false,
       });
@@ -111,12 +111,12 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       const closed = await postJson<ProductionOrderDto>(
         api,
         `/api/production/roofing/${op.id}/close`,
-        // 18 kg de despunte sobre 50 consumidos son 36 %: por encima del 10 % que tolera un
+        // 17.68 kg de despunte sobre 50 consumidos son 35 %: por encima del 10 % que tolera un
         // cierre sin explicación (D-089), hace falta el motivo.
         { consumedKg: '50', reason: 'Despunte alto de prueba E2E: se declara todo lo reservado' },
       );
       expect(closed.status).toBe('CLOSED');
-      expect(closed.scrapKg).toBe('18.000');
+      expect(closed.scrapKg).toBe('17.680');
 
       // La reserva de bobina quedó CONSUMIDA entera: sale de la cola para siempre, no solo
       // mientras la OP estuvo viva.
@@ -168,7 +168,7 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       trail.orderIds = [order.id];
 
       const reservation = (await reservationsOf(api, order.id))[0]!;
-      expect(reservation.qty).toBe('32.000');
+      expect(reservation.qty).toBe('32.320');
       const op = await roofingOrder(api, reservation.id);
       trail.productionOrderIds = [op.id];
 
@@ -251,7 +251,7 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       // Sin OP viva y la reserva otra vez ACTIVA: el pedido reaparece solo.
       const queueAfter = await queueOf(api);
       expect(queueAfter.find((q) => q.salesOrderId === order.id)).toMatchObject({
-        theoreticalKg: '24.000',
+        theoreticalKg: '24.240',
       });
       const detail = await getOrder(api, order.id);
       expect(detail.queueStatus).toBe('EN_COLA');

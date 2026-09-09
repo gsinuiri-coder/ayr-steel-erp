@@ -30,9 +30,10 @@ const coil: CoilGeometry = { widthMm: '1100.00', thicknessMm: '0.30', densityFac
 
 describe('roofingTheoreticalKg (D-047)', () => {
   it('calcula el kilo desde la geometría de la bobina y el largo rolado', () => {
-    // 1100 × 0.30 × 4200 × 7.85 / 1e6 = 10.8801 kg por plancha de 4.20 m
+    // 1100 × 0.30 × 4200 × (7.85 × 1.01) / 1e6 = 10.9889 kg por plancha de 4.20 m.
+    // D-165: la densidad que entra es la **estándar**, con el 1 % de merma normal adentro.
     const kg = roofingTheoreticalKg(coil, [{ lengthMm: '4200.00', qty: 1 }]);
-    expect(kg.toFixed(3)).toBe('10.880');
+    expect(kg.toFixed(3)).toBe('10.989');
   });
 
   it('suma los largos distintos de un mismo reporte', () => {
@@ -40,8 +41,8 @@ describe('roofingTheoreticalKg (D-047)', () => {
       { lengthMm: '4200.00', qty: 3 },
       { lengthMm: '6000.00', qty: 2 },
     ]);
-    // 3 × 10.880 + 2 × 15.543 = 32.640 + 31.086
-    expect(kg.toFixed(3)).toBe('63.726');
+    // 3 × 10.989 + 2 × 15.698 = 32.967 + 31.396
+    expect(kg.toFixed(3)).toBe('64.363');
   });
 
   it('un rollo más ancho consume más kilo por el mismo largo: el ancho es el de la bobina', () => {
@@ -201,8 +202,10 @@ describe('roofingCloseAdjustmentPen', () => {
 
 describe('metersFromKg', () => {
   it('estima los metros que salen de un saldo con la geometría del rollo', () => {
-    // 2.5905 kg por metro con 1100 × 0.30 × 7.85
-    expect(metersFromKg(coil, '259.050').toFixed(3)).toBe('100.000');
+    // 2.6164 kg por metro con 1100 × 0.30 × (7.85 × 1.01). D-165: los mismos 259.050 kg
+    // rinden **99.010 m** y no 100, porque el 1 % de merma normal ya está en el estándar.
+    // Es exactamente el sentido de la decisión: lo que planta puede prometer, no el ideal.
+    expect(metersFromKg(coil, '259.050').toFixed(3)).toBe('99.010');
   });
 
   it('no divide por cero cuando la geometría no da kilo', () => {
@@ -326,9 +329,9 @@ describe('piecesTheoreticalKg (D-146)', () => {
     expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe(
       roofingTheoreticalKg(coil, plan).toFixed(3),
     );
-    // El kilo se redondea **por plancha** (10.8801 → 10.880) y recién después se suma, que
-    // es lo que hace el kardex: 10 × 10.880.
-    expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe('108.800');
+    // El kilo se redondea **por plancha** (10.9889 → 10.989) y recién después se suma, que
+    // es lo que hace el kardex: 10 × 10.989.
+    expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe('109.890');
   });
 });
 

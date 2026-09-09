@@ -426,9 +426,12 @@ export class CoilsService {
     if (coils.length === 0) return [];
     const balances = await this.prisma.inventoryBalance.findMany({
       where: { itemType: 'COIL', itemId: { in: coils.map((c) => c.id) } },
-      select: { itemId: true, qty: true },
+      // D-164: el promedio viaja junto con el saldo para que la pantalla pueda mostrar el
+      // remanente valorizado antes de cerrar, sin una segunda consulta por bobina.
+      select: { itemId: true, qty: true, avgCost: true },
     });
     const available = new Map(balances.map((b) => [b.itemId, b.qty.toFixed(3)]));
+    const avgCost = new Map(balances.map((b) => [b.itemId, b.avgCost.toFixed(4)]));
 
     return coils.map((c) => {
       const availableKg = available.get(c.id) ?? '0.000';
@@ -467,6 +470,7 @@ export class CoilsService {
         splitId: c.splitId,
         notes: c.notes,
         availableKg,
+        avgCostPen: avgCost.get(c.id) ?? '0.0000',
         equivalentMeters: meters === null ? null : meters.toFixed(3),
         operationDate: fromDateOnly(c.operationDate),
         createdAt: c.createdAt.toISOString(),

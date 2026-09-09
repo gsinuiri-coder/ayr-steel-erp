@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { adminApi, createFinish, createUser, getJson, postJson } from '../helpers/api';
+import {
+  adminApi,
+  closeCoilKeepingStock,
+  createFinish,
+  createUser,
+  getJson,
+  postJson,
+} from '../helpers/api';
 import {
   apiAs,
   balanceOf,
@@ -1028,10 +1035,12 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
 
       // --- Caso 1: el fleje se cerró (RF-19) mientras la OP estaba cerrada ---
       // El guardrail de D-060 ya no lo protege: cerrar la OP lo liberó.
-      const closedCoil = await postJson<CoilDto>(api, `/api/coils/${strip.id}/status`, {
-        status: 'CLOSED',
-        reason: 'El fleje se guarda tras la corrida (prueba E2E)',
-      });
+      // D-164: se guarda, no se agotó — se declara el saldo entero y no se liquida nada.
+      const closedCoil = await closeCoilKeepingStock(
+        api,
+        strip.id,
+        'El fleje se guarda tras la corrida (prueba E2E)',
+      );
       expect(closedCoil.status).toBe('CLOSED');
       const byStatus = await postExpectingError(api, `/api/production/${opId}/reopen`, {
         reason: 'Intento de reabrir con el fleje cerrado (prueba E2E)',

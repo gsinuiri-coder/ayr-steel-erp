@@ -28,19 +28,33 @@ import type { QuotationDto, SalesOrderDto } from './sales';
  * escenario y lo deshagan de la misma forma — mismo criterio que `production.ts` en Fase 4.
  *
  * **Los números están elegidos para que la aritmética se pueda comprobar a ojo:** una bobina
- * de 1 000 mm × 0.50 mm con un acabado de densidad 8.0 consume exactamente 4 kg por metro
- * (`1000 × 0.5 × 1000 × 8 / 1e6`), así que una plancha de 4 m son 16 kg y otra de 6 m, 24.
+ * de 1 000 mm × 0.50 mm con un acabado de densidad 8.0 da exactamente 4 kg por metro de
+ * geometría pura (`1000 × 0.5 × 1000 × 8 / 1e6`).
+ *
+ * **D-165 cambió lo que se consume, no la geometría.** El 1 % de merma normal vive dentro de
+ * la densidad estándar, así que el kilo que de verdad sale de la bobina por metro es
+ * `4 × 1.01 = 4.04` ({@link KG_PER_METER}), y por eso los kilos esperados de estos escenarios
+ * dejaron de ser redondos: 61 m son 246.44 kg y no 244. Los específicos que siguen escritos
+ * como literal llevan al lado el número geométrico del que salen.
  */
 
 export const ROOFING_LINE = 'metallic-roofing';
 export const UPVC_LINE = 'roofing';
 
-/** Densidad del acabado de prueba: deja el kilo por metro en un número redondo. */
+/** Densidad del acabado de prueba: deja la geometría en un número redondo. */
 export const TEST_DENSITY = '8.0000';
 /** Espesor nominal del producto y de la bobina que sí sirve. */
 export const NOMINAL_THICKNESS = '0.50';
-/** Ancho de la bobina de prueba: con la densidad de arriba, 4 kg por metro lineal. */
+/** Ancho de la bobina de prueba: con la densidad de arriba, 4 kg por metro de geometría. */
 export const COIL_WIDTH = '1000';
+/**
+ * D-165: la merma normal que la densidad estándar absorbe. Vive acá y no como un `1.01`
+ * repetido para que revisar el porcentaje —que es el pendiente escrito de D-165— sea cambiar
+ * un número y correr la suite, no buscar decimales por los fixtures.
+ */
+export const NORMAL_SCRAP_FACTOR = 1.01;
+/** Kilos de bobina que consume un metro lineal de la geometría de prueba, con D-165 adentro. */
+export const KG_PER_METER = 4 * NORMAL_SCRAP_FACTOR;
 
 export interface ColorDto {
   id: string;

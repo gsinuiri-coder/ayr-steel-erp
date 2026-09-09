@@ -113,15 +113,15 @@ test.describe('D-140 — orden de coberturas a stock, sin pedido detrás', () =>
       expect(reported.status).toBe('IN_PROGRESS');
       expect(reported.piecesReported).toBe(5);
       const report = reported.reports.find((r) => r.status === 'ACTIVE')!;
-      expect(report.theoreticalKg).toBe('80.000');
+      expect(report.theoreticalKg).toBe('80.800');
 
       // El kardex: 80 kg salen de la bobina y 5 planchas entran al producto.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1920.000');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1919.200');
       const productAfterReport = await balanceOf(api, 'PRODUCT', scenario.product.id);
       expect(productAfterReport.qty).toBe('5.000');
       expect(productAfterReport.unit).toBe('NIU');
       // 80 kg a S/ 5 = S/ 400 sobre 5 planchas ⇒ S/ 80 cada una.
-      expect(productAfterReport.avgCost).toBe('80.0000');
+      expect(productAfterReport.avgCost).toBe('80.8000');
 
       // **El corazón de D-140**: sin pedido detrás no hay promesa que trasladar (D-088), así
       // que las planchas entran como **saldo libre**. Es lo que hace que el pedido de
@@ -137,7 +137,7 @@ test.describe('D-140 — orden de coberturas a stock, sin pedido detrás', () =>
         { consumedKg: '83.000' },
       );
       expect(closed.status).toBe('CLOSED');
-      expect(closed.scrapKg).toBe('3.000');
+      expect(closed.scrapKg).toBe('2.200');
       // 83 kg a S/ 5 = S/ 415 sobre 5 planchas ⇒ S/ 83 cada una.
       expect(closed.materialCostPen).toBe('415.0000');
       expect(closed.unitCostPen).toBe('83.0000');

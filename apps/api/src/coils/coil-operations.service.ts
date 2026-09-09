@@ -40,8 +40,25 @@ import { assertStripsNotAssigned } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import { assertRawMaterialInvariant } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
+import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
 import { CoilsService } from './coils.service';
+
+/**
+ * D-164: lo que el cierre (o la reapertura) movió en el kardex, para la auditoría del hecho
+ * que lo provocó. `null` cuando no hubo nada que liquidar, que es el caso normal de una
+ * bobina que se cierra ya en cero.
+ */
+interface CloseAdjustmentSummary {
+  kind: CoilCloseAdjustmentKind;
+  movementId: string;
+  qtyKg: string;
+  totalCostPen: string;
+  /** Solo al cerrar: los kilos que planta declaró que quedaban en el rollo. */
+  declaredPhysicalKg?: string;
+  /** Solo al reabrir: el ajuste que este movimiento inverso deshace. */
+  reversalOfId?: string;
+}
 
 /**
  * Operaciones de Fase 2b sobre una bobina ya dada de alta: partido (RF-15) y su
@@ -465,6 +482,9 @@ export class CoilOperationsService {
   // -------------------------------------------------------------------------
 
   async setStatus(actor: RequestUser, coilId: string, input: SetCoilStatusInput): Promise<CoilDto> {
+    // D-124 + D-164: el cierre ya no es solo un cambio de estado, emite un movimiento de
+    // kardex, así que tiene fecha de operación como cualquier otro hecho fechado.
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     // D-134: presupuesto explícito. La comprobación del agregado recorre las bobinas
     // compatibles, y con los 5 s por defecto de Prisma esta transacción se pasaba del
     // límite contra Neon de forma intermitente — un 500 en una operación normal.
@@ -495,6 +515,16 @@ export class CoilOperationsService {
           );
         }
 
+        // D-164: el kardex se mueve **antes** de cambiar el estado. `InventoryService.record`
+        // no sabe nada de estados de bobina, pero `assertRawMaterialInvariant` sí lee el
+        // agregado desde la base: con la bobina ya marcada `CLOSED`, la salida se comprobaría
+        // contra un agregado que acaba de perder este rollo entero y rechazaría por kilos que
+        // el propio cierre sacó de la vista. Es el mismo orden que respeta el partido.
+        const liquidated =
+          input.status === CoilStatus.CLOSED
+            ? await this.liquidateRemainder(tx, coil, input, actor, operationDate)
+            : await this.reverseCloseAdjustment(tx, coil.id, input, actor, operationDate);
+
         await tx.coil.update({ where: { id: coilId }, data: { status: input.status } });
 
         // D-134: cerrar una bobina la saca del agregado sin mover kardex y sin que ninguna
@@ -510,12 +540,219 @@ export class CoilOperationsService {
           entity: 'coils',
           entityId: coilId,
           before: { status: coil.status },
-          after: { status: input.status, reason: input.reason ?? null },
+          after: {
+            status: input.status,
+            reason: input.reason ?? null,
+            operationDate,
+            // El ajuste se nombra en la auditoría del cierre y no solo en el kardex: es la
+            // baja de inventario que ese cierre provocó, y RF-95 la quiere donde se decidió.
+            // Se expande a un literal para que `InputJsonValue` lo acepte sin obligar a
+            // `CloseAdjustmentSummary` a llevar una firma de índice, que apagaría el chequeo
+            // de propiedades de toda la interfaz.
+            adjustment: liquidated === null ? null : { ...liquidated },
+          },
         });
       },
       { timeout: 30_000 },
     );
     return this.coils.findOne(coilId);
+  }
+
+  /**
+   * D-164 — la liquidación del remanente al cerrar (RF-19).
+   *
+   * Cerrar una bobina declara que el rollo dejó de estar disponible. Hasta D-164 eso no movía
+   * kardex, así que el saldo teórico que quedaba en `inventory_balances` seguía sumando kilos
+   * y valor a un inventario valorizado de material que ya no existe — y nadie lo veía, porque
+   * la bobina cerrada desaparece de las pantallas de producción pero no del valorizado.
+   *
+   * Ahora el cierre pide **cuántos kilos quedan de verdad** y saca la diferencia por el único
+   * camino que el kardex admite (`InventoryService.record`, regla dura 2), en la misma
+   * transacción que el cambio de estado. Con D-165 metiendo el 1 % de merma normal dentro de
+   * la densidad estándar, lo que este movimiento mide es **merma anormal**: por eso lleva
+   * `refType` propio y no se confunde con los consumos de producción en el kardex del rollo.
+   */
+  private async liquidateRemainder(
+    tx: Prisma.TransactionClient,
+    coil: Coil,
+    input: SetCoilStatusInput,
+    actor: RequestUser,
+    operationDate: string,
+  ): Promise<CloseAdjustmentSummary | null> {
+    const balance = await tx.inventoryBalance.findUnique({
+      where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
+    });
+    const balanceKg = toDecimal(balance?.qty.toString() ?? '0');
+
+    // Sin saldo y sin declaración no hay nada que liquidar: es el cierre de una bobina ya
+    // agotada, el caso más común y el único que sigue siendo un clic.
+    //
+    // El corte es por `physicalKg === undefined` y **no** por `balanceKg <= 0`: cortar por el
+    // saldo dejaba fuera justamente el sobrante sobre una bobina en cero —planta encuentra
+    // material que el kardex ya dio por consumido—, que es el caso para el que existe la
+    // rama `SURPLUS`. Una declaración explícita se respeta siempre, en los dos sentidos.
+    if (input.physicalKg === undefined) {
+      // Con saldo vivo, cerrar **exige** decir qué queda. Dejarlo opcional con un default de
+      // cero convertiría un olvido en una baja de inventario silenciosa, que es exactamente
+      // lo que esta decisión viene a cerrar; y un default igual al saldo la deja sin efecto.
+      if (balanceKg.gt(0)) {
+        throw new BadRequestException(
+          `La bobina tiene ${balanceKg.toFixed(3)} kg de saldo: indica cuántos kilos quedan de ` +
+            'verdad en el rollo para liquidar la diferencia al cerrarla (D-164).',
+        );
+      }
+      return null;
+    }
+
+    // Cota física: un rollo no puede tener más kilos de los que entraron. Sin esto, un `5000`
+    // tipeado donde iba `500` daba de alta 4 500 kg valorizados al promedio en una sola
+    // llamada, con un texto libre como única justificación. `weightKg` es el peso de alta y no
+    // se mueve con los consumos ni con un partido, así que es el techo correcto.
+    const declaredKg = toDecimal(input.physicalKg);
+    const intakeKg = toDecimal(coil.weightKg.toString());
+    if (declaredKg.gt(intakeKg)) {
+      throw new BadRequestException(
+        `Declaras ${declaredKg.toFixed(3)} kg y la bobina entró con ${intakeKg.toFixed(3)} kg: ` +
+          'un rollo no puede tener más material del que ingresó. Revisá el número.',
+      );
+    }
+
+    const plan = planCoilCloseAdjustment({
+      balanceKg,
+      physicalKg: input.physicalKg,
+      avgCostPen: balance?.avgCost.toString() ?? '0',
+      // El costo del documento ya viene en soles: `unitCostPerKg` es sin IGV y en la moneda
+      // de la compra (D-038), así que el tipo de cambio de la bobina lo lleva a soles (D-042).
+      documentUnitCostPen: toDecimal(coil.unitCostPerKg.toString()).times(
+        toDecimal(coil.exchangeRate.toString()),
+      ),
+    });
+    if (!plan) return null;
+
+    // El sentido lo decide `plan.kind` y no una segunda comparación: re-derivarlo acá dejaba
+    // dos fuentes para la misma pregunta, y la de acá no pasa por el redondeo a la escala de
+    // kilos que sí aplica el plan.
+    if (plan.kind === 'SURPLUS') {
+      // Un `SURPLUS` es un conteo físico por encima del saldo teórico: material que existe y
+      // el kardex no conocía. Es legítimo, pero **crea** inventario, así que exige el mismo
+      // motivo escrito que cualquier otra corrección de saldo (RF-95).
+      if (!input.reason) {
+        throw new BadRequestException(
+          `Declaras ${declaredKg.toFixed(3)} kg contra un saldo de ` +
+            `${balanceKg.toFixed(3)} kg: dar de alta ${plan.qtyKg.toFixed(3)} kg que el kardex no ` +
+            'tenía exige un motivo escrito.',
+        );
+      }
+    } else if (!input.reason) {
+      throw new BadRequestException(
+        `Cerrar liquida ${plan.qtyKg.toFixed(3)} kg de remanente (S/ ` +
+          `${plan.totalCostPen.toFixed(2)}) como merma: explica el motivo.`,
+      );
+    }
+
+    const movement = await this.inventory.record(tx, {
+      businessLineId: coil.businessLineId,
+      itemType: 'COIL',
+      itemId: coil.id,
+      type: plan.kind === 'SHORTAGE' ? 'OUT' : 'IN',
+      qty: toFixedString(plan.qtyKg, 'KG'),
+      unit: Unit.KGM,
+      // Una salida se valoriza sola al promedio vigente (D-028/D-040) y `record` ignora este
+      // campo; una entrada lo exige, y sobre un saldo en cero el promedio no dice nada.
+      unitCost: plan.kind === 'SURPLUS' ? toFixedString(plan.unitCostPen, 'MONEY') : undefined,
+      refType: 'CLOSE_ADJUSTMENT',
+      refId: coil.id,
+      notes: input.reason,
+      actorId: actor.id,
+      operationDate,
+      confirmBackdate: input.confirmBackdate,
+    });
+    if (!movement) {
+      throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
+    }
+
+    return {
+      kind: plan.kind,
+      movementId: movement.id.toString(),
+      qtyKg: movement.qty.toFixed(3),
+      totalCostPen: movement.totalCost.toFixed(4),
+      declaredPhysicalKg: declaredKg.toFixed(3),
+    };
+  }
+
+  /**
+   * D-164 — reabrir deshace la liquidación.
+   *
+   * El ajuste del cierre **no** se anula por RF-18: `cancelScrap` lo rechaza a propósito
+   * (mira el `refType`), igual que rechaza la merma de proceso de una OP (D-057). El camino
+   * es reabrir la bobina, que revierte el movimiento entero — kilos y valor— con un
+   * movimiento inverso, nunca un `DELETE` (§3.2).
+   *
+   * **Solo se revierte el ajuste si es el ÚLTIMO movimiento del kardex de la bobina**, sin
+   * anular nada, y si él mismo no fue anulado todavía. Es la parte que más cuesta acertar, y
+   * las dos versiones anteriores estaban mal:
+   *
+   * 1. «El último `CLOSE_ADJUSTMENT` vivo» no ancla nada. Una bobina puede volver a `OPEN` por
+   *    un camino que no es este: `revertSplit` (RF-16) reabre a la madre con un `update`
+   *    directo, y ahí el ajuste de un cierre anterior queda vivo y **sin dueño**. El siguiente
+   *    ciclo cerrar→reabrir lo adoptaba: madre de 500 kg, partido de 400, cierre declarando
+   *    cero (ajuste de 100), `revertSplit` que devuelve los 400 y la reabre, cierre declarando
+   *    los 400 (sin ajuste nuevo) y una reapertura que mete 100 kg **de la nada**.
+   * 2. «El último movimiento **vivo**» tampoco, y por un motivo que no se ve: `liveMovements`
+   *    descarta los pares movimiento+reversa, y la reversa del partido anula exactamente al
+   *    movimiento del partido. Después de `revertSplit` los dos desaparecen de la lista y el
+   *    ajuste **vuelve a quedar último**, así que la regla se saltea justo el caso que venía a
+   *    cerrar. Que el par se anule es correcto para "¿queda algo que bloquee?" y equivocado
+   *    para "¿pasó algo después?", que es la pregunta de acá.
+   *
+   * La condición que sí sirve es la cruda: nada se grabó después. El kardex es append-only, así
+   * que un ajuste que dejó de ser el último **nunca vuelve a serlo** y queda inerte para
+   * siempre, sin necesidad de guardar el vínculo en la bobina. Y es además lo que hace segura
+   * la reversa: si algo movió el rollo después del cierre, el saldo ya no es el que el ajuste
+   * dejó, y deshacerlo a ciegas es justamente lo que no se puede hacer.
+   */
+  private async reverseCloseAdjustment(
+    tx: Prisma.TransactionClient,
+    coilId: string,
+    input: SetCoilStatusInput,
+    actor: RequestUser,
+    operationDate: string,
+  ): Promise<CloseAdjustmentSummary | null> {
+    const last = await tx.inventoryMovement.findFirst({
+      where: { itemType: 'COIL', itemId: coilId },
+      orderBy: { id: 'desc' },
+      include: { reversals: { select: { id: true } } },
+    });
+    // `reversals` vacío: reabrir dos veces seguidas encontraría el mismo ajuste —ya revertido—
+    // e intentaría revertirlo otra vez, chocando con "ese movimiento ya fue anulado". No puede
+    // pasar hoy (reabrir una bobina abierta ya rebota antes), pero el chequeo es una línea y
+    // el que lo garantiza es un estado, no una invariante del kardex.
+    const adjustment =
+      last?.refType === 'CLOSE_ADJUSTMENT' && last.reversals.length === 0 ? last : undefined;
+    if (!adjustment) return null;
+
+    if (!input.reason) {
+      throw new BadRequestException(
+        `Al cerrarla se liquidaron ${adjustment.qty.toFixed(3)} kg: reabrirla los devuelve al ` +
+          'kardex con un movimiento inverso, así que explica el motivo.',
+      );
+    }
+
+    const reversal = await this.inventory.reverse(
+      tx,
+      adjustment.id,
+      actor.id,
+      input.reason,
+      operationDate,
+      input.confirmBackdate,
+    );
+    return {
+      kind: adjustment.type === 'OUT' ? 'SHORTAGE' : 'SURPLUS',
+      movementId: reversal.id.toString(),
+      qtyKg: reversal.qty.toFixed(3),
+      totalCostPen: reversal.totalCost.toFixed(4),
+      reversalOfId: adjustment.id.toString(),
+    };
   }
 
   // -------------------------------------------------------------------------

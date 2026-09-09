@@ -18,7 +18,9 @@ function rows(...remaining: string[]): StripAllocationRow[] {
 
 describe('theoreticalKgPerPiece (D-047, D-059)', () => {
   it('calcula el kilo de un perfil desde su geometría y el factor de densidad', () => {
-    // 90 mm × 0.50 mm × 3000 mm = 135 000 mm³; × 7.85 / 1e6 = 1.05975 kg → 1.060 kg.
+    // 90 mm × 0.50 mm × 3000 mm = 135 000 mm³; × 7.85 / 1e6 = 1.05975 kg, y **× 1.01** por la
+    // merma normal de D-165 = 1.0703… → 1.070 kg. El kilo que la bobina entrega de menos, no
+    // lo que el perfil pesa: el 1 % es recorte y despunte que ocurren en toda corrida.
     expect(
       theoreticalKgPerPiece({
         widthMm: '90',
@@ -26,7 +28,7 @@ describe('theoreticalKgPerPiece (D-047, D-059)', () => {
         pieceLengthMm: '3000',
         densityFactor: '7.85',
       }).toFixed(3),
-    ).toBe('1.060');
+    ).toBe('1.070');
   });
 
   it('escala linealmente con el largo de la pieza', () => {

@@ -37,7 +37,8 @@ import {
  * una sola vez.
  *
  * La aritmética está elegida para comprobarse a ojo: bobina de 1 000 mm × 0.50 mm con
- * densidad 8.0 ⇒ **4 kg por metro lineal**. Una plancha de 4 m son 16 kg; una de 6 m, 24 kg.
+ * densidad 8.0 ⇒ 4 kg por metro de geometría y **4.04 consumidos** con el 1 % de merma
+ * normal que D-165 absorbe en la densidad estándar. Una plancha de 4 m se lleva 16.16 kg.
  */
 
 const allowWrites = process.env.E2E_ALLOW_WRITES === '1' || !process.env.E2E_BASE_URL;
@@ -77,7 +78,7 @@ test.describe('Fase 6 — producción de coberturas', () => {
     };
 
     try {
-      // 3 planchas de 4.20 m + 2 de 6.00 m = 24.60 m. A 4 kg/m son 98.400 kg teóricos.
+      // 3 planchas de 4.20 m + 2 de 6.00 m = 24.60 m. A 4.04 kg/m (D-165) son 99.384 kg.
       const rows = pieces([4.2, 3], [6, 2]);
       expect(metersOf(rows)).toBe('24.600');
 
@@ -103,12 +104,12 @@ test.describe('Fase 6 — producción de coberturas', () => {
       // D-134: confirmar reservó kilos del **agregado de materia prima** (línea + color +
       // espesor), no una bobina concreta — la línea ya no elige el rollo, así que el
       // producto terminado sigue sin existir hasta que planta rola. Los kilos son los
-      // teóricos de la geometría: 24.6 m × 4 kg/m = 98.400 kg.
+      // teóricos del estándar: 24.6 m × 4.04 kg/m = 99.384 kg (D-165).
       const afterConfirm = await reservationsOf(api, order.id);
       expect(afterConfirm).toHaveLength(1);
       expect(afterConfirm[0]).toMatchObject({
         itemType: 'RAW_MATERIAL',
-        qty: '98.400',
+        qty: '99.384',
         status: 'ACTIVE',
       });
       // El disponible del agregado ya descuenta lo prometido, aunque el físico de la bobina
@@ -119,7 +120,7 @@ test.describe('Fase 6 — producción de coberturas', () => {
       });
       expect(panelAfterConfirm.products[0]).toMatchObject({
         productId: scenario.product.id,
-        rawMaterialAvailableKg: '1901.600',
+        rawMaterialAvailableKg: '1900.616',
       });
       const coilAfterConfirm = await balanceOf(api, 'COIL', scenario.coil.id);
       expect(coilAfterConfirm.qty).toBe('2000.000');
@@ -136,8 +137,9 @@ test.describe('Fase 6 — producción de coberturas', () => {
       // El filtro ofrece la bobina del propio pedido: su reserva no se excluye a sí misma.
       const options = await coilOptions(api, scenario.product.id, afterConfirm[0]!.id);
       expect(options.map((o) => o.coilId)).toContain(scenario.coil.id);
-      // 2 000 kg a 4 kg/m son 500 m.
-      expect(options.find((o) => o.coilId === scenario.coil.id)?.estimatedMeters).toBe('500.000');
+      // 2 000 kg a 4.04 kg/m (D-165) rinden 495.050 m: el mismo rollo promete ~1 % menos
+      // metros, que es exactamente el efecto buscado de absorber la merma normal en el estándar.
+      expect(options.find((o) => o.coilId === scenario.coil.id)?.estimatedMeters).toBe('495.050');
 
       await postJson<ProductionOrderDto>(api, `/api/production/roofing/${created.id}/coils`, {
         coilId: scenario.coil.id,
@@ -157,20 +159,22 @@ test.describe('Fase 6 — producción de coberturas', () => {
       expect(reported.piecesReported).toBe(5);
       expect(reported.metersReported).toBe('24.600');
       const report = reported.reports.find((r) => r.status === 'ACTIVE')!;
-      expect(report.theoreticalKg).toBe('98.400');
+      expect(report.theoreticalKg).toBe('99.384');
 
-      // El kardex: 98.400 kg salen de la bobina y 24.600 m entran al producto.
+      // El kardex: 99.384 kg salen de la bobina (D-165) y 24.600 m entran al producto.
       const coilAfterReport = await balanceOf(api, 'COIL', scenario.coil.id);
-      expect(coilAfterReport.qty).toBe('1901.600');
+      expect(coilAfterReport.qty).toBe('1900.616');
       const productAfterReport = await balanceOf(api, 'PRODUCT', scenario.product.id);
       expect(productAfterReport.qty).toBe('24.600');
       expect(productAfterReport.unit).toBe('MTR');
-      // Valor conservado: la bobina entró a S/ 5/kg, así que 98.4 kg son S/ 492.
-      expect(productAfterReport.avgCost).toBe('20.0000');
+      // Valor conservado: la bobina entró a S/ 5/kg, así que los 99.384 kg del estándar
+      // (D-165) son S/ 496.92, repartidos en 24.6 m ⇒ S/ 20.20 por metro.
+      expect(productAfterReport.avgCost).toBe('20.2000');
 
       // **D-088, el corazón de la fase**: la promesa se trasladó. La reserva de materia
-      // prima se consumió por completo (reservó y gastó exactamente 98.400 kg, D-134) y
-      // nació una reserva sobre los metros fabricados.
+      // prima se consumió por completo (reservó y gastó exactamente 99.384 kg con el 1 % de
+      // D-165, D-134) y nació una reserva sobre los **metros** fabricados — que son 24.600 y no
+      // llevan el factor: la merma vive en el kilo de bobina, no en el metro de producto.
       const afterReport = await reservationsOf(api, order.id);
       const onRawMaterial = afterReport.find((r) => r.itemType === 'RAW_MATERIAL')!;
       const onProduct = afterReport.find((r) => r.itemType === 'PRODUCT')!;
@@ -193,11 +197,12 @@ test.describe('Fase 6 — producción de coberturas', () => {
         { consumedKg: '102.000' },
       );
       expect(closed.status).toBe('CLOSED');
-      expect(closed.scrapKg).toBe('3.600');
+      expect(closed.scrapKg).toBe('2.616');
       expect(closed.consumedDeclaredKg).toBe('102.000');
 
       // El sobrante de la bobina **vuelve al almacén**, no sale como merma: eso es lo que
-      // separa D-089 de D-057. Salieron 98.400 + 3.600 = 102 kg de 2 000.
+      // separa D-089 de D-057. Salieron 99.384 + 2.616 = 102 kg de 2 000: con el 1 % de
+      // D-165 adentro del estándar, el despunte que queda por explicar es más chico.
       const coilAfterClose = await balanceOf(api, 'COIL', scenario.coil.id);
       expect(coilAfterClose.qty).toBe('1898.000');
 

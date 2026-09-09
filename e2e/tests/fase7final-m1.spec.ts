@@ -71,7 +71,7 @@ test.describe('M1 — reserva genérica de materia prima (D-134)', () => {
     };
 
     try {
-      // 3 planchas de 5 m = 15 m. A 4 kg/m son 60.000 kg teóricos.
+      // 3 planchas de 5 m = 15 m. A 4.04 kg/m (D-165) son 60.600 kg teóricos.
       const rows = pieces([5, 3]);
       expect(metersOf(rows)).toBe('15.000');
 
@@ -89,7 +89,7 @@ test.describe('M1 — reserva genérica de materia prima (D-134)', () => {
       expect(reservations).toHaveLength(1);
       expect(reservations[0]).toMatchObject({
         itemType: 'RAW_MATERIAL',
-        qty: '60.000',
+        qty: '60.600',
         unit: 'KGM',
         status: 'ACTIVE',
       });
@@ -169,7 +169,7 @@ test.describe('M1 — reserva genérica de materia prima (D-134)', () => {
       expect(onProduct).toMatchObject({ qty: '10.000', unit: 'MTR', status: 'ACTIVE' });
 
       // Y en el kardex, la que de verdad roló bajó sus kilos; la otra, ninguno.
-      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('260.000');
+      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('259.600');
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('300.000');
 
       const closed = await postJson<ProductionOrderDto>(
@@ -307,14 +307,14 @@ test.describe('M1 — reserva genérica de materia prima (D-134)', () => {
         physicalKg: '500.000',
         reservedKg: '0.000',
         availableKg: '500.000',
-        theoreticalMeters: '125.000',
+        theoreticalMeters: '123.762',
       });
 
       const productRow = panel.products.find((p) => p.productId === scenario.product.id);
       expect(productRow, 'el SKU pedido por productIds tiene que venir en el panel').toBeDefined();
       expect(productRow).toMatchObject({
         rawMaterialAvailableKg: '500.000',
-        kgPerMeter: '4.000',
+        kgPerMeter: '4.040',
       });
       expect(productRow?.rawMaterialLabel).toContain(scenario.color.name);
     } finally {
