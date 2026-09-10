@@ -317,10 +317,21 @@ export async function buyCoilForSale(
     weightKg?: string;
     unitPrice?: string;
     coilStatus?: 'OPEN' | 'CLOSED';
+    /**
+     * D-168: código del acabado con el que se arma el `typeKey` y, de él, el SKU de venta
+     * directa (D-037). Se puede fijar porque **el guion es un separador, no un carácter a
+     * borrar**: un acabado real lleva guiones adentro (`ALZ-ROJO-3002`) y por ahí se coló el
+     * defecto en que `coilSku` los conservaba y `coilSkuFromTypeKey` los borraba, así que la
+     * venta directa buscaba un SKU que el catálogo nunca había dado de alta.
+     */
+    finishCode?: string;
   },
 ): Promise<CoilScenario> {
   const supplier = await createCuttingSupplier(api);
-  const finish = await createFinish(api);
+  const finish = await createFinish(
+    api,
+    options.finishCode === undefined ? {} : { code: options.finishCode },
+  );
   const weightKg = options.weightKg ?? '500';
 
   const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
@@ -371,6 +382,12 @@ export interface SellableCoilDto {
   thicknessMm: string;
   status: 'OPEN' | 'CLOSED';
   availableQty: string;
+  /**
+   * D-170: costo promedio del kardex de esa bobina, en soles por kilo. El vendedor negocia el
+   * precio de un rollo entero mirando lo que costó, y hasta D-170 ese número no salía en el
+   * desplegable. `null` cuando la bobina todavía no tiene saldo valorizado.
+   */
+  avgCostPen: string | null;
 }
 
 /** `GET /sales/sellable-coils` (D-116): bobinas DISPONIBLES para vender enteras. */
@@ -414,6 +431,12 @@ export interface ProductStockDto {
    */
   minPricePen: string | null;
   minValuePen: string | null;
+  /**
+   * D-167: `false` cuando el producto es de una línea `NOOP` (un servicio). No es «no hay
+   * saldo»: es que a esta fila la pregunta «cuánto hay» no se le hace, y por eso la celda
+   * dice «Servicio · no lleva inventario» en vez de un cero que se confunde con un agotado.
+   */
+  carriesInventory: boolean;
 }
 
 export interface StockPanelDto {

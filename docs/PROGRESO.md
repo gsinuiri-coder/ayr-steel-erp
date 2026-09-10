@@ -4003,6 +4003,273 @@ captura. Regresión de ventas y catálogo: `precios-d161-d163`, `fase7e`, `fase1
 
 **Sin desplegar y sin push.**
 
+## Sesión HOTFIX post-deploy (2026-09-10) — servicios, importes del papel, SKU de bobina, reventa de bobina y plancha contra pedido (D-167..D-171)
+
+La ventana de deploy expuso cuatro flujos que nunca se habían ejercitado de punta a punta con
+datos reales. Dos eran defectos de una línea; dos eran premisas de negocio equivocadas.
+
+**Entorno LOCAL en toda la sesión** (Docker, `:3000`/`:3001`). Contra `production` se corrieron
+únicamente los dos guiones de **solo lectura**, con el OK del dueño. **Nada desplegado y sin
+push.**
+
+### M0 — Un servicio no se podía cotizar por ninguna puerta (D-167)
+
+«Línea 1: el producto CONFORMADO es de una línea sin inventario: no se cotiza». El rechazo
+estaba en `resolveSalesLines` y cortaba **antes** de llegar al kardex, que ya trataba el caso
+como el no-op explícito que es (§2.2) — la mitad de abajo del sistema estaba lista y la de
+arriba no dejaba llegar.
+
+La exención la decide ahora `carriesInventory(line)` en `@ayr/shared`, por el **atributo**
+`inventory_strategy` y nunca por el código de la línea. Reemplaza a las tres comparaciones
+sueltas que había (`inventory.service` ×2, `purchases.service`). Cinco puntos tocados: la
+resolución de líneas, la reserva, el piso de precio, el despacho y el web.
+
+**Lo que la revisión encontró y obligó a ampliar el alcance:** el web filtraba el selector de
+línea de negocio por `inventoryStrategy === 'STOCK'`, así que Servicios **ni siquiera se podía
+elegir** y todo lo que M0 había agregado del lado del navegador era código muerto. Sin ese
+segundo arreglo, el único camino que ejercitaba D-167 era el importador.
+
+Dos consecuencias que había que decidir y no se podían dejar implícitas:
+
+- **El despacho rechaza una línea de servicio.** No sale nada del almacén y no hay peso que
+  declarar en una guía; dejarla pasar hacía que el despacho pidiera «el peso en kilos» de un
+  conformado y lo escribiera en la guía de remisión como si fuera un bulto.
+- **`recomputeOrderStatus` no la espera** para llegar a `FULFILLED`. Sin esto, todo pedido que
+  mezclara mercadería con un servicio quedaba en `PARCIALMENTE DESPACHADO` para siempre.
+- Un pedido de **solo** servicios se queda en `CONFIRMADO`: el ERP no modela la ejecución de un
+  servicio y fingir que sí sería peor. Queda anotado.
+
+### M1 — El rechazo por céntimos vivía en la cobranza, no en el importador (D-169)
+
+El brief decía que las importaciones rechazaban por céntimos y ubicaba el rechazo aguas abajo.
+**No estaba en el importador**: ahí no hay ninguna comparación de importes (el piso de precio ya
+está desactivado por D-163). Se reprodujo el camino completo contra el API local hasta
+encontrarlo.
+
+**Dónde estaba.** Una línea de 3 × S/ 33.3333 da un subtotal de 99.9999 y un total de
+**117.9999**. El papel dice S/ 118.00. Cobrar los 118 del papel se rechazaba con:
+
+```
+El cobro excede el saldo pendiente (S/ 118.00)
+```
+
+sobre un cobro de exactamente S/ 118.00 — el mensaje redondeaba para mostrar y la comparación
+no. Dos cifras idénticas en pantalla y un 400 sin salida, sobre una factura que no se podía
+cerrar nunca.
+
+**Dos arreglos, y hacen falta los dos:**
+
+1. **La causa** (D-169): el importe de una línea importada **se copia del papel** en vez de
+   recalcularse. `netAmountPen` viaja por fila y `resolveSalesLines`, bajo `exactAmounts`, lo
+   persiste como subtotal. El unitario sigue siendo la cuenta derivada, porque es lo que el
+   comprobante electrónico declara como `valorUnitario`.
+2. **La clase entera**: `payableBalance` compara el saldo **en céntimos**, redondeando hacia
+   arriba. Un total con cola de diezmilésimas también lo produce un precio tipeado a mano, así
+   que arreglar solo el importador habría dejado el mismo callejón por otra puerta.
+
+Y dos cierres más que la revisión encontró en el camino:
+
+- El **comprobante** recalculaba el subtotal e ignoraba el del pedido, así que el importe exacto
+  moría al facturar — literalmente el daño que D-169 dice cerrar, una pantalla más adelante. La
+  línea que factura un pedido entero a su propio precio ahora **copia** su importe; la parcial o
+  la de precio editado se sigue recalculando, que es lo único defendible.
+- **Editar** una cotización importada le borraba los importes a todas sus líneas, en silencio.
+  Ahora conserva el del papel en las líneas cuyo producto, cantidad y precio no cambiaron.
+
+**La tolerancia tuvo que dejar de ser un número fijo.** El techo plano de S/ 0.10 que pidió el
+brief rechazaba **justo los documentos que la decisión venía a poder importar**: el desvío que
+el redondeo del unitario puede producir es `cantidad × 0.00005`, o sea S/ 0.12 en una línea de
+2 500 kg, que es el tamaño normal de una de acero. La cota es ahora
+`max(S/ 0.10, Σ (cantidad + 1) × 0.00005)` — el colchón del dueño como piso, y la aritmética
+como techo. Lo que queda por encima es lo único que el redondeo no pudo haber hecho.
+
+### M2 — El guion es un separador, no un carácter a borrar (D-168)
+
+`coilSkuFromTypeKey` hacía `typeKey.replace(/-/g, '')` y `coilSku` conservaba los guiones del
+acabado. Con un código de acabado sin guiones (`GALV`) las dos coinciden y el test que había
+pasaba; con uno real del cliente (`ALZ-ROJO-3002`) no:
+
+```
+catálogo   → BOBALZ-ROJO-30020.45   (coilSku, es lo que está en la base)
+venta      → BOBALZROJO30020.45     (coilSkuFromTypeKey)
+```
+
+y RF-73 respondía «no existe el producto de venta directa» sobre una bobina que sí tenía el
+suyo. Ahora hay **una sola** función que arma el SKU y la otra parte el `typeKey` por su
+**último** guion y delega — el mismo criterio que `describeTypeKey` ya usaba en el valorizado.
+
+**Auditado contra `production` y `local`** (`pnpm check:coil-skus`, solo lectura, con OK del
+dueño): los **11** tipos de bobina de producción y los 3 de local resuelven a su producto con la
+función arreglada. **No hay ningún dato que migrar.** Los dos `BOB…` sin bobinas de cada base
+(`BOB38AZUL`/`BOB38ROJO` en producción) son SKU creados a mano, no restos de la forma vieja.
+
+### M3 — La venta de bobina entera ya existía; le faltaba el cierre (D-170)
+
+Al leer el código antes de diseñar apareció que **RF-73/D-116 ya estaba casi entero** desde la
+Fase 7e: saldo vigente y no nominal, sin fracciones, reserva del rollo completo, `OUT` directo
+sobre la bobina sin pasar por ningún kardex intermedio, y una bobina reservada que ni se monta
+en producción ni se manda a corte. **Lo que la rompía en la práctica era M2.**
+
+Lo que faltaba, y se agregó: el despacho **cierra** el rollo que quedó en cero y sin reservas
+vivas, y la reversa lo **reabre**. Un despacho parcial que deja remanente no lo cierra: ese
+camino sigue siendo el cierre manual de D-164, el que pide cuántos kilos quedan y liquida la
+diferencia como merma anormal.
+
+**`refType` propio se descartó, con el OK del dueño.** El movimiento ya es `SALE` sobre
+`itemType = COIL`, que es inequívoco; agregar `COIL_SALE` al enum obligaba a una migración y a
+revisar la reversa a cambio de distinguir algo que el `itemType` ya distingue solo.
+
+### M4 — La plancha no es stock terminado (D-171, revierte D-140)
+
+Regla de negocio del dueño. Con el modelo viejo el mostrador exigía tener planchas en el almacén
+—«0.000 NIU disponibles… necesita 10»— sobre un producto que nunca vive ahí: se rola contra el
+pedido igual que una cobertura a medida.
+
+**Una cuarta pregunta, no un cambio a las que había** (regla dura 14). `isMadeToOrder(product)`
+responde _¿se fabrica desde bobina contra el pedido?_, y la contestan que sí la cobertura a
+medida y la plancha **con largo fijo usable**. `isMadeToMeasure` deja de decidir la rama de la reserva y se
+queda con lo que su nombre dice. El centinela `sales-lines.spec.ts` cubre ahora las cuatro
+combinaciones, con el par nuevo escrito aparte porque es el más peligroso: responder «¿se
+produce?» con `isMadeToMeasure` devuelve la plancha al modelo viejo en silencio.
+
+`orderedMeters(product, qty, at)` es la conversión que hace que las dos formas prometan con la
+misma aritmética: en una plancha, `cantidad × largo del SKU`. **El 1 % de merma normal no se
+suma aparte** —vive dentro de la densidad estándar desde D-165— y sumarlo lo habría contado dos
+veces.
+
+**Producir coberturas a stock se eliminó**, con el OK explícito del dueño y registrado como
+decisión de negocio **reversible**. Es la contracara necesaria: si además se pudiera producir a
+stock, quedaría un saldo de producto terminado que ningún pedido consume nunca. Para reabrirla
+hay que responder primero qué hace una línea de pedido cuando ese saldo existe, que es la
+pregunta que hoy no tiene respuesta. `createToStock` quedó en el archivo sin llamadores, para
+que reabrirla sea volver a enchufarla y no volver a escribirla.
+
+**Un defecto viejo que apareció al mirar el camino del despacho:** `resolveDispatchTarget`
+decidía «se fabrica contra el pedido» con `productBom.count`, y desde D-122 una cobertura **ya
+no tiene receta** — el caso central de esa rama daba cero y se sostenía solo por que la
+producción ya hubiera abierto la reserva de producto. Un despacho **anterior** a producir caía
+al camino de las coordenadas congeladas y emitía una salida de **kilos de bobina** por una venta
+de planchas, que es exactamente lo que D-088 vino a cerrar. Ahora decide por el subtipo.
+
+**Censo previo, con el OK del dueño** (`pnpm check:roofing-catalog`, ampliado en esta sesión,
+solo lectura):
+
+|                              | `production` | `local` |
+| ---------------------------- | ------------ | ------- |
+| SKU de plancha               | 19           | 3       |
+| Líneas en cotizaciones vivas | 0            | 5       |
+| Líneas en pedidos vivos      | 0            | 0       |
+| Saldo de producto terminado  | 0            | 0       |
+| OP de plancha «a stock»      | 0            | 0       |
+
+**Ninguna migración**, y no por suerte: la rama de la reserva se recalcula al **confirmar** el
+pedido (`resolveRawMaterial`), no al cotizar, así que las cotizaciones vivas se confirman solas
+bajo el modelo nuevo. Es el mismo mecanismo con el que D-134 arregló las anteriores a él.
+
+### Lo que encontró la revisión
+
+Dos bloqueantes, los dos reales y los dos corregidos antes de seguir:
+
+1. **La tolerancia de D-169 era más chica que el error que existe para tolerar** — ver M1.
+2. **El web tapiaba la puerta que M0 abrió en el API** — ver M0.
+
+Y cuatro más, todos corregidos: el comprobante que recalculaba el importe; la edición que lo
+perdía; la línea de servicio atrapada en el despacho; y el guard de `netAmountPen`, que estaba
+**después** del `return` de la rama de venta de bobina, así que en esa rama el campo se ignoraba
+en silencio en vez de dar 400 — el contrato decía una cosa y una de las dos ramas hacía otra.
+
+De los bajos se tomaron: unificar las tres comparaciones crudas de `NOOP` en `carriesInventory`,
+dejar escrita la exclusión del mostrador (su lista nace del saldo, y un servicio no tiene saldo
+del que salir), validar `--branch` en el guion nuevo, y mostrar el ajuste de redondeo en el
+detalle de la cotización — viajaba en el DTO y no lo pintaba ninguna pantalla.
+
+**La segunda pasada, sobre M3 y M4, encontró otros dos altos**, los dos del mismo tipo — la
+regla nueva alcanzaba a datos que no sabía describir:
+
+1. **`isMadeToOrder` era `roofingKind !== null`, y eso no alcanza.** Ver M4: el `CHECK` de la
+   base admite una `PLANCHA` en `KGM` y una sin largo, y en esas dos la cantidad no son
+   planchas. Corregido a `isMadeToMeasure || sellsByFixedLength`, con el caso en el centinela.
+2. **La tarjeta «Nueva orden de coberturas a stock» de `/planta` quedó como callejón**: el API
+   ya respondía 400 fijo y la pantalla seguía ofreciendo elegir la plancha y tipear la meta.
+   Se retiró en el mismo commit que cerró la puerta, que es lo que D-156 pide.
+
+Y cinco medios, corregidos: la **reversa parcial** dejaba el rollo `CLOSED` con saldo vivo —dos
+despachos sobre la misma bobina, el segundo la cierra, revertir el primero le devuelve kilos—,
+así que la reapertura pasó a mirar el **último cierre del rollo** y no el `closedCoils` del
+despacho que se revierte; la reversa **no tomaba el lock de bobinas** aunque su propio
+comentario prometía el orden «pedido → bobinas → saldos»; el bloque canónico de la familia de
+preguntas en `schemas/roofing.ts` seguía enseñando que `isMadeToMeasure` decide la rama de la
+reserva, que es exactamente la confusión que la regla dura 14 prohíbe; el navegador respondía
+la pregunta de la unidad con el subtipo en el cálculo de metros; y el **mostrador** seguía
+ofreciendo planchas con saldo legado que ya no se pueden despachar por ninguna puerta.
+
+De los bajos de esa pasada se tomaron: la fecha de operación en el cierre automático (el manual
+la escribe y un reporte por fecha de negocio se saltearía los automáticos), el plan de corte
+derivado en el **PDF de planta** —imprimía «—» justo en la línea que ahora hay que rolar— y el
+`madeToMeasure` mal nombrado de `roofing-production.service.ts`, que es la clase de nombre que
+no conviene reutilizar con cuatro predicados en juego.
+
+### Lo que encontró la escritura de los E2E
+
+**Un defecto del API, y era mío: la cabecera del comprobante no sumaba sus propias líneas.**
+`resolveLines` copiaba el importe del papel en la línea (la mitad de D-169 que sí estaba
+implementada) y, un renglón más abajo, `createInTx` calculaba el total de la cabecera con
+`salesTotals(lines.map(l => ({ qty, unitPricePen })))` — recalculando desde el unitario. La
+línea decía S/ 4 179.13 y la cabecera S/ 4 179.00.
+
+No era cosmético y era **exactamente el daño que D-169 vino a cerrar, sobrevivido una pantalla
+más adelante**: la cuenta por cobrar sale de `totalPen`, así que el saldo quedaba trece
+céntimos por debajo del papel y cobrar el importe del papel se rechazaba por exceso. Pasaba
+desapercibido porque el total recalculado, al perder la cola de diezmilésimas, se ve **más
+limpio** que el correcto.
+
+Corregido con `sumLineTotals` —suma subtotal e IGV por separado, nunca totales ya redondeados,
+el mismo criterio que `documentTotals` en ventas— y aplicado también a la **nota de crédito**,
+que tenía el mismo defecto por partida doble: su cabecera lo recalculaba y, peor, una NC
+**total** sobre un comprobante importado acreditaba menos que el total del afectado, así que la
+cuenta por cobrar no cerraba nunca y quedaban céntimos que ya nadie podía acreditar ni cobrar.
+Acreditar la línea entera copia su importe entero; una acreditación parcial se sigue calculando,
+porque una fracción de un importe exacto hay que derivarla.
+
+El caso nació en la suite marcado `test.fail()` —corría, afirmaba la regla nueva y dejaba la
+suite verde mientras el defecto existiera— y se le quitó la marca al corregirlo.
+
+**Dos más, que no se tocaron** (ninguno es de esta sesión):
+
+- **El selector de cliente no ve más de 200 clientes y no busca.**
+  `sales-document-form.tsx` los pide con `fetchAllForPicker('/customers')` (`pageSize=200`) y
+  los pinta en un `<Select>` plano. `/customers` ordena por `isActive desc, name asc`, así que
+  con más de 200 activos **el vendedor no puede elegir a la mayoría**: no hay error, sencillamente
+  no están. El propio helper lo advierte de sí mismo y `/customers` ya soporta `search`.
+- **La cuenta demo del PSE está en su tope** («No puedes enviar mas de 50 documentos en en una
+  cuenta DEMO»), y con eso quedan 12 casos rojos en `fase5b`, `fase5b-bordes` y `fase7b`. **No
+  es una regresión** y no se silenció: `probePse` no cubre este caso —el PSE está configurado,
+  solo sin cupo— y saltear esos casos por cuota escondería regresiones reales. Necesita acción
+  del dueño: vaciar los comprobantes de la cuenta demo.
+
+### Verificación
+
+```bash
+pnpm turbo lint typecheck test     # verde (399 unitarios)
+pnpm exec prettier --check apps packages docs CLAUDE.md scripts e2e
+pnpm exec eslint e2e
+
+pnpm check:coil-skus --branch local        # y --branch production, solo lectura
+pnpm check:roofing-catalog --branch local  # incluye el censo de exposición de PLANCHA
+
+# Recrear `ayr_local_e2e` antes de una tanda larga (ver notas operativas).
+# Matar servidores viejos en :3000/:3001; NO tocar :4000/:4001 (regla dura 15).
+pnpm e2e servicios-d167 bobina-sku-guiones-d168 importe-importado-d169 \
+         venta-bobina-entera-d170 plancha-contra-pedido-d171     # 22/22, los cinco frentes
+pnpm e2e fase6 fase7-consolidada-subtipo fase7final-op-a-stock precios-d161-d163 \
+         planta-avisos-materia-prima planta-espacio-produccion-ui  # regresión de D-171
+```
+
+La suite completa quedó en **13 fallados / 230 pasados**, y los 12 que sobreviven al último
+arreglo son todos el cupo del PSE demo. El baseline antes de esta sesión era **26 fallados**.
+
+**Nunca `pnpm e2e:prod`** (regla dura 9, D-126).
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
@@ -4049,6 +4316,51 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
   API nuevo**: es aditiva (un valor más en el enum `InventoryRefType`), así que el API viejo
   contra la base migrada funciona igual, pero el API nuevo contra la base sin migrar escribe
   `CLOSE_ADJUSTMENT` y revienta.
+
+## Pendientes abiertos de la Sesión HOTFIX (2026-09-10)
+
+- **Un pedido de solo servicios no llega a `FULFILLED`** y se queda en `CONFIRMADO` para
+  siempre (D-167). Es honesto —el ERP no modela la ejecución de un servicio, así que no tiene
+  con qué decidir que terminó— pero deja una fila viva en la lista de pedidos que nadie va a
+  poder cerrar. Las salidas posibles son un cierre manual con motivo (el patrón de D-164) o
+  dejarlo así y filtrarlo en la lista. **Decisión del dueño**, y conviene tomarla recién cuando
+  aparezca el primer pedido de solo servicios: hasta hoy no existe ninguno.
+- **La edición de una cotización importada conserva el importe solo si el trío no cambió**
+  (producto, cantidad, valor unitario). Si alguien corrige el **precio** de una línea, esa
+  línea vuelve a calcularse y el documento deja de coincidir con el papel en esa línea. Es lo
+  correcto —quien edita el precio está diciendo que el papel decía otra cosa— pero no hay nada
+  en la pantalla que lo avise. Un cartel en el formulario de edición de una cotización
+  importada sería barato.
+- **El importador sigue derivando el unitario y no deja editar el importe.** El campo editable
+  del preview es el **precio unitario**, así que corregir una fila obliga a pensar al revés
+  (qué unitario da el importe que quiero). Lo natural, ahora que el importe manda, sería que el
+  campo editable **fuera el importe** y el unitario se derivara a la vista. No se hizo en esta
+  sesión para no mover la forma de una pantalla que el dueño ya conoce en medio de un hotfix.
+- **Reabrir la producción a stock de coberturas** (D-171) exige responder antes qué hace una
+  línea de pedido cuando ese saldo existe: ¿lo toma?, ¿lo ignora y produce igual?, ¿lo toma
+  hasta donde alcanza y produce el resto? `createToStock` quedó en el archivo, sin llamadores,
+  esperando esa respuesta.
+- **`BOB38AZUL` y `BOB38ROJO` en `production`** son productos `BOB…` que ninguna bobina nombra
+  (los lista `pnpm check:coil-skus`). No son restos de D-168 —su forma no es la que genera
+  `coilSku`— sino SKU creados a mano. Antes de darlos de baja hay que ver si alguno está
+  cotizado o vendido; el guion no borra nada a propósito.
+
+### Necesitan acción tuya
+
+- **Vaciar los comprobantes de la cuenta demo del PSE.** Está en su tope («No puedes enviar mas
+  de 50 documentos en en una cuenta DEMO») y con eso quedan **12 casos rojos** en `fase5b`,
+  `fase5b-bordes` y `fase7b`. No es una regresión de esta sesión y **no se silenciaron a
+  propósito**: `probePse` no cubre este caso —el PSE está configurado, solo sin cupo— y saltear
+  esos casos por cuota escondería regresiones reales el día que las haya. Es el mismo cupo que
+  ya apareció en el cierre de la Fase 5b.
+- **El selector de cliente de la cotización no ve más de 200 clientes y no tiene búsqueda.**
+  `sales-document-form.tsx` los pide con `fetchAllForPicker('/customers')` (`pageSize=200`) y
+  los pinta en un `<Select>` plano; `/customers` ordena por `isActive desc, name asc`. Con más
+  de 200 clientes activos **el vendedor no puede elegir a la mayoría**, y no hay ningún error:
+  simplemente no están en la lista. No es de esta sesión y no se tocó —cambiar ese selector por
+  uno con búsqueda es un punto propio, no un renglón de un hotfix— pero conviene saber cuántos
+  clientes activos hay en producción antes de que alguien lo descubra vendiendo. El endpoint ya
+  soporta `search` y `SearchSelectField` (D-156) ya existe en el importador.
 
 ## Notas operativas
 

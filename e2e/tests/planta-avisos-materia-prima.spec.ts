@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, postJson } from '../helpers/api';
-import { balanceOf, type ProductionOrderDto } from '../helpers/production';
+import { adminApi } from '../helpers/api';
+import { balanceOf, putJson, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
   buyRoofingCoil,
@@ -195,15 +195,25 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
      * Un faltante **real** exige que lo prometido a otros pedidos supere el físico libre, y
      * eso no se consigue montando: desde D-154 la custodia de una OP contra pedido no
      * descuenta nada, y confirmar un pedido ya se rechaza cuando el agregado no le alcanza.
-     * Lo que sí saca kilos del pool sin ninguna promesa detrás es una corrida **a stock**
-     * (D-140): nadie la encargó, así que su custodia es lo único que la representa.
+     * Hace falta algo que **saque kilos del pool sin una promesa de materia prima detrás**.
      *
-     * El escenario es entonces el que la decisión describe: planta pone a producir planchas
-     * de catálogo con material que un pedido tenía prometido.
+     * **Ese algo cambió con D-171 y hubo que buscarlo de nuevo.** Hasta acá era una corrida
+     * **a stock** de planchas de catálogo (D-140): nadie la encargaba, así que su custodia era
+     * lo único que la representaba. D-171 cerró esa puerta —toda cobertura se rola contra el
+     * pedido que reserva su material—. Vender la bobina entera (RF-73) tampoco sirve, y eso se
+     * comprobó: `createReservations` corre la invariante y **rechaza** la venta que dejaría el
+     * agregado por debajo de lo prometido, que es exactamente lo que debe hacer.
+     *
+     * Lo que queda, y es lo más realista de los tres, es **rolar de más**: el techo se mide en
+     * obra, planta amplía el plan de corte (D-084) y la corrida se lleva más material del que
+     * su pedido había prometido. Los kilos que exceden la reserva salen del pool sin nada que
+     * los respalde, y ahí es donde D-154 tiene que avisar en vez de bloquear — porque el rollo
+     * ya se cortó y el hecho hay que poder anotarlo.
      *
      *   pool = bobina A 300 kg + bobina B 500 kg  =  800 kg
-     *   prometido = pedido ajeno 500 kg + el nuestro 40 kg = 540  → los dos confirman
-     *   la OP a stock monta la bobina B  → físico libre 300, prometido a terceros 500
+     *   prometido = pedido ajeno 505 kg + el nuestro 2 × 40.4 kg  → los dos confirman
+     *   la orden de la línea 1 amplía su plan a 100 ML y rola 404 kg de la bobina B
+     *     → físico 396, prometido a terceros 505, faltan 109
      */
     const scenario = await setupRoofingScenario(api, { weightKg: '300' });
     const big = await buyRoofingCoil(api, {
@@ -212,19 +222,12 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
       colorId: scenario.color.id,
       weightKg: '500',
     });
-    // Plancha de catálogo del mismo color y espesor: es lo único que puede producirse a
-    // stock (D-140), y por eso lo único que puede retener material sin haberlo prometido.
-    const { product: sheet } = await createRoofingProduct(api, {
-      finishId: scenario.finish.id,
-      colorId: scenario.color.id,
-      pieceLengthMm: '3000',
-    });
     const customer = await createCustomer(api);
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
       supplierId: scenario.supplier.id,
       finishId: scenario.finish.id,
       colorId: scenario.color.id,
-      productIds: [scenario.product.id, sheet.id],
+      productIds: [scenario.product.id],
       coilIds: [scenario.coil.id, big.coil.id],
       purchaseIds: [scenario.purchaseId, big.purchaseId],
       productionOrderIds: [],
@@ -236,76 +239,84 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
       const foreign = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
-        rows: pieces([5, 25]), // 125 ML = 500 kg, de otro pedido
+        rows: pieces([5, 25]), // 125 ML = 505 kg, de otro pedido
       });
-      const mine = await quoteAndOrder(api, {
+      // El nuestro, con **dos líneas** de 10 ML: la primera es la que se pasa de rosca y la
+      // segunda es la que después monta con el pool ya corto.
+      const mine = await quoteAndOrderLines(api, {
         customerId: customer.id,
-        productId: scenario.product.id,
-        rows: pieces([5, 2]), // 10 ML = 40 kg, el nuestro
+        lines: [
+          { productId: scenario.product.id, rows: pieces([5, 2]) },
+          { productId: scenario.product.id, rows: pieces([5, 2]) },
+        ],
       });
       trail.orderIds = [foreign.order.id, mine.order.id];
       trail.quotationIds = [foreign.quotation.id, mine.quotation.id];
 
-      const op = await roofingOrder(
-        api,
-        (await reservationsOf(api, mine.order.id)).find((r) => r.status === 'ACTIVE')!.id,
+      const mineReservations = (await reservationsOf(api, mine.order.id)).filter(
+        (r) => r.status === 'ACTIVE',
       );
-      trail.productionOrderIds = [op.id];
+      expect(mineReservations).toHaveLength(2);
+      const first = await roofingOrder(api, mineReservations[0]!.id);
+      trail.productionOrderIds = [first.id];
 
-      // La corrida a stock se lleva la bobina de 500 kg. **Su custodia sí pesa** —no hay
-      // pedido que la represente— así que el pool queda en los 300 kg de la otra bobina, y
-      // este montaje ya avisa: entre los dos pedidos hay 540 kg prometidos.
-      const stockOrder = await postJson<ProductionOrderDto>(api, '/api/production/roofing', {
-        productId: sheet.id,
-        targetPieces: 10,
+      // Montar la bobina de 500 kg **no** avisa: el pool sigue sano (800 libres contra 505
+      // prometidos a terceros) y la custodia de una orden con pedido detrás no descuenta nada.
+      const mountedFirst = await mountCoil(api, first.id, { coilId: big.coil.id });
+      expect(mountedFirst.rawMaterialWarnings ?? []).toEqual([]);
+
+      // El techo se midió más grande: planta amplía el plan de 10 ML a 100 ML. Cambiar el plan
+      // no toca ni el kardex ni la reserva (D-084) — el pedido sigue prometiendo sus 40.4 kg.
+      await putJson<ProductionOrderDto>(api, `/api/production/roofing/${first.id}/plan`, {
+        items: pieces([5, 20]),
       });
-      trail.productionOrderIds = [op.id, stockOrder.id];
-      const stockMounted = await mountCoil(api, stockOrder.id, { coilId: big.coil.id });
-      expect(
-        (stockMounted.rawMaterialWarnings ?? []).map((w) => w.orders.map((o) => o.code)).flat(),
-      ).toContain(foreign.order.code);
 
-      // Y ahora sí, montar en **nuestra** orden: entra (D-154) y avisa con la cuenta exacta.
-      // Los 40 kg de nuestro propio pedido no aparecen en lo prometido: la promesa propia
-      // nunca cuenta en contra de quien la viene a cumplir.
-      const mounted = await mountCoil(api, op.id, { coilId: scenario.coil.id });
-      const warning = (mounted.rawMaterialWarnings ?? [])[0];
-      expect(warning, 'Montar debía avisar del pedido ajeno que queda sin material').toBeDefined();
-      expect(warning!.freeKg).toBe('300.000');
-      expect(warning!.promisedKg).toBe('505.000');
-      expect(warning!.shortfallKg).toBe('205.000');
-      expect(warning!.orders).toEqual([{ code: foreign.order.code, qtyKg: '505.000' }]);
-      expect(warning!.label).toContain(scenario.color.name);
-      expect(warning!.message).toContain('La operación se registró igual');
-      // Y montó de verdad: el aviso no es un rechazo con otro nombre.
-      expect(mounted.status).toBe('IN_PROGRESS');
-      expect(mounted.assignedKg).toBe('300.000');
-      // Un aviso por agregado, no uno por bobina.
-      expect(mounted.rawMaterialWarnings).toHaveLength(1);
-
-      // Reportar los 10 ML: mismo pedido en riesgo, y **el material se roló** — los 40 kg que
-      // salen del pool lo dejan 40 más corto todavía.
-      const reported = await reportPieces(api, op.id, {
-        pieces: pieces([5, 2]),
-        consumedKg: '42.000',
-      });
+      // **Y rola los 100 ML**: 404 kg salen de la bobina B, de los que solo 40.4 estaban
+      // prometidos. Los otros 363.6 dejan el pool corto para el pedido ajeno, y D-154 avisa en
+      // vez de bloquear: el rollo ya se cortó.
+      const reported = await reportPieces(api, first.id, { pieces: pieces([5, 20]) });
       const reportWarning = (reported.rawMaterialWarnings ?? [])[0];
-      expect(reportWarning, 'Reportar debía avisar del mismo pedido en riesgo').toBeDefined();
-      expect(reportWarning!.orders.map((o) => o.code)).toContain(foreign.order.code);
-      expect(reportWarning!.freeKg).toBe('259.600');
-      expect(reportWarning!.shortfallKg).toBe('245.400');
+      expect(
+        reportWarning,
+        'Reportar de más debía avisar del pedido ajeno en riesgo',
+      ).toBeDefined();
+      expect(reportWarning!.orders).toEqual([{ code: foreign.order.code, qtyKg: '505.000' }]);
+      // 300 de la bobina A + 96 que quedan de la B. La promesa propia no cuenta en contra de
+      // quien la viene a cumplir, así que lo prometido son los 505 del pedido ajeno.
+      expect(reportWarning!.freeKg).toBe('396.000');
+      expect(reportWarning!.promisedKg).toBe('505.000');
+      expect(reportWarning!.shortfallKg).toBe('109.000');
+      expect(reportWarning!.label).toContain(scenario.color.name);
+      expect(reportWarning!.message).toContain('La operación se registró igual');
+      // Un aviso por agregado, no uno por bobina.
+      expect(reported.rawMaterialWarnings).toHaveLength(1);
+      // Y el material se roló de verdad: el aviso no es un rechazo con otro nombre.
+      expect((await balanceOf(api, 'COIL', big.coil.id)).qty).toBe('96.000');
 
       // El aviso queda **en la fila del reporte**: quien audita la corrida mira sus reportes,
       // no el `audit_log`.
-      const report = await lastActiveReport(api, op.id);
+      const report = await lastActiveReport(api, first.id);
       expect(report.rawMaterialWarning).not.toBeNull();
       expect(report.rawMaterialWarning).toContain(foreign.order.code);
-      expect(report.rawMaterialWarning).toContain('faltan 245.400 kg');
+      expect(report.rawMaterialWarning).toContain('faltan 109.000 kg');
 
-      // Y el kardex se escribió: la bobina bajó por los 40.4 kg teóricos (10 ML × 4.04 kg/m, D-165), no
-      // por los 42 declarados, y el producto entró por sus 10 m.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('259.600');
-      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('10.000');
+      // Y ahora **montar** con el pool ya corto: la orden de la línea 2 entra igual y avisa con
+      // la misma cuenta. Montar es custodia y no mueve un gramo, así que el faltante no cambia.
+      const second = await roofingOrder(api, mineReservations[1]!.id);
+      trail.productionOrderIds = [first.id, second.id];
+      const mountedSecond = await mountCoil(api, second.id, { coilId: scenario.coil.id });
+      const mountWarning = (mountedSecond.rawMaterialWarnings ?? [])[0];
+      expect(mountWarning, 'Montar con el pool corto debía avisar').toBeDefined();
+      expect(mountWarning!.freeKg).toBe('396.000');
+      expect(mountWarning!.shortfallKg).toBe('109.000');
+      expect(mountWarning!.orders).toEqual([{ code: foreign.order.code, qtyKg: '505.000' }]);
+      expect(mountedSecond.status).toBe('IN_PROGRESS');
+      expect(mountedSecond.assignedKg).toBe('300.000');
+
+      // Y el kardex del rollo recién montado sigue intacto: montar es custodia, no consumo.
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('300.000');
+      // El producto entró por los 100 m que de verdad se rolaron (D-083).
+      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('100.000');
     } finally {
       await purgeRoofingTrail(api, trail);
     }

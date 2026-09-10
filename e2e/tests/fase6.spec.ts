@@ -377,11 +377,18 @@ test.describe('Fase 6 — producción de coberturas', () => {
       expect(avail.availableQty).toBe('30.000');
 
       // Y no se puede producir: no hay receta ni bobina detrás.
+      //
+      // **D-171 reescribió el mensaje, no la regla.** Lo que corta es que la reserva sea de
+      // producto terminado y no de materia prima, y eso sigue siendo verdad para UPVC —que es
+      // compra-venta pura—. La palabra "stock" desapareció del texto porque desde D-171 la
+      // salida que el mensaje nombraba (producir a stock) dejó de existir: lo que ahora dice
+      // es que esa línea se atiende con el saldo del almacén.
       const error = await postExpectingError(api, '/api/production/roofing', {
         reservationId: reservations[0]!.id,
       });
       expect(error.status).toBe(400);
-      expect(error.message).toContain('stock');
+      expect(error.message).toContain('reserva producto terminado, no materia prima');
+      expect(error.message).toContain('el saldo que ya hay en el almacén');
     } finally {
       await purgeRoofingTrail(api, trail);
     }
@@ -431,7 +438,7 @@ test.describe('Fase 6 — producción de coberturas', () => {
     }
   });
 
-  test('plancha de catálogo: se vende de stock y producirla contra el pedido no tiene ruta (D-140)', async () => {
+  test('plancha de catálogo: se fabrica contra el pedido aunque haya saldo en el almacén (D-171 revierte D-140)', async () => {
     const scenario = await setupRoofingScenario(api, {
       weightKg: '1000',
       pieceLengthMm: '3000',
@@ -445,15 +452,25 @@ test.describe('Fase 6 — producción de coberturas', () => {
       productIds: [scenario.product.id],
       coilIds: [scenario.coil.id],
       purchaseIds: [scenario.purchaseId],
+      productionOrderIds: [],
       orderIds: [],
       quotationIds: [],
     };
 
     try {
-      // D-127/D-134: una plancha de catálogo (`roofingKind = PLANCHA`) reserva **stock del
-      // propio producto**, no materia prima — así que primero hace falta stock, igual que
-      // la línea UPVC de más arriba (D-091). Sin él, confirmar fallaría por falta de
-      // disponible antes de llegar al punto que este caso prueba.
+      // **Diez planchas compradas y en el almacén, a propósito.**
+      //
+      // Bajo D-140 este saldo era la premisa del caso: la plancha reservaba producto terminado
+      // y sin stock no se podía confirmar. D-171 invirtió la premisa —una plancha se rola
+      // contra el pedido, como cualquier otra cobertura— y por eso el saldo pasó de ser lo que
+      // el caso necesitaba a ser lo que el caso **descarta**: sigue acá para comprobar que la
+      // línea reserva materia prima **igual**, sin mirarlo y sin tocarlo.
+      //
+      // Que ese saldo quede intacto no es un detalle: es la pregunta abierta que D-171 dejó
+      // escrita (¿una línea de pedido lo toma?, ¿lo ignora?, ¿lo toma hasta donde alcanza?) y
+      // la razón por la que producir a stock se cerró en vez de dejarse entreabierto. Hoy la
+      // respuesta es «lo ignora», y este caso la fija para que cambiarla sea una decisión y no
+      // un efecto lateral.
       const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
         supplierId: supplier.id,
         businessLine: 'metallic-roofing',
@@ -500,27 +517,32 @@ test.describe('Fase 6 — producción de coberturas', () => {
       );
       trail.orderIds = [order.id];
 
-      // La reserva es sobre el **producto terminado**: el saldo que ya había, no un agregado.
+      // **D-171**: la reserva es sobre el **agregado de materia prima**, no sobre las diez
+      // planchas que hay en el almacén. 4 planchas × 3 m = 12 m × 4.04 kg/m = 48.480 kg.
       const reservation = (await reservationsOf(api, order.id))[0]!;
-      expect(reservation).toMatchObject({ itemType: 'PRODUCT', itemId: scenario.product.id });
-      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('10.000');
-
-      // D-140 (resuelto por el dueño): una plancha de catálogo **nunca** se fabrica contra el
-      // pedido. Se produce a stock —`productId` + `targetPieces`, sin reserva— y el pedido
-      // espera ese saldo. Intentar colgarla de la reserva se rechaza nombrando la salida, en
-      // vez de dejar a planta adivinando qué le falta.
-      const rejected = await postExpectingError(api, '/api/production/roofing', {
-        reservationId: reservation.id,
+      expect(reservation).toMatchObject({
+        itemType: 'RAW_MATERIAL',
+        qty: '48.480',
+        unit: 'KGM',
+        status: 'ACTIVE',
       });
-      expect(rejected.status).toBe(400);
-      expect(rejected.message).toContain(
-        'Esa línea del pedido se atiende con stock de producto terminado, no con producción',
-      );
-      expect(rejected.message).toContain('producí una orden a stock desde planta');
-
-      // El rechazo no dejó nada a medias: ni OP, ni cambio en el saldo ni en la reserva.
+      expect(reservation.itemId).not.toBe(scenario.product.id);
+      // El saldo de producto terminado sigue ahí y **sin reservar**: nadie lo tocó.
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('10.000');
-      expect((await reservationsOf(api, order.id))[0]!.status).toBe('ACTIVE');
+      expect((await availabilityOf(api, 'PRODUCT', scenario.product.id)).reservedQty).toBe('0.000');
+
+      // Y la orden de producción **sí** nace de esa reserva: es la ruta que D-140 negaba
+      // («producí una orden a stock desde planta») y que D-171 abrió. El ciclo completo
+      // —montar, rolar, despachar— vive en `plancha-contra-pedido-d171.spec.ts`; acá alcanza
+      // con que la puerta esté abierta y la OP cuelgue del pedido.
+      const op = await postJson<{ id: string; status: string; salesOrderId: string | null }>(
+        api,
+        '/api/production/roofing',
+        { reservationId: reservation.id },
+      );
+      trail.productionOrderIds = [op.id];
+      expect(op.status).toBe('DRAFT');
+      expect(op.salesOrderId).toBe(order.id);
     } finally {
       await purgeRoofingTrail(api, trail);
       await api

@@ -35,6 +35,7 @@ import {
   salesOrderCode,
   salesTotals,
   serializeSalesTotals,
+  sumLineTotals,
   toDecimal,
   toFixedString,
   toSkipTake,
@@ -434,7 +435,15 @@ export class InvoicingService {
     }
 
     const lines = await this.resolveLines(tx, input);
-    const totals = salesTotals(lines.map((l) => ({ qty: l.qty, unitPricePen: l.unitPricePen })));
+    // D-169: **la cabecera suma sus propias líneas.** Recalcularla desde `cantidad × unitario`
+    // deshacía, un renglón más abajo, lo que `resolveLines` acababa de hacer: la línea que
+    // factura un pedido entero **copia** el importe del papel, y el total volvía a derivarse
+    // del unitario redondeado. La cuenta por cobrar sale de `totalPen`, así que el saldo
+    // quedaba unos céntimos por debajo del comprobante y cobrar el importe real se rechazaba
+    // por exceso — exactamente el daño que D-169 vino a cerrar, sobrevivido una pantalla más
+    // adelante. Pasaba desapercibido porque el total recalculado se ve «más limpio» que el
+    // correcto.
+    const totals = sumLineTotals(lines);
     const serialized = serializeSalesTotals(totals);
 
     // D-077: bloqueo suave del tope de SUNAT. La excepción existe, la puede usar solo
@@ -613,7 +622,25 @@ export class InvoicingService {
         }
         usedHere.set(orderItem.id, (usedHere.get(orderItem.id) ?? new Decimal(0)).plus(qty));
         const price = item.unitPricePen ?? orderItem.unitPricePen.toString();
-        const totals = salesTotals([{ qty: item.qty, unitPricePen: price }]);
+        // D-169: **la línea que factura el pedido entero a su propio precio copia su importe**
+        // en vez de recalcularlo. En un pedido nacido del importador (D-152) ese importe es el
+        // del comprobante que ya se emitió, y recalcularlo dejaba la cuenta por cobrar unos
+        // céntimos por encima del papel — que es exactamente el daño que D-169 vino a cerrar,
+        // una pantalla más adelante.
+        //
+        // Las dos condiciones son necesarias y ninguna alcanza sola. Si el precio se editó al
+        // facturar, el importe del pedido describe otro precio y copiarlo sería mentir. Si se
+        // factura una **parte** de la línea, el importe exacto es del total y una fracción de
+        // él hay que calcularla: ahí el recálculo desde el unitario es lo único defendible.
+        const fullLine =
+          item.unitPricePen === undefined && qty.equals(toDecimal(orderItem.qty.toString()));
+        const totals = fullLine
+          ? {
+              subtotal: toDecimal(orderItem.subtotalPen.toString()),
+              igv: toDecimal(orderItem.igvPen.toString()),
+              total: toDecimal(orderItem.totalPen.toString()),
+            }
+          : salesTotals([{ qty: item.qty, unitPricePen: price }]);
         const s = serializeSalesTotals(totals);
         return {
           productId: orderItem.productId,
@@ -771,9 +798,19 @@ export class InvoicingService {
           );
         }
         usedHere.set(original.id, (usedHere.get(original.id) ?? new Decimal(0)).plus(qty));
-        const totals = salesTotals([
-          { qty: line.qty, unitPricePen: original.unitPricePen.toString() },
-        ]);
+        // D-169: acreditar la línea **entera** acredita su importe entero, copiado. Con el
+        // recálculo desde el unitario, una nota de crédito total sobre un comprobante
+        // importado dejaba unos céntimos de deuda que ya nadie podía acreditar ni cobrar: la
+        // NC no llegaba al total del afectado y su cuenta por cobrar no cerraba nunca. Una
+        // acreditación **parcial** sí se calcula: el importe exacto es del total de la línea y
+        // una fracción de él hay que derivarla.
+        const totals = toDecimal(line.qty).equals(toDecimal(original.qty.toString()))
+          ? {
+              subtotal: toDecimal(original.subtotalPen.toString()),
+              igv: toDecimal(original.igvPen.toString()),
+              total: toDecimal(original.totalPen.toString()),
+            }
+          : salesTotals([{ qty: line.qty, unitPricePen: original.unitPricePen.toString() }]);
         return {
           original,
           qty: line.qty,
@@ -785,12 +822,9 @@ export class InvoicingService {
         throw new BadRequestException('No queda nada por acreditar en este comprobante');
       }
 
-      const totals = salesTotals(
-        lines.map((l) => ({
-          qty: l.qty,
-          unitPricePen: l.original.unitPricePen.toString(),
-        })),
-      );
+      // D-169: la cabecera de la nota **suma sus propias líneas**, igual que la del
+      // comprobante. Recalcularla desde el unitario volvía a perder el importe copiado.
+      const totals = sumLineTotals(lines);
       const serialized = serializeSalesTotals(totals);
 
       const note = await tx.fiscalDocument.create({

@@ -19,7 +19,6 @@ import {
   PIECE_LENGTH_RANGE_LABEL,
   piecesCount,
   piecesMeters,
-  RoofingProductKind,
   salePriceFromValue,
   saleValueFromPrice,
   salesLineTotals,
@@ -879,9 +878,13 @@ function LineRow({
                 // D-065: un pedido directo no se admite en una línea que exige cotización.
                 // Ofrecerla llevaba al vendedor a llenar la fila entera y comerse un 400 al
                 // guardar — el mismo "previsualización verde → 400" del partido (2b).
-                ?.filter(
-                  (b) => b.inventoryStrategy === 'STOCK' && (isQuotation || !b.quotationRequired),
-                )
+                //
+                // D-167: **sin filtrar por `inventoryStrategy`**. Excluir las líneas `NOOP`
+                // era el reverso del rechazo que el API tenía: el vendedor ni siquiera podía
+                // elegir Servicios, así que un conformado no se cotizaba por ninguna puerta.
+                // Que una línea no lleve existencias no la hace menos vendible; lo único que
+                // cambia es que no promete stock, y eso lo resuelve el API.
+                ?.filter((b) => isQuotation || !b.quotationRequired)
                 .map((b) => (
                   <SelectItem key={b.id} value={b.code}>
                     {BUSINESS_LINE_LABELS[b.code]}
@@ -1054,7 +1057,12 @@ function LineRow({
           )}
         </TableCell>
         <TableCell className="whitespace-normal">
-          <RawMaterialCell line={l} product={product} stock={stock} />
+          <RawMaterialCell
+            line={l}
+            product={product}
+            stock={stock}
+            coil={sellableCoils?.find((c) => c.coilId === l.saleCoilId)}
+          />
         </TableCell>
         <TableCell className="text-right font-medium tabular-nums">
           {lineTotal ? formatMoney(lineTotal.toFixed(4)) : '—'}
@@ -1287,20 +1295,47 @@ function RawMaterialCell({
   line: l,
   product,
   stock,
+  coil,
 }: {
   line: LineDraft;
   product: ProductDto | undefined;
   stock: ProductStockDto | undefined;
+  coil: SellableCoilDto | undefined;
 }): ReactElement {
   if (l.kind === 'BOBINA') {
-    return <span className="text-sm text-muted-foreground">La bobina entera</span>;
+    return (
+      <span className="text-sm text-muted-foreground">
+        La bobina entera
+        {/*
+          D-170: el promedio del propio rollo, que es a lo que el kardex lo va a dar de baja.
+          Una venta de bobina es a precio negociado por kg y a ojo; con el costo al lado, el
+          vendedor ve contra qué está negociando sin despejarlo del precio mínimo.
+        */}
+        {coil?.avgCostPen && (
+          <span className="mt-0.5 block text-xs tabular-nums">
+            Costo promedio {formatMoney(coil.avgCostPen, 'PEN', 4)} /kg
+          </span>
+        )}
+        <span className="mt-0.5 block text-xs">Se cierra al despacharla</span>
+      </span>
+    );
   }
   if (!product) return <span className="text-sm text-muted-foreground">—</span>;
+
+  // D-167: un servicio no lleva existencias, así que no se le muestra un disponible. El cero
+  // de su saldo y el cero de un producto agotado se ven iguales y significan lo contrario.
+  if (stock?.carriesInventory === false) {
+    return <span className="text-xs text-muted-foreground">Servicio · no lleva inventario</span>;
+  }
 
   // D-131: la rama la decide el **subtipo**, no la unidad. Un producto en `MTR` de otra
   // línea (UPVC, trading) sale de stock y tiene su disponible; mandarlo a la rama de
   // materia prima le mostraba "—" justo en el dato que sí existe.
-  if (product.roofingKind !== RoofingProductKind.A_MEDIDA) {
+  //
+  // **D-171: y ahora la decide tener subtipo, no ser `A_MEDIDA`.** Desde que la plancha se
+  // fabrica contra el pedido, mostrarle al vendedor el saldo de su SKU sería mostrarle un cero
+  // que no significa nada: lo que decide si puede prometer son los kilos del agregado.
+  if (product.roofingKind === null) {
     return (
       <span className="text-xs text-muted-foreground">
         Sale de stock
@@ -1316,10 +1351,22 @@ function RawMaterialCell({
 
   // Kilos teóricos de ESTA línea: el mismo `ml × espesor × ancho × densidad` que el API
   // calcula al confirmar, para que el número que se ve y el que se compromete sean uno.
+  //
+  // D-171: y los metros salen de la misma conversión que `orderedMeters` del lado del API. En
+  // una plancha la cantidad son **planchas**, así que multiplicar el kilo por metro por ella
+  // directamente daba los kilos de una plancha de un metro: seis veces menos en un SKU de 6 m,
+  // y el vendedor veía que el material alcanzaba justo cuando no alcanzaba.
+  // La rama la decide `byFixedLength` —el mismo predicado que el API usa en `orderedMeters`—
+  // y **no** el subtipo: preguntarlo por `roofingKind === A_MEDIDA` coincide hoy solo porque
+  // el catálogo fuerza `A_MEDIDA → MTR`, y es literalmente el patrón que la regla dura 14
+  // prohíbe. La primera `PLANCHA` legada en otra unidad separaba las dos cuentas.
+  const meters = !isPositiveDecimal(l.qty)
+    ? null
+    : byFixedLength(product) && product.lengthMm !== null
+      ? new Decimal(l.qty).times(product.lengthMm).div(1000)
+      : new Decimal(l.qty);
   const needed =
-    stock?.kgPerMeter && isPositiveDecimal(l.qty)
-      ? new Decimal(stock.kgPerMeter).times(l.qty)
-      : null;
+    stock?.kgPerMeter && meters !== null ? new Decimal(stock.kgPerMeter).times(meters) : null;
   const available =
     stock?.rawMaterialAvailableKg === null || stock?.rawMaterialAvailableKg === undefined
       ? null
@@ -1444,11 +1491,13 @@ function StockPanelSheet({
                   <p className="text-sm font-medium">{row.sku}</p>
                   <p className="text-xs text-muted-foreground">{row.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {row.rawMaterialAvailableKg !== null
-                      ? `${formatQty(row.rawMaterialAvailableKg, 'kg')} de materia prima disponibles`
-                      : row.kgPerMeter !== null
-                        ? 'No se pudo calcular la materia prima de este SKU'
-                        : `${formatQty(row.availableQty, unitSymbol(row.unit))} disponibles`}
+                    {!row.carriesInventory
+                      ? 'Servicio: no lleva inventario'
+                      : row.rawMaterialAvailableKg !== null
+                        ? `${formatQty(row.rawMaterialAvailableKg, 'kg')} de materia prima disponibles`
+                        : row.kgPerMeter !== null
+                          ? 'No se pudo calcular la materia prima de este SKU'
+                          : `${formatQty(row.availableQty, unitSymbol(row.unit))} disponibles`}
                   </p>
                 </li>
               ))}

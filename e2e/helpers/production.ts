@@ -4,6 +4,7 @@ import {
   getItems,
   getJson,
   postJson,
+  retryingOnConflict,
   type CreatedFinish,
   type CreatedSupplier,
   type CreatedUser,
@@ -144,8 +145,12 @@ export interface ProductionOrderDto {
   productId: string;
   productUnit: string;
   /**
-   * D-048/D-140: piezas que la corrida se propone producir. En una OP **a stock** —drywall
-   * sin pedido, o plancha de catálogo (D-145)— es lo único que dice por qué existe la orden.
+   * D-048: piezas que la corrida se propone producir. En una OP **a stock** es lo único que
+   * dice por qué existe la orden.
+   *
+   * D-171: y a stock ya solo se produce **drywall**. La corrida a stock de coberturas que
+   * D-140 había abierto (plancha de catálogo, `productId` + `targetPieces`) dejó de existir:
+   * toda cobertura se rola contra el pedido que reserva su material.
    */
   targetPieces: number | null;
   /** D-084: el pedido del que nació. Null en una corrida de stock de drywall. */
@@ -210,8 +215,30 @@ export interface MovementDto {
 // Utilidades
 // ---------------------------------------------------------------------------
 
+/**
+ * Correlativo único de nueve dígitos, **sin cero adelante y sin cambiar de largo**.
+ *
+ * Las dos mitades del contrato importan y una casi se lleva puesta a la otra:
+ *
+ * - *sin cero adelante*, porque el correlativo de un comprobante es un número y el ERP lo
+ *   guarda y lo vuelve a pintar como tal: subir un XML que dice `F001-028480939` deja en
+ *   pantalla `F001-28480939`, que es correcto. Lo que no lo era es que este helper fabricara
+ *   el cero y el caso del XML lo comparara letra por letra. El fallo se leía como una
+ *   regresión del lector («Leído del XML: F001-028480939 no está visible») y **aparecía y
+ *   desaparecía con el reloj**: el noveno dígito desde atrás de `Date.now()` es cero durante
+ *   tandas de días enteros cada varios meses.
+ * - *sin cambiar de largo*, porque media suite usa este número como cola de un RUC
+ *   (`20${uniqueDocumentNumber()}` son once dígitos). El primer arreglo fue
+ *   `String(Number(...))`, que quita el cero **y** un dígito, y con eso todo `POST /customers`
+ *   pasó a rebotar con "RUC debe tener 11 dígitos". Un helper que dos llamadores leen con
+ *   contratos distintos —uno el valor, otro el ancho— no se normaliza recortando.
+ *
+ * El `9` sustituye al `0` en vez de sortear un dígito: dos correlativos del mismo proceso solo
+ * chocarían si sus relojes distaran exactamente 9 × 10⁸ ms (unos diez días).
+ */
 export function uniqueDocumentNumber(): string {
-  return String(Date.now()).slice(-9);
+  const nine = String(Date.now()).slice(-9);
+  return nine.startsWith('0') ? `9${nine.slice(1)}` : nine;
 }
 
 /**
@@ -266,18 +293,29 @@ function base26(value: number, length: number): string {
 }
 
 export async function createCuttingSupplier(api: APIRequestContext): Promise<CreatedSupplier> {
-  cuttingSupplierSeq += 1;
-  const code = `${randomLetters(2)}${base26(cuttingSupplierSeq, 4)}`;
-  return postJson<CreatedSupplier>(api, '/api/suppliers', {
-    code,
-    docType: 'RUC',
-    // Mismo criterio para el RUC: el correlativo garantiza que dos del mismo proceso no
-    // colisionen aunque los milisegundos coincidan (el `slice(-6)` se repite cada 1 000 s).
-    docNumber: `20${String(Date.now()).slice(-6)}${String(cuttingSupplierSeq % 1000).padStart(3, '0')}`,
-    name: `E2E Proveedor de corte ${code}`,
-    creditDays: 0,
-    providesCuttingService: true,
-  });
+  // El correlativo separa dos proveedores **del mismo proceso**; las dos letras al azar
+  // separan corridas distintas contra una base que no se vació. Eso último es 1 entre 676 por
+  // corrida, y con cientos de proveedores `E2E` acumulados en la base local el 409 aparecía
+  // cada tantas corridas — siempre desde dentro de `setupRoofingScenario`, en un test que no
+  // habla de proveedores. `retryingOnConflict` vuelve a sortear el código en vez de tumbar la
+  // corrida: lo que el escenario quiere es *un* proveedor de corte, no uno con este código.
+  return retryingOnConflict(
+    () => {
+      cuttingSupplierSeq += 1;
+      const code = `${randomLetters(2)}${base26(cuttingSupplierSeq, 4)}`;
+      return {
+        code,
+        docType: 'RUC',
+        // Mismo criterio para el RUC: el correlativo garantiza que dos del mismo proceso no
+        // colisionen aunque los milisegundos coincidan (el `slice(-6)` se repite cada 1 000 s).
+        docNumber: `20${String(Date.now()).slice(-6)}${String(cuttingSupplierSeq % 1000).padStart(3, '0')}`,
+        name: `E2E Proveedor de corte ${code}`,
+        creditDays: 0,
+        providesCuttingService: true,
+      };
+    },
+    (body) => postJson<CreatedSupplier>(api, '/api/suppliers', body),
+  );
 }
 
 export interface ApiError {

@@ -81,6 +81,67 @@ export function salesLineTotals(line: SalesLineInput): SalesLineTotals {
   return { subtotal, igv, total: subtotal.plus(igv) };
 }
 
+/**
+ * D-169: los totales de una línea cuyo **importe lo manda el papel**, no la cuenta.
+ *
+ * El subtotal es el del comprobante, tal cual; el IGV sale de ese subtotal con la misma
+ * cuenta de siempre. El unitario **no** se recalcula desde el importe: sigue siendo el que la
+ * línea trae, que es el que va al comprobante electrónico como `valorUnitario`.
+ */
+export function salesLineTotalsFromNet(netPen: DecimalInput): SalesLineTotals {
+  const subtotal = money(netPen);
+  const igv = money(subtotal.times(toDecimal(IGV_RATE_PCT)).div(100));
+  return { subtotal, igv, total: subtotal.plus(igv) };
+}
+
+/**
+ * D-169: cuánto se separa el importe del papel de `cantidad × valor unitario`.
+ *
+ * Positivo cuando el papel dice más que la cuenta. Es el número que se muestra por línea y el
+ * que se suma —en valor absoluto— para decidir si un documento está dentro de la tolerancia.
+ */
+export function roundingAdjustment(line: SalesLineInput & { subtotalPen: DecimalInput }): Decimal {
+  return money(line.subtotalPen).minus(salesLineTotals(line).subtotal);
+}
+
+/**
+ * D-169: el colchón fijo de la tolerancia de importación, en soles.
+ *
+ * Es el número que puso el dueño (± S/ 0.10 por documento) y sigue siendo el **piso**: un
+ * documento chico se aguanta hasta diez céntimos aunque su aritmética no los explique. Lo que
+ * no puede ser es el techo, por el motivo que dice `importRoundingTolerance`.
+ */
+export const IMPORT_ROUNDING_TOLERANCE_PEN = '0.10';
+
+/**
+ * D-169: cuánto puede separarse un documento importado de su propio recálculo, en soles.
+ *
+ * **Un plano de S/ 0.10 rechazaría justo los documentos que D-169 vino a poder importar.** El
+ * unitario derivado se redondea a cuatro decimales (D-003), así que el producto se corre hasta
+ * `cantidad × 0.00005` — invisible en una línea de tres unidades y de **S/ 0.12** en una de
+ * 2 500 kg, que es el tamaño normal de una línea de acero. Con el techo fijo, la mitad del
+ * archivo de agosto se caía con «una diferencia así no la produce el redondeo», que era
+ * exactamente falso.
+ *
+ * Así que la tolerancia **es** esa cota: lo máximo que el redondeo puede explicar, más el
+ * colchón del dueño. Por encima queda solo lo que el redondeo **no** puede haber producido —
+ * la columna del precio con IGV donde va el valor, una cantidad con un cero de más, un
+ * descuento de línea que el ERP no modela—, que es lo que hay que ver al importar y no al
+ * cobrar. El `+ 1` de cada línea es el redondeo del propio producto a escala de dinero, que se
+ * suma al del unitario.
+ *
+ * Se compara contra **la suma de los valores absolutos** de los ajustes y no contra el neto:
+ * dos líneas que se van S/ 40 en sentidos opuestos suman cero y son justo el archivo a
+ * rechazar.
+ */
+export function importRoundingTolerance(qtys: DecimalInput[]): Decimal {
+  const explainable = qtys.reduce<Decimal>(
+    (acc, qty) => acc.plus(toDecimal(qty).plus(1).times('0.00005')),
+    new Decimal(0),
+  );
+  return Decimal.max(toDecimal(IMPORT_ROUNDING_TOLERANCE_PEN), money(explainable));
+}
+
 /** Suma de líneas ya calculadas. El total es Σ subtotales + Σ IGV, no Σ totales redondeados. */
 export function salesTotals(lines: SalesLineInput[]): SalesLineTotals {
   const totals = lines.map(salesLineTotals);
@@ -233,6 +294,23 @@ export const salesItemInputSchema = z.object({
    * importador de históricos (D-152) no lo manda: importa el valor unitario tal como salió.
    */
   valuePerMeterPen: priceSchema.optional(),
+  /**
+   * D-169: el **importe exacto de la línea tal como sale del papel** (valor de venta, SIN
+   * IGV, en soles). Solo lo acepta el importador de históricos (D-152); en cualquier otra
+   * ruta mandarlo es un 400.
+   *
+   * Existe porque un comprobante ya emitido **es** un documento legal y sus importes no se
+   * recalculan: el archivo trae `VALOR DE VENTA` por línea, el ERP deriva el unitario
+   * dividiéndolo entre la cantidad, y `cantidad × unitario` vuelve a dar el importe con una
+   * diferencia de céntimos que crece con la cantidad —una línea de 2 500 kg redondea el
+   * unitario a cuatro decimales y se va S/ 0.12 del papel—. Mientras el importe se
+   * recalculaba, esa diferencia terminaba en la cuenta por cobrar de un comprobante que dice
+   * otra cifra.
+   *
+   * Con esto, el importe **se copia** y lo que se deriva es el unitario, que es el orden
+   * correcto: el unitario es el dato calculado del papel y el importe es el dato firmado.
+   */
+  netAmountPen: priceSchema.optional(),
   description: z.string().trim().max(240).optional(),
   /**
    * D-116 (Fase 7e): venta de una bobina completa (RF-73), virgen o con saldo parcial. El
@@ -337,6 +415,16 @@ export const salesItemSchema = z.object({
   subtotalPen: z.string(),
   igvPen: z.string(),
   totalPen: z.string(),
+  /**
+   * D-169: **el ajuste de redondeo de una línea importada**: lo que el importe del papel se
+   * separa de `cantidad × valor unitario`. Cero en todo lo cotizado acá, que se calcula.
+   *
+   * No es una columna: se deriva de `subtotalPen − redondeo(qty × unitPricePen)`, que son
+   * dos datos que ya están guardados. Guardarlo aparte habría dejado dos fuentes para el
+   * mismo número y una forma de que discrepen (D-003); lo que hace falta es **verlo**, y para
+   * eso alcanza con calcularlo al leer.
+   */
+  roundingAdjustmentPen: z.string(),
   /** D-083: los largos de una línea compuesta de cobertura a medida. Vacío en una simple. */
   pieces: z.array(roofingPieceSchema),
   /** Qué reservará (o reservó) esta línea. Ver `salesItemInputSchema`. */
@@ -688,6 +776,15 @@ export const productStockSchema = z.object({
    */
   minPricePen: z.string().nullable(),
   minValuePen: z.string().nullable(),
+  /**
+   * D-167: `false` en un producto de una línea `NOOP` —un servicio—, que no lleva
+   * existencias. Viaja como bandera propia y no se deduce de `availableQty === '0.000'`
+   * porque los dos ceros significan cosas distintas: el de un producto físico es "se acabó"
+   * y hay que reponerlo, y el de un servicio es "esta pregunta no aplica". Mostrarlos
+   * iguales fue lo que hizo que el mostrador leyera «0.000 disponibles» sobre un conformado
+   * y creyera que faltaba stock de algo que no tiene stock.
+   */
+  carriesInventory: z.boolean(),
 });
 export type ProductStockDto = z.infer<typeof productStockSchema>;
 
@@ -744,6 +841,17 @@ export const sellableCoilSchema = z.object({
    * mínimo a la vista, lo único que le dice que se pasó es el 400 al guardar.
    */
   minPricePen: z.string().nullable(),
+  /**
+   * D-170: el **costo promedio por kilo** de este rollo, que es a lo que el kardex lo va a
+   * dar de baja cuando la venta lo despache.
+   *
+   * Viaja porque una venta de bobina entera es a precio negociado y a ojo: el vendedor tipea
+   * un número por kg y hasta ahora lo único que le decía si se había pasado era el piso —del
+   * que este costo ya se despejaba (D-163)—. Mostrarlo directo no revela nada nuevo y evita
+   * la aritmética mental; lo que sigue sin viajar es el costo del **documento** de compra, el
+   * proveedor y el landed cost, que es lo que §3.4 le oculta al vendedor.
+   */
+  avgCostPen: z.string().nullable(),
 });
 export type SellableCoilDto = z.infer<typeof sellableCoilSchema>;
 
@@ -775,6 +883,25 @@ export const documentLookupSchema = z.object({
 export type DocumentLookupDto = z.infer<typeof documentLookupSchema>;
 
 /** Serialización de un total de línea a los strings del DTO (D-003). */
+/**
+ * D-169: los totales de un documento a partir de **los importes que sus líneas ya tienen**.
+ *
+ * Es la contracara de `salesTotals`, que los deriva de `cantidad × unitario`. Se usa cuando las
+ * líneas traen un importe que no hay que volver a calcular —el de un comprobante importado, que
+ * es el del papel— y por eso suma `subtotal` e `igv` por separado, nunca los totales ya
+ * redondeados, exactamente como `documentTotals` en ventas.
+ */
+export function sumLineTotals(
+  lines: readonly { subtotalPen: DecimalInput; igvPen: DecimalInput }[],
+): SalesLineTotals {
+  const subtotal = lines.reduce<Decimal>(
+    (acc, l) => acc.plus(toDecimal(l.subtotalPen)),
+    new Decimal(0),
+  );
+  const igv = lines.reduce<Decimal>((acc, l) => acc.plus(toDecimal(l.igvPen)), new Decimal(0));
+  return { subtotal, igv, total: subtotal.plus(igv) };
+}
+
 export function serializeSalesTotals(totals: SalesLineTotals): {
   subtotalPen: string;
   igvPen: string;

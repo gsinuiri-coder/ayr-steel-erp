@@ -4,6 +4,7 @@ import {
   getItems,
   getJson,
   postJson,
+  retryingOnConflict,
   type CreatedFinish,
   type CreatedSupplier,
 } from './api';
@@ -112,15 +113,20 @@ function letterSeq(value: number, length: number): string {
 
 /** Un color nuevo del maestro (D-085). El prefijo `E2E` es la marca de la purga. */
 export async function createColor(api: APIRequestContext, hex = '#c8102e'): Promise<ColorDto> {
-  colorSeq += 1;
   // Dos letras al azar separan corridas distintas contra la misma base; el correlativo hace
-  // que dos colores del mismo proceso no puedan chocar nunca.
-  const code = `E2E${randomLetters(2)}${letterSeq(colorSeq, 4)}`;
-  return postJson<ColorDto>(api, '/api/colors', {
-    code,
-    name: `E2E Color ${code}`,
-    hexColor: hex,
-  });
+  // que dos colores del mismo proceso no puedan chocar nunca. Lo que las dos letras **no**
+  // cubren es que la corrida de hoy sortee el mismo par que una corrida vieja: es 1 entre 676
+  // y el maestro de colores no se vacía entre corridas, así que pasa. `retryingOnConflict`
+  // vuelve a sortearlo en vez de tumbar un test que no habla de colores (mismo motivo y misma
+  // forma que en `createCuttingSupplier`).
+  return retryingOnConflict(
+    () => {
+      colorSeq += 1;
+      const code = `E2E${randomLetters(2)}${letterSeq(colorSeq, 4)}`;
+      return { code, name: `E2E Color ${code}`, hexColor: hex };
+    },
+    (body) => postJson<ColorDto>(api, '/api/colors', body),
+  );
 }
 
 /** Acabado con densidad fija, para que el kilo teórico sea comprobable a mano. */

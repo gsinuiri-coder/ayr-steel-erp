@@ -1,6 +1,12 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, closeCoilKeepingStock, postJson } from '../helpers/api';
-import { createCuttingSupplier, errorFrom, today, type ProductDto } from '../helpers/production';
+import {
+  createCuttingSupplier,
+  errorFrom,
+  optionalBalanceOf,
+  today,
+  type ProductDto,
+} from '../helpers/production';
 import {
   buyRoofingCoil,
   createColor,
@@ -174,24 +180,34 @@ test.describe('D-127 — subtipo de cobertura', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2 — La plancha sigue exigiendo stock
+  // 2 — La plancha también reserva materia prima (D-171 revirtió D-140)
   // -------------------------------------------------------------------------
 
-  test('una plancha de catálogo sin saldo de producto terminado no se puede confirmar', async () => {
+  test('una plancha de catálogo sin saldo de producto terminado se confirma contra la bobina, y sin bobina no', async () => {
+    /**
+     * **Este caso afirmaba lo contrario hasta D-171.** Bajo D-140 la plancha se atendía con
+     * stock de producto terminado y confirmarla sin saldo tenía que morir con «0.000 NIU
+     * disponibles»; el dueño corrigió la premisa —una plancha no espera en el almacén, se rola
+     * contra el pedido igual que una cobertura a medida— y ahora lo correcto es justo lo
+     * opuesto: se confirma, reservando kilos del agregado.
+     *
+     * Lo que **no** se aflojó es la invariante de D-066: no se promete lo que no está. Por eso
+     * el caso tiene las dos mitades. Cambió contra qué se mide (materia prima en vez de
+     * producto terminado), no que se mida.
+     */
     const supplier = await createCuttingSupplier(api);
     const finish = await createRoofingFinish(api);
     const color = await createColor(api);
     const customer = await createCustomer(api);
-    // Plancha: largo fijo, unidad `NIU`. La receta existe igual —planta la rola— pero la
-    // venta sale del almacén, no de la bobina.
+    // Plancha: largo fijo, unidad `NIU`. Se rola contra el pedido desde bobina, y lo que la
+    // separa de una cobertura a medida es **cómo se cuenta**, no de dónde sale el material.
     const { product } = await createRoofingProduct(api, {
       finishId: finish.id,
       colorId: color.id,
       pieceLengthMm: '3000',
     });
-    // Hay bobina disponible del color y espesor correctos a propósito: si la rama del
-    // subtipo estuviera invertida, la confirmación pasaría reservando materia prima y este
-    // test se pondría verde por el motivo equivocado.
+    // La bobina del color y espesor correctos es ahora la premisa del caso, no su trampa: es
+    // el material contra el que la plancha promete.
     const { coil, purchaseId } = await buyRoofingCoil(api, {
       supplierId: supplier.id,
       finishId: finish.id,
@@ -199,11 +215,15 @@ test.describe('D-127 — subtipo de cobertura', () => {
       weightKg: '2000',
     });
     const quotationIds: string[] = [];
+    const orderIds: string[] = [];
 
     try {
       expect(product.unit).toBe('NIU');
       expect((product as ProductDto & { roofingKind: string }).roofingKind).toBe('PLANCHA');
+      // Y el almacén está vacío de planchas: nunca se compró ni se roló ninguna.
+      expect(await optionalBalanceOf(api, 'PRODUCT', product.id)).toBeNull();
 
+      // (a) Sin una sola plancha en el almacén, se confirma. 10 × 3 m = 30 m × 4.04 kg/m.
       const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
         businessLine: ROOFING_LINE,
@@ -211,15 +231,36 @@ test.describe('D-127 — subtipo de cobertura', () => {
         items: [{ productId: product.id, qty: '10', unitPricePen: '80' }],
       });
       quotationIds.push(quotation.id);
+      const order = await emitAndConfirm(api, quotation.id);
+      orderIds.push(order.id);
 
-      const error = await emitAndConfirmExpectingError(api, quotation.id);
+      const reservations = await reservationsOf(api, order.id);
+      expect(reservations).toHaveLength(1);
+      expect(reservations[0]).toMatchObject({
+        itemType: 'RAW_MATERIAL',
+        qty: '121.200',
+        unit: 'KGM',
+        status: 'ACTIVE',
+      });
+      expect(reservations[0]!.itemId).not.toBe(product.id);
+
+      // (b) Y lo que no está sigue sin poder prometerse: 1 000 planchas son 12 120 kg y del
+      // agregado quedan 1 878.8. El rechazo nombra el agregado corto (color y espesor), no el
+      // SKU — que es lo que D-134 cambió y D-171 no tocó.
+      const tooMany = await postJson<QuotationDto>(api, '/api/sales/quotations', {
+        customerId: customer.id,
+        businessLine: ROOFING_LINE,
+        issueDate: today(),
+        items: [{ productId: product.id, qty: '1000', unitPricePen: '80' }],
+      });
+      quotationIds.push(tooMany.id);
+      const error = await emitAndConfirmExpectingError(api, tooMany.id);
       expect(error.status).toBe(400);
-      expect(
-        error.message.toLowerCase(),
-        'la plancha se atiende con stock de producto terminado, y no lo hay',
-      ).toContain('disponible');
+      expect(error.message.toLowerCase()).toMatch(/disponible|bobina/);
+      expect(error.message).toContain(color.name);
     } finally {
       await purgeRoofingTrail(api, {
+        orderIds,
         quotationIds,
         coilIds: [coil.id],
         purchaseIds: [purchaseId],
@@ -232,10 +273,10 @@ test.describe('D-127 — subtipo de cobertura', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 3 — Cambiar el subtipo cambia la rama
+  // 3 — Cambiar el subtipo cambia la forma de la línea, no de dónde sale el material
   // -------------------------------------------------------------------------
 
-  test('cambiar un producto de plancha a a-medida cambia la rama de la confirmación', async () => {
+  test('cambiar un producto de plancha a a-medida cambia cómo se cuenta la línea, y las dos reservan materia prima', async () => {
     const supplier = await createCuttingSupplier(api);
     const finish = await createRoofingFinish(api);
     const color = await createColor(api);
@@ -262,7 +303,16 @@ test.describe('D-127 — subtipo de cobertura', () => {
     };
 
     try {
-      // (a) Como plancha, sin stock, no se confirma.
+      /**
+       * **Lo que este caso afirmaba hasta D-171**: que como plancha, sin stock, no se
+       * confirmaba, y que corregir el subtipo era lo que abría la venta. D-171 revirtió D-140 y
+       * con eso las dos formas reservan materia prima, así que el subtipo dejó de decidir *de
+       * dónde sale el material*. Sigue decidiendo lo otro —y es lo que ahora se compara—:
+       * **cómo se cuenta la línea**. Una plancha va en `NIU` sin detalle de largos y sus metros
+       * los pone el SKU; una cobertura a medida va en `MTR` con subítems y los trae la línea.
+       */
+      // (a) Como plancha, sin una sola en el almacén, **se confirma**: promete los kilos que
+      // sus metros van a consumir. 10 planchas × 3 m = 30 m × 4.04 kg/m = 121.200 kg.
       const asPlancha = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
         businessLine: ROOFING_LINE,
@@ -270,9 +320,21 @@ test.describe('D-127 — subtipo de cobertura', () => {
         items: [{ productId: product.id, qty: '10', unitPricePen: '80' }],
       });
       trail.quotationIds.push(asPlancha.id);
-      const blocked = await emitAndConfirmExpectingError(api, asPlancha.id);
-      expect(blocked.status).toBe(400);
-      expect(blocked.message.toLowerCase()).toContain('disponible');
+      const sheetOrder = await emitAndConfirm(api, asPlancha.id);
+      trail.orderIds.push(sheetOrder.id);
+
+      const sheetLine = sheetOrder.items[0]!;
+      expect(sheetLine.qty).toBe('10.000');
+      expect(sheetLine.unit).toBe('NIU');
+      // Línea simple: `sellsByLength` es la unidad, y esta no es `MTR` (regla dura 14).
+      expect(sheetLine.pieces ?? []).toEqual([]);
+      const sheetReservation = (await reservationsOf(api, sheetOrder.id))[0]!;
+      expect(sheetReservation).toMatchObject({
+        itemType: 'RAW_MATERIAL',
+        unit: 'KGM',
+        qty: (10 * 3 * KG_PER_METER).toFixed(3),
+        status: 'ACTIVE',
+      });
 
       // (b) Se corrige el subtipo. La unidad y el largo van con él: `A_MEDIDA` se mide en
       // `MTR` y tiene prohibido el largo fijo (lo traen los subítems de cada línea).
@@ -288,7 +350,9 @@ test.describe('D-127 — subtipo de cobertura', () => {
       // son del propio producto, que es justo lo que el PATCH de arriba acaba de dejar
       // correcto. El API rechaza hoy un `PUT /production/boms/:id` con `kind: 'ROOFING'`.
 
-      // (c) La misma venta, ahora por la otra rama: reserva materia prima y no exige stock.
+      // (c) La misma venta, ahora contada de la otra forma: en metros y con el detalle de
+      // largos. Reserva materia prima igual que la plancha; lo que cambia es de dónde salen
+      // los metros —de la línea, no del largo del SKU— y la unidad de la cantidad.
       const meters = metersOf(REAL_CASE_ROWS);
       const asMedida = await postJson<QuotationDto>(api, '/api/sales/quotations', {
         customerId: customer.id,
@@ -312,6 +376,12 @@ test.describe('D-127 — subtipo de cobertura', () => {
         status: 'ACTIVE',
       });
       expect(reservations[0]!.itemId).not.toBe(coil.id);
+      // Las dos promesas nombran **el mismo agregado**: es el mismo material, contado de dos
+      // formas. Ahí se ve que el subtipo no decide de dónde sale.
+      expect(reservations[0]!.itemId).toBe(sheetReservation.itemId);
+      // Y la línea sí cambió de forma: metros con subítems, no planchas.
+      expect(order.items[0]!.unit).toBe('MTR');
+      expect(order.items[0]!.pieces).toHaveLength(REAL_CASE_ROWS.length);
     } finally {
       await purgeRoofingTrail(api, {
         orderIds: trail.orderIds,

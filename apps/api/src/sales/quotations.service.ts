@@ -11,6 +11,8 @@ import { Prisma, QuotationStatus, SalesOrderStatus, type InventoryItemType } fro
 import {
   businessToday,
   defaultValidUntil,
+  externalInvoiceOf,
+  IMPORT_ROUNDING_TOLERANCE_PEN,
   isImportedQuotation,
   keepImportMarker,
   isQuotationExpired,
@@ -19,6 +21,7 @@ import {
   Role,
   quotationCode,
   salesOrderCode,
+  toDecimal,
   toSkipTake,
   type CreateQuotationInput,
   type CreateQuotationInternalInput,
@@ -141,11 +144,21 @@ export class QuotationsService {
     // D-163: el piso duro se aplica **salvo** que el llamador diga que no, y el único que
     // dice que no es el importador de históricos (D-152). El defecto es enforcar a propósito:
     // un alta nueva que se olvide de pasar el flag queda protegida, no desprotegida.
-    options: { enforcePriceFloor?: boolean } = {},
+    options: {
+      enforcePriceFloor?: boolean;
+      /**
+       * D-169: el documento del que salen estas líneas trae sus **importes ya fijados** y hay
+       * que copiarlos. Es la misma excepción que `enforcePriceFloor: false` y por el mismo
+       * motivo —lo que entra por acá es un hecho consumado, no una oferta—, y el defecto
+       * también es el mismo: sin la opción, el importe se recalcula.
+       */
+      exactAmounts?: { tolerancePen: string; documentLabel: string };
+    } = {},
   ): Promise<string> {
     const customer = await this.requireActiveCustomer(tx, input.customerId);
     const lines = await resolveSalesLines(tx, input.items, {
       ...((options.enforcePriceFloor ?? true) ? { priceFloor: this.priceFloor() } : {}),
+      ...(options.exactAmounts ? { exactAmounts: options.exactAmounts } : {}),
     });
     const totals = documentTotals(lines);
     // D-157: `null` es **sin vencimiento** y se guarda como `NULL`, no como una fecha lejana.
@@ -198,8 +211,21 @@ export class QuotationsService {
       // nadie tocó y cuyo precio es un hecho consumado: la única salida habría sido falsear el
       // precio histórico o mover el margen mínimo de toda la línea de negocio.
       const imported = isImportedQuotation(current.notes);
-      const lines = await resolveSalesLines(tx, input.items, {
+      // D-169: y por el mismo motivo, sus **importes** también sobreviven a la edición. La
+      // exención del piso ya estaba; a los importes les faltaba. Sin esto, corregir el
+      // producto mal mapeado de una línea recalculaba las diez y el documento volvía a
+      // separarse del comprobante — en silencio, y sin que nadie hubiera tocado los números.
+      const items = imported ? await this.withImportedAmounts(tx, id, input.items) : input.items;
+      const lines = await resolveSalesLines(tx, items, {
         ...(imported ? {} : { priceFloor: this.priceFloor() }),
+        ...(imported
+          ? {
+              exactAmounts: {
+                tolerancePen: IMPORT_ROUNDING_TOLERANCE_PEN,
+                documentLabel: externalInvoiceOf(current.notes) ?? 'El comprobante importado',
+              },
+            }
+          : {}),
       });
       const totals = documentTotals(lines);
       const validUntil = quotationValidUntil(input.issueDate, input.validityDays);
@@ -233,6 +259,52 @@ export class QuotationsService {
     });
 
     return this.findOne(id);
+  }
+
+  /**
+   * D-169: le devuelve a cada línea editada el **importe del papel**, si sigue siendo suyo.
+   *
+   * La edición de una cotización importada llega sin importes: el formulario manda producto,
+   * cantidad y precio, que es todo lo que una persona puede tocar. Sin este paso, guardar
+   * recalculaba las diez líneas y el documento volvía a separarse del comprobante — sin que
+   * nadie hubiera tocado los números, y en silencio.
+   *
+   * **El criterio de "sigue siendo suyo" es el trío completo** (producto, cantidad, valor
+   * unitario). Si alguno cambió, el importe guardado describe otra línea y se deja recalcular:
+   * copiar el importe viejo sobre una cantidad nueva sería fijar un total que ya no
+   * corresponde a nada, y el rechazo por tolerancia terminaría culpando al archivo de una
+   * diferencia que introdujo la corrección.
+   *
+   * El emparejamiento **consume** cada línea guardada, así que dos líneas idénticas del mismo
+   * documento —que existen: el mismo SKU facturado dos veces en la misma factura— reciben cada
+   * una su propio importe y no dos veces el primero.
+   */
+  private async withImportedAmounts(
+    tx: Prisma.TransactionClient,
+    quotationId: string,
+    items: SalesItemInput[],
+  ): Promise<SalesItemInput[]> {
+    const stored = await tx.quotationItem.findMany({
+      where: { quotationId },
+      select: { productId: true, qty: true, unitPricePen: true, subtotalPen: true },
+      orderBy: { lineNumber: 'asc' },
+    });
+    const available = stored.map((row) => ({ row, taken: false }));
+
+    return items.map((item) => {
+      const { productId, unitPricePen } = item;
+      if (unitPricePen === undefined || productId === undefined) return item;
+      const match = available.find(
+        (candidate) =>
+          !candidate.taken &&
+          candidate.row.productId === productId &&
+          toDecimal(candidate.row.qty.toString()).equals(toDecimal(item.qty)) &&
+          toDecimal(candidate.row.unitPricePen.toString()).equals(toDecimal(unitPricePen)),
+      );
+      if (!match) return item;
+      match.taken = true;
+      return { ...item, netAmountPen: match.row.subtotalPen.toFixed(4) };
+    });
   }
 
   /**

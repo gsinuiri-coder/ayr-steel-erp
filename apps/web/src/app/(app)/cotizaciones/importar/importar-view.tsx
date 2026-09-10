@@ -293,6 +293,12 @@ export function ImportarCotizacionesView() {
               productId: r.productId,
               qty: r.qty,
               unitPricePen: r.unitPricePen,
+              // D-169: el importe del papel viaja **solo mientras siga siendo el del papel**.
+              // Si alguien corrigió la cantidad o el precio de esta fila, el importe del
+              // archivo dejó de describirla: mandarlo haría que la corrección no cambiara el
+              // importe, y el rechazo por tolerancia culparía al Excel de una diferencia que
+              // introdujo la corrección.
+              ...(r.netAmountPen ? { netAmountPen: r.netAmountPen } : {}),
               ...(r.raw.rawProductName ? { description: r.raw.rawProductName } : {}),
               ...(r.pieces ? { pieces: r.pieces } : {}),
             })),
@@ -586,6 +592,14 @@ function groupByDocument(
     if (row.raw.rawCustomer !== group.rawCustomer) group.mixedRawCustomer = true;
     group.live += 1;
     if (row.issues.some((i) => i.severity === 'error')) group.blocking += 1;
+    // D-169: el total de la cabecera es **el que se va a crear**, y por eso suma el importe
+    // del papel cuando la fila todavía responde a él. Sumar `cantidad × precio` sobre una
+    // fila cuyo importe se copia dejaba la cabecera diciendo unos céntimos menos que la
+    // cotización resultante, justo en el número que se compara contra el comprobante.
+    if (row.netAmountPen !== null) {
+      group.totalPen = group.totalPen.plus(toDecimal(row.netAmountPen));
+      continue;
+    }
     // Un importe con el precio o la cantidad mal tipeados no se suma: el total de la
     // cabecera diría un número inventado justo cuando hay que compararlo con el papel.
     if (/^\d+(\.\d+)?$/.test(row.qty.trim()) && /^\d+(\.\d+)?$/.test(row.unitPricePen.trim())) {
@@ -895,6 +909,17 @@ function ImportRow({
             {raw.currency} · TC {raw.exchangeRate}
           </div>
         )}
+        {/*
+          D-169: el importe con el que la línea se va a crear, y de dónde sale. Se muestra
+          siempre y no solo cuando difiere: el punto de la decisión es que el vendedor sepa
+          que el número del papel se copia, y una etiqueta que aparece nada más cuando hay
+          diferencia no enseña la regla, solo el caso raro.
+        */}
+        <div className="mt-1 text-xs text-muted-foreground">
+          {row.netAmountPen !== null
+            ? `Importe del archivo: ${formatMoney(row.netAmountPen, 'PEN', 2)}`
+            : 'Importe recalculado: cantidad × precio'}
+        </div>
         <Issue row={row} field="unitPrice" />
       </td>
       <td className="py-3 pr-3">
@@ -981,6 +1006,12 @@ interface ResolvedRow {
   productId: string | null;
   qty: string;
   unitPricePen: string;
+  /**
+   * D-169: el importe del papel, o `null` cuando esta fila dejó de responder a él porque
+   * alguien editó su cantidad o su precio. Es la señal que decide si el API copia el importe
+   * o lo recalcula.
+   */
+  netAmountPen: string | null;
   needsPieces: boolean;
   planText: string;
   pieces: RoofingPieceDto[] | null;
@@ -1091,12 +1122,19 @@ function resolveRow(
     }
   }
 
+  // D-169: el importe del archivo sigue valiendo mientras la cantidad y el precio sean los que
+  // el archivo trajo. Se compara contra `raw` y no contra un flag propio: `edit.qty` puede
+  // existir con el mismo valor —abrir el campo y volver a escribir lo mismo— y eso no cambia
+  // nada del papel.
+  const untouched = qty === raw.qty && unitPricePen === raw.unitPricePen;
+
   return {
     raw,
     removed: edit.removed === true,
     productId,
     qty,
     unitPricePen,
+    netAmountPen: untouched && raw.netAmountPen ? raw.netAmountPen : null,
     needsPieces,
     planText,
     pieces,

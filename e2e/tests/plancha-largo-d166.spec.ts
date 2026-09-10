@@ -44,6 +44,33 @@ test.skip(
 // en el primer visitante de la corrida.
 test.describe.configure({ timeout: 240_000 });
 
+/**
+ * Un cliente que el **selector de la pantalla** puede ver.
+ *
+ * `fetchAllForPicker` pide `pageSize=200` y `/customers` ordena por `isActive desc, name asc`,
+ * así que el `<Select>` de cliente muestra **como mucho los 200 primeros por nombre** y no
+ * tiene búsqueda. Crear un cliente nuevo y buscarlo en la lista es entonces una moneda al aire
+ * en cuanto la base tiene más de 200 activos —y la propia suite crea uno por test—: el caso
+ * fallaba con «waiting for getByRole('option', {name: 'E2E Cliente PDHMM'})» según en qué
+ * posición del abecedario hubiera caído el sorteo de las cinco letras.
+ *
+ * **Es un defecto de la app y está reportado** (`fetch-all-for-picker.ts` ya lo dice de sí
+ * mismo: "un selector con más de MAX_PAGE_SIZE opciones no las ve todas"). Lo que hace este
+ * helper es no atar *este* caso —que es sobre el largo de una plancha— a ese defecto: toma un
+ * cliente de la **misma página** que el selector va a pedir, así que está garantizado que
+ * aparece. Si algún día el selector busca contra el servidor, esto sigue funcionando igual.
+ */
+async function customerVisibleInPicker(api: APIRequestContext): Promise<{ name: string }> {
+  const page = await getJson<{ items: { name: string; isActive: boolean }[] }>(
+    api,
+    '/api/customers?pageSize=200',
+  );
+  const visible = page.items.find((c) => c.isActive);
+  if (visible) return visible;
+  // Base recién creada: no hay ninguno todavía, y el que se cree entra en la primera página.
+  return createCustomer(api);
+}
+
 async function loginAsAdmin(page: Page) {
   const { email, password } = adminCredentials();
   await page.goto('/login');
@@ -155,7 +182,7 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
   }) => {
     const finish = await createRoofingFinish(api);
     const color = await createColor(api);
-    const customer = await createCustomer(api);
+    const customer = await customerVisibleInPicker(api);
     const { product } = await createRoofingProduct(api, {
       finishId: finish.id,
       colorId: color.id,

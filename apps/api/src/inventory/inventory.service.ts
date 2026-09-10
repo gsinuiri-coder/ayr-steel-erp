@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import {
   InventoryItemType,
-  InventoryStrategy,
   Prisma,
   type InventoryMovement,
   type InventoryMovementType,
@@ -17,6 +16,7 @@ import {
 import {
   BACKDATE_OUT_OF_ORDER,
   businessToday,
+  carriesInventory,
   Decimal,
   fromDateOnly,
   paginate,
@@ -183,7 +183,7 @@ export class InventoryService {
   ): Promise<InventoryMovement | null> {
     const line = await tx.businessLine.findUnique({ where: { id: input.businessLineId } });
     if (!line) throw new NotFoundException('Línea de negocio no encontrada');
-    if (line.inventoryStrategy === InventoryStrategy.NOOP) return null;
+    if (!carriesInventory(line)) return null;
 
     const qty = toDecimal(input.qty);
     if (!qty.isFinite() || qty.lte(0)) {
@@ -368,7 +368,7 @@ export class InventoryService {
   ): Promise<InventoryMovement | null> {
     const line = await tx.businessLine.findUnique({ where: { id: input.businessLineId } });
     if (!line) throw new NotFoundException('Línea de negocio no encontrada');
-    if (line.inventoryStrategy === InventoryStrategy.NOOP) return null;
+    if (!carriesInventory(line)) return null;
 
     const amount = toDecimal(input.amountPen);
     if (!amount.isFinite()) throw new BadRequestException('Monto de ajuste inválido');

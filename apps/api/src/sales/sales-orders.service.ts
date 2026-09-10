@@ -20,6 +20,7 @@ import {
 } from '@prisma/client';
 import {
   businessToday,
+  carriesInventory,
   COIL_BUSINESS_LINES,
   Decimal,
   DERIVED_FILTER_FETCH_CAP,
@@ -77,7 +78,8 @@ import {
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import {
   documentTotals,
-  isMadeToMeasure,
+  isMadeToOrder,
+  orderedMeters,
   resolveSalesLines,
   ROOFING_PRODUCT_SELECT,
   roofingSpecThicknessMm,
@@ -599,7 +601,11 @@ export class SalesOrdersService {
     const out = new Map<number, { specId: string; kg: string }>();
     for (const line of candidates) {
       const product = productById.get(line.productId);
-      if (!product || !isMadeToMeasure(product)) continue;
+      // D-171: **también la plancha de catálogo.** Recalcular acá es, además, lo que hace que
+      // las cotizaciones de plancha emitidas bajo el modelo viejo —que guardaron `PRODUCT` y
+      // unidades— se confirmen solas bajo el nuevo, sin migrar una fila. Es exactamente el
+      // mismo mecanismo con el que D-134 arregló las anteriores a él.
+      if (!product || !isMadeToOrder(product)) continue;
       const at = `Línea ${line.lineNumber}`;
       const spec = await resolveRawMaterialSpec(tx, {
         businessLineId: product.businessLineId,
@@ -608,7 +614,10 @@ export class SalesOrdersService {
       });
       out.set(line.lineNumber, {
         specId: spec.id,
-        kg: toFixedString(theoreticalKgForMeters(product, line.qty, at), 'KG'),
+        kg: toFixedString(
+          theoreticalKgForMeters(product, orderedMeters(product, line.qty), at),
+          'KG',
+        ),
       });
     }
     return out;
@@ -748,12 +757,32 @@ export class SalesOrdersService {
         ? []
         : await tx.product.findMany({
             where: { id: { in: [...new Set(productItems.map((i) => i.reserveItemId))] } },
-            select: { id: true, businessLineId: true },
+            select: {
+              id: true,
+              businessLineId: true,
+              // D-167: para saber cuáles de estos productos **no** se reservan.
+              businessLine: { select: { inventoryStrategy: true } },
+            },
           });
     const productBusinessLineById = new Map(productLines.map((p) => [p.id, p.businessLineId]));
+    // D-167: los productos de una línea `NOOP`. No es «los que no tienen saldo»: es que a
+    // estos la pregunta no se les hace. Abrirles una reserva los mandaría a `lockAvailability`,
+    // que crearía la fila de saldo de un ítem que nunca va a tener movimientos y rechazaría el
+    // pedido con «tiene 0.000 disponibles» — el mismo callejón que D-167 vino a cerrar, un
+    // paso más adelante.
+    const withoutInventory = new Set(
+      productLines.filter((p) => !carriesInventory(p.businessLine)).map((p) => p.id),
+    );
 
     for (const item of sorted) {
       const qty = toDecimal(item.reserveQty.toString());
+
+      if (
+        item.reserveItemType === InventoryItemTypeEnum.PRODUCT &&
+        withoutInventory.has(item.reserveItemId)
+      ) {
+        continue;
+      }
 
       // D-134: la promesa genérica se comprueba contra la **suma** del agregado, no contra
       // el saldo de un ítem. Es la misma invariante de D-066 —no prometer lo que no está—
@@ -1460,8 +1489,20 @@ export class SalesOrdersService {
       priorityReason: row.priorityAt === null ? null : (row.priorityReason ?? 'sin motivo escrito'),
       notes: row.notes,
       lines: row.items.map((item) => {
-        const pieces = item.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty }));
         const product = item.product;
+        // D-171: una plancha no trae subítems —su largo está en el SKU— y hasta acá el papel
+        // que se lleva planta imprimía «—» en la columna del plan de corte, justo ahora que es
+        // la línea que hay que rolar. Se deriva con la **misma** función que usa la cola
+        // (D-093) y que copia la OP al nacer (D-084), así que el papel, la pantalla y la orden
+        // dicen los mismos largos.
+        const pieces =
+          item.pieces.length > 0
+            ? item.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty }))
+            : derivePiecesPlan(
+                [],
+                product.lengthMm === null ? null : product.lengthMm.toFixed(2),
+                item.qty.toString(),
+              ).map((p) => ({ lengthMm: p.lengthMm, qty: p.qty }));
         // Lo que decide qué bobina se monta (D-086): espesor, ancho y color. El largo fijo
         // solo lo tiene una plancha de catálogo (D-127).
         const measures = [
@@ -1656,12 +1697,12 @@ export class SalesOrdersService {
       where: { id: { in: productIds } },
       select: {
         name: true,
-        unit: true,
-        // D-161: el largo fijo decide si el mínimo se muestra por metro o por unidad.
-        lengthMm: true,
-        // D-163: `ROOFING_PRODUCT_SELECT` ya trae `businessLineId`, que es lo que el piso de
-        // precio necesita para encontrar el margen mínimo de la línea.
+        // D-163: `ROOFING_PRODUCT_SELECT` ya trae `businessLineId` —lo que el piso de precio
+        // necesita para encontrar el margen mínimo de la línea— y, desde D-171, también
+        // `unit` y `lengthMm`, que `orderedMeters` usa para convertir planchas en metros.
         ...ROOFING_PRODUCT_SELECT,
+        // D-167: si la línea lleva existencias. El panel lo muestra en vez de un cero.
+        businessLine: { select: { inventoryStrategy: true } },
       },
     });
     if (products.length === 0) return [];
@@ -1715,10 +1756,12 @@ export class SalesOrdersService {
         }) && product.lengthMm !== null
           ? { kind: 'PER_METER', lengthMm: product.lengthMm.toFixed(2) }
           : { kind: 'UNIT', unitLabel: product.unit };
-      // D-134: una cobertura a medida no se atiende con stock del producto —siempre cero—
-      // sino con el agregado. Mostrarle al vendedor el cero del SKU sería mentirle sobre lo
-      // único que decide si puede prometer.
-      if (isMadeToMeasure(product) && product.thicknessMm !== null && product.finish !== null) {
+      // D-134: una cobertura no se atiende con stock del producto —siempre cero— sino con el
+      // agregado. Mostrarle al vendedor el cero del SKU sería mentirle sobre lo único que
+      // decide si puede prometer. **D-171: y la plancha de catálogo tampoco**, desde que se
+      // produce contra el pedido; ese cero era literalmente el mensaje de la captura del
+      // dueño («0.000 NIU disponibles… necesita 10»).
+      if (isMadeToOrder(product) && product.thicknessMm !== null && product.finish !== null) {
         // D-136: el panel es una **lectura**. `findRawMaterialSpec` no crea la fila si no
         // existe: el disponible de un agregado que nadie prometió todavía es el mismo.
         const spec = await findRawMaterialSpec(this.prisma, {
@@ -1758,11 +1801,14 @@ export class SalesOrdersService {
             cost: {
               kind: 'RAW_MATERIAL',
               spec,
-              kgPerUnit: theoreticalKgForMeters(product, '1', product.sku),
+              // D-171: el kilo de **una unidad de venta**, que en una plancha lleva su largo
+              // adentro. Con el `'1'` a secas, el piso de una plancha de 6 m salía calculado
+              // sobre el material de un solo metro: seis veces más barato de lo que cuesta.
+              kgPerUnit: theoreticalKgForMeters(product, orderedMeters(product, '1'), product.sku),
             },
           });
         }
-      } else {
+      } else if (carriesInventory(product.businessLine)) {
         floorCandidates.push({
           at: product.id,
           sku: product.sku,
@@ -1785,6 +1831,7 @@ export class SalesOrdersService {
         // una tanda para no repetir por SKU la consulta de márgenes y la de costos.
         minPricePen: null,
         minValuePen: null,
+        carriesInventory: carriesInventory(product.businessLine),
       });
     }
 
@@ -1839,7 +1886,10 @@ export class SalesOrdersService {
     const [balances, reserved, assigned] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
-        select: { itemId: true, qty: true },
+        // D-170: el promedio viaja junto al saldo — es a lo que el kardex va a dar de baja
+        // el rollo cuando la venta lo despache, y el número contra el que el vendedor
+        // negocia el precio por kilo.
+        select: { itemId: true, qty: true, avgCost: true },
       }),
       this.prisma.reservation.groupBy({
         by: ['itemId'],
@@ -1864,6 +1914,7 @@ export class SalesOrdersService {
       }),
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const avgCostById = new Map(balances.map((b) => [b.itemId, b.avgCost.toFixed(4)]));
     const reservedById = new Map(
       reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
     );
@@ -1904,6 +1955,7 @@ export class SalesOrdersService {
           status: c.status as 'OPEN' | 'CLOSED',
           availableQty: qty.minus(res).toFixed(3),
           minPricePen: floors.get(c.id)?.minPricePen ?? null,
+          avgCostPen: avgCostById.get(c.id) ?? null,
         };
       })
       .filter((c) => toDecimal(c.availableQty).gt(0));

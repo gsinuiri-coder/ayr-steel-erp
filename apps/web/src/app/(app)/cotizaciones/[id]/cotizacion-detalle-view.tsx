@@ -5,7 +5,13 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { BUSINESS_LINE_LABELS, Role, type QuotationDto, type SalesOrderDto } from '@ayr/shared';
+import {
+  BUSINESS_LINE_LABELS,
+  Role,
+  toDecimal,
+  type QuotationDto,
+  type SalesOrderDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
@@ -296,6 +302,17 @@ export function CotizacionDetalleView({ id }: { id: string }) {
                   </TableCell>
                   <TableCell className="text-right font-medium tabular-nums">
                     {formatMoney(item.subtotalPen)}
+                    {/*
+                      D-169: en una línea importada el importe es el del comprobante, no
+                      `cantidad × valor unitario`. Cuando las dos cifras no coinciden hay que
+                      decirlo acá: si no, el importe se lee como una multiplicación mal hecha.
+                    */}
+                    {toDecimal(item.roundingAdjustmentPen).isZero() ? null : (
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        Importe del comprobante ({formatMoney(item.roundingAdjustmentPen, 'PEN', 4)}{' '}
+                        contra la multiplicación)
+                      </span>
+                    )}
                   </TableCell>
                 </TableRow>
               );

@@ -5,7 +5,9 @@ import {
   defaultRoofingPlan,
   importDocTypeOf,
   EXTERNAL_INVOICE_NOTES_PREFIX,
+  IMPORT_ROUNDING_TOLERANCE_PEN,
   MAX_PADRON_LOOKUPS,
+  money,
   MAX_QUOTATION_IMPORT_ROWS,
   PADRON_LOOKUP_CONCURRENCY,
   QUOTATION_IMPORT_COLUMNS,
@@ -202,10 +204,17 @@ export class QuotationImportService {
 
     // El archivo no trae precio unitario: trae el valor de venta (sin IGV) de la línea. El
     // unitario sale de dividirlo entre la cantidad, con `Decimal` y a escala de dinero.
+    //
+    // D-169: y el que **manda** es el importe, no el unitario. `netAmountPen` viaja aparte y
+    // es el que se persiste; el unitario es una cuenta derivada que se guarda porque el
+    // comprobante electrónico lo necesita como `valorUnitario`. Mientras el importe se
+    // recalculaba desde el unitario redondeado, el ERP y el papel decían cifras distintas —
+    // poco, pero distintas, y crecía con la cantidad.
     const net = parseAmount(field(raw, 'netAmount'));
     const currency = field(raw, 'currency');
     const exchangeRate = parseAmount(field(raw, 'exchangeRate'));
     let unitPricePen: Decimal | null = null;
+    let netAmountPen: Decimal | null = null;
     if (net?.gt(0) !== true) {
       issues.push({
         field: 'unitPrice',
@@ -224,8 +233,11 @@ export class QuotationImportService {
           message: 'El documento está en dólares y la fila no trae tipo de cambio.',
         });
       } else {
-        const netPen = isForeign && exchangeRate ? net.times(exchangeRate) : net;
-        unitPricePen = netPen.div(qty);
+        // El redondeo del importe en soles se hace **una sola vez, acá**: es el número que se
+        // va a persistir tal cual y contra el que se va a medir el desvío del unitario. Que
+        // la conversión a soles ocurra antes que el redondeo es lo de siempre (D-003).
+        netAmountPen = money(isForeign && exchangeRate ? net.times(exchangeRate) : net);
+        unitPricePen = netAmountPen.div(qty);
       }
     }
 
@@ -274,6 +286,8 @@ export class QuotationImportService {
       productId: product?.id ?? null,
       qty: roundedQty === null ? '' : toFixedString(roundedQty, 'KG'),
       unitPricePen: unitPricePen === null ? '' : toFixedString(unitPricePen, 'MONEY'),
+      // D-169: el importe del papel, en soles y sin IGV. Es lo que se persiste como subtotal.
+      netAmountPen: netAmountPen === null ? '' : toFixedString(netAmountPen, 'MONEY'),
       // El lector recorta a 512 y el schema del confirm topa en 240: sin este recorte, un
       // nombre largo tumbaba el archivo entero con un error de Zod que la pantalla no sabe
       // atribuir a ninguna fila.
@@ -534,6 +548,10 @@ export class QuotationImportService {
                   productId: r.productId,
                   qty: r.qty,
                   unitPricePen: r.unitPricePen,
+                  // D-169: el importe del papel manda. `unitPricePen` sigue viajando porque el
+                  // comprobante lo necesita, pero el subtotal sale de acá. Ausente en la fila
+                  // que el usuario editó: ahí manda lo que tipeó y el importe se recalcula.
+                  ...(r.netAmountPen === undefined ? {} : { netAmountPen: r.netAmountPen }),
                   ...(r.description ? { description: r.description } : {}),
                   ...(r.pieces ? { pieces: r.pieces } : {}),
                 })),
@@ -545,6 +563,13 @@ export class QuotationImportService {
                 // Es la misma razón por la que la cotización importada no vence (D-157): lo que
                 // entra por acá es un hecho consumado, no una oferta.
                 enforcePriceFloor: false,
+                // D-169: y por la misma razón, sus importes se copian en vez de recalcularse.
+                // La tolerancia es del **documento**: es acá donde «documento» está definido —
+                // las filas de este `documentKey`— y por eso el rechazo puede nombrarlo.
+                exactAmounts: {
+                  tolerancePen: IMPORT_ROUNDING_TOLERANCE_PEN,
+                  documentLabel: documentKey,
+                },
               },
             );
             await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);

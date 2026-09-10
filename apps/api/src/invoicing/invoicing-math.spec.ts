@@ -2,6 +2,10 @@ import {
   documentBalance,
   FiscalDocType,
   FiscalDocumentStatus,
+  payableBalance,
+  salesTotals,
+  sumLineTotals,
+  toDecimal,
   VOID_WINDOW_DAYS,
   voidPathFor,
 } from '@ayr/shared';
@@ -168,5 +172,88 @@ describe('pendingQty y proratedQty (D-074)', () => {
 
   it('una línea sin cantidad pedida no reparte nada en vez de dividir por cero', () => {
     expect(proratedQty('5.000', '0', '400.000').toFixed(3)).toBe('0.000');
+  });
+});
+
+/**
+ * D-169 — el rechazo por céntimos de la cobranza, que es donde el defecto del importador
+ * terminaba saliendo a la superficie.
+ *
+ * Un comprobante cuyo total lleva cola de diezmilésimas (S/ 117.9999) no se podía cobrar con
+ * los S/ 118.00 que el cliente de verdad transfiere: el saldo se comparaba con cuatro
+ * decimales y el mensaje lo mostraba con dos, así que el error decía «excede el saldo
+ * pendiente (S/ 118.00)» sobre un cobro de S/ 118.00. Dos cifras idénticas en pantalla y un
+ * 400 que nadie podía resolver.
+ */
+describe('payableBalance (D-169)', () => {
+  it('un saldo con cola de diezmilésimas se cobra hasta el céntimo de arriba', () => {
+    expect(payableBalance('117.9999').toFixed(2)).toBe('118.00');
+    expect(payableBalance('117.9901').toFixed(2)).toBe('118.00');
+  });
+
+  it('un saldo exacto no se infla', () => {
+    expect(payableBalance('118.0000').toFixed(2)).toBe('118.00');
+    expect(payableBalance('0.0000').toFixed(2)).toBe('0.00');
+  });
+
+  it('redondea hacia arriba y no al más cercano: de menos volvería a no cerrar', () => {
+    // Con HALF_UP, 117.9949 daría 117.99 y la factura del papel (118.00) seguiría sin poder
+    // cobrarse entera. Lo que se admite de más es siempre menos de un céntimo.
+    expect(payableBalance('117.9949').toFixed(2)).toBe('118.00');
+  });
+
+  it('lo que se admite de más nunca llega a un céntimo', () => {
+    for (const balance of ['117.9999', '117.9901', '0.0001', '5000.4444']) {
+      expect(payableBalance(balance).minus(toDecimal(balance)).lt('0.01')).toBe(true);
+    }
+  });
+
+  it('el sobrepago menor a un céntimo lo absorbe el saldo, que nunca es negativo', () => {
+    expect(
+      documentBalance({
+        status: 'ACCEPTED',
+        totalPen: '117.9999',
+        paidPen: '118.0000',
+        creditedPen: '0',
+      }),
+    ).toBe('0.0000');
+  });
+});
+
+/**
+ * D-169 — **la cabecera suma sus líneas; no las recalcula.**
+ *
+ * El defecto que la escritura de los E2E encontró: `resolveLines` copiaba el importe del papel
+ * en la línea y, un renglón más abajo, la cabecera lo volvía a derivar de `cantidad × unitario`.
+ * La cuenta por cobrar sale del total de la cabecera, así que el saldo quedaba unos céntimos por
+ * debajo del comprobante y cobrar el importe real se rechazaba por exceso — el mismo daño que
+ * D-169 vino a cerrar, una pantalla más adelante. Pasaba desapercibido porque el total
+ * recalculado se ve «más limpio» que el correcto.
+ */
+describe('sumLineTotals (D-169)', () => {
+  it('suma los importes que las líneas ya tienen, aunque no sean cantidad × unitario', () => {
+    // 3 500 kg por S/ 4 179.13: el unitario derivado (1.1940) devuelve 4 179.00 al multiplicar.
+    const totals = sumLineTotals([{ subtotalPen: '4179.1300', igvPen: '752.2434' }]);
+    expect(totals.subtotal.toFixed(4)).toBe('4179.1300');
+    expect(totals.total.toFixed(4)).toBe('4931.3734');
+    // Lo que hacía la cabecera antes, y por trece céntimos de menos:
+    expect(salesTotals([{ qty: '3500.000', unitPricePen: '1.1940' }]).subtotal.toFixed(4)).toBe(
+      '4179.0000',
+    );
+  });
+
+  it('suma subtotales e IGV por separado, nunca totales ya redondeados', () => {
+    // El mismo criterio que `documentTotals` en ventas: sumar totales de línea arrastra el
+    // redondeo del IGV de cada una.
+    const totals = sumLineTotals([
+      { subtotalPen: '0.0100', igvPen: '0.0018' },
+      { subtotalPen: '0.0100', igvPen: '0.0018' },
+    ]);
+    expect(totals.subtotal.toFixed(4)).toBe('0.0200');
+    expect(totals.igv.toFixed(4)).toBe('0.0036');
+  });
+
+  it('un documento sin líneas da cero y no NaN', () => {
+    expect(sumLineTotals([]).total.toFixed(4)).toBe('0.0000');
   });
 });

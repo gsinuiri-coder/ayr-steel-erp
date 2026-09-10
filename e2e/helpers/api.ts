@@ -98,21 +98,59 @@ export async function createSupplier(
   api: APIRequestContext,
   overrides: Partial<{ code: string; docNumber: string; name: string }> = {},
 ): Promise<CreatedSupplier> {
-  const code = overrides.code ?? `EE${randomLetters(4)}`;
-  // Con solo `Date.now()` dos altas en el mismo milisegundo chocaban por RUC repetido, y
-  // un escenario de esta suite crea tres proveedores seguidos: el sufijo aleatorio lo cierra.
-  const docNumber =
-    overrides.docNumber ??
-    `20${String(Date.now()).slice(-6)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
-  const name = overrides.name ?? `E2E Proveedor ${code}`;
-  return postJson<CreatedSupplier>(api, '/api/suppliers', {
-    code,
-    docType: 'RUC',
-    docNumber,
-    name,
-    creditDays: 0,
-    providesCuttingService: false,
-  });
+  return retryingOnConflict(
+    () => {
+      const code = overrides.code ?? `EE${randomLetters(4)}`;
+      // Con solo `Date.now()` dos altas en el mismo milisegundo chocaban por RUC repetido, y
+      // un escenario de esta suite crea tres proveedores seguidos: el sufijo aleatorio lo cierra.
+      const docNumber =
+        overrides.docNumber ??
+        `20${String(Date.now()).slice(-6)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
+      return {
+        code,
+        docType: 'RUC',
+        docNumber,
+        name: overrides.name ?? `E2E Proveedor ${code}`,
+        creditDays: 0,
+        providesCuttingService: false,
+      };
+    },
+    (body) => postJson<CreatedSupplier>(api, '/api/suppliers', body),
+    overrides.code !== undefined || overrides.docNumber !== undefined,
+  );
+}
+
+/**
+ * Reintenta un alta cuyo único modo de falla esperable es un **choque de identificador al
+ * azar** (`409`), volviendo a sortearlo.
+ *
+ * Existe por un fallo que aparecía siempre lejos de su causa: `suppliers.code` es
+ * `VarChar(6)` y único, el maestro **no se vacía entre corridas** —el reset trunca
+ * inventario, compras y usuarios, no los maestros— y la base local acumula cientos de
+ * proveedores `E2E`. Con eso, cada tantas corridas un `409 Ya existe un proveedor con ese
+ * documento o con ese código corto` salía desde dentro de `setupRoofingScenario`, en un test
+ * que no habla de proveedores, y se leía como una regresión del test que lo hospedaba.
+ *
+ * Reintentar es lo correcto y no un parche: lo que el test quiere es *un* proveedor nuevo, no
+ * uno con un código concreto. Cuando el llamador **sí** fijó el código o el RUC, el 409 es un
+ * hecho del caso y se propaga sin reintentar.
+ */
+export async function retryingOnConflict<T>(
+  buildBody: () => Record<string, unknown>,
+  send: (body: Record<string, unknown>) => Promise<T>,
+  fixedIdentity = false,
+  attempts = 5,
+): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await send(buildBody());
+    } catch (err) {
+      last = err;
+      if (fixedIdentity || !(err instanceof Error) || !err.message.includes('409')) throw err;
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last));
 }
 
 export interface CreatedFinish {

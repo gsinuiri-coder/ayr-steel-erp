@@ -208,11 +208,25 @@ export async function resolveDispatchTarget(
   //
   // Lo que separa "se fabrica contra el pedido" de "se vende la bobina tal cual" (RF-73) **no**
   // son los subítems de largo: una plancha de catálogo fabricada contra pedido tiene línea
-  // simple y también hay que producirla. Lo que los separa es la **receta**: un producto de
-  // `trading` que vende una bobina no tiene, y uno de coberturas sí.
+  // simple y también hay que producirla.
+  //
+  // **D-171: y tampoco es la receta.** Ese era el criterio, y desde D-122 una cobertura ya no
+  // tiene receta: `productBom.count` daba cero para el caso central de esta rama, que se
+  // sostenía solo por `onProduct !== null` — o sea, únicamente después de que la producción ya
+  // hubiera abierto la reserva de producto. Un despacho **anterior** a producir caía al
+  // camino de las coordenadas congeladas y emitía una salida de **kilos de bobina** por una
+  // venta de planchas, que es exactamente lo que D-088 vino a cerrar.
+  //
+  // El criterio correcto es el mismo que decide la rama de la reserva: **tener subtipo de
+  // cobertura** (`isMadeToOrder`). La receta sigue mirándose para drywall, que sí la tiene.
   if (!backedByProduct) {
+    const product = await tx.product.findUnique({
+      where: { id: item.productId },
+      select: { roofingKind: true },
+    });
     const madeToOrder =
       onProduct !== null ||
+      (product?.roofingKind ?? null) !== null ||
       (await tx.productBom.count({ where: { productId: item.productId, isActive: true } })) > 0;
     if (madeToOrder) {
       throw new BadRequestException(

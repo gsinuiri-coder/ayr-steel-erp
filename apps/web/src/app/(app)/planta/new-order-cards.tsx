@@ -4,14 +4,9 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  BusinessLine,
-  MAX_PIECE_QTY,
   MAX_REPORT_PIECES,
   ProductBomKind,
-  RoofingProductKind,
-  type BusinessLineDto,
   type ProductBomDto,
-  type ProductDto,
   type ProductionOrderDto,
   type ReservationDto,
 } from '@ayr/shared';
@@ -116,124 +111,6 @@ export function RoofingQueueCard({ onCreated }: { onCreated: (orderId: string) =
             </div>
           </div>
         ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Una cobertura a medida siempre nace del pedido que reserva el material (RF-31, D-134): esa
- * es la tarjeta de arriba. Una **plancha de catálogo** es lo contrario — el pedido reserva
- * producto terminado (D-127) y nunca fabrica contra sí mismo (D-140) —, así que su único
- * camino a producción es esta corrida a stock: elegís el SKU y cuántas planchas, sin pedido
- * de por medio. Si el saldo no alcanza para un pedido, ese pedido espera esta corrida.
- */
-export function RoofingStockOrderCard({ onCreated }: { onCreated: (orderId: string) => void }) {
-  const queryClient = useQueryClient();
-  const [productId, setProductId] = useState('');
-  const [targetPieces, setTargetPieces] = useState('');
-  const [orderDate, setOrderDate] = useState<string | undefined>(undefined);
-
-  const lines = useQuery({
-    queryKey: ['business-lines'],
-    queryFn: () => api<BusinessLineDto[]>('/business-lines'),
-  });
-  const roofingLineId = lines.data?.find((l) => l.code === BusinessLine.METALLIC_ROOFING)?.id;
-  const products = useQuery({
-    queryKey: ['catalog-products', roofingLineId],
-    queryFn: () => api<ProductDto[]>(`/catalog?businessLineId=${roofingLineId}`),
-    enabled: roofingLineId !== undefined,
-  });
-  // Solo planchas de catálogo activas (D-127): una cobertura a medida no tiene largo fijo
-  // que producir sin que un pedido lo diga.
-  const catalogSheets = (products.data ?? []).filter(
-    (p) => p.isActive && p.roofingKind === RoofingProductKind.PLANCHA,
-  );
-
-  const create = useMutation({
-    mutationFn: () =>
-      api<ProductionOrderDto>('/production/roofing', {
-        method: 'POST',
-        body: { productId, targetPieces: Number(targetPieces.trim()), operationDate: orderDate },
-      }),
-    onSuccess: (order) => {
-      toast.success(`Orden ${order.code} creada a stock`);
-      setProductId('');
-      setTargetPieces('');
-      invalidateProduction(queryClient);
-      onCreated(order.id);
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo crear la orden'),
-  });
-
-  const piecesValue = targetPieces.trim();
-  const piecesInvalid =
-    piecesValue !== '' &&
-    (!/^\d+$/.test(piecesValue) || Number(piecesValue) < 1 || Number(piecesValue) > MAX_PIECE_QTY);
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">Nueva orden de coberturas a stock</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-4 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
-        <div className="grid gap-2">
-          <Label htmlFor="planta-plancha">Plancha de catálogo</Label>
-          <Select value={productId} onValueChange={setProductId}>
-            <SelectTrigger id="planta-plancha" className="h-12">
-              <SelectValue placeholder="Elige la plancha" />
-            </SelectTrigger>
-            <SelectContent>
-              {catalogSheets.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.sku} — {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="planta-meta-planchas">Planchas a producir</Label>
-          <Input
-            id="planta-meta-planchas"
-            inputMode="numeric"
-            className="h-12 text-lg"
-            value={targetPieces}
-            onChange={(e) => {
-              setTargetPieces(e.target.value);
-            }}
-          />
-        </div>
-        <div className="grid gap-2">
-          <Button
-            className="h-12"
-            disabled={!productId || !piecesValue || piecesInvalid || create.isPending}
-            onClick={() => {
-              create.mutate();
-            }}
-          >
-            {create.isPending ? 'Creando…' : 'Crear orden'}
-          </Button>
-          <OperationDateField value={orderDate} onChange={setOrderDate} />
-        </div>
-        {products.isPending && roofingLineId !== undefined && (
-          <Skeleton className="h-5 w-full sm:col-span-3" />
-        )}
-        {products.isSuccess && catalogSheets.length === 0 && (
-          <p className="text-sm text-muted-foreground sm:col-span-3">
-            Ninguna plancha de catálogo está activa: cárgala desde el catálogo.
-          </p>
-        )}
-        {piecesInvalid && (
-          <p className="text-sm text-destructive sm:col-span-3">
-            La cantidad es un número entero entre 1 y {MAX_PIECE_QTY}.
-          </p>
-        )}
-        <p className="text-sm text-muted-foreground sm:col-span-3">
-          Esta corrida no tiene pedido detrás: entra al almacén como stock libre y cualquier pedido
-          que espere esa plancha se atiende de ese saldo (D-140).
-        </p>
       </CardContent>
     </Card>
   );

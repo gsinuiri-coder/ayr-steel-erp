@@ -112,10 +112,25 @@ interface ProductDto {
 // Utilidades
 // ---------------------------------------------------------------------------
 
-/** Correlativo de comprobante único: dos corridas seguidas no chocan contra el índice
- *  único (proveedor, tipo, serie, número), que no se resetea fuera de CI. */
+/**
+ * Correlativo de comprobante único: dos corridas seguidas no chocan contra el índice único
+ * (proveedor, tipo, serie, número), que no se resetea fuera de CI.
+ *
+ * **Sin ceros a la izquierda**, y no es cosmética: el correlativo de un comprobante es un
+ * número y el ERP lo guarda y lo vuelve a pintar como tal, así que subir un XML que dice
+ * `F001-031507529` deja en pantalla `F001-31507529` —que es correcto—. Este helper fabricaba
+ * el cero adelante y el caso del XML lo comparaba letra por letra, así que fallaba con
+ * «Leído del XML: F001-031507529 no está visible» y se leía como una regresión del lector.
+ *
+ * Lo peor era que **aparecía y desaparecía con el reloj**: el noveno dígito desde atrás de
+ * `Date.now()` es cero durante tandas de días enteros cada varios meses, así que la suite se
+ * caía todas las corridas de esa tanda y volvía sola después. Es el mismo arreglo que
+ * `helpers/production.ts#uniqueDocumentNumber` —que además explica por qué el largo **no**
+ * cambia—; esta copia local es anterior a aquel.
+ */
 function uniqueDocumentNumber(): string {
-  return String(Date.now()).slice(-9);
+  const nine = String(Date.now()).slice(-9);
+  return nine.startsWith('0') ? `9${nine.slice(1)}` : nine;
 }
 
 interface CoilLineInput {

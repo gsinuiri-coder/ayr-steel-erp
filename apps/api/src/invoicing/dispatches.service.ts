@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CoilStatus,
   DispatchStatus,
   FiscalDocType,
   FiscalDocumentStatus,
@@ -13,6 +14,7 @@ import {
   type InventoryItemType,
 } from '@prisma/client';
 import {
+  carriesInventory,
   Decimal,
   dispatchCode,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
@@ -146,7 +148,17 @@ export class DispatchesService {
     `;
     const order = await tx.salesOrder.findUnique({
       where: { id: input.salesOrderId },
-      include: { items: { orderBy: { lineNumber: 'asc' } } },
+      include: {
+        items: {
+          orderBy: { lineNumber: 'asc' },
+          // D-167: para poder cortar la línea de servicio antes de intentar despacharla.
+          include: {
+            product: {
+              select: { sku: true, businessLine: { select: { inventoryStrategy: true } } },
+            },
+          },
+        },
+      },
     });
     if (!order) throw new NotFoundException('Pedido no encontrado');
     if (order.status === SalesOrderStatus.CANCELLED) {
@@ -166,6 +178,17 @@ export class DispatchesService {
       const orderItem = byId.get(item.salesOrderItemId);
       if (!orderItem) {
         throw new BadRequestException('Hay una línea que no pertenece a este pedido');
+      }
+      // D-167: **un servicio no se despacha.** No sale nada del almacén, no hay peso que
+      // declarar en la guía y el kardex ya lo trataba como un no-op; lo que faltaba era
+      // decirlo antes, en vez de dejar que el despacho pidiera «el peso en kilos» de un
+      // conformado y lo escribiera en la guía de remisión como si fuera un bulto. Estas
+      // líneas tampoco frenan el cierre del pedido: `recomputeOrderStatus` no las espera.
+      if (!carriesInventory(orderItem.product.businessLine)) {
+        throw new BadRequestException(
+          `La línea ${String(orderItem.lineNumber)} (${orderItem.product.sku}) es un servicio y no se despacha: ` +
+            'quítala del despacho. El pedido se cierra con las líneas que sí llevan mercadería.',
+        );
       }
       const qty = toDecimal(item.qty);
       const pending = pendingQty(
@@ -337,6 +360,16 @@ export class DispatchesService {
       });
     }
 
+    // D-170: **la venta cierra la bobina.** Las que este despacho dejó en cero y sin ninguna
+    // promesa viva se pasan a `CLOSED` acá mismo.
+    const closedCoils = await this.closeEmptySoldCoils(
+      tx,
+      actor,
+      coilIds,
+      dispatch.seq,
+      dispatchDate,
+    );
+
     const status = await this.recomputeOrderStatus(tx, order.id);
 
     await this.audit.write(tx, {
@@ -353,6 +386,9 @@ export class DispatchesService {
         // advertencia de orden cronológico. Sin esto, mover un despacho de mes no deja rastro.
         operationDate: dispatchDate,
         confirmedBackdate: input.confirmBackdate === true,
+        // D-170: qué rollos quedó cerrando esta salida, en la auditoría del hecho que los
+        // cerró. Vacío en todo despacho que no vendió una bobina entera.
+        closedCoils,
       },
     });
     return dispatch.id;
@@ -501,6 +537,22 @@ export class DispatchesService {
           );
         }
 
+        // **Bobinas antes que saldos**, el mismo orden que `create` y que `createReservations`
+        // (la línea de arriba lo promete desde Fase 5b y la reversa no lo cumplía). Sin este
+        // lock, revertir tomaba primero los saldos —dentro de `inventory.reverse`— y recién
+        // después escribía sobre `coils`: orden inverso al de todo el resto, así que dos
+        // transacciones sobre el mismo rollo podían trabarse en un deadlock, y un
+        // `CoilOperationsService.setStatus` concurrente —que sí toma `lockCoil`— podía quedar
+        // pisado por el cambio de estado de D-170.
+        const lockedCoilIds = [
+          ...new Set(dispatch.items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
+        ].sort();
+        if (lockedCoilIds.length > 0) {
+          await tx.$queryRaw`
+            SELECT "id" FROM "coils" WHERE "id" = ANY(${lockedCoilIds}::uuid[]) ORDER BY "id" FOR UPDATE
+          `;
+        }
+
         for (const item of dispatch.items) {
           if (item.movementId !== null) {
             await this.inventory.reverse(tx, item.movementId, actor.id, reason, operationDate);
@@ -526,6 +578,14 @@ export class DispatchesService {
           }
         }
 
+        // D-170: los kilos ya volvieron al rollo; el estado tiene que volver con ellos.
+        const reopenedCoils = await this.reopenRevertedCoils(
+          tx,
+          actor,
+          lockedCoilIds,
+          dispatch.seq,
+        );
+
         await tx.dispatch.update({
           where: { id },
           data: {
@@ -543,7 +603,7 @@ export class DispatchesService {
           entity: 'dispatches',
           entityId: id,
           before: { status: DispatchStatus.ISSUED, lines: dispatch.items.length },
-          after: { status: DispatchStatus.REVERSED, reason, orderStatus: status },
+          after: { status: DispatchStatus.REVERSED, reason, orderStatus: status, reopenedCoils },
         });
       },
       { timeout: 30_000 },
@@ -555,6 +615,192 @@ export class DispatchesService {
   // -------------------------------------------------------------------------
   // D-074 — el estado del pedido lo decide lo despachado
   // -------------------------------------------------------------------------
+
+  /**
+   * D-170 — **la venta de una bobina entera la cierra** (RF-73).
+   *
+   * Vender un rollo completo lo saca del almacén, pero hasta acá el rollo seguía `OPEN` con
+   * saldo cero: aparecía en la lista de bobinas abiertas y en los desplegables de producción
+   * para siempre, y alguien tenía que acordarse de cerrarlo a mano. El cierre es parte del
+   * hecho, no una tarea posterior.
+   *
+   * **Solo cierra lo que de verdad se agotó**, y las dos condiciones importan:
+   *
+   * - *saldo en cero*: un despacho parcial por peso deja remanente, y ese rollo tiene que
+   *   quedar abierto para que alguien lo cierre por el camino de D-164 —el que pide cuántos
+   *   kilos quedan y liquida la diferencia como merma anormal—. Cerrarlo acá se saltearía esa
+   *   liquidación y el valor del remanente quedaría en el inventario valorizado de un rollo
+   *   que ya no existe, que es justo lo que D-164 vino a cerrar.
+   * - *sin reservas vivas*: otro pedido puede tener prometido lo que a este rollo le quedaba.
+   *   Es la misma condición que `assertNotReserved` exige en el cierre manual, y por el mismo
+   *   motivo: una bobina cerrada no entra a producción, así que el material prometido quedaría
+   *   inalcanzable sin que nada avisara.
+   *
+   * No hay liquidación que emitir: con el saldo ya en cero, `planCoilCloseAdjustment` no
+   * produciría ningún movimiento. Por eso esto es un cambio de estado y no una llamada a
+   * `setStatus`, que además exigiría una fecha de operación propia y un motivo escrito para
+   * algo que no mueve un gramo.
+   *
+   * La reversa del despacho lo deshace: ver `reopenRevertedCoils`.
+   */
+  private async closeEmptySoldCoils(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    coilIds: string[],
+    dispatchSeq: number,
+    operationDate: string,
+  ): Promise<string[]> {
+    if (coilIds.length === 0) return [];
+
+    const [balances, reserved, coils] = await Promise.all([
+      tx.inventoryBalance.findMany({
+        where: { itemType: 'COIL', itemId: { in: coilIds } },
+        select: { itemId: true, qty: true },
+      }),
+      tx.reservation.groupBy({
+        by: ['itemId'],
+        where: { status: 'ACTIVE', itemType: 'COIL', itemId: { in: coilIds } },
+        _sum: { qty: true },
+      }),
+      tx.coil.findMany({
+        where: { id: { in: coilIds }, status: CoilStatus.OPEN },
+        select: { id: true, code: true },
+      }),
+    ]);
+    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const reservedIds = new Set(
+      reserved.filter((r) => toDecimal((r._sum.qty ?? 0).toString()).gt(0)).map((r) => r.itemId),
+    );
+
+    const toClose = coils.filter(
+      (c) => !reservedIds.has(c.id) && (qtyById.get(c.id) ?? new Decimal(0)).lte(0),
+    );
+    if (toClose.length === 0) return [];
+
+    await tx.coil.updateMany({
+      where: { id: { in: toClose.map((c) => c.id) } },
+      data: { status: CoilStatus.CLOSED },
+    });
+    for (const coil of toClose) {
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        // La misma acción que el cierre manual (RF-19): quien audita una bobina quiere ver
+        // todos sus cierres juntos, no dos verbos según quién lo haya hecho.
+        action: 'coils.close',
+        entity: 'coils',
+        entityId: coil.id,
+        before: { status: CoilStatus.OPEN },
+        after: {
+          status: CoilStatus.CLOSED,
+          reason: `Vendida entera en el despacho ${dispatchCode(dispatchSeq)} (D-170)`,
+          // Sin ajuste: el saldo ya estaba en cero cuando se cerró.
+          adjustment: null,
+          // D-124: el cierre manual fecha su auditoría con la fecha de operación, y este
+          // hereda la del despacho que lo provocó. No mueve kardex —el saldo ya estaba en
+          // cero— pero un reporte que agrupe cierres por fecha de negocio tiene que verlos.
+          operationDate,
+          // **La marca que hace reversible este cierre.** Un cierre manual con saldo cero
+          // también escribe `adjustment: null`, así que sin este campo la reversa no puede
+          // distinguir el rollo que cerró un despacho del que ya estaba cerrado cuando se
+          // vendió —caso normal y explícito de D-116— y reabriría el segundo.
+          closedByDispatch: dispatchCode(dispatchSeq),
+        },
+      });
+    }
+    return toClose.map((c) => c.code);
+  }
+
+  /**
+   * D-170: la reversa del despacho **reabre** la bobina que ese despacho había cerrado.
+   *
+   * El movimiento inverso le devuelve los kilos, así que dejarla `CLOSED` la dejaría con saldo
+   * vivo y fuera de producción a la vez — el estado que nadie sabría de dónde salió.
+   *
+   * **Reabre lo que cerró un despacho, y eso lo dice la auditoría, no el estado.** Es la parte
+   * que no se puede deducir: una bobina `CLOSED` con saldo después de la reversa puede ser una
+   * que un despacho cerró **o** una que ya estaba cerrada cuando se vendió — que es un caso
+   * normal y explícito de D-116, el de dar de alta una bobina ya cerrada porque se sabe que se
+   * va a vender entera. Reabrir esa segunda sería inventarle un estado que nadie pidió. La
+   * marca `closedByDispatch` que `closeEmptySoldCoils` deja en el `coils.close` es el único
+   * registro de cuál fue cuál: un cierre manual sobre saldo cero también escribe
+   * `adjustment: null`, así que ese campo no alcanza para distinguirlos.
+   *
+   * **Y no solo lo que cerró *este* despacho.** Una venta se puede despachar en dos veces: el
+   * segundo despacho es el que agota el rollo y el que lo cierra, y revertir el **primero**
+   * también le devuelve kilos. Mirando solo el `closedCoils` propio, esa reversa dejaba el
+   * rollo `CLOSED` con saldo vivo, fuera de producción y sin la liquidación que D-164 exige
+   * para un cierre con saldo. Lo que se mira, entonces, es el **último cierre del rollo**: si
+   * lo puso un despacho y ahora hay saldo, se reabre.
+   */
+  private async reopenRevertedCoils(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    coilIds: string[],
+    dispatchSeq: number,
+  ): Promise<string[]> {
+    if (coilIds.length === 0) return [];
+
+    const balances = await tx.inventoryBalance.findMany({
+      where: { itemType: 'COIL', itemId: { in: coilIds } },
+      select: { itemId: true, qty: true },
+    });
+    const withStock = balances
+      .filter((b) => toDecimal(b.qty.toString()).gt(0))
+      .map((b) => b.itemId);
+    if (withStock.length === 0) return [];
+
+    const candidates = await tx.coil.findMany({
+      where: { id: { in: withStock }, status: CoilStatus.CLOSED },
+      select: { id: true, code: true },
+    });
+    if (candidates.length === 0) return [];
+
+    // El **último** movimiento de estado de cada rollo. Uno puede haberse abierto y cerrado
+    // varias veces (D-164 revierte su ajuste al reabrir), así que lo que decide es el más
+    // reciente y no que exista algún cierre automático en el historial.
+    const history = await tx.auditLog.findMany({
+      where: {
+        entity: 'coils',
+        entityId: { in: candidates.map((c) => c.id) },
+        action: { in: ['coils.close', 'coils.open'] },
+      },
+      orderBy: { at: 'desc' },
+      select: { entityId: true, action: true, after: true },
+    });
+    const lastByCoil = new Map<string, (typeof history)[number]>();
+    for (const row of history) {
+      if (row.entityId !== null && !lastByCoil.has(row.entityId)) lastByCoil.set(row.entityId, row);
+    }
+
+    const coils = candidates.filter((c) => {
+      const last = lastByCoil.get(c.id);
+      if (last?.action !== 'coils.close') return false;
+      const after = last.after;
+      if (after === null || typeof after !== 'object' || Array.isArray(after)) return false;
+      return typeof (after as Record<string, unknown>).closedByDispatch === 'string';
+    });
+    if (coils.length === 0) return [];
+
+    await tx.coil.updateMany({
+      where: { id: { in: coils.map((c) => c.id) } },
+      data: { status: CoilStatus.OPEN },
+    });
+    for (const coil of coils) {
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'coils.open',
+        entity: 'coils',
+        entityId: coil.id,
+        before: { status: CoilStatus.CLOSED },
+        after: {
+          status: CoilStatus.OPEN,
+          reason: `Reversa del despacho ${dispatchCode(dispatchSeq)} que la había vendido entera (D-170)`,
+          adjustment: null,
+        },
+      });
+    }
+    return coils.map((c) => c.code);
+  }
 
   /**
    * Recalcula el estado del pedido **desde las filas de despacho vigentes**, nunca desde
@@ -571,7 +817,17 @@ export class DispatchesService {
   ): Promise<SalesOrderStatus> {
     const order = await tx.salesOrder.findUniqueOrThrow({
       where: { id: salesOrderId },
-      select: { status: true, items: { select: { id: true, qty: true } } },
+      select: {
+        status: true,
+        items: {
+          select: {
+            id: true,
+            qty: true,
+            // D-167: para saber cuáles de estas líneas no se despachan nunca.
+            product: { select: { businessLine: { select: { inventoryStrategy: true } } } },
+          },
+        },
+      },
     });
     if (order.status === SalesOrderStatus.CANCELLED) return order.status;
 
@@ -580,7 +836,13 @@ export class DispatchesService {
       order.items.map((i) => i.id),
     );
     const anyDispatched = [...dispatched.values()].some((q) => q.gt(0));
-    const allComplete = order.items.every((item) =>
+    // D-167: **una línea de servicio no espera despacho.** No hay nada que sacar del almacén
+    // ni que declarar en una guía, así que exigirle una fila de despacho para cerrar el
+    // pedido dejaba en `PARCIALMENTE DESPACHADO` para siempre a todo pedido que mezclara
+    // mercadería con un conformado —o forzaba a despacharlo con un peso inventado, y el
+    // servicio viajaba como bulto en la guía de remisión.
+    const shippable = order.items.filter((item) => carriesInventory(item.product.businessLine));
+    const allComplete = shippable.every((item) =>
       (dispatched.get(item.id) ?? new Decimal(0)).gte(toDecimal(item.qty.toString())),
     );
 

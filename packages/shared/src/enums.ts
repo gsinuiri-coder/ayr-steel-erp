@@ -71,6 +71,26 @@ export const DEFAULT_INVENTORY_STRATEGY: Record<BusinessLine, InventoryStrategy>
   services: InventoryStrategy.NOOP,
 };
 
+/**
+ * D-167: **¿el producto de esta línea de negocio tiene existencias?** La responde el
+ * atributo `inventoryStrategy` de la línea y nada más — nunca su código ni su nombre.
+ *
+ * Vive en una función y no como una comparación suelta porque la respuesta la necesitan
+ * tres lugares que tienen que decir lo mismo: el kardex, la reserva de una venta y el
+ * despacho. Mientras la pregunta se contestó solo dentro de `InventoryService`, la venta
+ * de un servicio se rechazaba antes de llegar ahí —«es de una línea sin inventario: no se
+ * cotiza»— y un servicio es justamente lo que una empresa de transformación factura todo
+ * el tiempo: conformado, corte de terceros, flete.
+ *
+ * Una línea `NOOP` **no** es una línea sin stock: es una línea a la que la pregunta
+ * «cuánto hay» no se le hace. No reserva, no mueve kardex y no tiene costo promedio contra
+ * el que comparar un piso de precio. Todo el resto del documento —cantidad, precio, IGV,
+ * comprobante, cobranza— es idéntico al de cualquier otra línea.
+ */
+export function carriesInventory(line: { inventoryStrategy: InventoryStrategy }): boolean {
+  return line.inventoryStrategy !== InventoryStrategy.NOOP;
+}
+
 /** Moneda de compras y ventas (D-029/P-06). PEN es el default. */
 export const Currency = {
   PEN: 'PEN',

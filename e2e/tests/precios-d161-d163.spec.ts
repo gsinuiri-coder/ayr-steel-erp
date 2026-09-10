@@ -7,7 +7,6 @@ import {
   getJson,
   postJson,
 } from '../helpers/api';
-import { dispatchOrder, purgeInvoicingTrail } from '../helpers/invoicing';
 import {
   closeSessionQuietly,
   openCashSession,
@@ -23,10 +22,14 @@ import {
   putJson,
   randomLetters,
   today,
-  uniqueDocumentNumber,
   type ProductDto,
 } from '../helpers/production';
-import { createColor, createRoofingProduct, purgeRoofingTrail } from '../helpers/roofing';
+import {
+  buyRoofingCoil,
+  createColor,
+  createRoofingProduct,
+  purgeRoofingTrail,
+} from '../helpers/roofing';
 import {
   createCustomer,
   createQuotationWithLines,
@@ -67,6 +70,18 @@ const ROOFING_LINE = 'metallic-roofing';
 
 /** Largo del SKU de plancha de los casos de D-161: 3.60 m, el factor del defecto original. */
 const PLANCHA_LENGTH_MM = '3600.00';
+
+/**
+ * D-171: kilos de bobina que **una plancha** de estos casos encarga.
+ *
+ * Desde D-171 una plancha se rola contra el pedido, así que lo que su línea promete son kilos
+ * del agregado de materia prima y no unidades de un saldo terminado. La geometría del SKU de
+ * `setupPlancha` es 1 000 mm × 0.50 mm con la densidad por defecto de `createFinish` (7.85), y
+ * D-165 mete el 1 % de merma normal dentro de la densidad estándar: `7.85 × 1.01 = 7.9285`.
+ *
+ * `1000 × 0.50 × 1000 × 7.9285 / 1e6 = 3.96425` kg por metro lineal, y una plancha son 3.60 m.
+ */
+const KG_PER_SHEET = 3.6 * ((1000 * 0.5 * 1000 * (7.85 * 1.01)) / 1_000_000);
 
 const isProduction = !!process.env.E2E_BASE_URL;
 test.skip(
@@ -112,19 +127,22 @@ interface PlanchaScenario {
   finishId: string;
   product: ProductDto;
   purchaseId: string | null;
+  /** D-171: la bobina que respalda la reserva de materia prima, cuando el caso la necesita. */
+  coilId: string | null;
 }
 
 /**
  * Un SKU `PLANCHA` de Metallic Roofing con largo en el maestro (D-127/D-161).
  *
- * Con `unitPrice` compra y recibe planchas, para que el SKU tenga costo promedio en el kardex
- * —y por lo tanto piso (D-163)— y saldo con el que confirmar y despachar. Sin él, el producto
- * nace sin kardex: ningún piso que aplicar, que es justo lo que hace falta cuando el caso
- * habla de la aritmética del precio y no del mínimo.
+ * Con `coilKg` compra y recibe una **bobina** del mismo espesor y sin color, que es el agregado
+ * de materia prima contra el que la línea promete desde D-171: una plancha se rola contra el
+ * pedido, así que lo que hace falta para confirmar ya no son planchas en el almacén sino kilos
+ * de bobina. Sin `coilKg` el escenario alcanza para cotizar (la cotización no promete material)
+ * pero no para confirmar.
  */
 async function setupPlancha(
   api: APIRequestContext,
-  options: { unitPrice?: string; qty?: string } = {},
+  options: { coilKg?: string; coilUnitPrice?: string } = {},
 ): Promise<PlanchaScenario> {
   const supplier = await createSupplier(api, { name: 'E2E Proveedor planchas' });
   const finish = await createFinish(api);
@@ -137,33 +155,30 @@ async function setupPlancha(
     finishId: finish.id,
     name: 'Plancha E2E de catálogo 3.60 m',
   });
-  if (options.unitPrice === undefined) {
-    return { supplierId: supplier.id, finishId: finish.id, product, purchaseId: null };
+  if (options.coilKg === undefined) {
+    return {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      product,
+      purchaseId: null,
+      coilId: null,
+    };
   }
 
-  const purchase = await postJson<{ id: string }>(api, '/api/purchases', {
+  // Sin color, igual que el SKU: el agregado se empareja por línea, color y espesor (D-134).
+  const { coil, purchaseId } = await buyRoofingCoil(api, {
     supplierId: supplier.id,
-    businessLine: ROOFING_LINE,
-    type: 'FINISHED_GOOD',
-    docType: 'FACTURA',
-    series: 'F001',
-    number: uniqueDocumentNumber(),
-    issueDate: today(),
-    currency: 'PEN',
-    igvRate: '18',
-    paymentTerms: 'CONTADO',
-    items: [
-      {
-        productId: product.id,
-        description: 'Planchas E2E compradas para vender',
-        qty: options.qty ?? '40',
-        unit: 'NIU',
-        unitPrice: options.unitPrice,
-      },
-    ],
+    finishId: finish.id,
+    weightKg: options.coilKg,
+    unitPrice: options.coilUnitPrice ?? '5',
   });
-  await postJson(api, `/api/purchases/${purchase.id}/receive`);
-  return { supplierId: supplier.id, finishId: finish.id, product, purchaseId: purchase.id };
+  return {
+    supplierId: supplier.id,
+    finishId: finish.id,
+    product,
+    purchaseId,
+    coilId: coil.id,
+  };
 }
 
 /** `POST` que debe rebotar con 400; devuelve el cuerpo crudo para poder leer `errors` de Zod. */
@@ -240,11 +255,19 @@ test.describe('D-161 — la plancha de catálogo se cotiza por metro lineal', ()
       expect(line.qty).toBe('10.000');
       expect(line.unit).toBe('NIU');
 
-      // Lo que la regla dura 14 protege: la unidad de negociación cambió, la de inventario no.
-      expect(line.reserveItemType).toBe('PRODUCT');
-      expect(line.reserveItemId).toBe(scenario.product.id);
-      expect(line.reserveQty).toBe('10.000');
-      expect(line.reserveUnit).toBe('NIU');
+      // Lo que la regla dura 14 protege: **la unidad de negociación cambió y la de la línea
+      // no**. La cantidad son planchas y la unidad `NIU`, por más que el precio se haya
+      // acordado por metro.
+      //
+      // **D-171 movió lo que la línea reserva, no lo que cuenta.** Hasta acá la reserva era el
+      // propio SKU (`PRODUCT`, 10 NIU): una plancha se vendía del almacén. Desde D-171 se rola
+      // contra el pedido, así que lo que promete son los kilos de bobina que esos metros van a
+      // consumir — 10 planchas × 3.60 m × 3.96425 kg/m. Que la cantidad y la unidad de arriba
+      // sigan intactas es justamente lo que muestra que D-161 no se tocó.
+      expect(line.reserveItemType).toBe('RAW_MATERIAL');
+      expect(line.reserveItemId).not.toBe(scenario.product.id);
+      expect(line.reserveQty).toBe((10 * KG_PER_SHEET).toFixed(3));
+      expect(line.reserveUnit).toBe('KGM');
 
       // Y el documento: 252.00 + 18% = 297.36.
       expect(quotation.subtotalPen).toBe('252.0000');
@@ -271,7 +294,14 @@ test.describe('D-161 — la plancha de catálogo se cotiza por metro lineal', ()
      *   largo, porque la línea entera está en metros (D-083/D-131).
      *
      * Si algún día alguien "unifica" las dos formas pasando la plancha a metros, este caso es
-     * el que lo cuenta: el kardex, la reserva y el despacho de una plancha están en planchas.
+     * el que lo cuenta: el kardex y el despacho de una plancha están en planchas.
+     *
+     * **D-171 acercó las dos formas por un lado y las dejó separadas por el otro.** Las dos
+     * reservan ahora kilos del agregado de materia prima —una plancha se rola contra el pedido,
+     * ya no sale del almacén—, pero cada una cuenta lo suyo: la plancha en `NIU` con los metros
+     * puestos por el largo del SKU, la cobertura a medida en `MTR` con los metros de la línea.
+     * Que la *reserva* haya dejado de distinguirlas es exactamente por qué hace falta que este
+     * caso siga mirando la unidad, la cantidad y los subítems.
      */
     const scenario = await setupPlancha(api);
     const color = await createColor(api);
@@ -316,7 +346,10 @@ test.describe('D-161 — la plancha de catálogo se cotiza por metro lineal', ()
         unit: 'NIU',
         unitPricePen: '25.2000',
         valuePerMeterPen: '7.0000',
-        reserveItemType: 'PRODUCT',
+        // D-171: las dos formas reservan materia prima. Lo que sigue distinguiéndolas es lo de
+        // abajo —qué se cuenta— y no de dónde sale el material.
+        reserveItemType: 'RAW_MATERIAL',
+        reserveUnit: 'KGM',
       });
       expect(asMeters).toMatchObject({
         qty: '36.000',
@@ -387,18 +420,29 @@ test.describe('D-161 — la plancha de catálogo se cotiza por metro lineal', ()
     }
   });
 
-  test('el pedido congela el valor por metro y el despacho sale en planchas', async () => {
+  test('el pedido congela el valor por metro, y lo que promete son kilos de bobina', async () => {
     /**
      * La propagación aguas abajo, que es donde D-161 se podría perder: el pedido copia las
      * líneas de la cotización, y si copiara solo el unitario, reabrir el pedido mostraría
-     * S/ 25.20 sin decir nunca que se negoció a S/ 7.00 el metro. Y el despacho, que es el
-     * final del camino, tiene que seguir contando **planchas**.
+     * S/ 25.20 sin decir nunca que se negoció a S/ 7.00 el metro.
+     *
+     * **D-171 cambió el final del camino, no el número.** El caso terminaba despachando cuatro
+     * de las diez planchas del almacén para comprobar que el despacho cuenta en `NIU` y no en
+     * 14.4 metros. Desde D-171 esas planchas no están en el almacén —se rolan contra el
+     * pedido—, así que despachar exige antes montar una bobina y reportar los largos; ese
+     * camino completo, con su despacho en `NIU`, vive en `plancha-contra-pedido-d171.spec.ts`.
+     * Lo que queda acá, que es lo de D-161, es que el **valor por metro sobreviva a la
+     * confirmación**, y de paso que lo prometido sean kilos de bobina y no unidades.
+     *
+     * La bobina se compra a S/ 1 el kilo a propósito: con ella el piso de D-163 queda en unos
+     * S/ 15.86 por plancha (14.2713 kg × S/ 1 ÷ 0.9) y los S/ 25.20 del caso pasan cómodos.
+     * Con el costo de bobina normal de la suite (S/ 5) el piso subiría a S/ 79 y este caso
+     * rebotaría por el precio, que es un asunto de otro test.
      */
-    const scenario = await setupPlancha(api, { unitPrice: '20', qty: '40' });
+    const scenario = await setupPlancha(api, { coilKg: '2000', coilUnitPrice: '1' });
     const customer = await createCustomer(api);
     const quotationIds: string[] = [];
     const orderIds: string[] = [];
-    const dispatchIds: string[] = [];
 
     try {
       const quotation = await quoteOneLine(api, {
@@ -428,23 +472,23 @@ test.describe('D-161 — la plancha de catálogo se cotiza por metro lineal', ()
       });
       expect(order.totalPen).toBe('297.3600');
 
-      // Cuatro planchas de las diez: el despacho parcial se mide en `NIU`, no en 14.4 metros.
-      const dispatch = await dispatchOrder(api, {
-        salesOrderId: order.id,
-        items: [{ salesOrderItemId: line.id, qty: '4.000', weightKg: '40.000' }],
+      // D-171: la promesa del pedido son los kilos que esos metros van a consumir.
+      expect(order.reservations).toHaveLength(1);
+      expect(order.reservations[0]).toMatchObject({
+        itemType: 'RAW_MATERIAL',
+        unit: 'KGM',
+        qty: (10 * KG_PER_SHEET).toFixed(3),
+        status: 'ACTIVE',
       });
-      dispatchIds.push(dispatch.id);
-      expect(dispatch.items).toHaveLength(1);
-      expect(dispatch.items[0]).toMatchObject({ qty: '4.000', unit: 'NIU', itemType: 'PRODUCT' });
     } finally {
-      await purgeInvoicingTrail(api, {
-        dispatchIds,
-        orderIds,
-        ...(scenario.purchaseId ? { purchaseId: scenario.purchaseId } : {}),
-        supplierId: scenario.supplierId,
+      await purgeSalesTrail(api, { orderIds, quotationIds });
+      await purgeRoofingTrail(api, {
         productIds: [scenario.product.id],
+        ...(scenario.coilId ? { coilIds: [scenario.coilId] } : {}),
+        ...(scenario.purchaseId ? { purchaseIds: [scenario.purchaseId] } : {}),
+        supplierId: scenario.supplierId,
+        finishId: scenario.finishId,
       });
-      await purgeSalesTrail(api, { quotationIds });
     }
   });
 });

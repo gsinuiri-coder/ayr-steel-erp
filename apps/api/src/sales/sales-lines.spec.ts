@@ -1,6 +1,6 @@
 import { RoofingProductKind } from '@prisma/client';
 import { sellsByFixedLength, Unit } from '@ayr/shared';
-import { isMadeToMeasure, sellsByLength } from './sales-lines';
+import { isMadeToMeasure, isMadeToOrder, sellsByLength } from './sales-lines';
 
 /**
  * **Centinela de D-131, ampliado por D-161.** Las preguntas que ya se confundieron dos veces,
@@ -9,8 +9,12 @@ import { isMadeToMeasure, sellsByLength } from './sales-lines';
  *
  * - *¿La línea necesita el detalle de largos?* → la decide la **unidad** (`sellsByLength`), y
  *   vale para cualquier línea de negocio.
- * - *¿Se fabrica contra pedido desde materia prima?* → la decide el **subtipo**
- *   (`isMadeToMeasure`), y es exclusiva de Metallic Roofing.
+ * - *¿Se cotiza a la medida del cliente?* → la decide el **subtipo `A_MEDIDA`**
+ *   (`isMadeToMeasure`), y es exclusiva de Metallic Roofing. Desde D-171 responde por la
+ *   **forma de la línea**, no por el origen del material.
+ * - *¿Se fabrica desde bobina contra el pedido?* → `isMadeToOrder` (D-171): la cobertura a
+ *   medida **y** la plancha con largo fijo usable. **No** es «tener subtipo»: una `PLANCHA` en
+ *   `KGM` o sin largo no sabe decir cuántos metros pide, así que sigue saliendo del saldo.
  * - *¿El precio se negocia por metro contra el largo fijo del SKU?* → la deciden el **subtipo
  *   y el largo juntos** (`sellsByFixedLength`), y es exclusiva de la plancha de catálogo.
  *
@@ -28,6 +32,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: null,
       byLength: true,
       made: true,
+      order: true,
       fixed: false,
     },
     // El caso que rompió el importador: se vende por metro pero no se fabrica a medida.
@@ -41,6 +46,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: LARGO,
       byLength: true,
       made: false,
+      order: false,
       fixed: false,
     },
     // D-161, el caso que la revisión encontró: el CHECK solo prohíbe `MTR`, así que una
@@ -52,6 +58,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: LARGO,
       byLength: false,
       made: false,
+      order: false,
       fixed: false,
     },
     // El caso que rompió el mostrador: un producto en MTR fuera de coberturas.
@@ -61,6 +68,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: LARGO,
       byLength: true,
       made: false,
+      order: false,
       fixed: false,
     },
     // La plancha normal: cuenta en planchas y cotiza por metro.
@@ -70,6 +78,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: LARGO,
       byLength: false,
       made: false,
+      order: true,
       fixed: true,
     },
     // D-161: una plancha **sin largo en el catálogo** no se puede multiplicar por nada, así
@@ -81,6 +90,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: null,
       byLength: false,
       made: false,
+      order: false,
       fixed: false,
     },
     // Un perfil de drywall tiene largo y no es plancha: el largo solo no alcanza.
@@ -90,6 +100,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: LARGO,
       byLength: false,
       made: false,
+      order: false,
       fixed: false,
     },
     {
@@ -98,6 +109,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: null,
       byLength: false,
       made: false,
+      order: false,
       fixed: false,
     },
     // Imposible por el maestro, pero si alguna vez existiera: el subtipo no crea subítems.
@@ -107,14 +119,18 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       lengthMm: null,
       byLength: false,
       made: true,
+      order: true,
       fixed: false,
     },
   ];
 
   for (const c of cases) {
-    it(`${c.unit} + ${c.roofingKind ?? 'sin subtipo'} + largo ${c.lengthMm ?? 'null'}: largos=${String(c.byLength)}, a medida=${String(c.made)}, por metro=${String(c.fixed)}`, () => {
+    it(`${c.unit} + ${c.roofingKind ?? 'sin subtipo'} + largo ${c.lengthMm ?? 'null'}: largos=${String(c.byLength)}, a medida=${String(c.made)}, por metro=${String(c.fixed)}, se produce=${String(c.order)}`, () => {
       expect(sellsByLength({ unit: c.unit })).toBe(c.byLength);
       expect(isMadeToMeasure({ roofingKind: c.roofingKind })).toBe(c.made);
+      expect(
+        isMadeToOrder({ roofingKind: c.roofingKind, unit: c.unit, lengthMm: c.lengthMm }),
+      ).toBe(c.order);
       expect(
         sellsByFixedLength({ roofingKind: c.roofingKind, unit: c.unit, lengthMm: c.lengthMm }),
       ).toBe(c.fixed);
@@ -148,6 +164,47 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
     expect(isMadeToMeasure(aMedida)).toBe(true);
     expect(sellsByFixedLength(aMedida)).toBe(false);
     expect(sellsByFixedLength(aMedida)).not.toBe(isMadeToMeasure(aMedida));
+
+    // **D-171: `isMadeToOrder` contra `isMadeToMeasure`.** El par nuevo, y el más peligroso de
+    // los cuatro: responder «¿se produce contra el pedido?» con `isMadeToMeasure` devuelve la
+    // plancha al modelo viejo —reserva producto terminado, el mostrador vuelve a pedir «0.000
+    // NIU disponibles»— y el compilador no dice nada.
+    expect(isMadeToOrder(plancha)).toBe(true);
+    expect(isMadeToMeasure(plancha)).toBe(false);
+    expect(isMadeToOrder(plancha)).not.toBe(isMadeToMeasure(plancha));
+
+    // **Y contra `roofingKind !== null`, que fue la primera versión de `isMadeToOrder` y estaba
+    // mal.** El `CHECK` de la base admite una `PLANCHA` en `KGM` —hay SKU legados— y ahí la
+    // cantidad son kilos, no planchas de un largo conocido: con «tener subtipo» a secas, mil
+    // kilos se leían como mil planchas y la línea reservaba catorce toneladas de bobina. Esa
+    // plancha **no** se produce; sale del saldo, como antes de D-171.
+    const planchaLegada = {
+      unit: Unit.KGM,
+      roofingKind: RoofingProductKind.PLANCHA,
+      lengthMm: LARGO,
+    };
+    expect(planchaLegada.roofingKind !== null).toBe(true);
+    expect(isMadeToOrder(planchaLegada)).toBe(false);
+
+    // Lo mismo con una plancha sin largo: no hay por qué multiplicar.
+    const planchaSinLargo = {
+      unit: Unit.NIU,
+      roofingKind: RoofingProductKind.PLANCHA,
+      lengthMm: null,
+    };
+    expect(planchaSinLargo.roofingKind !== null).toBe(true);
+    expect(isMadeToOrder(planchaSinLargo)).toBe(false);
+
+    // Contra `sellsByFixedLength`: una cobertura a medida se produce y **no** cotiza por largo
+    // fijo. Son la unión y una de sus mitades, así que tienen que diferir en la otra mitad.
+    expect(isMadeToOrder(aMedida)).toBe(true);
+    expect(sellsByFixedLength(aMedida)).toBe(false);
+    expect(isMadeToOrder(aMedida)).not.toBe(sellsByFixedLength(aMedida));
+
+    // Fuera de coberturas nada se produce en la roladora, se mida como se mida.
+    const perfil = { unit: Unit.NIU, roofingKind: null, lengthMm: LARGO };
+    expect(isMadeToOrder(perfil)).toBe(false);
+    expect(sellsByFixedLength(perfil)).toBe(false);
   });
 
   it('una plancha con largo cero no se cotiza por metro: multiplicar por cero dejaría la línea en S/ 0', () => {

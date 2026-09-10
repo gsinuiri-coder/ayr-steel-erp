@@ -9,6 +9,7 @@ import {
   businessToday,
   Decimal,
   documentBalance,
+  payableBalance,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginateInMemory,
   toDateOnly,
@@ -129,9 +130,13 @@ export class ReceivablesService {
 
     const balance = this.balanceOf(document);
     const amount = toDecimal(input.amountPen);
-    if (amount.gt(balance)) {
+    // D-169: el saldo se compara **en céntimos**, que es la escala en la que se cobra. Ver
+    // `payableBalance`. D-169 arregla la causa de que un total importado tenga cola de
+    // diezmilésimas; esto arregla la clase entera, que también alcanza a un precio tipeado.
+    const payable = payableBalance(balance);
+    if (amount.gt(payable)) {
       throw new BadRequestException(
-        `El cobro excede el saldo pendiente (S/ ${balance.toFixed(2)})`,
+        `El cobro excede el saldo pendiente (S/ ${payable.toFixed(2)})`,
       );
     }
 

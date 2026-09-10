@@ -228,6 +228,22 @@ export const quotationImportRowInputSchema = z.object({
   qty: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
   /** Precio unitario **sin IGV y en soles**, ya convertido si el documento venía en dólares. */
   unitPricePen: decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY }),
+  /**
+   * D-169: el **importe de la línea tal como está en el papel** (valor de venta, sin IGV, en
+   * soles). Es el que se persiste como subtotal; `unitPricePen` es la cuenta derivada.
+   *
+   * Viaja como campo propio y no se recalcula desde el unitario porque ahí está el defecto
+   * que D-169 cierra: dividir el importe entre la cantidad, redondear a cuatro decimales y
+   * volver a multiplicar no devuelve el importe, y la diferencia crece con la cantidad. En un
+   * comprobante ya emitido el importe es el dato firmado y el unitario el dato calculado.
+   *
+   * **Opcional, y la ausencia significa algo**: la fila cuya cantidad o cuyo precio el usuario
+   * editó en el preview ya no responde al importe del papel, así que viaja sin él y el
+   * importe se recalcula desde lo que esa persona tipeó. Mandarlo igual habría hecho que
+   * corregir un precio no cambiara el importe —y el rechazo por tolerancia habría culpado al
+   * archivo de una diferencia que introdujo la corrección.
+   */
+  netAmountPen: decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY }).optional(),
   description: z.string().trim().max(240).optional(),
   /** D-083: los largos de una cobertura a medida. Ausente en toda línea simple. */
   pieces: roofingPiecesSchema.optional(),
@@ -273,10 +289,13 @@ export const quotationImportRowSchema = quotationImportRowInputSchema
      */
     excludedReason: z.string().nullable(),
   })
-  .omit({ qty: true, unitPricePen: true })
+  // El preview manda strings crudos: una fila con la cantidad vacía o el importe ilegible
+  // tiene que **llegar a la pantalla** con su marca, no morir en el parseo del archivo entero.
+  .omit({ qty: true, unitPricePen: true, netAmountPen: true })
   .extend({
     qty: z.string(),
     unitPricePen: z.string(),
+    netAmountPen: z.string(),
   });
 export type QuotationImportRowDto = z.infer<typeof quotationImportRowSchema>;
 
@@ -367,6 +386,21 @@ export const EXTERNAL_INVOICE_NOTES_PREFIX = 'Factura externa: ';
  */
 export function isImportedQuotation(notes: string | null): boolean {
   return notes?.startsWith(EXTERNAL_INVOICE_NOTES_PREFIX) === true;
+}
+
+/**
+ * D-169: el número del comprobante externo que originó esta cotización (`F001-1349`), o
+ * `null` si no la trajo el importador.
+ *
+ * Sirve para **nombrar el documento en un error**. Vive acá, pegado al prefijo y a
+ * `isImportedQuotation`, porque las tres leen la misma convención: separarlas fue lo que hizo
+ * que el importador tuviera tres formas distintas de reconocer su propia marca.
+ */
+export function externalInvoiceOf(notes: string | null): string | null {
+  if (!isImportedQuotation(notes) || notes === null) return null;
+  const firstLine = notes.split('\n')[0] ?? '';
+  const key = firstLine.slice(EXTERNAL_INVOICE_NOTES_PREFIX.length).trim();
+  return key === '' ? null : key;
 }
 
 /** Tope de `quotations.notes` (`VarChar(500)`). El texto del usuario se recorta, la marca no. */

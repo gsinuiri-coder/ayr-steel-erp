@@ -4,14 +4,16 @@ import {
   CoilKind,
   CoilStatus,
   InventoryItemType,
-  InventoryStrategy,
   ReservationStatus,
   type Prisma,
 } from '@prisma/client';
 import {
+  carriesInventory,
   coilSkuFromTypeKey,
+  Decimal,
   describePieces,
   fixedLengthUnitValue,
+  importRoundingTolerance,
   isPlausiblePieceLength,
   kgPerMeter,
   money,
@@ -19,12 +21,13 @@ import {
   piecesMeters,
   rawMaterialLabel,
   RoofingProductKind,
+  roundingAdjustment,
   salesLineTotals,
+  salesLineTotalsFromNet,
   sellsByFixedLength,
   toDecimal,
   toFixedString,
   Unit,
-  type Decimal,
   type RoofingPieceDto,
   type SalesItemDto,
   type SalesItemInput,
@@ -126,6 +129,15 @@ export interface ResolveSalesLinesOptions {
    * directo pasan siempre con el piso puesto.
    */
   priceFloor?: { toleranceMm: string };
+  /**
+   * D-169: **el importe de cada línea lo manda el papel**, no el recálculo. Solo el
+   * importador de históricos (D-152) lo pone; sin él, un `netAmountPen` en cualquier línea es
+   * un 400.
+   *
+   * `documentLabel` es cómo nombrar el documento en el rechazo por tolerancia — el archivo
+   * trae 71 comprobantes y «el documento no cuadra» no sirve para encontrar cuál.
+   */
+  exactAmounts?: { tolerancePen: string; documentLabel: string };
 }
 
 export async function resolveSalesLines(
@@ -166,7 +178,7 @@ export async function resolveSalesLines(
   // mismo agregado — que es justamente lo que hace que la invariante las sume.
   const specByProductId = new Map<string, RawMaterialSpecRef>();
   for (const product of products) {
-    if (!isMadeToMeasure(product)) continue;
+    if (!isMadeToOrder(product)) continue;
     if (product.thicknessMm === null || product.finish === null) continue;
     specByProductId.set(
       product.id,
@@ -188,9 +200,32 @@ export async function resolveSalesLines(
   // todas juntas después, en tres consultas, en vez de una por línea.
   const floorCandidates: PriceFloorCandidate[] = [];
 
+  // D-169: los ajustes de redondeo de las líneas que traen el importe del papel. Se juntan
+  // acá y se comprueban **todos juntos** al final, porque la tolerancia es del documento y no
+  // de la línea: un céntimo por línea es normal y diez en el total no lo es.
+  const adjustments: {
+    at: string;
+    sku: string;
+    /** La cantidad de la línea: es lo que decide cuánto desvío puede explicar el redondeo. */
+    qty: string;
+    adjustment: Decimal;
+    netPen: Decimal;
+    computedPen: Decimal;
+  }[] = [];
+
   const lines = items.map((item, index) => {
     const lineNumber = index + 1;
     const at = `Línea ${lineNumber}`;
+
+    // D-169: **antes de cualquier rama**, y no dentro de la del producto de catálogo. El
+    // importe exacto solo lo trae el importador; fuera de ahí es un 400 y no un campo que se
+    // ignora. Puesto más abajo, una línea de venta de bobina lo descartaba en silencio — el
+    // contrato decía una cosa y una de las dos ramas hacía otra.
+    if (item.netAmountPen !== undefined && options.exactAmounts === undefined) {
+      throw new BadRequestException(
+        `${at}: el importe exacto de línea solo lo trae el importador de comprobantes (D-169)`,
+      );
+    }
 
     if (item.saleCoilId !== undefined) {
       const sale = saleCoilById.get(item.saleCoilId);
@@ -243,11 +278,13 @@ export async function resolveSalesLines(
     if (!product.isActive) {
       throw new BadRequestException(`${at}: el producto ${product.sku} está desactivado`);
     }
-    if (product.businessLine.inventoryStrategy === InventoryStrategy.NOOP) {
-      throw new BadRequestException(
-        `${at}: el producto ${product.sku} es de una línea sin inventario: no se cotiza`,
-      );
-    }
+    // D-167: una línea de negocio `NOOP` **se cotiza y se vende**. Lo que no hace es
+    // prometer existencias: no reserva, no mueve kardex y no tiene costo promedio contra el
+    // que medir un piso. `carriesInventory` es esa exención, y la decide el atributo de la
+    // línea —nunca su código— para que agregar «Fletes» o «Montaje» no obligue a tocar
+    // ninguna condición. El rechazo que había acá cortaba antes de llegar al kardex, que ya
+    // trataba el caso como el no-op explícito que es (§2.2).
+    const withInventory = carriesInventory(product.businessLine);
 
     const listPricePen = product.listPricePen === null ? null : product.listPricePen.toFixed(4);
 
@@ -288,21 +325,23 @@ export async function resolveSalesLines(
       );
     }
 
-    // **Dos preguntas distintas, y hay que no confundirlas** (lo aprendí confundiéndolas:
+    // **Tres preguntas distintas, y hay que no confundirlas** (lo aprendí confundiéndolas:
     // ver D-130 y el guardrail del mostrador que se cayó en CI).
     //
     // (a) ¿Esta línea se vende por metro lineal? La decide la **unidad**, como desde D-083, y
     //     vale para cualquier línea de negocio: un producto en `MTR` necesita sus subítems de
     //     largo, sea una cobertura o cualquier otra cosa que se venda por metro. De esto
     //     depende también que el mostrador la rechace (D-098).
-    // (b) ¿Se fabrica contra pedido a partir de materia prima? La decide el **subtipo**
-    //     (D-127), y es una pregunta exclusiva de Metallic Roofing. De esto depende la rama
-    //     de la reserva, más abajo.
+    // (b) ¿Se fabrica contra pedido a partir de materia prima? La decide **tener subtipo de
+    //     cobertura** (D-171): desde que la plancha dejó de ser stock terminado, `A_MEDIDA` y
+    //     `PLANCHA` se producen las dos. De esto depende la rama de la reserva, más abajo.
+    // (c) ¿Se cotiza a la medida del cliente? La decide el subtipo `A_MEDIDA` (D-127). Es la
+    //     forma de la línea, no el origen del material.
     //
     // Haber respondido (a) con el subtipo dejó de exigir subítems a todo producto en `MTR`
     // fuera de coberturas — y con eso el mostrador pasó a poder vender material a medida.
     const byLength = sellsByLength(product);
-    const madeToMeasure = isMadeToMeasure(product);
+    const madeToOrder = isMadeToOrder(product);
     if (byLength && item.pieces === undefined) {
       throw new BadRequestException(
         `${at}: ${product.sku} se vende por metro lineal: detalla cuántas planchas de cada largo lleva la línea`,
@@ -337,7 +376,25 @@ export async function resolveSalesLines(
       );
     }
 
-    const totals = salesLineTotals({ qty: item.qty, unitPricePen });
+    // D-169: el importe del papel manda sobre el recálculo. El rechazo por fuera del
+    // importador ya se hizo arriba, antes de las ramas.
+    const computed = salesLineTotals({ qty: item.qty, unitPricePen });
+    const totals =
+      item.netAmountPen === undefined ? computed : salesLineTotalsFromNet(item.netAmountPen);
+    if (item.netAmountPen !== undefined) {
+      adjustments.push({
+        at,
+        sku: product.sku,
+        qty: item.qty,
+        adjustment: roundingAdjustment({
+          qty: item.qty,
+          unitPricePen,
+          subtotalPen: item.netAmountPen,
+        }),
+        netPen: toDecimal(item.netAmountPen),
+        computedPen: computed.subtotal,
+      });
+    }
 
     let reserveItemType: InventoryItemType;
     let reserveItemId: string;
@@ -345,13 +402,20 @@ export async function resolveSalesLines(
     let reserveUnit: string;
     let reserveItemLabel: string;
 
-    if (madeToMeasure) {
-      // **La reserva genérica (D-134).** Una cobertura a medida no se atiende con stock de
-      // producto terminado: ese producto no existe hasta que planta lo rola. Lo que la línea
-      // promete son los **kilos de materia prima** que esos metros van a consumir —
+    if (madeToOrder) {
+      // **La reserva genérica (D-134).** Una cobertura no se atiende con stock de producto
+      // terminado: ese producto no existe hasta que planta lo rola. Lo que la línea promete
+      // son los **kilos de materia prima** que esos metros van a consumir —
       // `ml × espesor × ancho × densidad del acabado`, la misma aritmética que usa el
       // reporte de piezas (D-047)— contra el **agregado** de bobinas compatibles, no contra
       // una bobina concreta.
+      //
+      // **D-171: y desde acá la plancha de catálogo también.** Hasta D-140 la plancha
+      // reservaba producto terminado y el mostrador exigía tener planchas en el almacén —
+      // «0.000 NIU disponibles… necesita 10»— sobre un producto que nunca vive en el almacén:
+      // se rola contra el pedido igual que una cobertura a medida. Lo único que cambia entre
+      // las dos es cómo se cuentan (planchas de largo fijo frente a metros con detalle de
+      // largos), y eso ya lo resuelve `orderedMeters`.
       //
       // Que sea el agregado y no un rollo es lo que permite cotizar meses antes de producir:
       // el color y el espesor los sabe el vendedor, y son estables; qué rollo los va a dar lo
@@ -365,33 +429,41 @@ export async function resolveSalesLines(
       const spec = specByProductId.get(product.id);
       if (!spec) {
         throw new BadRequestException(
-          `${at}: ${product.sku} se fabrica a medida pero le falta el espesor o el acabado en el catálogo: sin ellos no se sabe qué material necesita ni cuánto pesa`,
+          `${at}: ${product.sku} se fabrica contra el pedido pero le falta el espesor o el acabado en el catálogo: sin ellos no se sabe qué material necesita ni cuánto pesa`,
         );
       }
       reserveItemType = InventoryItemType.RAW_MATERIAL;
       reserveItemId = spec.id;
-      reserveQty = toFixedString(theoreticalKgForMeters(product, item.qty, at), 'KG');
+      reserveQty = toFixedString(
+        theoreticalKgForMeters(product, orderedMeters(product, item.qty), at),
+        'KG',
+      );
       reserveUnit = Unit.KGM;
       reserveItemLabel = rawMaterialLabel({
         thicknessMm: spec.thicknessMm,
         colorName: product.color?.name ?? null,
       });
-      // D-163: el costo por metro de una cobertura a medida sale de la bobina, no del SKU:
-      // su producto terminado no tiene saldo hasta que planta lo rola. Se pide **el kilo de
-      // un metro** y no `reserveQty / qty`, que ya viene redondeado a tres decimales.
+      // D-163: el costo de una cobertura sale de la bobina, no del SKU: su producto terminado
+      // no tiene saldo hasta que planta lo rola. Se pide **el kilo de una unidad de venta** y
+      // no `reserveQty / qty`, que ya viene redondeado a tres decimales — en una plancha esa
+      // unidad es una plancha entera, con su largo adentro.
       floorCandidates.push({
         at,
         sku: product.sku,
         businessLineId: product.businessLineId,
-        // Una cobertura a medida ya se cotiza por metro en su valor unitario (su unidad **es**
-        // `MTR`), así que la base es la unidad de venta y no `PER_METER`: no hay largo por el
-        // que multiplicar, la línea entera está en metros.
-        basis: { kind: 'UNIT', unitLabel: product.unit },
+        // D-161: en una plancha lo que se tipea es el precio **por metro**, así que el mínimo
+        // se muestra y se rechaza en esa unidad; una cobertura a medida ya se cotiza por metro
+        // en su valor unitario (su unidad **es** `MTR`), así que ahí la base es la unidad de
+        // venta y no hay largo por el que multiplicar.
+        basis:
+          valuePerMeterPen !== null && product.lengthMm !== null
+            ? { kind: 'PER_METER', lengthMm: product.lengthMm.toFixed(2) }
+            : { kind: 'UNIT', unitLabel: product.unit },
         unitValuePen: unitPricePen,
         cost: {
           kind: 'RAW_MATERIAL',
           spec,
-          kgPerUnit: theoreticalKgForMeters(product, '1', at),
+          kgPerUnit: theoreticalKgForMeters(product, orderedMeters(product, '1'), at),
         },
       });
     } else {
@@ -400,20 +472,28 @@ export async function resolveSalesLines(
       reserveQty = toFixedString(toDecimal(item.qty), 'KG');
       reserveUnit = product.unit;
       reserveItemLabel = product.sku;
-      floorCandidates.push({
-        at,
-        sku: product.sku,
-        businessLineId: product.businessLineId,
-        // D-161: en una plancha lo que se tipea es el precio **por metro**, así que el mínimo
-        // se muestra y se rechaza en esa misma unidad. El piso en sí sigue siendo por plancha,
-        // que es la unidad del costo del kardex.
-        basis:
-          valuePerMeterPen !== null && product.lengthMm !== null
-            ? { kind: 'PER_METER', lengthMm: product.lengthMm.toFixed(2) }
-            : { kind: 'UNIT', unitLabel: product.unit },
-        unitValuePen: unitPricePen,
-        cost: { kind: 'PRODUCT', productId: product.id },
-      });
+      // D-167: un servicio no tiene costo promedio en el kardex —no entra nunca al kardex—
+      // así que no hay piso que calcularle. Se omite el candidato en vez de dejar que
+      // `assertPriceFloor` lo descarte por costo cero: el descarte por cero también lo
+      // aplica un producto físico que todavía no tuvo ninguna compra, y ahí es una laguna
+      // temporal, no una exención. Que las dos cosas se vean iguales fue lo que dejó pasar
+      // el defecto original.
+      if (withInventory) {
+        floorCandidates.push({
+          at,
+          sku: product.sku,
+          businessLineId: product.businessLineId,
+          // D-161: en una plancha lo que se tipea es el precio **por metro**, así que el mínimo
+          // se muestra y se rechaza en esa misma unidad. El piso en sí sigue siendo por plancha,
+          // que es la unidad del costo del kardex.
+          basis:
+            valuePerMeterPen !== null && product.lengthMm !== null
+              ? { kind: 'PER_METER', lengthMm: product.lengthMm.toFixed(2) }
+              : { kind: 'UNIT', unitLabel: product.unit },
+          unitValuePen: unitPricePen,
+          cost: { kind: 'PRODUCT', productId: product.id },
+        });
+      }
     }
 
     return {
@@ -450,7 +530,67 @@ export async function resolveSalesLines(
   if (options.priceFloor) {
     await assertPriceFloor(tx, floorCandidates, options.priceFloor.toleranceMm);
   }
+  if (options.exactAmounts !== undefined) {
+    assertWithinRoundingTolerance(adjustments, options.exactAmounts);
+  }
   return lines;
+}
+
+/**
+ * D-169: el techo de lo que un documento importado puede separarse de su propio recálculo.
+ *
+ * **Por qué existe un techo, si el importe del papel se copia igual.** Porque copiarlo hace
+ * que ningún importe se rechace nunca, y eso convierte al importador en un canal por el que
+ * entra cualquier cifra. La diferencia contra `cantidad × unitario` es la única señal que
+ * queda de que la fila se leyó bien.
+ *
+ * **Y por qué el techo no es un número fijo.** Porque la parte de esa diferencia que produce
+ * el redondeo del unitario **crece con la cantidad**: `importRoundingTolerance` la calcula
+ * para estas líneas concretas. Con un plano de S/ 0.10 se caía toda línea de más de dos mil
+ * kilos —el tamaño normal de una de acero— acusando al archivo de un desvío que había
+ * producido el propio ERP al dividir. Lo que queda por encima de esa cota es lo único que el
+ * redondeo no puede haber hecho.
+ *
+ * El rechazo nombra **las dos cifras y la línea**, porque la corrección es del archivo: quien
+ * lo recibe tiene que poder abrir esa fila del Excel y ver cuál de las dos columnas está mal.
+ */
+function assertWithinRoundingTolerance(
+  adjustments: {
+    at: string;
+    sku: string;
+    qty: string;
+    adjustment: Decimal;
+    netPen: Decimal;
+    computedPen: Decimal;
+  }[],
+  options: { tolerancePen: string; documentLabel: string },
+): void {
+  if (adjustments.length === 0) return;
+  const total = adjustments.reduce((acc, a) => acc.plus(a.adjustment.abs()), toDecimal('0'));
+  // El colchón del dueño es el piso; la cota del redondeo de estas cantidades es lo que lo
+  // levanta cuando el documento las tiene grandes.
+  const tolerance = Decimal.max(
+    toDecimal(options.tolerancePen),
+    importRoundingTolerance(adjustments.map((a) => a.qty)),
+  );
+  if (total.lte(tolerance)) return;
+
+  // La peor línea primero: en un documento de diez, la que explica el desvío es una sola casi
+  // siempre, y nombrarla ahorra revisar las otras nueve.
+  const worst = [...adjustments].sort((a, b) =>
+    b.adjustment.abs().comparedTo(a.adjustment.abs()),
+  )[0];
+  throw new BadRequestException(
+    `${options.documentLabel}: los importes del archivo se separan S/ ${total.toFixed(2)} de ` +
+      `cantidad × valor unitario, y el redondeo de estas cantidades explica como mucho ` +
+      `S/ ${tolerance.toFixed(2)}. ` +
+      (worst
+        ? `La mayor diferencia está en ${worst.at} (${worst.sku}): el archivo dice ` +
+          `S/ ${worst.netPen.toFixed(2)} y la cuenta da S/ ${worst.computedPen.toFixed(2)}. `
+        : '') +
+      'Revisa la cantidad y el valor de venta de esa fila: puede ser el precio con IGV en la ' +
+      'columna del valor, o un cero de más en la cantidad.',
+  );
 }
 
 /** Lo que hace falta para armar una línea de venta de bobina completa (D-116). */
@@ -606,6 +746,16 @@ export function toSalesItemDto(
     subtotalPen: row.subtotalPen.toFixed(4),
     igvPen: row.igvPen.toFixed(4),
     totalPen: row.totalPen.toFixed(4),
+    // D-169: se **deriva** de lo guardado, no se lee de una columna. En todo lo cotizado acá
+    // da cero exacto, porque el subtotal salió justamente de esa multiplicación.
+    roundingAdjustmentPen: toFixedString(
+      roundingAdjustment({
+        qty: row.qty.toString(),
+        unitPricePen: row.unitPricePen.toString(),
+        subtotalPen: row.subtotalPen.toString(),
+      }),
+      'MONEY',
+    ),
     pieces: (row.pieces ?? [])
       .slice()
       .sort((a, b) => a.lineNumber - b.lineNumber)
@@ -631,6 +781,13 @@ interface RoofingProductLike {
   thicknessMm: Prisma.Decimal | null;
   widthMm: Prisma.Decimal | null;
   roofingKind: RoofingProductKind | null;
+  /**
+   * D-171: la unidad y el largo dejaron de ser cosa solo del precio. Desde que la plancha se
+   * fabrica contra el pedido, son lo que convierte su cantidad —en planchas— a los metros de
+   * bobina que promete: `orderedMeters`.
+   */
+  unit: string;
+  lengthMm: Prisma.Decimal | null;
   color: { name: string } | null;
   finish: { densityFactor: Prisma.Decimal } | null;
 }
@@ -643,6 +800,9 @@ export const ROOFING_PRODUCT_SELECT = {
   businessLineId: true,
   thicknessMm: true,
   widthMm: true,
+  // D-171: los dos que `orderedMeters` necesita para una plancha de catálogo.
+  unit: true,
+  lengthMm: true,
   roofingKind: true,
   color: { select: { name: true } },
   // D-122: el acabado —y con él la densidad— es del producto. Mientras salió de la receta
@@ -687,6 +847,74 @@ export function sellsByLength(product: { unit: string }): boolean {
 }
 
 /**
+ * D-171, la cuarta: **¿esta línea se fabrica desde bobina contra el pedido?**
+ *
+ * Responden que sí las dos formas de cobertura que dicen **cuántos metros de bobina piden**:
+ * la que se cotiza a la medida del cliente (su cantidad ya está en metros) y la plancha de
+ * catálogo con largo usable (sus metros son `cantidad × largo`). Desde D-171 la plancha
+ * también se produce: no es stock terminado que espera en el almacén, es un largo fijo que la
+ * roladora corta cuando alguien la pide.
+ *
+ * **No es «tener subtipo», y esa fue la primera versión, equivocada.** El subtipo solo no
+ * alcanza porque el `CHECK` de la base es más laxo que la app: admite una `PLANCHA` en `KGM`
+ * —hay SKU legados— y una `PLANCHA` sin largo. En esas dos, la cantidad **no** son planchas de
+ * un largo conocido, así que no hay forma de convertirla a metros: con `roofingKind !== null` a
+ * secas, mil kilos de un SKU legado se leían como mil planchas y la línea reservaba 14 toneladas
+ * de bobina. Las dos siguen atendiéndose con saldo de producto terminado, exactamente como
+ * antes de D-171: lo único que esta decisión cambia es la plancha que de verdad se puede rolar.
+ *
+ * Se escribe como la unión de las dos preguntas que ya existen, y no repitiendo sus
+ * condiciones, para que no puedan divergir: es **la misma** `sellsByFixedLength` que decide que
+ * el precio va por metro (D-161), y tiene que serlo — el precio y el material salen del mismo
+ * largo, así que corregirlo en el catálogo mueve las dos cuentas juntas o ninguna.
+ *
+ * **Las cuatro preguntas de la familia, que devuelven todas `boolean`** (regla dura 14: el
+ * compilador nunca avisa cuando se responde una con otra):
+ *
+ * - `sellsByLength` — *¿necesita el detalle de largos?* → la **unidad**.
+ * - `sellsByFixedLength` — *¿el precio se negocia por metro contra el largo del SKU?* → el
+ *   **subtipo, la unidad y el largo**.
+ * - `isMadeToMeasure` — *¿se cotiza a la medida del cliente?* → el **subtipo `A_MEDIDA`**. Desde
+ *   D-171 ya **no** decide la rama de la reserva; decide la forma de la línea.
+ * - `isMadeToOrder` — *¿la reserva es materia prima y hay que producirla?* → las dos de arriba.
+ *
+ * El centinela es `sales-lines.spec.ts`, con la tabla completa de combinaciones.
+ */
+export function isMadeToOrder(product: MadeToOrderLike): boolean {
+  return isMadeToMeasure(product) || sellsByFixedLength(toFixedLengthLike(product));
+}
+
+/**
+ * Lo mínimo para responder las preguntas de la familia sobre una fila de producto.
+ *
+ * El largo admite las dos formas en las que llega —`Decimal` desde Prisma, `string` desde un
+ * DTO o un test— porque obligar a convertirlo en cada llamador era pedir un `.toFixed(2)`
+ * repetido en seis lugares, y el que se olvidara uno iba a pasar `undefined` sin que el tipo
+ * dijera nada.
+ */
+export interface MadeToOrderLike {
+  roofingKind: RoofingProductKind | null;
+  unit: string;
+  lengthMm: Prisma.Decimal | string | null;
+}
+
+/** `sellsByFixedLength` pide el largo como string; la fila de Prisma lo trae como `Decimal`. */
+function toFixedLengthLike(product: MadeToOrderLike): {
+  roofingKind: string | null;
+  unit: string;
+  lengthMm: string | null;
+} {
+  return {
+    roofingKind: product.roofingKind,
+    unit: product.unit,
+    lengthMm:
+      product.lengthMm === null || typeof product.lengthMm === 'string'
+        ? product.lengthMm
+        : product.lengthMm.toFixed(2),
+  };
+}
+
+/**
  * Kilos de bobina que consumen `meters` metros lineales de una cobertura a medida:
  * `ml × espesor × ancho × densityFactor`. Misma aritmética que el reporte de piezas (D-047)
  * y que el kg teórico del catálogo (D-118), vía `kgPerMeter` de `@ayr/shared`.
@@ -714,6 +942,33 @@ export function theoreticalKgForMeters(
     thicknessMm: product.thicknessMm.toFixed(2),
     densityFactor: product.finish.densityFactor.toFixed(4),
   }).times(toDecimal(meters));
+}
+
+/**
+ * D-171: **los metros lineales de bobina que esta línea encarga**, sea como se cuente.
+ *
+ * Es la traducción que hace que las dos formas de cobertura prometan materia prima con la
+ * misma aritmética:
+ *
+ * - **plancha de catálogo con largo usable**: la cantidad son planchas y el largo lo pone el
+ *   SKU, así que los metros son `cantidad × largo`;
+ * - **todo lo demás que se produce** (la cotización a medida): la cantidad ya está en metros —
+ *   el detalle de largos suma exactamente eso (D-083), así que no hay nada que convertir.
+ *
+ * **La rama la decide `sellsByFixedLength`, la misma que decide que el precio va por metro**
+ * (D-161), y tiene que ser la misma: el precio y el material salen del mismo largo. Preguntarlo
+ * por la unidad —«si no es `MTR`, la cantidad son piezas»— es lo que hacía que un SKU legado en
+ * `KGM` con largo cargado leyera mil **kilos** como mil **planchas** y reservara catorce
+ * toneladas de bobina por una venta de una.
+ *
+ * No lanza y no hace falta que lo haga: `isMadeToOrder` ya dejó fuera todo lo que no sabe
+ * decir sus metros, así que acá solo llegan las dos formas de arriba. La cota de D-166
+ * (`assertUsableFixedLength`) ya corrió antes: el largo es creíble.
+ */
+export function orderedMeters(product: MadeToOrderLike, qty: string): string {
+  const fixed = toFixedLengthLike(product);
+  if (!sellsByFixedLength(fixed) || fixed.lengthMm === null) return qty;
+  return toDecimal(qty).times(fixed.lengthMm).div(1000).toFixed(3);
 }
 
 /**

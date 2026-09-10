@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DrywallOrderPanel } from './drywall-order-panel';
-import { DrywallOrderCard, RoofingQueueCard, RoofingStockOrderCard } from './new-order-cards';
+import { DrywallOrderCard, RoofingQueueCard } from './new-order-cards';
 import {
   EMPTY_DRAFT,
   NO_NOTES,
@@ -208,10 +208,16 @@ export function PlantaView() {
           que se abre cuando hace falta. Lo que se hace todos los días es producir lo que ya
           está abierto; abrir una orden nueva es lo excepcional, y ocupaba la mitad de arriba.
         */}
+        {/*
+          D-171: la tarjeta «Nueva orden de coberturas a stock» se fue con la puerta que cerró
+          en el API. Dejarla habría sido el callejón que D-156 prohíbe: el operario elige la
+          plancha, tipea cuántas producir, aprieta y siempre recibe un 400. Una cobertura
+          —plancha incluida— nace ahora del pedido que reserva su material, que es la tarjeta
+          de la cola.
+        */}
         {creating && (
           <div className="grid gap-4">
             <RoofingQueueCard onCreated={setActiveId} />
-            <RoofingStockOrderCard onCreated={setActiveId} />
             <DrywallOrderCard onCreated={setActiveId} />
           </div>
         )}

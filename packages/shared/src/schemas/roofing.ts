@@ -180,17 +180,27 @@ export interface FixedLengthProductLike {
 /**
  * D-161: **¿esta línea se cotiza por metro lineal contra un largo fijo del SKU?**
  *
- * Es la **tercera** pregunta de la familia de D-131, y las tres se responden con funciones
- * distintas porque las tres devuelven `boolean` y el compilador no avisa cuando se contesta
+ * Es la **tercera** pregunta de la familia de D-131, y las cuatro se responden con funciones
+ * distintas porque las cuatro devuelven `boolean` y el compilador no avisa cuando se contesta
  * una con otra:
  *
  * - `sellsByLength` (unidad `MTR`) — *¿la línea necesita el detalle de largos?* La cantidad
  *   de la línea **son** metros y el vendedor los compone plancha por plancha.
- * - `isMadeToMeasure` (subtipo `A_MEDIDA`) — *¿se fabrica contra pedido desde bobina?* Decide
- *   la rama de la reserva.
+ * - `isMadeToMeasure` (subtipo `A_MEDIDA`) — *¿se cotiza a la medida del cliente?* Desde D-171
+ *   responde por la **forma de la línea** y ya **no** decide la rama de la reserva.
+ * - `isMadeToOrder` (D-171, en `sales-lines.ts`) — *¿se fabrica contra pedido desde bobina?*
+ *   Esa sí decide la rama de la reserva, y la responden que sí la cobertura a medida **y** la
+ *   plancha con largo fijo usable. No es «tener subtipo»: una `PLANCHA` en `KGM` o sin largo no
+ *   sabe decir cuántos metros pide, así que sigue saliendo del saldo.
  * - `sellsByFixedLength` (esta) — *¿el precio se negocia por metro pero la cantidad se cuenta
- *   en planchas?* La cantidad sigue siendo `NIU` —el kardex, la reserva y el despacho de una
- *   plancha están en planchas— y lo único que cambia es de dónde sale el valor unitario.
+ *   en planchas?* La cantidad sigue siendo `NIU` —el kardex y el despacho de una plancha están
+ *   en planchas— y lo que cambia es de dónde sale el valor unitario. **Desde D-171 esta misma
+ *   función decide también los metros de bobina que la línea promete** (`orderedMeters`), y
+ *   tiene que ser la misma: el precio y el material salen del mismo largo, así que corregirlo
+ *   en el catálogo mueve las dos cuentas juntas o ninguna.
+ *
+ * La **reserva** de una plancha, en cambio, ya no está en planchas: son kilos de materia prima
+ * desde D-171.
  *
  * Pide **tres** campos a propósito, y ninguno sobra:
  *

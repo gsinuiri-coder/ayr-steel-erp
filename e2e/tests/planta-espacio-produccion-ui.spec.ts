@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, postJson } from '../helpers/api';
-import { balanceOf, type ProductionOrderDto } from '../helpers/production';
+import { balanceOf, today, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
   buyRoofingCoil,
@@ -10,6 +10,8 @@ import {
   pieces,
   purgeRoofingTrail,
   quoteAndOrderLines,
+  reservationsOf,
+  roofingOrder,
   roofingOrdersFromSalesOrder,
   setupRoofingScenario,
 } from '../helpers/roofing';
@@ -507,23 +509,29 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
     }
   });
 
-  test('una corrida a stock ajusta su plan en planchas y captura los largos, y son las planchas tipeadas las que entran al kardex', async ({
+  test('una corrida de planchas ajusta su plan en planchas y captura los largos, y son las planchas tipeadas las que entran al kardex', async ({
     page,
     baseURL,
   }) => {
     /**
-     * D-140 + D-118 + D-159: una **plancha de catálogo** tiene el largo en el SKU, así que su
-     * plan se ajusta pidiendo **solo la cantidad**. Ofrecer el editor de largos completo sería
-     * un campo cuya única respuesta correcta el sistema ya conoce, y aceptar otro largo dejaría
-     * el plan diciendo algo que el catálogo contradice.
+     * D-118 + D-159: una **plancha de catálogo** tiene el largo en el SKU, así que su plan se
+     * ajusta pidiendo **solo la cantidad**. Ofrecer el editor de largos completo sería un campo
+     * cuya única respuesta correcta el sistema ya conoce, y aceptar otro largo dejaría el plan
+     * diciendo algo que el catálogo contradice.
      *
      * Lo que se comprueba después no es el texto sino el **saldo**: la conversión planchas→ML
      * es el punto ciego de toda la pantalla —si estuviera mal, reportar 3 planchas entraría al
      * kardex y al costo con otra cantidad y nadie se enteraría—, así que 3 planchas de 4 m
      * tienen que dejar 3 `NIU` en el producto y 48 kg menos en la bobina.
      *
-     * Va sin `?pedido=`: una corrida a stock no cuelga de ningún pedido, así que solo aparece
-     * en la lista de todas las órdenes abiertas.
+     * **De dónde nace la orden cambió con D-171, y el resto del caso no.** Se llamaba «corrida
+     * a stock» porque bajo D-140 una plancha se producía sin pedido detrás (`productId` +
+     * `targetPieces`); esa ruta dejó de existir y ahora la OP nace de la reserva del pedido,
+     * igual que cualquier otra cobertura. El plan de arranque sigue siendo el mismo —el largo
+     * del SKU repetido hasta la cantidad pedida, 5 × 4.00 m— porque lo deriva la misma función.
+     *
+     * Se sigue entrando a `/planta` **sin** `?pedido=`: lo que este caso mira es el panel de una
+     * orden encontrada en la lista de todas las abiertas, no el espacio de un pedido.
      */
     const api = await adminApi(baseURL!);
     // Plancha de catálogo de 4 m (`NIU`, largo fijo en el SKU) y una bobina de 2 000 kg.
@@ -531,6 +539,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       weightKg: '2000',
       pieceLengthMm: '4000',
     });
+    const customer = await createCustomer(api);
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
       supplierId: scenario.supplier.id,
       finishId: scenario.finish.id,
@@ -539,17 +548,35 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       coilIds: [scenario.coil.id],
       purchaseIds: [scenario.purchaseId],
       productionOrderIds: [],
+      orderIds: [],
+      quotationIds: [],
     };
 
     try {
       expect(scenario.product.unit).toBe('NIU');
-      // La orden nace del producto y de una meta, no de una reserva (D-140): el plan es el
-      // largo del SKU repetido hasta la meta, o sea 5 × 4.00 m = 20 ML.
-      const op = await postJson<ProductionOrderDto>(api, '/api/production/roofing', {
-        productId: scenario.product.id,
-        targetPieces: 5,
+      // D-171: cinco planchas cotizadas y confirmadas. El valor por metro (D-161) es holgado
+      // respecto del piso de D-163: el material de una plancha son 16.16 kg a S/ 5.
+      const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
+        customerId: customer.id,
+        issueDate: today(),
+        items: [{ productId: scenario.product.id, qty: '5', valuePerMeterPen: '60.0000' }],
       });
+      trail.quotationIds = [quotation.id];
+      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
+      const salesOrder = await postJson<{ id: string }>(
+        api,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+        {},
+      );
+      trail.orderIds = [salesOrder.id];
+
+      const reservation = (await reservationsOf(api, salesOrder.id)).find(
+        (r) => r.status === 'ACTIVE',
+      )!;
+      expect(reservation.itemType).toBe('RAW_MATERIAL');
+      const op = await roofingOrder(api, reservation.id);
       trail.productionOrderIds = [op.id];
+      // El plan es el largo del SKU repetido hasta la cantidad pedida: 5 × 4.00 m = 20 ML.
       expect(op.items).toEqual([{ lineNumber: 1, lengthMm: '4000.00', qty: 5 }]);
 
       await loginAsAdmin(page);

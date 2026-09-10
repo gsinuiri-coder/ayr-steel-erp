@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { decimalStringSchema, MAX_VALUE, toDecimal, type DecimalInput } from '../decimal';
+import { Decimal, decimalStringSchema, MAX_VALUE, toDecimal, type DecimalInput } from '../decimal';
 import {
   CREDIT_NOTE_REASONS,
   DISPATCH_STATUSES,
@@ -135,6 +135,23 @@ export function documentBalance(input: {
     .minus(toDecimal(input.paidPen))
     .minus(toDecimal(input.creditedPen));
   return (balance.isNegative() ? toDecimal('0') : balance).toFixed(4);
+}
+
+/**
+ * D-169: el saldo **hasta el que se puede cobrar**, en céntimos.
+ *
+ * El saldo vive con cuatro decimales (D-003) y el dinero se recibe con dos: nadie transfiere
+ * S/ 117.9999. Comparar un cobro contra el saldo sin igualar la escala producía el rechazo más
+ * desconcertante del sistema —«El cobro excede el saldo pendiente (S/ 118.00)» sobre un cobro
+ * de exactamente S/ 118.00, porque el mensaje redondeaba para mostrar y la comparación no— y
+ * dejaba la factura sin poder cerrarse nunca por un diezmilésimo.
+ *
+ * Redondea **hacia arriba** y no HALF_UP a propósito: de más se admite siempre menos de un
+ * céntimo, que `documentBalance` absorbe (nunca devuelve negativo); de menos, volveríamos a
+ * dejar documentos que no cierran, que es el defecto que esto viene a cerrar.
+ */
+export function payableBalance(balancePen: DecimalInput): Decimal {
+  return toDecimal(balancePen).toDecimalPlaces(2, Decimal.ROUND_CEIL);
 }
 
 // --------------------------------------------------------------------------

@@ -12,7 +12,6 @@ import {
   Currency,
   CuttingOrderStatus,
   ExchangeRateSource,
-  InventoryStrategy,
   Prisma,
   PurchaseStatus,
   PurchaseType,
@@ -23,6 +22,7 @@ import {
   type SupplierPayment,
 } from '@prisma/client';
 import {
+  carriesInventory,
   Decimal,
   DERIVED_FILTER_FETCH_CAP,
   LANDED_COST_SERVICE_KINDS,
@@ -163,10 +163,7 @@ export class PurchasesService {
     if (!supplier) throw new NotFoundException('Proveedor no encontrado');
     if (!supplier.isActive) throw new BadRequestException('El proveedor está desactivado');
     if (!businessLine) throw new NotFoundException('Línea de negocio no encontrada');
-    if (
-      STOCK_PURCHASE_TYPES.includes(input.type) &&
-      businessLine.inventoryStrategy === InventoryStrategy.NOOP
-    ) {
+    if (STOCK_PURCHASE_TYPES.includes(input.type) && !carriesInventory(businessLine)) {
       // Sin esto la recepción crearía bobinas o productos y el kardex los ignoraría en
       // silencio (§2.2: `services` es NOOP), dejando stock fantasma con saldo cero.
       throw new BadRequestException(

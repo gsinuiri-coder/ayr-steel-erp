@@ -134,7 +134,20 @@ export class PosService {
         isActive: true,
         // D-098: `MTR` es la unidad de la cobertura a medida. El mostrador no la vende.
         unit: { not: 'MTR' },
+        // D-171: **ninguna cobertura**, tampoco la plancha. Desde que se fabrica contra el
+        // pedido, su línea reserva materia prima y el despacho de la misma transacción del
+        // mostrador se cae —«se fabrica contra el pedido y no tiene producto terminado
+        // reservado»— porque no hay nada producido todavía. Un saldo de plancha ya no tiene
+        // salida por acá: se vende cotizando, que es donde se le arma la orden de producción.
+        // Sin este filtro, la plancha con saldo legado aparecía en el buscador y el mostrador
+        // fallaba al cobrar, que es el callejón que D-156 prohíbe.
+        roofingKind: null,
         businessLine: {
+          // D-167: el mostrador **sigue** sin ofrecer líneas sin inventario, y ahora es una
+          // decisión y no un descarte automático. La lista del POS nace del saldo —arranca en
+          // `withStock`, D-098— y un servicio no tiene saldo del que salir: entraría siempre
+          // con cero y nunca se podría cobrar. Que una cotización sí pueda venderlo (D-167) no
+          // cambia esto: ahí la línea la escribe una persona, acá la propone el stock.
           inventoryStrategy: 'STOCK',
           ...(query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : {}),
         },

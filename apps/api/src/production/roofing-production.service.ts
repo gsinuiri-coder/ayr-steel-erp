@@ -68,6 +68,7 @@ import {
   upsertItemReservation,
 } from '../sales/reservation-transfer';
 import { findRawMaterialShortfalls, type RawMaterialShortfall } from '../sales/raw-material';
+import { sellsByLength } from '../sales/sales-lines';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
 import { allocateStripKg, type StripAllocationRow } from './production-math';
 import {
@@ -161,7 +162,23 @@ export class RoofingProductionService {
     const orderOperationDate = this.operationDate.resolve(actor, input.operationDate);
     const orderId = await this.prisma.$transaction(async (tx) => {
       if (input.reservationId === undefined) {
-        return this.createToStock(tx, actor, input, orderOperationDate);
+        // **D-171: producir coberturas a stock deja de existir.** Es la contracara de que la
+        // plancha se produzca contra el pedido: si además se pudiera producir a stock,
+        // quedaría un saldo de producto terminado que ningún pedido consume nunca —cada uno
+        // reserva materia prima y rola lo suyo— y ese saldo envejecería en el valorizado sin
+        // que nadie pudiera venderlo.
+        //
+        // **Es una decisión de negocio del dueño y es reversible**: si mañana quiere reponer
+        // mostrador con planchas hechas de antemano, lo que hay que decidir primero es qué
+        // hace una línea de pedido cuando ese saldo existe (¿lo toma?, ¿lo ignora y produce
+        // igual?, ¿lo toma hasta donde alcanza y produce el resto?). Esa pregunta es la que no
+        // tiene respuesta hoy, y por eso la puerta se cierra en vez de dejarse entreabierta.
+        // `createToStock` sigue en el archivo, sin llamadores, para que reabrirla sea volver a
+        // enchufarla y no volver a escribirla.
+        throw new BadRequestException(
+          'Una cobertura no se produce a stock: se fabrica contra el pedido que reserva su ' +
+            'material (D-171). Confirmá el pedido y producí desde su reserva.',
+        );
       }
       return this.createFromReservationInTx(tx, actor, {
         reservationId: input.reservationId,
@@ -228,16 +245,20 @@ export class RoofingProductionService {
     // una bobina concreta. Cuál rollo la cumple lo decide `mountCoil`, que es donde planta
     // toma esa decisión — y es la razón entera del cambio.
     if (reservation.itemType !== InventoryItemType.RAW_MATERIAL) {
-      // Esto solo lo alcanza una **plancha de catálogo** (D-127: reserva stock de producto
-      // terminado, no materia prima). D-140: una plancha de catálogo **nunca** se fabrica
-      // contra el pedido — se vende del saldo que ya hay, y si falta, planta produce a
-      // stock por separado (ver `createToStock`) sin que ningún pedido en particular sea
-      // el dueño de esa corrida.
+      // **D-171 revirtió D-140.** Hasta acá una plancha de catálogo reservaba producto
+      // terminado y este camino la rechazaba: se vendía del saldo que hubiera y, si faltaba,
+      // planta producía a stock por separado. El dueño corrigió la premisa —una plancha no es
+      // stock terminado, se rola contra el pedido igual que una cobertura a medida— y con eso
+      // toda línea de coberturas llega acá con reserva de materia prima.
+      //
+      // Lo que queda alcanzando esta rama es una línea de **otra** cosa: un perfil de drywall,
+      // un producto de trading, o una plancha confirmada bajo el modelo viejo cuyo pedido ya
+      // reservó unidades. Ninguna se fabrica en la roladora de coberturas.
       throw new BadRequestException(
-        'Esa línea del pedido se atiende con stock de producto terminado, no con producción: ' +
-          'una plancha de catálogo se vende del saldo que ya hay y nunca se fabrica contra el ' +
-          'pedido (D-140). Si falta stock, producí una orden a stock desde planta; el pedido ' +
-          'queda esperando ese saldo.',
+        'Esa línea del pedido reserva producto terminado, no materia prima: se atiende con el ' +
+          'saldo que ya hay en el almacén y no con una orden de coberturas. Si es una plancha ' +
+          'de un pedido anterior a D-171, anulá el pedido y volvé a confirmarlo para que ' +
+          'reserve el material que va a rolar.',
       );
     }
 
@@ -859,9 +880,12 @@ export class RoofingProductionService {
     ];
     const allocations = allocateStripKg(allocationRows, neededKg);
 
-    const madeToMeasure = product.unit === Unit.MTR;
-    const outputQty = madeToMeasure ? piecesMeters(pieces) : new Decimal(piecesCount(pieces));
-    const outputUnit = madeToMeasure ? Unit.MTR : Unit.NIU;
+    // D-171: el nombre importa con cuatro predicados en juego. Lo que decide en qué unidad
+    // entra lo producido al kardex es **la unidad de venta**, o sea `sellsByLength`, y no el
+    // subtipo: llamarlo `madeToMeasure` invitaba a responder con la pregunta equivocada.
+    const byLength = sellsByLength(product);
+    const outputQty = byLength ? piecesMeters(pieces) : new Decimal(piecesCount(pieces));
+    const outputUnit = byLength ? Unit.MTR : Unit.NIU;
 
     // D-088, primera mitad: la reserva de bobina se descuenta **antes** de la salida de
     // kardex. Si fuera al revés, la propia reserva bloquearía contra la invariante justo
@@ -901,7 +925,7 @@ export class RoofingProductionService {
       data: {
         productionOrderId: orderId,
         pieces: piecesCount(pieces),
-        metersM: madeToMeasure ? toFixedString(piecesMeters(pieces), 'KG') : null,
+        metersM: byLength ? toFixedString(piecesMeters(pieces), 'KG') : null,
         theoreticalKg: toFixedString(neededKg, 'KG'),
         // D-146: lo declarado se guarda tal cual y no toca ningún cálculo del kardex.
         consumedKg: declaredKg === null ? null : toFixedString(declaredKg, 'KG'),

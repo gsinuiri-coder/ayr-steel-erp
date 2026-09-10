@@ -1,53 +1,65 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, postJson } from '../helpers/api';
+import { adminApi, getJson, postJson } from '../helpers/api';
+import { optionalBalanceOf, postExpectingError } from '../helpers/production';
 import {
-  balanceOf,
-  live,
-  movementsOf,
-  postExpectingError,
-  type ProductionOrderDto,
-} from '../helpers/production';
-import { availabilityOf } from '../helpers/sales';
-import {
-  metersOf,
-  pieces,
-  purgeRoofingOrder,
   purgeRoofingTrail,
+  reservationsOf,
+  roofingOrder,
   setupRoofingScenario,
 } from '../helpers/roofing';
+import { createCustomer, createQuotationWithLines, type QuotationDto } from '../helpers/sales';
 
 /**
- * D-140, la mitad que nunca se probó: **producir una plancha de catálogo a stock**.
+ * **La orden de coberturas a stock: el archivo que probaba D-140 y ahora prueba que no existe.**
  *
- * `fase6.spec.ts` cubre el rechazo ("una plancha de catálogo nunca se fabrica contra el
- * pedido; producí una orden a stock desde planta") y se detiene justo ahí, en la frase que
- * nombra la salida. La salida en sí —`POST /production/roofing` con `productId` +
- * `targetPieces`, sin reserva— no tenía ni un test que la recorriera, ni unitario (los de
- * `production` son de aritmética, con Prisma mockeado) ni E2E, así que el `CHECK` de la base
- * que la bloquea entera viajó desplegado sin que nadie lo notara.
+ * Historia en tres líneas, porque es lo que explica por qué este archivo dice lo contrario de
+ * lo que decía:
  *
- * Lo que estos casos protegen, en una línea: **una corrida a stock nace sin pedido detrás,
- * rola contra la misma bobina que una corrida contra pedido, y lo que fabrica entra al
- * almacén como saldo libre** — sin reserva que lo ate a nadie, que es exactamente lo que
- * D-140 decidió (el pedido de catálogo espera ese saldo, no lo encarga).
+ * 1. **D-140** decidió que una plancha de catálogo se vendía del almacén y se reponía con una
+ *    corrida **a stock** (`productId` + `targetPieces`, sin reserva). Este archivo nació para
+ *    recorrer esa corrida, que no tenía ni un test.
+ * 2. **D-171 revirtió D-140**: una plancha no es stock terminado esperando en el almacén, es un
+ *    largo fijo que la roladora corta cuando alguien la pide. Toda línea de coberturas reserva
+ *    materia prima y se produce contra el pedido.
+ * 3. Y con eso, **producir a stock dejó de existir**: `create` sin `reservationId` responde 400.
  *
- * Misma aritmética a ojo que Fase 6: bobina de 1 000 mm × 0.50 mm con densidad 8.0 ⇒ 4 kg
- * por metro lineal, así que una plancha de 4 m son 16 kg.
+ * **Por qué la puerta se cierra en vez de dejarse entreabierta.** Si además se pudiera producir
+ * a stock, quedaría un saldo de producto terminado que ningún pedido consume nunca —cada uno
+ * reserva su materia prima y rola lo suyo— y ese saldo envejecería en el inventario valorizado
+ * sin que nadie pudiera venderlo. Reabrirla exige decidir antes qué hace una línea de pedido
+ * cuando ese saldo existe (¿lo toma?, ¿lo ignora?, ¿lo toma hasta donde alcanza y produce el
+ * resto?), y esa pregunta hoy no tiene respuesta. `createToStock` sigue en el archivo del
+ * servicio, sin llamadores, para que reabrirla sea volver a enchufarla y no volver a escribirla.
  *
- * Todos los casos escriben (compras, bobinas, producción): nunca contra producción
+ * Lo que estos casos protegen, entonces: **que la puerta esté cerrada por el camino y no por el
+ * producto** —los dos subtipos rebotan igual, y ninguno deja rastro— y **que la ruta que la
+ * reemplazó esté abierta**, porque cerrar una sin la otra dejaría a planta sin forma de fabricar
+ * nada. El ciclo completo contra el pedido vive en `plancha-contra-pedido-d171.spec.ts`.
+ *
+ * Todos los casos escriben (compras, bobinas, pedidos): nunca contra producción
  * (regla dura 9, D-126).
  */
 
 const isProduction = !!process.env.E2E_BASE_URL;
 test.skip(
   isProduction,
-  'Crea compras, bobinas y órdenes de producción: nunca contra producción (D-126, regla dura 9).',
+  'Crea compras, bobinas y pedidos: nunca contra producción (D-126, regla dura 9).',
 );
 
-/** El ciclo completo son ~30 llamadas al API; el timeout global no alcanza. */
-test.describe.configure({ timeout: 240_000 });
+test.describe.configure({ timeout: 180_000 });
 
-test.describe('D-140 — orden de coberturas a stock, sin pedido detrás', () => {
+/**
+ * Órdenes de producción de un producto, para comprobar que un rechazo no dejó ninguna.
+ * `GET /production` devuelve un array plano (no está paginado, D-113 no lo alcanzó).
+ */
+async function productionOrdersOf(
+  api: APIRequestContext,
+  productId: string,
+): Promise<{ id: string; status: string }[]> {
+  return getJson<{ id: string; status: string }[]>(api, `/api/production?productId=${productId}`);
+}
+
+test.describe('D-171 — producir coberturas a stock dejó de existir', () => {
   let api: APIRequestContext;
 
   test.beforeAll(async ({ baseURL }) => {
@@ -58,9 +70,13 @@ test.describe('D-140 — orden de coberturas a stock, sin pedido detrás', () =>
     await api.dispose();
   });
 
-  test('ciclo completo a stock: crear sin reserva → montar → rolar → cerrar → saldo libre', async () => {
-    // Plancha de catálogo de 4 m (`NIU`, largo fijo en el SKU desde D-122) y una bobina de
-    // 2 000 kg del mismo color y espesor.
+  test('una plancha de catálogo ya no se produce a stock: el rechazo nombra la decisión y la salida', async () => {
+    /**
+     * **Este caso recorría la corrida a stock completa hasta D-171** —crear sin reserva,
+     * montar, rolar, cerrar, saldo libre— y todo eso desapareció con la ruta. Lo que queda es
+     * la afirmación contraria, sobre exactamente el mismo escenario: la plancha de 4 m y la
+     * bobina que la iba a dar.
+     */
     const scenario = await setupRoofingScenario(api, {
       weightKg: '2000',
       pieceLengthMm: '4000',
@@ -72,117 +88,42 @@ test.describe('D-140 — orden de coberturas a stock, sin pedido detrás', () =>
       productIds: [scenario.product.id],
       coilIds: [scenario.coil.id],
       purchaseIds: [scenario.purchaseId],
-      productionOrderIds: [],
     };
 
     try {
       expect(scenario.product.unit).toBe('NIU');
 
-      // --- La orden nace del producto y de una meta, no de una reserva (D-140) ---
-      const created = await postJson<ProductionOrderDto>(api, '/api/production/roofing', {
+      const rejected = await postExpectingError(api, '/api/production/roofing', {
         productId: scenario.product.id,
         targetPieces: 5,
       });
-      trail.productionOrderIds = [created.id];
+      expect(rejected.status).toBe(400);
+      expect(rejected.message).toContain('Una cobertura no se produce a stock');
+      // El mensaje tiene que nombrar **la salida**, no solo la prohibición: quien está en
+      // planta necesita saber qué hacer, y lo que hay que hacer es confirmar el pedido.
+      expect(rejected.message).toContain('se fabrica contra el pedido que reserva su material');
+      expect(rejected.message).toContain('Confirmá el pedido y producí desde su reserva');
 
-      expect(created.kind).toBe('ROOFING');
-      expect(created.status).toBe('DRAFT');
-      expect(created.targetPieces).toBe(5);
-      // Lo que la separa de una OP contra pedido: no cuelga de ningún pedido.
-      expect(created.salesOrderId).toBeNull();
-      expect(created.salesOrderCode).toBeNull();
-      // El plan de corte sale del largo del SKU repetido hasta la meta, no de subítems.
-      expect(created.items).toHaveLength(1);
-      expect(created.items[0]).toMatchObject({ lengthMm: '4000.00', qty: 5 });
-
-      // --- Montar la bobina: mismo camino que una corrida contra pedido ---
-      await postJson<ProductionOrderDto>(api, `/api/production/roofing/${created.id}/coils`, {
-        coilId: scenario.coil.id,
-      });
-      // Montar es custodia, no consumo (D-060).
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
-
-      // --- Rolar: 5 planchas de 4 m = 20 m ⇒ 80 kg teóricos ---
-      const rows = pieces([4, 5]);
-      expect(metersOf(rows)).toBe('20.000');
-      const reported = await postJson<ProductionOrderDto>(
-        api,
-        `/api/production/roofing/${created.id}/report`,
-        { pieces: rows },
-      );
-      expect(reported.status).toBe('IN_PROGRESS');
-      expect(reported.piecesReported).toBe(5);
-      const report = reported.reports.find((r) => r.status === 'ACTIVE')!;
-      expect(report.theoreticalKg).toBe('80.800');
-
-      // El kardex: 80 kg salen de la bobina y 5 planchas entran al producto.
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1919.200');
-      const productAfterReport = await balanceOf(api, 'PRODUCT', scenario.product.id);
-      expect(productAfterReport.qty).toBe('5.000');
-      expect(productAfterReport.unit).toBe('NIU');
-      // 80 kg a S/ 5 = S/ 400 sobre 5 planchas ⇒ S/ 80 cada una.
-      expect(productAfterReport.avgCost).toBe('80.8000');
-
-      // **El corazón de D-140**: sin pedido detrás no hay promesa que trasladar (D-088), así
-      // que las planchas entran como **saldo libre**. Es lo que hace que el pedido de
-      // catálogo que estaba esperando pueda reservarlas después.
-      const availability = await availabilityOf(api, 'PRODUCT', scenario.product.id);
-      expect(availability.reservedQty).toBe('0.000');
-      expect(availability.availableQty).toBe('5.000');
-
-      // --- Cerrar declarando el consumo real: la diferencia es despunte (D-089) ---
-      const closed = await postJson<ProductionOrderDto>(
-        api,
-        `/api/production/roofing/${created.id}/close`,
-        { consumedKg: '83.000' },
-      );
-      expect(closed.status).toBe('CLOSED');
-      expect(closed.scrapKg).toBe('2.200');
-      // 83 kg a S/ 5 = S/ 415 sobre 5 planchas ⇒ S/ 83 cada una.
-      expect(closed.materialCostPen).toBe('415.0000');
-      expect(closed.unitCostPen).toBe('83.0000');
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1917.000');
-
-      // El kardex de la bobina, de punta a punta: compra, rolado y despunte.
-      const coilMovements = live(await movementsOf(api, 'COIL', scenario.coil.id));
-      expect(coilMovements.map((m) => `${m.type}:${m.refType}`)).toEqual([
-        'IN:PURCHASE',
-        'OUT:PRODUCTION',
-        'OUT:SCRAP',
-      ]);
-
-      // Y el saldo sigue libre después del cierre: nada lo reservó por el camino.
-      const afterClose = await availabilityOf(api, 'PRODUCT', scenario.product.id);
-      expect(afterClose.reservedQty).toBe('0.000');
-      expect(afterClose.availableQty).toBe('5.000');
-      // El cierre también ajusta el costo del producto: los 3 kg de despunte (S/ 15) se
-      // reparten sobre las 5 planchas, así que el promedio pasa de 80 a 83.
-      const productAfterClose = await balanceOf(api, 'PRODUCT', scenario.product.id);
-      expect(productAfterClose.avgCost).toBe('83.0000');
-      const productMovements = live(await movementsOf(api, 'PRODUCT', scenario.product.id));
-      expect(productMovements.map((m) => `${m.type}:${m.refType}`)).toEqual([
-        'IN:PRODUCTION',
-        'ADJUST:PRODUCTION',
-      ]);
-
-      // --- La reversa completa, comprobada y no tragada ---
-      //
-      // `purgeRoofingTrail` envuelve cada paso en un `catch` silencioso porque es limpieza de
-      // `finally`. Pero reopen → reverseReport → cancel sobre una OP **sin reserva** son
-      // justo las rutas que este flujo estrena, y son las que más fácil asumirían una reserva
-      // que acá no existe: dejarlas correr sin mirar el resultado las daría por buenas aunque
-      // se rompieran. Así que acá se corren **dentro del `try`, sin `catch`**, y se comprueba
-      // que devolvieron todo a cero.
-      await purgeRoofingOrder(api, created.id);
-      trail.productionOrderIds = [];
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
-      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('0.000');
+      // Y no dejó rastro: ni orden, ni saldo de producto inventado, ni movimiento en la bobina.
+      expect(await productionOrdersOf(api, scenario.product.id)).toEqual([]);
+      expect(await optionalBalanceOf(api, 'PRODUCT', scenario.product.id)).toBeNull();
+      expect((await optionalBalanceOf(api, 'COIL', scenario.coil.id))?.qty).toBe('2000.000');
     } finally {
       await purgeRoofingTrail(api, trail);
     }
   });
 
-  test('una cobertura a medida no tiene camino a stock: sin pedido no hay largo que fabricar', async () => {
+  test('una cobertura a medida rebota por el mismo motivo: la puerta se cierra por el camino, no por el producto', async () => {
+    /**
+     * **Este caso también cambió de motivo.** Bajo D-140 el a-medida se rechazaba *más
+     * adentro*, con «es una cobertura a medida … no tiene largo fijo para producir a stock»:
+     * la ruta existía y este producto no calificaba. Desde D-171 la ruta no existe para nadie,
+     * así que el rechazo llega antes y es el mismo para los dos subtipos.
+     *
+     * La diferencia importa: un mensaje que hablara del largo fijo mandaría a alguien a
+     * cargarle un largo al SKU a medida —que es justo lo que D-127 le prohíbe— para conseguir
+     * una ruta que ya no está.
+     */
     // Sin `pieceLengthMm` el producto es a medida (`MTR`, sin largo fijo).
     const scenario = await setupRoofingScenario(api, { weightKg: '500' });
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
@@ -202,8 +143,61 @@ test.describe('D-140 — orden de coberturas a stock, sin pedido detrás', () =>
         targetPieces: 3,
       });
       expect(rejected.status).toBe(400);
-      expect(rejected.message).toContain('es una cobertura a medida');
-      expect(rejected.message).toContain('no tiene largo fijo para producir a stock');
+      expect(rejected.message).toContain('Una cobertura no se produce a stock');
+      // Y **no** el motivo viejo: nadie tiene que salir de acá pensando que le falta un largo.
+      expect(rejected.message).not.toContain('largo fijo');
+    } finally {
+      await purgeRoofingTrail(api, trail);
+    }
+  });
+
+  test('la ruta que la reemplazó está abierta: la OP nace de la reserva del pedido', async () => {
+    /**
+     * El contrapeso de los dos casos de arriba. Cerrar la puerta vieja sin comprobar que la
+     * nueva abre dejaría un sistema en el que planta no puede fabricar nada, y los dos rechazos
+     * de arriba seguirían verdes igual.
+     */
+    const scenario = await setupRoofingScenario(api, {
+      weightKg: '2000',
+      pieceLengthMm: '4000',
+    });
+    const customer = await createCustomer(api);
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id],
+      coilIds: [scenario.coil.id],
+      purchaseIds: [scenario.purchaseId],
+      productionOrderIds: [],
+      orderIds: [],
+      quotationIds: [],
+    };
+
+    try {
+      const quotation = await createQuotationWithLines(api, {
+        customerId: customer.id,
+        businessLine: 'metallic-roofing',
+        items: [{ productId: scenario.product.id, qty: '5', valuePerMeterPen: '60.0000' }],
+      });
+      trail.quotationIds = [quotation.id];
+      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
+      const order = await postJson<{ id: string }>(
+        api,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+        {},
+      );
+      trail.orderIds = [order.id];
+
+      const reservation = (await reservationsOf(api, order.id))[0]!;
+      expect(reservation.itemType).toBe('RAW_MATERIAL');
+
+      const op = await roofingOrder(api, reservation.id);
+      trail.productionOrderIds = [op.id];
+      expect(op.status).toBe('DRAFT');
+      // El plan de corte sale del largo del SKU repetido hasta la cantidad pedida: es la misma
+      // derivación que hacía `createToStock`, ahora con el pedido detrás.
+      expect(op.items).toEqual([expect.objectContaining({ lengthMm: '4000.00', qty: 5 })]);
     } finally {
       await purgeRoofingTrail(api, trail);
     }
