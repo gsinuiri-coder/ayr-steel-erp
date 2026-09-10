@@ -4270,6 +4270,55 @@ arreglo son todos el cupo del PSE demo. El baseline antes de esta sesión era **
 
 **Nunca `pnpm e2e:prod`** (regla dura 9, D-126).
 
+## Ventana de deploy (2026-09-10) — D-167..D-171 a producción
+
+Mini-ventana aprobada por el dueño, con cada comando contra producción anunciado y ejecutado
+uno por uno tras su OK. **Sin migraciones nuevas en la tanda.**
+
+|                     |                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------ |
+| Commits desplegados | `c908980`, `46b885a`, `946ce0e` (D-167..D-171)                                                   |
+| Respaldo previo     | rama Neon `respaldo-pre-hotfix-2026-09-10` (`br-muddy-flower-ae8ik7ae`)                          |
+| Revisión de API     | `https://ayr-steel-erp-api-2ompzrgnfq-uc.a.run.app`, CORS `https://ayr-steel-erp-web.vercel.app` |
+| Web                 | por push a `main`; verificación en navegador, a cargo del dueño                                  |
+| CI                  | run `34475912275`, disparada por el push                                                         |
+
+**Verificación post-deploy.** `pnpm smoke:prod` en verde (health, login, 5 líneas, 174
+productos, 52 saldos, 5 bobinas, 50 filas del reporte). Y **dos marcadores de que sirve la
+revisión nueva y no la anterior**, leídos con un administrador efímero borrado en el `finally`:
+`avgCostPen` en `/sales/sellable-coils` (D-170, 43 bobinas) y `carriesInventory` en
+`/sales/stock-panel` (D-167). Un smoke que solo mira que el API responda no distingue una
+revisión de la otra; por eso el marcador es un **campo que solo existe en los commits de la
+tanda**, y conviene elegir uno nuevo en cada ventana.
+
+**El selector de clientes no es urgente.** El defecto que encontró QA (pide 200 y los pinta sin
+búsqueda) se midió contra la base real: **49 clientes activos de 49 totales**, o sea 151 de
+margen. Sigue anotado y hay tiempo de resolverlo con `SearchSelectField` (D-156) en vez de a las
+apuradas.
+
+### Incidente de seguridad — credencial de `neondb_owner` expuesta
+
+**2026-09-10, 11:54 UTC.** `neonctl branches create` **imprime `connection_uris` en su salida de
+éxito**, y esa cadena lleva la contraseña de `neondb_owner` en texto plano. Quedó en la salida
+del comando y en el transcript de la sesión.
+
+**Alcance: las cuatro ramas de Neon, `production` incluida**, porque esa contraseña es la misma
+en todas (regla dura 5). No se escribió en ningún archivo, no se commiteó y no se repitió.
+
+**Por qué pasó, que no es lo que la regla decía.** La regla dura 5 cubría dos vías —la
+credencial no viaja por `argv`, y los helpers no repiten argumentos al componer un error— y de
+las dos nos cuidamos. La tercera vía es que **el comando la imprima al salir bien**, que no
+estaba nombrada. `scripts/lib.mjs#run` tiene `quiet: true` exactamente para esto; el comando se
+invocó directo por `cmd /c` con la salida a la vista. La regla dura 5 se amplió con este caso.
+
+**Decisión del dueño:** continuar la ventana sin rotar, asumiendo el riesgo, con la rotación
+como paso **obligatorio** de cierre.
+
+**Pendiente crítico, y la ventana no está cerrada sin él: rotar la contraseña de
+`neondb_owner`** (`neonctl roles reset-password`, o desde la consola de Neon) y actualizar
+después `.env.setup`, los secretos de Secret Manager en GCP y los de GitHub Actions. Hasta que
+eso pase, la credencial de producción hay que darla por comprometida.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
@@ -4309,13 +4358,20 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
   necesita el OK del dueño (es solo lectura, pero contra la base real). Si la respuesta es
   "pocos", el aviso en el carrito es barato; si es "muchos", primero hay que revisar la lista
   de precios o los márgenes mínimos, no poner el bloqueo.
-- **Migraciones pendientes de desplegar**, acumuladas de esta sesión y las anteriores: D-145,
+- ~~**Migraciones pendientes de desplegar**, acumuladas de esta sesión y las anteriores: D-145,
   D-146, las dos de D-153, la de D-154, la de D-157, la de D-161
   (`20260909210000_d161_plancha_por_metro_lineal`) y la de esta sesión
   (`20260909230000_d164_liquidacion_de_remanente_al_cierre`). **La de D-164 va antes que el
   API nuevo**: es aditiva (un valor más en el enum `InventoryRefType`), así que el API viejo
   contra la base migrada funciona igual, pero el API nuevo contra la base sin migrar escribe
-  `CLOSE_ADJUSTMENT` y revienta.
+  `CLOSE_ADJUSTMENT` y revienta.~~
+  **RESUELTO (ventana del 2026-09-10):** `prisma migrate status` contra `production` responde
+  **«Database schema is up to date!»** con las 55 migraciones del repo. Las ocho de esta lista
+  ya se habían aplicado en la ventana anterior y la lista quedó sin limpiar. **Lección: esta
+  lista se comprueba, no se cree** — `node scripts/migrations-status.mjs --branch production`
+  es de solo lectura y tarda diez segundos, y una lista de pendientes que envejece sin
+  verificarse hace exactamente lo contrario de lo que existe para hacer: en esta ventana estuvo
+  a punto de motivar un `pnpm db:prod` que no hacía falta.
 
 ## Pendientes abiertos de la Sesión HOTFIX (2026-09-10)
 
