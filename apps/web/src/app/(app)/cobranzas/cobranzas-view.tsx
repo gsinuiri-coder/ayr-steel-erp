@@ -19,7 +19,7 @@ import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn, LINK_CLASSNAME } from '@/lib/utils';
+import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -134,7 +134,12 @@ export function CobranzasView() {
                 {receivableRows.map((r) => (
                   <TableRow key={r.customerId}>
                     <TableCell>
-                      <div className="font-medium">{r.customerName}</div>
+                      <Link
+                        href={customerSearchHref(r.customerDocNumber)}
+                        className={cn('font-medium', LINK_CLASSNAME)}
+                      >
+                        {r.customerName}
+                      </Link>
                       <div className="text-xs text-muted-foreground">{r.customerDocNumber}</div>
                     </TableCell>
                     <TableCell className="hidden text-right sm:table-cell">
@@ -216,7 +221,14 @@ export function CobranzasView() {
                         {FISCAL_DOC_TYPE_LABELS[d.docType]}
                       </div>
                     </TableCell>
-                    <TableCell>{d.customerName}</TableCell>
+                    <TableCell>
+                      <Link
+                        href={customerSearchHref(d.customerDocNumber)}
+                        className={LINK_CLASSNAME}
+                      >
+                        {d.customerName}
+                      </Link>
+                    </TableCell>
                     <TableCell className="hidden sm:table-cell">
                       {formatDate(d.issueDate)}
                     </TableCell>

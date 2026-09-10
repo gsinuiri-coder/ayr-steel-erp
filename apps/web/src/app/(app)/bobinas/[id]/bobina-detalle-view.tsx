@@ -12,7 +12,9 @@ import {
   COIL_STATUS_LABELS,
   CURRENCY_LABELS,
   Decimal,
+  PRODUCTION_ORDER_STATUS_LABELS,
   Role,
+  type CoilConsumptionDto,
   type CoilDto,
   type CoilSplitDto,
   type InventoryMovementDto,
@@ -75,6 +77,12 @@ export function BobinaDetalleView({ id }: { id: string }) {
   const splits = useQuery({
     queryKey: ['coil', id, 'splits'],
     queryFn: () => api<CoilSplitDto[]>(`/coils/${id}/splits`),
+  });
+  // D-172 (T4): la otra punta del link bidireccional — el detalle de la OP ya muestra sus
+  // bobinas montadas, esto muestra qué OP (y qué pedido detrás) montaron esta bobina.
+  const consumptions = useQuery({
+    queryKey: ['coil', id, 'consumptions'],
+    queryFn: () => api<CoilConsumptionDto[]>(`/coils/${id}/consumptions`),
   });
   const movements = useQuery({
     queryKey: ['inventory', 'movements', `itemId=${id}`],
@@ -171,6 +179,10 @@ export function BobinaDetalleView({ id }: { id: string }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={isOpen ? 'secondary' : 'outline'}>{COIL_STATUS_LABELS[c.status]}</Badge>
+          {/* T6 (D-173): igual que el PDF de planta (D-149), descarga directa contra el API. */}
+          <Button variant="outline" asChild>
+            <a href={`/api/coils/${id}/pdf`}>Descargar PDF</a>
+          </Button>
           <Button
             variant="outline"
             disabled={!canOperate}
@@ -363,6 +375,67 @@ export function BobinaDetalleView({ id }: { id: string }) {
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground">
                     Esta bobina no se partió todavía.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Órdenes de producción</CardTitle>
+        </CardHeader>
+        <CardContent className="px-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Orden</TableHead>
+                <TableHead>Producto</TableHead>
+                <TableHead>Pedido</TableHead>
+                <TableHead className="text-right">Asignado</TableHead>
+                <TableHead className="text-right">Consumido</TableHead>
+                <TableHead>Estado</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <QueryStates
+                query={consumptions}
+                colSpan={6}
+                error="No se pudieron cargar las órdenes de producción."
+              />
+              {consumptions.data?.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell className="font-mono">
+                    <Link className={LINK_CLASSNAME} href={`/produccion/${c.productionOrderId}`}>
+                      {c.productionOrderCode}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{c.productSku}</TableCell>
+                  <TableCell>
+                    {c.salesOrderId ? (
+                      <>
+                        <Link className={LINK_CLASSNAME} href={`/pedidos/${c.salesOrderId}`}>
+                          {c.salesOrderCode}
+                        </Link>
+                        {c.customerName && (
+                          <span className="text-muted-foreground"> · {c.customerName}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">Sin pedido</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">{formatQty(c.assignedKg, 'kg')}</TableCell>
+                  <TableCell className="text-right">{formatQty(c.consumedKg, 'kg')}</TableCell>
+                  <TableCell>{PRODUCTION_ORDER_STATUS_LABELS[c.productionOrderStatus]}</TableCell>
+                </TableRow>
+              ))}
+              {consumptions.isSuccess && consumptions.data.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
+                    Ninguna orden de producción montó esta bobina todavía.
                   </TableCell>
                 </TableRow>
               )}

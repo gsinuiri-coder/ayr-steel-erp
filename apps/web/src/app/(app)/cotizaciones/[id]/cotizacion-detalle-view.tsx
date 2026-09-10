@@ -31,7 +31,7 @@ import {
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
-import { cn, LINK_CLASSNAME } from '@/lib/utils';
+import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
@@ -119,8 +119,10 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             <QuotationStatusBadge status={q.status} isExpired={q.isExpired} />
           </div>
           <p className="text-sm text-muted-foreground">
-            {q.customerName} · {q.customerDocNumber} ·{' '}
-            {/* D-119: una cotización puede mezclar líneas de negocio. */}
+            <Link href={customerSearchHref(q.customerDocNumber)} className={LINK_CLASSNAME}>
+              {q.customerName}
+            </Link>{' '}
+            · {q.customerDocNumber} · {/* D-119: una cotización puede mezclar líneas de negocio. */}
             {q.businessLines.map((b) => BUSINESS_LINE_LABELS[b]).join(', ')}
           </p>
         </div>

@@ -1175,7 +1175,7 @@ export class PurchasesService {
             product: { select: { sku: true } },
             finish: { select: { code: true } },
             color: { select: { name: true, hexColor: true } },
-            coil: { select: { code: true } },
+            coil: { select: { id: true, code: true } },
           },
         },
       },
@@ -1473,7 +1473,7 @@ function toItemDto(
     finish: { code: string } | null;
     // D-085: solo el detalle de la compra trae el color; el listado no lo necesita.
     color?: { name: string; hexColor: string } | null;
-    coil: { code: string } | null;
+    coil: { id: string; code: string } | null;
   },
 ) {
   return {
@@ -1498,6 +1498,7 @@ function toItemDto(
     // Una línea de compra solo escribe OPEN/CLOSED (D-116); los otros dos valores del enum
     // son estados de la bobina ya viva, nunca del alta.
     coilStatus: item.coilStatus === 'OPEN' || item.coilStatus === 'CLOSED' ? item.coilStatus : null,
+    coilId: item.coil?.id ?? null,
     coilCode: item.coil?.code ?? null,
   };
 }

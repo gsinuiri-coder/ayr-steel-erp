@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -153,7 +153,9 @@ export function CotizacionesView() {
                   </Link>
                 </TableCell>
                 <TableCell>
-                  <div>{q.customerName}</div>
+                  <Link href={customerSearchHref(q.customerDocNumber)} className={LINK_CLASSNAME}>
+                    {q.customerName}
+                  </Link>
                   <div className="text-xs text-muted-foreground">{q.customerDocNumber}</div>
                 </TableCell>
                 <TableCell className="hidden sm:table-cell">{formatDate(q.issueDate)}</TableCell>

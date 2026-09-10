@@ -25,6 +25,7 @@ import { formatQty } from '@/lib/format';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
 import { LengthEditor } from '@/components/production/length-editor';
@@ -376,7 +377,14 @@ export function RoofingOrderPanel({
             <StateBadge state={state} />
             <span className="font-normal text-muted-foreground">
               {order.productSku} · {order.productName}
-              {order.salesOrderCode !== null && <> · {order.salesOrderCode}</>}
+              {order.salesOrderCode !== null && order.salesOrderId !== null && (
+                <>
+                  {' · '}
+                  <Link href={`/pedidos/${order.salesOrderId}`} className={LINK_CLASSNAME}>
+                    {order.salesOrderCode}
+                  </Link>
+                </>
+              )}
               {order.customerName !== null && <> · {order.customerName}</>}
             </span>
           </CardTitle>

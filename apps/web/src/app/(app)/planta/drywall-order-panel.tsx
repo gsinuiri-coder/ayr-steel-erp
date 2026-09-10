@@ -17,6 +17,7 @@ import { formatQty } from '@/lib/format';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -183,7 +184,14 @@ export function DrywallOrderPanel({
             <Badge variant="outline">Perfiles</Badge>
             <span className="font-normal text-muted-foreground">
               {o.productSku} · {o.productName}
-              {o.salesOrderCode !== null && <> · {o.salesOrderCode}</>}
+              {o.salesOrderCode !== null && o.salesOrderId !== null && (
+                <>
+                  {' · '}
+                  <Link href={`/pedidos/${o.salesOrderId}`} className={LINK_CLASSNAME}>
+                    {o.salesOrderCode}
+                  </Link>
+                </>
+              )}
             </span>
           </CardTitle>
         </CardHeader>

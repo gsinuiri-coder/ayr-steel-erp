@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn, LINK_CLASSNAME } from '@/lib/utils';
+import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -142,7 +142,11 @@ export function DespachosView() {
                       {d.salesOrderCode}
                     </Link>
                   </TableCell>
-                  <TableCell>{d.customerName}</TableCell>
+                  <TableCell>
+                    <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
+                      {d.customerName}
+                    </Link>
+                  </TableCell>
                   <TableCell className="hidden sm:table-cell">
                     {formatDate(d.dispatchDate)}
                   </TableCell>

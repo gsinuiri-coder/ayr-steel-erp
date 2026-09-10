@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -141,7 +141,9 @@ export function PedidosView() {
                   </Link>
                 </TableCell>
                 <TableCell>
-                  <div>{o.customerName}</div>
+                  <Link href={customerSearchHref(o.customerDocNumber)} className={LINK_CLASSNAME}>
+                    {o.customerName}
+                  </Link>
                   <div className="text-xs text-muted-foreground">{o.customerDocNumber}</div>
                 </TableCell>
                 <TableCell className="hidden md:table-cell">

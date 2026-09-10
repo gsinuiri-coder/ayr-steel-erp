@@ -6,6 +6,8 @@ import {
   COIL_SPLIT_STATUSES,
   COIL_STATUSES,
   CURRENCIES,
+  PRODUCTION_ORDER_KINDS,
+  PRODUCTION_ORDER_STATUSES,
 } from '../enums';
 import { backdatableFields } from './operation';
 import { paginationQuerySchema } from './pagination';
@@ -147,6 +149,30 @@ export const coilSplitSchema = z.object({
   children: z.array(coilSplitChildSchema),
 });
 export type CoilSplitDto = z.infer<typeof coilSplitSchema>;
+
+/**
+ * D-172 (T4): la otra punta del enlace bidireccional bobina↔producción — el detalle de la
+ * OP ya lista sus bobinas montadas (`ProductionOrderDto.consumptions`); esto es "qué OP, y
+ * qué pedido detrás de ella, montaron ESTA bobina". `salesOrderId`/`salesOrderCode` viajan
+ * `null` en una OP de drywall sin pedido (D-048) o en una corrida de coberturas a stock.
+ */
+export const coilConsumptionSchema = z.object({
+  id: z.string().uuid(),
+  productionOrderId: z.string().uuid(),
+  productionOrderCode: z.string(),
+  productionOrderKind: z.enum(PRODUCTION_ORDER_KINDS),
+  productionOrderStatus: z.enum(PRODUCTION_ORDER_STATUSES),
+  productSku: z.string(),
+  productName: z.string(),
+  assignedKg: z.string(),
+  consumedKg: z.string(),
+  salesOrderId: z.string().uuid().nullable(),
+  salesOrderCode: z.string().nullable(),
+  customerName: z.string().nullable(),
+  releasedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type CoilConsumptionDto = z.infer<typeof coilConsumptionSchema>;
 
 /**
  * Ancho mínimo de una bobina hija, en mm. Una tira más angosta no existe en una

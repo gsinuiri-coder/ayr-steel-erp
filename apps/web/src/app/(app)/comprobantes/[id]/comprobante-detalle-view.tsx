@@ -60,7 +60,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -448,7 +448,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             </p>
           )}
           <p className="text-sm text-muted-foreground">
-            {FISCAL_DOC_TYPE_LABELS[d.docType]} · {d.customerName} · {d.customerDocNumber}
+            {FISCAL_DOC_TYPE_LABELS[d.docType]} ·{' '}
+            <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
+              {d.customerName}
+            </Link>{' '}
+            · {d.customerDocNumber}
             {d.salesOrderId && (
               <>
                 {' · '}

@@ -61,7 +61,8 @@ export const purchaseItemSchema = z.object({
   thicknessMm: z.string().nullable(),
   /** D-116: estado con el que nació (o nacerá) la bobina de esta línea. Null si no es COIL. */
   coilStatus: z.enum(['OPEN', 'CLOSED']).nullable(),
-  /** Código de la bobina que esta línea creó al recibirse (null si aún no se recibió). */
+  /** D-172 (T4): bobina que esta línea creó al recibirse (null si aún no se recibió). */
+  coilId: z.string().uuid().nullable(),
   coilCode: z.string().nullable(),
 });
 export type PurchaseItemDto = z.infer<typeof purchaseItemSchema>;

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, Role, type CustomerDto, type PaginatedResult } from '@ayr/shared';
@@ -50,7 +51,10 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
   const openDialog = (customer?: CustomerDto) => {
     setDialog((d) => ({ open: true, customer, nonce: d.nonce + 1 }));
   };
-  const [search, setSearch] = useState('');
+  // D-172: `?search=` deja que otra pantalla linkee a "este cliente" sin una ficha propia
+  // (T4).
+  const searchParams = useSearchParams();
+  const [search, setSearch] = useState(() => searchParams.get('search') ?? '');
   const debouncedSearch = useDebounced(search.trim(), 300);
   const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
 
@@ -59,6 +63,13 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
   useEffect(() => {
     if (autoOpenNew && isAdmin) setDialog((d) => ({ open: true, nonce: d.nonce + 1 }));
   }, [autoOpenNew, isAdmin]);
+
+  // Esta pantalla nunca escribe `search` de vuelta en la URL —tipear en el buscador no la
+  // toca—, así que este efecto solo dispara ante una navegación ajena (otro `customerSearchHref`
+  // entrando con un RUC distinto) y no pisa lo que el usuario está escribiendo.
+  useEffect(() => {
+    setSearch(searchParams.get('search') ?? '');
+  }, [searchParams]);
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (debouncedSearch) params.set('search', debouncedSearch);

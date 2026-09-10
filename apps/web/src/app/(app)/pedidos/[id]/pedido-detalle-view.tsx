@@ -37,7 +37,7 @@ import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { PlantSheetButtons } from '@/components/sales/plant-sheet-buttons';
 import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 
 function reservationBadge(r: ReservationDto) {
   const label = RESERVATION_STATUS_LABELS[r.status];
@@ -182,8 +182,10 @@ export function PedidoDetalleView({ id }: { id: string }) {
             {o.origin === 'IMPORTED' && <Badge variant="outline">Importado</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">
-            {o.customerName} · {o.customerDocNumber} ·{' '}
-            {/* D-119: un pedido puede mezclar líneas de negocio. */}
+            <Link href={customerSearchHref(o.customerDocNumber)} className={LINK_CLASSNAME}>
+              {o.customerName}
+            </Link>{' '}
+            · {o.customerDocNumber} · {/* D-119: un pedido puede mezclar líneas de negocio. */}
             {o.businessLines.map((b) => BUSINESS_LINE_LABELS[b]).join(', ')}
             {o.quotationId && (
               <>

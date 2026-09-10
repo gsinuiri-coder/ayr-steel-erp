@@ -8,7 +8,9 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   coilQuerySchema,
   createCoilScrapSchema,
@@ -17,6 +19,7 @@ import {
   Role,
   setCoilStatusSchema,
   updateCoilSchema,
+  type CoilConsumptionDto,
   type CoilDto,
   type CoilQuery,
   type CoilSplitDto,
@@ -60,6 +63,21 @@ export class CoilsController {
   }
 
   /**
+   * PDF del conjunto filtrado actual de la lista (T6, D-173). Va antes de `:id` porque
+   * `report-pdf` es una ruta fija (mismo motivo que `splits`/`scraps` más abajo).
+   */
+  @Get('report-pdf')
+  async reportPdf(
+    @Query(new ZodValidationPipe(coilQuerySchema)) query: CoilQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { buffer, filename } = await this.coils.reportPdf(query);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
+  /**
    * Anular una merma (RF-18). Va antes de `:id` porque `splits` y `scraps` son rutas
    * fijas y Nest resuelve por orden de declaración.
    */
@@ -96,6 +114,21 @@ export class CoilsController {
   @Get(':id/splits')
   findSplits(@Param('id', ParseUUIDPipe) id: string): Promise<CoilSplitDto[]> {
     return this.coils.findSplits(id);
+  }
+
+  /** OP —y pedido detrás de ella— que montaron esta bobina (D-172, T4). */
+  @Get(':id/consumptions')
+  findConsumptions(@Param('id', ParseUUIDPipe) id: string): Promise<CoilConsumptionDto[]> {
+    return this.coils.findConsumptions(id);
+  }
+
+  /** PDF de esta bobina (T6, D-173): identificación, saldo, OP y kardex. */
+  @Get(':id/pdf')
+  async pdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
+    const { buffer, filename } = await this.coils.pdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   }
 
   /** Partir la bobina en hijas por ancho (RF-15). */

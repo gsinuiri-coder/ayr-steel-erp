@@ -784,7 +784,10 @@ export const dispatchSchema = z.object({
   code: z.string(),
   salesOrderId: z.string().uuid(),
   salesOrderCode: z.string(),
+  customerId: z.string().uuid(),
   customerName: z.string(),
+  /** D-172 (T4): el RUC/DNI que linkea a la ficha del cliente cuando no hay una propia. */
+  customerDocNumber: z.string(),
   status: z.enum(DISPATCH_STATUSES),
   dispatchDate: z.string(),
   originAddress: z.string(),

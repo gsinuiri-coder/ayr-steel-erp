@@ -68,7 +68,7 @@ const dispatchInclude = {
       id: true,
       seq: true,
       status: true,
-      customer: { select: { name: true } },
+      customer: { select: { id: true, name: true, docNumber: true } },
     },
   },
   items: {
@@ -1037,7 +1037,9 @@ export class DispatchesService {
       code: dispatchCode(row.seq),
       salesOrderId: row.salesOrderId,
       salesOrderCode: salesOrderCode(row.salesOrder.seq),
+      customerId: row.salesOrder.customer.id,
       customerName: row.salesOrder.customer.name,
+      customerDocNumber: row.salesOrder.customer.docNumber,
       status: row.status,
       dispatchDate: row.dispatchDate.toISOString().slice(0, 10),
       originAddress: row.originAddress,

@@ -35,7 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn, LINK_CLASSNAME } from '@/lib/utils';
+import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -207,15 +207,21 @@ export function ComprobantesView() {
                       {/* Un borrador todavía no tiene número (D-072): se dice, no se finge. */}
                       {d.number ?? 'Borrador'}
                     </Link>
-                    {d.salesOrderCode && (
-                      <div className="text-xs text-muted-foreground">{d.salesOrderCode}</div>
+                    {d.salesOrderCode && d.salesOrderId && (
+                      <div className="text-xs">
+                        <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
+                          {d.salesOrderCode}
+                        </Link>
+                      </div>
                     )}
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
                     {FISCAL_DOC_TYPE_LABELS[d.docType]}
                   </TableCell>
                   <TableCell>
-                    <div>{d.customerName}</div>
+                    <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
+                      {d.customerName}
+                    </Link>
                     <div className="text-xs text-muted-foreground">{d.customerDocNumber}</div>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">{formatDate(d.issueDate)}</TableCell>

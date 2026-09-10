@@ -17,12 +17,16 @@ import {
   coilTypeKey,
   equivalentMeters,
   fromDateOnly,
+  MAX_PAGE_SIZE,
   paginate,
+  productionOrderCode,
+  salesOrderCode,
   toDateOnly,
   toDecimal,
   toFixedString,
   toSkipTake,
   Unit,
+  type CoilConsumptionDto,
   type CoilDto,
   type CoilQuery,
   type CoilSplitDto,
@@ -31,6 +35,7 @@ import {
 import { toSharedLineCode, toPrismaLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildCoilPdf, buildCoilsReportPdf } from './coil-pdf';
 
 /** Datos mínimos para dar de alta una bobina. Los códigos se derivan aquí, no los trae el llamador. */
 export interface CreateCoilInput {
@@ -409,6 +414,101 @@ export class CoilsService {
         status: c.status,
       })),
     }));
+  }
+
+  /**
+   * D-172 (T4): qué OP —y qué pedido detrás de ella— montaron esta bobina. La punta
+   * opuesta del `consumptions` que ya trae `ProductionOrderDto` (RF-34, D-060): esa lista
+   * las bobinas que una OP montó, esta lista las OP que montaron una bobina.
+   */
+  async findConsumptions(coilId: string): Promise<CoilConsumptionDto[]> {
+    const rows = await this.prisma.productionOrderConsumption.findMany({
+      where: { coilId },
+      include: {
+        productionOrder: {
+          select: {
+            id: true,
+            seq: true,
+            kind: true,
+            status: true,
+            product: { select: { sku: true, name: true } },
+            reservation: {
+              select: {
+                salesOrder: {
+                  select: { id: true, seq: true, customer: { select: { name: true } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((r) => {
+      const salesOrder = r.productionOrder.reservation?.salesOrder ?? null;
+      return {
+        id: r.id,
+        productionOrderId: r.productionOrder.id,
+        productionOrderCode: productionOrderCode(r.productionOrder.seq),
+        productionOrderKind: r.productionOrder.kind,
+        productionOrderStatus: r.productionOrder.status,
+        productSku: r.productionOrder.product.sku,
+        productName: r.productionOrder.product.name,
+        assignedKg: r.assignedKg.toFixed(3),
+        consumedKg: r.consumedKg.toFixed(3),
+        salesOrderId: salesOrder?.id ?? null,
+        salesOrderCode: salesOrder ? salesOrderCode(salesOrder.seq) : null,
+        customerName: salesOrder?.customer.name ?? null,
+        releasedAt: r.releasedAt ? r.releasedAt.toISOString() : null,
+        createdAt: r.createdAt.toISOString(),
+      };
+    });
+  }
+
+  /** PDF de una sola bobina (T6, D-173): identificación, saldo, OP y kardex. */
+  async pdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    const [coil, consumptions, movements] = await Promise.all([
+      this.findOne(id),
+      this.findConsumptions(id),
+      this.inventory.findMovements(
+        { itemType: 'COIL', itemId: id, page: 1, pageSize: MAX_PAGE_SIZE },
+        true,
+      ),
+    ]);
+    const buffer = await buildCoilPdf({
+      code: coil.code,
+      typeKey: coil.typeKey,
+      businessLine: coil.businessLine,
+      supplierName: coil.supplierName,
+      finishLabel: `${coil.finishCode} — ${coil.finishName}`,
+      colorName: coil.colorName,
+      widthMm: coil.widthMm,
+      thicknessMm: coil.thicknessMm,
+      status: coil.status,
+      weightKg: coil.weightKg,
+      availableKg: coil.availableKg,
+      avgCostPen: coil.avgCostPen,
+      notes: coil.notes,
+      operationDate: coil.operationDate,
+      consumptions,
+      movements: movements.items,
+    });
+    return { buffer, filename: `${coil.code}.pdf` };
+  }
+
+  /**
+   * PDF del conjunto filtrado actual de la lista (T6, D-173): mismos filtros que `findAll`,
+   * topado a `MAX_PAGE_SIZE` filas — el mismo techo por request que ya respeta cualquier
+   * otro listado de la aplicación (D-113); el PDF avisa en el pie si el filtro trae más.
+   */
+  async reportPdf(query: CoilQuery): Promise<{ buffer: Buffer; filename: string }> {
+    const page = await this.findAll({ ...query, page: 1, pageSize: MAX_PAGE_SIZE });
+    const buffer = await buildCoilsReportPdf({
+      generatedAt: businessToday(),
+      totalMatched: page.total,
+      rows: page.items,
+    });
+    return { buffer, filename: `bobinas-${businessToday()}.pdf` };
   }
 
   private async resolveActorNames(ids: string[]): Promise<Map<string, string>> {

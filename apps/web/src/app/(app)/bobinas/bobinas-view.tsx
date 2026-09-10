@@ -120,7 +120,12 @@ export function BobinasView() {
             Materia prima por línea de negocio (RF-23). El alta entra por compra, XML o planilla.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {/* T6 (D-173): el reporte del conjunto filtrado actual — mismos filtros que la
+              tabla de abajo, la descarga es directa contra el API (patrón D-149). */}
+          <Button variant="outline" asChild>
+            <a href={`/api/coils/report-pdf?${queryString}`}>Descargar PDF</a>
+          </Button>
           <Button variant="outline" asChild>
             <Link href="/bobinas/nueva-xml">Desde XML</Link>
           </Button>

@@ -360,7 +360,15 @@ export function CompraDetalleView({ id }: { id: string }) {
                     {formatMoney(item.subtotal, p.currency)}
                   </TableCell>
                   {p.type === PurchaseType.COIL && (
-                    <TableCell className="font-mono text-xs">{item.coilCode ?? '—'}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {item.coilId && item.coilCode ? (
+                        <Link href={`/bobinas/${item.coilId}`} className={LINK_CLASSNAME}>
+                          {item.coilCode}
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
                   )}
                 </TableRow>
               ))}

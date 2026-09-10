@@ -208,7 +208,14 @@ export function ProduccionView() {
                   <div className="text-xs text-muted-foreground">{o.productName}</div>
                   <div className="text-xs text-muted-foreground">
                     {PRODUCTION_ORDER_KIND_LABELS[o.kind]}
-                    {o.salesOrderCode !== null && <> · {o.salesOrderCode}</>}
+                    {o.salesOrderCode !== null && o.salesOrderId !== null && (
+                      <>
+                        {' · '}
+                        <Link href={`/pedidos/${o.salesOrderId}`} className={LINK_CLASSNAME}>
+                          {o.salesOrderCode}
+                        </Link>
+                      </>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="text-right">

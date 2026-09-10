@@ -26,7 +26,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -129,7 +129,10 @@ export function DespachoDetalleView({ id }: { id: string }) {
             <DispatchStatusBadge status={d.status} />
           </div>
           <p className="text-sm text-muted-foreground">
-            {d.customerName} ·{' '}
+            <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
+              {d.customerName}
+            </Link>{' '}
+            ·{' '}
             <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
               {d.salesOrderCode}
             </Link>{' '}
