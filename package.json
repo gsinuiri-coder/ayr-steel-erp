@@ -38,7 +38,8 @@
     "dev:demo": "node scripts/dev-demo.mjs",
     "smoke:prod": "node scripts/smoke-prod.mjs",
     "check:price-floor": "node scripts/check-price-floor.mjs",
-    "check:roofing-catalog": "node scripts/check-roofing-catalog.mjs"
+    "check:roofing-catalog": "node scripts/check-roofing-catalog.mjs",
+    "check:coil-skus": "node scripts/check-coil-skus.mjs"
   },
   "devDependencies": {
     "@ayr/eslint-config": "workspace:*",

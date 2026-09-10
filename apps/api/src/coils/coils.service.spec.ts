@@ -67,9 +67,31 @@ describe('códigos de bobina (RF-13, RF-14, D-037)', () => {
     expect(coilTypeKey('GALV', '0.50')).toBe(coilTypeKey('GALV', '0.5000'));
   });
 
-  it('D-037: el SKU es BOB{finishCode}{thicknessMm}, sin ancho ni guiones', () => {
+  it('D-037: el SKU es BOB{finishCode}{thicknessMm}, sin el ancho', () => {
     expect(coilSku('GALV', '0.50')).toBe('BOBGALV0.50');
     expect(coilSkuFromTypeKey(coilTypeKey('GALV', '0.50'))).toBe('BOBGALV0.50');
+  });
+
+  // D-168: el defecto real. Con un acabado con guiones adentro —los del cliente los tienen,
+  // `ALZ-ROJO-3002`— el catálogo daba de alta `BOBALZ-ROJO-30020.45` y la venta directa
+  // buscaba `BOBALZROJO30020.45`: «no existe el producto de venta directa» sobre una bobina
+  // que sí tenía el suyo. Las dos cuentas tienen que ser **la misma**, con guiones o sin.
+  it('D-168: un acabado con guiones da el mismo SKU por las dos vías', () => {
+    expect(coilSku('ALZ-ROJO-3002', '0.45')).toBe('BOBALZ-ROJO-30020.45');
+    expect(coilSkuFromTypeKey(coilTypeKey('ALZ-ROJO-3002', '0.45'))).toBe('BOBALZ-ROJO-30020.45');
+    expect(coilSkuFromTypeKey('ALZ-ROJO-3002-0.45')).toBe(coilSku('ALZ-ROJO-3002', '0.45'));
+  });
+
+  it('D-168: el espesor se normaliza igual venga del typeKey o de los argumentos', () => {
+    // El typeKey siempre trae la escala mm, pero el SKU no puede depender de eso.
+    expect(coilSkuFromTypeKey('GALV-0.5')).toBe('BOBGALV0.50');
+    expect(coilSkuFromTypeKey('alz-azul-0.38')).toBe('BOBALZ-AZUL0.38');
+  });
+
+  it('D-168: un typeKey que no se puede partir no inventa un espesor', () => {
+    expect(coilSkuFromTypeKey('GALV')).toBe('BOBGALV');
+    expect(coilSkuFromTypeKey('-0.50')).toBe('BOB-0.50');
+    expect(coilSkuFromTypeKey('GALV-ROJO')).toBe('BOBGALV-ROJO');
   });
 
   it('RF-13: el código compone proveedor, acabado, espesor, peso y correlativo', () => {
