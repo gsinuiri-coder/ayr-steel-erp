@@ -40,6 +40,7 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { ExpressCreateCustomer, ExpressCreateProduct } from '@/components/express-create';
+import { SearchSelectField } from '@/components/search-select-modal';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatMoney, formatQty, isPositiveDecimal, todayIso, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
@@ -588,20 +589,32 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
               }}
             />
           </div>
-          <Select value={customerId} onValueChange={setCustomerId}>
-            <SelectTrigger id="customer" className="w-full">
-              <SelectValue placeholder="Elige un cliente" />
-            </SelectTrigger>
-            <SelectContent>
-              {customers.data
-                ?.filter((c) => c.isActive)
-                .map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name} — {c.docNumber}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+          {/*
+            D-156: el mismo campo que el importador. Con pocos clientes es un desplegable y
+            con muchos, un botón que abre un buscador — y **quien lo usa no elige cuál**:
+            elige el número de opciones, que es el dato que de verdad manda.
+
+            Lo que reemplaza era un `<Select>` plano de hasta 200 opciones **sin búsqueda**:
+            para elegir un cliente había que reconocerlo de vista en una lista larguísima.
+
+            Ojo con lo que esto **no** arregla: `fetchAllForPicker` sigue trayendo como mucho
+            `MAX_PAGE_SIZE` clientes y `/customers` ordena por `isActive desc, name asc`, así
+            que con más de 200 activos los últimos siguen sin aparecer. Esto da búsqueda sobre
+            lo cargado; levantar el tope es buscar del lado del servidor —`/customers` ya
+            acepta `search`— y es un cambio propio, no un renglón de este. Hoy no aprieta: en
+            producción hay 49 clientes activos (medido en la ventana del 2026-09-10).
+          */}
+          <SearchSelectField
+            id="customer"
+            className="w-full"
+            label="Cliente"
+            placeholder="Elige un cliente"
+            value={customerId === '' ? null : customerId}
+            options={(customers.data ?? [])
+              .filter((c) => c.isActive)
+              .map((c) => ({ id: c.id, label: `${c.name} — ${c.docNumber}` }))}
+            onChange={setCustomerId}
+          />
         </div>
         <div className="grid gap-2">
           <Label htmlFor="issue-date">Fecha de emisión</Label>

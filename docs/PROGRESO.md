@@ -4319,6 +4319,173 @@ como paso **obligatorio** de cierre.
 después `.env.setup`, los secretos de Secret Manager en GCP y los de GitHub Actions. Hasta que
 eso pase, la credencial de producción hay que darla por comprometida.
 
+## Sesión Saneamiento E2E (2026-09-10) — la suite deja de tener rojos que no son regresiones
+
+Entorno **LOCAL** en toda la sesión. **Nada desplegado y sin push**; el commit de la ventana
+(`207bdf9`) sigue pendiente y sale con estos.
+
+**Resultado: `pnpm e2e` da verde pleno.** De **26 fallados** al empezar el día a **0**. El
+tiempo de la suite ronda los **50 minutos**, con un desvío de ±4 entre corridas del mismo
+código (ver M1: esa dispersión es la que impidió medir la mejora de velocidad):
+
+| corrida                             | resultado                                       |
+| ----------------------------------- | ----------------------------------------------- |
+| baseline heredado (sesión anterior) | 26 fallados                                     |
+| tras el hotfix D-167..D-171         | 13 fallados                                     |
+| primera completa de esta sesión     | 10 fallados — todos causados por el reset nuevo |
+| **final**                           | **234 pasados, 0 fallados, 2 saltados**         |
+
+Los 2 saltados son los dos casos de `fase7b` que exigen que una **boleta** llegue a aceptada;
+SUNAT las resuelve por resumen diario y el PSE demo puede tardar más que la corrida. Se saltan
+por diseño desde la Fase 7b, no son deuda nueva.
+
+### M0 — la suite deja de depender de recursos externos
+
+Tres piezas, documentadas en `docs/ENTORNOS.md` bajo «La corrida por defecto no depende de nada
+externo».
+
+**Los 12 casos que necesitan cupo del PSE salen de la corrida por defecto** (`@pse`,
+`pnpm e2e:pse` para correrlos). La lista no se armó leyendo: se corrieron los tres archivos y se
+tomó a los que fallan con «No puedes enviar mas de 50 documentos en en una cuenta DEMO».
+
+Dos cosas decidieron la forma. **El opt-in va por entorno y no por bandera** porque un `--grep`
+de la línea de comandos pisa a `grep` pero **no** a `grepInvert`: con bandera, `e2e:pse` habría
+corrido cero casos. Y **no se amplió `probePse`**, que era la alternativa obvia: la sonda ya
+saltea cuando no hay PSE atado o falta el RUC del receptor —eso es _en este entorno no se puede
+llegar a una aceptación_—, pero enseñarle además «…y tampoco si el servidor contestó que no hay
+cupo» sería saltear casos según **la respuesta que dio el servidor**, y esa misma condición
+taparía una regresión que hiciera fallar la emisión por cualquier otro motivo.
+
+**El 409 al azar se arregló en la causa.** `reset-test-db.ts` truncaba nueve tablas escritas a
+mano y dejaba fuera **todos los maestros**, que se acumulaban entre corridas. Ahora enumera
+desde `information_schema` y vacía **45 tablas** —todo menos `_prisma_migrations`—, que es tabla
+por tabla el estado de una base recién creada. Se enumera y no se lista a mano a propósito: la
+lista escrita a mano fue justamente lo que envejeció.
+
+**El padrón se responde con un stub local.** `e2e/padron-stub.mjs` corre como tercer `webServer`
+en `:3002` y el API lo consulta vía `APIS_NET_PE_BASE_URL`, que se hizo configurable. Existía un
+motivo real para que el badge «Nuevo — se creará desde padrón» fuera intestable: **la consulta
+sale del API, no del navegador** (D-158), así que `page.route()` nunca la veía. El stub responde
+200 si el documento termina en dígito par y 404 si en impar, así un test elige la rama del alta
+desde padrón o la del alta express sin listas que mantener.
+
+**Dos E2E nuevos**: el badge del padrón —con los dos lados en el mismo archivo, para que el
+contraste no dependa de dos corridas— y el diálogo de cierre de bobina de D-164 por pantalla.
+
+### Lo que el reset destapó, que es la mitad del valor de M0
+
+La primera corrida completa dio **10 rojos, y los diez eran del cambio**. La migración de la
+Fase 5b sembraba tres datos iniciales —el cliente **«público en general»** (D-077), las **cinco
+series fiscales** (D-072) y la **fila de configuración del PSE** (D-073)— y una migración corre
+**una vez**: al vaciarlas, nada las repuso.
+
+El síntoma no se parecía a la causa: «la migración de 5b siembra el cliente "público en
+general"» en un test de importación, y «No hay una serie activa para emitir FACTURA» en diez
+casos repartidos por cinco archivos que no hablan de series.
+
+Los tres se mudaron al **seed**, que responde otra pregunta —_qué necesita esta base para ser
+usable_, la misma que ya respondían las líneas de negocio y sus márgenes— y corre siempre. Todo
+idempotente: contra producción o demo no hace nada. **El seed no pisa una serie que ya existe**:
+el correlativo es un hecho fiscal y `isActive` lo administra el dueño.
+
+**La regla, para lo que venga: un dato inicial que inserta una migración tiene que estar también
+en el seed**, o desaparece en el primer reset y reaparece como un fallo lejos de su causa. Queda
+escrita en `seed.ts`.
+
+### M1 — el informe apuntaba al lugar equivocado, y la medición lo dice
+
+Perfil real de la suite, medido sobre las duraciones que imprime el reporter:
+
+| franja      | casos   | tiempo       | %        |
+| ----------- | ------- | ------------ | -------- |
+| > 60 s      | 0       | —            | —        |
+| 30–60 s     | 7       | 4.6 min      | 9 %      |
+| **10–30 s** | **128** | **35.2 min** | **71 %** |
+| ≤ 10 s      | 98      | 9.7 min      | 20 %     |
+
+**No hay punto caliente**: el archivo más pesado es el 6.3 % del total y el caso más caro, 51.7 s.
+La suite tarda porque hace 233 cosas de punta a punta.
+
+Dos de las tres recomendaciones del informe **no se sostienen**, y se descartaron con números:
+
+- **`storageState` para el login («ALTA, 10-15 min»)**: son **15 llamadas a
+  `loginAndSetPassword` en 6 archivos**, no «198 tests» — el resto usa `adminApi()`, que es un
+  POST. Techo real ≈ 1 minuto, contra una refactorización que toca seis roles distintos y varios
+  casos que ejercitan a propósito el cambio de contraseña obligatorio.
+- **Los `setTimeout` fijos de `fase7b`**: son polls de un servicio asíncrono real (SUNAT por
+  resumen diario) y viven en los dos tests que quedan **saltados**. Ahorro: cero.
+
+El informe se escribió leyendo el código sin correrlo, y ahí está su error: estimó el login por
+cuántos specs mencionan la palabra, no por cuántas veces se llama.
+
+Lo que sí se hizo, que es lo que paga en un perfil plano —**el setup que todos comparten**—:
+`Promise.all` en las altas **independientes entre sí** de `setupRoofingScenario` (lo montan **51
+casos**), `setupScenario` de producción y `setupOrderScenario`; y `purgeInvoicingTrail` dejó de
+leer los mismos documentos **tres veces** con un GET por documento en cada pasada.
+
+Las **mutaciones** de la limpieza siguen secuenciales y no es una omisión: cobros antes que
+bajas, notas de crédito antes que su afectado. Ahí el orden **es** la regla.
+
+**La ganancia NO se pudo medir, y eso es el resultado.** Cuatro corridas completas de la suite,
+las dos últimas con el código final, dieron **49.5 · 47.3 · 45.7 · 49.7 min** de suma de
+duraciones (y 53.9 · 50.3 · 48.8 · 54.3 de reloj de pared). El desvío entre corridas del
+**mismo** código es de ±4 minutos, o sea **más grande que el efecto que se estaba buscando**.
+
+Durante la sesión llegué a reportar «≈5 minutos, 9 %» comparando dos corridas sueltas. Estaba
+leyendo ruido como señal: con esa dispersión, un solo par antes/después no puede resolver un
+efecto de dos minutos. Medirlo de verdad pide varias corridas de cada lado, o sea horas.
+
+Lo que sí se puede contar sin medir es lo estructural: los tres helpers se montan **94 veces**
+entre todos los specs, y cada uno ahorra 1 o 2 viajes secuenciales; `purgeInvoicingTrail` pasó
+de `3 × N` viajes en fila a 3 vueltas en paralelo. Son unos pocos segundos en total —por eso no
+se ven—. El cambio es correcto y no se deshace, pero **la velocidad de la suite no mejoró de
+forma observable**, y presentarlo de otra manera sería inventar.
+
+**La palanca grande sería paralelizar workers**, y ahí sí hay minutos de verdad. No se tocó: los
+233 casos comparten una base y muchos dependen de saldos, correlativos y reservas globales.
+Queda propuesta, no hecha.
+
+### M3 — el selector de cliente pasa a `SearchSelectField`, y el umbral baja a 20
+
+El desplegable sin búsqueda de la cotización pasa al mismo campo que usa el importador (D-156).
+
+**Y el umbral bajó de 50 a 20, por decisión del dueño tomada con el dato delante**: producción
+tiene **49 clientes activos**, así que con el umbral en 50 el vendedor quedaba a un cliente de
+distancia del buscador y mientras tanto elegía de una lista de 49 nombres reconociéndolos de
+vista. Alcanza a tres campos: el cliente de la cotización, el cliente del comprobante en el
+importador y el producto de la fila (que ya estaba del lado del buscador, con 174 productos).
+
+**Lo que M3 no arregla**, y quedó escrito en el código: `fetchAllForPicker` sigue trayendo como
+mucho 200 clientes. Esto da **búsqueda sobre lo cargado**, no «ver todos». Levantar el tope es
+buscar del lado del servidor —`/customers` ya acepta `search`— y es un cambio propio.
+
+### El fallo que enseñó más que su arreglo
+
+El caso de D-166 **pasaba aislado y fallaba en la suite completa**, que es la peor forma de
+fallar. La causa: el reset vacía la base **una vez por corrida, no por test**, así que para
+cuando ese caso corre ya hay más de veinte clientes creados por sus vecinos, y el campo que en
+solitario es un `<select>` ahí es un modal. Con el modal abierto, `getByLabel('Cliente')`
+resuelve a **tres** elementos —el botón del campo, el diálogo y el botón «Seleccionar…»— y
+Playwright corta por modo estricto.
+
+Dos cosas quedaron de ahí: el locator con `exact: true`, y los helpers que manejan las dos formas
+del campo movidos de dentro del spec del importador a `e2e/helpers/ui.ts`. Vivían ahí porque esa
+era la única pantalla con el componente; desde M3 son dos, y tener la solución copiada en un
+spec era esperar a que la segunda la reescribiera peor.
+
+### Verificación
+
+```bash
+pnpm turbo lint typecheck test          # verde (399 unitarios)
+pnpm exec eslint e2e
+pnpm format:check
+
+pnpm e2e                                # 234 pasados, 0 fallados, 2 saltados (~50 min)
+pnpm e2e:pse                            # los 12 del PSE — antes hay que vaciar la cuenta demo
+```
+
+**Nunca `pnpm e2e:prod`** (regla dura 9, D-126).
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
@@ -4403,23 +4570,30 @@ El dueño vinculó el proyecto GCP `ayr-steel-erp` a una cuenta de facturación 
 
 ### Necesitan acción tuya
 
-- **Vaciar los comprobantes de la cuenta demo del PSE.** Está en su tope («No puedes enviar mas
-  de 50 documentos en en una cuenta DEMO») y con eso quedan **12 casos rojos** en `fase5b`,
-  `fase5b-bordes` y `fase7b`. No es una regresión de esta sesión y **no se silenciaron a
-  propósito**: `probePse` no cubre este caso —el PSE está configurado, solo sin cupo— y saltear
-  esos casos por cuota escondería regresiones reales el día que las haya. Es el mismo cupo que
-  ya apareció en el cierre de la Fase 5b.
-- **El selector de cliente de la cotización no ve más de 200 clientes y no tiene búsqueda.**
-  `sales-document-form.tsx` los pide con `fetchAllForPicker('/customers')` (`pageSize=200`) y
-  los pinta en un `<Select>` plano; `/customers` ordena por `isActive desc, name asc`. Con más
-  de 200 clientes activos **el vendedor no puede elegir a la mayoría**, y no hay ningún error:
-  simplemente no están en la lista. No es de esta sesión y no se tocó —cambiar ese selector por
-  uno con búsqueda es un punto propio, no un renglón de un hotfix— pero conviene saber cuántos
-  clientes activos hay en producción antes de que alguien lo descubra vendiendo. El endpoint ya
-  soporta `search` y `SearchSelectField` (D-156) ya existe en el importador.
+- **Vaciar los comprobantes de la cuenta demo del PSE.** Sigue en su tope («No puedes enviar mas
+  de 50 documentos en en una cuenta DEMO»). **Desde el saneamiento E2E ya no ensucia la corrida
+  por defecto**: esos 12 casos están etiquetados `@pse` y salen aparte con `pnpm e2e:pse`. Pero
+  la deuda sigue viva — mientras la cuenta esté llena, **esos 12 casos no se están corriendo**,
+  y son los que cubren el ciclo fiscal completo hasta la aceptación. Vaciarla y correr
+  `pnpm e2e:pse` es lo que los vuelve a poner en verde.
+- ~~**El selector de cliente de la cotización no ve más de 200 clientes y no tiene
+  búsqueda.**~~ **Medio resuelto en el saneamiento E2E**: pasó a `SearchSelectField` (D-156) y
+  el umbral bajó a 20, así que con los 49 clientes activos de producción el vendedor ya tiene
+  buscador. **Lo que sigue abierto es el tope**: `fetchAllForPicker` trae como mucho 200 y
+  `/customers` ordena por `isActive desc, name asc`, así que con más de 200 activos los últimos
+  siguen sin aparecer — y sin ningún error, simplemente no están. Levantarlo es **buscar del
+  lado del servidor** (`/customers` ya acepta `search`), y alcanza a los tres campos que usan el
+  componente. Hoy no aprieta: 49 de 200.
 
 ## Notas operativas
 
+- **RESUELTO en el saneamiento E2E (2026-09-10).** Las dos notas de abajo —recrear la base a
+  mano, y los 409 al azar por maestros acumulados— describen un problema que **ya no existe**:
+  `reset-test-db.ts` vacía las 45 tablas en cada corrida, así que la base nunca envejece. Se
+  dejan porque explican por qué el reset es como es, y porque la segunda documenta el otro
+  efecto de la acumulación —**la pantalla que cambia de forma según cuántas filas haya**— que
+  **sigue vivo dentro de una misma corrida** y volvió a morder en esta sesión (ver «El fallo que
+  enseñó más que su arreglo»).
 - **Sesión Cierre de bobina (2026-09-09). La base de E2E se recreó desde cero, y conviene
   volver a hacerlo.** El 409 anotado abajo (proveedores/colores repetidos al azar contra un
   maestro que el reset no trunca) dejó de ser ruido de fondo y pasó a tapar la señal: con

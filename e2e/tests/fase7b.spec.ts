@@ -67,7 +67,7 @@ test.describe('Fase 7b — venta de mostrador', () => {
     await api.dispose();
   });
 
-  test('venta completa: público en general, efectivo, y los cuatro documentos nacen juntos', async () => {
+  test('venta completa: público en general, efectivo, y los cuatro documentos nacen juntos @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     const stock = await setupPosStock(api, { qty: '40', listPricePen: '10.0000' });
     let session: CashSessionDto | undefined;
@@ -138,7 +138,7 @@ test.describe('Fase 7b — venta de mostrador', () => {
     }
   });
 
-  test('con RUC se emite factura, y el cliente identificado no tiene tope', async () => {
+  test('con RUC se emite factura, y el cliente identificado no tiene tope @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     const stock = await setupPosStock(api, { qty: '40', listPricePen: '100.0000' });
     const customer = await createInvoiceableCustomer(api);
@@ -179,7 +179,7 @@ test.describe('Fase 7b — venta de mostrador', () => {
     }
   });
 
-  test('el tope de la boleta genérica se levanta identificando al cliente (D-077)', async () => {
+  test('el tope de la boleta genérica se levanta identificando al cliente (D-077) @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     const stock = await setupPosStock(api, { qty: '40', listPricePen: '100.0000' });
     const customer = await createInvoiceableCustomer(api);

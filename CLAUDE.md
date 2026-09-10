@@ -64,6 +64,7 @@ pnpm dev:local                       # Postgres en Docker + migrate + seed + api
 pnpm dev:preview                     # api :4000 + web :4001 contra ayr_local — puertos del DUEÑO (regla dura 15)
 pnpm db:local reset|snapshot <n>|restore <n>   # operar el Postgres local (Docker)
 pnpm e2e                     # Playwright, por defecto contra el Postgres local (Docker); en CI, Neon rama ci
+pnpm e2e:pse                 # solo los casos @pse (necesitan cupo de la cuenta demo de Nubefact, docs/ENTORNOS.md)
 pnpm env:demo | db:demo | dev:demo   # entorno de ensayo (rama Neon demo, D-125)
 pnpm smoke:prod              # verificación post-deploy de SOLO LECTURA (D-126)
 pnpm check:price-floor [--branch production|demo|dev|local|local-e2e]      # SKU bajo el piso de D-163, solo lectura

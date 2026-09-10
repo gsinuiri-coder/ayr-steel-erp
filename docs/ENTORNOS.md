@@ -123,6 +123,80 @@ mano antes de correr `pnpm e2e` sigue funcionando para apuntar a otra base puntu
 
 ---
 
+## La corrida por defecto no depende de nada externo
+
+**Meta: `pnpm e2e` tiene que poder dar verde pleno sin llamar a ningún tercero.** Un rojo que no
+es una regresión cuesta más que el caso que cubre: quien corre la suite deja de mirar los rojos
+porque «esos son los de siempre», y el día que uno sea de verdad no lo va a ver. De ahí salen
+las tres piezas de abajo.
+
+### Los casos que necesitan el PSE corren aparte (`@pse`)
+
+Doce casos —en `fase5b`, `fase5b-bordes` y `fase7b`— necesitan que un comprobante llegue a
+**ACEPTADO**, y para eso hace falta cupo en la cuenta demo de Nubefact, que admite 50
+comprobantes. Llena, esos doce fallan todos con «No puedes enviar mas de 50 documentos en en una
+cuenta DEMO».
+
+- Están etiquetados **`@pse`** en el título y **excluidos de `pnpm e2e`** (`grepInvert` en
+  `playwright.config.ts`).
+- Se corren aparte con **`pnpm e2e:pse`**, que pone `E2E_PSE=1` y con eso la suite corre
+  exactamente el complemento. **Antes hay que vaciar los comprobantes de la cuenta demo** en el
+  panel de Nubefact.
+- El flag va por **entorno y no por `--grep`** porque un `--grep` de la línea de comandos pisa a
+  `grep` pero **no** a `grepInvert`: con bandera, `e2e:pse` habría corrido cero casos.
+
+**Por qué por etiqueta y no ampliando `probePse`.** La sonda ya saltea estos casos cuando no hay
+PSE atado o falta el RUC del receptor: eso es _en este entorno no se puede llegar a una
+aceptación_. Enseñarle además «…y tampoco si el servidor contestó que no hay cupo» sería
+saltear casos según **la respuesta que dio el servidor**, y esa misma condición taparía una
+regresión que hiciera fallar la emisión por cualquier otro motivo. La exclusión tiene que ser
+una decisión escrita en la suite, no un heurístico sobre un mensaje de error.
+
+### El padrón se responde con un stub local
+
+`e2e/padron-stub.mjs` corre como tercer `webServer` en **`:3002`** y el API lo consulta vía
+`APIS_NET_PE_BASE_URL`. Sirve el padrón de RUC (D-067), el de DNI y el tipo de cambio SUNAT
+(D-029) — los tres caminos que el ERP usa de apis.net.pe.
+
+Existe porque **el padrón se consulta del lado del API, no del navegador** (D-158: la fila manda
+el documento y el nombre lo trae el servidor), así que un `page.route()` de Playwright nunca lo
+interceptaba: la petición no sale del navegador. El badge «Nuevo — se creará desde padrón» era
+la única rama de D-158 que ningún E2E podía ejercitar.
+
+**Contrato del stub**, que es lo que deja elegir el caso sin listas que mantener: un documento
+**existe** en el padrón si termina en dígito **par** (200 con `razonSocial: "PADRON STUB
+<numero>"`) y **no existe** si termina en **impar** (404). Así un test elige a propósito la rama
+del alta desde padrón o la del alta express (D-156).
+
+De paso, la suite deja de gastar la cuota compartida del servicio real, que es la misma para el
+padrón y para el tipo de cambio.
+
+### La base de pruebas se vacía entera
+
+`apps/api/prisma/reset-test-db.ts` trunca **todas** las tablas menos `_prisma_migrations`,
+enumerándolas desde `information_schema`, y el seed repone lo que hace falta: líneas de negocio,
+márgenes, administrador y el cliente **«público en general»** (D-077). El resultado es, tabla por
+tabla, el estado de una base recién creada.
+
+Hasta la sesión de saneamiento la lista era de nueve tablas escritas a mano y dejaba fuera
+**todos los maestros**, que se acumulaban entre corridas: llegó a 1 874 proveedores, 841 colores,
+2 902 productos, 1 576 acabados y 1 195 clientes. Eso producía dos cosas, las dos observadas:
+`409` al azar en tests que no hablaban del maestro que chocó —`suppliers.code` es `VarChar(6)` y
+los generadores sorteaban contra un maestro de miles de filas— y una pantalla que **cambiaba de
+forma con la edad de la base** (el `SearchSelectField` de D-156 en modo modal o en modo
+`<select>` según cuántos clientes hubiera).
+
+Se enumera y no se lista a mano **a propósito**: la lista escrita a mano fue justamente lo que
+envejeció. Un modelo nuevo entra solo al vaciado, que es el comportamiento correcto para una
+base descartable.
+
+**Y por eso el cliente «público en general» se mudó al seed.** Lo sembraba la migración de la
+Fase 5b, y una migración corre una vez y no repone nada: al vaciar `customers`, el mostrador se
+quedó sin a quién facturar. El seed responde otra pregunta —_qué necesita esta base para ser
+usable_— y es idempotente, así que contra producción o demo no hace nada.
+
+---
+
 ## La suite E2E no corre contra producción (D-126)
 
 **`pnpm e2e:prod` queda prohibido como rutina.** Desde el 2026-09-07 producción tiene

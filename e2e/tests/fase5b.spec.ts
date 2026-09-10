@@ -172,7 +172,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
   // 1.b El papel del despacho: guía y factura — **emite**
   // -------------------------------------------------------------------------
 
-  test('el despacho habilita la guía y la factura del pedido, cada una con su correlativo', async () => {
+  test('el despacho habilita la guía y la factura del pedido, cada una con su correlativo @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
 
     const sc = await setupOrderScenario(api, {
@@ -280,7 +280,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
   // 2. El ciclo entero, hasta el saldo en cero
   // -------------------------------------------------------------------------
 
-  test('el ciclo completo termina con la factura aceptada cobrada y el saldo en cero', async () => {
+  test('el ciclo completo termina con la factura aceptada cobrada y el saldo en cero @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     test.skip(!pse.accepts, pse.reason);
 
@@ -401,7 +401,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
   // 3. Nota de crédito parcial (RF-76)
   // -------------------------------------------------------------------------
 
-  test('una nota de crédito parcial baja el saldo del comprobante en lo acreditado', async () => {
+  test('una nota de crédito parcial baja el saldo del comprobante en lo acreditado @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     test.skip(!pse.accepts, pse.reason);
 
@@ -474,7 +474,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
    * cliente y el papel digan cosas distintas: no se da de baja algo que ya se cobró ni algo
    * que ya se acreditó.
    */
-  test('una factura aceptada se da de baja, pero no con un cobro vigente ni con una nota de crédito viva', async () => {
+  test('una factura aceptada se da de baja, pero no con un cobro vigente ni con una nota de crédito viva @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     test.skip(!pse.accepts, pse.reason);
 
@@ -716,7 +716,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
   // 5.b La boleta que sí sale — **emite**
   // -------------------------------------------------------------------------
 
-  test('la boleta a público en general por debajo del tope sale con su correlativo', async () => {
+  test('la boleta a público en general por debajo del tope sale con su correlativo @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
 
     const generic = await genericCustomer(api);

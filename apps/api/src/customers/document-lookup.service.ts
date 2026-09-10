@@ -58,7 +58,7 @@ export class DocumentLookupService {
         : `v1/dni?numero=${encodeURIComponent(docNumber)}`;
 
     try {
-      const res = await fetch(`https://api.apis.net.pe/${path}`, {
+      const res = await fetch(`${this.env.APIS_NET_PE_BASE_URL}/${path}`, {
         headers: { Authorization: `Bearer ${this.env.APIS_NET_PE_TOKEN}` },
         signal: AbortSignal.timeout(5000),
       });

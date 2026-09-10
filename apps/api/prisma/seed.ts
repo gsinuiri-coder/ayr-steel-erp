@@ -5,7 +5,14 @@
  * Lee variables de process.env (cargar .env antes con dotenv o el entorno de CI).
  */
 import 'dotenv/config';
-import { BusinessLineCode, InventoryStrategy, PrismaClient, Role } from '@prisma/client';
+import {
+  BusinessLineCode,
+  DocType,
+  FiscalDocType,
+  InventoryStrategy,
+  PrismaClient,
+  Role,
+} from '@prisma/client';
 import argon2 from 'argon2';
 
 const prisma = new PrismaClient();
@@ -73,8 +80,111 @@ async function seedBusinessLinesAndPricing(): Promise<void> {
   console.warn(`Seed listo: ${BUSINESS_LINES.length} líneas de negocio y sus márgenes por defecto`);
 }
 
+/**
+ * Los datos iniciales que **sembró una migración** y que el seed tiene que saber reponer.
+ *
+ * Son tres —el cliente genérico (D-077), las series fiscales (D-072) y la fila de
+ * configuración de facturación (D-073)— y las tres las creó la migración de la Fase 5b.
+ *
+ * **Por qué se mudan acá.** Una migración corre **una vez**: describe un cambio de esquema y,
+ * de paso, dejó unas filas. Eso alcanzó mientras la base de pruebas conservaba esas filas
+ * entre corridas; el día que el reset pasó a vaciarlas —para que los maestros dejaran de
+ * acumularse y de producir 409 al azar— se fueron con todo lo demás y nada las repuso. El
+ * síntoma no se parecía a su causa: «la migración de 5b siembra el cliente "público en
+ * general"» en un test de importación, y «No hay una serie activa para emitir FACTURA» en
+ * diez casos repartidos por cinco archivos que no hablan de series.
+ *
+ * El seed responde otra pregunta —**qué necesita esta base para ser usable**, la misma que ya
+ * responden las líneas de negocio y sus márgenes— y corre siempre, así que es su lugar. Todo
+ * es idempotente: contra una base que ya los tiene (producción, demo) no hace nada.
+ *
+ * **La regla, para lo que venga:** un dato inicial que una migración inserta tiene que estar
+ * también acá, o desaparece en el primer reset y reaparece como un fallo lejos de su causa.
+ */
+
+/** D-072: las series del punto de emisión. La NC hereda la del tipo que afecta. */
+const FISCAL_SERIES: {
+  docType: FiscalDocType;
+  series: string;
+  affectedDocType: FiscalDocType | null;
+}[] = [
+  { docType: FiscalDocType.FACTURA, series: 'F001', affectedDocType: null },
+  { docType: FiscalDocType.BOLETA, series: 'B001', affectedDocType: null },
+  { docType: FiscalDocType.NOTA_CREDITO, series: 'FC01', affectedDocType: FiscalDocType.FACTURA },
+  { docType: FiscalDocType.NOTA_CREDITO, series: 'BC01', affectedDocType: FiscalDocType.BOLETA },
+  { docType: FiscalDocType.GUIA_REMISION_REMITENTE, series: 'T001', affectedDocType: null },
+];
+
+async function seedInvoicing(): Promise<void> {
+  for (const serie of FISCAL_SERIES) {
+    await prisma.fiscalSeries.upsert({
+      where: { series: serie.series },
+      create: { ...serie, correlative: 0, isActive: true },
+      // **No se pisa nada de una serie que ya existe.** El correlativo es un hecho fiscal —
+      // dice cuántos comprobantes salieron— y `isActive` lo administra el dueño desde la
+      // pantalla de series. El seed las crea si faltan y no opina sobre las que están.
+      update: {},
+    });
+  }
+  // D-073: fila única de configuración. Nace con el PSE en línea y la alerta en 6 horas.
+  const settings = await prisma.invoicingSetting.findFirst({ select: { id: true } });
+  if (!settings) {
+    await prisma.invoicingSetting.create({ data: { providerOffline: false, alertAfterHours: 6 } });
+  }
+  console.warn(`Seed listo: ${FISCAL_SERIES.length} series fiscales y la configuración del PSE`);
+}
+
+/**
+ * D-077: el cliente **«público en general»**, el receptor de toda boleta sin identificar.
+ * Ver el bloque de arriba para por qué vive acá y no solo en su migración.
+ */
+const GENERIC_CUSTOMER_NAME = 'PÚBLICO EN GENERAL';
+
+async function seedGenericCustomer(): Promise<void> {
+  const existing = await prisma.customer.findUnique({
+    where: { docType_docNumber: { docType: DocType.DNI, docNumber: '00000000' } },
+    select: { id: true, name: true, isSystem: true },
+  });
+
+  if (!existing) {
+    await prisma.customer.create({
+      data: {
+        docType: DocType.DNI,
+        docNumber: '00000000',
+        name: GENERIC_CUSTOMER_NAME,
+        creditDays: 0,
+        isSystem: true,
+        isActive: true,
+      },
+    });
+    console.warn('Seed listo: cliente «público en general» (D-077)');
+    return;
+  }
+
+  // **La marca no se fuerza sobre una fila que ya existe con otro nombre**, y esa es la
+  // diferencia con la migración, que corría una vez sobre una base que no podía tenerla.
+  // Este seed corre en **cada** `pnpm db:prod`, y el DNI `00000000` es exactamente el relleno
+  // que alguien escribe cuando importa un cliente sin documento. Marcarlo `isSystem` lo
+  // volvería inmutable (`CustomersService` no lo deja editar ni dar de baja) y —peor— el
+  // mostrador lo resolvería como «público en general»: sus boletas saldrían sin identificar al
+  // receptor, que es un problema fiscal y no de datos.
+  if (existing.name !== GENERIC_CUSTOMER_NAME) {
+    console.warn(
+      `Seed: el DNI 00000000 ya lo tiene «${existing.name}», que NO es el cliente genérico. ` +
+        'No se toca. Si el mostrador lo necesita, hay que liberar ese documento a mano (D-077).',
+    );
+    return;
+  }
+  if (!existing.isSystem) {
+    await prisma.customer.update({ where: { id: existing.id }, data: { isSystem: true } });
+  }
+  console.warn('Seed listo: cliente «público en general» (D-077)');
+}
+
 async function main(): Promise<void> {
   await seedBusinessLinesAndPricing();
+  await seedGenericCustomer();
+  await seedInvoicing();
 
   const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   const password = process.env.ADMIN_PASSWORD;

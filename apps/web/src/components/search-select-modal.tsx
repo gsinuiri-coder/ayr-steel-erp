@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -33,7 +34,19 @@ import {
  * auditoría de campos-callejón encuentre después.
  */
 
-export const SEARCH_SELECT_THRESHOLD = 50;
+/**
+ * A partir de cuántas opciones el campo deja de ser un desplegable y pasa a ser el buscador.
+ *
+ * **20 desde el saneamiento E2E**, por decisión del dueño. Estaba en 50 y producción tenía 49
+ * clientes activos: el vendedor quedaba a un cliente de distancia del buscador y mientras
+ * tanto elegía de una lista de 49 nombres reconociéndolos de vista. Con 20 el buscador entra
+ * donde de verdad hace falta y el desplegable se queda para los maestros que son de verdad
+ * cortos, que es la única cosa para la que es mejor.
+ *
+ * Alcanza a tres campos: el cliente de la cotización, el cliente del comprobante en el
+ * importador y el producto de la fila (que ya estaba del lado del buscador, con 174 productos).
+ */
+export const SEARCH_SELECT_THRESHOLD = 20;
 
 /** Cuántas filas se pintan por vez. Filtrar es barato; pintar 900 filas no. */
 const PAGE = 50;
@@ -197,6 +210,8 @@ export function SearchSelectField({
   value,
   disabled,
   onChange,
+  id,
+  className,
 }: {
   /** Se usa como `aria-label` y como título del modal. */
   label: string;
@@ -205,6 +220,18 @@ export function SearchSelectField({
   value: string | null;
   disabled?: boolean;
   onChange: (id: string) => void;
+  /**
+   * Para que un `<Label htmlFor>` de afuera enfoque el campo. Sin esto, la etiqueta del
+   * formulario de ventas apuntaba a un id que dejó de existir al cambiar el `<Select>` por
+   * este componente: el clic en «Cliente» no enfocaba nada.
+   */
+  id?: string;
+  /**
+   * Ancho y demás, desde afuera. El `w-52` por defecto es el del importador, donde el campo
+   * vive en una celda de tabla; en un formulario a dos columnas trunca nombres que entran de
+   * sobra («PÚBLICO EN GENERAL — 00000000» al lado de una fecha a ancho completo).
+   */
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.id === value) ?? null;
@@ -221,8 +248,9 @@ export function SearchSelectField({
     return (
       <div className="grid gap-1">
         <select
+          id={id}
           aria-label={label}
-          className="h-9 w-52 rounded-md border bg-background px-2 text-xs"
+          className={cn('h-9 w-52 rounded-md border bg-background px-2 text-xs', className)}
           value={missing ? '' : (value ?? '')}
           disabled={disabled}
           onChange={(e) => {
@@ -245,10 +273,11 @@ export function SearchSelectField({
     <div className="grid gap-1">
       <Button
         type="button"
+        id={id}
         variant="outline"
         aria-label={label}
         disabled={disabled}
-        className="h-9 w-52 justify-start truncate text-xs font-normal"
+        className={cn('h-9 w-52 justify-start truncate text-xs font-normal', className)}
         onClick={() => {
           setOpen(true);
         }}

@@ -568,8 +568,9 @@ export async function setupScenario(
   api: APIRequestContext,
   options: { stripCount?: number } = {},
 ): Promise<Scenario> {
-  const supplier = await createCuttingSupplier(api);
-  const finish = await createFinish(api);
+  // Independientes entre sí: dos altas contra dos tablas distintas. La compra de abajo sí
+  // necesita las dos, así que va después.
+  const [supplier, finish] = await Promise.all([createCuttingSupplier(api), createFinish(api)]);
 
   const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
     supplierId: supplier.id,

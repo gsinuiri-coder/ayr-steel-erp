@@ -111,7 +111,7 @@ export class ExchangeRatesService {
   }
 
   private async fetchFromApisNetPe(date: string): Promise<{ buy: string; sell: string }> {
-    const res = await fetch(`https://api.apis.net.pe/v1/tipo-cambio-sunat?fecha=${date}`, {
+    const res = await fetch(`${this.env.APIS_NET_PE_BASE_URL}/v1/tipo-cambio-sunat?fecha=${date}`, {
       headers: { Authorization: `Bearer ${this.env.APIS_NET_PE_TOKEN}` },
       signal: AbortSignal.timeout(5000),
     });

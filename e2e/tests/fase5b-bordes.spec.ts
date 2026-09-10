@@ -163,7 +163,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
   // 2. D-073 — el PSE se cae y la operación sigue
   // -------------------------------------------------------------------------
 
-  test('con el PSE en contingencia el comprobante toma correlativo, el despacho sale igual y el barrido lo recupera', async () => {
+  test('con el PSE en contingencia el comprobante toma correlativo, el despacho sale igual y el barrido lo recupera @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
 
     // D-134: `setupOrderScenario` vende la bobina entera (RF-73); ya no hay `qty` de por
@@ -288,7 +288,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
    * la consulta posterior lo resuelve. Que después de varios intentos siga esperando no es
    * un fallo: SUNAT tarda lo que tarda, y el barrido lo sigue reintentando.
    */
-  test('un comprobante que SUNAT todavía no procesó queda pendiente, no rechazado, y la consulta lo resuelve', async () => {
+  test('un comprobante que SUNAT todavía no procesó queda pendiente, no rechazado, y la consulta lo resuelve @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     test.skip(!pse.accepts, pse.reason);
 
@@ -338,7 +338,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
    * El resultado es que el barrido de D-073 mata el comprobante que existía para
    * rescatarlo, y su correlativo no se recupera.
    */
-  test('el barrido no convierte en rechazado un comprobante que ya está en el PSE esperando a SUNAT', async () => {
+  test('el barrido no convierte en rechazado un comprobante que ya está en el PSE esperando a SUNAT @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     test.skip(!pse.accepts, pse.reason);
 
@@ -445,7 +445,7 @@ test.describe('Fase 5b — bordes, contingencia y reversas', () => {
   // 4. D-074 — un comprobante vigente bloquea la reversa
   // -------------------------------------------------------------------------
 
-  test('una factura aceptada de esas líneas bloquea la reversa del despacho y la nombra', async () => {
+  test('una factura aceptada de esas líneas bloquea la reversa del despacho y la nombra @pse', async () => {
     test.skip(!fiscalEmission, FISCAL_EMISSION_REASON);
     test.skip(!pse.accepts, pse.reason);
 

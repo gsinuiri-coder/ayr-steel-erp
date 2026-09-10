@@ -15,6 +15,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml,css}\"",
     "e2e": "playwright test",
+    "e2e:pse": "node scripts/e2e-pse.mjs",
     "e2e:install": "playwright install --with-deps chromium",
     "db:migrate": "pnpm --filter @ayr/api db:migrate",
     "db:deploy": "pnpm --filter @ayr/api db:deploy",

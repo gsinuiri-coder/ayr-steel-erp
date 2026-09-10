@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, getItems } from '../helpers/api';
 import { createCatalogProduct, randomLetters } from '../helpers/production';
 import { createCustomer, createSellableProduct } from '../helpers/sales';
+import { chooseOption, chosenLabelOf, expectChosen } from '../helpers/ui';
 
 /**
  * Importador masivo de cotizaciones **por pantalla**: `/cotizaciones/importar`
@@ -27,9 +28,13 @@ import { createCustomer, createSellableProduct } from '../helpers/sales';
  *   heredan. `Cliente de la fila N` ya no existe, y pedirlo por línea era además la única forma
  *   de armar un documento que el API no acepta.
  *
- * Lo que **no** se puede ejercitar acá: el badge "Nuevo — se creará desde padrón". Depende de
- * apis.net.pe y el entorno local no tiene token, así que un documento que el maestro no conoce
- * cae siempre en la rama del error normal. Montar un mock sería probar el mock.
+ * **El badge "Nuevo — se creará desde padrón" sí se ejercita** (antes decía acá que era
+ * imposible). El padrón se consulta del lado del **API**, así que un `page.route()` nunca lo
+ * interceptaba; ahora `e2e/padron-stub.mjs` corre como tercer `webServer` y el API lo usa vía
+ * `APIS_NET_PE_BASE_URL`. El stub responde 200 al documento que **termina en dígito par** y 404
+ * al que termina en impar, así que un caso elige a propósito de qué lado del padrón cae cada
+ * comprobante. No es "probar el mock": lo que se prueba es la rama del ERP que solo se activa
+ * cuando el padrón responde, y el contraste vive en el mismo archivo con la misma corrida.
  *
  * El archivo se arma como CSV en el propio test —mismos encabezados exactos que el export de
  * ventas detalladas— y se entrega con `setInputFiles` desde un buffer, sin tocar el disco ni
@@ -145,73 +150,6 @@ function documentToggle(page: Page, documentKey: string): Locator {
 /** Las líneas de un comprobante, que solo existen mientras su acordeón está abierto. */
 function documentLines(page: Page, documentKey: string): Locator {
   return page.getByRole('region', { name: `Líneas de ${documentKey}` });
-}
-
-/*
- * Los campos de maestro de esta pantalla son `SearchSelectField` (D-156) y **cambian de forma
- * según cuántas opciones tengan**: hasta `SEARCH_SELECT_THRESHOLD` son un `<select>` y por
- * encima un botón que abre el modal de búsqueda. Los tres helpers de abajo existen por eso, y
- * no por gusto:
- *
- * - **Cuál de las dos formas toca no se sabe de antemano.** La base local acumula clientes y
- *   productos entre corridas —`reset-test-db.ts` vacía inventario, compras y usuarios, pero no
- *   los maestros—, así que la misma pantalla es un `<select>` en una base recién creada y un
- *   modal en la de una máquina que ya corrió la suite veinte veces.
- * - **Y la forma cambia bajo los pies.** Mientras el maestro viaja hay cero opciones, o sea un
- *   `<select>` vacío que un instante después puede volverse el botón del modal. Mirar la forma
- *   una sola vez es una carrera que falla con "Element is not a <select> element", un error que
- *   no se parece en nada a su causa. Por eso todo va por `expect.poll`.
- */
-
-async function isNativeSelect(field: Locator): Promise<boolean> {
-  return (await field.evaluate((el) => el.tagName.toLowerCase())) === 'select';
-}
-
-/**
- * Lo que el campo muestra como elegido, sea cual sea su forma. En el `<select>` es el texto de
- * la opción seleccionada y en el botón su propio texto; con nada elegido, los dos dicen el
- * placeholder, así que "no hay nada elegido" también se comprueba con esta función.
- */
-async function chosenLabelOf(field: Locator): Promise<string> {
-  return field.evaluate((el) =>
-    el instanceof HTMLSelectElement
-      ? (el.selectedOptions[0]?.textContent?.trim() ?? '')
-      : (el.textContent?.trim() ?? ''),
-  );
-}
-
-async function expectChosen(field: Locator, label: string): Promise<void> {
-  await expect.poll(() => chosenLabelOf(field), { timeout: 20_000 }).toBe(label);
-}
-
-/** Elige una opción por su etiqueta visible, en cualquiera de las dos formas del campo. */
-async function chooseOption(page: Page, field: Locator, optionLabel: string): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        if ((await chosenLabelOf(field)) === optionLabel) return true;
-        try {
-          if (await isNativeSelect(field)) {
-            await field.selectOption({ label: optionLabel }, { timeout: 2_000 });
-          } else {
-            await field.click({ timeout: 2_000 });
-            const modal = page.getByRole('dialog');
-            await modal.getByLabel('Filtrar opciones').fill(optionLabel, { timeout: 2_000 });
-            await modal
-              .getByRole('button', { name: `Seleccionar ${optionLabel}`, exact: true })
-              .click({ timeout: 2_000 });
-          }
-        } catch {
-          // El maestro todavía no llegó (la opción no existe) o el campo cambió de forma
-          // entre el sondeo y el clic: se reintenta con la forma que tenga en el intento
-          // siguiente, que es exactamente lo que haría una persona mirando la pantalla.
-          return false;
-        }
-        return (await chosenLabelOf(field)) === optionLabel;
-      },
-      { timeout: 30_000, intervals: [300, 700, 1_500] },
-    )
-    .toBe(true);
 }
 
 test.describe('D-152/D-156/D-158 — la pantalla del importador de cotizaciones', () => {
@@ -421,10 +359,10 @@ test.describe('D-152/D-156/D-158 — la pantalla del importador de cotizaciones'
      * D-158 lo arregló paginando de a `MAX_PAGE_SIZE`, así que el caso se puede correr. Y el
      * campo se mudó a la cabecera: `Cliente de <clave>`, uno por comprobante.
      *
-     * El documento inventado (`20999999999`) tampoco existe en el padrón, así que la rama de
-     * D-158 —el badge "Nuevo — se creará desde padrón"— no se activa y el comprobante queda
-     * con su error normal. Es el mismo camino que el entorno local recorre siempre: sin token
-     * del padrón, no hay alta automática.
+     * El documento inventado (`20999999999`) **termina en impar**, así que el stub del padrón
+     * lo devuelve como 404 y la rama de D-158 —el badge "Nuevo — se creará desde padrón"— no
+     * se activa: el comprobante queda con su error normal. Que la última cifra sea impar no es
+     * casualidad y no se puede cambiar sin romper el caso.
      */
     const api = await adminApi(baseURL!);
     const created: string[] = [];
@@ -497,6 +435,225 @@ test.describe('D-152/D-156/D-158 — la pantalla del importador de cotizaciones'
         .get(`/api/sales/quotations/${mine[0]!.id}`)
         .then((r) => r.json() as Promise<QuotationDetail>);
       expect(detail.customerName).toBe(customer.name);
+    } finally {
+      for (const id of created) {
+        await api
+          .post(`/api/sales/quotations/${id}/cancel`, {
+            data: { reason: 'Limpieza de prueba E2E' },
+          })
+          .catch(() => undefined);
+      }
+      await api.dispose();
+    }
+  });
+
+  test('el comprobante cuyo RUC está en el padrón se marca «Nuevo — se creará desde padrón» y el del RUC que el padrón no conoce queda con su error', async ({
+    page,
+    baseURL,
+  }) => {
+    /**
+     * **D-158, la rama que hasta ahora ningún E2E podía ejercitar.**
+     *
+     * Dos comprobantes en **el mismo archivo**, idénticos salvo por la última cifra del RUC:
+     * uno par —el stub del padrón lo devuelve— y uno impar —el stub responde 404—. Ninguno
+     * está en el maestro. Ese es todo el contraste, y por eso van juntos: si el badge
+     * apareciera por "el documento no está en el maestro" en vez de por "el padrón lo
+     * devolvió", los dos lo mostrarían.
+     *
+     * Lo que se afirma, además del badge:
+     *
+     * - **El nombre lo pone el servidor.** El archivo trae una razón social inventada y el
+     *   request que sale del navegador manda `newCustomer` con **solo el documento** —dos
+     *   claves, sin `name`—. Es la aserción que protege la decisión de forma de D-158: sin
+     *   ella, aceptar el nombre del navegador dejaría dar de alta "PROVEEDOR S.A.C." bajo un
+     *   RUC ajeno editando el request, que es la creación de datos inventados que D-152
+     *   prohibió. Y el cliente que queda en el maestro tiene la razón social del padrón, no
+     *   la del Excel.
+     * - **El comprobante del padrón no es un problema**: no se abre solo, su badge de estado
+     *   dice "Lista" y no bloquea el botón. El único que bloquea es el del RUC que no existe.
+     */
+    const api = await adminApi(baseURL!);
+    const created: string[] = [];
+
+    /** RUC de 11 dígitos con la última cifra elegida: par existe en el stub, impar no. */
+    const ruc = (exists: boolean): string => {
+      const middle = String(Math.floor(Math.random() * 1e8)).padStart(8, '0');
+      return `20${middle}${exists ? '4' : '7'}`;
+    };
+    const rucEnPadron = ruc(true);
+    const rucFueraDelPadron = ruc(false);
+    // Lo que dice el papel, y que no tiene que llegar a la base: el nombre lo decide SUNAT.
+    const NOMBRE_DEL_EXCEL = 'RAZON SOCIAL INVENTADA DEL EXCEL S.A.C.';
+
+    try {
+      const delMaestro = await createCustomer(api);
+      const product = await createCatalogProduct(api, {
+        source: 'PURCHASED',
+        name: PRODUCT_NAME,
+      });
+      const keyPadron = `FFA1-${randomLetters(4)}`;
+      const keySinPadron = `FFA1-${randomLetters(4)}`;
+      const line = (over: Partial<SheetRow>): SheetRow => ({
+        issueDate: '03/08/2026',
+        docType: 'Factura',
+        documentKey: '',
+        customer: '',
+        sku: product.sku,
+        productName: PRODUCT_NAME,
+        unit: 'UNIDAD',
+        qty: '10.000',
+        netAmount: '1000.00',
+        ...over,
+      });
+
+      await loginAsAdmin(page);
+      await page.goto('/cotizaciones/importar');
+      await expect(page.getByRole('heading', { name: 'Importar cotizaciones' })).toBeVisible({
+        timeout: 60_000,
+      });
+      await uploadCsv(page, [
+        line({ documentKey: keyPadron, customer: `${rucEnPadron} - ${NOMBRE_DEL_EXCEL}` }),
+        line({ documentKey: keySinPadron, customer: `${rucFueraDelPadron} - ${NOMBRE_DEL_EXCEL}` }),
+      ]);
+
+      // ---------------------------------------------------------------------
+      // 1. El que sí está en el padrón: badge con la razón social **del padrón**.
+      // ---------------------------------------------------------------------
+      await expect(
+        page.getByText(`Nuevo — se creará desde padrón: PADRON STUB ${rucEnPadron}`),
+      ).toBeVisible();
+      // El nombre del papel no es el que se muestra como decidido: en la cabecera aparece
+      // como referencia de lo que traía el archivo, pero el badge dice el del padrón.
+      await expect(
+        page.getByText(`Nuevo — se creará desde padrón: ${NOMBRE_DEL_EXCEL}`),
+      ).toHaveCount(0);
+      // No es un problema: no se abre solo y su estado es "Lista".
+      const togglePadron = documentToggle(page, keyPadron);
+      await expect(togglePadron).toHaveAttribute('aria-expanded', 'false');
+      await expect(togglePadron.locator('..').getByText('Lista', { exact: true })).toBeVisible();
+      // Y el aviso de arriba lo cuenta como alta, en singular: es **uno** solo.
+      await expect(
+        page.getByText(
+          'Un comprobante trae un cliente que no está en el maestro y sí en el padrón',
+        ),
+      ).toBeVisible();
+
+      // ---------------------------------------------------------------------
+      // 2. El que no está: sin badge, con su error de siempre y con el alta
+      //    express al lado (D-156). El botón queda bloqueado por este y solo
+      //    por este.
+      // ---------------------------------------------------------------------
+      await expect(
+        page.getByText(`Nuevo — se creará desde padrón: PADRON STUB ${rucFueraDelPadron}`),
+      ).toHaveCount(0);
+      await expect(documentToggle(page, keySinPadron)).toHaveAttribute('aria-expanded', 'true');
+      await expect(
+        page.getByText('Elige el cliente del comprobante o créalo con el botón de al lado.'),
+      ).toHaveCount(1);
+      await expect(page.getByText('Un comprobante tiene algo sin resolver')).toBeVisible();
+      const submit = page.getByRole('button', { name: 'Crear las cotizaciones' });
+      await expect(submit).toBeDisabled();
+      await expect(page.getByRole('button', { name: '+ Crear cliente' })).toHaveCount(2);
+
+      // ---------------------------------------------------------------------
+      // 3. Se resuelve eligiendo un cliente del maestro y el resumen queda
+      //    diciendo cuántos clientes se van a dar de alta.
+      // ---------------------------------------------------------------------
+      const etiquetaMaestro = `${delMaestro.docNumber} — ${delMaestro.name}`;
+      const campoSinPadron = page.getByLabel(`Cliente de ${keySinPadron}`, { exact: true });
+      await chooseOption(page, campoSinPadron, etiquetaMaestro);
+      await expectChosen(campoSinPadron, etiquetaMaestro);
+      await expect(submit).toBeEnabled();
+      await expect(
+        page.getByText(
+          'Se crearán 2 cotizaciones en borrador con 2 líneas, y 1 clientes nuevos desde el padrón.',
+        ),
+      ).toBeVisible();
+
+      // ---------------------------------------------------------------------
+      // 4. Enviar. **Lo que viaja** es lo que protege D-158: el documento y
+      //    nada más.
+      // ---------------------------------------------------------------------
+      const enviado = page.waitForRequest(
+        (r) =>
+          r.url().includes('/api/imports/quotations') &&
+          !r.url().includes('preview') &&
+          r.method() === 'POST',
+      );
+      const confirmed = page.waitForResponse(
+        (r) =>
+          r.url().includes('/api/imports/quotations') &&
+          !r.url().includes('preview') &&
+          r.request().method() === 'POST',
+      );
+      await submit.click();
+
+      const body = (await enviado).postDataJSON() as {
+        rows: {
+          documentKey: string;
+          customerId: string | null;
+          newCustomer?: Record<string, unknown>;
+        }[];
+      };
+      const filaPadron = body.rows.find((r) => r.documentKey === keyPadron);
+      const filaMaestro = body.rows.find((r) => r.documentKey === keySinPadron);
+      expect(filaPadron?.customerId).toBeNull();
+      // Dos claves exactas: `docType` y `docNumber`. Si mañana alguien agrega `name` acá, este
+      // caso se cae — que es justo lo que tiene que pasar.
+      expect(filaPadron?.newCustomer).toEqual({ docType: 'RUC', docNumber: rucEnPadron });
+      // Y el nombre del papel no viaja por ningún otro campo del request.
+      expect(JSON.stringify(body)).not.toContain(NOMBRE_DEL_EXCEL);
+      // El comprobante resuelto a mano manda el id y **no** pide alta: son excluyentes.
+      expect(filaMaestro?.customerId).toBe(delMaestro.id);
+      expect(filaMaestro?.newCustomer).toBeUndefined();
+
+      const response = await confirmed;
+      expect(response.ok(), `la importación falló: ${await response.text()}`).toBe(true);
+      const result = (await response.json()) as {
+        quotations: number;
+        codes: string[];
+        createdCustomers: string[];
+      };
+      expect(result.quotations).toBe(2);
+      // El alta se informa con la razón social del padrón, que es la que se escribió.
+      expect(result.createdCustomers).toEqual([`${rucEnPadron} — PADRON STUB ${rucEnPadron}`]);
+      await expect(
+        page.getByText(`Y se dieron de alta 1 clientes desde el padrón: ${rucEnPadron}`),
+      ).toBeVisible();
+
+      // ---------------------------------------------------------------------
+      // 5. Lo que quedó escrito: el cliente nuevo con el nombre del padrón y
+      //    cada cotización a nombre de quien corresponde.
+      // ---------------------------------------------------------------------
+      const enMaestro = await getItems<{ id: string; docNumber: string; name: string }>(
+        api,
+        `/api/customers?search=${rucEnPadron}`,
+      );
+      const nuevo = enMaestro.find((c) => c.docNumber === rucEnPadron);
+      expect(nuevo, 'el importador no dio de alta al cliente del padrón').toBeDefined();
+      expect(nuevo!.name).toBe(`PADRON STUB ${rucEnPadron}`);
+      // El RUC que el padrón no conoce **no** se dio de alta: se resolvió eligiendo otro.
+      const noCreado = await getItems<{ docNumber: string }>(
+        api,
+        `/api/customers?search=${rucFueraDelPadron}`,
+      );
+      expect(noCreado.filter((c) => c.docNumber === rucFueraDelPadron)).toHaveLength(0);
+
+      const all = await getItems<QuotationListItem>(api, '/api/sales/quotations');
+      const mine = all.filter((q) => result.codes.includes(q.code));
+      created.push(...mine.map((q) => q.id));
+      expect(mine).toHaveLength(2);
+      const detalles = await Promise.all(
+        mine.map((q) =>
+          api
+            .get(`/api/sales/quotations/${q.id}`)
+            .then((r) => r.json() as Promise<QuotationDetail>),
+        ),
+      );
+      const delPadron = detalles.find((d) => d.notes?.includes(keyPadron));
+      const delOtro = detalles.find((d) => d.notes?.includes(keySinPadron));
+      expect(delPadron?.customerName).toBe(`PADRON STUB ${rucEnPadron}`);
+      expect(delOtro?.customerName).toBe(delMaestro.name);
     } finally {
       for (const id of created) {
         await api

@@ -8,6 +8,7 @@ import {
   purgeRoofingTrail,
 } from '../helpers/roofing';
 import { postExpectingError } from '../helpers/production';
+import { chooseOption } from '../helpers/ui';
 
 /**
  * **D-166 — el largo de catálogo de una plancha va en milímetros, y tiene que ser posible.**
@@ -195,8 +196,22 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
       await loginAsAdmin(page);
       await page.goto('/cotizaciones/nueva');
 
-      await page.getByLabel('Cliente').click();
-      await page.getByRole('option', { name: customer.name }).click();
+      // D-156: el selector de cliente es un `SearchSelectField` desde el saneamiento E2E, y
+      // cambia de forma según cuántos clientes haya. `chooseOption` maneja las dos.
+      // `exact: true`: con el campo en modo modal, «Cliente» sin exact resuelve a **tres**
+      // elementos —el botón del campo, el diálogo («Elegir · Cliente») y el botón «Seleccionar
+      // <cliente>»— y Playwright corta por modo estricto. El importador no lo sufría porque
+      // ahí la etiqueta lleva el número de comprobante y ya era única.
+      //
+      // Y el modo modal **sí** toca acá aunque el spec corra solo con dos clientes: el reset
+      // vacía la base una vez por corrida, no por test, así que para cuando este caso corre
+      // dentro de la suite completa ya hay más de veinte clientes creados por sus vecinos. El
+      // caso pasaba aislado y fallaba en la suite, que es la peor forma de fallar.
+      await chooseOption(
+        page,
+        page.getByLabel('Cliente', { exact: true }),
+        `${customer.name} — ${customer.docNumber}`,
+      );
       await page.getByRole('button', { name: /Agregar línea/i }).click();
 
       // El selector de producto está apagado hasta que la línea tiene línea de negocio: es

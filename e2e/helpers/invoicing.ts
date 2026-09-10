@@ -320,11 +320,11 @@ export async function setupOrderScenario(
   api: APIRequestContext,
   options: { coilKg?: string; unitPricePen?: string } = {},
 ): Promise<OrderScenario> {
-  const customer = await createInvoiceableCustomer(api);
-  const stock = await setupCoilStock(api, {
-    lineCode: DISPATCH_LINE,
-    weightKg: options.coilKg ?? '1000',
-  });
+  // El cliente y la bobina no se necesitan entre sí; el pedido de abajo necesita a los dos.
+  const [customer, stock] = await Promise.all([
+    createInvoiceableCustomer(api),
+    setupCoilStock(api, { lineCode: DISPATCH_LINE, weightKg: options.coilKg ?? '1000' }),
+  ]);
   const order = await createDirectOrder(api, {
     customerId: customer.id,
     businessLine: DISPATCH_LINE,
@@ -911,14 +911,37 @@ export async function purgeInvoicingTrail(
 ): Promise<void> {
   const reason = 'Limpieza de prueba E2E';
 
+  /**
+   * Lee los documentos del rastro **de una sola vuelta, en paralelo**.
+   *
+   * Antes cada una de las tres fases de abajo leía sus documentos **en fila**, uno detrás de
+   * otro; ahora cada fase los pide todos juntos. Leer no tiene orden —son GET
+   * independientes— así que el paralelo no cambia nada de lo que la limpieza significa.
+   *
+   * **Las tres fases siguen releyendo, y tiene que seguir siendo así**: la fase 1 revierte
+   * cobros y la 2 reintenta envíos, o sea que las dos cambian el estado que la siguiente
+   * necesita mirar. Lo que se ahorró es el viaje de más dentro de cada vuelta, no una vuelta.
+   *
+   * Las **mutaciones** siguen secuenciales y en el mismo orden de siempre, y eso no es una
+   * omisión: cobros antes que bajas, notas de crédito antes que su afectado. Ahí el orden
+   * **es** la regla.
+   */
+  const readDocuments = async (): Promise<FiscalDocumentDto[]> => {
+    const rows = await Promise.all(
+      (trail.documentIds ?? []).map((documentId) =>
+        api
+          .get(`/api/invoicing/documents/${documentId}`)
+          .then((r) => (r.ok() ? (r.json() as Promise<FiscalDocumentDto>) : null))
+          .catch(() => null),
+      ),
+    );
+    return rows.filter((d): d is FiscalDocumentDto => d !== null);
+  };
+
   // 1. Cobros vigentes: un comprobante con cobros no se da de baja.
-  for (const documentId of trail.documentIds ?? []) {
-    const document = await api
-      .get(`/api/invoicing/documents/${documentId}`)
-      .then((r) => (r.ok() ? (r.json() as Promise<FiscalDocumentDto>) : null))
-      .catch(() => null);
-    for (const payment of (document?.payments ?? []).filter((p) => p.reversedAt === null)) {
-      await reversePayment(api, documentId, payment.id, reason).catch(() => undefined);
+  for (const document of await readDocuments()) {
+    for (const payment of document.payments.filter((p) => p.reversedAt === null)) {
+      await reversePayment(api, document.id, payment.id, reason).catch(() => undefined);
     }
   }
 
@@ -926,24 +949,15 @@ export async function purgeInvoicingTrail(
   //    dar de baja (la baja exige un aceptado) y, mientras siga pendiente, también bloquea
   //    la reversa del despacho. Un reintento lo deja en un estado terminal —aceptado o
   //    rechazado— y recién ahí se sabe qué corresponde hacer con él.
-  for (const documentId of trail.documentIds ?? []) {
-    const document = await api
-      .get(`/api/invoicing/documents/${documentId}`)
-      .then((r) => (r.ok() ? (r.json() as Promise<FiscalDocumentDto>) : null))
-      .catch(() => null);
-    if (document?.status !== 'SEND_ERROR' && document?.status !== 'ISSUED') continue;
-    await api.post(`/api/invoicing/documents/${documentId}/retry`).catch(() => undefined);
+  //
+  //    Se relee: la fase anterior revirtió cobros y el estado pudo cambiar.
+  for (const document of await readDocuments()) {
+    if (document.status !== 'SEND_ERROR' && document.status !== 'ISSUED') continue;
+    await api.post(`/api/invoicing/documents/${document.id}/retry`).catch(() => undefined);
   }
 
   // 3. Los documentos, notas de crédito primero (el afectado no se da de baja con una viva).
-  const documents: FiscalDocumentDto[] = [];
-  for (const documentId of trail.documentIds ?? []) {
-    const document = await api
-      .get(`/api/invoicing/documents/${documentId}`)
-      .then((r) => (r.ok() ? (r.json() as Promise<FiscalDocumentDto>) : null))
-      .catch(() => null);
-    if (document) documents.push(document);
-  }
+  const documents = await readDocuments();
   const rank = (d: FiscalDocumentDto): number =>
     d.docType === 'NOTA_CREDITO' ? 0 : d.docType === 'GUIA_REMISION_REMITENTE' ? 2 : 1;
   for (const document of [...documents].sort((a, b) => rank(a) - rank(b))) {

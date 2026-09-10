@@ -37,6 +37,23 @@ const envSchema = z.object({
   /** Tipo de cambio SUNAT (D-029). Vacío = solo fallback manual (bloqueo B-02, ver PROGRESO.md). */
   APIS_NET_PE_TOKEN: z.string().default(''),
   /**
+   * Base de apis.net.pe — el mismo proveedor para el padrón de RUC/DNI (D-067) y el tipo de
+   * cambio SUNAT (D-029).
+   *
+   * Existe **para poder probarlo**. El padrón se consulta del lado del **API** (D-158: el
+   * navegador manda el documento y nada más), así que un `page.route()` de Playwright no lo
+   * intercepta: la petición no sale del navegador. Sin esta variable, el badge «Nuevo — se
+   * creará desde padrón» era la única rama de D-158 que ningún E2E podía ejercitar, y estaba
+   * anotado como tal en `import-cotizaciones-ui.spec.ts`.
+   *
+   * La suite la apunta a un stub local (`e2e/padron-stub.mjs`, tercer `webServer`), así que la
+   * consulta es determinística y no gasta la cuota compartida del servicio real.
+   *
+   * **No es una entrada de usuario**: viaja por el entorno del proceso, igual que el token, y
+   * nadie la puede fijar desde una petición.
+   */
+  APIS_NET_PE_BASE_URL: z.string().url().default('https://api.apis.net.pe'),
+  /**
    * PSE de facturación electrónica (D-071). La URL identifica a la cuenta y con ella al
    * emisor, por eso no hay variables de RUC ni de razón social. Vacías = se ata
    * `NullInvoicingProvider` y toda emisión queda en contingencia (D-073), que es un

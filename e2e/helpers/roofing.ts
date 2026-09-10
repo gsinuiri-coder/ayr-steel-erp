@@ -266,9 +266,16 @@ export async function setupRoofingScenario(
   api: APIRequestContext,
   options: { weightKg?: string; pieceLengthMm?: string } = {},
 ): Promise<RoofingScenario> {
-  const supplier = await createCuttingSupplier(api);
-  const finish = await createRoofingFinish(api);
-  const color = await createColor(api);
+  // Los tres maestros de arriba **no dependen entre sí**: son tres altas contra tres tablas
+  // distintas. En fila cuestan tres viajes; juntas, uno. Lo que sigue sí depende de ellos
+  // —el producto necesita el acabado y el color, la compra necesita el proveedor— y se queda
+  // secuencial, que es lo que este `Promise.all` tiene que respetar para no volverse una
+  // carrera. Este escenario lo montan 51 casos, así que el viaje ahorrado se paga 51 veces.
+  const [supplier, finish, color] = await Promise.all([
+    createCuttingSupplier(api),
+    createRoofingFinish(api),
+    createColor(api),
+  ]);
   const { product } = await createRoofingProduct(api, {
     finishId: finish.id,
     colorId: color.id,
