@@ -4486,6 +4486,82 @@ pnpm e2e:pse                            # los 12 del PSE — antes hay que vacia
 
 **Nunca `pnpm e2e:prod`** (regla dura 9, D-126).
 
+## Sesión S9 — Trazabilidad y links (T4) + Reporte de bobinas PDF (T6) (2026-09-10)
+
+Entorno **LOCAL** en toda la sesión. **Nada desplegado y sin push**: PROHIBIDO por el brief de
+la sesión, que acumula commits locales para la ventana única post-T7.
+
+**M1 (T4) — links donde antes había texto plano, cero cambios de lógica de negocio.**
+
+- **Bobina ↔ pedido/OP, la punta que faltaba.** `/produccion/:id` ya listaba las bobinas
+  montadas por una OP (D-060); faltaba el sentido contrario. `GET /coils/:id/consumptions`
+  recorre `ProductionOrderConsumption` por `coilId` y sube por
+  `productionOrder.reservation.salesOrder`, y una tarjeta nueva "Órdenes de producción" en
+  `/bobinas/:id` lo muestra con links a `/produccion/:id` y `/pedidos/:id` (D-172). Se
+  descartó ir por `Reservation.itemId`: una reserva `RAW_MATERIAL` apunta a un agregado
+  color+espesor (D-134), no a una bobina física — la bobina concreta recién se decide al
+  armar la OP.
+- **Cliente sin ficha propia.** No existe `/clientes/[id]`. El link es `/clientes?search=<RUC>`;
+  `clientes-view.tsx` lee `?search=` con `useSearchParams()` solo al montar (mismo patrón que
+  `?pedido=` en despachos/comprobantes nuevos) y `customerSearchHref()` en `@/lib/utils` arma
+  el href. Aplicado en cotizaciones, pedidos, despachos, comprobantes y cobranzas (lista y
+  detalle donde correspondía). Dos DTO ganaron un campo aditivo para poder armar el link:
+  `DispatchDto.customerId`/`customerDocNumber` y `PurchaseItemDto.coilId` — los dos ya se
+  resolvían en el `include` de Prisma, solo faltaba devolverlos.
+- **Quedan afuera a propósito** las filas dentro de un `<Select>` de un formulario (elegir
+  qué pedido despachar o facturar): ahí un clic ya significa "elegir esta fila", convertirlo
+  en link rompería la selección.
+- Decisión completa: D-172.
+
+**M2 (T6) — reporte de bobinas en PDF, no sacrificado.**
+
+- Mismo criterio que la hoja de planta del pedido (D-149) y no el de la cotización (D-068):
+  es un reporte interno y regenerable, así que se arma al vuelo con `pdfkit` y **no** se
+  persiste en R2. `apps/api/src/coils/coil-pdf.ts` concentra los dos armados —
+  `GET /coils/:id/pdf` (identificación, saldo, las OP que la montaron, kardex completo) y
+  `GET /coils/report-pdf?<mismos filtros que GET /coils>` (la tabla del conjunto filtrado
+  actual, topada a `MAX_PAGE_SIZE`/200 filas con aviso en el pie si el filtro trae más) —
+  y se descargan con un `<a href="/api/coils/...">` directo, igual que el PDF de planta.
+- **Dos bugs reales, ninguno del código que ya tenía cobertura — los dos, de probar de
+  verdad.** El primero, probando en el navegador: la primera versión de la tabla genérica
+  dejaba que un código de bobina sin espacios (no tiene dónde partirse) se escribiera
+  encima de la columna siguiente cuando no entraba en el ancho declarado — y además los
+  anchos de columna sumaban más que `CONTENT_WIDTH` en dos de las tres tablas. Se corrigió
+  recalculando los anchos y truncando cada celda a una línea con `ellipsis: true`. El
+  segundo, encontrado por `revisor`: el salto de página dentro del loop de filas
+  (`doc.addPage()`) no volvía a dibujar la fila de encabezados, así que un `report-pdf` de
+  varias páginas dejaba la mayoría sin decir qué columna es cuál. Se extrajo
+  `drawHeaderRow()` y se llama también ahí.
+- Decisión completa: D-173.
+
+**Verificación de esta sesión:**
+
+```bash
+pnpm turbo lint typecheck test     # verde (399 unitarios)
+pnpm exec eslint e2e               # verde
+pnpm format:check                  # verde
+pnpm e2e                           # 234 pasados, 0 fallados, 2 saltados (53.9 min) — mismo
+                                    # baseline que la Sesión Saneamiento E2E, sin regresiones
+```
+
+Probado a mano en `pnpm dev:local` (Chrome, vía `claude-in-chrome`): los dos PDFs descargan
+y su contenido es correcto (bobina con 3 consumos de producción, y una con cero); el link
+pedido→cliente filtra `/clientes?search=` a exactamente esa fila; el link compra→bobina
+navega a la bobina correcta.
+
+**Cobertura E2E nueva** (agente `qa`, ambas verdes, corridas de nuevo por mí después del
+arreglo de `revisor`): `e2e/tests/bobina-consumos-pdf-d172.spec.ts` (3 casos —
+`GET /coils/:id/consumptions` vacío/con fila, y los dos PDF con la firma `%PDF` real, no
+solo el `Content-Type`) y `e2e/tests/bobina-consumos-ui-d172.spec.ts` (2 casos — la tarjeta
+nueva y su link a `/produccion/:id`, y el link de cliente desde `/pedidos` a
+`/clientes?search=`). `revisor` no encontró bloqueantes; los dos hallazgos de arriba
+(tabla del PDF) y una mejora defensiva en `clientes-view.tsx` (sincronizar `search` con la
+URL vía `useEffect`, para cuando en el futuro haya un link hacia `/clientes?search=...`
+que navegue **dentro** de la propia pantalla de clientes sin desmontarla) ya están
+aplicados.
+
+Ver handoff completo en `docs/handoff/s9-trazabilidad-links-reporte-bobinas.md`.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
