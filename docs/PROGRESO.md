@@ -4562,6 +4562,78 @@ aplicados.
 
 Ver handoff completo en `docs/handoff/s9-trazabilidad-links-reporte-bobinas.md`.
 
+## Sesión S10 — UX batch: renombres, sidebar, avance de producción (2026-09-10)
+
+Entorno **LOCAL** en toda la sesión. **Nada desplegado y sin push**: PROHIBIDO por el
+brief; los commits se suman a los pendientes de sesiones anteriores para la ventana única.
+
+**M1 — Renombres de línea (D-174).** `BUSINESS_LINE_LABELS` cambia de valores, no de
+claves: Metallic Roofing → Coberturas Aluzinc, Roofing (UPVC) → Coberturas (UPVC), Trading
+→ Reventa, Services → Servicios (Drywall no cambia). Mapeo dado por el dueño, no una
+traducción — se preguntó antes de tocar nada porque el brief lo marcaba como pendiente de
+confirmar y no había ningún precedente en los docs. Un censo por grep confirmó que
+`BUSINESS_LINE_LABELS` es el único punto de renderizado en toda la app: cero strings
+sueltos que corregir aparte. Dos ajustes en E2E por selectores que dejaron de ser únicos o
+dejaron de existir: `plancha-largo-d166.spec.ts` (un tab por `/Coberturas/` ya no alcanza,
+hay dos líneas que empiezan así) y `auth.spec.ts` ("Inicio" → "Panel").
+
+**M2 — Sidebar (D-175).** Grupos reordenados a Comercial, Catálogo, Planta,
+Administración; "General" desaparece y "Inicio" (ahora "Panel") queda sin grupo, a la
+cabeza. "Márgenes" y "Tipo de cambio" se funden en un ítem con pestañas
+(`configuracion/layout.tsx` nuevo, `Tabs` controlado por ruta) — las dos rutas siguen
+existiendo, ningún `href` cambió de destino. `NavItem.activePrefix` nuevo para que el ítem
+fusionado se resalte en las dos rutas. Ajustado en E2E: `fase1.spec.ts` (el link ahora se
+llama "Márgenes y tipo de cambio").
+
+**M3 — Avance en la fila de bobina/fleje montado (D-176).** En `/planta`, cada fila de
+material montado gana una línea de solo lectura con datos que el DTO ya traía:
+`reportedMeters`/`piecesReported` (agregado de **toda la orden**) · `consumedKg` (de esa
+asignación puntual, ya vivía en el DTO sin mostrarse). Cero cálculo nuevo. Verificado
+contra `planta-espacio-produccion*.spec.ts`, `planta-avisos-materia-prima.spec.ts` y
+`fase4*.spec.ts` (drywall) sin tocarlos — el texto nuevo no colisionó con ningún locator
+existente.
+
+**M4 (tablas y cajas info) se difiere a S10b**, por la regla de presupuesto de contexto
+que el propio brief puso (`>60% antes de M4 → /compact; si no alcanza, pasa a S10b`).
+Antes de diferirlo se hizo el primer paso que pedía el brief — listar, no tocar —: el
+"orden descendente por defecto" que pedía ya está en las cuatro listas principales
+(cotizaciones y pedidos por `seq desc`, bobinas por `operationDate desc`, órdenes de
+producción por `seq desc`); lo que falta de M4 es sort interactivo por columna (no
+construido) y la conversión de cajas info largas a popover, con dos candidatos ya
+identificados como punto de partida: la nota de D-146 en `roofing-order-panel.tsx`
+("El plan es una intención...") y la de D-054 en `pedido-detalle-view.tsx` ("Una reserva
+activa descuenta..."). Un censo completo de "vistas afectadas" —el primer paso que M4
+exige antes de tocar nada— no se terminó: la mayoría de los párrafos grises de la app son
+el subtítulo corto de cada página (no un candidato) y separar esos de una nota larga de
+verdad exige leer cada uno, no un grep.
+
+**Lo que encontró `revisor`, ya corregido.** El grep de M1 no podía ver un string que no
+está en el código: `pos.service.ts` armaba el badge de línea del Mostrador y dos mensajes
+de error (venta mixta, piso de margen en `price-floor.ts`) leyendo `businessLine.name`, la
+columna cruda de `business_lines` que sembró el seed en inglés — antes de esta sesión
+coincidía por casualidad con `BUSINESS_LINE_LABELS`, después de D-174 divergía. Los tres
+pasan a resolver el nombre por el código (`BUSINESS_LINE_LABELS[toSharedLineCode(...)]`);
+`PosProductDto.businessLineName` se elimina del todo — el código de línea ya viajaba en el
+DTO y el front resuelve el label ahí. De paso, dos mensajes de error apuntaban a
+"Configuración → Márgenes", una ruta de menú que nunca existió con ese nombre y que D-175
+aleja un paso más: ahora dicen "Administración → Márgenes y tipo de cambio". También:
+la línea nueva de M3 podía leerse como si "reportados"/"piezas" fueran de esa bobina o
+fleje puntual — el texto ahora dice "de la orden"/"de esta bobina"/"de este fleje" para
+que la única cifra realmente propia de la fila (`consumidos`) no se confunda con el
+agregado de toda la orden.
+
+**Verificación de esta sesión:**
+
+```bash
+pnpm turbo lint typecheck test     # verde (399 unitarios)
+pnpm exec eslint e2e               # verde
+pnpm format:check                  # verde
+pnpm e2e                           # 239 pasados, 0 fallados, 2 saltados (52.6 min) —
+                                    # corrida limpia con las correcciones de revisor adentro
+```
+
+Ver handoff completo en `docs/handoff/s10-ux-batch-renombres-sidebar-produccion.md`.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
