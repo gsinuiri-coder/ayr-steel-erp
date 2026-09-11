@@ -45,8 +45,8 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         {groups.map((group) => (
-          <SidebarGroup key={group.label}>
-            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+          <SidebarGroup key={group.label || 'sin-grupo'}>
+            {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => (
@@ -65,7 +65,9 @@ export function AppSidebar() {
                       <SidebarMenuButton
                         asChild
                         isActive={
-                          item.href === '/' ? pathname === '/' : pathname.startsWith(item.href)
+                          item.href === '/'
+                            ? pathname === '/'
+                            : pathname.startsWith(item.activePrefix ?? item.href)
                         }
                         tooltip={item.title}
                       >

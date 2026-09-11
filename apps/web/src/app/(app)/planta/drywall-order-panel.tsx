@@ -287,6 +287,16 @@ export function DrywallOrderPanel({
                   {c.parentCoilCode && <> · madre {c.parentCoilCode}</>}
                 </div>
               </div>
+              {/*
+                S10/M3: avance de la orden mientras este fleje está montado — solo lectura,
+                sin ningún cálculo nuevo. "Piezas buenas" es de la orden entera (los reportes
+                no se parten por fleje); "kg consumidos" sí es de este fleje puntual, y ya
+                existía en el DTO sin mostrarse.
+              */}
+              <div className="text-sm text-muted-foreground">
+                {o.piecesReported} piezas de la orden · {formatQty(c.consumedKg, 'kg')} consumidos
+                de este fleje
+              </div>
               {isLive && new Decimal(c.consumedKg).lte(0) && (
                 <Button
                   variant="outline"

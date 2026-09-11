@@ -30,12 +30,19 @@ export const BusinessLine = {
 export type BusinessLine = (typeof BusinessLine)[keyof typeof BusinessLine];
 export const BUSINESS_LINES = Object.values(BusinessLine) as [BusinessLine, ...BusinessLine[]];
 
+/**
+ * S10/M1 (D-174): nombres de línea que ve el usuario, decisión del dueño — no una
+ * traducción literal. El código (`BusinessLine`, columna `code`) y el `name` que trae
+ * `business_lines` en la base **no cambian**: son identifiers/datos, esto es la única
+ * capa de presentación y el único lugar que un componente debe importar para mostrar el
+ * nombre de una línea.
+ */
 export const BUSINESS_LINE_LABELS: Record<BusinessLine, string> = {
   drywall: 'Drywall',
-  'metallic-roofing': 'Metallic Roofing',
-  roofing: 'Roofing (UPVC)',
-  trading: 'Trading',
-  services: 'Services',
+  'metallic-roofing': 'Coberturas Aluzinc',
+  roofing: 'Coberturas (UPVC)',
+  trading: 'Reventa',
+  services: 'Servicios',
 };
 
 /** Líneas cuyo inventario no genera movimientos de kardex. */

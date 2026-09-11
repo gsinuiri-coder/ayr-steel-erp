@@ -452,7 +452,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
             error:
               `${at}: el precio está por debajo del mínimo. El mínimo de ${coil.code} es ` +
               `${formatMoney(coil.minPricePen, 'PEN', 2)} por kg (con IGV). ` +
-              'Súbelo, o cambia el margen mínimo de esa línea de negocio en Configuración → Márgenes.',
+              'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes y tipo de cambio.',
           };
         }
         items.push({
@@ -513,7 +513,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
           error:
             `${at}: el precio está por debajo del mínimo. El mínimo de ${product?.sku ?? 'este producto'} es ` +
             `${formatMoney(stock.minPricePen, 'PEN', 2)} por ${perMeter ? 'metro' : unitSymbol(product?.unit ?? '')} (con IGV). ` +
-            'Súbelo, o cambia el margen mínimo de esa línea de negocio en Configuración → Márgenes.',
+            'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes y tipo de cambio.',
         };
       }
 

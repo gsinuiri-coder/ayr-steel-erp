@@ -468,6 +468,16 @@ export function RoofingOrderPanel({
                   {c.widthMm} mm · pendiente {formatQty(c.remainingKg, 'kg')}
                 </div>
               </div>
+              {/*
+                S10/M3: avance de la orden mientras esta bobina está montada — solo lectura,
+                sin ningún cálculo nuevo. "ML reportados" es de la orden entera (los reportes
+                no se parten por bobina); "kg consumidos" sí es de esta bobina puntual, y ya
+                existía en el DTO sin mostrarse.
+              */}
+              <div className="text-sm text-muted-foreground">
+                {formatQty(order.reportedMeters, 'm')} de la orden · {formatQty(c.consumedKg, 'kg')}{' '}
+                consumidos de esta bobina
+              </div>
               <div className="flex items-center gap-2">
                 {liveCoils.length > 1 && (
                   <Button

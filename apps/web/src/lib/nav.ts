@@ -32,6 +32,12 @@ export interface NavItem {
   roles: readonly Role[];
   /** Módulo aún no construido (fases siguientes). */
   soon?: boolean;
+  /**
+   * S10/M2: prefijo para marcar el ítem activo, cuando no coincide con `href` — un ítem
+   * que apunta a la primera de varias rutas hermanas (pestañas) sigue "activo" en las
+   * demás. Por defecto es `href`.
+   */
+  activePrefix?: string;
 }
 
 export interface NavGroup {
@@ -41,11 +47,68 @@ export interface NavGroup {
 
 const ALL = [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR] as const;
 
-/** Menú lateral por rol (§3.4). Los módulos de fases futuras se muestran deshabilitados. */
+/**
+ * Menú lateral por rol (§3.4). Los módulos de fases futuras se muestran deshabilitados.
+ *
+ * S10/M2: el orden y la agrupación son los que pidió el dueño — Comercial, Catálogo,
+ * Planta, Administración —, sin la sección "General" de antes. "Panel" (antes "Inicio")
+ * queda como el único ítem sin grupo (`label: ''`, que `app-sidebar.tsx` no pinta), a la
+ * cabeza del menú. Ningún `href` cambió: es reordenar y renombrar, no mover rutas.
+ */
 export const NAV: NavGroup[] = [
   {
-    label: 'General',
-    items: [{ title: 'Inicio', href: '/', icon: Home, roles: ALL }],
+    label: '',
+    items: [{ title: 'Panel', href: '/', icon: Home, roles: ALL }],
+  },
+  {
+    label: 'Comercial',
+    items: [
+      {
+        // Fase 7b (RF-60): primero de la lista porque es la pantalla que más se abre al
+        // día, y la única que se usa de pie con una tablet en la mano.
+        title: 'Mostrador',
+        href: '/pos',
+        icon: Store,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
+        title: 'Clientes',
+        href: '/clientes',
+        icon: UsersRound,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
+        title: 'Cotizaciones',
+        href: '/cotizaciones',
+        icon: FileText,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
+        title: 'Pedidos',
+        href: '/pedidos',
+        icon: ClipboardList,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
+        title: 'Comprobantes',
+        href: '/comprobantes',
+        icon: ReceiptText,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
+        title: 'Despachos',
+        href: '/despachos',
+        icon: Send,
+        // El despacho es un acto de almacén (D-074): lo hace planta, no solo el vendedor.
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        title: 'Cobranzas',
+        href: '/cobranzas',
+        icon: Banknote,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+    ],
   },
   {
     label: 'Catálogo',
@@ -115,69 +178,16 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    label: 'Comercial',
-    items: [
-      {
-        // Fase 7b (RF-60): primero de la lista porque es la pantalla que más se abre al
-        // día, y la única que se usa de pie con una tablet en la mano.
-        title: 'Mostrador',
-        href: '/pos',
-        icon: Store,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
-      {
-        title: 'Clientes',
-        href: '/clientes',
-        icon: UsersRound,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
-      {
-        title: 'Cotizaciones',
-        href: '/cotizaciones',
-        icon: FileText,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
-      {
-        title: 'Pedidos',
-        href: '/pedidos',
-        icon: ClipboardList,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
-      {
-        title: 'Comprobantes',
-        href: '/comprobantes',
-        icon: ReceiptText,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
-      {
-        title: 'Despachos',
-        href: '/despachos',
-        icon: Send,
-        // El despacho es un acto de almacén (D-074): lo hace planta, no solo el vendedor.
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA],
-      },
-      {
-        title: 'Cobranzas',
-        href: '/cobranzas',
-        icon: Banknote,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
-    ],
-  },
-  {
     label: 'Administración',
     items: [
       { title: 'Usuarios', href: '/usuarios', icon: Users, roles: [Role.ADMINISTRADOR] },
       {
-        title: 'Márgenes',
+        // S10/M2: Márgenes y tipo de cambio comparten pantalla (pestañas en
+        // configuracion/layout.tsx); el ítem del menú apunta al primer tab.
+        title: 'Márgenes y tipo de cambio',
         href: '/configuracion/margenes',
+        activePrefix: '/configuracion',
         icon: Percent,
-        roles: [Role.ADMINISTRADOR],
-      },
-      {
-        title: 'Tipo de cambio',
-        href: '/configuracion/tipo-cambio',
-        icon: Banknote,
         roles: [Role.ADMINISTRADOR],
       },
     ],

@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  BUSINESS_LINE_LABELS,
   Decimal,
   GENERIC_CUSTOMER_MAX_TOTAL_PEN,
   PAYMENT_METHOD_LABELS,
@@ -293,7 +294,7 @@ export function PosView() {
                         </div>
                         <div className="text-sm text-muted-foreground">{p.name}</div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                          <Badge variant="secondary">{p.businessLineName}</Badge>
+                          <Badge variant="secondary">{BUSINESS_LINE_LABELS[p.businessLine]}</Badge>
                           <span>disponible {formatQty(p.availableQty, unitSymbol(p.unit))}</span>
                           {otherLine && <span>· otra línea de negocio</span>}
                         </div>

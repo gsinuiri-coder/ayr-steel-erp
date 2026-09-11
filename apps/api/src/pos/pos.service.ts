@@ -17,6 +17,7 @@ import {
   TransferMode,
 } from '@prisma/client';
 import {
+  BUSINESS_LINE_LABELS,
   CreditNoteReason,
   Decimal,
   GENERIC_CUSTOMER_DOC_NUMBER,
@@ -166,7 +167,7 @@ export class PosService {
         name: true,
         unit: true,
         listPricePen: true,
-        businessLine: { select: { code: true, name: true } },
+        businessLine: { select: { code: true } },
       },
     });
     if (products.length === 0) return [];
@@ -194,7 +195,6 @@ export class PosService {
           name: p.name,
           unit: p.unit,
           businessLine: toSharedLineCode(p.businessLine.code),
-          businessLineName: p.businessLine.name,
           listPricePen: p.listPricePen === null ? null : p.listPricePen.toFixed(4),
           availableQty: available.toFixed(3),
           _available: available,
@@ -705,7 +705,7 @@ export class PosService {
   ): Promise<BusinessLine> {
     const products = await tx.product.findMany({
       where: { id: { in: productIds } },
-      select: { id: true, sku: true, businessLine: { select: { code: true, name: true } } },
+      select: { id: true, sku: true, businessLine: { select: { code: true } } },
     });
     if (products.length !== new Set(productIds).size) {
       throw new NotFoundException('Hay un producto del carrito que no existe');
@@ -714,8 +714,10 @@ export class PosService {
     if (!first) throw new BadRequestException('El carrito está vacío');
     const other = products.find((p) => p.businessLine.code !== first.businessLine.code);
     if (other) {
+      // D-174: el nombre de línea es de `BUSINESS_LINE_LABELS`, nunca de la columna
+      // `name` de `business_lines` — esa la escribió el seed y no la lee nadie más.
       throw new BadRequestException(
-        `Una venta de mostrador es de una sola línea de negocio: ${first.sku} es de ${first.businessLine.name} y ${other.sku} de ${other.businessLine.name}. Cóbralas por separado.`,
+        `Una venta de mostrador es de una sola línea de negocio: ${first.sku} es de ${BUSINESS_LINE_LABELS[toSharedLineCode(first.businessLine.code)]} y ${other.sku} de ${BUSINESS_LINE_LABELS[toSharedLineCode(other.businessLine.code)]}. Cóbralas por separado.`,
       );
     }
     return toSharedLineCode(first.businessLine.code);

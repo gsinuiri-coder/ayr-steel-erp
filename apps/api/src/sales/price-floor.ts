@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { InventoryItemType, type Prisma } from '@prisma/client';
 import {
+  BUSINESS_LINE_LABELS,
   Decimal,
   fixedLengthUnitValue,
   fixedLengthValuePerMeter,
@@ -11,6 +12,7 @@ import {
   saleValueFromPrice,
   toDecimal,
 } from '@ayr/shared';
+import { toSharedLineCode } from '../common/business-line-code';
 import { rawMaterialCoilIds, type RawMaterialSpecRef } from './raw-material';
 
 /**
@@ -196,7 +198,7 @@ async function minMarginsByBusinessLine(
   if (ids.length === 0) return new Map();
   const settings = await tx.pricingSetting.findMany({
     where: { businessLineId: { in: ids } },
-    select: { businessLineId: true, minMarginPct: true, businessLine: { select: { name: true } } },
+    select: { businessLineId: true, minMarginPct: true, businessLine: { select: { code: true } } },
   });
   const out = new Map<string, string>();
   for (const setting of settings) {
@@ -205,10 +207,13 @@ async function minMarginsByBusinessLine(
     // El schema de edición ya no lo admite (D-163), pero una fila anterior a esa validación
     // tiene que rebotar acá con un mensaje legible y no con un 500 desde `valueForMargin`.
     if (toDecimal(minMarginPct).gte(100)) {
+      // D-174: el nombre de línea es de `BUSINESS_LINE_LABELS`, no de la columna `name`
+      // de `business_lines`; D-175: el ítem del menú se llama "Márgenes y tipo de cambio",
+      // bajo "Administración" (nunca existió un grupo "Configuración").
       throw new BadRequestException(
-        `El margen mínimo de ${setting.businessLine.name} es ${toDecimal(minMarginPct).toFixed(2)}%: ` +
+        `El margen mínimo de ${BUSINESS_LINE_LABELS[toSharedLineCode(setting.businessLine.code)]} es ${toDecimal(minMarginPct).toFixed(2)}%: ` +
           'no se puede calcular un precio mínimo con un margen de 100% o más. ' +
-          'Corrígelo en Configuración → Márgenes.',
+          'Corrígelo en Administración → Márgenes y tipo de cambio.',
       );
     }
     out.set(setting.businessLineId, minMarginPct);

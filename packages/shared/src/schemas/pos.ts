@@ -254,8 +254,8 @@ export const posProductSchema = z.object({
   sku: z.string(),
   name: z.string(),
   unit: z.string(),
+  /** D-174: el nombre se resuelve con `BUSINESS_LINE_LABELS[businessLine]`, nunca aparte. */
   businessLine: z.enum(BUSINESS_LINES),
-  businessLineName: z.string(),
   /** Precio de lista sin IGV. Null si el producto no tiene: ahí hay que escribirlo. */
   listPricePen: z.string().nullable(),
   availableQty: z.string(),
