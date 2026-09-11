@@ -408,15 +408,19 @@ para esa búsqueda»**. No hubo búsqueda. El estado inicial debería invitar (�
 producto por código o nombre») y reservar ese mensaje para cuando una búsqueda real no
 devuelva nada.
 
-### F4-02 — (c) El reparto del ancho está al revés
+### F4-02 — CORREGIDO: el reparto del ancho está bien
 
-A 1920 px, la zona de productos ocupa ~1060 px (vacíos hasta que se busca) y el carrito
-—que es donde el mostrador mira todo el tiempo: cliente, líneas, totales, medio de pago—
-queda en una columna de ~270 px. Los cuatro botones de medio de pago entran de a dos por
-fila en esa columna.
+**Lo que se anotó primero, y era falso.** «El carrito queda en una columna de ~270 px».
+Salió de medir sobre una captura de 1568 px de ancho que representaba un viewport de
+2133 px: los píxeles de la imagen se leyeron como píxeles CSS. El carrito es
+`lg:grid-cols-[1fr_24rem]` (`pos-view.tsx:258`), o sea **384 px CSS**, que es un ancho
+razonable para un panel de venta, y a 1366 px la pantalla no desborda
+(`documentElement.scrollWidth - clientWidth === 0`, medido).
 
-**Propuesta (B2).** Ensanchar el panel de venta y dejar que la grilla de productos ocupe lo
-que sobra, no al revés.
+Queda anotado en vez de borrado porque es exactamente el error contra el que sirve medir:
+una captura escalada no es una medida. Lo único cierto del hallazgo original es F4-01 —el
+área de productos está vacía hasta que alguien busca—, y eso es un problema de estado
+vacío, no de reparto de ancho.
 
 ---
 
@@ -449,9 +453,9 @@ avisar) siguen vigentes y **no** se vuelven a levantar acá para no duplicar la 
 
 **B2 — robustez 1366–1920**
 
-- T-07 (menú más alto que la pantalla), F4-02 (reparto del ancho del mostrador), y la
-  verificación de que ninguna tabla ni grid se rompe entre 1366 y 1920 con la ventana a
-  media pantalla.
+- T-07 (menú más alto que la pantalla) y la verificación de que ninguna tabla ni grid se
+  rompe entre 1366 y 1920 con la ventana a media pantalla. (F4-02 se cayó al medirlo: ver
+  arriba.)
 
 **B3 — fixes baratos (a) de esta inspección**
 

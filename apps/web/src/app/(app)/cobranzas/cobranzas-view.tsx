@@ -19,7 +19,13 @@ import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
+import {
+  cn,
+  customerSearchHref,
+  CUSTOMER_CELL_CLASSNAME,
+  CUSTOMER_NAME_CLASSNAME,
+  LINK_CLASSNAME,
+} from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -133,10 +139,11 @@ export function CobranzasView() {
               <TableBody>
                 {receivableRows.map((r) => (
                   <TableRow key={r.customerId}>
-                    <TableCell>
+                    <TableCell className={CUSTOMER_CELL_CLASSNAME}>
                       <Link
                         href={customerSearchHref(r.customerDocNumber)}
-                        className={cn('font-medium', LINK_CLASSNAME)}
+                        className={cn('font-medium', LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
+                        title={r.customerName}
                       >
                         {r.customerName}
                       </Link>
@@ -223,10 +230,11 @@ export function CobranzasView() {
                         {FISCAL_DOC_TYPE_LABELS[d.docType]}
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={CUSTOMER_CELL_CLASSNAME}>
                       <Link
                         href={customerSearchHref(d.customerDocNumber)}
-                        className={LINK_CLASSNAME}
+                        className={cn(LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
+                        title={d.customerName}
                       >
                         {d.customerName}
                       </Link>

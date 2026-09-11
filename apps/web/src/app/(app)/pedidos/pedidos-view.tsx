@@ -27,7 +27,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
+import {
+  cn,
+  customerSearchHref,
+  CUSTOMER_CELL_CLASSNAME,
+  CUSTOMER_NAME_CLASSNAME,
+  LINK_CLASSNAME,
+} from '@/lib/utils';
 import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import {
@@ -211,8 +217,12 @@ export function PedidosView() {
                     {o.code}
                   </Link>
                 </TableCell>
-                <TableCell>
-                  <Link href={customerSearchHref(o.customerDocNumber)} className={LINK_CLASSNAME}>
+                <TableCell className={CUSTOMER_CELL_CLASSNAME}>
+                  <Link
+                    href={customerSearchHref(o.customerDocNumber)}
+                    className={cn(LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
+                    title={o.customerName}
+                  >
                     {o.customerName}
                   </Link>
                   <span className="ml-2 text-xs text-muted-foreground">{o.customerDocNumber}</span>

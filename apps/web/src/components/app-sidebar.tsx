@@ -97,13 +97,15 @@ export function AppSidebar() {
           </SidebarGroup>
         ))}
       </SidebarContent>
-      <SidebarFooter className="border-t p-3">
+      {/* S11/B2: el pie ocupaba 113 px de un menú que ya no entra a 768 px de alto. El correo
+          pasa al `title` —se usa para identificarse, no se lee— y el rol acompaña al nombre
+          en la misma línea. */}
+      <SidebarFooter className="border-t p-2">
         <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-          <p className="truncate text-sm font-medium">{user.name}</p>
-          <p className="truncate text-xs text-muted-foreground" title={user.email}>
-            {user.email}
+          <p className="truncate text-xs font-medium" title={user.email}>
+            {user.name}{' '}
+            <span className="font-normal text-muted-foreground">{ROLE_LABELS[user.role]}</span>
           </p>
-          <p className="text-xs text-muted-foreground">{ROLE_LABELS[user.role]}</p>
         </div>
         <Button
           variant="outline"

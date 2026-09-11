@@ -35,7 +35,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
+import {
+  cn,
+  customerSearchHref,
+  CUSTOMER_CELL_CLASSNAME,
+  CUSTOMER_NAME_CLASSNAME,
+  LINK_CLASSNAME,
+} from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -218,8 +224,12 @@ export function ComprobantesView() {
                   <TableCell className="hidden md:table-cell">
                     {FISCAL_DOC_TYPE_LABELS[d.docType]}
                   </TableCell>
-                  <TableCell>
-                    <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
+                  <TableCell className={CUSTOMER_CELL_CLASSNAME}>
+                    <Link
+                      href={customerSearchHref(d.customerDocNumber)}
+                      className={cn(LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
+                      title={d.customerName}
+                    >
                       {d.customerName}
                     </Link>
                     <span className="ml-2 text-xs text-muted-foreground">
