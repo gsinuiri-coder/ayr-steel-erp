@@ -449,11 +449,19 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   );
 }
 
-/** S11/D-179: la misma tira que el resto de los detalles, con su renglón de contexto. */
+/**
+ * S11/D-179: la misma tira que el resto de los detalles, con su renglón de contexto.
+ *
+ * La cifra va en su propio elemento y no suelta junto al renglón: pegadas, el nodo de texto
+ * pasa a ser «1200.0Del fleje montado, vs. 0 reportadas» y deja de existir un elemento cuyo
+ * texto sea la cifra. Lo detectó `fase7e-ajustes-d121.spec.ts:92`, que busca el valor con
+ * `exact: true` — y tiene razón en buscarlo así: lo que la pantalla promete es mostrar la
+ * cifra, no una cadena que la contenga.
+ */
 function SummaryCard({ title, value, hint }: { title: string; value: string; hint?: string }) {
   return (
     <Stat label={title}>
-      {value}
+      <div>{value}</div>
       {hint && <div className="mt-0.5 text-xs font-normal text-muted-foreground">{hint}</div>}
     </Stat>
   );

@@ -211,7 +211,9 @@ export function DespachoDetalleView({ id }: { id: string }) {
           )}
         </Stat>
         <Stat label="Peso bruto">
-          {formatQty(d.totalWeightKg, 'kg')}
+          {/* La cifra en su propio elemento: pegada al renglón de bultos, ningún elemento
+              tendría por texto el peso solo. Ver `SummaryCard` en el detalle de una OP. */}
+          <span>{formatQty(d.totalWeightKg, 'kg')}</span>
           {d.packageCount !== null && (
             <span className="ml-2 font-normal text-muted-foreground">{d.packageCount} bultos</span>
           )}

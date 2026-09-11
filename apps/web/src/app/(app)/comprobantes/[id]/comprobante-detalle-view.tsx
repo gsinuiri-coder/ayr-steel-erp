@@ -730,7 +730,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {formatMoney(d.totalPen)}
         </Stat>
         <Stat label="Saldo" className="font-semibold">
-          {formatMoney(d.balancePen)}
+          {/* La cifra en su propio elemento, por lo mismo que en el detalle de un despacho. */}
+          <div>{formatMoney(d.balancePen)}</div>
           {/*
             RF-72: el saldo de una versión archivada se sigue calculando igual, pero ya no
             suma en cuentas por cobrar. Sin esta línea, la cifra se lee como una deuda viva.
