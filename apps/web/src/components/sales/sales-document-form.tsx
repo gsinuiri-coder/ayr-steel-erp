@@ -554,10 +554,10 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
   return (
     <>
       <div>
-        <h1 className="text-2xl font-semibold">
+        <h1 className="text-lg font-semibold">
           {isQuotation ? 'Nueva cotización' : 'Nuevo pedido directo'}
         </h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {isQuotation
             ? 'Simulación de precio: no reserva stock. La reserva nace al confirmarla (D-054).'
             : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
@@ -572,7 +572,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         </Alert>
       )}
 
-      <div className="grid gap-4 rounded-lg border p-4 md:grid-cols-4">
+      <div className="grid gap-x-4 gap-y-3 rounded-lg border p-3 md:grid-cols-4">
         <div className="grid gap-2 md:col-span-2">
           <div className="flex items-center justify-between">
             <Label htmlFor="customer">Cliente</Label>

@@ -93,8 +93,8 @@ export function TipoCambioView() {
   return (
     <>
       <div>
-        <h1 className="text-2xl font-semibold">Tipo de cambio</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold">Tipo de cambio</h1>
+        <p className="text-xs text-muted-foreground">
           Se consulta a apis.net.pe (SUNAT) por fecha y se cachea. Si la API externa falla, el
           sistema usa el último valor conocido; aquí puedes registrar uno a mano.
         </p>

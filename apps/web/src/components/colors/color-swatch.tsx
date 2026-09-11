@@ -20,7 +20,9 @@ export function ColorSwatch({
     return <span className={cn('text-muted-foreground', className)}>Sin color</span>;
   }
   return (
-    <span className={cn('inline-flex items-center gap-2', className)}>
+    // `align-middle`: un `inline-flex` apoyado en la línea base cuelga por debajo de ella y
+    // estira la fila de la tabla ~4 px (S11, B1).
+    <span className={cn('inline-flex items-center gap-2 align-middle', className)}>
       <span
         aria-hidden
         className="size-4 shrink-0 rounded-sm border border-border"

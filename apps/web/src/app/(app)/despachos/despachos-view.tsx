@@ -76,8 +76,8 @@ export function DespachosView() {
     <RoleGate allow={DISPATCH_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Despachos</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Despachos</h1>
+          <p className="text-xs text-muted-foreground">
             El despacho saca la mercadería: mueve el kardex y cierra el pedido. Facturar no lo
             cierra.
           </p>

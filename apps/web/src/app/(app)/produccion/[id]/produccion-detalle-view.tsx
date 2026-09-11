@@ -154,8 +154,8 @@ export function ProduccionDetalleView({ id }: { id: string }) {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="font-mono text-2xl font-semibold">{o.code}</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="font-mono text-lg font-semibold">{o.code}</h1>
+          <p className="text-xs text-muted-foreground">
             {o.productSku} · {o.productName} ·{' '}
             {o.kind === ProductionOrderKind.ROOFING
               ? `bobina de ${o.productThicknessMm ?? '—'} mm (±0.02)`

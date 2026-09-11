@@ -103,8 +103,8 @@ export function CotizacionesView() {
     <RoleGate allow={SALES_ROLES}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Cotizaciones</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Cotizaciones</h1>
+          <p className="text-xs text-muted-foreground">
             Cotizar no reserva stock; confirmar crea el pedido y la reserva (RF-61, RF-62).
           </p>
         </div>
@@ -228,7 +228,7 @@ export function CotizacionesView() {
                   <Link href={customerSearchHref(q.customerDocNumber)} className={LINK_CLASSNAME}>
                     {q.customerName}
                   </Link>
-                  <div className="text-xs text-muted-foreground">{q.customerDocNumber}</div>
+                  <span className="ml-2 text-xs text-muted-foreground">{q.customerDocNumber}</span>
                 </TableCell>
                 <TableCell className="hidden sm:table-cell">{formatDate(q.issueDate)}</TableCell>
                 {/* D-157: `null` es "no vence", no "falta el dato". */}

@@ -303,7 +303,7 @@ export function ProductDialog({
                     <FormLabel>Acabado</FormLabel>
                     <Select value={field.value} onValueChange={field.onChange}>
                       <FormControl>
-                        <SelectTrigger disabled={finishes.isPending}>
+                        <SelectTrigger className="w-full" disabled={finishes.isPending}>
                           <SelectValue
                             placeholder={
                               finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
@@ -346,7 +346,7 @@ export function ProductDialog({
                       }}
                     >
                       <FormControl>
-                        <SelectTrigger>
+                        <SelectTrigger className="w-full">
                           <SelectValue placeholder="Elige el subtipo" />
                         </SelectTrigger>
                       </FormControl>

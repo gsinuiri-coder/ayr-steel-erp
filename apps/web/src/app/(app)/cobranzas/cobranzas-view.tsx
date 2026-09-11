@@ -68,8 +68,8 @@ export function CobranzasView() {
   return (
     <RoleGate allow={SALES_ROLES}>
       <div>
-        <h1 className="text-2xl font-semibold">Cobranzas</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold">Cobranzas</h1>
+        <p className="text-xs text-muted-foreground">
           Saldo por comprobante. El cobro se registra desde el comprobante, y revertirlo devuelve el
           monto al saldo.
         </p>
@@ -115,7 +115,7 @@ export function CobranzasView() {
       </div>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Por cliente</h2>
+        <h2 className="text-sm font-medium">Por cliente</h2>
         {receivables.isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : (
@@ -140,7 +140,9 @@ export function CobranzasView() {
                       >
                         {r.customerName}
                       </Link>
-                      <div className="text-xs text-muted-foreground">{r.customerDocNumber}</div>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {r.customerDocNumber}
+                      </span>
                     </TableCell>
                     <TableCell className="hidden text-right sm:table-cell">
                       {r.documentCount}
@@ -190,7 +192,7 @@ export function CobranzasView() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Comprobantes con saldo</h2>
+        <h2 className="text-sm font-medium">Comprobantes con saldo</h2>
         {pending.isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : (

@@ -191,10 +191,10 @@ export function CompraDetalleView({ id }: { id: string }) {
     <>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">
+          <h1 className="text-lg font-semibold">
             {PURCHASE_DOC_TYPE_LABELS[p.docType]} {p.documentLabel}
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {p.supplierCode} — {p.supplierName} · {PURCHASE_TYPE_LABELS[p.type]} ·{' '}
             {BUSINESS_LINE_LABELS[p.businessLine]}
           </p>

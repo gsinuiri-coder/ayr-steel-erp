@@ -195,7 +195,7 @@ export function DrywallOrderPanel({
             </span>
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent className="grid gap-3">
           <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-5">
             <BigStat label="Piezas buenas" value={String(o.piecesReported)} />
             <BigStat

@@ -26,8 +26,8 @@ export function NuevaCompraView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div>
-        <h1 className="text-2xl font-semibold">Nueva compra</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold">Nueva compra</h1>
+        <p className="text-xs text-muted-foreground">
           {PURCHASE_TYPE_LABELS[type]}. La compra se registra como borrador; el stock se mueve
           recién al recibirla.
         </p>

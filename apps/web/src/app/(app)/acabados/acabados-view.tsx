@@ -53,8 +53,8 @@ export function AcabadosView() {
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Acabados</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Acabados</h1>
+          <p className="text-xs text-muted-foreground">
             Catálogo de acabados de bobina y su factor de densidad (RF-25).
           </p>
         </div>

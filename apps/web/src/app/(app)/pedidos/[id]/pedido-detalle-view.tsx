@@ -34,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Stat, StatStrip } from '@/components/stat-strip';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { PlantSheetButtons } from '@/components/sales/plant-sheet-buttons';
@@ -168,7 +169,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold">{o.code}</h1>
+            <h1 className="text-lg font-semibold">{o.code}</h1>
             <SalesOrderStatusBadge status={o.status} />
             {/* RF-37 (D-093): "en cola" no es un estado del pedido, es una vista derivada. */}
             {o.queueStatus === 'EN_COLA' && <Badge variant="outline">En cola de producción</Badge>}
@@ -312,35 +313,17 @@ export function PedidoDetalleView({ id }: { id: string }) {
         </Alert>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Fecha</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg">{formatDate(o.issueDate)}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Subtotal</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg">{formatMoney(o.subtotalPen)}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">IGV</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg">{formatMoney(o.igvPen)}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg font-semibold">{formatMoney(o.totalPen)}</CardContent>
-        </Card>
-      </div>
+      <StatStrip>
+        <Stat label="Fecha">{formatDate(o.issueDate)}</Stat>
+        <Stat label="Subtotal">{formatMoney(o.subtotalPen)}</Stat>
+        <Stat label="IGV">{formatMoney(o.igvPen)}</Stat>
+        <Stat label="Total" className="font-semibold">
+          {formatMoney(o.totalPen)}
+        </Stat>
+      </StatStrip>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Líneas</h2>
+        <h2 className="text-sm font-medium">Líneas</h2>
         <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
@@ -382,7 +365,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
       </section>
 
       <section className="space-y-2">
-        <h2 className="flex items-center gap-2 text-lg font-medium">
+        <h2 className="flex items-center gap-2 text-sm font-medium">
           Reservas de material
           <InfoPopover label="Sobre las reservas de material">
             Una reserva activa descuenta el disponible del ítem sin tocar el kardex (D-054): el

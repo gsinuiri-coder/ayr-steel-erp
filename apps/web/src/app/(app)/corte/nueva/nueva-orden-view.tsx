@@ -137,8 +137,8 @@ export function NuevaOrdenCorteView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div>
-        <h1 className="text-2xl font-semibold">Enviar bobinas a corte</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold">Enviar bobinas a corte</h1>
+        <p className="text-xs text-muted-foreground">
           El envío no mueve el kardex (D-050): la bobina sigue siendo propia, solo cambia de
           ubicación mientras el tercero la corta.
         </p>
@@ -148,7 +148,7 @@ export function NuevaOrdenCorteView() {
         <CardHeader>
           <CardTitle>Proveedor de corte</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
+        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-2">
           <div className="grid gap-1">
             <Label>Proveedor</Label>
             <Select value={supplierId} onValueChange={setSupplierId}>

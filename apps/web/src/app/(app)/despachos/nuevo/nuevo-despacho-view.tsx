@@ -238,8 +238,8 @@ export function NuevoDespachoView() {
   return (
     <RoleGate allow={DISPATCH_ROLES}>
       <div>
-        <h1 className="text-2xl font-semibold">Nuevo despacho</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold">Nuevo despacho</h1>
+        <p className="text-xs text-muted-foreground">
           Al guardar, el material sale del kardex y el pedido pasa a atendido —total o en parte—. La
           guía de remisión se emite después, desde el despacho.
         </p>
@@ -249,11 +249,11 @@ export function NuevoDespachoView() {
         <CardHeader>
           <CardTitle className="text-base">Pedido y fecha</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-3">
-          <div className="space-y-2">
+        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
+          <div className="space-y-1">
             <Label>Pedido</Label>
             <Select value={salesOrderId} onValueChange={setSalesOrderId}>
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="Elige un pedido" />
               </SelectTrigger>
               <SelectContent>
@@ -267,7 +267,7 @@ export function NuevoDespachoView() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Fecha de traslado</Label>
             <Input
               type="date"
@@ -282,7 +282,7 @@ export function NuevoDespachoView() {
               }}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Bultos</Label>
             <Input
               inputMode="numeric"
@@ -299,8 +299,8 @@ export function NuevoDespachoView() {
         <CardHeader>
           <CardTitle className="text-base">Traslado</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
+        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-2">
+          <div className="space-y-1">
             <Label>Dirección de partida</Label>
             <Input
               value={originAddress}
@@ -318,7 +318,7 @@ export function NuevoDespachoView() {
               ))}
             </datalist>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Ubigeo de partida</Label>
             <Input
               inputMode="numeric"
@@ -330,7 +330,7 @@ export function NuevoDespachoView() {
               }}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Dirección de llegada</Label>
             <Input
               value={destinationAddress}
@@ -340,7 +340,7 @@ export function NuevoDespachoView() {
               }}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Ubigeo de llegada</Label>
             <Input
               inputMode="numeric"
@@ -352,7 +352,7 @@ export function NuevoDespachoView() {
               }}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Modalidad</Label>
             <Select
               value={transferMode}
@@ -360,7 +360,7 @@ export function NuevoDespachoView() {
                 setTransferMode(v as TransferMode);
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -372,7 +372,7 @@ export function NuevoDespachoView() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2" hidden={transferMode === 'PICKUP'}>
+          <div className="space-y-1" hidden={transferMode === 'PICKUP'}>
             <Label>Peso bruto total (kg)</Label>
             <Input
               inputMode="decimal"
@@ -396,10 +396,10 @@ export function NuevoDespachoView() {
             {transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-3">
+        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
           {transferMode === 'PRIVATE' ? (
             <>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <Label>Placa</Label>
                 <Input
                   value={vehiclePlate}
@@ -420,7 +420,7 @@ export function NuevoDespachoView() {
                 guía sin los apellidos. Partirlos de un campo único se equivoca con un
                 nombre compuesto, y esa adivinanza saldría impresa en la guía.
               */}
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <Label>Nombres del conductor</Label>
                 <Input
                   value={driverGivenNames}
@@ -447,7 +447,7 @@ export function NuevoDespachoView() {
                   ))}
                 </datalist>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <Label>Apellidos del conductor</Label>
                 <Input
                   value={driverFamilyNames}
@@ -457,7 +457,7 @@ export function NuevoDespachoView() {
                   }}
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <Label>Licencia</Label>
                 <Input
                   value={driverLicense}
@@ -467,7 +467,7 @@ export function NuevoDespachoView() {
                   }}
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <Label>Tipo de documento</Label>
                 <Select
                   value={driverDocType}
@@ -475,7 +475,7 @@ export function NuevoDespachoView() {
                     setDriverDocType(v as DocType);
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -487,7 +487,7 @@ export function NuevoDespachoView() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <Label>Número de documento</Label>
                 <Input
                   value={driverDocNumber}
@@ -500,7 +500,7 @@ export function NuevoDespachoView() {
             </>
           ) : (
             <>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <Label>RUC del transportista</Label>
                 <Input
                   value={carrierDocNumber}
@@ -555,7 +555,7 @@ export function NuevoDespachoView() {
       )}
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Qué sale</h2>
+        <h2 className="text-sm font-medium">Qué sale</h2>
         <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">

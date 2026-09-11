@@ -65,7 +65,7 @@ export function MargenesView() {
   return (
     <>
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold">Márgenes</h1>
+        <h1 className="text-lg font-semibold">Márgenes</h1>
         {/*
           D-163: la página dejó de ser informativa. El margen mínimo es ahora el **piso duro**
           de toda cotización y pedido nuevos, así que la fórmula tiene que estar a la vista de

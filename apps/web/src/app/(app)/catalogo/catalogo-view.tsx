@@ -104,8 +104,8 @@ export function CatalogoView() {
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Catálogo</h1>
-          <p className="text-sm text-muted-foreground">Productos por línea de negocio (RF-50).</p>
+          <h1 className="text-lg font-semibold">Catálogo</h1>
+          <p className="text-xs text-muted-foreground">Productos por línea de negocio (RF-50).</p>
         </div>
       </div>
 

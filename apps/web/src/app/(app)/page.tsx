@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: 'Panel' };
 export default function HomePage() {
   return (
     <>
-      <h1 className="text-2xl font-semibold">Panel</h1>
+      <h1 className="text-lg font-semibold">Panel</h1>
       <HomeGreeting />
     </>
   );

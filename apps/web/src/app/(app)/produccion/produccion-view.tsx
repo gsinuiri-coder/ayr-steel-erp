@@ -20,6 +20,7 @@ import {
   QueueEntrySummary,
   useProductionQueue,
 } from '@/components/production-queue';
+import { InfoPopover } from '@/components/info-popover';
 import { RoleGate } from '@/components/role-gate';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { useSession } from '@/lib/session';
@@ -100,8 +101,8 @@ export function ProduccionView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Producción</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Producción</h1>
+          <p className="text-xs text-muted-foreground">
             Perfiles de drywall desde fleje (RF-34) y coberturas metálicas desde bobina contra
             pedido (RF-30, RF-31), con trazabilidad hasta la bobina madre. La captura del operario
             está en{' '}
@@ -118,15 +119,19 @@ export function ProduccionView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Cola de producción (RF-37)</CardTitle>
+          <CardTitle className="flex items-center gap-1.5">
+            Cola de producción (RF-37)
+            {/* D-178: el párrafo explicaba una regla de dominio estática y ocupaba dos
+                líneas fijas encima de la cola en todas las cargas (S11, B1). */}
+            <InfoPopover label="Cómo se ordena la cola de producción">
+              Pedidos de coberturas contra pedido esperando producción, en el mismo orden que
+              `/planta` (prioridad, semáforo de fecha prometida, luego el más antiguo — D-094).
+              {user.role === Role.ADMINISTRADOR &&
+                ' Solo ADMINISTRADOR puede priorizar o cambiar la fecha prometida.'}
+            </InfoPopover>
+          </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <p className="text-sm text-muted-foreground">
-            Pedidos de coberturas contra pedido esperando producción, en el mismo orden que
-            `/planta` (prioridad, semáforo de fecha prometida, luego el más antiguo — D-094).
-            {user.role === Role.ADMINISTRADOR &&
-              ' Solo ADMINISTRADOR puede priorizar o cambiar la fecha prometida.'}
-          </p>
           {queue.isPending && <Skeleton className="h-16 w-full" />}
           {queue.isError && (
             <p className="text-sm text-destructive">No se pudo cargar la cola de producción.</p>
@@ -249,8 +254,12 @@ export function ProduccionView() {
                   </Link>
                 </TableCell>
                 <TableCell>
-                  <div className="font-medium">{o.productSku}</div>
-                  <div className="text-xs text-muted-foreground">{o.productName}</div>
+                  <div className="font-medium">
+                    {o.productSku}
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      {o.productName}
+                    </span>
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     {PRODUCTION_ORDER_KIND_LABELS[o.kind]}
                     {o.salesOrderCode !== null && o.salesOrderId !== null && (

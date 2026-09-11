@@ -136,8 +136,8 @@ export function CajaView() {
     <RoleGate allow={POS_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Caja</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Caja</h1>
+          <p className="text-xs text-muted-foreground">
             El arqueo compara el efectivo esperado del turno contra el que cuentas. Tarjeta, Yape y
             transferencia se listan aparte: no ponen billetes en el cajón.
           </p>
@@ -166,7 +166,7 @@ export function CajaView() {
                 {open.code} · {CASH_SESSION_STATUS_LABELS[open.status]} · {open.userName}
               </CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-4">
+            <CardContent className="grid gap-3">
               <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div>
                   <dt className="text-muted-foreground">Apertura</dt>

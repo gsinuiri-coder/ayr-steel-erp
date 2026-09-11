@@ -390,7 +390,7 @@ export function RoofingOrderPanel({
             </span>
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent className="grid gap-3">
           <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4">
             <MiniStat label="ML del plan" value={`${order.planMeters} m`} />
             <MiniStat label="ML reportado" value={`${order.reportedMeters} m`} />
@@ -534,7 +534,7 @@ export function RoofingOrderPanel({
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Reportar lo que salió</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent className="grid gap-3">
           {liveCoils.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               Monta una bobina y las líneas del plan que falta aparecen acá, listas para ajustar.

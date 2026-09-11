@@ -24,8 +24,8 @@ export function LineasView() {
   return (
     <>
       <div>
-        <h1 className="text-2xl font-semibold">Líneas de negocio</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold">Líneas de negocio</h1>
+        <p className="text-xs text-muted-foreground">
           Las cinco líneas del negocio (§2.2). Determinan si un producto lleva kardex.
         </p>
       </div>

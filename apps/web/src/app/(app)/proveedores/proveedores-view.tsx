@@ -65,8 +65,8 @@ export function ProveedoresView() {
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Proveedores</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Proveedores</h1>
+          <p className="text-xs text-muted-foreground">
             Alta, edición y baja de proveedores (RF-81).
           </p>
         </div>

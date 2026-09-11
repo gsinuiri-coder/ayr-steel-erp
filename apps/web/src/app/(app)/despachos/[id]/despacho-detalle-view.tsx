@@ -35,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Stat, StatStrip } from '@/components/stat-strip';
 
 const DISPATCH_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA] as const;
 
@@ -125,7 +126,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{d.code}</h1>
+            <h1 className="text-lg font-semibold">{d.code}</h1>
             <DispatchStatusBadge status={d.status} />
           </div>
           <p className="text-sm text-muted-foreground">
@@ -191,63 +192,41 @@ export function DespachoDetalleView({ id }: { id: string }) {
         </Alert>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Modalidad</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm">{TRANSFER_MODE_LABELS[d.transferMode]}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              {d.transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm">
-            {d.transferMode === 'PRIVATE' ? (
-              <>
-                <div>{d.vehiclePlate}</div>
-                <div className="text-muted-foreground">
-                  {d.driverGivenNames} {d.driverFamilyNames} · {d.driverDocType} {d.driverDocNumber}{' '}
-                  · Lic. {d.driverLicense}
-                </div>
-              </>
-            ) : (
-              <>
-                <div>{d.carrierName}</div>
-                <div className="text-muted-foreground">RUC {d.carrierDocNumber}</div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Peso bruto</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg">
-            {formatQty(d.totalWeightKg, 'kg')}
-            {d.packageCount !== null && (
-              <span className="ml-2 text-sm text-muted-foreground">{d.packageCount} bultos</span>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Guía</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm">
-            {d.dispatchNoteStatus ? (
-              <div className="space-y-1">
-                <div>{d.dispatchNoteNumber ?? 'Borrador'}</div>
-                <FiscalDocumentStatusBadge status={d.dispatchNoteStatus} />
+      <StatStrip>
+        <Stat label="Modalidad">{TRANSFER_MODE_LABELS[d.transferMode]}</Stat>
+        <Stat label={d.transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}>
+          {d.transferMode === 'PRIVATE' ? (
+            <>
+              <div>{d.vehiclePlate}</div>
+              <div className="font-normal text-muted-foreground">
+                {d.driverGivenNames} {d.driverFamilyNames} · {d.driverDocType} {d.driverDocNumber} ·
+                Lic. {d.driverLicense}
               </div>
-            ) : (
-              <span className="text-muted-foreground">Todavía sin emitir</span>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            </>
+          ) : (
+            <>
+              <div>{d.carrierName}</div>
+              <div className="font-normal text-muted-foreground">RUC {d.carrierDocNumber}</div>
+            </>
+          )}
+        </Stat>
+        <Stat label="Peso bruto">
+          {formatQty(d.totalWeightKg, 'kg')}
+          {d.packageCount !== null && (
+            <span className="ml-2 font-normal text-muted-foreground">{d.packageCount} bultos</span>
+          )}
+        </Stat>
+        <Stat label="Guía">
+          {d.dispatchNoteStatus ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{d.dispatchNoteNumber ?? 'Borrador'}</span>
+              <FiscalDocumentStatusBadge status={d.dispatchNoteStatus} />
+            </div>
+          ) : (
+            <span className="font-normal text-muted-foreground">Todavía sin emitir</span>
+          )}
+        </Stat>
+      </StatStrip>
 
       <Card>
         <CardHeader className="pb-2">
@@ -271,7 +250,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
       </Card>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Qué salió</h2>
+        <h2 className="text-sm font-medium">Qué salió</h2>
         <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">

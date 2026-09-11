@@ -50,14 +50,14 @@ export function ReporteBobinasView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Reporte mensual de bobinas</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Reporte mensual de bobinas</h1>
+          <p className="text-xs text-muted-foreground">
             {report.data
               ? `Del ${formatDate(report.data.from)} al ${formatDate(report.data.to)}`
               : 'Saldo al inicio del mes y al cierre, por bobina.'}
           </p>
         </div>
-        <div className="space-y-2">
+        <div className="space-y-1">
           <Label htmlFor="reporte-mes">Mes</Label>
           <Input
             id="reporte-mes"

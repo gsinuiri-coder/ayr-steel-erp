@@ -147,7 +147,7 @@ export function CustomerPicker({
                   setSearched(false);
                 }}
               >
-                <SelectTrigger id="pos-doc-type">
+                <SelectTrigger id="pos-doc-type" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

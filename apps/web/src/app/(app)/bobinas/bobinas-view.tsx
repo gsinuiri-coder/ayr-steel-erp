@@ -136,8 +136,8 @@ export function BobinasView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Bobinas</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Bobinas</h1>
+          <p className="text-xs text-muted-foreground">
             Materia prima por línea de negocio (RF-23). El alta entra por compra, XML o planilla.
           </p>
         </div>
@@ -156,22 +156,24 @@ export function BobinasView() {
         </div>
       </div>
 
-      <Tabs
-        value={tab}
-        onValueChange={(v) => {
-          setTab(v as ViewTab);
-        }}
-      >
-        <TabsList>
-          {VIEW_TABS.map((t) => (
-            <TabsTrigger key={t} value={t}>
-              {VIEW_TAB_LABELS[t]}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
+      {/* Pestañas y filtros comparten fila: son el mismo gesto —acotar la lista— y en dos
+          filas costaban 48 px de alto en todas las pantallas (S11, B1). */}
       <div className="flex flex-wrap items-center gap-3">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => {
+            setTab(v as ViewTab);
+          }}
+        >
+          <TabsList>
+            {VIEW_TABS.map((t) => (
+              <TabsTrigger key={t} value={t}>
+                {VIEW_TAB_LABELS[t]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+
         <Select
           value={businessLine}
           onValueChange={(v) => {

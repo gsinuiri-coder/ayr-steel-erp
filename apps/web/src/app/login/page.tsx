@@ -12,7 +12,7 @@ export default function LoginPage() {
           <p className="text-sm font-medium tracking-widest text-muted-foreground uppercase">
             AYR Steel
           </p>
-          <h1 className="text-2xl font-semibold">Iniciar sesión</h1>
+          <h1 className="text-lg font-semibold">Iniciar sesión</h1>
         </div>
         <Suspense>
           <LoginForm />

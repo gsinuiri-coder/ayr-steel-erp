@@ -88,8 +88,8 @@ export function KardexView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Kardex</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Kardex</h1>
+          <p className="text-xs text-muted-foreground">
             {singleItem
               ? `Movimientos de ${header ? `${INVENTORY_ITEM_TYPE_LABELS[header.itemType]} ${header.itemLabel}` : 'el ítem seleccionado'}, con saldo corrido (RF-53).`
               : 'Últimos movimientos de inventario. Elige un ítem desde /inventario o /bobinas para ver su saldo corrido.'}

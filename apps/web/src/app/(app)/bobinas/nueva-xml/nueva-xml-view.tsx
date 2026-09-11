@@ -47,8 +47,8 @@ export function NuevaXmlView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div>
-        <h1 className="text-2xl font-semibold">Bobinas desde XML</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold">Bobinas desde XML</h1>
+        <p className="text-xs text-muted-foreground">
           Sube el XML de la factura electrónica del proveedor (UBL 2.1). Se prellena la compra y sus
           bobinas; tú completas acabado, ancho y espesor de cada una antes de confirmar.
         </p>

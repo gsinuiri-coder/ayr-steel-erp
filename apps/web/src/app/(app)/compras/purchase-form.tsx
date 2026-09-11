@@ -358,7 +358,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           <CardHeader>
             <CardTitle>Comprobante</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-3">
+          <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
             <FormField
               control={form.control}
               name="type"
@@ -749,7 +749,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           <CardHeader>
             <CardTitle>{isCoil ? 'Bobinas' : 'Detalle'}</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-4">
+          <CardContent className="grid gap-3">
             {isCoil && (
               <p className="text-sm text-muted-foreground">
                 Cada línea es una bobina: al recibir la compra se crea con su código RF-13 y su

@@ -329,7 +329,7 @@ export function ImportarCotizacionesView() {
       <div className="grid gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold">Importar cotizaciones</h1>
+            <h1 className="text-lg font-semibold">Importar cotizaciones</h1>
             <p className="max-w-3xl text-sm text-muted-foreground">
               Sube el export de ventas detalladas y revisa cada comprobante antes de crear nada.
               Cada uno se convierte en una <strong>cotización en borrador</strong> sin fecha de
@@ -405,7 +405,7 @@ export function ImportarCotizacionesView() {
                 </span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-4">
+            <CardContent className="grid gap-3">
               {customers.data?.truncated === true && (
                 <Alert>
                   <AlertDescription>

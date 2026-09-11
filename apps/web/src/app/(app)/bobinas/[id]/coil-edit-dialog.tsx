@@ -197,7 +197,7 @@ export function CoilEditDialog({
                       setExchangeRate(v === 'PEN' ? '1.0000' : '');
                     }}
                   >
-                    <SelectTrigger id="edit-currency">
+                    <SelectTrigger id="edit-currency" className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

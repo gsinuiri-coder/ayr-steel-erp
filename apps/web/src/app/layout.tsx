@@ -13,8 +13,16 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="es" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    // Las variables de next/font van en <html>, no en <body>: `globals.css` aplica
+    // `font-sans` sobre <html> y ahí `--font-geist-sans` no existía, así que
+    // `font-family: var(--font-sans)` quedaba inválida y toda la app caía a la fuente
+    // serif por defecto del navegador (S11, hallazgo T-01).
+    <html
+      lang="es"
+      className={`${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
+      <body className="antialiased">
         <Providers>{children}</Providers>
       </body>
     </html>

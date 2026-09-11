@@ -234,8 +234,8 @@ export function NuevoComprobanteView() {
   return (
     <RoleGate allow={SALES_ROLES}>
       <div>
-        <h1 className="text-2xl font-semibold">Nuevo comprobante</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold">Nuevo comprobante</h1>
+        <p className="text-xs text-muted-foreground">
           Se crea como borrador. El correlativo se toma recién al emitirlo, así que un borrador
           abandonado no deja hueco en la numeración.
         </p>
@@ -245,8 +245,8 @@ export function NuevoComprobanteView() {
         <CardHeader>
           <CardTitle className="text-base">Datos del comprobante</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-3">
-          <div className="space-y-2">
+        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
+          <div className="space-y-1">
             <Label>Tipo</Label>
             <Select
               value={docType}
@@ -254,7 +254,7 @@ export function NuevoComprobanteView() {
                 setDocType(v as FiscalDocType);
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -267,10 +267,10 @@ export function NuevoComprobanteView() {
             </Select>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Pedido</Label>
             <Select value={salesOrderId} onValueChange={setSalesOrderId}>
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="Venta directa" />
               </SelectTrigger>
               <SelectContent>
@@ -286,14 +286,14 @@ export function NuevoComprobanteView() {
             </Select>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Cliente</Label>
             <Select
               value={customerId}
               onValueChange={setCustomerId}
               disabled={salesOrderId !== NONE}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="Elige un cliente" />
               </SelectTrigger>
               <SelectContent>
@@ -306,7 +306,7 @@ export function NuevoComprobanteView() {
             </Select>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Fecha de emisión</Label>
             <Input
               type="date"
@@ -317,7 +317,7 @@ export function NuevoComprobanteView() {
             />
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Condición de pago</Label>
             <Select
               value={paymentTerms}
@@ -326,7 +326,7 @@ export function NuevoComprobanteView() {
                 if (v === 'CONTADO') setDueDate('');
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -339,7 +339,7 @@ export function NuevoComprobanteView() {
             </Select>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Vencimiento</Label>
             <Input
               type="date"
@@ -422,7 +422,7 @@ export function NuevoComprobanteView() {
 
       {salesOrderId !== NONE ? (
         <section className="space-y-2">
-          <h2 className="text-lg font-medium">Líneas del pedido</h2>
+          <h2 className="text-sm font-medium">Líneas del pedido</h2>
           <p className="text-sm text-muted-foreground">
             Se propone facturar todo lo pendiente. Baja la cantidad para facturar en partes; deja
             una línea en blanco para no incluirla.
@@ -483,7 +483,7 @@ export function NuevoComprobanteView() {
         </section>
       ) : (
         <section className="space-y-2">
-          <h2 className="text-lg font-medium">Líneas</h2>
+          <h2 className="text-sm font-medium">Líneas</h2>
           <div className="space-y-2">
             {freeLines.map((line, i) => (
               // Clave estable y no el índice: al borrar una línea del medio, con `key={i}`
@@ -526,7 +526,7 @@ export function NuevoComprobanteView() {
                       setFreeLines((prev) => prev.map((l, j) => (j === i ? { ...l, unit: v } : l)));
                     }}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

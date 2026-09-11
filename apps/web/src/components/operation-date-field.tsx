@@ -47,7 +47,7 @@ export function OperationDateField({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
       <Label htmlFor="operation-date">{label}</Label>
       <Input
         id="operation-date"

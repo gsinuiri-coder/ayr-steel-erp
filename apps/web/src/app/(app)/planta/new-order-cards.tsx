@@ -187,7 +187,7 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Nueva orden de perfiles (drywall)</CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-4 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
+      <CardContent className="grid gap-x-4 gap-y-3 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
         <div className="grid gap-2">
           <Label htmlFor="planta-producto">Perfil a fabricar</Label>
           <Select value={productId} onValueChange={setProductId}>

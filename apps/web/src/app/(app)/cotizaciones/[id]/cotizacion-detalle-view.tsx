@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Stat, StatStrip } from '@/components/stat-strip';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
@@ -115,7 +116,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{q.code}</h1>
+            <h1 className="text-lg font-semibold">{q.code}</h1>
             <QuotationStatusBadge status={q.status} isExpired={q.isExpired} />
           </div>
           <p className="text-sm text-muted-foreground">
@@ -204,44 +205,20 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         </Alert>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Emisión</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg">{formatDate(q.issueDate)}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Válida hasta
-            </CardTitle>
-          </CardHeader>
-          {/* D-157: sin vencimiento no es una fecha faltante, es una cotización que no vence
-              (una importada). El guion de `formatDate` diría lo contrario. */}
-          <CardContent className="text-lg">
-            {q.validUntil === null ? 'Sin vencimiento' : formatDate(q.validUntil)}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Subtotal</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg tabular-nums">{formatMoney(q.subtotalPen)}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total (con IGV)
-            </CardTitle>
-          </CardHeader>
-          {/* El total es el número que se busca de un vistazo: es el único de los cuatro
-              que va en semibold, y ahora también el único más grande. */}
-          <CardContent className="text-xl font-semibold tabular-nums">
-            {formatMoney(q.totalPen)}
-          </CardContent>
-        </Card>
-      </div>
+      <StatStrip>
+        <Stat label="Emisión">{formatDate(q.issueDate)}</Stat>
+        {/* D-157: sin vencimiento no es una fecha faltante, es una cotización que no vence
+            (una importada). El guion de `formatDate` diría lo contrario. */}
+        <Stat label="Válida hasta">
+          {q.validUntil === null ? 'Sin vencimiento' : formatDate(q.validUntil)}
+        </Stat>
+        <Stat label="Subtotal">{formatMoney(q.subtotalPen)}</Stat>
+        {/* El total es el número que se busca de un vistazo: es el único de los cuatro que
+            va en semibold. */}
+        <Stat label="Total (con IGV)" className="font-semibold">
+          {formatMoney(q.totalPen)}
+        </Stat>
+      </StatStrip>
 
       <div className="rounded-lg border">
         <Table>

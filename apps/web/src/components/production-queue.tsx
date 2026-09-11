@@ -54,23 +54,20 @@ const SEMAPHORE_VARIANT: Record<
 /** Lo que toda tarjeta de la cola muestra, sin importar quién la use ni qué botón le ponga. */
 export function QueueEntrySummary({ entry }: { entry: ProductionQueueEntryDto }) {
   return (
-    <div className="grid gap-1">
-      <div className="flex flex-wrap items-center gap-2">
+    // S11/B1: los mismos seis datos en dos líneas en vez de cinco. La tarjeta mide más de
+    // mil píxeles de ancho y cada línea usaba doscientos; el alto era el que escaseaba.
+    <div className="grid gap-0.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-mono font-medium">{entry.salesOrderCode}</span>
         {entry.priority && <Badge>Prioridad</Badge>}
         <Badge variant={SEMAPHORE_VARIANT[entry.semaphore]}>
           {SEMAPHORE_LABEL[entry.semaphore]}
         </Badge>
-      </div>
-      <div className="text-sm">{entry.customerName}</div>
-      <div className="text-xs text-muted-foreground">
-        {entry.productSku} — {entry.productName}
+        <span className="text-sm">{entry.customerName}</span>
       </div>
       <div className="text-xs text-muted-foreground">
-        {describePieces(entry.pieces)}
-        {entry.theoreticalKg !== null && <> · {formatQty(entry.theoreticalKg, 'kg')} teóricos</>}
-      </div>
-      <div className="text-xs text-muted-foreground">
+        {entry.productSku} — {entry.productName} · {describePieces(entry.pieces)}
+        {entry.theoreticalKg !== null && <> · {formatQty(entry.theoreticalKg, 'kg')} teóricos</>} ·
         Prometida:{' '}
         {entry.promisedDeliveryDate ? formatDate(entry.promisedDeliveryDate) : 'sin fecha'} · en
         cola desde {queueAgeLabel(entry.createdAt)}

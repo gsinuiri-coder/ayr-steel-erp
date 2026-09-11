@@ -171,7 +171,7 @@ export function PlantaView() {
       <div className="grid gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold">
+            <h1 className="text-lg font-semibold">
               {salesOrderId === null ? 'Producción' : `Producir ${salesOrderCode ?? 'el pedido'}`}
             </h1>
             <p className="max-w-3xl text-sm text-muted-foreground">

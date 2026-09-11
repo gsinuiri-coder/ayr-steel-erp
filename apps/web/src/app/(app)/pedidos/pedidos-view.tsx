@@ -98,8 +98,8 @@ export function PedidosView() {
     <RoleGate allow={SALES_ROLES}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Pedidos</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Pedidos</h1>
+          <p className="text-xs text-muted-foreground">
             Nacen de confirmar una cotización, o directo en las líneas que no la exigen (D-065).
           </p>
         </div>
@@ -215,7 +215,7 @@ export function PedidosView() {
                   <Link href={customerSearchHref(o.customerDocNumber)} className={LINK_CLASSNAME}>
                     {o.customerName}
                   </Link>
-                  <div className="text-xs text-muted-foreground">{o.customerDocNumber}</div>
+                  <span className="ml-2 text-xs text-muted-foreground">{o.customerDocNumber}</span>
                 </TableCell>
                 <TableCell className="hidden md:table-cell">
                   {o.quotationId ? (

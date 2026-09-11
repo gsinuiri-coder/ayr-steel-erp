@@ -88,8 +88,8 @@ export function ComprobantesView() {
     <RoleGate allow={SALES_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Comprobantes</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Comprobantes</h1>
+          <p className="text-xs text-muted-foreground">
             Facturas, boletas y notas de crédito. Un comprobante emitido ya permite despachar aunque
             el PSE todavía no lo haya aceptado.
           </p>
@@ -222,7 +222,9 @@ export function ComprobantesView() {
                     <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
                       {d.customerName}
                     </Link>
-                    <div className="text-xs text-muted-foreground">{d.customerDocNumber}</div>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {d.customerDocNumber}
+                    </span>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">{formatDate(d.issueDate)}</TableCell>
                   <TableCell className="hidden md:table-cell">

@@ -65,8 +65,8 @@ export function CorteView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Corte tercerizado</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Corte tercerizado</h1>
+          <p className="text-xs text-muted-foreground">
             Bobinas enviadas a un tercero para partir en flejes (RF-40..42). El envío no mueve
             kardex: la bobina sigue siendo propia hasta que se recibe.
           </p>

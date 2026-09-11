@@ -205,8 +205,8 @@ export function PosView() {
     <RoleGate allow={POS_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Mostrador</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-lg font-semibold">Mostrador</h1>
+          <p className="text-xs text-muted-foreground">
             Venta al contado de productos en stock, con entrega inmediata. Lo que se fabrica a
             medida va por cotización.
           </p>
@@ -311,7 +311,7 @@ export function PosView() {
             <CardHeader>
               <CardTitle>Venta</CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-4">
+            <CardContent className="grid gap-3">
               <div className="grid gap-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm text-muted-foreground">

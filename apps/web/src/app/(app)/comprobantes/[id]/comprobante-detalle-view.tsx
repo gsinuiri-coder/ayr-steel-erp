@@ -41,7 +41,6 @@ import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -69,6 +68,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Stat, StatStrip } from '@/components/stat-strip';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -431,7 +431,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{d.number ?? 'Borrador'}</h1>
+            <h1 className="text-lg font-semibold">{d.number ?? 'Borrador'}</h1>
             <FiscalDocumentStatusBadge status={d.status} isStalled={d.isStalled} />
             {/* D-153: el origen se marca siempre que no sea del ERP, no solo si es importado. */}
             {isExternal && (
@@ -715,53 +715,33 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         </Alert>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Emisión</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg">{formatDate(d.issueDate)}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              {PAYMENT_TERMS_LABELS[d.paymentTerms]}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg">
-            {d.dueDate ? (
-              <span className={d.isOverdue ? 'text-destructive' : undefined}>
-                {formatDate(d.dueDate)}
-              </span>
-            ) : (
-              '—'
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg font-semibold">{formatMoney(d.totalPen)}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Saldo</CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg font-semibold">
-            {formatMoney(d.balancePen)}
-            {/*
-              RF-72: el saldo de una versión archivada se sigue calculando igual, pero ya no
-              suma en cuentas por cobrar. Sin esta línea, la cifra se lee como una deuda viva.
-            */}
-            {d.archivedAt !== null && (
-              <div className="text-xs font-normal text-muted-foreground">
-                Versión archivada: no cuenta en cobranzas
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <StatStrip>
+        <Stat label="Emisión">{formatDate(d.issueDate)}</Stat>
+        <Stat label={PAYMENT_TERMS_LABELS[d.paymentTerms]}>
+          {d.dueDate ? (
+            <span className={d.isOverdue ? 'text-destructive' : undefined}>
+              {formatDate(d.dueDate)}
+            </span>
+          ) : (
+            '—'
+          )}
+        </Stat>
+        <Stat label="Total" className="font-semibold">
+          {formatMoney(d.totalPen)}
+        </Stat>
+        <Stat label="Saldo" className="font-semibold">
+          {formatMoney(d.balancePen)}
+          {/*
+            RF-72: el saldo de una versión archivada se sigue calculando igual, pero ya no
+            suma en cuentas por cobrar. Sin esta línea, la cifra se lee como una deuda viva.
+          */}
+          {d.archivedAt !== null && (
+            <div className="text-xs font-normal text-muted-foreground">
+              Versión archivada: no cuenta en cobranzas
+            </div>
+          )}
+        </Stat>
+      </StatStrip>
 
       {(d.hasPdf || d.hasXml || d.hasCdr) && (
         <div className="flex flex-wrap gap-2">
@@ -784,7 +764,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       )}
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Líneas</h2>
+        <h2 className="text-sm font-medium">Líneas</h2>
         <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
@@ -841,7 +821,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       {!isDispatchNote && d.docType !== 'NOTA_CREDITO' && (
         <section className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">Cobros</h2>
+            <h2 className="text-sm font-medium">Cobros</h2>
             {canCollect && (
               <Button
                 variant="outline"
@@ -919,7 +899,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
 
       {d.creditNotes.length > 0 && (
         <section className="space-y-2">
-          <h2 className="text-lg font-medium">Notas de crédito</h2>
+          <h2 className="text-sm font-medium">Notas de crédito</h2>
           <div className="rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
@@ -1110,7 +1090,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
+            <div className="space-y-1">
               <Label>Fecha</Label>
               <Input
                 type="date"
@@ -1125,7 +1105,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 }}
               />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1">
               <Label>Monto</Label>
               <Input
                 inputMode="decimal"
@@ -1135,7 +1115,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 }}
               />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1">
               <Label>Medio de pago</Label>
               <Select
                 value={payMethod}
@@ -1143,7 +1123,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   setPayMethod(v as PaymentMethod);
                 }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1155,7 +1135,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1">
               <Label>Referencia</Label>
               <Input
                 value={payReference}
@@ -1232,7 +1212,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="space-y-2">
+            <div className="space-y-1">
               <Label>Motivo (catálogo 09 de SUNAT)</Label>
               <Select
                 value={creditReason}
@@ -1240,7 +1220,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   setCreditReason(v as CreditNoteReason);
                 }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1258,7 +1238,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               )}
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1">
               <Label>Cantidades a acreditar (opcional)</Label>
               {d.items.map((item) => {
                 const pending = toDecimal(item.qty).minus(toDecimal(item.creditedQty));
