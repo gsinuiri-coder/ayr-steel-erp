@@ -28,7 +28,14 @@ const ALLOWED = [
   // Postgres de docker-compose.yml (`scripts/local-docker-env.mjs`), base exclusiva de la suite.
   { label: 'Docker local (ayr_local_e2e)', test: (u: URL) => isLocalE2E(u) },
   // Rama Neon `ci`, que se resetea en cada corrida de GitHub Actions.
-  { label: 'Neon rama ci', test: (u: URL) => u.hostname.startsWith('ep-misty-band-') },
+  //
+  // El prefijo es el del **endpoint de cómputo** de la rama, no el de su branch id — son dos
+  // identificadores aleatorios independientes en Neon y no tienen por qué coincidir (D-181):
+  // el valor anterior, `ep-misty-band-`, copiaba el id de la rama (`br-misty-band-...`) en vez
+  // de verificar el endpoint real, y nunca coincidió con nada. Si esto vuelve a desalinearse,
+  // el endpoint vigente sale de `neonctl branches get ci --output json` (campo del compute),
+  // nunca de la cadena de conexión completa (regla dura 5).
+  { label: 'Neon rama ci', test: (u: URL) => u.hostname.startsWith('ep-dry-butterfly-') },
 ];
 
 function isLocalE2E(url: URL): boolean {
