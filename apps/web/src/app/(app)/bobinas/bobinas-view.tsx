@@ -15,6 +15,7 @@ import {
   type FinishDto,
   type PaginatedResult,
 } from '@ayr/shared';
+import { COIL_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -338,9 +339,7 @@ export function BobinasView() {
                   {formatMoney(c.unitCostPerKg, c.currency, 4)}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={c.status === 'OPEN' ? 'secondary' : 'outline'}>
-                    {COIL_STATUS_LABELS[c.status]}
-                  </Badge>
+                  <Badge variant={COIL_TONE[c.status]}>{COIL_STATUS_LABELS[c.status]}</Badge>
                 </TableCell>
               </TableRow>
             ))}

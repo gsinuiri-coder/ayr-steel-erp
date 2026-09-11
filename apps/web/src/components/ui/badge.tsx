@@ -16,6 +16,12 @@ const badgeVariants = cva(
         destructive:
           'bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20',
         outline: 'border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground',
+        // D-180: los tres tonos de estado de dominio que no son ni neutro (`outline`) ni
+        // error (`destructive`). El mapa de qué estado usa cuál vive en
+        // `components/status-tone.ts`, no en cada vista.
+        progress: 'bg-tone-progress text-tone-progress-foreground',
+        done: 'bg-tone-done text-tone-done-foreground',
+        warning: 'bg-tone-warning text-tone-warning-foreground',
         ghost: 'hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50',
         link: 'text-primary underline-offset-4 hover:underline',
       },

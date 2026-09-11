@@ -15,9 +15,9 @@ import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { usePagination } from '@/lib/use-pagination';
 import { PaginationBar } from '@/components/pagination-bar';
+import { Stat, StatStrip } from '@/components/stat-strip';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   cn,
@@ -52,6 +52,8 @@ export function CobranzasView() {
     queryKey: ['receivables-summary'],
     queryFn: () => api<ReceivableTotalsDto>('/invoicing/receivables/summary'),
   });
+  /** Regla dura 1: el vencido se compara como `Decimal`, no como número ni como string. */
+  const overdue = toDecimal(totals.data?.totalOverduePen ?? '0').gt(0);
 
   const receivables = useQuery({
     queryKey: ['receivables', receivablesPage.page, receivablesPage.pageSize],
@@ -81,44 +83,30 @@ export function CobranzasView() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Por cobrar</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">
-            {totals.isPending ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              formatMoney(totals.data?.totalBalancePen ?? '0')
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Vencido</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold text-destructive">
-            {totals.isPending ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              formatMoney(totals.data?.totalOverduePen ?? '0')
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Clientes</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">
-            {totals.isPending ? (
-              <Skeleton className="h-8 w-12" />
-            ) : (
-              (totals.data?.customerCount ?? 0)
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <StatStrip className="lg:grid-cols-3">
+        <Stat label="Por cobrar">
+          {totals.isPending ? (
+            <Skeleton className="h-5 w-24" />
+          ) : (
+            formatMoney(totals.data?.totalBalancePen ?? '0')
+          )}
+        </Stat>
+        {/*
+          D-180: el rojo solo cuando hay algo vencido. Estaba fijo, así que «Vencido
+          S/ 0.00» —que es la buena noticia— se pintaba igual que una deuda de miles. Rojo y
+          ámbar están reservados para error y aviso, y un cero no es ninguno de los dos.
+        */}
+        <Stat label="Vencido" className={overdue ? 'text-destructive' : undefined}>
+          {totals.isPending ? (
+            <Skeleton className="h-5 w-24" />
+          ) : (
+            formatMoney(totals.data?.totalOverduePen ?? '0')
+          )}
+        </Stat>
+        <Stat label="Clientes">
+          {totals.isPending ? <Skeleton className="h-5 w-12" /> : (totals.data?.customerCount ?? 0)}
+        </Stat>
+      </StatStrip>
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium">Por cliente</h2>

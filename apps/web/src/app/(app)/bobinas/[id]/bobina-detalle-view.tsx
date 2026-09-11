@@ -20,6 +20,7 @@ import {
   type InventoryMovementDto,
   type PaginatedResult,
 } from '@ayr/shared';
+import { COIL_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
 import {
   formatMoney,
@@ -178,7 +179,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={isOpen ? 'secondary' : 'outline'}>{COIL_STATUS_LABELS[c.status]}</Badge>
+          <Badge variant={COIL_TONE[c.status]}>{COIL_STATUS_LABELS[c.status]}</Badge>
           {/* T6 (D-173): igual que el PDF de planta (D-149), descarga directa contra el API. */}
           <Button variant="outline" asChild>
             <a href={`/api/coils/${id}/pdf`}>Descargar PDF</a>

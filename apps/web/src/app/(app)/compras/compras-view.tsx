@@ -17,6 +17,7 @@ import {
   type PurchaseStatus,
   type PurchaseType,
 } from '@ayr/shared';
+import { PURCHASE_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { usePagination } from '@/lib/use-pagination';
@@ -45,12 +46,6 @@ import {
 } from '@/components/ui/table';
 
 const ALL = 'ALL';
-
-const STATUS_VARIANT: Record<PurchaseStatus, 'default' | 'secondary' | 'outline'> = {
-  DRAFT: 'outline',
-  RECEIVED: 'secondary',
-  CANCELLED: 'outline',
-};
 
 /** Lista central de compras (D-030), filtrable por línea, tipo, estado y saldo. */
 export function ComprasView() {
@@ -226,7 +221,7 @@ export function ComprasView() {
                   {formatMoney(p.balance, p.currency)}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_VARIANT[p.status]}>
+                  <Badge variant={PURCHASE_TONE[p.status]}>
                     {PURCHASE_STATUS_LABELS[p.status]}
                   </Badge>
                 </TableCell>

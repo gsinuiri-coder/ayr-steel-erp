@@ -13,6 +13,7 @@ import {
   type ProductionOrderListItemDto,
   type ProductionOrderStatus,
 } from '@ayr/shared';
+import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { formatMoneyOrDash, formatQty, formatTimestampDate } from '@/lib/format';
 import {
@@ -47,13 +48,6 @@ import {
 } from '@/components/ui/table';
 
 const ALL = 'ALL';
-
-const STATUS_VARIANT: Record<ProductionOrderStatus, 'default' | 'secondary' | 'outline'> = {
-  DRAFT: 'outline',
-  IN_PROGRESS: 'default',
-  CLOSED: 'secondary',
-  CANCELLED: 'outline',
-};
 
 /**
  * Órdenes de producción (RF-34, RF-30). Vista de administración; planta usa `/planta`.
@@ -299,7 +293,7 @@ export function ProduccionView() {
                 </TableCell>
                 <TableCell>{formatTimestampDate(o.createdAt)}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_VARIANT[o.status]}>
+                  <Badge variant={PRODUCTION_ORDER_TONE[o.status]}>
                     {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
                   </Badge>
                 </TableCell>

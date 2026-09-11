@@ -29,6 +29,13 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  /* D-180: tonos de estado de dominio. Ver el bloque de `:root` para qué significa cada uno. */
+  --color-tone-progress: var(--tone-progress);
+  --color-tone-progress-foreground: var(--tone-progress-foreground);
+  --color-tone-done: var(--tone-done);
+  --color-tone-done-foreground: var(--tone-done-foreground);
+  --color-tone-warning: var(--tone-warning);
+  --color-tone-warning-foreground: var(--tone-warning-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -57,7 +64,11 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  /* D-180: el único color de marca. Un azul acero de croma bajo, oscuro para que el texto
+     blanco encima llegue holgado a 4.5:1, y lo bastante apagado para que una pantalla llena
+     de datos no compita con él. Se usa en la acción primaria, el foco y el estado "en
+     curso"; nunca de adorno. */
+  --primary: oklch(0.46 0.105 248);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -68,7 +79,33 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: oklch(0.55 0.095 248);
+
+  /*
+    D-180 — los cuatro tonos de estado de dominio. Un estado se pinta por lo que **significa**
+    y no por la vista donde cae: antes «Aceptada», «En producción» y «Activa» compartían el
+    negro más fuerte de la paleta y «Atendido» era el más apagado, así que el mismo color
+    quería decir cosas distintas según la pantalla.
+
+    - `progress` — vivo, en curso, esperando a alguien (emitida, en producción, activa,
+      abierta, enviada al PSE). Lleva el acento.
+    - `done`     — terminó bien y no hay nada más que hacer (confirmada, aceptada, cerrada,
+      atendido, despachado, consumida, recibida).
+    - `warning`  — hace falta mirarlo, pero no es un error (vencida, un envío al PSE que se
+      quedó en el camino, una baja pendiente).
+    - `danger`   — error de verdad (rechazada por SUNAT, error de envío). Rojo y ámbar están
+      reservados para estos dos últimos: no hay ningún uso decorativo de esos tonos.
+
+    Un estado anulado o revertido **no** es ninguno de los cuatro: es neutro (`outline`). Es
+    una decisión tomada, no un problema, y pintar de rojo cada cotización anulada convertía
+    el rojo en ruido justo donde tiene que gritar.
+  */
+  --tone-progress: oklch(0.955 0.022 248);
+  --tone-progress-foreground: oklch(0.42 0.105 248);
+  --tone-done: oklch(0.955 0.032 158);
+  --tone-done-foreground: oklch(0.4 0.085 158);
+  --tone-warning: oklch(0.96 0.05 85);
+  --tone-warning-foreground: oklch(0.44 0.095 70);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -92,8 +129,10 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  /* D-180: en oscuro el acento sube de claridad y baja de croma para no vibrar sobre el
+     fondo; el texto encima pasa a ser el oscuro. */
+  --primary: oklch(0.72 0.095 248);
+  --primary-foreground: oklch(0.18 0.02 248);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -103,7 +142,15 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --ring: oklch(0.6 0.09 248);
+
+  /* D-180: los mismos cuatro tonos, invertidos — fondo oscuro teñido y texto claro. */
+  --tone-progress: oklch(0.3 0.045 248);
+  --tone-progress-foreground: oklch(0.83 0.075 248);
+  --tone-done: oklch(0.3 0.05 158);
+  --tone-done-foreground: oklch(0.84 0.09 158);
+  --tone-warning: oklch(0.32 0.055 80);
+  --tone-warning-foreground: oklch(0.87 0.1 85);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -111,7 +158,9 @@
   --chart-5: oklch(0.269 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  /* D-180: era un violeta saturado que no pertenecía a ninguna paleta del proyecto — el que
+     trae la plantilla de shadcn. Toma el acento, como el resto. */
+  --sidebar-primary: oklch(0.72 0.095 248);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);

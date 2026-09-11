@@ -13,6 +13,7 @@ import {
   type CuttingOrderListItemDto,
   type CuttingOrderStatus,
 } from '@ayr/shared';
+import { CUTTING_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { formatTimestampDate } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
@@ -37,13 +38,6 @@ import {
 } from '@/components/ui/table';
 
 const ALL = 'ALL';
-
-const STATUS_VARIANT: Record<CuttingOrderStatus, 'default' | 'secondary' | 'outline'> = {
-  SENT: 'outline',
-  PARTIALLY_RECEIVED: 'default',
-  RECEIVED: 'secondary',
-  CANCELLED: 'outline',
-};
 
 /** Órdenes de corte tercerizado (RF-40..42, RF-22), filtrables por línea y estado. */
 export function CorteView() {
@@ -155,7 +149,7 @@ export function CorteView() {
                 <TableCell className="text-right">{o.coilCount}</TableCell>
                 <TableCell>{formatTimestampDate(o.sentAt)}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_VARIANT[o.status]}>
+                  <Badge variant={CUTTING_ORDER_TONE[o.status]}>
                     {CUTTING_ORDER_STATUS_LABELS[o.status]}
                   </Badge>
                 </TableCell>

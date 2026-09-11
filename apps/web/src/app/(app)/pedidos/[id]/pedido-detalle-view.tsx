@@ -18,6 +18,7 @@ import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
+import { RESERVATION_TONE } from '@/components/status-tone';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
 import { QueueAdminControls } from '@/components/production-queue';
@@ -42,10 +43,7 @@ import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 
 function reservationBadge(r: ReservationDto) {
-  const label = RESERVATION_STATUS_LABELS[r.status];
-  if (r.status === 'ACTIVE') return <Badge>{label}</Badge>;
-  if (r.status === 'CONSUMED') return <Badge variant="secondary">{label}</Badge>;
-  return <Badge variant="outline">{label}</Badge>;
+  return <Badge variant={RESERVATION_TONE[r.status]}>{RESERVATION_STATUS_LABELS[r.status]}</Badge>;
 }
 
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
