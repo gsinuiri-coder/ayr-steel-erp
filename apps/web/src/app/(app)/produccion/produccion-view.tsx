@@ -21,7 +21,9 @@ import {
   useProductionQueue,
 } from '@/components/production-queue';
 import { RoleGate } from '@/components/role-gate';
+import { SortableTableHead } from '@/components/sortable-table-head';
 import { useSession } from '@/lib/session';
+import { compareBy, useSort } from '@/lib/use-sort';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -74,6 +76,25 @@ export function ProduccionView() {
     queryKey: ['production-orders', queryString],
     queryFn: () => api<ProductionOrderListItemDto[]>(`/production${queryString}`),
   });
+  // S10b/M1: esta lista no pagina (D-113 la deja en un tope de 500, no en páginas), así
+  // que el sort acá sí cubre el conjunto entero, no solo lo visible. El orden por defecto
+  // del servidor (por `seq` descendente) no se toca salvo que el usuario clickee.
+  const [sort, toggleSort] = useSort<'code' | 'createdAt' | 'status'>();
+  const rows =
+    sort.key === null
+      ? (orders.data ?? [])
+      : [...(orders.data ?? [])].sort((a, b) => {
+          switch (sort.key) {
+            case 'code':
+              return compareBy(sort.dir, a.code, b.code);
+            case 'createdAt':
+              return compareBy(sort.dir, a.createdAt, b.createdAt);
+            case 'status':
+              return compareBy(sort.dir, a.status, b.status);
+            default:
+              return 0;
+          }
+        });
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -170,14 +191,38 @@ export function ProduccionView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Orden</TableHead>
+              <SortableTableHead
+                active={sort.key === 'code'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('code');
+                }}
+              >
+                Orden
+              </SortableTableHead>
               <TableHead>Producto</TableHead>
               <TableHead className="text-right">Producido</TableHead>
               <TableHead className="text-right">Material asignado</TableHead>
               <TableHead className="text-right">Merma</TableHead>
               <TableHead className="text-right">Costo unitario</TableHead>
-              <TableHead>Creada</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortableTableHead
+                active={sort.key === 'createdAt'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('createdAt');
+                }}
+              >
+                Creada
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'status'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('status');
+                }}
+              >
+                Estado
+              </SortableTableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -196,7 +241,7 @@ export function ProduccionView() {
                 </TableCell>
               </TableRow>
             )}
-            {orders.data?.map((o) => (
+            {rows.map((o) => (
               <TableRow key={o.id}>
                 <TableCell className="font-mono font-medium">
                   <Link href={`/produccion/${o.id}`} className={LINK_CLASSNAME}>
@@ -249,7 +294,7 @@ export function ProduccionView() {
                 </TableCell>
               </TableRow>
             ))}
-            {orders.data?.length === 0 && (
+            {orders.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={8} className="text-center text-muted-foreground">
                   No hay órdenes de producción que coincidan con el filtro.

@@ -29,6 +29,8 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
+import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
+import { SortableTableHead } from '@/components/sortable-table-head';
 import {
   Table,
   TableBody,
@@ -68,7 +70,34 @@ export function CotizacionesView() {
       api<PaginatedResult<QuotationListItemDto>>(`/sales/quotations?${params.toString()}`),
   });
 
-  const rows = quotations.data?.items ?? [];
+  // S10b/M1: sort sobre la página actual, no sobre el total (D-176 del handoff de S10:
+  // el orden por defecto del servidor —descendente— no se toca, esto solo se activa si
+  // el usuario clickea una columna).
+  const [sort, toggleSort] = useSort<'code' | 'customer' | 'issueDate' | 'total' | 'status'>();
+  const unsortedRows = quotations.data?.items ?? [];
+  const rows =
+    sort.key === null
+      ? unsortedRows
+      : [...unsortedRows].sort((a, b) => {
+          switch (sort.key) {
+            case 'code':
+              return compareBy(sort.dir, a.code, b.code);
+            case 'customer':
+              return compareBy(
+                sort.dir,
+                a.customerName.toLowerCase(),
+                b.customerName.toLowerCase(),
+              );
+            case 'issueDate':
+              return compareBy(sort.dir, a.issueDate, b.issueDate);
+            case 'total':
+              return compareDecimalBy(sort.dir, a.totalPen, b.totalPen);
+            case 'status':
+              return compareBy(sort.dir, a.status, b.status);
+            default:
+              return 0;
+          }
+        });
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -120,12 +149,55 @@ export function CotizacionesView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Código</TableHead>
-              <TableHead>Cliente</TableHead>
-              <TableHead className="hidden sm:table-cell">Emisión</TableHead>
+              <SortableTableHead
+                active={sort.key === 'code'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('code');
+                }}
+              >
+                Código
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'customer'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('customer');
+                }}
+              >
+                Cliente
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'issueDate'}
+                dir={sort.dir}
+                className="hidden sm:table-cell"
+                onClick={() => {
+                  toggleSort('issueDate');
+                }}
+              >
+                Emisión
+              </SortableTableHead>
               <TableHead className="hidden md:table-cell">Vigencia</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortableTableHead
+                active={sort.key === 'total'}
+                dir={sort.dir}
+                align="right"
+                className="text-right"
+                onClick={() => {
+                  toggleSort('total');
+                }}
+              >
+                Total
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'status'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('status');
+                }}
+              >
+                Estado
+              </SortableTableHead>
               <TableHead className="hidden lg:table-cell">Pedido</TableHead>
             </TableRow>
           </TableHeader>

@@ -19,7 +19,9 @@ import { api } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { usePagination } from '@/lib/use-pagination';
+import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
 import { RoleGate } from '@/components/role-gate';
+import { SortableTableHead } from '@/components/sortable-table-head';
 import { formatMoney, formatQty, isPositiveDecimal } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -109,7 +111,26 @@ export function BobinasView() {
     queryKey: ['coils', queryString],
     queryFn: () => api<PaginatedResult<CoilDto>>(`/coils?${queryString}`),
   });
-  const rows = coils.data?.items ?? [];
+  // S10b/M1: sort sobre la página actual, no sobre el total — el orden por defecto del
+  // servidor (por `operationDate` descendente, D-124) no se toca salvo que el usuario
+  // clickee una columna.
+  const [sort, toggleSort] = useSort<'code' | 'availableKg' | 'status'>();
+  const unsortedRows = coils.data?.items ?? [];
+  const rows =
+    sort.key === null
+      ? unsortedRows
+      : [...unsortedRows].sort((a, b) => {
+          switch (sort.key) {
+            case 'code':
+              return compareBy(sort.dir, a.code, b.code);
+            case 'availableKg':
+              return compareDecimalBy(sort.dir, a.availableKg, b.availableKg);
+            case 'status':
+              return compareBy(sort.dir, a.status, b.status);
+            default:
+              return 0;
+          }
+        });
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -231,16 +252,42 @@ export function BobinasView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Código</TableHead>
+              <SortableTableHead
+                active={sort.key === 'code'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('code');
+                }}
+              >
+                Código
+              </SortableTableHead>
               <TableHead>Tipo</TableHead>
               <TableHead className="hidden md:table-cell">Línea</TableHead>
               <TableHead className="hidden lg:table-cell">Proveedor</TableHead>
               <TableHead>Color</TableHead>
               <TableHead className="text-right">Ancho</TableHead>
               <TableHead className="hidden text-right sm:table-cell">Peso</TableHead>
-              <TableHead className="text-right">Disponible</TableHead>
+              <SortableTableHead
+                active={sort.key === 'availableKg'}
+                dir={sort.dir}
+                align="right"
+                className="text-right"
+                onClick={() => {
+                  toggleSort('availableKg');
+                }}
+              >
+                Disponible
+              </SortableTableHead>
               <TableHead className="hidden text-right lg:table-cell">Costo/kg</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortableTableHead
+                active={sort.key === 'status'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('status');
+                }}
+              >
+                Estado
+              </SortableTableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

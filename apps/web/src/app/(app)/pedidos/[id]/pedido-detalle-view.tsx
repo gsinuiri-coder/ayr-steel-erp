@@ -18,6 +18,7 @@ import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
+import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
 import { QueueAdminControls } from '@/components/production-queue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -381,11 +382,13 @@ export function PedidoDetalleView({ id }: { id: string }) {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Reservas de material</h2>
-        <p className="text-sm text-muted-foreground">
-          Una reserva activa descuenta el disponible del ítem sin tocar el kardex (D-054): el
-          material sigue físicamente en el almacén, pero ninguna otra operación lo puede tomar.
-        </p>
+        <h2 className="flex items-center gap-2 text-lg font-medium">
+          Reservas de material
+          <InfoPopover label="Sobre las reservas de material">
+            Una reserva activa descuenta el disponible del ítem sin tocar el kardex (D-054): el
+            material sigue físicamente en el almacén, pero ninguna otra operación lo puede tomar.
+          </InfoPopover>
+        </h2>
         <div className="rounded-lg border">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">

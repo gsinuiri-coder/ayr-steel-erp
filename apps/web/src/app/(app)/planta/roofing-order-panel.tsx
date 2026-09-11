@@ -27,6 +27,7 @@ import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
 import { LengthEditor } from '@/components/production/length-editor';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -551,7 +552,13 @@ export function RoofingOrderPanel({
 
               <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-end">
                 <div className="grid gap-1.5">
-                  <Label htmlFor={`kg-${order.orderId}`}>kg consumido (opcional)</Label>
+                  <Label htmlFor={`kg-${order.orderId}`} className="flex items-center gap-1.5">
+                    kg consumido (opcional)
+                    <InfoPopover label="Sobre el kg consumido">
+                      Dato de planta: el kardex sale por el kilo teórico y el consumo real se
+                      reconcilia al cerrar.
+                    </InfoPopover>
+                  </Label>
                   <Input
                     id={`kg-${order.orderId}`}
                     aria-label={`Kilos consumidos de ${order.code}`}
@@ -564,10 +571,6 @@ export function RoofingOrderPanel({
                       onDraft({ consumedKg: e.target.value });
                     }}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Dato de planta: el kardex sale por el kilo teórico y el consumo real se
-                    reconcilia al cerrar.
-                  </p>
                 </div>
                 <div className="grid gap-1 text-sm">
                   {resolved.pieces && (
@@ -787,7 +790,14 @@ function PlanCard({
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Plan de corte</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          Plan de corte
+          <InfoPopover label="Sobre el plan de corte">
+            El plan es una intención: lo que mueve inventario son los largos que reportes. Es
+            también el tope de lo que se puede reportar (D-146), así que si de verdad hay que
+            producir más, se cambia acá.
+          </InfoPopover>
+        </CardTitle>
       </CardHeader>
       <CardContent className="grid gap-3">
         {order.planItems.length === 0 ? (
@@ -814,11 +824,6 @@ function PlanCard({
 
         {editing && rows !== null && (
           <div className="grid gap-3 rounded-lg border p-3">
-            <p className="text-sm text-muted-foreground">
-              El plan es una intención: lo que mueve inventario son los largos que reportes. Es
-              también el tope de lo que se puede reportar (D-146), así que si de verdad hay que
-              producir más, se cambia acá.
-            </p>
             {fixedLengthMm === null ? (
               <LengthEditor
                 rows={rows}
