@@ -152,8 +152,10 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
     try {
       await loginAsAdmin(page);
       await page.goto('/catalogo');
-      // El catálogo se mira por línea de negocio; la de coberturas es la que tiene planchas.
-      await page.getByRole('tab', { name: /Metallic Roofing|Coberturas/i }).click();
+      // El catálogo se mira por línea de negocio; la de Metallic Roofing (D-174: "Coberturas
+      // Aluzinc" en la UI) es la que tiene planchas. Exacto porque "Coberturas (UPVC)" también
+      // matchea un `/Coberturas/` suelto.
+      await page.getByRole('tab', { name: 'Coberturas Aluzinc', exact: true }).click();
       await page.getByRole('button', { name: /Nuevo producto/i }).click();
 
       await page.getByLabel('Subtipo de cobertura').click();
@@ -217,7 +219,9 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
       // El selector de producto está apagado hasta que la línea tiene línea de negocio: es
       // por línea, no del documento (D-119).
       await page.getByLabel('Línea de negocio de la línea 1').click();
-      await page.getByRole('option', { name: 'Metallic Roofing' }).click();
+      // D-174 (S10): el label de la línea es una decisión del dueño, no una traducción
+      // literal — "Coberturas Aluzinc" en la UI de hoy.
+      await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
       await page.getByLabel('Producto de la línea 1').click();
       await page.getByRole('option', { name: new RegExp(product.sku) }).click();
 

@@ -107,7 +107,8 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
     const originalMargin = drywall.marginPct;
 
     try {
-      await page.getByRole('link', { name: 'Márgenes' }).click();
+      // S10/M2: Márgenes y tipo de cambio comparten un solo ítem de menú (pestañas).
+      await page.getByRole('link', { name: 'Márgenes y tipo de cambio' }).click();
       await expect(page.getByRole('heading', { name: 'Márgenes' })).toBeVisible();
 
       const row = page.getByRole('row').filter({ hasText: 'Drywall' });
@@ -138,8 +139,8 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
     const vendedor = await createUser(api, 'VENDEDOR');
     await loginAndSetPassword(page, vendedor, 'ClaveVendedorE2E-2026');
 
-    await expect(page.getByRole('link', { name: 'Márgenes' })).toHaveCount(0);
-    await expect(page.getByRole('link', { name: 'Tipo de cambio' })).toHaveCount(0);
+    // S10/M2: un solo ítem de menú para las dos ("Márgenes y tipo de cambio").
+    await expect(page.getByRole('link', { name: 'Márgenes y tipo de cambio' })).toHaveCount(0);
 
     await page.goto('/configuracion/margenes');
     await expect(page.getByText('No tienes permiso para ver esta sección.')).toBeVisible();

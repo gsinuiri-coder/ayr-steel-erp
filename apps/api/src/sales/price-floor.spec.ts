@@ -55,7 +55,7 @@ function fakeTx(options: {
               {
                 businessLineId: BL,
                 minMarginPct: new Prisma.Decimal(options.minMarginPct ?? MIN_MARGIN),
-                businessLine: { name: 'Drywall' },
+                businessLine: { code: 'DRYWALL' },
               },
             ],
       ),
@@ -213,7 +213,7 @@ describe('assertPriceFloor (D-163)', () => {
   it('un margen mínimo de 100% rebota con un mensaje legible, no con un 500', async () => {
     const tx = fakeTx({ minMarginPct: '100.0000', productCost: COST });
     await expect(assertPriceFloor(tx, [candidate('50.0000')], '0.05')).rejects.toThrow(
-      /Configuración → Márgenes/,
+      /Administración → Márgenes y tipo de cambio/,
     );
   });
 

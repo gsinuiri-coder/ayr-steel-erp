@@ -101,7 +101,8 @@ test.describe('Autenticación (RF-01, RF-03)', () => {
     await page.getByRole('button', { name: 'Guardar contraseña' }).click();
 
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole('heading', { name: 'Inicio' })).toBeVisible();
+    // S10/M2: "Inicio" pasa a llamarse "Panel".
+    await expect(page.getByRole('heading', { name: 'Panel' })).toBeVisible();
     // Un supervisor no ve el módulo de usuarios.
     await expect(page.getByRole('link', { name: 'Usuarios' })).toHaveCount(0);
   });
