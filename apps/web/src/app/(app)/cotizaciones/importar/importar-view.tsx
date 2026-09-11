@@ -344,7 +344,7 @@ export function ImportarCotizacionesView() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">1. El archivo</CardTitle>
+            <CardTitle>1. El archivo</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div className="grid gap-1.5">
@@ -397,7 +397,7 @@ export function ImportarCotizacionesView() {
         {preview && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">
+              <CardTitle>
                 2. Revisar y corregir{' '}
                 <span className="text-sm font-normal text-muted-foreground">
                   ({String(live.length)} líneas · {String(documents.length)} cotizaciones ·{' '}

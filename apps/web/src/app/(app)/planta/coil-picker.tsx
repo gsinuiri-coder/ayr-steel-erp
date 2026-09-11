@@ -82,7 +82,7 @@ export function CoilPicker({
     <>
       <Button
         type="button"
-        className="h-12 justify-self-start"
+        className="justify-self-start"
         aria-label={`Buscar una bobina para ${orderCode}`}
         disabled={disabled || pending}
         onClick={() => {

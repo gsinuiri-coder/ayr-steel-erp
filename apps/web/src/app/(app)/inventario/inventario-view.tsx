@@ -95,9 +95,7 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
     <>
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">
-            {showCosts ? 'Valorizado de la línea' : 'Ítems con saldo'}
-          </CardTitle>
+          <CardTitle>{showCosts ? 'Valorizado de la línea' : 'Ítems con saldo'}</CardTitle>
         </CardHeader>
         <CardContent>
           {showCosts && (
@@ -148,7 +146,7 @@ function SummaryTable({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">{title}</CardTitle>
+        <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="px-0">
         <Table>

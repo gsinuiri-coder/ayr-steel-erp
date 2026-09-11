@@ -101,7 +101,9 @@ export function ProduccionView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Producción</h1>
+          {/* S11/F1-01: `/planta` y esta pantalla se titulaban las dos «Producción», que es
+              justo lo que D-160 separó. El título repite el nombre que el menú ya le da. */}
+          <h1 className="text-lg font-semibold">Órdenes de producción</h1>
           <p className="text-xs text-muted-foreground">
             Perfiles de drywall desde fleje (RF-34) y coberturas metálicas desde bobina contra
             pedido (RF-30, RF-31), con trazabilidad hasta la bobina madre. La captura del operario

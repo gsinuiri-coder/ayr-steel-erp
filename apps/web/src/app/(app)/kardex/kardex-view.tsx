@@ -210,7 +210,13 @@ export function KardexView() {
                     {formatMoneyOrDash(m.balanceAvgCost, 'PEN', 4)}
                   </TableCell>
                 )}
-                <TableCell className="max-w-xs truncate text-muted-foreground">
+                {/* S11/F3-01: es la columna que hay que leer entera cuando se audita un
+                    movimiento, y se cortaba con «…» sin forma de ver el resto. El texto
+                    completo queda en el `title`. */}
+                <TableCell
+                  className="max-w-xs truncate text-muted-foreground"
+                  title={[m.notes, m.actorName].filter(Boolean).join(' · ')}
+                >
                   {m.notes ?? ''}
                   {m.notes && m.actorName ? ' · ' : ''}
                   {m.actorName ?? ''}

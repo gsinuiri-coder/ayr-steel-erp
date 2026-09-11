@@ -253,7 +253,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Material</CardTitle>
+            <CardTitle>Material</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1 text-sm">
             <Row label="Acabado" value={`${c.finishCode} — ${c.finishName}`} />
@@ -266,7 +266,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Costo</CardTitle>
+            <CardTitle>Costo</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1 text-sm">
             <Row label="Moneda" value={CURRENCY_LABELS[c.currency]} />
@@ -286,7 +286,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Origen</CardTitle>
+            <CardTitle>Origen</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1 text-sm">
             <Row
@@ -309,7 +309,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Partidos (RF-15)</CardTitle>
+          <CardTitle>Partidos (RF-15)</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <Table>
@@ -385,7 +385,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Órdenes de producción</CardTitle>
+          <CardTitle>Órdenes de producción</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <Table>
@@ -446,7 +446,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader className="flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base">Kardex de la bobina (RF-53)</CardTitle>
+          <CardTitle>Kardex de la bobina (RF-53)</CardTitle>
           <Button variant="outline" size="sm" asChild>
             <Link href={`/kardex?itemType=COIL&item=${id}`}>Ver kardex completo</Link>
           </Button>

@@ -102,7 +102,7 @@ export function TipoCambioView() {
 
       <Card className="max-w-md">
         <CardHeader>
-          <CardTitle className="text-base">Registrar manualmente</CardTitle>
+          <CardTitle>Registrar manualmente</CardTitle>
         </CardHeader>
         <CardContent>
           <Form {...form}>

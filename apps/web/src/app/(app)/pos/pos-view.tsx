@@ -269,8 +269,13 @@ export function PosView() {
             {products.isPending ? (
               <Skeleton className="h-64 w-full" />
             ) : (products.data ?? []).length === 0 ? (
+              /* S11/F4-01: con el buscador vacío la pantalla decía «no hay productos… para
+                 esa búsqueda» sin que nadie hubiera buscado nada. Ese mensaje es la
+                 respuesta a una búsqueda, no el estado inicial. */
               <p className="text-sm text-muted-foreground">
-                No hay productos con saldo disponible para esa búsqueda.
+                {search.trim() === ''
+                  ? 'Busca un producto por código o nombre para agregarlo al carrito.'
+                  : 'No hay productos con saldo disponible para esa búsqueda.'}
               </p>
             ) : (
               <ul className="grid gap-2 sm:grid-cols-2">

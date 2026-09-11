@@ -223,17 +223,42 @@ export function NuevoDespachoView() {
           driverLicense.trim() !== ''
         : carrierDocNumber.trim() !== '' && carrierName.trim() !== '';
 
-  const canSubmit =
-    salesOrderId !== NONE &&
-    selectedLines.length > 0 &&
-    invalidLines === 0 &&
-    originAddress.trim() !== '' &&
-    /^\d{6}$/.test(originUbigeo.trim()) &&
-    destinationAddress.trim() !== '' &&
-    /^\d{6}$/.test(destinationUbigeo.trim()) &&
-    (transferMode === 'PICKUP' || isPositiveDecimal(totalWeightKg)) &&
-    transportComplete &&
-    !create.isPending;
+  /**
+   * S11/F2-02: qué le falta al formulario, en palabras. El botón se apagaba sin decir nada,
+   * y los dos campos que más veces faltaban —los ubigeos— muestran un ejemplo como
+   * *placeholder* («150101»), así que se leían como si ya estuvieran llenos. La lista se
+   * arma con las mismas condiciones que habilitan el envío, no con una copia.
+   */
+  const missing: string[] = [];
+  if (salesOrderId === NONE) missing.push('el pedido');
+  if (selectedLines.length === 0) missing.push('qué cantidad sale');
+  if (originAddress.trim() === '') missing.push('la dirección de partida');
+  if (!/^\d{6}$/.test(originUbigeo.trim())) missing.push('el ubigeo de partida (6 dígitos)');
+  if (destinationAddress.trim() === '') missing.push('la dirección de llegada');
+  if (!/^\d{6}$/.test(destinationUbigeo.trim())) missing.push('el ubigeo de llegada (6 dígitos)');
+  if (transferMode !== 'PICKUP' && !isPositiveDecimal(totalWeightKg))
+    missing.push('el peso bruto total');
+  if (!transportComplete)
+    missing.push(
+      transferMode === 'PRIVATE'
+        ? 'los datos del vehículo y el conductor'
+        : 'los del transportista',
+    );
+
+  /** «a, b y c» — una enumeración y no una lista de campos pegada con comas. */
+  const missingText =
+    missing.length <= 1
+      ? missing.join('')
+      : `${missing.slice(0, -1).join(', ')} y ${missing[missing.length - 1] ?? ''}`;
+  /** Una cantidad mal escrita no es un dato que falta: es uno que está mal. */
+  const blockedText =
+    invalidLines > 0
+      ? 'Hay cantidades a despachar mayores que lo pendiente o mal escritas.'
+      : missing.length > 0
+        ? `Falta ${missingText}.`
+        : null;
+
+  const canSubmit = missing.length === 0 && invalidLines === 0 && !create.isPending;
 
   return (
     <RoleGate allow={DISPATCH_ROLES}>
@@ -247,7 +272,7 @@ export function NuevoDespachoView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Pedido y fecha</CardTitle>
+          <CardTitle>Pedido y fecha</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
           <div className="space-y-1">
@@ -297,7 +322,7 @@ export function NuevoDespachoView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Traslado</CardTitle>
+          <CardTitle>Traslado</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-2">
           <div className="space-y-1">
@@ -392,7 +417,7 @@ export function NuevoDespachoView() {
       {/* D-078: la modalidad decide qué datos pide la guía. D-103: el recojo no pide ninguno. */}
       <Card hidden={transferMode === 'PICKUP'}>
         <CardHeader>
-          <CardTitle className="text-base">
+          <CardTitle>
             {transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}
           </CardTitle>
         </CardHeader>
@@ -609,7 +634,10 @@ export function NuevoDespachoView() {
         </div>
       </section>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+        {blockedText !== null && (
+          <p className="mr-auto text-xs text-muted-foreground">{blockedText}</p>
+        )}
         <Button
           variant="outline"
           onClick={() => {
@@ -620,6 +648,7 @@ export function NuevoDespachoView() {
         </Button>
         <Button
           disabled={!canSubmit}
+          title={blockedText ?? undefined}
           onClick={() => {
             void backdate.attempt();
           }}

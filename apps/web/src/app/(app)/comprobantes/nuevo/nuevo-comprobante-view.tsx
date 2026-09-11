@@ -243,7 +243,7 @@ export function NuevoComprobanteView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Datos del comprobante</CardTitle>
+          <CardTitle>Datos del comprobante</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
           <div className="space-y-1">

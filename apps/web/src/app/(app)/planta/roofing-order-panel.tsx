@@ -450,7 +450,7 @@ export function RoofingOrderPanel({
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Bobina montada</CardTitle>
+          <CardTitle>Bobina montada</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
           {liveCoils.length === 0 && (
@@ -532,7 +532,7 @@ export function RoofingOrderPanel({
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Reportar lo que salió</CardTitle>
+          <CardTitle>Reportar lo que salió</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
           {liveCoils.length === 0 ? (
@@ -563,7 +563,7 @@ export function RoofingOrderPanel({
                     id={`kg-${order.orderId}`}
                     aria-label={`Kilos consumidos de ${order.code}`}
                     inputMode="decimal"
-                    className="h-12 text-lg"
+
                     placeholder={resolved.newKg === null ? 'opcional' : resolved.newKg.toFixed(3)}
                     disabled={pending}
                     value={draft.consumedKg}
@@ -610,7 +610,7 @@ export function RoofingOrderPanel({
                   id={`cierre-kg-${order.orderId}`}
                   aria-label={`Kilos consumidos al cerrar ${order.code}`}
                   inputMode="decimal"
-                  className="h-12 text-lg"
+
                   placeholder={resolved.closeOnly.consumedFloorKg.toFixed(3)}
                   disabled={pending}
                   value={draft.closeKg}
@@ -654,10 +654,15 @@ export function RoofingOrderPanel({
             </div>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          {/* S11/F1-02: eran dos botones de 64 px de alto estirados a media tarjeta cada uno
+              (≈580 y ≈720 px), del tamaño que pedía una terminal de planta con guantes. El
+              sistema se opera desde el escritorio del supervisor, así que valen los mismos
+              botones que el resto de la app, alineados a la derecha como toda barra de
+              acciones. */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <OperationDateField value={operationDate} onChange={onOperationDate} />
             <Button
               variant={closeIsPrimary ? 'outline' : 'default'}
-              className="h-16 text-lg"
               disabled={resolved.pieces === null || resolved.error !== null || pending}
               onClick={() => {
                 start(false);
@@ -667,7 +672,6 @@ export function RoofingOrderPanel({
             </Button>
             <Button
               variant={closeIsPrimary ? 'default' : 'outline'}
-              className="h-16 text-lg"
               disabled={
                 resolved.pieces === null ||
                 resolved.error !== null ||
@@ -680,13 +684,12 @@ export function RoofingOrderPanel({
             >
               {report.isPending && pendingClose ? 'Cerrando…' : 'Guardar y cerrar'}
             </Button>
-            <OperationDateField value={operationDate} onChange={onOperationDate} />
           </div>
 
           {canClose && (
             <Button
               variant="outline"
-              className="h-12 justify-self-start"
+              className="justify-self-start"
               aria-label={`Cerrar ${order.code} sin reportar más`}
               disabled={pending || resolved.closeOnly.closeKgError !== null}
               onClick={() => {
@@ -814,7 +817,7 @@ function PlanCard({
         {!editing && (
           <Button
             variant="outline"
-            className="h-12 justify-self-start"
+            className="justify-self-start"
             aria-label={`Ajustar el plan de corte de ${order.code}`}
             onClick={startEditing}
           >
@@ -840,7 +843,7 @@ function PlanCard({
                   id={`plan-planchas-${order.orderId}`}
                   aria-label={`Planchas del plan de ${order.code}`}
                   inputMode="numeric"
-                  className="h-12 text-lg"
+
                   disabled={pending}
                   value={rows[0]?.qty ?? ''}
                   onChange={(e) => {
@@ -854,7 +857,6 @@ function PlanCard({
             )}
             <div className="flex gap-2">
               <Button
-                className="h-12"
                 disabled={parsed === null || !parsed.ok || pending}
                 onClick={() => {
                   if (parsed?.ok) onSave(parsed.pieces);
@@ -864,7 +866,7 @@ function PlanCard({
               </Button>
               <Button
                 variant="outline"
-                className="h-12"
+
                 onClick={() => {
                   onRows(null);
                 }}

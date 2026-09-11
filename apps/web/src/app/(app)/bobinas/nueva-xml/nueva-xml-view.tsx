@@ -57,7 +57,7 @@ export function NuevaXmlView() {
       {!preview && (
         <Card className="max-w-xl">
           <CardHeader>
-            <CardTitle className="text-base">Archivo XML</CardTitle>
+            <CardTitle>Archivo XML</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">
             <Input

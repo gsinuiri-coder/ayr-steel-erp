@@ -268,7 +268,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">
+          <CardTitle>
             {o.kind === ProductionOrderKind.ROOFING
               ? 'Bobinas montadas en la orden'
               : 'Flejes consumidos por la orden'}
@@ -331,7 +331,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Reportes de piezas</CardTitle>
+          <CardTitle>Reportes de piezas</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <Table>

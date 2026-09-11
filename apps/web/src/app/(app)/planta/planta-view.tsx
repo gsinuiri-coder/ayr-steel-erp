@@ -183,13 +183,13 @@ export function PlantaView() {
           </div>
           <div className="flex flex-wrap gap-2">
             {salesOrderId !== null && (
-              <Button variant="outline" className="h-12" asChild>
+              <Button variant="outline" asChild>
                 <Link href="/planta">Todas las órdenes abiertas</Link>
               </Button>
             )}
             <Button
               variant="outline"
-              className="h-12"
+
               aria-expanded={creating}
               onClick={() => {
                 setCreating((v) => !v);
@@ -197,7 +197,7 @@ export function PlantaView() {
             >
               {creating ? 'Ocultar' : 'Abrir una orden nueva'}
             </Button>
-            <Button variant="outline" className="h-12" asChild>
+            <Button variant="outline" asChild>
               <Link href="/produccion">Órdenes de producción</Link>
             </Button>
           </div>

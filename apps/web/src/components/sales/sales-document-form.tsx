@@ -1043,7 +1043,9 @@ function LineRow({
             cuánto sale la plancha entera — que es lo que el cliente compara.
           */}
           <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
-            {fixedLength ? 'por metro' : `por ${unitSymbol(product?.unit ?? '')}`}
+            {/* S11/F1-03: sin producto elegido no hay unidad que poner, y el sufijo se
+                imprimía como un «por» suelto debajo del campo de precio. */}
+            {fixedLength ? 'por metro' : product ? `por ${unitSymbol(product.unit)}` : ''}
             {unitValuePen !== null && (
               <>
                 {' · valor '}

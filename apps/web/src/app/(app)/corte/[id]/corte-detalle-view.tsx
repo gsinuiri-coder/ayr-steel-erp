@@ -131,7 +131,7 @@ export function CorteDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Bobinas de la orden</CardTitle>
+          <CardTitle>Bobinas de la orden</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <Table>
@@ -232,7 +232,7 @@ export function CorteDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Servicios de corte imputados (RF-41)</CardTitle>
+          <CardTitle>Servicios de corte imputados (RF-41)</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <Table>

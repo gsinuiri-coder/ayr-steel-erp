@@ -222,7 +222,7 @@ export function DrywallOrderPanel({
       {isLive && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Reportar piezas</CardTitle>
+            <CardTitle>Reportar piezas</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div className="grid gap-2">
@@ -231,7 +231,7 @@ export function DrywallOrderPanel({
                 id={`piezas-${orderId}`}
                 aria-label={`Piezas buenas de ${o.code}`}
                 inputMode="numeric"
-                className="h-16 text-3xl"
+                className="text-3xl"
                 value={pieces}
                 onChange={(e) => {
                   setPieces(e.target.value);
@@ -240,7 +240,6 @@ export function DrywallOrderPanel({
             </div>
             <div className="grid gap-2">
               <Button
-                className="h-16 text-lg"
                 disabled={!piecesValid || overCapacity || report.isPending}
                 onClick={() => {
                   void backdate.attempt();
@@ -266,7 +265,7 @@ export function DrywallOrderPanel({
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Flejes montados</CardTitle>
+          <CardTitle>Flejes montados</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
           {liveStrips.length === 0 && (
@@ -300,7 +299,7 @@ export function DrywallOrderPanel({
               {isLive && new Decimal(c.consumedKg).lte(0) && (
                 <Button
                   variant="outline"
-                  className="h-12"
+
                   aria-label={`Liberar el fleje ${c.coilCode}`}
                   disabled={release.isPending}
                   onClick={() => {
@@ -318,7 +317,7 @@ export function DrywallOrderPanel({
       {isLive && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Consumir otro fleje</CardTitle>
+            <CardTitle>Consumir otro fleje</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">
             {strips.isPending && <Skeleton className="h-16 w-full" />}
@@ -359,7 +358,6 @@ export function DrywallOrderPanel({
                   </div>
                 </div>
                 <Button
-                  className="h-12"
                   aria-label={`Montar el fleje ${s.code}`}
                   disabled={consume.isPending || liveStrips.length >= MAX_ORDER_STRIPS}
                   onClick={() => {
@@ -376,7 +374,6 @@ export function DrywallOrderPanel({
 
       {o.status === 'IN_PROGRESS' && o.piecesReported > 0 && (
         <Button
-          className="h-16 text-lg"
           disabled={close.isPending}
           onClick={() => {
             // Con mucha merma, cerrar es una baja de inventario y el API pide motivo

@@ -243,7 +243,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Comprobante</CardTitle>
+            <CardTitle>Comprobante</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1 text-sm">
             <Row label="Emisión" value={formatDate(p.issueDate)} />
@@ -273,7 +273,7 @@ export function CompraDetalleView({ id }: { id: string }) {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Importes</CardTitle>
+            <CardTitle>Importes</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1 text-sm">
             <Row label="Valor de venta" value={formatMoney(p.subtotal, p.currency)} />
@@ -285,7 +285,7 @@ export function CompraDetalleView({ id }: { id: string }) {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Cuenta por pagar</CardTitle>
+            <CardTitle>Cuenta por pagar</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1 text-sm">
             <Row label="Pagado" value={formatMoney(p.paidAmount, p.currency)} />
@@ -320,9 +320,7 @@ export function CompraDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">
-            {p.type === PurchaseType.COIL ? 'Bobinas' : 'Detalle'}
-          </CardTitle>
+          <CardTitle>{p.type === PurchaseType.COIL ? 'Bobinas' : 'Detalle'}</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -380,9 +378,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       {p.landedCostServices.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">
-              Servicios imputados al costo de las bobinas (D-043)
-            </CardTitle>
+            <CardTitle>Servicios imputados al costo de las bobinas (D-043)</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
@@ -423,7 +419,7 @@ export function CompraDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Pagos</CardTitle>
+          <CardTitle>Pagos</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -707,7 +703,7 @@ function PaymentForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Nuevo pago</CardTitle>
+        <CardTitle>Nuevo pago</CardTitle>
       </CardHeader>
       <CardContent>
         <Form {...form}>

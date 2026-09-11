@@ -55,7 +55,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
 
       <Card className="max-w-sm">
         <CardHeader>
-          <CardTitle className="text-base">Total adeudado</CardTitle>
+          <CardTitle>Total adeudado</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-2xl font-semibold">{formatMoney(s.totalBalancePen)}</p>

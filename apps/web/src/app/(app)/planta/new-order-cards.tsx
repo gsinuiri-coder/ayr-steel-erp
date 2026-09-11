@@ -73,7 +73,7 @@ export function RoofingQueueCard({ onCreated }: { onCreated: (orderId: string) =
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Coberturas por fabricar</CardTitle>
+        <CardTitle>Coberturas por fabricar</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-3">
         <p className="text-sm text-muted-foreground">
@@ -98,7 +98,6 @@ export function RoofingQueueCard({ onCreated }: { onCreated: (orderId: string) =
             <QueueEntrySummary entry={entry} />
             <div className="grid justify-items-end gap-1">
               <Button
-                className="h-12"
                 aria-label={`Iniciar producción del pedido ${entry.salesOrderCode}`}
                 disabled={create.isPending}
                 onClick={() => {
@@ -185,13 +184,13 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Nueva orden de perfiles (drywall)</CardTitle>
+        <CardTitle>Nueva orden de perfiles (drywall)</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-x-4 gap-y-3 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
         <div className="grid gap-2">
           <Label htmlFor="planta-producto">Perfil a fabricar</Label>
           <Select value={productId} onValueChange={setProductId}>
-            <SelectTrigger id="planta-producto" className="h-12">
+            <SelectTrigger id="planta-producto">
               <SelectValue placeholder="Elige el perfil" />
             </SelectTrigger>
             <SelectContent>
@@ -209,7 +208,7 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
           <Input
             id="planta-meta"
             inputMode="numeric"
-            className="h-12 text-lg"
+
             value={targetPieces}
             onChange={(e) => {
               setTargetPieces(e.target.value);
@@ -218,7 +217,6 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
         </div>
         <div className="grid gap-2">
           <Button
-            className="h-12"
             disabled={!productId || piecesInvalid || create.isPending}
             onClick={() => {
               create.mutate();
@@ -232,7 +230,7 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
           <div className="grid gap-2 sm:col-span-3">
             <Label htmlFor="planta-pedido">Pedido a atender (opcional)</Label>
             <Select value={reservationId} onValueChange={setReservationId}>
-              <SelectTrigger id="planta-pedido" className="h-12">
+              <SelectTrigger id="planta-pedido">
                 <SelectValue placeholder="Corrida de stock, sin pedido" />
               </SelectTrigger>
               <SelectContent>
