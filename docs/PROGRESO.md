@@ -4315,10 +4315,9 @@ invocó directo por `cmd /c` con la salida a la vista. La regla dura 5 se ampli�
 **Decisión del dueño:** continuar la ventana sin rotar, asumiendo el riesgo, con la rotación
 como paso **obligatorio** de cierre.
 
-**Pendiente crítico, y la ventana no está cerrada sin él: rotar la contraseña de
-`neondb_owner`** (`neonctl roles reset-password`, o desde la consola de Neon) y actualizar
-después `.env.setup`, los secretos de Secret Manager en GCP y los de GitHub Actions. Hasta que
-eso pase, la credencial de producción hay que darla por comprometida.
+**Rotación ejecutada.** `neondb_owner` se reseteó (`neonctl roles reset-password`) y se
+propagó a `.env.setup`, Secret Manager en GCP y los secretos de GitHub Actions. Incidente
+cerrado.
 
 ## Sesión Saneamiento E2E (2026-09-10) — la suite deja de tener rojos que no son regresiones
 
