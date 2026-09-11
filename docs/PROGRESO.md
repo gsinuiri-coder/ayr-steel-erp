@@ -4634,6 +4634,59 @@ pnpm e2e                           # 239 pasados, 0 fallados, 2 saltados (52.6 m
 
 Ver handoff completo en `docs/handoff/s10-ux-batch-renombres-sidebar-produccion.md`.
 
+## Sesión S10b — Cierre de M4: sort en tablas + cajas info a popover (2026-09-10)
+
+Sesión corta (brief: ~30-45 min), sin push. Cierra M4, la mitad de S10 que quedó
+diferida.
+
+**M1 — Sort de columna (D-177).** `apps/web/src/lib/use-sort.ts` (hook `useSort` +
+`compareBy`/`compareDecimalBy`, esta última por `Decimal.comparedTo` — regla dura 1) y
+`apps/web/src/components/sortable-table-head.tsx` son el mecanismo único, aplicado a
+cotizaciones, pedidos, bobinas (paginadas: sort solo de la página actual) y producción
+(sin paginar: sort del conjunto entero). `key: null` es el default — sin clickear nada, el
+orden es el que ya manda el servidor (descendente, D-113/D-124), intacto.
+
+**M2 — Cajas info → popover (D-178).** `apps/web/src/components/ui/popover.tsx` (nuevo,
+`radix-ui`) + `apps/web/src/components/info-popover.tsx`. Aplicado a los dos candidatos
+que dejó identificados el handoff de S10: la nota de D-146 en "Plan de corte"
+(`roofing-order-panel.tsx`) y la de D-054 en "Reservas de material"
+(`pedido-detalle-view.tsx`). Avisos condicionales de negocio no se tocaron — siguen
+siempre visibles, por criterio explícito.
+
+**Un desvío que costó tiempo y no era un bug:** a mitad de sesión, un `pnpm e2e` en
+background con la salida canalizada a `tail -60` mostró 0 bytes durante varios minutos, y
+el proceso del API resultó ser `node .../dist/main` en vez de lo que se esperaba de
+`nest start`. Se interpretó como servidor con código viejo (mismo síntoma que ya había
+costado una corrida completa en S10) y se mató el proceso dos veces antes de confirmar que
+**`nest start` sin `--watch` compila a `dist/` y corre desde ahí siempre** — ver esto en
+la lista de procesos es normal, no evidencia de caché ni de modo CI. La demora real la
+causó canalizar la salida de un comando en background a `tail` sin `-f`: eso junta toda la
+salida hasta el final y no imprime nada mientras tanto, así que 0 bytes no quería decir
+"colgado". Ninguno de los dos hallazgos tocó código de producto.
+
+**Verificación de esta sesión:**
+
+```bash
+pnpm turbo lint typecheck test     # verde (399 unitarios)
+pnpm exec eslint e2e               # verde
+pnpm format:check                  # verde
+pnpm e2e e2e/tests/fase1.spec.ts e2e/tests/fase5a.spec.ts \
+  e2e/tests/planta-espacio-produccion-ui.spec.ts   # 17 pasados, dirigidos a M1/M2
+pnpm e2e                           # 239 pasados, 0 fallados, 2 saltados (51.1 min) —
+                                    # mismo baseline que S10, sin regresiones
+```
+
+`revisor` no encontró bloqueantes. Dos hallazgos BAJO en `roofing-order-panel.tsx`: dos
+notas estáticas más que cumplían el criterio de M2 y se habían dejado afuera. Una
+("Dato de planta: el kardex sale por el kilo teórico...", junto al campo "kg consumido")
+pasó a `InfoPopover` en la misma sesión. La otra ("Sin este dato se asume que la bobina
+consumió...", junto al cierre sin reportar) se dejó **a propósito**: mezcla un valor en
+vivo (`consumedFloorKg`) con dos avisos de validación condicionales que el propio criterio
+de M2 dice que tienen que seguir siempre visibles — convertirla entera habría escondido un
+error de validación detrás de un clic.
+
+Ver handoff completo en `docs/handoff/s10b-cierre-m4-sort-popover.md`.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
