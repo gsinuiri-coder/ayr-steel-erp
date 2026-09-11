@@ -20,7 +20,7 @@ import {
   type InventoryMovementDto,
   type PaginatedResult,
 } from '@ayr/shared';
-import { COIL_TONE } from '@/components/status-tone';
+import { COIL_SPLIT_TONE, COIL_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
 import {
   formatMoney,
@@ -349,7 +349,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={s.status === 'ACTIVE' ? 'secondary' : 'outline'}>
+                    <Badge variant={COIL_SPLIT_TONE[s.status]}>
                       {COIL_SPLIT_STATUS_LABELS[s.status]}
                     </Badge>
                   </TableCell>

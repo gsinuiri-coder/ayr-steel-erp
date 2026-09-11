@@ -12,6 +12,7 @@ import {
   type ProductionOrderDto,
   type ProductionStripOptionDto,
 } from '@ayr/shared';
+import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
 import { formatQty } from '@/lib/format';
 import type { ReverseArgs } from '@/lib/reverse-args';
@@ -178,7 +179,7 @@ export function DrywallOrderPanel({
         <CardHeader className="pb-3">
           <CardTitle className="flex flex-wrap items-center gap-2 text-base">
             <span className="font-mono">{o.code}</span>
-            <Badge variant={o.status === 'IN_PROGRESS' ? 'default' : 'secondary'}>
+            <Badge variant={PRODUCTION_ORDER_TONE[o.status]}>
               {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
             </Badge>
             <Badge variant="outline">Perfiles</Badge>
@@ -227,11 +228,14 @@ export function DrywallOrderPanel({
           <CardContent className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div className="grid gap-2">
               <Label htmlFor={`piezas-${orderId}`}>Piezas buenas de esta tanda</Label>
+              {/* S11/D-179: el campo era `text-3xl` y el de kilos de coberturas `text-lg`, sin
+                  criterio entre los dos. El número se tipea con teclado en un escritorio,
+                  como en cualquier otro formulario de la app; el campo gigante era para la
+                  terminal de planta que el operario ya no usa. */}
               <Input
                 id={`piezas-${orderId}`}
                 aria-label={`Piezas buenas de ${o.code}`}
                 inputMode="numeric"
-                className="text-3xl"
                 value={pieces}
                 onChange={(e) => {
                   setPieces(e.target.value);
@@ -299,7 +303,6 @@ export function DrywallOrderPanel({
               {isLive && new Decimal(c.consumedKg).lte(0) && (
                 <Button
                   variant="outline"
-
                   aria-label={`Liberar el fleje ${c.coilCode}`}
                   disabled={release.isPending}
                   onClick={() => {

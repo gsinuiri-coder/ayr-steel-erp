@@ -25,6 +25,7 @@ import {
   type Currency,
   type PurchaseDto,
 } from '@ayr/shared';
+import { PURCHASE_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { formatDate, formatMoney, formatQty, isPositiveDecimal, todayIso } from '@/lib/format';
@@ -200,9 +201,7 @@ export function CompraDetalleView({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={p.status === 'RECEIVED' ? 'secondary' : 'outline'}>
-            {PURCHASE_STATUS_LABELS[p.status]}
-          </Badge>
+          <Badge variant={PURCHASE_TONE[p.status]}>{PURCHASE_STATUS_LABELS[p.status]}</Badge>
           {canReceive && p.status === 'DRAFT' && (
             <div className="grid justify-items-end gap-1">
               <Button
@@ -400,7 +399,7 @@ export function CompraDetalleView({ id }: { id: string }) {
                     </TableCell>
                     <TableCell>{SERVICE_KIND_LABELS[service.serviceKind]}</TableCell>
                     <TableCell>
-                      <Badge variant={service.status === 'RECEIVED' ? 'secondary' : 'outline'}>
+                      <Badge variant={PURCHASE_TONE[service.status]}>
                         {PURCHASE_STATUS_LABELS[service.status]}
                       </Badge>
                     </TableCell>

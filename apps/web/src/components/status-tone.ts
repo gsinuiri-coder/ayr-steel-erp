@@ -1,7 +1,10 @@
 import type {
+  CoilSplitStatus,
   CoilStatus,
+  CuttingOrderCoilStatus,
   CuttingOrderStatus,
   DispatchStatus,
+  ProductionReportStatus,
   FiscalDocumentStatus,
   ProductionOrderStatus,
   PurchaseStatus,
@@ -108,4 +111,26 @@ export const CUTTING_ORDER_TONE: Record<CuttingOrderStatus, StatusTone> = {
   PARTIALLY_RECEIVED: 'progress',
   RECEIVED: 'done',
   CANCELLED: 'outline',
+};
+
+/** La bobina de una orden de corte, fila por fila. */
+export const CUTTING_ORDER_COIL_TONE: Record<CuttingOrderCoilStatus, StatusTone> = {
+  SENT: 'progress',
+  RECEIVED: 'done',
+  CANCELLED: 'outline',
+};
+
+/**
+ * Un partido de bobina y un reporte de producción comparten forma: viven o fueron
+ * revertidos. Un revertido es neutro, no un error — la reversa es una operación normal del
+ * dominio (D-052, D-061), no un fallo.
+ */
+export const COIL_SPLIT_TONE: Record<CoilSplitStatus, StatusTone> = {
+  ACTIVE: 'done',
+  REVERTED: 'outline',
+};
+
+export const PRODUCTION_REPORT_TONE: Record<ProductionReportStatus, StatusTone> = {
+  ACTIVE: 'done',
+  REVERTED: 'outline',
 };

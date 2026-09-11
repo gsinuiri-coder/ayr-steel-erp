@@ -99,7 +99,7 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
         </CardHeader>
         <CardContent>
           {showCosts && (
-            <p className="text-2xl font-semibold" data-testid="inventario-total">
+            <p className="text-lg font-semibold" data-testid="inventario-total">
               {formatMoneyOrDash(totalValuePen)}
             </p>
           )}

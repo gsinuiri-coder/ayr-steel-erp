@@ -12,6 +12,7 @@ import {
   type CuttingOrderCoilDto,
   type CuttingOrderDto,
 } from '@ayr/shared';
+import { CUTTING_ORDER_COIL_TONE, CUTTING_ORDER_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { formatMoney, formatQty } from '@/lib/format';
@@ -108,7 +109,7 @@ export function CorteDetalleView({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={o.status === 'CANCELLED' ? 'outline' : 'secondary'}>
+          <Badge variant={CUTTING_ORDER_TONE[o.status]}>
             {CUTTING_ORDER_STATUS_LABELS[o.status]}
           </Badge>
           <Button variant="outline" asChild>
@@ -195,7 +196,7 @@ export function CorteDetalleView({ id }: { id: string }) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={row.status === 'SENT' ? 'outline' : 'secondary'}>
+                    <Badge variant={CUTTING_ORDER_COIL_TONE[row.status]}>
                       {CUTTING_ORDER_COIL_STATUS_LABELS[row.status]}
                     </Badge>
                   </TableCell>

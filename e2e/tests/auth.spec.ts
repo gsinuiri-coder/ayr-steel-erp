@@ -22,7 +22,10 @@ test.describe('Autenticación (RF-01, RF-03)', () => {
     // Puede caer en Inicio o en cambio de contraseña obligatorio; en ambos hay sesión.
     await expect(page).toHaveURL(/\/(cambiar-contrasena)?$/);
     await expect(page.getByRole('button', { name: 'Cerrar sesión' })).toBeVisible();
-    await expect(page.getByText(email)).toBeVisible();
+    // S11/D-179: el correo dejó de ocupar una línea propia en el pie del menú —el menú no
+    // entra a 768 px de alto— y vive en el `title` de la línea del usuario. Sigue siendo el
+    // dato que identifica la sesión, que es lo que este caso comprueba.
+    await expect(page.getByTitle(email)).toBeVisible();
   });
 
   test('login con contraseña incorrecta muestra error y no entra', async ({ page }) => {

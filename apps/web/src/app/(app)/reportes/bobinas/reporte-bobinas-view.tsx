@@ -10,10 +10,10 @@ import {
   Role,
   type CoilMonthReportDto,
 } from '@ayr/shared';
+import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney, formatQty } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -72,11 +72,11 @@ export function ReporteBobinasView() {
       </div>
 
       {report.data && (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <StatStrip className="sm:grid-cols-3 lg:grid-cols-3">
           <TotalCard title="Saldo inicio de mes" value={report.data.totals.openingKg} />
           <TotalCard title="Peso de alta" value={report.data.totals.weightKg} />
           <TotalCard title="Saldo fin de mes" value={report.data.totals.closingKg} />
-        </div>
+        </StatStrip>
       )}
 
       <div className="overflow-x-auto rounded-md border">
@@ -146,13 +146,7 @@ export function ReporteBobinasView() {
   );
 }
 
+/** S11/D-179: la misma tira que el resto del sistema, en vez de tres tarjetas sueltas. */
 function TotalCard({ title, value }: { title: string; value: string }) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-normal text-muted-foreground">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="text-2xl font-semibold">{formatQty(value, 'kg')}</CardContent>
-    </Card>
-  );
+  return <Stat label={title}>{formatQty(value, 'kg')}</Stat>;
 }

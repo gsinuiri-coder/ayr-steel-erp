@@ -171,7 +171,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
             <SalesOrderStatusBadge status={o.status} />
             {/* RF-37 (D-093): "en cola" no es un estado del pedido, es una vista derivada. */}
             {o.queueStatus === 'EN_COLA' && <Badge variant="outline">En cola de producción</Badge>}
-            {o.queueStatus === 'EN_PRODUCCION' && <Badge variant="secondary">En producción</Badge>}
+            {o.queueStatus === 'EN_PRODUCCION' && <Badge variant="progress">En producción</Badge>}
             {o.priority && <Badge>Prioridad</Badge>}
             {/*
               D-141: un pedido importado se comporta como cualquier otro, pero no nació acá,

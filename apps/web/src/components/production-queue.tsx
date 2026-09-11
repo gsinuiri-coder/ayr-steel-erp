@@ -12,6 +12,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { formatDate, formatQty, queueAgeLabel, todayIso } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
+import type { StatusTone } from '@/components/status-tone';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,13 +42,16 @@ const SEMAPHORE_LABEL: Record<QueueSemaphore, string> = {
   SIN_FECHA: 'Sin fecha',
 };
 
-const SEMAPHORE_VARIANT: Record<
-  QueueSemaphore,
-  'default' | 'secondary' | 'destructive' | 'outline'
-> = {
+/**
+ * D-180: el semáforo de la fecha prometida, con los mismos cuatro tonos que el resto del
+ * sistema. Antes «Próximo (<48 h)» se llevaba el acento —el color de "en curso"— y «A
+ * tiempo» el gris más apagado, o sea que el aviso se veía como lo normal y la buena noticia
+ * como lo desactivado. Un semáforo es exactamente el caso para el que existe `warning`.
+ */
+const SEMAPHORE_VARIANT: Record<QueueSemaphore, StatusTone> = {
   VENCIDO: 'destructive',
-  PROXIMO: 'default',
-  A_TIEMPO: 'secondary',
+  PROXIMO: 'warning',
+  A_TIEMPO: 'done',
   SIN_FECHA: 'outline',
 };
 

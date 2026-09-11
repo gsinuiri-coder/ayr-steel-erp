@@ -93,7 +93,7 @@
       atendido, despachado, consumida, recibida).
     - `warning`  — hace falta mirarlo, pero no es un error (vencida, un envío al PSE que se
       quedó en el camino, una baja pendiente).
-    - `danger`   — error de verdad (rechazada por SUNAT, error de envío). Rojo y ámbar están
+    - `destructive` — error de verdad (rechazada por SUNAT, error de envío). Rojo y ámbar están
       reservados para estos dos últimos: no hay ningún uso decorativo de esos tonos.
 
     Un estado anulado o revertido **no** es ninguno de los cuatro: es neutro (`outline`). Es

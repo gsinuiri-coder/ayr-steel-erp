@@ -17,6 +17,8 @@ import {
   type ProductionOrderDto,
   type ProductionReportDto,
 } from '@ayr/shared';
+import { PRODUCTION_ORDER_TONE, PRODUCTION_REPORT_TONE } from '@/components/status-tone';
+import { Stat, StatStrip } from '@/components/stat-strip';
 import { api, ApiError } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import {
@@ -182,7 +184,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={o.status === 'IN_PROGRESS' ? 'default' : 'secondary'}>
+          <Badge variant={PRODUCTION_ORDER_TONE[o.status]}>
             {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
           </Badge>
           <Badge variant="outline">{PRODUCTION_ORDER_KIND_LABELS[o.kind]}</Badge>
@@ -228,7 +230,16 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/* Las columnas siguen a cuántas celdas hay de verdad: «Piezas teóricas» solo aparece
+          en drywall, y con cinco columnas fijas la quinta quedaba como un bloque gris (la
+          tira dibuja sus líneas con el color del borde por debajo). */}
+      <StatStrip
+        className={
+          theoreticalPieces === null
+            ? 'sm:grid-cols-2 lg:grid-cols-4'
+            : 'sm:grid-cols-2 lg:grid-cols-5'
+        }
+      >
         <SummaryCard
           title={o.metersReported === null ? 'Piezas buenas' : 'Metros buenos'}
           value={o.metersReported === null ? String(o.piecesReported) : `${o.metersReported} m`}
@@ -264,7 +275,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
               : 'Se calcula al cerrar la orden'
           }
         />
-      </div>
+      </StatStrip>
 
       <Card>
         <CardHeader>
@@ -359,7 +370,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
                   </TableCell>
                   <TableCell className="text-muted-foreground">{r.createdByName ?? '—'}</TableCell>
                   <TableCell>
-                    <Badge variant={r.status === 'ACTIVE' ? 'secondary' : 'outline'}>
+                    <Badge variant={PRODUCTION_REPORT_TONE[r.status]}>
                       {PRODUCTION_REPORT_STATUS_LABELS[r.status]}
                     </Badge>
                   </TableCell>
@@ -438,16 +449,12 @@ export function ProduccionDetalleView({ id }: { id: string }) {
   );
 }
 
+/** S11/D-179: la misma tira que el resto de los detalles, con su renglón de contexto. */
 function SummaryCard({ title, value, hint }: { title: string; value: string; hint?: string }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-normal text-muted-foreground">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-2xl font-semibold">{value}</p>
-        {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
-      </CardContent>
-    </Card>
+    <Stat label={title}>
+      {value}
+      {hint && <div className="mt-0.5 text-xs font-normal text-muted-foreground">{hint}</div>}
+    </Stat>
   );
 }

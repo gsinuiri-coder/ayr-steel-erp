@@ -208,7 +208,6 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
           <Input
             id="planta-meta"
             inputMode="numeric"
-
             value={targetPieces}
             onChange={(e) => {
               setTargetPieces(e.target.value);

@@ -189,7 +189,6 @@ export function PlantaView() {
             )}
             <Button
               variant="outline"
-
               aria-expanded={creating}
               onClick={() => {
                 setCreating((v) => !v);

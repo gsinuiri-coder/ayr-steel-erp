@@ -58,7 +58,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
           <CardTitle>Total adeudado</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-2xl font-semibold">{formatMoney(s.totalBalancePen)}</p>
+          <p className="text-lg font-semibold">{formatMoney(s.totalBalancePen)}</p>
           <p className="text-xs text-muted-foreground">
             Suma en soles del saldo de cada compra, convertido con el tipo de cambio que tenía esa
             compra.

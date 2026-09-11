@@ -250,12 +250,17 @@ export function NuevoDespachoView() {
     missing.length <= 1
       ? missing.join('')
       : `${missing.slice(0, -1).join(', ')} y ${missing[missing.length - 1] ?? ''}`;
-  /** Una cantidad mal escrita no es un dato que falta: es uno que está mal. */
+  /**
+   * Una cantidad mal escrita no es un dato que falta: es uno que está mal, y por eso se
+   * avisa aparte. «Todavía falta:» en vez de «Falta …» porque la lista mezcla singular y
+   * plural («la dirección de llegada», «los datos del conductor») y el verbo no puede
+   * concordar con las dos.
+   */
   const blockedText =
     invalidLines > 0
       ? 'Hay cantidades a despachar mayores que lo pendiente o mal escritas.'
       : missing.length > 0
-        ? `Falta ${missingText}.`
+        ? `Todavía falta: ${missingText}.`
         : null;
 
   const canSubmit = missing.length === 0 && invalidLines === 0 && !create.isPending;

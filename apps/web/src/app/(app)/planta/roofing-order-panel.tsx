@@ -563,7 +563,6 @@ export function RoofingOrderPanel({
                     id={`kg-${order.orderId}`}
                     aria-label={`Kilos consumidos de ${order.code}`}
                     inputMode="decimal"
-
                     placeholder={resolved.newKg === null ? 'opcional' : resolved.newKg.toFixed(3)}
                     disabled={pending}
                     value={draft.consumedKg}
@@ -610,7 +609,6 @@ export function RoofingOrderPanel({
                   id={`cierre-kg-${order.orderId}`}
                   aria-label={`Kilos consumidos al cerrar ${order.code}`}
                   inputMode="decimal"
-
                   placeholder={resolved.closeOnly.consumedFloorKg.toFixed(3)}
                   disabled={pending}
                   value={draft.closeKg}
@@ -843,7 +841,6 @@ function PlanCard({
                   id={`plan-planchas-${order.orderId}`}
                   aria-label={`Planchas del plan de ${order.code}`}
                   inputMode="numeric"
-
                   disabled={pending}
                   value={rows[0]?.qty ?? ''}
                   onChange={(e) => {
@@ -866,7 +863,6 @@ function PlanCard({
               </Button>
               <Button
                 variant="outline"
-
                 onClick={() => {
                   onRows(null);
                 }}
