@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { InventoryItemType, ReservationStatus, type Prisma } from '@prisma/client';
 import {
   Decimal,
+  quotationCode,
   rawMaterialLabel,
   salesOrderCode,
   toDecimal,
@@ -10,6 +11,7 @@ import {
 } from '@ayr/shared';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
+import { liveTemporaryWhere, reservedByItem, type ReservedScope } from './reserved-ledger';
 
 /**
  * La reserva **genérica** de materia prima (D-134).
@@ -265,38 +267,20 @@ export async function rawMaterialAvailability(
     `;
   }
 
-  const scope = reservationScopeWhere(options);
-  const [balances, onCoils, mounted, generic] = await Promise.all([
+  // D-185: las dos sumas de lo reservado pasan por `reservedByItem`, que suma firme y
+  // temporal vigente. Una temporal descuenta del agregado exactamente igual que una firme.
+  const [balances, onCoilsById, mounted, genericById] = await Promise.all([
     ids.length === 0
       ? []
       : tx.inventoryBalance.findMany({
           where: { itemType: InventoryItemType.COIL, itemId: { in: ids } },
           select: { itemId: true, qty: true },
         }),
-    ids.length === 0
-      ? []
-      : tx.reservation.findMany({
-          where: {
-            status: ReservationStatus.ACTIVE,
-            itemType: InventoryItemType.COIL,
-            itemId: { in: ids },
-            ...scope,
-          },
-          select: { itemId: true, qty: true },
-        }),
+    reservedByItem(tx, InventoryItemType.COIL, ids, options),
     ids.length === 0 ? [] : findLiveStripAssignments(tx, ids),
-    spec.id === ''
-      ? Promise.resolve({ _sum: { qty: null } })
-      : tx.reservation.aggregate({
-          where: {
-            status: ReservationStatus.ACTIVE,
-            itemType: InventoryItemType.RAW_MATERIAL,
-            itemId: spec.id,
-            ...scope,
-          },
-          _sum: { qty: true },
-        }),
+    reservedByItem(tx, InventoryItemType.RAW_MATERIAL, [spec.id], options),
   ]);
+  const onCoils = [...onCoilsById].map(([itemId, qty]) => ({ itemId, qty }));
 
   // D-154: lo que una OP retiene de cada rollo, que **no** es el rollo entero. Una bobina
   // puede aparecer en una sola asignación viva (`mountCoil` lo garantiza), pero se suma por
@@ -327,13 +311,10 @@ export async function rawMaterialAvailability(
   // `assertCoilsNotReserved` y `assertStripsNotAssigned`, pero la invariante no puede
   // depender de que dos guardrails ajenos sigan siendo herméticos.
   const reservedOnCoils = onCoils.reduce(
-    (acc, r) =>
-      (freeByCoilId.get(r.itemId) ?? new Decimal(0)).lte(0)
-        ? acc
-        : acc.plus(toDecimal(r.qty.toString())),
+    (acc, r) => ((freeByCoilId.get(r.itemId) ?? new Decimal(0)).lte(0) ? acc : acc.plus(r.qty)),
     new Decimal(0),
   );
-  const reservedGeneric = toDecimal(generic._sum.qty?.toString() ?? '0');
+  const reservedGeneric = genericById.get(spec.id) ?? new Decimal(0);
 
   const mountedKg = [...heldByCoilId.values()].reduce((acc, kg) => acc.plus(kg), new Decimal(0));
   const mountedOrderCodes = [...new Set(mounted.map((m) => m.orderCode))];
@@ -360,10 +341,7 @@ export async function rawMaterialAvailability(
  * planta estaba fabricando. **Una promesa no puede bloquear al pedido que la hizo**, ni por
  * su propia línea ni por sus hermanas.
  */
-export interface RawMaterialScope {
-  exceptReservationIds?: string[];
-  exceptSalesOrderIds?: string[];
-}
+export type RawMaterialScope = ReservedScope;
 
 function reservationScopeWhere(scope: RawMaterialScope): Prisma.ReservationWhereInput {
   const reservationIds = scope.exceptReservationIds ?? [];
@@ -530,21 +508,41 @@ export async function findRawMaterialShortfallsFor(
     });
     if (availability.available.gte(0)) continue;
 
-    const holders = await tx.reservation.findMany({
-      where: {
-        status: ReservationStatus.ACTIVE,
-        itemType: InventoryItemType.RAW_MATERIAL,
-        itemId: spec.id,
-        ...reservationScopeWhere(options),
-      },
-      select: { qty: true, salesOrder: { select: { seq: true } } },
-      orderBy: { createdAt: 'asc' },
-    });
+    const [holders, temporaryHolders] = await Promise.all([
+      tx.reservation.findMany({
+        where: {
+          status: ReservationStatus.ACTIVE,
+          itemType: InventoryItemType.RAW_MATERIAL,
+          itemId: spec.id,
+          ...reservationScopeWhere(options),
+        },
+        select: { qty: true, salesOrder: { select: { seq: true } } },
+        orderBy: { createdAt: 'asc' },
+      }),
+      tx.quotationReservation.findMany({
+        where: {
+          ...liveTemporaryWhere(),
+          itemType: InventoryItemType.RAW_MATERIAL,
+          itemId: spec.id,
+          ...((options.exceptQuotationIds ?? []).length === 0
+            ? {}
+            : { quotationId: { notIn: options.exceptQuotationIds } }),
+        },
+        select: { qty: true, quotation: { select: { seq: true } } },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
     const label = (await rawMaterialSpecLabels(tx, [spec.id])).get(spec.id) ?? 'materia prima';
-    const orders = holders.map((h) => ({
-      code: salesOrderCode(h.salesOrder.seq),
-      qtyKg: h.qty.toFixed(3),
-    }));
+    const orders = [
+      ...holders.map((h) => ({
+        code: salesOrderCode(h.salesOrder.seq),
+        qtyKg: h.qty.toFixed(3),
+      })),
+      ...temporaryHolders.map((h) => ({
+        code: `${quotationCode(h.quotation.seq)} (reserva temporal)`,
+        qtyKg: h.qty.toFixed(3),
+      })),
+    ];
     const freeKg = availability.physical.minus(availability.reservedOnCoils).toFixed(3);
     const promisedKg = availability.reservedGeneric.toFixed(3);
     const shortfallKg = availability.available.negated().toFixed(3);
@@ -596,15 +594,13 @@ async function findSpecsAffectedByAttributes(
   });
   if (candidates.length === 0) return [];
 
-  const withPromises = await tx.reservation.groupBy({
-    by: ['itemId'],
-    where: {
-      status: ReservationStatus.ACTIVE,
-      itemType: InventoryItemType.RAW_MATERIAL,
-      itemId: { in: candidates.map((c) => c.id) },
-    },
-  });
-  const live = new Set(withPromises.map((r) => r.itemId));
+  // D-185: una spec con una reserva temporal vigente también tiene promesas que proteger.
+  const promised = await reservedByItem(
+    tx,
+    InventoryItemType.RAW_MATERIAL,
+    candidates.map((c) => c.id),
+  );
+  const live = new Set(promised.keys());
   return candidates.filter((c) => live.has(c.id)).map(toSpecRef);
 }
 

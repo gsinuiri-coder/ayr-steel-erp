@@ -45,6 +45,7 @@ import { DispatchesService } from '../invoicing/dispatches.service';
 import { InvoicingService } from '../invoicing/invoicing.service';
 import { ReceivablesService } from '../invoicing/receivables.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { reservedByItem } from '../sales/reserved-ledger';
 import { SalesOrdersService } from '../sales/sales-orders.service';
 import { CashSessionsService } from './cash-sessions.service';
 
@@ -173,16 +174,10 @@ export class PosService {
     if (products.length === 0) return [];
 
     const ids = products.map((p) => p.id);
-    const reserved = await this.prisma.reservation.groupBy({
-      by: ['itemId'],
-      where: { itemType: 'PRODUCT', itemId: { in: ids }, status: 'ACTIVE' },
-      _sum: { qty: true },
-    });
+    // D-185: lo reservado incluye las reservas temporales vigentes de cotizaciones.
+    const reservedById = await reservedByItem(this.prisma, 'PRODUCT', ids);
     const balances = withStock;
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-    const reservedById = new Map(
-      reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString())]),
-    );
 
     return products
       .map((p) => {

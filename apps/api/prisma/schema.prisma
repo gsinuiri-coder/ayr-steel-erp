@@ -332,6 +332,16 @@ enum ReservationStatus {
   RELEASED
 }
 
+/// D-185: estado de una reserva temporal de cotización. `ACTIVE` descuenta disponible solo
+/// mientras `expires_at` esté en el futuro — la expiración es perezosa: una vencida cuenta como
+/// liberada en toda lectura y se marca `EXPIRED` en la próxima escritura que la toque.
+enum TemporaryReservationStatus {
+  ACTIVE
+  RELEASED
+  EXPIRED
+  CONVERTED
+}
+
 /// Origen de un pedido (D-141). `IMPORTED` es el que nace de un comprobante ya emitido
 /// afuera (RF-71): puede ser una **cáscara** terminal —la venta ya se entregó y el ERP solo
 /// la registra— o un pedido **vivo** con reservas y una OP en cola, si lo importado todavía
@@ -1423,6 +1433,8 @@ model Quotation {
   /// pedido la devuelve a `EMITIDA` y se puede volver a confirmar; como mucho uno de
   /// ellos está vivo a la vez.
   salesOrders SalesOrder[]
+  /// D-185: el historial de reservas temporales. Como mucho un juego vigente a la vez.
+  temporaryReservations QuotationReservation[]
 
   @@index([customerId, status])
   @@index([status, validUntil])
@@ -1665,6 +1677,59 @@ model Reservation {
   @@index([salesOrderItemId, status])
   @@index([importBatchId])
   @@map("reservations")
+}
+
+/// Reserva **temporal** de una cotización emitida (D-185): el material se aparta mientras
+/// el cliente deposita, sin crear el pedido.
+///
+/// Tabla aparte del ledger firme a propósito: `reservations` cuelga de un pedido y de su
+/// línea en todas sus lecturas (cola, producción, traslado de la promesa). Una temporal no
+/// tiene pedido, y hacer esas columnas opcionales habría abierto un caso nulo en cada uno de
+/// esos caminos. Lo que sí comparten es la pregunta de disponibilidad: toda suma de
+/// "reservado" del sistema suma las dos tablas (`reservedByItem`), así que una temporal
+/// vigente descuenta igual que una firme.
+///
+/// Una fila por línea de la cotización con algo que reservar. Append-only en el mismo
+/// sentido que `reservations`: nunca se borra, termina en `RELEASED`, `EXPIRED` o
+/// `CONVERTED` con quién, cuándo y por qué.
+model QuotationReservation {
+  id          String                     @id @default(uuid()) @db.Uuid
+  quotationId String                     @map("quotation_id") @db.Uuid
+  quotation   Quotation                  @relation(fields: [quotationId], references: [id])
+  /// Número de línea de la cotización al reservar. Las líneas se reescriben al editar, así que
+  /// no hay FK: editar libera y vuelve a reservar si lo reservado cambió.
+  lineNumber  Int                        @map("line_number")
+  itemType    InventoryItemType          @map("item_type")
+  itemId      String                     @map("item_id") @db.Uuid
+  qty         Decimal                    @db.Decimal(16, 3)
+  unit        String                     @db.VarChar(20)
+  status      TemporaryReservationStatus @default(ACTIVE)
+  expiresAt   DateTime                   @map("expires_at") @db.Timestamptz(3)
+  createdById String                     @map("created_by_id") @db.Uuid
+  createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  endedAt     DateTime?                  @map("ended_at") @db.Timestamptz(3)
+  /// Null cuando terminó sola (vencida) o la terminó el sistema (conversión).
+  endedById   String?                    @map("ended_by_id") @db.Uuid
+  endReason   String?                    @map("end_reason") @db.VarChar(240)
+  /// El pedido en el que se convirtió en firme. Referencia suelta, solo trazabilidad.
+  salesOrderId String?                   @map("sales_order_id") @db.Uuid
+
+  /// El que sostiene la suma de disponible: una pasada por índice por ítem.
+  @@index([itemType, itemId, status, expiresAt])
+  @@index([quotationId, status])
+  @@index([status, expiresAt])
+  @@map("quotation_reservations")
+}
+
+/// Configuración comercial editable por Administración (D-185). Una sola fila, `id = 1`; si
+/// no existe, rigen los valores por defecto de `@ayr/shared`.
+model SalesSettings {
+  id                               Int      @id @default(1)
+  temporaryReservationBusinessDays Int      @map("temporary_reservation_business_days")
+  updatedById                      String?  @map("updated_by_id") @db.Uuid
+  updatedAt                        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("sales_settings")
 }
 
 // ---------------------------------------------------------------------------

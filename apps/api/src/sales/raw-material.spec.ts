@@ -41,6 +41,14 @@ interface FakeState {
     reservationId?: string | null;
   }[];
   specs: (typeof SPEC)[];
+  /** D-185: reservas temporales de cotización (siempre `ACTIVE`; el vencimiento decide). */
+  temporary?: {
+    itemType: 'COIL' | 'RAW_MATERIAL';
+    itemId: string;
+    qty: string;
+    expiresAt: string;
+    quotationSeq: number;
+  }[];
 }
 
 /**
@@ -53,6 +61,25 @@ function scopeFilter(where: Record<string, unknown>) {
   return (row: { id: string; salesOrderId?: string }) =>
     !exceptIds.includes(row.id) &&
     !(row.salesOrderId !== undefined && exceptOrders.includes(row.salesOrderId));
+}
+
+function sumByItem(rows: { itemId: string; qty: string }[]) {
+  const totals = new Map<string, Prisma.Decimal>();
+  for (const r of rows) {
+    totals.set(r.itemId, (totals.get(r.itemId) ?? new Prisma.Decimal(0)).plus(r.qty));
+  }
+  return [...totals].map(([itemId, qty]) => ({ itemId, _sum: { qty } }));
+}
+
+/**
+ * D-185: las temporales que el `where` de `liveTemporaryWhere` deja pasar — `ACTIVE` y con
+ * vencimiento posterior al instante de la consulta —, del tipo pedido.
+ */
+function liveTemporary(state: FakeState, where: Record<string, unknown>) {
+  const gt = (where.expiresAt as { gt?: Date } | undefined)?.gt ?? new Date(0);
+  return (state.temporary ?? []).filter(
+    (r) => where.status === 'ACTIVE' && r.itemType === where.itemType && new Date(r.expiresAt) > gt,
+  );
 }
 
 function createFakeTx(state: FakeState) {
@@ -124,14 +151,34 @@ function createFakeTx(state: FakeState) {
             .map((r) => ({ qty: dec(r.qty), salesOrder: { seq: r.orderSeq } })),
         );
       }),
-      aggregate: jest.fn(({ where }: { where: Record<string, unknown> }) => {
-        const total = state.generic
-          .filter(scopeFilter(where))
-          .reduce((acc, r) => acc.plus(dec(r.qty)), new Prisma.Decimal(0));
-        return Promise.resolve({ _sum: { qty: total } });
+      // `reservedByItem` (D-185): la suma por ítem, con el mismo alcance que el resto.
+      groupBy: jest.fn(({ where }: { where: Record<string, unknown> }) => {
+        const keep = scopeFilter(where);
+        const rows =
+          where.itemType === 'COIL'
+            ? state.onCoils.filter((r) => keep({ id: r.id }))
+            : state.generic.filter(keep).map((r) => ({ ...r, itemId: SPEC.id }));
+        return Promise.resolve(sumByItem(rows));
       }),
-      groupBy: jest.fn(() =>
-        Promise.resolve(state.generic.length > 0 ? [{ itemId: SPEC.id }] : []),
+    },
+    quotationReservation: {
+      groupBy: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(
+          sumByItem(
+            liveTemporary(state, where).map((r) => ({
+              itemId: where.itemType === 'COIL' ? r.itemId : SPEC.id,
+              qty: r.qty,
+            })),
+          ),
+        ),
+      ),
+      findMany: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(
+          liveTemporary(state, where).map((r) => ({
+            qty: dec(r.qty),
+            quotation: { seq: r.quotationSeq },
+          })),
+        ),
       ),
     },
     $queryRaw: jest.fn(() => Promise.resolve([])),
@@ -180,6 +227,61 @@ describe('Invariante del agregado de materia prima (D-134)', () => {
       expect(result.reservedOnCoils.toFixed(3)).toBe('300.000');
       expect(result.reservedGeneric.toFixed(3)).toBe('200.000');
       expect(result.available.toFixed(3)).toBe('500.000');
+    });
+
+    it('D-185: una reserva temporal vigente descuenta igual que una firme; una vencida no', async () => {
+      const future = new Date(Date.now() + 86_400_000).toISOString();
+      const past = new Date(Date.now() - 1_000).toISOString();
+      const tx = createFakeTx({
+        ...EMPTY,
+        coils: [{ id: 'a', businessLineId: LINE, colorId: 'rojo', thicknessMm: '0.45' }],
+        balances: [{ itemId: 'a', qty: '1000' }],
+        generic: [{ id: 'r-gen', qty: '200', orderSeq: 7 }],
+        temporary: [
+          {
+            itemType: 'RAW_MATERIAL',
+            itemId: SPEC.id,
+            qty: '150',
+            expiresAt: future,
+            quotationSeq: 3,
+          },
+          // Vencida sin marcar: la expiración es perezosa y tiene que contar como liberada.
+          {
+            itemType: 'RAW_MATERIAL',
+            itemId: SPEC.id,
+            qty: '400',
+            expiresAt: past,
+            quotationSeq: 4,
+          },
+          { itemType: 'COIL', itemId: 'a', qty: '100', expiresAt: future, quotationSeq: 5 },
+        ],
+      });
+      const result = await rawMaterialAvailability(tx, SPEC, TOLERANCE);
+      expect(result.reservedGeneric.toFixed(3)).toBe('350.000');
+      expect(result.reservedOnCoils.toFixed(3)).toBe('100.000');
+      expect(result.available.toFixed(3)).toBe('550.000');
+    });
+
+    it('D-185: la reserva temporal nombra a su cotización cuando el agregado queda corto', async () => {
+      const future = new Date(Date.now() + 86_400_000).toISOString();
+      const tx = createFakeTx({
+        ...EMPTY,
+        coils: [{ id: 'a', businessLineId: LINE, colorId: 'rojo', thicknessMm: '0.45' }],
+        balances: [{ itemId: 'a', qty: '100' }],
+        temporary: [
+          {
+            itemType: 'RAW_MATERIAL',
+            itemId: SPEC.id,
+            qty: '300',
+            expiresAt: future,
+            quotationSeq: 12,
+          },
+        ],
+      });
+      const shortfalls = await findRawMaterialShortfalls(tx, ['a'], TOLERANCE);
+      expect(shortfalls[0]?.orders).toEqual([
+        { code: 'COT-000012 (reserva temporal)', qtyKg: '300.000' },
+      ]);
     });
 
     it('no cuenta los kilos que una corrida A STOCK retiene (D-060)', async () => {

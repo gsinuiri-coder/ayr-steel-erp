@@ -32,6 +32,11 @@ import { Stat, StatStrip } from '@/components/stat-strip';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
+import {
+  formatExpiry,
+  remainingLabel,
+  TemporaryReservationLines,
+} from '@/components/sales/temporary-reservation';
 import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
@@ -42,6 +47,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [releaseOpen, setReleaseOpen] = useState(false);
 
   const quotation = useQuery({
     queryKey: ['quotation', id],
@@ -59,6 +65,30 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       toast.success(`Pedido ${order.code} creado con su reserva`);
       invalidateSales(queryClient, { quotationId: id, orderId: order.id });
       router.push(`/pedidos/${order.id}`);
+    },
+    onError,
+  });
+
+  // D-185: apartar el material mientras el cliente deposita.
+  const reserve = useMutation({
+    mutationFn: () => api<QuotationDto>(`/sales/quotations/${id}/reserve`, { method: 'POST' }),
+    onSuccess: () => {
+      toast.success('Material reservado temporalmente');
+      invalidateSales(queryClient, { quotationId: id });
+    },
+    onError,
+  });
+
+  const releaseTemporary = useMutation({
+    mutationFn: (reason: string) =>
+      api<QuotationDto>(`/sales/quotations/${id}/release-reservation`, {
+        method: 'POST',
+        body: { reason },
+      }),
+    onSuccess: () => {
+      toast.success('Reserva temporal liberada');
+      setReleaseOpen(false);
+      invalidateSales(queryClient, { quotationId: id });
     },
     onError,
   });
@@ -97,8 +127,14 @@ export function CotizacionDetalleView({ id }: { id: string }) {
     );
   }
 
-  const busy = confirm.isPending || cancel.isPending || duplicate.isPending;
+  const busy =
+    confirm.isPending ||
+    cancel.isPending ||
+    duplicate.isPending ||
+    reserve.isPending ||
+    releaseTemporary.isPending;
   const canConfirm = q.status === 'EMITTED' && !q.isExpired;
+  const canReserve = canConfirm && q.temporaryReservation === null;
   const canCancel = q.status !== 'CONFIRMED' && q.status !== 'CANCELLED';
   // D-184: editable mientras no esté confirmada. Una vencida también: editarla es renovarla.
   const canEdit = q.status !== 'CONFIRMED' && q.status !== 'CANCELLED';
@@ -130,6 +166,20 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           {canEdit && (
             <Button variant="outline" asChild>
               <Link href={`/cotizaciones/${q.id}/editar`}>Editar</Link>
+            </Button>
+          )}
+          {canReserve && (
+            <Button
+              variant="outline"
+              disabled={busy}
+              pending={reserve.isPending}
+              pendingText="Reservando…"
+              onClick={() => {
+                if (busy) return;
+                reserve.mutate();
+              }}
+            >
+              Reservar
             </Button>
           )}
           {canConfirm && (
@@ -180,6 +230,40 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             confirmar. Edítala con una vigencia nueva para renovarla.
           </AlertDescription>
         </Alert>
+      )}
+
+      {q.temporaryReservation && (
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2">
+            <div>
+              <CardTitle className="text-sm">Reserva temporal</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Vence {formatExpiry(q.temporaryReservation.expiresAt)} · queda{' '}
+                <span className="font-medium text-foreground">
+                  {remainingLabel(q.temporaryReservation.expiresAt)}
+                </span>
+                {q.temporaryReservation.createdByName
+                  ? ` · la hizo ${q.temporaryReservation.createdByName}`
+                  : ''}
+                . Confirmar la convierte en firme.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                if (busy) return;
+                setReleaseOpen(true);
+              }}
+            >
+              Liberar
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <TemporaryReservationLines lines={q.temporaryReservation.lines} />
+          </CardContent>
+        </Card>
       )}
 
       {q.salesOrderId && (
@@ -306,6 +390,18 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           </Badge>
         )}
       </div>
+
+      <ReasonDialog
+        open={releaseOpen}
+        onOpenChange={setReleaseOpen}
+        title={`Liberar la reserva de ${q.code}`}
+        description="El material vuelve a estar disponible. La cotización sigue emitida y se puede volver a reservar o confirmar."
+        confirmLabel="Liberar reserva"
+        pending={releaseTemporary.isPending}
+        onConfirm={(reason) => {
+          releaseTemporary.mutate(reason);
+        }}
+      />
 
       <ReasonDialog
         open={cancelOpen}

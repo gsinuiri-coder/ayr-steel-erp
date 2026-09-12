@@ -43,6 +43,7 @@ import {
   type RawMaterialShortfall,
 } from '../sales/raw-material';
 import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
+import { reservedByItem as sumReservedByItem } from '../sales/reserved-ledger';
 
 /**
  * D-134: los movimientos de un **partido**, que no se comprueban contra el agregado uno por
@@ -987,17 +988,13 @@ export class InventoryService {
   ): Promise<Map<string, Decimal>> {
     const map = new Map<string, Decimal>();
     if (balances.length === 0) return map;
-    const rows = await this.prisma.reservation.groupBy({
-      by: ['itemType', 'itemId'],
-      where: {
-        status: 'ACTIVE',
-        itemId: { in: [...new Set(balances.map((b) => b.itemId))] },
-      },
-      _sum: { qty: true },
-    });
-    for (const r of rows) {
-      if (r._sum.qty === null) continue;
-      map.set(labelKey(r.itemType, r.itemId), toDecimal(r._sum.qty.toString()));
+    // D-185: firme más temporal vigente, un tipo de ítem por vez.
+    const types = [...new Set(balances.map((b) => b.itemType))];
+    for (const itemType of types) {
+      const ids = balances.filter((b) => b.itemType === itemType).map((b) => b.itemId);
+      for (const [itemId, qty] of await sumReservedByItem(this.prisma, itemType, ids)) {
+        map.set(labelKey(itemType, itemId), qty);
+      }
     }
     return map;
   }

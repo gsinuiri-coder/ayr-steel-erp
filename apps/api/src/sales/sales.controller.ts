@@ -19,7 +19,13 @@ import {
   createSalesOrderSchema,
   quotationQuerySchema,
   releaseReservationSchema,
+  releaseTemporaryReservationSchema,
   reservationQuerySchema,
+  updateSalesSettingsSchema,
+  type ReleaseTemporaryReservationInput,
+  type SalesSettingsDto,
+  type TemporaryReservationListItemDto,
+  type UpdateSalesSettingsInput,
   Role,
   salesOrderQuerySchema,
   sellableCoilQuerySchema,
@@ -164,6 +170,52 @@ export class SalesController {
     @Body(new ZodValidationPipe(confirmQuotationSchema)) body: ConfirmQuotationInput,
   ): Promise<SalesOrderDto> {
     return this.orders.confirm(actor, id, body.promisedDeliveryDate);
+  }
+
+  /**
+   * D-185: «Reservar» — aparta el material de una cotización emitida, con vencimiento a N
+   * días hábiles, sin crear el pedido.
+   */
+  @Post('quotations/:id/reserve')
+  async reserveQuotation(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<QuotationDto> {
+    await this.orders.reserveTemporarily(actor, id);
+    return this.quotations.findOne(id);
+  }
+
+  /** D-185: liberar a mano la reserva temporal vigente. Motivo obligatorio. */
+  @Post('quotations/:id/release-reservation')
+  async releaseQuotationReservation(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(releaseTemporaryReservationSchema))
+    body: ReleaseTemporaryReservationInput,
+  ): Promise<QuotationDto> {
+    await this.orders.releaseTemporary(actor, id, body.reason);
+    return this.quotations.findOne(id);
+  }
+
+  /** D-185: la vista «Reservas temporales vigentes». */
+  @Get('temporary-reservations')
+  temporaryReservations(): Promise<TemporaryReservationListItemDto[]> {
+    return this.orders.findTemporaryReservations();
+  }
+
+  /** D-185: configuración comercial. La lee el equipo comercial; la cambia Administración. */
+  @Get('settings')
+  salesSettings(): Promise<SalesSettingsDto> {
+    return this.orders.getSalesSettings();
+  }
+
+  @Put('settings')
+  @Roles(Role.ADMINISTRADOR)
+  updateSalesSettings(
+    @CurrentUser() actor: RequestUser,
+    @Body(new ZodValidationPipe(updateSalesSettingsSchema)) body: UpdateSalesSettingsInput,
+  ): Promise<SalesSettingsDto> {
+    return this.orders.updateSalesSettings(actor, body);
   }
 
   /** RF-65: anular una cotización no confirmada. */

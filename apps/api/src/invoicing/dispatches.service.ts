@@ -41,6 +41,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
+import { reservedByItem } from '../sales/reserved-ledger';
 import { pendingQty, proratedQty } from './invoicing-math';
 
 /**
@@ -657,11 +658,8 @@ export class DispatchesService {
         where: { itemType: 'COIL', itemId: { in: coilIds } },
         select: { itemId: true, qty: true },
       }),
-      tx.reservation.groupBy({
-        by: ['itemId'],
-        where: { status: 'ACTIVE', itemType: 'COIL', itemId: { in: coilIds } },
-        _sum: { qty: true },
-      }),
+      // D-185: firme más temporal vigente.
+      reservedByItem(tx, 'COIL', coilIds),
       tx.coil.findMany({
         where: { id: { in: coilIds }, status: CoilStatus.OPEN },
         select: { id: true, code: true },
@@ -669,7 +667,7 @@ export class DispatchesService {
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
     const reservedIds = new Set(
-      reserved.filter((r) => toDecimal((r._sum.qty ?? 0).toString()).gt(0)).map((r) => r.itemId),
+      [...reserved].filter(([, qty]) => qty.gt(0)).map(([itemId]) => itemId),
     );
 
     const toClose = coils.filter(

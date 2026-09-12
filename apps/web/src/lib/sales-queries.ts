@@ -18,6 +18,8 @@ export function invalidateSales(
   void queryClient.invalidateQueries({ queryKey: ['quotations'] });
   void queryClient.invalidateQueries({ queryKey: ['sales-orders'] });
   void queryClient.invalidateQueries({ queryKey: ['reservations'] });
+  // D-185: reservar, liberar, editar y confirmar cambian la vista de temporales vigentes.
+  void queryClient.invalidateQueries({ queryKey: ['temporary-reservations'] });
   void queryClient.invalidateQueries({ queryKey: ['stock-panel'] });
   void queryClient.invalidateQueries({ queryKey: ['inventory'] });
   void queryClient.invalidateQueries({ queryKey: ['coils'] });

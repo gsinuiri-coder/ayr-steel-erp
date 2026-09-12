@@ -18,6 +18,7 @@ import {
   ShoppingCart,
   Store,
   Send,
+  Timer,
   Truck,
   Users,
   UsersRound,
@@ -81,6 +82,13 @@ export const NAV: NavGroup[] = [
         title: 'Cotizaciones',
         href: '/cotizaciones',
         icon: FileText,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
+        // D-185: lo apartado mientras el cliente deposita, con su tiempo restante.
+        title: 'Reservas temporales',
+        href: '/reservas-temporales',
+        icon: Timer,
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
       },
       {
@@ -184,7 +192,7 @@ export const NAV: NavGroup[] = [
       {
         // S10/M2: Márgenes y tipo de cambio comparten pantalla (pestañas en
         // configuracion/layout.tsx); el ítem del menú apunta al primer tab.
-        title: 'Márgenes y tipo de cambio',
+        title: 'Márgenes, tipo de cambio y reservas',
         href: '/configuracion/margenes',
         activePrefix: '/configuracion',
         icon: Percent,

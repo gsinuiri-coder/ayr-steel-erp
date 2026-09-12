@@ -16,6 +16,7 @@ import {
 import {
   BUSINESS_LINES,
   INVENTORY_ITEM_TYPES,
+  MAX_TEMPORARY_RESERVATION_BUSINESS_DAYS,
   QUOTATION_STATUSES,
   RESERVATION_STATUSES,
   SALES_ORDER_ORIGINS,
@@ -511,6 +512,8 @@ export const quotationSchema = z.object({
   emittedAt: z.string().nullable(),
   confirmedAt: z.string().nullable(),
   cancelledAt: z.string().nullable(),
+  /** D-185: la reserva temporal vigente, o `null`. Una vencida no se informa como vigente. */
+  temporaryReservation: z.lazy(() => quotationTemporaryReservationSchema).nullable(),
 });
 export type QuotationDto = z.infer<typeof quotationSchema>;
 
@@ -519,7 +522,8 @@ export type QuotationDto = z.infer<typeof quotationSchema>;
 // consulta aparte por fila. Nadie lo muestra en la lista hoy — se omite acá y se recalcula
 // en el detalle (`GET /sales/quotations/:id`), donde `items` ya viaja completo.
 export const quotationListItemSchema = quotationSchema
-  .omit({ items: true, businessLines: true })
+  // D-185: la reserva temporal es del detalle; la vista de vigentes tiene su propio endpoint.
+  .omit({ items: true, businessLines: true, temporaryReservation: true })
   .extend({
     itemCount: z.number().int(),
   });
@@ -557,6 +561,64 @@ export const confirmQuotationSchema = z.object({
   promisedDeliveryDate: isoDateSchema.optional(),
 });
 export type ConfirmQuotationInput = z.infer<typeof confirmQuotationSchema>;
+
+// --------------------------------------------------------------------------
+// D-185 — reserva temporal sobre una cotización emitida
+// --------------------------------------------------------------------------
+
+/**
+ * Una línea de la reserva temporal: lo mismo que confirmar reservaría en firme para esa
+ * línea (el agregado de materia prima, el producto o la bobina), con su cantidad.
+ */
+export const temporaryReservationLineSchema = z.object({
+  id: z.string().uuid(),
+  lineNumber: z.number().int(),
+  itemType: z.enum(INVENTORY_ITEM_TYPES),
+  itemId: z.string().uuid(),
+  itemLabel: z.string(),
+  qty: z.string(),
+  unit: unitStringSchema,
+});
+export type TemporaryReservationLineDto = z.infer<typeof temporaryReservationLineSchema>;
+
+/** La reserva temporal **vigente** de una cotización. `null` en el DTO si no tiene. */
+export const quotationTemporaryReservationSchema = z.object({
+  expiresAt: z.string(),
+  createdAt: z.string(),
+  createdByName: z.string().nullable(),
+  lines: z.array(temporaryReservationLineSchema),
+});
+export type QuotationTemporaryReservationDto = z.infer<typeof quotationTemporaryReservationSchema>;
+
+/** Una fila de la vista «Reservas temporales vigentes»: una por cotización. */
+export const temporaryReservationListItemSchema = quotationTemporaryReservationSchema.extend({
+  quotationId: z.string().uuid(),
+  quotationCode: z.string(),
+  customerName: z.string(),
+});
+export type TemporaryReservationListItemDto = z.infer<typeof temporaryReservationListItemSchema>;
+
+/** Liberar a mano una reserva temporal. Motivo obligatorio (RF-95). */
+export const releaseTemporaryReservationSchema = z.object({ reason: reasonSchema });
+export type ReleaseTemporaryReservationInput = z.infer<typeof releaseTemporaryReservationSchema>;
+
+/** Configuración comercial editable por Administración (D-185). */
+export const salesSettingsSchema = z.object({
+  temporaryReservationBusinessDays: z.number().int(),
+});
+export type SalesSettingsDto = z.infer<typeof salesSettingsSchema>;
+
+export const updateSalesSettingsSchema = z.object({
+  temporaryReservationBusinessDays: z
+    .number({ invalid_type_error: 'Escribe un número de días hábiles' })
+    .int('Días hábiles enteros')
+    .min(1, 'Al menos un día hábil')
+    .max(
+      MAX_TEMPORARY_RESERVATION_BUSINESS_DAYS,
+      `Como máximo ${MAX_TEMPORARY_RESERVATION_BUSINESS_DAYS} días hábiles`,
+    ),
+});
+export type UpdateSalesSettingsInput = z.infer<typeof updateSalesSettingsSchema>;
 
 /** Anular un pedido: libera sus reservas activas (D-066). Motivo obligatorio. */
 export const cancelSalesOrderSchema = z.object({ reason: reasonSchema });

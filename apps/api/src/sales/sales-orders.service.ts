@@ -15,6 +15,7 @@ import {
   ReservationStatus,
   SalesOrderOrigin,
   SalesOrderStatus,
+  TemporaryReservationStatus,
   InventoryItemType as InventoryItemTypeEnum,
   type InventoryItemType,
 } from '@prisma/client';
@@ -22,7 +23,14 @@ import {
   businessToday,
   carriesInventory,
   COIL_BUSINESS_LINES,
+  DEFAULT_TEMPORARY_RESERVATION_BUSINESS_DAYS,
   Decimal,
+  temporaryReservationExpiry,
+  type QuotationTemporaryReservationDto,
+  type SalesSettingsDto,
+  type TemporaryReservationLineDto,
+  type TemporaryReservationListItemDto,
+  type UpdateSalesSettingsInput,
   DERIVED_FILTER_FETCH_CAP,
   describePieces,
   fromDateOnly,
@@ -87,6 +95,11 @@ import {
   toSalesItemDto,
 } from './sales-lines';
 import { buildPlantOrderPdf } from './plant-order-pdf';
+import {
+  liveTemporaryWhere,
+  reservedByItem,
+  sweepExpiredTemporaryReservations,
+} from './reserved-ledger';
 import { computePriceFloors, type PriceFloorCandidate } from './price-floor';
 import {
   assertRawMaterialInvariant,
@@ -166,6 +179,16 @@ export interface CreateDirectOptions {
    * respaldada por su propio producto.
    */
   counterSale?: boolean;
+}
+
+/** Lo que una línea (de pedido o de cotización) necesita para poder reservar. */
+interface ReservableLine {
+  lineNumber: number;
+  productId: string;
+  reserveItemType: InventoryItemType;
+  reserveItemId: string;
+  reserveQty: Prisma.Decimal | string;
+  reserveUnit: string;
 }
 
 /** Las dos formas en que una fila nombra al ítem del kardex que reserva. */
@@ -648,16 +671,42 @@ export class SalesOrdersService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     orderId: string,
-    items: {
-      id: string;
-      lineNumber: number;
-      productId: string;
-      reserveItemType: InventoryItemType;
-      reserveItemId: string;
-      reserveQty: Prisma.Decimal;
-      reserveUnit: string;
-    }[],
+    items: (ReservableLine & { id: string })[],
   ): Promise<void> {
+    await this.reserveLines(tx, items, 'el pedido', async (item) => {
+      await tx.reservation.create({
+        data: {
+          salesOrderId: orderId,
+          salesOrderItemId: item.id,
+          itemType: item.reserveItemType,
+          itemId: item.reserveItemId,
+          qty: item.reserveQty,
+          unit: item.reserveUnit,
+          status: ReservationStatus.ACTIVE,
+          createdById: actor.id,
+        },
+      });
+    });
+  }
+
+  /**
+   * El corazón de `createReservations`, sin decidir **dónde** se escribe la promesa (D-185).
+   *
+   * La reserva firme del pedido y la temporal de la cotización comprueban exactamente lo
+   * mismo —bobinas bloqueadas en un solo orden, estado de la bobina, custodia, disponible del
+   * ítem o del agregado— y difieren solo en la fila que escriben. Copiar esta función para la
+   * temporal habría dejado dos guardrails que envejecen por separado, que es la lección
+   * repetida del proyecto (D-150). `write` recibe cada línea que sí reserva algo; devuelve
+   * cuántas fueron, para que la temporal pueda decir "no hay nada que reservar".
+   */
+  private async reserveLines<T extends ReservableLine>(
+    tx: Prisma.TransactionClient,
+    items: T[],
+    /** Quién necesita el material, para el mensaje: «el pedido», «la reserva». */
+    holder: string,
+    write: (item: T) => Promise<void>,
+  ): Promise<number> {
+    let written = 0;
     const sorted = [...items].sort((a, b) =>
       `${a.reserveItemType}:${a.reserveItemId}`.localeCompare(
         `${b.reserveItemType}:${b.reserveItemId}`,
@@ -813,22 +862,12 @@ export class SalesOrdersService {
                 .plus(availability.reservedGeneric)
                 .toFixed(
                   3,
-                )} ya comprometidos${mountedNote}) y el pedido necesita ${qty.toFixed(3)}. ` +
-              'Compra o abre una bobina de ese color y espesor antes de confirmar.',
+                )} ya comprometidos${mountedNote}) y ${holder} necesita ${qty.toFixed(3)}. ` +
+              'Compra o abre una bobina de ese color y espesor antes de continuar.',
           );
         }
-        await tx.reservation.create({
-          data: {
-            salesOrderId: orderId,
-            salesOrderItemId: item.id,
-            itemType: item.reserveItemType,
-            itemId: item.reserveItemId,
-            qty: item.reserveQty,
-            unit: item.reserveUnit,
-            status: ReservationStatus.ACTIVE,
-            createdById: actor.id,
-          },
-        });
+        await write(item);
+        written += 1;
         continue;
       }
 
@@ -850,21 +889,11 @@ export class SalesOrdersService {
       if (qty.gt(availability.available)) {
         const label = await this.itemLabel(tx, item.reserveItemType, item.reserveItemId);
         throw new BadRequestException(
-          `Línea ${item.lineNumber}: ${label} tiene ${availability.available.toFixed(3)} ${availability.unit} disponibles (${availability.qty.toFixed(3)} físicos menos ${availability.reserved.toFixed(3)} ya reservados) y el pedido necesita ${qty.toFixed(3)}.`,
+          `Línea ${item.lineNumber}: ${label} tiene ${availability.available.toFixed(3)} ${availability.unit} disponibles (${availability.qty.toFixed(3)} físicos menos ${availability.reserved.toFixed(3)} ya reservados) y ${holder} necesita ${qty.toFixed(3)}.`,
         );
       }
-      await tx.reservation.create({
-        data: {
-          salesOrderId: orderId,
-          salesOrderItemId: item.id,
-          itemType: item.reserveItemType,
-          itemId: item.reserveItemId,
-          qty: item.reserveQty,
-          unit: item.reserveUnit,
-          status: ReservationStatus.ACTIVE,
-          createdById: actor.id,
-        },
-      });
+      await write(item);
+      written += 1;
     }
 
     // D-134: vender una bobina entera (RF-73) le saca kilos al agregado sin mover un gramo
@@ -874,6 +903,428 @@ export class SalesOrdersService {
     if (coilIds.length > 0) {
       await assertRawMaterialInvariant(tx, coilIds, roofingToleranceMm(this.env));
     }
+    return written;
+  }
+
+  // -------------------------------------------------------------------------
+  // D-185 — reserva temporal sobre una cotización emitida
+  // -------------------------------------------------------------------------
+
+  /**
+   * Lo que cada línea de una cotización reservaría **hoy**: lo mismo que va a reservar el
+   * pedido al confirmar. Una línea que se fabrica contra el pedido recalcula su agregado y
+   * sus kilos contra el catálogo vigente (D-134), igual que `confirm`; el resto copia lo que
+   * la cotización declaró.
+   */
+  private async quotationReservableLines(
+    tx: Prisma.TransactionClient,
+    items: {
+      lineNumber: number;
+      productId: string;
+      qty: Prisma.Decimal;
+      reserveItemType: InventoryItemType;
+      reserveItemId: string;
+      reserveQty: Prisma.Decimal;
+      reserveUnit: string;
+    }[],
+  ): Promise<ReservableLine[]> {
+    const raw = await this.resolveRawMaterial(
+      tx,
+      items.map((i) => ({
+        lineNumber: i.lineNumber,
+        productId: i.productId,
+        qty: i.qty.toString(),
+      })),
+    );
+    return items.map((i) => {
+      const line = raw.get(i.lineNumber);
+      return {
+        lineNumber: i.lineNumber,
+        productId: i.productId,
+        reserveItemType: line ? InventoryItemTypeEnum.RAW_MATERIAL : i.reserveItemType,
+        reserveItemId: line ? line.specId : i.reserveItemId,
+        reserveQty: line ? line.kg : i.reserveQty.toFixed(3),
+        reserveUnit: line ? Unit.KGM : i.reserveUnit,
+      };
+    });
+  }
+
+  /** Días hábiles de una reserva temporal: lo que fijó Administración o el defecto. */
+  private async temporaryBusinessDays(tx: Prisma.TransactionClient): Promise<number> {
+    const settings = await tx.salesSettings.findUnique({ where: { id: 1 } });
+    return (
+      settings?.temporaryReservationBusinessDays ?? DEFAULT_TEMPORARY_RESERVATION_BUSINESS_DAYS
+    );
+  }
+
+  async getSalesSettings(): Promise<SalesSettingsDto> {
+    return { temporaryReservationBusinessDays: await this.temporaryBusinessDays(this.prisma) };
+  }
+
+  async updateSalesSettings(
+    actor: RequestUser,
+    input: UpdateSalesSettingsInput,
+  ): Promise<SalesSettingsDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const before = await this.temporaryBusinessDays(tx);
+      await tx.salesSettings.upsert({
+        where: { id: 1 },
+        create: {
+          id: 1,
+          temporaryReservationBusinessDays: input.temporaryReservationBusinessDays,
+          updatedById: actor.id,
+        },
+        update: {
+          temporaryReservationBusinessDays: input.temporaryReservationBusinessDays,
+          updatedById: actor.id,
+        },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.settings.update',
+        entity: 'sales_settings',
+        entityId: '1',
+        before: { temporaryReservationBusinessDays: before },
+        after: { temporaryReservationBusinessDays: input.temporaryReservationBusinessDays },
+      });
+    });
+    return this.getSalesSettings();
+  }
+
+  /**
+   * Bloquea la cotización y valida que quien opera pueda operarla (RF-66: la propia, o
+   * cualquiera si es ADMINISTRADOR). Devuelve la cabecera ya bloqueada.
+   */
+  private async lockOwnQuotation(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    quotationId: string,
+    action: string,
+  ): Promise<{
+    id: string;
+    seq: number;
+    status: QuotationStatus;
+    validUntil: string | null;
+  }> {
+    const rows = await tx.$queryRaw<
+      {
+        id: string;
+        seq: number;
+        status: QuotationStatus;
+        valid_until: Date | null;
+        created_by_id: string;
+      }[]
+    >`
+      SELECT "id", "seq", "status", "valid_until", "created_by_id"
+      FROM "quotations" WHERE "id" = ${quotationId}::uuid FOR UPDATE
+    `;
+    const head = rows[0];
+    if (!head) throw new NotFoundException('Cotización no encontrada');
+    if (actor.role !== Role.ADMINISTRADOR && actor.id !== head.created_by_id) {
+      throw new ForbiddenException(`La cotización es de otro vendedor: no puedes ${action}`);
+    }
+    return {
+      id: head.id,
+      seq: head.seq,
+      status: head.status,
+      validUntil: head.valid_until?.toISOString().slice(0, 10) ?? null,
+    };
+  }
+
+  /**
+   * «Reservar»: aparta el material de una cotización emitida mientras el cliente deposita,
+   * sin crear el pedido (D-185).
+   *
+   * Reserva **exactamente** lo que confirmar reservaría —con el mismo guardrail de
+   * disponible, las mismas bobinas bloqueadas y el mismo orden de locks—, pero en la tabla de
+   * temporales y con vencimiento a N días hábiles. Una línea sin inventario (un servicio) no
+   * aparta nada; si ninguna línea aparta nada, no hay reserva que crear.
+   */
+  async reserveTemporarily(actor: RequestUser, quotationId: string): Promise<void> {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const head = await this.lockOwnQuotation(tx, actor, quotationId, 'reservarla');
+        await sweepExpiredTemporaryReservations(tx, { quotationId });
+        if (head.status !== QuotationStatus.EMITTED) {
+          throw new BadRequestException(
+            `Solo se reserva una cotización emitida; esta está ${head.status}`,
+          );
+        }
+        if (head.validUntil !== null && isQuotationExpired(head.validUntil, businessToday())) {
+          throw new BadRequestException(
+            `La cotización venció el ${head.validUntil}: renuévala editándola antes de reservar`,
+          );
+        }
+        const live = await tx.quotationReservation.count({
+          where: { quotationId, ...liveTemporaryWhere() },
+        });
+        if (live > 0) {
+          throw new ConflictException('La cotización ya tiene una reserva temporal vigente');
+        }
+
+        const items = await tx.quotationItem.findMany({
+          where: { quotationId },
+          orderBy: { lineNumber: 'asc' },
+        });
+        const lines = await this.quotationReservableLines(tx, items);
+        const days = await this.temporaryBusinessDays(tx);
+        const expiresAt = temporaryReservationExpiry(days);
+        const written = await this.reserveLines(tx, lines, 'la reserva', async (line) => {
+          await tx.quotationReservation.create({
+            data: {
+              quotationId,
+              lineNumber: line.lineNumber,
+              itemType: line.reserveItemType,
+              itemId: line.reserveItemId,
+              qty: line.reserveQty,
+              unit: line.reserveUnit,
+              expiresAt,
+              createdById: actor.id,
+            },
+          });
+        });
+        if (written === 0) {
+          throw new BadRequestException(
+            'La cotización no tiene ninguna línea con material que apartar: sus líneas no llevan inventario',
+          );
+        }
+
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'sales.quotation.reserve-temporary',
+          entity: 'quotations',
+          entityId: quotationId,
+          after: {
+            code: quotationCode(head.seq),
+            expiresAt: expiresAt.toISOString(),
+            businessDays: days,
+            lines: written,
+          },
+        });
+      },
+      // Mismo presupuesto que `confirm`: toma los mismos locks por línea.
+      { timeout: 30_000 },
+    );
+  }
+
+  /** Liberar a mano la reserva temporal vigente de una cotización (D-185). */
+  async releaseTemporary(actor: RequestUser, quotationId: string, reason: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const head = await this.lockOwnQuotation(tx, actor, quotationId, 'liberar su reserva');
+      await sweepExpiredTemporaryReservations(tx, { quotationId });
+      const released = await this.endTemporaryInTx(tx, quotationId, {
+        status: TemporaryReservationStatus.RELEASED,
+        actorId: actor.id,
+        reason,
+      });
+      if (released === 0) {
+        throw new ConflictException('La cotización no tiene una reserva temporal vigente');
+      }
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.quotation.release-temporary',
+        entity: 'quotations',
+        entityId: quotationId,
+        after: { code: quotationCode(head.seq), lines: released, reason },
+      });
+    });
+  }
+
+  /**
+   * Termina las temporales vigentes de una cotización. La usan la liberación manual, la
+   * anulación de la cotización, la edición que recalcula y la confirmación que las convierte.
+   */
+  async endTemporaryInTx(
+    tx: Prisma.TransactionClient,
+    quotationId: string,
+    end: {
+      status: TemporaryReservationStatus;
+      actorId: string | null;
+      reason: string;
+      salesOrderId?: string;
+    },
+  ): Promise<number> {
+    const result = await tx.quotationReservation.updateMany({
+      where: { quotationId, ...liveTemporaryWhere() },
+      data: {
+        status: end.status,
+        endedAt: new Date(),
+        endedById: end.actorId,
+        endReason: end.reason.slice(0, 240),
+        ...(end.salesOrderId === undefined ? {} : { salesOrderId: end.salesOrderId }),
+      },
+    });
+    return result.count;
+  }
+
+  /**
+   * Editar una cotización con reserva temporal la **recalcula** (D-185), dentro de la misma
+   * transacción de la edición y después de reescribir las líneas.
+   *
+   * Si lo que las líneas nuevas reservan es igual a lo vigente, no toca nada. Si cambió,
+   * libera lo vigente y vuelve a reservar con el mismo guardrail de disponible y **el mismo
+   * vencimiento**: editar no es una forma de estirar el plazo. Si lo nuevo no alcanza, lanza
+   * y la edición entera se deshace — la reserva vieja queda como estaba, nunca se libera en
+   * silencio ni se reserva de más sin validar.
+   */
+  async recalculateTemporaryInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    quotationId: string,
+  ): Promise<void> {
+    await sweepExpiredTemporaryReservations(tx, { quotationId });
+    const current = await tx.quotationReservation.findMany({
+      where: { quotationId, ...liveTemporaryWhere() },
+      orderBy: { lineNumber: 'asc' },
+    });
+    const first = current[0];
+    if (!first) return;
+
+    const items = await tx.quotationItem.findMany({
+      where: { quotationId },
+      orderBy: { lineNumber: 'asc' },
+    });
+    const lines = await this.quotationReservableLines(tx, items);
+    const signature = (
+      rows: { lineNumber: number; type: string; id: string; qty: string }[],
+    ): string =>
+      rows
+        .map((r) => `${String(r.lineNumber)}|${r.type}|${r.id}|${toDecimal(r.qty).toFixed(3)}`)
+        .sort()
+        .join(';');
+    const before = signature(
+      current.map((r) => ({
+        lineNumber: r.lineNumber,
+        type: r.itemType,
+        id: r.itemId,
+        qty: r.qty.toString(),
+      })),
+    );
+    const after = signature(
+      (await this.linesWithInventory(tx, lines)).map((l) => ({
+        lineNumber: l.lineNumber,
+        type: l.reserveItemType,
+        id: l.reserveItemId,
+        qty: l.reserveQty.toString(),
+      })),
+    );
+    // La edición no tocó nada de lo reservado (cambió un precio, una observación): la reserva
+    // queda como estaba, sin filas liberadas que no cuenten ninguna historia.
+    if (before === after) return;
+
+    await this.endTemporaryInTx(tx, quotationId, {
+      status: TemporaryReservationStatus.RELEASED,
+      actorId: actor.id,
+      reason: 'Edición de la cotización: se recalculó la reserva',
+    });
+    let created = 0;
+    await this.reserveLines(tx, lines, 'la reserva', async (line) => {
+      created += 1;
+      await tx.quotationReservation.create({
+        data: {
+          quotationId,
+          lineNumber: line.lineNumber,
+          itemType: line.reserveItemType,
+          itemId: line.reserveItemId,
+          qty: line.reserveQty,
+          unit: line.reserveUnit,
+          expiresAt: first.expiresAt,
+          createdById: actor.id,
+        },
+      });
+    });
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'sales.quotation.recalculate-temporary',
+      entity: 'quotations',
+      entityId: quotationId,
+      before: { lines: current.length },
+      after: { lines: created, expiresAt: first.expiresAt.toISOString() },
+    });
+  }
+
+  /** La vista «Reservas temporales vigentes» (D-185): una fila por cotización. */
+  async findTemporaryReservations(): Promise<TemporaryReservationListItemDto[]> {
+    await this.prisma.$transaction((tx) => sweepExpiredTemporaryReservations(tx));
+    const rows = await this.prisma.quotationReservation.findMany({
+      where: liveTemporaryWhere(),
+      include: {
+        quotation: { select: { id: true, seq: true, customer: { select: { name: true } } } },
+      },
+      orderBy: [{ expiresAt: 'asc' }, { lineNumber: 'asc' }],
+    });
+    const labels = await this.temporaryLabels(rows);
+    const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
+    const byQuotation = new Map<string, TemporaryReservationListItemDto>();
+    for (const r of rows) {
+      const entry =
+        byQuotation.get(r.quotationId) ??
+        ({
+          quotationId: r.quotation.id,
+          quotationCode: quotationCode(r.quotation.seq),
+          customerName: r.quotation.customer.name,
+          expiresAt: r.expiresAt.toISOString(),
+          createdAt: r.createdAt.toISOString(),
+          createdByName: actors.get(r.createdById) ?? null,
+          lines: [],
+        } satisfies TemporaryReservationListItemDto);
+      entry.lines.push(toTemporaryLine(r, labels));
+      byQuotation.set(r.quotationId, entry);
+    }
+    return [...byQuotation.values()];
+  }
+
+  /** La reserva temporal vigente de una cotización, para su detalle. */
+  async findQuotationTemporaryReservation(
+    quotationId: string,
+  ): Promise<QuotationTemporaryReservationDto | null> {
+    const rows = await this.prisma.quotationReservation.findMany({
+      where: { quotationId, ...liveTemporaryWhere() },
+      orderBy: { lineNumber: 'asc' },
+    });
+    const first = rows[0];
+    if (!first) return null;
+    const labels = await this.temporaryLabels(rows);
+    const actors = await this.resolveActorNames([first.createdById]);
+    return {
+      expiresAt: first.expiresAt.toISOString(),
+      createdAt: first.createdAt.toISOString(),
+      createdByName: actors.get(first.createdById) ?? null,
+      lines: rows.map((r) => toTemporaryLine(r, labels)),
+    };
+  }
+
+  private async temporaryLabels(
+    rows: { itemType: InventoryItemType; itemId: string }[],
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    for (const [itemId, value] of await this.reserveLabels(rows)) map.set(itemId, value.label);
+    return map;
+  }
+
+  /**
+   * Las líneas que de verdad dejan una reserva: las de un producto sin inventario (D-167) se
+   * saltan en `reserveLines`, así que tampoco cuentan al comparar lo reservado.
+   */
+  private async linesWithInventory(
+    tx: Prisma.TransactionClient,
+    lines: ReservableLine[],
+  ): Promise<ReservableLine[]> {
+    const productIds = lines
+      .filter((l) => l.reserveItemType === InventoryItemTypeEnum.PRODUCT)
+      .map((l) => l.reserveItemId);
+    if (productIds.length === 0) return lines;
+    const products = await tx.product.findMany({
+      where: { id: { in: [...new Set(productIds)] } },
+      select: { id: true, businessLine: { select: { inventoryStrategy: true } } },
+    });
+    const noInventory = new Set(
+      products.filter((p) => !carriesInventory(p.businessLine)).map((p) => p.id),
+    );
+    return lines.filter(
+      (l) =>
+        !(l.reserveItemType === InventoryItemTypeEnum.PRODUCT && noInventory.has(l.reserveItemId)),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1578,20 +2029,13 @@ export class SalesOrdersService {
     if (coils.length === 0) return [];
 
     const ids = coils.map((c) => c.id);
-    const [balances, onCoils, mounted, specs] = await Promise.all([
+    const [balances, reservedById, mounted, specs] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
         select: { itemId: true, qty: true },
       }),
-      this.prisma.reservation.groupBy({
-        by: ['itemId'],
-        where: {
-          status: ReservationStatus.ACTIVE,
-          itemType: InventoryItemTypeEnum.COIL,
-          itemId: { in: ids },
-        },
-        _sum: { qty: true },
-      }),
+      // D-185: firme más temporal vigente.
+      reservedByItem(this.prisma, InventoryItemTypeEnum.COIL, ids),
       findLiveStripAssignments(this.prisma, ids),
       this.prisma.rawMaterialSpec.findMany({
         where: { businessLine: { code: toPrismaLineCode(businessLine) } },
@@ -1599,29 +2043,16 @@ export class SalesOrdersService {
       }),
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-    const reservedById = new Map(
-      onCoils.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
-    );
     const takenByProduction = new Set(mounted.map((m) => m.coilId));
 
     // Lo prometido de forma genérica, por spec. Se reparte después entre los grupos que la
     // tolerancia alcanza (ver el comentario del DTO: el reparto se puede solapar, y ante la
     // duda el panel muestra de menos).
-    const promisedBySpec = new Map<string, Decimal>();
-    if (specs.length > 0) {
-      const promises = await this.prisma.reservation.groupBy({
-        by: ['itemId'],
-        where: {
-          status: ReservationStatus.ACTIVE,
-          itemType: InventoryItemTypeEnum.RAW_MATERIAL,
-          itemId: { in: specs.map((sp) => sp.id) },
-        },
-        _sum: { qty: true },
-      });
-      for (const promise of promises) {
-        promisedBySpec.set(promise.itemId, toDecimal((promise._sum.qty ?? 0).toString()));
-      }
-    }
+    const promisedBySpec = await reservedByItem(
+      this.prisma,
+      InventoryItemTypeEnum.RAW_MATERIAL,
+      specs.map((sp) => sp.id),
+    );
     const tolerance = toDecimal(roofingToleranceMm(this.env));
 
     const groups = new Map<string, RawMaterialStockDto & { thickness: Decimal }>();
@@ -1707,25 +2138,15 @@ export class SalesOrdersService {
     });
     if (products.length === 0) return [];
 
-    const [balances, reserved] = await Promise.all([
+    const [balances, reservedById] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: InventoryItemTypeEnum.PRODUCT, itemId: { in: productIds } },
         select: { itemId: true, qty: true },
       }),
-      this.prisma.reservation.groupBy({
-        by: ['itemId'],
-        where: {
-          status: ReservationStatus.ACTIVE,
-          itemType: InventoryItemTypeEnum.PRODUCT,
-          itemId: { in: productIds },
-        },
-        _sum: { qty: true },
-      }),
+      // D-185: firme más temporal vigente.
+      reservedByItem(this.prisma, InventoryItemTypeEnum.PRODUCT, productIds),
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-    const reservedById = new Map(
-      reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
-    );
 
     // D-163: el piso de precio de cada SKU, con la **misma** función que lo va a exigir al
     // guardar. Los candidatos se arman **dentro** del bucle de abajo y no en uno propio, para
@@ -1883,7 +2304,7 @@ export class SalesOrdersService {
     if (coils.length === 0) return [];
 
     const ids = coils.map((c) => c.id);
-    const [balances, reserved, assigned] = await Promise.all([
+    const [balances, reservedById, assigned] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
         // D-170: el promedio viaja junto al saldo — es a lo que el kardex va a dar de baja
@@ -1891,15 +2312,8 @@ export class SalesOrdersService {
         // negocia el precio por kilo.
         select: { itemId: true, qty: true, avgCost: true },
       }),
-      this.prisma.reservation.groupBy({
-        by: ['itemId'],
-        where: {
-          status: ReservationStatus.ACTIVE,
-          itemType: InventoryItemTypeEnum.COIL,
-          itemId: { in: ids },
-        },
-        _sum: { qty: true },
-      }),
+      // D-185: firme más temporal vigente.
+      reservedByItem(this.prisma, InventoryItemTypeEnum.COIL, ids),
       // D-060: montada en una OP viva (roofing) no se puede vender aunque el saldo esté
       // intacto — asignar no mueve kardex, así que el disponible no lo delata.
       this.prisma.productionOrderConsumption.findMany({
@@ -1915,9 +2329,6 @@ export class SalesOrdersService {
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
     const avgCostById = new Map(balances.map((b) => [b.itemId, b.avgCost.toFixed(4)]));
-    const reservedById = new Map(
-      reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
-    );
     const assignedIds = new Set(assigned.map((a) => a.coilId));
 
     // D-163: el piso por kg de cada rollo vendible, con la misma función que lo va a exigir
@@ -2181,6 +2592,28 @@ export class SalesOrdersService {
       queueStatus,
     };
   }
+}
+
+function toTemporaryLine(
+  row: {
+    id: string;
+    lineNumber: number;
+    itemType: InventoryItemType;
+    itemId: string;
+    qty: Prisma.Decimal;
+    unit: string;
+  },
+  labels: Map<string, string>,
+): TemporaryReservationLineDto {
+  return {
+    id: row.id,
+    lineNumber: row.lineNumber,
+    itemType: row.itemType,
+    itemId: row.itemId,
+    itemLabel: labels.get(row.itemId) ?? row.itemId,
+    qty: row.qty.toFixed(3),
+    unit: row.unit,
+  };
 }
 
 function toReserveRef(item: { reserveItemType: InventoryItemType; reserveItemId: string }): {

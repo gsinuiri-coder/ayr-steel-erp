@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 const TABS = [
   { value: 'margenes', label: 'Márgenes' },
   { value: 'tipo-cambio', label: 'Tipo de cambio' },
+  { value: 'reservas', label: 'Reservas temporales' },
 ] as const;
 
 /**

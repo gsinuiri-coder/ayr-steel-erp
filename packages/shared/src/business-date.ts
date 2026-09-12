@@ -25,6 +25,34 @@ export const BUSINESS_TIME_ZONE = 'America/Lima';
  * Con eso, una cotización válida "hasta el 10" se rechazaba por vencida durante las últimas
  * cinco horas del día 10, y el pedido nacía fechado el 11 (D-069, D-112).
  */
+/**
+ * D-185: `n` días hábiles después de `isoDate` (`YYYY-MM-DD`), contando de lunes a viernes.
+ * El día de partida no cuenta: reservar un viernes con 3 días hábiles vence el miércoles.
+ *
+ * Sin calendario de feriados a propósito: la empresa no tiene uno cargado y un feriado que
+ * cae dentro del plazo solo lo acorta un día — el vendedor lo ve en "tiempo restante" y
+ * vuelve a reservar.
+ */
+export function addBusinessDays(isoDate: string, n: number): string {
+  const date = new Date(`${isoDate}T12:00:00.000Z`);
+  let remaining = n;
+  while (remaining > 0) {
+    date.setUTCDate(date.getUTCDate() + 1);
+    const weekday = date.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) remaining -= 1;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * D-185: el instante en que vence una reserva temporal hecha hoy: el **final** del `n`-ésimo
+ * día hábil en Lima. Lima no tiene horario de verano, así que el desfase fijo es exacto.
+ */
+export function temporaryReservationExpiry(n: number, now: Date = new Date()): Date {
+  const lastDay = addBusinessDays(businessToday(now), n);
+  return new Date(`${lastDay}T23:59:59.999-05:00`);
+}
+
 export function businessToday(now: Date = new Date()): string {
   // `en-CA` da directamente `YYYY-MM-DD`; `Intl` resuelve el desfase y el horario de verano
   // (que Perú no tiene, pero no hace falta asumirlo).

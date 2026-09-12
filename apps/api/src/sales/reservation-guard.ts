@@ -5,8 +5,9 @@ import {
   SalesOrderStatus,
   type Prisma,
 } from '@prisma/client';
-import { Decimal, salesOrderCode, toDecimal } from '@ayr/shared';
+import { Decimal, quotationCode, salesOrderCode, toDecimal } from '@ayr/shared';
 import { assertRawMaterialInvariantFor, findRawMaterialSpecs } from './raw-material';
+import { liveTemporaryWhere, reservedByItem } from './reserved-ledger';
 
 /**
  * Guardrail transversal de Fase 5a (D-054, D-066): la invariante `disponible ≥ reservado`.
@@ -58,42 +59,68 @@ export async function findActiveReservations(
   items: ReservedItemRef[],
 ): Promise<ActiveReservation[]> {
   if (items.length === 0) return [];
-  const rows = await tx.reservation.findMany({
-    where: {
-      status: ReservationStatus.ACTIVE,
-      OR: items.map((i) => ({ itemType: i.itemType, itemId: i.itemId })),
-    },
-    select: {
-      id: true,
-      itemType: true,
-      itemId: true,
-      qty: true,
-      unit: true,
-      salesOrder: { select: { id: true, seq: true } },
-    },
-    orderBy: { createdAt: 'asc' },
-  });
-  return rows.map((r) => ({
-    reservationId: r.id,
-    itemType: r.itemType,
-    itemId: r.itemId,
-    qty: toDecimal(r.qty.toString()),
-    unit: r.unit,
-    orderId: r.salesOrder.id,
-    orderCode: salesOrderCode(r.salesOrder.seq),
-  }));
+  const itemFilter = items.map((i) => ({ itemType: i.itemType, itemId: i.itemId }));
+  const [rows, temporary] = await Promise.all([
+    tx.reservation.findMany({
+      where: { status: ReservationStatus.ACTIVE, OR: itemFilter },
+      select: {
+        id: true,
+        itemType: true,
+        itemId: true,
+        qty: true,
+        unit: true,
+        salesOrder: { select: { id: true, seq: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    // D-185: una temporal vigente también es un titular — bloquea la custodia y nombra a su
+    // cotización en el mensaje, igual que un pedido.
+    tx.quotationReservation.findMany({
+      where: { AND: [liveTemporaryWhere(), { OR: itemFilter }] },
+      select: {
+        id: true,
+        itemType: true,
+        itemId: true,
+        qty: true,
+        unit: true,
+        quotation: { select: { id: true, seq: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ]);
+  return [
+    ...rows.map((r) => ({
+      reservationId: r.id,
+      itemType: r.itemType,
+      itemId: r.itemId,
+      qty: toDecimal(r.qty.toString()),
+      unit: r.unit,
+      orderId: r.salesOrder.id,
+      orderCode: salesOrderCode(r.salesOrder.seq),
+    })),
+    ...temporary.map((r) => ({
+      reservationId: r.id,
+      itemType: r.itemType,
+      itemId: r.itemId,
+      qty: toDecimal(r.qty.toString()),
+      unit: r.unit,
+      orderId: r.quotation.id,
+      orderCode: `${quotationCode(r.quotation.seq)} (reserva temporal)`,
+    })),
+  ];
 }
 
-/** Kilos (o unidades) reservados vivos de un ítem. Cero cuando no hay ninguna reserva. */
+/**
+ * Kilos (o unidades) reservados vivos de un ítem —firme más temporal vigente, D-185—. Cero
+ * cuando no hay ninguna reserva.
+ */
 export async function reservedQty(
   tx: Prisma.TransactionClient,
   item: ReservedItemRef,
 ): Promise<Decimal> {
-  const agg = await tx.reservation.aggregate({
-    where: { status: ReservationStatus.ACTIVE, itemType: item.itemType, itemId: item.itemId },
-    _sum: { qty: true },
-  });
-  return agg._sum.qty === null ? new Decimal(0) : toDecimal(agg._sum.qty.toString());
+  return (
+    (await reservedByItem(tx, item.itemType, [item.itemId])).get(item.itemId) ?? new Decimal(0)
+  );
 }
 
 /**

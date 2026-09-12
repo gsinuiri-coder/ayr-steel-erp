@@ -4,7 +4,6 @@ import {
   CoilKind,
   CoilStatus,
   InventoryItemType,
-  ReservationStatus,
   type Prisma,
 } from '@prisma/client';
 import {
@@ -35,6 +34,7 @@ import {
 import { toSharedLineCode } from '../common/business-line-code';
 import { assertPriceFloor, type PriceFloorCandidate } from './price-floor';
 import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material';
+import { reservedByItem } from './reserved-ledger';
 
 /**
  * Resolución de las líneas de una cotización o de un pedido (D-065, D-068).
@@ -636,25 +636,15 @@ async function resolveSaleCoils(
       : [];
   const productBySku = new Map(products.map((p) => [p.sku, p]));
 
-  const [balances, reserved] = await Promise.all([
+  const [balances, reservedById] = await Promise.all([
     tx.inventoryBalance.findMany({
       where: { itemType: InventoryItemType.COIL, itemId: { in: coilIds } },
       select: { itemId: true, qty: true },
     }),
-    tx.reservation.groupBy({
-      by: ['itemId'],
-      where: {
-        status: ReservationStatus.ACTIVE,
-        itemType: InventoryItemType.COIL,
-        itemId: { in: coilIds },
-      },
-      _sum: { qty: true },
-    }),
+    // D-185: firme más temporal vigente.
+    reservedByItem(tx, InventoryItemType.COIL, coilIds),
   ]);
   const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-  const reservedById = new Map(
-    reserved.map((r) => [r.itemId, toDecimal((r._sum.qty ?? 0).toString())]),
-  );
 
   for (const coilId of coilIds) {
     const coil = coilById.get(coilId);

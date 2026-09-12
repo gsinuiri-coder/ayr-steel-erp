@@ -595,6 +595,35 @@ export const QUOTATION_STATUS_LABELS: Record<QuotationStatus, string> = {
 };
 
 /**
+ * D-185: estado de una reserva temporal de cotización. Solo `ACTIVE` **con `expiresAt` en el
+ * futuro** descuenta disponible: una `ACTIVE` vencida cuenta como liberada aunque nadie la haya
+ * marcado todavía (la expiración es perezosa, sin job). `CONVERTED` es la que confirmar volvió
+ * reserva firme del pedido.
+ */
+export const TemporaryReservationStatus = {
+  ACTIVE: 'ACTIVE',
+  RELEASED: 'RELEASED',
+  EXPIRED: 'EXPIRED',
+  CONVERTED: 'CONVERTED',
+} as const;
+export type TemporaryReservationStatus =
+  (typeof TemporaryReservationStatus)[keyof typeof TemporaryReservationStatus];
+export const TEMPORARY_RESERVATION_STATUSES = Object.values(TemporaryReservationStatus) as [
+  TemporaryReservationStatus,
+  ...TemporaryReservationStatus[],
+];
+export const TEMPORARY_RESERVATION_STATUS_LABELS: Record<TemporaryReservationStatus, string> = {
+  ACTIVE: 'Vigente',
+  RELEASED: 'Liberada',
+  EXPIRED: 'Vencida',
+  CONVERTED: 'Convertida en firme',
+};
+
+/** D-185: días hábiles de una reserva temporal cuando Administración no fijó otro número. */
+export const DEFAULT_TEMPORARY_RESERVATION_BUSINESS_DAYS = 3;
+export const MAX_TEMPORARY_RESERVATION_BUSINESS_DAYS = 30;
+
+/**
  * Estado de un pedido (D-065). Estados mínimos de Fase 5a: el despacho real, la guía y
  * la cobranza son de Fase 5b. `IN_PRODUCTION` desde que una OP nace del pedido;
  * `FULFILLED` cuando se entregó todo.

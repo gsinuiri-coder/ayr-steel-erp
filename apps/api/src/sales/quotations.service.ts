@@ -7,7 +7,13 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, QuotationStatus, SalesOrderStatus, type InventoryItemType } from '@prisma/client';
+import {
+  Prisma,
+  QuotationStatus,
+  SalesOrderStatus,
+  TemporaryReservationStatus,
+  type InventoryItemType,
+} from '@prisma/client';
 import {
   businessToday,
   defaultValidUntil,
@@ -41,6 +47,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
+import { SalesOrdersService } from './sales-orders.service';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 
 function toDateOnly(value: string): Date {
@@ -74,9 +81,10 @@ type QuotationRow = Prisma.QuotationGetPayload<{ include: typeof quotationInclud
 /**
  * Cotizaciones (RF-61, RF-65, RF-66, RF-69; D-064..D-069).
  *
- * Una cotización es una **simulación de precio**: no toca inventario ni reserva nada
- * (D-054). Lo único que hace con el stock es declarar, línea por línea, qué se reservaría
- * al confirmarla — y confirmar es acto aparte, en `SalesOrdersService`.
+ * Una cotización es una **simulación de precio**: no toca inventario (D-054). Nace emitida y
+ * editable hasta confirmarse (D-184). Con el stock hace dos cosas, y las dos viven en
+ * `SalesOrdersService`: apartar el material de forma temporal mientras el cliente deposita
+ * (D-185) y confirmar, que crea el pedido con su reserva firme.
  *
  * Todo en soles (D-064): no hay moneda ni tipo de cambio en el ciclo comercial.
  */
@@ -88,6 +96,7 @@ export class QuotationsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly storage: StorageService,
+    private readonly orders: SalesOrdersService,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -286,6 +295,10 @@ export class QuotationsService {
         entityId: id,
         after: { totalPen: totals.totalPen, items: lines.length, status },
       });
+
+      // D-185: con reserva temporal vigente, lo reservado sigue a las líneas nuevas — o la
+      // edición entera se deshace si ya no alcanza.
+      await this.orders.recalculateTemporaryInTx(tx, actor, id);
     });
 
     await this.generatePdf(id);
@@ -600,6 +613,12 @@ export class QuotationsService {
           cancelledById: actor.id,
         },
       });
+      // D-185: anular suelta lo que la cotización tenía apartado.
+      await this.orders.endTemporaryInTx(tx, id, {
+        status: TemporaryReservationStatus.RELEASED,
+        actorId: actor.id,
+        reason: `Cotización anulada: ${reason}`,
+      });
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'sales.quotation.cancel',
@@ -705,7 +724,11 @@ export class QuotationsService {
     ]);
     const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
     const items = rows.map((r) => {
-      const { items: _items, ...rest } = this.toDto({ ...r, items: [] }, new Map(), actors);
+      const {
+        items: _items,
+        temporaryReservation: _temporary,
+        ...rest
+      } = this.toDto({ ...r, items: [] }, new Map(), actors);
       return { ...rest, itemCount: r._count.items };
     });
     return paginate(items, total, query);
@@ -719,7 +742,8 @@ export class QuotationsService {
     if (!row) throw new NotFoundException('Cotización no encontrada');
     const labels = await this.reserveLabels(row.items);
     const actors = await this.resolveActorNames([row.createdById]);
-    return this.toDto(row, labels, actors);
+    const temporary = await this.orders.findQuotationTemporaryReservation(id);
+    return this.toDto(row, labels, actors, temporary);
   }
 
   // -------------------------------------------------------------------------
@@ -835,6 +859,7 @@ export class QuotationsService {
     row: QuotationRow,
     labels: Map<string, string>,
     actors: Map<string, string>,
+    temporaryReservation: QuotationDto['temporaryReservation'] = null,
   ): QuotationDto {
     const validUntil = row.validUntil?.toISOString().slice(0, 10) ?? null;
     const liveOrder = row.salesOrders[0];
@@ -866,6 +891,7 @@ export class QuotationsService {
       emittedAt: row.emittedAt?.toISOString() ?? null,
       confirmedAt: row.confirmedAt?.toISOString() ?? null,
       cancelledAt: row.cancelledAt?.toISOString() ?? null,
+      temporaryReservation,
     };
   }
 }

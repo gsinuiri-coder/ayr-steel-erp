@@ -69,6 +69,7 @@ import {
   upsertItemReservation,
 } from '../sales/reservation-transfer';
 import { findRawMaterialShortfalls, type RawMaterialShortfall } from '../sales/raw-material';
+import { reservedByItem } from '../sales/reserved-ledger';
 import { sellsByLength } from '../sales/sales-lines';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
 import { allocateStripKg, type StripAllocationRow } from './production-math';
@@ -2156,19 +2157,19 @@ export class RoofingProductionService {
         select: { itemId: true, qty: true },
       }),
       findLiveStripAssignments(this.prisma, ids),
-      this.prisma.reservation.findMany({
-        where: {
-          status: ReservationStatus.ACTIVE,
-          itemType: InventoryItemType.COIL,
-          itemId: { in: ids },
-        },
-        select: { id: true, itemId: true },
-      }),
+      // D-185: firme más temporal vigente — una bobina apartada para venderse entera tampoco
+      // se ofrece para montar.
+      reservedByItem(
+        this.prisma,
+        InventoryItemType.COIL,
+        ids,
+        ownReservationId === undefined ? {} : { exceptReservationIds: [ownReservationId] },
+      ),
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
     const taken = new Set(assignments.map((a) => a.coilId));
     const promised = new Set(
-      reservations.filter((r) => r.id !== ownReservationId).map((r) => r.itemId),
+      [...reservations].filter(([, qty]) => qty.gt(0)).map(([itemId]) => itemId),
     );
 
     return coils

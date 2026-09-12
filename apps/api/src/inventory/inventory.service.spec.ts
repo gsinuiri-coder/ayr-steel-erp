@@ -84,7 +84,11 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
     // La transacción falsa lo devuelve vacío por defecto; los tests que necesiten una
     // reserva viva sobreescriben estos mocks.
     reservation: {
-      aggregate: jest.fn().mockResolvedValue({ _sum: { qty: null } }),
+      findMany: jest.fn().mockResolvedValue([]),
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
+    // D-185: el ledger de reservas temporales, vacío salvo que un test lo llene.
+    quotationReservation: {
       findMany: jest.fn().mockResolvedValue([]),
       groupBy: jest.fn().mockResolvedValue([]),
     },
@@ -456,9 +460,11 @@ describe('InventoryService (§3.2, D-028)', () => {
   describe('invariante disponible ≥ reservado (D-066)', () => {
     function reserve(fake: ReturnType<typeof createFakeTx>, qty: string, orderSeq = 1): void {
       const tx = fake.tx as unknown as {
-        reservation: { aggregate: jest.Mock; findMany: jest.Mock };
+        reservation: { groupBy: jest.Mock; findMany: jest.Mock };
       };
-      tx.reservation.aggregate.mockResolvedValue({ _sum: { qty: { toString: () => qty } } });
+      tx.reservation.groupBy.mockResolvedValue([
+        { itemId: ITEM, _sum: { qty: { toString: () => qty } } },
+      ]);
       tx.reservation.findMany.mockResolvedValue([
         {
           id: 'res-1',
