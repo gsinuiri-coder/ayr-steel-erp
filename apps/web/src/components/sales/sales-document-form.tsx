@@ -44,6 +44,7 @@ import { SearchSelectField } from '@/components/search-select-modal';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatMoney, formatQty, isPositiveDecimal, todayIso, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -280,17 +281,26 @@ function validityDaysOf(q: QuotationDto): string {
 export function SalesDocumentForm({
   mode,
   initial,
+  addTo,
 }: {
   mode: 'quotation' | 'order';
   /** D-184: con una cotización, el formulario la edita en vez de crear una nueva. */
   initial?: QuotationDto;
+  /**
+   * D-187: con un pedido confirmado, el formulario **agrega ítems** a ese pedido. Solo las
+   * líneas: cliente, fecha y observaciones son del pedido y no se tocan desde acá.
+   */
+  addTo?: SalesOrderDto;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const isQuotation = mode === 'quotation';
   const editing = initial !== undefined;
+  const adding = addTo !== undefined;
+  // F8-S1/M2: agregar ítems es una creación repetible; el mismo envío no agrega dos veces.
+  const submitKey = useIdempotencyKey();
 
-  const [customerId, setCustomerId] = useState(initial?.customerId ?? '');
+  const [customerId, setCustomerId] = useState(initial?.customerId ?? addTo?.customerId ?? '');
   const [issueDate, setIssueDate] = useState(initial?.issueDate ?? todayIso());
   const [validityDays, setValidityDays] = useState(
     initial ? validityDaysOf(initial) : String(DEFAULT_QUOTATION_VALIDITY_DAYS),
@@ -444,16 +454,30 @@ export function SalesDocumentForm({
 
   const save = useMutation<QuotationDto | SalesOrderDto, unknown, unknown>({
     mutationFn: (body: unknown) =>
-      initial
-        ? api<QuotationDto>(`/sales/quotations/${initial.id}`, { method: 'PUT', body })
-        : isQuotation
-          ? api<QuotationDto>('/sales/quotations', { method: 'POST', body })
-          : api<SalesOrderDto>('/sales/orders', { method: 'POST', body }),
+      addTo
+        ? api<SalesOrderDto>(`/sales/orders/${addTo.id}/items`, { method: 'POST', body })
+        : initial
+          ? api<QuotationDto>(`/sales/quotations/${initial.id}`, { method: 'PUT', body })
+          : isQuotation
+            ? api<QuotationDto>('/sales/quotations', { method: 'POST', body })
+            : api<SalesOrderDto>('/sales/orders', { method: 'POST', body }),
+    onSettled: (_data, error) => {
+      submitKey.settle(error ?? undefined);
+    },
     onSuccess: (created) => {
       toast.success(
-        editing ? 'Cotización actualizada' : isQuotation ? 'Cotización creada' : 'Pedido creado',
+        adding
+          ? 'Ítems agregados al pedido'
+          : editing
+            ? 'Cotización actualizada'
+            : isQuotation
+              ? 'Cotización creada'
+              : 'Pedido creado',
       );
-      invalidateSales(queryClient, editing ? { quotationId: created.id } : undefined);
+      invalidateSales(
+        queryClient,
+        adding ? { orderId: created.id } : editing ? { quotationId: created.id } : undefined,
+      );
       router.push(isQuotation ? `/cotizaciones/${created.id}` : `/pedidos/${created.id}`);
     },
     onError: (err) => {
@@ -513,7 +537,7 @@ export function SalesDocumentForm({
             error:
               `${at}: el precio está por debajo del mínimo. El mínimo de ${coil.code} es ` +
               `${formatMoney(coil.minPricePen, 'PEN', 2)} por kg (con IGV). ` +
-              'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes y tipo de cambio.',
+              'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes, tipo de cambio y reservas.',
           };
         }
         items.push({
@@ -574,7 +598,7 @@ export function SalesDocumentForm({
           error:
             `${at}: el precio está por debajo del mínimo. El mínimo de ${product?.sku ?? 'este producto'} es ` +
             `${formatMoney(stock.minPricePen, 'PEN', 2)} por ${perMeter ? 'metro' : unitSymbol(product?.unit ?? '')} (con IGV). ` +
-            'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes y tipo de cambio.',
+            'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes, tipo de cambio y reservas.',
         };
       }
 
@@ -603,6 +627,10 @@ export function SalesDocumentForm({
     }
     const { items } = result;
 
+    if (adding) {
+      save.mutate({ items, idempotencyKey: submitKey.current() });
+      return;
+    }
     save.mutate({
       customerId,
       issueDate,
@@ -617,18 +645,22 @@ export function SalesDocumentForm({
     <>
       <div>
         <h1 className="text-lg font-semibold">
-          {initial
-            ? `Editar ${initial.code}`
-            : isQuotation
-              ? 'Nueva cotización'
-              : 'Nuevo pedido directo'}
+          {addTo
+            ? `Agregar ítems a ${addTo.code}`
+            : initial
+              ? `Editar ${initial.code}`
+              : isQuotation
+                ? 'Nueva cotización'
+                : 'Nuevo pedido directo'}
         </h1>
         <p className="text-xs text-muted-foreground">
-          {initial
-            ? 'Guardar reemplaza las líneas y regenera el PDF: la última versión es la que vale.'
-            : isQuotation
-              ? 'Nace emitida, con su PDF. No reserva stock: la reserva nace al reservar o al confirmar.'
-              : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
+          {addTo
+            ? `${addTo.customerName} · Cada ítem reserva su material al guardar y, si se fabrica, nace con su orden de producción.`
+            : initial
+              ? 'Guardar reemplaza las líneas y regenera el PDF: la última versión es la que vale.'
+              : isQuotation
+                ? 'Nace emitida, con su PDF. No reserva stock: la reserva nace al reservar o al confirmar.'
+                : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
         </p>
       </div>
 
@@ -640,24 +672,25 @@ export function SalesDocumentForm({
         </Alert>
       )}
 
-      <div className="grid gap-x-4 gap-y-3 rounded-lg border p-3 md:grid-cols-4">
-        <div className="grid gap-2 md:col-span-2">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="customer">Cliente</Label>
-            {/*
+      {!adding && (
+        <div className="grid gap-x-4 gap-y-3 rounded-lg border p-3 md:grid-cols-4">
+          <div className="grid gap-2 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="customer">Cliente</Label>
+              {/*
               D-156: el alta pasa a ser un diálogo sobre esta misma pantalla. El enlace a
               `/clientes/nuevo` en otra pestaña conservaba el borrador —la pantalla no se
               desmontaba— pero dejaba al vendedor volver a mano, buscar el cliente recién
               creado en un desplegable que además puede estar cacheado, y elegirlo. Acá el
               formulario es el mismo y la fila queda elegida sola.
             */}
-            <ExpressCreateCustomer
-              onCreated={(created) => {
-                setCustomerId(created.id);
-              }}
-            />
-          </div>
-          {/*
+              <ExpressCreateCustomer
+                onCreated={(created) => {
+                  setCustomerId(created.id);
+                }}
+              />
+            </div>
+            {/*
             D-156: el mismo campo que el importador. Con pocos clientes es un desplegable y
             con muchos, un botón que abre un buscador — y **quien lo usa no elige cuál**:
             elige el número de opciones, que es el dato que de verdad manda.
@@ -672,56 +705,57 @@ export function SalesDocumentForm({
             acepta `search`— y es un cambio propio, no un renglón de este. Hoy no aprieta: en
             producción hay 49 clientes activos (medido en la ventana del 2026-09-10).
           */}
-          <SearchSelectField
-            id="customer"
-            className="w-full"
-            label="Cliente"
-            placeholder="Elige un cliente"
-            value={customerId === '' ? null : customerId}
-            options={(customers.data ?? [])
-              .filter((c) => c.isActive)
-              .map((c) => ({ id: c.id, label: `${c.name} — ${c.docNumber}` }))}
-            onChange={setCustomerId}
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="issue-date">Fecha de emisión</Label>
-          <Input
-            id="issue-date"
-            type="date"
-            value={issueDate}
-            onChange={(e) => {
-              setIssueDate(e.target.value);
-            }}
-          />
-        </div>
-        {isQuotation && (
+            <SearchSelectField
+              id="customer"
+              className="w-full"
+              label="Cliente"
+              placeholder="Elige un cliente"
+              value={customerId === '' ? null : customerId}
+              options={(customers.data ?? [])
+                .filter((c) => c.isActive)
+                .map((c) => ({ id: c.id, label: `${c.name} — ${c.docNumber}` }))}
+              onChange={setCustomerId}
+            />
+          </div>
           <div className="grid gap-2">
-            <Label htmlFor="validity">Vigencia (días)</Label>
+            <Label htmlFor="issue-date">Fecha de emisión</Label>
             <Input
-              id="validity"
-              type="number"
-              min={1}
-              max={MAX_QUOTATION_VALIDITY_DAYS}
-              value={validityDays}
+              id="issue-date"
+              type="date"
+              value={issueDate}
               onChange={(e) => {
-                setValidityDays(e.target.value);
+                setIssueDate(e.target.value);
               }}
             />
           </div>
-        )}
-        <div className="grid gap-2 md:col-span-3">
-          <Label htmlFor="notes">Observaciones</Label>
-          <Input
-            id="notes"
-            maxLength={500}
-            value={notes}
-            onChange={(e) => {
-              setNotes(e.target.value);
-            }}
-          />
+          {isQuotation && (
+            <div className="grid gap-2">
+              <Label htmlFor="validity">Vigencia (días)</Label>
+              <Input
+                id="validity"
+                type="number"
+                min={1}
+                max={MAX_QUOTATION_VALIDITY_DAYS}
+                value={validityDays}
+                onChange={(e) => {
+                  setValidityDays(e.target.value);
+                }}
+              />
+            </div>
+          )}
+          <div className="grid gap-2 md:col-span-3">
+            <Label htmlFor="notes">Observaciones</Label>
+            <Input
+              id="notes"
+              maxLength={500}
+              value={notes}
+              onChange={(e) => {
+                setNotes(e.target.value);
+              }}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
@@ -851,7 +885,13 @@ export function SalesDocumentForm({
           pendingText="Guardando…"
           onClick={submit}
         >
-          {editing ? 'Guardar cambios' : isQuotation ? 'Crear cotización' : 'Crear pedido'}
+          {adding
+            ? 'Agregar ítems'
+            : editing
+              ? 'Guardar cambios'
+              : isQuotation
+                ? 'Crear cotización'
+                : 'Crear pedido'}
         </Button>
       </div>
     </>

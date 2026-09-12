@@ -11,6 +11,7 @@ import {
   Role,
   type ReservationDto,
   type RoofingBatchCreateResultDto,
+  type SalesItemDto,
   type SalesOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
@@ -38,7 +39,13 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
+import {
+  ChangeCustomerDialog,
+  EditLinePriceDialog,
+  EditLineQtyDialog,
+} from '@/components/sales/order-edit-dialogs';
 import { PlantSheetButtons } from '@/components/sales/plant-sheet-buttons';
+import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 
@@ -56,6 +63,10 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [cancelOpen, setCancelOpen] = useState(false);
   const [releasing, setReleasing] = useState<ReservationDto | null>(null);
+  // D-187: las ediciones del pedido confirmado, hasta su comprobante.
+  const [pricing, setPricing] = useState<SalesItemDto | null>(null);
+  const [resizing, setResizing] = useState<SalesItemDto | null>(null);
+  const [changingCustomer, setChangingCustomer] = useState(false);
   /** D-124/D-148: día con el que nacen las órdenes que genera el botón. Solo lo ve un admin. */
   const [ordersDate, setOrdersDate] = useState<string | undefined>(undefined);
 
@@ -165,6 +176,11 @@ export function PedidoDetalleView({ id }: { id: string }) {
   // pedido; sin este `busy` combinado, "Anular pedido" seguía habilitado mientras
   // "Generar todas las órdenes" del mismo pedido estaba en vuelo.
   const busy = cancel.isPending || release.isPending || generateOrders.isPending;
+  // D-187: precio y cliente son de ADMINISTRADOR; agregar ítems y cambiar cantidades, también
+  // del vendedor dueño del pedido. El API es el que corta; esto solo evita ofrecer un 403.
+  const canEditAsAdmin = o.isEditable && isAdmin;
+  const canEditAsOwner = o.isEditable && (isAdmin || user.id === o.createdById);
+  const showLineActions = canEditAsAdmin || canEditAsOwner;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -282,6 +298,22 @@ export function PedidoDetalleView({ id }: { id: string }) {
               <Link href={`/planta?pedido=${o.id}`}>Producir ({String(queuedRoofingLines)})</Link>
             </Button>
           )}
+          {canEditAsOwner && (
+            <Button variant="outline" asChild>
+              <Link href={`/pedidos/${o.id}/agregar`}>Agregar ítems</Link>
+            </Button>
+          )}
+          {canEditAsAdmin && (
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setChangingCustomer(true);
+              }}
+            >
+              Cambiar cliente
+            </Button>
+          )}
           {isAdmin && canCancel && (
             <Button
               variant="destructive"
@@ -338,6 +370,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
                 {/* D-162: valor = sin IGV. Es lo que la línea congeló al confirmarse. */}
                 <TableHead className="text-right">Valor unitario</TableHead>
                 <TableHead className="text-right">Valor de venta</TableHead>
+                {showLineActions && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -361,6 +394,35 @@ export function PedidoDetalleView({ id }: { id: string }) {
                     )}
                   </TableCell>
                   <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
+                  {showLineActions && (
+                    <TableCell className="text-right">
+                      {canEditAsAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Cambiar precio de la línea ${String(item.lineNumber)}`}
+                          onClick={() => {
+                            setPricing(item);
+                          }}
+                        >
+                          Precio
+                        </Button>
+                      )}
+                      {/* D-116: una bobina entera vende su saldo; su cantidad no se edita. */}
+                      {canEditAsOwner && item.reserveItemType !== 'COIL' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Cambiar cantidad de la línea ${String(item.lineNumber)}`}
+                          onClick={() => {
+                            setResizing(item);
+                          }}
+                        >
+                          Cantidad
+                        </Button>
+                      )}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -450,6 +512,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
         </div>
       </section>
 
+      <PriceChangesCard changes={o.priceChanges} />
+
       {o.notes && (
         <Card>
           <CardHeader className="pb-2">
@@ -488,6 +552,21 @@ export function PedidoDetalleView({ id }: { id: string }) {
           if (releasing) release.mutate({ reservationId: releasing.id, reason });
         }}
       />
+      <EditLinePriceDialog
+        order={o}
+        item={pricing}
+        onOpenChange={(open) => {
+          if (!open) setPricing(null);
+        }}
+      />
+      <EditLineQtyDialog
+        order={o}
+        item={resizing}
+        onOpenChange={(open) => {
+          if (!open) setResizing(null);
+        }}
+      />
+      <ChangeCustomerDialog order={o} open={changingCustomer} onOpenChange={setChangingCustomer} />
     </RoleGate>
   );
 }

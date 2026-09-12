@@ -138,6 +138,12 @@ export interface ResolveSalesLinesOptions {
    * trae 71 comprobantes y «el documento no cuadra» no sirve para encontrar cuál.
    */
   exactAmounts?: { tolerancePen: string; documentLabel: string };
+  /**
+   * D-187: el número de la primera línea. Por defecto 1, que es un documento que se arma
+   * entero; agregar ítems a un pedido confirmado —o recalcular una de sus líneas— numera a
+   * continuación de lo que ya existe, y los rechazos tienen que nombrar esa línea y no «Línea 1».
+   */
+  firstLineNumber?: number;
 }
 
 export async function resolveSalesLines(
@@ -214,7 +220,7 @@ export async function resolveSalesLines(
   }[] = [];
 
   const lines = items.map((item, index) => {
-    const lineNumber = index + 1;
+    const lineNumber = (options.firstLineNumber ?? 1) + index;
     const at = `Línea ${lineNumber}`;
 
     // D-169: **antes de cualquier rama**, y no dentro de la del producto de catálogo. El

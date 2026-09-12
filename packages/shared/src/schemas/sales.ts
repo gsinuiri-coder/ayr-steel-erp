@@ -23,6 +23,7 @@ import {
   SALES_ORDER_STATUSES,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { idempotencyKeySchema } from './idempotency';
 import { paginationQuerySchema } from './pagination';
 import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing';
 
@@ -514,6 +515,8 @@ export const quotationSchema = z.object({
   cancelledAt: z.string().nullable(),
   /** D-185: la reserva temporal vigente, o `null`. Una vencida no se informa como vigente. */
   temporaryReservation: z.lazy(() => quotationTemporaryReservationSchema).nullable(),
+  /** D-187: cambios de precio de sus líneas, del más reciente al más viejo. */
+  priceChanges: z.array(z.lazy(() => salesPriceChangeSchema)),
 });
 export type QuotationDto = z.infer<typeof quotationSchema>;
 
@@ -523,7 +526,7 @@ export type QuotationDto = z.infer<typeof quotationSchema>;
 // en el detalle (`GET /sales/quotations/:id`), donde `items` ya viaja completo.
 export const quotationListItemSchema = quotationSchema
   // D-185: la reserva temporal es del detalle; la vista de vigentes tiene su propio endpoint.
-  .omit({ items: true, businessLines: true, temporaryReservation: true })
+  .omit({ items: true, businessLines: true, temporaryReservation: true, priceChanges: true })
   .extend({
     itemCount: z.number().int(),
   });
@@ -765,6 +768,8 @@ export const salesOrderSchema = z.object({
   items: z.array(salesItemSchema),
   reservations: z.array(reservationSchema),
   createdAt: z.string(),
+  /** D-187: el dueño del pedido, que puede agregarle ítems y cambiar cantidades. */
+  createdById: z.string().uuid(),
   createdByName: z.string().nullable(),
   cancelledAt: z.string().nullable(),
   promisedDeliveryDate: z.string().nullable(),
@@ -773,6 +778,10 @@ export const salesOrderSchema = z.object({
   priorityByName: z.string().nullable(),
   /** `null` cuando el pedido no tiene nada que fabricar, o ya dejó la cola (D-093). */
   queueStatus: z.enum(QUEUE_STATUSES).nullable(),
+  /** D-187: cambios de precio de sus líneas después de confirmado. */
+  priceChanges: z.array(z.lazy(() => salesPriceChangeSchema)),
+  /** D-187: no anulado y sin comprobante (factura o boleta, en borrador o viva). */
+  isEditable: z.boolean(),
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 
@@ -790,12 +799,93 @@ export const salesOrderListItemSchema = salesOrderSchema
     businessLines: true,
     importedDocumentId: true,
     importedDocumentNumber: true,
+    priceChanges: true,
+    isEditable: true,
   })
   .extend({
     itemCount: z.number().int(),
     activeReservations: z.number().int(),
   });
 export type SalesOrderListItemDto = z.infer<typeof salesOrderListItemSchema>;
+
+// --------------------------------------------------------------------------
+// D-187 — registro de cambios de precio y edición del pedido confirmado
+// --------------------------------------------------------------------------
+
+/**
+ * Un cambio de precio de una línea (D-187): quién, cuándo, antes y después. Los valores son
+ * **sin IGV** (D-162), igual que las líneas; el web los muestra con IGV.
+ */
+export const salesPriceChangeSchema = z.object({
+  id: z.string().uuid(),
+  lineNumber: z.number().int(),
+  productSku: z.string(),
+  beforeUnitValuePen: z.string(),
+  afterUnitValuePen: z.string(),
+  /** D-161: el valor por metro de una plancha, cuando la línea se negoció así. */
+  beforeValuePerMeterPen: z.string().nullable(),
+  afterValuePerMeterPen: z.string().nullable(),
+  changedByName: z.string().nullable(),
+  changedAt: z.string(),
+});
+export type SalesPriceChangeDto = z.infer<typeof salesPriceChangeSchema>;
+
+/**
+ * Nuevo precio de una línea de un pedido confirmado (solo ADMINISTRADOR). En una de sus dos
+ * formas, como en la cotización (D-161): valor unitario o valor por metro, nunca las dos.
+ */
+export const updateSalesOrderItemPriceSchema = z
+  .object({
+    unitPricePen: priceSchema.optional(),
+    valuePerMeterPen: priceSchema.optional(),
+  })
+  .superRefine((v, ctx) => {
+    if ((v.unitPricePen === undefined) === (v.valuePerMeterPen === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['unitPricePen'],
+        message: 'Manda el valor unitario o el valor por metro (uno de los dos)',
+      });
+    }
+  });
+export type UpdateSalesOrderItemPriceInput = z.infer<typeof updateSalesOrderItemPriceSchema>;
+
+/**
+ * Nueva cantidad de una línea confirmada. Una línea a medida manda sus largos, y la cantidad
+ * tiene que ser su suma (D-083).
+ */
+export const updateSalesOrderItemQtySchema = z
+  .object({
+    qty: qtySchema,
+    pieces: roofingPiecesSchema.optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.pieces !== undefined) {
+      const expected = piecesMeters(v.pieces);
+      if (!expected.equals(toDecimal(v.qty))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['qty'],
+          message: `Los largos suman ${expected.toFixed(3)} m y la línea dice ${toDecimal(v.qty).toFixed(3)}`,
+        });
+      }
+    }
+  });
+export type UpdateSalesOrderItemQtyInput = z.infer<typeof updateSalesOrderItemQtySchema>;
+
+/** Agregar ítems a un pedido confirmado: mismas líneas que una cotización. */
+export const addSalesOrderItemsSchema = z.object({
+  items: salesItemsSchema,
+  idempotencyKey: idempotencyKeySchema.optional(),
+});
+export type AddSalesOrderItemsInput = z.infer<typeof addSalesOrderItemsSchema>;
+
+/** Cambiar el cliente (razón social) de un pedido confirmado: solo ADMINISTRADOR, con motivo. */
+export const changeSalesOrderCustomerSchema = z.object({
+  customerId: z.string({ required_error: 'El cliente es obligatorio' }).uuid(),
+  reason: reasonSchema,
+});
+export type ChangeSalesOrderCustomerInput = z.infer<typeof changeSalesOrderCustomerSchema>;
 
 export const salesOrderQuerySchema = paginationQuerySchema.extend({
   status: z.enum(SALES_ORDER_STATUSES).optional(),

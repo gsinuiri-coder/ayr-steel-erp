@@ -9,8 +9,10 @@ import {
 import {
   CoilKind,
   CoilStatus,
+  FiscalDocType,
   Prisma,
   ProductionOrderStatus,
+  ProductionReportStatus,
   QuotationStatus,
   ReservationStatus,
   SalesOrderOrigin,
@@ -45,6 +47,7 @@ import {
   quotationCode,
   RESERVATION_STALE_DAYS,
   Role,
+  STANDING_DOCUMENT_STATUSES,
   salesOrderCode,
   toDecimal,
   toFixedString,
@@ -98,6 +101,7 @@ import {
   toSalesItemDto,
 } from './sales-lines';
 import { buildPlantOrderPdf } from './plant-order-pdf';
+import { findPriceChanges } from './price-changes';
 import {
   liveTemporaryWhere,
   reservedByItem,
@@ -910,15 +914,29 @@ export class SalesOrdersService {
    * `(itemType, itemId)`, así que dos confirmaciones simultáneas que compartan ítems se
    * serializan en vez de trabarse en un deadlock.
    */
-  private async createReservations(
+  // Público desde D-187: agregar ítems a un pedido confirmado y cambiar la cantidad de una línea
+  // (`SalesOrderEditsService`) reservan por esta misma puerta, con los mismos locks.
+  async createReservations(
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     orderId: string,
     items: (ReservableLine & { id: string })[],
   ): Promise<void> {
     await this.reserveLines(tx, items, 'el pedido', async (item) => {
-      await tx.reservation.create({
-        data: {
+      // `upsert` y no `create` desde D-187: cambiar la cantidad de una línea confirmada libera
+      // su reserva y vuelve a reservar la misma línea sobre el mismo ítem, y la tabla admite una
+      // sola fila por (línea, ítem). La fila liberada **revive** con la cantidad nueva —y con
+      // ella la OP que ya colgaba de su id—; el rastro de la liberación queda en `audit_log`.
+      // En confirmar y agregar ítems la línea es nueva y siempre cae en `create`.
+      await tx.reservation.upsert({
+        where: {
+          salesOrderItemId_itemType_itemId: {
+            salesOrderItemId: item.id,
+            itemType: item.reserveItemType,
+            itemId: item.reserveItemId,
+          },
+        },
+        create: {
           salesOrderId: orderId,
           salesOrderItemId: item.id,
           itemType: item.reserveItemType,
@@ -927,6 +945,13 @@ export class SalesOrdersService {
           unit: item.reserveUnit,
           status: ReservationStatus.ACTIVE,
           createdById: actor.id,
+        },
+        update: {
+          qty: item.reserveQty,
+          unit: item.reserveUnit,
+          status: ReservationStatus.ACTIVE,
+          releasedAt: null,
+          releasedById: null,
         },
       });
     });
@@ -1620,17 +1645,42 @@ export class SalesOrdersService {
             where: {
               status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
             },
-            select: { seq: true },
-            take: 1,
+            select: { id: true, seq: true, status: true },
           },
         },
       });
-      const blocking = reservations.flatMap((r) => r.productionOrders);
+      const liveOrders = reservations.flatMap((r) => r.productionOrders);
+      // D-186: confirmar ya deja una OP en cola por línea a fabricar, así que anular el pedido
+      // arrastra las que **nadie empezó** —en borrador: sin bobina montada (montar la pasa a
+      // en curso) y sin reportes—. Exigir anularlas una por una antes era una traba nacida de
+      // la automatización, no una protección: no hay material en custodia ni producción que
+      // deshacer. Una OP en curso sigue bloqueando, como siempre.
+      const idleIds: string[] = [];
+      for (const op of liveOrders) {
+        if (op.status !== ProductionOrderStatus.DRAFT) continue;
+        const reported = await tx.productionReport.findFirst({
+          where: { productionOrderId: op.id, status: ProductionReportStatus.ACTIVE },
+          select: { id: true },
+        });
+        if (!reported) idleIds.push(op.id);
+      }
+      const blocking = liveOrders.filter((op) => !idleIds.includes(op.id));
       if (blocking.length > 0) {
         const detail = blocking.map((op) => `orden ${productionOrderCode(op.seq)}`).join(', ');
         throw new BadRequestException(
           `No se puede anular: ${detail} está fabricando con el material reservado. Anula la orden de producción primero.`,
         );
+      }
+
+      if (idleIds.length > 0) {
+        await tx.productionOrder.updateMany({
+          where: { id: { in: idleIds }, status: ProductionOrderStatus.DRAFT },
+          data: {
+            status: ProductionOrderStatus.CANCELLED,
+            cancelledById: actor.id,
+            cancelledAt: new Date(),
+          },
+        });
       }
 
       const active = reservations.filter((r) => r.status === ReservationStatus.ACTIVE);
@@ -1684,7 +1734,11 @@ export class SalesOrdersService {
         entity: 'sales_orders',
         entityId: id,
         before: { status: order.status, activeReservations: active.length },
-        after: { status: SalesOrderStatus.CANCELLED, reason },
+        after: {
+          status: SalesOrderStatus.CANCELLED,
+          reason,
+          cancelledProductionOrders: idleIds.length,
+        },
       });
     });
 
@@ -2100,6 +2154,8 @@ export class SalesOrdersService {
         queueStatus: _queueStatus,
         importedDocumentId: _importedDocumentId,
         importedDocumentNumber: _importedDocumentNumber,
+        priceChanges: _priceChanges,
+        isEditable: _isEditable,
         ...rest
       } = dto;
       return {
@@ -2116,11 +2172,26 @@ export class SalesOrdersService {
     if (!row) throw new NotFoundException('Pedido no encontrado');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
     const actorIds = [row.createdById, ...(row.priorityById ? [row.priorityById] : [])];
-    const [actors, queueStatus] = await Promise.all([
+    const [actors, queueStatus, priceChanges, invoice] = await Promise.all([
       this.resolveActorNames(actorIds),
       this.computeQueueStatus(row),
+      findPriceChanges(this.prisma, { salesOrderId: id }),
+      // D-187: el mismo corte que `SalesOrderEditsService.lockEditable`.
+      this.prisma.fiscalDocument.findFirst({
+        where: {
+          salesOrderId: id,
+          docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
+          status: { in: [...STANDING_DOCUMENT_STATUSES] },
+          archivedAt: null,
+        },
+        select: { id: true },
+      }),
     ]);
-    return this.toDto(row, labels, actors, queueStatus);
+    return {
+      ...this.toDto(row, labels, actors, queueStatus),
+      priceChanges,
+      isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
+    };
   }
 
   /**
@@ -2824,6 +2895,7 @@ export class SalesOrdersService {
       items: row.items.map((i) => toSalesItemDto(i, labels.get(i.reserveItemId)?.label ?? '')),
       reservations: row.reservations.map((r) => this.toReservationDto(r, labels)),
       createdAt: row.createdAt.toISOString(),
+      createdById: row.createdById,
       createdByName: actors.get(row.createdById) ?? null,
       cancelledAt: row.cancelledAt?.toISOString() ?? null,
       promisedDeliveryDate: row.promisedDeliveryDate
@@ -2833,6 +2905,8 @@ export class SalesOrdersService {
       priorityReason: row.priorityReason,
       priorityByName: row.priorityById ? (actors.get(row.priorityById) ?? null) : null,
       queueStatus,
+      priceChanges: [],
+      isEditable: false,
     };
   }
 }

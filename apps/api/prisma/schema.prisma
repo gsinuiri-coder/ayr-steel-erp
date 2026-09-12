@@ -1327,26 +1327,26 @@ model ProductionOrderConsumption {
 /// Revertirlo (D-060) anula esos movimientos en bloque y devuelve los kilos a la
 /// asignación; la fila queda `REVERTED`, nunca se borra (§3.2).
 model ProductionReport {
-  id                String                 @id @default(uuid()) @db.Uuid
+  id                 String                 @id @default(uuid()) @db.Uuid
   /// Orden real de los reportes de una OP. No se puede usar `createdAt`: en Postgres
   /// `now()` es el instante en que **empezó la transacción**, así que dos reportes
   /// concurrentes pueden quedar empatados o invertidos respecto al orden de commit, y
   /// "revertir solo el último vigente" dejaría de ser cierto. Mismo criterio que el
   /// kardex, que ordena por su `id` bigserial y no por `at`.
-  seq               Int                    @default(autoincrement())
-  productionOrderId String                 @map("production_order_id") @db.Uuid
-  productionOrder   ProductionOrder        @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  seq                Int                    @default(autoincrement())
+  productionOrderId  String                 @map("production_order_id") @db.Uuid
+  productionOrder    ProductionOrder        @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
   /// Piezas buenas. Unidad primaria del producto terminado de drywall (D-055) y de la
   /// plancha de catálogo; en una cobertura a medida es cuántas planchas salieron, y lo que
   /// entra al kardex son los metros de `metersM`.
-  pieces            Int
+  pieces             Int
   /// **Solo ROOFING a medida** (D-083): metros lineales que entraron al kardex en este
   /// reporte, `Σ cantidad × largo` de `pieces` detallados. Null en drywall, donde la
   /// unidad del producto terminado son piezas y no hay nada que derivar.
-  metersM           Decimal?               @map("meters_m") @db.Decimal(16, 3)
+  metersM            Decimal?               @map("meters_m") @db.Decimal(16, 3)
   /// Kilos de material que esas piezas consumen. En drywall, `pieces × bom.kgPerPiece`; en
   /// coberturas, la geometría de la bobina montada por los largos reportados (D-047).
-  theoreticalKg     Decimal                @map("theoretical_kg") @db.Decimal(12, 3)
+  theoreticalKg      Decimal                @map("theoretical_kg") @db.Decimal(12, 3)
   /// **Solo ROOFING** (D-146): kilos que planta declara que la bobina consumió en **este**
   /// reporte. Dato observado, no consumo: el kardex sigue saliendo por `theoreticalKg` y el
   /// consumo real de la corrida se reconcilia al cerrar (`ProductionOrder.consumedKg`,
@@ -1355,25 +1355,25 @@ model ProductionReport {
   /// El tope lo pone el servicio y no la base: el máximo es el kilo teórico del **plan
   /// completo** con la geometría de la bobina montada, un número que ninguna columna de
   /// esta tabla conoce.
-  consumedKg        Decimal?               @map("consumed_kg") @db.Decimal(12, 3)
+  consumedKg         Decimal?               @map("consumed_kg") @db.Decimal(12, 3)
   /// **Solo ROOFING** (D-154): el aviso que el reporte dejó anotado, si lo dejó. Dos cosas
   /// caben acá y las dos son avisos, nunca rechazos: la desviación del kilo declarado contra
   /// el teórico de los largos, y el agregado de materia prima que quedó por debajo de lo
   /// prometido a otros pedidos. Se guarda en la fila y no solo en `audit_log` porque quien
   /// audita una corrida corta de material mira sus reportes, no el log.
-  rawMaterialWarning String?               @map("raw_material_warning") @db.Text
+  rawMaterialWarning String?                @map("raw_material_warning") @db.Text
   /// Valor en soles que salió de los flejes por este reporte (D-042).
-  materialCostPen   Decimal                @map("material_cost_pen") @db.Decimal(18, 4)
+  materialCostPen    Decimal                @map("material_cost_pen") @db.Decimal(18, 4)
   /// `materialCostPen / pieces`: costo con el que las piezas entraron al kardex.
-  unitCostPen       Decimal                @map("unit_cost_pen") @db.Decimal(18, 4)
-  status            ProductionReportStatus @default(ACTIVE)
-  notes             String?                @db.VarChar(240)
+  unitCostPen        Decimal                @map("unit_cost_pen") @db.Decimal(18, 4)
+  status             ProductionReportStatus @default(ACTIVE)
+  notes              String?                @db.VarChar(240)
   /// D-124: día de negocio del reporte de piezas (Lima).
-  operationDate     DateTime               @map("operation_date") @db.Date
-  createdById       String                 @map("created_by_id") @db.Uuid
-  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
-  revertedById      String?                @map("reverted_by_id") @db.Uuid
-  revertedAt        DateTime?              @map("reverted_at") @db.Timestamptz(3)
+  operationDate      DateTime               @map("operation_date") @db.Date
+  createdById        String                 @map("created_by_id") @db.Uuid
+  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  revertedById       String?                @map("reverted_by_id") @db.Uuid
+  revertedAt         DateTime?              @map("reverted_at") @db.Timestamptz(3)
 
   /// D-083: los largos que de verdad salieron. Vacío en un reporte de drywall.
   piecesDetail ProductionReportPiece[]
@@ -1428,13 +1428,15 @@ model Quotation {
   createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  items       QuotationItem[]
+  items                 QuotationItem[]
   /// Pedidos nacidos de esta cotización. Es una lista y no uno solo porque anular un
   /// pedido la devuelve a `EMITIDA` y se puede volver a confirmar; como mucho uno de
   /// ellos está vivo a la vez.
-  salesOrders SalesOrder[]
+  salesOrders           SalesOrder[]
   /// D-185: el historial de reservas temporales. Como mucho un juego vigente a la vez.
   temporaryReservations QuotationReservation[]
+  /// D-187: cambios de precio de sus líneas mientras no se confirmó.
+  priceChanges          SalesPriceChange[]
 
   @@index([customerId, status])
   @@index([status, validUntil])
@@ -1449,17 +1451,17 @@ model Quotation {
 /// el propio producto (perfiles, trading) o los kilos de una bobina concreta (coberturas,
 /// que se fabrican contra el pedido y todavía no tienen producto terminado en stock).
 model QuotationItem {
-  id              String            @id @default(uuid()) @db.Uuid
-  quotationId     String            @map("quotation_id") @db.Uuid
-  quotation       Quotation         @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  lineNumber      Int               @map("line_number")
-  productId       String            @map("product_id") @db.Uuid
-  product         Product           @relation(fields: [productId], references: [id])
-  description     String            @db.VarChar(240)
-  qty             Decimal           @db.Decimal(16, 3)
-  unit            String            @db.VarChar(20)
-  listPricePen    Decimal?          @map("list_price_pen") @db.Decimal(18, 4)
-  unitPricePen    Decimal           @map("unit_price_pen") @db.Decimal(18, 4)
+  id               String            @id @default(uuid()) @db.Uuid
+  quotationId      String            @map("quotation_id") @db.Uuid
+  quotation        Quotation         @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  lineNumber       Int               @map("line_number")
+  productId        String            @map("product_id") @db.Uuid
+  product          Product           @relation(fields: [productId], references: [id])
+  description      String            @db.VarChar(240)
+  qty              Decimal           @db.Decimal(16, 3)
+  unit             String            @db.VarChar(20)
+  listPricePen     Decimal?          @map("list_price_pen") @db.Decimal(18, 4)
+  unitPricePen     Decimal           @map("unit_price_pen") @db.Decimal(18, 4)
   /// D-161: valor de venta **por metro lineal** con el que se cotizó una plancha de
   /// catálogo. `unitPricePen` sigue siendo el valor por plancha (`largo del SKU × este
   /// número`) porque es lo que la línea factura y lo que el kardex mueve, en `NIU`; esta
@@ -1469,14 +1471,14 @@ model QuotationItem {
   /// `NULL` en todo lo demás: una línea a medida ya cotiza por metro en `unitPricePen`, y
   /// un perfil o un producto de trading se cotizan por unidad. También queda `NULL` en las
   /// planchas cotizadas antes de D-161 y en las que importó D-152, que no se recalculan.
-  valuePerMeterPen Decimal?         @map("value_per_meter_pen") @db.Decimal(18, 4)
-  subtotalPen     Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
-  igvPen          Decimal           @map("igv_pen") @db.Decimal(18, 4)
-  totalPen        Decimal           @map("total_pen") @db.Decimal(18, 4)
-  reserveItemType InventoryItemType @map("reserve_item_type")
-  reserveItemId   String            @map("reserve_item_id") @db.Uuid
-  reserveQty      Decimal           @map("reserve_qty") @db.Decimal(16, 3)
-  reserveUnit     String            @map("reserve_unit") @db.VarChar(20)
+  valuePerMeterPen Decimal?          @map("value_per_meter_pen") @db.Decimal(18, 4)
+  subtotalPen      Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen           Decimal           @map("igv_pen") @db.Decimal(18, 4)
+  totalPen         Decimal           @map("total_pen") @db.Decimal(18, 4)
+  reserveItemType  InventoryItemType @map("reserve_item_type")
+  reserveItemId    String            @map("reserve_item_id") @db.Uuid
+  reserveQty       Decimal           @map("reserve_qty") @db.Decimal(16, 3)
+  reserveUnit      String            @map("reserve_unit") @db.VarChar(20)
 
   /// D-083: los largos de una línea compuesta de cobertura a medida. `qty` de la línea es
   /// la suma `Σ cantidad × largo` en metros y `unit` es `MTR`. Vacío en una línea simple.
@@ -1545,6 +1547,8 @@ model SalesOrder {
   dispatches      Dispatch[]
   /// Venta de mostrador que creó este pedido (Fase 7b, D-100). Null en el resto.
   posSale         PosSale?
+  /// D-187: cambios de precio de sus líneas después de confirmado.
+  priceChanges    SalesPriceChange[]
 
   @@index([customerId, status])
   @@index([quotationId])
@@ -1555,27 +1559,27 @@ model SalesOrder {
 /// Línea de un pedido: copia congelada de la línea de la cotización (o del alta directa).
 /// Los precios no se recalculan nunca contra el maestro después de confirmar.
 model SalesOrderItem {
-  id              String            @id @default(uuid()) @db.Uuid
-  salesOrderId    String            @map("sales_order_id") @db.Uuid
-  salesOrder      SalesOrder        @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
-  lineNumber      Int               @map("line_number")
-  productId       String            @map("product_id") @db.Uuid
-  product         Product           @relation(fields: [productId], references: [id])
-  description     String            @db.VarChar(240)
-  qty             Decimal           @db.Decimal(16, 3)
-  unit            String            @db.VarChar(20)
-  listPricePen    Decimal?          @map("list_price_pen") @db.Decimal(18, 4)
-  unitPricePen    Decimal           @map("unit_price_pen") @db.Decimal(18, 4)
+  id               String            @id @default(uuid()) @db.Uuid
+  salesOrderId     String            @map("sales_order_id") @db.Uuid
+  salesOrder       SalesOrder        @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  lineNumber       Int               @map("line_number")
+  productId        String            @map("product_id") @db.Uuid
+  product          Product           @relation(fields: [productId], references: [id])
+  description      String            @db.VarChar(240)
+  qty              Decimal           @db.Decimal(16, 3)
+  unit             String            @db.VarChar(20)
+  listPricePen     Decimal?          @map("list_price_pen") @db.Decimal(18, 4)
+  unitPricePen     Decimal           @map("unit_price_pen") @db.Decimal(18, 4)
   /// D-161: copia congelada del valor por metro con el que se cotizó una plancha. Ver
   /// `QuotationItem.valuePerMeterPen`.
-  valuePerMeterPen Decimal?         @map("value_per_meter_pen") @db.Decimal(18, 4)
-  subtotalPen     Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
-  igvPen          Decimal           @map("igv_pen") @db.Decimal(18, 4)
-  totalPen        Decimal           @map("total_pen") @db.Decimal(18, 4)
-  reserveItemType InventoryItemType @map("reserve_item_type")
-  reserveItemId   String            @map("reserve_item_id") @db.Uuid
-  reserveQty      Decimal           @map("reserve_qty") @db.Decimal(16, 3)
-  reserveUnit     String            @map("reserve_unit") @db.VarChar(20)
+  valuePerMeterPen Decimal?          @map("value_per_meter_pen") @db.Decimal(18, 4)
+  subtotalPen      Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
+  igvPen           Decimal           @map("igv_pen") @db.Decimal(18, 4)
+  totalPen         Decimal           @map("total_pen") @db.Decimal(18, 4)
+  reserveItemType  InventoryItemType @map("reserve_item_type")
+  reserveItemId    String            @map("reserve_item_id") @db.Uuid
+  reserveQty       Decimal           @map("reserve_qty") @db.Decimal(16, 3)
+  reserveUnit      String            @map("reserve_unit") @db.VarChar(20)
 
   /// **Plural desde D-088.** Una línea sostiene a la vez la promesa de materia prima que le
   /// queda y la del producto terminado que la producción ya fabricó: al reportar largos, la
@@ -1693,26 +1697,26 @@ model Reservation {
 /// sentido que `reservations`: nunca se borra, termina en `RELEASED`, `EXPIRED` o
 /// `CONVERTED` con quién, cuándo y por qué.
 model QuotationReservation {
-  id          String                     @id @default(uuid()) @db.Uuid
-  quotationId String                     @map("quotation_id") @db.Uuid
-  quotation   Quotation                  @relation(fields: [quotationId], references: [id])
+  id           String                     @id @default(uuid()) @db.Uuid
+  quotationId  String                     @map("quotation_id") @db.Uuid
+  quotation    Quotation                  @relation(fields: [quotationId], references: [id])
   /// Número de línea de la cotización al reservar. Las líneas se reescriben al editar, así que
   /// no hay FK: editar libera y vuelve a reservar si lo reservado cambió.
-  lineNumber  Int                        @map("line_number")
-  itemType    InventoryItemType          @map("item_type")
-  itemId      String                     @map("item_id") @db.Uuid
-  qty         Decimal                    @db.Decimal(16, 3)
-  unit        String                     @db.VarChar(20)
-  status      TemporaryReservationStatus @default(ACTIVE)
-  expiresAt   DateTime                   @map("expires_at") @db.Timestamptz(3)
-  createdById String                     @map("created_by_id") @db.Uuid
-  createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
-  endedAt     DateTime?                  @map("ended_at") @db.Timestamptz(3)
+  lineNumber   Int                        @map("line_number")
+  itemType     InventoryItemType          @map("item_type")
+  itemId       String                     @map("item_id") @db.Uuid
+  qty          Decimal                    @db.Decimal(16, 3)
+  unit         String                     @db.VarChar(20)
+  status       TemporaryReservationStatus @default(ACTIVE)
+  expiresAt    DateTime                   @map("expires_at") @db.Timestamptz(3)
+  createdById  String                     @map("created_by_id") @db.Uuid
+  createdAt    DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  endedAt      DateTime?                  @map("ended_at") @db.Timestamptz(3)
   /// Null cuando terminó sola (vencida) o la terminó el sistema (conversión).
-  endedById   String?                    @map("ended_by_id") @db.Uuid
-  endReason   String?                    @map("end_reason") @db.VarChar(240)
+  endedById    String?                    @map("ended_by_id") @db.Uuid
+  endReason    String?                    @map("end_reason") @db.VarChar(240)
   /// El pedido en el que se convirtió en firme. Referencia suelta, solo trazabilidad.
-  salesOrderId String?                   @map("sales_order_id") @db.Uuid
+  salesOrderId String?                    @map("sales_order_id") @db.Uuid
 
   /// El que sostiene la suma de disponible: una pasada por índice por ítem.
   @@index([itemType, itemId, status, expiresAt])
@@ -1730,6 +1734,34 @@ model SalesSettings {
   updatedAt                        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("sales_settings")
+}
+
+/// Registro de cambios de precio de una línea (D-187). Append-only: cada edición que mueve el
+/// valor unitario de una línea —de una cotización mientras no se confirma, o de un pedido
+/// confirmado mientras no tiene comprobante— deja una fila con quién, cuándo y el antes y el
+/// después. Exactamente uno de `quotationId`/`salesOrderId` (CHECK en la migración).
+model SalesPriceChange {
+  id                     String      @id @default(uuid()) @db.Uuid
+  quotationId            String?     @map("quotation_id") @db.Uuid
+  quotation              Quotation?  @relation(fields: [quotationId], references: [id])
+  salesOrderId           String?     @map("sales_order_id") @db.Uuid
+  salesOrder             SalesOrder? @relation(fields: [salesOrderId], references: [id])
+  /// Número de línea **después** del cambio. Las líneas de la cotización se reescriben al
+  /// editar, así que no hay FK a la línea.
+  lineNumber             Int         @map("line_number")
+  productId              String      @map("product_id") @db.Uuid
+  /// Valor unitario sin IGV, antes y después (D-162).
+  beforeUnitValuePen     Decimal     @map("before_unit_value_pen") @db.Decimal(18, 4)
+  afterUnitValuePen      Decimal     @map("after_unit_value_pen") @db.Decimal(18, 4)
+  /// D-161: el valor por metro de una plancha, cuando la línea se negoció así.
+  beforeValuePerMeterPen Decimal?    @map("before_value_per_meter_pen") @db.Decimal(18, 4)
+  afterValuePerMeterPen  Decimal?    @map("after_value_per_meter_pen") @db.Decimal(18, 4)
+  changedById            String      @map("changed_by_id") @db.Uuid
+  changedAt              DateTime    @default(now()) @map("changed_at") @db.Timestamptz(3)
+
+  @@index([quotationId, changedAt])
+  @@index([salesOrderId, changedAt])
+  @@map("sales_price_changes")
 }
 
 // ---------------------------------------------------------------------------

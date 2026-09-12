@@ -38,6 +38,7 @@ import {
   remainingLabel,
   TemporaryReservationLines,
 } from '@/components/sales/temporary-reservation';
+import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
@@ -373,6 +374,9 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           </TableBody>
         </Table>
       </div>
+
+      {/* D-187: cada edición que movió un precio, con quién y cuándo. */}
+      <PriceChangesCard changes={q.priceChanges} />
 
       {q.notes && (
         <Card>

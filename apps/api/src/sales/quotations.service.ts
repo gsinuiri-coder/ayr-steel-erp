@@ -45,6 +45,7 @@ import { ENV, type Env } from '../config/env';
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
+import { findPriceChanges, recordPriceChanges } from './price-changes';
 import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
 import { SalesOrdersService } from './sales-orders.service';
@@ -267,6 +268,11 @@ export class QuotationsService {
           ? QuotationStatus.EXPIRED
           : QuotationStatus.EMITTED;
 
+      // D-187: lo cotizado antes de reescribir las líneas, para registrar qué precio se movió.
+      const previousLines = await tx.quotationItem.findMany({
+        where: { quotationId: id },
+        select: { lineNumber: true, productId: true, unitPricePen: true, valuePerMeterPen: true },
+      });
       await tx.quotationItem.deleteMany({ where: { quotationId: id } });
       await tx.quotation.update({
         where: { id },
@@ -288,12 +294,26 @@ export class QuotationsService {
         },
       });
 
+      const priceChanges = await recordPriceChanges(
+        tx,
+        { quotationId: id },
+        previousLines,
+        lines,
+        actor.id,
+      );
+
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'sales.quotation.update',
         entity: 'quotations',
         entityId: id,
-        after: { totalPen: totals.totalPen, items: lines.length, status },
+        after: {
+          customerId: customer.id,
+          totalPen: totals.totalPen,
+          items: lines.length,
+          status,
+          priceChanges,
+        },
       });
 
       // D-185: con reserva temporal vigente, lo reservado sigue a las líneas nuevas — o la
@@ -727,6 +747,7 @@ export class QuotationsService {
       const {
         items: _items,
         temporaryReservation: _temporary,
+        priceChanges: _priceChanges,
         ...rest
       } = this.toDto({ ...r, items: [] }, new Map(), actors);
       return { ...rest, itemCount: r._count.items };
@@ -742,8 +763,11 @@ export class QuotationsService {
     if (!row) throw new NotFoundException('Cotización no encontrada');
     const labels = await this.reserveLabels(row.items);
     const actors = await this.resolveActorNames([row.createdById]);
-    const temporary = await this.orders.findQuotationTemporaryReservation(id);
-    return this.toDto(row, labels, actors, temporary);
+    const [temporary, priceChanges] = await Promise.all([
+      this.orders.findQuotationTemporaryReservation(id),
+      findPriceChanges(this.prisma, { quotationId: id }),
+    ]);
+    return { ...this.toDto(row, labels, actors, temporary), priceChanges };
   }
 
   // -------------------------------------------------------------------------
@@ -892,6 +916,7 @@ export class QuotationsService {
       confirmedAt: row.confirmedAt?.toISOString() ?? null,
       cancelledAt: row.cancelledAt?.toISOString() ?? null,
       temporaryReservation,
+      priceChanges: [],
     };
   }
 }

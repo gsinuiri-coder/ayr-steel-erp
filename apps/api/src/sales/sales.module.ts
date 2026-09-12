@@ -6,6 +6,7 @@ import { ProductionModule } from '../production/production.module';
 import { QuotationExpiryJob } from './quotation-expiry.job';
 import { QuotationsService } from './quotations.service';
 import { SalesController } from './sales.controller';
+import { SalesOrderEditsService } from './sales-order-edits.service';
 import { SalesOrdersService } from './sales-orders.service';
 
 /**
@@ -25,7 +26,7 @@ import { SalesOrdersService } from './sales-orders.service';
   // (`createFromReservationInTx`). Producción no importa ventas, así que no hay ciclo.
   imports: [InventoryModule, DocumentsModule, JobsModule, ProductionModule],
   controllers: [SalesController],
-  providers: [QuotationsService, SalesOrdersService, QuotationExpiryJob],
+  providers: [QuotationsService, SalesOrdersService, SalesOrderEditsService, QuotationExpiryJob],
   exports: [QuotationsService, SalesOrdersService],
 })
 export class SalesModule {}

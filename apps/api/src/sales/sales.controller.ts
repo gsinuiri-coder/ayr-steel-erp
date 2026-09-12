@@ -12,6 +12,14 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  addSalesOrderItemsSchema,
+  changeSalesOrderCustomerSchema,
+  updateSalesOrderItemPriceSchema,
+  updateSalesOrderItemQtySchema,
+  type AddSalesOrderItemsInput,
+  type ChangeSalesOrderCustomerInput,
+  type UpdateSalesOrderItemPriceInput,
+  type UpdateSalesOrderItemQtyInput,
   cancelQuotationSchema,
   cancelSalesOrderSchema,
   confirmQuotationSchema,
@@ -63,6 +71,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { QuotationsService } from './quotations.service';
+import { SalesOrderEditsService } from './sales-order-edits.service';
 import { SalesOrdersService } from './sales-orders.service';
 
 /**
@@ -82,6 +91,7 @@ export class SalesController {
   constructor(
     private readonly quotations: QuotationsService,
     private readonly orders: SalesOrdersService,
+    private readonly edits: SalesOrderEditsService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -318,6 +328,56 @@ export class SalesController {
     body: UpdatePromisedDeliveryDateInput,
   ): Promise<SalesOrderDto> {
     return this.orders.setPromisedDeliveryDate(actor, id, body.promisedDeliveryDate);
+  }
+
+  // -------------------------------------------------------------------------
+  // D-187 — editar un pedido confirmado hasta su comprobante
+  // -------------------------------------------------------------------------
+
+  /** Precio de una línea: solo ADMINISTRADOR, con piso (D-163) y registro de cambios. */
+  @Patch('orders/:id/items/:itemId/price')
+  @Roles(Role.ADMINISTRADOR)
+  updateOrderItemPrice(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body(new ZodValidationPipe(updateSalesOrderItemPriceSchema))
+    body: UpdateSalesOrderItemPriceInput,
+  ): Promise<SalesOrderDto> {
+    return this.edits.updateItemPrice(actor, id, itemId, body);
+  }
+
+  /** Cantidad de una línea sin reportes de producción ni despachos: dueño o ADMINISTRADOR. */
+  @Patch('orders/:id/items/:itemId/qty')
+  updateOrderItemQty(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body(new ZodValidationPipe(updateSalesOrderItemQtySchema)) body: UpdateSalesOrderItemQtyInput,
+  ): Promise<SalesOrderDto> {
+    return this.edits.updateItemQty(actor, id, itemId, body);
+  }
+
+  /** Agregar ítems (reserva + OP), aun con despacho parcial: dueño o ADMINISTRADOR. */
+  @Post('orders/:id/items')
+  addOrderItems(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(addSalesOrderItemsSchema)) body: AddSalesOrderItemsInput,
+  ): Promise<SalesOrderDto> {
+    return this.edits.addItems(actor, id, body);
+  }
+
+  /** Cliente (razón social) del pedido: solo ADMINISTRADOR, con motivo. */
+  @Patch('orders/:id/customer')
+  @Roles(Role.ADMINISTRADOR)
+  changeOrderCustomer(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(changeSalesOrderCustomerSchema))
+    body: ChangeSalesOrderCustomerInput,
+  ): Promise<SalesOrderDto> {
+    return this.edits.changeCustomer(actor, id, body);
   }
 
   // -------------------------------------------------------------------------
