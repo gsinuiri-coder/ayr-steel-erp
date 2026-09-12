@@ -1393,7 +1393,8 @@ model Quotation {
   seq           Int             @unique @default(autoincrement())
   customerId    String          @map("customer_id") @db.Uuid
   customer      Customer        @relation(fields: [customerId], references: [id])
-  status        QuotationStatus @default(DRAFT)
+  /// D-184: nace `EMITTED`. `DRAFT` queda en el enum sin que nada lo escriba.
+  status        QuotationStatus @default(EMITTED)
   issueDate     DateTime        @map("issue_date") @db.Date
   /// Último día en que la cotización se puede confirmar (D-069). El job diario marca
   /// `EXPIRED` a las que ya pasaron; `confirm()` lo revalida igual, por si el job no corrió.

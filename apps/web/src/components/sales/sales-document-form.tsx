@@ -44,7 +44,7 @@ import { SearchSelectField } from '@/components/search-select-modal';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatMoney, formatQty, isPositiveDecimal, todayIso, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
-import { EMPTY_PIECE_ROW, parsePieceRows, type PieceRow } from '@/lib/pieces';
+import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -234,17 +234,74 @@ function brokenFixedLength(product: ProductDto | undefined): boolean {
   );
 }
 
-export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
+/**
+ * D-184: una línea guardada, de vuelta a borrador de formulario. El precio vuelve a ser el
+ * **con IGV** que se tipea (D-162) y, en una plancha, por metro (D-161): la ida y vuelta
+ * valor → precio → valor a 4 decimales es exacta, así que guardar sin tocar nada no mueve un
+ * céntimo — y una línea importada sigue emparejando con su importe del papel (D-169).
+ */
+function lineFromItem(item: QuotationDto['items'][number], key: number): LineDraft {
+  const value = item.valuePerMeterPen ?? item.unitPricePen;
+  const pricePen = toFixedString(money(salePriceFromValue(value)), 'MONEY');
+  // D-134: desde la reserva genérica, la única línea que reserva una bobina concreta es la
+  // venta del rollo entero (RF-73).
+  if (item.reserveItemType === 'COIL') {
+    return {
+      ...emptyLine(key),
+      kind: 'BOBINA',
+      saleCoilId: item.reserveItemId,
+      qty: item.qty,
+      pricePen,
+    };
+  }
+  return {
+    key,
+    kind: 'PRODUCT',
+    businessLine: item.businessLine,
+    productId: item.productId,
+    saleCoilId: '',
+    qty: item.qty,
+    pricePen,
+    pieces:
+      item.pieces.length > 0
+        ? item.pieces.map((p) => ({ lengthM: mmToMeters(p.lengthMm), qty: String(p.qty) }))
+        : [EMPTY_PIECE],
+  };
+}
+
+/** Días de vigencia de una cotización guardada, para sembrar el campo. */
+function validityDaysOf(q: QuotationDto): string {
+  if (q.validUntil === null) return String(DEFAULT_QUOTATION_VALIDITY_DAYS);
+  const ms = Date.parse(`${q.validUntil}T00:00:00Z`) - Date.parse(`${q.issueDate}T00:00:00Z`);
+  const days = Math.round(ms / 86_400_000);
+  return String(days >= 1 ? days : DEFAULT_QUOTATION_VALIDITY_DAYS);
+}
+
+export function SalesDocumentForm({
+  mode,
+  initial,
+}: {
+  mode: 'quotation' | 'order';
+  /** D-184: con una cotización, el formulario la edita en vez de crear una nueva. */
+  initial?: QuotationDto;
+}) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const isQuotation = mode === 'quotation';
+  const editing = initial !== undefined;
 
-  const [customerId, setCustomerId] = useState('');
-  const [issueDate, setIssueDate] = useState(todayIso());
-  const [validityDays, setValidityDays] = useState(String(DEFAULT_QUOTATION_VALIDITY_DAYS));
-  const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState<LineDraft[]>([emptyLine(0)]);
-  const [nextKey, setNextKey] = useState(1);
+  const [customerId, setCustomerId] = useState(initial?.customerId ?? '');
+  const [issueDate, setIssueDate] = useState(initial?.issueDate ?? todayIso());
+  const [validityDays, setValidityDays] = useState(
+    initial ? validityDaysOf(initial) : String(DEFAULT_QUOTATION_VALIDITY_DAYS),
+  );
+  const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [lines, setLines] = useState<LineDraft[]>(
+    initial && initial.items.length > 0
+      ? initial.items.map((item, i) => lineFromItem(item, i))
+      : [emptyLine(0)],
+  );
+  const [nextKey, setNextKey] = useState(initial ? initial.items.length + 1 : 1);
   const [formError, setFormError] = useState<string | null>(null);
 
   const customers = useQuery({
@@ -387,12 +444,16 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
 
   const save = useMutation<QuotationDto | SalesOrderDto, unknown, unknown>({
     mutationFn: (body: unknown) =>
-      isQuotation
-        ? api<QuotationDto>('/sales/quotations', { method: 'POST', body })
-        : api<SalesOrderDto>('/sales/orders', { method: 'POST', body }),
+      initial
+        ? api<QuotationDto>(`/sales/quotations/${initial.id}`, { method: 'PUT', body })
+        : isQuotation
+          ? api<QuotationDto>('/sales/quotations', { method: 'POST', body })
+          : api<SalesOrderDto>('/sales/orders', { method: 'POST', body }),
     onSuccess: (created) => {
-      toast.success(isQuotation ? 'Cotización creada' : 'Pedido creado');
-      invalidateSales(queryClient);
+      toast.success(
+        editing ? 'Cotización actualizada' : isQuotation ? 'Cotización creada' : 'Pedido creado',
+      );
+      invalidateSales(queryClient, editing ? { quotationId: created.id } : undefined);
       router.push(isQuotation ? `/cotizaciones/${created.id}` : `/pedidos/${created.id}`);
     },
     onError: (err) => {
@@ -556,12 +617,18 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
     <>
       <div>
         <h1 className="text-lg font-semibold">
-          {isQuotation ? 'Nueva cotización' : 'Nuevo pedido directo'}
+          {initial
+            ? `Editar ${initial.code}`
+            : isQuotation
+              ? 'Nueva cotización'
+              : 'Nuevo pedido directo'}
         </h1>
         <p className="text-xs text-muted-foreground">
-          {isQuotation
-            ? 'Simulación de precio: no reserva stock. La reserva nace al confirmarla (D-054).'
-            : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
+          {initial
+            ? 'Guardar reemplaza las líneas y regenera el PDF: la última versión es la que vale.'
+            : isQuotation
+              ? 'Nace emitida, con su PDF. No reserva stock: la reserva nace al reservar o al confirmar.'
+              : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
         </p>
       </div>
 
@@ -784,7 +851,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
           pendingText="Guardando…"
           onClick={submit}
         >
-          {isQuotation ? 'Crear cotización' : 'Crear pedido'}
+          {editing ? 'Guardar cambios' : isQuotation ? 'Crear cotización' : 'Crear pedido'}
         </Button>
       </div>
     </>

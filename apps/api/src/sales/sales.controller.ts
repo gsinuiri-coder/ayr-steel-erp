@@ -129,7 +129,7 @@ export class SalesController {
     return this.quotations.create(actor, body);
   }
 
-  /** RF-66: editar mientras siga en borrador. */
+  /** RF-66 / D-184: editar mientras no esté confirmada; regenera el PDF. */
   @Put('quotations/:id')
   updateQuotation(
     @CurrentUser() actor: RequestUser,
@@ -151,14 +151,6 @@ export class SalesController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<QuotationDto> {
     return this.quotations.duplicate(actor, id);
-  }
-
-  @Post('quotations/:id/emit')
-  emitQuotation(
-    @CurrentUser() actor: RequestUser,
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<QuotationDto> {
-    return this.quotations.emit(actor, id);
   }
 
   /**

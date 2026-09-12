@@ -53,15 +53,6 @@ export function CotizacionDetalleView({ id }: { id: string }) {
     toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
   }
 
-  const emit = useMutation({
-    mutationFn: () => api<QuotationDto>(`/sales/quotations/${id}/emit`, { method: 'POST' }),
-    onSuccess: () => {
-      toast.success('Cotización emitida');
-      invalidateSales(queryClient, { quotationId: id });
-    },
-    onError,
-  });
-
   const confirm = useMutation({
     mutationFn: () => api<SalesOrderDto>(`/sales/quotations/${id}/confirm`, { method: 'POST' }),
     onSuccess: (order) => {
@@ -83,12 +74,12 @@ export function CotizacionDetalleView({ id }: { id: string }) {
     onError,
   });
 
-  // D-119: duplicar crea un BORRADOR nuevo en cualquier estado — la única acción de esta
-  // pantalla que no depende de `q.status`.
+  // D-119: duplicar crea una cotización nueva en cualquier estado — la única acción de esta
+  // pantalla que no depende de `q.status`. D-184: nace emitida, igual que cualquier alta.
   const duplicate = useMutation({
     mutationFn: () => api<QuotationDto>(`/sales/quotations/${id}/duplicate`, { method: 'POST' }),
     onSuccess: (created) => {
-      toast.success(`Borrador ${created.code} creado`);
+      toast.success(`Cotización ${created.code} creada`);
       invalidateSales(queryClient);
       router.push(`/cotizaciones/${created.id}`);
     },
@@ -106,10 +97,11 @@ export function CotizacionDetalleView({ id }: { id: string }) {
     );
   }
 
-  const busy = emit.isPending || confirm.isPending || cancel.isPending || duplicate.isPending;
-  const canEmit = q.status === 'DRAFT';
+  const busy = confirm.isPending || cancel.isPending || duplicate.isPending;
   const canConfirm = q.status === 'EMITTED' && !q.isExpired;
   const canCancel = q.status !== 'CONFIRMED' && q.status !== 'CANCELLED';
+  // D-184: editable mientras no esté confirmada. Una vencida también: editarla es renovarla.
+  const canEdit = q.status !== 'CONFIRMED' && q.status !== 'CANCELLED';
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -128,29 +120,16 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {q.status !== 'DRAFT' && (
+          <Button variant="outline" asChild>
+            {/*
+              Descarga directa desde el API (D-068); el proxy `/api/*` reenvía el binario. No
+              depende de `pdfKey`: si la subida a R2 falló, el endpoint lo rearma al vuelo.
+            */}
+            <a href={`/api/sales/quotations/${q.id}/pdf`}>Descargar PDF</a>
+          </Button>
+          {canEdit && (
             <Button variant="outline" asChild>
-              {/*
-                Descarga directa desde el API (D-068); el proxy `/api/*` reenvía el binario.
-                El botón depende del **estado**, no de `pdfKey`: si la subida a R2 falló al
-                emitir (que es un fallo tolerado a propósito), la cotización quedaba emitida
-                sin key, reemitirla daba 409 y no había forma de llegar al PDF. El endpoint
-                lo rearma cuando hace falta.
-              */}
-              <a href={`/api/sales/quotations/${q.id}/pdf`}>Descargar PDF</a>
-            </Button>
-          )}
-          {canEmit && (
-            <Button
-              disabled={busy}
-              pending={emit.isPending}
-              pendingText="Emitiendo…"
-              onClick={() => {
-                if (busy) return;
-                emit.mutate();
-              }}
-            >
-              Emitir
+              <Link href={`/cotizaciones/${q.id}/editar`}>Editar</Link>
             </Button>
           )}
           {canConfirm && (
@@ -198,7 +177,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         <Alert variant="destructive">
           <AlertDescription>
             La vigencia venció el {formatDate(q.validUntil)}: la cotización ya no se puede
-            confirmar. Crea una nueva con la fecha vigente.
+            confirmar. Edítala con una vigencia nueva para renovarla.
           </AlertDescription>
         </Alert>
       )}
@@ -241,7 +220,6 @@ export function CotizacionDetalleView({ id }: { id: string }) {
                   lo que el comprobante factura es el valor, así que la columna lo dice. */}
               <TableHead className="text-right">Valor de lista</TableHead>
               <TableHead className="text-right">Valor cotizado</TableHead>
-              <TableHead>Reservará</TableHead>
               <TableHead className="text-right">Valor de venta</TableHead>
             </TableRow>
           </TableHeader>
@@ -283,12 +261,6 @@ export function CotizacionDetalleView({ id }: { id: string }) {
                       </span>
                     )}
                   </TableCell>
-                  <TableCell className="max-w-[12rem] text-xs whitespace-normal">
-                    {item.reserveItemLabel || item.reserveItemId}
-                    <span className="block text-muted-foreground tabular-nums">
-                      {formatQty(item.reserveQty, unitSymbol(item.reserveUnit))}
-                    </span>
-                  </TableCell>
                   <TableCell className="text-right font-medium tabular-nums">
                     {formatMoney(item.subtotalPen)}
                     {/*
@@ -308,7 +280,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             })}
             {q.items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   La cotización no tiene líneas.
                 </TableCell>
               </TableRow>

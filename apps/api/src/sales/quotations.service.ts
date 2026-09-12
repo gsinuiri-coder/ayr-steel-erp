@@ -124,6 +124,7 @@ export class QuotationsService {
 
   async create(actor: RequestUser, input: CreateQuotationInput): Promise<QuotationDto> {
     const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input));
+    await this.generatePdf(id);
     return this.findOne(id);
   }
 
@@ -167,7 +168,11 @@ export class QuotationsService {
     const quotation = await tx.quotation.create({
       data: {
         customerId: customer.id,
-        status: QuotationStatus.DRAFT,
+        // D-184: la cotización nace emitida. El borrador desapareció del flujo: lo que hacía
+        // (editar antes de mandarla) ahora lo hace la edición de una emitida, que regenera
+        // el PDF.
+        status: QuotationStatus.EMITTED,
+        emittedAt: new Date(),
         issueDate: toDateOnly(input.issueDate),
         validUntil: validUntil === null ? null : toDateOnly(validUntil),
         subtotalPen: totals.subtotalPen,
@@ -194,14 +199,26 @@ export class QuotationsService {
     return quotation.id;
   }
 
-  /** RF-66: editar una cotización propia mientras siga en borrador. Reemplaza las líneas. */
+  /**
+   * RF-66 / D-184: editar una cotización propia mientras **no esté confirmada**. Reemplaza
+   * las líneas y regenera el PDF: hay una sola versión y la última manda.
+   *
+   * Una vencida también se edita — es la forma de renovarla: si la vigencia nueva la vuelve
+   * a dejar vigente, vuelve a `EMITIDA`. Una confirmada no, porque su precio ya es el del
+   * pedido; una anulada tampoco, porque anular es terminal.
+   */
   async update(actor: RequestUser, id: string, input: UpdateQuotationInput): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
       this.assertOwnership(actor, current.createdById, 'editarla');
-      if (current.status !== QuotationStatus.DRAFT) {
+      if (current.status === QuotationStatus.CONFIRMED) {
         throw new BadRequestException(
-          `Solo se edita una cotización en borrador; esta está ${current.status}. Anúlala y crea una nueva.`,
+          'La cotización ya está confirmada: lo que se edita desde ahora es el pedido.',
+        );
+      }
+      if (current.status === QuotationStatus.CANCELLED) {
+        throw new BadRequestException(
+          'La cotización está anulada: duplícala para cotizar de nuevo.',
         );
       }
       const customer = await this.requireActiveCustomer(tx, input.customerId);
@@ -228,13 +245,26 @@ export class QuotationsService {
           : {}),
       });
       const totals = documentTotals(lines);
-      const validUntil = quotationValidUntil(input.issueDate, input.validityDays);
+      // D-157: una cotización **sin vencimiento** (la trajo el importador) lo sigue siendo al
+      // editarla. El cuerpo HTTP no puede expresar `null`, y sin este corte la primera edición
+      // le inventaba una fecha a un comprobante ya vendido.
+      const validUntil =
+        current.validUntil === null
+          ? null
+          : quotationValidUntil(input.issueDate, input.validityDays);
+
+      const status =
+        validUntil !== null && isQuotationExpired(validUntil, businessToday())
+          ? QuotationStatus.EXPIRED
+          : QuotationStatus.EMITTED;
 
       await tx.quotationItem.deleteMany({ where: { quotationId: id } });
       await tx.quotation.update({
         where: { id },
         data: {
           customerId: customer.id,
+          status,
+          ...(status === QuotationStatus.EMITTED ? { expiredAt: null } : {}),
           issueDate: toDateOnly(input.issueDate),
           validUntil: validUntil === null ? null : toDateOnly(validUntil),
           subtotalPen: totals.subtotalPen,
@@ -254,10 +284,11 @@ export class QuotationsService {
         action: 'sales.quotation.update',
         entity: 'quotations',
         entityId: id,
-        after: { totalPen: totals.totalPen, items: lines.length },
+        after: { totalPen: totals.totalPen, items: lines.length, status },
       });
     });
 
+    await this.generatePdf(id);
     return this.findOne(id);
   }
 
@@ -395,7 +426,9 @@ export class QuotationsService {
       const quotation = await tx.quotation.create({
         data: {
           customerId: customer.id,
-          status: QuotationStatus.DRAFT,
+          // D-184: el duplicado también nace emitido, igual que cualquier cotización nueva.
+          status: QuotationStatus.EMITTED,
+          emittedAt: new Date(),
           issueDate: toDateOnly(issueDate),
           validUntil: toDateOnly(validUntil),
           subtotalPen: totals.subtotalPen,
@@ -422,54 +455,8 @@ export class QuotationsService {
       return quotation.id;
     });
 
+    await this.generatePdf(newId);
     return this.findOne(newId);
-  }
-
-  // -------------------------------------------------------------------------
-  // Emitir (y con eso, generar el PDF)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Pasa la cotización a `EMITIDA` — el único estado desde el que se confirma — y genera
-   * su PDF (D-068).
-   *
-   * El PDF se sube a R2 **fuera** de la transacción: es una llamada de red a un servicio
-   * externo y sostenerla dentro del `$transaction` mantendría abierta una transacción de
-   * Postgres a merced de la latencia de R2. Si la subida falla, la cotización queda emitida
-   * igual y sin PDF: emitir es el hecho de negocio, el PDF es un adjunto que se puede
-   * regenerar reemitiendo.
-   */
-  async emit(actor: RequestUser, id: string): Promise<QuotationDto> {
-    await this.prisma.$transaction(async (tx) => {
-      const current = await this.lockQuotation(tx, id);
-      this.assertOwnership(actor, current.createdById, 'emitirla');
-      if (current.status === QuotationStatus.EMITTED) {
-        throw new ConflictException('La cotización ya está emitida');
-      }
-      if (current.status !== QuotationStatus.DRAFT) {
-        throw new BadRequestException(
-          `Solo se emite una cotización en borrador; esta está ${current.status}`,
-        );
-      }
-      const itemCount = await tx.quotationItem.count({ where: { quotationId: id } });
-      if (itemCount === 0) {
-        throw new BadRequestException('Una cotización sin líneas no se puede emitir');
-      }
-      await tx.quotation.update({
-        where: { id },
-        data: { status: QuotationStatus.EMITTED, emittedAt: new Date() },
-      });
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'sales.quotation.emit',
-        entity: 'quotations',
-        entityId: id,
-        after: { status: QuotationStatus.EMITTED },
-      });
-    });
-
-    await this.generatePdf(id);
-    return this.findOne(id);
   }
 
   /**
@@ -527,8 +514,13 @@ export class QuotationsService {
   }
 
   /**
-   * Genera el PDF, lo sube a R2 y guarda su key. Solo lo llama `emit`: es el momento en que
-   * el documento pasa a existir. Los fallos de R2 no tumban la emisión (D-068).
+   * Genera el PDF, lo sube a R2 y guarda su key (D-068). Lo llaman el alta, la edición y el
+   * duplicado (D-184): la key es estable, así que cada edición **pisa** el archivo anterior
+   * y la última versión manda, sin rastro de las previas.
+   *
+   * Se sube **fuera** de la transacción: es una llamada de red y sostenerla dentro del
+   * `$transaction` dejaría a Postgres a merced de la latencia de R2. Si falla, la cotización
+   * queda guardada igual y `pdf()` la redibuja al vuelo.
    */
   private async generatePdf(id: string): Promise<void> {
     try {
@@ -548,17 +540,12 @@ export class QuotationsService {
   /**
    * Descarga el PDF de la cotización.
    *
-   * **Una cotización en borrador no tiene PDF**, y no es un detalle: sin ese corte, un
-   * vendedor podía armar un borrador con el precio que quisiera, no emitirlo nunca —así no
-   * queda emitido ni confirmable— y aun así mandarle al cliente un documento idéntico a uno
-   * válido. El documento existe recién cuando se emite.
-   *
    * Fuera de `EMITIDA`/`CONFIRMADA` el PDF **se arma al vuelo y no se guarda**: el archivo
-   * de R2 se congeló al emitir y diría "Emitida" sobre una cotización que hoy está anulada
-   * o vencida. Redibujarlo con el estado de hoy es lo que hace que el papel no mienta.
+   * de R2 diría "Emitida" sobre una cotización que hoy está anulada o vencida. Redibujarlo
+   * con el estado de hoy es lo que hace que el papel no mienta.
    *
-   * Ese es también el motivo de que este `GET` no escriba nada: la única escritura del PDF
-   * ocurre en `emit`, que es un `POST`.
+   * Ese es también el motivo de que este `GET` no escriba nada: el PDF se escribe en el
+   * alta, la edición y el duplicado, que son `POST`/`PUT`.
    */
   async pdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
     const row = await this.prisma.quotation.findUnique({
@@ -566,11 +553,6 @@ export class QuotationsService {
       select: { id: true, seq: true, status: true, validUntil: true, pdfKey: true },
     });
     if (!row) throw new NotFoundException('Cotización no encontrada');
-    if (row.status === QuotationStatus.DRAFT) {
-      throw new BadRequestException(
-        'Una cotización en borrador todavía no tiene documento: emítela primero',
-      );
-    }
 
     const filename = `${quotationCode(row.seq)}.pdf`;
     // Con el estado **efectivo**, no el guardado: una emitida cuya fecha ya pasó no puede
