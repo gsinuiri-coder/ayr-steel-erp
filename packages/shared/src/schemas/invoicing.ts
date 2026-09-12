@@ -893,6 +893,13 @@ export const salesOrderProgressSchema = z.object({
       itemLabel: z.string(),
       reserveQty: z.string(),
       reserveUnit: unitStringSchema,
+      /**
+       * F8-S1/M3: kg teórico por unidad de venta (kg/m de una cobertura, kg/pieza de una
+       * plancha de largo fijo, o `pieceWeightKg` de drywall) — lo que el formulario de
+       * despacho propone como peso de línea para la guía. `null` cuando no hay cómo
+       * calcularlo (a medida): ahí el peso lo escribe la báscula, sin propuesta.
+       */
+      weightKgPerUnit: z.string().nullable(),
     }),
   ),
 });

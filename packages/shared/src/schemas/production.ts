@@ -14,6 +14,7 @@ import {
   PRODUCTION_ORDER_KINDS,
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_REPORT_STATUSES,
+  Unit,
 } from '../enums';
 import { reasonSchema } from './coil';
 import { backdatableFields } from './operation';
@@ -199,6 +200,37 @@ export function equivalentMeters(
   const perMeter = kgPerMeter(geometry);
   if (perMeter.lte(0)) return null;
   return roundTo(toDecimal(availableKg).div(perMeter), 'KG');
+}
+
+/**
+ * Kg teórico por unidad de venta de una cobertura (D-118): `kgPerMeter` si se vende por
+ * metro (D-161), `theoreticalKgPerPiece` si el largo es fijo. `null` si falta geometría o
+ * el largo es variable (a medida) — ahí no hay un kilo por unidad que proponer.
+ *
+ * Vive acá y no en `apps/api/.../catalog.service.ts` porque F8-S1/M3 la necesita también
+ * para proponer el peso por línea en el formulario de despacho: dos copias de esta cuenta
+ * habrían sido dos números que en algún caso dejan de coincidir.
+ */
+export function theoreticalKgPerSellingUnit(input: {
+  unit: string;
+  thicknessMm: DecimalInput | null;
+  widthMm: DecimalInput | null;
+  lengthMm: DecimalInput | null;
+  densityFactor: DecimalInput | null;
+}): Decimal | null {
+  if (input.thicknessMm === null || input.widthMm === null || input.densityFactor === null) {
+    return null;
+  }
+  const geometry = {
+    widthMm: input.widthMm,
+    thicknessMm: input.thicknessMm,
+    densityFactor: input.densityFactor,
+  };
+  if (input.unit === Unit.MTR) return roundTo(kgPerMeter(geometry), 'KG');
+  if (input.lengthMm !== null) {
+    return theoreticalKgPerPiece({ ...geometry, pieceLengthMm: input.lengthMm });
+  }
+  return null;
 }
 
 // --------------------------------------------------------------------------

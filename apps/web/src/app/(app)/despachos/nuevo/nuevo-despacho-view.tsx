@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -81,6 +81,7 @@ export function NuevoDespachoView() {
   const [carrierName, setCarrierName] = useState('');
   const [notes, setNotes] = useState('');
   const [qtyByLine, setQtyByLine] = useState<Record<string, string>>({});
+  const [weightKgByLine, setWeightKgByLine] = useState<Record<string, string>>({});
 
   const orders = useQuery({
     queryKey: ['sales-orders', 'dispatchable'],
@@ -138,6 +139,20 @@ export function NuevoDespachoView() {
     [progress.data, qtyByLine],
   );
 
+  /**
+   * F8-S1/M3: el peso es obligatorio por línea para la guía de remisión (SUNAT), pero
+   * solo cuando el despacho lleva transporte — un recojo no genera guía (D-103) y el API
+   * fija su peso en cero sin pedirlo.
+   */
+  const invalidWeightLines = useMemo(
+    () =>
+      transferMode === 'PICKUP'
+        ? 0
+        : selectedLines.filter((l) => !isPositiveDecimal(weightKgByLine[l.salesOrderItemId] ?? ''))
+            .length,
+    [transferMode, selectedLines, weightKgByLine],
+  );
+
   // El peso total se propone sumando el de las líneas elegidas, en proporción a lo que
   // cada una reserva. Es editable: la báscula manda sobre la estimación.
   const suggestedWeight = useMemo(
@@ -156,6 +171,45 @@ export function NuevoDespachoView() {
   useEffect(() => {
     setTotalWeightKg((prev) => (prev === '' || prev === '0.000' ? suggestedWeight : prev));
   }, [suggestedWeight]);
+
+  /**
+   * F8-S1/M3: peso teórico de la línea (kg/unidad de venta × cantidad a despachar), la
+   * misma propuesta que ya arma `suggestedWeight` para el total pero por línea. `null`
+   * cuando el producto no tiene un kg por unidad calculable (a medida): ahí no hay
+   * propuesta y el campo queda en blanco hasta que lo escriba la báscula.
+   */
+  function theoreticalLineWeight(l: SalesOrderProgressDto['lines'][number]): string | null {
+    if (l.weightKgPerUnit === null) return null;
+    const qty = toDecimal(qtyByLine[l.salesOrderItemId] ?? '0');
+    if (qty.lte(0)) return null;
+    return toDecimal(l.weightKgPerUnit).times(qty).toFixed(3);
+  }
+
+  // Mismo criterio que el peso total (`suggestedWeight`): la propuesta sigue a la cantidad
+  // mientras el campo no se tocó, y deja de pisarlo apenas el usuario escribe algo distinto
+  // de lo último que se propuso — ahí manda la báscula.
+  const lastSuggestedWeightRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    setWeightKgByLine((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const l of selectedLines) {
+        const suggested = theoreticalLineWeight(l);
+        if (suggested === null) continue;
+        const current = next[l.salesOrderItemId];
+        const wasAutoFilled =
+          current === undefined ||
+          current === '' ||
+          current === lastSuggestedWeightRef.current[l.salesOrderItemId];
+        if (wasAutoFilled && current !== suggested) {
+          next[l.salesOrderItemId] = suggested;
+          changed = true;
+        }
+        lastSuggestedWeightRef.current[l.salesOrderItemId] = suggested;
+      }
+      return changed ? next : prev;
+    });
+  }, [selectedLines, qtyByLine]);
 
   const create = useMutation({
     mutationFn: (confirmBackdate: boolean) =>
@@ -193,10 +247,14 @@ export function NuevoDespachoView() {
                   carrierName: carrierName.trim(),
                 }),
           ...(notes.trim() ? { notes: notes.trim() } : {}),
-          items: selectedLines.map((l) => ({
-            salesOrderItemId: l.salesOrderItemId,
-            qty: (qtyByLine[l.salesOrderItemId] ?? '').trim(),
-          })),
+          items: selectedLines.map((l) => {
+            const weightKg = (weightKgByLine[l.salesOrderItemId] ?? '').trim();
+            return {
+              salesOrderItemId: l.salesOrderItemId,
+              qty: (qtyByLine[l.salesOrderItemId] ?? '').trim(),
+              ...(weightKg ? { weightKg } : {}),
+            };
+          }),
         },
       }),
     onSuccess: (created) => {
@@ -238,6 +296,7 @@ export function NuevoDespachoView() {
   if (!/^\d{6}$/.test(destinationUbigeo.trim())) missing.push('el ubigeo de llegada (6 dígitos)');
   if (transferMode !== 'PICKUP' && !isPositiveDecimal(totalWeightKg))
     missing.push('el peso bruto total');
+  if (invalidWeightLines > 0) missing.push('el peso de cada línea a despachar');
   if (!transportComplete)
     missing.push(
       transferMode === 'PRIVATE'
@@ -584,6 +643,17 @@ export function NuevoDespachoView() {
         </Alert>
       )}
 
+      {invalidWeightLines > 0 && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            {invalidWeightLines === 1
+              ? 'Una línea no tiene'
+              : `${invalidWeightLines} líneas no tienen`}{' '}
+            un peso válido: la guía de remisión lo necesita por línea.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <section className="space-y-2">
         <h2 className="text-sm font-medium">Qué sale</h2>
         <div className="rounded-lg border">
@@ -596,6 +666,7 @@ export function NuevoDespachoView() {
                 <TableHead className="text-right">Ya despachado</TableHead>
                 <TableHead className="text-right">Pendiente</TableHead>
                 <TableHead className="w-36 text-right">A despachar</TableHead>
+                <TableHead className="w-36 text-right">Peso (kg)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -625,11 +696,32 @@ export function NuevoDespachoView() {
                       }}
                     />
                   </TableCell>
+                  <TableCell>
+                    {/*
+                      F8-S1/M3: el peso es de la guía de remisión (SUNAT), no del kardex —
+                      se pide por línea siempre que hay algo que despachar, prellenado con
+                      el kg teórico cuando el producto lo tiene (D-118) y editable con la
+                      báscula. Solo es obligatorio con transporte (validado en `missing`);
+                      en recojo el API lo ignora y lo deja en cero (D-103).
+                    */}
+                    <Input
+                      inputMode="decimal"
+                      className="text-right"
+                      disabled={!toDecimal(l.pendingDispatchQty).gt(0)}
+                      value={weightKgByLine[l.salesOrderItemId] ?? ''}
+                      onChange={(e) => {
+                        setWeightKgByLine((prev) => ({
+                          ...prev,
+                          [l.salesOrderItemId]: e.target.value,
+                        }));
+                      }}
+                    />
+                  </TableCell>
                 </TableRow>
               ))}
               {(progress.data?.lines.length ?? 0) === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground">
                     Elige un pedido para ver qué queda por despachar.
                   </TableCell>
                 </TableRow>
@@ -653,8 +745,11 @@ export function NuevoDespachoView() {
         </Button>
         <Button
           disabled={!canSubmit}
+          pending={create.isPending}
+          pendingText="Despachando…"
           title={blockedText ?? undefined}
           onClick={() => {
+            if (create.isPending) return;
             void backdate.attempt();
           }}
         >

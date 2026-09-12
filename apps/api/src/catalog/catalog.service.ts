@@ -7,13 +7,11 @@ import {
 import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
   isPlausiblePieceLength,
-  kgPerMeter,
   PIECE_LENGTH_RANGE_LABEL,
   ROOFING_KIND_UNIT,
   RoofingProductKind,
-  theoreticalKgPerPiece,
+  theoreticalKgPerSellingUnit,
   toDecimal,
-  Unit,
   type CreateProductInput,
   type ProductDto,
   type UpdateProductInput,
@@ -379,20 +377,15 @@ type WithLineCode = Product & {
  * no es un prisma simple.
  */
 function theoreticalKgPerUnit(p: WithLineCode): string | null {
-  if (p.thicknessMm === null || p.widthMm === null || p.finish === null) return null;
-  const geometry = {
-    widthMm: p.widthMm.toFixed(2),
-    thicknessMm: p.thicknessMm.toFixed(2),
-    densityFactor: p.finish.densityFactor.toFixed(4),
-  };
-  if (p.unit === Unit.MTR) return kgPerMeter(geometry).toFixed(3);
-  if (p.lengthMm !== null) {
-    return theoreticalKgPerPiece({
-      ...geometry,
-      pieceLengthMm: p.lengthMm.toFixed(2),
-    }).toFixed(3);
-  }
-  return null;
+  return (
+    theoreticalKgPerSellingUnit({
+      unit: p.unit,
+      thicknessMm: p.thicknessMm?.toFixed(2) ?? null,
+      widthMm: p.widthMm?.toFixed(2) ?? null,
+      lengthMm: p.lengthMm?.toFixed(2) ?? null,
+      densityFactor: p.finish?.densityFactor.toFixed(4) ?? null,
+    })?.toFixed(3) ?? null
+  );
 }
 
 function toDto(p: WithLineCode): ProductDto {

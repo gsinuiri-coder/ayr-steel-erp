@@ -36,6 +36,7 @@ import {
   salesTotals,
   serializeSalesTotals,
   sumLineTotals,
+  theoreticalKgPerSellingUnit,
   toDecimal,
   toFixedString,
   toSkipTake,
@@ -2366,7 +2367,19 @@ export class InvoicingService {
         customer: { select: { name: true } },
         items: {
           orderBy: { lineNumber: 'asc' },
-          include: { product: { select: { sku: true } } },
+          include: {
+            product: {
+              select: {
+                sku: true,
+                unit: true,
+                thicknessMm: true,
+                widthMm: true,
+                lengthMm: true,
+                pieceWeightKg: true,
+                finish: { select: { densityFactor: true } },
+              },
+            },
+          },
         },
       },
     });
@@ -2426,6 +2439,20 @@ export class InvoicingService {
         const qty = toDecimal(item.qty.toString());
         const dispatchedQty = dispatchedByItem.get(item.id) ?? new Decimal(0);
         const invoicedQty = invoicedByItem.get(item.id) ?? new Decimal(0);
+        // F8-S1/M3: kg teórico por unidad de venta, para que el formulario de despacho
+        // proponga el peso de línea sin que el usuario tenga que calcularlo. Cobertura por
+        // metro o de largo fijo (D-118): geometría del producto. Drywall: su
+        // `pieceWeightKg` declarado, porque su sección no es un prisma simple.
+        const weightKgPerUnit =
+          theoreticalKgPerSellingUnit({
+            unit: item.product.unit,
+            thicknessMm: item.product.thicknessMm?.toFixed(2) ?? null,
+            widthMm: item.product.widthMm?.toFixed(2) ?? null,
+            lengthMm: item.product.lengthMm?.toFixed(2) ?? null,
+            densityFactor: item.product.finish?.densityFactor.toFixed(4) ?? null,
+          })?.toFixed(3) ??
+          item.product.pieceWeightKg?.toFixed(3) ??
+          null;
         return {
           salesOrderItemId: item.id,
           lineNumber: item.lineNumber,
@@ -2446,6 +2473,7 @@ export class InvoicingService {
           itemLabel: labels.get(`${item.reserveItemType}:${item.reserveItemId}`) ?? '—',
           reserveQty: item.reserveQty.toFixed(3),
           reserveUnit: item.reserveUnit,
+          weightKgPerUnit,
         };
       }),
     };
