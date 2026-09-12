@@ -35,6 +35,7 @@ import {
   unitSymbol,
 } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
@@ -283,6 +284,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
 
   // Dentro del `RoleGate`: fuera, quien no tiene permiso veía "no se pudo cargar" en
   // lugar de "no tienes permiso", que es justo lo que el guard existe para decir.
+  const paymentKey = useIdempotencyKey();
   const addPayment = useMutation({
     mutationFn: () =>
       api<FiscalDocumentDto>(`/invoicing/documents/${id}/payments`, {
@@ -292,8 +294,12 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           amountPen: payAmount.trim(),
           method: payMethod,
           ...(payReference.trim() ? { reference: payReference.trim() } : {}),
+          idempotencyKey: paymentKey.current(),
         },
       }),
+    onSettled: (_data, error) => {
+      paymentKey.settle(error ?? undefined);
+    },
     onSuccess: () => {
       toast.success('Cobro registrado');
       setPayOpen(false);

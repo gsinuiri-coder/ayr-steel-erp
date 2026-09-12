@@ -33,6 +33,7 @@ import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -701,6 +702,7 @@ function PaymentForm({
   const paymentCurrency = form.watch('currency');
   const crossCurrency = paymentCurrency !== currency;
 
+  const paymentKey = useIdempotencyKey();
   const addPayment = useMutation({
     mutationFn: (values: PaymentValues) =>
       api<PurchaseDto>(`/purchases/${purchaseId}/payments`, {
@@ -712,13 +714,15 @@ function PaymentForm({
           exchangeRate: values.exchangeRate?.trim() ? values.exchangeRate.trim() : undefined,
           method: values.method,
           reference: values.reference?.trim() ? values.reference.trim() : undefined,
+          idempotencyKey: paymentKey.current(),
         },
       }),
     onMutate: () => {
       onPendingChange(true);
     },
-    onSettled: () => {
+    onSettled: (_data, error) => {
       onPendingChange(false);
+      paymentKey.settle(error ?? undefined);
     },
     onSuccess: () => {
       toast.success('Pago registrado');

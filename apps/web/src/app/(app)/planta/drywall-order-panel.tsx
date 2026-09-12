@@ -18,6 +18,7 @@ import { formatQty } from '@/lib/format';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -103,12 +104,21 @@ export function DrywallOrderPanel({
       toast.error(err instanceof ApiError ? err.message : 'No se pudo liberar el fleje'),
   });
 
+  const submitKey = useIdempotencyKey();
   const report = useMutation({
     mutationFn: ({ count, confirmBackdate }: { count: number; confirmBackdate: boolean }) =>
       api<ProductionOrderDto>(`/production/${orderId}/report`, {
         method: 'POST',
-        body: { pieces: count, operationDate, confirmBackdate: confirmBackdate || undefined },
+        body: {
+          pieces: count,
+          operationDate,
+          confirmBackdate: confirmBackdate || undefined,
+          idempotencyKey: submitKey.current(),
+        },
       }),
+    onSettled: (_data, error) => {
+      submitKey.settle(error ?? undefined);
+    },
     onSuccess: (o) => {
       toast.success(`Reportadas las piezas: ${o.piecesReported} en total`);
       setPieces('');

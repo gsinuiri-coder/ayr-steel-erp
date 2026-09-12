@@ -25,6 +25,7 @@ import { formatQty } from '@/lib/format';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { InfoPopover } from '@/components/info-popover';
@@ -224,6 +225,7 @@ export function RoofingOrderPanel({
 
   const resolved = resolveDraft(order, draft);
 
+  const submitKey = useIdempotencyKey();
   const report = useMutation({
     mutationFn: ({
       pieces,
@@ -253,9 +255,13 @@ export function RoofingOrderPanel({
               : {}),
             operationDate,
             confirmBackdate: confirmBackdate || undefined,
+            idempotencyKey: submitKey.current(),
           },
         },
       ),
+    onSettled: (_data, error) => {
+      submitKey.settle(error ?? undefined);
+    },
     onSuccess: (updated, variables) => {
       toast.success(
         variables.close
