@@ -222,12 +222,15 @@ export function CustomerDialog({ open, customer, initial, onCreated, onOpenChang
                           type="button"
                           variant="outline"
                           disabled={!canLookup || lookup.isPending}
+                          pending={lookup.isPending}
+                          pendingText="Buscando…"
                           onClick={() => {
+                            if (lookup.isPending) return;
                             setLookupNote(null);
                             lookup.mutate({ docType, docNumber: docNumber.trim() });
                           }}
                         >
-                          {lookup.isPending ? 'Buscando…' : 'Buscar'}
+                          Buscar
                         </Button>
                       )}
                     </div>
@@ -318,8 +321,13 @@ export function CustomerDialog({ open, customer, initial, onCreated, onOpenChang
               >
                 Cancelar
               </Button>
-              <Button type="submit" disabled={save.isPending}>
-                {save.isPending ? 'Guardando…' : editing ? 'Guardar cambios' : 'Crear cliente'}
+              <Button
+                type="submit"
+                disabled={save.isPending}
+                pending={save.isPending}
+                pendingText="Guardando…"
+              >
+                {editing ? 'Guardar cambios' : 'Crear cliente'}
               </Button>
             </DialogFooter>
           </form>

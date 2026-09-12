@@ -192,8 +192,13 @@ export function UserDialog({ open, user, onOpenChange }: Props) {
               >
                 Cancelar
               </Button>
-              <Button type="submit" disabled={save.isPending}>
-                {save.isPending ? 'Guardando…' : editing ? 'Guardar cambios' : 'Crear usuario'}
+              <Button
+                type="submit"
+                disabled={save.isPending}
+                pending={save.isPending}
+                pendingText="Guardando…"
+              >
+                {editing ? 'Guardar cambios' : 'Crear usuario'}
               </Button>
             </DialogFooter>
           </form>

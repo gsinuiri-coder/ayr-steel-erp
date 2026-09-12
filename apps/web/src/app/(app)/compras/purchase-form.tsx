@@ -1037,8 +1037,13 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           >
             Cancelar
           </Button>
-          <Button type="submit" disabled={save.isPending}>
-            {save.isPending ? 'Guardando…' : (submitLabel ?? 'Registrar compra')}
+          <Button
+            type="submit"
+            disabled={save.isPending}
+            pending={save.isPending}
+            pendingText="Guardando…"
+          >
+            {submitLabel ?? 'Registrar compra'}
           </Button>
         </div>
       </form>

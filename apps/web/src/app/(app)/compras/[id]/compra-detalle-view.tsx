@@ -187,6 +187,10 @@ export function CompraDetalleView({ id }: { id: string }) {
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const canReceive = user.role === Role.ADMINISTRADOR || user.role === Role.SUPERVISOR_PLANTA;
   const hasBalance = isPositiveDecimal(p.balance);
+  // F8-S1/M1: recibir, anular, corregir el número y anular un pago cambian la misma
+  // compra; un `busy` combinado evita que dos de estas corran a la vez sobre ella.
+  const busy =
+    receive.isPending || cancel.isPending || updateDocument.isPending || reversePayment.isPending;
 
   return (
     <>
@@ -205,12 +209,15 @@ export function CompraDetalleView({ id }: { id: string }) {
           {canReceive && p.status === 'DRAFT' && (
             <div className="grid justify-items-end gap-1">
               <Button
-                disabled={receive.isPending}
+                disabled={busy}
+                pending={receive.isPending}
+                pendingText="Recibiendo…"
                 onClick={() => {
+                  if (busy) return;
                   void backdate.attempt();
                 }}
               >
-                {receive.isPending ? 'Recibiendo…' : 'Recibir'}
+                Recibir
               </Button>
               <OperationDateField value={receiveDate} onChange={setReceiveDate} />
             </div>
@@ -218,7 +225,9 @@ export function CompraDetalleView({ id }: { id: string }) {
           {isAdmin && p.status !== 'CANCELLED' && (
             <Button
               variant="outline"
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setEditingDocument(true);
               }}
             >
@@ -228,8 +237,9 @@ export function CompraDetalleView({ id }: { id: string }) {
           {isAdmin && p.status !== 'CANCELLED' && (
             <Button
               variant="outline"
-              disabled={cancel.isPending}
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setConfirmCancel(true);
               }}
             >
@@ -294,7 +304,9 @@ export function CompraDetalleView({ id }: { id: string }) {
                 variant="outline"
                 size="sm"
                 className="mt-2 w-fit"
+                disabled={busy}
                 onClick={() => {
+                  if (busy) return;
                   setShowPaymentForm((v) => !v);
                 }}
               >
@@ -455,7 +467,9 @@ export function CompraDetalleView({ id }: { id: string }) {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={busy}
                           onClick={() => {
+                            if (busy) return;
                             setReversingPaymentId(payment.id);
                           }}
                         >
@@ -837,8 +851,13 @@ function PaymentForm({
               />
             )}
             <div className="md:col-span-5">
-              <Button type="submit" disabled={addPayment.isPending}>
-                {addPayment.isPending ? 'Guardando…' : 'Guardar pago'}
+              <Button
+                type="submit"
+                disabled={addPayment.isPending}
+                pending={addPayment.isPending}
+                pendingText="Guardando…"
+              >
+                Guardar pago
               </Button>
             </div>
           </form>

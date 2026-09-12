@@ -150,8 +150,13 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
               >
                 Cancelar
               </Button>
-              <Button type="submit" disabled={save.isPending}>
-                {save.isPending ? 'Guardando…' : editing ? 'Guardar cambios' : 'Crear acabado'}
+              <Button
+                type="submit"
+                disabled={save.isPending}
+                pending={save.isPending}
+                pendingText="Guardando…"
+              >
+                {editing ? 'Guardar cambios' : 'Crear acabado'}
               </Button>
             </DialogFooter>
           </form>

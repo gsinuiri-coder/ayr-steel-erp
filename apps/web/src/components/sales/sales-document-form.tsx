@@ -533,6 +533,7 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
   }
 
   function submit(): void {
+    if (save.isPending) return;
     setFormError(null);
     const result = validate();
     if ('error' in result) {
@@ -777,8 +778,13 @@ export function SalesDocumentForm({ mode }: { mode: 'quotation' | 'order' }) {
         >
           Cancelar
         </Button>
-        <Button disabled={save.isPending} onClick={submit}>
-          {save.isPending ? 'Guardando…' : isQuotation ? 'Crear cotización' : 'Crear pedido'}
+        <Button
+          disabled={save.isPending}
+          pending={save.isPending}
+          pendingText="Guardando…"
+          onClick={submit}
+        >
+          {isQuotation ? 'Crear cotización' : 'Crear pedido'}
         </Button>
       </div>
     </>

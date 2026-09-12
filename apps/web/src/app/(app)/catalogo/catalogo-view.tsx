@@ -202,7 +202,11 @@ export function CatalogoView() {
                               variant="ghost"
                               size="sm"
                               disabled={toggleActive.isPending}
+                              pending={
+                                toggleActive.isPending && toggleActive.variables?.id === p.id
+                              }
                               onClick={() => {
+                                if (toggleActive.isPending) return;
                                 toggleActive.mutate(p);
                               }}
                             >

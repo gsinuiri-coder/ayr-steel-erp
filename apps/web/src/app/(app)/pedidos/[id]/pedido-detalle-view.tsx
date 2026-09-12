@@ -161,6 +161,10 @@ export function PedidoDetalleView({ id }: { id: string }) {
   // pero sí se puede seguir facturando, así que el botón de comprobante vive con este
   // mismo permiso y el API es el que corta lo que ya no queda pendiente.
   const canOperate = o.status !== 'CANCELLED';
+  // F8-S1/M1: anular, liberar una reserva y generar las OP de golpe cambian el mismo
+  // pedido; sin este `busy` combinado, "Anular pedido" seguía habilitado mientras
+  // "Generar todas las órdenes" del mismo pedido estaba en vuelo.
+  const busy = cancel.isPending || release.isPending || generateOrders.isPending;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -256,14 +260,15 @@ export function PedidoDetalleView({ id }: { id: string }) {
             <div className="grid gap-1">
               <Button
                 variant="outline"
-                disabled={generateOrders.isPending}
+                disabled={busy}
+                pending={generateOrders.isPending}
+                pendingText="Generando…"
                 onClick={() => {
+                  if (busy) return;
                   generateOrders.mutate();
                 }}
               >
-                {generateOrders.isPending
-                  ? 'Generando…'
-                  : `Generar todas las órdenes (${String(pendingRoofingLines)})`}
+                {`Generar todas las órdenes (${String(pendingRoofingLines)})`}
               </Button>
               <OperationDateField value={ordersDate} onChange={setOrdersDate} />
             </div>
@@ -280,8 +285,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
           {isAdmin && canCancel && (
             <Button
               variant="destructive"
-              disabled={cancel.isPending}
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setCancelOpen(true);
               }}
             >
@@ -416,7 +422,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={busy}
                           onClick={() => {
+                            if (busy) return;
                             setReleasing(r);
                           }}
                         >

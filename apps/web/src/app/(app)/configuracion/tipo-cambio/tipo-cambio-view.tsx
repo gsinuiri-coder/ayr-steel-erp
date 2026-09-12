@@ -185,8 +185,14 @@ export function TipoCambioView() {
                   )}
                 />
               </div>
-              <Button type="submit" disabled={save.isPending} className="justify-self-start">
-                {save.isPending ? 'Guardando…' : 'Guardar'}
+              <Button
+                type="submit"
+                disabled={save.isPending}
+                pending={save.isPending}
+                pendingText="Guardando…"
+                className="justify-self-start"
+              >
+                Guardar
               </Button>
             </form>
           </Form>

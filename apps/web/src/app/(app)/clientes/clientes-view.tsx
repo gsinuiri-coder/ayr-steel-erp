@@ -196,7 +196,9 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                       variant="ghost"
                       size="sm"
                       disabled={toggleActive.isPending}
+                      pending={toggleActive.isPending && toggleActive.variables?.id === c.id}
                       onClick={() => {
+                        if (toggleActive.isPending) return;
                         toggleActive.mutate(c);
                       }}
                     >

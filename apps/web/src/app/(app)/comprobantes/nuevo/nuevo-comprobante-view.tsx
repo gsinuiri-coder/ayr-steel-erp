@@ -603,7 +603,10 @@ export function NuevoComprobanteView() {
         </Button>
         <Button
           disabled={!canSubmit}
+          pending={create.isPending}
+          pendingText="Creando…"
           onClick={() => {
+            if (create.isPending) return;
             create.mutate();
           }}
         >

@@ -426,6 +426,22 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const canCreateCreditNote =
     typedCreditQty.length === validCreditQty.length && (isFullReason || validCreditQty.length > 0);
 
+  // F8-S1/M1: un solo `busy` para toda mutación que cambia este comprobante (estado, saldo o
+  // cobros). Antes cada botón miraba solo su propio `isPending`, así que "Descartar borrador"
+  // seguía habilitado mientras "Emitir y enviar al PSE" del mismo documento estaba en vuelo.
+  const busy =
+    discard.isPending ||
+    registerManual.isPending ||
+    send.isPending ||
+    retry.isPending ||
+    refreshStatus.isPending ||
+    correct.isPending ||
+    voidDocument.isPending ||
+    annul.isPending ||
+    creditNote.isPending ||
+    addPayment.isPending ||
+    reversePayment.isPending;
+
   return (
     <RoleGate allow={SALES_ROLES}>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -467,8 +483,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {isDraft && (
             <Button
               variant="outline"
-              disabled={discard.isPending}
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setDiscardOpen(true);
               }}
             >
@@ -483,8 +500,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {isDraft && (
             <Button
               variant={manualIsDefault ? 'default' : 'outline'}
-              disabled={registerManual.isPending}
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 void openManualDialog();
               }}
             >
@@ -494,8 +512,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {isDraft && (
             <Button
               variant={manualIsDefault ? 'outline' : 'default'}
-              disabled={send.isPending}
+              disabled={busy}
+              pending={send.isPending}
+              pendingText="Enviando…"
               onClick={() => {
+                if (busy) return;
                 send.mutate();
               }}
             >
@@ -505,8 +526,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {canRetry && (
             <Button
               variant="outline"
-              disabled={retry.isPending}
+              disabled={busy}
+              pending={retry.isPending}
+              pendingText="Reintentando…"
               onClick={() => {
+                if (busy) return;
                 retry.mutate();
               }}
             >
@@ -516,8 +540,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {canQuery && (
             <Button
               variant="outline"
-              disabled={refreshStatus.isPending}
+              disabled={busy}
+              pending={refreshStatus.isPending}
+              pendingText="Consultando…"
               onClick={() => {
+                if (busy) return;
                 refreshStatus.mutate();
               }}
             >
@@ -526,8 +553,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           )}
           {canCorrect && (
             <Button
-              disabled={correct.isPending}
+              disabled={busy}
+              pending={correct.isPending}
+              pendingText="Corrigiendo…"
               onClick={() => {
+                if (busy) return;
                 correct.mutate();
               }}
             >
@@ -544,7 +574,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {canCreditNote && (
             <Button
               variant="outline"
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setCreditOpen(true);
               }}
             >
@@ -554,7 +586,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {canAnnul && (
             <Button
               variant="destructive"
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setAnnulOpen(true);
               }}
             >
@@ -564,7 +598,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           {(canVoid || canVoidDispatchNote) && (
             <Button
               variant="destructive"
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setVoidOpen(true);
               }}
             >
@@ -969,8 +1005,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             </Button>
             <Button
               variant="destructive"
-              disabled={discard.isPending}
+              disabled={busy}
+              pending={discard.isPending}
+              pendingText="Descartando…"
               onClick={() => {
+                if (busy) return;
                 discard.mutate();
               }}
             >
@@ -1042,12 +1081,15 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Cancelar
             </Button>
             <Button
-              disabled={!manualValid || registerManual.isPending}
+              disabled={!manualValid || busy}
+              pending={registerManual.isPending}
+              pendingText="Registrando…"
               onClick={() => {
+                if (busy) return;
                 registerManual.mutate();
               }}
             >
-              {registerManual.isPending ? 'Registrando…' : 'Registrar'}
+              Registrar
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1159,13 +1201,16 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             </Button>
             <Button
               disabled={
-                addPayment.isPending ||
+                busy ||
                 !isPositiveDecimal(payAmount) ||
                 toDecimal(isPositiveDecimal(payAmount) ? payAmount : '0').gt(
                   toDecimal(d.balancePen),
                 )
               }
+              pending={addPayment.isPending}
+              pendingText="Registrando…"
               onClick={() => {
+                if (busy) return;
                 addPayment.mutate();
               }}
             >
@@ -1276,8 +1321,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Cancelar
             </Button>
             <Button
-              disabled={creditNote.isPending || !canCreateCreditNote}
+              disabled={busy || !canCreateCreditNote}
+              pending={creditNote.isPending}
+              pendingText="Creando…"
               onClick={() => {
+                if (busy) return;
                 creditNote.mutate();
               }}
             >

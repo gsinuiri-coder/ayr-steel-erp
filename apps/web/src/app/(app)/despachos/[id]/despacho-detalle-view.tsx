@@ -120,6 +120,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
   // D-103: un recojo en mostrador no tiene guía — el traslado es del comprador—, así que el
   // botón no aparece en vez de ofrecer una operación que el API rechaza.
   const canIssueNote = isLive && d.transferMode !== 'PICKUP' && !noteBlocks;
+  const busy = issueNote.isPending || reverse.isPending;
 
   return (
     <RoleGate allow={DISPATCH_ROLES}>
@@ -143,8 +144,11 @@ export function DespachoDetalleView({ id }: { id: string }) {
         <div className="flex flex-wrap gap-2">
           {canIssueNote && (
             <Button
-              disabled={issueNote.isPending}
+              disabled={busy}
+              pending={issueNote.isPending}
+              pendingText="Emitiendo…"
               onClick={() => {
+                if (busy) return;
                 issueNote.mutate();
               }}
             >
@@ -159,7 +163,9 @@ export function DespachoDetalleView({ id }: { id: string }) {
           {canReverse && (
             <Button
               variant="destructive"
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setReverseOpen(true);
               }}
             >

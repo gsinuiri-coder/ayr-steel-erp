@@ -170,7 +170,9 @@ export function ProveedoresView() {
                       variant="ghost"
                       size="sm"
                       disabled={toggleActive.isPending}
+                      pending={toggleActive.isPending && toggleActive.variables?.id === s.id}
                       onClick={() => {
+                        if (toggleActive.isPending) return;
                         toggleActive.mutate(s);
                       }}
                     >

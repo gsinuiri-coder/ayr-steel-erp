@@ -139,7 +139,9 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
                       size="sm"
                       aria-label={`${c.isActive ? 'Desactivar' : 'Activar'} el color ${c.name}`}
                       disabled={toggleActive.isPending}
+                      pending={toggleActive.isPending && toggleActive.variables?.id === c.id}
                       onClick={() => {
+                        if (toggleActive.isPending) return;
                         toggleActive.mutate(c);
                       }}
                     >
@@ -297,8 +299,13 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={save.isPending}>
-                {save.isPending ? 'Guardando…' : editing ? 'Guardar cambios' : 'Crear color'}
+              <Button
+                type="submit"
+                disabled={save.isPending}
+                pending={save.isPending}
+                pendingText="Guardando…"
+              >
+                {editing ? 'Guardar cambios' : 'Crear color'}
               </Button>
             </DialogFooter>
           </form>

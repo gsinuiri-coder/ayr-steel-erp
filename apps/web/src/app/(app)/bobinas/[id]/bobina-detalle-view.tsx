@@ -160,6 +160,9 @@ export function BobinaDetalleView({ id }: { id: string }) {
     lastMovement?.refType === 'CLOSE_ADJUSTMENT' && !lastMovement.reversedById
       ? lastMovement
       : undefined;
+  // F8-S1/M1: mientras cerrar/reabrir/anular está en vuelo, ninguna otra acción de la
+  // misma bobina (partir, merma, editar, anular) debería poder abrir su propio diálogo.
+  const busy = runAction.isPending;
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -186,8 +189,9 @@ export function BobinaDetalleView({ id }: { id: string }) {
           </Button>
           <Button
             variant="outline"
-            disabled={!canOperate}
+            disabled={busy || !canOperate}
             onClick={() => {
+              if (busy) return;
               setDialog('split');
             }}
           >
@@ -195,8 +199,9 @@ export function BobinaDetalleView({ id }: { id: string }) {
           </Button>
           <Button
             variant="outline"
-            disabled={c.status === 'CANCELLED' || !hasStock}
+            disabled={busy || c.status === 'CANCELLED' || !hasStock}
             onClick={() => {
+              if (busy) return;
               setDialog('scrap');
             }}
           >
@@ -205,7 +210,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
           {c.status !== 'CANCELLED' && (
             <Button
               variant="outline"
-              disabled={runAction.isPending}
+              disabled={busy}
               onClick={() => {
                 // D-164: cerrar **siempre** pregunta cuánto queda, también con el saldo en
                 // cero. Es la misma pregunta en los dos casos, el diálogo muestra "no se
@@ -231,8 +236,9 @@ export function BobinaDetalleView({ id }: { id: string }) {
           )}
           <Button
             variant="outline"
-            disabled={c.status === 'CANCELLED'}
+            disabled={busy || c.status === 'CANCELLED'}
             onClick={() => {
+              if (busy) return;
               setDialog('edit');
             }}
           >
@@ -241,7 +247,9 @@ export function BobinaDetalleView({ id }: { id: string }) {
           {isAdmin && c.status !== 'CANCELLED' && (
             <Button
               variant="destructive"
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setPending({ kind: 'cancel-coil' });
               }}
             >
@@ -496,7 +504,9 @@ export function BobinaDetalleView({ id }: { id: string }) {
                       <Button
                         variant="outline"
                         size="sm"
+                        disabled={busy}
                         onClick={() => {
+                          if (busy) return;
                           setPending({
                             kind: 'cancel-scrap',
                             movementId: m.id,

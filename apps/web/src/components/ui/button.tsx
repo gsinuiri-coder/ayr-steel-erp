@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
+import { Loader2 } from 'lucide-react';
 import { Slot } from 'radix-ui';
 
 import { cn } from '@/lib/utils';
@@ -46,12 +47,27 @@ function Button({
   variant = 'default',
   size = 'default',
   asChild = false,
+  pending = false,
+  pendingText,
+  disabled,
+  children,
   ...props
 }: React.ComponentProps<'button'> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    /**
+     * F8-S1/M1: patrón único de botón en vuelo. Deshabilita desde el primer click y
+     * muestra un spinner hasta que la mutación resuelve, en vez de que cada vista arme su
+     * propio `disabled={a.isPending || b.isPending}` sin señal visual (regla dura de la
+     * sesión: nunca un botón ad-hoc). No aplica con `asChild`: el `Slot` exige un único
+     * hijo y no admite el spinner al lado.
+     */
+    pending?: boolean;
+    /** Texto mientras `pending` (p. ej. «Guardando…»). Sin él, se mantiene el label. */
+    pendingText?: React.ReactNode;
   }) {
   const Comp = asChild ? Slot.Root : 'button';
+  const showPending = pending && !asChild;
 
   return (
     <Comp
@@ -59,8 +75,19 @@ function Button({
       data-variant={variant}
       data-size={size}
       className={cn(buttonVariants({ variant, size, className }))}
+      disabled={disabled || pending}
+      aria-busy={pending || undefined}
       {...props}
-    />
+    >
+      {showPending ? (
+        <>
+          <Loader2 className="animate-spin" />
+          {pendingText ?? children}
+        </>
+      ) : (
+        children
+      )}
+    </Comp>
   );
 }
 

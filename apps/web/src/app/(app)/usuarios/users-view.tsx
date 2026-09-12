@@ -131,7 +131,9 @@ export function UsersView() {
                     variant="ghost"
                     size="sm"
                     disabled={u.id === me.id || toggleActive.isPending}
+                    pending={toggleActive.isPending && toggleActive.variables?.id === u.id}
                     onClick={() => {
+                      if (toggleActive.isPending) return;
                       toggleActive.mutate(u);
                     }}
                   >

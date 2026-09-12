@@ -143,7 +143,10 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           {canEmit && (
             <Button
               disabled={busy}
+              pending={emit.isPending}
+              pendingText="Emitiendo…"
               onClick={() => {
+                if (busy) return;
                 emit.mutate();
               }}
             >
@@ -153,7 +156,10 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           {canConfirm && (
             <Button
               disabled={busy}
+              pending={confirm.isPending}
+              pendingText="Confirmando…"
               onClick={() => {
+                if (busy) return;
                 confirm.mutate();
               }}
             >
@@ -165,6 +171,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
               variant="destructive"
               disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setCancelOpen(true);
               }}
             >
@@ -175,11 +182,14 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           <Button
             variant="outline"
             disabled={busy}
+            pending={duplicate.isPending}
+            pendingText="Duplicando…"
             onClick={() => {
+              if (busy) return;
               duplicate.mutate();
             }}
           >
-            {duplicate.isPending ? 'Duplicando…' : 'Duplicar'}
+            Duplicar
           </Button>
         </div>
       </div>

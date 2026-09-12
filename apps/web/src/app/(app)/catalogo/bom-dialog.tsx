@@ -283,8 +283,13 @@ export function BomDialog({
                   >
                     Cancelar
                   </Button>
-                  <Button type="submit" disabled={save.isPending || bom.isPending || bom.isError}>
-                    {save.isPending ? 'Guardando…' : 'Guardar receta'}
+                  <Button
+                    type="submit"
+                    disabled={save.isPending || bom.isPending || bom.isError}
+                    pending={save.isPending}
+                    pendingText="Guardando…"
+                  >
+                    Guardar receta
                   </Button>
                 </DialogFooter>
               </form>

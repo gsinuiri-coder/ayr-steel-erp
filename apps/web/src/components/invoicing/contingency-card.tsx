@@ -108,12 +108,13 @@ export function ContingencyCard() {
   });
 
   const s = settings.data;
-  const pending = alerts.data?.pending ?? 0;
+  const pendingCount = alerts.data?.pending ?? 0;
+  const busy = toggle.isPending || toggleManual.isPending || sweep.isPending;
   if (!s) return null;
   // Nada que decir: proveedor en línea, configurado, sin cola y sin nadie que pueda tocar
   // las series. Para un administrador la tarjeta se queda: las series son lo primero que
   // hay que mirar cuando el PSE rechaza por forma.
-  if (!s.providerOffline && s.providerConfigured && pending === 0 && !isAdmin) return null;
+  if (!s.providerOffline && s.providerConfigured && pendingCount === 0 && !isAdmin) return null;
 
   return (
     <Card>
@@ -154,8 +155,9 @@ export function ContingencyCard() {
               type="checkbox"
               className="size-4"
               checked={s.manualByDefault}
-              disabled={toggleManual.isPending}
+              disabled={busy}
               onChange={(e) => {
+                if (busy) return;
                 toggleManual.mutate(e.target.checked);
               }}
             />
@@ -163,9 +165,9 @@ export function ContingencyCard() {
           </label>
         )}
         <p className="text-muted-foreground">
-          Proveedor: {s.providerName}. {pending === 0 ? 'Sin' : pending} documento
-          {pending === 1 ? '' : 's'} pendiente{pending === 1 ? '' : 's'} de aceptación. Se avisa a
-          partir de las {s.alertAfterHours} horas.
+          Proveedor: {s.providerName}. {pendingCount === 0 ? 'Sin' : pendingCount} documento
+          {pendingCount === 1 ? '' : 's'} pendiente{pendingCount === 1 ? '' : 's'} de aceptación. Se
+          avisa a partir de las {s.alertAfterHours} horas.
         </p>
         {/*
           Las series se muestran acá porque es donde se nota el problema: si el PSE no
@@ -203,8 +205,10 @@ export function ContingencyCard() {
             <Button
               variant={s.providerOffline ? 'default' : 'outline'}
               size="sm"
-              disabled={toggle.isPending}
+              disabled={busy}
+              pending={toggle.isPending}
               onClick={() => {
+                if (busy) return;
                 toggle.mutate(!s.providerOffline);
               }}
             >
@@ -213,8 +217,11 @@ export function ContingencyCard() {
             <Button
               variant="outline"
               size="sm"
-              disabled={sweep.isPending || pending === 0}
+              disabled={busy || pendingCount === 0}
+              pending={sweep.isPending}
+              pendingText="Reintentando…"
               onClick={() => {
+                if (busy) return;
                 sweep.mutate();
               }}
             >

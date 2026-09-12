@@ -523,8 +523,13 @@ export function ProductDialog({
               >
                 Cancelar
               </Button>
-              <Button type="submit" disabled={save.isPending}>
-                {save.isPending ? 'Guardando…' : editing ? 'Guardar cambios' : 'Crear producto'}
+              <Button
+                type="submit"
+                disabled={save.isPending}
+                pending={save.isPending}
+                pendingText="Guardando…"
+              >
+                {editing ? 'Guardar cambios' : 'Crear producto'}
               </Button>
             </DialogFooter>
           </form>
