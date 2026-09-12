@@ -103,11 +103,17 @@ export function ReasonDialog({
           <Button
             variant="destructive"
             disabled={pending || trimmed.length < 3}
+            pending={pending}
+            pendingText="Procesando…"
             onClick={() => {
+              // F8-S1/M1: el `disabled` de arriba cubre el click normal, pero no un doble
+              // Enter disparado antes de que React repinte el DOM — este guard evalúa el
+              // estado actual en el momento del click, no el que tenía el DOM al render.
+              if (pending || trimmed.length < 3) return;
               onConfirm(trimmed, operationDate);
             }}
           >
-            {pending ? 'Procesando…' : confirmLabel}
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

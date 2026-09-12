@@ -95,6 +95,10 @@ export function CompraDetalleView({ id }: { id: string }) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [editingDocument, setEditingDocument] = useState(false);
   const [reversingPaymentId, setReversingPaymentId] = useState<string | null>(null);
+  // F8-S1/M1: `PaymentForm` es un componente hijo con su propio `useMutation` — sin esto,
+  // el `busy` de más abajo no sabía que "Guardar pago" estaba en vuelo, y "Recibir"/
+  // "Anular"/"Editar documento" seguían habilitados mientras se registraba el pago.
+  const [paymentPending, setPaymentPending] = useState(false);
 
   const purchase = useQuery({
     queryKey: ['purchase', id],
@@ -190,7 +194,11 @@ export function CompraDetalleView({ id }: { id: string }) {
   // F8-S1/M1: recibir, anular, corregir el número y anular un pago cambian la misma
   // compra; un `busy` combinado evita que dos de estas corran a la vez sobre ella.
   const busy =
-    receive.isPending || cancel.isPending || updateDocument.isPending || reversePayment.isPending;
+    receive.isPending ||
+    cancel.isPending ||
+    updateDocument.isPending ||
+    reversePayment.isPending ||
+    paymentPending;
 
   return (
     <>
@@ -322,6 +330,7 @@ export function CompraDetalleView({ id }: { id: string }) {
           purchaseId={p.id}
           currency={p.currency}
           balance={p.balance}
+          onPendingChange={setPaymentPending}
           onSaved={() => {
             setShowPaymentForm(false);
             invalidate();
@@ -668,11 +677,14 @@ function PaymentForm({
   purchaseId,
   currency,
   balance,
+  onPendingChange,
   onSaved,
 }: {
   purchaseId: string;
   currency: Currency;
   balance: string;
+  /** F8-S1/M1: para que el `busy` del padre cubra también esta mutación. */
+  onPendingChange: (pending: boolean) => void;
   onSaved: () => void;
 }) {
   const form = useForm<PaymentValues>({
@@ -702,6 +714,12 @@ function PaymentForm({
           reference: values.reference?.trim() ? values.reference.trim() : undefined,
         },
       }),
+    onMutate: () => {
+      onPendingChange(true);
+    },
+    onSettled: () => {
+      onPendingChange(false);
+    },
     onSuccess: () => {
       toast.success('Pago registrado');
       onSaved();

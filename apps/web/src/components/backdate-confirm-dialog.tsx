@@ -56,11 +56,16 @@ export function BackdateConfirmDialog({
           <Button
             variant="destructive"
             disabled={pending}
+            pending={pending}
+            pendingText="Procesando…"
             onClick={() => {
+              // F8-S1/M1: mismo guard que ReasonDialog — cubre el doble Enter, que el
+              // `disabled` del DOM no atrapa si llega antes del repintado.
+              if (pending) return;
               onConfirm();
             }}
           >
-            {pending ? 'Procesando…' : 'Registrar igual'}
+            Registrar igual
           </Button>
         </DialogFooter>
       </DialogContent>
