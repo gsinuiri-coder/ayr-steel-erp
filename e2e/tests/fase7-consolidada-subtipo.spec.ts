@@ -17,6 +17,7 @@ import {
   pieces,
   purgeRoofingTrail,
   reservationsOf,
+  returnToProductionQueue,
   ROOFING_LINE,
 } from '../helpers/roofing';
 import { createCustomer, queueOf, type QuotationDto, type SalesOrderDto } from '../helpers/sales';
@@ -44,7 +45,6 @@ import { createCustomer, queueOf, type QuotationDto, type SalesOrderDto } from '
 const REAL_CASE_ROWS = pieces([5, 5], [6, 6]);
 
 async function emitAndConfirm(api: APIRequestContext, quotationId: string): Promise<SalesOrderDto> {
-  await postJson<QuotationDto>(api, `/api/sales/quotations/${quotationId}/emit`);
   return postJson<SalesOrderDto>(api, `/api/sales/quotations/${quotationId}/confirm`, {});
 }
 
@@ -52,7 +52,6 @@ async function emitAndConfirmExpectingError(
   api: APIRequestContext,
   quotationId: string,
 ): Promise<{ status: number; message: string }> {
-  await postJson<QuotationDto>(api, `/api/sales/quotations/${quotationId}/emit`);
   return errorFrom(
     await api.post(`/api/sales/quotations/${quotationId}/confirm`, { data: {} }),
     `confirmar la cotización ${quotationId}`,
@@ -157,6 +156,9 @@ test.describe('D-127 — subtipo de cobertura', () => {
 
       // Y el pedido llega a la cola de producción, que es lo que el defecto impedía: sin
       // reserva de materia prima no había nada que fabricar y la orden nunca aparecía.
+      expect(reservation.productionOrderId, 'D-186: confirmar deja la OP en cola').not.toBeNull();
+      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
+      expect(await returnToProductionQueue(api, order.id)).toBe(1);
       const queue = await queueOf(api);
       const entry = queue.find((q) => q.reservationId === reservation.id);
       expect(entry, 'el pedido a medida entra a la cola de producción (RF-37)').toBeDefined();

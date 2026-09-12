@@ -107,8 +107,9 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
     const originalMargin = drywall.marginPct;
 
     try {
-      // S10/M2: Márgenes y tipo de cambio comparten un solo ítem de menú (pestañas).
-      await page.getByRole('link', { name: 'Márgenes y tipo de cambio' }).click();
+      // S10/M2: Márgenes y tipo de cambio comparten un solo ítem de menú (pestañas); F8-S2
+      // (D-185) le sumó la pestaña de reservas temporales.
+      await page.getByRole('link', { name: 'Márgenes, tipo de cambio y reservas' }).click();
       await expect(page.getByRole('heading', { name: 'Márgenes' })).toBeVisible();
 
       const row = page.getByRole('row').filter({ hasText: 'Drywall' });
@@ -139,8 +140,10 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
     const vendedor = await createUser(api, 'VENDEDOR');
     await loginAndSetPassword(page, vendedor, 'ClaveVendedorE2E-2026');
 
-    // S10/M2: un solo ítem de menú para las dos ("Márgenes y tipo de cambio").
-    await expect(page.getByRole('link', { name: 'Márgenes y tipo de cambio' })).toHaveCount(0);
+    // S10/M2: un solo ítem de menú para las dos; F8-S2 le sumó las reservas temporales.
+    await expect(
+      page.getByRole('link', { name: 'Márgenes, tipo de cambio y reservas' }),
+    ).toHaveCount(0);
 
     await page.goto('/configuracion/margenes');
     await expect(page.getByText('No tienes permiso para ver esta sección.')).toBeVisible();

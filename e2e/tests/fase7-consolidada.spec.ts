@@ -42,6 +42,7 @@ import {
   purgeRoofingOrder,
   purgeRoofingTrail,
   reservationsOf,
+  returnToProductionQueue,
   ROOFING_LINE,
 } from '../helpers/roofing';
 import {
@@ -770,7 +771,6 @@ test.describe('D-124 — fecha de operación', () => {
         items: [{ productId: product.id, qty: meters, unitPricePen: '30', pieces: rows }],
       });
       trail.quotationIds.push(quotation.id);
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -781,6 +781,8 @@ test.describe('D-124 — fecha de operación', () => {
       // bobina puntual — la OP más abajo la monta igual, porque cumple color y espesor.
       const reservation = (await reservationsOf(api, order.id))[0]!;
       expect(reservation.itemType).toBe('RAW_MATERIAL');
+      // D-186: confirmar ya abrió una OP con fecha de hoy. Se anula para abrir la retrofechada.
+      expect(await returnToProductionQueue(api, order.id)).toBe(1);
 
       const op = await postJson<{ id: string; operationDate: string }>(
         api,

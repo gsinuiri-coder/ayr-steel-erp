@@ -215,8 +215,8 @@ test.describe('D-152 — importador masivo de cotizaciones', () => {
     const mine = all.filter((q) => result.codes.includes(q.code));
     created.push(...mine.map((q) => q.id));
     expect(mine).toHaveLength(2);
-    // **En borrador**: el importador no emite ni confirma, así que no compromete inventario.
-    expect(mine.every((q) => q.status === 'DRAFT')).toBe(true);
+    // D-184: nacen emitidas, pero sin confirmar ni reservar, así que no comprometen inventario.
+    expect(mine.every((q) => q.status === 'EMITTED')).toBe(true);
 
     // El número del comprobante externo queda en las observaciones, con formato reconocible.
     const detail = await getJson<{ notes: string | null; items: { qty: string }[] }>(
@@ -359,18 +359,10 @@ test.describe('D-152 — importador masivo de cotizaciones', () => {
         validUntil: string | null;
         isExpired: boolean;
       }>(api, `/api/sales/quotations/${mine.id}`);
-      expect(draft.status).toBe('DRAFT');
+      // 2. D-184: nace EMITIDA, y `effectiveStatus` no la degrada a EXPIRED al vuelo.
+      expect(draft.status).toBe('EMITTED');
       expect(draft.validUntil).toBeNull();
       expect(draft.isExpired).toBe(false);
-
-      // 2. Emitida sigue EMITIDA: `effectiveStatus` no la degrada a EXPIRED al vuelo.
-      await postJson(api, `/api/sales/quotations/${mine.id}/emit`);
-      const emitted = await getJson<{ status: string; validUntil: string | null }>(
-        api,
-        `/api/sales/quotations/${mine.id}`,
-      );
-      expect(emitted.status).toBe('EMITTED');
-      expect(emitted.validUntil).toBeNull();
 
       // 3. **Y se confirma**, que es lo que la regla vieja impedía.
       const order = await postJson<{ id: string; code: string; status: string }>(

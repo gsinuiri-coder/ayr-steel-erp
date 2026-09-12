@@ -327,7 +327,7 @@ test.describe('D-152/D-156/D-158 — la pantalla del importador de cotizaciones'
       const detail = await api
         .get(`/api/sales/quotations/${mine[0]!.id}`)
         .then((r) => r.json() as Promise<QuotationDetail>);
-      expect(detail.status).toBe('DRAFT');
+      expect(detail.status).toBe('EMITTED');
       expect(detail.notes).toContain(`Factura externa: ${brokenKey}`);
       expect(detail.notes).not.toContain(goodKey);
       expect(detail.items).toHaveLength(1);

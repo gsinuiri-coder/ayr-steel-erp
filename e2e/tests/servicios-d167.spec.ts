@@ -100,8 +100,6 @@ test.describe('D-167 — se cotiza y se vende una línea sin inventario', () => 
         qty: '3.000',
         subtotalPen: '450.0000',
       });
-
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -147,8 +145,6 @@ test.describe('D-167 — se cotiza y se vende una línea sin inventario', () => 
         items: [{ productId: physical.id, qty: '5', unitPricePen: '40.0000' }],
       });
       trail.quotationIds.push(quotation.id);
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
-
       const rejected = await errorFrom(
         await api.post(`/api/sales/quotations/${quotation.id}/confirm`, { data: {} }),
         'confirmar la cotización de un producto físico sin stock',

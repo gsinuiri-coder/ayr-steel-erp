@@ -2,7 +2,13 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, createUser } from '../helpers/api';
 import { apiAs } from '../helpers/production';
 import { createCustomer, patchExpectingError, queueOf, setPriority } from '../helpers/sales';
-import { pieces, purgeRoofingTrail, quoteAndOrder, setupRoofingScenario } from '../helpers/roofing';
+import {
+  pieces,
+  purgeRoofingTrail,
+  quoteAndOrder,
+  returnToProductionQueue,
+  setupRoofingScenario,
+} from '../helpers/roofing';
 
 /**
  * Fase 7 — bordes de la cola de producción (RF-37, RF-38; D-092..D-096).
@@ -53,6 +59,8 @@ test.describe('Fase 7 — bordes de la cola de producción', () => {
         rows: pieces([2, 1]),
       });
       trail.orderIds = [order.id];
+      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
+      await returnToProductionQueue(api, order.id);
 
       // Priorizar sin motivo: el schema lo exige siempre, no solo al quitarla.
       const sinMotivoAlPoner = await patchExpectingError(

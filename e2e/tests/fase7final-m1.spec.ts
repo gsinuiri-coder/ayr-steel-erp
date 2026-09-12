@@ -266,8 +266,6 @@ test.describe('M1 — reserva genérica de materia prima (D-134)', () => {
         ],
       });
       trail.quotationIds = [quotation.id];
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
-
       const error = await postExpectingError(api, `/api/sales/quotations/${quotation.id}/confirm`);
       expect(error.status).toBe(400);
       expect(error.message.toLowerCase()).toContain('color y espesor');

@@ -94,6 +94,11 @@ export interface QuotationDto {
   salesOrderCode: string | null;
   pdfKey: string | null;
   items: SalesItemDto[];
+  /** D-185: la reserva temporal vigente, o `null`. */
+  temporaryReservation: {
+    expiresAt: string;
+    lines: { lineNumber: number; itemType: string; itemId: string; qty: string; unit: string }[];
+  } | null;
 }
 
 export interface SalesOrderDto {
@@ -789,6 +794,20 @@ export async function purgeSalesTrail(
   trail: { orderIds?: string[]; quotationIds?: string[] },
 ): Promise<void> {
   for (const orderId of trail.orderIds ?? []) {
+    // D-186: confirmar deja las OPs en cola; una OP viva bloquea la anulación del pedido. Las
+    // de este camino nacen en borrador y sin reportes, así que alcanza con anularlas.
+    const order = await getJson<{ reservations: { productionOrderId: string | null }[] }>(
+      api,
+      `/api/sales/orders/${orderId}`,
+    ).catch(() => ({ reservations: [] }));
+    for (const r of order.reservations) {
+      if (!r.productionOrderId) continue;
+      await api
+        .post(`/api/production/roofing/${r.productionOrderId}/cancel`, {
+          data: { reason: 'Limpieza de prueba E2E' },
+        })
+        .catch(() => undefined);
+    }
     await api
       .post(`/api/sales/orders/${orderId}/cancel`, { data: { reason: 'Limpieza de prueba E2E' } })
       .catch(() => undefined);

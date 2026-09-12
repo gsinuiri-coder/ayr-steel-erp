@@ -17,6 +17,7 @@ import {
   purgeRoofingTrail,
   quoteAndOrder,
   reservationsOf,
+  returnToProductionQueue,
   roofingOrder,
   setupRoofingScenario,
   ROOFING_LINE,
@@ -75,8 +76,10 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
         rows,
       });
       trail.orderIds = [order.id];
+      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
+      expect(await returnToProductionQueue(api, order.id)).toBe(1);
 
-      // Confirmado y sin OP: aparece EN_COLA, y el detalle del pedido coincide.
+      // Sin OP viva: aparece EN_COLA, y el detalle del pedido coincide.
       const queueBefore = await queueOf(api);
       const entry = queueBefore.find((q) => q.salesOrderId === order.id);
       expect(entry).toMatchObject({
@@ -288,6 +291,9 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
         rows: pieces([2, 1]),
       });
       trail.orderIds = [orderA.id, orderB.id];
+      // D-186: confirmar ya generó las OP; se anulan para que las dos vuelvan a la cola.
+      await returnToProductionQueue(api, orderA.id);
+      await returnToProductionQueue(api, orderB.id);
 
       const before = await queueOf(api);
       const idxABefore = before.findIndex((q) => q.salesOrderId === orderA.id);
@@ -354,6 +360,8 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       });
       trail.orderIds = [order.id];
       expect(order.promisedDeliveryDate).toBe(overdue);
+      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
+      await returnToProductionQueue(api, order.id);
 
       const entry = (await queueOf(api)).find((q) => q.salesOrderId === order.id);
       expect(entry).toMatchObject({ promisedDeliveryDate: overdue, semaphore: 'VENCIDO' });
@@ -382,7 +390,6 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
         items: [{ saleCoilId: stock.coil.id, qty: stock.coil.availableKg, unitPricePen: '9' }],
       });
       trail.quotationIds = [quotation.id];
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -435,6 +442,8 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       });
       // No se agrega a `trail.orderIds`: el pedido se anula dentro del propio test y no hace
       // falta que la purga lo reintente.
+      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
+      await returnToProductionQueue(api, order.id);
 
       expect((await queueOf(api)).some((q) => q.salesOrderId === order.id)).toBe(true);
       const reservationBefore = (await reservationsOf(api, order.id))[0]!;

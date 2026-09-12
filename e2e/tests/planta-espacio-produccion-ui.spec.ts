@@ -562,7 +562,6 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
         items: [{ productId: scenario.product.id, qty: '5', valuePerMeterPen: '60.0000' }],
       });
       trail.quotationIds = [quotation.id];
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const salesOrder = await postJson<{ id: string }>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,

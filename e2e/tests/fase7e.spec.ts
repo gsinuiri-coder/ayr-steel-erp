@@ -110,8 +110,6 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
         reserveQty: '500.000',
       });
       expect(quotation.items[0]!.description).toContain(scenario.coil.code);
-
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -205,7 +203,6 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
         items: [{ saleCoilId: scenario.coil.id, qty: '1', unitPricePen: '9' }],
       });
       trail.quotationIds.push(quotation.id);
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -292,8 +289,6 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
       // distintas entre sí (`roofing` del UPVC y `trading` de la venta directa de bobina).
       expect(detail.businessLines.length).toBeGreaterThan(1);
       expect(detail.businessLines).toEqual(expect.arrayContaining(['roofing', 'trading']));
-
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const pdfRes = await api.get(`/api/sales/quotations/${quotation.id}/pdf`);
       expect(pdfRes.ok()).toBe(true);
       expect(pdfRes.headers()['content-type']).toContain('application/pdf');
@@ -374,7 +369,6 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
     });
 
     try {
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -386,7 +380,8 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
         `/api/sales/quotations/${quotation.id}/duplicate`,
       );
       duplicatedId = duplicated.id;
-      expect(duplicated.status).toBe('DRAFT');
+      // D-184: el duplicado nace emitido, como cualquier alta.
+      expect(duplicated.status).toBe('EMITTED');
       expect(duplicated.code).not.toBe(quotation.code);
       expect(duplicated.customerId).toBe(customer.id);
       expect(duplicated.items).toHaveLength(1);
@@ -454,7 +449,6 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
         items: [{ saleCoilId: scenario.coil.id, qty: '1', unitPricePen: '6' }],
       });
       trail.quotationIds.push(quotation.id);
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,

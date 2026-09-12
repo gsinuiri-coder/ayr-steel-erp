@@ -24,6 +24,7 @@ import {
   purgeRoofingTrail,
   quoteAndOrder,
   reservationsOf,
+  returnToProductionQueue,
   roofingOrder,
   setupRoofingScenario,
 } from '../helpers/roofing';
@@ -288,7 +289,6 @@ test.describe('Fase 6 — producción de coberturas', () => {
         ],
       });
       trail.quotationIds = [quotation.id, rival.id];
-      await postJson(api, `/api/sales/quotations/${rival.id}/emit`);
       const error = await postExpectingError(api, `/api/sales/quotations/${rival.id}/confirm`);
       expect(error.status).toBe(400);
       // D-127 cambió **por qué** se corta, no **si** se corta. Una línea a medida ya no se
@@ -510,7 +510,6 @@ test.describe('Fase 6 — producción de coberturas', () => {
         ],
       });
       trail.quotationIds = [quotation.id];
-      await postJson(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<{ id: string }>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -535,6 +534,11 @@ test.describe('Fase 6 — producción de coberturas', () => {
       // («producí una orden a stock desde planta») y que D-171 abrió. El ciclo completo
       // —montar, rolar, despachar— vive en `plancha-contra-pedido-d171.spec.ts`; acá alcanza
       // con que la puerta esté abierta y la OP cuelgue del pedido.
+      //
+      // D-186: confirmar ya la abrió sola. Se anula esa y se vuelve a crear a mano, para que
+      // la puerta de `POST /production/roofing` siga probada.
+      expect(reservation.productionOrderId, 'D-186: confirmar deja la OP en cola').not.toBeNull();
+      expect(await returnToProductionQueue(api, order.id)).toBe(1);
       const op = await postJson<{ id: string; status: string; salesOrderId: string | null }>(
         api,
         '/api/production/roofing',

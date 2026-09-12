@@ -30,7 +30,13 @@ import {
   type QuotationDto,
   type SalesOrderDto,
 } from '../helpers/sales';
-import { metersOf, pieces, purgeRoofingTrail, setupRoofingScenario } from '../helpers/roofing';
+import {
+  metersOf,
+  pieces,
+  purgeRoofingTrail,
+  returnToProductionQueue,
+  setupRoofingScenario,
+} from '../helpers/roofing';
 
 /**
  * Fase 5a — cotización → confirmación → pedido + reserva (D-054, D-064..D-069).
@@ -121,7 +127,9 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         pieces: rows,
       });
       trail.quotationIds = [quotation.id];
-      expect(quotation.status).toBe('DRAFT');
+      // D-184: nace emitida, con su PDF — no hay borrador ni paso de emitir.
+      expect(quotation.status).toBe('EMITTED');
+      expect(quotation.pdfKey, 'el alta debe dejar el PDF en R2').not.toBeNull();
       expect(quotation.code).toMatch(/^COT-\d{6}$/);
       // D-134: la línea reserva kilos del agregado, no un ítem de kardex.
       expect(quotation.items[0]).toMatchObject({
@@ -143,13 +151,6 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         { rawMaterialAvailableKg: '5000.000' },
       );
 
-      // Emitir genera el PDF (D-068) y habilita la confirmación.
-      const emitted = await postJson<QuotationDto>(
-        api,
-        `/api/sales/quotations/${quotation.id}/emit`,
-      );
-      expect(emitted.status).toBe('EMITTED');
-      expect(emitted.pdfKey, 'la emisión debe dejar el PDF en R2').not.toBeNull();
       const pdf = await api.get(`/api/sales/quotations/${quotation.id}/pdf`);
       expect(pdf.ok(), 'el PDF de la cotización debe descargarse').toBe(true);
       expect(pdf.headers()['content-type']).toContain('application/pdf');
@@ -172,8 +173,9 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         qty: '40.400',
         unit: 'KGM',
         status: 'ACTIVE',
-        productionOrderId: null,
       });
+      // D-186: confirmar deja la orden de producción en cola en el mismo paso.
+      expect(order.reservations[0]!.productionOrderId).not.toBeNull();
       // La reserva nombra el agregado (una fila de `raw_material_specs`), no la bobina.
       expect(order.reservations[0]!.itemId).not.toBe(scenario.coil.id);
 
@@ -388,7 +390,6 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         pieces: firstRows,
       });
       trail.quotationIds = [first.id];
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${first.id}/emit`);
       const firstOrder = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${first.id}/confirm`,
@@ -406,8 +407,6 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         pieces: secondRows,
       });
       trail.quotationIds = [first.id, second.id];
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${second.id}/emit`);
-
       const failed = await postExpectingError(api, `/api/sales/quotations/${second.id}/confirm`);
       expect(failed.status).toBe(400);
       // El mensaje tiene que decir disponible y necesitado: sin eso el vendedor no sabe si
@@ -550,7 +549,6 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         validityDays: 30,
       });
       trail.quotationIds = [quotation.id];
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -598,6 +596,9 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
       );
       trail.orderIds = [order.id, second.id];
       expect(second.reservations[0]!.status).toBe('ACTIVE');
+      // D-186: confirmar dejó una OP colgando de la reserva, y una reserva con OP viva no se
+      // libera a mano. Se anula la OP (devuelve la reserva a la cola) para probar la liberación.
+      expect(await returnToProductionQueue(api, second.id)).toBe(1);
 
       // Liberación manual sin anular el pedido (D-054): el pedido sigue vivo, la promesa no.
       const released = await postJson<{ status: string }>(
@@ -667,9 +668,6 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
       trail.quotationIds = [quotation.id];
       expect(quotation.validUntil).toBe(isoDaysFromToday(-9));
       expect(quotation.isExpired, 'la fecha ya pasó, aunque el estado siga en borrador').toBe(true);
-
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
-
       // Confirmar antes de que el job corra ya falla: el estado es una comodidad de la
       // lista, la vigencia se revalida siempre (D-069).
       const beforeJob = await postExpectingError(
@@ -807,7 +805,6 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
         pieces: rows,
       });
       trail.quotationIds = [quotation.id];
-      await postJson<QuotationDto>(sellerApi, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         sellerApi,
         `/api/sales/quotations/${quotation.id}/confirm`,

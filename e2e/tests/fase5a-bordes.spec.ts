@@ -185,8 +185,6 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         igvPen: '1485.0000',
         totalPen: '9735.0000',
       });
-
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${tooMuch.id}/emit`);
       const failed = await postExpectingError(api, `/api/sales/quotations/${tooMuch.id}/confirm`);
       expect(failed.status).toBe(400);
       // La línea 1 ya reservó 606 dentro de la misma transacción: la 2 tiene que verlo.
@@ -219,7 +217,6 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         ],
       });
       trail.quotationIds.push(fits.id);
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${fits.id}/emit`);
       const order = await postJson<SalesOrderDto>(api, `/api/sales/quotations/${fits.id}/confirm`);
       trail.orderIds.push(order.id);
 
@@ -307,8 +304,6 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         igvPen: '6480.0000',
         totalPen: '42480.0000',
       });
-
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -521,8 +516,6 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         items: [{ saleCoilId: stock.coil.id, qty: stock.coil.availableKg, unitPricePen: '6' }],
       });
       trail.quotationIds.push(quotation.id);
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
-
       // La bobina se va a un tercero después de cotizarla y antes de confirmar.
       const cutting = await postJson<{ id: string }>(api, '/api/cutting', {
         supplierId: stock.supplier.id,
@@ -641,7 +634,6 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         pieces: rowsB,
       });
       trail.quotationIds = [qA.id, quotationB.id];
-      await postJson(api, `/api/sales/quotations/${quotationB.id}/emit`);
       const orderB = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotationB.id}/confirm`,
@@ -673,7 +665,6 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         pieces: rowsC,
       });
       trail.quotationIds = [qA.id, quotationB.id, quotationC.id];
-      await postJson(api, `/api/sales/quotations/${quotationC.id}/emit`);
       const blocked = await postExpectingError(
         api,
         `/api/sales/quotations/${quotationC.id}/confirm`,
@@ -693,7 +684,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
   // 5. Editar, reemitir, anular y el PDF (RF-65, RF-66, D-068)
   // -------------------------------------------------------------------------
 
-  test('el borrador se edita y no tiene PDF; la emitida no se edita y su anulación sale rotulada', async () => {
+  test('la emitida se edita y regenera su PDF; la anulada no se edita y su PDF sale rotulado', async () => {
     const supplier = await createCuttingSupplier(api);
     const finish = await createRoofingFinish(api);
     const colorA = await createColor(api, '#c8102e');
@@ -735,9 +726,10 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       trail.quotationIds.push(draft.id);
       expect(draft.totalPen).toBe('1416.0000');
 
-      // Un borrador todavía no es un documento.
-      const noPdf = await getExpectingError(api, `/api/sales/quotations/${draft.id}/pdf`);
-      expect(noPdf.status).toBe(400);
+      // D-184: nace emitida y ya es un documento.
+      expect(draft.status).toBe('EMITTED');
+      const firstPdf = await api.get(`/api/sales/quotations/${draft.id}/pdf`);
+      expect(firstPdf.ok()).toBe(true);
 
       // RF-66: editar reemplaza las líneas completas y recalcula los totales.
       const editedRowsCover = pieces([5, 1]); // 5 m ⇒ 20 kg
@@ -766,7 +758,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       expect(edited.items.map((i) => i.lineNumber)).toEqual([1, 2]);
       // 5×120=600 y 4×62.5=250 → 850 de subtotal, 153 de IGV.
       expect(edited).toMatchObject({
-        status: 'DRAFT',
+        status: 'EMITTED',
         subtotalPen: '850.0000',
         igvPen: '153.0000',
         totalPen: '1003.0000',
@@ -780,17 +772,27 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         reserveQty: '16.160',
       });
 
-      // Emitida: el PDF existe y la edición se cierra.
-      const emitted = await postJson<QuotationDto>(api, `/api/sales/quotations/${draft.id}/emit`);
-      expect(emitted.status).toBe('EMITTED');
+      // D-184: la edición regenera el PDF — una sola versión, y la vigente no lleva rótulo.
       const pdf = await api.get(`/api/sales/quotations/${draft.id}/pdf`);
       expect(pdf.ok()).toBe(true);
       const emittedText = pdfText(await pdf.body());
-      expect(emittedText).toContain(emitted.code);
+      expect(emittedText).toContain(edited.code);
       expect(emittedText, 'una cotización vigente no lleva rótulo de estado').not.toContain(
         'COTIZACI',
       );
 
+      // Anular una emitida (RF-65) y comprobar que su PDF sale rotulado.
+      const cancelled = await postJson<QuotationDto>(
+        api,
+        `/api/sales/quotations/${draft.id}/cancel`,
+        { reason: 'El cliente compró en otro lado' },
+      );
+      expect(cancelled.status).toBe('CANCELLED');
+      const cancelledPdf = await api.get(`/api/sales/quotations/${draft.id}/pdf`);
+      expect(cancelledPdf.ok()).toBe(true);
+      expect(pdfText(await cancelledPdf.body())).toContain('COTIZACI');
+
+      // Anulada, la edición se cierra — y el rechazo es antes de tocar las líneas.
       const cannotEditRows = pieces([1, 1]);
       const cannotEdit = await putExpectingError(
         api,
@@ -807,24 +809,12 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         }),
       );
       expect(cannotEdit.status).toBe(400);
-      expect(cannotEdit.message).toContain('borrador');
-      // Y no cambió nada: el rechazo es antes de tocar las líneas.
-      const stillEmitted = await getJson<QuotationDto>(api, `/api/sales/quotations/${draft.id}`);
-      expect(stillEmitted).toMatchObject({ status: 'EMITTED', totalPen: '1003.0000' });
-      expect(stillEmitted.items).toHaveLength(2);
+      expect(cannotEdit.message).toContain('anulada');
+      const stillCancelled = await getJson<QuotationDto>(api, `/api/sales/quotations/${draft.id}`);
+      expect(stillCancelled).toMatchObject({ status: 'CANCELLED', totalPen: '1003.0000' });
+      expect(stillCancelled.items).toHaveLength(2);
 
-      // Anular una emitida (RF-65) y comprobar que su PDF sale rotulado.
-      const cancelled = await postJson<QuotationDto>(
-        api,
-        `/api/sales/quotations/${draft.id}/cancel`,
-        { reason: 'El cliente compró en otro lado' },
-      );
-      expect(cancelled.status).toBe('CANCELLED');
-      const cancelledPdf = await api.get(`/api/sales/quotations/${draft.id}/pdf`);
-      expect(cancelledPdf.ok()).toBe(true);
-      expect(pdfText(await cancelledPdf.body())).toContain('COTIZACI');
-
-      // Anular un borrador también entra (RF-65: cualquier estado no confirmado).
+      // Anular una recién creada también entra (RF-65: cualquier estado no confirmado).
       const scrappedRows = pieces([2, 1]);
       const scrapped = await createQuotation(api, {
         customerId: customer.id,
@@ -913,7 +903,8 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
           pieces: rows,
         });
         trail.quotationIds!.push(q.id);
-        emitted.push(await postJson<QuotationDto>(api, `/api/sales/quotations/${q.id}/emit`));
+        // D-184: nace emitida.
+        emitted.push(q);
       }
 
       /**
@@ -1030,11 +1021,12 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         }),
       );
       expect(cannotEdit.status).toBe(403);
-      const cannotEmit = await postExpectingError(
+      // D-185: reservar también es operar la cotización.
+      const cannotReserve = await postExpectingError(
         otherApi,
-        `/api/sales/quotations/${quotation.id}/emit`,
+        `/api/sales/quotations/${quotation.id}/reserve`,
       );
-      expect(cannotEmit.status).toBe(403);
+      expect(cannotReserve.status).toBe(403);
       const cannotCancel = await postExpectingError(
         otherApi,
         `/api/sales/quotations/${quotation.id}/cancel`,
@@ -1042,12 +1034,23 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       );
       expect(cannotCancel.status).toBe(403);
 
-      // El ADMINISTRADOR sí opera cualquiera: emite la del vendedor…
-      const emitted = await postJson<QuotationDto>(
+      // El ADMINISTRADOR sí opera cualquiera: edita la del vendedor…
+      const edited = await putJson<QuotationDto>(
         api,
-        `/api/sales/quotations/${quotation.id}/emit`,
+        `/api/sales/quotations/${quotation.id}`,
+        updateQuotationBody({
+          customerId: customer.id,
+          items: [
+            {
+              productId: scenario.product.id,
+              qty: metersOf(rows),
+              unitPricePen: '45',
+              pieces: rows,
+            },
+          ],
+        }),
       );
-      expect(emitted.status).toBe('EMITTED');
+      expect(edited.status).toBe('EMITTED');
 
       // …y confirmar sigue cerrado para el vendedor ajeno, que es el acto que compromete
       // stock a nombre del cliente de otro.
@@ -1109,12 +1112,8 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         validityDays: 1,
       });
       trail.quotationIds = [quotation.id];
-      const emitted = await postJson<QuotationDto>(
-        api,
-        `/api/sales/quotations/${quotation.id}/emit`,
-      );
       // El estado todavía dice EMITIDA porque el job no corrió; la fecha ya dice otra cosa.
-      expect(emitted).toMatchObject({ status: 'EMITTED', isExpired: true });
+      expect(quotation).toMatchObject({ status: 'EMITTED', isExpired: true });
       // Y el API ya no la deja confirmar: la vigencia se revalida (D-069).
       const cannotConfirm = await postExpectingError(
         api,
@@ -1181,7 +1180,6 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
           pieces: rows,
         });
         trail.quotationIds!.push(q.id);
-        await postJson<QuotationDto>(api, `/api/sales/quotations/${q.id}/emit`);
         quotations.push(q);
       }
 

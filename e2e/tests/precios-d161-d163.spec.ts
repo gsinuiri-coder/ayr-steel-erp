@@ -453,8 +453,6 @@ test.describe('D-161 — la plancha de catálogo se cotiza por metro lineal', ()
         valuePerMeterPen: '7.0000',
       });
       quotationIds.push(quotation.id);
-
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,

@@ -15,6 +15,7 @@ import {
   purgeRoofingTrail,
   reportPieces,
   reservationsOf,
+  returnToProductionQueue,
   roofingOrder,
   ROOFING_LINE,
   setupRoofingScenario,
@@ -151,7 +152,6 @@ test.describe('D-171 — la plancha de catálogo se fabrica contra el pedido', (
       expect(line.pieces ?? []).toEqual([]);
 
       // --- 2. La confirmación ---
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -174,6 +174,9 @@ test.describe('D-171 — la plancha de catálogo se fabrica contra el pedido', (
       // --- 3. La cola de planta (RF-37) ---
       // Bajo D-140 la plancha **nunca** llegaba acá: la cola se arma con reservas de materia
       // prima, y la plancha no abría ninguna. Planta no tenía forma de enterarse del pedido.
+      expect(reservation.productionOrderId, 'D-186: confirmar deja la OP en cola').not.toBeNull();
+      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
+      expect(await returnToProductionQueue(api, order.id)).toBe(1);
       const queue = await queueOf(api);
       const mine = queue.find((e) => e.salesOrderId === order.id);
       expect(mine, 'el pedido de planchas no llegó a la cola de producción').toBeDefined();
@@ -291,7 +294,6 @@ test.describe('D-171 — la plancha de catálogo se fabrica contra el pedido', (
         items: [{ productId: scenario.product.id, qty: '4', valuePerMeterPen: VALUE_PER_METER }],
       });
       trail.quotationIds = [quotation.id];
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,

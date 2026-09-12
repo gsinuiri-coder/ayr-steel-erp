@@ -81,7 +81,6 @@ test.describe('Fase 7e — bordes de la venta de bobina completa', () => {
         items: [{ saleCoilId: drywall.coil.id, qty: '1', unitPricePen: '6' }],
       });
       trail.quotationIds.push(q1.id);
-      await postJson(api, `/api/sales/quotations/${q1.id}/emit`);
       const order1 = await postJson<SalesOrderDto>(api, `/api/sales/quotations/${q1.id}/confirm`);
       trail.orderIds.push(order1.id);
 
@@ -113,7 +112,6 @@ test.describe('Fase 7e — bordes de la venta de bobina completa', () => {
         items: [{ saleCoilId: roofing.coil.id, qty: '1', unitPricePen: '9' }],
       });
       trail.quotationIds.push(q2.id);
-      await postJson(api, `/api/sales/quotations/${q2.id}/emit`);
       const order2 = await postJson<SalesOrderDto>(api, `/api/sales/quotations/${q2.id}/confirm`);
       trail.orderIds.push(order2.id);
 

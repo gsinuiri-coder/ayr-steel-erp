@@ -181,7 +181,6 @@ test.describe('D-171 — producir coberturas a stock dejó de existir', () => {
         items: [{ productId: scenario.product.id, qty: '5', valuePerMeterPen: '60.0000' }],
       });
       trail.quotationIds = [quotation.id];
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
       const order = await postJson<{ id: string }>(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,

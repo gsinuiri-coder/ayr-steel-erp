@@ -370,7 +370,7 @@ export async function quoteAndOrderLines(
       pieces: line.rows,
     })),
   });
-  await postJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}/emit`);
+  // D-184: la cotización nace emitida; no hay paso de emitir.
   // `confirmQuotationSchema` (Fase 7) valida un objeto; `ZodValidationPipe` trata un body
   // ausente como `{}`, así que esto funciona con o sin `promisedDeliveryDate`.
   const order = await postJson<SalesOrderDto>(
@@ -381,11 +381,27 @@ export async function quoteAndOrderLines(
   return { quotation, order };
 }
 
-/** D-148: la OP de cada línea del pedido que todavía no la tiene, de una sola vez. */
+/**
+ * D-148: la OP de cada línea del pedido.
+ *
+ * D-186: confirmar ya las crea, así que para un pedido recién confirmado esto devuelve **las
+ * que la confirmación dejó en cola** (en `created`, en el orden de las líneas). Solo llama al
+ * endpoint de D-148 si a alguna línea le falta su orden —por ejemplo, porque un test anuló una
+ * OP—, que es el único caso en que ese botón todavía tiene trabajo.
+ */
 export async function roofingOrdersFromSalesOrder(
   api: APIRequestContext,
   salesOrderId: string,
 ): Promise<{ created: { orderId: string; code: string }[]; alreadyQueued: number }> {
+  const live = (await reservationsOf(api, salesOrderId)).filter(
+    (r) => r.itemType === 'RAW_MATERIAL' && r.status === 'ACTIVE',
+  );
+  if (live.length > 0 && live.every((r) => r.productionOrderId !== null)) {
+    return {
+      created: live.map((r) => ({ orderId: r.productionOrderId!, code: r.productionOrderCode! })),
+      alreadyQueued: 0,
+    };
+  }
   return postJson<{ created: { orderId: string; code: string }[]; alreadyQueued: number }>(
     api,
     `/api/production/roofing/from-sales-order/${salesOrderId}`,
@@ -480,10 +496,23 @@ export async function reservationsOf(
   return order.reservations;
 }
 
+/**
+ * La OP de una reserva de materia prima.
+ *
+ * D-186: confirmar la crea en la misma transacción que el pedido, así que lo normal es que ya
+ * exista y se devuelve esa. Solo se crea si la reserva no tiene orden viva (una OP anulada), que
+ * es el camino que `POST /production/roofing` sigue cubriendo.
+ */
 export async function roofingOrder(
   api: APIRequestContext,
   reservationId: string,
 ): Promise<ProductionOrderDto> {
+  const reservations = await getJson<{ id: string; productionOrderId: string | null }[]>(
+    api,
+    '/api/sales/reservations?status=ACTIVE',
+  );
+  const existing = reservations.find((r) => r.id === reservationId)?.productionOrderId;
+  if (existing) return getJson<ProductionOrderDto>(api, `/api/production/${existing}`);
   return postJson<ProductionOrderDto>(api, '/api/production/roofing', { reservationId });
 }
 
@@ -503,6 +532,36 @@ export async function coilOptions(
  * Deja la OP de coberturas anulada y su kardex en cero. Mismo camino que la purga de
  * producción de Fase 4 pero contra las rutas de coberturas.
  */
+/**
+ * Devuelve el pedido a la **cola de producción** (D-093): anula las OP que confirmar creó
+ * solas (D-186).
+ *
+ * La cola lista las líneas a fabricar **sin OP viva**. Desde D-186 confirmar genera esa OP en
+ * el acto, así que un pedido recién confirmado ya no pasa por la cola; la cola sigue viva para
+ * lo que perdió su orden (una OP anulada devuelve la reserva, D-066) y para los pedidos
+ * anteriores. Los specs que prueban la cola —orden, prioridad, semáforo— la ejercitan por esa
+ * puerta. Devuelve cuántas anuló.
+ */
+export async function returnToProductionQueue(
+  api: APIRequestContext,
+  salesOrderId: string,
+): Promise<number> {
+  const reservations = await reservationsOf(api, salesOrderId);
+  let cancelled = 0;
+  for (const r of reservations) {
+    if (r.status !== 'ACTIVE' || r.productionOrderId === null) continue;
+    await postJson<ProductionOrderDto>(
+      api,
+      `/api/production/roofing/${r.productionOrderId}/cancel`,
+      {
+        reason: 'E2E: devolver la línea a la cola de producción',
+      },
+    );
+    cancelled += 1;
+  }
+  return cancelled;
+}
+
 export async function purgeRoofingOrder(api: APIRequestContext, orderId: string): Promise<void> {
   const order = await getJson<ProductionOrderDto>(api, `/api/production/${orderId}`);
   if (order.status === 'CANCELLED') return;
@@ -548,6 +607,17 @@ export async function purgeRoofingTrail(
 ): Promise<void> {
   for (const orderId of [...(trail.productionOrderIds ?? [])].reverse()) {
     await purgeRoofingOrder(api, orderId).catch(() => undefined);
+  }
+  // D-186: confirmar ya deja las OPs en cola, así que un pedido puede traer órdenes que el test
+  // nunca anotó. Sin anularlas primero, la anulación del pedido se rechaza (hay una OP viva) y
+  // la reserva queda prometiendo material para los casos siguientes de la misma corrida.
+  for (const orderId of trail.orderIds ?? []) {
+    const reservations = await reservationsOf(api, orderId).catch(() => []);
+    for (const r of reservations) {
+      if (r.productionOrderId) {
+        await purgeRoofingOrder(api, r.productionOrderId).catch(() => undefined);
+      }
+    }
   }
   for (const orderId of trail.orderIds ?? []) {
     await api

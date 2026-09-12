@@ -208,7 +208,6 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
       expect(quotation.totalPen).toBe('4931.3734');
 
       // --- 3. El pedido ---
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${mine!.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${mine!.id}/confirm`,
@@ -286,7 +285,6 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
       );
       const mine = listed.items.find((q) => q.code === result.codes[0])!;
       quotationIds.push(mine.id);
-      await postJson<QuotationDto>(api, `/api/sales/quotations/${mine.id}/emit`);
       const order = await postJson<SalesOrderDto>(
         api,
         `/api/sales/quotations/${mine.id}/confirm`,
