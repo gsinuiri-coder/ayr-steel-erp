@@ -40,6 +40,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
@@ -519,6 +520,12 @@ export class ProductionService {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
+        // F8-S1/M2: un reporte es un hecho legítimo si se repite (dos tandas iguales de
+        // piezas son dos hechos), pero el mismo intento de submit (doble click, reintento
+        // de red) no debe consumir flejes ni sumar producto terminado dos veces.
+        const claim = await claimIdempotencyKey(tx, 'production-report', input.idempotencyKey);
+        if (!claim.claimed) return;
+
         const order = await this.lockOrder(tx, orderId);
         if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
           throw new BadRequestException(

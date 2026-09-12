@@ -502,6 +502,26 @@ model AuditLog {
   @@map("audit_log")
 }
 
+/// Deduplicación de creaciones repetibles (D-182, F8-S1/M2): un reporte de producción o un
+/// cobro son eventos de negocio legítimos si se repiten, pero un *intento de submit*
+/// duplicado (doble click, reintento de red) no debe crear dos. `key` la genera el cliente
+/// una vez por intento; el `create` dentro de la misma transacción que el efecto de negocio
+/// es la garantía atómica — si la clave ya existe, el `UNIQUE` la rechaza y el servicio
+/// devuelve el recurso que ya se creó con ella en vez de crear otro.
+model IdempotencyKey {
+  /// Generada por el cliente (UUID), no derivada del contenido del request — ver el
+  /// docblock de `idempotencyKeySchema` en `@ayr/shared`.
+  key        String   @id @db.VarChar(100)
+  /// Qué endpoint la usó (`production-report`, `roofing-report`, `customer-payment`,
+  /// `supplier-payment`, …): la misma clave no cruza de un scope a otro por accidente.
+  scope      String   @db.VarChar(60)
+  /// El recurso que el intento original creó, para poder devolverlo en un reintento.
+  resourceId String   @map("resource_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("idempotency_keys")
+}
+
 /// Líneas de negocio (§2.2). Fila sembrada por la migración; el módulo API solo
 /// las lee (no hay alta/baja de líneas de negocio, `code` es un dominio fijo).
 model BusinessLine {

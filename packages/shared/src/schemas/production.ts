@@ -17,6 +17,7 @@ import {
   Unit,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { idempotencyFields } from './idempotency';
 import { backdatableFields } from './operation';
 import { roofingPieceSchema } from './roofing';
 
@@ -342,6 +343,7 @@ export type ConsumeStripInput = z.infer<typeof consumeStripSchema>;
 /** Reporte parcial de piezas buenas (D-058). */
 export const reportPiecesSchema = z.object({
   ...backdatableFields,
+  ...idempotencyFields,
   pieces: piecesSchema,
   notes: z.string().trim().max(240).optional(),
 });

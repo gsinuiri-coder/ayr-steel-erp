@@ -53,6 +53,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { CoilsService } from '../coils/coils.service';
 import { ColorsService } from '../colors/colors.service';
@@ -996,6 +997,11 @@ export class PurchasesService {
     );
 
     await this.prisma.$transaction(async (tx) => {
+      // F8-S1/M2: mismo criterio que el cobro a cliente — dos pagos iguales son negocio
+      // legítimo, pero el mismo intento de submit no debe registrar el pago dos veces.
+      const claim = await claimIdempotencyKey(tx, 'supplier-payment', input.idempotencyKey);
+      if (!claim.claimed) return;
+
       // Bloquea la compra y recalcula el saldo dentro de la transacción: dos pagos
       // concurrentes que por separado caben en el saldo no pueden sobrepagarla.
       await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${purchaseId}::uuid FOR UPDATE`;

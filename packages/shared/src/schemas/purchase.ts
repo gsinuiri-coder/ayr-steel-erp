@@ -17,6 +17,7 @@ import {
   SERVICE_KINDS,
   UNITS,
 } from '../enums';
+import { idempotencyFields } from './idempotency';
 import { backdatableFields } from './operation';
 
 /** Fecha en formato ISO corto (YYYY-MM-DD), que es como viajan las fechas de negocio. */
@@ -436,6 +437,7 @@ export const createSupplierPaymentSchema = z.object({
   exchangeRate: decimalStringSchema('RATE', { positive: true }).optional(),
   method: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Medio de pago inválido' }) }),
   reference: z.string().trim().max(80).optional(),
+  ...idempotencyFields,
 });
 export type CreateSupplierPaymentInput = z.infer<typeof createSupplierPaymentSchema>;
 

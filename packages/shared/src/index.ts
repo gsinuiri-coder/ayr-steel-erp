@@ -5,6 +5,7 @@ export * from './decimal';
 export * from './coil-code';
 export * from './schemas/pagination';
 export * from './schemas/operation';
+export * from './schemas/idempotency';
 export * from './schemas/auth';
 export * from './schemas/user';
 export * from './schemas/business-line';

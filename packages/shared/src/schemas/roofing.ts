@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Decimal, decimalStringSchema, MAX_VALUE, roundTo, toDecimal } from '../decimal';
 import { PRODUCTION_ORDER_STATUSES } from '../enums';
 import { reasonSchema } from './coil';
+import { idempotencyFields } from './idempotency';
 import { backdatableFields } from './operation';
 
 /**
@@ -566,6 +567,7 @@ export const reportRoofingPiecesSchema = z.object({
   consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   notes: z.string().trim().max(240).optional(),
   ...backdatableFields,
+  ...idempotencyFields,
 });
 export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>;
 

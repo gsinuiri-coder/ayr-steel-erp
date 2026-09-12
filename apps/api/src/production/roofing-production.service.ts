@@ -51,6 +51,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { InventoryService } from '../inventory/inventory.service';
@@ -700,7 +701,13 @@ export class RoofingProductionService {
   ): Promise<ProductionOrderDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const warnings = await this.prisma.$transaction(
-      async (tx) => this.reportInTx(tx, actor, orderId, input, operationDate),
+      async (tx) => {
+        // F8-S1/M2: mismo criterio que `ProductionService.report` — un doble click no debe
+        // descontar la reserva de bobina ni sumar producto terminado dos veces.
+        const claim = await claimIdempotencyKey(tx, 'roofing-report', input.idempotencyKey);
+        if (!claim.claimed) return [];
+        return this.reportInTx(tx, actor, orderId, input, operationDate);
+      },
       { timeout: 30_000 },
     );
 
@@ -1350,6 +1357,16 @@ export class RoofingProductionService {
     const closeWarnings: RawMaterialShortfall[] = [];
     await this.prisma.$transaction(
       async (tx) => {
+        // F8-S1/M2: intento de submit, no el hecho de negocio — un doble click no debe
+        // reportar Y cerrar dos veces. Alcance propio (`roofing-report-and-close`): no
+        // comparte clave con `report()` porque acá el efecto es el de las dos mitades.
+        const claim = await claimIdempotencyKey(
+          tx,
+          'roofing-report-and-close',
+          input.idempotencyKey,
+        );
+        if (!claim.claimed) return;
+
         reportWarnings.push(...(await this.reportInTx(tx, actor, orderId, input, operationDate)));
         await this.closeInTx(
           tx,

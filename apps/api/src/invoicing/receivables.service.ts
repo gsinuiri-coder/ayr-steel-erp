@@ -23,6 +23,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -89,6 +90,12 @@ export class ReceivablesService {
     documentId: string,
     input: CreateCustomerPaymentInput,
   ): Promise<string> {
+    // F8-S1/M2: dos cobros iguales son negocio legítimo (el cliente pagó dos veces), pero
+    // el mismo intento de submit (doble click, reintento de red) no debe registrar el
+    // cobro dos veces. El id devuelto es el del cobro real, se haya creado ahora o antes.
+    const claim = await claimIdempotencyKey(tx, 'customer-payment', input.idempotencyKey);
+    if (!claim.claimed) return claim.resourceId;
+
     await tx.$queryRaw`
       SELECT "id" FROM "fiscal_documents" WHERE "id" = ${documentId}::uuid FOR UPDATE
     `;
@@ -142,6 +149,7 @@ export class ReceivablesService {
 
     const payment = await tx.customerPayment.create({
       data: {
+        id: claim.resourceId,
         documentId,
         // D-124: `date` es la fecha de operación del cobro — la que ubica el cobro en el
         // mes en la cobranza. Se valida como cualquier retrofecha: solo administrador,

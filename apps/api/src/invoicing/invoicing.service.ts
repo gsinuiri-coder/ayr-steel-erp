@@ -2112,6 +2112,14 @@ export class InvoicingService {
    */
   async issueDispatchNote(actor: RequestUser, dispatchId: string): Promise<FiscalDocumentDto> {
     const documentId = await this.prisma.$transaction(async (tx) => {
+      // F8-S1/M2: el mismo lock que `DispatchesService.reverse` sobre esta tabla. Sin él,
+      // dos clicks en "Emitir guía" leían los dos `dispatch.documents` sin ninguna vigente
+      // todavía, pasaban los dos el chequeo de abajo y cada uno creaba su propio borrador
+      // —y su propio correlativo— para el mismo despacho: dos guías electrónicas vigentes
+      // para un solo traslado físico.
+      await tx.$queryRaw`
+        SELECT "id" FROM "dispatches" WHERE "id" = ${dispatchId}::uuid FOR UPDATE
+      `;
       const dispatch = await tx.dispatch.findUnique({
         where: { id: dispatchId },
         include: {

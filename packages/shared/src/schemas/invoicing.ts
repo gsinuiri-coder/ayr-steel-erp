@@ -18,6 +18,7 @@ import {
   TransferMode,
 } from '../enums';
 import { reasonSchema } from './coil';
+import { idempotencyFields } from './idempotency';
 import { backdatableFields } from './operation';
 import { paginationQuerySchema } from './pagination';
 import { businessToday } from '../business-date';
@@ -916,6 +917,7 @@ export const createCustomerPaymentSchema = z.object({
     errorMap: () => ({ message: 'Medio de pago inválido' }),
   }),
   reference: z.string().trim().max(120).optional(),
+  ...idempotencyFields,
 });
 export type CreateCustomerPaymentInput = z.infer<typeof createCustomerPaymentSchema>;
 
