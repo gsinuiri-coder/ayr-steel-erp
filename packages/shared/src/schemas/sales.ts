@@ -562,6 +562,51 @@ export const confirmQuotationSchema = z.object({
 });
 export type ConfirmQuotationInput = z.infer<typeof confirmQuotationSchema>;
 
+/**
+ * D-186: qué hace confirmar con cada línea.
+ * - `PRODUCE`: reserva materia prima del agregado y genera su orden de producción, con el
+ *   plan de corte por defecto (lo que el pedido encargó).
+ * - `RESERVE_STOCK`: reserva el producto terminado o la bobina que la línea vende; sale de
+ *   stock sin orden.
+ * - `NONE`: la línea no lleva inventario (un servicio): no reserva ni produce nada.
+ */
+export const CONFIRM_LINE_ACTIONS = ['PRODUCE', 'RESERVE_STOCK', 'NONE'] as const;
+export type ConfirmLineAction = (typeof CONFIRM_LINE_ACTIONS)[number];
+
+export const confirmPreviewLineSchema = z.object({
+  lineNumber: z.number().int(),
+  productSku: z.string(),
+  description: z.string(),
+  qty: z.string(),
+  unit: unitStringSchema,
+  action: z.enum(CONFIRM_LINE_ACTIONS),
+  /** Lo que se reserva: etiqueta del agregado, producto o bobina. `null` si `NONE`. */
+  reserveLabel: z.string().nullable(),
+  reserveQty: z.string().nullable(),
+  reserveUnit: unitStringSchema.nullable(),
+  /**
+   * Lo disponible para **esta** línea: contando la reserva temporal propia como suya y
+   * descontando lo que las líneas anteriores del mismo documento ya tomaron del mismo ítem.
+   */
+  availableQty: z.string().nullable(),
+  /** Cuánto falta, si falta. `null` cuando alcanza. */
+  shortfallQty: z.string().nullable(),
+  /** El plan de corte que tendrá la OP (`PRODUCE`), en palabras. */
+  plan: z.string().nullable(),
+});
+export type ConfirmPreviewLineDto = z.infer<typeof confirmPreviewLineSchema>;
+
+export const confirmPreviewSchema = z.object({
+  quotationId: z.string().uuid(),
+  quotationCode: z.string(),
+  /** La reserva temporal que se convierte en firme, si hay una vigente. */
+  temporaryReservationExpiresAt: z.string().nullable(),
+  lines: z.array(confirmPreviewLineSchema),
+  /** Por qué no se puede confirmar hoy. Vacío = el botón confirma. */
+  blockers: z.array(z.string()),
+});
+export type ConfirmPreviewDto = z.infer<typeof confirmPreviewSchema>;
+
 // --------------------------------------------------------------------------
 // D-185 — reserva temporal sobre una cotización emitida
 // --------------------------------------------------------------------------

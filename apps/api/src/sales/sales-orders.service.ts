@@ -26,6 +26,8 @@ import {
   DEFAULT_TEMPORARY_RESERVATION_BUSINESS_DAYS,
   Decimal,
   temporaryReservationExpiry,
+  type ConfirmPreviewDto,
+  type ConfirmPreviewLineDto,
   type QuotationTemporaryReservationDto,
   type SalesSettingsDto,
   type TemporaryReservationLineDto,
@@ -84,6 +86,7 @@ import {
   type CoilGeometry,
 } from '../production/roofing-math';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
+import { RoofingProductionService } from '../production/roofing-production.service';
 import {
   documentTotals,
   isMadeToOrder,
@@ -210,6 +213,7 @@ export class SalesOrdersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
+    private readonly roofing: RoofingProductionService,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -387,7 +391,44 @@ export class SalesOrdersService {
           include: { items: { orderBy: { lineNumber: 'asc' } } },
         });
 
+        // D-186: la reserva temporal de la cotización **se convierte** en firme. Se termina
+        // antes de reservar para que el guardrail de disponible no la cuente contra el mismo
+        // pedido que viene a cumplirla; si algo de abajo falla, la transacción se deshace y
+        // la temporal vuelve a estar vigente.
+        await sweepExpiredTemporaryReservations(tx, { quotationId });
+        const converted = await this.endTemporaryInTx(tx, quotationId, {
+          status: TemporaryReservationStatus.CONVERTED,
+          actorId: actor.id,
+          reason: `Convertida en firme al confirmar ${salesOrderCode(order.seq)}`,
+          salesOrderId: order.id,
+        });
+
         await this.createReservations(tx, actor, order.id, order.items);
+
+        // D-186: confirmar ya deja las órdenes en cola. Cada línea que reserva materia prima
+        // es una línea que se fabrica contra el pedido (D-134/D-171), y su OP nace por el
+        // mismo camino que el botón de una orden y la importación de ventas — con el plan de
+        // corte por defecto, que es lo que el pedido encargó (D-084). Las líneas de stock, de
+        // reventa o de servicios no generan nada.
+        const productionReservations = await tx.reservation.findMany({
+          where: {
+            salesOrderId: order.id,
+            status: ReservationStatus.ACTIVE,
+            itemType: InventoryItemTypeEnum.RAW_MATERIAL,
+          },
+          select: { id: true },
+          orderBy: { salesOrderItem: { lineNumber: 'asc' } },
+        });
+        const productionOrderIds: string[] = [];
+        for (const reservation of productionReservations) {
+          productionOrderIds.push(
+            await this.roofing.createFromReservationInTx(tx, actor, {
+              reservationId: reservation.id,
+              operationDate: businessToday(),
+              notes: null,
+            }),
+          );
+        }
 
         await tx.quotation.update({
           where: { id: quotationId },
@@ -403,18 +444,210 @@ export class SalesOrdersService {
             code: salesOrderCode(order.seq),
             quotationCode: quotationCode(head.seq),
             totalPen: order.totalPen.toFixed(4),
+            convertedTemporaryLines: converted,
+            productionOrders: productionOrderIds.length,
           },
         });
         return order.id;
       },
       // Una confirmación toma un lock por línea (hasta `MAX_SALES_ITEMS`) sobre bobinas y
-      // saldos. Con el timeout por defecto de Prisma (5 s) un pedido de varias líneas
-      // contra Neon se caía por reloj; mismo criterio que el resto de transacciones largas
-      // del proyecto (partido, recepción de corte, cierre de OP).
-      { timeout: 30_000 },
+      // saldos, y desde D-186 además crea una OP por línea a fabricar. Mismo presupuesto que
+      // «generar todas las órdenes» (D-148), que hacía la mitad de este trabajo.
+      { timeout: 60_000, maxWait: 15_000 },
     );
 
     return this.findOne(orderId);
+  }
+
+  /**
+   * D-186: lo que confirmar va a hacer, **antes** de hacerlo: qué reserva cada línea, qué
+   * órdenes de producción salen con qué plan, qué líneas no generan nada y, si falta
+   * material, cuánto y dónde.
+   *
+   * Es una lectura sin locks: la palabra final la tiene `confirm`, bajo el lock de la
+   * cotización y de las bobinas. Por eso los mismos rechazos que `confirm` lanza aparecen acá
+   * como `blockers` — un botón deshabilitado con el motivo es mejor que un 400 después del
+   * clic, pero no lo reemplaza.
+   */
+  async confirmPreview(actor: RequestUser, quotationId: string): Promise<ConfirmPreviewDto> {
+    const quotation = await this.prisma.quotation.findUnique({
+      where: { id: quotationId },
+      include: {
+        customer: { select: { name: true, isActive: true } },
+        items: {
+          orderBy: { lineNumber: 'asc' },
+          include: {
+            product: {
+              select: {
+                sku: true,
+                isActive: true,
+                lengthMm: true,
+                businessLine: { select: { inventoryStrategy: true } },
+              },
+            },
+            pieces: { orderBy: { lineNumber: 'asc' } },
+          },
+        },
+      },
+    });
+    if (!quotation) throw new NotFoundException('Cotización no encontrada');
+
+    const blockers: string[] = [];
+    if (actor.role !== Role.ADMINISTRADOR && actor.id !== quotation.createdById) {
+      blockers.push('La cotización es de otro vendedor: no puedes confirmarla');
+    }
+    const validUntil = quotation.validUntil?.toISOString().slice(0, 10) ?? null;
+    if (quotation.status !== QuotationStatus.EMITTED) {
+      blockers.push(`Solo se confirma una cotización emitida; esta está ${quotation.status}`);
+    } else if (validUntil !== null && isQuotationExpired(validUntil, businessToday())) {
+      blockers.push(`La cotización venció el ${validUntil}: renuévala editándola`);
+    }
+    if (!quotation.customer.isActive) {
+      blockers.push(`El cliente ${quotation.customer.name} está desactivado`);
+    }
+    for (const item of quotation.items) {
+      if (!item.product.isActive) {
+        blockers.push(
+          `Línea ${String(item.lineNumber)}: el producto ${item.product.sku} está desactivado`,
+        );
+      }
+    }
+
+    const temporary = await this.prisma.quotationReservation.findFirst({
+      where: { quotationId, ...liveTemporaryWhere() },
+      select: { expiresAt: true },
+    });
+
+    let lines: ReservableLine[] = [];
+    try {
+      const raw = await this.resolveRawMaterial(
+        this.prisma,
+        quotation.items.map((i) => ({
+          lineNumber: i.lineNumber,
+          productId: i.productId,
+          qty: i.qty.toString(),
+        })),
+        { readOnly: true },
+      );
+      lines = quotation.items.map((i) => {
+        const r = raw.get(i.lineNumber);
+        return {
+          lineNumber: i.lineNumber,
+          productId: i.productId,
+          reserveItemType: r ? InventoryItemTypeEnum.RAW_MATERIAL : i.reserveItemType,
+          reserveItemId: r ? r.specId : i.reserveItemId,
+          reserveQty: r ? r.kg : i.reserveQty.toFixed(3),
+          reserveUnit: r ? Unit.KGM : i.reserveUnit,
+        };
+      });
+    } catch (err) {
+      // Un producto a medida con el catálogo incompleto no deja calcular el material: es el
+      // mismo 400 que daría confirmar, dicho antes.
+      blockers.push(err instanceof Error ? err.message : 'No se pudo calcular el material');
+    }
+
+    const scope = { exceptQuotationIds: [quotationId] };
+    const tolerance = roofingToleranceMm(this.env);
+    // Lo que las líneas anteriores del mismo documento ya tomaron de cada ítem: dos líneas del
+    // mismo color y espesor compiten por el mismo agregado, igual que en `reserveLines`.
+    const taken = new Map<string, Decimal>();
+    const labels = await this.reserveLabels(lines);
+    const previewLines: ConfirmPreviewLineDto[] = [];
+
+    for (const item of quotation.items) {
+      const line = lines.find((l) => l.lineNumber === item.lineNumber);
+      const base = {
+        lineNumber: item.lineNumber,
+        productSku: item.product.sku,
+        description: item.description,
+        qty: item.qty.toFixed(3),
+        unit: item.unit,
+      };
+      const withoutInventory = !carriesInventory(item.product.businessLine);
+      if (!line || (line.reserveItemType === InventoryItemTypeEnum.PRODUCT && withoutInventory)) {
+        previewLines.push({
+          ...base,
+          action: 'NONE',
+          reserveLabel: null,
+          reserveQty: null,
+          reserveUnit: null,
+          availableQty: null,
+          shortfallQty: null,
+          plan: null,
+        });
+        continue;
+      }
+
+      const qty = toDecimal(line.reserveQty.toString());
+      const key = `${line.reserveItemType}:${line.reserveItemId}`;
+      let available: Decimal;
+      let plan: string | null = null;
+      if (line.reserveItemType === InventoryItemTypeEnum.RAW_MATERIAL) {
+        const spec = (await findRawMaterialSpecs(this.prisma, [line.reserveItemId])).get(
+          line.reserveItemId,
+        );
+        available = spec
+          ? (await rawMaterialAvailability(this.prisma, spec, tolerance, scope)).available
+          : new Decimal(0);
+        const pieces = derivePiecesPlan(
+          item.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty })),
+          item.product.lengthMm === null ? null : item.product.lengthMm.toFixed(2),
+          item.qty.toString(),
+        );
+        plan = pieces.length > 0 ? describePieces(pieces) : null;
+        try {
+          await this.roofing.assertProducible(item.productId);
+        } catch (err) {
+          blockers.push(
+            `Línea ${String(item.lineNumber)}: ${err instanceof Error ? err.message : 'no se puede producir'}`,
+          );
+        }
+      } else {
+        const [balances, reserved] = await Promise.all([
+          this.prisma.inventoryBalance.findMany({
+            where: { itemType: line.reserveItemType, itemId: line.reserveItemId },
+            select: { qty: true },
+          }),
+          reservedByItem(this.prisma, line.reserveItemType, [line.reserveItemId], scope),
+        ]);
+        const physical = balances.reduce(
+          (acc, b) => acc.plus(toDecimal(b.qty.toString())),
+          new Decimal(0),
+        );
+        available = physical.minus(reserved.get(line.reserveItemId) ?? new Decimal(0));
+      }
+
+      const forThisLine = available.minus(taken.get(key) ?? new Decimal(0));
+      taken.set(key, (taken.get(key) ?? new Decimal(0)).plus(qty));
+      const shortfall = qty.gt(forThisLine)
+        ? qty.minus(Decimal.max(forThisLine, new Decimal(0)))
+        : null;
+      const label = labels.get(line.reserveItemId)?.label ?? line.reserveItemId;
+      if (shortfall !== null) {
+        blockers.push(
+          `Línea ${String(item.lineNumber)}: ${label} tiene ${Decimal.max(forThisLine, new Decimal(0)).toFixed(3)} ${line.reserveUnit} disponibles y el pedido necesita ${qty.toFixed(3)} — faltan ${shortfall.toFixed(3)}`,
+        );
+      }
+      previewLines.push({
+        ...base,
+        action:
+          line.reserveItemType === InventoryItemTypeEnum.RAW_MATERIAL ? 'PRODUCE' : 'RESERVE_STOCK',
+        reserveLabel: label,
+        reserveQty: qty.toFixed(3),
+        reserveUnit: line.reserveUnit,
+        availableQty: Decimal.max(forThisLine, new Decimal(0)).toFixed(3),
+        shortfallQty: shortfall?.toFixed(3) ?? null,
+        plan,
+      });
+    }
+
+    return {
+      quotationId,
+      quotationCode: quotationCode(quotation.seq),
+      temporaryReservationExpiresAt: temporary?.expiresAt.toISOString() ?? null,
+      lines: previewLines,
+      blockers,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -605,6 +838,12 @@ export class SalesOrdersService {
   private async resolveRawMaterial(
     tx: Prisma.TransactionClient,
     lines: { lineNumber: number; productId?: string; qty: string }[],
+    /**
+     * D-186: la vista previa de confirmar es un `GET` y no puede crear el agregado. Con
+     * `readOnly` la spec que todavía no existe vuelve virtual (id vacío), igual que en el
+     * panel de stock: nadie pudo prometer contra ella.
+     */
+    options: { readOnly?: boolean } = {},
   ): Promise<Map<number, { specId: string; kg: string }>> {
     // `flatMap` y no `filter`: además de descartar, estrecha el tipo de `productId`, así que
     // de acá para abajo no hacen falta aserciones.
@@ -630,11 +869,15 @@ export class SalesOrdersService {
       // mismo mecanismo con el que D-134 arregló las anteriores a él.
       if (!product || !isMadeToOrder(product)) continue;
       const at = `Línea ${line.lineNumber}`;
-      const spec = await resolveRawMaterialSpec(tx, {
+      const specInput = {
         businessLineId: product.businessLineId,
         colorId: product.colorId,
         thicknessMm: roofingSpecThicknessMm(product, at),
-      });
+      };
+      const spec =
+        options.readOnly === true
+          ? await findRawMaterialSpec(tx, specInput)
+          : await resolveRawMaterialSpec(tx, specInput);
       out.set(line.lineNumber, {
         specId: spec.id,
         kg: toFixedString(

@@ -158,6 +158,14 @@ export class RoofingProductionService {
   // D-084 — la orden nace del pedido, con su plan de corte copiado
   // -------------------------------------------------------------------------
 
+  /**
+   * D-186: lanza lo mismo que `createFromReservationInTx` lanzaría por el catálogo (espesor,
+   * ancho, acabado del SKU). La vista previa de confirmar lo usa para decirlo antes del clic.
+   */
+  async assertProducible(productId: string): Promise<void> {
+    await this.production.requireRoofingProduct(productId);
+  }
+
   async create(actor: RequestUser, input: CreateRoofingOrderInput): Promise<ProductionOrderDto> {
     // D-124: fecha en que la corrida arranca. Montar la bobina es custodia, no consumo
     // (D-060), así que crear la OP no mueve kardex y no hay guardrail que aplicar acá.

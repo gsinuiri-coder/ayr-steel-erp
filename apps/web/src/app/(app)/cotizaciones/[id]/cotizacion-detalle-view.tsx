@@ -31,6 +31,7 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
+import { ConfirmQuotationDialog } from '@/components/sales/confirm-quotation-dialog';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
 import {
   formatExpiry,
@@ -48,6 +49,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [cancelOpen, setCancelOpen] = useState(false);
   const [releaseOpen, setReleaseOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const quotation = useQuery({
     queryKey: ['quotation', id],
@@ -62,7 +64,8 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   const confirm = useMutation({
     mutationFn: () => api<SalesOrderDto>(`/sales/quotations/${id}/confirm`, { method: 'POST' }),
     onSuccess: (order) => {
-      toast.success(`Pedido ${order.code} creado con su reserva`);
+      toast.success(`Pedido ${order.code} creado con su reserva y sus órdenes`);
+      setConfirmOpen(false);
       invalidateSales(queryClient, { quotationId: id, orderId: order.id });
       router.push(`/pedidos/${order.id}`);
     },
@@ -185,14 +188,12 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           {canConfirm && (
             <Button
               disabled={busy}
-              pending={confirm.isPending}
-              pendingText="Confirmando…"
               onClick={() => {
                 if (busy) return;
-                confirm.mutate();
+                setConfirmOpen(true);
               }}
             >
-              Confirmar y reservar
+              Confirmar
             </Button>
           )}
           {canCancel && (
@@ -390,6 +391,16 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           </Badge>
         )}
       </div>
+
+      <ConfirmQuotationDialog
+        quotationId={q.id}
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        pending={confirm.isPending}
+        onConfirm={() => {
+          confirm.mutate();
+        }}
+      />
 
       <ReasonDialog
         open={releaseOpen}

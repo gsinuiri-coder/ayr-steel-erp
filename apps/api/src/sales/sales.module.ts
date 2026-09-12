@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DocumentsModule } from '../documents/documents.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { JobsModule } from '../jobs/jobs.module';
+import { ProductionModule } from '../production/production.module';
 import { QuotationExpiryJob } from './quotation-expiry.job';
 import { QuotationsService } from './quotations.service';
 import { SalesController } from './sales.controller';
@@ -20,7 +21,9 @@ import { SalesOrdersService } from './sales-orders.service';
  * provider metería a los cuatro en un ciclo de módulos con este.
  */
 @Module({
-  imports: [InventoryModule, DocumentsModule, JobsModule],
+  // D-186: `production` porque confirmar crea las OPs en la misma transacción que el pedido
+  // (`createFromReservationInTx`). Producción no importa ventas, así que no hay ciclo.
+  imports: [InventoryModule, DocumentsModule, JobsModule, ProductionModule],
   controllers: [SalesController],
   providers: [QuotationsService, SalesOrdersService, QuotationExpiryJob],
   exports: [QuotationsService, SalesOrdersService],

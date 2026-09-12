@@ -22,6 +22,7 @@ import {
   releaseTemporaryReservationSchema,
   reservationQuerySchema,
   updateSalesSettingsSchema,
+  type ConfirmPreviewDto,
   type ReleaseTemporaryReservationInput,
   type SalesSettingsDto,
   type TemporaryReservationListItemDto,
@@ -159,8 +160,18 @@ export class SalesController {
     return this.quotations.duplicate(actor, id);
   }
 
+  /** D-186: qué va a hacer confirmar —reservas, órdenes, faltantes— antes de hacerlo. */
+  @Get('quotations/:id/confirm-preview')
+  confirmPreview(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<ConfirmPreviewDto> {
+    return this.orders.confirmPreview(actor, id);
+  }
+
   /**
-   * RF-62: confirmar crea pedido + reserva en una transacción (D-054).
+   * RF-62 / D-186: confirmar crea pedido + reserva firme + órdenes de producción en una
+   * transacción, convirtiendo la reserva temporal si la había.
    * `promisedDeliveryDate` es opcional (D-096): única ventana en la que el vendedor la fija.
    */
   @Post('quotations/:id/confirm')
