@@ -41,6 +41,10 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { ExpressCreateCustomer, ExpressCreateProduct } from '@/components/express-create';
 import { SearchSelectField } from '@/components/search-select-modal';
+import {
+  ProductStockPickerDialog,
+  RawMaterialPoolList,
+} from '@/components/sales/product-stock-picker';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatMoney, formatQty, isPositiveDecimal, todayIso, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
@@ -965,6 +969,8 @@ function LineRow({
   const activeProducts = products?.filter(
     (p) => p.isActive && p.businessLineCode === l.businessLine,
   );
+  // D-188: el modal de elegir producto con stock, uno por fila.
+  const [pickerOpen, setPickerOpen] = useState(false);
   const product = productById.get(l.productId);
   const lineTotal = lineTotalsOf(l, product)?.subtotal ?? null;
   const sellsMeters = sellsByLength(product);
@@ -1077,28 +1083,41 @@ function LineRow({
             </Select>
           ) : (
             <div className="grid gap-1">
-              <Select
-                value={l.productId}
-                onValueChange={onChooseProduct}
+              {/*
+                D-188 (F8-S2b/M1): elegir viendo el disponible, en vez de un SKU suelto y una
+                hoja de stock aparte que había que abrir por su cuenta. El botón conserva el
+                mismo `aria-label` que tenía el `<select>` de siempre: sigue siendo "el campo
+                Producto de la línea N", solo que abre el modal en vez de desplegar opciones.
+              */}
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 w-full justify-start truncate text-xs font-normal"
+                aria-label={`Producto de la línea ${index + 1}`}
                 disabled={l.businessLine === ''}
+                onClick={() => {
+                  setPickerOpen(true);
+                }}
               >
-                <SelectTrigger className="w-full" aria-label={`Producto de la línea ${index + 1}`}>
-                  <SelectValue placeholder="Producto" />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeProducts?.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.sku} — {p.name}
-                    </SelectItem>
-                  ))}
-                  {/* Un desplegable vacío se ve igual que uno que no cargó: se dice. */}
-                  {products && activeProducts?.length === 0 && (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                      Esta línea no tiene productos activos.
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
+                {product ? `${product.sku} — ${product.name}` : 'Producto'}
+              </Button>
+              {l.businessLine !== '' && (
+                <ProductStockPickerDialog
+                  open={pickerOpen}
+                  onOpenChange={setPickerOpen}
+                  businessLine={l.businessLine}
+                  businessLineLabel={BUSINESS_LINE_LABELS[l.businessLine]}
+                  activeProducts={activeProducts ?? []}
+                  selectedProductId={l.productId}
+                  onSelect={onChooseProduct}
+                />
+              )}
+              {/* Un catálogo vacío se ve igual que uno que no cargó: se dice. */}
+              {products && activeProducts?.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Esta línea no tiene productos activos.
+                </p>
+              )}
               {/*
                 D-156: el SKU que falta se da de alta desde acá, con la línea de la fila ya
                 elegida. Es el callejón más caro del sistema: hasta ahora había que salir al
@@ -1485,13 +1504,20 @@ function RawMaterialCell({
   // fabrica contra el pedido, mostrarle al vendedor el saldo de su SKU sería mostrarle un cero
   // que no significa nada: lo que decide si puede prometer son los kilos del agregado.
   if (product.roofingKind === null) {
+    // D-188: la misma advertencia que la línea a medida de más abajo — cantidad pedida contra
+    // disponible, en rojo si no alcanza —, pareja entre las dos ramas. Antes solo se veía el
+    // disponible sin compararlo contra nada, y "faltan 3" quedaba para descubrirlo al guardar.
+    const needed = isPositiveDecimal(l.qty) ? new Decimal(l.qty) : null;
+    const available = stock ? new Decimal(stock.availableQty) : null;
+    const short = needed !== null && available !== null && needed.gt(available);
     return (
-      <span className="text-xs text-muted-foreground">
+      <span className={short ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
         Sale de stock
         {stock && (
           <>
             {' · '}
             {formatQty(stock.availableQty, unitSymbol(stock.unit))} disp.
+            {short && ' — no alcanza'}
           </>
         )}
       </span>
@@ -1589,41 +1615,10 @@ function StockPanelSheet({
             </p>
           ) : loading ? (
             <p className="text-xs text-muted-foreground">Cargando…</p>
-          ) : (data?.rawMaterial ?? []).length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              No hay bobinas abiertas en esta línea de negocio.
-            </p>
           ) : (
-            <ul className="grid gap-2">
-              {data?.rawMaterial.map((row) => (
-                <li
-                  key={`${row.colorId ?? '-'}|${row.thicknessMm}`}
-                  className="rounded-md border p-2"
-                >
-                  <div className="flex items-center gap-2">
-                    {row.colorHex && (
-                      <span
-                        aria-hidden
-                        className="size-3 rounded-full border"
-                        style={{ backgroundColor: row.colorHex }}
-                      />
-                    )}
-                    <span className="text-sm font-medium">
-                      {row.thicknessMm} mm · {row.colorName ?? 'Sin color'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {formatQty(row.availableKg, 'kg')} disponibles de{' '}
-                    {formatQty(row.physicalKg, 'kg')} · ≈ {formatQty(row.theoreticalMeters, 'm')}{' '}
-                    lineales
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {row.coils} bobina{row.coils === 1 ? '' : 's'} ·{' '}
-                    {formatQty(row.reservedKg, 'kg')} comprometidos
-                  </p>
-                </li>
-              ))}
-            </ul>
+            // D-188: la misma lista que usa el modal de elegir producto — una sola función,
+            // para que las dos vistas del agregado nunca puedan decir números distintos.
+            <RawMaterialPoolList rows={data?.rawMaterial ?? []} />
           )}
         </section>
 

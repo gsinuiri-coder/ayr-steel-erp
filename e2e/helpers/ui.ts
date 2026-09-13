@@ -83,6 +83,24 @@ export async function chooseOption(page: Page, field: Locator, optionLabel: stri
 }
 
 /**
+ * Elige un producto en el picker de stock de una línea de cotización o pedido (D-188): el
+ * campo **siempre** abre el modal —nunca decide por un `<select>` nativo, a diferencia de
+ * `chooseOption`— porque el punto del picker es mostrar el disponible, que un `<option>` de
+ * un desplegable no puede llevar. `productField` es el botón con
+ * `aria-label="Producto de la línea N"`.
+ */
+export async function chooseProductWithStock(
+  page: Page,
+  productField: Locator,
+  sku: string,
+): Promise<void> {
+  await productField.click();
+  const modal = page.getByRole('dialog');
+  await modal.getByLabel('Filtrar productos').fill(sku);
+  await modal.getByRole('button', { name: `Elegir ${sku}`, exact: true }).click();
+}
+
+/**
  * Inicia sesión con un usuario efímero recién creado (contraseña temporal) y
  * completa el cambio de contraseña obligatorio del primer ingreso.
  */

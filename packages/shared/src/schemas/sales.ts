@@ -611,6 +611,39 @@ export const confirmPreviewSchema = z.object({
 export type ConfirmPreviewDto = z.infer<typeof confirmPreviewSchema>;
 
 // --------------------------------------------------------------------------
+// D-188 (F8-S2b/M1) — aviso "sin stock disponible"
+// --------------------------------------------------------------------------
+
+/**
+ * Una línea de una cotización emitida que hoy no alcanza: la misma cuenta de
+ * `confirmPreview` (`shortfallQty`), leída sin bloqueadores de dueño ni de catálogo — este
+ * aviso es solo sobre material, no sobre quién puede confirmar.
+ */
+export const quotationStockShortageLineSchema = z.object({
+  lineNumber: z.number().int(),
+  productSku: z.string(),
+  /** Etiqueta de lo que falta: el agregado de materia prima, o el propio SKU si es stock. */
+  label: z.string(),
+  missingQty: z.string(),
+  unit: unitStringSchema,
+});
+export type QuotationStockShortageLineDto = z.infer<typeof quotationStockShortageLineSchema>;
+
+/**
+ * Una cotización con al menos una línea sin stock hoy. **Sin flag guardado ni job**: se
+ * recalcula en cada lectura de `GET /sales/quotations/stock-shortages` a partir del mismo
+ * disponible que ve el vendedor y que exige confirmar — una cotización que se confirma,
+ * anula, vence o cuyo material se libera deja de aparecer sola, sin que nadie la limpie.
+ */
+export const quotationStockShortageSchema = z.object({
+  quotationId: z.string().uuid(),
+  quotationCode: z.string(),
+  customerName: z.string(),
+  lines: z.array(quotationStockShortageLineSchema),
+});
+export type QuotationStockShortageDto = z.infer<typeof quotationStockShortageSchema>;
+
+// --------------------------------------------------------------------------
 // D-185 — reserva temporal sobre una cotización emitida
 // --------------------------------------------------------------------------
 

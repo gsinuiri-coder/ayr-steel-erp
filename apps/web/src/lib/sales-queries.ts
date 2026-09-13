@@ -20,6 +20,9 @@ export function invalidateSales(
   void queryClient.invalidateQueries({ queryKey: ['reservations'] });
   // D-185: reservar, liberar, editar y confirmar cambian la vista de temporales vigentes.
   void queryClient.invalidateQueries({ queryKey: ['temporary-reservations'] });
+  // D-188: la misma cuenta que la vista previa de confirmar — cualquier cosa que mueva
+  // disponible o el estado de una cotización puede sacarla (o meterla) en el aviso del Panel.
+  void queryClient.invalidateQueries({ queryKey: ['quotation-stock-shortages'] });
   void queryClient.invalidateQueries({ queryKey: ['stock-panel'] });
   void queryClient.invalidateQueries({ queryKey: ['inventory'] });
   void queryClient.invalidateQueries({ queryKey: ['coils'] });

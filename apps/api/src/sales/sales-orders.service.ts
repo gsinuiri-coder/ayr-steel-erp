@@ -20,6 +20,7 @@ import {
   TemporaryReservationStatus,
   InventoryItemType as InventoryItemTypeEnum,
   type InventoryItemType,
+  type InventoryStrategy,
 } from '@prisma/client';
 import {
   businessToday,
@@ -65,6 +66,7 @@ import {
   type SalesOrderListItemDto,
   type SalesOrderQuery,
   type ProductStockDto,
+  type QuotationStockShortageDto,
   type RawMaterialStockDto,
   sellsByFixedLength,
   type SellableCoilDto,
@@ -522,18 +524,62 @@ export class SalesOrdersService {
       select: { expiresAt: true },
     });
 
+    const { lines: previewLines, blockers: shortfallBlockers } = await this.previewLinesOf(
+      quotationId,
+      quotation.items,
+    );
+    blockers.push(...shortfallBlockers);
+
+    return {
+      quotationId,
+      quotationCode: quotationCode(quotation.seq),
+      temporaryReservationExpiresAt: temporary?.expiresAt.toISOString() ?? null,
+      lines: previewLines,
+      blockers,
+    };
+  }
+
+  /**
+   * El corazón de `confirmPreview` (D-186), separado de sus bloqueadores de dueño, vigencia
+   * y cliente: qué reserva cada línea, cuánto hay disponible y cuánto falta.
+   *
+   * F8-S2b/M1 también lo usa (`findStockShortages`) para el aviso "sin stock disponible" —
+   * la misma cuenta del gate de confirmar, nunca una paralela que se pueda desincronizar
+   * (D-150: dos guardrails que envejecen por separado es la forma en que uno se olvida).
+   */
+  private async previewLinesOf(
+    quotationId: string,
+    items: {
+      lineNumber: number;
+      productId: string;
+      qty: Prisma.Decimal;
+      unit: string;
+      description: string;
+      reserveItemType: InventoryItemType;
+      reserveItemId: string;
+      reserveQty: Prisma.Decimal;
+      reserveUnit: string;
+      product: {
+        sku: string;
+        lengthMm: Prisma.Decimal | null;
+        businessLine: { inventoryStrategy: InventoryStrategy };
+      };
+      pieces: { lengthMm: Prisma.Decimal; qty: number }[];
+    }[],
+  ): Promise<{ lines: ConfirmPreviewLineDto[]; blockers: string[] }> {
+    const blockers: string[] = [];
     let lines: ReservableLine[] = [];
     try {
       const raw = await this.resolveRawMaterial(
         this.prisma,
-        quotation.items.map((i) => ({
+        items.map((i) => ({
           lineNumber: i.lineNumber,
           productId: i.productId,
           qty: i.qty.toString(),
         })),
         { readOnly: true },
       );
-      lines = quotation.items.map((i) => {
+      lines = items.map((i) => {
         const r = raw.get(i.lineNumber);
         return {
           lineNumber: i.lineNumber,
@@ -558,7 +604,7 @@ export class SalesOrdersService {
     const labels = await this.reserveLabels(lines);
     const previewLines: ConfirmPreviewLineDto[] = [];
 
-    for (const item of quotation.items) {
+    for (const item of items) {
       const line = lines.find((l) => l.lineNumber === item.lineNumber);
       const base = {
         lineNumber: item.lineNumber,
@@ -645,13 +691,73 @@ export class SalesOrdersService {
       });
     }
 
-    return {
-      quotationId,
-      quotationCode: quotationCode(quotation.seq),
-      temporaryReservationExpiresAt: temporary?.expiresAt.toISOString() ?? null,
-      lines: previewLines,
-      blockers,
-    };
+    return { lines: previewLines, blockers };
+  }
+
+  /**
+   * F8-S2b/M1: cotizaciones emitidas y vigentes cuya materia prima o producto no alcanza
+   * **hoy** para lo que prometen. La misma cuenta de `confirmPreview` (`previewLinesOf`), sin
+   * sus bloqueadores de dueño, cliente ni catálogo — esos no son "falta de stock", y mezclar
+   * las dos cosas en un mismo aviso confundiría al vendedor sobre por qué apareció acá.
+   *
+   * **Lazy, sin flag guardado ni job**: no hay nada que limpiar cuando la cotización se
+   * confirma (deja de estar `EMITTED`, sale del `where`), vence (`isQuotationExpired` la
+   * descarta) o el material llega a cubrir (`shortfallQty` da `null` en la próxima lectura).
+   * El costo es leer todas las emitidas vigentes en cada consulta — aceptable: es el mismo
+   * conjunto, acotado, que ya recorre `/reservas-temporales` y la propia cola de vencimiento.
+   */
+  async findStockShortages(): Promise<QuotationStockShortageDto[]> {
+    const quotations = await this.prisma.quotation.findMany({
+      where: { status: QuotationStatus.EMITTED },
+      include: {
+        customer: { select: { name: true } },
+        items: {
+          orderBy: { lineNumber: 'asc' },
+          include: {
+            product: {
+              select: {
+                sku: true,
+                lengthMm: true,
+                businessLine: { select: { inventoryStrategy: true } },
+              },
+            },
+            pieces: { orderBy: { lineNumber: 'asc' } },
+          },
+        },
+      },
+      orderBy: { seq: 'asc' },
+    });
+    if (quotations.length === 0) return [];
+
+    const today = businessToday();
+    const out: QuotationStockShortageDto[] = [];
+    for (const quotation of quotations) {
+      if (quotation.items.length === 0) continue;
+      const validUntil = quotation.validUntil?.toISOString().slice(0, 10) ?? null;
+      if (validUntil !== null && isQuotationExpired(validUntil, today)) continue;
+
+      const { lines } = await this.previewLinesOf(quotation.id, quotation.items);
+      // `flatMap` y no `filter`: además de descartar, estrecha el tipo de `shortfallQty`, así
+      // que de acá para abajo no hace falta ninguna aserción (mismo patrón que
+      // `resolveSalesLines`).
+      const short = lines.flatMap((l) =>
+        l.shortfallQty !== null ? [{ ...l, shortfallQty: l.shortfallQty }] : [],
+      );
+      if (short.length === 0) continue;
+      out.push({
+        quotationId: quotation.id,
+        quotationCode: quotationCode(quotation.seq),
+        customerName: quotation.customer.name,
+        lines: short.map((l) => ({
+          lineNumber: l.lineNumber,
+          productSku: l.productSku,
+          label: l.reserveLabel ?? l.productSku,
+          missingQty: l.shortfallQty,
+          unit: l.reserveUnit ?? l.unit,
+        })),
+      });
+    }
+    return out;
   }
 
   // -------------------------------------------------------------------------

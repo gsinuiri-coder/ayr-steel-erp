@@ -8,7 +8,7 @@ import {
   purgeRoofingTrail,
 } from '../helpers/roofing';
 import { postExpectingError } from '../helpers/production';
-import { chooseOption } from '../helpers/ui';
+import { chooseOption, chooseProductWithStock } from '../helpers/ui';
 
 /**
  * **D-166 — el largo de catálogo de una plancha va en milímetros, y tiene que ser posible.**
@@ -222,8 +222,8 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
       // D-174 (S10): el label de la línea es una decisión del dueño, no una traducción
       // literal — "Coberturas Aluzinc" en la UI de hoy.
       await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
-      await page.getByLabel('Producto de la línea 1').click();
-      await page.getByRole('option', { name: new RegExp(product.sku) }).click();
+      // D-188: el campo de producto abre el picker con stock, no un desplegable de opciones.
+      await chooseProductWithStock(page, page.getByLabel('Producto de la línea 1'), product.sku);
 
       // **La regresión de la captura, en una línea**: el largo bloqueado tiene que traer el
       // del SKU en metros. Antes decía 0.00 porque el catálogo tenía 3 mm.

@@ -52,6 +52,7 @@ import {
   type QuotationDto,
   type QuotationListItemDto,
   type QuotationQuery,
+  type QuotationStockShortageDto,
   type ReleaseReservationInput,
   type ReservationDto,
   type ReservationQuery,
@@ -103,6 +104,16 @@ export class SalesController {
     @Query(new ZodValidationPipe(quotationQuerySchema)) query: QuotationQuery,
   ): Promise<PaginatedResult<QuotationListItemDto>> {
     return this.quotations.findAll(query);
+  }
+
+  /**
+   * D-188 (F8-S2b/M1): cotizaciones emitidas y vigentes con al menos una línea sin stock hoy
+   * — el aviso del Panel. Va **antes** de `quotations/:id`: si no, `ParseUUIDPipe` rechaza
+   * "stock-shortages" como si fuera un id.
+   */
+  @Get('quotations/stock-shortages')
+  findStockShortages(): Promise<QuotationStockShortageDto[]> {
+    return this.orders.findStockShortages();
   }
 
   @Get('quotations/:id')
