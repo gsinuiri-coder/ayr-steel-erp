@@ -369,12 +369,24 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
   const [pinned, setPinned] = useState<ReadonlySet<string>>(
     () => new Set(focused === null ? [] : [focused]),
   );
+  /**
+   * La orden elegida queda en `?op=`: recargar la vuelve a fijar. Las demás fijadas son estado
+   * de la pantalla y vuelven a la cola, que es donde está lo no iniciado.
+   *
+   * **Elegir pestaña también escribe `?op=`**, no solo abrir desde la cola. Si solo lo hiciera
+   * abrir, la navegación de «abrir B» podía llegar después de un clic en la pestaña A y el
+   * efecto de `?op=` le devolvía la B a quien ya había elegido la A. Con las dos escribiendo,
+   * la última elección es también la última navegación, y gana.
+   */
+  const selectOrder = (orderId: string) => {
+    setActiveId(orderId);
+    // Sin comparar contra `focused`: ese valor puede ser el de antes de una navegación todavía
+    // en vuelo, y saltarse el `replace` era exactamente la carrera que esto viene a cerrar.
+    router.replace(plantaHref({ pedido, op: orderId }), { scroll: false });
+  };
   const openOrder = (orderId: string) => {
     setPinned((prev) => (prev.has(orderId) ? prev : new Set([...prev, orderId])));
-    setActiveId(orderId);
-    // La última orden abierta queda en `?op=`: recargar la vuelve a fijar. Las demás fijadas
-    // son estado de la pantalla y vuelven a la cola, que es donde está lo no iniciado.
-    router.replace(plantaHref({ pedido, op: orderId }), { scroll: false });
+    selectOrder(orderId);
   };
 
   const rows = useMemo<WorkspaceOrder[]>(() => {
@@ -581,7 +593,7 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
               asList ? 'grid gap-4 lg:grid-cols-[minmax(0,18rem)_1fr] lg:items-start' : 'grid gap-4'
             }
           >
-            <OrderPicker rows={rows} activeId={activeId} asList={asList} onSelect={setActiveId} />
+            <OrderPicker rows={rows} activeId={activeId} asList={asList} onSelect={selectOrder} />
             {active?.roofing && (
               <RoofingOrderPanel
                 key={active.orderId}
