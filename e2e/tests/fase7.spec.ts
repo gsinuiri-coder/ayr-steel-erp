@@ -73,11 +73,12 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       // 2 planchas de 4 m ⇒ 8 m ⇒ 32 kg teóricos. Se reservan 50 kg: queda margen de sobra
       // (18 kg) para que la reserva de bobina siga viva mientras la OP está en curso.
       const rows = pieces([4, 2]);
-      const { order } = await quoteAndOrder(api, {
+      const { quotation: quotation1, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows,
       });
+      (trail.quotationIds ??= []).push(quotation1.id);
       trail.orderIds = [order.id];
 
       // D-189: confirmar abrió la OP en borrador, y esa orden no iniciada **es** la entrada
@@ -169,11 +170,12 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       // (`releaseRemainingReservation`), los 24 kg de sobra dejaban la reserva ACTIVA para
       // siempre y el pedido no salía de la cola ni despachado.
       const plannedRows = pieces([4, 2]); // 8 m ⇒ 32 kg reservados
-      const { order } = await quoteAndOrder(api, {
+      const { quotation: quotation2, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows: plannedRows,
       });
+      (trail.quotationIds ??= []).push(quotation2.id);
       trail.orderIds = [order.id];
 
       const reservation = (await reservationsOf(api, order.id))[0]!;
@@ -238,11 +240,12 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
 
     try {
       const rows = pieces([3, 2]); // 6 m ⇒ 24 kg
-      const { order } = await quoteAndOrder(api, {
+      const { quotation: quotation3, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows,
       });
+      (trail.quotationIds ??= []).push(quotation3.id);
       trail.orderIds = [order.id];
       const reservation = (await reservationsOf(api, order.id))[0]!;
       const op = await roofingOrder(api, reservation.id);
@@ -297,16 +300,18 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
 
     try {
       // Dos pedidos EN_COLA, sin fecha prometida (mismo semáforo): el orden inicial es FIFO.
-      const { order: orderA } = await quoteAndOrder(api, {
+      const { quotation: quotation4, order: orderA } = await quoteAndOrder(api, {
         customerId: customerA.id,
         productId: scenario.product.id,
         rows: pieces([2, 1]),
       });
-      const { order: orderB } = await quoteAndOrder(api, {
+      (trail.quotationIds ??= []).push(quotation4.id);
+      const { quotation: quotation5, order: orderB } = await quoteAndOrder(api, {
         customerId: customerB.id,
         productId: scenario.product.id,
         rows: pieces([2, 1]),
       });
+      (trail.quotationIds ??= []).push(quotation5.id);
       trail.orderIds = [orderA.id, orderB.id];
       // D-189: confirmar dejó una OP no iniciada por pedido; esas son las entradas de la cola.
       const opA = orderA.reservations[0]!.productionOrderId!;
@@ -384,26 +389,29 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       const far = isoDaysFromToday(10);
       const near = isoDaysFromToday(2);
       const overdue = isoDaysFromToday(-3);
-      const { order: farOrder } = await quoteAndOrder(api, {
+      const { quotation: quotation6, order: farOrder } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows,
         promisedDeliveryDate: far,
       });
+      (trail.quotationIds ??= []).push(quotation6.id);
       trail.orderIds = [farOrder.id];
-      const { order: nearOrder } = await quoteAndOrder(api, {
+      const { quotation: quotation7, order: nearOrder } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows,
         promisedDeliveryDate: near,
       });
+      (trail.quotationIds ??= []).push(quotation7.id);
       trail.orderIds.push(nearOrder.id);
-      const { order } = await quoteAndOrder(api, {
+      const { quotation: quotation8, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows,
         promisedDeliveryDate: overdue,
       });
+      (trail.quotationIds ??= []).push(quotation8.id);
       trail.orderIds.push(order.id);
       expect(order.promisedDeliveryDate).toBe(overdue);
       const opFar = farOrder.reservations[0]!.productionOrderId!;
@@ -505,11 +513,12 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
 
     try {
       const rows = pieces([3, 1]); // 3 m ⇒ 12 kg
-      const { order } = await quoteAndOrder(api, {
+      const { quotation: quotation9, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows,
       });
+      (trail.quotationIds ??= []).push(quotation9.id);
       // No se agrega a `trail.orderIds`: el pedido se anula dentro del propio test y no hace
       // falta que la purga lo reintente.
       // D-189: la orden no iniciada que abrió confirmar es la entrada de la cola.

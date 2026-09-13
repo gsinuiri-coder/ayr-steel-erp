@@ -47,11 +47,12 @@ test.describe('Fase 7 — bordes de la cola de producción', () => {
     };
 
     try {
-      const { order } = await quoteAndOrder(api, {
+      const { quotation: quotation1, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows: pieces([2, 1]),
       });
+      (trail.quotationIds ??= []).push(quotation1.id);
       trail.orderIds = [order.id];
       // D-189: la prioridad es de la orden, y la orden en cola es la que abrió confirmar.
       const opId = order.reservations[0]!.productionOrderId!;
@@ -111,11 +112,12 @@ test.describe('Fase 7 — bordes de la cola de producción', () => {
     let sellerApi: APIRequestContext | null = null;
 
     try {
-      const { order } = await quoteAndOrder(api, {
+      const { quotation: quotation2, order } = await quoteAndOrder(api, {
         customerId: customer.id,
         productId: scenario.product.id,
         rows: pieces([2, 1]),
       });
+      (trail.quotationIds ??= []).push(quotation2.id);
       trail.orderIds = [order.id];
 
       sellerApi = await apiAs(baseURL!, seller);

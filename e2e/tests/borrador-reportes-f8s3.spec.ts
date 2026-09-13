@@ -168,6 +168,15 @@ test.describe('D-191 — borrador de reportes por orden (API)', () => {
       expect(shrink.status()).toBe(400);
       expect(await shrink.text()).toMatch(/quita o corrige filas del borrador/);
 
+      // Bajar la bobina de la que salen esas filas tampoco: el borrador quedaría huérfano. Se
+      // comprueba antes de reportar nada, porque una bobina que ya roló no se baja por otra guarda.
+      const withCoil = await getJson<ProductionOrderDto>(api, `/api/production/${opId}`);
+      const release = await postExpectingError(
+        api,
+        `/api/production/roofing/${opId}/coils/${withCoil.consumptions[0]!.id}/release`,
+      );
+      expect(release.message).toMatch(/fila\(s\) en el borrador/);
+
       // Pero el estado igual puede cambiar por debajo: un reporte directo (API o importación)
       // de 8 m deja 32 m libres, y el borrador ocupa 40.
       await postJson(api, `/api/production/roofing/${opId}/report`, { pieces: pieces([4, 2]) });
@@ -187,13 +196,6 @@ test.describe('D-191 — borrador de reportes por orden (API)', () => {
       // Cerrar con el borrador cargado tampoco: quedaría huérfano.
       const close = await postExpectingError(api, `/api/production/roofing/${opId}/close`, {});
       expect(close.message).toMatch(/fila\(s\) sin ejecutar en el borrador/);
-      // Ni bajar la bobina de la que salen esas filas.
-      const withCoil = await getJson<ProductionOrderDto>(api, `/api/production/${opId}`);
-      const release = await postExpectingError(
-        api,
-        `/api/production/roofing/${opId}/coils/${withCoil.consumptions[0]!.id}/release`,
-      );
-      expect(release.message).toMatch(/fila\(s\) en el borrador/);
     } finally {
       await purgeRoofingTrail(api, trail);
     }
