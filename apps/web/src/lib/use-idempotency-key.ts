@@ -14,14 +14,25 @@ export function useIdempotencyKey(): {
   current: () => string;
   settle: (error?: unknown) => void;
 } {
-  const key = useRef<string>(crypto.randomUUID());
+  // Perezoso y con respaldo: `crypto.randomUUID` solo existe en contexto seguro (HTTPS o
+  // localhost), y abrir `/planta` por la IP de la red local lo dejaba `undefined` y el panel
+  // reventaba al montarse. La clave solo tiene que ser única por intento, no criptográfica.
+  const key = useRef<string | null>(null);
+  key.current ??= newKey();
 
-  const current = useCallback(() => key.current, []);
+  const current = useCallback(() => (key.current ??= newKey()), []);
 
   const settle = useCallback((error?: unknown) => {
     const uncertain = error !== undefined && !(error instanceof ApiError && error.status < 500);
-    if (!uncertain) key.current = crypto.randomUUID();
+    if (!uncertain) key.current = newKey();
   }, []);
 
   return { current, settle };
+}
+
+function newKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }

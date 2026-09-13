@@ -25,6 +25,17 @@ export const BUSINESS_TIME_ZONE = 'America/Lima';
  * Con eso, una cotización válida "hasta el 10" se rechazaba por vencida durante las últimas
  * cinco horas del día 10, y el pedido nacía fechado el 11 (D-069, D-112).
  */
+export function businessToday(now: Date = new Date()): string {
+  // `en-CA` da directamente `YYYY-MM-DD`; `Intl` resuelve el desfase y el horario de verano
+  // (que Perú no tiene, pero no hace falta asumirlo).
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
 /**
  * D-185: `n` días hábiles después de `isoDate` (`YYYY-MM-DD`), contando de lunes a viernes.
  * El día de partida no cuenta: reservar un viernes con 3 días hábiles vence el miércoles.
@@ -51,15 +62,4 @@ export function addBusinessDays(isoDate: string, n: number): string {
 export function temporaryReservationExpiry(n: number, now: Date = new Date()): Date {
   const lastDay = addBusinessDays(businessToday(now), n);
   return new Date(`${lastDay}T23:59:59.999-05:00`);
-}
-
-export function businessToday(now: Date = new Date()): string {
-  // `en-CA` da directamente `YYYY-MM-DD`; `Intl` resuelve el desfase y el horario de verano
-  // (que Perú no tiene, pero no hace falta asumirlo).
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: BUSINESS_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(now);
 }

@@ -301,7 +301,11 @@ export function SalesDocumentForm({
   const submitKey = useIdempotencyKey();
 
   const [customerId, setCustomerId] = useState(initial?.customerId ?? addTo?.customerId ?? '');
-  const [issueDate, setIssueDate] = useState(initial?.issueDate ?? todayIso());
+  // D-184: editar una vencida es renovarla, y la vigencia se cuenta desde la emisión: con la
+  // fecha original, una cotización vieja seguía vencida por más días que se le dieran.
+  const [issueDate, setIssueDate] = useState(
+    initial && !initial.isExpired ? initial.issueDate : todayIso(),
+  );
   const [validityDays, setValidityDays] = useState(
     initial ? validityDaysOf(initial) : String(DEFAULT_QUOTATION_VALIDITY_DAYS),
   );
@@ -802,7 +806,9 @@ export function SalesDocumentForm({
                 key={l.key}
                 line={l}
                 index={index}
-                isQuotation={isQuotation}
+                // D-187: agregar ítems a un pedido que nació de una cotización ofrece también las
+                // líneas que exigen cotizar (coberturas, RF-31): la cotización ya existió.
+                offersQuotationRequired={isQuotation || adding}
                 businessLines={businessLines.data}
                 products={products.data}
                 productById={productById}
@@ -906,7 +912,7 @@ export function SalesDocumentForm({
 function LineRow({
   line: l,
   index,
-  isQuotation,
+  offersQuotationRequired,
   businessLines,
   products,
   productById,
@@ -923,7 +929,7 @@ function LineRow({
 }: {
   line: LineDraft;
   index: number;
-  isQuotation: boolean;
+  offersQuotationRequired: boolean;
   businessLines: BusinessLineDto[] | undefined;
   products: ProductDto[] | undefined;
   productById: Map<string, ProductDto>;
@@ -1010,7 +1016,7 @@ function LineRow({
                 // elegir Servicios, así que un conformado no se cotizaba por ninguna puerta.
                 // Que una línea no lleve existencias no la hace menos vendible; lo único que
                 // cambia es que no promete stock, y eso lo resuelve el API.
-                ?.filter((b) => isQuotation || !b.quotationRequired)
+                ?.filter((b) => offersQuotationRequired || !b.quotationRequired)
                 .map((b) => (
                   <SelectItem key={b.id} value={b.code}>
                     {BUSINESS_LINE_LABELS[b.code]}

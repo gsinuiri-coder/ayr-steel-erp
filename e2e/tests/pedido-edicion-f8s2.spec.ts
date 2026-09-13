@@ -374,6 +374,58 @@ test.describe('F8-S2 — edición del pedido confirmado (D-187)', () => {
     }
   });
 
+  test('D-187: agregar un ítem de coberturas desde la pantalla del pedido', async ({ page }) => {
+    const s = await setupRoofingScenario(api, { weightKg: '500' });
+    const customer = await createCustomer(api);
+    const trail = trailOf(s);
+    try {
+      const rows = pieces([10, 1]);
+      const quotation = await createQuotation(api, {
+        customerId: customer.id,
+        businessLine: ROOFING_LINE,
+        productId: s.product.id,
+        qty: metersOf(rows),
+        unitPricePen: '60',
+        pieces: rows,
+      });
+      trail.quotationIds.push(quotation.id);
+      const order = await postJson<SalesOrderDto>(
+        api,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+      );
+      trail.orderIds.push(order.id);
+
+      await loginAsAdmin(page);
+      await page.goto(`/pedidos/${order.id}`);
+      await page.getByRole('link', { name: 'Agregar ítems' }).click();
+      await expect(
+        page.getByRole('heading', { name: `Agregar ítems a ${order.code}` }),
+      ).toBeVisible({ timeout: 60_000 });
+
+      // Coberturas exige cotización (RF-31), pero este pedido ya nació de una: la línea de
+      // negocio tiene que ofrecerse igual.
+      await page.getByLabel('Línea de negocio de la línea 1').click();
+      await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
+      await page.getByLabel('Producto de la línea 1').click();
+      await page.getByRole('option', { name: new RegExp(s.product.sku) }).click();
+      await page.getByLabel('Planchas del largo 1 de la línea 1').fill('1');
+      await page.getByLabel('Largo 1 de la línea 1 en metros').fill('10');
+      await page.getByLabel('Precio unitario de la línea 1').fill('70.80');
+      await page.getByRole('button', { name: 'Agregar ítems' }).click();
+
+      await expect(page).toHaveURL(new RegExp(`/pedidos/${order.id}$`), { timeout: 30_000 });
+      const detail = await getJson<SalesOrderDto>(api, `/api/sales/orders/${order.id}`);
+      expect(detail.items).toHaveLength(2);
+      const added = (await reservationsOf(api, order.id)).find(
+        (r) => r.salesOrderItemId === detail.items[1]!.id,
+      );
+      expect(added).toMatchObject({ status: 'ACTIVE', qty: '40.400' });
+      expect(added!.productionOrderId).not.toBeNull();
+    } finally {
+      await purgeRoofingTrail(api, trail);
+    }
+  });
+
   test('D-187: el administrador cambia el precio desde el pedido y ve el registro', async ({
     page,
   }) => {

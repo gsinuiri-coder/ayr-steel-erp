@@ -406,15 +406,28 @@ export class SalesOrderEditsService {
           select: {
             id: true,
             status: true,
+            itemType: true,
+            // **Todas** las OP no anuladas, cerradas incluidas: una OP que reportó y se cerró
+            // ya no está viva, pero dejó producto fabricado con su propia reserva y la de
+            // materia prima liberada. Mirar solo las vivas dejaba recalcular encima de eso.
             productionOrders: {
-              where: {
-                status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
-              },
-              select: { id: true, seq: true },
+              where: { status: { not: ProductionOrderStatus.CANCELLED } },
+              select: { id: true, seq: true, status: true, reservationId: true },
             },
           },
         });
-        const liveOrders = reservations.flatMap((r) => r.productionOrders);
+        const orders = reservations.flatMap((r) => r.productionOrders);
+        const closed = orders.find(
+          (o) =>
+            o.status !== ProductionOrderStatus.DRAFT &&
+            o.status !== ProductionOrderStatus.IN_PROGRESS,
+        );
+        if (closed) {
+          throw new BadRequestException(
+            `${at}: la orden ${productionOrderCode(closed.seq)} ya se cerró, así que la cantidad no se cambia. ${addInstead}`,
+          );
+        }
+        const liveOrders = orders;
         if (liveOrders.length > 0) {
           const reported = await tx.productionReport.findFirst({
             where: {
@@ -428,6 +441,17 @@ export class SalesOrderEditsService {
               `${at}: la orden ${productionOrderCode(reported.productionOrder.seq)} ya tiene reportes de producción, así que la cantidad no se cambia. ${addInstead}`,
             );
           }
+        }
+        // D-088: producir traslada la promesa a una reserva del producto fabricado. Si la línea
+        // tiene una reserva viva de otro tipo que el suyo, ya hay producción detrás.
+        if (
+          reservations.some(
+            (r) => r.status === ReservationStatus.ACTIVE && r.itemType !== item.reserveItemType,
+          )
+        ) {
+          throw new BadRequestException(
+            `${at}: ya tiene material fabricado reservado, así que la cantidad no se cambia. ${addInstead}`,
+          );
         }
         if (reservations.some((r) => r.status === ReservationStatus.CONSUMED)) {
           throw new BadRequestException(
@@ -505,6 +529,17 @@ export class SalesOrderEditsService {
             : [];
         const adjustedOrders: string[] = [];
         for (const op of liveOrders) {
+          // Si el catálogo movió la especificación, la reserva nueva es otra fila: una OP en curso
+          // tiene una bobina montada elegida para la especificación vieja y no se reasigna sola.
+          if (
+            newReservation &&
+            op.status === ProductionOrderStatus.IN_PROGRESS &&
+            op.reservationId !== newReservation.id
+          ) {
+            throw new BadRequestException(
+              `${at}: la materia prima de la línea cambió en el catálogo y la orden ${productionOrderCode(op.seq)} ya tiene bobina montada: libera la bobina antes de cambiar la cantidad`,
+            );
+          }
           if (!newReservation) {
             // La línea dejó de fabricarse (el catálogo cambió entre confirmar y hoy): la OP no
             // tiene de qué colgar. Que planta la anule a mano con su motivo.

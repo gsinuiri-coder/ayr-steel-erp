@@ -1336,7 +1336,16 @@ export class SalesOrdersService {
         });
         const lines = await this.quotationReservableLines(tx, items);
         const days = await this.temporaryBusinessDays(tx);
-        const expiresAt = temporaryReservationExpiry(days);
+        // Nunca más allá de la vigencia de la cotización: pasado ese día ya no se puede
+        // confirmar, y seguir apartando material para algo que no se puede confirmar es
+        // quitárselo a otro sin motivo. `null` es sin vencimiento (D-157) y no recorta nada.
+        const byBusinessDays = temporaryReservationExpiry(days);
+        const byValidity =
+          head.validUntil === null ? null : new Date(`${head.validUntil}T23:59:59.999-05:00`);
+        const expiresAt =
+          byValidity !== null && byValidity.getTime() < byBusinessDays.getTime()
+            ? byValidity
+            : byBusinessDays;
         const written = await this.reserveLines(tx, lines, 'la reserva', async (line) => {
           await tx.quotationReservation.create({
             data: {
@@ -1673,7 +1682,12 @@ export class SalesOrdersService {
       }
 
       if (idleIds.length > 0) {
-        await tx.productionOrder.updateMany({
+        // Sin lock previo de las OP a propósito: montar una bobina bloquea la OP y después la
+        // reserva, y tomarlas acá en el orden inverso abriría un deadlock. En su lugar, la
+        // condición `DRAFT` se reevalúa al escribir: si planta montó una bobina entre la lectura
+        // y esta escritura, la fila ya no es `DRAFT`, se actualizan menos y la anulación entera
+        // se deshace — nunca queda una OP en curso sobre un pedido anulado.
+        const cancelledOrders = await tx.productionOrder.updateMany({
           where: { id: { in: idleIds }, status: ProductionOrderStatus.DRAFT },
           data: {
             status: ProductionOrderStatus.CANCELLED,
@@ -1681,6 +1695,11 @@ export class SalesOrdersService {
             cancelledAt: new Date(),
           },
         });
+        if (cancelledOrders.count !== idleIds.length) {
+          throw new ConflictException(
+            'Una orden de producción del pedido empezó a fabricarse mientras se anulaba: vuelve a intentarlo',
+          );
+        }
       }
 
       const active = reservations.filter((r) => r.status === ReservationStatus.ACTIVE);
@@ -1737,7 +1756,9 @@ export class SalesOrdersService {
         after: {
           status: SalesOrderStatus.CANCELLED,
           reason,
-          cancelledProductionOrders: idleIds.length,
+          cancelledProductionOrders: liveOrders
+            .filter((op) => idleIds.includes(op.id))
+            .map((op) => productionOrderCode(op.seq)),
         },
       });
     });

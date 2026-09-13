@@ -17,6 +17,7 @@ import { api, ApiError } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
+import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
 import { SearchSelectField } from '@/components/search-select-modal';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -171,7 +172,8 @@ export function EditLineQtyDialog({
   const [qty, setQty] = useState('');
   const [rows, setRows] = useState<PieceRow[]>([EMPTY_PIECE_ROW]);
   const [error, setError] = useState<string | null>(null);
-  const byPieces = (item?.pieces.length ?? 0) > 0;
+  // Regla dura 14: los largos los decide la unidad, no que la línea los haya traído.
+  const byPieces = item?.unit === 'MTR';
 
   useEffect(() => {
     if (item) {
@@ -194,6 +196,8 @@ export function EditLineQtyDialog({
     onSuccess: () => {
       toast.success('Cantidad actualizada');
       invalidateSales(queryClient, { orderId: order.id });
+      // El plan de corte de la OP cambió con la cantidad.
+      invalidateProduction(queryClient);
       onOpenChange(false);
     },
     onError: (err) => {

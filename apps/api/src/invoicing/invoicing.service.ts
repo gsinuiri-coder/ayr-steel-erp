@@ -418,6 +418,16 @@ export class InvoicingService {
     // puede usar. Un VENDEDOR emite con fecha de hoy y nada más.
     this.operationDate.assertIssueDate(actor, input.issueDate);
 
+    // D-187: el comprobante es el corte de la edición del pedido confirmado (precio, cliente,
+    // ítems, cantidades), y esas ediciones toman el lock del pedido. Tomarlo acá **antes** de
+    // leer cliente y líneas serializa las dos cosas: sin él, un borrador creado mientras el
+    // administrador cambiaba un precio copiaba el precio viejo y el registro decía otro.
+    if (input.salesOrderId) {
+      await tx.$queryRaw`
+        SELECT "id" FROM "sales_orders" WHERE "id" = ${input.salesOrderId}::uuid FOR UPDATE
+      `;
+    }
+
     const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
     if (!customer) throw new NotFoundException('Cliente no encontrado');
     if (!customer.isActive) throw new BadRequestException('El cliente está desactivado');

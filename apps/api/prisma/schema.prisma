@@ -1743,9 +1743,9 @@ model SalesSettings {
 model SalesPriceChange {
   id                     String      @id @default(uuid()) @db.Uuid
   quotationId            String?     @map("quotation_id") @db.Uuid
-  quotation              Quotation?  @relation(fields: [quotationId], references: [id])
+  quotation              Quotation?  @relation(fields: [quotationId], references: [id], onDelete: Restrict)
   salesOrderId           String?     @map("sales_order_id") @db.Uuid
-  salesOrder             SalesOrder? @relation(fields: [salesOrderId], references: [id])
+  salesOrder             SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
   /// Número de línea **después** del cambio. Las líneas de la cotización se reescriben al
   /// editar, así que no hay FK a la línea.
   lineNumber             Int         @map("line_number")

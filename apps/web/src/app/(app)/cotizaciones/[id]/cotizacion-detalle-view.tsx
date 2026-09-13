@@ -70,7 +70,12 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       invalidateSales(queryClient, { quotationId: id, orderId: order.id });
       router.push(`/pedidos/${order.id}`);
     },
-    onError,
+    onError: (err: unknown) => {
+      onError(err);
+      // Entre la vista previa y el clic otro pudo tomar el material: se relee para que el
+      // diálogo muestre el bloqueo nuevo en vez de ofrecer otra vez el mismo botón.
+      void queryClient.invalidateQueries({ queryKey: ['confirm-preview', id] });
+    },
   });
 
   // D-185: apartar el material mientras el cliente deposita.
