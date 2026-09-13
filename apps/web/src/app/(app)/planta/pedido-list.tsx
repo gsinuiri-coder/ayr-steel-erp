@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { formatDate, formatQty } from '@/lib/format';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import { QueueEntrySummary } from '@/components/production-queue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { plantaHref } from './planta-links';
 import type { PedidoGroup } from './pedido-groups';
+
+/** F8-S3c/M2: la cotización de origen de un pedido, para el link clickable de su tarjeta. */
+export type QuotationOf = ReadonlyMap<string, { quotationId: string; quotationCode: string }>;
 
 /**
  * F8-S3b/M2: la primera vista de `/planta` es la lista de **pedidos** con producción
@@ -23,10 +27,13 @@ export function PedidoList({
   groups,
   pending,
   failed,
+  quotations,
 }: {
   groups: readonly PedidoGroup[];
   pending: boolean;
   failed: boolean;
+  /** F8-S3c/M2: cotización de origen por `salesOrderId`, cuando se conoce. */
+  quotations: QuotationOf;
 }) {
   if (pending) return <Skeleton className="h-64 w-full" />;
   if (failed) {
@@ -48,13 +55,23 @@ export function PedidoList({
   return (
     <section aria-label="Pedidos con producción pendiente" className="grid gap-3">
       {groups.map((g) => (
-        <PedidoCard key={g.key} group={g} />
+        <PedidoCard
+          key={g.key}
+          group={g}
+          quotation={g.salesOrderId === null ? null : (quotations.get(g.salesOrderId) ?? null)}
+        />
       ))}
     </section>
   );
 }
 
-function PedidoCard({ group: g }: { group: PedidoGroup }) {
+function PedidoCard({
+  group: g,
+  quotation,
+}: {
+  group: PedidoGroup;
+  quotation: { quotationId: string; quotationCode: string } | null;
+}) {
   const title =
     g.salesOrderId === null ? 'Órdenes sin pedido (a stock)' : (g.salesOrderCode ?? 'Pedido');
   const { counts } = g;
@@ -75,6 +92,20 @@ function PedidoCard({ group: g }: { group: PedidoGroup }) {
           </Link>
           {g.customerName !== null && g.salesOrderId !== null && (
             <span className="text-sm font-normal">{g.customerName}</span>
+          )}
+          {/*
+            F8-S3c/M2: por encima del `after:absolute` de arriba (el orden en el DOM decide,
+            los dos son position:relative de hecho vía Link/CardTitle), con su propio z-index:
+            sin él, el link a la cotización quedaría debajo del enlace que cubre toda la
+            tarjeta y el clic nunca le llegaría.
+          */}
+          {quotation !== null && (
+            <Link
+              href={`/cotizaciones/${quotation.quotationId}`}
+              className={`relative z-10 text-sm font-normal ${LINK_CLASSNAME}`}
+            >
+              {quotation.quotationCode}
+            </Link>
           )}
           {g.prioritized > 0 && <Badge>Prioridad</Badge>}
           {g.overdue && <Badge variant="destructive">Vencido</Badge>}

@@ -48,7 +48,7 @@ export interface PedidoGroup {
 }
 
 /** El listado de perfiles no trae el correlativo: sale del código (`OP-000123`). */
-function seqOf(code: string): number {
+export function seqOf(code: string): number {
   const digits = /(\d+)$/.exec(code)?.[1];
   return digits === undefined ? Number.MAX_SAFE_INTEGER : Number(digits);
 }

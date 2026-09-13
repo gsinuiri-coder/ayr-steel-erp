@@ -5,21 +5,25 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
+  compareQueueRank,
   MAX_ORDER_TABS,
   ProductionOrderKind,
-  ProductionOrderStatus,
   Role,
   type ProductionOrderListItemDto,
+  type ProductionQueueEntryDto,
+  type QueueRankable,
   type RoofingBatchOrderDto,
+  type SalesOrderListItemDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatDate, formatQty } from '@/lib/format';
+import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
+import { formatDate, formatQty, queueAgeLabel } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Sheet,
   SheetContent,
@@ -30,10 +34,10 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DrywallOrderPanel } from './drywall-order-panel';
-import { QueueEntryLink, useProductionQueue } from '@/components/production-queue';
+import { useProductionQueue } from '@/components/production-queue';
 import { OrderHistory } from '@/components/production/order-history';
 import { DrywallOrderCard, LinesWithoutOrderCard } from './new-order-cards';
-import { groupByPedido, WITHOUT_SALES_ORDER } from './pedido-groups';
+import { groupByPedido, seqOf, WITHOUT_SALES_ORDER } from './pedido-groups';
 import { PedidoList } from './pedido-list';
 import { PedidoPriorityControl } from './pedido-priority';
 import { plantaHref } from './planta-links';
@@ -59,9 +63,10 @@ import {
  *
  * Ahora es una sola pantalla. Desde F8-S3b/M2 se **entra por pedido**: la primera vista lista
  * los pedidos con producción pendiente y cada uno abre su propia vista de producción
- * (`?pedido=`), con su cola y su workspace. Adentro, cada orden es una pestaña con su ciclo
- * completo, y la clase de la orden decide qué panel se dibuja —coberturas o perfiles—, que es
- * la única diferencia real entre las dos ramas (D-087).
+ * (`?pedido=`), directa desde F8-S3c/M1: sin paso por una cola separada, la franja de chips
+ * trae de una vez todas las órdenes del pedido con el workspace de la primera debajo. Adentro,
+ * cada orden es una pestaña con su ciclo completo, y la clase de la orden decide qué panel se
+ * dibuja —coberturas o perfiles—, que es la única diferencia real entre las dos ramas (D-087).
  *
  * El detalle de una orden (`/produccion/:id`) queda de **solo lectura**: costos, kardex y
  * correcciones. Producir es acá, y en un solo lugar.
@@ -84,15 +89,38 @@ interface WorkspaceOrder {
   customerName: string | null;
   /** Segunda línea de la pestaña: qué falta producir. */
   subtitle: string;
+  /**
+   * F8-S3c/M1: lo que aportaba el card de «Cola de producción» que el chip absorbe —en cola
+   * desde cuándo, kilos teóricos— para una orden todavía no iniciada. `null` si ya arrancó o
+   * si es de perfiles (la cola de D-189 es solo de coberturas).
+   */
+  queueNote: string | null;
   /** Solo coberturas: el DTO completo que su panel necesita. */
   roofing: RoofingBatchOrderDto | null;
+}
+
+/** F8-S3c/M1: el ranking de la cola (D-189) para una fila del workspace, de cualquier rama. */
+function rankOfRoofing(order: RoofingBatchOrderDto): QueueRankable {
+  return {
+    priority: order.priority,
+    promisedDeliveryDate: order.promisedDeliveryDate,
+    seq: order.seq,
+  };
+}
+
+function rankOfDrywall(order: ProductionOrderListItemDto): QueueRankable {
+  return {
+    priority: order.priority,
+    promisedDeliveryDate: order.promisedDeliveryDate,
+    seq: seqOf(order.code),
+  };
 }
 
 /**
  * F8-S3b/M2: `/planta` tiene cuatro formas, y la URL decide cuál (ver `plantaHref`).
  *
  * - sin parámetros: los **pedidos** con producción pendiente;
- * - `?pedido=`: la producción de ese pedido —su cola y su workspace—;
+ * - `?pedido=`: la producción de ese pedido —todas sus órdenes, en chips—;
  * - `?op=` suelto: se resuelve al pedido de la orden, porque los enlaces viejos y los de otras
  *   pantallas («Producir esta orden») siguen existiendo;
  * - `?historial=1`: el historial de órdenes (D-190), como vista propia (F8-S3b/M4).
@@ -192,6 +220,26 @@ function PedidoOverview() {
     () => groupByPedido(orders.roofing, orders.drywall, queue.data ?? []),
     [orders.roofing, orders.drywall, queue.data],
   );
+  /**
+   * F8-S3c/M2: la cotización de origen de cada pedido, con el mismo `/sales/orders` que ya
+   * usan otros selectores (D-113) — no hay endpoint por lista de ids, y pedir el detalle de
+   * cada pedido por separado sería el N+1 que `batchOrders` ya evita para las órdenes. Mismo
+   * tope de `fetchAllForPicker` (200): con más pedidos pendientes que eso, los más nuevos se
+   * quedan sin el link, igual que el selector de cliente (§ pendientes de PROGRESO.md).
+   */
+  const salesOrders = useQuery({
+    queryKey: ['sales-orders', 'planta-quotations'],
+    queryFn: () => fetchAllForPicker<SalesOrderListItemDto>('/sales/orders'),
+  });
+  const quotations = useMemo(() => {
+    const map = new Map<string, { quotationId: string; quotationCode: string }>();
+    for (const o of salesOrders.data ?? []) {
+      if (o.quotationId !== null && o.quotationCode !== null) {
+        map.set(o.id, { quotationId: o.quotationId, quotationCode: o.quotationCode });
+      }
+    }
+    return map;
+  }, [salesOrders.data]);
 
   return (
     <div className="grid gap-4">
@@ -227,7 +275,12 @@ function PedidoOverview() {
           </AlertDescription>
         </Alert>
       )}
-      <PedidoList groups={groups} pending={orders.pending} failed={orders.failed} />
+      <PedidoList
+        groups={groups}
+        pending={orders.pending}
+        failed={orders.failed}
+        quotations={quotations}
+      />
     </div>
   );
 }
@@ -248,8 +301,11 @@ function NewOrderDrawer({ onCreated }: { onCreated: (orderId: string) => void })
       <SheetTrigger asChild>
         <Button variant="outline">Abrir una orden nueva</Button>
       </SheetTrigger>
-      <SheetContent side="right" className="w-full overflow-y-auto data-[side=right]:sm:max-w-2xl">
-        <SheetHeader className="px-0 pt-0">
+      <SheetContent
+        side="right"
+        className="w-full overflow-y-auto p-4 data-[side=right]:sm:max-w-2xl"
+      >
+        <SheetHeader className="p-0">
           <SheetTitle>Abrir una orden nueva</SheetTitle>
           <SheetDescription>
             Confirmar un pedido ya crea sus órdenes de coberturas. Acá se reabre la de una línea que
@@ -260,7 +316,7 @@ function NewOrderDrawer({ onCreated }: { onCreated: (orderId: string) => void })
           D-171: la tarjeta «Nueva orden de coberturas a stock» se fue con la puerta que cerró
           en el API. Una cobertura —plancha incluida— nace del pedido que reserva su material.
         */}
-        <div className="grid gap-4 px-4 pb-4">
+        <div className="grid gap-4">
           <LinesWithoutOrderCard onCreated={created} />
           <DrywallOrderCard onCreated={created} />
         </div>
@@ -331,10 +387,16 @@ function ResolveOrder({ orderId }: { orderId: string }) {
 }
 
 /**
- * La producción de **un pedido** (F8-S3b/M2): lo que antes era `/planta` entero, acotado.
- * Arriba el resumen del pedido con su prioridad; después su cola —las órdenes no iniciadas,
- * en el orden de `compareQueueRank`—, y abajo el workspace con lo que está en curso y lo que se
- * abrió desde la cola. Nada del contenido de F8-S3 se perdió: solo cambió de dónde cuelga.
+ * La producción de **un pedido** (F8-S3b/M2, directa desde F8-S3c/M1): lo que antes era
+ * `/planta` entero, acotado. Arriba el resumen del pedido con su prioridad; abajo, sin ningún
+ * paso intermedio, la franja de **todas** las órdenes abiertas del pedido —iniciadas o no—,
+ * en el orden de `compareQueueRank` (D-189), con el workspace de la primera debajo.
+ *
+ * Hasta F8-S3c había un card de «Cola de producción» separado, solo con lo no iniciado, y
+ * había que elegir de ahí antes de ver el workspace. Con tres órdenes eso era un paso de más:
+ * ahora las tres son chips desde que se entra, y lo que la cola aportaba de más —en cola desde
+ * cuándo, kilos teóricos— se absorbe en el chip de la orden que todavía no arrancó
+ * (`queueNote`, F8-S3c/M1).
  */
 function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string | null }) {
   const salesOrderId = pedido === WITHOUT_SALES_ORDER ? null : pedido;
@@ -360,23 +422,18 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
     [orders.roofing, salesOrderId],
   );
   const pedidoQueue = (queue.data ?? []).filter((e) => belongs(e.salesOrderId));
+  const queueByOrder = useMemo(
+    () => new Map(pedidoQueue.map((e) => [e.orderId, e])),
+    [pedidoQueue],
+  );
 
   /**
-   * Las órdenes no iniciadas que se abrieron en esta sesión —desde la cola o por `?op=`—. Quedan
-   * en el workspace aunque se cambie de pestaña: derivarlo de la pestaña activa hacía que la
-   * misma orden desapareciera o no según por dónde se había entrado (revisión de F8-S3).
-   */
-  const [pinned, setPinned] = useState<ReadonlySet<string>>(
-    () => new Set(focused === null ? [] : [focused]),
-  );
-  /**
-   * La orden elegida queda en `?op=`: recargar la vuelve a fijar. Las demás fijadas son estado
-   * de la pantalla y vuelven a la cola, que es donde está lo no iniciado.
+   * La orden elegida queda en `?op=`: recargar la vuelve a fijar.
    *
-   * **Elegir pestaña también escribe `?op=`**, no solo abrir desde la cola. Si solo lo hiciera
-   * abrir, la navegación de «abrir B» podía llegar después de un clic en la pestaña A y el
-   * efecto de `?op=` le devolvía la B a quien ya había elegido la A. Con las dos escribiendo,
-   * la última elección es también la última navegación, y gana.
+   * **Elegir chip también escribe `?op=`**, no solo abrir desde otra pantalla. Si solo lo
+   * hiciera esa otra pantalla, la navegación de «abrir B» podía llegar después de un clic en el
+   * chip A y el efecto de `?op=` le devolvía la B a quien ya había elegido la A. Con las dos
+   * escribiendo, la última elección es también la última navegación, y gana.
    */
   const selectOrder = (orderId: string) => {
     setActiveId(orderId);
@@ -384,21 +441,22 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
     // en vuelo, y saltarse el `replace` era exactamente la carrera que esto viene a cerrar.
     router.replace(plantaHref({ pedido, op: orderId }), { scroll: false });
   };
-  const openOrder = (orderId: string) => {
-    setPinned((prev) => (prev.has(orderId) ? prev : new Set([...prev, orderId])));
-    selectOrder(orderId);
-  };
 
   const rows = useMemo<WorkspaceOrder[]>(() => {
-    // D-189: el workspace es lo **en curso** más las no iniciadas que se abrieron desde la cola
-    // (o por `?op=`); el resto de las no iniciadas vive en la cola del pedido. El orden lo trae
-    // el API (`compareQueueRank`), así que no se reordena acá.
-    const roofingRows = pedidoRoofing
-      .filter((o) => o.status !== ProductionOrderStatus.DRAFT || pinned.has(o.orderId))
-      .map(toRoofingRow);
-    const drywallRows = orders.drywall.filter((o) => belongs(o.salesOrderId)).map(toDrywallRow);
-    return [...roofingRows, ...drywallRows];
-  }, [pedidoRoofing, orders.drywall, salesOrderId, pinned]);
+    // F8-S3c/M1: la franja de chips es **todas** las órdenes abiertas del pedido, iniciadas o
+    // no —ya no hay un paso previo por la cola—, en el orden de `compareQueueRank` (D-189).
+    // `pedidoRoofing` no trae ese orden (la API lo da por `seq`), así que se ordena acá.
+    const roofingEntries = pedidoRoofing.map((o) => ({
+      rank: rankOfRoofing(o),
+      row: toRoofingRow(o, queueByOrder.get(o.orderId) ?? null),
+    }));
+    const drywallEntries = orders.drywall
+      .filter((o) => belongs(o.salesOrderId))
+      .map((o) => ({ rank: rankOfDrywall(o), row: toDrywallRow(o) }));
+    return [...roofingEntries, ...drywallEntries]
+      .sort((a, b) => compareQueueRank(a.rank, b.rank))
+      .map((e) => e.row);
+  }, [pedidoRoofing, orders.drywall, salesOrderId, queueByOrder]);
 
   /**
    * `?op=` **se re-lee cuando cambia**, no solo al montar: con dos enlaces «Producir esta
@@ -406,10 +464,7 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
    * quedaba en la orden anterior. Es el mismo efecto que tenía la terminal antes de D-160.
    */
   useEffect(() => {
-    if (focused !== null) {
-      setPinned((prev) => (prev.has(focused) ? prev : new Set([...prev, focused])));
-      setActiveId(focused);
-    }
+    if (focused !== null) setActiveId(focused);
   }, [focused]);
 
   /**
@@ -470,7 +525,7 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
           <>
             {salesOrderId === null
               ? 'Corridas a stock, sin pedido detrás. Cada orden monta su material, reporta lo suyo y se cierra por separado.'
-              : 'La cola del pedido y sus órdenes en curso. Monta la bobina y reporta sin salir de acá; cada orden se guarda por su cuenta.'}
+              : 'Todas las órdenes del pedido, iniciadas o no. Monta la bobina y reporta sin salir de acá; cada orden se guarda por su cuenta.'}
             {salesOrderId !== null && group?.customerName && <> · {group.customerName}</>}
           </>
         }
@@ -527,37 +582,6 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
         </Card>
       )}
 
-      {/*
-        D-189: la cola del pedido —órdenes no iniciadas— en el orden de `compareQueueRank`.
-        Un clic abre esa orden en el workspace de abajo, que es donde se monta la bobina.
-      */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            Cola de producción
-            {queue.isSuccess && <Badge variant="outline">{pedidoQueue.length}</Badge>}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-2">
-          {queue.isPending && <Skeleton className="h-16 w-full" />}
-          {queue.isError && (
-            <p className="text-sm text-destructive">No se pudo cargar la cola de producción.</p>
-          )}
-          {queue.isSuccess && pedidoQueue.length === 0 && (
-            <p className="text-sm text-muted-foreground">No hay órdenes esperando producción.</p>
-          )}
-          {pedidoQueue.map((entry) => (
-            <QueueEntryLink
-              key={entry.orderId}
-              entry={entry}
-              href={plantaHref({ pedido, op: entry.orderId })}
-              selected={entry.orderId === activeId}
-              onSelect={openOrder}
-            />
-          ))}
-        </CardContent>
-      </Card>
-
       {pending && <Skeleton className="h-64 w-full" />}
       {failed && (
         <Alert variant="destructive">
@@ -578,9 +602,7 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
       {!pending && !failed && rows.length === 0 && (
         <Alert>
           <AlertDescription>
-            {pedidoQueue.length > 0
-              ? 'No hay órdenes en curso. Elige una de la cola para empezar a producirla.'
-              : 'Este pedido no tiene órdenes abiertas. Genéralas desde el detalle del pedido.'}
+            Este pedido no tiene órdenes abiertas. Genéralas desde el detalle del pedido.
           </AlertDescription>
         </Alert>
       )}
@@ -625,7 +647,10 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
   );
 }
 
-function toRoofingRow(order: RoofingBatchOrderDto): WorkspaceOrder {
+function toRoofingRow(
+  order: RoofingBatchOrderDto,
+  queueEntry: ProductionQueueEntryDto | null,
+): WorkspaceOrder {
   return {
     orderId: order.orderId,
     code: order.code,
@@ -639,8 +664,15 @@ function toRoofingRow(order: RoofingBatchOrderDto): WorkspaceOrder {
     subtitle:
       `${order.productSku} · faltan ${order.remainingMeters} m` +
       (order.customerName === null ? '' : ` · ${order.customerName}`),
+    queueNote: queueEntry === null ? null : queueNoteOf(queueEntry),
     roofing: order,
   };
+}
+
+function queueNoteOf(entry: ProductionQueueEntryDto): string {
+  const parts = [`en cola desde ${queueAgeLabel(entry.createdAt)}`];
+  if (entry.theoreticalKg !== null) parts.push(`${formatQty(entry.theoreticalKg, 'kg')} teóricos`);
+  return parts.join(' · ');
 }
 
 function toDrywallRow(order: ProductionOrderListItemDto): WorkspaceOrder {
@@ -656,6 +688,8 @@ function toDrywallRow(order: ProductionOrderListItemDto): WorkspaceOrder {
       (order.targetPieces === null ? '' : ` de ${String(order.targetPieces)}`) +
       ` · ${formatQty(order.assignedKg, 'kg')} montados` +
       (order.customerName === null ? '' : ` · ${order.customerName}`),
+    // La cola de D-189 es solo de coberturas: una corrida de perfiles nunca la tuvo.
+    queueNote: null,
     roofing: null,
   };
 }
@@ -740,6 +774,9 @@ function OrderPicker({
               )}
             </div>
             <div className="text-xs text-muted-foreground">{row.subtitle}</div>
+            {row.queueNote !== null && (
+              <div className="text-xs text-muted-foreground">{row.queueNote}</div>
+            )}
           </button>
         );
       })}
