@@ -23,6 +23,7 @@ import { RESERVATION_TONE } from '@/components/status-tone';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
 import { PromisedDateControl } from '@/components/production-queue';
+import { ProductionOrdersCard } from './production-orders-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -417,6 +418,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
           </Table>
         </div>
       </section>
+
+      {isAdmin && <ProductionOrdersCard salesOrderId={o.id} canOperate={canOperate} />}
 
       <section className="space-y-2">
         <h2 className="flex items-center gap-2 text-sm font-medium">

@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DrywallOrderPanel } from './drywall-order-panel';
 import { QueueEntryLink, useProductionQueue } from '@/components/production-queue';
+import { OrderHistory } from '@/components/production/order-history';
 import { DrywallOrderCard, LinesWithoutOrderCard } from './new-order-cards';
 import {
   EMPTY_DRAFT,
@@ -81,6 +82,8 @@ export function PlantaView() {
   /** D-124: día de negocio de todo lo que se reporte en esta sesión. Solo lo ve un admin. */
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const [creating, setCreating] = useState(false);
+  /** D-190: `/produccion` redirige acá con `?historial=1`. */
+  const [showHistory, setShowHistory] = useState(params.get('historial') === '1');
   /**
    * Los borradores y los avisos viven acá y no en la pestaña **a propósito**: con estado
    * local, saltar a otra orden para verificar de qué bobina salió algo y volver borraba lo
@@ -212,11 +215,20 @@ export function PlantaView() {
             >
               {creating ? 'Ocultar' : 'Abrir una orden nueva'}
             </Button>
-            <Button variant="outline" asChild>
-              <Link href="/produccion">Órdenes de producción</Link>
+            <Button
+              variant="outline"
+              aria-expanded={showHistory}
+              onClick={() => {
+                setShowHistory((v) => !v);
+              }}
+            >
+              {showHistory ? 'Ocultar historial' : 'Historial de órdenes'}
             </Button>
           </div>
         </div>
+
+        {/* D-190: el listado que era `/produccion`, reubicado acá sin perder columnas. */}
+        {showHistory && <OrderHistory />}
 
         {/*
           D-160: crear la orden dejó de ser el paso 1 de la pantalla y pasó a ser una sección

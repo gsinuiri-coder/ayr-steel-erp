@@ -4,7 +4,6 @@ import {
   Boxes,
   CalendarRange,
   ClipboardList,
-  Factory,
   FileText,
   Hammer,
   Home,
@@ -164,12 +163,11 @@ export const NAV: NavGroup[] = [
         icon: Hammer,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
-      {
-        title: 'Órdenes de producción',
-        href: '/produccion',
-        icon: Factory,
-        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-      },
+      /*
+        D-190: «Órdenes de producción» (`/produccion`) salió del menú. Producción se opera
+        desde la cola y el workspace de `/planta`, las órdenes de un pedido se ven en su
+        detalle y el historial completo es una sección de `/planta`. `/produccion` redirige.
+      */
       {
         title: 'Proveedores',
         href: '/proveedores',
