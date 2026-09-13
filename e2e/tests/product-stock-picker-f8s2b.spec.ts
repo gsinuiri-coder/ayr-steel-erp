@@ -103,9 +103,10 @@ test.describe('F8-S2b/M1 — picker de producto con stock', () => {
       await expect(dialog.getByText(/m lineales/)).toHaveCount(0);
 
       // El SKU quedó sin nada disponible — se ve en rojo, y no impide elegirlo.
+      // F8-S3c/M3: el disponible de materia prima se ve en ML, con el kg entre paréntesis.
       await dialog.getByLabel('Filtrar productos').fill(s.product.sku);
       const row = dialog.getByRole('row', { name: new RegExp(s.product.sku) });
-      await expect(row.getByText(/0\.000 kg de materia prima/)).toBeVisible({ timeout: 15_000 });
+      await expect(row.getByText(/0\.000 m \(0\.000 kg\)/)).toBeVisible({ timeout: 15_000 });
 
       // Sin scroll horizontal: se mide en el DOM, no en una captura. Ni la tabla ni su
       // contenedor desbordan a lo ancho, y «Elegir» cae entero dentro del diálogo.
