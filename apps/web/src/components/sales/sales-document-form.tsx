@@ -334,9 +334,16 @@ export function SalesDocumentForm({
   });
   // D-116: bobinas DISPONIBLES para vender enteras (RF-73), siempre `trading` (D-037); trae
   // bobinas de Drywall y Metallic Roofing por igual, sin depender de ninguna fila.
+  //
+  // D-185 (F8-S2b): al editar, `excludeQuotationId` es la propia cotización — su reserva
+  // temporal no cuenta como "de otro", y sin esto la bobina que ya tenía elegida desaparecía
+  // del desplegable (`availableQty` en cero) aunque el valor siguiera seleccionado.
   const sellableCoils = useQuery({
-    queryKey: ['sellable-coils'],
-    queryFn: () => api<SellableCoilDto[]>('/sales/sellable-coils'),
+    queryKey: ['sellable-coils', initial?.id ?? null],
+    queryFn: () =>
+      api<SellableCoilDto[]>(
+        `/sales/sellable-coils${initial ? `?excludeQuotationId=${initial.id}` : ''}`,
+      ),
   });
 
   // D-136: el panel de stock en vivo. Reemplaza al selector "Reserva desde bobina" que

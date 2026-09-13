@@ -2647,8 +2647,12 @@ export class SalesOrdersService {
         // negocia el precio por kilo.
         select: { itemId: true, qty: true, avgCost: true },
       }),
-      // D-185: firme más temporal vigente.
-      reservedByItem(this.prisma, InventoryItemTypeEnum.COIL, ids),
+      // D-185 (F8-S2b): firme más temporal vigente, salvo la reserva propia de la cotización
+      // que se está editando — es su bobina, y el picker tiene que volver a ofrecerla. Una
+      // bobina reservada por otra cotización sigue descontada, como siempre.
+      reservedByItem(this.prisma, InventoryItemTypeEnum.COIL, ids, {
+        exceptQuotationIds: query.excludeQuotationId ? [query.excludeQuotationId] : [],
+      }),
       // D-060: montada en una OP viva (roofing) no se puede vender aunque el saldo esté
       // intacto — asignar no mueve kardex, así que el disponible no lo delata.
       this.prisma.productionOrderConsumption.findMany({

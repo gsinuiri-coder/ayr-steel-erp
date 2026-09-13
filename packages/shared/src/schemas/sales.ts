@@ -1056,6 +1056,14 @@ export const sellableCoilQuerySchema = z.object({
   /** Sin filtro trae bobinas de Drywall y Metallic Roofing, las únicas líneas con bobina. */
   businessLine: z.enum(BUSINESS_LINES).optional(),
   search: z.string().trim().max(80).optional(),
+  /**
+   * D-185 (F8-S2b): al editar una cotización que ya reservó una bobina entera **para sí
+   * misma**, esa reserva no se cuenta como "de otro" — es la que el picker tiene que volver
+   * a ofrecer. Sin esto, la propia reserva temporal de la cotización dejaba su bobina con
+   * `availableQty` en cero y el `<Select>` la mostraba vacía aunque el valor siguiera puesto.
+   * Una bobina reservada por **otra** cotización sigue sin aparecer: la exclusión es por id.
+   */
+  excludeQuotationId: z.string().uuid().optional(),
 });
 export type SellableCoilQuery = z.infer<typeof sellableCoilQuerySchema>;
 
