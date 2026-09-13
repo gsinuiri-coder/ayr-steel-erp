@@ -421,7 +421,13 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
     () => orders.roofing.filter((o) => belongs(o.salesOrderId)),
     [orders.roofing, salesOrderId],
   );
-  const pedidoQueue = (queue.data ?? []).filter((e) => belongs(e.salesOrderId));
+  // Memorizado por el mismo motivo que `pedidoRoofing`: sin esto, `queueByOrder` y `rows` se
+  // recalculaban en cada render y disparaban de nuevo los efectos que dependen de `rows`
+  // (revisión de F8-S3c).
+  const pedidoQueue = useMemo(
+    () => (queue.data ?? []).filter((e) => belongs(e.salesOrderId)),
+    [queue.data, salesOrderId],
+  );
   const queueByOrder = useMemo(
     () => new Map(pedidoQueue.map((e) => [e.orderId, e])),
     [pedidoQueue],

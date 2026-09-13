@@ -9,13 +9,12 @@ import {
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   Decimal,
   describePieces,
-  kgPerMeter,
+  equivalentMeters,
   piecesMeters,
   piecesTheoreticalKg,
   Role,
   roofingConsumptionDeviation,
   toDecimal,
-  toFixedString,
   Unit,
   type ProductionOrderDto,
   type RawMaterialWarningDto,
@@ -121,9 +120,7 @@ export const NO_NOTES: SavedNotes = { pool: [], note: null };
  * `null` con geometría en cero (no debería pasar con datos reales).
  */
 function equivalentMetersOf(coil: RoofingBatchCoilDto): string | null {
-  const perMeter = kgPerMeter(coil);
-  if (perMeter.lte(0)) return null;
-  return toFixedString(toDecimal(coil.remainingKg).div(perMeter), 'KG');
+  return equivalentMeters(coil, coil.remainingKg)?.toFixed(3) ?? null;
 }
 
 export function RoofingOrderPanel({
