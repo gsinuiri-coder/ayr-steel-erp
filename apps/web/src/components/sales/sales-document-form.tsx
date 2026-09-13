@@ -554,6 +554,12 @@ export function SalesDocumentForm({
 
       if (!l.productId) return { error: `${at}: elige un producto` };
       const product = productById.get(l.productId);
+      // Sin el producto no se sabe si la línea lleva largos (D-083) ni en qué unidad se negocia
+      // (D-161): validar igual mandaba una línea a medida sin sus largos. Pasa al editar una
+      // cotización o agregar ítems, que siembran líneas antes de que el catálogo llegue.
+      if (!product) {
+        return { error: `${at}: el catálogo todavía está cargando, espera un momento` };
+      }
       // D-166: una plancha cuyo largo de catálogo es imposible no se cotiza. El API también lo
       // rechaza, pero decirlo acá señala **qué línea** y, sobre todo, llega antes de que el
       // vendedor mande un documento cuyo importe salió mil veces más chico sin avisar.
@@ -886,7 +892,9 @@ export function SalesDocumentForm({
           Cancelar
         </Button>
         <Button
-          disabled={save.isPending}
+          // Apagado hasta que llegue el catálogo: sin él las líneas sembradas no saben si llevan
+          // largos ni en qué unidad se negocian (hallazgo de `qa`, F8-S2).
+          disabled={save.isPending || products.isPending}
           pending={save.isPending}
           pendingText="Guardando…"
           onClick={submit}
