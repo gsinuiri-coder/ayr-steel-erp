@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -65,48 +64,6 @@ export const SEMAPHORE_VARIANT: Record<QueueSemaphore, StatusTone> = {
   A_TIEMPO: 'done',
   SIN_FECHA: 'outline',
 };
-
-/**
- * Una entrada de la cola, completa: OP, pedido y cliente, producto (SKU con color y espesor),
- * ML del plan, fecha compromiso, prioridad y la marca de vencida. Toda la tarjeta es el enlace
- * al workspace de **esa** orden (D-189): el clic lleva a producirla, no a buscarla.
- */
-export function QueueEntryLink({
-  entry,
-  href,
-  onSelect,
-  selected = false,
-}: {
-  entry: ProductionQueueEntryDto;
-  /** A dónde lleva el clic. Sin `onSelect`, navega; con `onSelect`, lo resuelve la pantalla. */
-  href: string;
-  onSelect?: (orderId: string) => void;
-  selected?: boolean;
-}) {
-  const className = `block rounded-lg border p-3 text-left hover:bg-muted ${
-    selected ? 'border-primary bg-primary/5' : ''
-  }`;
-  const body = <QueueEntrySummary entry={entry} />;
-  if (onSelect) {
-    return (
-      <button
-        type="button"
-        aria-current={selected}
-        className={`w-full ${className}`}
-        onClick={() => {
-          onSelect(entry.orderId);
-        }}
-      >
-        {body}
-      </button>
-    );
-  }
-  return (
-    <Link href={href} className={className}>
-      {body}
-    </Link>
-  );
-}
 
 export function QueueEntrySummary({
   entry,
