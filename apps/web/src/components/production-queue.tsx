@@ -108,7 +108,18 @@ export function QueueEntryLink({
   );
 }
 
-export function QueueEntrySummary({ entry }: { entry: ProductionQueueEntryDto }) {
+export function QueueEntrySummary({
+  entry,
+  srPrefix = true,
+}: {
+  entry: ProductionQueueEntryDto;
+  /**
+   * «Abrir en producción» delante del código, para el lector de pantalla. Solo tiene sentido
+   * cuando el resumen **es** el enlace; dentro de la tarjeta de un pedido (F8-S3b/M2) el clic
+   * lleva al pedido y el prefijo mentiría.
+   */
+  srPrefix?: boolean;
+}) {
   const spec = [
     entry.colorName ?? 'sin color',
     entry.thicknessMm === null ? null : `${entry.thicknessMm} mm`,
@@ -119,7 +130,7 @@ export function QueueEntrySummary({ entry }: { entry: ProductionQueueEntryDto })
     <span className="grid gap-0.5">
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-mono font-medium">
-          <span className="sr-only">Abrir en producción </span>
+          {srPrefix && <span className="sr-only">Abrir en producción </span>}
           {entry.code}
         </span>
         {entry.priority && <Badge>Prioridad</Badge>}

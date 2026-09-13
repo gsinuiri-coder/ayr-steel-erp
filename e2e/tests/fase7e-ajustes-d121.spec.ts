@@ -110,7 +110,14 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
       // D-160: `?op=` sigue abriendo la orden, pero ahora la enfoca dentro de la lista de
       // todas las abiertas en vez de abrir una pantalla dedicada.
       await page.goto(`/planta?op=${order.id}`);
-      await expect(page.getByRole('heading', { name: 'Producción', exact: true })).toBeVisible({
+      // F8-S3b/M2: `?op=` suelto se resuelve al pedido de la orden; una corrida a stock de
+      // drywall no tiene pedido y cae en la vista de las órdenes sin pedido.
+      await expect(page).toHaveURL(new RegExp(`/planta\\?pedido=sin-pedido&op=${order.id}$`), {
+        timeout: 60_000,
+      });
+      await expect(
+        page.getByRole('heading', { name: 'Órdenes sin pedido', exact: true }),
+      ).toBeVisible({
         timeout: 60_000,
       });
       // El panel se busca por su id y no por texto: el código de la orden también está en el

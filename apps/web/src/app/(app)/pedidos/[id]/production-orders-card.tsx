@@ -145,7 +145,10 @@ export function ProductionOrdersCard({
                       )}
                       {live && canOperate && (
                         <Button variant="outline" size="sm" asChild>
-                          <Link href={`/planta?op=${o.id}`} aria-label={`Producir ${o.code}`}>
+                          <Link
+                            href={`/planta?pedido=${salesOrderId}&op=${o.id}`}
+                            aria-label={`Producir ${o.code}`}
+                          >
                             Producir
                           </Link>
                         </Button>

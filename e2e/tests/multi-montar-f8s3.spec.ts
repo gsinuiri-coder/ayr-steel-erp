@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, getJson, postJson } from '../helpers/api';
+import { openQueuedOrder } from '../helpers/ui';
 import { balanceOf, postExpectingError, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -155,6 +156,8 @@ test.describe('D-192 — montar varias bobinas', () => {
       await expect(page.getByRole('heading', { name: `Producir ${order.code}` })).toBeVisible({
         timeout: 60_000,
       });
+      // F8-S3b/M2: la orden no iniciada está en la cola del pedido; abrirla la fija como pestaña.
+      await openQueuedOrder(page, op.code);
       const panel = page.getByRole('tabpanel', { name: op.code });
 
       await panel.getByRole('button', { name: `Buscar una bobina para ${op.code}` }).click();

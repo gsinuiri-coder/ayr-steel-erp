@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, postJson } from '../helpers/api';
+import { openQueuedOrder } from '../helpers/ui';
 import { balanceOf, today, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -180,10 +181,15 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       });
       await expect(page).toHaveURL(new RegExp(`/planta\\?pedido=${order.id}$`));
 
+      // F8-S3b/M2: las dos no iniciadas están en la cola del pedido; abrirlas las fija como
+      // pestañas del workspace.
+      await openQueuedOrder(page, codeA);
+      await openQueuedOrder(page, codeB);
       const tabs = page.getByRole('tablist', { name: 'Órdenes del pedido' });
       const tabA = tabs.getByRole('tab').filter({ hasText: codeA });
       const tabB = tabs.getByRole('tab').filter({ hasText: codeB });
       await expect(tabs.getByRole('tab')).toHaveCount(2);
+      await tabA.click();
       await expect(tabA).toContainText('Sin bobina');
       await expect(tabB).toContainText('Sin bobina');
 
@@ -291,6 +297,10 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
         timeout: 60_000,
       });
       await expect(draftTableA.getByRole('row').filter({ hasText: '10 × 4.00 m' })).toBeVisible();
+      // F8-S3b/M2: lo que se fija desde la cola es estado de la pantalla, no del servidor. Tras
+      // recargar, la hermana —todavía sin iniciar— volvió a la cola del pedido y se reabre.
+      await openQueuedOrder(page, codeB);
+      await tabA.click();
 
       // Se ejecuta **sin** cerrar a propósito: es el reporte parcial, y deja la orden abierta
       // con su bobina montada para comprobar abajo que la pestaña hermana no se tocó.
@@ -485,6 +495,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await expect(page.getByRole('heading', { name: `Producir ${order.code}` })).toBeVisible({
         timeout: 60_000,
       });
+      await openQueuedOrder(page, op.code);
       const panel = page.getByRole('tabpanel', { name: op.code });
       // Por "Faltan …" y por los metros entre paréntesis, y no por el desglose suelto: ese
       // texto aparece dos veces —en la tarjeta del plan y en la línea de lo que falta— y una
@@ -607,21 +618,22 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       expect(op.items).toEqual([{ lineNumber: 1, lengthMm: '4000.00', qty: 5 }]);
 
       await loginAsAdmin(page);
+      // F8-S3b/M2: `/planta` lista pedidos; la tarjeta del pedido lleva a su producción.
       await page.goto('/planta');
       await expect(page.getByRole('heading', { name: 'Producción', exact: true })).toBeVisible({
         timeout: 60_000,
       });
+      await page.getByRole('link', { name: `Producir ${op.salesOrderCode!}`, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`/planta\\?pedido=${salesOrder.id}$`));
 
-      // Sin `?pedido=` la pantalla lista **todas** las órdenes abiertas de la base, y por
-      // encima de `MAX_ORDER_TABS` el selector deja de ser pestañas y pasa a lista lateral:
+      // Por encima de `MAX_ORDER_TABS` el selector deja de ser pestañas y pasa a lista lateral:
       // los botones pierden `role="tab"` a propósito (una lista no cumple la navegación por
       // flechas que la semántica de pestañas promete) y el panel pierde con ellos su
       // `role="tabpanel"`. Se los busca entonces por contenedor y por id, que no cambian entre
-      // los dos modos, para que el caso no dependa de cuántas órdenes haya abiertas cuando
-      // corra — la base local acumula las de los tests anteriores.
+      // los dos modos.
       //
-      // D-189: sin `?pedido=` una orden no iniciada no está en el selector sino en la **cola**;
-      // un clic en su entrada la abre en el workspace.
+      // D-189: una orden no iniciada no está en el selector sino en la **cola** del pedido; un
+      // clic en su entrada la abre en el workspace.
       await page
         .getByRole('button', { name: new RegExp(`^Abrir en producción ${op.code}\\b`) })
         .click();
@@ -756,8 +768,11 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await expect(page.getByRole('heading', { name: `Producir ${order.code}` })).toBeVisible({
         timeout: 60_000,
       });
+      await openQueuedOrder(page, codeA);
+      await openQueuedOrder(page, codeB);
       const tabs = page.getByRole('tablist', { name: 'Órdenes del pedido' });
       await expect(tabs.getByRole('tab')).toHaveCount(2);
+      await tabs.getByRole('tab').filter({ hasText: codeA }).click();
 
       // --- Orden 1: montar, y cerrar en el mismo acto que el reporte ---
       const panelA = page.getByRole('tabpanel', { name: codeA });

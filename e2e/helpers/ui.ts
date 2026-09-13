@@ -101,6 +101,18 @@ export async function chooseProductWithStock(
 }
 
 /**
+ * F8-S3b/M2: en la vista de producción de un pedido (`/planta?pedido=`), las órdenes no
+ * iniciadas viven en la **cola** del pedido y no en el workspace. Abrir una es un clic en su
+ * entrada, que la fija como pestaña; esto espera a que la pestaña exista antes de seguir.
+ */
+export async function openQueuedOrder(page: Page, code: string): Promise<void> {
+  await page.getByRole('button', { name: new RegExp(`^Abrir en producción ${code}\\b`) }).click();
+  await expect(
+    page.locator('[aria-label="Órdenes del pedido"]').locator('button').filter({ hasText: code }),
+  ).toHaveCount(1);
+}
+
+/**
  * Inicia sesión con un usuario efímero recién creado (contraseña temporal) y
  * completa el cambio de contraseña obligatorio del primer ingreso.
  */
