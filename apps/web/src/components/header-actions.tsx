@@ -77,7 +77,7 @@ export function HeaderActions({
   if (visible.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-start gap-2">
+    <div data-slot="header-actions" className="flex flex-wrap items-start gap-2">
       {main && (
         <div className="grid justify-items-end gap-1">
           <PrimaryButton action={main} />
@@ -93,12 +93,7 @@ export function HeaderActions({
       {rest.length > 0 && (
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label="Más acciones"
-              disabled={pendingSecondary !== undefined}
-            >
+            <Button variant="outline" size="icon" aria-label="Más acciones">
               <Ellipsis />
             </Button>
           </DropdownMenuTrigger>

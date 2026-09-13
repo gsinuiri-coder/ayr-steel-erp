@@ -59,6 +59,16 @@ export function PedidoPriorityControl({
       return { priority: input.priority, count: done };
     },
     onSuccess: ({ priority, count }) => {
+      if (count === 0) {
+        // Otra persona ya lo había aplicado entre la lectura y la confirmación.
+        toast.info(
+          priority
+            ? `${salesOrderCode} ya estaba priorizado`
+            : `${salesOrderCode} ya no tenía prioridad`,
+        );
+        setOpen(false);
+        return;
+      }
       toast.success(
         priority
           ? `${salesOrderCode} priorizado (${String(count)} ${count === 1 ? 'orden' : 'órdenes'})`
@@ -114,7 +124,7 @@ export function PedidoPriorityControl({
         title={target ? `Priorizar ${salesOrderCode}` : `Quitar prioridad a ${salesOrderCode}`}
         description={`Se aplica a ${
           target ? String(orders.length - prioritized) : String(prioritized)
-        } de las ${String(orders.length)} órdenes de coberturas abiertas del pedido y las mueve en la cola de producción. Queda registrado en la auditoría (RF-95).`}
+        } de las ${String(orders.length)} órdenes de coberturas abiertas del pedido —en cola o en curso— y decide su lugar en la cola de producción. Queda registrado en la auditoría (RF-95).`}
         confirmLabel={target ? 'Priorizar' : 'Quitar prioridad'}
         pending={apply.isPending}
         onConfirm={(reason) => {

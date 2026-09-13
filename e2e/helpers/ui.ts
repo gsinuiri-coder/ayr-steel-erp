@@ -119,11 +119,12 @@ export async function openQueuedOrder(page: Page, code: string): Promise<void> {
  * las dos le tocó a la acción en el estado del documento.
  */
 export async function headerAction(page: Page, name: string): Promise<Locator> {
-  const main = page.locator('main');
-  const visible = main
+  // Acotado a la cabecera: una tarjeta de la vista puede tener un botón con el mismo nombre.
+  const header = page.locator('[data-slot="header-actions"]');
+  const visible = header
     .getByRole('button', { name, exact: true })
-    .or(main.getByRole('link', { name, exact: true }));
-  const more = main.getByRole('button', { name: 'Más acciones' });
+    .or(header.getByRole('link', { name, exact: true }));
+  const more = header.getByRole('button', { name: 'Más acciones' });
   await expect(visible.or(more).first()).toBeVisible({ timeout: 30_000 });
   if ((await visible.count()) > 0) return visible.first();
   await more.click();

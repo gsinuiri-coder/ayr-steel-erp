@@ -72,6 +72,8 @@ const PLANT_ROLES = [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA] as const;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const EMPTY_ROOFING: RoofingBatchOrderDto[] = [];
+
 /** Una orden del selector, de cualquiera de las dos ramas. */
 interface WorkspaceOrder {
   orderId: string;
@@ -139,11 +141,18 @@ function usePlantaOrders(salesOrderId: string | null) {
     queryFn: () => api<ProductionOrderListItemDto[]>('/production?status=IN_PROGRESS'),
   });
   const pending = roofing.isPending || draftOrders.isPending || inProgress.isPending;
+  // Memorizado: un arreglo nuevo en cada render invalidaba los `useMemo` de abajo y hacía correr
+  // el efecto de la pestaña activa en cada render (revisión de F8-S3b).
+  const drywall = useMemo(
+    () =>
+      [...(inProgress.data ?? []), ...(draftOrders.data ?? [])].filter(
+        (o) => o.kind === ProductionOrderKind.DRYWALL,
+      ),
+    [inProgress.data, draftOrders.data],
+  );
   return {
-    roofing: roofing.data ?? [],
-    drywall: [...(inProgress.data ?? []), ...(draftOrders.data ?? [])].filter(
-      (o) => o.kind === ProductionOrderKind.DRYWALL,
-    ),
+    roofing: roofing.data ?? EMPTY_ROOFING,
+    drywall,
     pending,
     failed: roofing.isError || draftOrders.isError || inProgress.isError,
     /**
@@ -203,11 +212,22 @@ function PedidoOverview() {
           </>
         }
       />
-      <PedidoList
-        groups={groups}
-        pending={orders.pending || queue.isPending}
-        failed={orders.failed || queue.isError}
-      />
+      {/*
+        La lista sale de las órdenes abiertas; la cola solo agrega el detalle de lo no iniciado.
+        Si la cola falla, planta sigue teniendo por dónde entrar a producir (revisión de F8-S3b).
+
+        Tope conocido: el batch sin filtro trae hasta 500 órdenes de coberturas abiertas
+        (`batchOrders`). Por encima, los pedidos de las más nuevas no aparecen acá.
+      */}
+      {queue.isError && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            No se pudo cargar la cola de producción: las tarjetas no muestran sus órdenes sin
+            iniciar.
+          </AlertDescription>
+        </Alert>
+      )}
+      <PedidoList groups={groups} pending={orders.pending} failed={orders.failed} />
     </div>
   );
 }
@@ -330,6 +350,7 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
   const [drafts, setDrafts] = useState<Record<string, OrderDraft>>({});
   const [saved, setSaved] = useState<Record<string, SavedNotes>>({});
 
+  const router = useRouter();
   const orders = usePlantaOrders(salesOrderId);
   const { refreshing, pending, failed } = orders;
   const queue = useProductionQueue();
@@ -351,6 +372,9 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
   const openOrder = (orderId: string) => {
     setPinned((prev) => (prev.has(orderId) ? prev : new Set([...prev, orderId])));
     setActiveId(orderId);
+    // La última orden abierta queda en `?op=`: recargar la vuelve a fijar. Las demás fijadas
+    // son estado de la pantalla y vuelven a la cola, que es donde está lo no iniciado.
+    router.replace(plantaHref({ pedido, op: orderId }), { scroll: false });
   };
 
   const rows = useMemo<WorkspaceOrder[]>(() => {
@@ -396,6 +420,19 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
       setActiveId(rows[0]?.orderId ?? null);
     }
   }, [rows, activeId, refreshing]);
+
+  /**
+   * Un `?op=` que no está entre las órdenes del pedido (cerrada, anulada, de otro pedido) se
+   * avisa en vez de caer callado en la primera pestaña. Se decide **una vez por `?op=`**, con
+   * las listas ya cargadas: abrir desde la cola también escribe `?op=`, y cerrar esa orden
+   * después no es un enlace roto, es el trabajo terminado.
+   */
+  const [checkedFocus, setCheckedFocus] = useState<{ id: string; missing: boolean } | null>(null);
+  useEffect(() => {
+    if (refreshing || focused === null || checkedFocus?.id === focused) return;
+    setCheckedFocus({ id: focused, missing: !rows.some((r) => r.orderId === focused) });
+  }, [refreshing, focused, rows, checkedFocus]);
+  const focusMissing = checkedFocus !== null && checkedFocus.id === focused && checkedFocus.missing;
 
   const active = rows.find((r) => r.orderId === activeId) ?? null;
   const roofingRows = rows.filter((r) => r.roofing !== null);
@@ -460,8 +497,13 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
                 )}
               </div>
               <span className="text-muted-foreground">
-                {formatQty(group.reportedMeters, 'm')} de {formatQty(group.planMeters, 'm')}{' '}
-                reportados · {group.counts.total}{' '}
+                {group.roofing.length > 0 && (
+                  <>
+                    {formatQty(group.reportedMeters, 'm')} de {formatQty(group.planMeters, 'm')}{' '}
+                    reportados ·{' '}
+                  </>
+                )}
+                {group.counts.total}{' '}
                 {group.counts.total === 1 ? 'orden abierta' : 'órdenes abiertas'}
               </span>
             </div>
@@ -508,6 +550,17 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
       {failed && (
         <Alert variant="destructive">
           <AlertDescription>No se pudieron cargar las órdenes abiertas.</AlertDescription>
+        </Alert>
+      )}
+      {!failed && focusMissing && (
+        <Alert>
+          <AlertDescription>
+            La orden del enlace no está abierta en este pedido.{' '}
+            <Link className="underline" href={`/produccion/${checkedFocus.id}`}>
+              Ver su detalle
+            </Link>
+            .
+          </AlertDescription>
         </Alert>
       )}
       {!pending && !failed && rows.length === 0 && (
