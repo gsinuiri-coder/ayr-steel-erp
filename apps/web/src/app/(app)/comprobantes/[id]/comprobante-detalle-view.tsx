@@ -41,6 +41,7 @@ import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -485,135 +486,126 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             )}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {isDraft && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                if (busy) return;
-                setDiscardOpen(true);
-              }}
-            >
-              Descartar borrador
-            </Button>
-          )}
-          {/*
-            D-153: los dos terminales del borrador, **los dos siempre visibles**. El ajuste
-            global solo decide cuál es el principal: mientras dure la migración lo normal es
-            registrar manual, pero esconder el otro haría que un descuido pasara inadvertido.
-          */}
-          {isDraft && (
-            <Button
-              variant={manualIsDefault ? 'default' : 'outline'}
-              disabled={busy}
-              onClick={() => {
+        {/*
+          F8-S3b/M3: principal + «⋯». En el borrador la principal es el terminal que el ajuste
+          global destaca y el otro va **al lado, a la vista** (`companion`): D-153 pide los dos
+          siempre visibles, porque esconder uno haría que un descuido pasara inadvertido. Fuera
+          del borrador, la principal es lo que destraba el documento: corregir un rechazo,
+          reintentar o consultar al PSE.
+        */}
+        <HeaderActions
+          primary={[manualIsDefault ? 'manual' : 'send', 'correct', 'retry', 'query']}
+          companion={isDraft ? (manualIsDefault ? 'send' : 'manual') : undefined}
+          actions={[
+            {
+              key: 'manual',
+              label: 'Registrar manual',
+              show: isDraft,
+              disabled: busy,
+              onSelect: () => {
                 if (busy) return;
                 void openManualDialog();
-              }}
-            >
-              Registrar manual
-            </Button>
-          )}
-          {isDraft && (
-            <Button
-              variant={manualIsDefault ? 'outline' : 'default'}
-              disabled={busy}
-              pending={send.isPending}
-              pendingText="Enviando…"
-              onClick={() => {
+              },
+            },
+            {
+              key: 'send',
+              label: 'Emitir y enviar al PSE',
+              show: isDraft,
+              disabled: busy,
+              pending: send.isPending,
+              pendingText: 'Enviando…',
+              onSelect: () => {
                 if (busy) return;
                 send.mutate();
-              }}
-            >
-              Emitir y enviar al PSE
-            </Button>
-          )}
-          {canRetry && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              pending={retry.isPending}
-              pendingText="Reintentando…"
-              onClick={() => {
-                if (busy) return;
-                retry.mutate();
-              }}
-            >
-              Reintentar envío
-            </Button>
-          )}
-          {canQuery && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              pending={refreshStatus.isPending}
-              pendingText="Consultando…"
-              onClick={() => {
-                if (busy) return;
-                refreshStatus.mutate();
-              }}
-            >
-              Consultar al PSE
-            </Button>
-          )}
-          {canCorrect && (
-            <Button
-              disabled={busy}
-              pending={correct.isPending}
-              pendingText="Corrigiendo…"
-              onClick={() => {
+              },
+            },
+            {
+              key: 'correct',
+              label: 'Corregir y reemitir',
+              show: canCorrect,
+              disabled: busy,
+              pending: correct.isPending,
+              pendingText: 'Corrigiendo…',
+              onSelect: () => {
                 if (busy) return;
                 correct.mutate();
-              }}
-            >
-              Corregir y reemitir
-            </Button>
-          )}
-          {d.replacedByDocumentId && (
-            <Button variant="outline" asChild>
-              <Link href={`/comprobantes/${d.replacedByDocumentId}`}>
-                Ver {d.replacedByDocumentNumber ?? 'la corrección'}
-              </Link>
-            </Button>
-          )}
-          {canCreditNote && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
+              },
+            },
+            {
+              key: 'retry',
+              label: 'Reintentar envío',
+              show: canRetry,
+              disabled: busy,
+              pending: retry.isPending,
+              pendingText: 'Reintentando…',
+              onSelect: () => {
+                if (busy) return;
+                retry.mutate();
+              },
+            },
+            {
+              key: 'query',
+              label: 'Consultar al PSE',
+              show: canQuery,
+              disabled: busy,
+              pending: refreshStatus.isPending,
+              pendingText: 'Consultando…',
+              onSelect: () => {
+                if (busy) return;
+                refreshStatus.mutate();
+              },
+            },
+            {
+              key: 'replaced',
+              label: `Ver ${d.replacedByDocumentNumber ?? 'la corrección'}`,
+              show: d.replacedByDocumentId !== null,
+              href: `/comprobantes/${d.replacedByDocumentId ?? ''}`,
+            },
+            {
+              key: 'credit-note',
+              label: 'Nota de crédito',
+              show: canCreditNote,
+              disabled: busy,
+              onSelect: () => {
                 if (busy) return;
                 setCreditOpen(true);
-              }}
-            >
-              Nota de crédito
-            </Button>
-          )}
-          {canAnnul && (
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => {
+              },
+            },
+            {
+              key: 'discard',
+              label: 'Descartar borrador',
+              show: isDraft,
+              destructive: true,
+              disabled: busy,
+              onSelect: () => {
+                if (busy) return;
+                setDiscardOpen(true);
+              },
+            },
+            {
+              key: 'annul',
+              label: 'Anular internamente',
+              show: canAnnul,
+              destructive: true,
+              disabled: busy,
+              onSelect: () => {
                 if (busy) return;
                 setAnnulOpen(true);
-              }}
-            >
-              Anular internamente
-            </Button>
-          )}
-          {(canVoid || canVoidDispatchNote) && (
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => {
+              },
+            },
+            {
+              key: 'void',
+              label: 'Dar de baja',
+              show: canVoid || canVoidDispatchNote,
+              destructive: true,
+              disabled: busy,
+              onSelect: () => {
                 if (busy) return;
                 setVoidOpen(true);
-              }}
-            >
-              Dar de baja
-            </Button>
-          )}
-        </div>
+              },
+            },
+          ]}
+        />
       </div>
 
       {/* Los avisos de estado. Cada uno dice qué pasó y qué hacer, no solo qué pasó. */}

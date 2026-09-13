@@ -17,6 +17,7 @@ import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } f
 import { invalidateSales } from '@/lib/sales-queries';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -164,70 +165,62 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             {q.businessLines.map((b) => BUSINESS_LINE_LABELS[b]).join(', ')}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" asChild>
-            {/*
-              Descarga directa desde el API (D-068); el proxy `/api/*` reenvía el binario. No
-              depende de `pdfKey`: si la subida a R2 falló, el endpoint lo rearma al vuelo.
-            */}
-            <a href={`/api/sales/quotations/${q.id}/pdf`}>Descargar PDF</a>
-          </Button>
-          {canEdit && (
-            <Button variant="outline" asChild>
-              <Link href={`/cotizaciones/${q.id}/editar`}>Editar</Link>
-            </Button>
-          )}
-          {canReserve && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              pending={reserve.isPending}
-              pendingText="Reservando…"
-              onClick={() => {
+        {/*
+          F8-S3b/M3: principal + «⋯». Principal: confirmar mientras se pueda (es a lo que va la
+          cotización); si no, editar; si tampoco, el PDF. Duplicar funciona en cualquier estado
+          (D-119). La descarga es directa desde el API (D-068), no depende de `pdfKey`.
+        */}
+        <HeaderActions
+          primary={['confirm', 'edit', 'pdf']}
+          actions={[
+            { key: 'pdf', label: 'Descargar PDF', download: `/api/sales/quotations/${q.id}/pdf` },
+            { key: 'edit', label: 'Editar', show: canEdit, href: `/cotizaciones/${q.id}/editar` },
+            {
+              key: 'reserve',
+              label: 'Reservar',
+              show: canReserve,
+              disabled: busy,
+              pending: reserve.isPending,
+              pendingText: 'Reservando…',
+              onSelect: () => {
                 if (busy) return;
                 reserve.mutate();
-              }}
-            >
-              Reservar
-            </Button>
-          )}
-          {canConfirm && (
-            <Button
-              disabled={busy}
-              onClick={() => {
+              },
+            },
+            {
+              key: 'confirm',
+              label: 'Confirmar',
+              show: canConfirm,
+              disabled: busy,
+              onSelect: () => {
                 if (busy) return;
                 setConfirmOpen(true);
-              }}
-            >
-              Confirmar
-            </Button>
-          )}
-          {canCancel && (
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => {
+              },
+            },
+            {
+              key: 'duplicate',
+              label: 'Duplicar',
+              disabled: busy,
+              pending: duplicate.isPending,
+              pendingText: 'Duplicando…',
+              onSelect: () => {
+                if (busy) return;
+                duplicate.mutate();
+              },
+            },
+            {
+              key: 'cancel',
+              label: 'Anular',
+              show: canCancel,
+              destructive: true,
+              disabled: busy,
+              onSelect: () => {
                 if (busy) return;
                 setCancelOpen(true);
-              }}
-            >
-              Anular
-            </Button>
-          )}
-          {/* D-119: duplicar funciona en cualquier estado, no solo en los vigentes. */}
-          <Button
-            variant="outline"
-            disabled={busy}
-            pending={duplicate.isPending}
-            pendingText="Duplicando…"
-            onClick={() => {
-              if (busy) return;
-              duplicate.mutate();
-            }}
-          >
-            Duplicar
-          </Button>
-        </div>
+              },
+            },
+          ]}
+        />
       </div>
 
       {q.status === 'EMITTED' && q.isExpired && (

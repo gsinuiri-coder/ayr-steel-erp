@@ -9,7 +9,7 @@ import {
   type InvoicingTrail,
 } from '../helpers/invoicing';
 import { apiAs, postExpectingError, putJson } from '../helpers/production';
-import { chooseProductWithStock } from '../helpers/ui';
+import { chooseProductWithStock, headerAction } from '../helpers/ui';
 import {
   metersOf,
   mountCoil,
@@ -398,7 +398,7 @@ test.describe('F8-S2 — edición del pedido confirmado (D-187)', () => {
 
       await loginAsAdmin(page);
       await page.goto(`/pedidos/${order.id}`);
-      await page.getByRole('link', { name: 'Agregar ítems' }).click();
+      await (await headerAction(page, 'Agregar ítems')).click();
       await expect(
         page.getByRole('heading', { name: `Agregar ítems a ${order.code}` }),
       ).toBeVisible({ timeout: 60_000 });

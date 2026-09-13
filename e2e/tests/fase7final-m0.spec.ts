@@ -3,7 +3,7 @@ import { adminApi, createSupplier, createUser, getJson, postJson } from '../help
 import { apiAs, postExpectingError, today, uniqueDocumentNumber } from '../helpers/production';
 import { createCustomer, patchExpectingError } from '../helpers/sales';
 import { createInvoice, freeLine, invoiceBody, type FiscalDocumentDto } from '../helpers/invoicing';
-import { loginAndSetPassword } from '../helpers/ui';
+import { loginAndSetPassword, headerAction } from '../helpers/ui';
 
 /**
  * Sesión 7-final, milestone M0 — dos arreglos puntuales:
@@ -181,7 +181,7 @@ test.describe('M0a — unicidad de comprobante de compra solo entre compras viva
         page.getByRole('heading', { name: `Factura F001-${originalNumber}` }),
       ).toBeVisible();
 
-      await page.getByRole('button', { name: 'Corregir número' }).click();
+      await (await headerAction(page, 'Corregir número')).click();
       // `exact: true`: sin él, "Número" también matchea (por substring, case-insensitive)
       // el título del diálogo "Corregir el número del comprobante", que Playwright expone
       // como accesible vía `aria-labelledby` del propio `role=dialog` — violación de modo

@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, getJson, postJson } from '../helpers/api';
+import { headerAction } from '../helpers/ui';
 import { expireTemporaryReservationsNow } from '../helpers/db';
 import { postExpectingError, putExpectingError, putJson } from '../helpers/production';
 import {
@@ -391,7 +392,7 @@ test.describe('F8-S2 — reserva temporal y confirmar en un paso', () => {
       });
 
       // Reservar desde la pantalla deja la sección con el material apartado.
-      await page.getByRole('button', { name: 'Reservar', exact: true }).click();
+      await (await headerAction(page, 'Reservar')).click();
       await expect(page.getByText('Reserva temporal', { exact: true })).toBeVisible();
 
       await page.getByRole('button', { name: 'Confirmar', exact: true }).click();

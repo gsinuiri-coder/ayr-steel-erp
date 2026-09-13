@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, createUser, getJson, postJson } from '../helpers/api';
+import { headerAction } from '../helpers/ui';
 import { expireTemporaryReservationsNow } from '../helpers/db';
 import { apiAs, ROLE_PASSWORD } from '../helpers/production';
 import {
@@ -117,7 +118,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       // Una cotización recién emitida no tiene historial de precios: la tarjeta no se pinta.
       await expect(page.getByRole('table', { name: 'Cambios de precio' })).toHaveCount(0);
 
-      await page.getByRole('link', { name: 'Editar', exact: true }).click();
+      await (await headerAction(page, 'Editar')).click();
       await expect(page).toHaveURL(new RegExp(`/cotizaciones/${quotation.id}/editar$`));
       await expect(page.getByRole('heading', { name: `Editar ${quotation.code}` })).toBeVisible({
         timeout: 60_000,
@@ -145,7 +146,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
 
       // Volver a guardar desde el formulario sin tocar el precio no es un cambio de precio: el
       // valor tiene que ir y volver por el precio con IGV sin moverse un centavo.
-      await page.getByRole('link', { name: 'Editar', exact: true }).click();
+      await (await headerAction(page, 'Editar')).click();
       await waitForCatalog(page);
       await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('76.7000');
       await page.getByRole('button', { name: 'Guardar cambios' }).click();
@@ -277,15 +278,17 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       await expect(page.getByRole('heading', { name: ownOrder.code, level: 1 })).toBeVisible({
         timeout: 60_000,
       });
-      await expect(page.getByRole('link', { name: 'Agregar ítems' })).toBeVisible();
+      // F8-S3b/M3: las acciones secundarias del pedido viven en el menú «Más acciones».
+      await expect(await headerAction(page, 'Agregar ítems')).toBeVisible();
+      await expect(page.getByRole('menuitem', { name: 'Cambiar cliente' })).toHaveCount(0);
+      await expect(page.getByRole('menuitem', { name: 'Anular pedido' })).toHaveCount(0);
+      await page.keyboard.press('Escape');
       await expect(
         page.getByRole('button', { name: 'Cambiar cantidad de la línea 1' }),
       ).toBeVisible();
       await expect(page.getByRole('button', { name: 'Cambiar precio de la línea 1' })).toHaveCount(
         0,
       );
-      await expect(page.getByRole('button', { name: 'Cambiar cliente' })).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'Anular pedido' })).toHaveCount(0);
 
       // Lo que ve lo puede usar: la cantidad pasa de 1 a 2 planchas de 10 m desde el diálogo.
       await page.getByRole('button', { name: 'Cambiar cantidad de la línea 1' }).click();
@@ -452,7 +455,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
         timeout: 60_000,
       });
       await expect(page.getByText('Reserva temporal', { exact: true })).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'Reservar', exact: true })).toBeVisible();
+      await expect(await headerAction(page, 'Reservar')).toBeVisible();
     } finally {
       await purgeRoofingTrail(api, trail);
     }

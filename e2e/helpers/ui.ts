@@ -113,6 +113,26 @@ export async function openQueuedOrder(page: Page, code: string): Promise<void> {
 }
 
 /**
+ * F8-S3b/M3: una acción de la cabecera de una vista (`HeaderActions`). La principal es un
+ * botón o enlace a la vista; las secundarias viven en el menú «Más acciones». Devuelve el
+ * elemento a clickear, abriendo el menú si hace falta, para que el test no dependa de cuál de
+ * las dos le tocó a la acción en el estado del documento.
+ */
+export async function headerAction(page: Page, name: string): Promise<Locator> {
+  const main = page.locator('main');
+  const visible = main
+    .getByRole('button', { name, exact: true })
+    .or(main.getByRole('link', { name, exact: true }));
+  const more = main.getByRole('button', { name: 'Más acciones' });
+  await expect(visible.or(more).first()).toBeVisible({ timeout: 30_000 });
+  if ((await visible.count()) > 0) return visible.first();
+  await more.click();
+  const item = page.getByRole('menuitem', { name, exact: true });
+  await expect(item).toBeVisible();
+  return item;
+}
+
+/**
  * Inicia sesión con un usuario efímero recién creado (contraseña temporal) y
  * completa el cambio de contraseña obligatorio del primer ingreso.
  */

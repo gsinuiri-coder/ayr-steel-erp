@@ -12,7 +12,7 @@ import {
   type CreatedUser,
 } from '../helpers/api';
 import { today } from '../helpers/production';
-import { loginAndSetPassword } from '../helpers/ui';
+import { loginAndSetPassword, headerAction } from '../helpers/ui';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -304,7 +304,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
 
       // --- Con el pago revertido, el comprobante ya se puede anular ---
       // `exact` importa: sin él, este selector también matchea "Anular pago" de la tabla.
-      await page.getByRole('button', { name: 'Anular', exact: true }).click();
+      await (await headerAction(page, 'Anular')).click();
       await page.getByLabel('Motivo').fill('Cierre de la prueba E2E');
       await page.getByRole('button', { name: 'Sí, anular' }).click();
       await expect(page.getByText('Compra anulada')).toBeVisible();

@@ -25,7 +25,7 @@ import { RoleGate } from '@/components/role-gate';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { formatMoney, formatQty, isPositiveDecimal } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { HeaderActions } from '@/components/header-actions';
 import { Input } from '@/components/ui/input';
 import { PaginationBar } from '@/components/pagination-bar';
 import {
@@ -142,19 +142,27 @@ export function BobinasView() {
             Materia prima por línea de negocio (RF-23). El alta entra por compra, XML o planilla.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {/* T6 (D-173): el reporte del conjunto filtrado actual — mismos filtros que la
-              tabla de abajo, la descarga es directa contra el API (patrón D-149). */}
-          <Button variant="outline" asChild>
-            <a href={`/api/coils/report-pdf?${queryString}`}>Descargar PDF</a>
-          </Button>
-          <Button variant="outline" asChild>
-            <Link href="/bobinas/nueva-xml">Desde XML</Link>
-          </Button>
-          <Button asChild>
-            <Link href="/compras/nueva?tipo=COIL">Nueva compra de bobinas</Link>
-          </Button>
-        </div>
+        {/*
+          F8-S3b/M3: principal + «⋯». Principal: la compra de bobinas, que es por donde entra
+          casi todo el alta. T6 (D-173): el PDF es el reporte del conjunto filtrado actual —mismos
+          filtros que la tabla de abajo—, descarga directa contra el API (patrón D-149).
+        */}
+        <HeaderActions
+          primary={['new-purchase']}
+          actions={[
+            {
+              key: 'new-purchase',
+              label: 'Nueva compra de bobinas',
+              href: '/compras/nueva?tipo=COIL',
+            },
+            { key: 'from-xml', label: 'Desde XML', href: '/bobinas/nueva-xml' },
+            {
+              key: 'pdf',
+              label: 'Descargar PDF',
+              download: `/api/coils/report-pdf?${queryString}`,
+            },
+          ]}
+        />
       </div>
 
       {/* Pestañas y filtros comparten fila: son el mismo gesto —acotar la lista— y en dos

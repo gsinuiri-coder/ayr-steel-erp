@@ -23,7 +23,7 @@ import {
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { HeaderActions } from '@/components/header-actions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
@@ -141,38 +141,45 @@ export function DespachoDetalleView({ id }: { id: string }) {
             · {formatDate(d.dispatchDate)}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {canIssueNote && (
-            <Button
-              disabled={busy}
-              pending={issueNote.isPending}
-              pendingText="Emitiendo…"
-              onClick={() => {
+        {/*
+          F8-S3b/M3: principal + «⋯». Principal: emitir la guía mientras falte; con la guía
+          emitida, verla. Revertir es destructivo y va al menú.
+        */}
+        <HeaderActions
+          primary={['issue-note', 'view-note']}
+          actions={[
+            {
+              key: 'issue-note',
+              label:
+                d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía de remisión',
+              show: canIssueNote,
+              disabled: busy,
+              pending: issueNote.isPending,
+              pendingText: 'Emitiendo…',
+              onSelect: () => {
                 if (busy) return;
                 issueNote.mutate();
-              }}
-            >
-              {d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía de remisión'}
-            </Button>
-          )}
-          {d.dispatchNoteId && (
-            <Button variant="outline" asChild>
-              <Link href={`/comprobantes/${d.dispatchNoteId}`}>Ver guía</Link>
-            </Button>
-          )}
-          {canReverse && (
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => {
+              },
+            },
+            {
+              key: 'view-note',
+              label: 'Ver guía',
+              show: d.dispatchNoteId !== null,
+              href: `/comprobantes/${d.dispatchNoteId ?? ''}`,
+            },
+            {
+              key: 'reverse',
+              label: 'Revertir despacho',
+              show: canReverse,
+              destructive: true,
+              disabled: busy,
+              onSelect: () => {
                 if (busy) return;
                 setReverseOpen(true);
-              }}
-            >
-              Revertir despacho
-            </Button>
-          )}
-        </div>
+              },
+            },
+          ]}
+        />
       </div>
 
       {/*

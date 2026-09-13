@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+import { headerAction } from '../helpers/ui';
 import {
   adminApi,
   adminCredentials,
@@ -130,7 +131,7 @@ function filaDeCierre(page: Page): Locator {
 async function abrirDialogoDeCierre(page: Page, coil: CoilRow): Promise<Locator> {
   await page.goto(`/bobinas/${coil.id}`);
   await expect(page.getByRole('heading', { name: coil.code })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
+  await (await headerAction(page, 'Cerrar')).click();
   const dialog = page.getByRole('dialog').filter({ hasText: `Cerrar ${coil.code}` });
   await expect(dialog).toBeVisible();
   return dialog;

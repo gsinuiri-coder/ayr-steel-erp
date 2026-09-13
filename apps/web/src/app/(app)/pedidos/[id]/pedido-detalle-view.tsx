@@ -26,8 +26,17 @@ import { PromisedDateControl } from '@/components/production-queue';
 import { ProductionOrdersCard } from './production-orders-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -45,7 +54,7 @@ import {
   EditLinePriceDialog,
   EditLineQtyDialog,
 } from '@/components/sales/order-edit-dialogs';
-import { PlantSheetButtons } from '@/components/sales/plant-sheet-buttons';
+import { usePlantSheetActions } from '@/components/sales/plant-sheet-buttons';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
@@ -70,12 +79,16 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const [changingCustomer, setChangingCustomer] = useState(false);
   /** D-124/D-148: día con el que nacen las órdenes que genera el botón. Solo lo ve un admin. */
   const [ordersDate, setOrdersDate] = useState<string | undefined>(undefined);
+  /** F8-S3b/M3: generar las órdenes pasa por un diálogo que ofrece esa fecha. */
+  const [generateOpen, setGenerateOpen] = useState(false);
 
   const order = useQuery({
     queryKey: ['sales-order', id],
     queryFn: () => api<SalesOrderDto>(`/sales/orders/${id}`),
   });
   const o = order.data;
+  // Antes de los retornos tempranos: es un hook (el de compartir mira `navigator`).
+  const plantSheetActions = usePlantSheetActions(id, o?.code ?? '');
 
   function onError(err: unknown): void {
     toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
@@ -239,83 +252,118 @@ export function PedidoDetalleView({ id }: { id: string }) {
             </div>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
-          {/*
-            Los dos actos que siguen al pedido, y que corren por separado (D-074):
-            despachar saca la mercadería y cierra el pedido; facturar no lo cierra.
-          */}
-          {canOperate && (
-            <>
-              {/* D-149: el papel que baja al taller, sin importes. */}
-              <PlantSheetButtons orderId={o.id} code={o.code} />
-              <Button asChild>
-                <Link href={`/despachos/nuevo?pedido=${o.id}`}>Despachar</Link>
-              </Button>
-              <Button variant="outline" asChild>
-                <Link href={`/comprobantes/nuevo?pedido=${o.id}`}>Emitir comprobante</Link>
-              </Button>
-            </>
-          )}
-          {/*
-            D-148: una OP por cada línea a medida que todavía no la tiene, de una vez y en
-            una transacción. Solo para ADMINISTRADOR porque producción es de ADMINISTRADOR y
-            SUPERVISOR_PLANTA (§3.4), y VENDEDOR —que sí ve este pedido— no llega al endpoint.
-          */}
-          {isAdmin && canOperate && pendingRoofingLines > 0 && (
-            <div className="grid gap-1">
+        {/*
+          F8-S3b/M3: principal + «⋯». Principal: despachar, que es lo que sigue al pedido y lo
+          cierra (D-074); con el pedido anulado no hay principal. Facturar corre por separado y
+          no cierra el pedido, así que va al menú con el resto.
+        */}
+        <HeaderActions
+          primary={['dispatch']}
+          actions={[
+            {
+              key: 'dispatch',
+              label: 'Despachar',
+              show: canOperate,
+              href: `/despachos/nuevo?pedido=${o.id}`,
+            },
+            {
+              key: 'invoice',
+              label: 'Emitir comprobante',
+              show: canOperate,
+              href: `/comprobantes/nuevo?pedido=${o.id}`,
+            },
+            // D-149: el papel que baja al taller, sin importes.
+            ...plantSheetActions.map((a) => ({ ...a, show: canOperate && a.show !== false })),
+            // D-160: el espacio de producción, acotado a este pedido.
+            {
+              key: 'produce',
+              label: `Producir (${String(queuedRoofingLines)})`,
+              show: isAdmin && canOperate && queuedRoofingLines > 0,
+              href: `/planta?pedido=${o.id}`,
+            },
+            // D-148: una OP por cada línea a medida que todavía no la tiene, de una vez. Solo
+            // ADMINISTRADOR: VENDEDOR —que sí ve este pedido— no llega al endpoint (§3.4).
+            {
+              key: 'generate',
+              label: `Generar todas las órdenes (${String(pendingRoofingLines)})`,
+              show: isAdmin && canOperate && pendingRoofingLines > 0,
+              disabled: busy,
+              pending: generateOrders.isPending,
+              pendingText: 'Generando…',
+              onSelect: () => {
+                if (busy) return;
+                setGenerateOpen(true);
+              },
+            },
+            {
+              key: 'add-items',
+              label: 'Agregar ítems',
+              show: canEditAsOwner,
+              href: `/pedidos/${o.id}/agregar`,
+            },
+            {
+              key: 'change-customer',
+              label: 'Cambiar cliente',
+              show: canEditAsAdmin,
+              disabled: busy,
+              onSelect: () => {
+                setChangingCustomer(true);
+              },
+            },
+            {
+              key: 'cancel',
+              label: 'Anular pedido',
+              show: isAdmin && canCancel,
+              destructive: true,
+              disabled: busy,
+              onSelect: () => {
+                if (busy) return;
+                setCancelOpen(true);
+              },
+            },
+          ]}
+        />
+        {/*
+          La fecha de las órdenes (D-124) vivía debajo del botón; dentro de un menú no tiene
+          dónde ir, así que generar pasa por un diálogo corto que la ofrece antes de crear nada.
+        */}
+        <Dialog open={generateOpen} onOpenChange={setGenerateOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Generar las órdenes de {o.code}</DialogTitle>
+              <DialogDescription>
+                Crea la orden de producción de cada línea a medida que todavía no la tiene (
+                {pendingRoofingLines}), con el plan de corte del pedido.
+              </DialogDescription>
+            </DialogHeader>
+            <OperationDateField value={ordersDate} onChange={setOrdersDate} />
+            <DialogFooter>
               <Button
                 variant="outline"
+                onClick={() => {
+                  setGenerateOpen(false);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
                 disabled={busy}
                 pending={generateOrders.isPending}
                 pendingText="Generando…"
                 onClick={() => {
                   if (busy) return;
-                  generateOrders.mutate();
+                  generateOrders.mutate(undefined, {
+                    onSuccess: () => {
+                      setGenerateOpen(false);
+                    },
+                  });
                 }}
               >
-                {`Generar todas las órdenes (${String(pendingRoofingLines)})`}
+                Generar
               </Button>
-              <OperationDateField value={ordersDate} onChange={setOrdersDate} />
-            </div>
-          )}
-          {/*
-            D-160: el espacio de producción, acotado a este pedido. Es la única entrada a
-            producir: ahí se monta la bobina, se reporta y se cierra cada orden.
-          */}
-          {isAdmin && canOperate && queuedRoofingLines > 0 && (
-            <Button variant="outline" asChild>
-              <Link href={`/planta?pedido=${o.id}`}>Producir ({String(queuedRoofingLines)})</Link>
-            </Button>
-          )}
-          {canEditAsOwner && (
-            <Button variant="outline" asChild>
-              <Link href={`/pedidos/${o.id}/agregar`}>Agregar ítems</Link>
-            </Button>
-          )}
-          {canEditAsAdmin && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                setChangingCustomer(true);
-              }}
-            >
-              Cambiar cliente
-            </Button>
-          )}
-          {isAdmin && canCancel && (
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => {
-                if (busy) return;
-                setCancelOpen(true);
-              }}
-            >
-              Anular pedido
-            </Button>
-          )}
-        </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {consumed.length > 0 && o.status !== 'CANCELLED' && (

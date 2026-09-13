@@ -2,21 +2,22 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
+import type { HeaderAction } from '@/components/header-actions';
 
 /**
- * Hoja de planta del pedido (D-149): descargarla y —en el teléfono— compartirla.
+ * Hoja de planta del pedido (D-149): descargarla y —en el teléfono— compartirla. Desde
+ * F8-S3b/M3 son dos acciones del menú «⋯» de la cabecera del pedido, no dos botones sueltos.
  *
  * La descarga es un `<a>` directo contra el API, igual que el PDF de la cotización (D-068):
  * el proxy `/api/*` reenvía el binario y el navegador se encarga del resto.
  *
- * El botón de compartir **solo aparece si el navegador puede compartir archivos**. La Web
+ * Compartir **solo aparece si el navegador puede compartir archivos**. La Web
  * Share API existe en el móvil y casi nunca en el escritorio, y `navigator.share` sin
  * `canShare({ files })` falla en el momento de compartir y no antes — mostrar un botón que
  * revienta al apretarlo es peor que no mostrarlo. La comprobación va en un efecto porque en
  * el servidor no hay `navigator` y el primer render tiene que coincidir con el del cliente.
  */
-export function PlantSheetButtons({ orderId, code }: { orderId: string; code: string }) {
+export function usePlantSheetActions(orderId: string, code: string): HeaderAction[] {
   const [canShare, setCanShare] = useState(false);
   const [sharing, setSharing] = useState(false);
   const href = `/api/sales/orders/${orderId}/pdf-planta`;
@@ -55,22 +56,18 @@ export function PlantSheetButtons({ orderId, code }: { orderId: string; code: st
     }
   }
 
-  return (
-    <>
-      <Button variant="outline" asChild>
-        <a href={href}>Hoja de planta (PDF)</a>
-      </Button>
-      {canShare && (
-        <Button
-          variant="outline"
-          disabled={sharing}
-          onClick={() => {
-            void share();
-          }}
-        >
-          {sharing ? 'Preparando…' : 'Compartir'}
-        </Button>
-      )}
-    </>
-  );
+  return [
+    { key: 'plant-sheet', label: 'Hoja de planta (PDF)', download: href },
+    {
+      key: 'plant-sheet-share',
+      label: 'Compartir hoja de planta',
+      show: canShare,
+      disabled: sharing,
+      pending: sharing,
+      pendingText: 'Preparando…',
+      onSelect: () => {
+        void share();
+      },
+    },
+  ];
 }

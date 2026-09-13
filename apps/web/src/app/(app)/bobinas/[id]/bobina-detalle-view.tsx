@@ -33,6 +33,7 @@ import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -181,81 +182,84 @@ export function BobinaDetalleView({ id }: { id: string }) {
             )}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={COIL_TONE[c.status]}>{COIL_STATUS_LABELS[c.status]}</Badge>
-          {/* T6 (D-173): igual que el PDF de planta (D-149), descarga directa contra el API. */}
-          <Button variant="outline" asChild>
-            <a href={`/api/coils/${id}/pdf`}>Descargar PDF</a>
-          </Button>
-          <Button
-            variant="outline"
-            disabled={busy || !canOperate}
-            onClick={() => {
-              if (busy) return;
-              setDialog('split');
-            }}
-          >
-            Partir
-          </Button>
-          <Button
-            variant="outline"
-            disabled={busy || c.status === 'CANCELLED' || !hasStock}
-            onClick={() => {
-              if (busy) return;
-              setDialog('scrap');
-            }}
-          >
-            Registrar merma
-          </Button>
-          {c.status !== 'CANCELLED' && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                // D-164: cerrar **siempre** pregunta cuánto queda, también con el saldo en
-                // cero. Es la misma pregunta en los dos casos, el diálogo muestra "no se
-                // liquida nada" cuando no hay nada, y es lo único que deja declarar un
-                // sobrante sobre una bobina que el kardex ya dio por consumida.
-                //
-                // Reabrir **también** pasa siempre por el diálogo de motivo, aunque no haya
-                // ajuste que revertir. Decidirlo mirando el kardex era un error: mientras esa
-                // consulta carga —o si falló, o durante el refetch posterior al cierre—
-                // `movementRows` está vacío, así que se mandaba un `OPEN` sin motivo y el API
-                // lo rechazaba pidiendo algo que la pantalla nunca había ofrecido; con el
-                // kardex caído, la bobina no se podía reabrir. El motivo de más no hace daño
-                // cuando no hay nada que deshacer, y el kardex solo decide **el texto**.
-                if (isOpen) {
-                  setDialog('close');
-                } else {
-                  setPending({ kind: 'reopen', qty: liveCloseAdjustment?.qty ?? null });
-                }
-              }}
-            >
-              {isOpen ? 'Cerrar' : 'Abrir'}
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            disabled={busy || c.status === 'CANCELLED'}
-            onClick={() => {
-              if (busy) return;
-              setDialog('edit');
-            }}
-          >
-            Editar
-          </Button>
-          {isAdmin && c.status !== 'CANCELLED' && (
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => {
-                if (busy) return;
-                setPending({ kind: 'cancel-coil' });
-              }}
-            >
-              Anular
-            </Button>
-          )}
+        <div className="flex flex-wrap items-start gap-2">
+          <Badge variant={COIL_TONE[c.status]} className="mt-2">
+            {COIL_STATUS_LABELS[c.status]}
+          </Badge>
+          {/*
+            F8-S3b/M3: principal + «⋯». Principal: partir, la operación del día a día sobre una
+            bobina con saldo; sin saldo o cerrada, cerrarla o reabrirla; anulada, el PDF.
+          */}
+          <HeaderActions
+            primary={canOperate ? ['split'] : ['close-open', 'pdf']}
+            actions={[
+              // T6 (D-173): igual que el PDF de planta (D-149), descarga directa contra el API.
+              { key: 'pdf', label: 'Descargar PDF', download: `/api/coils/${id}/pdf` },
+              {
+                key: 'split',
+                label: 'Partir',
+                disabled: busy || !canOperate,
+                onSelect: () => {
+                  if (busy) return;
+                  setDialog('split');
+                },
+              },
+              {
+                key: 'scrap',
+                label: 'Registrar merma',
+                disabled: busy || c.status === 'CANCELLED' || !hasStock,
+                onSelect: () => {
+                  if (busy) return;
+                  setDialog('scrap');
+                },
+              },
+              {
+                key: 'close-open',
+                label: isOpen ? 'Cerrar' : 'Abrir',
+                show: c.status !== 'CANCELLED',
+                disabled: busy,
+                onSelect: () => {
+                  // D-164: cerrar **siempre** pregunta cuánto queda, también con el saldo en
+                  // cero. Es la misma pregunta en los dos casos, el diálogo muestra "no se
+                  // liquida nada" cuando no hay nada, y es lo único que deja declarar un
+                  // sobrante sobre una bobina que el kardex ya dio por consumida.
+                  //
+                  // Reabrir **también** pasa siempre por el diálogo de motivo, aunque no haya
+                  // ajuste que revertir. Decidirlo mirando el kardex era un error: mientras esa
+                  // consulta carga —o si falló, o durante el refetch posterior al cierre—
+                  // `movementRows` está vacío, así que se mandaba un `OPEN` sin motivo y el API
+                  // lo rechazaba pidiendo algo que la pantalla nunca había ofrecido; con el
+                  // kardex caído, la bobina no se podía reabrir. El motivo de más no hace daño
+                  // cuando no hay nada que deshacer, y el kardex solo decide **el texto**.
+                  if (isOpen) {
+                    setDialog('close');
+                  } else {
+                    setPending({ kind: 'reopen', qty: liveCloseAdjustment?.qty ?? null });
+                  }
+                },
+              },
+              {
+                key: 'edit',
+                label: 'Editar',
+                disabled: busy || c.status === 'CANCELLED',
+                onSelect: () => {
+                  if (busy) return;
+                  setDialog('edit');
+                },
+              },
+              {
+                key: 'cancel-coil',
+                label: 'Anular',
+                show: isAdmin && c.status !== 'CANCELLED',
+                destructive: true,
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setPending({ kind: 'cancel-coil' });
+                },
+              },
+            ]}
+          />
         </div>
       </div>
 
