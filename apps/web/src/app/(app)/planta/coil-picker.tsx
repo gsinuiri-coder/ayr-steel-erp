@@ -398,8 +398,8 @@ function ReopenStep({
             {formatQty(adjustment.qtyKg, 'kg')} (
             {adjustment.kind === 'SHORTAGE' ? 'faltante' : 'sobrante'}) — reabrirla revierte el
             ajuste: {adjustment.kind === 'SHORTAGE' ? 'vuelven al kardex' : 'salen del kardex'}{' '}
-            {formatQty(adjustment.qtyKg, 'kg')} con un asiento compensatorio. Al cerrarla
-            de nuevo se calcula un ajuste nuevo con el saldo real.
+            {formatQty(adjustment.qtyKg, 'kg')} con un asiento compensatorio. Al cerrarla de nuevo
+            se calcula un ajuste nuevo con el saldo real.
           </>
         )}{' '}
         Queda montada en esta orden con {formatQty(coil.availableKg, 'kg')}.
