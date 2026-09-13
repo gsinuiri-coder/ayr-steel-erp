@@ -117,9 +117,15 @@ test.describe('F8-S2b — huecos de cobertura', () => {
   test('D-188: sin cotizaciones con faltante, la tarjeta del Panel no pinta nada (ni una vacía)', async ({
     page,
   }) => {
-    // Primer test del archivo, base recién reseteada (`E2E_RESET_DB=1`): nadie generó todavía
-    // una cotización EMITTED con faltante. Se comprueba también la respuesta cruda del API, no
-    // solo la ausencia en pantalla, para no confundir "no cargó" con "cargó y no había nada".
+    // La base **no** está recién reseteada cuando corre la suite completa: el reset es uno por
+    // corrida y los specs anteriores pueden dejar cotizaciones EMITTED con faltante (F8-S3 lo
+    // vio dos veces, con cotizaciones distintas). Lo que este caso prueba es la pantalla con
+    // una lista vacía, así que la respuesta vacía se fija con `page.route`; del API real solo se
+    // comprueba que responde bien y con la forma esperada, para no confundir "no cargó" con
+    // "cargó y no había nada".
+    await page.route('**/api/sales/quotations/stock-shortages', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    );
     await page.goto('/login');
     await page.getByLabel('Correo electrónico').fill(adminCredentials().email);
     await page.getByLabel('Contraseña', { exact: true }).fill(adminCredentials().password);
@@ -130,8 +136,10 @@ test.describe('F8-S2b — huecos de cobertura', () => {
     await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 
     const resp = await shortagesResponse;
-    expect(resp.ok(), await resp.text()).toBe(true);
     expect(await resp.json()).toEqual([]);
+    const real = await page.request.get('/api/sales/quotations/stock-shortages');
+    expect(real.ok(), await real.text()).toBe(true);
+    expect(Array.isArray(await real.json())).toBe(true);
 
     await expect(page.getByRole('heading', { name: 'Panel', level: 1 })).toBeVisible();
     await expect(page.getByText('Cotizaciones sin stock disponible')).toHaveCount(0);
