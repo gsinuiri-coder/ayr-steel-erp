@@ -60,6 +60,7 @@ import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
+import { DRAFT_INCLUDE, toDraftDto } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
@@ -645,10 +646,7 @@ export class RoofingProductionService {
    * Cuelga de la respuesta los avisos que dejó **esta** operación (D-154). No toca la orden
    * en la base: es un campo de la respuesta, y un `GET` posterior no lo trae.
    */
-  private withWarnings(
-    order: ProductionOrderDto,
-    warnings: RawMaterialShortfall[],
-  ): ProductionOrderDto {
+  withWarnings(order: ProductionOrderDto, warnings: RawMaterialShortfall[]): ProductionOrderDto {
     const unique = dedupeWarnings(warnings);
     if (unique.length === 0) return order;
     return { ...order, rawMaterialWarnings: unique.map(toWarningDto) };
@@ -676,6 +674,15 @@ export class RoofingProductionService {
       if (toDecimal(consumption.consumedKg.toString()).gt(0)) {
         throw new BadRequestException(
           `${consumption.coil.code} ya alimentó planchas reportadas (${consumption.consumedKg.toFixed(3)} kg): revierte esos reportes antes de bajarla`,
+        );
+      }
+      // D-191: el borrador que sale de esta bobina quedaría apuntando a un rollo desmontado.
+      const drafted = await tx.productionReportDraft.count({
+        where: { productionOrderId: orderId, coilId: consumption.coilId },
+      });
+      if (drafted > 0) {
+        throw new BadRequestException(
+          `${consumption.coil.code} tiene ${String(drafted)} fila(s) en el borrador de la orden: quítalas o cámbialas de bobina antes de bajarla`,
         );
       }
 
@@ -741,7 +748,7 @@ export class RoofingProductionService {
    *
    * Devuelve los avisos del agregado que dejó (D-154): el llamador los cuelga de la respuesta.
    */
-  private async reportInTx(
+  async reportInTx(
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     orderId: string,
@@ -1169,12 +1176,15 @@ export class RoofingProductionService {
             },
           },
         },
+        // D-191: el borrador de la orden viaja con la pestaña, igual que su plan.
+        reportDrafts: { include: DRAFT_INCLUDE, orderBy: { seq: 'asc' } },
       },
       orderBy: { seq: 'asc' },
       take: 500,
     });
 
     const rows = orders.map((order): RoofingBatchOrderDto => {
+      const drafts = order.reportDrafts.map(toDraftDto);
       const planPieces = order.items.map(toPieceLike);
       const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
       const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
@@ -1235,6 +1245,10 @@ export class RoofingProductionService {
             'KG',
           ),
         })),
+        drafts,
+        draftMeters: drafts
+          .reduce((acc, d) => acc.plus(toDecimal(d.meters)), new Decimal(0))
+          .toFixed(3),
         operationDate: fromDateOnly(order.operationDate),
       };
     });
@@ -1578,7 +1592,7 @@ export class RoofingProductionService {
    * `warnings` se recibe y se **muta**: es el mismo arreglo que `InventoryService.record`
    * llena con los faltantes del agregado (D-154), y el llamador lo cuelga de la respuesta.
    */
-  private async closeInTx(
+  async closeInTx(
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     orderId: string,
@@ -1593,6 +1607,16 @@ export class RoofingProductionService {
         order.status === ProductionOrderStatus.DRAFT
           ? 'La orden no tiene material ni planchas: anúlala en vez de cerrarla'
           : `La orden ya está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}`,
+      );
+    }
+
+    // D-191: cerrar con filas en el borrador las dejaría huérfanas de una orden que ya no
+    // admite reportes — y lo que salió de verdad no entraría nunca. Se ejecutan o se quitan.
+    // (El commit del borrador las borra antes de llamar acá.)
+    const drafted = await tx.productionReportDraft.count({ where: { productionOrderId: orderId } });
+    if (drafted > 0) {
+      throw new BadRequestException(
+        `${productionOrderCode(order.seq)} tiene ${String(drafted)} fila(s) sin ejecutar en el borrador: ejecútalas o quítalas antes de cerrar`,
       );
     }
 
@@ -2236,6 +2260,12 @@ export class RoofingProductionService {
         );
       }
 
+      // D-191: anular descarta el borrador. No es un hecho del dominio —nunca movió kardex—,
+      // así que se borra con la orden que ya no lo va a ejecutar.
+      const discardedDrafts = await tx.productionReportDraft.deleteMany({
+        where: { productionOrderId: orderId },
+      });
+
       const released = await tx.productionOrderConsumption.updateMany({
         where: { productionOrderId: orderId, releasedAt: null },
         data: { releasedAt: new Date() },
@@ -2271,6 +2301,7 @@ export class RoofingProductionService {
           status: ProductionOrderStatus.CANCELLED,
           reason,
           releasedCoils: released.count,
+          discardedDraftRows: discardedDrafts.count,
           ...(restored ? { reservationRestored: order.reservationId } : {}),
         },
       });
@@ -2380,7 +2411,7 @@ export class RoofingProductionService {
   }
 
   /** La tolerancia de D-086, con el override de entorno que documenta esa decisión. */
-  private thicknessToleranceMm(): string {
+  thicknessToleranceMm(): string {
     return roofingToleranceMm(this.env);
   }
 }

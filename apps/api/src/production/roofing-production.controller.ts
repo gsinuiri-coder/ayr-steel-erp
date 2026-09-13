@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -10,7 +11,12 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  commitRoofingDraftsSchema,
+  roofingReportDraftInputSchema,
   setProductionOrderPrioritySchema,
+  type CommitRoofingDraftsInput,
+  type RoofingReportDraftDto,
+  type RoofingReportDraftInput,
   type ProductionQueueEntryDto,
   type SetProductionOrderPriorityInput,
   cancelProductionOrderSchema,
@@ -41,6 +47,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { RoofingDraftsService } from './roofing-drafts.service';
 import { RoofingProductionService } from './roofing-production.service';
 
 /**
@@ -58,7 +65,10 @@ import { RoofingProductionService } from './roofing-production.service';
 @Controller('production/roofing')
 @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
 export class RoofingProductionController {
-  constructor(private readonly roofing: RoofingProductionService) {}
+  constructor(
+    private readonly roofing: RoofingProductionService,
+    private readonly drafts: RoofingDraftsService,
+  ) {}
 
   /**
    * Bobinas que la orden puede montar: el filtro de D-086 ya aplicado (abierta, con saldo,
@@ -111,6 +121,52 @@ export class RoofingProductionController {
     body: SetProductionOrderPriorityInput,
   ): Promise<ProductionOrderDto> {
     return this.roofing.setPriority(actor, id, body);
+  }
+
+  // -------------------------------------------------------------------------
+  // D-191 — borrador de reportes por orden
+  // -------------------------------------------------------------------------
+
+  @Get(':id/drafts')
+  listDrafts(@Param('id', ParseUUIDPipe) id: string): Promise<RoofingReportDraftDto[]> {
+    return this.drafts.list(id);
+  }
+
+  /** Ingresar una fila: se valida contra lo reportado más lo que el borrador ya ocupa. */
+  @Post(':id/drafts')
+  addDraft(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(roofingReportDraftInputSchema)) body: RoofingReportDraftInput,
+  ): Promise<RoofingReportDraftDto[]> {
+    return this.drafts.add(actor, id, body);
+  }
+
+  /** Ejecutar el borrador entero en una transacción (todo o nada). Va antes de `:draftId`. */
+  @Post(':id/drafts/commit')
+  commitDrafts(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(commitRoofingDraftsSchema)) body: CommitRoofingDraftsInput,
+  ): Promise<ProductionOrderDto> {
+    return this.drafts.commit(actor, id, body);
+  }
+
+  @Put(':id/drafts/:draftId')
+  updateDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('draftId', ParseUUIDPipe) draftId: string,
+    @Body(new ZodValidationPipe(roofingReportDraftInputSchema)) body: RoofingReportDraftInput,
+  ): Promise<RoofingReportDraftDto[]> {
+    return this.drafts.update(id, draftId, body);
+  }
+
+  @Delete(':id/drafts/:draftId')
+  removeDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('draftId', ParseUUIDPipe) draftId: string,
+  ): Promise<RoofingReportDraftDto[]> {
+    return this.drafts.remove(id, draftId);
   }
 
   /** Generar la OP de cada línea del pedido que todavía no la tiene (D-148). */

@@ -572,6 +572,54 @@ export const reportRoofingPiecesSchema = z.object({
 export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>;
 
 // --------------------------------------------------------------------------
+// D-191 — borrador de reportes por orden (staging server-side, commit todo o nada)
+// --------------------------------------------------------------------------
+
+/**
+ * Una fila del borrador: un reporte que todavía no se ejecutó. Misma forma que
+ * `reportRoofingPiecesSchema` menos lo que es del **acto** de ejecutar (fecha, idempotencia):
+ * eso viaja una sola vez, en el commit.
+ */
+export const roofingReportDraftInputSchema = z.object({
+  /** Opcional con una sola bobina montada; con varias, obligatorio (un reporte sale de un rollo). */
+  coilId: z.string().uuid().optional(),
+  pieces: roofingPiecesSchema,
+  consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+  notes: z.string().trim().max(240).optional(),
+});
+export type RoofingReportDraftInput = z.infer<typeof roofingReportDraftInputSchema>;
+
+/**
+ * Ejecutar el borrador de una orden: todas sus filas en **una** transacción, en orden, con
+ * revalidación completa adentro. `close` cierra la orden en la misma transacción (el «Guardar y
+ * cerrar» de D-159), con los mismos dos campos del cierre.
+ */
+export const commitRoofingDraftsSchema = z.object({
+  close: z.boolean().optional(),
+  closeConsumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+  closeReason: reasonSchema.optional(),
+  ...backdatableFields,
+  ...idempotencyFields,
+});
+export type CommitRoofingDraftsInput = z.infer<typeof commitRoofingDraftsSchema>;
+
+export const roofingReportDraftSchema = z.object({
+  id: z.string().uuid(),
+  /** Número de fila (1..N) en el orden en que se ejecuta. Es el que nombran los errores. */
+  rowNumber: z.number().int(),
+  coilId: z.string().uuid(),
+  coilCode: z.string(),
+  pieces: z.array(roofingPieceSchema),
+  meters: z.string(),
+  /** Kilo teórico con la geometría de esa bobina (D-047): lo que saldría del kardex. */
+  theoreticalKg: z.string(),
+  consumedKg: z.string().nullable(),
+  notes: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type RoofingReportDraftDto = z.infer<typeof roofingReportDraftSchema>;
+
+// --------------------------------------------------------------------------
 // D-155 — el espacio de producción del pedido
 // --------------------------------------------------------------------------
 
@@ -681,6 +729,10 @@ export const roofingBatchOrderSchema = z.object({
   /** Kilos teóricos que las planchas reportadas consumieron. */
   reportedKg: z.string(),
   coils: z.array(roofingBatchCoilSchema),
+  /** D-191: el borrador de reportes de la orden, en orden de ejecución. */
+  drafts: z.array(roofingReportDraftSchema),
+  /** D-191: metros del borrador, que ya ocupan plan aunque no se hayan ejecutado. */
+  draftMeters: z.string(),
   operationDate: z.string(),
 });
 export type RoofingBatchOrderDto = z.infer<typeof roofingBatchOrderSchema>;

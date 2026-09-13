@@ -1041,6 +1041,8 @@ model Coil {
   cuttingOrderSends  CuttingOrderCoil[]           @relation("CuttingOrderCoilSource")
   /// Asignaciones de este fleje a órdenes de producción (RF-34, Fase 4, D-060).
   productionInputs   ProductionOrderConsumption[]
+  /// D-191: reportes en borrador que saldrían de esta bobina.
+  reportDrafts       ProductionReportDraft[]
   /// Observaciones editables mientras la bobina está abierta (RF-20).
   notes              String?                      @db.VarChar(500)
   createdById        String                       @map("created_by_id") @db.Uuid
@@ -1291,6 +1293,8 @@ model ProductionOrder {
   reports      ProductionReport[]
   /// D-084: el plan de corte copiado del pedido. Vacío en una OP de drywall.
   items        ProductionOrderItem[]
+  /// D-191: reportes en borrador, todavía sin ejecutar.
+  reportDrafts ProductionReportDraft[]
 
   @@index([businessLineId, status])
   @@index([productId])
@@ -2220,6 +2224,44 @@ model ProductionReportPiece {
   @@unique([reportId, lineNumber])
   @@index([reportId])
   @@map("production_report_pieces")
+}
+
+/// D-191 (F8-S3/M3): un reporte de coberturas **en borrador**. Server-side para que sobreviva
+/// un refresh o un corte de luz; editable y eliminable mientras no se ejecute. **No mueve
+/// kardex ni reservas**: ejecutar el borrador de la orden valida todo otra vez y convierte cada
+/// fila en un `ProductionReport` en una sola transacción (todo o nada), y después las borra.
+model ProductionReportDraft {
+  id                String          @id @default(uuid()) @db.Uuid
+  /// Orden de carga: el borrador se ejecuta en este orden, y los errores nombran la fila.
+  seq               Int             @unique @default(autoincrement())
+  productionOrderId String          @map("production_order_id") @db.Uuid
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  /// De qué bobina montada salen estas planchas (un reporte sale de un rollo).
+  coilId            String          @map("coil_id") @db.Uuid
+  coil              Coil            @relation(fields: [coilId], references: [id])
+  /// D-146: kilo declarado de este reporte, opcional. Dato de planta, no consumo.
+  consumedKg        Decimal?        @map("consumed_kg") @db.Decimal(12, 3)
+  notes             String?         @db.VarChar(240)
+  createdById       String          @map("created_by_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  pieces ProductionReportDraftPiece[]
+
+  @@index([productionOrderId, seq])
+  @@map("production_report_drafts")
+}
+
+model ProductionReportDraftPiece {
+  id         String                @id @default(uuid()) @db.Uuid
+  draftId    String                @map("draft_id") @db.Uuid
+  draft      ProductionReportDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  lineNumber Int                   @map("line_number")
+  lengthMm   Decimal               @map("length_mm") @db.Decimal(8, 2)
+  qty        Int
+
+  @@unique([draftId, lineNumber])
+  @@map("production_report_draft_pieces")
 }
 
 /// Subítems de largo de una línea de cotización compuesta (D-083).

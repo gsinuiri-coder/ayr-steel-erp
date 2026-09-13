@@ -20,6 +20,7 @@ import {
   type RoofingBatchOrderDto,
   type RoofingCoilOptionDto,
   type RoofingPieceDto,
+  type RoofingReportDraftDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatQty } from '@/lib/format';
@@ -41,47 +42,51 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { CoilPicker } from './coil-picker';
 
 /**
  * El ciclo completo de **una** orden de coberturas dentro del espacio de producción
- * (D-155, rehecho por D-159).
+ * (D-155, rehecho por D-159 y por D-191).
  *
- * Lo que D-159 cambió, y por qué:
+ * - **El plan de corte se edita acá** (D-159). En una plancha de catálogo, solo la cantidad.
+ * - **D-191: lo que salió se carga en un borrador y se ejecuta todo junto.** Cada fila del
+ *   borrador es un reporte (bobina, largos, kg declarado) que vive en el servidor —sobrevive
+ *   un refresh o un corte de luz— y se edita o se quita mientras no se ejecute. Ni el kardex
+ *   ni la reserva se mueven hasta «Ejecutar», que valida todo otra vez y graba todas las filas
+ *   en una sola transacción: si una falla, no entra ninguna y el error nombra la fila.
+ * - **Ejecutar y cerrar** es una sola transacción, como era «Guardar y cerrar»: libera la
+ *   bobina para la orden hermana en el acto.
  *
- * - **El plan de corte se edita acá.** El techo real se mide en obra y el largo cambia; hasta
- *   D-158 corregirlo obligaba a irse a la terminal, que era la otra mitad del flujo que esta
- *   pantalla vino a juntar. En una plancha de catálogo se edita **solo la cantidad**: el largo
- *   lo trae el SKU y volver a pedirlo es ofrecer un campo cuya única respuesta correcta el
- *   sistema ya conoce (D-118).
- * - **Montar la bobina rellena el reporte con el plan que falta.** El caso normal es rolar lo
- *   que el pedido pide; escribirlo de nuevo largo por largo era transcribir lo que la pantalla
- *   ya tenía en la mano. Las líneas quedan editables y **se pueden borrar**: lo primero que
- *   hace quien roló la mitad es sacar las que no salieron.
- * - **Guardar y cerrar es una sola transacción** (`POST /report-and-close`). Un pedido genera
- *   una OP por línea (D-084/D-148) y todas se rolan del mismo rollo; mientras la primera siga
- *   abierta con la bobina montada, la segunda no la puede montar. Cerrar en un segundo viaje
- *   dejaba además el reporte escrito sobre una orden a medio cerrar cuando ese viaje fallaba.
- *
- * Lo que **no** cambió: el tope de metros del plan sigue siendo duro (D-146) y las
- * desviaciones del kilo declarado y el faltante del agregado siguen siendo avisos (D-154).
+ * Lo que **no** cambió: el tope de metros del plan sigue siendo duro (D-146) —y ahora cuenta lo
+ * que el borrador ya ocupa— y las desviaciones del kilo declarado y el faltante del agregado
+ * siguen siendo avisos (D-154).
  */
 
-/** Lo que se está por reportar en una orden. Vive **en el padre**, indexado por orden. */
+/** Lo que se está escribiendo en una orden. Vive **en el padre**, indexado por orden. */
 export interface OrderDraft {
   /**
-   * Filas del reporte. `null` es "todavía no se sembró": el panel lo rellena con el plan
-   * faltante en cuanto la orden tiene bobina, y a partir de ahí es del usuario. Distinguir
-   * `null` de `[]` es lo que evita que borrar todas las líneas las haga reaparecer.
+   * Filas del editor. `null` es "todavía no se sembró": el panel lo rellena con el plan
+   * faltante (si el borrador está vacío) y a partir de ahí es del usuario. Distinguir `null` de
+   * `[]` es lo que evita que borrar todas las líneas las haga reaparecer.
    */
   rows: PieceRow[] | null;
-  /** D-146: kilos declarados para **este** reporte. Dato de planta, no consumo. */
+  /** D-146: kilos declarados para **esta** fila. Dato de planta, no consumo. */
   consumedKg: string;
   /** D-089: kilos que la bobina consumió en **toda** la corrida; de acá sale el despunte. */
   closeKg: string;
   coilId: string;
   /** Filas del plan de corte mientras se edita. `null` = no se está editando. */
   planRows: PieceRow[] | null;
+  /** D-191: la fila del borrador que el editor está corrigiendo. `null` = se agrega una nueva. */
+  editingDraftId: string | null;
 }
 
 export const EMPTY_DRAFT: OrderDraft = {
@@ -90,6 +95,7 @@ export const EMPTY_DRAFT: OrderDraft = {
   closeKg: '',
   coilId: '',
   planRows: null,
+  editingDraftId: null,
 };
 
 /**
@@ -99,11 +105,7 @@ export const EMPTY_DRAFT: OrderDraft = {
 export interface SavedNotes {
   /** Faltantes del agregado que devolvió el API. */
   pool: RawMaterialWarningDto[];
-  /**
-   * La desviación del kg declarado. La calcula la pantalla con la misma función del API, y
-   * hay que **retenerla**: al guardar se limpian los campos, así que el ⚠ que se veía
-   * mientras se tipeaba desaparecía justo cuando pasó a ser un hecho registrado.
-   */
+  /** La desviación del kg declarado, retenida para que no desaparezca al limpiar el campo. */
   note: string | null;
 }
 
@@ -124,11 +126,9 @@ export function RoofingOrderPanel({
   /** El picker dejó de ser pestañas; el panel tiene que dejar de ser `tabpanel` con él. */
   asList: boolean;
   /**
-   * La lista de órdenes se está refrescando. Bloquea los envíos: tras guardar un reporte, el
-   * `order` de esta pestaña sigue siendo el viejo hasta que llega el refetch, así que el
-   * editor se re-siembra con los largos que **acaban de reportarse** y el botón queda
-   * habilitado sobre un `remainingMeters` que ya no es cierto. Un segundo clic rápido lo
-   * duplicaba; el API lo corta por el tope del plan (D-146), pero la pantalla lo invitaba.
+   * La lista de órdenes se está refrescando. Bloquea los envíos: tras ejecutar, el `order` de
+   * esta pestaña sigue siendo el viejo hasta que llega el refetch, y el botón quedaría
+   * habilitado sobre un borrador que ya no existe.
    */
   refreshing: boolean;
   draft: OrderDraft;
@@ -141,25 +141,17 @@ export function RoofingOrderPanel({
   const queryClient = useQueryClient();
   const { user } = useSession();
   /** Motivo del despunte cuando el cierre lo exige (D-089). */
-  const [closeReason, setCloseReason] = useState<string | null>(null);
   const [askingReason, setAskingReason] = useState(false);
-  /** Qué botón disparó el guardado: decide si el envío cierra la orden o solo reporta. */
+  /** Qué botón disparó la ejecución: decide si también cierra. Solo para el rótulo. */
   const [pendingClose, setPendingClose] = useState(false);
   /**
-   * **Los dos datos que deciden el envío van por `ref` y no por estado.** El botón los fija y
-   * dispara el envío en el mismo manejador, y un `setState` no se ve hasta el render
-   * siguiente: leídos del estado, «Guardar y cerrar» habría mandado lo que el botón anterior
-   * dejó puesto —un reporte sin cierre la primera vez— sin ningún error a la vista.
-   * `pendingClose` queda solo para el rótulo, que sí se pinta en el render siguiente.
+   * **Los dos datos que deciden el envío van por `ref` y no por estado**: el botón los fija y
+   * dispara el envío en el mismo manejador, y un `setState` no se ve hasta el render siguiente.
    */
   const closeMode = useRef(false);
   const reasonToSend = useRef<string | null>(null);
-  /**
-   * Cuál de los dos cierres está esperando el motivo. El diálogo es uno solo y lo abren dos
-   * caminos —«Guardar y cerrar» y «cerrar sin reportar más»—; sin esto, confirmar el motivo
-   * en el segundo mandaba el primero, o sea reportaba largos que nadie había tipeado.
-   */
-  const reasonFor = useRef<'report' | 'close-only'>('report');
+  /** Cuál de los dos cierres está esperando el motivo: el diálogo es uno solo. */
+  const reasonFor = useRef<'commit' | 'close-only'>('commit');
 
   const invalidate = () => {
     invalidateProduction(queryClient, order.orderId);
@@ -184,9 +176,8 @@ export function RoofingOrderPanel({
     onSuccess: (updated) => {
       toast.success('Bobina montada en la roladora');
       onNotes({ pool: updated.rawMaterialWarnings ?? [], note: null });
-      // D-159: el reporte llega relleno con lo que el plan todavía debe. Montar no cambia el
-      // plan, así que los pendientes de este mismo DTO son los correctos.
-      onDraft({ rows: seedRows(order) });
+      // D-159: el editor llega relleno con lo que el plan todavía debe.
+      onDraft({ rows: null });
       invalidate();
     },
     onError: (err) =>
@@ -202,8 +193,6 @@ export function RoofingOrderPanel({
     onSuccess: () => {
       toast.success('Bobina bajada de la orden');
       onDraft({ coilId: '' });
-      // El aviso hablaba del material que esta orden retenía; con la bobina abajo describe
-      // un estado que ya no existe.
       onNotes(NO_NOTES);
       invalidate();
     },
@@ -219,7 +208,6 @@ export function RoofingOrderPanel({
       }),
     onSuccess: () => {
       toast.success('Plan de corte actualizado');
-      // El reporte se vuelve a sembrar del plan nuevo: lo que había seguía siendo el viejo.
       onDraft({ planRows: null, rows: null });
       invalidate();
     },
@@ -228,77 +216,110 @@ export function RoofingOrderPanel({
   });
 
   const resolved = resolveDraft(order, draft);
+  const editing = order.drafts.find((d) => d.id === draft.editingDraftId) ?? null;
 
-  const submitKey = useIdempotencyKey();
-  const report = useMutation({
-    mutationFn: ({
-      pieces,
-      close,
-      reason,
-      confirmBackdate,
-    }: {
-      pieces: RoofingPieceDto[];
-      close: boolean;
-      reason: string | null;
-      confirmBackdate: boolean;
-    }) =>
-      api<ProductionOrderDto>(
-        `/production/roofing/${order.orderId}/${close ? 'report-and-close' : 'report'}`,
+  // -------------------------------------------------------------------------
+  // D-191 — el borrador
+  // -------------------------------------------------------------------------
+
+  const saveDraft = useMutation({
+    mutationFn: (pieces: RoofingPieceDto[]) =>
+      api<RoofingReportDraftDto[]>(
+        editing === null
+          ? `/production/roofing/${order.orderId}/drafts`
+          : `/production/roofing/${order.orderId}/drafts/${editing.id}`,
         {
-          method: 'POST',
+          method: editing === null ? 'POST' : 'PUT',
           body: {
             pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
             ...(resolved.coil ? { coilId: resolved.coil.coilId } : {}),
             ...(draft.consumedKg.trim()
               ? { consumedKg: toDecimal(draft.consumedKg.trim()).toFixed(3) }
               : {}),
-            ...(close && reason ? { closeReason: reason } : {}),
-            // D-089: el consumo real de toda la corrida, que es de donde sale el despunte.
-            ...(close && draft.closeKg.trim()
-              ? { closeConsumedKg: toDecimal(draft.closeKg.trim()).toFixed(3) }
-              : {}),
-            operationDate,
-            confirmBackdate: confirmBackdate || undefined,
-            idempotencyKey: submitKey.current(),
           },
         },
       ),
+    onSuccess: () => {
+      toast.success(
+        editing === null
+          ? `${order.code}: fila agregada al borrador`
+          : `${order.code}: fila ${String(editing.rowNumber)} corregida`,
+      );
+      // Tras agregar, el editor queda vacío: lo que falta del plan ya lo ocupa el borrador.
+      onDraft({ rows: [EMPTY_PIECE_ROW], consumedKg: '', editingDraftId: null });
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo guardar la fila'),
+  });
+
+  const removeDraft = useMutation({
+    mutationFn: (draftId: string) =>
+      api<RoofingReportDraftDto[]>(`/production/roofing/${order.orderId}/drafts/${draftId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: (_data, draftId) => {
+      toast.success(`${order.code}: fila quitada del borrador`);
+      if (draft.editingDraftId === draftId) {
+        onDraft({ rows: null, consumedKg: '', editingDraftId: null });
+      }
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo quitar la fila'),
+  });
+
+  const submitKey = useIdempotencyKey();
+  const commit = useMutation({
+    mutationFn: ({
+      close,
+      reason,
+      confirmBackdate,
+    }: {
+      close: boolean;
+      reason: string | null;
+      confirmBackdate: boolean;
+    }) =>
+      api<ProductionOrderDto>(`/production/roofing/${order.orderId}/drafts/commit`, {
+        method: 'POST',
+        body: {
+          ...(close ? { close: true } : {}),
+          ...(close && reason ? { closeReason: reason } : {}),
+          // D-089: el consumo real de toda la corrida, que es de donde sale el despunte.
+          ...(close && draft.closeKg.trim()
+            ? { closeConsumedKg: toDecimal(draft.closeKg.trim()).toFixed(3) }
+            : {}),
+          operationDate,
+          confirmBackdate: confirmBackdate || undefined,
+          idempotencyKey: submitKey.current(),
+        },
+      }),
     onSettled: (_data, error) => {
       submitKey.settle(error ?? undefined);
     },
     onSuccess: (updated, variables) => {
       toast.success(
         variables.close
-          ? `${order.code}: producción reportada y orden cerrada`
-          : `${order.code}: producción reportada`,
+          ? `${order.code}: borrador ejecutado y orden cerrada`
+          : `${order.code}: borrador ejecutado`,
       );
-      // La desviación se guarda **antes** de limpiar el campo: es la misma cuenta que el API
-      // acaba de dejar anotada en el reporte, y quien la produjo tiene que seguir viéndola.
-      onNotes({ pool: updated.rawMaterialWarnings ?? [], note: resolved.deviation });
-      onDraft({ rows: null, consumedKg: '', closeKg: '' });
-      // El motivo es de **este** cierre: arrastrarlo al reporte siguiente lo justificaría con
-      // la explicación de otra corrida.
+      onNotes({ pool: updated.rawMaterialWarnings ?? [], note: resolved.draftDeviation });
+      onDraft({ rows: null, consumedKg: '', closeKg: '', editingDraftId: null });
       reasonToSend.current = null;
-      setCloseReason(null);
       invalidate();
     },
     onError: (err) => {
-      // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API
-      // (es quien conoce los kilos declarados reporte a reporte). La pantalla lo estima y
-      // pregunta antes; cuando la estimación se queda corta, se pregunta acá.
-      if (err instanceof ApiError && /motivo/i.test(err.message)) {
+      // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.
+      if (err instanceof ApiError && /motivo/i.test(err.message) && closeMode.current) {
         setAskingReason(true);
         return;
       }
-      // Cualquier otro fallo deja el motivo escrito sin usar. Arrastrarlo al envío siguiente
-      // justificaría con la explicación de esta corrida un despunte que puede ser otro.
       reasonToSend.current = null;
-      setCloseReason(null);
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo reportar la producción');
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo ejecutar el borrador');
     },
   });
 
-  /** El cierre suelto: no queda nada que reportar (el plan se cubrió, o la bobina se acabó). */
+  /** El cierre suelto: sin borrador pendiente, no queda nada que reportar. */
   const closeOnly = useMutation({
     mutationFn: (reason: string | null) =>
       api<ProductionOrderDto>(`/production/roofing/${order.orderId}/close`, {
@@ -316,7 +337,6 @@ export function RoofingOrderPanel({
         `${order.code}: orden cerrada con ${formatQty(updated.scrapKg ?? '0.000', 'kg')} de despunte`,
       );
       reasonToSend.current = null;
-      setCloseReason(null);
       invalidate();
     },
     onError: (err) => {
@@ -328,14 +348,9 @@ export function RoofingOrderPanel({
     },
   });
 
-  /**
-   * Guardar, con o sin cierre. `reason` viaja solo cuando el despunte lo exige, y el diálogo
-   * de retro-fecha (D-124) envuelve las dos formas por igual.
-   */
+  /** Ejecutar, con o sin cierre, envuelto en el diálogo de retro-fecha (D-124). */
   const submit = useBackdateConfirm(async (confirmBackdate) => {
-    if (!resolved.pieces) return;
-    await report.mutateAsync({
-      pieces: resolved.pieces,
+    await commit.mutateAsync({
       close: closeMode.current,
       reason: reasonToSend.current,
       confirmBackdate,
@@ -344,7 +359,7 @@ export function RoofingOrderPanel({
 
   const start = (close: boolean) => {
     closeMode.current = close;
-    reasonFor.current = 'report';
+    reasonFor.current = 'commit';
     setPendingClose(close);
     // El motivo se pide **antes** de mandar cuando la pantalla ya sabe que el API lo va a
     // exigir: gastar un 400 para descubrirlo es la peor forma de enterarse.
@@ -359,22 +374,24 @@ export function RoofingOrderPanel({
   const state = stateOf(order);
   const full = liveCoils.length >= MAX_ORDER_STRIPS;
   const planCovered = order.planItems.length > 0 && toDecimal(order.remainingMeters).lte(0);
-  const closeIsPrimary = resolved.completesPlan || planCovered;
+  const hasDrafts = order.drafts.length > 0;
   /**
-   * **Cerrar sin reportar más existe siempre que la orden ya haya producido algo**, no solo
-   * cuando el plan quedó cubierto. El caso que lo obliga es el más común de todos: la bobina
-   * se acabó a los 28 m de un plan de 40, se reporta lo que salió y hay que cerrar la orden
-   * para devolverle el rollo a la orden hermana. Atado a `planCovered`, la única salida era
-   * bajar el plan a mano hasta que diera cero —o reportar 12 m que nadie produjo—, y el
-   * cierre del detalle de la orden ya no está (D-160). El API nunca exigió el plan cubierto.
+   * **Cerrar sin reportar más existe siempre que la orden ya haya producido algo** y el borrador
+   * esté vacío: el caso más común es la bobina que se acabó antes del plan. Con filas en el
+   * borrador el cierre va por «Ejecutar y cerrar», que las graba primero.
    */
-  const canClose = toDecimal(order.reportedKg).gt(0);
-  const pending = report.isPending || closeOnly.isPending || refreshing;
+  const canCloseOnly = toDecimal(order.reportedKg).gt(0) && !hasDrafts;
+  const canCloseWithCommit = hasDrafts;
+  const busy =
+    commit.isPending ||
+    closeOnly.isPending ||
+    saveDraft.isPending ||
+    removeDraft.isPending ||
+    refreshing;
 
   return (
     // Con la forma de lista, `tabpanel` sería un huérfano: no hay ningún `tablist` que lo
     // contenga y `aria-labelledby` apuntaría a un botón que ya no se anuncia como pestaña.
-    // El rótulo se conserva en las dos formas; lo que cambia es solo el rol.
     <section
       role={asList ? undefined : 'tabpanel'}
       id={`panel-${order.orderId}`}
@@ -419,12 +436,11 @@ export function RoofingOrderPanel({
               label="ML restante"
               value={`${order.remainingMeters} m`}
               tone={planCovered ? 'alert' : 'strong'}
+              hint={hasDrafts ? `${order.draftMeters} m en el borrador` : undefined}
             />
             <MiniStat
               label="kg teórico del plan"
               value={resolved.planKg === null ? '—' : `${resolved.planKg.toFixed(3)} kg`}
-              // Dos motivos distintos para el mismo guion, y confundirlos hacía que la
-              // pantalla pidiera montar una bobina sobre una orden que tenía dos.
               hint={
                 liveCoils.length === 0
                   ? 'Monta una bobina'
@@ -490,12 +506,7 @@ export function RoofingOrderPanel({
                   {c.widthMm} mm · pendiente {formatQty(c.remainingKg, 'kg')}
                 </div>
               </div>
-              {/*
-                S10/M3: avance de la orden mientras esta bobina está montada — solo lectura,
-                sin ningún cálculo nuevo. "ML reportados" es de la orden entera (los reportes
-                no se parten por bobina); "kg consumidos" sí es de esta bobina puntual, y ya
-                existía en el DTO sin mostrarse.
-              */}
+              {/* S10/M3: avance de la orden mientras esta bobina está montada, solo lectura. */}
               <div className="text-sm text-muted-foreground">
                 {formatQty(order.reportedMeters, 'm')} de la orden · {formatQty(c.consumedKg, 'kg')}{' '}
                 consumidos de esta bobina
@@ -514,12 +525,16 @@ export function RoofingOrderPanel({
                   </Button>
                 )}
                 {/* Una bobina que ya roló no se baja: hay que revertir esos reportes primero
-                    (RF-33). El API dice lo mismo; apagar el botón evita gastar un 400. */}
+                    (RF-33). Tampoco con filas del borrador que salen de ella (D-191). */}
                 <Button
                   variant="outline"
                   className="h-11"
                   aria-label={`Bajar la bobina ${c.coilCode} de ${order.code}`}
-                  disabled={release.isPending || toDecimal(c.consumedKg).gt(0)}
+                  disabled={
+                    release.isPending ||
+                    toDecimal(c.consumedKg).gt(0) ||
+                    order.drafts.some((d) => d.coilId === c.coilId)
+                  }
                   onClick={() => {
                     release.mutate(c.consumptionId);
                   }}
@@ -553,7 +568,14 @@ export function RoofingOrderPanel({
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle>Reportar lo que salió</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            Reportar lo que salió
+            <InfoPopover label="Sobre el borrador de reportes">
+              Cada fila del borrador es un reporte. Queda guardado aunque cierres la pantalla, y no
+              mueve inventario hasta que lo ejecutes: ahí se graban todas las filas juntas, o
+              ninguna si alguna falla.
+            </InfoPopover>
+          </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
           {liveCoils.length === 0 ? (
@@ -561,11 +583,14 @@ export function RoofingOrderPanel({
               Monta una bobina y las líneas del plan que falta aparecen acá, listas para ajustar.
             </p>
           ) : (
-            <>
+            <div className="grid gap-3 rounded-lg border p-3">
+              {editing !== null && (
+                <p className="text-sm font-medium">Corrigiendo la fila {editing.rowNumber}</p>
+              )}
               <LengthEditor
                 rows={draft.rows ?? seedRows(order)}
                 idPrefix={`reporte-${order.orderId}`}
-                disabled={pending}
+                disabled={busy}
                 onChange={(rows) => {
                   onDraft({ rows });
                 }}
@@ -585,7 +610,7 @@ export function RoofingOrderPanel({
                     aria-label={`Kilos consumidos de ${order.code}`}
                     inputMode="decimal"
                     placeholder={resolved.newKg === null ? 'opcional' : resolved.newKg.toFixed(3)}
-                    disabled={pending}
+                    disabled={busy}
                     value={draft.consumedKg}
                     onChange={(e) => {
                       onDraft({ consumedKg: e.target.value });
@@ -605,22 +630,125 @@ export function RoofingOrderPanel({
                   )}
                   {resolved.completesPlan && (
                     <p className="text-muted-foreground">
-                      Con esto el plan queda cubierto: «Guardar y cerrar» cierra la orden y libera
-                      la bobina para la orden siguiente del pedido.
+                      Con esta fila el borrador cubre el plan: «Ejecutar y cerrar» lo graba, cierra
+                      la orden y libera la bobina para la orden siguiente del pedido.
                     </p>
                   )}
                 </div>
               </div>
-            </>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {editing !== null && (
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => {
+                      onDraft({ rows: null, consumedKg: '', editingDraftId: null });
+                    }}
+                  >
+                    Cancelar corrección
+                  </Button>
+                )}
+                <Button
+                  variant={hasDrafts && editing === null ? 'outline' : 'default'}
+                  aria-label={
+                    editing === null
+                      ? `Agregar al borrador de ${order.code}`
+                      : `Guardar la fila ${String(editing.rowNumber)} de ${order.code}`
+                  }
+                  disabled={resolved.pieces === null || resolved.error !== null || busy}
+                  onClick={() => {
+                    if (resolved.pieces) saveDraft.mutate(resolved.pieces);
+                  }}
+                >
+                  {saveDraft.isPending
+                    ? 'Guardando…'
+                    : editing === null
+                      ? 'Agregar al borrador'
+                      : `Guardar fila ${String(editing.rowNumber)}`}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {hasDrafts && (
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">
+                Borrador de {order.code}: {order.drafts.length}{' '}
+                {order.drafts.length === 1 ? 'fila' : 'filas'} · {order.draftMeters} m sin ejecutar
+              </p>
+              <div className="overflow-x-auto rounded-lg border">
+                <Table aria-label={`Borrador de ${order.code}`}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Fila</TableHead>
+                      <TableHead>Bobina</TableHead>
+                      <TableHead>Largos</TableHead>
+                      <TableHead className="text-right">m</TableHead>
+                      <TableHead className="text-right">kg teóricos</TableHead>
+                      <TableHead className="text-right">kg declarados</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {order.drafts.map((d) => (
+                      <TableRow
+                        key={d.id}
+                        className={d.id === draft.editingDraftId ? 'bg-primary/5' : undefined}
+                      >
+                        <TableCell>{d.rowNumber}</TableCell>
+                        <TableCell className="font-mono">{d.coilCode}</TableCell>
+                        <TableCell>{describePieces(d.pieces)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{d.meters}</TableCell>
+                        <TableCell className="text-right tabular-nums">{d.theoreticalKg}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {d.consumedKg ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Corregir la fila ${String(d.rowNumber)} de ${order.code}`}
+                            disabled={busy}
+                            onClick={() => {
+                              onDraft({
+                                editingDraftId: d.id,
+                                coilId: d.coilId,
+                                consumedKg: d.consumedKg ?? '',
+                                rows: d.pieces.map((p) => ({
+                                  lengthM: mmToMeters(p.lengthMm),
+                                  qty: String(p.qty),
+                                })),
+                              });
+                            }}
+                          >
+                            Corregir
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Quitar la fila ${String(d.rowNumber)} de ${order.code}`}
+                            disabled={busy}
+                            onClick={() => {
+                              removeDraft.mutate(d.id);
+                            }}
+                          >
+                            Quitar
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
           )}
 
           {/*
-            D-089: los kilos que la bobina consumió **de verdad** en toda la corrida. Es el
-            dato del que sale el despunte, y sin él el cierre asume merma cero. Vive con los
-            botones de cierre porque es del cierre, no del reporte: el `kg consumido` de
-            arriba es lo declarado de **esta** pasada (D-146).
+            D-089: los kilos que la bobina consumió **de verdad** en toda la corrida. Es el dato
+            del que sale el despunte, y sin él el cierre asume merma cero.
           */}
-          {canClose && (
+          {(canCloseOnly || canCloseWithCommit) && (
             <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-start">
               <div className="grid gap-1.5">
                 <Label htmlFor={`cierre-kg-${order.orderId}`}>
@@ -630,8 +758,8 @@ export function RoofingOrderPanel({
                   id={`cierre-kg-${order.orderId}`}
                   aria-label={`Kilos consumidos al cerrar ${order.code}`}
                   inputMode="decimal"
-                  placeholder={resolved.closeOnly.consumedFloorKg.toFixed(3)}
-                  disabled={pending}
+                  placeholder={resolved.closeBounds.consumedFloorKg.toFixed(3)}
+                  disabled={busy}
                   value={draft.closeKg}
                   onChange={(e) => {
                     onDraft({ closeKg: e.target.value });
@@ -640,86 +768,70 @@ export function RoofingOrderPanel({
               </div>
               <p className="text-sm text-muted-foreground">
                 Sin este dato se asume que la bobina consumió exactamente los{' '}
-                {formatQty(resolved.closeOnly.consumedFloorKg.toFixed(3), 'kg')} teóricos de las
-                planchas ya reportadas. La diferencia sale como despunte; el resto de la bobina
-                vuelve al almacén.
-                {/*
-                  Las dos cotas se dicen por separado porque son dos cierres distintos: cerrar
-                  ahora no manda los largos del editor, y «Guardar y cerrar» sí. Un solo
-                  mensaje —el de la versión con reporte— dejaba bloqueado el cierre suelto por
-                  planchas que ese botón no iba a producir.
-                */}
-                {resolved.closeOnly.closeKgError !== null && (
-                  <span className="text-destructive">
-                    {' '}
-                    Para cerrar sin reportar más: {resolved.closeOnly.closeKgError}
-                  </span>
+                {formatQty(resolved.closeBounds.consumedFloorKg.toFixed(3), 'kg')} teóricos de las
+                planchas {hasDrafts ? 'reportadas y del borrador' : 'ya reportadas'}. La diferencia
+                sale como despunte; el resto de la bobina vuelve al almacén.
+                {resolved.closeBounds.closeKgError !== null && (
+                  <span className="text-destructive"> {resolved.closeBounds.closeKgError}</span>
                 )}
-                {resolved.closeWithReport.closeKgError !== null &&
-                  resolved.closeWithReport.closeKgError !== resolved.closeOnly.closeKgError && (
-                    <span className="text-destructive">
+                {resolved.closeBounds.scrapKg.gt(0) &&
+                  resolved.closeBounds.closeKgError === null && (
+                    <>
                       {' '}
-                      Para guardar y cerrar: {resolved.closeWithReport.closeKgError}
-                    </span>
+                      Despunte al cerrar: {formatQty(resolved.closeBounds.scrapKg.toFixed(3), 'kg')}
+                      .
+                    </>
                   )}
-                {resolved.closeOnly.scrapKg.gt(0) && resolved.closeOnly.closeKgError === null && (
-                  <>
-                    {' '}
-                    Despunte al cerrar ahora:{' '}
-                    {formatQty(resolved.closeOnly.scrapKg.toFixed(3), 'kg')}.
-                  </>
-                )}
               </p>
             </div>
           )}
 
-          {/* S11/F1-02: eran dos botones de 64 px de alto estirados a media tarjeta cada uno
-              (≈580 y ≈720 px), del tamaño que pedía una terminal de planta con guantes. El
-              sistema se opera desde el escritorio del supervisor, así que valen los mismos
-              botones que el resto de la app, alineados a la derecha como toda barra de
-              acciones. */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <OperationDateField value={operationDate} onChange={onOperationDate} />
-            <Button
-              variant={closeIsPrimary ? 'outline' : 'default'}
-              disabled={resolved.pieces === null || resolved.error !== null || pending}
-              onClick={() => {
-                start(false);
-              }}
-            >
-              {report.isPending && !pendingClose ? 'Guardando…' : `Guardar ${order.code}`}
-            </Button>
-            <Button
-              variant={closeIsPrimary ? 'default' : 'outline'}
-              disabled={
-                resolved.pieces === null ||
-                resolved.error !== null ||
-                resolved.closeWithReport.closeKgError !== null ||
-                pending
-              }
-              onClick={() => {
-                start(true);
-              }}
-            >
-              {report.isPending && pendingClose ? 'Cerrando…' : 'Guardar y cerrar'}
-            </Button>
+            {hasDrafts && (
+              <>
+                <Button
+                  variant={resolved.draftCoversPlan ? 'outline' : 'default'}
+                  aria-label={`Ejecutar el borrador de ${order.code}`}
+                  disabled={busy || editing !== null}
+                  onClick={() => {
+                    start(false);
+                  }}
+                >
+                  {commit.isPending && !pendingClose ? 'Ejecutando…' : 'Ejecutar borrador'}
+                </Button>
+                <Button
+                  variant={resolved.draftCoversPlan ? 'default' : 'outline'}
+                  aria-label={`Ejecutar el borrador y cerrar ${order.code}`}
+                  disabled={busy || editing !== null || resolved.closeBounds.closeKgError !== null}
+                  onClick={() => {
+                    start(true);
+                  }}
+                >
+                  {commit.isPending && pendingClose ? 'Cerrando…' : 'Ejecutar y cerrar'}
+                </Button>
+              </>
+            )}
+            {canCloseOnly && (
+              <Button
+                variant="outline"
+                aria-label={`Cerrar ${order.code} sin reportar más`}
+                disabled={busy || resolved.closeBounds.closeKgError !== null}
+                onClick={() => {
+                  reasonFor.current = 'close-only';
+                  closeOnly.mutate(reasonToSend.current);
+                }}
+              >
+                {closeOnly.isPending
+                  ? 'Cerrando…'
+                  : `Cerrar ${order.code} sin reportar más${planCovered ? '' : ' (la bobina se acabó)'}`}
+              </Button>
+            )}
           </div>
-
-          {canClose && (
-            <Button
-              variant="outline"
-              className="justify-self-start"
-              aria-label={`Cerrar ${order.code} sin reportar más`}
-              disabled={pending || resolved.closeOnly.closeKgError !== null}
-              onClick={() => {
-                reasonFor.current = 'close-only';
-                closeOnly.mutate(closeReason);
-              }}
-            >
-              {closeOnly.isPending
-                ? 'Cerrando…'
-                : `Cerrar ${order.code} sin reportar más${planCovered ? '' : ' (la bobina se acabó)'}`}
-            </Button>
+          {hasDrafts && editing !== null && (
+            <p className="text-right text-xs text-muted-foreground">
+              Termina o cancela la corrección antes de ejecutar.
+            </p>
           )}
         </CardContent>
       </Card>
@@ -728,23 +840,14 @@ export function RoofingOrderPanel({
         open={askingReason}
         onOpenChange={setAskingReason}
         title="Cerrar con despunte alto"
-        // Con las cifras concretas, no solo el porcentaje: es el momento en que el encargado
-        // decide si la merma que va a firmar es la que de verdad ocurrió.
-        description={`Las planchas reportadas representan ${formatQty(
-          (reasonFor.current === 'close-only'
-            ? resolved.closeOnly
-            : resolved.closeWithReport
-          ).consumedFloorKg.toFixed(3),
+        description={`Las planchas representan ${formatQty(
+          resolved.closeBounds.consumedFloorKg.toFixed(3),
           'kg',
         )} y se declara un consumo mayor: la diferencia —más del ${String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} %— sale del inventario como despunte y su costo se reparte entre el producto bueno. Explica por qué.`}
         confirmLabel="Cerrar la orden"
-        pending={pending}
+        pending={busy}
         onConfirm={(reason: string) => {
-          // El motivo se guarda en el `ref` y se reintenta por **el mismo camino** que el
-          // botón: así el reintento sigue pasando por el guardrail cronológico (D-124) en
-          // vez de mandar `confirmBackdate: false` a mano y perder el diálogo de retro-fecha.
           reasonToSend.current = reason;
-          setCloseReason(reason);
           setAskingReason(false);
           if (reasonFor.current === 'close-only') closeOnly.mutate(reason);
           else start(true);
@@ -757,7 +860,7 @@ export function RoofingOrderPanel({
           if (!open) submit.close();
         }}
         detail={submit.detail ?? ''}
-        pending={report.isPending}
+        pending={commit.isPending}
         onConfirm={() => {
           void submit.confirm();
         }}
@@ -980,9 +1083,13 @@ export function MiniStat({
 // Lo que el borrador de una pestaña resuelve, con las funciones del API
 // ---------------------------------------------------------------------------
 
-/** El plan que todavía falta, como filas del editor. Vacío ⇒ una fila en blanco. */
+/**
+ * El plan que todavía falta, como filas del editor. Con filas en el borrador el editor arranca
+ * vacío: lo que falta del plan ya lo ocupan esas filas, y sembrarlo otra vez invitaba a
+ * cargarlo dos veces.
+ */
 function seedRows(order: RoofingBatchOrderDto): PieceRow[] {
-  if (order.remainingPieces.length === 0) return [EMPTY_PIECE_ROW];
+  if (order.drafts.length > 0 || order.remainingPieces.length === 0) return [EMPTY_PIECE_ROW];
   return order.remainingPieces.map((p) => ({
     lengthM: mmToMeters(p.lengthMm),
     qty: String(p.qty),
@@ -995,44 +1102,27 @@ interface ResolvedDraft {
   pieces: RoofingPieceDto[] | null;
   meters: Decimal;
   newKg: Decimal | null;
-  /** `true` cuando lo que se va a reportar cubre exactamente lo que falta del plan. */
+  /** La fila que se escribe deja el borrador cubriendo exactamente el plan. */
   completesPlan: boolean;
+  /** El borrador guardado ya cubre el plan: «Ejecutar y cerrar» pasa a ser la acción primaria. */
+  draftCoversPlan: boolean;
   /** El API va a exigir motivo para el despunte de este cierre (D-089). */
   needsCloseReason: boolean;
   /**
-   * D-089: las cotas del kg declarado, **una por cada forma de cerrar**.
-   *
-   * No son la misma cuenta y confundirlas dejaba inservible justo el botón que más se usa:
-   * el piso es lo que las planchas reportadas representan, y «Guardar y cerrar» reporta unas
-   * cuantas más que «cerrar sin reportar más» no manda. Con un solo piso —el de la versión
-   * con reporte— el cierre suelto exigía declarar kilos por planchas que no iban a salir, y
-   * como el editor se re-siembra solo con el plan que falta, el caso normal («la bobina se
-   * acabó, cierro con lo que salió») quedaba bloqueado sin salida visible.
+   * D-089: las cotas del kg declarado al cerrar. Con borrador, el piso incluye sus filas
+   * («Ejecutar y cerrar» las graba antes de cerrar); sin borrador es el cierre suelto.
    */
-  closeOnly: CloseBounds;
-  closeWithReport: CloseBounds;
+  closeBounds: CloseBounds;
   /** Lo que el API también rechaza: el botón se apaga. */
   error: string | null;
   /** Lo que el API **acepta** y anota igual (D-154): se muestra y no bloquea. */
   deviation: string | null;
+  /** La desviación que el borrador guardado va a dejar anotada, para retenerla tras ejecutar. */
+  draftDeviation: string | null;
 }
 
-/**
- * Las dos cotas del consumo declarado al cerrar (D-089), comprobadas acá porque el API las
- * comprueba **dentro** de la transacción del cierre: descubrirlas con un 400 es enterarse
- * después de una espera que la pantalla ya sabía perdida, y sobre un campo que —hasta que se
- * repuso con D-159— ni siquiera existía para corregir.
- *
- * `extraReportedKg` son los kilos del reporte que va en el mismo envío («Guardar y cerrar»):
- * suben el piso, y no cambian el techo — lo que el reporte le saca al saldo de la bobina se
- * lo suma a lo ya consumido.
- */
 interface CloseBounds {
-  /**
-   * El piso del consumo declarable: lo que las planchas ya reportadas —más las de este envío,
-   * cuando el envío también reporta— representan. Es lo que el cierre asume si nadie declara
-   * nada, o sea despunte cero.
-   */
+  /** Lo que las planchas —reportadas y del borrador— representan: despunte cero. */
   consumedFloorKg: Decimal;
   /** Por qué el kg declarado no sirve. `null` cuando está vacío o dentro de las cotas. */
   closeKgError: string | null;
@@ -1040,7 +1130,7 @@ interface CloseBounds {
   scrapKg: Decimal;
 }
 
-function closeBounds(
+function closeBoundsOf(
   order: RoofingBatchOrderDto,
   closeKg: string,
   extraReportedKg: Decimal,
@@ -1060,7 +1150,7 @@ function closeBounds(
   if (declared.lt(floor)) {
     return {
       ...none,
-      closeKgError: `Las planchas reportadas ya consumieron ${floor.toFixed(3)} kg: no se puede declarar menos.`,
+      closeKgError: `Las planchas ya consumieron ${floor.toFixed(3)} kg: no se puede declarar menos.`,
     };
   }
   if (declared.gt(mounted)) {
@@ -1084,8 +1174,45 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       ? null
       : piecesTheoreticalKg(geometry, order.planItems);
 
-  // Sin reporte pendiente las dos formas de cerrar coinciden: el piso es lo ya reportado.
-  const closeOnly = closeBounds(order, draft.closeKg, new Decimal(0));
+  // Las filas del borrador que **no** son la que se corrige: esas ya ocupan plan y bobina.
+  const others = order.drafts.filter((d) => d.id !== draft.editingDraftId);
+  const othersMeters = others.reduce((acc, d) => acc.plus(toDecimal(d.meters)), new Decimal(0));
+  const draftKg = order.drafts.reduce(
+    (acc, d) => acc.plus(toDecimal(d.theoreticalKg)),
+    new Decimal(0),
+  );
+  const draftDeclaredKg = order.drafts.reduce(
+    (acc, d) => acc.plus(d.consumedKg === null ? new Decimal(0) : toDecimal(d.consumedKg)),
+    new Decimal(0),
+  );
+  const available = Decimal.max(
+    toDecimal(order.remainingMeters).minus(othersMeters),
+    new Decimal(0),
+  );
+  const closeBounds = closeBoundsOf(order, draft.closeKg, draftKg);
+
+  // D-089: lo declarado menos lo que las planchas representan es el despunte, y por encima del
+  // umbral el API pide motivo. La pantalla lo **estima**; el 400 conserva su camino de vuelta.
+  const floor = closeBounds.consumedFloorKg;
+  const declared = draft.closeKg.trim()
+    ? floor.plus(closeBounds.scrapKg)
+    : Decimal.max(toDecimal(order.declaredKg).plus(draftDeclaredKg), floor);
+  const needsCloseReason =
+    declared.gt(0) &&
+    declared
+      .minus(floor)
+      .div(declared)
+      .gt(toDecimal(String(MAX_SCRAP_RATIO_WITHOUT_REASON)));
+
+  const draftDeviation =
+    planKg === null || draftDeclaredKg.isZero()
+      ? null
+      : roofingConsumptionDeviation({
+          declaredKg: draftDeclaredKg,
+          theoreticalKg: draftKg,
+          alreadyDeclaredKg: order.declaredKg,
+          planKg,
+        });
 
   const base: ResolvedDraft = {
     coil,
@@ -1094,19 +1221,22 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
     meters: new Decimal(0),
     newKg: null,
     completesPlan: false,
-    needsCloseReason: false,
-    closeOnly,
-    closeWithReport: closeOnly,
+    draftCoversPlan:
+      order.planItems.length > 0 &&
+      order.drafts.length > 0 &&
+      toDecimal(order.draftMeters).equals(toDecimal(order.remainingMeters)),
+    needsCloseReason,
+    closeBounds,
     error: null,
     deviation: null,
+    draftDeviation,
   };
 
   if (order.coils.length === 0) return base;
-  // El plan ya está cubierto y nadie tipeó nada: el editor está vacío porque no hay nada que
-  // reportar, no porque falte llenarlo. Sin esto, una orden lista para cerrar mostraba
-  // «Escribe al menos un largo» en rojo sobre la única acción que ya no corresponde.
-  if (draft.rows === null && order.remainingPieces.length === 0) return base;
-  const parsed = parsePieceRows(draft.rows ?? seedRows(order));
+  const rows = draft.rows ?? seedRows(order);
+  // Editor vacío: no hay nada que agregar, y no es un error que haya que pintar en rojo.
+  if (rows.every((r) => r.lengthM.trim() === '' && r.qty.trim() === '')) return base;
+  const parsed = parsePieceRows(rows);
   if (!parsed.ok) return { ...base, error: parsed.reason };
   if (order.coils.length > 1 && coil === undefined) {
     return { ...base, error: 'Indica de qué bobina salieron.' };
@@ -1115,31 +1245,41 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
   const pieces = parsed.pieces;
   const meters = piecesMeters(pieces);
   const newKg = geometry === null ? null : piecesTheoreticalKg(geometry, pieces);
-  const completesPlan = meters.equals(toDecimal(order.remainingMeters));
+  const completesPlan = order.planItems.length > 0 && meters.equals(available);
 
-  // D-146: el tope del plan sigue siendo duro. Producir de más se resuelve ajustando el plan
-  // —que ahora se edita en esta misma pantalla—, no reportando por encima.
-  if (meters.gt(toDecimal(order.remainingMeters))) {
+  // D-146 con el borrador adentro: lo que ya ocupan las otras filas cuenta como reportado.
+  if (order.planItems.length > 0 && meters.gt(available)) {
     return {
       ...base,
       pieces,
       meters,
       newKg,
-      error: `Del plan quedan ${order.remainingMeters} m y esto suma ${meters.toFixed(3)} m: ajusta el plan de corte si de verdad hay que producir más.`,
+      error:
+        `Del plan quedan ${available.toFixed(3)} m` +
+        (othersMeters.gt(0) ? ` descontando el borrador` : '') +
+        ` y esto suma ${meters.toFixed(3)} m: ajusta el plan de corte si de verdad hay que producir más.`,
     };
   }
 
-  // El material montado corta acá y no solo en el servidor: el API lo comprueba dentro de la
-  // transacción del reporte, o sea después de una espera que la pantalla ya sabía perdida.
-  if (coil !== undefined && newKg?.gt(toDecimal(coil.remainingKg)) === true) {
-    return {
-      ...base,
-      pieces,
-      meters,
-      newKg,
-      completesPlan,
-      error: `${coil.coilCode} tiene ${coil.remainingKg} kg montados y esto necesita ${newKg.toFixed(3)} kg: monta más material.`,
-    };
+  // Los kilos de la bobina que ya toman las otras filas del borrador, también.
+  if (coil !== undefined && newKg !== null) {
+    const taken = others
+      .filter((d) => d.coilId === coil.coilId)
+      .reduce((acc, d) => acc.plus(toDecimal(d.theoreticalKg)), new Decimal(0));
+    const left = toDecimal(coil.remainingKg).minus(taken);
+    if (newKg.gt(left)) {
+      return {
+        ...base,
+        pieces,
+        meters,
+        newKg,
+        completesPlan,
+        error:
+          `${coil.coilCode} tiene ${left.toFixed(3)} kg montados` +
+          (taken.gt(0) ? ' libres del borrador' : '') +
+          ` y esto necesita ${newKg.toFixed(3)} kg: monta más material.`,
+      };
+    }
   }
 
   const kg = draft.consumedKg.trim();
@@ -1154,42 +1294,16 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
     };
   }
 
-  // D-154: la desviación del kilo declarado **avisa**, con la misma función que el API usa
-  // para dejarla anotada en el reporte. Dos redacciones serían dos umbrales distintos.
+  // D-154: la desviación del kilo declarado **avisa**, con la misma función que el API.
   const deviation =
     kg === '' || newKg === null
       ? null
       : roofingConsumptionDeviation({
           declaredKg: kg,
           theoreticalKg: newKg,
-          alreadyDeclaredKg: order.declaredKg,
+          alreadyDeclaredKg: toDecimal(order.declaredKg).plus(draftDeclaredKg).toFixed(3),
           planKg,
         });
 
-  // Con el reporte de este envío contado: «Guardar y cerrar» sube el piso del consumo con
-  // los kilos que está por reportar. `closeOnly` sigue siendo el del cierre suelto.
-  const closeWithReport = closeBounds(order, draft.closeKg, newKg ?? new Decimal(0));
-
-  // D-089: lo declarado menos lo que las planchas representan es el despunte, y por encima
-  // del umbral el API pide motivo. Lo explícito manda —igual que en el API—; sin él, la
-  // pantalla **estima** con lo declarado reporte a reporte, y como el API suma de otra forma
-  // puede llegar a una cifra mayor: por eso el 400 sigue teniendo su camino de vuelta.
-  const floor = closeWithReport.consumedFloorKg;
-  const declared = draft.closeKg.trim()
-    ? floor.plus(closeWithReport.scrapKg)
-    : Decimal.max(toDecimal(order.declaredKg).plus(kg === '' ? '0' : kg), floor);
-  const scrap = declared.minus(floor);
-  const needsCloseReason =
-    declared.gt(0) && scrap.div(declared).gt(toDecimal(String(MAX_SCRAP_RATIO_WITHOUT_REASON)));
-
-  return {
-    ...base,
-    closeWithReport,
-    pieces,
-    meters,
-    newKg,
-    completesPlan,
-    needsCloseReason,
-    deviation,
-  };
+  return { ...base, pieces, meters, newKg, completesPlan, deviation };
 }
