@@ -36,6 +36,14 @@ import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -213,48 +221,53 @@ export function CompraDetalleView({ id }: { id: string }) {
             {BUSINESS_LINE_LABELS[p.businessLine]}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant={PURCHASE_TONE[p.status]}>{PURCHASE_STATUS_LABELS[p.status]}</Badge>
-          {canReceive && p.status === 'DRAFT' && (
-            <div className="grid justify-items-end gap-1">
-              <Button
-                disabled={busy}
-                pending={receive.isPending}
-                pendingText="Recibiendo…"
-                onClick={() => {
+        <div className="flex flex-wrap items-start gap-2">
+          <Badge variant={PURCHASE_TONE[p.status]} className="mt-2">
+            {PURCHASE_STATUS_LABELS[p.status]}
+          </Badge>
+          {/*
+            F8-S3b/M3: principal + «⋯». Principal: recibir el borrador, con su fecha de
+            operación debajo (D-124); corregir el número y anular van al menú.
+          */}
+          <HeaderActions
+            primary={['receive']}
+            primaryFooter={<OperationDateField value={receiveDate} onChange={setReceiveDate} />}
+            actions={[
+              {
+                key: 'receive',
+                label: 'Recibir',
+                show: canReceive && p.status === 'DRAFT',
+                disabled: busy,
+                pending: receive.isPending,
+                pendingText: 'Recibiendo…',
+                onSelect: () => {
                   if (busy) return;
                   void backdate.attempt();
-                }}
-              >
-                Recibir
-              </Button>
-              <OperationDateField value={receiveDate} onChange={setReceiveDate} />
-            </div>
-          )}
-          {isAdmin && p.status !== 'CANCELLED' && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                if (busy) return;
-                setEditingDocument(true);
-              }}
-            >
-              Corregir número
-            </Button>
-          )}
-          {isAdmin && p.status !== 'CANCELLED' && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                if (busy) return;
-                setConfirmCancel(true);
-              }}
-            >
-              Anular
-            </Button>
-          )}
+                },
+              },
+              {
+                key: 'fix-number',
+                label: 'Corregir número',
+                show: isAdmin && p.status !== 'CANCELLED',
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setEditingDocument(true);
+                },
+              },
+              {
+                key: 'cancel',
+                label: 'Anular',
+                show: isAdmin && p.status !== 'CANCELLED',
+                destructive: true,
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setConfirmCancel(true);
+                },
+              },
+            ]}
+          />
         </div>
       </div>
 
@@ -316,7 +329,7 @@ export function CompraDetalleView({ id }: { id: string }) {
                 disabled={busy}
                 onClick={() => {
                   if (busy) return;
-                  setShowPaymentForm((v) => !v);
+                  setShowPaymentForm(true);
                 }}
               >
                 Registrar pago
@@ -326,18 +339,39 @@ export function CompraDetalleView({ id }: { id: string }) {
         </Card>
       </div>
 
-      {showPaymentForm && (
-        <PaymentForm
-          purchaseId={p.id}
-          currency={p.currency}
-          balance={p.balance}
-          onPendingChange={setPaymentPending}
-          onSaved={() => {
-            setShowPaymentForm(false);
-            invalidate();
-          }}
-        />
-      )}
+      {/*
+        F8-S3b/M4: el formulario de pago dejó de abrirse en línea, entre los importes y el
+        detalle, y pasó a un drawer: la compra sigue a la vista detrás. Mientras el pago viaja
+        no se cierra, porque desmontar el formulario perdería el resultado de la mutación.
+      */}
+      <Sheet
+        open={showPaymentForm}
+        onOpenChange={(open) => {
+          if (!open && paymentPending) return;
+          setShowPaymentForm(open);
+        }}
+      >
+        <SheetContent side="right" className="w-full overflow-y-auto data-[side=right]:sm:max-w-lg">
+          <SheetHeader className="px-0 pt-0">
+            <SheetTitle>Registrar pago</SheetTitle>
+            <SheetDescription>
+              Saldo pendiente: {formatMoney(p.balance, p.currency)}.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="px-4 pb-4">
+            <PaymentForm
+              purchaseId={p.id}
+              currency={p.currency}
+              balance={p.balance}
+              onPendingChange={setPaymentPending}
+              onSaved={() => {
+                setShowPaymentForm(false);
+                invalidate();
+              }}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <Card>
         <CardHeader>
