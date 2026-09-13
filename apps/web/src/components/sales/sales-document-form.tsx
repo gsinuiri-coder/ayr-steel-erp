@@ -703,25 +703,18 @@ export function SalesDocumentForm({
       {!adding && (
         <div className="grid gap-x-4 gap-y-3 rounded-lg border p-3 md:grid-cols-4">
           <div className="grid gap-2 md:col-span-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="customer">Cliente</Label>
-              {/*
-              D-156: el alta pasa a ser un diálogo sobre esta misma pantalla. El enlace a
-              `/clientes/nuevo` en otra pestaña conservaba el borrador —la pantalla no se
-              desmontaba— pero dejaba al vendedor volver a mano, buscar el cliente recién
-              creado en un desplegable que además puede estar cacheado, y elegirlo. Acá el
-              formulario es el mismo y la fila queda elegida sola.
-            */}
-              <ExpressCreateCustomer
-                onCreated={(created) => {
-                  setCustomerId(created.id);
-                }}
-              />
-            </div>
+            <Label htmlFor="customer">Cliente</Label>
             {/*
             D-156: el mismo campo que el importador. Con pocos clientes es un desplegable y
             con muchos, un botón que abre un buscador — y **quien lo usa no elige cuál**:
             elige el número de opciones, que es el dato que de verdad manda.
+
+            **F8-S3c/M4: acá siempre es el modal (`forceModal`)**, aunque el maestro tenga
+            pocos clientes o ninguno — es el selector de la venta, no un campo cualquiera, y
+            un `<select>` vacío no ofrece nada. El «+ Crear cliente» pasó de estar al lado del
+            campo a vivir **dentro** del modal (D-156, patrón crear-desde-campo): sigue a la
+            vista con la lista vacía o filtrada a cero, que es justo cuando hace falta, y el
+            alta cierra el modal además de elegir al cliente.
 
             Lo que reemplaza era un `<Select>` plano de hasta 200 opciones **sin búsqueda**:
             para elegir un cliente había que reconocerlo de vista en una lista larguísima.
@@ -738,11 +731,22 @@ export function SalesDocumentForm({
               className="w-full"
               label="Cliente"
               placeholder="Elige un cliente"
+              actionLabel="Elegir"
+              forceModal
+              emptyMessage="No hay ningún cliente registrado todavía: créalo con «+ Crear cliente»."
               value={customerId === '' ? null : customerId}
               options={(customers.data ?? [])
                 .filter((c) => c.isActive)
                 .map((c) => ({ id: c.id, label: `${c.name} — ${c.docNumber}` }))}
               onChange={setCustomerId}
+              extraAction={({ close }) => (
+                <ExpressCreateCustomer
+                  onCreated={(created) => {
+                    setCustomerId(created.id);
+                    close();
+                  }}
+                />
+              )}
             />
           </div>
           <div className="grid gap-2">

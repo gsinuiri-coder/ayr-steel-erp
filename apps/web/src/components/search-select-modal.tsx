@@ -76,6 +76,8 @@ export function SearchSelectModal({
   selectedId,
   onSelect,
   onOpenChange,
+  extraAction,
+  emptyMessage,
 }: {
   open: boolean;
   title: string;
@@ -88,6 +90,18 @@ export function SearchSelectModal({
   selectedId?: string | null;
   onSelect: (id: string) => void;
   onOpenChange: (open: boolean) => void;
+  /**
+   * F8-S3c/M4: el alta express (D-156) de la opción que falta, **dentro** del modal —el
+   * patrón crear-desde-campo mantiene el contexto—, no al lado del campo que lo abre. Sigue
+   * a la vista con la lista vacía o filtrada a cero, que es justo cuando hace falta.
+   */
+  extraAction?: ReactNode;
+  /**
+   * F8-S3c/M4: el maestro no tiene **ninguna** opción todavía (no es que el filtro no
+   * encontró nada). Sin esto, un maestro recién creado se leía igual que una búsqueda sin
+   * resultados, y no decía qué hacer al respecto — `extraAction` es la respuesta.
+   */
+  emptyMessage?: string;
 }) {
   const [filter, setFilter] = useState('');
   const [shown, setShown] = useState(PAGE);
@@ -127,9 +141,12 @@ export function SearchSelectModal({
               setShown(PAGE);
             }}
           />
-          <p className="text-xs text-muted-foreground">
-            {matches.length} de {options.length} opciones
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              {matches.length} de {options.length} opciones
+            </p>
+            {extraAction}
+          </div>
           <div className="max-h-80 overflow-y-auto rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
@@ -176,7 +193,9 @@ export function SearchSelectModal({
                       colSpan={2 + (columns?.length ?? 0)}
                       className="text-center text-muted-foreground"
                     >
-                      Ninguna opción coincide con ese texto.
+                      {options.length === 0
+                        ? (emptyMessage ?? 'No hay ninguna opción registrada todavía.')
+                        : 'Ninguna opción coincide con ese texto.'}
                     </TableCell>
                   </TableRow>
                 )}
@@ -212,6 +231,10 @@ export function SearchSelectField({
   onChange,
   id,
   className,
+  forceModal = false,
+  actionLabel,
+  extraAction,
+  emptyMessage,
 }: {
   /** Se usa como `aria-label` y como título del modal. */
   label: string;
@@ -232,6 +255,17 @@ export function SearchSelectField({
    * sobra («PÚBLICO EN GENERAL — 00000000» al lado de una fecha a ancho completo).
    */
   className?: string;
+  /**
+   * F8-S3c/M4: el campo nunca cae al `<select>` corto, ni con cero opciones — es el selector
+   * de cliente, que tiene que poder abrirse (y ofrecer el alta) también en un maestro vacío.
+   * Los demás campos (producto, el cliente del importador) no lo pasan y siguen decidiendo
+   * por el número de opciones (D-156).
+   */
+  forceModal?: boolean;
+  actionLabel?: string;
+  /** Ver `SearchSelectModal`. Recibe `close` para cerrar el modal desde la acción propia. */
+  extraAction?: (helpers: { close: () => void }) => ReactNode;
+  emptyMessage?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.id === value) ?? null;
@@ -244,7 +278,7 @@ export function SearchSelectField({
    */
   const missing = value !== null && value !== '' && selected === null;
 
-  if (options.length <= SEARCH_SELECT_THRESHOLD) {
+  if (!forceModal && options.length <= SEARCH_SELECT_THRESHOLD) {
     return (
       <div className="grid gap-1">
         <select
@@ -293,11 +327,22 @@ export function SearchSelectField({
       <SearchSelectModal
         open={open}
         title={`Elegir · ${label}`}
-        description={`${options.length} opciones: filtra por cualquier parte del texto.`}
+        description={
+          options.length === 0
+            ? 'Todavía no hay ninguna opción en este maestro.'
+            : `${options.length} opciones: filtra por cualquier parte del texto.`
+        }
         options={options}
+        actionLabel={actionLabel}
         selectedId={value}
         onSelect={onChange}
         onOpenChange={setOpen}
+        extraAction={extraAction?.({
+          close: () => {
+            setOpen(false);
+          },
+        })}
+        emptyMessage={emptyMessage}
       />
     </div>
   );
