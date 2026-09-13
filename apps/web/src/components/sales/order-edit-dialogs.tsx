@@ -65,11 +65,12 @@ export function EditLinePriceDialog({
   const queryClient = useQueryClient();
   const [price, setPrice] = useState('');
   const [error, setError] = useState<string | null>(null);
-  // El título muestra esto, no `item` directo: al cerrar, `item` pasa a `null` antes de que
-  // termine la animación de cierre del diálogo, y el título parpadeaba a «Cambiar precio · L»
-  // sin línea ni SKU durante ese instante.
+  // Todo lo que se **muestra** sale de esto, no de `item` directo: al cerrar, `item` pasa a
+  // `null` antes de que termine la animación de cierre del diálogo, y leerlo ahí hacía
+  // parpadear el título («Cambiar precio · L» sin línea ni SKU) y la unidad del precio
+  // («por metro» ↔ «por NIU») durante ese instante.
   const [lastItem, setLastItem] = useState<SalesItemDto | null>(null);
-  const perMeter = item?.valuePerMeterPen !== null && item?.valuePerMeterPen !== undefined;
+  const perMeter = lastItem?.valuePerMeterPen !== null && lastItem?.valuePerMeterPen !== undefined;
 
   useEffect(() => {
     if (item) {
@@ -119,7 +120,7 @@ export function EditLinePriceDialog({
         </DialogHeader>
         <div className="grid gap-2">
           <Label htmlFor="line-price">
-            Precio con IGV {perMeter ? 'por metro' : `por ${unitSymbol(item?.unit ?? '')}`}
+            Precio con IGV {perMeter ? 'por metro' : `por ${unitSymbol(lastItem?.unit ?? '')}`}
           </Label>
           <Input
             id="line-price"
@@ -177,11 +178,13 @@ export function EditLineQtyDialog({
   const [qty, setQty] = useState('');
   const [rows, setRows] = useState<PieceRow[]>([EMPTY_PIECE_ROW]);
   const [error, setError] = useState<string | null>(null);
-  // El título muestra esto, no `item` directo: ver el mismo comentario en
-  // `EditLinePriceDialog`.
+  // Todo lo que se muestra sale de esto, no de `item` directo: ver el comentario en
+  // `EditLinePriceDialog`. Acá importa más que en el de precio — sin esto, `byPieces` caía a
+  // `false` al cerrar y el formulario cambiaba de "planchas por largo" a un campo de cantidad
+  // simple (o al revés) en plena animación de salida.
   const [lastItem, setLastItem] = useState<SalesItemDto | null>(null);
   // Regla dura 14: los largos los decide la unidad, no que la línea los haya traído.
-  const byPieces = item?.unit === 'MTR';
+  const byPieces = lastItem?.unit === 'MTR';
 
   useEffect(() => {
     if (item) {
@@ -305,7 +308,7 @@ export function EditLineQtyDialog({
             </>
           ) : (
             <>
-              <Label htmlFor="line-qty">Cantidad ({unitSymbol(item?.unit ?? '')})</Label>
+              <Label htmlFor="line-qty">Cantidad ({unitSymbol(lastItem?.unit ?? '')})</Label>
               <Input
                 id="line-qty"
                 inputMode="decimal"

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   toDecimal,
@@ -143,6 +143,13 @@ export function ProductStockPickerDialog({
 }) {
   const [filter, setFilter] = useState('');
   const debouncedFilter = useDebounced(filter, 250);
+
+  // El filtro no sobrevive al cierre (mismo motivo que `SearchSelectModal`, D-156): sin esto,
+  // reabrir el picker de otra línea —o el mismo después de elegir— mostraba la búsqueda de la
+  // vez anterior, con «0 de N productos» hasta que alguien la borraba a mano.
+  useEffect(() => {
+    if (open) setFilter('');
+  }, [open]);
 
   const matches = useMemo(() => {
     const needle = debouncedFilter.trim().toLowerCase();

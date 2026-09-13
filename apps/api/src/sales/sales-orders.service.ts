@@ -751,6 +751,10 @@ export class SalesOrdersService {
         lines: short.map((l) => ({
           lineNumber: l.lineNumber,
           productSku: l.productSku,
+          // `reserveLabel`/`reserveUnit` son `string | null` en el tipo porque una línea
+          // `action: 'NONE'` no reserva nada — pero esta ya se filtró por `shortfallQty !==
+          // null`, y eso solo ocurre en las ramas que sí los llenan. El `??` es defensivo
+          // (el tipo no puede expresar esa correlación), no un caso real que falte cubrir.
           label: l.reserveLabel ?? l.productSku,
           missingQty: l.shortfallQty,
           unit: l.reserveUnit ?? l.unit,
