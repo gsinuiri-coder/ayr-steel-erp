@@ -273,7 +273,16 @@ export function BobinaDetalleView({ id }: { id: string }) {
             <Row label="Espesor" value={`${c.thicknessMm} mm`} />
             <Row label="Ancho" value={`${c.widthMm} mm`} />
             <Row label="Peso de alta" value={formatQty(c.weightKg, 'kg')} />
-            <Row label="Disponible" value={formatQty(c.availableKg, 'kg')} />
+            <Row
+              label="Disponible"
+              value={
+                // F8-S3c/M3: kg · ≈ ML del saldo (D-116), presentación pura — el kardex sigue
+                // en kg, esto solo lo traduce para quien piensa en metros de plancha.
+                c.equivalentMeters !== null
+                  ? `${formatQty(c.availableKg, 'kg')} · ≈ ${formatQty(c.equivalentMeters, 'm')}`
+                  : formatQty(c.availableKg, 'kg')
+              }
+            />
           </CardContent>
         </Card>
 

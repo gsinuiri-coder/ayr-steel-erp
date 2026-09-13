@@ -9,14 +9,17 @@ import {
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   Decimal,
   describePieces,
+  kgPerMeter,
   piecesMeters,
   piecesTheoreticalKg,
   Role,
   roofingConsumptionDeviation,
   toDecimal,
+  toFixedString,
   Unit,
   type ProductionOrderDto,
   type RawMaterialWarningDto,
+  type RoofingBatchCoilDto,
   type RoofingBatchOrderDto,
   type RoofingCoilOptionDto,
   type RoofingPieceDto,
@@ -110,6 +113,18 @@ export interface SavedNotes {
 }
 
 export const NO_NOTES: SavedNotes = { pool: [], note: null };
+
+/**
+ * F8-S3c/M3: metro lineal equivalente de lo que le queda a una bobina montada (D-116, la
+ * misma cuenta que ya da `CoilDto.equivalentMeters` para el saldo entero). Presentación
+ * pura: la asignación real sigue en kg, esto solo la traduce para quien piensa en metros.
+ * `null` con geometría en cero (no debería pasar con datos reales).
+ */
+function equivalentMetersOf(coil: RoofingBatchCoilDto): string | null {
+  const perMeter = kgPerMeter(coil);
+  if (perMeter.lte(0)) return null;
+  return toFixedString(toDecimal(coil.remainingKg).div(perMeter), 'KG');
+}
 
 export function RoofingOrderPanel({
   order,
@@ -541,55 +556,63 @@ export function RoofingOrderPanel({
               La orden no tiene ninguna bobina montada: monta una para poder reportar.
             </p>
           )}
-          {liveCoils.map((c) => (
-            <div
-              key={c.coilId}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-            >
-              <div>
-                <div className="font-mono font-medium">{c.coilCode}</div>
-                <div className="text-sm text-muted-foreground">
-                  {c.widthMm} mm · pendiente {formatQty(c.remainingKg, 'kg')}
+          {liveCoils.map((c) => {
+            const remainingMeters = equivalentMetersOf(c);
+            return (
+              <div
+                key={c.coilId}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+              >
+                <div>
+                  <div className="font-mono font-medium">{c.coilCode}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {c.widthMm} mm · pendiente {formatQty(c.remainingKg, 'kg')}
+                    {/*
+                      F8-S3c/M3: kg · ≈ ML de lo que le queda a esta bobina montada (D-116),
+                      presentación pura — la asignación y el kardex siguen en kg.
+                    */}
+                    {remainingMeters !== null && <> · ≈ {formatQty(remainingMeters, 'm')}</>}
+                  </div>
                 </div>
-              </div>
-              {/* S10/M3: avance de la orden mientras esta bobina está montada, solo lectura. */}
-              <div className="text-sm text-muted-foreground">
-                {formatQty(order.reportedMeters, 'm')} de la orden · {formatQty(c.consumedKg, 'kg')}{' '}
-                consumidos de esta bobina
-              </div>
-              <div className="flex items-center gap-2">
-                {liveCoils.length > 1 && (
+                {/* S10/M3: avance de la orden mientras esta bobina está montada, solo lectura. */}
+                <div className="text-sm text-muted-foreground">
+                  {formatQty(order.reportedMeters, 'm')} de la orden ·{' '}
+                  {formatQty(c.consumedKg, 'kg')} consumidos de esta bobina
+                </div>
+                <div className="flex items-center gap-2">
+                  {liveCoils.length > 1 && (
+                    <Button
+                      variant={resolved.coil?.coilId === c.coilId ? 'default' : 'outline'}
+                      className="h-11"
+                      aria-label={`Reportar desde la bobina ${c.coilCode}`}
+                      onClick={() => {
+                        onDraft({ coilId: c.coilId });
+                      }}
+                    >
+                      {resolved.coil?.coilId === c.coilId ? 'Elegida' : 'Usar esta'}
+                    </Button>
+                  )}
+                  {/* Una bobina que ya roló no se baja: hay que revertir esos reportes primero
+                      (RF-33). Tampoco con filas del borrador que salen de ella (D-191). */}
                   <Button
-                    variant={resolved.coil?.coilId === c.coilId ? 'default' : 'outline'}
+                    variant="outline"
                     className="h-11"
-                    aria-label={`Reportar desde la bobina ${c.coilCode}`}
+                    aria-label={`Bajar la bobina ${c.coilCode} de ${order.code}`}
+                    disabled={
+                      release.isPending ||
+                      toDecimal(c.consumedKg).gt(0) ||
+                      order.drafts.some((d) => d.coilId === c.coilId)
+                    }
                     onClick={() => {
-                      onDraft({ coilId: c.coilId });
+                      release.mutate(c.consumptionId);
                     }}
                   >
-                    {resolved.coil?.coilId === c.coilId ? 'Elegida' : 'Usar esta'}
+                    {toDecimal(c.consumedKg).gt(0) ? 'Ya roló' : 'Bajar'}
                   </Button>
-                )}
-                {/* Una bobina que ya roló no se baja: hay que revertir esos reportes primero
-                    (RF-33). Tampoco con filas del borrador que salen de ella (D-191). */}
-                <Button
-                  variant="outline"
-                  className="h-11"
-                  aria-label={`Bajar la bobina ${c.coilCode} de ${order.code}`}
-                  disabled={
-                    release.isPending ||
-                    toDecimal(c.consumedKg).gt(0) ||
-                    order.drafts.some((d) => d.coilId === c.coilId)
-                  }
-                  onClick={() => {
-                    release.mutate(c.consumptionId);
-                  }}
-                >
-                  {toDecimal(c.consumedKg).gt(0) ? 'Ya roló' : 'Bajar'}
-                </Button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {full ? (
             <p className="text-sm text-destructive">

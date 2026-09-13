@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   toDecimal,
+  toFixedString,
   type BusinessLine,
   type ProductDto,
   type ProductStockDto,
@@ -63,9 +64,20 @@ function availabilityOf(stock: ProductStockDto | undefined, unit: string): Avail
   }
   if (stock.rawMaterialAvailableKg !== null) {
     const label = stock.rawMaterialLabel ? ` (${stock.rawMaterialLabel})` : '';
+    const kg = toDecimal(stock.rawMaterialAvailableKg);
+    const empty = kg.lte(0);
+    // F8-S3c/M3: el ML manda, el kg acompaña — el vendedor piensa en metros de plancha, no en
+    // kilos de bobina. Mismo `kgPerMeter` que ya usa el gate de confirmación (D-150).
+    if (stock.kgPerMeter !== null && toDecimal(stock.kgPerMeter).gt(0)) {
+      const meters = toFixedString(kg.div(toDecimal(stock.kgPerMeter)), 'KG');
+      return {
+        text: `${formatQty(meters, 'm')} (${formatQty(stock.rawMaterialAvailableKg, 'kg')})${label}`,
+        empty,
+      };
+    }
     return {
       text: `${formatQty(stock.rawMaterialAvailableKg, 'kg')} de materia prima${label}`,
-      empty: toDecimal(stock.rawMaterialAvailableKg).lte(0),
+      empty,
     };
   }
   if (stock.kgPerMeter !== null) {

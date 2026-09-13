@@ -351,25 +351,26 @@ export function CompraDetalleView({ id }: { id: string }) {
           setShowPaymentForm(open);
         }}
       >
-        <SheetContent side="right" className="w-full overflow-y-auto data-[side=right]:sm:max-w-lg">
-          <SheetHeader className="px-0 pt-0">
+        <SheetContent
+          side="right"
+          className="w-full overflow-y-auto p-4 data-[side=right]:sm:max-w-lg"
+        >
+          <SheetHeader className="p-0">
             <SheetTitle>Registrar pago</SheetTitle>
             <SheetDescription>
               Saldo pendiente: {formatMoney(p.balance, p.currency)}.
             </SheetDescription>
           </SheetHeader>
-          <div className="px-4 pb-4">
-            <PaymentForm
-              purchaseId={p.id}
-              currency={p.currency}
-              balance={p.balance}
-              onPendingChange={setPaymentPending}
-              onSaved={() => {
-                setShowPaymentForm(false);
-                invalidate();
-              }}
-            />
-          </div>
+          <PaymentForm
+            purchaseId={p.id}
+            currency={p.currency}
+            balance={p.balance}
+            onPendingChange={setPaymentPending}
+            onSaved={() => {
+              setShowPaymentForm(false);
+              invalidate();
+            }}
+          />
         </SheetContent>
       </Sheet>
 
