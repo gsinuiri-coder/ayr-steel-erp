@@ -95,7 +95,7 @@ export function ProductionOrdersCard({
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-1">
                       <Badge variant={PRODUCTION_ORDER_TONE[o.status]}>
-                        {o.status === 'DRAFT'
+                        {o.status === 'DRAFT' && o.kind === 'ROOFING'
                           ? 'En cola'
                           : PRODUCTION_ORDER_STATUS_LABELS[o.status]}
                       </Badge>

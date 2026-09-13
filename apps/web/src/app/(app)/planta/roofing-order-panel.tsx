@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -150,6 +150,7 @@ export function RoofingOrderPanel({
    */
   const closeMode = useRef(false);
   const reasonToSend = useRef<string | null>(null);
+  const lastCloseMode = useRef<boolean | null>(null);
   /** Cuál de los dos cierres está esperando el motivo: el diálogo es uno solo. */
   const reasonFor = useRef<'commit' | 'close-only'>('commit');
 
@@ -162,7 +163,6 @@ export function RoofingOrderPanel({
   const invalidateReopened = () => {
     void queryClient.invalidateQueries({ queryKey: ['coil'] });
     void queryClient.invalidateQueries({ queryKey: ['coils'] });
-    void queryClient.invalidateQueries({ queryKey: ['kardex'] });
   };
 
   const options = useQuery({
@@ -201,7 +201,7 @@ export function RoofingOrderPanel({
       );
       onNotes({ pool: updated.rawMaterialWarnings ?? [], note: null });
       // D-159: el editor llega relleno con lo que el plan todavía debe.
-      onDraft({ rows: null });
+      onDraft({ rows: null, consumedKg: '', editingDraftId: null });
       invalidate();
     },
     onError: (err) =>
@@ -232,7 +232,7 @@ export function RoofingOrderPanel({
       }),
     onSuccess: () => {
       toast.success('Plan de corte actualizado');
-      onDraft({ planRows: null, rows: null });
+      onDraft({ planRows: null, rows: null, consumedKg: '', editingDraftId: null });
       invalidate();
     },
     onError: (err) =>
@@ -241,6 +241,12 @@ export function RoofingOrderPanel({
 
   const resolved = resolveDraft(order, draft);
   const editing = order.drafts.find((d) => d.id === draft.editingDraftId) ?? null;
+  const staleEditing = draft.editingDraftId !== null && editing === null && !refreshing;
+  useEffect(() => {
+    if (!staleEditing) return;
+    toast.warning('La fila que corregías ya no está en el borrador: se descartó la corrección.');
+    onDraft({ rows: null, consumedKg: '', editingDraftId: null });
+  }, [staleEditing, onDraft]);
 
   // -------------------------------------------------------------------------
   // D-191 — el borrador
@@ -382,6 +388,8 @@ export function RoofingOrderPanel({
   });
 
   const start = (close: boolean) => {
+    if (lastCloseMode.current !== null && lastCloseMode.current !== close) submitKey.settle();
+    lastCloseMode.current = close;
     closeMode.current = close;
     reasonFor.current = 'commit';
     setPendingClose(close);
@@ -411,7 +419,17 @@ export function RoofingOrderPanel({
     closeOnly.isPending ||
     saveDraft.isPending ||
     removeDraft.isPending ||
+    savePlan.isPending ||
+    mount.isPending ||
+    release.isPending ||
     refreshing;
+  /**
+   * ALTO de la revisión: una fila escrita en el editor y **no agregada** no se ejecuta. Si los
+   * botones de ejecutar siguieran habilitados, «Ejecutar y cerrar» grababa el borrador sin ella,
+   * cerraba la orden y el éxito limpiaba el editor: lo que salió de la roladora quedaba sin
+   * reportar en una orden cerrada.
+   */
+  const unsavedEditor = resolved.pieces !== null || resolved.error !== null;
 
   return (
     // Con la forma de lista, `tabpanel` sería un huérfano: no hay ningún `tablist` que lo
@@ -659,8 +677,8 @@ export function RoofingOrderPanel({
                   )}
                   {resolved.completesPlan && (
                     <p className="text-muted-foreground">
-                      Con esta fila el borrador cubre el plan: «Ejecutar y cerrar» lo graba, cierra
-                      la orden y libera la bobina para la orden siguiente del pedido.
+                      Con esta fila el borrador cubre el plan: agrégala y después «Ejecutar y
+                      cerrar» lo graba, cierra la orden y libera la bobina para la orden siguiente.
                     </p>
                   )}
                 </div>
@@ -791,15 +809,20 @@ export function RoofingOrderPanel({
                   disabled={busy}
                   value={draft.closeKg}
                   onChange={(e) => {
+                    reasonToSend.current = null;
                     onDraft({ closeKg: e.target.value });
                   }}
                 />
               </div>
               <p className="text-sm text-muted-foreground">
-                Sin este dato se asume que la bobina consumió exactamente los{' '}
+                Sin este dato el cierre usa los kilos declarados reporte a reporte (y el teórico
+                donde no se declaró); el piso son los{' '}
                 {formatQty(resolved.closeBounds.consumedFloorKg.toFixed(3), 'kg')} teóricos de las
-                planchas {hasDrafts ? 'reportadas y del borrador' : 'ya reportadas'}. La diferencia
-                sale como despunte; el resto de la bobina vuelve al almacén.
+                planchas {hasDrafts ? 'reportadas y del borrador' : 'ya reportadas'}. Lo que pase
+                del piso sale como despunte; el resto de la bobina vuelve al almacén.
+                {draft.closeKg.trim() === '' && resolved.estimatedScrapKg.gt(0) && (
+                  <> Despunte estimado: {formatQty(resolved.estimatedScrapKg.toFixed(3), 'kg')}.</>
+                )}
                 {resolved.closeBounds.closeKgError !== null && (
                   <span className="text-destructive"> {resolved.closeBounds.closeKgError}</span>
                 )}
@@ -822,7 +845,7 @@ export function RoofingOrderPanel({
                 <Button
                   variant={resolved.draftCoversPlan ? 'outline' : 'default'}
                   aria-label={`Ejecutar el borrador de ${order.code}`}
-                  disabled={busy || editing !== null}
+                  disabled={busy || editing !== null || unsavedEditor}
                   onClick={() => {
                     start(false);
                   }}
@@ -832,7 +855,12 @@ export function RoofingOrderPanel({
                 <Button
                   variant={resolved.draftCoversPlan ? 'default' : 'outline'}
                   aria-label={`Ejecutar el borrador y cerrar ${order.code}`}
-                  disabled={busy || editing !== null || resolved.closeBounds.closeKgError !== null}
+                  disabled={
+                    busy ||
+                    editing !== null ||
+                    unsavedEditor ||
+                    resolved.closeBounds.closeKgError !== null
+                  }
                   onClick={() => {
                     start(true);
                   }}
@@ -862,12 +890,21 @@ export function RoofingOrderPanel({
               Termina o cancela la corrección antes de ejecutar.
             </p>
           )}
+          {hasDrafts && editing === null && unsavedEditor && (
+            <p className="text-right text-xs text-muted-foreground">
+              Hay una fila escrita en el editor: agrégala al borrador o vacía el editor antes de
+              ejecutar.
+            </p>
+          )}
         </CardContent>
       </Card>
 
       <ReasonDialog
         open={askingReason}
-        onOpenChange={setAskingReason}
+        onOpenChange={(open) => {
+          if (!open) reasonToSend.current = null;
+          setAskingReason(open);
+        }}
         title="Cerrar con despunte alto"
         description={`Las planchas representan ${formatQty(
           resolved.closeBounds.consumedFloorKg.toFixed(3),
@@ -886,7 +923,10 @@ export function RoofingOrderPanel({
       <BackdateConfirmDialog
         open={submit.open}
         onOpenChange={(open) => {
-          if (!open) submit.close();
+          if (!open) {
+            reasonToSend.current = null;
+            submit.close();
+          }
         }}
         detail={submit.detail ?? ''}
         pending={commit.isPending}
@@ -1137,6 +1177,8 @@ interface ResolvedDraft {
   draftCoversPlan: boolean;
   /** El API va a exigir motivo para el despunte de este cierre (D-089). */
   needsCloseReason: boolean;
+  /** Despunte que el cierre sacaría con el campo vacío, estimado como lo estima el motivo. */
+  estimatedScrapKg: Decimal;
   /**
    * D-089: las cotas del kg declarado al cerrar. Con borrador, el piso incluye sus filas
    * («Ejecutar y cerrar» las graba antes de cerrar); sin borrador es el cierre suelto.
@@ -1255,6 +1297,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       order.drafts.length > 0 &&
       toDecimal(order.draftMeters).equals(toDecimal(order.remainingMeters)),
     needsCloseReason,
+    estimatedScrapKg: declared.minus(floor),
     closeBounds,
     error: null,
     deviation: null,
@@ -1272,6 +1315,16 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
   }
 
   const pieces = parsed.pieces;
+  if (order.productUnit !== Unit.MTR && order.productLengthMm !== null) {
+    const fixed = toDecimal(order.productLengthMm);
+    const off = pieces.find((p) => !toDecimal(p.lengthMm).equals(fixed));
+    if (off) {
+      return {
+        ...base,
+        error: `${order.productSku} es una plancha de catálogo de ${mmToMeters(order.productLengthMm)} m: no admite un largo de ${mmToMeters(off.lengthMm)} m.`,
+      };
+    }
+  }
   const meters = piecesMeters(pieces);
   const newKg = geometry === null ? null : piecesTheoreticalKg(geometry, pieces);
   const completesPlan = order.planItems.length > 0 && meters.equals(available);

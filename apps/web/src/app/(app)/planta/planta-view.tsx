@@ -111,6 +111,18 @@ export function PlantaView() {
   });
 
   const queue = useProductionQueue({ enabled: salesOrderId === null });
+  /**
+   * Las órdenes no iniciadas que se abrieron en esta sesión —desde la cola o por `?op=`—. Quedan
+   * en el workspace aunque se cambie de pestaña: derivarlo de la pestaña activa hacía que la
+   * misma orden desapareciera o no según por dónde se había entrado (revisión de F8-S3).
+   */
+  const [pinned, setPinned] = useState<ReadonlySet<string>>(
+    () => new Set(focused && UUID.test(focused) ? [focused] : []),
+  );
+  const openOrder = (orderId: string) => {
+    setPinned((prev) => (prev.has(orderId) ? prev : new Set([...prev, orderId])));
+    setActiveId(orderId);
+  };
 
   const rows = useMemo<WorkspaceOrder[]>(() => {
     // D-189: sin filtro por pedido, el workspace es lo **en curso** más la orden no iniciada
@@ -122,8 +134,7 @@ export function PlantaView() {
         (o) =>
           salesOrderId !== null ||
           o.status !== ProductionOrderStatus.DRAFT ||
-          o.orderId === activeId ||
-          o.orderId === focused,
+          pinned.has(o.orderId),
       )
       .map(toRoofingRow);
     const drywallRows = [...(inProgress.data ?? []), ...(draftOrders.data ?? [])]
@@ -133,7 +144,7 @@ export function PlantaView() {
       .filter((o) => salesOrderId === null || o.salesOrderId === salesOrderId)
       .map(toDrywallRow);
     return [...roofingRows, ...drywallRows];
-  }, [roofing.data, inProgress.data, draftOrders.data, salesOrderId, activeId, focused]);
+  }, [roofing.data, inProgress.data, draftOrders.data, salesOrderId, pinned]);
 
   const pending = roofing.isPending || draftOrders.isPending || inProgress.isPending;
   const failed = roofing.isError || draftOrders.isError || inProgress.isError;
@@ -150,7 +161,10 @@ export function PlantaView() {
    * quedaba en la orden anterior. Es el mismo efecto que tenía la terminal antes de D-160.
    */
   useEffect(() => {
-    if (focused !== null && UUID.test(focused)) setActiveId(focused);
+    if (focused !== null && UUID.test(focused)) {
+      setPinned((prev) => (prev.has(focused) ? prev : new Set([...prev, focused])));
+      setActiveId(focused);
+    }
   }, [focused]);
 
   /**
@@ -244,7 +258,7 @@ export function PlantaView() {
         */}
         {creating && (
           <div className="grid gap-4">
-            <LinesWithoutOrderCard onCreated={setActiveId} />
+            <LinesWithoutOrderCard onCreated={openOrder} />
             <DrywallOrderCard onCreated={setActiveId} />
           </div>
         )}
@@ -279,7 +293,7 @@ export function PlantaView() {
                   entry={entry}
                   href={`/planta?op=${entry.orderId}`}
                   selected={entry.orderId === activeId}
-                  onSelect={setActiveId}
+                  onSelect={openOrder}
                 />
               ))}
             </CardContent>

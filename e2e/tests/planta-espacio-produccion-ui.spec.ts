@@ -622,7 +622,9 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       //
       // D-189: sin `?pedido=` una orden no iniciada no está en el selector sino en la **cola**;
       // un clic en su entrada la abre en el workspace.
-      await page.getByRole('button', { name: `Abrir ${op.code} en producción` }).click();
+      await page
+        .getByRole('button', { name: new RegExp(`^Abrir en producción ${op.code}\\b`) })
+        .click();
       const picker = page.locator('[aria-label="Órdenes del pedido"]');
       const tab = picker.locator('button').filter({ hasText: op.code });
       await expect(tab).toHaveCount(1);

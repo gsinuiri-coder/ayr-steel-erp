@@ -86,23 +86,27 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       });
 
       const queueCard = page.locator('main').getByText('Cola de producción').locator('../..');
-      const entries = queueCard.getByRole('button', { name: /^Abrir OP-\d+ en producción$/ });
+      // El nombre accesible es el contenido visible (código, prioridad, vencida, cliente…),
+      // precedido por «Abrir en producción».
+      const entries = queueCard.getByRole('button', { name: /^Abrir en producción OP-\d+/ });
       await expect(entries.first()).toBeVisible();
       const labels = await entries.evaluateAll((els) =>
-        els.map((e) => e.getAttribute('aria-label')),
+        els.map((e) => /OP-\d+/.exec(e.textContent ?? '')?.[0] ?? ''),
       );
       const codeOf = async (id: string) =>
         (await api.get(`/api/production/${id}`).then((r) => r.json())) as { code: string };
       const firstCode = (await codeOf(first!)).code;
       const secondCode = (await codeOf(second!)).code;
-      const idxFirst = labels.indexOf(`Abrir ${firstCode} en producción`);
-      const idxSecond = labels.indexOf(`Abrir ${secondCode} en producción`);
+      const idxFirst = labels.indexOf(firstCode);
+      const idxSecond = labels.indexOf(secondCode);
       expect(idxFirst).toBeGreaterThanOrEqual(0);
       expect(idxSecond).toBeGreaterThanOrEqual(0);
       expect(idxSecond, 'la priorizada va primero').toBeLessThan(idxFirst);
 
       // La entrada lleva la información precisa que el card de cola tenía.
-      const entry = queueCard.getByRole('button', { name: `Abrir ${firstCode} en producción` });
+      const entry = queueCard.getByRole('button', {
+        name: new RegExp(`^Abrir en producción ${firstCode}\\b`),
+      });
       await expect(entry).toContainText(order.code);
       await expect(entry).toContainText(customer.name);
       await expect(entry).toContainText(scenario.product.sku);
@@ -110,7 +114,7 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       await expect(entry).toContainText('Vencida');
       await expect(entry).toContainText('Compromiso:');
       const prioritized = queueCard.getByRole('button', {
-        name: `Abrir ${secondCode} en producción`,
+        name: new RegExp(`^Abrir en producción ${secondCode}\\b`),
       });
       await expect(prioritized).toContainText('Prioridad');
       await expect(prioritized).toContainText('Obra con grúa alquilada');

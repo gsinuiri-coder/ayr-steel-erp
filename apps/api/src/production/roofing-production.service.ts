@@ -449,6 +449,33 @@ export class RoofingProductionService {
       assertKind(order, ProductionOrderKind.ROOFING);
       assertLive(order, 'cambiar el plan de corte');
 
+      // D-191: el plan nuevo no puede quedar por debajo de lo que el borrador ya ocupa sobre lo
+      // reportado. Sin esto el borrador quedaba inválido en silencio y planta se enteraba
+      // recién al ejecutarlo.
+      const drafts = await tx.productionReportDraft.findMany({
+        where: { productionOrderId: orderId },
+        select: { pieces: { select: { lengthMm: true, qty: true } } },
+      });
+      if (drafts.length > 0) {
+        const reported = await tx.productionReport.findMany({
+          where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
+          select: { piecesDetail: { select: { lengthMm: true, qty: true } } },
+        });
+        const occupied = piecesMeters([
+          ...reported.flatMap((r) => r.piecesDetail.map(toPieceLike)),
+          ...drafts.flatMap((d) => d.pieces.map(toPieceLike)),
+        ]);
+        const planMeters = piecesMeters(
+          input.items.map((p) => ({ lengthMm: toFixedString(p.lengthMm, 'MM'), qty: p.qty })),
+        );
+        if (planMeters.lt(occupied)) {
+          throw new BadRequestException(
+            `El plan nuevo suma ${planMeters.toFixed(3)} m y entre lo reportado y el borrador ya hay ` +
+              `${occupied.toFixed(3)} m: quita o corrige filas del borrador antes de achicar el plan`,
+          );
+        }
+      }
+
       const before = await tx.productionOrderItem.findMany({
         where: { productionOrderId: orderId },
         orderBy: { lineNumber: 'asc' },
@@ -490,8 +517,12 @@ export class RoofingProductionService {
     input: MountRoofingCoilInput,
   ): Promise<ProductionOrderDto> {
     const warnings: RawMaterialShortfall[] = [];
-    // D-192: una o varias bobinas, en una sola transacción (todo o nada). Se bloquean en orden
-    // de id para que dos montajes concurrentes que comparten rollos no se crucen en un deadlock.
+    // D-192: una o varias bobinas, en una sola transacción (todo o nada). Se recorren en orden
+    // de id para que dos montajes de **las mismas** bobinas las tomen en el mismo orden. No
+    // alcanza contra todo cruce: la comprobación del agregado (`findRawMaterialShortfalls`)
+    // bloquea después las bobinas compatibles, y un montaje concurrente de otra bobina de la
+    // misma spec puede tomarlas al revés — Postgres aborta una y el usuario reintenta, igual
+    // que ya pasaba con una sola bobina.
     const coilIds = [
       ...(input.coilIds ?? (input.coilId === undefined ? [] : [input.coilId])),
     ].sort();
@@ -520,6 +551,12 @@ export class RoofingProductionService {
             })
             .then((row) => row.color),
         ]);
+        const mounted: {
+          consumptionId: string;
+          coilId: string;
+          coilCode: string;
+          assignedKg: string;
+        }[] = [];
         for (const coilId of coilIds) {
           const coil = await this.coils.lockCoil(tx, coilId);
 
@@ -632,41 +669,46 @@ export class RoofingProductionService {
             data: { status: ProductionOrderStatus.IN_PROGRESS },
           });
 
-          // D-134: montar saca del disponible del agregado los kilos que la orden retiene, sin
-          // mover un gramo de kardex (D-060), así que es exactamente la clase de operación que
-          // la invariante por ítem no ve.
-          //
-          // **D-154: avisa, nunca bloquea.** Las promesas del propio pedido no cuentan (ver
-          // `ownPromiseScope`), y si aun así el agregado queda corto para pedidos ajenos, el
-          // montaje entra igual y el aviso viaja en la respuesta y al `audit_log`. Cortar acá
-          // era pedirle al operario de la roladora que anulara el pedido de otro cliente o
-          // liberara su reserva —dos cosas que no puede hacer y que no debería—, y el resultado
-          // medido fue material rolado que nunca se registró.
-          const shortfalls = await findRawMaterialShortfalls(
-            tx,
-            [coil.id],
-            this.thicknessToleranceMm(),
-            await this.ownPromiseScope(tx, order),
-          );
-          warnings.push(...shortfalls);
+          mounted.push({
+            consumptionId: consumption.id,
+            coilId: coil.id,
+            coilCode: coil.code,
+            assignedKg: toFixedString(assignedKg, 'KG'),
+          });
+        }
 
+        // D-134: montar saca del disponible del agregado los kilos que la orden retiene, sin
+        // mover un gramo de kardex (D-060), así que es exactamente la clase de operación que la
+        // invariante por ítem no ve.
+        //
+        // **D-154: avisa, nunca bloquea.** Las promesas del propio pedido no cuentan (ver
+        // `ownPromiseScope`), y si aun así el agregado queda corto para pedidos ajenos, el
+        // montaje entra igual y el aviso viaja en la respuesta y al `audit_log`.
+        //
+        // D-192: **una sola vez para todas las bobinas**, después del loop. La comprobación
+        // recorre y bloquea el agregado entero; hecha por bobina, montar veinte multiplicaba ese
+        // costo por veinte dentro del mismo presupuesto de transacción.
+        const shortfalls = await findRawMaterialShortfalls(
+          tx,
+          mounted.map((m) => m.coilId),
+          this.thicknessToleranceMm(),
+          await this.ownPromiseScope(tx, order),
+        );
+        warnings.push(...shortfalls);
+        const warningMessages =
+          shortfalls.length === 0 ? null : dedupeWarnings(shortfalls).map((w) => w.message);
+        for (const m of mounted) {
           await this.audit.write(tx, {
             actorId: actor.id,
             action: 'production.roofing.mount',
             entity: 'production_orders',
             entityId: orderId,
-            after: {
-              consumptionId: consumption.id,
-              coilId: coil.id,
-              coilCode: coil.code,
-              assignedKg: toFixedString(assignedKg, 'KG'),
-              rawMaterialWarnings:
-                shortfalls.length === 0 ? null : dedupeWarnings(shortfalls).map((w) => w.message),
-            },
+            after: { ...m, rawMaterialWarnings: warningMessages },
           });
         }
       },
-      { timeout: 30_000, maxWait: 10_000 },
+      // Cada bobina suma su lock, sus lecturas y su asignación: el presupuesto crece con ellas.
+      { timeout: 30_000 + 3_000 * Math.max(coilIds.length - 1, 0), maxWait: 10_000 },
     );
 
     return this.withWarnings(await this.production.findOne(orderId), warnings);
@@ -1342,7 +1384,8 @@ export class RoofingProductionService {
         },
       },
       orderBy: { seq: 'asc' },
-      take: 500,
+      // Sin tope: la cola está acotada por naturaleza (borradores de coberturas), y un `take`
+      // antes de ordenar por prioridad dejaba afuera justo a una OP nueva priorizada.
     });
     const actors = await resolveActorNames(
       this.prisma,
@@ -2374,38 +2417,105 @@ export class RoofingProductionService {
         ? reservationId
         : undefined;
 
-    const coils = await this.prisma.coil.findMany({
-      // D-127: el filtro vive en `roofing-coil-match` porque la confirmación de una
-      // cotización a medida hace la misma pregunta y no puede responderla distinto.
-      where: {
-        ...roofingCoilWhere({
-          businessLineId: product.businessLineId,
-          colorId: product.colorId,
-          inputThicknessMm: product.thicknessMm,
-          toleranceMm: this.thicknessToleranceMm(),
-        }),
-        ...(includeClosed ? { status: { in: [CoilStatus.OPEN, CoilStatus.CLOSED] } } : {}),
-      },
-      select: {
-        id: true,
-        code: true,
-        status: true,
-        typeKey: true,
-        weightKg: true,
-        widthMm: true,
-        thicknessMm: true,
-        colorId: true,
-        color: { select: { name: true, hexColor: true } },
-        finish: { select: { code: true, densityFactor: true } },
-      },
+    // D-127: el filtro vive en `roofing-coil-match` porque la confirmación de una cotización a
+    // medida hace la misma pregunta y no puede responderla distinto.
+    const specWhere = roofingCoilWhere({
+      businessLineId: product.businessLineId,
+      colorId: product.colorId,
+      inputThicknessMm: product.thicknessMm,
+      toleranceMm: this.thicknessToleranceMm(),
+    });
+    const coilSelect = {
+      id: true,
+      code: true,
+      status: true,
+      typeKey: true,
+      weightKg: true,
+      widthMm: true,
+      thicknessMm: true,
+      colorId: true,
+      color: { select: { name: true, hexColor: true } },
+      finish: { select: { code: true, densityFactor: true } },
+    } satisfies Prisma.CoilSelect;
+
+    // D-193: abiertas y cerradas en **dos** consultas, cada una con su tope. En una sola, las
+    // cerradas —que no salen nunca de la tabla— terminaban desplazando del corte a las bobinas
+    // recién compradas de la misma spec.
+    const openCoils = await this.prisma.coil.findMany({
+      where: specWhere,
+      select: coilSelect,
       orderBy: { code: 'asc' },
       take: 500,
     });
+
+    // Las cerradas que valen la pena: las que tienen un ajuste de cierre vivo como último
+    // movimiento (reabrir lo revierte) o saldo. Se resuelve primero sobre los ids —una lectura
+    // liviana— y recién después se traen las filas completas, así una spec con cientos de
+    // rollos agotados no gasta el tope en bobinas que no se van a mostrar.
+    let closedCoils: typeof openCoils = [];
+    const lastByCoil = new Map<
+      string,
+      { refType: string; type: string; qty: Prisma.Decimal; reversed: boolean }
+    >();
+    if (includeClosed) {
+      const closedIds = (
+        await this.prisma.coil.findMany({
+          where: { ...specWhere, status: CoilStatus.CLOSED },
+          select: { id: true },
+        })
+      ).map((c) => c.id);
+      if (closedIds.length > 0) {
+        const [last, closedBalances] = await Promise.all([
+          this.prisma.$queryRaw<
+            {
+              item_id: string;
+              ref_type: string;
+              type: string;
+              qty: Prisma.Decimal;
+              reversed: boolean;
+            }[]
+          >`
+            SELECT DISTINCT ON (m."item_id") m."item_id", m."ref_type"::text AS "ref_type",
+                   m."type"::text AS "type", m."qty",
+                   EXISTS (SELECT 1 FROM "inventory_movements" r WHERE r."reversal_of_id" = m."id") AS "reversed"
+            FROM "inventory_movements" m
+            WHERE m."item_type" = 'COIL' AND m."item_id" = ANY(${closedIds}::uuid[])
+            ORDER BY m."item_id", m."id" DESC
+          `,
+          this.prisma.inventoryBalance.findMany({
+            where: { itemType: 'COIL', itemId: { in: closedIds }, qty: { gt: 0 } },
+            select: { itemId: true },
+          }),
+        ]);
+        for (const row of last) {
+          lastByCoil.set(row.item_id, {
+            refType: row.ref_type,
+            type: row.type,
+            qty: row.qty,
+            reversed: row.reversed,
+          });
+        }
+        const withStock = new Set(closedBalances.map((b) => b.itemId));
+        const candidates = closedIds.filter((id) => {
+          const m = lastByCoil.get(id);
+          return withStock.has(id) || (m?.refType === 'CLOSE_ADJUSTMENT' && !m.reversed);
+        });
+        if (candidates.length > 0) {
+          closedCoils = await this.prisma.coil.findMany({
+            where: { id: { in: candidates } },
+            select: coilSelect,
+            orderBy: { updatedAt: 'desc' },
+            take: 100,
+          });
+        }
+      }
+    }
+
+    const coils = [...openCoils, ...closedCoils];
     if (coils.length === 0) return [];
 
     const ids = coils.map((c) => c.id);
-    const closedIds = coils.filter((c) => c.status === CoilStatus.CLOSED).map((c) => c.id);
-    const [balances, assignments, reservations, lastMovements] = await Promise.all([
+    const [balances, assignments, reservations] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: 'COIL', itemId: { in: ids } },
         select: { itemId: true, qty: true },
@@ -2419,29 +2529,14 @@ export class RoofingProductionService {
         ids,
         ownReservationId === undefined ? {} : { exceptReservationIds: [ownReservationId] },
       ),
-      // D-193: el último movimiento de cada cerrada. Reabrir revierte el ajuste del cierre **solo
-      // si es el último** y no está anulado (D-164, `reverseCloseAdjustment`): es la misma
-      // pregunta, contestada igual para mostrarla antes del clic.
-      closedIds.length === 0
-        ? Promise.resolve([])
-        : this.prisma.inventoryMovement.findMany({
-            where: { itemType: 'COIL', itemId: { in: closedIds } },
-            orderBy: [{ itemId: 'asc' }, { id: 'desc' }],
-            distinct: ['itemId'],
-            select: {
-              itemId: true,
-              refType: true,
-              type: true,
-              qty: true,
-              reversals: { select: { id: true } },
-            },
-          }),
     ]);
+    // D-193: reabrir revierte el ajuste del cierre **solo si es el último movimiento** y no está
+    // anulado (D-164, `reverseCloseAdjustment`): la misma pregunta, contestada igual.
     const adjustmentById = new Map(
-      lastMovements
-        .filter((m) => m.refType === 'CLOSE_ADJUSTMENT' && m.reversals.length === 0)
-        .map((m) => [
-          m.itemId,
+      [...lastByCoil]
+        .filter(([, m]) => m.refType === 'CLOSE_ADJUSTMENT' && !m.reversed)
+        .map(([itemId, m]) => [
+          itemId,
           {
             kind: m.type === 'OUT' ? ('SHORTAGE' as const) : ('SURPLUS' as const),
             qty: toDecimal(m.qty.toString()),

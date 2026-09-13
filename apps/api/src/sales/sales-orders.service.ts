@@ -2809,7 +2809,6 @@ export class SalesOrdersService {
     /** D-141: quién creó el pedido; lo mira el archivado por reimportación. */
     origin: SalesOrderOrigin;
     quotationId: string | null;
-    priorityReason: string | null;
     promisedDeliveryDate: string | null;
   }> {
     const rows = await tx.$queryRaw<
@@ -2819,11 +2818,10 @@ export class SalesOrdersService {
         status: SalesOrderStatus;
         origin: SalesOrderOrigin;
         quotation_id: string | null;
-        priority_reason: string | null;
         promised_delivery_date: Date | null;
       }[]
     >`
-      SELECT "id", "seq", "status", "origin", "quotation_id", "priority_reason",
+      SELECT "id", "seq", "status", "origin", "quotation_id",
              "promised_delivery_date"
       FROM "sales_orders" WHERE "id" = ${id}::uuid FOR UPDATE
     `;
@@ -2835,7 +2833,6 @@ export class SalesOrdersService {
       status: row.status,
       origin: row.origin,
       quotationId: row.quotation_id,
-      priorityReason: row.priority_reason,
       promisedDeliveryDate: row.promised_delivery_date
         ? row.promised_delivery_date.toISOString().slice(0, 10)
         : null,

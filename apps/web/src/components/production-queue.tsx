@@ -91,7 +91,6 @@ export function QueueEntryLink({
     return (
       <button
         type="button"
-        aria-label={`Abrir ${entry.code} en producción`}
         aria-current={selected}
         className={`w-full ${className}`}
         onClick={() => {
@@ -103,7 +102,7 @@ export function QueueEntryLink({
     );
   }
   return (
-    <Link href={href} aria-label={`Abrir ${entry.code} en producción`} className={className}>
+    <Link href={href} className={className}>
       {body}
     </Link>
   );
@@ -117,9 +116,12 @@ export function QueueEntrySummary({ entry }: { entry: ProductionQueueEntryDto })
     .filter((s): s is string => s !== null)
     .join(' · ');
   return (
-    <div className="grid gap-0.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-mono font-medium">{entry.code}</span>
+    <span className="grid gap-0.5">
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-mono font-medium">
+          <span className="sr-only">Abrir en producción </span>
+          {entry.code}
+        </span>
         {entry.priority && <Badge>Prioridad</Badge>}
         {entry.overdue && <Badge variant="destructive">Vencida</Badge>}
         {!entry.overdue && (
@@ -131,22 +133,22 @@ export function QueueEntrySummary({ entry }: { entry: ProductionQueueEntryDto })
           <span className="font-mono text-sm">{entry.salesOrderCode}</span>
         )}
         {entry.customerName !== null && <span className="text-sm">{entry.customerName}</span>}
-      </div>
-      <div className="text-xs text-muted-foreground">
+      </span>
+      <span className="text-xs text-muted-foreground">
         {entry.productSku} ({spec}) · {entry.planMeters} m del plan
         {entry.planItems.length > 0 && <> · {describePieces(entry.planItems)}</>}
         {entry.theoreticalKg !== null && <> · {formatQty(entry.theoreticalKg, 'kg')} teóricos</>} ·
         Compromiso:{' '}
         {entry.promisedDeliveryDate ? formatDate(entry.promisedDeliveryDate) : 'sin fecha'} · en
         cola desde {queueAgeLabel(entry.createdAt)}
-      </div>
+      </span>
       {entry.priority && (
-        <div className="text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {entry.priorityReason}
           {entry.priorityByName ? ` — ${entry.priorityByName}` : ''}
-        </div>
+        </span>
       )}
-    </div>
+    </span>
   );
 }
 

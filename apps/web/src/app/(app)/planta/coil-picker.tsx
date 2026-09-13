@@ -100,7 +100,9 @@ export function CoilPicker({
   }, [openOptions, filter]);
 
   const room = Math.max(MAX_ORDER_STRIPS - mountedCount, 0);
-  const overLimit = selected.size > room;
+  /** Solo lo elegido que el filtro deja a la vista: no se monta un rollo que nadie está mirando. */
+  const visibleSelected = matches.filter((c) => selected.has(c.coilId)).map((c) => c.coilId);
+  const overLimit = visibleSelected.length > room;
 
   if (loading) return <Skeleton className="h-12 w-full" />;
   if (failed) {
@@ -253,7 +255,9 @@ export function CoilPicker({
                     {matches.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center text-muted-foreground">
-                          Ninguna bobina coincide con ese texto.
+                          {openOptions.length === 0
+                            ? 'No hay bobinas libres de esta spec: mira las cerradas.'
+                            : 'Ninguna bobina coincide con ese texto.'}
                         </TableCell>
                       </TableRow>
                     )}
@@ -343,14 +347,19 @@ export function CoilPicker({
                 Cancelar
               </Button>
               <Button
-                aria-label={`Montar las ${String(selected.size)} bobinas elegidas en ${orderCode}`}
-                disabled={selected.size === 0 || overLimit || pending}
+                aria-label={
+                  visibleSelected.length === 1
+                    ? `Montar la bobina elegida en ${orderCode}`
+                    : `Montar las ${String(visibleSelected.length)} bobinas elegidas en ${orderCode}`
+                }
+                disabled={visibleSelected.length === 0 || overLimit || pending}
                 onClick={() => {
-                  mount([...selected]);
+                  mount(visibleSelected);
                 }}
               >
-                Montar{' '}
-                {selected.size === 1 ? 'la elegida' : `las ${String(selected.size)} elegidas`}
+                {visibleSelected.length === 1
+                  ? 'Montar la elegida'
+                  : `Montar las ${String(visibleSelected.length)} elegidas`}
               </Button>
             </DialogFooter>
           )}

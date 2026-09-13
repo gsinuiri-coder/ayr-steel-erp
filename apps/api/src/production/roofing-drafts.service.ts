@@ -47,6 +47,14 @@ import { RoofingProductionService } from './roofing-production.service';
  * luz, que es lo que pasa en una planta. **No mueve kardex ni reservas**: esas dos cosas solo
  * las mueve `RoofingProductionService.reportInTx`, que es lo que el commit llama fila por fila.
  */
+/**
+ * Filas por borrador. Cada una es un `reportInTx` completo (kardex, promesa, agregado) dentro de
+ * la **misma** transacción del commit; contra Neon, doscientas (`MAX_ORDER_REPORTS`) podían
+ * pasar el tiempo de la cadena HTTP (Vercel, Cloud Run) con la transacción todavía corriendo.
+ * Cincuenta es una hoja de planta holgada.
+ */
+export const MAX_DRAFT_ROWS = 50;
+
 @Injectable()
 export class RoofingDraftsService {
   constructor(
@@ -84,6 +92,11 @@ export class RoofingDraftsService {
         const state = await this.loadState(tx, orderId);
         const existing = await this.drafts(tx, orderId);
         this.assertRoomForReports(state.liveReports, existing.length + 1);
+        if (existing.length >= MAX_DRAFT_ROWS) {
+          throw new BadRequestException(
+            `El borrador admite hasta ${MAX_DRAFT_ROWS} filas: ejecútalo antes de seguir cargando`,
+          );
+        }
         const candidate = { coilId: input.coilId, pieces: input.pieces };
         const coilId = this.validate(state, [...existing.map(toRowLike), candidate], 'new');
         await tx.productionReportDraft.create({
@@ -174,7 +187,13 @@ export class RoofingDraftsService {
       async (tx) => {
         // D-182: un doble click en «Ejecutar» no ejecuta el borrador dos veces. Alcance propio:
         // el efecto es el de N reportes (y quizá un cierre), no el de uno.
-        const claim = await claimIdempotencyKey(tx, 'roofing-drafts-commit', input.idempotencyKey);
+        // El alcance lleva la orden: la misma clave reusada en otra orden no es un reintento, y
+        // devolverle un 200 que no ejecutó nada sería mentirle.
+        const claim = await claimIdempotencyKey(
+          tx,
+          `roofing-drafts-commit:${orderId}`,
+          input.idempotencyKey,
+        );
         if (!claim.claimed) return;
 
         const state = await this.loadState(tx, orderId);

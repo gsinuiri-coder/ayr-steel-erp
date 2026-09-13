@@ -161,8 +161,16 @@ test.describe('D-191 — borrador de reportes por orden (API)', () => {
       await postJson(api, draftsPath(opId), { pieces: pieces([4, 5]) }); // 20 m
       await postJson(api, draftsPath(opId), { pieces: pieces([4, 5]) }); // 20 m
 
-      // Planta achica el plan a 6 × 4 m (24 m) con el borrador cargado.
-      await api.put(`/api/production/roofing/${opId}/plan`, { data: { items: pieces([4, 6]) } });
+      // Achicar el plan por debajo de lo que el borrador ya ocupa se rechaza de entrada.
+      const shrink = await api.put(`/api/production/roofing/${opId}/plan`, {
+        data: { items: pieces([4, 6]) },
+      });
+      expect(shrink.status()).toBe(400);
+      expect(await shrink.text()).toMatch(/quita o corrige filas del borrador/);
+
+      // Pero el estado igual puede cambiar por debajo: un reporte directo (API o importación)
+      // de 8 m deja 32 m libres, y el borrador ocupa 40.
+      await postJson(api, `/api/production/roofing/${opId}/report`, { pieces: pieces([4, 2]) });
 
       const failed = await postExpectingError(api, `${draftsPath(opId)}/commit`, {
         idempotencyKey: randomUUID(),
@@ -170,10 +178,10 @@ test.describe('D-191 — borrador de reportes por orden (API)', () => {
       expect(failed.status).toBe(400);
       expect(failed.message).toMatch(/^Fila 2: /);
 
-      // Todo o nada: ni la fila 1, que sí entraba, se grabó.
+      // Todo o nada: ni la fila 1, que sí entraba, se grabó. Solo está el reporte directo.
       const order = await getJson<ProductionOrderDto>(api, `/api/production/${opId}`);
-      expect(order.reports).toHaveLength(0);
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
+      expect(order.reports).toHaveLength(1);
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1967.680');
       expect(await getJson<DraftDto[]>(api, draftsPath(opId))).toHaveLength(2);
 
       // Cerrar con el borrador cargado tampoco: quedaría huérfano.

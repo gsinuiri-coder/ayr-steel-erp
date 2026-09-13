@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, createUser, getJson, postJson } from '../helpers/api';
-import { apiAs, balanceOf, putJson, type ProductionOrderDto } from '../helpers/production';
+import { apiAs, balanceOf, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer, pdfText, queueOf, setOrderPriority } from '../helpers/sales';
 import {
   createRoofingProduct,
@@ -149,7 +149,7 @@ test.describe('F8-S3 — huecos de cobertura', () => {
     }
   });
 
-  test('borrador por pantalla: si el plan se achicó, ejecutar avisa «Fila 2:» y el borrador y el kardex quedan como estaban', async ({
+  test('borrador por pantalla: si otro reporte ocupó el plan, ejecutar avisa «Fila 2:» y el borrador y el kardex quedan como estaban', async ({
     page,
     baseURL,
   }) => {
@@ -159,8 +159,9 @@ test.describe('F8-S3 — huecos de cobertura', () => {
       await mountCoil(api, opId, { coilId: scenario.coil.id });
       await postJson(api, draftsPath(opId), { pieces: pieces([4, 5]) }); // 20 m
       await postJson(api, draftsPath(opId), { pieces: pieces([4, 5]) }); // 20 m
-      // Planta achica el plan a 24 m con el borrador cargado: la fila 2 ya no entra.
-      await putJson(api, `/api/production/roofing/${opId}/plan`, { items: pieces([4, 6]) });
+      // Un reporte directo de 8 m ocupa el plan por debajo del borrador: la fila 2 ya no entra.
+      // (Achicar el plan con el borrador cargado se rechaza de entrada desde la revisión.)
+      await postJson(api, `/api/production/roofing/${opId}/report`, { pieces: pieces([4, 2]) });
 
       await loginAsAdmin(page);
       await page.goto(`/planta?pedido=${order.id}`);
@@ -172,14 +173,14 @@ test.describe('F8-S3 — huecos de cobertura', () => {
       await expect(table.getByRole('row')).toHaveCount(3);
 
       await panel.getByRole('button', { name: `Ejecutar el borrador de ${opCode}` }).click();
-      await expect(page.getByText(`Fila 2: ${opCode} tiene un plan de 24.000 m`)).toBeVisible();
+      await expect(page.getByText(`Fila 2: ${opCode} tiene un plan de 40.000 m`)).toBeVisible();
 
       // El borrador sigue entero en pantalla y en el servidor; nada se grabó.
       await expect(table.getByRole('row')).toHaveCount(3);
       expect(await getJson<DraftDto[]>(api, draftsPath(opId))).toHaveLength(2);
       const after = await getJson<ProductionOrderDto>(api, `/api/production/${opId}`);
-      expect(after.reports).toHaveLength(0);
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
+      expect(after.reports).toHaveLength(1);
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1967.680');
     } finally {
       await purgeRoofingTrail(api, trail);
       await api.dispose();
