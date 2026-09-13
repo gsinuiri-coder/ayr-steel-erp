@@ -591,10 +591,13 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       // `role="tabpanel"`. Se los busca entonces por contenedor y por id, que no cambian entre
       // los dos modos, para que el caso no dependa de cuántas órdenes haya abiertas cuando
       // corra — la base local acumula las de los tests anteriores.
+      //
+      // D-189: sin `?pedido=` una orden no iniciada no está en el selector sino en la **cola**;
+      // un clic en su entrada la abre en el workspace.
+      await page.getByRole('button', { name: `Abrir ${op.code} en producción` }).click();
       const picker = page.locator('[aria-label="Órdenes del pedido"]');
       const tab = picker.locator('button').filter({ hasText: op.code });
       await expect(tab).toHaveCount(1);
-      await tab.click();
       const panel = page.locator(`#panel-${op.id}`);
 
       // Sin bobina no se reporta; se monta desde la propia pestaña, igual que contra pedido.

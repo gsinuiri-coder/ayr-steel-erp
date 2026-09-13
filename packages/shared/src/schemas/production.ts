@@ -576,6 +576,14 @@ export const productionOrderSchema = z.object({
   salesOrderId: z.string().uuid().nullable(),
   salesOrderCode: z.string().nullable(),
   customerName: z.string().nullable(),
+  /** D-189: fecha prometida del pedido, que la orden hereda. Null sin pedido o sin fecha. */
+  promisedDeliveryDate: z.string().nullable(),
+  /** D-189: prioridad manual de la cola, **por orden** (antes era del pedido, D-094). */
+  priority: z.boolean(),
+  priorityReason: z.string().nullable(),
+  priorityByName: z.string().nullable(),
+  /** D-190: códigos de las bobinas montadas ahora (asignaciones sin liberar). */
+  mountedCoilCodes: z.array(z.string()),
   consumptions: z.array(productionOrderConsumptionSchema),
   reports: z.array(productionReportSchema),
   /** D-124: día de negocio en que la corrida arrancó (Lima). */
@@ -609,6 +617,8 @@ export const productionOrderQuerySchema = z.object({
   kind: z.enum(PRODUCTION_ORDER_KINDS).optional(),
   productId: z.string().uuid().optional(),
   businessLine: z.enum(BUSINESS_LINES).optional(),
+  /** D-190: las órdenes que nacieron de las reservas de un pedido. */
+  salesOrderId: z.string().uuid().optional(),
 });
 export type ProductionOrderQuery = z.infer<typeof productionOrderQuerySchema>;
 

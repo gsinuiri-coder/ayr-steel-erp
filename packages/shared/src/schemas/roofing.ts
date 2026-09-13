@@ -640,7 +640,13 @@ export type RoofingBatchCoilDto = z.infer<typeof roofingBatchCoilSchema>;
 export const roofingBatchOrderSchema = z.object({
   orderId: z.string().uuid(),
   code: z.string(),
+  /** D-189: correlativo, el desempate del ranking de la cola. */
+  seq: z.number().int(),
   status: z.enum(PRODUCTION_ORDER_STATUSES),
+  /** D-189: prioridad manual de la orden y fecha prometida heredada del pedido. */
+  priority: z.boolean(),
+  priorityReason: z.string().nullable(),
+  promisedDeliveryDate: z.string().nullable(),
   /**
    * D-155: la reserva que la orden viene a cumplir, para pedirle a
    * `GET /production/roofing/coils` las bobinas candidatas sin que la promesa del propio

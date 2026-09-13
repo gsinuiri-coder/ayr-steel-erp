@@ -39,7 +39,6 @@ import {
   salesOrderQuerySchema,
   sellableCoilQuerySchema,
   stockPanelQuerySchema,
-  setSalesOrderPrioritySchema,
   updatePromisedDeliveryDateSchema,
   updateQuotationSchema,
   type CancelQuotationInput,
@@ -47,7 +46,7 @@ import {
   type ConfirmQuotationInput,
   type CreateQuotationInput,
   type CreateSalesOrderInput,
-  type ProductionQueueEntryDto,
+  type LineWithoutOrderDto,
   type PaginatedResult,
   type QuotationDto,
   type QuotationListItemDto,
@@ -63,7 +62,6 @@ import {
   type StockPanelDto,
   type StockPanelQuery,
   type SellableCoilQuery,
-  type SetSalesOrderPriorityInput,
   type UpdatePromisedDeliveryDateInput,
   type UpdateQuotationInput,
 } from '@ayr/shared';
@@ -283,14 +281,15 @@ export class SalesController {
   }
 
   /**
-   * La cola de producción (RF-37, D-092..D-096). **También la lee SUPERVISOR_PLANTA**, por
-   * el mismo motivo que `reservations`: es la pantalla de entrada de `/planta`. Va antes de
-   * `orders/:id` — si no, `ParseUUIDPipe` rechaza "queue" como si fuera un id.
+   * Líneas que reservan materia prima sin orden viva (D-093; desde D-189 ya no es la cola,
+   * que vive en `GET /production/roofing/queue`). **También la lee SUPERVISOR_PLANTA**: es de
+   * donde `/planta` vuelve a abrir una orden. Va antes de `orders/:id` — si no,
+   * `ParseUUIDPipe` rechaza el segmento como si fuera un id.
    */
-  @Get('orders/queue')
+  @Get('orders/lines-without-order')
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
-  findProductionQueue(): Promise<ProductionQueueEntryDto[]> {
-    return this.orders.findProductionQueue();
+  findLinesWithoutOrder(): Promise<LineWithoutOrderDto[]> {
+    return this.orders.findLinesWithoutOrder();
   }
 
   @Get('orders/:id')
@@ -316,17 +315,6 @@ export class SalesController {
     @Body(new ZodValidationPipe(cancelSalesOrderSchema)) body: CancelSalesOrderInput,
   ): Promise<SalesOrderDto> {
     return this.orders.cancel(actor, id, body.reason);
-  }
-
-  /** Prioridad manual excepcional de la cola (D-094): solo ADMINISTRADOR, con motivo. */
-  @Patch('orders/:id/priority')
-  @Roles(Role.ADMINISTRADOR)
-  setOrderPriority(
-    @CurrentUser() actor: RequestUser,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(setSalesOrderPrioritySchema)) body: SetSalesOrderPriorityInput,
-  ): Promise<SalesOrderDto> {
-    return this.orders.setPriority(actor, id, body);
   }
 
   /** Fecha prometida, después de creado el pedido (D-096): solo ADMINISTRADOR. */

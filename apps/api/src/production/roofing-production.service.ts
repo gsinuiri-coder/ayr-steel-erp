@@ -12,8 +12,12 @@ import {
   Prisma,
 } from '@prisma/client';
 import {
+  businessToday,
+  compareQueueRank,
   Decimal,
   describePieces,
+  isOverdue,
+  queueSemaphore,
   fromDateOnly,
   MAX_ORDER_REPORTS,
   MAX_ORDER_STRIPS,
@@ -38,6 +42,7 @@ import {
   type MountRoofingCoilInput,
   type PieceLike,
   type ProductionOrderDto,
+  type ProductionQueueEntryDto,
   type RawMaterialWarningDto,
   type ReportAndCloseRoofingInput,
   type ReportRoofingPiecesInput,
@@ -45,6 +50,7 @@ import {
   type RoofingBatchCreateResultDto,
   type RoofingBatchOrderDto,
   type RoofingCoilOptionDto,
+  type SetProductionOrderPriorityInput,
   type UpdateRoofingPlanInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -78,6 +84,7 @@ import {
   assertLive,
   lockOrder,
   recomputeStatus,
+  resolveActorNames,
   restoreReservationIfIdle,
   type LockedOrder,
 } from './production-shared';
@@ -1130,7 +1137,14 @@ export class RoofingProductionService {
         items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
         reservation: {
           select: {
-            salesOrder: { select: { id: true, seq: true, customer: { select: { name: true } } } },
+            salesOrder: {
+              select: {
+                id: true,
+                seq: true,
+                promisedDeliveryDate: true,
+                customer: { select: { name: true } },
+              },
+            },
           },
         },
         reports: {
@@ -1160,7 +1174,7 @@ export class RoofingProductionService {
       take: 500,
     });
 
-    return orders.map((order) => {
+    const rows = orders.map((order): RoofingBatchOrderDto => {
       const planPieces = order.items.map(toPieceLike);
       const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
       const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
@@ -1168,7 +1182,13 @@ export class RoofingProductionService {
       return {
         orderId: order.id,
         code: productionOrderCode(order.seq),
+        seq: order.seq,
         status: order.status,
+        priority: order.priorityAt !== null,
+        priorityReason: order.priorityAt === null ? null : order.priorityReason,
+        promisedDeliveryDate: salesOrder?.promisedDeliveryDate
+          ? fromDateOnly(salesOrder.promisedDeliveryDate)
+          : null,
         // D-155: la pestaña monta bobinas, y `GET /production/roofing/coils` necesita la
         // reserva propia para no esconder el material que este mismo pedido prometió.
         reservationId: order.reservationId,
@@ -1218,6 +1238,157 @@ export class RoofingProductionService {
         operationDate: fromDateOnly(order.operationDate),
       };
     });
+
+    // D-189: **un solo ranking**. Las órdenes en curso primero (son las que ya tienen material
+    // en la roladora) y después las no iniciadas exactamente en el orden de la cola.
+    const today = businessToday();
+    return rows.sort((a, b) => {
+      const startedA = a.status === ProductionOrderStatus.IN_PROGRESS;
+      const startedB = b.status === ProductionOrderStatus.IN_PROGRESS;
+      if (startedA !== startedB) return startedA ? -1 : 1;
+      return compareQueueRank(a, b, today);
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // D-189 — la cola de producción: órdenes no iniciadas, con prioridad por orden
+  // -------------------------------------------------------------------------
+
+  /**
+   * La cola (RF-37, D-189): órdenes de coberturas **no iniciadas** —en borrador, sin bobina
+   * montada y sin reportes vigentes— ordenadas por `compareQueueRank`, el mismo criterio que
+   * usa `batchOrders` para `/planta`.
+   *
+   * `DRAFT` ya garantiza las dos condiciones (`recomputeStatus` vuelve a borrador solo sin
+   * asignaciones ni reportes, y montar pasa a en curso); se filtran igual en la consulta
+   * porque la definición es esa y no el estado, y un borrador que las incumpla sería un
+   * defecto que la cola no debe esconder poniéndolo delante de planta.
+   */
+  async queue(): Promise<ProductionQueueEntryDto[]> {
+    const orders = await this.prisma.productionOrder.findMany({
+      where: {
+        kind: ProductionOrderKind.ROOFING,
+        status: ProductionOrderStatus.DRAFT,
+        consumptions: { none: { releasedAt: null } },
+        reports: { none: { status: ProductionReportStatus.ACTIVE } },
+      },
+      include: {
+        product: {
+          select: {
+            sku: true,
+            name: true,
+            thicknessMm: true,
+            widthMm: true,
+            color: { select: { name: true } },
+            finish: { select: { densityFactor: true } },
+          },
+        },
+        items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
+        reservation: {
+          select: {
+            salesOrder: {
+              select: {
+                id: true,
+                seq: true,
+                promisedDeliveryDate: true,
+                customer: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { seq: 'asc' },
+      take: 500,
+    });
+    const actors = await resolveActorNames(
+      this.prisma,
+      orders.map((o) => o.priorityById).filter((id): id is string => id !== null),
+    );
+
+    const today = businessToday();
+    const entries = orders.map((order): ProductionQueueEntryDto => {
+      const planItems = order.items.map((i, n) => ({
+        lineNumber: n + 1,
+        lengthMm: i.lengthMm.toFixed(2),
+        qty: i.qty,
+      }));
+      const product = order.product;
+      // El kilo teórico sale de la geometría **del SKU**: la orden todavía no montó ninguna
+      // bobina, y es el mismo número que el vendedor vio al cotizar (D-134/D-122).
+      const geometry: CoilGeometry | null =
+        product.thicknessMm !== null && product.widthMm !== null && product.finish !== null
+          ? {
+              widthMm: product.widthMm.toFixed(2),
+              thicknessMm: product.thicknessMm.toFixed(2),
+              densityFactor: product.finish.densityFactor.toFixed(4),
+            }
+          : null;
+      const salesOrder = order.reservation?.salesOrder ?? null;
+      const promisedDeliveryDate = salesOrder?.promisedDeliveryDate
+        ? fromDateOnly(salesOrder.promisedDeliveryDate)
+        : null;
+      return {
+        orderId: order.id,
+        code: productionOrderCode(order.seq),
+        seq: order.seq,
+        salesOrderId: salesOrder?.id ?? null,
+        salesOrderCode: salesOrder ? salesOrderCode(salesOrder.seq) : null,
+        customerName: salesOrder?.customer.name ?? null,
+        productId: order.productId,
+        productSku: product.sku,
+        productName: product.name,
+        colorName: product.color?.name ?? null,
+        thicknessMm: product.thicknessMm?.toFixed(2) ?? null,
+        planItems,
+        planMeters: piecesMeters(planItems).toFixed(3),
+        theoreticalKg: geometry ? roofingTheoreticalKg(geometry, planItems).toFixed(3) : null,
+        promisedDeliveryDate,
+        semaphore: queueSemaphore(promisedDeliveryDate, today),
+        overdue: isOverdue(promisedDeliveryDate, today),
+        priority: order.priorityAt !== null,
+        priorityAt: order.priorityAt?.toISOString() ?? null,
+        priorityByName: order.priorityById ? (actors.get(order.priorityById) ?? null) : null,
+        priorityReason: order.priorityAt === null ? null : order.priorityReason,
+        createdAt: order.createdAt.toISOString(),
+      };
+    });
+    return entries.sort((a, b) => compareQueueRank(a, b, today));
+  }
+
+  /**
+   * Prioridad manual excepcional de una orden (D-094, movida a la orden por D-189): solo
+   * ADMINISTRADOR (lo corta el controller), siempre con motivo. Una orden terminal no se
+   * prioriza: ya no está esperando a nadie.
+   */
+  async setPriority(
+    actor: RequestUser,
+    orderId: string,
+    input: SetProductionOrderPriorityInput,
+  ): Promise<ProductionOrderDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await lockOrder(tx, orderId);
+      assertKind(order, ProductionOrderKind.ROOFING);
+      assertLive(order, 'cambiar su prioridad');
+      const before = await tx.productionOrder.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { priorityAt: true, priorityReason: true },
+      });
+      await tx.productionOrder.update({
+        where: { id: orderId },
+        data: input.priority
+          ? { priorityAt: new Date(), priorityById: actor.id, priorityReason: input.reason }
+          : { priorityAt: null, priorityById: null, priorityReason: null },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: input.priority ? 'production.priority-set' : 'production.priority-clear',
+        entity: 'production_orders',
+        entityId: orderId,
+        before: { priority: before.priorityAt !== null, reason: before.priorityReason },
+        after: { priority: input.priority, reason: input.reason },
+      });
+    });
+    return this.production.findOne(orderId);
   }
 
   // -------------------------------------------------------------------------

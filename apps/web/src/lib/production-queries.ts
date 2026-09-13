@@ -16,6 +16,10 @@ export function invalidateProduction(queryClient: QueryClient, orderId?: string)
   // Va acá y no en esa pantalla porque quien la desactualiza es cualquier operación de
   // producción —reportar desde la terminal, cerrar, revertir, anular—, no solo ella misma.
   void queryClient.invalidateQueries({ queryKey: ['roofing-batch'] });
+  // D-189: la cola son las órdenes no iniciadas, así que montar, anular o priorizar la mueven;
+  // anular una orden además devuelve su línea a «sin orden».
+  void queryClient.invalidateQueries({ queryKey: ['production-queue'] });
+  void queryClient.invalidateQueries({ queryKey: ['lines-without-order'] });
   void queryClient.invalidateQueries({ queryKey: ['production-strips'] });
   void queryClient.invalidateQueries({ queryKey: ['coils'] });
   void queryClient.invalidateQueries({ queryKey: ['coil'] });

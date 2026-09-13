@@ -34,7 +34,7 @@ import {
   metersOf,
   pieces,
   purgeRoofingTrail,
-  returnToProductionQueue,
+  cancelAutoCreatedOrders,
   setupRoofingScenario,
 } from '../helpers/roofing';
 
@@ -597,8 +597,8 @@ test.describe('Fase 5a — cotización, pedido y reserva', () => {
       trail.orderIds = [order.id, second.id];
       expect(second.reservations[0]!.status).toBe('ACTIVE');
       // D-186: confirmar dejó una OP colgando de la reserva, y una reserva con OP viva no se
-      // libera a mano. Se anula la OP (devuelve la reserva a la cola) para probar la liberación.
-      expect(await returnToProductionQueue(api, second.id)).toBe(1);
+      // libera a mano. Se anula la OP (la reserva queda sin orden) para probar la liberación.
+      expect(await cancelAutoCreatedOrders(api, second.id)).toBe(1);
 
       // Liberación manual sin anular el pedido (D-054): el pedido sigue vivo, la promesa no.
       const released = await postJson<{ status: string }>(

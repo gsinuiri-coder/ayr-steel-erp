@@ -57,7 +57,7 @@ import {
   type BusinessLine,
   type CreateSalesOrderInput,
   type PaginatedResult,
-  type ProductionQueueEntryDto,
+  type LineWithoutOrderDto,
   type QueueSemaphore,
   type QueueStatus,
   type ReservationDto,
@@ -73,7 +73,6 @@ import {
   type StockPanelDto,
   type StockPanelQuery,
   type SellableCoilQuery,
-  type SetSalesOrderPriorityInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
@@ -1975,38 +1974,8 @@ export class SalesOrdersService {
   // Fase 7 — cola de producción (D-092..D-096)
   // -------------------------------------------------------------------------
 
-  /**
-   * Prioridad manual excepcional (D-094): solo ADMINISTRADOR, siempre con motivo. Cachea
-   * `priorityAt`/`priorityById`/`priorityReason` en el pedido para poder ordenar la cola sin
-   * releer `audit_log`, que sigue siendo la fuente de "quién y cuándo" (RF-95).
-   */
-  async setPriority(
-    actor: RequestUser,
-    id: string,
-    input: SetSalesOrderPriorityInput,
-  ): Promise<SalesOrderDto> {
-    await this.prisma.$transaction(async (tx) => {
-      const order = await this.lockOrder(tx, id);
-      if (order.status === SalesOrderStatus.CANCELLED) {
-        throw new BadRequestException('El pedido está anulado');
-      }
-      await tx.salesOrder.update({
-        where: { id },
-        data: input.priority
-          ? { priorityAt: new Date(), priorityById: actor.id, priorityReason: input.reason }
-          : { priorityAt: null, priorityById: null, priorityReason: null },
-      });
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: input.priority ? 'sales.order.priority-set' : 'sales.order.priority-clear',
-        entity: 'sales_orders',
-        entityId: id,
-        before: { priority: order.priorityReason !== null, reason: order.priorityReason },
-        after: { priority: input.priority, reason: input.reason },
-      });
-    });
-    return this.findOne(id);
-  }
+  // D-189: la prioridad manual dejó de ser del pedido — se fija por orden de producción en
+  // `RoofingProductionService.setPriority`.
 
   /**
    * Fecha prometida de entrega, después de que el pedido existe (D-096): el vendedor solo la
@@ -2042,17 +2011,20 @@ export class SalesOrdersService {
   }
 
   /**
-   * La cola (RF-37): pedidos con reserva de **materia prima** activa sobre un producto que
-   * se fabrica contra el pedido (D-093, misma señal que `resolveDispatchTarget`, D-088) y
-   * sin OP viva todavía. No hay tabla: se recalcula acá en cada lectura.
+   * Líneas sin orden viva (D-093 original): pedidos con reserva de **materia prima** activa
+   * sobre un producto que se fabrica contra el pedido (misma señal que
+   * `resolveDispatchTarget`, D-088) y sin OP viva. No hay tabla: se recalcula en cada lectura.
    *
-   * D-134: la señal pasó de "reserva sobre una bobina" a "reserva sobre un agregado". Es el
-   * mismo criterio —lo que espera producción es lo que prometió insumo y todavía no lo
-   * convirtió— leído sobre el objeto nuevo. Una venta de bobina entera (RF-73) sigue siendo
-   * una reserva `COIL` y **no** entra a la cola, que es lo que ya pasaba y lo que debe pasar:
+   * **D-189: esto dejó de ser la cola.** Desde D-186 confirmar crea las OPs, así que la cola
+   * son las órdenes no iniciadas (`RoofingProductionService.queue`). Lo que queda acá es lo que
+   * perdió su orden —una OP anulada devuelve la reserva, D-066— o un pedido anterior a D-186:
+   * el punto desde el que planta vuelve a abrir una orden. Sin prioridad: la prioridad es de
+   * la orden, y estas líneas todavía no tienen una.
+   *
+   * D-134: una venta de bobina entera (RF-73) sigue siendo una reserva `COIL` y **no** entra:
    * ese rollo se despacha, no se fabrica.
    */
-  async findProductionQueue(): Promise<ProductionQueueEntryDto[]> {
+  async findLinesWithoutOrder(): Promise<LineWithoutOrderDto[]> {
     const reservations = await this.prisma.reservation.findMany({
       where: { status: ReservationStatus.ACTIVE, itemType: InventoryItemTypeEnum.RAW_MATERIAL },
       include: {
@@ -2062,9 +2034,6 @@ export class SalesOrdersService {
             seq: true,
             createdAt: true,
             promisedDeliveryDate: true,
-            priorityAt: true,
-            priorityById: true,
-            priorityReason: true,
             customer: { select: { name: true } },
           },
         },
@@ -2107,13 +2076,8 @@ export class SalesOrdersService {
     const eligible = pending.filter((r) => productById.has(r.salesOrderItem.productId));
     if (eligible.length === 0) return [];
 
-    const priorityByIds = eligible
-      .map((r) => r.salesOrder.priorityById)
-      .filter((id): id is string => id !== null);
-    const actors = await this.resolveActorNames(priorityByIds);
-
     const today = businessToday();
-    const entries = eligible.flatMap((r): ProductionQueueEntryDto[] => {
+    const entries = eligible.flatMap((r): LineWithoutOrderDto[] => {
       const product = productById.get(r.salesOrderItem.productId);
       if (!product) return [];
       const pieces = derivePiecesPlan(
@@ -2151,18 +2115,11 @@ export class SalesOrdersService {
           promisedDeliveryDate,
           semaphore: queueSemaphore(promisedDeliveryDate, today),
           createdAt: r.salesOrder.createdAt.toISOString(),
-          priority: r.salesOrder.priorityById !== null,
-          priorityAt: r.salesOrder.priorityAt?.toISOString() ?? null,
-          priorityByName: r.salesOrder.priorityById
-            ? (actors.get(r.salesOrder.priorityById) ?? null)
-            : null,
-          priorityReason: r.salesOrder.priorityReason,
         },
       ];
     });
 
-    // D-094: prioridad > semáforo > FIFO. Entre dos priorizados, gana el que se priorizó
-    // primero — la misma idea de FIFO, aplicada al momento de priorizar.
+    // Semáforo y después el pedido más antiguo. Estas líneas no tienen prioridad (D-189).
     const semaphoreRank: Record<QueueSemaphore, number> = {
       VENCIDO: 0,
       PROXIMO: 1,
@@ -2170,8 +2127,6 @@ export class SalesOrdersService {
       SIN_FECHA: 3,
     };
     return entries.sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority ? -1 : 1;
-      if (a.priority && b.priority) return (a.priorityAt ?? '').localeCompare(b.priorityAt ?? '');
       const rankDiff = semaphoreRank[a.semaphore] - semaphoreRank[b.semaphore];
       if (rankDiff !== 0) return rankDiff;
       return a.createdAt.localeCompare(b.createdAt);
@@ -2179,37 +2134,21 @@ export class SalesOrdersService {
   }
 
   /**
-   * Estado del pedido frente a la cola (D-093), para el detalle de `/pedidos/[id]`: `null`
-   * cuando no tiene nada que fabricar contra el pedido, o ya salió de la cola.
+   * Estado del pedido frente a la cola, para el detalle de `/pedidos/[id]` (D-189): con
+   * alguna orden de coberturas **en curso**, `EN_PRODUCCION`; si no, con alguna **no
+   * iniciada** (la cola), `EN_COLA`; sin órdenes vivas, `null`.
    */
   private async computeQueueStatus(row: OrderRow): Promise<QueueStatus | null> {
-    const productIdByItem = new Map(row.items.map((i) => [i.id, i.productId]));
-    const candidates = row.reservations.filter(
-      (r) =>
-        r.status === ReservationStatus.ACTIVE && r.itemType === InventoryItemTypeEnum.RAW_MATERIAL,
-    );
-    if (candidates.length === 0) return null;
-    const productIds = [
-      ...new Set(
-        candidates
-          .map((r) => productIdByItem.get(r.salesOrderItemId))
-          .filter((id): id is string => id !== undefined),
-      ),
-    ];
-    if (productIds.length === 0) return null;
-    // D-122: mismo filtro que `findProductionQueue` — lo que decide si una línea se
-    // fabrica es el **producto**, no una receta que las coberturas ya no tienen.
-    const roofingProducts = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, roofingKind: { not: null } },
-      select: { id: true },
+    const live = await this.prisma.productionOrder.findMany({
+      where: {
+        kind: 'ROOFING',
+        status: { in: ['DRAFT', 'IN_PROGRESS'] },
+        reservation: { salesOrderId: row.id },
+      },
+      select: { status: true },
     });
-    const madeToOrder = new Set(roofingProducts.map((p) => p.id));
-    const relevant = candidates.filter((r) => {
-      const productId = productIdByItem.get(r.salesOrderItemId);
-      return productId !== undefined && madeToOrder.has(productId);
-    });
-    if (relevant.length === 0) return null;
-    return relevant.some((r) => r.productionOrders.length === 0) ? 'EN_COLA' : 'EN_PRODUCCION';
+    if (live.some((o) => o.status === 'IN_PROGRESS')) return 'EN_PRODUCCION';
+    return live.length > 0 ? 'EN_COLA' : null;
   }
 
   // -------------------------------------------------------------------------
@@ -2268,11 +2207,7 @@ export class SalesOrdersService {
         take,
       }),
     ]);
-    const actorIds = rows.flatMap((r) => [
-      r.createdById,
-      ...(r.priorityById ? [r.priorityById] : []),
-    ]);
-    const actors = await this.resolveActorNames(actorIds);
+    const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
     const items = rows.map((r) => {
       const dto = this.toDto(
         { ...r, items: [], reservations: [], fiscalDocuments: [] },
@@ -2302,9 +2237,8 @@ export class SalesOrdersService {
     const row = await this.prisma.salesOrder.findUnique({ where: { id }, include: orderInclude });
     if (!row) throw new NotFoundException('Pedido no encontrado');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
-    const actorIds = [row.createdById, ...(row.priorityById ? [row.priorityById] : [])];
     const [actors, queueStatus, priceChanges, invoice] = await Promise.all([
-      this.resolveActorNames(actorIds),
+      this.resolveActorNames([row.createdById]),
       this.computeQueueStatus(row),
       findPriceChanges(this.prisma, { salesOrderId: id }),
       // D-187: el mismo corte que `SalesOrderEditsService.lockEditable`.
@@ -2344,8 +2278,15 @@ export class SalesOrdersService {
         issueDate: true,
         promisedDeliveryDate: true,
         notes: true,
-        priorityAt: true,
-        priorityReason: true,
+        // D-189: la prioridad es de cada orden viva del pedido; el papel dice las que la tengan.
+        reservations: {
+          select: {
+            productionOrders: {
+              where: { status: { in: ['DRAFT', 'IN_PROGRESS'] }, priorityAt: { not: null } },
+              select: { seq: true, priorityReason: true },
+            },
+          },
+        },
         customer: { select: { name: true, docType: true, docNumber: true } },
         items: {
           orderBy: { lineNumber: 'asc' },
@@ -2381,8 +2322,8 @@ export class SalesOrdersService {
         : null,
       customerName: row.customer.name,
       customerDoc: `${row.customer.docType} ${row.customer.docNumber}`,
-      // Solo cuando el pedido está priorizado: el motivo sin la marca no significa nada.
-      priorityReason: row.priorityAt === null ? null : (row.priorityReason ?? 'sin motivo escrito'),
+      // Solo cuando alguna orden está priorizada: el motivo sin la marca no significa nada.
+      priorityReason: priorityNoteOf(row.reservations.flatMap((r) => r.productionOrders)),
       notes: row.notes,
       lines: row.items.map((item) => {
         const product = item.product;
@@ -3036,14 +2977,25 @@ export class SalesOrdersService {
       promisedDeliveryDate: row.promisedDeliveryDate
         ? row.promisedDeliveryDate.toISOString().slice(0, 10)
         : null,
-      priority: row.priorityById !== null,
-      priorityReason: row.priorityReason,
-      priorityByName: row.priorityById ? (actors.get(row.priorityById) ?? null) : null,
       queueStatus,
       priceChanges: [],
       isEditable: false,
     };
   }
+}
+
+/**
+ * D-189: el renglón «Prioridad» de la hoja de planta, armado con las órdenes vivas del pedido
+ * que la tienen. `null` si ninguna: el motivo sin la marca no significa nada.
+ */
+function priorityNoteOf(
+  orders: readonly { seq: number; priorityReason: string | null }[],
+): string | null {
+  if (orders.length === 0) return null;
+  return [...orders]
+    .sort((a, b) => a.seq - b.seq)
+    .map((o) => `${productionOrderCode(o.seq)}: ${o.priorityReason ?? 'sin motivo escrito'}`)
+    .join(' · ');
 }
 
 function toTemporaryLine(

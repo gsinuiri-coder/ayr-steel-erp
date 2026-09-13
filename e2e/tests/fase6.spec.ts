@@ -24,7 +24,7 @@ import {
   purgeRoofingTrail,
   quoteAndOrder,
   reservationsOf,
-  returnToProductionQueue,
+  cancelAutoCreatedOrders,
   roofingOrder,
   setupRoofingScenario,
 } from '../helpers/roofing';
@@ -538,7 +538,7 @@ test.describe('Fase 6 — producción de coberturas', () => {
       // D-186: confirmar ya la abrió sola. Se anula esa y se vuelve a crear a mano, para que
       // la puerta de `POST /production/roofing` siga probada.
       expect(reservation.productionOrderId, 'D-186: confirmar deja la OP en cola').not.toBeNull();
-      expect(await returnToProductionQueue(api, order.id)).toBe(1);
+      expect(await cancelAutoCreatedOrders(api, order.id)).toBe(1);
       const op = await postJson<{ id: string; status: string; salesOrderId: string | null }>(
         api,
         '/api/production/roofing',

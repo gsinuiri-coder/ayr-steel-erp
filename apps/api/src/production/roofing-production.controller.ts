@@ -1,5 +1,18 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
 import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
+import {
+  setProductionOrderPrioritySchema,
+  type ProductionQueueEntryDto,
+  type SetProductionOrderPriorityInput,
   cancelProductionOrderSchema,
   closeRoofingOrderSchema,
   createRoofingOrderSchema,
@@ -75,6 +88,29 @@ export class RoofingProductionController {
     @Query('salesOrderId', new ParseUUIDPipe({ optional: true })) salesOrderId?: string,
   ): Promise<RoofingBatchOrderDto[]> {
     return this.roofing.batchOrders(salesOrderId);
+  }
+
+  /**
+   * La cola de producción (RF-37, D-189): órdenes de coberturas no iniciadas, en el orden de
+   * `compareQueueRank` — el mismo que `batch` usa para `/planta`. VENDEDOR la lee igual que
+   * leía la cola vieja (`GET /sales/orders/queue`): saber qué espera planta no es operarla.
+   */
+  @Get('queue')
+  @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
+  queue(): Promise<ProductionQueueEntryDto[]> {
+    return this.roofing.queue();
+  }
+
+  /** Prioridad manual excepcional de una orden (D-094 → D-189): solo ADMINISTRADOR, con motivo. */
+  @Patch(':id/priority')
+  @Roles(Role.ADMINISTRADOR)
+  setPriority(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(setProductionOrderPrioritySchema))
+    body: SetProductionOrderPriorityInput,
+  ): Promise<ProductionOrderDto> {
+    return this.roofing.setPriority(actor, id, body);
   }
 
   /** Generar la OP de cada línea del pedido que todavía no la tiene (D-148). */

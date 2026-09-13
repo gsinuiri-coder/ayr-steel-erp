@@ -4,16 +4,24 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  describePieces,
   MAX_REPORT_PIECES,
   ProductBomKind,
+  type LineWithoutOrderDto,
   type ProductBomDto,
   type ProductionOrderDto,
   type ReservationDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { formatDate, formatQty } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { OperationDateField } from '@/components/operation-date-field';
-import { QueueEntrySummary, useProductionQueue } from '@/components/production-queue';
+import {
+  SEMAPHORE_LABEL,
+  SEMAPHORE_VARIANT,
+  useLinesWithoutOrder,
+} from '@/components/production-queue';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -42,12 +50,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 /**
  * D-084: una OP de coberturas a medida no se crea eligiendo un producto, se crea eligiendo el
- * **pedido** que viene a cumplir. La lista son las reservas activas sobre bobina, que es
- * exactamente lo que un pedido de coberturas promete antes de fabricarse.
+ * **pedido** que viene a cumplir. La lista son las líneas que reservan materia prima y no
+ * tienen orden viva.
+ *
+ * D-189: esto dejó de ser la cola. Confirmar ya crea las órdenes (D-186); acá solo llega lo
+ * que perdió la suya —una OP anulada devuelve la reserva— o un pedido anterior a D-186.
  */
-export function RoofingQueueCard({ onCreated }: { onCreated: (orderId: string) => void }) {
+export function LinesWithoutOrderCard({ onCreated }: { onCreated: (orderId: string) => void }) {
   const queryClient = useQueryClient();
-  const queue = useProductionQueue();
+  const queue = useLinesWithoutOrder();
 
   // D-124: día en que arranca la corrida. Montar la bobina es custodia y no mueve kardex
   // (D-060), así que crear la orden solo necesita su fecha.
@@ -61,7 +72,6 @@ export function RoofingQueueCard({ onCreated }: { onCreated: (orderId: string) =
     onSuccess: (order) => {
       toast.success(`Orden ${order.code} creada con el plan de corte del pedido`);
       invalidateProduction(queryClient);
-      void queryClient.invalidateQueries({ queryKey: ['production-queue'] });
       onCreated(order.id);
     },
     onError: (err) =>
@@ -73,21 +83,20 @@ export function RoofingQueueCard({ onCreated }: { onCreated: (orderId: string) =
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle>Coberturas por fabricar</CardTitle>
+        <CardTitle>Líneas de pedido sin orden</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-3">
         <p className="text-sm text-muted-foreground">
-          La cola ordena prioridad, luego semáforo de fecha prometida y luego el pedido más antiguo
-          (RF-37, D-094). Una orden de coberturas nace del pedido y copia sus largos como plan de
-          corte, que puedes ajustar antes y durante la corrida (RF-31, D-084).
+          Confirmar un pedido ya crea sus órdenes: acá solo aparecen las líneas cuya orden se anuló.
+          La orden nueva copia los largos del pedido como plan de corte (RF-31, D-084).
         </p>
         {queue.isPending && <Skeleton className="h-16 w-full" />}
         {queue.isError && (
-          <p className="text-sm text-destructive">No se pudieron cargar los pedidos pendientes.</p>
+          <p className="text-sm text-destructive">No se pudieron cargar las líneas sin orden.</p>
         )}
         {queue.isSuccess && pending.length === 0 && (
           <p className="text-sm text-muted-foreground">
-            No hay pedidos de coberturas esperando producción.
+            Todas las líneas de coberturas tienen su orden.
           </p>
         )}
         {pending.map((entry) => (
@@ -95,7 +104,7 @@ export function RoofingQueueCard({ onCreated }: { onCreated: (orderId: string) =
             key={entry.reservationId}
             className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
           >
-            <QueueEntrySummary entry={entry} />
+            <LineWithoutOrderSummary entry={entry} />
             <div className="grid justify-items-end gap-1">
               <Button
                 aria-label={`Iniciar producción del pedido ${entry.salesOrderCode}`}
@@ -112,6 +121,26 @@ export function RoofingQueueCard({ onCreated }: { onCreated: (orderId: string) =
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+function LineWithoutOrderSummary({ entry }: { entry: LineWithoutOrderDto }) {
+  return (
+    <div className="grid gap-0.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-mono font-medium">{entry.salesOrderCode}</span>
+        <Badge variant={SEMAPHORE_VARIANT[entry.semaphore]}>
+          {SEMAPHORE_LABEL[entry.semaphore]}
+        </Badge>
+        <span className="text-sm">{entry.customerName}</span>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {entry.productSku} — {entry.productName} · {describePieces(entry.pieces)}
+        {entry.theoreticalKg !== null && <> · {formatQty(entry.theoreticalKg, 'kg')} teóricos</>} ·
+        Prometida:{' '}
+        {entry.promisedDeliveryDate ? formatDate(entry.promisedDeliveryDate) : 'sin fecha'}
+      </div>
+    </div>
   );
 }
 

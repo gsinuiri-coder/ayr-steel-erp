@@ -1277,6 +1277,13 @@ model ProductionOrder {
   /// reserva a medida) o a stock (déficit consolidado de catálogo). Null en el resto.
   /// Referencia suelta, sin FK.
   importBatchId       String?               @map("import_batch_id") @db.Uuid
+  /// D-189: prioridad manual excepcional de la cola de producción, **por orden**. Hasta F8-S3
+  /// vivía en el pedido (D-094); desde que confirmar crea las OPs (D-186) la cola son las
+  /// órdenes no iniciadas y lo que se prioriza es cada una. Cachea el último valor para
+  /// ordenar sin releer `audit_log`, que sigue siendo la fuente de "quién y cuándo".
+  priorityAt          DateTime?             @map("priority_at") @db.Timestamptz(3)
+  priorityById        String?               @map("priority_by_id") @db.Uuid
+  priorityReason      String?               @map("priority_reason") @db.VarChar(500)
   createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1530,8 +1537,8 @@ model SalesOrder {
   /// Fecha prometida de entrega (Fase 7, D-096). Opcional; el vendedor la fija solo al
   /// confirmar/crear el pedido, después solo ADMINISTRADOR (`PATCH .../promised-delivery-date`).
   promisedDeliveryDate DateTime?        @map("promised_delivery_date") @db.Date
-  /// Prioridad manual excepcional de la cola de producción (D-094): cachea el último valor
-  /// vigente para ordenar sin releer `audit_log`, que sigue siendo la fuente de "quién y cuándo".
+  /// **Sin escritor desde D-189**: la prioridad pasó a `production_orders` (la migración copió
+  /// la vigente a cada OP viva). Se conservan por additive-first; nada las lee.
   priorityAt           DateTime?        @map("priority_at") @db.Timestamptz(3)
   priorityById         String?          @map("priority_by_id") @db.Uuid
   priorityReason       String?          @map("priority_reason") @db.VarChar(500)

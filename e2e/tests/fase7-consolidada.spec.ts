@@ -42,7 +42,7 @@ import {
   purgeRoofingOrder,
   purgeRoofingTrail,
   reservationsOf,
-  returnToProductionQueue,
+  cancelAutoCreatedOrders,
   ROOFING_LINE,
 } from '../helpers/roofing';
 import {
@@ -782,7 +782,7 @@ test.describe('D-124 — fecha de operación', () => {
       const reservation = (await reservationsOf(api, order.id))[0]!;
       expect(reservation.itemType).toBe('RAW_MATERIAL');
       // D-186: confirmar ya abrió una OP con fecha de hoy. Se anula para abrir la retrofechada.
-      expect(await returnToProductionQueue(api, order.id)).toBe(1);
+      expect(await cancelAutoCreatedOrders(api, order.id)).toBe(1);
 
       const op = await postJson<{ id: string; operationDate: string }>(
         api,

@@ -83,7 +83,14 @@ const ORDER_RELATIONS = {
    */
   reservation: {
     select: {
-      salesOrder: { select: { id: true, seq: true, customer: { select: { name: true } } } },
+      salesOrder: {
+        select: {
+          id: true,
+          seq: true,
+          promisedDeliveryDate: true,
+          customer: { select: { name: true } },
+        },
+      },
     },
   },
   consumptions: {
@@ -126,7 +133,14 @@ const LIST_RELATIONS = {
   },
   reservation: {
     select: {
-      salesOrder: { select: { id: true, seq: true, customer: { select: { name: true } } } },
+      salesOrder: {
+        select: {
+          id: true,
+          seq: true,
+          promisedDeliveryDate: true,
+          customer: { select: { name: true } },
+        },
+      },
     },
   },
   /**
@@ -135,7 +149,16 @@ const LIST_RELATIONS = {
    * pedir el detalle de cada orden por separado.
    */
   items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
-  consumptions: { select: { assignedKg: true, consumedKg: true, releasedAt: true } },
+  consumptions: {
+    orderBy: { createdAt: 'asc' },
+    select: {
+      assignedKg: true,
+      consumedKg: true,
+      releasedAt: true,
+      // D-190: el pedido muestra qué bobina tiene montada cada una de sus órdenes.
+      coil: { select: { code: true } },
+    },
+  },
   reports: { select: { pieces: true, metersM: true, status: true } },
 } satisfies Prisma.ProductionOrderInclude;
 
@@ -1302,6 +1325,8 @@ export class ProductionService {
         status: query.status,
         kind: query.kind,
         productId: query.productId,
+        // D-190: las órdenes de un pedido, para su detalle.
+        ...(query.salesOrderId ? { reservation: { salesOrderId: query.salesOrderId } } : {}),
         businessLine: query.businessLine
           ? { code: toPrismaLineCode(query.businessLine) }
           : undefined,
@@ -1310,7 +1335,9 @@ export class ProductionService {
       orderBy: { seq: 'desc' },
       take: 500,
     });
-    const actors = await this.resolveActorNames(orders.map((o) => o.createdById));
+    const actors = await this.resolveActorNames(
+      orders.flatMap((o) => [o.createdById, ...(o.priorityById ? [o.priorityById] : [])]),
+    );
     return orders.map((order) => this.toListItem(order, actors));
   }
 
@@ -1328,6 +1355,7 @@ export class ProductionService {
     const availableKg = new Map(balances.map((b) => [b.itemId, b.qty.toFixed(3)]));
     const actors = await this.resolveActorNames([
       order.createdById,
+      ...(order.priorityById ? [order.priorityById] : []),
       ...order.reports.map((r) => r.createdById),
     ]);
 
@@ -1524,6 +1552,14 @@ export class ProductionService {
       salesOrderId: salesOrder?.id ?? null,
       salesOrderCode: salesOrder ? salesOrderCode(salesOrder.seq) : null,
       customerName: salesOrder?.customer.name ?? null,
+      // D-189: la prioridad es de la orden; la fecha prometida la hereda del pedido.
+      promisedDeliveryDate: salesOrder?.promisedDeliveryDate
+        ? fromDateOnly(salesOrder.promisedDeliveryDate)
+        : null,
+      priority: order.priorityAt !== null,
+      priorityReason: order.priorityAt === null ? null : order.priorityReason,
+      priorityByName: order.priorityById ? (actors.get(order.priorityById) ?? null) : null,
+      mountedCoilCodes: live.map((c) => c.coil.code),
       notes: order.notes,
       piecesReported: activeReports.reduce((acc, r) => acc + r.pieces, 0),
       metersReported: reportedMeters === null ? null : toFixedString(reportedMeters, 'KG'),

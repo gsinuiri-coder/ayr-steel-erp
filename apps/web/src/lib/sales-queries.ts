@@ -32,4 +32,5 @@ export function invalidateSales(
   // Fase 7 (D-092..D-096): prioridad, fecha prometida y cualquier transición de reserva
   // cambian el orden o la presencia de un pedido en la cola derivada.
   void queryClient.invalidateQueries({ queryKey: ['production-queue'] });
+  void queryClient.invalidateQueries({ queryKey: ['lines-without-order'] });
 }

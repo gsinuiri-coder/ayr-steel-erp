@@ -17,8 +17,8 @@ import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { formatMoneyOrDash, formatQty, formatTimestampDate } from '@/lib/format';
 import {
-  QueueAdminControls,
-  QueueEntrySummary,
+  OrderPriorityControl,
+  QueueEntryLink,
   useProductionQueue,
 } from '@/components/production-queue';
 import { InfoPopover } from '@/components/info-popover';
@@ -138,12 +138,17 @@ export function ProduccionView() {
             </p>
           )}
           {queue.data?.map((entry) => (
-            <div
-              key={entry.reservationId}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-            >
-              <QueueEntrySummary entry={entry} />
-              {user.role === Role.ADMINISTRADOR && <QueueAdminControls entry={entry} />}
+            <div key={entry.orderId} className="flex flex-wrap items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <QueueEntryLink entry={entry} href={`/planta?op=${entry.orderId}`} />
+              </div>
+              {user.role === Role.ADMINISTRADOR && (
+                <OrderPriorityControl
+                  orderId={entry.orderId}
+                  orderCode={entry.code}
+                  priority={entry.priority}
+                />
+              )}
             </div>
           ))}
         </CardContent>

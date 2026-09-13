@@ -533,16 +533,14 @@ export async function coilOptions(
  * producción de Fase 4 pero contra las rutas de coberturas.
  */
 /**
- * Devuelve el pedido a la **cola de producción** (D-093): anula las OP que confirmar creó
- * solas (D-186).
+ * Anula las OP vivas que confirmar creó solas (D-186) y devuelve cuántas anuló.
  *
- * La cola lista las líneas a fabricar **sin OP viva**. Desde D-186 confirmar genera esa OP en
- * el acto, así que un pedido recién confirmado ya no pasa por la cola; la cola sigue viva para
- * lo que perdió su orden (una OP anulada devuelve la reserva, D-066) y para los pedidos
- * anteriores. Los specs que prueban la cola —orden, prioridad, semáforo— la ejercitan por esa
- * puerta. Devuelve cuántas anuló.
+ * **No es la puerta de la cola**: desde D-189 la cola son justamente esas órdenes no
+ * iniciadas, y los specs de cola trabajan sobre ellas sin anular nada. Esto queda para los
+ * casos que necesitan la reserva **sin** orden: liberarla a mano, volver a abrir la orden por
+ * `POST /production/roofing` con otra fecha, o probar «líneas sin orden».
  */
-export async function returnToProductionQueue(
+export async function cancelAutoCreatedOrders(
   api: APIRequestContext,
   salesOrderId: string,
 ): Promise<number> {
@@ -554,7 +552,7 @@ export async function returnToProductionQueue(
       api,
       `/api/production/roofing/${r.productionOrderId}/cancel`,
       {
-        reason: 'E2E: devolver la línea a la cola de producción',
+        reason: 'E2E: dejar la reserva sin orden',
       },
     );
     cancelled += 1;

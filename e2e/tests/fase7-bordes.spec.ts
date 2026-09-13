@@ -1,14 +1,8 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, createUser } from '../helpers/api';
 import { apiAs } from '../helpers/production';
-import { createCustomer, patchExpectingError, queueOf, setPriority } from '../helpers/sales';
-import {
-  pieces,
-  purgeRoofingTrail,
-  quoteAndOrder,
-  returnToProductionQueue,
-  setupRoofingScenario,
-} from '../helpers/roofing';
+import { createCustomer, patchExpectingError, queueOf, setOrderPriority } from '../helpers/sales';
+import { pieces, purgeRoofingTrail, quoteAndOrder, setupRoofingScenario } from '../helpers/roofing';
 
 /**
  * Fase 7 — bordes de la cola de producción (RF-37, RF-38; D-092..D-096).
@@ -59,41 +53,40 @@ test.describe('Fase 7 — bordes de la cola de producción', () => {
         rows: pieces([2, 1]),
       });
       trail.orderIds = [order.id];
-      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
-      await returnToProductionQueue(api, order.id);
+      // D-189: la prioridad es de la orden, y la orden en cola es la que abrió confirmar.
+      const opId = order.reservations[0]!.productionOrderId!;
+      const priorityPath = `/api/production/roofing/${opId}/priority`;
 
       // Priorizar sin motivo: el schema lo exige siempre, no solo al quitarla.
-      const sinMotivoAlPoner = await patchExpectingError(
-        api,
-        `/api/sales/orders/${order.id}/priority`,
-        { priority: true, reason: '' },
-      );
+      const sinMotivoAlPoner = await patchExpectingError(api, priorityPath, {
+        priority: true,
+        reason: '',
+      });
       expect(sinMotivoAlPoner.status).toBe(400);
 
       // Con motivo válido sí prioriza.
-      const prioritized = await setPriority(api, order.id, {
+      const prioritized = await setOrderPriority(api, opId, {
         priority: true,
         reason: 'Motivo válido de prueba E2E',
       });
       expect(prioritized.priority).toBe(true);
 
       // Quitarla también exige motivo: un `false` no es "sin comentarios".
-      const sinMotivoAlQuitar = await patchExpectingError(
-        api,
-        `/api/sales/orders/${order.id}/priority`,
-        { priority: false, reason: '' },
-      );
+      const sinMotivoAlQuitar = await patchExpectingError(api, priorityPath, {
+        priority: false,
+        reason: '',
+      });
       expect(sinMotivoAlQuitar.status).toBe(400);
 
       // Motivo demasiado corto: el mínimo de `reasonSchema` (3 caracteres) también aplica acá.
-      const motivoCorto = await patchExpectingError(api, `/api/sales/orders/${order.id}/priority`, {
+      const motivoCorto = await patchExpectingError(api, priorityPath, {
         priority: false,
         reason: 'ab',
       });
       expect(motivoCorto.status).toBe(400);
 
-      // Y sigue priorizado: ningún intento fallido tocó nada.
-      expect((await queueOf(api)).find((q) => q.salesOrderId === order.id)?.priority).toBe(true);
+      // Y sigue priorizada: ningún intento fallido tocó nada.
+      expect((await queueOf(api)).find((q) => q.orderId === opId)?.priority).toBe(true);
     } finally {
       await purgeRoofingTrail(api, trail);
     }
@@ -127,12 +120,15 @@ test.describe('Fase 7 — bordes de la cola de producción', () => {
 
       sellerApi = await apiAs(baseURL!, seller);
 
-      // VENDEDOR sí puede leer la cola (RF-37: es la entrada de su propio panel).
-      const queueAsSeller = await sellerApi.get('/api/sales/orders/queue');
+      // VENDEDOR sí puede leer la cola y las líneas sin orden (RF-37).
+      const queueAsSeller = await sellerApi.get('/api/production/roofing/queue');
       expect(queueAsSeller.ok()).toBe(true);
+      const linesAsSeller = await sellerApi.get('/api/sales/orders/lines-without-order');
+      expect(linesAsSeller.ok()).toBe(true);
 
       // Pero no puede tocar la prioridad ni la fecha prometida: eso es de ADMINISTRADOR.
-      const priorityAsSeller = await sellerApi.patch(`/api/sales/orders/${order.id}/priority`, {
+      const opId = order.reservations[0]!.productionOrderId!;
+      const priorityAsSeller = await sellerApi.patch(`/api/production/roofing/${opId}/priority`, {
         data: { priority: true, reason: 'Intento de un vendedor' },
       });
       expect(priorityAsSeller.status()).toBe(403);

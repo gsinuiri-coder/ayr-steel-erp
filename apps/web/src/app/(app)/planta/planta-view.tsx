@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   MAX_ORDER_TABS,
   ProductionOrderKind,
+  ProductionOrderStatus,
   Role,
   type ProductionOrderListItemDto,
   type RoofingBatchOrderDto,
@@ -17,10 +18,11 @@ import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DrywallOrderPanel } from './drywall-order-panel';
-import { DrywallOrderCard, RoofingQueueCard } from './new-order-cards';
+import { QueueEntryLink, useProductionQueue } from '@/components/production-queue';
+import { DrywallOrderCard, LinesWithoutOrderCard } from './new-order-cards';
 import {
   EMPTY_DRAFT,
   NO_NOTES,
@@ -105,8 +107,22 @@ export function PlantaView() {
     queryFn: () => api<ProductionOrderListItemDto[]>('/production?status=IN_PROGRESS'),
   });
 
+  const queue = useProductionQueue({ enabled: salesOrderId === null });
+
   const rows = useMemo<WorkspaceOrder[]>(() => {
-    const roofingRows = (roofing.data ?? []).map(toRoofingRow);
+    // D-189: sin filtro por pedido, el workspace es lo **en curso** más la orden no iniciada
+    // que se abrió desde la cola (o por `?op=`); el resto de las no iniciadas vive en la cola.
+    // Con `?pedido=` son todas las del pedido, en curso y no iniciadas, como hasta ahora. El
+    // orden lo trae el API (`compareQueueRank`), así que no se reordena acá.
+    const roofingRows = (roofing.data ?? [])
+      .filter(
+        (o) =>
+          salesOrderId !== null ||
+          o.status !== ProductionOrderStatus.DRAFT ||
+          o.orderId === activeId ||
+          o.orderId === focused,
+      )
+      .map(toRoofingRow);
     const drywallRows = [...(inProgress.data ?? []), ...(draftOrders.data ?? [])]
       .filter((o) => o.kind === ProductionOrderKind.DRYWALL)
       // Con el filtro por pedido, una corrida de stock de otro producto no tiene nada que
@@ -114,7 +130,7 @@ export function PlantaView() {
       .filter((o) => salesOrderId === null || o.salesOrderId === salesOrderId)
       .map(toDrywallRow);
     return [...roofingRows, ...drywallRows];
-  }, [roofing.data, inProgress.data, draftOrders.data, salesOrderId]);
+  }, [roofing.data, inProgress.data, draftOrders.data, salesOrderId, activeId, focused]);
 
   const pending = roofing.isPending || draftOrders.isPending || inProgress.isPending;
   const failed = roofing.isError || draftOrders.isError || inProgress.isError;
@@ -216,9 +232,46 @@ export function PlantaView() {
         */}
         {creating && (
           <div className="grid gap-4">
-            <RoofingQueueCard onCreated={setActiveId} />
+            <LinesWithoutOrderCard onCreated={setActiveId} />
             <DrywallOrderCard onCreated={setActiveId} />
           </div>
+        )}
+
+        {/*
+          D-189: la cola —órdenes no iniciadas— siempre a la vista y en el orden de
+          `compareQueueRank`. Un clic abre esa orden en el workspace de abajo, que es donde se
+          monta la bobina. Con `?pedido=` no se muestra: las pestañas ya traen todas las
+          órdenes del pedido, iniciadas o no.
+        */}
+        {salesOrderId === null && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2">
+                Cola de producción
+                {queue.isSuccess && <Badge variant="outline">{queue.data.length}</Badge>}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-2">
+              {queue.isPending && <Skeleton className="h-16 w-full" />}
+              {queue.isError && (
+                <p className="text-sm text-destructive">No se pudo cargar la cola de producción.</p>
+              )}
+              {queue.isSuccess && queue.data.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  No hay órdenes esperando producción.
+                </p>
+              )}
+              {queue.data?.map((entry) => (
+                <QueueEntryLink
+                  key={entry.orderId}
+                  entry={entry}
+                  href={`/planta?op=${entry.orderId}`}
+                  selected={entry.orderId === activeId}
+                  onSelect={setActiveId}
+                />
+              ))}
+            </CardContent>
+          </Card>
         )}
 
         {pending && <Skeleton className="h-64 w-full" />}
@@ -231,7 +284,7 @@ export function PlantaView() {
           <Alert>
             <AlertDescription>
               {salesOrderId === null
-                ? 'No hay ninguna orden abierta. Abre una con el botón de arriba.'
+                ? 'No hay órdenes en curso. Elige una de la cola para empezar a producirla.'
                 : 'Este pedido no tiene órdenes abiertas. Genéralas desde el detalle del pedido.'}
             </AlertDescription>
           </Alert>

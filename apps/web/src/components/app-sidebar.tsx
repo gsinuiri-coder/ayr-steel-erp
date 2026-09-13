@@ -85,7 +85,7 @@ export function AppSidebar() {
                     {item.href === '/planta' && queueCount > 0 && (
                       <SidebarMenuBadge
                         className="group-data-[collapsible=icon]:hidden"
-                        title={`${String(queueCount)} pedidos esperando producción`}
+                        title={`${String(queueCount)} órdenes esperando producción`}
                       >
                         {queueCount}
                       </SidebarMenuBadge>

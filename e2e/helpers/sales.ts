@@ -113,51 +113,85 @@ export interface SalesOrderDto {
   reservations: ReservationDto[];
   /** Fase 7 (D-092..D-096): entrada del vendedor al confirmar, editable después por ADMINISTRADOR. */
   promisedDeliveryDate: string | null;
-  /** Prioridad manual excepcional de la cola (D-094). */
-  priority: boolean;
-  priorityReason: string | null;
-  priorityByName: string | null;
-  /** `null` cuando el pedido no tiene nada que fabricar contra el pedido, o ya salió de la cola. */
+  /**
+   * D-189: `EN_PRODUCCION` con alguna orden de coberturas en curso; si no, `EN_COLA` con
+   * alguna no iniciada; `null` sin órdenes vivas.
+   */
   queueStatus: 'EN_COLA' | 'EN_PRODUCCION' | null;
 }
 
-/** Una fila de la cola de producción (RF-37, D-092..D-096): `GET /sales/orders/queue`. */
+/** Una entrada de la cola de producción (RF-37, D-189): una OP de coberturas no iniciada. */
 export interface ProductionQueueEntryDto {
+  orderId: string;
+  code: string;
+  seq: number;
+  salesOrderId: string | null;
+  salesOrderCode: string | null;
+  customerName: string | null;
+  productId: string;
+  productSku: string;
+  productName: string;
+  colorName: string | null;
+  thicknessMm: string | null;
+  planItems: { lineNumber: number; lengthMm: string; qty: number }[];
+  planMeters: string;
+  theoreticalKg: string | null;
+  promisedDeliveryDate: string | null;
+  semaphore: 'VENCIDO' | 'PROXIMO' | 'A_TIEMPO' | 'SIN_FECHA';
+  overdue: boolean;
+  priority: boolean;
+  priorityAt: string | null;
+  priorityByName: string | null;
+  priorityReason: string | null;
+  createdAt: string;
+}
+
+/** Una línea que reserva materia prima y no tiene orden viva (D-093; ya no es la cola, D-189). */
+export interface LineWithoutOrderDto {
   salesOrderId: string;
   salesOrderCode: string;
   salesOrderItemId: string;
   reservationId: string;
   customerName: string;
   productId: string;
-  productSku: string;
-  productName: string;
   pieces: { lineNumber: number; lengthMm: string; qty: number }[];
   theoreticalKg: string | null;
   promisedDeliveryDate: string | null;
   semaphore: 'VENCIDO' | 'PROXIMO' | 'A_TIEMPO' | 'SIN_FECHA';
-  createdAt: string;
-  priority: boolean;
-  priorityAt: string | null;
-  priorityByName: string | null;
-  priorityReason: string | null;
 }
 
-/** La cola de producción (RF-37): pedidos con reserva de bobina activa y sin OP viva. */
+/** La cola de producción (RF-37, D-189): órdenes no iniciadas, en el orden del ranking. */
 export async function queueOf(api: APIRequestContext): Promise<ProductionQueueEntryDto[]> {
-  return getJson<ProductionQueueEntryDto[]>(api, '/api/sales/orders/queue');
+  return getJson<ProductionQueueEntryDto[]>(api, '/api/production/roofing/queue');
 }
 
-/** Prioridad manual excepcional de la cola (D-094): motivo obligatorio en los dos sentidos. */
-export async function setPriority(
+/** Las líneas sin orden viva (D-093): de dónde se vuelve a abrir una orden. */
+export async function linesWithoutOrderOf(api: APIRequestContext): Promise<LineWithoutOrderDto[]> {
+  return getJson<LineWithoutOrderDto[]>(api, '/api/sales/orders/lines-without-order');
+}
+
+/** Prioridad manual de una **orden** (D-094 → D-189): motivo obligatorio en los dos sentidos. */
+export async function setOrderPriority(
   api: APIRequestContext,
-  orderId: string,
+  productionOrderId: string,
   input: { priority: boolean; reason: string },
-): Promise<SalesOrderDto> {
-  const res = await api.patch(`/api/sales/orders/${orderId}/priority`, { data: input });
+): Promise<{
+  id: string;
+  priority: boolean;
+  priorityReason: string | null;
+  priorityByName: string | null;
+}> {
+  const path = `/api/production/roofing/${productionOrderId}/priority`;
+  const res = await api.patch(path, { data: input });
   if (!res.ok()) {
-    throw new Error(`PATCH orders/${orderId}/priority falló: ${res.status()} ${await res.text()}`);
+    throw new Error(`PATCH ${path} falló: ${res.status()} ${await res.text()}`);
   }
-  return (await res.json()) as SalesOrderDto;
+  return (await res.json()) as {
+    id: string;
+    priority: boolean;
+    priorityReason: string | null;
+    priorityByName: string | null;
+  };
 }
 
 /** Fecha prometida después de creado el pedido (D-096): solo ADMINISTRADOR. `null` la borra. */

@@ -709,12 +709,15 @@ export type CancelSalesOrderInput = z.infer<typeof cancelSalesOrderSchema>;
 // Fase 7 — cola de producción (RF-37, RF-38; D-092..D-096)
 // --------------------------------------------------------------------------
 
-/** Prioridad manual excepcional de la cola (D-094): motivo obligatorio en los dos sentidos. */
-export const setSalesOrderPrioritySchema = z.object({
+/**
+ * Prioridad manual excepcional de la cola (D-094): motivo obligatorio en los dos sentidos.
+ * D-189: se fija sobre una **orden de producción**, no sobre el pedido.
+ */
+export const setProductionOrderPrioritySchema = z.object({
   priority: z.boolean(),
   reason: reasonSchema,
 });
-export type SetSalesOrderPriorityInput = z.infer<typeof setSalesOrderPrioritySchema>;
+export type SetProductionOrderPriorityInput = z.infer<typeof setProductionOrderPrioritySchema>;
 
 /** Solo ADMINISTRADOR, y solo después de que el pedido existe (D-096). `null` la borra. */
 export const updatePromisedDeliveryDateSchema = z.object({
@@ -744,12 +747,90 @@ export function queueSemaphore(
 export const QUEUE_STATUSES = ['EN_COLA', 'EN_PRODUCCION'] as const;
 export type QueueStatus = (typeof QUEUE_STATUSES)[number];
 
+/** D-189: la fecha prometida ya pasó. Día de negocio en Lima, igual que el semáforo. */
+export function isOverdue(
+  promisedDeliveryDate: string | null,
+  today: string = businessToday(),
+): boolean {
+  return promisedDeliveryDate !== null && promisedDeliveryDate < today;
+}
+
+/** Lo que el ranking de la cola necesita saber de una orden. */
+export interface QueueRankable {
+  priority: boolean;
+  promisedDeliveryDate: string | null;
+  /** Correlativo de la OP: desempata por la orden creada primero. */
+  seq: number;
+}
+
 /**
- * Una fila de la cola (D-093): pedido confirmado, con reserva de bobina activa sobre un
- * producto que se fabrica contra el pedido, y sin OP viva todavía. No es una tabla — se
- * recalcula en cada lectura a partir de `Reservation` + `ProductionOrder`.
+ * **El único criterio de orden de la cola de producción** (D-189). Lo usan la cola del API y
+ * `/planta`, así que las dos listas no pueden discrepar.
+ *
+ * 1. Prioridad manual primero.
+ * 2. Dentro de cada grupo de prioridad, las vencidas arriba.
+ * 3. Después la fecha prometida más cercana; sin fecha, al final.
+ * 4. Empate: la orden creada primero (FIFO por correlativo).
+ */
+export function compareQueueRank(
+  a: QueueRankable,
+  b: QueueRankable,
+  today: string = businessToday(),
+): number {
+  if (a.priority !== b.priority) return a.priority ? -1 : 1;
+  const overdueA = isOverdue(a.promisedDeliveryDate, today);
+  const overdueB = isOverdue(b.promisedDeliveryDate, today);
+  if (overdueA !== overdueB) return overdueA ? -1 : 1;
+  if (a.promisedDeliveryDate !== b.promisedDeliveryDate) {
+    if (a.promisedDeliveryDate === null) return 1;
+    if (b.promisedDeliveryDate === null) return -1;
+    return a.promisedDeliveryDate < b.promisedDeliveryDate ? -1 : 1;
+  }
+  return a.seq - b.seq;
+}
+
+/**
+ * Una entrada de la cola de producción (D-189): una **orden de coberturas no iniciada** —en
+ * borrador, sin bobina montada y sin reportes—. Desde D-186 confirmar crea las OPs, así que la
+ * orden en borrador **es** lo que espera a planta. No es una tabla: se recalcula en cada lectura.
  */
 export const productionQueueEntrySchema = z.object({
+  orderId: z.string().uuid(),
+  /** `OP-000123`. */
+  code: z.string(),
+  seq: z.number().int(),
+  salesOrderId: z.string().uuid().nullable(),
+  salesOrderCode: z.string().nullable(),
+  customerName: z.string().nullable(),
+  productId: z.string().uuid(),
+  productSku: z.string(),
+  productName: z.string(),
+  colorName: z.string().nullable(),
+  thicknessMm: z.string().nullable(),
+  /** El plan de corte de la orden (cantidad × largo), que planta puede haber ajustado. */
+  planItems: z.array(roofingPieceSchema),
+  /** Metros lineales del plan. */
+  planMeters: z.string(),
+  /** Kilos teóricos del plan con la geometría del SKU. `null` si el catálogo no la tiene. */
+  theoreticalKg: z.string().nullable(),
+  /** Fecha prometida del pedido: la orden la hereda, no tiene una propia. */
+  promisedDeliveryDate: z.string().nullable(),
+  semaphore: z.enum(QUEUE_SEMAPHORES),
+  overdue: z.boolean(),
+  priority: z.boolean(),
+  priorityAt: z.string().nullable(),
+  priorityByName: z.string().nullable(),
+  priorityReason: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type ProductionQueueEntryDto = z.infer<typeof productionQueueEntrySchema>;
+
+/**
+ * Una línea de pedido que reserva materia prima y **no tiene orden viva** (D-093 original).
+ * Desde D-186 solo llega acá lo que perdió su orden —una OP anulada devuelve la reserva— o un
+ * pedido anterior a D-186. No es la cola (D-189): es de dónde se vuelve a abrir una orden.
+ */
+export const lineWithoutOrderSchema = z.object({
   salesOrderId: z.string().uuid(),
   salesOrderCode: z.string(),
   salesOrderItemId: z.string().uuid(),
@@ -760,17 +841,12 @@ export const productionQueueEntrySchema = z.object({
   productName: z.string(),
   /** Subítems (cantidad × largo), copiados o derivados igual que `create()` de la OP (D-084). */
   pieces: z.array(roofingPieceSchema),
-  /** Kilos teóricos con la geometría de la bobina reservada al cotizar. `null` si esa bobina ya no existe. */
   theoreticalKg: z.string().nullable(),
   promisedDeliveryDate: z.string().nullable(),
   semaphore: z.enum(QUEUE_SEMAPHORES),
   createdAt: z.string(),
-  priority: z.boolean(),
-  priorityAt: z.string().nullable(),
-  priorityByName: z.string().nullable(),
-  priorityReason: z.string().nullable(),
 });
-export type ProductionQueueEntryDto = z.infer<typeof productionQueueEntrySchema>;
+export type LineWithoutOrderDto = z.infer<typeof lineWithoutOrderSchema>;
 
 export const salesOrderSchema = z.object({
   id: z.string().uuid(),
@@ -806,10 +882,11 @@ export const salesOrderSchema = z.object({
   createdByName: z.string().nullable(),
   cancelledAt: z.string().nullable(),
   promisedDeliveryDate: z.string().nullable(),
-  priority: z.boolean(),
-  priorityReason: z.string().nullable(),
-  priorityByName: z.string().nullable(),
-  /** `null` cuando el pedido no tiene nada que fabricar, o ya dejó la cola (D-093). */
+  /**
+   * `EN_COLA`: alguna orden de coberturas del pedido todavía no se inició (D-189);
+   * `EN_PRODUCCION`: alguna ya está en curso. `null` sin órdenes vivas. La prioridad manual ya
+   * no es del pedido: vive en cada orden (D-189).
+   */
   queueStatus: z.enum(QUEUE_STATUSES).nullable(),
   /** D-187: cambios de precio de sus líneas después de confirmado. */
   priceChanges: z.array(z.lazy(() => salesPriceChangeSchema)),
@@ -821,7 +898,7 @@ export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 export const salesOrderListItemSchema = salesOrderSchema
   // `queueStatus` exige leer reservas + su OP viva por pedido (D-093); el listado solo
   // cuenta reservas activas (`activeReservations`) para no pagar ese costo por fila. La
-  // cola en sí (`GET /sales/orders/queue`) es la vista barata para eso.
+  // cola en sí (`GET /production/roofing/queue`, D-189) es la vista barata para eso.
   // D-119: `businessLines` sale de `items`, que el listado tampoco carga (mismo motivo).
   // D-141: el número del comprobante importado exige un join más por fila y nadie lo
   // muestra en la lista; `origin` sí queda, que es una columna y es lo que se filtra.

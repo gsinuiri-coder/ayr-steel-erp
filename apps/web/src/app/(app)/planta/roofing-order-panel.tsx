@@ -11,6 +11,7 @@ import {
   describePieces,
   piecesMeters,
   piecesTheoreticalKg,
+  Role,
   roofingConsumptionDeviation,
   toDecimal,
   Unit,
@@ -26,7 +27,9 @@ import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/li
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
+import { useSession } from '@/lib/session';
 import { LINK_CLASSNAME } from '@/lib/utils';
+import { OrderPriorityControl } from '@/components/production-queue';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -136,6 +139,7 @@ export function RoofingOrderPanel({
   onNotes: (next: SavedNotes) => void;
 }) {
   const queryClient = useQueryClient();
+  const { user } = useSession();
   /** Motivo del despunte cuando el cierre lo exige (D-089). */
   const [closeReason, setCloseReason] = useState<string | null>(null);
   const [askingReason, setAskingReason] = useState(false);
@@ -394,6 +398,17 @@ export function RoofingOrderPanel({
               )}
               {order.customerName !== null && <> · {order.customerName}</>}
             </span>
+            {order.priority && <Badge>Prioridad</Badge>}
+            {/* D-189: la prioridad es de la orden; se fija desde su propio panel. */}
+            {user.role === Role.ADMINISTRADOR && (
+              <span className="ml-auto">
+                <OrderPriorityControl
+                  orderId={order.orderId}
+                  orderCode={order.code}
+                  priority={order.priority}
+                />
+              </span>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">

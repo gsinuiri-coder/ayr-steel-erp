@@ -17,7 +17,6 @@ import {
   pieces,
   purgeRoofingTrail,
   reservationsOf,
-  returnToProductionQueue,
   ROOFING_LINE,
 } from '../helpers/roofing';
 import { createCustomer, queueOf, type QuotationDto, type SalesOrderDto } from '../helpers/sales';
@@ -157,14 +156,14 @@ test.describe('D-127 — subtipo de cobertura', () => {
       // Y el pedido llega a la cola de producción, que es lo que el defecto impedía: sin
       // reserva de materia prima no había nada que fabricar y la orden nunca aparecía.
       expect(reservation.productionOrderId, 'D-186: confirmar deja la OP en cola').not.toBeNull();
-      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
-      expect(await returnToProductionQueue(api, order.id)).toBe(1);
+      // D-189: la cola son las órdenes no iniciadas, y la de este pedido es la que abrió
+      // confirmar.
       const queue = await queueOf(api);
-      const entry = queue.find((q) => q.reservationId === reservation.id);
+      const entry = queue.find((q) => q.orderId === reservation.productionOrderId);
       expect(entry, 'el pedido a medida entra a la cola de producción (RF-37)').toBeDefined();
       expect(entry!.salesOrderId).toBe(order.id);
       expect(entry!.productId).toBe(product.id);
-      expect(entry!.pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty }))).toEqual(
+      expect(entry!.planItems.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty }))).toEqual(
         REAL_CASE_ROWS.map((r) => ({ lengthMm: r.lengthMm, qty: r.qty })),
       );
     } finally {

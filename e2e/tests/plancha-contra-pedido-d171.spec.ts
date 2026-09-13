@@ -15,7 +15,6 @@ import {
   purgeRoofingTrail,
   reportPieces,
   reservationsOf,
-  returnToProductionQueue,
   roofingOrder,
   ROOFING_LINE,
   setupRoofingScenario,
@@ -175,8 +174,7 @@ test.describe('D-171 — la plancha de catálogo se fabrica contra el pedido', (
       // Bajo D-140 la plancha **nunca** llegaba acá: la cola se arma con reservas de materia
       // prima, y la plancha no abría ninguna. Planta no tenía forma de enterarse del pedido.
       expect(reservation.productionOrderId, 'D-186: confirmar deja la OP en cola').not.toBeNull();
-      // D-186: confirmar ya generó la OP; se anula para que la línea vuelva a la cola.
-      expect(await returnToProductionQueue(api, order.id)).toBe(1);
+      // D-189: la cola son las órdenes no iniciadas; la de este pedido la abrió confirmar.
       const queue = await queueOf(api);
       const mine = queue.find((e) => e.salesOrderId === order.id);
       expect(mine, 'el pedido de planchas no llegó a la cola de producción').toBeDefined();
@@ -184,18 +182,19 @@ test.describe('D-171 — la plancha de catálogo se fabrica contra el pedido', (
       expect(mine!.theoreticalKg).toBe('121.200');
       // El plan que planta va a ver: el largo del SKU repetido hasta la cantidad pedida. Una
       // plancha no trae subítems, así que se derivan (`derivePiecesPlan`).
-      expect(mine!.pieces).toEqual([{ lineNumber: 1, lengthMm: '3000.00', qty: SHEETS }]);
+      expect(mine!.planItems).toEqual([{ lineNumber: 1, lengthMm: '3000.00', qty: SHEETS }]);
 
       // --- 4. La orden de producción ---
       const op = await roofingOrder(api, reservation.id);
       trail.productionOrderIds = [op.id];
+      expect(op.id).toBe(mine!.orderId);
       expect(op.status).toBe('DRAFT');
       expect(op.salesOrderId).toBe(order.id);
       expect(op.items).toEqual([expect.objectContaining({ lengthMm: '3000.00', qty: SHEETS })]);
-      // Creada la OP, la línea sale de la cola: ya no está esperando.
-      expect((await queueOf(api)).find((e) => e.salesOrderId === order.id)).toBeUndefined();
 
       await mountCoil(api, op.id, { coilId: scenario.coil.id });
+      // Montada la bobina, la orden se inició: sale de la cola (D-189).
+      expect((await queueOf(api)).find((e) => e.salesOrderId === order.id)).toBeUndefined();
       // Montar es custodia, no consumo (D-060).
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
 

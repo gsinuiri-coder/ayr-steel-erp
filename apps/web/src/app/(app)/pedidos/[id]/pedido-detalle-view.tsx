@@ -22,7 +22,7 @@ import { invalidateSales } from '@/lib/sales-queries';
 import { RESERVATION_TONE } from '@/components/status-tone';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
-import { QueueAdminControls } from '@/components/production-queue';
+import { PromisedDateControl } from '@/components/production-queue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -192,7 +192,6 @@ export function PedidoDetalleView({ id }: { id: string }) {
             {/* RF-37 (D-093): "en cola" no es un estado del pedido, es una vista derivada. */}
             {o.queueStatus === 'EN_COLA' && <Badge variant="outline">En cola de producción</Badge>}
             {o.queueStatus === 'EN_PRODUCCION' && <Badge variant="progress">En producción</Badge>}
-            {o.priority && <Badge>Prioridad</Badge>}
             {/*
               D-141: un pedido importado se comporta como cualquier otro, pero no nació acá,
               y eso cambia lo que se puede esperar de él — el que está atendido nunca tuvo
@@ -228,24 +227,13 @@ export function PedidoDetalleView({ id }: { id: string }) {
           <p className="text-sm text-muted-foreground">
             Fecha prometida:{' '}
             {o.promisedDeliveryDate ? formatDate(o.promisedDeliveryDate) : 'sin fecha'}
-            {o.priority && o.priorityReason && (
-              <>
-                {' '}
-                · Prioridad: {o.priorityReason}
-                {o.priorityByName ? ` — ${o.priorityByName}` : ''}
-              </>
-            )}
           </p>
           {isAdmin && o.status !== 'CANCELLED' && (
             <div className="mt-2">
-              <QueueAdminControls
-                entry={{
-                  salesOrderId: o.id,
-                  salesOrderCode: o.code,
-                  customerName: o.customerName,
-                  priority: o.priority,
-                  promisedDeliveryDate: o.promisedDeliveryDate,
-                }}
+              <PromisedDateControl
+                salesOrderId={o.id}
+                salesOrderCode={o.code}
+                promisedDeliveryDate={o.promisedDeliveryDate}
               />
             </div>
           )}
