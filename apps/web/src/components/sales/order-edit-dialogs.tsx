@@ -65,10 +65,15 @@ export function EditLinePriceDialog({
   const queryClient = useQueryClient();
   const [price, setPrice] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // El título muestra esto, no `item` directo: al cerrar, `item` pasa a `null` antes de que
+  // termine la animación de cierre del diálogo, y el título parpadeaba a «Cambiar precio · L»
+  // sin línea ni SKU durante ese instante.
+  const [lastItem, setLastItem] = useState<SalesItemDto | null>(null);
   const perMeter = item?.valuePerMeterPen !== null && item?.valuePerMeterPen !== undefined;
 
   useEffect(() => {
     if (item) {
+      setLastItem(item);
       setPrice(typedPriceOf(item));
       setError(null);
     }
@@ -105,7 +110,7 @@ export function EditLinePriceDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            Cambiar precio · L{item?.lineNumber} {item?.productSku}
+            Cambiar precio · L{lastItem?.lineNumber} {lastItem?.productSku}
           </DialogTitle>
           <DialogDescription>
             Queda en el registro de cambios de precio del pedido, con tu nombre. El precio no puede
@@ -172,11 +177,15 @@ export function EditLineQtyDialog({
   const [qty, setQty] = useState('');
   const [rows, setRows] = useState<PieceRow[]>([EMPTY_PIECE_ROW]);
   const [error, setError] = useState<string | null>(null);
+  // El título muestra esto, no `item` directo: ver el mismo comentario en
+  // `EditLinePriceDialog`.
+  const [lastItem, setLastItem] = useState<SalesItemDto | null>(null);
   // Regla dura 14: los largos los decide la unidad, no que la línea los haya traído.
   const byPieces = item?.unit === 'MTR';
 
   useEffect(() => {
     if (item) {
+      setLastItem(item);
       setQty(item.qty);
       setRows(
         item.pieces.length > 0
@@ -236,7 +245,7 @@ export function EditLineQtyDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            Cambiar cantidad · L{item?.lineNumber} {item?.productSku}
+            Cambiar cantidad · L{lastItem?.lineNumber} {lastItem?.productSku}
           </DialogTitle>
           <DialogDescription>
             Ajusta la reserva de material y, si la línea se fabrica, el plan de corte de su orden.

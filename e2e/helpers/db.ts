@@ -41,3 +41,23 @@ export async function expireTemporaryReservationsNow(quotationId: string): Promi
     await db.$disconnect();
   }
 }
+
+/**
+ * Deja sin vencimiento una cotización, como si la hubiera traído el importador (D-157). No hay
+ * `POST`/`PUT` que exprese `validUntil: null`: el body de un `createQuotationSchema` siempre
+ * trae `validityDays` (con su valor por defecto), y por diseño esa es la única forma de crearla
+ * — el importador nace `null` **por código**, no por HTTP. Para probar la edición de una
+ * cotización así (sin depender del importador entero, con su CSV y su previsualización) se
+ * arma una normal y se la deja sin vencimiento acá, directo contra la base de pruebas.
+ */
+export async function clearQuotationValidity(quotationId: string): Promise<void> {
+  const db = testDatabaseClient();
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE "quotations" SET "valid_until" = NULL WHERE "id" = $1::uuid`,
+      quotationId,
+    );
+  } finally {
+    await db.$disconnect();
+  }
+}

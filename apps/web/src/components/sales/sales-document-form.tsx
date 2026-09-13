@@ -301,6 +301,11 @@ export function SalesDocumentForm({
   const isQuotation = mode === 'quotation';
   const editing = initial !== undefined;
   const adding = addTo !== undefined;
+  // D-157: la cotización del importador no vence nunca, y editarla la sigue sin vencer — el
+  // API descarta `validityDays` en ese caso. Antes el campo se mostraba igual, pedía un
+  // número válido para guardar y ese número no cambiaba nada: parecía un dato que se podía
+  // tocar y no lo era.
+  const noExpiration = initial?.validUntil === null;
   // F8-S1/M2: agregar ítems es una creación repetible; el mismo envío no agrega dos veces.
   const submitKey = useIdempotencyKey();
 
@@ -512,7 +517,7 @@ export function SalesDocumentForm({
    */
   function validate(): { items: SalesItemInput[] } | { error: string } {
     if (!customerId) return { error: 'Elige un cliente' };
-    if (isQuotation) {
+    if (isQuotation && !noExpiration) {
       const days = Number(validityDays);
       if (!Number.isInteger(days) || days < 1 || days > MAX_QUOTATION_VALIDITY_DAYS) {
         return {
@@ -655,7 +660,9 @@ export function SalesDocumentForm({
     save.mutate({
       customerId,
       issueDate,
-      ...(isQuotation ? { validityDays: Number(validityDays) } : {}),
+      // D-157: sin vencimiento, no se manda nada que fingir — el API lo ignora igual, pero
+      // mandar el número del campo (que acá ni se pinta) prometía un dato que no se usa.
+      ...(isQuotation && !noExpiration ? { validityDays: Number(validityDays) } : {}),
       // `validityDays` ya quedó validado como entero en rango dentro de `validate()`.
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       items,
@@ -749,7 +756,15 @@ export function SalesDocumentForm({
               }}
             />
           </div>
-          {isQuotation && (
+          {isQuotation && noExpiration && (
+            <div className="grid gap-2">
+              <Label>Vigencia</Label>
+              <p className="text-xs text-muted-foreground">
+                Sin vencimiento: viene de un comprobante importado (D-157) y esto no se cambia acá.
+              </p>
+            </div>
+          )}
+          {isQuotation && !noExpiration && (
             <div className="grid gap-2">
               <Label htmlFor="validity">Vigencia (días)</Label>
               <Input
