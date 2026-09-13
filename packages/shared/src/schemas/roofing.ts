@@ -75,6 +75,12 @@ export const PIECE_LENGTH_RANGE_LABEL = `${MIN_PIECE_LENGTH_MM / 1000} y ${MAX_P
 /** Tope de planchas de un mismo largo en una línea. */
 export const MAX_PIECE_QTY = 10_000;
 
+/**
+ * D-192: bobinas que se montan en una sola operación. Es el mismo 20 de `MAX_ORDER_STRIPS`
+ * (bobinas vivas por orden), repetido acá porque `roofing` no importa de `production`.
+ */
+export const MAX_ORDER_STRIPS_TO_MOUNT = 20;
+
 // --------------------------------------------------------------------------
 // Subítems de largo: la forma que comparten cotización, pedido, plan de corte y reporte
 // --------------------------------------------------------------------------
@@ -536,10 +542,43 @@ export type UpdateRoofingPlanInput = z.infer<typeof updateRoofingPlanSchema>;
  *
  * `qtyKg` opcional: sin él se monta todo el saldo del rollo, que es el caso normal.
  */
-export const mountRoofingCoilSchema = z.object({
-  coilId: z.string({ required_error: 'La bobina es obligatoria' }).uuid(),
-  qtyKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
-});
+export const mountRoofingCoilSchema = z
+  .object({
+    coilId: z.string().uuid().optional(),
+    /**
+     * D-192: varias bobinas en una sola operación (todo o nada). Cada una se monta con todo su
+     * saldo; `qtyKg` solo vale para una bobina suelta.
+     */
+    coilIds: z
+      .array(z.string().uuid())
+      .min(1, 'Elige al menos una bobina')
+      .max(MAX_ORDER_STRIPS_TO_MOUNT, `Como máximo ${MAX_ORDER_STRIPS_TO_MOUNT} bobinas a la vez`)
+      .optional(),
+    qtyKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if ((v.coilId === undefined) === (v.coilIds === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['coilId'],
+        message: 'La bobina es obligatoria: una (`coilId`) o varias (`coilIds`)',
+      });
+    }
+    if (v.coilIds !== undefined && v.qtyKg !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['qtyKg'],
+        message: 'Los kilos a tomar se indican montando una sola bobina',
+      });
+    }
+    if (v.coilIds !== undefined && new Set(v.coilIds).size !== v.coilIds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['coilIds'],
+        message: 'Una bobina aparece dos veces',
+      });
+    }
+  });
 export type MountRoofingCoilInput = z.infer<typeof mountRoofingCoilSchema>;
 
 /** Reportar los largos que de verdad salieron (D-083). Parcial, N veces, como D-058. */
@@ -794,6 +833,8 @@ export const roofingCoilOptionSchema = z.object({
   colorId: z.string().uuid().nullable(),
   colorName: z.string().nullable(),
   colorHex: z.string().nullable(),
+  /** D-192: peso con el que la bobina entró (kg). Se muestra al lado del disponible. */
+  weightKg: z.string(),
   availableKg: z.string(),
   /** Metros que salen de ese saldo con la geometría de esta bobina: lo que planta necesita ver. */
   estimatedMeters: z.string(),

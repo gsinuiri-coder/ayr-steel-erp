@@ -168,13 +168,18 @@ export function RoofingOrderPanel({
   });
 
   const mount = useMutation({
-    mutationFn: (id: string) =>
+    // D-192: una o varias bobinas en una sola operación.
+    mutationFn: (coilIds: string[]) =>
       api<ProductionOrderDto>(`/production/roofing/${order.orderId}/coils`, {
         method: 'POST',
-        body: { coilId: id },
+        body: coilIds.length === 1 ? { coilId: coilIds[0] } : { coilIds },
       }),
-    onSuccess: (updated) => {
-      toast.success('Bobina montada en la roladora');
+    onSuccess: (updated, coilIds) => {
+      toast.success(
+        coilIds.length === 1
+          ? 'Bobina montada en la roladora'
+          : `${String(coilIds.length)} bobinas montadas en la roladora`,
+      );
       onNotes({ pool: updated.rawMaterialWarnings ?? [], note: null });
       // D-159: el editor llega relleno con lo que el plan todavía debe.
       onDraft({ rows: null });
@@ -487,7 +492,11 @@ export function RoofingOrderPanel({
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle>Bobina montada</CardTitle>
+          <CardTitle>
+            {liveCoils.length > 1
+              ? `Bobinas montadas (${String(liveCoils.length)})`
+              : 'Bobina montada'}
+          </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
           {liveCoils.length === 0 && (
@@ -557,9 +566,10 @@ export function RoofingOrderPanel({
               options={options.data ?? []}
               loading={options.isPending}
               failed={options.isError}
+              mountedCount={liveCoils.length}
               pending={mount.isPending}
-              onMount={(id) => {
-                mount.mutate(id);
+              onMount={(ids) => {
+                mount.mutate(ids);
               }}
             />
           )}

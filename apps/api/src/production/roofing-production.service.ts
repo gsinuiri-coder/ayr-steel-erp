@@ -487,7 +487,12 @@ export class RoofingProductionService {
     orderId: string,
     input: MountRoofingCoilInput,
   ): Promise<ProductionOrderDto> {
-    let warnings: RawMaterialShortfall[] = [];
+    const warnings: RawMaterialShortfall[] = [];
+    // D-192: una o varias bobinas, en una sola transacción (todo o nada). Se bloquean en orden
+    // de id para que dos montajes concurrentes que comparten rollos no se crucen en un deadlock.
+    const coilIds = [
+      ...(input.coilIds ?? (input.coilId === undefined ? [] : [input.coilId])),
+    ].sort();
     // El presupuesto por defecto de Prisma son 5 s, y montar una bobina ya no entra:
     // además del lock y las lecturas de siempre, D-134 agregó la comprobación del agregado,
     // que recorre las bobinas compatibles. Contra Neon —con latencia de red real— se pasaba
@@ -509,132 +514,135 @@ export class RoofingProductionService {
             })
             .then((row) => row.color),
         ]);
-        const coil = await this.coils.lockCoil(tx, input.coilId);
+        for (const coilId of coilIds) {
+          const coil = await this.coils.lockCoil(tx, coilId);
 
-        if (coil.kind !== CoilKind.COIL) {
-          throw new BadRequestException(
-            `${coil.code} es un fleje, no una bobina: la roladora de coberturas consume bobina (D-049)`,
+          if (coil.kind !== CoilKind.COIL) {
+            throw new BadRequestException(
+              `${coil.code} es un fleje, no una bobina: la roladora de coberturas consume bobina (D-049)`,
+            );
+          }
+          if (coil.status !== CoilStatus.OPEN) {
+            throw new BadRequestException(
+              `${coil.code} no está disponible (${coil.status}): solo una bobina abierta entra a producción`,
+            );
+          }
+          if (coil.businessLineId !== order.businessLineId) {
+            throw new BadRequestException(
+              `${coil.code} es de otra línea de negocio que la orden de producción`,
+            );
+          }
+          // D-086/D-122: espesor dentro de tolerancia contra el espesor **del SKU** (el rollo
+          // nunca trae el espesor nominal exacto). Hasta D-122 se comparaba contra el de la
+          // receta, que era el mismo dato en otro lugar.
+          if (
+            !thicknessWithinTolerance(
+              coil.thicknessMm.toFixed(2),
+              product.thicknessMm.toFixed(2),
+              this.thicknessToleranceMm(),
+            )
+          ) {
+            throw new BadRequestException(
+              `${coil.code} tiene ${coil.thicknessMm.toFixed(2)} mm de espesor y ${product.sku} necesita ${product.thicknessMm.toFixed(2)} mm (tolerancia ±${this.thicknessToleranceMm()} mm)`,
+            );
+          }
+          // D-085: **igualdad estricta**, null incluido. Con null tratado como comodín, un
+          // producto galvanizado aceptaría cualquier rollo prepintado del almacén, que es
+          // justo el error que no se puede deshacer una vez rolado.
+          if (coil.colorId !== product.colorId) {
+            const need = color?.name ?? 'sin color';
+            throw new BadRequestException(
+              `${coil.code} no coincide en color con ${product.sku}, que necesita ${need}`,
+            );
+          }
+
+          // D-066: una bobina reservada por un pedido solo la puede montar la OP que nace de ese
+          // mismo pedido. Sin la excepción, la reserva se bloquearía a sí misma.
+          await assertCoilsNotReserved(
+            tx,
+            [coil.id],
+            'montarla en esta orden',
+            order.reservationId ? [order.reservationId] : [],
           );
-        }
-        if (coil.status !== CoilStatus.OPEN) {
-          throw new BadRequestException(
-            `${coil.code} no está disponible (${coil.status}): solo una bobina abierta entra a producción`,
-          );
-        }
-        if (coil.businessLineId !== order.businessLineId) {
-          throw new BadRequestException(
-            `${coil.code} es de otra línea de negocio que la orden de producción`,
-          );
-        }
-        // D-086/D-122: espesor dentro de tolerancia contra el espesor **del SKU** (el rollo
-        // nunca trae el espesor nominal exacto). Hasta D-122 se comparaba contra el de la
-        // receta, que era el mismo dato en otro lugar.
-        if (
-          !thicknessWithinTolerance(
-            coil.thicknessMm.toFixed(2),
-            product.thicknessMm.toFixed(2),
+
+          const [taken] = await findLiveStripAssignments(tx, [coil.id]);
+          if (taken) {
+            throw new BadRequestException(
+              taken.orderId === orderId
+                ? `${coil.code} ya está montada en esta orden`
+                : `${coil.code} ya está montada en la orden de producción ${taken.orderCode}`,
+            );
+          }
+
+          const liveCount = await tx.productionOrderConsumption.count({
+            where: { productionOrderId: orderId, releasedAt: null },
+          });
+          if (liveCount >= MAX_ORDER_STRIPS) {
+            throw new BadRequestException(
+              `Una orden admite hasta ${MAX_ORDER_STRIPS} bobinas a la vez: ciérrala y abre otra`,
+            );
+          }
+
+          const balance = await tx.inventoryBalance.findUnique({
+            where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
+          });
+          const availableKg = toDecimal(balance?.qty.toString() ?? '0');
+          if (availableKg.lte(0)) {
+            throw new BadRequestException(`${coil.code} no tiene kilos disponibles en el kardex`);
+          }
+          const assignedKg = input.qtyKg ? toDecimal(input.qtyKg) : availableKg;
+          if (assignedKg.gt(availableKg)) {
+            throw new BadRequestException(
+              `${coil.code} tiene ${availableKg.toFixed(3)} kg disponibles y se intentan tomar ${assignedKg.toFixed(3)} kg`,
+            );
+          }
+
+          const consumption = await tx.productionOrderConsumption.create({
+            data: {
+              productionOrderId: orderId,
+              coilId: coil.id,
+              assignedKg: toFixedString(assignedKg, 'KG'),
+              createdById: actor.id,
+            },
+          });
+          await tx.productionOrder.update({
+            where: { id: orderId },
+            data: { status: ProductionOrderStatus.IN_PROGRESS },
+          });
+
+          // D-134: montar saca del disponible del agregado los kilos que la orden retiene, sin
+          // mover un gramo de kardex (D-060), así que es exactamente la clase de operación que
+          // la invariante por ítem no ve.
+          //
+          // **D-154: avisa, nunca bloquea.** Las promesas del propio pedido no cuentan (ver
+          // `ownPromiseScope`), y si aun así el agregado queda corto para pedidos ajenos, el
+          // montaje entra igual y el aviso viaja en la respuesta y al `audit_log`. Cortar acá
+          // era pedirle al operario de la roladora que anulara el pedido de otro cliente o
+          // liberara su reserva —dos cosas que no puede hacer y que no debería—, y el resultado
+          // medido fue material rolado que nunca se registró.
+          const shortfalls = await findRawMaterialShortfalls(
+            tx,
+            [coil.id],
             this.thicknessToleranceMm(),
-          )
-        ) {
-          throw new BadRequestException(
-            `${coil.code} tiene ${coil.thicknessMm.toFixed(2)} mm de espesor y ${product.sku} necesita ${product.thicknessMm.toFixed(2)} mm (tolerancia ±${this.thicknessToleranceMm()} mm)`,
+            await this.ownPromiseScope(tx, order),
           );
+          warnings.push(...shortfalls);
+
+          await this.audit.write(tx, {
+            actorId: actor.id,
+            action: 'production.roofing.mount',
+            entity: 'production_orders',
+            entityId: orderId,
+            after: {
+              consumptionId: consumption.id,
+              coilId: coil.id,
+              coilCode: coil.code,
+              assignedKg: toFixedString(assignedKg, 'KG'),
+              rawMaterialWarnings:
+                shortfalls.length === 0 ? null : dedupeWarnings(shortfalls).map((w) => w.message),
+            },
+          });
         }
-        // D-085: **igualdad estricta**, null incluido. Con null tratado como comodín, un
-        // producto galvanizado aceptaría cualquier rollo prepintado del almacén, que es
-        // justo el error que no se puede deshacer una vez rolado.
-        if (coil.colorId !== product.colorId) {
-          const need = color?.name ?? 'sin color';
-          throw new BadRequestException(
-            `${coil.code} no coincide en color con ${product.sku}, que necesita ${need}`,
-          );
-        }
-
-        // D-066: una bobina reservada por un pedido solo la puede montar la OP que nace de ese
-        // mismo pedido. Sin la excepción, la reserva se bloquearía a sí misma.
-        await assertCoilsNotReserved(
-          tx,
-          [coil.id],
-          'montarla en esta orden',
-          order.reservationId ? [order.reservationId] : [],
-        );
-
-        const [taken] = await findLiveStripAssignments(tx, [coil.id]);
-        if (taken) {
-          throw new BadRequestException(
-            taken.orderId === orderId
-              ? `${coil.code} ya está montada en esta orden`
-              : `${coil.code} ya está montada en la orden de producción ${taken.orderCode}`,
-          );
-        }
-
-        const liveCount = await tx.productionOrderConsumption.count({
-          where: { productionOrderId: orderId, releasedAt: null },
-        });
-        if (liveCount >= MAX_ORDER_STRIPS) {
-          throw new BadRequestException(
-            `Una orden admite hasta ${MAX_ORDER_STRIPS} bobinas a la vez: ciérrala y abre otra`,
-          );
-        }
-
-        const balance = await tx.inventoryBalance.findUnique({
-          where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
-        });
-        const availableKg = toDecimal(balance?.qty.toString() ?? '0');
-        if (availableKg.lte(0)) {
-          throw new BadRequestException(`${coil.code} no tiene kilos disponibles en el kardex`);
-        }
-        const assignedKg = input.qtyKg ? toDecimal(input.qtyKg) : availableKg;
-        if (assignedKg.gt(availableKg)) {
-          throw new BadRequestException(
-            `${coil.code} tiene ${availableKg.toFixed(3)} kg disponibles y se intentan tomar ${assignedKg.toFixed(3)} kg`,
-          );
-        }
-
-        const consumption = await tx.productionOrderConsumption.create({
-          data: {
-            productionOrderId: orderId,
-            coilId: coil.id,
-            assignedKg: toFixedString(assignedKg, 'KG'),
-            createdById: actor.id,
-          },
-        });
-        await tx.productionOrder.update({
-          where: { id: orderId },
-          data: { status: ProductionOrderStatus.IN_PROGRESS },
-        });
-
-        // D-134: montar saca del disponible del agregado los kilos que la orden retiene, sin
-        // mover un gramo de kardex (D-060), así que es exactamente la clase de operación que
-        // la invariante por ítem no ve.
-        //
-        // **D-154: avisa, nunca bloquea.** Las promesas del propio pedido no cuentan (ver
-        // `ownPromiseScope`), y si aun así el agregado queda corto para pedidos ajenos, el
-        // montaje entra igual y el aviso viaja en la respuesta y al `audit_log`. Cortar acá
-        // era pedirle al operario de la roladora que anulara el pedido de otro cliente o
-        // liberara su reserva —dos cosas que no puede hacer y que no debería—, y el resultado
-        // medido fue material rolado que nunca se registró.
-        warnings = await findRawMaterialShortfalls(
-          tx,
-          [coil.id],
-          this.thicknessToleranceMm(),
-          await this.ownPromiseScope(tx, order),
-        );
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'production.roofing.mount',
-          entity: 'production_orders',
-          entityId: orderId,
-          after: {
-            consumptionId: consumption.id,
-            coilId: coil.id,
-            coilCode: coil.code,
-            assignedKg: toFixedString(assignedKg, 'KG'),
-            rawMaterialWarnings:
-              warnings.length === 0 ? null : dedupeWarnings(warnings).map((w) => w.message),
-          },
-        });
       },
       { timeout: 30_000, maxWait: 10_000 },
     );
@@ -2349,6 +2357,7 @@ export class RoofingProductionService {
         id: true,
         code: true,
         typeKey: true,
+        weightKg: true,
         widthMm: true,
         thicknessMm: true,
         colorId: true,
@@ -2404,6 +2413,7 @@ export class RoofingProductionService {
           colorId: c.colorId,
           colorName: c.color?.name ?? null,
           colorHex: c.color?.hexColor ?? null,
+          weightKg: c.weightKg.toFixed(3),
           availableKg: availableKg.toFixed(3),
           estimatedMeters: toFixedString(metersFromKg(geometry, availableKg.toFixed(3)), 'KG'),
         };
