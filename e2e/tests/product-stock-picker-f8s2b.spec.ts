@@ -12,12 +12,12 @@ import { createCustomer, createQuotation } from '../helpers/sales';
 import { chooseOption, chooseProductWithStock } from '../helpers/ui';
 
 /**
- * F8-S2b/M1 — el picker de producto con stock (D-188).
+ * F8-S2b/M1 — el picker de producto con stock (D-188), simplificado en F8-S3b/M1.
  *
  * Reemplaza al `<select>` de SKU sueltos: elegir un producto pasa por ver, en el mismo
- * modal, el agregado de materia prima del pool (espesor + color, con sus metros lineales
- * teóricos) y el disponible del SKU — la misma cuenta que ya usa la fila y que confirmar
- * vuelve a comprobar bajo lock. **Elegir sin stock no está bloqueado**: el aviso vive en la
+ * modal, el disponible del SKU — la misma cuenta que ya usa la fila y que confirmar vuelve
+ * a comprobar bajo lock. Desde F8-S3b el modal no muestra el pool de bobinas (espesor +
+ * color) en ninguna línea, y cabe sin scroll horizontal. **Elegir sin stock no está bloqueado**: el aviso vive en la
  * fila, no en el picker.
  */
 
@@ -58,7 +58,7 @@ test.describe('F8-S2b/M1 — picker de producto con stock', () => {
     await api.dispose();
   });
 
-  test('D-188: el pool de bobinas y el disponible del SKU se ven antes de elegir, y elegir sin stock no bloquea', async ({
+  test('D-188: el disponible del SKU se ve antes de elegir, sin pool ni scroll horizontal, y elegir sin stock no bloquea', async ({
     page,
   }) => {
     const s = await setupRoofingScenario(api, { weightKg: '80.8' });
@@ -97,21 +97,32 @@ test.describe('F8-S2b/M1 — picker de producto con stock', () => {
 
       await page.getByLabel('Producto de la línea 1').click();
       const dialog = page.getByRole('dialog');
-      const pool = dialog.getByText('Bobinas del pool (espesor + color)').locator('xpath=..');
-      await expect(pool).toBeVisible();
-      // El grupo del pool de ESTE escenario: en la suite completa pueden convivir bobinas
-      // abiertas de otros tests en la misma línea de negocio, así que se ubica el `<li>` por
-      // el color (único por test, `E2E Color XXXX`) y se comprueba dentro de ese, no del
-      // pool entero — que puede traer más de un grupo con "m lineales".
-      const group = pool.locator('li', { hasText: s.color.name });
-      await expect(group).toBeVisible();
-      await expect(group.getByText(/m lineales/)).toBeVisible();
+      await expect(dialog.getByLabel('Filtrar productos')).toBeVisible();
+      // F8-S3b/M1: el pool de bobinas salió del modal, también en coberturas.
+      await expect(dialog.getByText('Bobinas del pool (espesor + color)')).toHaveCount(0);
+      await expect(dialog.getByText(/m lineales/)).toHaveCount(0);
 
       // El SKU quedó sin nada disponible — se ve en rojo, y no impide elegirlo.
       await dialog.getByLabel('Filtrar productos').fill(s.product.sku);
       const row = dialog.getByRole('row', { name: new RegExp(s.product.sku) });
       await expect(row.getByText(/0\.000 kg de materia prima/)).toBeVisible({ timeout: 15_000 });
-      await dialog.getByRole('button', { name: `Elegir ${s.product.sku}`, exact: true }).click();
+
+      // Sin scroll horizontal: se mide en el DOM, no en una captura. Ni la tabla ni su
+      // contenedor desbordan a lo ancho, y «Elegir» cae entero dentro del diálogo.
+      const choose = dialog.getByRole('button', { name: `Elegir ${s.product.sku}`, exact: true });
+      const overflow = await dialog.locator('[data-slot="table-container"]').evaluate((el) => {
+        const scroller = el.parentElement!;
+        return {
+          table: el.scrollWidth - el.clientWidth,
+          scroller: scroller.scrollWidth - scroller.clientWidth,
+        };
+      });
+      expect(overflow.table, 'la tabla desborda a lo ancho').toBeLessThanOrEqual(0);
+      expect(overflow.scroller, 'el contenedor desborda a lo ancho').toBeLessThanOrEqual(0);
+      const dialogBox = (await dialog.boundingBox())!;
+      const chooseBox = (await choose.boundingBox())!;
+      expect(chooseBox.x + chooseBox.width).toBeLessThanOrEqual(dialogBox.x + dialogBox.width);
+      await choose.click();
       await expect(dialog).toBeHidden();
       await expect(page.getByLabel('Producto de la línea 1')).toContainText(s.product.sku);
 

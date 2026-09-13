@@ -81,8 +81,9 @@ function availabilityOf(stock: ProductStockDto | undefined, unit: string): Avail
 
 /**
  * El agregado de materia prima de una línea de negocio, agrupado por espesor y color
- * (D-134/D-136), con sus metros lineales teóricos. Vive acá y no repetido en el panel lateral
- * (`StockPanelSheet`) y en este modal: son la misma lista, con la misma fuente.
+ * (D-134/D-136), con sus metros lineales teóricos. Lo muestra el panel lateral
+ * (`StockPanelSheet`). Este modal lo mostraba también hasta F8-S3b/M1: el dueño lo pidió solo
+ * con la lista de productos, igual en todas las líneas.
  */
 export function RawMaterialPoolList({ rows }: { rows: RawMaterialStockDto[] }) {
   if (rows.length === 0) {
@@ -196,13 +197,7 @@ export function ProductStockPickerDialog({
             confirmar.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3">
-          {(stockPanel.data?.rawMaterial.length ?? 0) > 0 && (
-            <section className="grid gap-2">
-              <h3 className="text-sm font-semibold">Bobinas del pool (espesor + color)</h3>
-              <RawMaterialPoolList rows={stockPanel.data?.rawMaterial ?? []} />
-            </section>
-          )}
+        <div className="grid min-w-0 gap-3">
           <Input
             autoFocus
             aria-label="Filtrar productos"
@@ -217,13 +212,18 @@ export function ProductStockPickerDialog({
             {truncated &&
               ` · el disponible se muestra para los primeros ${String(STOCK_QUERY_CAP)}: sigue filtrando para ver el de los demás`}
           </p>
-          <div className="max-h-80 overflow-y-auto rounded-lg border">
-            <Table>
+          {/* F8-S3b/M1: sin scroll horizontal. Tabla de ancho fijo y celdas que parten línea —
+              la base de `TableCell` es `whitespace-nowrap`, y un nombre largo o un disponible
+              con su materia prima empujaban «Elegir» fuera de la vista. */}
+          <div className="max-h-96 overflow-x-hidden overflow-y-auto rounded-lg border">
+            <Table className="table-fixed">
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
-                  <TableHead>SKU</TableHead>
-                  <TableHead>Disponible</TableHead>
-                  <TableHead className="w-28 text-right">Elegir</TableHead>
+                  <TableHead>Producto</TableHead>
+                  <TableHead className="w-[38%]">Disponible</TableHead>
+                  <TableHead className="w-24 text-right">
+                    <span className="sr-only">Elegir</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -234,11 +234,11 @@ export function ProductStockPickerDialog({
                   );
                   return (
                     <TableRow key={p.id}>
-                      <TableCell>
+                      <TableCell className="whitespace-normal break-words">
                         <div className="font-medium">{p.sku}</div>
                         <div className="text-xs text-muted-foreground">{p.name}</div>
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-xs whitespace-normal break-words">
                         <span
                           className={
                             availability.empty ? 'text-destructive' : 'text-muted-foreground'
