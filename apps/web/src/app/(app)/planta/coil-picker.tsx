@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -62,11 +63,16 @@ export function CoilPicker({
   failed: boolean;
   pending: boolean;
   disabled?: boolean | undefined;
-  onMount: (coilIds: string[]) => void;
+  /** D-193: `reopen` viaja solo cuando planta confirmó reabrir una bobina cerrada. */
+  onMount: (coilIds: string[], reopen?: { coilIds: string[]; reason: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  /** D-193: la cerrada que se está por reabrir (paso de confirmación), y su motivo. */
+  const [reopening, setReopening] = useState<RoofingCoilOptionDto | null>(null);
+  const [reopenReason, setReopenReason] = useState('');
+  const [showClosed, setShowClosed] = useState(false);
 
   // El filtro y la selección no sobreviven al cierre: reabrir con una selección vieja montaría
   // rollos que ya nadie está mirando.
@@ -74,18 +80,24 @@ export function CoilPicker({
     if (open) {
       setFilter('');
       setSelected(new Set());
+      setReopening(null);
+      setReopenReason('');
+      setShowClosed(false);
     }
   }, [open]);
 
+  const openOptions = useMemo(() => options.filter((c) => c.status === 'OPEN'), [options]);
+  const closedOptions = useMemo(() => options.filter((c) => c.status === 'CLOSED'), [options]);
+
   const matches = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    if (needle === '') return options;
-    return options.filter((c) =>
+    if (needle === '') return openOptions;
+    return openOptions.filter((c) =>
       `${c.code} ${c.colorName ?? ''} ${c.thicknessMm} ${c.widthMm} ${c.weightKg} ${c.availableKg}`
         .toLowerCase()
         .includes(needle),
     );
-  }, [options, filter]);
+  }, [openOptions, filter]);
 
   const room = Math.max(MAX_ORDER_STRIPS - mountedCount, 0);
   const overLimit = selected.size > room;
@@ -96,7 +108,7 @@ export function CoilPicker({
       <p className="text-sm text-destructive">No se pudieron cargar las bobinas disponibles.</p>
     );
   }
-  if (options.length === 0) {
+  if (openOptions.length === 0 && closedOptions.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
         No hay bobinas libres del color y el espesor de {productSku} (±
@@ -122,141 +134,299 @@ export function CoilPicker({
           setOpen(true);
         }}
       >
-        Buscar y montar bobinas ({options.length})
+        Buscar y montar bobinas ({openOptions.length})
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>Bobinas para {orderCode}</DialogTitle>
             <DialogDescription>
-              {options.length} bobinas libres del espesor y el color de {productSku}. Monta una con
-              su botón, o elige varias y móntalas juntas.
+              {openOptions.length} bobinas libres del espesor y el color de {productSku}. Monta una
+              con su botón, o elige varias y móntalas juntas.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3">
-            <Input
-              autoFocus
-              aria-label="Filtrar opciones"
-              placeholder="Filtra por código, color o kilos…"
-              value={filter}
-              onChange={(e) => {
-                setFilter(e.target.value);
+          {reopening !== null ? (
+            <ReopenStep
+              coil={reopening}
+              reason={reopenReason}
+              pending={pending}
+              onReason={setReopenReason}
+              onBack={() => {
+                setReopening(null);
+                setReopenReason('');
               }}
-            />
-            <p className="text-xs text-muted-foreground">
-              {matches.length} de {options.length} bobinas
-              {selected.size > 0 && <> · {selected.size} elegidas</>}
-            </p>
-            <div className="max-h-96 overflow-auto rounded-lg border">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-background">
-                  <TableRow>
-                    <TableHead className="w-10">
-                      <span className="sr-only">Elegir</span>
-                    </TableHead>
-                    <TableHead>Bobina</TableHead>
-                    <TableHead>Espesor</TableHead>
-                    <TableHead>Color</TableHead>
-                    <TableHead className="text-right">Peso inicial</TableHead>
-                    <TableHead className="text-right">kg disponibles</TableHead>
-                    <TableHead className="w-28 text-right">Montar</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {matches.map((c) => (
-                    <TableRow
-                      key={c.coilId}
-                      data-state={selected.has(c.coilId) ? 'selected' : undefined}
-                    >
-                      <TableCell>
-                        <Checkbox
-                          aria-label={`Elegir ${c.code}`}
-                          checked={selected.has(c.coilId)}
-                          onCheckedChange={(checked) => {
-                            setSelected((prev) => {
-                              const next = new Set(prev);
-                              if (checked === true) next.add(c.coilId);
-                              else next.delete(c.coilId);
-                              return next;
-                            });
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-mono font-medium">{c.code}</div>
-                        <div className="text-xs text-muted-foreground">
-                          alcanza para {c.estimatedMeters} m
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">{c.thicknessMm} mm</TableCell>
-                      <TableCell>
-                        <ColorSwatch
-                          color={
-                            c.colorName && c.colorHex
-                              ? { name: c.colorName, hexColor: c.colorHex }
-                              : null
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatQty(c.weightKg, 'kg')}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatQty(c.availableKg, 'kg')}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          aria-label={`Montar ${c.code}`}
-                          disabled={pending || room === 0}
-                          onClick={() => {
-                            mount([c.coilId]);
-                          }}
-                        >
-                          Montar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {matches.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center text-muted-foreground">
-                        Ninguna bobina coincide con ese texto.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-            {overLimit && (
-              <p className="text-sm text-destructive">
-                La orden admite {MAX_ORDER_STRIPS} bobinas a la vez y ya tiene {mountedCount}: elige
-                como máximo {room}.
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
+              onConfirm={() => {
+                onMount([reopening.coilId], {
+                  coilIds: [reopening.coilId],
+                  reason: reopenReason.trim(),
+                });
                 setOpen(false);
               }}
-            >
-              Cancelar
-            </Button>
-            <Button
-              aria-label={`Montar las ${String(selected.size)} bobinas elegidas en ${orderCode}`}
-              disabled={selected.size === 0 || overLimit || pending}
-              onClick={() => {
-                mount([...selected]);
-              }}
-            >
-              Montar {selected.size === 1 ? 'la elegida' : `las ${String(selected.size)} elegidas`}
-            </Button>
-          </DialogFooter>
+            />
+          ) : (
+            <div className="grid gap-3">
+              <Input
+                autoFocus
+                aria-label="Filtrar opciones"
+                placeholder="Filtra por código, color o kilos…"
+                value={filter}
+                onChange={(e) => {
+                  setFilter(e.target.value);
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                {matches.length} de {openOptions.length} bobinas
+                {selected.size > 0 && <> · {selected.size} elegidas</>}
+              </p>
+              <div className="max-h-96 overflow-auto rounded-lg border">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-background">
+                    <TableRow>
+                      <TableHead className="w-10">
+                        <span className="sr-only">Elegir</span>
+                      </TableHead>
+                      <TableHead>Bobina</TableHead>
+                      <TableHead>Espesor</TableHead>
+                      <TableHead>Color</TableHead>
+                      <TableHead className="text-right">Peso inicial</TableHead>
+                      <TableHead className="text-right">kg disponibles</TableHead>
+                      <TableHead className="w-28 text-right">Montar</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {matches.map((c) => (
+                      <TableRow
+                        key={c.coilId}
+                        data-state={selected.has(c.coilId) ? 'selected' : undefined}
+                      >
+                        <TableCell>
+                          <Checkbox
+                            aria-label={`Elegir ${c.code}`}
+                            checked={selected.has(c.coilId)}
+                            onCheckedChange={(checked) => {
+                              setSelected((prev) => {
+                                const next = new Set(prev);
+                                if (checked === true) next.add(c.coilId);
+                                else next.delete(c.coilId);
+                                return next;
+                              });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-mono font-medium">{c.code}</div>
+                          <div className="text-xs text-muted-foreground">
+                            alcanza para {c.estimatedMeters} m
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm">{c.thicknessMm} mm</TableCell>
+                        <TableCell>
+                          <ColorSwatch
+                            color={
+                              c.colorName && c.colorHex
+                                ? { name: c.colorName, hexColor: c.colorHex }
+                                : null
+                            }
+                          />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatQty(c.weightKg, 'kg')}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatQty(c.availableKg, 'kg')}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            aria-label={`Montar ${c.code}`}
+                            disabled={pending || room === 0}
+                            onClick={() => {
+                              mount([c.coilId]);
+                            }}
+                          >
+                            Montar
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {matches.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center text-muted-foreground">
+                          Ninguna bobina coincide con ese texto.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              {/*
+              D-193: las cerradas del mismo espesor y color. Se ven a pedido, separadas de las
+              libres, y su botón no monta: abre el paso que dice qué ajuste se va a revertir.
+            */}
+              {closedOptions.length > 0 && (
+                <div className="grid gap-2">
+                  <Button
+                    variant="ghost"
+                    className="justify-self-start"
+                    aria-expanded={showClosed}
+                    onClick={() => {
+                      setShowClosed((v) => !v);
+                    }}
+                  >
+                    {showClosed ? 'Ocultar' : 'Ver'} bobinas cerradas ({closedOptions.length})
+                  </Button>
+                  {showClosed && (
+                    <div className="max-h-60 overflow-auto rounded-lg border">
+                      <Table aria-label="Bobinas cerradas">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Bobina cerrada</TableHead>
+                            <TableHead className="text-right">Peso inicial</TableHead>
+                            <TableHead className="text-right">Ajuste del cierre</TableHead>
+                            <TableHead className="text-right">kg al reabrir</TableHead>
+                            <TableHead className="w-40 text-right">Reabrir</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {closedOptions.map((c) => (
+                            <TableRow key={c.coilId}>
+                              <TableCell className="font-mono font-medium">{c.code}</TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatQty(c.weightKg, 'kg')}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {c.closeAdjustment === null
+                                  ? '—'
+                                  : `${c.closeAdjustment.kind === 'SHORTAGE' ? '−' : '+'}${formatQty(c.closeAdjustment.qtyKg, 'kg')}`}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatQty(c.availableKg, 'kg')}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  aria-label={`Reabrir y montar ${c.code}`}
+                                  disabled={pending || room === 0}
+                                  onClick={() => {
+                                    setReopening(c);
+                                  }}
+                                >
+                                  Reabrir y montar
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </div>
+              )}
+              {overLimit && (
+                <p className="text-sm text-destructive">
+                  La orden admite {MAX_ORDER_STRIPS} bobinas a la vez y ya tiene {mountedCount}:
+                  elige como máximo {room}.
+                </p>
+              )}
+            </div>
+          )}
+          {reopening === null && (
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setOpen(false);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                aria-label={`Montar las ${String(selected.size)} bobinas elegidas en ${orderCode}`}
+                disabled={selected.size === 0 || overLimit || pending}
+                onClick={() => {
+                  mount([...selected]);
+                }}
+              >
+                Montar{' '}
+                {selected.size === 1 ? 'la elegida' : `las ${String(selected.size)} elegidas`}
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * D-193: el paso explícito antes de reabrir una bobina cerrada. Dice **qué** va a pasar en el
+ * kardex —el ajuste del cierre se revierte con un asiento compensatorio, el original no se toca—
+ * y pide el motivo que la reversa exige. Sin este clic nada se mueve.
+ */
+function ReopenStep({
+  coil,
+  reason,
+  pending,
+  onReason,
+  onBack,
+  onConfirm,
+}: {
+  coil: RoofingCoilOptionDto;
+  reason: string;
+  pending: boolean;
+  onReason: (value: string) => void;
+  onBack: () => void;
+  onConfirm: () => void;
+}) {
+  const adjustment = coil.closeAdjustment;
+  return (
+    <div className="grid gap-3">
+      <div
+        role="alert"
+        className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+      >
+        {adjustment === null ? (
+          <>
+            <span className="font-mono font-medium">{coil.code}</span> está cerrada sin un ajuste de
+            cierre pendiente: reabrirla no mueve el kardex.
+          </>
+        ) : (
+          <>
+            <span className="font-mono font-medium">{coil.code}</span> cerrada con ajuste de{' '}
+            {formatQty(adjustment.qtyKg, 'kg')} (
+            {adjustment.kind === 'SHORTAGE' ? 'faltante' : 'sobrante'}) — reabrirla revierte el
+            ajuste: {adjustment.kind === 'SHORTAGE' ? 'vuelven al kardex' : 'salen del kardex'}{' '}
+            {formatQty(adjustment.qtyKg, 'kg')} con un asiento compensatorio. Al cerrarla
+            de nuevo se calcula un ajuste nuevo con el saldo real.
+          </>
+        )}{' '}
+        Queda montada en esta orden con {formatQty(coil.availableKg, 'kg')}.
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor={`reabrir-${coil.coilId}`}>Motivo de la reapertura</Label>
+        <Input
+          id={`reabrir-${coil.coilId}`}
+          aria-label={`Motivo para reabrir ${coil.code}`}
+          value={reason}
+          onChange={(e) => {
+            onReason(e.target.value);
+          }}
+        />
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onBack}>
+          Volver
+        </Button>
+        <Button
+          aria-label={`Confirmar: reabrir y montar ${coil.code}`}
+          disabled={reason.trim().length < 3 || pending}
+          onClick={onConfirm}
+        >
+          Reabrir y montar
+        </Button>
+      </DialogFooter>
+    </div>
   );
 }

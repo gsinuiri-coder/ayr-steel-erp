@@ -55,6 +55,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { CoilOperationsService } from '../coils/coil-operations.service';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
@@ -127,6 +128,7 @@ export class RoofingProductionService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
+    private readonly coilOperations: CoilOperationsService,
     private readonly production: ProductionService,
     private readonly operationDate: OperationDateService,
     @Inject(ENV) private readonly env: Env,
@@ -493,6 +495,10 @@ export class RoofingProductionService {
     const coilIds = [
       ...(input.coilIds ?? (input.coilId === undefined ? [] : [input.coilId])),
     ].sort();
+    // D-193: las cerradas que planta confirmó reabrir. El asiento compensatorio se fecha hoy: es
+    // un hecho de hoy (se reabre para montarla ahora), no una corrección del cierre original.
+    const reopenIds = new Set(input.reopenCoilIds ?? []);
+    const reopenDate = reopenIds.size > 0 ? this.operationDate.resolve(actor, undefined) : '';
     // El presupuesto por defecto de Prisma son 5 s, y montar una bobina ya no entra:
     // además del lock y las lecturas de siempre, D-134 agregó la comprobación del agregado,
     // que recorre las bobinas compatibles. Contra Neon —con latencia de red real— se pasaba
@@ -522,9 +528,12 @@ export class RoofingProductionService {
               `${coil.code} es un fleje, no una bobina: la roladora de coberturas consume bobina (D-049)`,
             );
           }
-          if (coil.status !== CoilStatus.OPEN) {
+          const reopening = coil.status === CoilStatus.CLOSED && reopenIds.has(coil.id);
+          if (coil.status !== CoilStatus.OPEN && !reopening) {
             throw new BadRequestException(
-              `${coil.code} no está disponible (${coil.status}): solo una bobina abierta entra a producción`,
+              coil.status === CoilStatus.CLOSED
+                ? `${coil.code} está cerrada: para montarla hay que confirmar que se reabre (revierte el ajuste del cierre, D-193)`
+                : `${coil.code} no está disponible (${coil.status}): solo una bobina abierta entra a producción`,
             );
           }
           if (coil.businessLineId !== order.businessLineId) {
@@ -553,6 +562,19 @@ export class RoofingProductionService {
             const need = color?.name ?? 'sin color';
             throw new BadRequestException(
               `${coil.code} no coincide en color con ${product.sku}, que necesita ${need}`,
+            );
+          }
+
+          // D-193: se reabre recién acá, con el rollo ya validado contra la orden (línea, espesor
+          // y color): reabrir uno que después no se puede montar dejaría el kardex movido por
+          // nada — aunque la transacción entera lo desharía igual.
+          if (reopening) {
+            await this.coilOperations.reopenInTx(
+              tx,
+              actor,
+              coil.id,
+              input.reopenReason ?? '',
+              reopenDate,
             );
           }
 
@@ -2328,8 +2350,16 @@ export class RoofingProductionService {
    * null incluido). Excluye las que otra orden ya tiene montadas (D-060) y las prometidas a
    * otro pedido (D-066) — salvo la reserva propia de esta orden, que es justo el material
    * que viene a rolar.
+   *
+   * D-193: con `includeClosed` suma las **cerradas** del mismo filtro, con el ajuste del cierre
+   * que reabrirlas va a revertir y el saldo que les quedaría. Se ofrecen para reabrir y montar
+   * con confirmación; sin ella el montaje las sigue rechazando.
    */
-  async coilOptions(productId: string, reservationId?: string): Promise<RoofingCoilOptionDto[]> {
+  async coilOptions(
+    productId: string,
+    reservationId?: string,
+    includeClosed = false,
+  ): Promise<RoofingCoilOptionDto[]> {
     const product = await this.production.requireRoofingProduct(productId);
 
     // La excepción solo vale si esa reserva es de una línea que pide **este** producto: un
@@ -2347,15 +2377,19 @@ export class RoofingProductionService {
     const coils = await this.prisma.coil.findMany({
       // D-127: el filtro vive en `roofing-coil-match` porque la confirmación de una
       // cotización a medida hace la misma pregunta y no puede responderla distinto.
-      where: roofingCoilWhere({
-        businessLineId: product.businessLineId,
-        colorId: product.colorId,
-        inputThicknessMm: product.thicknessMm,
-        toleranceMm: this.thicknessToleranceMm(),
-      }),
+      where: {
+        ...roofingCoilWhere({
+          businessLineId: product.businessLineId,
+          colorId: product.colorId,
+          inputThicknessMm: product.thicknessMm,
+          toleranceMm: this.thicknessToleranceMm(),
+        }),
+        ...(includeClosed ? { status: { in: [CoilStatus.OPEN, CoilStatus.CLOSED] } } : {}),
+      },
       select: {
         id: true,
         code: true,
+        status: true,
         typeKey: true,
         weightKg: true,
         widthMm: true,
@@ -2370,7 +2404,8 @@ export class RoofingProductionService {
     if (coils.length === 0) return [];
 
     const ids = coils.map((c) => c.id);
-    const [balances, assignments, reservations] = await Promise.all([
+    const closedIds = coils.filter((c) => c.status === CoilStatus.CLOSED).map((c) => c.id);
+    const [balances, assignments, reservations, lastMovements] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: 'COIL', itemId: { in: ids } },
         select: { itemId: true, qty: true },
@@ -2384,8 +2419,49 @@ export class RoofingProductionService {
         ids,
         ownReservationId === undefined ? {} : { exceptReservationIds: [ownReservationId] },
       ),
+      // D-193: el último movimiento de cada cerrada. Reabrir revierte el ajuste del cierre **solo
+      // si es el último** y no está anulado (D-164, `reverseCloseAdjustment`): es la misma
+      // pregunta, contestada igual para mostrarla antes del clic.
+      closedIds.length === 0
+        ? Promise.resolve([])
+        : this.prisma.inventoryMovement.findMany({
+            where: { itemType: 'COIL', itemId: { in: closedIds } },
+            orderBy: [{ itemId: 'asc' }, { id: 'desc' }],
+            distinct: ['itemId'],
+            select: {
+              itemId: true,
+              refType: true,
+              type: true,
+              qty: true,
+              reversals: { select: { id: true } },
+            },
+          }),
     ]);
-    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const adjustmentById = new Map(
+      lastMovements
+        .filter((m) => m.refType === 'CLOSE_ADJUSTMENT' && m.reversals.length === 0)
+        .map((m) => [
+          m.itemId,
+          {
+            kind: m.type === 'OUT' ? ('SHORTAGE' as const) : ('SURPLUS' as const),
+            qty: toDecimal(m.qty.toString()),
+          },
+        ]),
+    );
+    // En una cerrada, el saldo que queda después de reabrir: el faltante vuelve, el sobrante sale.
+    const afterReopen = (coilId: string, balance: Decimal): Decimal => {
+      const adjustment = adjustmentById.get(coilId);
+      if (adjustment === undefined) return balance;
+      return adjustment.kind === 'SHORTAGE'
+        ? balance.plus(adjustment.qty)
+        : balance.minus(adjustment.qty);
+    };
+    const qtyById = new Map(
+      coils.map((c) => {
+        const balance = toDecimal(balances.find((b) => b.itemId === c.id)?.qty.toString() ?? '0');
+        return [c.id, c.status === CoilStatus.CLOSED ? afterReopen(c.id, balance) : balance];
+      }),
+    );
     const taken = new Set(assignments.map((a) => a.coilId));
     const promised = new Set(
       [...reservations].filter(([, qty]) => qty.gt(0)).map(([itemId]) => itemId),
@@ -2414,6 +2490,14 @@ export class RoofingProductionService {
           colorName: c.color?.name ?? null,
           colorHex: c.color?.hexColor ?? null,
           weightKg: c.weightKg.toFixed(3),
+          status: c.status === CoilStatus.CLOSED ? ('CLOSED' as const) : ('OPEN' as const),
+          closeAdjustment: (() => {
+            const adjustment =
+              c.status === CoilStatus.CLOSED ? adjustmentById.get(c.id) : undefined;
+            return adjustment === undefined
+              ? null
+              : { kind: adjustment.kind, qtyKg: adjustment.qty.toFixed(3) };
+          })(),
           availableKg: availableKg.toFixed(3),
           estimatedMeters: toFixedString(metersFromKg(geometry, availableKg.toFixed(3)), 'KG'),
         };

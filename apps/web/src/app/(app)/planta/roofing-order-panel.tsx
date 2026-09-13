@@ -158,23 +158,42 @@ export function RoofingOrderPanel({
     void queryClient.invalidateQueries({ queryKey: ['roofing-coils'] });
   };
 
+  /** D-193: reabrir mueve el kardex de la bobina; las pantallas de bobinas tienen que enterarse. */
+  const invalidateReopened = () => {
+    void queryClient.invalidateQueries({ queryKey: ['coil'] });
+    void queryClient.invalidateQueries({ queryKey: ['coils'] });
+    void queryClient.invalidateQueries({ queryKey: ['kardex'] });
+  };
+
   const options = useQuery({
     queryKey: ['roofing-coils', order.productId, order.reservationId],
     queryFn: () =>
       api<RoofingCoilOptionDto[]>(
         `/production/roofing/coils?productId=${order.productId}` +
-          (order.reservationId === null ? '' : `&reservationId=${order.reservationId}`),
+          (order.reservationId === null ? '' : `&reservationId=${order.reservationId}`) +
+          // D-193: también las cerradas, que se montan reabriéndolas con confirmación.
+          '&includeClosed=true',
       ),
   });
 
   const mount = useMutation({
     // D-192: una o varias bobinas en una sola operación.
-    mutationFn: (coilIds: string[]) =>
+    mutationFn: ({
+      coilIds,
+      reopen,
+    }: {
+      coilIds: string[];
+      reopen?: { coilIds: string[]; reason: string };
+    }) =>
       api<ProductionOrderDto>(`/production/roofing/${order.orderId}/coils`, {
         method: 'POST',
-        body: coilIds.length === 1 ? { coilId: coilIds[0] } : { coilIds },
+        body: {
+          ...(coilIds.length === 1 ? { coilId: coilIds[0] } : { coilIds }),
+          ...(reopen ? { reopenCoilIds: reopen.coilIds, reopenReason: reopen.reason } : {}),
+        },
       }),
-    onSuccess: (updated, coilIds) => {
+    onSuccess: (updated, { coilIds, reopen }) => {
+      if (reopen) invalidateReopened();
       toast.success(
         coilIds.length === 1
           ? 'Bobina montada en la roladora'
@@ -568,8 +587,8 @@ export function RoofingOrderPanel({
               failed={options.isError}
               mountedCount={liveCoils.length}
               pending={mount.isPending}
-              onMount={(ids) => {
-                mount.mutate(ids);
+              onMount={(coilIds, reopen) => {
+                mount.mutate({ coilIds, ...(reopen ? { reopen } : {}) });
               }}
             />
           )}

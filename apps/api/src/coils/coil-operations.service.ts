@@ -559,6 +559,53 @@ export class CoilOperationsService {
   }
 
   /**
+   * D-193 — reabrir una bobina cerrada **desde planta**, dentro de la transacción del montaje.
+   *
+   * Es la mitad `OPEN` de `setStatus`, sin nada propio: el mismo `reverseCloseAdjustment` de
+   * D-164 (asiento compensatorio del `CLOSE_ADJUSTMENT`, nunca un `DELETE` ni un `UPDATE` del
+   * original) y el mismo cambio de estado. Existe para que reabrir y montar sean **un** acto: si
+   * el montaje falla después, la reapertura se deshace con él y la bobina no queda abierta sin
+   * que nadie la haya usado. Al cerrarla de nuevo, `liquidateRemainder` calcula un ajuste nuevo
+   * con el saldo real, como cualquier cierre.
+   */
+  async reopenInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    coilId: string,
+    reason: string,
+    operationDate: string,
+  ): Promise<CloseAdjustmentSummary | null> {
+    const coil = await this.coils.lockCoil(tx, coilId);
+    if (coil.status !== CoilStatus.CLOSED) {
+      throw new BadRequestException(`${coil.code} no está cerrada: no hay nada que reabrir`);
+    }
+    await assertStripsNotAssigned(tx, [coil.id], 'reabrirla');
+    const reversed = await this.reverseCloseAdjustment(
+      tx,
+      coil.id,
+      { status: CoilStatus.OPEN, reason },
+      actor,
+      operationDate,
+    );
+    await tx.coil.update({ where: { id: coilId }, data: { status: CoilStatus.OPEN } });
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'coils.open',
+      entity: 'coils',
+      entityId: coilId,
+      before: { status: coil.status },
+      after: {
+        status: CoilStatus.OPEN,
+        reason,
+        operationDate,
+        origin: 'production.roofing.mount',
+        adjustment: reversed === null ? null : { ...reversed },
+      },
+    });
+    return reversed;
+  }
+
+  /**
    * D-164 — la liquidación del remanente al cerrar (RF-19).
    *
    * Cerrar una bobina declara que el rollo dejó de estar disponible. Hasta D-164 eso no movía

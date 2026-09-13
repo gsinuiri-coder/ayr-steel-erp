@@ -555,8 +555,32 @@ export const mountRoofingCoilSchema = z
       .max(MAX_ORDER_STRIPS_TO_MOUNT, `Como máximo ${MAX_ORDER_STRIPS_TO_MOUNT} bobinas a la vez`)
       .optional(),
     qtyKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+    /**
+     * D-193: bobinas **cerradas** de la lista que planta confirmó reabrir. Reabrir revierte el
+     * ajuste del cierre con un asiento compensatorio (D-164) antes de montar. Una cerrada que no
+     * esté acá se rechaza como siempre: sin confirmación explícita nada toca el kardex.
+     */
+    reopenCoilIds: z.array(z.string().uuid()).max(MAX_ORDER_STRIPS_TO_MOUNT).optional(),
+    reopenReason: reasonSchema.optional(),
   })
   .superRefine((v, ctx) => {
+    const listed = new Set(v.coilIds ?? (v.coilId === undefined ? [] : [v.coilId]));
+    if (v.reopenCoilIds !== undefined && v.reopenCoilIds.length > 0) {
+      if (v.reopenReason === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reopenReason'],
+          message: 'Reabrir una bobina cerrada exige un motivo',
+        });
+      }
+      if (v.reopenCoilIds.some((id) => !listed.has(id))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reopenCoilIds'],
+          message: 'Solo se reabre una bobina que también se está montando',
+        });
+      }
+    }
     if ((v.coilId === undefined) === (v.coilIds === undefined)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -835,6 +859,20 @@ export const roofingCoilOptionSchema = z.object({
   colorHex: z.string().nullable(),
   /** D-192: peso con el que la bobina entró (kg). Se muestra al lado del disponible. */
   weightKg: z.string(),
+  /**
+   * D-193: `CLOSED` solo cuando se pidieron las cerradas (`includeClosed`). Una cerrada se
+   * monta reabriéndola, con confirmación explícita.
+   */
+  status: z.enum(['OPEN', 'CLOSED']),
+  /**
+   * D-193: el ajuste del cierre que reabrir va a revertir (D-164), o `null` si no hay ninguno
+   * pendiente. `SHORTAGE` sacó kilos del kardex al cerrar (reabrir los devuelve); `SURPLUS`
+   * los dio de alta (reabrir los saca).
+   */
+  closeAdjustment: z
+    .object({ kind: z.enum(['SHORTAGE', 'SURPLUS']), qtyKg: z.string() })
+    .nullable(),
+  /** En una cerrada, el saldo que va a quedar **después** de reabrirla. */
   availableKg: z.string(),
   /** Metros que salen de ese saldo con la geometría de esta bobina: lo que planta necesita ver. */
   estimatedMeters: z.string(),

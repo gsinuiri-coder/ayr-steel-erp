@@ -79,8 +79,10 @@ export class RoofingProductionController {
   coilOptions(
     @Query('productId', ParseUUIDPipe) productId: string,
     @Query('reservationId', new ParseUUIDPipe({ optional: true })) reservationId?: string,
+    /** D-193: `true` suma las cerradas, que se montan reabriéndolas con confirmación. */
+    @Query('includeClosed') includeClosed?: string,
   ): Promise<RoofingCoilOptionDto[]> {
-    return this.roofing.coilOptions(productId, reservationId);
+    return this.roofing.coilOptions(productId, reservationId, includeClosed === 'true');
   }
 
   /**
