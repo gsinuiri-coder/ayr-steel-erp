@@ -27,4 +27,8 @@ export default function globalSetup(): void {
     execSync('pnpm exec prisma migrate deploy', opts);
   }
   execSync('pnpm exec tsx prisma/seed.ts', opts);
+  // D-202: con la base recién vaciada, las series renacen en 0 y la cuenta demo de Nubefact
+  // recuerda los números de la corrida anterior. Cada corrida parte de su propio correlativo.
+  // Solo tras un reset: sobre una base con historia el correlativo es un hecho fiscal.
+  if (reset) execSync('pnpm exec tsx prisma/e2e-fiscal-offset.ts', opts);
 }
