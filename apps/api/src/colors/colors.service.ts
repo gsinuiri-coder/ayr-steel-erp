@@ -39,8 +39,14 @@ export class ColorsService {
   async create(actor: RequestUser, input: CreateColorInput): Promise<ColorDto> {
     try {
       const color = await this.prisma.$transaction(async (tx) => {
+        await assertNameFree(tx, input.name);
         const created = await tx.color.create({
-          data: { code: input.code, name: input.name, hexColor: input.hexColor },
+          data: {
+            code: input.code,
+            name: input.name,
+            ralCode: input.ralCode ?? null,
+            hexColor: input.hexColor,
+          },
         });
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -54,7 +60,7 @@ export class ColorsService {
       return toDto(color);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('Ya existe un color con ese código');
+        throw new ConflictException('Ya existe un color con ese código o ese nombre');
       }
       throw err;
     }
@@ -69,23 +75,27 @@ export class ColorsService {
     // vería un rollo cuyo color no puede elegir en ninguna pantalla. Se bloquea con el
     // mismo criterio conservador del resto del proyecto — decir qué falta, no adivinar.
     if (input.isActive === false && before.isActive) {
-      const [products, coils] = await Promise.all([
+      const [products, coils, finishes] = await Promise.all([
         this.prisma.product.count({ where: { colorId: id, isActive: true } }),
         this.prisma.coil.count({ where: { colorId: id, status: { not: 'CANCELLED' } } }),
+        // D-203: un acabado activo con este color lo seguiría ofreciendo al registrar bobinas.
+        this.prisma.finish.count({ where: { colorId: id, isActive: true } }),
       ]);
-      if (products > 0 || coils > 0) {
+      if (products > 0 || coils > 0 || finishes > 0) {
         throw new BadRequestException(
-          `El color lo usan ${products} producto(s) activo(s) y ${coils} bobina(s) viva(s): quítalo de ellos antes de desactivarlo`,
+          `El color lo usan ${products} producto(s) activo(s), ${finishes} acabado(s) activo(s) y ${coils} bobina(s) viva(s): quítalo de ellos antes de desactivarlo`,
         );
       }
     }
 
     const data: Prisma.ColorUpdateInput = {};
     if (input.name !== undefined) data.name = input.name;
+    if (input.ralCode !== undefined) data.ralCode = input.ralCode;
     if (input.hexColor !== undefined) data.hexColor = input.hexColor;
     if (input.isActive !== undefined) data.isActive = input.isActive;
 
     const after = await this.prisma.$transaction(async (tx) => {
+      if (input.name !== undefined) await assertNameFree(tx, input.name, id);
       const updated = await tx.color.update({ where: { id }, data });
       await this.audit.write(tx, {
         actorId: actor.id,
@@ -121,6 +131,7 @@ export function toDto(c: Color): ColorDto {
     id: c.id,
     code: c.code,
     name: c.name,
+    ralCode: c.ralCode,
     hexColor: c.hexColor,
     isActive: c.isActive,
     createdAt: c.createdAt.toISOString(),
@@ -129,5 +140,31 @@ export function toDto(c: Color): ColorDto {
 }
 
 function auditView(c: Color): Prisma.InputJsonObject {
-  return { code: c.code, name: c.name, hexColor: c.hexColor, isActive: c.isActive };
+  return {
+    code: c.code,
+    name: c.name,
+    ralCode: c.ralCode,
+    hexColor: c.hexColor,
+    isActive: c.isActive,
+  };
+}
+
+/**
+ * D-203: el nombre de un color es único sin distinguir mayúsculas («Rojo» y «ROJO» son el mismo
+ * color para quien lo elige). La base lo sostiene con `colors_name_lower_key`; esto da el mensaje
+ * claro antes de llegar al índice.
+ */
+async function assertNameFree(
+  tx: Prisma.TransactionClient,
+  name: string,
+  exceptId?: string,
+): Promise<void> {
+  const clash = await tx.color.findFirst({
+    where: {
+      name: { equals: name, mode: 'insensitive' },
+      ...(exceptId ? { id: { not: exceptId } } : {}),
+    },
+    select: { name: true },
+  });
+  if (clash) throw new ConflictException(`Ya existe el color «${clash.name}»`);
 }

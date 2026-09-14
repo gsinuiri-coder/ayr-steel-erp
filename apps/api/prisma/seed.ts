@@ -181,10 +181,34 @@ async function seedGenericCustomer(): Promise<void> {
   console.warn('Seed listo: cliente «público en general» (D-077)');
 }
 
+/**
+ * D-203: catálogo de colores de ejemplo, el mismo que siembra su migración. Va también acá
+ * porque el reset de la base de pruebas vacía todas las tablas y una migración no vuelve a
+ * correr.
+ *
+ * **Solo sobre un catálogo vacío.** Este seed corre en cada `pnpm db:prod`: si el dueño ya
+ * renombró, desactivó o reemplazó estos colores desde Catálogo, volver a insertarlos le
+ * devolvería colores que sacó a propósito.
+ */
+const SAMPLE_COLORS = [
+  { code: 'ROJO', name: 'Rojo', ralCode: '3002', hexColor: '#9b2423' },
+  { code: 'AZUL', name: 'Azul', ralCode: '5010', hexColor: '#0e4c96' },
+  { code: 'VERDE', name: 'Verde', ralCode: '6005', hexColor: '#114232' },
+  { code: 'BLANCO', name: 'Blanco', ralCode: '9010', hexColor: '#f1ece1' },
+  { code: 'GRIS', name: 'Gris', ralCode: '7035', hexColor: '#cbd0cc' },
+];
+
+async function seedColors(): Promise<void> {
+  if ((await prisma.color.count()) > 0) return;
+  await prisma.color.createMany({ data: SAMPLE_COLORS });
+  console.warn(`Seed listo: ${SAMPLE_COLORS.length} colores de ejemplo (D-203)`);
+}
+
 async function main(): Promise<void> {
   await seedBusinessLinesAndPricing();
   await seedGenericCustomer();
   await seedInvoicing();
+  await seedColors();
 
   const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   const password = process.env.ADMIN_PASSWORD;

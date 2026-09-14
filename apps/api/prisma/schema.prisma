@@ -342,6 +342,15 @@ enum TemporaryReservationStatus {
   CONVERTED
 }
 
+/// D-203 (F8-S4/M1): tipo de acabado. Decide si el acabado lleva color: `PREPINTADO` lo exige,
+/// `NATURAL` y `GALVANIZADO` no lo admiten (CHECK `finishes_color_by_kind`). Los nombres son
+/// los del oficio, como `A_MEDIDA` o `FACTURA`.
+enum FinishKind {
+  NATURAL
+  PREPINTADO
+  GALVANIZADO
+}
+
 /// Origen de un pedido (D-141). `IMPORTED` es el que nace de un comprobante ya emitido
 /// afuera (RF-71): puede ser una **cáscara** terminal —la venta ya se entregó y el ERP solo
 /// la registra— o un pedido **vivo** con reservas y una OP en cola, si lo importado todavía
@@ -547,6 +556,7 @@ model BusinessLine {
   updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   products           Product[]
+  finishes           Finish[]
   pricingSettings    PricingSetting?
   inventoryMovements InventoryMovement[]
   inventoryBalances  InventoryBalance[]
@@ -560,12 +570,25 @@ model BusinessLine {
 }
 
 /// Acabados de bobina (RF-25), con su factor de densidad (Decimal 10,4).
+///
+/// D-203 (F8-S4/M1): un acabado es **tipo + color + línea**. El color de una bobina y de su
+/// ítem de compra sale de su acabado, no de un campo aparte que alguien se olvida de llenar.
+/// `kind` y `businessLineId` nacen nulos solo para las filas anteriores a la migración que no
+/// se pudieron mapear; la API los exige en toda alta y edición, y una migración posterior los
+/// pasa a `NOT NULL` cuando ya no quede ninguna fila sin mapear.
 model Finish {
-  id            String   @id @default(uuid()) @db.Uuid
-  code          String   @unique @db.VarChar(20)
-  name          String   @db.VarChar(120)
-  densityFactor Decimal  @map("density_factor") @db.Decimal(10, 4)
-  isActive      Boolean  @default(true) @map("is_active")
+  id             String        @id @default(uuid()) @db.Uuid
+  code           String        @unique @db.VarChar(20)
+  name           String        @db.VarChar(120)
+  densityFactor  Decimal       @map("density_factor") @db.Decimal(10, 4)
+  kind           FinishKind?
+  /// Obligatorio con `PREPINTADO`, nulo con `NATURAL` y `GALVANIZADO` (CHECK en la base).
+  colorId        String?       @map("color_id") @db.Uuid
+  color          Color?        @relation(fields: [colorId], references: [id])
+  /// Línea dura: un acabado pertenece a una sola línea de negocio.
+  businessLineId String?       @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine? @relation(fields: [businessLineId], references: [id])
+  isActive       Boolean       @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -574,6 +597,7 @@ model Finish {
   boms          ProductBom[]
   products      Product[]
 
+  @@index([businessLineId, isActive])
   @@map("finishes")
 }
 
@@ -2170,13 +2194,18 @@ model Color {
   id        String   @id @default(uuid()) @db.Uuid
   /// Código corto para el SKU y para las planillas de importación (`ROJ`, `AZU`).
   code      String   @unique @db.VarChar(20)
+  /// Único sin distinguir mayúsculas (índice `colors_name_lower_key` sobre `lower(name)`, que
+  /// Prisma no sabe expresar): «Rojo» y «ROJO» son el mismo color para quien lo elige (D-203).
   name      String   @db.VarChar(80)
+  /// Código RAL (`3002`). Opcional: no todo color del proveedor tiene uno.
+  ralCode   String?  @map("ral_code") @db.VarChar(10)
   /// `#RRGGBB`. Solo presentación: ninguna regla de negocio lo lee.
   hexColor  String   @map("hex_color") @db.VarChar(7)
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  finishes         Finish[]
   products         Product[]
   coils            Coil[]
   purchaseItems    PurchaseItem[]

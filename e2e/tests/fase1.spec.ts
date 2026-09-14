@@ -29,6 +29,12 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
       const dialog = page.getByRole('dialog');
       await dialog.getByLabel('Código').fill(code);
       await dialog.getByLabel('Nombre').fill('Acabado E2E');
+      // D-203: tipo y línea son obligatorios; con «Natural» no se pide color.
+      await dialog.getByRole('combobox', { name: 'Línea' }).click();
+      await page.getByRole('option', { name: 'Drywall' }).click();
+      await dialog.getByRole('combobox', { name: 'Tipo' }).click();
+      await page.getByRole('option', { name: 'Natural' }).click();
+      await expect(dialog.getByText('Color', { exact: true })).toBeHidden();
       await dialog.getByLabel('Factor de densidad').fill('7.85');
       await dialog.getByRole('button', { name: 'Crear acabado' }).click();
 
@@ -36,6 +42,8 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
       const row = page.getByRole('row').filter({ hasText: code });
       await expect(row).toBeVisible();
       await expect(row).toContainText('Activo');
+      await expect(row).toContainText('Natural');
+      await expect(row).toContainText('Drywall');
     } finally {
       if (isProduction) {
         const list = await api.get('/api/finishes');

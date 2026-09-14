@@ -3,12 +3,19 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Role, type FinishDto } from '@ayr/shared';
+import {
+  BUSINESS_LINE_LABELS,
+  FINISH_KIND_LABELS,
+  Role,
+  type BusinessLine,
+  type FinishDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ColorSwatch } from '@/components/colors/color-swatch';
 import {
   Table,
   TableBody,
@@ -55,7 +62,7 @@ export function AcabadosView() {
         <div>
           <h1 className="text-lg font-semibold">Acabados</h1>
           <p className="text-xs text-muted-foreground">
-            Catálogo de acabados de bobina y su factor de densidad (RF-25).
+            Catálogo de acabados de bobina: tipo, color, línea y factor de densidad (RF-25, D-203).
           </p>
         </div>
         {isAdmin && (
@@ -75,6 +82,9 @@ export function AcabadosView() {
             <TableRow>
               <TableHead>Código</TableHead>
               <TableHead>Nombre</TableHead>
+              <TableHead>Línea</TableHead>
+              <TableHead>Tipo</TableHead>
+              <TableHead>Color</TableHead>
               <TableHead>Factor de densidad</TableHead>
               <TableHead>Estado</TableHead>
               {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
@@ -84,14 +94,14 @@ export function AcabadosView() {
             {finishes.isPending &&
               [0, 1, 2].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={5}>
+                  <TableCell colSpan={8}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
             {finishes.isError && (
               <TableRow>
-                <TableCell colSpan={5} className="text-destructive">
+                <TableCell colSpan={8} className="text-destructive">
                   No se pudieron cargar los acabados.
                 </TableCell>
               </TableRow>
@@ -100,6 +110,24 @@ export function AcabadosView() {
               <TableRow key={f.id} data-state={f.isActive ? undefined : 'inactive'}>
                 <TableCell className="font-medium">{f.code}</TableCell>
                 <TableCell>{f.name}</TableCell>
+                <TableCell>
+                  {f.businessLine ? BUSINESS_LINE_LABELS[f.businessLine as BusinessLine] : '—'}
+                </TableCell>
+                <TableCell>
+                  {f.kind ? (
+                    FINISH_KIND_LABELS[f.kind]
+                  ) : (
+                    // Anterior a D-203 y sin mapear: se completa editándolo.
+                    <Badge variant="outline">Sin tipo: complétalo</Badge>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {f.colorName && f.colorHex ? (
+                    <ColorSwatch color={{ name: f.colorName, hexColor: f.colorHex }} />
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
                 <TableCell>{f.densityFactor}</TableCell>
                 <TableCell>
                   {f.isActive ? (
@@ -137,7 +165,7 @@ export function AcabadosView() {
             ))}
             {finishes.data?.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   No hay acabados registrados.
                 </TableCell>
               </TableRow>

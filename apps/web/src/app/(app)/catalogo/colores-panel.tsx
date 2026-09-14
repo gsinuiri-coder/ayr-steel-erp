@@ -46,6 +46,11 @@ const formSchema = z.object({
     .max(20)
     .regex(/^[A-Za-z0-9-]+$/, 'Solo letras, números y guiones'),
   name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(80),
+  // D-203: RAL clásico, opcional.
+  ralCode: z
+    .string()
+    .trim()
+    .regex(/^(d{4})?$/, 'El RAL son cuatro dígitos (ej: 3002)'),
   hexColor: z
     .string()
     .trim()
@@ -102,6 +107,7 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
             <TableRow>
               <TableHead>Código</TableHead>
               <TableHead>Color</TableHead>
+              <TableHead>RAL</TableHead>
               <TableHead>Hex</TableHead>
               <TableHead>Estado</TableHead>
               {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
@@ -113,6 +119,9 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
                 <TableCell className="font-medium">{c.code}</TableCell>
                 <TableCell>
                   <ColorSwatch color={c} />
+                </TableCell>
+                <TableCell>
+                  {c.ralCode ?? <span className="text-muted-foreground">—</span>}
                 </TableCell>
                 <TableCell className="font-mono text-xs">{c.hexColor}</TableCell>
                 <TableCell>
@@ -153,7 +162,7 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
             ))}
             {colors.data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={isAdmin ? 5 : 4} className="text-center text-muted-foreground">
+                <TableCell colSpan={isAdmin ? 6 : 5} className="text-center text-muted-foreground">
                   Todavía no hay colores. Cárgalos antes de dar de alta coberturas prepintadas.
                 </TableCell>
               </TableRow>
@@ -184,6 +193,7 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
     defaultValues: {
       code: color?.code ?? '',
       name: color?.name ?? '',
+      ralCode: color?.ralCode ?? '',
       hexColor: color?.hexColor ?? '#c8102e',
     },
   });
@@ -194,9 +204,16 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
       editing
         ? api<ColorDto>(`/colors/${color.id}`, {
             method: 'PATCH',
-            body: { name: values.name, hexColor: values.hexColor },
+            body: {
+              name: values.name,
+              ralCode: values.ralCode === '' ? null : values.ralCode,
+              hexColor: values.hexColor,
+            },
           })
-        : api<ColorDto>('/colors', { method: 'POST', body: values }),
+        : api<ColorDto>('/colors', {
+            method: 'POST',
+            body: { ...values, ralCode: values.ralCode === '' ? null : values.ralCode },
+          }),
     onSuccess: () => {
       toast.success(editing ? 'Color actualizado' : 'Color creado');
       void queryClient.invalidateQueries({ queryKey: colorsQueryKey });
@@ -259,6 +276,19 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
                   <FormLabel>Nombre</FormLabel>
                   <FormControl>
                     <Input placeholder="Rojo colonial" autoComplete="off" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="ralCode"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Código RAL (opcional)</FormLabel>
+                  <FormControl>
+                    <Input inputMode="numeric" placeholder="3002" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

@@ -13,6 +13,8 @@ export const colorSchema = z.object({
   id: z.string().uuid(),
   code: z.string(),
   name: z.string(),
+  /** Código RAL (D-203). Opcional. */
+  ralCode: z.string().nullable(),
   hexColor: z.string(),
   isActive: z.boolean(),
   createdAt: z.string(),
@@ -41,9 +43,22 @@ const hexColorSchema = z
   .toLowerCase()
   .regex(/^#[0-9a-f]{6}$/, 'Color inválido: usa el formato #rrggbb');
 
+/** RAL clásico: cuatro dígitos (`3002`). Vacío = sin RAL. */
+const ralCodeSchema = z
+  .string()
+  .trim()
+  .transform((v) => (v === '' ? null : v))
+  .pipe(
+    z
+      .string()
+      .regex(/^\d{4}$/, 'El RAL son cuatro dígitos (ej: 3002)')
+      .nullable(),
+  );
+
 export const createColorSchema = z.object({
   code: codeSchema,
   name: nameSchema,
+  ralCode: ralCodeSchema.nullable().optional(),
   hexColor: hexColorSchema,
 });
 export type CreateColorInput = z.infer<typeof createColorSchema>;
@@ -51,6 +66,7 @@ export type CreateColorInput = z.infer<typeof createColorSchema>;
 export const updateColorSchema = z
   .object({
     name: nameSchema,
+    ralCode: ralCodeSchema.nullable(),
     hexColor: hexColorSchema,
     isActive: z.boolean(),
   })

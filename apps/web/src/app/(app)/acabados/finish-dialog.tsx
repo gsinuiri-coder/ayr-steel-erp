@@ -5,12 +5,21 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { createFinishSchema, type FinishDto } from '@ayr/shared';
+import {
+  BUSINESS_LINE_LABELS,
+  COIL_BUSINESS_LINES,
+  FINISH_KIND_LABELS,
+  FinishKind,
+  finishColorError,
+  finishKindHasColor,
+  type FinishDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -18,21 +27,48 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { ColorSelect } from '@/components/colors/color-select';
 
 const FINISHES_QUERY_KEY = ['finishes'] as const;
 
-const formSchema = z.object({
-  code: z.string().trim().min(1, 'Obligatorio').max(20),
-  name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(120),
-  densityFactor: z.string().trim().min(1, 'Obligatorio'),
-});
+const KINDS = [FinishKind.NATURAL, FinishKind.PREPINTADO, FinishKind.GALVANIZADO] as const;
+
+const formSchema = z
+  .object({
+    code: z.string().trim().min(1, 'Obligatorio').max(20),
+    name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(120),
+    densityFactor: z.string().trim().min(1, 'Obligatorio'),
+    // String y no enum: el formulario arranca sin tipo elegido (`''`).
+    kind: z
+      .string()
+      .refine((v) => (KINDS as readonly string[]).includes(v), 'Elige el tipo de acabado'),
+    colorId: z.string(),
+    businessLine: z.string().min(1, 'Elige la línea del acabado'),
+  })
+  .superRefine((v, ctx) => {
+    if (!isKind(v.kind)) return;
+    const error = finishColorError(v.kind, v.colorId === '' ? null : v.colorId);
+    if (error) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['colorId'], message: error });
+  });
 type FormValues = z.infer<typeof formSchema>;
+
+function isKind(value: string): value is FinishKind {
+  return (KINDS as readonly string[]).includes(value);
+}
 
 interface Props {
   open: boolean;
@@ -40,6 +76,11 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * Alta y edición de un acabado (RF-25, D-203): tipo + color + línea. El color solo aparece con
+ * «Prepintado», que es el único tipo que lo lleva — ofrecerlo en los otros sería pedir un dato
+ * que la base rechaza.
+ */
 export function FinishDialog({ open, finish, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const editing = !!finish;
@@ -49,19 +90,36 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
       code: finish?.code ?? '',
       name: finish?.name ?? '',
       densityFactor: finish?.densityFactor ?? '',
+      kind: finish?.kind ?? '',
+      colorId: finish?.colorId ?? '',
+      businessLine: finish?.businessLine ?? '',
     },
   });
+  const kind = form.watch('kind');
+  const withColor = isKind(kind) && finishKindHasColor(kind);
 
   const save = useMutation({
     mutationFn: (values: FormValues) => {
+      const identity = {
+        kind: values.kind,
+        colorId: withColor && values.colorId !== '' ? values.colorId : null,
+        businessLine: values.businessLine,
+      };
       if (editing) {
         return api<FinishDto>(`/finishes/${finish.id}`, {
           method: 'PATCH',
-          body: { name: values.name, densityFactor: values.densityFactor },
+          body: { name: values.name, densityFactor: values.densityFactor, ...identity },
         });
       }
-      const parsed = createFinishSchema.parse(values);
-      return api<FinishDto>('/finishes', { method: 'POST', body: parsed });
+      return api<FinishDto>('/finishes', {
+        method: 'POST',
+        body: {
+          code: values.code,
+          name: values.name,
+          densityFactor: values.densityFactor,
+          ...identity,
+        },
+      });
     },
     onSuccess: () => {
       toast.success(editing ? 'Acabado actualizado' : 'Acabado creado');
@@ -87,6 +145,10 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{editing ? 'Editar acabado' : 'Nuevo acabado'}</DialogTitle>
+          <DialogDescription>
+            El color de las bobinas sale del acabado: una bobina prepintada se registra eligiendo su
+            acabado, sin cargar el color aparte.
+          </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form
@@ -127,6 +189,81 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="businessLine"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Línea</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger className="w-full" aria-label="Línea">
+                        <SelectValue placeholder="Elige la línea" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {COIL_BUSINESS_LINES.map((line) => (
+                        <SelectItem key={line} value={line}>
+                          {BUSINESS_LINE_LABELS[line]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="kind"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Tipo</FormLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={(v) => {
+                      field.onChange(v);
+                      form.clearErrors('colorId');
+                    }}
+                  >
+                    <FormControl>
+                      <SelectTrigger className="w-full" aria-label="Tipo">
+                        <SelectValue placeholder="Elige el tipo" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {KINDS.map((k) => (
+                        <SelectItem key={k} value={k}>
+                          {FINISH_KIND_LABELS[k]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            {withColor && (
+              <FormField
+                control={form.control}
+                name="colorId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Color</FormLabel>
+                    <ColorSelect
+                      value={field.value}
+                      onChange={field.onChange}
+                      allowEmpty={false}
+                      placeholder="Elige el color"
+                    />
+                    <FormDescription>
+                      Los colores se administran en Catálogo → Colores.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="densityFactor"

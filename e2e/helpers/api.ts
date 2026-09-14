@@ -165,7 +165,16 @@ export async function createFinish(
   // `densityFactor` es override desde Fase 6: el kilo teórico de una cobertura sale de la
   // geometría de la bobina por ese factor (D-047), y una densidad redonda deja la aritmética
   // del test comprobable a ojo.
-  overrides: Partial<{ code: string; name: string; densityFactor: string }> = {},
+  //
+  // D-203: un acabado es tipo + color + línea. Por defecto, natural (sin color) de Drywall.
+  overrides: Partial<{
+    code: string;
+    name: string;
+    densityFactor: string;
+    kind: 'NATURAL' | 'PREPINTADO' | 'GALVANIZADO';
+    colorId: string;
+    businessLine: string;
+  }> = {},
 ): Promise<CreatedFinish> {
   // Cuatro letras al azar chocaban de vez en cuando dentro de una misma corrida, y el 409
   // aparecía en un test que no tenía nada que ver con el acabado: el sufijo de reloj lo
@@ -175,6 +184,9 @@ export async function createFinish(
     code,
     name: overrides.name ?? `Acabado E2E ${code}`,
     densityFactor: overrides.densityFactor ?? '7.85',
+    kind: overrides.kind ?? 'NATURAL',
+    colorId: overrides.colorId ?? null,
+    businessLine: overrides.businessLine ?? 'drywall',
   });
   return { id: finish.id, code: finish.code, name: finish.name };
 }

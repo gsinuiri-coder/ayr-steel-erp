@@ -131,7 +131,7 @@ export async function createColor(api: APIRequestContext, hex = '#c8102e'): Prom
 
 /** Acabado con densidad fija, para que el kilo teórico sea comprobable a mano. */
 export async function createRoofingFinish(api: APIRequestContext): Promise<CreatedFinish> {
-  return createFinish(api, { densityFactor: TEST_DENSITY });
+  return createFinish(api, { densityFactor: TEST_DENSITY, businessLine: 'metallic-roofing' });
 }
 
 /**
