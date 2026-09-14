@@ -1,7 +1,8 @@
 # F8-R1 — Regresión de rendimiento del lote F8 (FASE 1, en curso)
 
-Estado al 2026-09-14 13:10 UTC: **FASE 1 sin cerrar.** Hay un defecto medido y con riesgo real
-en producción, pero todavía no está probado que sea la causa del 4-6× de CI. Nada del
+Estado al 2026-09-14 14:05 UTC: **FASE 1 sin cerrar.** Hay un defecto medido y con riesgo real
+en producción (`stock-shortages`, §3), pero **no** es la causa del 4-6× de CI (§4). R2, PSE,
+polling y `next dev` también quedan descartados (§5). Lo que sigue en pie es Neon. Nada del
 producto se tocó. Este documento es el punto de reanudación.
 
 ## Contexto
@@ -90,21 +91,50 @@ cotizaciones emitidas, cada apertura del Panel cuesta ~16·N consultas mientras 
 conexiones del pool, y se repite cada 60 s por pestaña abierta. Desde el deploy de V-3 no hubo
 ninguna llamada a ese endpoint en Cloud Run (nadie abrió el Panel).
 
+### 4. Specs 1-31 de HEAD con muestreo de cotizaciones (2026-09-14, 13:20-14:01 UTC)
+
+Proxy `--delay 1`, pool 5, `sampler.mjs` cada 30 s. Datos en
+`local-data/r1/head-first31-b.{jsonl,log}` y `local-data/r1/sampler-head-first31-b.jsonl`.
+
+- **158 tests en 39,7 min: 155 passed, 3 failed.** Los tres rojos ya estaban registrados y
+  son del entorno: `fase2a.spec.ts:357` (XML), `fase2a.spec.ts:471` (drawer bajo latencia) y
+  `fase5a.spec.ts:100` (el mismo de `:94` en la base; afirma «el alta debe dejar el PDF en
+  R2», y el worktree no tiene R2).
+- El ritmo repite el de la corrida completa de HEAD: 15 tests en 3,3 min (antes 3,2), 80 en
+  14,0 (antes 13,8). La medición es estable.
+- **Cotizaciones `EMITTED` a lo largo de la corrida: máximo 2, promedio 0,12**; 0 en 73 de 82
+  muestras. La suite crea 59 y anula 57 casi enseguida. Una carga del Panel cuesta entonces
+  a lo sumo ~35 round-trips.
+- `fase7d.spec.ts:94`, el test del P2028 en CI, **pasa en local en 6,3 s** con pool 5 y
+  latencia: las 26 compras en paralelo no agotan el pool en este entorno.
+
+**Conclusión:** `stock-shortages` **no explica** la lentitud de CI. Queda como defecto de
+producción (§3, FASE 2), pero la causa del 4-6× es otra.
+
+### 5. Otros caminos que solo corren en CI, descartados
+
+| Candidato                             | Evidencia                                                                                                                                                                                                                                                                                    |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PDF a R2 en cada alta/edición (D-184) | Antes solo al emitir. En los specs 1-31 son 62 subidas en total. Los logs de CI sí muestran la salida del API (`[WebServer]`, ahí están los P2028) y en las tres corridas no hay ni un `No se pudo generar el PDF`: R2 respondió sin fallos ni reintentos colgados. No alcanza para minutos. |
+| PSE (Nubefact) en caminos calientes   | El diff del lote no agrega llamadas al PSE fuera de las acciones explícitas de comprobante.                                                                                                                                                                                                  |
+| Polling nuevo del web                 | Solo dos `refetchInterval: 60_000` (`stock-shortages-card`, `reservas-temporales`).                                                                                                                                                                                                          |
+| `next dev` en CI                      | CI compila y usa `web start`/`api start`, igual que el runner local.                                                                                                                                                                                                                         |
+| Padrón (apis.net.pe)                  | CI y local usan el mismo `e2e/padron-stub.mjs`, sin cambios en el lote.                                                                                                                                                                                                                      |
+
+Límite: CI usa el reporter `github` (puntos), sin duración por test, así que la corrida de CI
+no se puede cruzar test por test con la local. Para aislar dónde se va el tiempo en CI hace
+falta una corrida con reporter `list` (o el `.jsonl` de round-trips) **en CI**.
+
 ## Lo que falta para cerrar FASE 1
 
-1. **¿Explica este endpoint el 4-6× de CI?** El dato que falta es cuántas cotizaciones
-   `EMITTED` tiene la suite a lo largo de la corrida. Un primer muestreo de los specs 1-31
-   (`local-data/r1/tools/sampler.mjs`) mostró solo 6 cotizaciones, todas `CANCELLED`, en los
-   primeros minutos: si la suite deja pocas emitidas, el endpoint no alcanza a explicar la
-   lentitud temprana de CI, y hay que seguir buscando algo más.
-   - Retomar: proxy (`--delay 1 --stats-port 5499`), `sampler.mjs` en background y
-     `scripts/e2e-latency.mjs --worktree ../wt-r1-head` sobre los specs 1-31 (orden
-     alfabético, hasta `fase7d.spec.ts`).
+1. ~~¿Explica `stock-shortages` el 4-6× de CI?~~ **No** (§4).
 2. **Lo que CI tiene y el entorno local no:** Neon (pooler/pgbouncer en `CI_DATABASE_URL`,
    cómputo mínimo, caché fría), credenciales de PSE y R2, y `E2E_CUSTOMER_RUC`. La lentitud de
    CI aparece desde los primeros 15 tests, así que lo que la cause ya está activo al arrancar.
-   Candidatos a verificar: caminos nuevos que solo se ejecutan con PSE/R2 configurados, y
-   consultas que en Neon cambian de plan.
+   PSE y R2 quedan descartados (§5). Candidatos que siguen: el pooler de Neon —el P2028 de
+   `fase7d.spec.ts:94` no se reproduce en local con pool 5, así que en CI algo retiene las
+   conexiones más tiempo— y consultas que en Neon cambian de plan. El paso más barato para
+   ubicarlo es una corrida de CI con duración y round-trips por test (§5, límite).
 3. **Plan B del brief (Neon `dev`)** si lo anterior no alcanza: el guard de
    `reset-test-db.ts` solo permite `ayr_local_e2e` y la rama `ci`, así que medir en Neon
    requiere decidir cómo (credenciales por entorno, regla dura 5).
