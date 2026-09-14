@@ -1,11 +1,12 @@
-# F8-R1 — Regresión de rendimiento del lote F8 (FASE 1, en curso)
+# F8-R1 — Regresión de rendimiento del lote F8 (diagnóstico cerrado)
 
-Estado al 2026-09-14 19:20 UTC: **causa de FASE 1 nombrada (§6).** La lentitud de CI es
+Estado al 2026-09-14: **diagnóstico aceptado y cerrado (D-201).** La lentitud de CI es
 consultas × latencia de red runner→Neon, y esa latencia varía por corrida según la región del
 runner (16 ms en `eastus`, 33 ms en `centralus`, ~80 ms en el run que se cortó). El lote no
 encarece cada consulta: sube el total de la suite ×1,64. `stock-shortages` (§3) es un defecto
-real de producción, pero no la causa (§4). Nada del producto se tocó. Falta la decisión del
-dueño sobre qué palanca atacar en FASE 2.
+real de producción, pero no la causa (§4). Nada del producto se tocó: no hay regresión de
+producto. Palanca elegida por el dueño: E2E de CI contra un Postgres de servicio en el runner,
+en una sesión propia de salud E2E.
 
 ## Contexto
 
@@ -266,14 +267,17 @@ contando en `duration`. Mueve ~×1,3, no el ×4.
 2. ~~Lo que CI tiene y el entorno local no~~ **Nombrado** (§6, Causa): red runner→Neon variable
    por región, multiplicada por el volumen de consultas del lote.
 3. ~~Plan B (Neon `dev`)~~ No hizo falta.
-4. **Decisión del dueño antes de FASE 2:** qué palanca atacar. Opciones a evaluar: menos
-   consultas por test (el costo es lineal en consultas), workers en paralelo o partir la suite
-   (deuda ya anotada en `ci.yml`), un E2E contra un Postgres de servicio dentro del runner con
-   Neon solo en un smoke, o sacar la región de la ecuación (runner o cómputo en la misma región).
-5. Borrar las ramas `diag/f8-r1-instrumentacion` y `diag/f8-r1-instrumentacion-base` al dar por
-   cerrado el diagnóstico.
+4. ~~Decisión del dueño sobre la palanca~~ **Tomada (D-201):** E2E completo de CI contra un
+   Postgres de servicio dentro del runner; Neon solo para el chequeo de migraciones y un smoke
+   chico (~10-15 specs más el guard de reset). Va en una sesión propia de salud E2E, junto con
+   los correlativos de Nubefact. Reducir consultas por test queda como higiene de backlog;
+   workers en paralelo se reevalúa después del cambio de base; fijar región no es viable en
+   runners hosted.
+5. ~~Borrar las ramas diag~~ **Hecho** (2026-09-14). La instrumentación (`prisma-query-stats.cjs`,
+   `e2e-query-reporter.mjs`, `db-rtt.mjs` y los dos `ci.yml`) quedó copiada en
+   `local-data/r1/tools/diag/`, fuera de git, por si hace falta repetir la medición.
 
-## Pendiente de FASE 2 ya identificado (sin tocar todavía)
+## Backlog que deja el diagnóstico (sin tocar)
 
 - `findStockShortages`: dejar de recalcular cotización por cotización. Opciones a evaluar con
   el límite duro del brief (misma cuenta que el gate de confirmar, D-150): cargar en lote los
@@ -281,3 +285,8 @@ contando en `duration`. Mueve ~×1,3, no el ×4.
   por request. Sacar el refetch de 60 s si no hay pestaña visible.
 - Fragilidad de `fase2a.spec.ts:471` y `m2-reversa-pago.spec.ts:233` bajo latencia (selector de
   saldo que choca con la descripción del drawer).
+- Los ~12 ms por consulta que el API paga en CI por encima del `SELECT 1` de la sonda (§6, «Sin
+  explicar»).
+- `fase7d.spec.ts:94` tuvo en local un `ECONNRESET` en el rewrite `/api/*` de Next con las 26
+  compras en paralelo (corrida instrumentada de los specs 1-31). Es intermitente y distinto del
+  P2028 de CI.
