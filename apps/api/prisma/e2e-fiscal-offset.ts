@@ -17,7 +17,9 @@
  *   suite (build, reset, seed) tarda más que el cupo entero de la cuenta demo.
  * - El módulo mantiene el número en ocho dígitos, que es lo que SUNAT admite y lo que valida
  *   `createFiscalSeriesSchema` (`max(99_999_999)`): el tope es 90 000 000 y queda margen de
- *   sobra para lo que emite una corrida. Da la vuelta cada ~2,5 años.
+ *   sobra para lo que emite una corrida. Da la vuelta cada ~2,5 años (la próxima, el
+ *   2028-04-22): **después de una vuelta la garantía no vale** contra números que la cuenta
+ *   demo haya recibido en la vuelta anterior, así que en esa fecha hay que vaciarla una vez.
  * - El piso de 10 000 000 deja fuera de rango los números bajos que cualquier otra cosa que
  *   hable con la cuenta demo pueda haber usado empezando desde 1.
  *

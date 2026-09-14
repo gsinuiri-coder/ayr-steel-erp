@@ -63,31 +63,45 @@ function isRunnerCiE2E(url: URL): boolean {
   );
 }
 
-/**
- * Devuelve la etiqueta de la base de pruebas a la que apunta `DIRECT_URL`/`DATABASE_URL`, o
- * lanza si no es una de la lista blanca o falta `ALLOW_DB_RESET=1`.
- */
-export function assertTestDatabase(): string {
-  const url = process.env.DIRECT_URL ?? process.env.DATABASE_URL ?? '';
-  if (!url) throw new Error('Falta DATABASE_URL');
-  if (process.env.ALLOW_DB_RESET !== '1') {
-    throw new Error('Bloqueado: define ALLOW_DB_RESET=1 solo para la base de pruebas');
-  }
-
+function labelOf(name: string, url: string): string {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error('Bloqueado: DATABASE_URL no es una URL que se pueda leer');
+    throw new Error(`Bloqueado: ${name} no es una URL que se pueda leer`);
   }
   const allowed = ALLOWED.find((candidate) => candidate.test(parsed));
   if (!allowed) {
     // Sin la cadena de conexión en el mensaje: lleva la contraseña (regla dura 5). El host y
     // la base alcanzan para entender qué se estaba por tocar.
     throw new Error(
-      `Bloqueado: ${parsed.hostname}/${databaseName(parsed)} no es una base de pruebas. ` +
-        `Solo se admiten: ${ALLOWED.map((c) => c.label).join(', ')}.`,
+      `Bloqueado: ${name} apunta a ${parsed.hostname}/${databaseName(parsed)}, que no es una ` +
+        `base de pruebas. Solo se admiten: ${ALLOWED.map((c) => c.label).join(', ')}.`,
     );
   }
   return allowed.label;
+}
+
+/**
+ * Devuelve la etiqueta de la base de pruebas, o lanza si falta `ALLOW_DB_RESET=1` o si
+ * **alguna** de las dos URLs no es de la lista blanca.
+ *
+ * Se validan las dos y tienen que coincidir porque cada escritor usa una distinta:
+ * `prisma migrate deploy` va por `DIRECT_URL`, pero el `TRUNCATE` y el `updateMany` van por
+ * `DATABASE_URL` (el `url` del datasource). Validar solo una dejaba pasar el caso de quien
+ * exporta `DATABASE_URL` a otra base y hereda el `DIRECT_URL` de `ayr_local_e2e` que completa
+ * `playwright.config.ts`: el guard aprobaba mirando una y el vaciado caía sobre la otra.
+ */
+export function assertTestDatabase(): string {
+  if (process.env.ALLOW_DB_RESET !== '1') {
+    throw new Error('Bloqueado: define ALLOW_DB_RESET=1 solo para la base de pruebas');
+  }
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error('Falta DATABASE_URL');
+  const label = labelOf('DATABASE_URL', databaseUrl);
+  const directUrl = process.env.DIRECT_URL;
+  if (directUrl && labelOf('DIRECT_URL', directUrl) !== label) {
+    throw new Error('Bloqueado: DATABASE_URL y DIRECT_URL apuntan a bases de pruebas distintas');
+  }
+  return label;
 }
