@@ -149,9 +149,28 @@ esto, `StorageService` responde 503 — degradación ya prevista, no un fallo de
 
 ## ci
 
-La corrida completa de Playwright en GitHub Actions (`pnpm e2e`, con `CI=true`) vive contra la
-rama Neon `ci`, que se resetea por corrida — el residuo que la suite deja no le importa a
-nadie. **En local, `pnpm e2e` ya no toca Neon**: corre contra el Postgres de Docker de arriba
+**Desde D-202, CI tiene dos jobs de E2E y solo uno toca Neon:**
+
+- **`e2e` — la suite completa (`pnpm e2e`) contra un Postgres de servicio dentro del runner**
+  (`postgres:17-alpine`, la misma imagen que Docker local; base `ayr_ci_e2e` en `localhost`).
+  D-201 midió que la lentitud del E2E en CI era consultas × latencia runner→Neon, y esa latencia
+  depende de la región donde GitHub asigna el runner: con la base en el mismo host, la duración
+  vuelve a depender del código. La contraseña de esa base va en claro en `ci.yml` y no es un
+  secreto: la base nace y muere con el job.
+- **`smoke-neon` — lo que solo Neon valida, contra la rama Neon `ci`**: `prisma migrate deploy` y
+  `migrate status` en un paso propio (si una migración no aplica en Neon, el rojo lo dice), el
+  reset con su guard contra el endpoint real de la rama (D-181) y **`pnpm e2e:smoke`**, una
+  docena de specs representativos listados con su motivo en `scripts/e2e-smoke.mjs`. Corre sin
+  `NUBEFACT_*`: la emisión va por el camino sin PSE atado. Es el único job con
+  `concurrency: neon-ci-branch`, porque la rama se resetea en cada corrida.
+
+El guard de `apps/api/prisma/test-db-guard.ts` admite exactamente tres bases: `ayr_local_e2e`
+en Docker local, `ayr_ci_e2e` en `localhost` **solo con `GITHUB_ACTIONS=true`**, y el endpoint de
+la rama Neon `ci`. El host del runner es `localhost` y no el nombre del servicio (`postgres`)
+porque el job corre en el runner, no en un contenedor: el servicio se alcanza por el puerto
+mapeado.
+
+**En local, `pnpm e2e` ya no toca Neon**: corre contra el Postgres de Docker de arriba
 (base `ayr_local_e2e`), que también se vacía en cada corrida por default
 (`E2E_RESET_DB=1`, seteado por `playwright.config.ts`). Exportar `DATABASE_URL`/`DIRECT_URL` a
 mano antes de correr `pnpm e2e` sigue funcionando para apuntar a otra base puntualmente.
@@ -175,8 +194,14 @@ cuenta DEMO».
 - Están etiquetados **`@pse`** en el título y **excluidos de `pnpm e2e`** (`grepInvert` en
   `playwright.config.ts`).
 - Se corren aparte con **`pnpm e2e:pse`**, que pone `E2E_PSE=1` y con eso la suite corre
-  exactamente el complemento. **Antes hay que vaciar los comprobantes de la cuenta demo** en el
-  panel de Nubefact.
+  exactamente el complemento. **Si la cuenta demo está cerca de los 50, antes hay que vaciarla**
+  en el panel de Nubefact.
+- **La numeración ya no obliga a vaciarla hasta 0 (D-202).** El reset deja las series en 0 y la
+  cuenta demo recuerda los números que ya recibió, así que cada corrida volvía a mandar
+  `F001-00000001` y chocaba con la anterior. Ahora `e2e/global-setup.ts`, tras el reset y el
+  seed, corre `apps/api/prisma/e2e-fiscal-offset.ts`, que adelanta todas las series a
+  `10 000 000 + (epoch en segundos mod 80 000 000)`: dos corridas no reusan números. El cupo de
+  50 sigue siendo real; lo que deja de ser bloqueante es la numeración.
 - El flag va por **entorno y no por `--grep`** porque un `--grep` de la línea de comandos pisa a
   `grep` pero **no** a `grepInvert`: con bandera, `e2e:pse` habría corrido cero casos.
 
@@ -246,10 +271,34 @@ En su lugar:
 - **Post-deploy: `pnpm smoke:prod`.** Health sin sesión, login con el admin efímero y cuatro o
   cinco GET (líneas, catálogo, inventario, bobinas, reporte mensual). Lo único que escribe es
   ese usuario efímero, y lo borra en `finally`.
-- **La suite completa: local y CI**, contra `ci`. Es la que manda antes de un push (D-123).
+- **La suite completa: local y CI**, contra Docker local y el Postgres del runner; el smoke,
+  contra la rama Neon `ci` (D-202). Es la que manda antes de un push (D-123).
 - **`pnpm prod:purge-e2e` queda solo para emergencias documentadas**: si algún día vuelve a
   entrar residuo E2E a producción, se usa una vez y se anota en `PROGRESO.md` por qué.
 
 La regla no vive solo acá: `scripts/e2e-prod.mjs` **se niega a correr** salvo que se le pase
 `AYR_ALLOW_E2E_PROD=1`, y el mensaje que muestra remite a `pnpm smoke:prod`. Una prohibición que
 solo existe en un documento se saltea tecleando el comando de siempre.
+
+---
+
+## Checklist de ventana de deploy
+
+Lo que las ventanas V-2 y V-3 hicieron a mano, en orden. Cada paso se anota en `PROGRESO.md`
+con su resultado.
+
+1. **CI verde en `main`** sobre el último commit del lote: jobs `calidad`, `e2e` (Postgres del
+   runner) y `smoke-neon` (D-202). Un timeout no es un verde.
+2. **Respaldo Neon** de `production` (rama `respaldo-pre-deploy-AAAAMMDD`), vía
+   `scripts/lib.mjs#run` con `quiet: true` y `--output json` (regla dura 5).
+3. **Migraciones pendientes** en `production`: `node scripts/migrations-status.mjs --branch
+production`. Si alguna muta datos, se dice en `PROGRESO.md` cuál y qué hace.
+4. **Gate PSE: `pnpm e2e:pse`** en local.
+   - **Cupo:** si la cuenta demo de Nubefact está cerca de los 50 comprobantes, el dueño la
+     vacía antes. Sigue en el checklist porque el cupo es real.
+   - **Numeración: ya no es bloqueante (D-202).** Cada corrida parte de su propio correlativo,
+     así que no hace falta dejar la cuenta en 0 exacto para no chocar con números viejos. Un
+     rojo de «documento ya existe» después de D-202 **no** se acepta por clasificación: es un
+     defecto.
+5. **Deploy:** `pnpm deploy:api` y verificar `/health`; web por push a `main` (Vercel).
+6. **`pnpm smoke:prod`** (solo lectura, D-126). Nunca `pnpm e2e:prod`.

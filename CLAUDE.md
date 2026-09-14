@@ -63,7 +63,8 @@ pnpm db:seed                 # admin desde ADMIN_EMAIL/ADMIN_PASSWORD
 pnpm dev:local                       # Postgres en Docker + migrate + seed + api+web, sin Neon (docs/ENTORNOS.md)
 pnpm dev:preview                     # api :4000 + web :4001 contra ayr_local — puertos del DUEÑO (regla dura 15)
 pnpm db:local reset|snapshot <n>|restore <n>   # operar el Postgres local (Docker)
-pnpm e2e                     # Playwright, por defecto contra el Postgres local (Docker); en CI, Neon rama ci
+pnpm e2e                     # Playwright, por defecto contra el Postgres local (Docker); en CI, Postgres del runner (D-202)
+pnpm e2e:smoke               # ~12 specs representativos; en CI, contra Neon rama ci (D-202)
 pnpm e2e:pse                 # solo los casos @pse (necesitan cupo de la cuenta demo de Nubefact, docs/ENTORNOS.md)
 pnpm env:demo | db:demo | dev:demo   # entorno de ensayo (rama Neon demo, D-125)
 pnpm smoke:prod              # verificación post-deploy de SOLO LECTURA (D-126)

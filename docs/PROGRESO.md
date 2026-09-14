@@ -36,6 +36,7 @@
 | Sesión F8-S3b — Feedback: modal de stock, planta por pedido, patrón de acciones                 | ✅ Cerrada (2026-09-13) | Iteración sobre el feedback del dueño en `dev:preview`, solo UI y navegación: cero schema, lógica de dominio o endpoints. M1 (el modal de elegir producto ya no muestra el pool de bobinas y cabe sin scroll horizontal), M2 (D-194: `/planta` lista pedidos con producción pendiente, en el orden de `compareQueueRank` de su OP más urgente; cada pedido abre su cola y su workspace; la prioridad se asigna al pedido y se propaga a sus OPs con el PATCH por orden), M3 (D-195: `HeaderActions`, principal + menú «Más acciones», en cotización, pedido, comprobante, despacho, bobina, lista de bobinas y compra; excepción explícita por D-153 en el borrador de comprobante) y M4 (D-196: abrir orden nueva y registrar pago en drawer, historial de órdenes como vista propia). Nada sacrificado. `revisor` sin bloqueantes ni altos (1 medio y 9 bajos, corregidos); `qa` sin defectos, sumó 8 casos. Desplegado en la Ventana V-3 (2026-09-14). Al cierre de la sesión: lint/typecheck/format y 414/414 unitarios en verde; suite E2E completa: 302 verdes, 2 saltados (cupo PSE), 0 caídos. Handoff: `docs/handoff/f8-s3b-planta-por-pedido-acciones.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Sesión F8-S3c — Segunda iteración de feedback: planta directa, ML visibles, selector de cliente | ✅ Cerrada (2026-09-13) | Tercera vuelta sobre el feedback del dueño en `dev:preview`, solo UI/presentación: cero schema, lógica de dominio o endpoints nuevos. M1 (D-197: sin card de «Cola de producción» separado — la franja de chips trae de entrada todas las órdenes del pedido, iniciadas o no, con su `queueNote` para las que no arrancaron), M2 (D-198: la tarjeta de cada pedido en `/planta` enlaza su cotización de origen), M3 (D-199: el disponible de materia prima en coberturas se ve en ML con el kg entre paréntesis — modal de elegir producto, «pendiente» de cada bobina montada y «Disponible» del detalle de bobina; de paso, padding consistente en los dos drawers que lo tenían pegado al borde) y M4 (D-200: el selector de cliente de la cotización siempre abre el buscador, con «+ Crear cliente» dentro del modal). Nada sacrificado. `revisor` sin bloqueantes ni altos (1 medio — memoización de `pedidoQueue` — y 1 bajo — `equivalentMetersOf` reescribía a mano una cuenta de `@ayr/shared` —, corregidos); `qa` adaptó 6 specs a la vista directa, sumó 2 specs nuevos (chips + link a cotización; selector de cliente) y encontró una regresión real de M4 en el helper compartido `chooseOption` (buscaba el botón por `"Seleccionar {label}"` fijo; con el cliente en `actionLabel="Elegir"` dejó de encontrarlo), corregida generalizando el helper a buscar por fila. Desplegado en la Ventana V-3 (2026-09-14). Al cierre de la sesión: lint/typecheck/format y 414/414 unitarios en verde; suite E2E completa: 306 verdes, 2 saltados (cupo PSE), 0 caídos (un `m2-reversa-pago.spec.ts` transitorio en la primera corrida completa — colisión de `getByText` con el `SheetDescription` del drawer de pago durante su animación de cierre, aislado 8/8 y limpio en la corrida siguiente completa; no es de esta sesión, no se tocó). Handoff: `docs/handoff/f8-s3c-planta-directa-ml-selector-cliente.md`. |
 | Sesión F8-R1 — Diagnóstico de la lentitud del E2E en CI                                         | ✅ Cerrada (2026-09-14) | Diagnóstico sin fix de producto (no hay regresión de producto). Causa nombrada con CI instrumentada: la lentitud es consultas × latencia runner→Neon, que varía por la región del runner; el lote sube el total de consultas ×1,64 sin encarecer cada una (D-201). Resolvió B-V3-5 y cerró la Ventana V-3 (run 34875631463: 305 passed en 92 min). Palanca elegida: E2E de CI contra un Postgres de servicio en el runner, en una sesión propia de salud E2E. Análisis: `docs/analisis/f8-r1-rendimiento.md`. Handoff: `docs/handoff/f8-r1-diagnostico-ci-cierre-v3.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Sesión F8-R2 — Salud E2E: Postgres del runner, smoke de Neon y correlativos                     | ✅ Cerrada (2026-09-14) | D-202, solo infra (cero producto, cero schema). La suite completa de CI corre contra un Postgres de servicio en el runner: 305 passed / 3 skipped en 9,6 min (run 34900414817), contra 92 min en Neon, con las mismas consultas (124 661) a 0,08 ms. Timeout 110 → 30. Nuevo job `smoke-neon`: migraciones y `pnpm e2e:smoke` (35 passed) contra la rama `ci`. Guard compartido en `test-db-guard.ts`, que valida las dos URLs (ALTO de `revisor`). Correlativos fiscales por corrida para la cuenta demo de Nubefact. Dos fallas que la latencia escondía (`fase2a`, `m2-reversa-pago`), corregidas. Handoff: `docs/handoff/f8-r2-salud-e2e.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 8 — Auditoría, reportes, UAT                                                                    | 🟡 En curso             | F8-S1, F8-S2, F8-S2b, F8-S3, F8-S3b y F8-S3c cerradas (nada sacrificado). Resto de la fase (auditoría, reportes, UAT) sin empezar.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ## Fase 0 — detalle
@@ -4952,11 +4953,9 @@ el total de consultas de la suite ×1,64, sin encarecer cada una (D-201).
 
 **Deuda que deja la ventana:**
 
-- **Sesión de salud E2E** (D-201): E2E completo de CI contra un Postgres de servicio dentro del
-  runner; Neon solo para el chequeo de migraciones y un smoke chico (~10-15 specs representativos
-  más el guard de reset); y los correlativos de la cuenta demo de Nubefact. Hasta entonces, la CI
-  de `main` sigue contra Neon y **puede volver a cortarse por timeout según dónde caiga el
-  runner**, sin que eso indique una regresión.
+- ~~**Sesión de salud E2E** (D-201)~~ — **RESUELTA** en la Sesión F8-R2 (D-202, abajo): E2E
+  completo de CI en el Postgres del runner (~10 min), smoke contra Neon `ci` y correlativos por
+  corrida.
 - **Backlog de rendimiento:**
   - `GET /sales/quotations/stock-shortages` (la tarjeta de faltantes del Panel, D-188) cuesta ~16
     consultas por cotización emitida en cada carga y cada 60 s. D-184 más D-157 hacen que el
@@ -4988,6 +4987,62 @@ decisión es D-201.
 - **Ramas diag:** `diag/f8-r1-instrumentacion` y `diag/f8-r1-instrumentacion-base` se pushearon
   con autorización del dueño, nunca se mergearon y se borraron al cerrar. La instrumentación
   vivió y murió en ellas.
+
+## Sesión F8-R2 — Salud E2E: Postgres del runner, smoke de Neon y correlativos (2026-09-14) — CERRADA
+
+Implementa D-201; la decisión es **D-202**. Solo infra: `ci.yml`, guard, scripts de E2E, dos
+specs y docs. Cero producto, cero schema.
+
+- **Suite completa de CI contra un Postgres de servicio en el runner** (`postgres:17-alpine`,
+  `ayr_ci_e2e` en `localhost`). Medida con la instrumentación de F8-R1 en la rama
+  `diag/salud-e2e`, dos corridas en dos regiones:
+
+  | Run                              | Runner    | Resultado                       | Suite   | Consultas | ms/consulta |
+  | -------------------------------- | --------- | ------------------------------- | ------- | --------: | ----------: |
+  | 34875631463 (F8-R1, Neon)        | centralus | 305 passed                      | 92 min  |   125 241 |   42,4 / 80 |
+  | 34898572060 (runner, 1.ª)        | WestUS3   | 303 passed, 2 failed, 3 skipped | 9,8 min |   124 504 |        0,07 |
+  | 34900414817 (runner, con el fix) | eastus    | **305 passed, 3 skipped**       | 9,6 min |   124 661 |        0,08 |
+
+  **Línea base nueva de CI: 305 passed / 3 skipped en ~10 min (job ~12 min).** Timeout del job
+  110 → 30 min. Mismas consultas que en Neon (×0,99): la diferencia es entera la latencia, como
+  predijo D-201.
+
+- **Dos fallas que la latencia escondía.** En la primera corrida, `fase2a.spec.ts:471` y
+  `m2-reversa-pago.spec.ts:233` fallaron en los dos intentos: `getByText('S/ 6,800.00')` chocaba en
+  modo estricto con la descripción del drawer de pago («Saldo pendiente: S/ …») mientras se
+  cierra. Con 16-80 ms por consulta el drawer ya se había ido; con 0,07 ms no. Son las dos
+  «fragilidades bajo latencia» del handoff de F8-R1. Fix: `{ exact: true }`. Local ×3: 36/36.
+  `qa` revisó el resto de la suite buscando el mismo patrón: ningún otro caso.
+- **Job `smoke-neon`** contra la rama `ci`: `migrate deploy` + `migrate status` en paso propio
+  («61 migrations found», «Database schema is up to date!»), reset con guard y `pnpm e2e:smoke`
+  (12 archivos: 35 passed / 2 skipped, en 8,2 min en `WestUS3` y 13,6 min en `eastus`). Timeout 45. Único job con `concurrency: neon-ci-branch`.
+- **Guard** (`apps/api/prisma/test-db-guard.ts`): lista blanca de tres bases. El host del runner es
+  `localhost` y no `postgres` (el job corre en el runner, no en un contenedor), verificado con
+  `new URL()` sobre la URL del workflow y en el log de CI («Reset sobre Postgres del runner de CI
+  (ayr_ci_e2e)»). `revisor` encontró un **ALTO**: el guard validaba `DIRECT_URL` pero el
+  `TRUNCATE` escribe por `DATABASE_URL`. Venía del guard anterior y ahora valida las dos. Probado
+  con 12 combinaciones de URLs.
+- **Correlativos por corrida** (`apps/api/prisma/e2e-fiscal-offset.ts`): tras reset y seed, las
+  cinco series parten de `10 000 000 + (epoch en segundos mod 80 000 000)`. Verificado en local y
+  en los dos jobs de CI (p. ej. «5 series parten de 39422442»). Documentado en `e2e/README.md` y en
+  el checklist de ventana nuevo de `docs/ENTORNOS.md`. **Sin verificar contra la cuenta demo:**
+  que Nubefact acepte un correlativo de 8 dígitos como primer número de una serie. Lo prueba el
+  próximo `pnpm e2e:pse`; si lo rechaza, D-202 se revisa antes de la ventana.
+- **`docs/analisis/e2e-velocidad.md`** entra al repo con cabecera: son estimaciones sin medir.
+- **Rama `diag/salud-e2e`:** pusheada para medir, nunca mergeada, borrada (remoto, local y
+  worktree). La instrumentación sigue fuera de git, en `local-data/r1/tools/diag/`; los `.jsonl`
+  de las dos corridas quedaron en `local-data/r1/salud-runner*.jsonl`.
+- **Pendientes que deja:**
+  - Los worktrees `../wt-r1-base` y `../wt-r1-head` de F8-R1 **siguen existiendo**, aunque el
+    handoff anterior los daba por borrados. `wt-r1-head` tiene sin trackear
+    `e2e/tests/zz-bench-shortages.spec.ts`. No se tocaron.
+  - El rango de correlativos da la vuelta el 2028-04-22: ese día hay que vaciar la cuenta demo
+    una vez.
+  - Sin PSE en `smoke-neon`, el caso «anular la venta del turno» de `fase7b` espera 60 s a una
+    aceptación que no llega y se salta. Cuesta un minuto y no suma cobertura.
+  - Backlog de rendimiento de F8-R1 sin cambios: `stock-shortages` en producción, ~12 ms del pool
+    y reducir consultas por test. **Workers en paralelo** se reevalúa ahora que la suite dura 10
+    min: con este número no aprieta.
 
 ## Bloqueos
 
