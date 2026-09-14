@@ -97,6 +97,9 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
   });
   const kind = form.watch('kind');
   const withColor = isKind(kind) && finishKindHasColor(kind);
+  // D-203: con bobinas o compras, tipo, color y línea quedan fijos (el API lo rechaza igual).
+  // Un acabado sin tipo, en cambio, se completa aunque tenga uso.
+  const identityLocked = editing && finish.inUse && finish.kind !== null;
 
   const save = useMutation({
     mutationFn: (values: FormValues) => {
@@ -108,7 +111,11 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
       if (editing) {
         return api<FinishDto>(`/finishes/${finish.id}`, {
           method: 'PATCH',
-          body: { name: values.name, densityFactor: values.densityFactor, ...identity },
+          body: {
+            name: values.name,
+            densityFactor: values.densityFactor,
+            ...(identityLocked ? {} : identity),
+          },
         });
       }
       return api<FinishDto>('/finishes', {
@@ -149,6 +156,18 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
             El color de las bobinas sale del acabado: una bobina prepintada se registra eligiendo su
             acabado, sin cargar el color aparte.
           </DialogDescription>
+          {identityLocked && (
+            <p className="text-sm text-muted-foreground">
+              Este acabado ya tiene bobinas o compras: su línea, tipo y color no se cambian porque
+              repintarían ese material. Para otro color, crea un acabado nuevo.
+            </p>
+          )}
+          {editing && finish.kind === null && (
+            <p className="text-sm text-muted-foreground">
+              Acabado sin tipo (anterior a D-203): complétalo. Si ya tiene bobinas de otro color o
+              de otra línea, pásalas antes a su acabado con «Editar bobina».
+            </p>
+          )}
         </DialogHeader>
         <Form {...form}>
           <form
@@ -195,7 +214,11 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Línea</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    disabled={identityLocked}
+                  >
                     <FormControl>
                       <SelectTrigger className="w-full" aria-label="Línea">
                         <SelectValue placeholder="Elige la línea" />
@@ -221,6 +244,7 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
                   <FormLabel>Tipo</FormLabel>
                   <Select
                     value={field.value}
+                    disabled={identityLocked}
                     onValueChange={(v) => {
                       field.onChange(v);
                       form.clearErrors('colorId');
@@ -254,6 +278,7 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
                       value={field.value}
                       onChange={field.onChange}
                       allowEmpty={false}
+                      disabled={identityLocked}
                       placeholder="Elige el color"
                     />
                     <FormDescription>

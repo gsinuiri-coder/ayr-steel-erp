@@ -1608,10 +1608,38 @@ export class SalesOrdersService {
     // La vigencia nueva ya pasó: no hay nada que confirmar, así que la reserva termina vencida
     // en vez de recrearse con un vencimiento en el pasado.
     if (expiresAt.getTime() <= Date.now()) {
-      await this.endTemporaryInTx(tx, quotationId, {
+      const ended = await this.endTemporaryInTx(tx, quotationId, {
         status: TemporaryReservationStatus.EXPIRED,
         actorId: actor.id,
         reason: 'Edición de la cotización: la vigencia nueva ya venció',
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.quotation.recalculate-temporary',
+        entity: 'quotations',
+        entityId: quotationId,
+        before: { lines: current.length, expiresAt: first.expiresAt.toISOString() },
+        after: { lines: ended, status: TemporaryReservationStatus.EXPIRED },
+      });
+      return;
+    }
+
+    // Solo se acortó el plazo: lo reservado no cambia, así que se mueve el vencimiento sin liberar
+    // ni volver a reservar. Re-reservar revalidaría el disponible, y un agregado que bajó por un
+    // camino que avisa en vez de rechazar (merma, consumo a stock, D-154) tumbaría una edición
+    // que solo **reduce** el compromiso.
+    if (before === after) {
+      await tx.quotationReservation.updateMany({
+        where: { quotationId, ...liveTemporaryWhere() },
+        data: { expiresAt },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.quotation.recalculate-temporary',
+        entity: 'quotations',
+        entityId: quotationId,
+        before: { lines: current.length, expiresAt: first.expiresAt.toISOString() },
+        after: { lines: current.length, expiresAt: expiresAt.toISOString() },
       });
       return;
     }
@@ -1619,10 +1647,7 @@ export class SalesOrdersService {
     await this.endTemporaryInTx(tx, quotationId, {
       status: TemporaryReservationStatus.RELEASED,
       actorId: actor.id,
-      reason:
-        before === after
-          ? 'Edición de la cotización: la vigencia se acortó y la reserva vence antes'
-          : 'Edición de la cotización: se recalculó la reserva',
+      reason: 'Edición de la cotización: se recalculó la reserva',
     });
     let created = 0;
     await this.reserveLines(tx, lines, 'la reserva', async (line) => {

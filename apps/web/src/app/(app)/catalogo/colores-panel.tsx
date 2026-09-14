@@ -50,7 +50,7 @@ const formSchema = z.object({
   ralCode: z
     .string()
     .trim()
-    .regex(/^(d{4})?$/, 'El RAL son cuatro dígitos (ej: 3002)'),
+    .regex(/^(\d{4})?$/, 'El RAL son cuatro dígitos (ej: 3002)'),
   hexColor: z
     .string()
     .trim()

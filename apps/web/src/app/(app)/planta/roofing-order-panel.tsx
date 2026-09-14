@@ -268,7 +268,9 @@ export function RoofingOrderPanel({
   // del commit, y atada al contenido de la fila.
   const addKey = useIdempotencyKey();
   const saveDraft = useMutation({
-    mutationFn: (pieces: RoofingPieceDto[]) => {
+    // `isAdd` viaja con la mutación: `onSettled` tiene que saber qué se mandó, no qué hay en
+    // pantalla cuando vuelve la respuesta.
+    mutationFn: ({ pieces }: { pieces: RoofingPieceDto[]; isAdd: boolean }) => {
       const body = {
         pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
         ...(resolved.coil ? { coilId: resolved.coil.coilId } : {}),
@@ -289,8 +291,8 @@ export function RoofingOrderPanel({
         },
       );
     },
-    onSettled: (_data, error) => {
-      if (editing === null) addKey.settle(error ?? undefined);
+    onSettled: (_data, error, variables) => {
+      if (variables.isAdd) addKey.settle(error ?? undefined);
     },
     onSuccess: () => {
       toast.success(
@@ -736,7 +738,9 @@ export function RoofingOrderPanel({
                   }
                   disabled={resolved.pieces === null || resolved.error !== null || busy}
                   onClick={() => {
-                    if (resolved.pieces) saveDraft.mutate(resolved.pieces);
+                    if (resolved.pieces) {
+                      saveDraft.mutate({ pieces: resolved.pieces, isAdd: editing === null });
+                    }
                   }}
                 >
                   {saveDraft.isPending

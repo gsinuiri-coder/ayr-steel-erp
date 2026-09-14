@@ -21,11 +21,13 @@ import { PrismaService } from '../prisma/prisma.service';
 type FinishRow = Finish & {
   color: Color | null;
   businessLine: { code: BusinessLineCode } | null;
+  _count: { coils: number; purchaseItems: number };
 };
 
 const FINISH_INCLUDE = {
   color: true,
   businessLine: { select: { code: true } },
+  _count: { select: { coils: true, purchaseItems: true } },
 } as const;
 
 /**
@@ -93,8 +95,10 @@ export class FinishesService {
   async update(actor: RequestUser, id: string, input: UpdateFinishInput): Promise<FinishDto> {
     const after = await this.prisma.$transaction(async (tx) => {
       // Lock de la fila: una recepción de bobina que lea este acabado en paralelo no ve un color
-      // a medio cambiar.
-      await tx.$queryRaw`SELECT "id" FROM "finishes" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      // a medio cambiar. `NO KEY UPDATE` y no `UPDATE`: la FK de una bobina o un ítem de compra
+      // que se inserta con este acabado pide `KEY SHARE` sobre la fila, y `UPDATE` chocaba con
+      // ella — un partido con la madre bloqueada y esta edición podían trabarse entre sí.
+      await tx.$queryRaw`SELECT "id" FROM "finishes" WHERE "id" = ${id}::uuid FOR NO KEY UPDATE`;
       const before = await tx.finish.findUnique({ where: { id }, include: FINISH_INCLUDE });
       if (!before) throw new NotFoundException('Acabado no encontrado');
 
@@ -105,7 +109,6 @@ export class FinishesService {
 
       const touchesIdentity =
         input.kind !== undefined || input.colorId !== undefined || input.businessLine !== undefined;
-      let colorChanged = false;
       if (touchesIdentity) {
         const kind = input.kind ?? before.kind;
         if (kind === null) {
@@ -132,7 +135,22 @@ export class FinishesService {
           colorId !== before.colorId ||
           businessLineId !== before.businessLineId;
         // Un acabado anterior a D-203 sin mapear (sin tipo) sí se completa aunque tenga uso: es
-        // justamente el paso que le falta. Uno ya mapeado con uso no cambia de identidad.
+        // justamente el paso que le falta. Pero **completarlo nunca repinta**: si alguna de sus
+        // bobinas o compras tiene otro color o es de otra línea, se rechaza y se dice cuántas. Antes
+        // de D-203 un mismo acabado podía llevar bobinas de colores distintos, y repintarlas en
+        // masa movería material prometido en el agregado (D-134/D-154) o montado en una OP con la
+        // igualdad de color ya validada (D-086). Esas bobinas se pasan primero, una por una, al
+        // acabado que les corresponde con «Editar bobina», que sí revisa todo eso.
+        if (changed && before.kind === null) {
+          const mismatched = await countMismatchedUses(tx, id, colorId, businessLineId);
+          if (mismatched.coils > 0 || mismatched.purchaseItems > 0) {
+            throw new BadRequestException(
+              `El acabado tiene ${mismatched.coils} bobina(s) y ${mismatched.purchaseItems} ítem(s) de compra ` +
+                'con otro color o de otra línea que lo elegido: pásalas primero al acabado que les corresponde (Editar bobina) y vuelve a completarlo',
+            );
+          }
+        }
+        // Uno ya mapeado con uso no cambia de identidad.
         if (changed && before.kind !== null) {
           const uses = await countUses(tx, id);
           if (uses.coils > 0 || uses.purchaseItems > 0) {
@@ -145,19 +163,11 @@ export class FinishesService {
         data.kind = kind;
         data.colorId = colorId;
         data.businessLineId = businessLineId;
-        colorChanged = colorId !== before.colorId;
       }
 
+      // Si el color se movió (solo al completar un acabado sin mapear), sus bobinas y compras lo
+      // siguen en la misma sentencia: trigger `finishes_color_to_items` (D-203).
       const updated = await tx.finish.update({ where: { id }, data, include: FINISH_INCLUDE });
-      // El color de las bobinas y compras de este acabado es el del acabado (D-203). Solo puede
-      // moverse al completar un acabado sin mapear; se alinea en la misma transacción.
-      if (colorChanged) {
-        await tx.coil.updateMany({ where: { finishId: id }, data: { colorId: updated.colorId } });
-        await tx.purchaseItem.updateMany({
-          where: { finishId: id },
-          data: { colorId: updated.colorId },
-        });
-      }
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'finishes.update',
@@ -206,6 +216,31 @@ async function resolveLine(tx: Prisma.TransactionClient, line: BusinessLine): Pr
   return row.id;
 }
 
+/**
+ * Bobinas e ítems de compra del acabado que **no** coinciden con el color y la línea elegidos
+ * (`IS DISTINCT FROM`: un color nulo contra uno elegido también cuenta). Bobinas anuladas
+ * incluidas: su color también es historia.
+ */
+async function countMismatchedUses(
+  tx: Prisma.TransactionClient,
+  finishId: string,
+  colorId: string | null,
+  businessLineId: string,
+): Promise<{ coils: number; purchaseItems: number }> {
+  const [coils] = await tx.$queryRaw<{ n: bigint }[]>`
+    SELECT count(*) AS n FROM "coils"
+    WHERE "finish_id" = ${finishId}::uuid
+      AND ("color_id" IS DISTINCT FROM ${colorId}::uuid OR "business_line_id" <> ${businessLineId}::uuid)
+  `;
+  const [items] = await tx.$queryRaw<{ n: bigint }[]>`
+    SELECT count(*) AS n FROM "purchase_items" pi
+    JOIN "purchases" p ON p."id" = pi."purchase_id"
+    WHERE pi."finish_id" = ${finishId}::uuid
+      AND (pi."color_id" IS DISTINCT FROM ${colorId}::uuid OR p."business_line_id" <> ${businessLineId}::uuid)
+  `;
+  return { coils: Number(coils?.n ?? 0), purchaseItems: Number(items?.n ?? 0) };
+}
+
 async function countUses(
   tx: Prisma.TransactionClient,
   finishId: string,
@@ -229,6 +264,7 @@ function toDto(f: FinishRow): FinishDto {
     colorHex: f.color?.hexColor ?? null,
     colorRal: f.color?.ralCode ?? null,
     businessLine: f.businessLine ? toSharedLineCode(f.businessLine.code) : null,
+    inUse: f._count.coils > 0 || f._count.purchaseItems > 0,
     isActive: f.isActive,
     createdAt: f.createdAt.toISOString(),
     updatedAt: f.updatedAt.toISOString(),

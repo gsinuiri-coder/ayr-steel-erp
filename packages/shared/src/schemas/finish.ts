@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { decimalStringSchema } from '../decimal';
-import { BusinessLine, COIL_BUSINESS_LINES } from '../enums';
+import { COIL_BUSINESS_LINES, type BusinessLine } from '../enums';
 
 /**
  * Tipo de acabado (D-203). Decide el color: `PREPINTADO` lo exige, `NATURAL` y `GALVANIZADO`
@@ -58,6 +58,11 @@ export const finishSchema = z.object({
   colorHex: z.string().nullable(),
   colorRal: z.string().nullable(),
   businessLine: z.string().nullable(),
+  /**
+   * Tiene bobinas o ítems de compra. Con uso, tipo, color y línea ya no se cambian (D-203); la
+   * pantalla los bloquea en vez de dejar descubrirlo con un 400.
+   */
+  inUse: z.boolean(),
   isActive: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),

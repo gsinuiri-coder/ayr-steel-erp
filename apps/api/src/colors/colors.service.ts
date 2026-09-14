@@ -94,19 +94,28 @@ export class ColorsService {
     if (input.hexColor !== undefined) data.hexColor = input.hexColor;
     if (input.isActive !== undefined) data.isActive = input.isActive;
 
-    const after = await this.prisma.$transaction(async (tx) => {
-      if (input.name !== undefined) await assertNameFree(tx, input.name, id);
-      const updated = await tx.color.update({ where: { id }, data });
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'colors.update',
-        entity: 'colors',
-        entityId: id,
-        before: auditView(before),
-        after: auditView(updated),
+    const after = await this.prisma
+      .$transaction(async (tx) => {
+        if (input.name !== undefined) await assertNameFree(tx, input.name, id);
+        const updated = await tx.color.update({ where: { id }, data });
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'colors.update',
+          entity: 'colors',
+          entityId: id,
+          before: auditView(before),
+          after: auditView(updated),
+        });
+        return updated;
+      })
+      .catch((err: unknown) => {
+        // Dos renombres simultáneos al mismo nombre pasan los dos `assertNameFree`; el índice
+        // `colors_name_lower_key` decide, y eso es un 409, no un 500.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          throw new ConflictException('Ya existe un color con ese nombre');
+        }
+        throw err;
       });
-      return updated;
-    });
     return toDto(after);
   }
 
