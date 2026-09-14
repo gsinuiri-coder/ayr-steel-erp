@@ -42,32 +42,42 @@ jobs:
           if-no-files-found: ignore
 
   e2e:
-    name: E2E Playwright (Neon ci)
+    name: E2E Playwright (Postgres del runner)
     runs-on: ubuntu-latest
     needs: calidad
-    # La suite crecio con Fase 5b (19 tests mas) y el entorno de CI no tiene PSE, asi que
-    # los documentos se quedan pendientes y el barrido reprocesa una cola que solo crece.
-    # Con 20 minutos la corrida quedaba al filo, y con 30 la Fase 6 (11 tests mas, cada uno
-    # con su compra, recepcion y ciclo comercial contra Neon) la corto a mitad de camino.
+    # D-202: la suite completa corre contra un Postgres de servicio **dentro del runner**, no
+    # contra Neon. D-201 midió que la lentitud del E2E en CI era consultas × latencia
+    # runner→Neon, y esa latencia cambia con la región donde cae el runner (16 ms en `eastus`,
+    # 33 en `centralus`, ~80 en la corrida que se cortó a los 110 min). Con la base a 0 ms, la
+    # duración vuelve a depender del código y no de la lotería de la región.
     #
-    # Fase 7c: 50 tampoco alcanza. Lo que manda no es el numero de tests sino la varianza de
-    # Neon: la **misma** suite de 136 tardo 22 min y 41 min el mismo dia, y con 149 la
-    # corrida lenta se pasa. El techo se pone sobre el peor caso medido y no sobre el
-    # promedio, porque un timeout no distingue "lento" de "roto" y obliga a reejecutar la
-    # hora entera para averiguarlo.
+    # Lo que solo Neon valida (pooler, planes de consulta reales, migraciones aplicadas ahí)
+    # sigue cubierto por el job `smoke-neon`, más abajo.
     #
-    # Ventana V-3 (F8): 75 cortó la primera CI sobre el lote a los 73 min, sin un solo rojo
-    # visible. 308 tests en 1 worker a ~10 s cada uno (V-2: 245 en 42 min) dan ~53 min en un
-    # día normal y ~100 en uno lento de Neon (x2). 110 cubre ese peor caso; la solución de
-    # fondo (workers en paralelo o partir la suite) es deuda anotada en docs/PROGRESO.md.
+    # TIMEOUT_E2E_RUNNER (se fija con la primera corrida medida, ver docs/PROGRESO.md).
     timeout-minutes: 110
-    # La rama Neon `ci` se resetea en cada corrida: solo una corrida a la vez.
-    concurrency:
-      group: neon-ci-branch
-      cancel-in-progress: false
+    services:
+      postgres:
+        # La misma imagen que docker-compose.yml: local y CI corren la suite sobre el mismo motor.
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ayr
+          POSTGRES_PASSWORD: ayr_ci
+          POSTGRES_DB: ayr_ci_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ayr -d ayr_ci_e2e"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     env:
-      DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
-      DIRECT_URL: ${{ secrets.CI_DIRECT_URL }}
+      # El job corre en el runner, no en un contenedor: el servicio se alcanza por el puerto
+      # mapeado en `localhost`, que es exactamente el host que admite el guard de
+      # `apps/api/prisma/test-db-guard.ts` para `ayr_ci_e2e` (y solo con GITHUB_ACTIONS=true).
+      # La contraseña no es un secreto: la base nace y muere con el job.
+      DATABASE_URL: postgresql://ayr:ayr_ci@localhost:5432/ayr_ci_e2e?schema=public
+      DIRECT_URL: postgresql://ayr:ayr_ci@localhost:5432/ayr_ci_e2e?schema=public
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
       ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
@@ -120,6 +130,77 @@ jobs:
         if: failure()
         with:
           name: playwright-report
+          path: playwright-report
+          retention-days: 7
+
+  smoke-neon:
+    name: Smoke E2E y migraciones (Neon ci)
+    runs-on: ubuntu-latest
+    needs: calidad
+    # D-202: lo que el Postgres del runner no puede validar. Migraciones aplicadas sobre Neon,
+    # el reset con su guard contra el endpoint real de la rama `ci` (D-181) y una docena de
+    # specs representativos (`scripts/e2e-smoke.mjs`) pasando por el pooler de Neon. Si la
+    # región del runner lo pone lento, son ~40 tests y no 308.
+    timeout-minutes: 45
+    # La rama Neon `ci` se resetea en cada corrida: solo una corrida a la vez.
+    concurrency:
+      group: neon-ci-branch
+      cancel-in-progress: false
+    env:
+      DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.CI_DIRECT_URL }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      E2E_ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      CI: true
+      ALLOW_DB_RESET: '1'
+      THROTTLE_DISABLED: 'true'
+      # Sin NUBEFACT_*: el smoke recorre la emisión por el camino sin PSE atado (contingencia,
+      # D-073/D-080). La aceptación real es `pnpm e2e:pse`, fuera de CI.
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ayr/shared build
+      - run: pnpm --filter @ayr/api db:generate
+      # Migraciones sobre Neon **antes** de la suite, en su propio paso: si una migración no
+      # aplica ahí, el rojo tiene que decir «migración» y no «falló el global-setup».
+      - name: Migraciones sobre Neon ci
+        run: |
+          pnpm --filter @ayr/api db:deploy
+          pnpm --filter @ayr/api exec prisma migrate status
+      - run: pnpm --filter @ayr/api build
+      - run: pnpm --filter @ayr/web build
+        env:
+          API_URL: http://localhost:3000
+      - name: Caché de navegadores Playwright
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm exec playwright install --with-deps chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+      - run: pnpm exec playwright install-deps chromium
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+      - run: pnpm e2e:smoke
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-smoke-neon
           path: playwright-report
           retention-days: 7
 

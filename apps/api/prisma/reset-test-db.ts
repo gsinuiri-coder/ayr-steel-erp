@@ -2,70 +2,16 @@
  * Reset de la base de PRUEBAS: aplica migraciones pendientes y **vacía todas las tablas**.
  * Exige `ALLOW_DB_RESET=1` explícito. Uso: `ALLOW_DB_RESET=1 pnpm exec tsx prisma/reset-test-db.ts`
  *
- * Las dos bases legítimas son el Postgres local de Docker (`ayr_local_e2e`) y la rama Neon
- * `ci`; ninguna otra.
+ * Solo contra una base de la lista blanca de `test-db-guard.ts`; ninguna otra.
  */
 import 'dotenv/config';
 import { execSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
-
-/**
- * **Lista blanca, no lista negra**, y el cambio importa desde que esto vacía **todas** las
- * tablas y no nueve.
- *
- * El guardrail anterior rechazaba el endpoint de producción y `NODE_ENV=production`, o sea que
- * dejaba pasar todo lo demás — incluida la rama Neon **`dev`**, que es lo que
- * `apps/api/.env` apunta después de un `pnpm env:local` y lo que este guion lee por
- * `dotenv/config`. Mientras el vaciado eran inventario, compras y usuarios, correrlo por error
- * contra `dev` costaba poco. Ahora se lleva también el catálogo, los clientes, las
- * cotizaciones y los comprobantes de esa rama, que es trabajo de verdad.
- *
- * Una lista negra hay que acordarse de ampliarla cada vez que aparece una base nueva; una
- * lista blanca falla sola ante lo que no reconoce, que es el lado correcto para fallar cuando
- * la operación es irreversible.
- */
-const ALLOWED = [
-  // Postgres de docker-compose.yml (`scripts/local-docker-env.mjs`), base exclusiva de la suite.
-  { label: 'Docker local (ayr_local_e2e)', test: (u: URL) => isLocalE2E(u) },
-  // Rama Neon `ci`, que se resetea en cada corrida de GitHub Actions.
-  //
-  // El prefijo es el del **endpoint de cómputo** de la rama, no el de su branch id — son dos
-  // identificadores aleatorios independientes en Neon y no tienen por qué coincidir (D-181):
-  // el valor anterior, `ep-misty-band-`, copiaba el id de la rama (`br-misty-band-...`) en vez
-  // de verificar el endpoint real, y nunca coincidió con nada. Si esto vuelve a desalinearse,
-  // el endpoint vigente sale de `neonctl branches get ci --output json` (campo del compute),
-  // nunca de la cadena de conexión completa (regla dura 5).
-  { label: 'Neon rama ci', test: (u: URL) => u.hostname.startsWith('ep-dry-butterfly-') },
-];
-
-function isLocalE2E(url: URL): boolean {
-  const localHost = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
-  return localHost && url.pathname.replace(/^\//, '') === 'ayr_local_e2e';
-}
+import { assertTestDatabase } from './test-db-guard';
 
 async function main(): Promise<void> {
-  const url = process.env.DIRECT_URL ?? process.env.DATABASE_URL ?? '';
-  if (!url) throw new Error('Falta DATABASE_URL');
-  if (process.env.ALLOW_DB_RESET !== '1') {
-    throw new Error('Reset bloqueado: define ALLOW_DB_RESET=1 solo para la base de pruebas');
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error('Reset bloqueado: DATABASE_URL no es una URL que se pueda leer');
-  }
-  const allowed = ALLOWED.find((candidate) => candidate.test(parsed));
-  if (!allowed) {
-    // Sin la cadena de conexión en el mensaje: lleva la contraseña (regla dura 5). El host y
-    // la base alcanzan para entender qué se estaba por borrar.
-    throw new Error(
-      `Reset bloqueado: ${parsed.hostname}/${parsed.pathname.replace(/^\//, '')} no es una base ` +
-        `de pruebas. Solo se vacían: ${ALLOWED.map((c) => c.label).join(' o ')}.`,
-    );
-  }
-  console.warn(`Reset sobre ${allowed.label}.`);
+  const label = assertTestDatabase();
+  console.warn(`Reset sobre ${label}.`);
 
   execSync('pnpm exec prisma migrate deploy', { stdio: 'inherit', env: process.env });
 
