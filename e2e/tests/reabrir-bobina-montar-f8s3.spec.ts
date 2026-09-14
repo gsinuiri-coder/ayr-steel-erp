@@ -177,7 +177,7 @@ test.describe('D-193 — reabrir una bobina cerrada para montarla', () => {
       await expect(page.getByRole('heading', { name: `Producir ${order.code}` })).toBeVisible({
         timeout: 60_000,
       });
-      // F8-S3b/M2: la orden no iniciada está en la cola del pedido; abrirla la fija como pestaña.
+      // F8-S3c/M1: la orden ya es un chip desde que se entra; abrirla la selecciona.
       await openQueuedOrder(page, op.code);
       const panel = page.getByRole('tabpanel', { name: op.code });
       await panel.getByRole('button', { name: `Buscar una bobina para ${op.code}` }).click();

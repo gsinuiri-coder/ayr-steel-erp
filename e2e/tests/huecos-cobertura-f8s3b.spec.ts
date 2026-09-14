@@ -217,11 +217,10 @@ test.describe('F8-S3b — huecos de cobertura', () => {
 
       await openPedidoWorkspace(page, s.order.id, s.order.code);
       await expect(page.getByText('Prioridad en 1 de 2 órdenes', { exact: true })).toBeVisible();
-      // El título lleva el contador al lado («Cola de producción 2»): no es texto exacto.
-      await expect(page.getByText('Cola de producción')).toBeVisible();
-      await expect(
-        page.getByRole('button', { name: new RegExp(`^Abrir en producción ${s.firstCode}\\b`) }),
-      ).toBeVisible();
+      // F8-S3c/M1: sin cola separada, las dos órdenes del pedido ya son chips desde que se entra.
+      const picker = page.locator('[aria-label="Órdenes del pedido"]');
+      await expect(picker.locator('button').filter({ hasText: s.firstCode })).toBeVisible();
+      await expect(picker.locator('button').filter({ hasText: s.secondCode })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Priorizar pedido' })).toHaveCount(0);
       await expect(page.getByRole('button', { name: 'Quitar prioridad al pedido' })).toHaveCount(0);
     } finally {

@@ -181,8 +181,8 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       });
       await expect(page).toHaveURL(new RegExp(`/planta\\?pedido=${order.id}$`));
 
-      // F8-S3b/M2: las dos no iniciadas están en la cola del pedido; abrirlas las fija como
-      // pestañas del workspace.
+      // F8-S3c/M1: las dos, iniciadas o no, ya son chips desde que se entra; abrirlas solo
+      // las selecciona.
       await openQueuedOrder(page, codeA);
       await openQueuedOrder(page, codeB);
       const tabs = page.getByRole('tablist', { name: 'Órdenes del pedido' });
@@ -297,8 +297,8 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
         timeout: 60_000,
       });
       await expect(draftTableA.getByRole('row').filter({ hasText: '10 × 4.00 m' })).toBeVisible();
-      // F8-S3b/M2: lo que se fija desde la cola es estado de la pantalla, no del servidor. Tras
-      // recargar, la hermana —todavía sin iniciar— volvió a la cola del pedido y se reabre.
+      // Qué pestaña queda activa es estado de la pantalla, no del servidor: tras recargar, la
+      // primera se elige sola otra vez. La hermana —todavía sin iniciar— sigue siendo un chip.
       await openQueuedOrder(page, codeB);
       await tabA.click();
 
@@ -632,14 +632,12 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       // `role="tabpanel"`. Se los busca entonces por contenedor y por id, que no cambian entre
       // los dos modos.
       //
-      // D-189: una orden no iniciada no está en el selector sino en la **cola** del pedido; un
-      // clic en su entrada la abre en el workspace.
-      await page
-        .getByRole('button', { name: new RegExp(`^Abrir en producción ${op.code}\\b`) })
-        .click();
+      // F8-S3c/M1: sin cola separada, la orden —iniciada o no— ya está entre los chips desde
+      // que se entra; un clic en su chip la abre en el workspace.
       const picker = page.locator('[aria-label="Órdenes del pedido"]');
       const tab = picker.locator('button').filter({ hasText: op.code });
       await expect(tab).toHaveCount(1);
+      await tab.click();
       const panel = page.locator(`#panel-${op.id}`);
 
       // Sin bobina no se reporta; se monta desde la propia pestaña, igual que contra pedido.

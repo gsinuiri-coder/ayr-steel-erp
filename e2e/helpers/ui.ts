@@ -65,8 +65,12 @@ export async function chooseOption(page: Page, field: Locator, optionLabel: stri
             await field.click({ timeout: 2_000 });
             const modal = page.getByRole('dialog');
             await modal.getByLabel('Filtrar opciones').fill(optionLabel, { timeout: 2_000 });
+            // El botón de la fila no siempre dice «Seleccionar» — F8-S3c/M4 le puso «Elegir»
+            // al campo de cliente (`actionLabel`) — así que se busca por la fila, no por el
+            // nombre accesible del botón.
             await modal
-              .getByRole('button', { name: `Seleccionar ${optionLabel}`, exact: true })
+              .getByRole('row', { name: optionLabel })
+              .getByRole('button')
               .click({ timeout: 2_000 });
           }
         } catch {
@@ -101,15 +105,29 @@ export async function chooseProductWithStock(
 }
 
 /**
- * F8-S3b/M2: en la vista de producción de un pedido (`/planta?pedido=`), las órdenes no
- * iniciadas viven en la **cola** del pedido y no en el workspace. Abrir una es un clic en su
- * entrada, que la fija como pestaña; esto espera a que la pestaña exista antes de seguir.
+ * F8-S3c/M1: en la vista de producción de un pedido (`/planta?pedido=`) la franja de chips
+ * (`aria-label="Órdenes del pedido"`) trae de entrada **todas** las órdenes del pedido,
+ * iniciadas o no — ya no hay un card de «Cola de producción» separado donde abrirlas primero.
+ * Abrir una es un clic directo en su chip.
+ *
+ * El chip es un `<button>` cuyo rol accesible es `tab` (o ninguno en la forma de lista, con
+ * más de `MAX_ORDER_TABS` órdenes) y no `button`: por eso se busca por la etiqueta de la
+ * franja y no por `getByRole('button', …)`, que no lo encontraría.
  */
 export async function openQueuedOrder(page: Page, code: string): Promise<void> {
-  await page.getByRole('button', { name: new RegExp(`^Abrir en producción ${code}\\b`) }).click();
-  await expect(
-    page.locator('[aria-label="Órdenes del pedido"]').locator('button').filter({ hasText: code }),
-  ).toHaveCount(1);
+  // Substring plano, no `\bcode\b`: el `textContent` del chip no lleva espacio entre el
+  // código y el badge que sigue (`"OP-000001Sin bobina…"`, sin nodo de texto entre los dos
+  // `<span>`), así que el `\b` de cierre nunca encuentra frontera de palabra —dígito seguido
+  // de letra, los dos son `\w`— y el filtro no matchea nada: `chip.click()` queda esperando
+  // por siempre a que aparezca un elemento que existe, pero con otro nombre. Un substring
+  // simple es seguro porque los códigos son de ancho fijo con cero-relleno (`OP-000001` nunca
+  // es substring de otro código real).
+  const chip = page
+    .locator('[aria-label="Órdenes del pedido"]')
+    .locator('button')
+    .filter({ hasText: code });
+  await chip.click();
+  await expect(chip).toHaveCount(1);
 }
 
 /**

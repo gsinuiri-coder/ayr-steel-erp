@@ -16,7 +16,9 @@ import {
  * - F8-S3b/M2: `/planta` lista **pedidos** en el orden del ranking, cada tarjeta con la
  *   información completa de su cola (OP, pedido y cliente, producto, ML del plan, fecha
  *   compromiso, prioridad, vencida); la prioridad se asigna al pedido y se propaga a sus OPs;
- *   dentro del pedido, un clic en su cola abre **esa** orden en el workspace;
+ *   dentro del pedido, F8-S3c/M1 quitó el paso por una cola separada: la franja de chips trae
+ *   de entrada **todas** las órdenes, iniciadas o no, y un clic en la suya abre esa orden en el
+ *   workspace;
  * - `/produccion` salió del menú y redirige al historial, que desde F8-S3b es vista propia;
  * - el detalle del pedido lista sus órdenes con estado y avance, prioriza por orden y lleva al
  *   workspace de cada una.
@@ -155,37 +157,38 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
         )
         .toBe(true);
 
-      // --- Dentro del pedido, la cola sigue el ranking por OP y abre su workspace ---
+      // --- Dentro del pedido, los chips siguen el ranking por OP y abren su workspace (F8-S3c/M1) ---
       await setOrderPriority(api, second!, { priority: true, reason: 'Sale primero la otra' });
       await page.goto(`/planta?pedido=${a.order.id}`);
       await expect(page.getByRole('heading', { name: `Producir ${a.order.code}` })).toBeVisible({
         timeout: 60_000,
       });
-      const queueCard = page.locator('main').getByText('Cola de producción').locator('../..');
-      const entries = queueCard.getByRole('button', { name: /^Abrir en producción OP-\d+/ });
-      await expect(entries).toHaveCount(2);
-      const opLabels = await entries.evaluateAll((els) =>
+      // F8-S3c/M1: sin cola separada, la franja de chips trae de entrada las dos órdenes del
+      // pedido, iniciadas o no. El chip es un `<button>` con rol `tab`, no `button`.
+      const picker = page.locator('[aria-label="Órdenes del pedido"]');
+      const chips = picker.locator('button');
+      await expect(chips).toHaveCount(2);
+      const chipLabels = await chips.evaluateAll((els) =>
         els.map((e) => /OP-\d+/.exec(e.textContent ?? '')?.[0] ?? ''),
       );
-      expect(opLabels, 'la priorizada va primero').toEqual([secondCode, firstCode]);
-      const prioritized = queueCard.getByRole('button', {
-        name: new RegExp(`^Abrir en producción ${secondCode}\\b`),
-      });
-      await expect(prioritized).toContainText('Prioridad');
-      await expect(prioritized).toContainText('Sale primero la otra');
+      expect(chipLabels, 'la priorizada va primero').toEqual([secondCode, firstCode]);
+      // Substring plano: el `textContent` del chip no lleva espacio entre el código y el
+      // badge de estado que sigue, así que un `\bcode\b` con frontera de cierre no matchea
+      // nada (helpers/ui.ts#openQueuedOrder tiene el mismo motivo documentado).
+      const chipOf = (code: string) => chips.filter({ hasText: code });
+      // Sin bobina montada, las dos siguen sin iniciar: el chip lo dice con su nota de cola.
+      await expect(chipOf(secondCode)).toContainText('en cola desde');
+      await expect(chipOf(firstCode)).toContainText('en cola desde');
+      await expect(chipOf(firstCode)).toContainText(scenario.product.sku);
+      await expect(chipOf(firstCode)).toContainText('faltan 40.000 m');
+      await expect(chipOf(firstCode)).toContainText(customer.name);
       // Una sola OP priorizada de dos: el resumen del pedido lo dice.
       await expect(page.getByText('Prioridad en 1 de 2 órdenes')).toBeVisible();
+      const secondOp = await opOf(second!);
+      expect(secondOp.priority).toBe(true);
+      expect(secondOp.priorityReason).toBe('Sale primero la otra');
 
-      const entry = queueCard.getByRole('button', {
-        name: new RegExp(`^Abrir en producción ${firstCode}\\b`),
-      });
-      await expect(entry).toContainText(a.order.code);
-      await expect(entry).toContainText(customer.name);
-      await expect(entry).toContainText(scenario.product.sku);
-      await expect(entry).toContainText('40.000 m del plan');
-      await expect(entry).toContainText('Vencida');
-      await expect(entry).toContainText('Compromiso:');
-      await entry.click();
+      await chipOf(firstCode).click();
       const panel = page.locator(`#panel-${first!}`);
       await expect(panel.getByText(firstCode, { exact: true })).toBeVisible();
       await expect(panel.getByText('Faltan 10 × 4.00 m')).toBeVisible();
