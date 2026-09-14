@@ -1,9 +1,11 @@
 # F8-R1 — Regresión de rendimiento del lote F8 (FASE 1, en curso)
 
-Estado al 2026-09-14 14:05 UTC: **FASE 1 sin cerrar.** Hay un defecto medido y con riesgo real
-en producción (`stock-shortages`, §3), pero **no** es la causa del 4-6× de CI (§4). R2, PSE,
-polling y `next dev` también quedan descartados (§5). Lo que sigue en pie es Neon. Nada del
-producto se tocó. Este documento es el punto de reanudación.
+Estado al 2026-09-14 19:20 UTC: **causa de FASE 1 nombrada (§6).** La lentitud de CI es
+consultas × latencia de red runner→Neon, y esa latencia varía por corrida según la región del
+runner (16 ms en `eastus`, 33 ms en `centralus`, ~80 ms en el run que se cortó). El lote no
+encarece cada consulta: sube el total de la suite ×1,64. `stock-shortages` (§3) es un defecto
+real de producción, pero no la causa (§4). Nada del producto se tocó. Falta la decisión del
+dueño sobre qué palanca atacar en FASE 2.
 
 ## Contexto
 
@@ -12,7 +14,9 @@ producto se tocó. Este documento es el punto de reanudación.
   2026-09-14 07:40 UTC) cerró 245 passed en 29,8 min.
 - **La tercera corrida del lote (10:55 UTC, con Neon ya comprobado sano) se arrastró igual**:
   ~80 tests a los 33 min, ~160 a los 92 min, cancelada a los 110. Descarta que la ventana haya
-  coincidido con una degradación de Neon: la regresión es del lote.
+  coincidido con una degradación de Neon: la regresión es del lote. _(Corregido en §6: Neon
+  estaba sano, pero la red del runner variaba y nadie la medía; el mismo commit cerró en 92 min
+  con un runner más cercano.)_
 - El P2028 («Unable to start a transaction in the given time») cae **en el mismo test** en la
   segunda y la tercera corrida: `fase7d.spec.ts:94`, que crea 26 compras en paralelo.
 
@@ -200,19 +204,74 @@ un `SELECT 1`. Si `SELECT 1` sube a ~80 ms durante la suite, es (a); si se queda
 mientras el API paga ~80, el cuello está del lado de la aplicación. Validado en local:
 `SELECT 1` da 31 ms por el proxy y 1,8 ms directo.
 
+**HEAD relanzado con la sonda** (run 34875631463, 2026-09-14 17:38-19:11 UTC): **305 passed, 3
+skipped en 92 min, dentro del tope de 110 y sin P2028**. Es el mismo código que en el run
+34859319029 se cortó a los 110 min. Runner en `centralus`: RTT TCP ~33 ms, y `SELECT 1` desde
+un proceso aparte **estable en 28-38 ms durante toda la suite** (14 muestras, sin tendencia).
+
+|                                     | Base (eastus) |  HEAD run 1 (región ?) | HEAD run 2 (centralus) |
+| ----------------------------------- | ------------: | ---------------------: | ---------------------: |
+| RTT TCP al pooler                   |         16 ms |           sin medición |                  33 ms |
+| `SELECT 1` durante la suite         |  sin medición |           sin medición |               28-38 ms |
+| ms por consulta del API             |          18,8 |                   80,0 |               **42,4** |
+| Consultas (207 tests comunes H1-H2) |             — |                 80.635 |     80.077 (**×0,99**) |
+| Suite completa                      | 31,1 min, 248 | cortada a 110 min, 207 |            92 min, 308 |
+
+`local-data/r1/shape-head2-vs-head1.txt` y `shape-head2-vs-base.txt`.
+
+### Causa (FASE 1)
+
+**La lentitud de CI es `consultas × latencia de red runner→Neon`, y esa latencia cambia de una
+corrida a otra según la región de Azure donde GitHub asigna el runner.** El lote la vuelve
+visible porque sube el total de consultas de la suite; no la crea.
+
+1. **Mismo commit, mismas consultas, la mitad del costo por consulta:** los dos runs de HEAD
+   hacen 80.635 contra 80.077 consultas en los mismos 207 tests (×0,99), a 80,0 contra 42,4 ms.
+   El piso por consulta lo fija la corrida, no el código. Esto descarta la lectura (b): con la
+   misma carga, el costo se partió a la mitad.
+2. **El piso sigue al RTT:** base en `eastus` con 16 ms de RTT paga 18,8 ms por consulta;
+   HEAD en `centralus` con 33 ms paga 42,4. La sonda independiente no sube durante la suite, así
+   que la base de Neon no se satura: es red.
+3. **El lote sube el volumen:** 125.241 consultas en la suite completa contra ~76.000 de la base
+   (×1,64). Casi todo viene de los 60 tests nuevos; los comunes suben solo +8 %.
+4. **Cuenta de control** (consultas × ms por consulta, sin el tiempo fuera de la base):
+
+   | ms por consulta     | Base (~76k) | HEAD (~125k) |
+   | ------------------- | ----------: | -----------: |
+   | ~19 (eastus)        |     ~24 min |      ~40 min |
+   | ~43 (centralus)     |     ~55 min |      ~90 min |
+   | ~80 (región lejana) |    ~101 min |     ~167 min |
+
+   Con el tope de 110 min, HEAD solo entra si el runner cae en `eastus` o `centralus`; con uno
+   lejano, **la base tampoco entraría en su tope de 75**. Encaja con la varianza que `ci.yml`
+   anota desde la Fase 7c («la misma suite tardó 22 y 41 min el mismo día») y con los tres
+   cortes del lote: la región del run 1 no se midió, pero sus 80 ms son consistentes con un
+   runner lejano.
+
+5. **El P2028 de `fase7d.spec.ts:94` es un síntoma, no otra causa:** 26 transacciones en
+   paralelo con pool 5; a 80 ms por consulta cada una retiene su conexión el doble o más, y la
+   espera por conexión supera el `maxWait` por defecto. A 42 ms (run 2) no aparece.
+
+Esto corrige §Contexto: la tercera corrida del lote no probó que «la regresión es del lote».
+Neon estaba sano; lo que variaba era la red del runner, que nadie medía.
+
+**Sin explicar, secundario:** en HEAD run 2 el API paga ~12 ms por consulta por encima del
+`SELECT 1` de la sonda (42 contra 30); en la base, ~3 ms por encima del RTT (18,8 contra 16).
+Puede ser espera por el pool de 5 en las ráfagas de `Promise.all`, que Prisma podría estar
+contando en `duration`. Mueve ~×1,3, no el ×4.
+
 ## Lo que falta para cerrar FASE 1
 
 1. ~~¿Explica `stock-shortages` el 4-6× de CI?~~ **No** (§4).
-2. **Lo que CI tiene y el entorno local no:** Neon (pooler/pgbouncer en `CI_DATABASE_URL`,
-   cómputo mínimo, caché fría), credenciales de PSE y R2, y `E2E_CUSTOMER_RUC`. La lentitud de
-   CI aparece desde los primeros 15 tests, así que lo que la cause ya está activo al arrancar.
-   PSE y R2 quedan descartados (§5). Candidatos que siguen: el pooler de Neon —el P2028 de
-   `fase7d.spec.ts:94` no se reproduce en local con pool 5, así que en CI algo retiene las
-   conexiones más tiempo— y consultas que en Neon cambian de plan. El paso más barato para
-   ubicarlo es una corrida de CI con duración y round-trips por test (§5, límite).
-3. **Plan B del brief (Neon `dev`)** si lo anterior no alcanza: el guard de
-   `reset-test-db.ts` solo permite `ayr_local_e2e` y la rama `ci`, así que medir en Neon
-   requiere decidir cómo (credenciales por entorno, regla dura 5).
+2. ~~Lo que CI tiene y el entorno local no~~ **Nombrado** (§6, Causa): red runner→Neon variable
+   por región, multiplicada por el volumen de consultas del lote.
+3. ~~Plan B (Neon `dev`)~~ No hizo falta.
+4. **Decisión del dueño antes de FASE 2:** qué palanca atacar. Opciones a evaluar: menos
+   consultas por test (el costo es lineal en consultas), workers en paralelo o partir la suite
+   (deuda ya anotada en `ci.yml`), un E2E contra un Postgres de servicio dentro del runner con
+   Neon solo en un smoke, o sacar la región de la ecuación (runner o cómputo en la misma región).
+5. Borrar las ramas `diag/f8-r1-instrumentacion` y `diag/f8-r1-instrumentacion-base` al dar por
+   cerrado el diagnóstico.
 
 ## Pendiente de FASE 2 ya identificado (sin tocar todavía)
 
