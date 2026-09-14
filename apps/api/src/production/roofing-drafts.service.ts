@@ -89,7 +89,17 @@ export class RoofingDraftsService {
   ): Promise<RoofingReportDraftDto[]> {
     await this.prisma.$transaction(
       async (tx) => {
+        // El lock de la orden va primero: serializa los reintentos del mismo envío antes de
+        // reclamar la clave, igual que en el commit.
         const state = await this.loadState(tx, orderId);
+        // D-182 (F8-S4/M0): un doble click en «Agregar al borrador» no agrega dos filas. El
+        // alcance lleva la orden, por el mismo motivo que el del commit.
+        const claim = await claimIdempotencyKey(
+          tx,
+          `roofing-drafts-add:${orderId}`,
+          input.idempotencyKey,
+        );
+        if (!claim.claimed) return;
         const existing = await this.drafts(tx, orderId);
         this.assertRoomForReports(state.liveReports, existing.length + 1);
         if (existing.length >= MAX_DRAFT_ROWS) {

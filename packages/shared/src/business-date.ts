@@ -63,3 +63,15 @@ export function temporaryReservationExpiry(n: number, now: Date = new Date()): D
   const lastDay = addBusinessDays(businessToday(now), n);
   return new Date(`${lastDay}T23:59:59.999-05:00`);
 }
+
+/**
+ * D-185: una reserva temporal nunca vence después que su cotización. Pasado el último día de
+ * vigencia (fin del día en Lima) ya no se puede confirmar, y seguir apartando material para algo
+ * que no se puede confirmar es quitárselo a otro sin motivo. `validUntil` es la fecha
+ * `YYYY-MM-DD`; `null` es sin vencimiento (D-157) y no recorta nada.
+ */
+export function capToQuotationValidity(expiresAt: Date, validUntil: string | null): Date {
+  if (validUntil === null) return expiresAt;
+  const endOfValidity = new Date(`${validUntil}T23:59:59.999-05:00`);
+  return endOfValidity.getTime() < expiresAt.getTime() ? endOfValidity : expiresAt;
+}

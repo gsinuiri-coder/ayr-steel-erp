@@ -654,7 +654,9 @@ export function SalesDocumentForm({
     const { items } = result;
 
     if (adding) {
-      save.mutate({ items, idempotencyKey: submitKey.current() });
+      // La huella son las líneas: si tras un fallo de red se corrigen y se reintenta, es otro
+      // envío y lleva otra clave (F8-S4/M0).
+      save.mutate({ items, idempotencyKey: submitKey.current(JSON.stringify(items)) });
       return;
     }
     save.mutate({

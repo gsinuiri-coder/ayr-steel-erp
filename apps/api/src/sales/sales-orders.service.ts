@@ -29,6 +29,7 @@ import {
   DEFAULT_TEMPORARY_RESERVATION_BUSINESS_DAYS,
   Decimal,
   temporaryReservationExpiry,
+  capToQuotationValidity,
   type ConfirmPreviewDto,
   type ConfirmPreviewLineDto,
   type QuotationTemporaryReservationDto,
@@ -1448,13 +1449,7 @@ export class SalesOrdersService {
         // Nunca más allá de la vigencia de la cotización: pasado ese día ya no se puede
         // confirmar, y seguir apartando material para algo que no se puede confirmar es
         // quitárselo a otro sin motivo. `null` es sin vencimiento (D-157) y no recorta nada.
-        const byBusinessDays = temporaryReservationExpiry(days);
-        const byValidity =
-          head.validUntil === null ? null : new Date(`${head.validUntil}T23:59:59.999-05:00`);
-        const expiresAt =
-          byValidity !== null && byValidity.getTime() < byBusinessDays.getTime()
-            ? byValidity
-            : byBusinessDays;
+        const expiresAt = capToQuotationValidity(temporaryReservationExpiry(days), head.validUntil);
         const written = await this.reserveLines(tx, lines, 'la reserva', async (line) => {
           await tx.quotationReservation.create({
             data: {
@@ -1547,11 +1542,14 @@ export class SalesOrdersService {
    * Editar una cotización con reserva temporal la **recalcula** (D-185), dentro de la misma
    * transacción de la edición y después de reescribir las líneas.
    *
-   * Si lo que las líneas nuevas reservan es igual a lo vigente, no toca nada. Si cambió,
-   * libera lo vigente y vuelve a reservar con el mismo guardrail de disponible y **el mismo
-   * vencimiento**: editar no es una forma de estirar el plazo. Si lo nuevo no alcanza, lanza
-   * y la edición entera se deshace — la reserva vieja queda como estaba, nunca se libera en
-   * silencio ni se reserva de más sin validar.
+   * Si lo que las líneas nuevas reservan es igual a lo vigente **y** la vigencia de la
+   * cotización no quedó antes del vencimiento, no toca nada. Si no, libera lo vigente y vuelve a
+   * reservar con el mismo guardrail de disponible y un vencimiento que es el **menor** entre el
+   * que tenía y el fin de la vigencia nueva: editar no es una forma de estirar el plazo, y una
+   * reserva nunca vence después que su cotización (F8-S4/M0 — acortar la vigencia dejaba la
+   * reserva apartando material para algo que ya no se podía confirmar). Si lo nuevo no alcanza,
+   * lanza y la edición entera se deshace — la reserva vieja queda como estaba, nunca se libera
+   * en silencio ni se reserva de más sin validar.
    */
   async recalculateTemporaryInTx(
     tx: Prisma.TransactionClient,
@@ -1594,14 +1592,37 @@ export class SalesOrdersService {
         qty: l.reserveQty.toString(),
       })),
     );
-    // La edición no tocó nada de lo reservado (cambió un precio, una observación): la reserva
-    // queda como estaba, sin filas liberadas que no cuenten ninguna historia.
-    if (before === after) return;
+    const quotation = await tx.quotation.findUniqueOrThrow({
+      where: { id: quotationId },
+      select: { validUntil: true },
+    });
+    const expiresAt = capToQuotationValidity(
+      first.expiresAt,
+      quotation.validUntil === null ? null : quotation.validUntil.toISOString().slice(0, 10),
+    );
+    const shortened = expiresAt.getTime() < first.expiresAt.getTime();
+    // La edición no tocó nada de lo reservado (cambió un precio, una observación) ni acortó la
+    // vigencia: la reserva queda como estaba, sin filas liberadas que no cuenten ninguna historia.
+    if (before === after && !shortened) return;
+
+    // La vigencia nueva ya pasó: no hay nada que confirmar, así que la reserva termina vencida
+    // en vez de recrearse con un vencimiento en el pasado.
+    if (expiresAt.getTime() <= Date.now()) {
+      await this.endTemporaryInTx(tx, quotationId, {
+        status: TemporaryReservationStatus.EXPIRED,
+        actorId: actor.id,
+        reason: 'Edición de la cotización: la vigencia nueva ya venció',
+      });
+      return;
+    }
 
     await this.endTemporaryInTx(tx, quotationId, {
       status: TemporaryReservationStatus.RELEASED,
       actorId: actor.id,
-      reason: 'Edición de la cotización: se recalculó la reserva',
+      reason:
+        before === after
+          ? 'Edición de la cotización: la vigencia se acortó y la reserva vence antes'
+          : 'Edición de la cotización: se recalculó la reserva',
     });
     let created = 0;
     await this.reserveLines(tx, lines, 'la reserva', async (line) => {
@@ -1614,7 +1635,7 @@ export class SalesOrdersService {
           itemId: line.reserveItemId,
           qty: line.reserveQty,
           unit: line.reserveUnit,
-          expiresAt: first.expiresAt,
+          expiresAt,
           createdById: actor.id,
         },
       });
@@ -1624,8 +1645,8 @@ export class SalesOrdersService {
       action: 'sales.quotation.recalculate-temporary',
       entity: 'quotations',
       entityId: quotationId,
-      before: { lines: current.length },
-      after: { lines: created, expiresAt: first.expiresAt.toISOString() },
+      before: { lines: current.length, expiresAt: first.expiresAt.toISOString() },
+      after: { lines: created, expiresAt: expiresAt.toISOString() },
     });
   }
 

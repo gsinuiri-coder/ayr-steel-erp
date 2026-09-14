@@ -640,8 +640,13 @@ export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>
 
 /**
  * Una fila del borrador: un reporte que todavía no se ejecutó. Misma forma que
- * `reportRoofingPiecesSchema` menos lo que es del **acto** de ejecutar (fecha, idempotencia):
- * eso viaja una sola vez, en el commit.
+ * `reportRoofingPiecesSchema` menos la fecha, que es del **acto** de ejecutar y viaja una sola
+ * vez, en el commit.
+ *
+ * La clave de idempotencia sí viaja acá (F8-S4/M0): **agregar** una fila es una creación
+ * repetible — dos filas iguales son legítimas — y un doble click o un reintento de red la
+ * duplicaban. Al corregir una fila (PUT) no se usa: reescribir la misma fila dos veces deja lo
+ * mismo.
  */
 export const roofingReportDraftInputSchema = z.object({
   /** Opcional con una sola bobina montada; con varias, obligatorio (un reporte sale de un rollo). */
@@ -649,6 +654,7 @@ export const roofingReportDraftInputSchema = z.object({
   pieces: roofingPiecesSchema,
   consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   notes: z.string().trim().max(240).optional(),
+  ...idempotencyFields,
 });
 export type RoofingReportDraftInput = z.infer<typeof roofingReportDraftInputSchema>;
 

@@ -264,23 +264,34 @@ export function RoofingOrderPanel({
   // D-191 — el borrador
   // -------------------------------------------------------------------------
 
+  // F8-S4/M0: agregar una fila es una creación repetible (D-182). Clave propia, distinta de la
+  // del commit, y atada al contenido de la fila.
+  const addKey = useIdempotencyKey();
   const saveDraft = useMutation({
-    mutationFn: (pieces: RoofingPieceDto[]) =>
-      api<RoofingReportDraftDto[]>(
+    mutationFn: (pieces: RoofingPieceDto[]) => {
+      const body = {
+        pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
+        ...(resolved.coil ? { coilId: resolved.coil.coilId } : {}),
+        ...(draft.consumedKg.trim()
+          ? { consumedKg: toDecimal(draft.consumedKg.trim()).toFixed(3) }
+          : {}),
+      };
+      return api<RoofingReportDraftDto[]>(
         editing === null
           ? `/production/roofing/${order.orderId}/drafts`
           : `/production/roofing/${order.orderId}/drafts/${editing.id}`,
         {
           method: editing === null ? 'POST' : 'PUT',
-          body: {
-            pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
-            ...(resolved.coil ? { coilId: resolved.coil.coilId } : {}),
-            ...(draft.consumedKg.trim()
-              ? { consumedKg: toDecimal(draft.consumedKg.trim()).toFixed(3) }
-              : {}),
-          },
+          body:
+            editing === null
+              ? { ...body, idempotencyKey: addKey.current(JSON.stringify(body)) }
+              : body,
         },
-      ),
+      );
+    },
+    onSettled: (_data, error) => {
+      if (editing === null) addKey.settle(error ?? undefined);
+    },
     onSuccess: () => {
       toast.success(
         editing === null
