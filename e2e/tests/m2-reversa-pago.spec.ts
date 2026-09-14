@@ -259,8 +259,9 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       await page.getByLabel('Referencia').fill('E2E-M2-PAGO');
       await page.getByRole('button', { name: 'Guardar pago' }).click();
       await expect(page.getByText('Pago registrado')).toBeVisible();
-      // Saldo = 11 800 − 5 000 = 6 800.
-      await expect(page.getByText('S/ 6,800.00')).toBeVisible();
+      // Saldo = 11 800 − 5 000 = 6 800. `exact`: mientras el drawer de pago se cierra, su
+      // descripción («Saldo pendiente: S/ …») sigue en el DOM y también contiene el monto.
+      await expect(page.getByText('S/ 6,800.00', { exact: true })).toBeVisible();
 
       const withPayment = await getJson<PurchaseDto>(api, `/api/purchases/${purchaseId}`);
       expect(withPayment.payments).toHaveLength(1);

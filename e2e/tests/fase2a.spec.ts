@@ -510,8 +510,9 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await page.getByRole('button', { name: 'Guardar pago' }).click();
 
       await expect(page.getByText('Pago registrado')).toBeVisible();
-      // Saldo = total − pagos: 11 800 − 5 000 = 6 800.
-      await expect(page.getByText('S/ 6,800.00')).toBeVisible();
+      // Saldo = total − pagos: 11 800 − 5 000 = 6 800. `exact`: mientras el drawer de pago se
+      // cierra, su descripción («Saldo pendiente: S/ …») sigue en el DOM y también contiene el monto.
+      await expect(page.getByText('S/ 6,800.00', { exact: true })).toBeVisible();
       await expect(page.getByRole('row').filter({ hasText: 'E2E-PAGO-PARCIAL' })).toContainText(
         'S/ 5,000.00',
       );
