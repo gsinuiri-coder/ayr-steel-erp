@@ -56,7 +56,6 @@ import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { CoilsService } from '../coils/coils.service';
-import { ColorsService } from '../colors/colors.service';
 import { StorageService } from '../documents/storage.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -83,7 +82,6 @@ export class PurchasesService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
-    private readonly colors: ColorsService,
     private readonly exchangeRates: ExchangeRatesService,
     private readonly storage: StorageService,
     private readonly operationDate: OperationDateService,
@@ -172,19 +170,13 @@ export class PurchasesService {
       );
     }
 
-    await this.assertItemsAreConsistent(input, businessLine.id);
+    const colorByFinish = await this.assertItemsAreConsistent(input, businessLine.id);
     await this.assertLandedCostLinkIsValid(actor, input, businessLine.id);
     await this.assertCuttingOrderLinkIsValid(actor, input, businessLine.id);
 
     const { rate, source } = await this.resolveExchangeRate(input);
     const totals = computeTotals(input);
     const dueDate = computeDueDate(input);
-    // D-085: los colores se validan contra el maestro **antes** de la transacción (el `map`
-    // que arma las líneas no puede ser async). Mismo criterio que el catálogo: sin esto una
-    // línea de compra sería la puerta trasera para meter un color desactivado en el filtro.
-    const colorByLine = await Promise.all(
-      totals.items.map((item) => this.colors.resolveActive(item.colorId)),
-    );
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
@@ -227,7 +219,8 @@ export class PurchasesService {
                 igv: toFixedString(item.igv, 'MONEY'),
                 total: toFixedString(item.total, 'MONEY'),
                 finishId: item.finishId ?? null,
-                colorId: colorByLine[index] ?? null,
+                // D-203: el color de la bobina es el de su acabado, nunca un dato aparte.
+                colorId: item.finishId ? (colorByFinish.get(item.finishId) ?? null) : null,
                 widthMm: item.widthMm ? toFixedString(item.widthMm, 'MM') : null,
                 thicknessMm: item.thicknessMm ? toFixedString(item.thicknessMm, 'MM') : null,
                 // D-116: `null` en compras que no son COIL; `receive()` decide el default
@@ -395,7 +388,8 @@ export class PurchasesService {
               purchaseId: purchase.id,
               purchaseItemId: item.id,
               finishId: requireField(item.finishId, 'La línea no tiene acabado'),
-              // D-085: el color se elige al registrar la compra; la bobina lo hereda.
+              // D-203: el color viene del acabado de la línea (la base lo sostiene con el
+              // trigger `coils_color_from_finish`).
               colorId: item.colorId,
               weightKg: item.qty.toFixed(3),
               widthMm: requireField(item.widthMm, 'La línea no tiene ancho').toFixed(2),
@@ -1232,21 +1226,51 @@ export class PurchasesService {
     };
   }
 
-  /** Valida que cada línea case con el tipo de compra y con la línea de negocio elegida. */
+  /**
+   * Valida que cada línea case con el tipo de compra y con la línea de negocio elegida, y devuelve
+   * el color de cada acabado usado (D-203).
+   */
   private async assertItemsAreConsistent(
     input: CreatePurchaseInput,
     businessLineId: string,
-  ): Promise<void> {
+  ): Promise<Map<string, string | null>> {
+    const colorByFinish = new Map<string, string | null>();
     if (input.type === PurchaseType.COIL) {
       const finishIds = [
         ...new Set(input.items.map((i) => i.finishId).filter(Boolean)),
       ] as string[];
       const finishes = await this.prisma.finish.findMany({
         where: { id: { in: finishIds }, isActive: true },
-        select: { id: true },
+        select: {
+          id: true,
+          code: true,
+          kind: true,
+          colorId: true,
+          businessLineId: true,
+          color: { select: { isActive: true, name: true } },
+        },
       });
       if (finishes.length !== finishIds.length) {
         throw new BadRequestException('Alguna línea usa un acabado inexistente o desactivado');
+      }
+      for (const finish of finishes) {
+        // D-203: el acabado dice el color de la bobina, así que tiene que estar completo.
+        if (finish.kind === null) {
+          throw new BadRequestException(
+            `El acabado ${finish.code} no tiene tipo ni línea: complétalo en Acabados antes de comprar con él`,
+          );
+        }
+        if (finish.businessLineId !== businessLineId) {
+          throw new BadRequestException(
+            `El acabado ${finish.code} es de otra línea: un acabado pertenece a una sola línea`,
+          );
+        }
+        if (finish.color && !finish.color.isActive) {
+          throw new BadRequestException(
+            `El color «${finish.color.name}» del acabado ${finish.code} está desactivado`,
+          );
+        }
+        colorByFinish.set(finish.id, finish.colorId);
       }
     }
     if (input.type === PurchaseType.FINISHED_GOOD) {
@@ -1266,6 +1290,7 @@ export class PurchasesService {
         );
       }
     }
+    return colorByFinish;
   }
 
   /**

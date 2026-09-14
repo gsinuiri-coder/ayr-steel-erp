@@ -174,11 +174,11 @@ const purchaseItemInputSchema = z.object({
   unitPrice: decimalStringSchema('MONEY', { positive: true }),
   finishId: z.string().uuid().optional(),
   /**
-   * D-085: color de la bobina, solo en líneas `COIL` de material prepintado. Opcional a
-   * propósito y sin validación cruzada con el acabado: quién es prepintado y quién
-   * galvanizado lo sabe el almacenero que tiene el rollo delante, no el maestro.
+   * D-203: la línea no lleva color. El color de la bobina sale de su acabado (tipo + color +
+   * línea); pedirlo aparte era lo que dejaba bobinas prepintadas sin color. Un `colorId` que
+   * todavía llegue se rechaza, en vez de ignorarlo en silencio: el que lo manda cree que cuenta.
    */
-  colorId: z.string().uuid().optional(),
+  colorId: z.never({ invalid_type_error: 'El color de la bobina sale de su acabado: elige el acabado' }).optional(),
   widthMm: decimalStringSchema('MM', { positive: true }).optional(),
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
   /**

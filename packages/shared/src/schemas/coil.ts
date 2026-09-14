@@ -318,11 +318,16 @@ export const updateCoilSchema = z
   .object({
     widthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }).optional(),
     /**
-     * D-085. Cadena vacía = quitar el color. Se edita bajo el mismo guardrail que el ancho
-     * (bobina abierta y no montada en una OP): cambiar el color de un rollo que una orden
-     * ya montó rompería, a mitad de corrida, la igualdad contra la que se validó (D-086).
+     * D-203: el color de una bobina sale de su acabado, así que un color mal cargado se corrige
+     * **cambiando el acabado** (uno de la misma línea). Mismo guardrail que el ancho (bobina
+     * abierta y no montada en una OP): cambiarlo en un rollo que una orden ya montó rompería, a
+     * mitad de corrida, la igualdad de color contra la que se validó (D-086).
      */
-    colorId: z.union([z.literal(''), z.string().uuid('Color inválido')]).optional(),
+    finishId: z.string().uuid('Acabado inválido').optional(),
+    /** Ya no se acepta (D-203): mismo criterio que la compra — rechazar, no ignorar en silencio. */
+    colorId: z
+      .never({ invalid_type_error: 'El color de la bobina sale de su acabado: cambia el acabado' })
+      .optional(),
     notes: z.string().trim().max(500).optional(),
     currency: z.enum(CURRENCIES).optional(),
     exchangeRate: decimalStringSchema('RATE', { positive: true, max: MAX_VALUE.RATE }).optional(),

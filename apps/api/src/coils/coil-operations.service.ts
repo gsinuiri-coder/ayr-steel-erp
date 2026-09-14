@@ -15,6 +15,7 @@ import {
   type InventoryMovement,
 } from '@prisma/client';
 import {
+  coilTypeKey,
   fromDateOnly,
   Role,
   toDecimal,
@@ -30,7 +31,6 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
-import { ColorsService } from '../colors/colors.service';
 import { ENV, type Env } from '../config/env';
 import { OperationDateService } from '../common/operation-date.service';
 import { liveMovements } from '../inventory/live-movements';
@@ -40,6 +40,7 @@ import { assertStripsNotAssigned } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import { assertRawMaterialInvariant } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
+import { reservedByItem } from '../sales/reserved-ledger';
 import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
 import { CoilsService } from './coils.service';
@@ -76,7 +77,6 @@ export class CoilOperationsService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
-    private readonly colors: ColorsService,
     private readonly operationDate: OperationDateService,
     @Inject(ENV) private readonly env: Env,
   ) {}
@@ -829,27 +829,72 @@ export class CoilOperationsService {
         if (input.widthMm !== undefined && coil.status !== CoilStatus.OPEN) {
           throw new BadRequestException('El ancho solo se edita con la bobina abierta');
         }
-        if (input.colorId !== undefined && coil.status !== CoilStatus.OPEN) {
-          throw new BadRequestException('El color solo se edita con la bobina abierta');
+        if (input.finishId !== undefined && coil.status !== CoilStatus.OPEN) {
+          throw new BadRequestException('El acabado solo se edita con la bobina abierta');
         }
         // D-060: recostear (D-045) o reanchar un fleje montado en una OP cambiaría, a mitad
         // de la corrida, el costo con el que ya entraron piezas y el ancho contra el que se
         // validó la receta.
-        // D-085: el color entra en la misma lista que el ancho. Cambiarlo en un rollo que
-        // una OP ya montó rompería, a mitad de corrida, la igualdad de color contra la que
-        // se validó el montaje (D-086).
-        if (touchesCost || input.widthMm !== undefined || input.colorId !== undefined) {
+        // D-085/D-203: el acabado (y con él el color) entra en la misma lista que el ancho.
+        // Cambiarlo en un rollo que una OP ya montó rompería, a mitad de corrida, la igualdad de
+        // color contra la que se validó el montaje (D-086).
+        const finishChanges = input.finishId !== undefined && input.finishId !== coil.finishId;
+        if (touchesCost || input.widthMm !== undefined || finishChanges) {
           await assertStripsNotAssigned(tx, [coil.id], 'editarlo');
         }
 
         const data: Prisma.CoilUpdateInput = {};
         if (input.widthMm !== undefined) data.widthMm = input.widthMm;
-        if (input.colorId !== undefined) {
-          // Por `resolveActive` y no por `connect` directo: un id inexistente daba un 500
-          // opaco, y —lo que importa— un color **desactivado** se podía asignar acá,
-          // esquivando a posteriori el guardrail que impide desactivar un color en uso.
-          const resolved = await this.colors.resolveActive(input.colorId);
-          data.color = resolved === null ? { disconnect: true } : { connect: { id: resolved } };
+        if (finishChanges && input.finishId !== undefined) {
+          const finish = await tx.finish.findUnique({
+            where: { id: input.finishId },
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              kind: true,
+              isActive: true,
+              colorId: true,
+              businessLineId: true,
+              color: { select: { name: true, isActive: true } },
+            },
+          });
+          if (!finish) throw new NotFoundException('Acabado no encontrado');
+          if (!finish.isActive) throw new BadRequestException('El acabado está desactivado');
+          if (finish.color && !finish.color.isActive) {
+            throw new BadRequestException(
+              `El color «${finish.color.name}» del acabado está desactivado`,
+            );
+          }
+          if (finish.kind === null) {
+            throw new BadRequestException(
+              `El acabado ${finish.code} no tiene tipo ni línea: complétalo en Acabados antes de usarlo`,
+            );
+          }
+          if (finish.businessLineId !== coil.businessLineId) {
+            throw new BadRequestException(
+              `El acabado ${finish.code} es de otra línea que la bobina`,
+            );
+          }
+          // El acabado entra en el `typeKey` (RF-14) y en el SKU de trading con el que se vende la
+          // bobina entera (D-037). Cambiarlo con algo ya apoyado en la bobina —una reserva propia o
+          // cualquier movimiento después del ingreso— dejaría eso apuntando al acabado viejo: se
+          // corrige solo una bobina recién ingresada y sin comprometer, como el recosteo (D-045).
+          const own = await reservedByItem(tx, InventoryItemType.COIL, [coil.id]);
+          if ((own.get(coil.id) ?? toDecimal('0')).gt(0)) {
+            throw new BadRequestException(
+              'La bobina tiene una reserva propia (venta de la bobina entera o reserva temporal): libérala antes de cambiarle el acabado',
+            );
+          }
+          await this.initialMovement(tx, coilId);
+          data.finish = { connect: { id: finish.id } };
+          data.typeKey = coilTypeKey(finish.code, coil.thicknessMm.toFixed(2));
+          await this.coils.ensureTradingProduct(tx, finish, coil.thicknessMm.toFixed(2));
+          // El código (RF-13) no se regenera: es la etiqueta física pegada al rollo, y cambiarla
+          // dejaría el papel y el sistema diciendo dos cosas distintas.
+          // El trigger `coils_color_from_finish` lo haría igual; escribirlo deja el `update`
+          // devolviendo el color nuevo sin depender de releer la fila.
+          data.color = finish.colorId ? { connect: { id: finish.colorId } } : { disconnect: true };
         }
         if (input.notes !== undefined) data.notes = input.notes || null;
 
@@ -908,11 +953,12 @@ export class CoilOperationsService {
 
         const updated = await tx.coil.update({ where: { id: coilId }, data });
 
-        // D-134: cambiarle el color a una bobina la **muda de agregado**, y el que abandona
-        // puede quedar por debajo de lo prometido. Hay que comprobar los dos: después del
-        // cambio la bobina ya no pertenece al viejo, así que leerla de la base no lo
-        // encontraría — por eso los atributos anteriores viajan explícitos.
-        if (input.colorId !== undefined && coil.colorId !== updated.colorId) {
+        // D-134: cambiarle el acabado a una bobina puede **mudarla de agregado** (el color lo
+        // define el acabado; el agregado es línea + color + espesor), y el que abandona puede
+        // quedar por debajo de lo prometido. Hay que comprobar los dos: después del cambio la bobina ya
+        // no pertenece al viejo, así que leerla de la base no lo encontraría — por eso los
+        // atributos anteriores viajan explícitos.
+        if (finishChanges) {
           await assertRawMaterialInvariant(tx, [coil.id], roofingToleranceMm(this.env), {
             alsoAffecting: [
               {
@@ -931,6 +977,8 @@ export class CoilOperationsService {
           entityId: coilId,
           before: {
             widthMm: coil.widthMm.toFixed(2),
+            finishId: coil.finishId,
+            colorId: coil.colorId,
             currency: coil.currency,
             exchangeRate: coil.exchangeRate.toFixed(4),
             unitCostPerKg: coil.unitCostPerKg.toFixed(4),
@@ -940,6 +988,8 @@ export class CoilOperationsService {
           // puede llevar formas relacionales de Prisma que no son JSON serializable.
           after: {
             widthMm: updated.widthMm.toFixed(2),
+            finishId: updated.finishId,
+            colorId: updated.colorId,
             currency: updated.currency,
             exchangeRate: updated.exchangeRate.toFixed(4),
             unitCostPerKg: updated.unitCostPerKg.toFixed(4),

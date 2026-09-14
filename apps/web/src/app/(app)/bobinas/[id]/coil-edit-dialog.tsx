@@ -1,11 +1,19 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CURRENCIES, CURRENCY_LABELS, Decimal, type Currency, type CoilDto } from '@ayr/shared';
+import {
+  CURRENCIES,
+  CURRENCY_LABELS,
+  Decimal,
+  FINISH_KIND_LABELS,
+  type Currency,
+  type CoilDto,
+  type FinishDto,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { ColorSelect } from '@/components/colors/color-select';
+import { ColorSwatch } from '@/components/colors/color-swatch';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,7 +64,7 @@ export function CoilEditDialog({
   onDone: () => void;
 }) {
   const [widthMm, setWidthMm] = useState(coil.widthMm);
-  const [colorId, setColorId] = useState(coil.colorId ?? '');
+  const [finishId, setFinishId] = useState(coil.finishId);
   const [notes, setNotes] = useState(coil.notes ?? '');
   const [currency, setCurrency] = useState<Currency>(coil.currency);
   const [exchangeRate, setExchangeRate] = useState(coil.exchangeRate);
@@ -72,7 +80,7 @@ export function CoilEditDialog({
     if (!open) return;
     const current = coilRef.current;
     setWidthMm(current.widthMm);
-    setColorId(current.colorId ?? '');
+    setFinishId(current.finishId);
     setNotes(current.notes ?? '');
     setCurrency(current.currency);
     setExchangeRate(current.exchangeRate);
@@ -89,7 +97,19 @@ export function CoilEditDialog({
       !decimalEquals(exchangeRate, coil.exchangeRate) ||
       !decimalEquals(unitCostPerKg, coil.unitCostPerKg));
   const widthChanged = !decimalEquals(widthMm, coil.widthMm);
-  const colorChanged = colorId !== (coil.colorId ?? '');
+  const finishChanged = finishId !== coil.finishId;
+  // D-203: el color de la bobina sale del acabado; se corrige cambiando el acabado.
+  const finishes = useQuery({
+    queryKey: ['finishes'],
+    queryFn: () => api<FinishDto[]>('/finishes'),
+    enabled: open,
+  });
+  const finishOptions = (finishes.data ?? []).filter(
+    (f) =>
+      f.id === coil.finishId ||
+      (f.isActive && f.kind !== null && f.businessLine === coil.businessLine),
+  );
+  const chosenFinish = finishes.data?.find((f) => f.id === finishId) ?? null;
   const notesChanged = notes.trim() !== (coil.notes ?? '');
   // Cambiar a moneda extranjera sin escribir el TC dejaría el recosteo con el `1.0000`
   // que arrastra una bobina en soles, y el kardex (que va en soles, D-042) entraría a
@@ -102,7 +122,7 @@ export function CoilEditDialog({
         method: 'PATCH',
         body: {
           ...(widthChanged ? { widthMm: widthMm.trim() } : {}),
-          ...(colorChanged ? { colorId } : {}),
+          ...(finishChanged ? { finishId } : {}),
           ...(notesChanged ? { notes: notes.trim() } : {}),
           ...(costChanged
             ? {
@@ -129,7 +149,7 @@ export function CoilEditDialog({
   });
 
   const canSubmit =
-    (widthChanged || colorChanged || notesChanged || costChanged) &&
+    (widthChanged || finishChanged || notesChanged || costChanged) &&
     (!costChanged || (reason.trim().length >= 3 && !needsRate));
 
   return (
@@ -140,7 +160,7 @@ export function CoilEditDialog({
           <DialogDescription>
             {canEditCost
               ? 'Cambiar la moneda, el tipo de cambio o el costo recuesta el ingreso en el kardex (D-045) y solo se puede si la bobina no se movió después.'
-              : 'Ancho y observaciones. El costo y la moneda los edita un administrador.'}
+              : 'Ancho, acabado y observaciones. El costo y la moneda los edita un administrador.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -163,12 +183,55 @@ export function CoilEditDialog({
             )}
           </div>
           <div className="grid gap-1">
-            <Label htmlFor="edit-color">Color</Label>
-            <ColorSelect value={colorId} onChange={setColorId} disabled={coil.status !== 'OPEN'} />
+            <Label htmlFor="edit-finish">Acabado</Label>
+            <Select
+              value={finishId}
+              onValueChange={setFinishId}
+              disabled={coil.status !== 'OPEN' || finishes.isPending}
+            >
+              <SelectTrigger id="edit-finish" className="w-full">
+                <SelectValue
+                  placeholder={finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {finishOptions.map((f) => (
+                  <SelectItem key={f.id} value={f.id}>
+                    {f.code} — {f.name}
+                    {f.kind ? ` · ${FINISH_KIND_LABELS[f.kind]}` : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {finishes.isError && (
+              <p className="text-sm text-destructive">No se pudieron cargar los acabados.</p>
+            )}
             <p className="text-sm text-muted-foreground">
+              Color:{' '}
+              {finishId === coil.finishId && chosenFinish?.kind === null ? (
+                // Acabado sin tipo (anterior a D-203): la bobina conserva el color con el que se
+                // cargó hasta que el acabado se complete; mostrar el del acabado sería mentir.
+                <>
+                  {coil.colorName && coil.colorHex ? (
+                    <ColorSwatch color={{ name: coil.colorName, hexColor: coil.colorHex }} />
+                  ) : (
+                    'sin color'
+                  )}{' '}
+                  (acabado sin tipo)
+                </>
+              ) : chosenFinish?.colorName && chosenFinish.colorHex ? (
+                <ColorSwatch
+                  color={{ name: chosenFinish.colorName, hexColor: chosenFinish.colorHex }}
+                />
+              ) : chosenFinish ? (
+                'sin color'
+              ) : (
+                '—'
+              )}
+              .{' '}
               {coil.status === 'OPEN'
-                ? 'La orden de coberturas solo ofrece bobinas del mismo color que el producto (D-086).'
-                : 'El color solo se edita con la bobina abierta.'}
+                ? 'El color sale del acabado: para corregirlo, elige el acabado correcto. La orden de coberturas solo ofrece bobinas del mismo color que el producto (D-086).'
+                : 'El acabado solo se edita con la bobina abierta.'}
             </p>
           </div>
           <div className="grid gap-1">

@@ -269,7 +269,7 @@ export class CoilsService {
    * con SKU `BOB{finishCode}{thicknessMm}`, uno por `typeKey`. Se crea al dar de alta
    * la primera bobina de ese tipo; si ya existe, no se toca.
    */
-  private async ensureTradingProduct(
+  async ensureTradingProduct(
     tx: Prisma.TransactionClient,
     finish: { code: string; name: string },
     thicknessMm: string,

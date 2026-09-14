@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -8,6 +9,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import {
+  FINISH_KIND_LABELS,
   BUSINESS_LINE_LABELS,
   BUSINESS_LINES,
   COIL_BUSINESS_LINES,
@@ -36,7 +38,7 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
-import { ColorSelect } from '@/components/colors/color-select';
+import { ColorSwatch } from '@/components/colors/color-swatch';
 import { formatMoney, isPositiveDecimal, todayIso } from '@/lib/format';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -75,8 +77,6 @@ const itemSchema = z.object({
   unit: z.enum(UNITS),
   unitPrice: decimalField('Precio inválido'),
   finishId: z.string().optional(),
-  /** D-085: color de la bobina. Vacío = sin color (galvanizada). */
-  colorId: z.string().optional(),
   widthMm: z.string().trim().optional(),
   thicknessMm: z.string().trim().optional(),
   /** D-116: estado con el que nace la bobina, editable; CLOSED por defecto. */
@@ -184,7 +184,6 @@ export function emptyItem(type: PurchaseType): PurchaseFormValues['items'][numbe
     unit: type === PurchaseType.COIL ? 'KGM' : 'NIU',
     unitPrice: '',
     finishId: '',
-    colorId: '',
     widthMm: '',
     thicknessMm: '',
     productId: '',
@@ -257,6 +256,8 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
     queryKey: ['finishes'],
     queryFn: () => api<FinishDto[]>('/finishes'),
     enabled: type === PurchaseType.COIL,
+    // D-203: el acabado que falta se crea en otra pestaña; al volver, tiene que aparecer.
+    refetchOnWindowFocus: true,
   });
   // Landed cost (D-043): solo se puede imputar a una compra de bobinas ya recibida de
   // la misma línea. La lista se pide únicamente cuando el servicio lo admite.
@@ -447,6 +448,16 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                         items.replace(
                           items.fields.map(() => emptyItem(PurchaseType.FINISHED_GOOD)),
                         );
+                      }
+                      // D-203: un acabado pertenece a una línea. El de la línea anterior quedaba
+                      // elegido sin verse y el API lo rechazaba al guardar.
+                      if (form.getValues('type') === PurchaseType.COIL) {
+                        form.getValues('items').forEach((item, i) => {
+                          const finish = finishes.data?.find((x) => x.id === item.finishId);
+                          if (finish && finish.businessLine !== v) {
+                            form.setValue(`items.${i}.finishId`, '');
+                          }
+                        });
                       }
                     }}
                   >
@@ -815,37 +826,40 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
+                            {/* D-203: solo acabados completos de la línea de la compra. Uno sin
+                                tipo no dice qué color lleva la bobina. */}
                             {finishes.data
-                              ?.filter((f) => f.isActive)
+                              ?.filter(
+                                (f) =>
+                                  (f.isActive || f.id === field.value) &&
+                                  f.kind !== null &&
+                                  f.businessLine === businessLine,
+                              )
                               .map((f) => (
                                 <SelectItem key={f.id} value={f.id}>
                                   {f.code} — {f.name}
+                                  {f.kind ? ` · ${FINISH_KIND_LABELS[f.kind]}` : ''}
+                                  {f.colorName ? ` · ${f.colorName}` : ''}
                                 </SelectItem>
                               ))}
                           </SelectContent>
                         </Select>
+                        <FinishColorHint
+                          loading={finishes.isPending}
+                          finish={
+                            finishes.data?.find(
+                              (f) => f.id === field.value && f.businessLine === businessLine,
+                            ) ?? null
+                          }
+                          unmapped={
+                            finishes.data?.filter((f) => f.isActive && f.kind === null).length ?? 0
+                          }
+                        />
                         {finishes.isError && (
                           <p className="text-xs text-destructive">
                             No se pudieron cargar los acabados.
                           </p>
                         )}
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-                {isCoil && (
-                  <FormField
-                    control={form.control}
-                    name={`items.${index}.colorId`}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Color</FormLabel>
-                        <ColorSelect
-                          value={field.value ?? ''}
-                          onChange={field.onChange}
-                          placeholder="Sin color"
-                        />
                         <FormMessage />
                       </FormItem>
                     )}
@@ -1117,12 +1131,57 @@ function toApiBody(values: PurchaseFormValues): Record<string, unknown> {
       qty: item.qty,
       unit: isCoil ? 'KGM' : item.unit,
       unitPrice: item.unitPrice,
+      // D-203: sin color aparte — la bobina toma el de su acabado.
       finishId: item.finishId?.trim() ? item.finishId : undefined,
-      // D-085: solo en bobinas y solo si se eligió; vacío significa galvanizada, sin color.
-      colorId: isCoil && item.colorId?.trim() ? item.colorId : undefined,
       widthMm: item.widthMm?.trim() ? item.widthMm : undefined,
       thicknessMm: item.thicknessMm?.trim() ? item.thicknessMm : undefined,
       coilStatus: isCoil ? (item.coilStatus ?? 'CLOSED') : undefined,
     })),
   };
+}
+
+/**
+ * D-203: el color de la bobina **se ve**, pero no se elige: sale del acabado. Si el que hace
+ * falta no existe, se dice dónde crearlo; el formulario nunca inventa un color ni un acabado.
+ */
+function FinishColorHint({
+  finish,
+  loading,
+  unmapped,
+}: {
+  finish: FinishDto | null;
+  loading: boolean;
+  /** Acabados activos sin tipo (anteriores a D-203): no se ofrecen hasta completarlos. */
+  unmapped: number;
+}) {
+  if (loading) return <p className="text-xs text-muted-foreground">Cargando acabados…</p>;
+  if (!finish) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {unmapped > 0 &&
+          `${String(unmapped)} acabado(s) sin tipo no se ofrecen: un administrador tiene que completarlos. `}
+        ¿No está el acabado o el color? Créalo en{' '}
+        {/* Pestaña nueva: salir de acá pierde la compra a medio cargar. */}
+        <Link
+          href="/acabados"
+          target="_blank"
+          rel="noopener"
+          className="underline underline-offset-2"
+        >
+          Acabados
+        </Link>{' '}
+        (los colores, en Catálogo → Colores) y vuelve a abrir el selector.
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs text-muted-foreground">
+      Color de la bobina:{' '}
+      {finish.colorName && finish.colorHex ? (
+        <ColorSwatch color={{ name: finish.colorName, hexColor: finish.colorHex }} />
+      ) : (
+        'sin color'
+      )}
+    </p>
+  );
 }
