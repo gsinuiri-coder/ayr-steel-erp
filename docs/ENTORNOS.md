@@ -107,6 +107,41 @@ disponible en paralelo. Las credenciales del Postgres local están fijas y a la 
 `scripts/local-docker-env.mjs` — no son secretas, son de una base descartable que nunca sale
 de `localhost`.
 
+### E2E con latencia: comparar el rendimiento de dos commits (F8-R1)
+
+Docker responde en ~0 ms, así que una regresión que vive en **cantidad de round-trips** a la
+base no se ve con `pnpm e2e` y aparece recién contra Neon. Para medirla de forma repetible hay
+tres herramientas, todas locales y sin Neon:
+
+- `scripts/latency-proxy.mjs`: proxy TCP delante del Postgres local que suma un retardo fijo
+  por sentido y **cuenta los round-trips** (`Sync` del protocolo extendido más consultas
+  simples). En Windows `setTimeout` redondea a ~15,6 ms: `--delay 1` da ~28 ms por consulta
+  medido con Prisma, que es el valor a usar. Medir antes de confiar en otro.
+- `scripts/e2e-latency.mjs`: corre la suite desde un **worktree** con builds de producción
+  (`node dist/main.js` y `next start`), el pool limitado a 5 conexiones como en el runner de
+  GitHub, y recrea `ayr_local_e2e` con el esquema de ese commit. Nunca usa `apps/web/.next` del
+  repo principal, que es el de `pnpm dev:preview` del dueño.
+- `scripts/e2e-roundtrips-reporter.mjs` (lo pone el runner) anota por test duración y
+  round-trips en un `.jsonl`; `scripts/e2e-latency-compare.mjs` cruza dos corridas por spec.
+
+```
+git worktree add --detach ../wt-antes <commit>      # y otro para el después
+pnpm --dir ../wt-antes install --frozen-lockfile
+pnpm --dir ../wt-antes --filter @ayr/shared build
+pnpm --dir ../wt-antes --filter @ayr/api db:generate
+pnpm --dir ../wt-antes --filter @ayr/api build
+pnpm --dir ../wt-antes --filter @ayr/web build       # con API_URL=http://localhost:3000
+node scripts/latency-proxy.mjs --listen 5435 --delay 1 --stats-port 5499   # aparte, en background
+node scripts/e2e-latency.mjs --worktree ../wt-antes --out local-data/r1/antes.jsonl [-- <specs>]
+node scripts/e2e-latency-compare.mjs local-data/r1/antes.jsonl local-data/r1/despues.jsonl
+```
+
+Dos límites medidos: el worktree no tiene credenciales de PSE ni de R2, así que esos caminos
+degradan igual en los dos commits; y un par de specs de UI con drawers fallan solo bajo
+latencia porque la aserción llega antes de que el drawer cierre (ver
+`docs/analisis/f8-r1-rendimiento.md`). Para limitar la CPU como en el runner, lanzar el runner
+con `start "" /affinity 3 /wait /b node scripts/e2e-latency.mjs …` desde `cmd`.
+
 Storage tipo R2 (los adjuntos de `imports`) es opcional: `docker compose --profile storage up
 -d` levanta MinIO y `apps/api/.env` (o el entorno que uses) apunta `R2_ENDPOINT` a
 `http://localhost:9000` con las credenciales de `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`. Sin
