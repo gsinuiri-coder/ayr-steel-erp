@@ -125,6 +125,55 @@ Límite: CI usa el reporter `github` (puntos), sin duración por test, así que 
 no se puede cruzar test por test con la local. Para aislar dónde se va el tiempo en CI hace
 falta una corrida con reporter `list` (o el `.jsonl` de round-trips) **en CI**.
 
+### 6. CI instrumentada: la forma de la divergencia
+
+Rama `diag/f8-r1-instrumentacion` (desde `9607c23`, no se mergea): reporter `list` y una línea
+`[r1]` por test con consultas a la base y su duración. Las mide un preload
+(`scripts/diag/prisma-query-stats.cjs`, vía `NODE_OPTIONS`) que escucha el evento `query` de
+Prisma solo en el proceso del API, sin cambios de producto. `queryMs` es la duración que
+informa el motor por consulta; si hay consultas en paralelo, la suma puede superar el reloj.
+
+Validación local: con el proxy a ~28 ms, el preload da 28-44 ms por consulta. En un test de
+27,3 s, 663 consultas suman 25,9 s. Cuenta menos que el proxy (el proxy también ve los helpers
+de Playwright y mensajes de protocolo), así que **CI y local se comparan con el mismo
+preload**: `local-data/r1/diag-local-first31.jsonl` (specs 1-31, 155 passed, 39,9 min).
+
+**HEAD en CI** (run 34859319029, 2026-09-14 15:04-16:52 UTC, cancelado por timeout a los 110
+min con 207 tests y sin P2028). Cruce con local sobre 161 tests (`local-data/r1/shape-head.txt`):
+
+|                           |    Local |       CI |      CI/local |
+| ------------------------- | -------: | -------: | ------------: |
+| Reloj                     | 39,1 min | 81,6 min |         ×2,09 |
+| Consultas                 |   60.508 |   61.713 |     **×1,02** |
+| ms por consulta (total)   |     33,7 |     78,6 |     **×2,33** |
+| Tiempo en consultas       | 34,0 min | 80,9 min |               |
+| Tiempo fuera de consultas |  5,1 min |  0,7 min | (paralelismo) |
+
+- **Mismas consultas, cada una más lenta.** No es más volumen: es un costo fijo por consulta.
+- **Uniforme, no puntual.** ×reloj por test: p10 1,41 · p25 1,95 · mediana 2,13 · p75 2,27 ·
+  p90 2,40. El ms por consulta de CI, por test (tests con ≥20 consultas): p5 61 · mediana 78 ·
+  p95 92. Hasta los tests de `auth`, con 6-30 consultas y sin locks, pagan 68-111 ms. La única
+  excepción, `fase5a.spec.ts:100` (×5,7), hace el doble de consultas porque en CI sigue el
+  camino de R2 que en local falla.
+- **No crece con el avance.** ×reloj por quintos: 2,04 · 1,85 · 2,20 · 2,29 · 1,94. No hay nada
+  que se acumule.
+- **Locks, puntuales.** Hay esperas largas aisladas (`INSERT … idempotency_keys ON CONFLICT` 6,9 s,
+  `SELECT … coils FOR UPDATE` 3,8 s, `UPDATE production_orders` 1,7 s), pero no mueven la mediana.
+- El diff del lote no cambia nada que agregue costo por consulta: misma versión de Prisma,
+  mismo `schema.prisma` (generator/datasource) y ningún `$extends`, `SET` por transacción ni
+  parámetro de conexión. Solo `maxWait`/`timeout` en cuatro `$transaction`.
+
+**Lo que la forma no alcanza a decir:** la base `e184ca1` cerró en CI en 29,8 min el mismo día
+(07:40 UTC, entre dos corridas lentas del lote a las 05:40 y 10:55). Con este perfil, eso
+exige ~20-25 ms por consulta. O el piso depende de la corrida (red runner→Neon, región del
+runner, estado del pooler) y la base tuvo suerte, o algo del lote lo sube de una manera que
+el diff no muestra. Eso lo decide el A/B.
+
+**A/B sobre la base en CI:** rama `diag/f8-r1-instrumentacion-base` (desde `e184ca1`), con la
+misma instrumentación más `scripts/diag/db-rtt.mjs`: RTT TCP del runner al pooler y al host
+directo, y región de Azure del runner, antes y después de la suite (solo milisegundos; ni host
+ni credenciales). Resultado: pendiente.
+
 ## Lo que falta para cerrar FASE 1
 
 1. ~~¿Explica `stock-shortages` el 4-6× de CI?~~ **No** (§4).
