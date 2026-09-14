@@ -54,8 +54,11 @@ jobs:
     # Lo que solo Neon valida (pooler, planes de consulta reales, migraciones aplicadas ahí)
     # sigue cubierto por el job `smoke-neon`, más abajo.
     #
-    # TIMEOUT_E2E_RUNNER (se fija con la primera corrida medida, ver docs/PROGRESO.md).
-    timeout-minutes: 110
+    # Medido en la primera corrida (run 34898572060, runner WestUS3): 308 tests en 9,8 min, job
+    # completo en 12 min, 124 504 consultas a 0,07 ms cada una. 30 deja ×2,5 sobre ese número:
+    # alcanza para el crecimiento de la suite, y un corte ya significa «algo se colgó», no «cayó
+    # lejos de Neon».
+    timeout-minutes: 30
     services:
       postgres:
         # La misma imagen que docker-compose.yml: local y CI corren la suite sobre el mismo motor.
@@ -140,7 +143,9 @@ jobs:
     # D-202: lo que el Postgres del runner no puede validar. Migraciones aplicadas sobre Neon,
     # el reset con su guard contra el endpoint real de la rama `ci` (D-181) y una docena de
     # specs representativos (`scripts/e2e-smoke.mjs`) pasando por el pooler de Neon. Si la
-    # región del runner lo pone lento, son ~40 tests y no 308.
+    # región del runner lo pone lento, son ~40 tests y no 308. Medido en la primera corrida
+    # (run 34898572060): 35 tests en 8,2 min, job completo en 10 min. 45 cubre un runner
+    # varias veces más lejos de Neon que ese.
     timeout-minutes: 45
     # La rama Neon `ci` se resetea en cada corrida: solo una corrida a la vez.
     concurrency:
