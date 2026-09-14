@@ -172,7 +172,33 @@ el diff no muestra. Eso lo decide el A/B.
 **A/B sobre la base en CI:** rama `diag/f8-r1-instrumentacion-base` (desde `e184ca1`), con la
 misma instrumentación más `scripts/diag/db-rtt.mjs`: RTT TCP del runner al pooler y al host
 directo, y región de Azure del runner, antes y después de la suite (solo milisegundos; ni host
-ni credenciales). Resultado: pendiente.
+ni credenciales).
+
+Run 34871806285 (2026-09-14 17:01-17:32 UTC): **245 passed, 3 skipped en 31,1 min**, dentro del
+tope de 75. Runner en `eastus`, RTT TCP de **~16 ms** al pooler y al directo, igual antes y
+después. Cruce HEAD-CI contra base-CI sobre 177 tests comunes (`local-data/r1/shape-ab.txt`):
+
+|                 |  Base CI |  HEAD CI | HEAD/base |
+| --------------- | -------: | -------: | --------: |
+| Reloj           | 22,5 min | 83,8 min |     ×3,73 |
+| Consultas       |   58.831 |   63.231 | **×1,07** |
+| ms por consulta |     18,8 |     78,8 | **×4,19** |
+
+- En la base, el costo por consulta (18,8 ms) es casi exactamente el RTT de red (16 ms).
+- HEAD hace **7 % más consultas** en los tests comunes, igual que en local (+10 % de RT, §1).
+  El volumen del lote no explica el ×3,7.
+- El ×4 por consulta es **uniforme** (×reloj p25 3,5 · mediana 3,9 · p90 4,8), no crece por
+  quintos (3,6 · 3,7 · 4,2 · 4,3 · 2,9) y **alcanza a código que el lote no tocó**: los tests de
+  `auth` pasan de 14-16 ms por consulta en la base a 68-88 en HEAD.
+- El lote no agrega trabajos en segundo plano: los dos jobs de pg-boss ya existían y respetan
+  `JOBS_ENABLED=false`.
+
+Quedan dos lecturas que esta corrida no separa, porque la de HEAD no tenía sonda: **(a)** la
+corrida de HEAD cayó en una red o un estado de Neon peores, o **(b)** hay carga concurrente
+fuera del proceso del API que el preload no ve. Para separarlas, HEAD se relanza (run 34875631463) con `db-rtt.mjs --loop`, que mide cada 60 s y desde su propio proceso el RTT TCP y
+un `SELECT 1`. Si `SELECT 1` sube a ~80 ms durante la suite, es (a); si se queda en ~16 ms
+mientras el API paga ~80, el cuello está del lado de la aplicación. Validado en local:
+`SELECT 1` da 31 ms por el proxy y 1,8 ms directo.
 
 ## Lo que falta para cerrar FASE 1
 
