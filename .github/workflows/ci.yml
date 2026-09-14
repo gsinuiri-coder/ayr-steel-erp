@@ -55,7 +55,12 @@ jobs:
     # corrida lenta se pasa. El techo se pone sobre el peor caso medido y no sobre el
     # promedio, porque un timeout no distingue "lento" de "roto" y obliga a reejecutar la
     # hora entera para averiguarlo.
-    timeout-minutes: 75
+    #
+    # Ventana V-3 (F8): 75 cortó la primera CI sobre el lote a los 73 min, sin un solo rojo
+    # visible. 308 tests en 1 worker a ~10 s cada uno (V-2: 245 en 42 min) dan ~53 min en un
+    # día normal y ~100 en uno lento de Neon (x2). 110 cubre ese peor caso; la solución de
+    # fondo (workers en paralelo o partir la suite) es deuda anotada en docs/PROGRESO.md.
+    timeout-minutes: 110
     # La rama Neon `ci` se resetea en cada corrida: solo una corrida a la vez.
     concurrency:
       group: neon-ci-branch
