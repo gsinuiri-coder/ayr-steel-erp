@@ -13,6 +13,7 @@ import {
   theoreticalKgPerSellingUnit,
   toDecimal,
   type CreateProductInput,
+  type FinishKind,
   type ProductDto,
   type UpdateProductInput,
 } from '@ayr/shared';
@@ -44,17 +45,54 @@ export class CatalogService {
    * D-122: el acabado del producto, comprobado contra el maestro. Mismo criterio que el
    * color (D-085): un id inexistente da un 404 claro y uno **desactivado** se rechaza, para
    * que el catálogo no sea la puerta trasera por la que entra un acabado dado de baja al
-   * filtro de bobina y al kilo teórico.
+   * filtro de bobina y al kilo teórico. Trae también lo que hace falta para comprobar la
+   * coherencia con la línea y el color del producto (`assertFinishCoherence`).
    */
-  private async resolveActiveFinish(finishId: string | null | undefined): Promise<string | null> {
+  private async resolveActiveFinish(
+    finishId: string | null | undefined,
+  ): Promise<FinishRef | null> {
     if (finishId === null || finishId === undefined || finishId === '') return null;
     const finish = await this.prisma.finish.findUnique({
       where: { id: finishId },
-      select: { id: true, isActive: true },
+      select: {
+        id: true,
+        code: true,
+        isActive: true,
+        kind: true,
+        colorId: true,
+        businessLineId: true,
+      },
     });
     if (!finish) throw new NotFoundException('Acabado no encontrado');
     if (!finish.isActive) throw new BadRequestException('El acabado está desactivado');
-    return finish.id;
+    return finish;
+  }
+
+  /**
+   * Huecos de catálogo heredados de F8-S4 (D-203): un producto con acabado de otra línea
+   * nunca aparecía en el filtro de esa línea, y uno cuyo color no coincidía con el de su
+   * acabado no encontraba jamás una bobina que montar (D-086 compara `product.colorId`
+   * contra `coil.colorId`, y este último sale del acabado desde D-203/M2). Un acabado sin
+   * mapear (`kind` null, anterior a D-203) todavía no tiene de dónde sacar esa verdad, así
+   * que no se comprueba hasta que se complete — mismo criterio que sus triggers en la base.
+   */
+  private assertFinishCoherence(
+    businessLineId: string,
+    colorId: string | null,
+    finish: FinishRef | null,
+  ): void {
+    if (finish === null) return;
+    if (finish.businessLineId !== null && finish.businessLineId !== businessLineId) {
+      throw new BadRequestException(
+        `El acabado ${finish.code} es de otra línea: un acabado pertenece a una sola línea`,
+      );
+    }
+    if (finish.kind !== null && finish.colorId !== colorId) {
+      throw new BadRequestException(
+        `El color del producto no coincide con el del acabado ${finish.code}: ninguna bobina ` +
+          'de ese acabado va a encontrar match nunca (D-086). Iguala el color del producto al del acabado.',
+      );
+    }
   }
 
   async findOne(id: string): Promise<ProductDto> {
@@ -70,9 +108,10 @@ export class CatalogService {
     const line = await this.prisma.businessLine.findUnique({ where: { id: input.businessLineId } });
     if (!line) throw new BadRequestException('Línea de negocio inválida');
     const colorId = await this.colors.resolveActive(input.colorId);
-    const finishId = await this.resolveActiveFinish(input.finishId);
+    const finish = await this.resolveActiveFinish(input.finishId);
     const roofingKind = input.roofingKind ?? null;
-    assertStructuredFields(line.code, { ...input, roofingKind, finishId });
+    assertStructuredFields(line.code, { ...input, roofingKind, finishId: finish?.id ?? null });
+    this.assertFinishCoherence(input.businessLineId, colorId, finish);
 
     try {
       const product = await this.prisma.$transaction(async (tx) => {
@@ -85,7 +124,7 @@ export class CatalogService {
             source: input.source,
             listPricePen: input.listPricePen,
             colorId,
-            finishId,
+            finishId: finish?.id ?? null,
             thicknessMm: input.thicknessMm,
             widthMm: input.widthMm,
             lengthMm: input.lengthMm,
@@ -194,21 +233,31 @@ export class CatalogService {
     // D-085: cambiar el color de un producto con receta viva movería el filtro de bobina
     // (D-086) por debajo de las órdenes en curso, que montaron el rollo contra el color
     // anterior. Mismo criterio que la unidad y el origen, unas líneas más arriba.
+    let finalColorId = before.colorId;
     if (input.colorId !== undefined) {
       const changesColor = input.colorId !== before.colorId;
       if (changesColor) {
         await this.assertNoLiveRoofingOrders(id);
         const resolved = await this.colors.resolveActive(input.colorId);
         data.color = resolved === null ? { disconnect: true } : { connect: { id: resolved } };
+        finalColorId = resolved;
       }
     }
     // D-122: el acabado del producto es lo que fija la densidad con la que se convierten
     // metros en kilos. Cambiarlo con una OP de coberturas viva reescribiría el kilo teórico
     // a mitad de corrida — el mismo motivo por el que el color está bloqueado arriba.
+    let finalFinish: FinishRef | null = before.finish;
     if (input.finishId !== undefined && input.finishId !== before.finishId) {
       await this.assertNoLiveRoofingOrders(id);
       const resolved = await this.resolveActiveFinish(input.finishId);
-      data.finish = resolved === null ? { disconnect: true } : { connect: { id: resolved } };
+      data.finish = resolved === null ? { disconnect: true } : { connect: { id: resolved.id } };
+      finalFinish = resolved;
+    }
+    // Huecos de catálogo de F8-S4 (D-203): tocar cualquiera de los dos vuelve a comprobar el
+    // par completo, porque cambiar solo uno puede romper la coherencia con el otro que no se
+    // tocó.
+    if (input.colorId !== undefined || input.finishId !== undefined) {
+      this.assertFinishCoherence(before.businessLineId, finalColorId, finalFinish);
     }
     if (input.isActive !== undefined) data.isActive = input.isActive;
 
@@ -354,18 +403,34 @@ const PRODUCT_RELATIONS = {
   color: true,
   // D-122: la densidad sale del acabado **del producto** y el largo fijo, del propio SKU.
   // Hasta acá los dos venían de la receta, y eso obligaba a una cobertura a tener una.
-  finish: { select: { id: true, code: true, name: true, densityFactor: true } },
+  // `kind`/`colorId`/`businessLineId` son los que `assertFinishCoherence` necesita cuando
+  // se toca un solo lado del par color/acabado y el otro se queda como estaba.
+  finish: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      densityFactor: true,
+      kind: true,
+      colorId: true,
+      businessLineId: true,
+    },
+  },
 } satisfies Prisma.ProductInclude;
+
+/** Lo que `assertFinishCoherence` necesita de un acabado: identidad, tipo, color y línea. */
+interface FinishRef {
+  id: string;
+  code: string;
+  kind: FinishKind | null;
+  colorId: string | null;
+  businessLineId: string | null;
+}
 
 type WithLineCode = Product & {
   businessLine: { code: BusinessLineCode };
   color: Color | null;
-  finish: {
-    id: string;
-    code: string;
-    name: string;
-    densityFactor: Prisma.Decimal;
-  } | null;
+  finish: (FinishRef & { name: string; densityFactor: Prisma.Decimal }) | null;
 };
 
 /**

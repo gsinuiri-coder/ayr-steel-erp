@@ -215,6 +215,14 @@ async function variantsOf(baseFinishId: string): Promise<string[]> {
  * Producto de cobertura **a medida**: unidad `MTR`, fabricado, con color y con el acabado
  * en el propio SKU (D-122: una cobertura ya no lleva receta; su acabado, su espesor, su
  * ancho y su color viven en `products`, y de ahí sale la densidad, RF-25).
+ *
+ * F8-S5/M0 (D-203): el catálogo exige que `colorId` sea el del acabado (D-086 monta una
+ * bobina solo si su color, que sale del acabado desde D-203/M2, coincide con el del
+ * producto). Igual que {@link buyRoofingCoil}, este helper no asume que quien llama ya hizo
+ * ese acabado a medida: si `options.finishId` no es del color pedido, usa (o crea) la
+ * variante de {@link finishForCoil} — la misma que usaría comprar una bobina con ese mismo
+ * par (acabado base, color), así que un producto y una bobina montados con los mismos
+ * argumentos siguen encontrándose.
  */
 export async function createRoofingProduct(
   api: APIRequestContext,
@@ -231,6 +239,12 @@ export async function createRoofingProduct(
 ): Promise<{ product: ProductDto }> {
   const lineId = await businessLineId(api, ROOFING_LINE);
   const madeToMeasure = options.pieceLengthMm === undefined;
+  const finishId = await finishForCoil(
+    api,
+    options.finishId,
+    ROOFING_LINE,
+    options.colorId ?? null,
+  );
   const product = await postJson<ProductDto>(api, '/api/catalog', {
     businessLineId: lineId,
     sku: `E2E-COB${randomLetters(5)}`,
@@ -240,7 +254,7 @@ export async function createRoofingProduct(
     listPricePen: options.listPricePen ?? '30',
     // D-118 (Fase 7e): Metallic Roofing exige espesor y ancho del SKU desde el alta.
     // D-122: y desde entonces también el acabado, que es de donde sale la densidad.
-    finishId: options.finishId,
+    finishId,
     thicknessMm: options.thicknessMm ?? NOMINAL_THICKNESS,
     widthMm: options.catalogWidthMm ?? COIL_WIDTH,
     // D-127: el subtipo es explícito y obligatorio en esta línea; antes se deducía de la

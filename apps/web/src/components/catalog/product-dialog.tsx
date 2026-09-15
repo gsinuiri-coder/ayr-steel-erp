@@ -21,7 +21,7 @@ import {
   type ProductDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { ColorSelect } from '@/components/colors/color-select';
+import { ColorSwatch } from '@/components/colors/color-swatch';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
@@ -64,8 +64,6 @@ const formSchema = z.object({
     .trim()
     .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Debe ser un número decimal')
     .refine((v) => v === '' || isPositiveDecimal(v), 'Debe ser mayor a cero'),
-  /** D-085: vacío = sin color, que el API guarda como `null`. */
-  colorId: z.string(),
   /**
    * D-122: acabado del SKU. Obligatorio en Metallic Roofing —de él sale la densidad con la
    * que se convierten metros en kilos (RF-25)—, y el campo ni se muestra en el resto.
@@ -101,7 +99,15 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-/** D-085: solo coberturas llevan color; en el resto del catálogo el campo no aparece. */
+/**
+ * D-085: solo coberturas llevan color; en el resto del catálogo el campo no aparece.
+ *
+ * Huecos de catálogo de F8-S4 (D-203): esta línea es siempre la misma que
+ * {@link usesRoofingFields}, y por eso el color de un producto se **deriva** de su acabado
+ * en vez de elegirse aparte — mismo criterio que la bobina (D-203/M2). Antes las dos
+ * selecciones eran independientes y nada avisaba si no coincidían, así que ninguna bobina
+ * de ese acabado llegaba a montarse jamás en el producto (D-086 compara los dos ids).
+ */
 function usesColor(lineCode: BusinessLine): boolean {
   return lineCode === BusinessLine.METALLIC_ROOFING;
 }
@@ -109,6 +115,21 @@ function usesColor(lineCode: BusinessLine): boolean {
 /** D-118: espesor y ancho del SKU, obligatorios solo en Metallic Roofing. */
 function usesRoofingFields(lineCode: BusinessLine): boolean {
   return lineCode === BusinessLine.METALLIC_ROOFING;
+}
+
+/**
+ * Color derivado del acabado elegido (F8-S5, mismo criterio que D-203/M2). Un acabado sin
+ * tipo (anterior a D-203) no tiene de dónde sacarlo: si es el que el producto ya tenía, se
+ * conserva su color hasta que el acabado se complete; si es otro, no hay color que ofrecer.
+ */
+function deriveColorId(
+  finish: FinishDto | null,
+  finishId: string,
+  product: ProductDto | undefined,
+): string {
+  if (finish === null) return '';
+  if (finish.kind !== null) return finish.colorId ?? '';
+  return finishId === product?.finishId ? (product?.colorId ?? '') : '';
 }
 
 /** D-118: ancho, largo y peso de la pieza terminada, obligatorios solo en Drywall. */
@@ -136,10 +157,12 @@ export function ProductDialog({
     queryFn: () => api<FinishDto[]>('/finishes'),
     enabled: open && showRoofingFields,
   });
-  // El acabado guardado se ofrece siempre, aunque esté desactivado: si no, el `Select` se
-  // vacía y parece que nadie eligió nada, cuando el producto sí tiene uno.
+  // El acabado guardado se ofrece siempre, aunque esté desactivado o de otra línea: si no,
+  // el `Select` se vacía y parece que nadie eligió nada, cuando el producto sí tiene uno.
+  // Huecos de catálogo de F8-S4 (D-203): un acabado de otra línea nunca podía montar una
+  // bobina de esta, así que ofrecerlo era la puerta de entrada del defecto.
   const finishOptions = (finishes.data ?? []).filter(
-    (f) => f.isActive || f.id === product?.finishId,
+    (f) => f.id === product?.finishId || (f.isActive && f.businessLine === businessLineCode),
   );
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -149,7 +172,6 @@ export function ProductDialog({
       unit: product?.unit ?? '',
       source: product?.source ?? 'MANUFACTURED',
       listPricePen: product?.listPricePen ?? '',
-      colorId: product?.colorId ?? '',
       finishId: product?.finishId ?? '',
       thicknessMm: product?.thicknessMm ?? '',
       widthMm: product?.widthMm ?? '',
@@ -164,6 +186,11 @@ export function ProductDialog({
   const save = useMutation({
     mutationFn: (values: FormValues) => {
       const roofingKind = showRoofingFields ? (values.roofingKind as RoofingProductKind) : null;
+      const chosenFinish = finishes.data?.find((f) => f.id === values.finishId) ?? null;
+      // D-203/M2 aplicado al catálogo (F8-S5): el color no se elige aparte, sale del
+      // acabado. Mandarlo siempre —y no solo cuando cambia— es lo que mantiene sincronizado
+      // un producto viejo cuyo color quedó desalineado del suyo.
+      const colorId = showColor ? deriveColorId(chosenFinish, values.finishId, product) : '';
       const structuredFields = {
         thicknessMm: showRoofingFields ? values.thicknessMm : '',
         widthMm: showRoofingFields || showDrywallFields ? values.widthMm : '',
@@ -182,7 +209,7 @@ export function ProductDialog({
             unit: values.unit,
             source: values.source,
             listPricePen: values.listPricePen,
-            ...(showColor ? { colorId: values.colorId } : {}),
+            ...(showColor ? { colorId } : {}),
             ...(showRoofingFields ? { finishId: values.finishId } : {}),
             ...structuredFields,
           },
@@ -192,7 +219,7 @@ export function ProductDialog({
         method: 'POST',
         body: {
           ...values,
-          colorId: showColor ? values.colorId : '',
+          colorId,
           finishId: showRoofingFields ? values.finishId : '',
           ...structuredFields,
           businessLineId,
@@ -277,56 +304,74 @@ export function ProductDialog({
                 </FormItem>
               )}
             />
-            {showColor && (
-              <FormField
-                control={form.control}
-                name="colorId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Color</FormLabel>
-                    <ColorSelect value={field.value} onChange={field.onChange} />
-                    <p className="text-xs text-muted-foreground">
-                      La orden de producción solo ofrece bobinas de este mismo color (D-086). Un
-                      producto sin color solo monta bobinas sin color.
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
             {showRoofingFields && (
               <FormField
                 control={form.control}
                 name="finishId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Acabado</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger className="w-full" disabled={finishes.isPending}>
-                          <SelectValue
-                            placeholder={
-                              finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
-                            }
-                          />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {finishOptions.map((f) => (
-                          <SelectItem key={f.id} value={f.id}>
-                            {f.code} — {f.name}
-                            {f.isActive ? '' : ' (desactivado)'}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      De su factor de densidad salen los kilos teóricos por metro lineal (RF-25,
-                      D-122). El acabado ya no vive en la receta: una cobertura no lleva.
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                render={({ field }) => {
+                  const chosenFinish = finishes.data?.find((f) => f.id === field.value) ?? null;
+                  const legacyUnmapped =
+                    field.value === product?.finishId && chosenFinish?.kind === null;
+                  return (
+                    <FormItem>
+                      <FormLabel>Acabado</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full" disabled={finishes.isPending}>
+                            <SelectValue
+                              placeholder={
+                                finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
+                              }
+                            />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {finishOptions.map((f) => (
+                            <SelectItem key={f.id} value={f.id}>
+                              {f.code} — {f.name}
+                              {f.isActive ? '' : ' (desactivado)'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        De su factor de densidad salen los kilos teóricos por metro lineal (RF-25,
+                        D-122). El acabado ya no vive en la receta: una cobertura no lleva.
+                      </p>
+                      {showColor && (
+                        <p className="text-sm text-muted-foreground">
+                          Color:{' '}
+                          {legacyUnmapped ? (
+                            <>
+                              {product?.colorName && product.colorHex ? (
+                                <ColorSwatch
+                                  color={{ name: product.colorName, hexColor: product.colorHex }}
+                                />
+                              ) : (
+                                'sin color'
+                              )}{' '}
+                              (acabado sin tipo)
+                            </>
+                          ) : chosenFinish?.colorName && chosenFinish.colorHex ? (
+                            <ColorSwatch
+                              color={{
+                                name: chosenFinish.colorName,
+                                hexColor: chosenFinish.colorHex,
+                              }}
+                            />
+                          ) : chosenFinish ? (
+                            'sin color'
+                          ) : (
+                            '—'
+                          )}
+                          . El color sale del acabado (D-086): para corregirlo, elige el acabado
+                          correcto.
+                        </p>
+                      )}
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
             )}
             {showRoofingFields && (

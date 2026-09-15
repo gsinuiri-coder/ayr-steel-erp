@@ -145,7 +145,10 @@ async function setupPlancha(
   options: { coilKg?: string; coilUnitPrice?: string } = {},
 ): Promise<PlanchaScenario> {
   const supplier = await createSupplier(api, { name: 'E2E Proveedor planchas' });
-  const finish = await createFinish(api);
+  // F8-S5/M0 (D-203): el acabado del SKU tiene que ser de su misma línea (D-086); el
+  // default de `createFinish` es Drywall, así que esta plancha de Metallic Roofing lo pide
+  // explícito.
+  const finish = await createFinish(api, { businessLine: ROOFING_LINE });
   const product = await createCatalogProduct(api, {
     lineCode: ROOFING_LINE,
     unit: 'NIU',
