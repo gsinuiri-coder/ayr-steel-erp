@@ -42,7 +42,8 @@
     "check:price-floor": "node scripts/check-price-floor.mjs",
     "check:roofing-catalog": "node scripts/check-roofing-catalog.mjs",
     "check:coil-skus": "node scripts/check-coil-skus.mjs",
-    "import:initial-inventory": "node scripts/import-initial-inventory.mjs"
+    "import:initial-inventory": "node scripts/import-initial-inventory.mjs",
+    "limpia:v4": "node scripts/production-cleanup-v4.mjs"
   },
   "devDependencies": {
     "@ayr/eslint-config": "workspace:*",
