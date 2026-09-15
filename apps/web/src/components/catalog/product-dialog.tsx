@@ -187,9 +187,6 @@ export function ProductDialog({
     mutationFn: (values: FormValues) => {
       const roofingKind = showRoofingFields ? (values.roofingKind as RoofingProductKind) : null;
       const chosenFinish = finishes.data?.find((f) => f.id === values.finishId) ?? null;
-      // D-203/M2 aplicado al catálogo (F8-S5): el color no se elige aparte, sale del
-      // acabado. Mandarlo siempre —y no solo cuando cambia— es lo que mantiene sincronizado
-      // un producto viejo cuyo color quedó desalineado del suyo.
       const colorId = showColor ? deriveColorId(chosenFinish, values.finishId, product) : '';
       const structuredFields = {
         thicknessMm: showRoofingFields ? values.thicknessMm : '',
@@ -202,6 +199,14 @@ export function ProductDialog({
         roofingKind,
       };
       if (editing) {
+        // D-203/M2 aplicado al catálogo (F8-S5): el color sale del acabado, no se elige
+        // aparte. Pero acá solo se manda cuando el acabado **cambió** (revisor: mandarlo
+        // siempre reabría D-085 en cada edición — un producto legado cuyo color quedó
+        // desalineado del suyo disparaba el guardrail de "receta viva" por renombrar o
+        // repreciar, con un mensaje que hablaba de color sin que nadie lo hubiera tocado).
+        // Un desalineado histórico se corrige a propósito, cambiando el acabado, igual que
+        // en «Editar bobina» — no como efecto de lado de guardar cualquier otro campo.
+        const finishChanged = values.finishId !== product.finishId;
         return api<ProductDto>(`/catalog/${product.id}`, {
           method: 'PATCH',
           body: {
@@ -209,7 +214,7 @@ export function ProductDialog({
             unit: values.unit,
             source: values.source,
             listPricePen: values.listPricePen,
-            ...(showColor ? { colorId } : {}),
+            ...(showColor && finishChanged ? { colorId } : {}),
             ...(showRoofingFields ? { finishId: values.finishId } : {}),
             ...structuredFields,
           },

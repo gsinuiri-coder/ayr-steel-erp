@@ -30,6 +30,7 @@ import {
   isPositiveDecimal,
   unitSymbol,
 } from '@/lib/format';
+import { INVOICE_LINK_ROLES, REF_TARGET_ROLES } from '@/lib/nav';
 import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
@@ -502,8 +503,12 @@ export function BobinaDetalleView({ id }: { id: string }) {
                   </TableCell>
                   <TableCell>
                     {/* F8-S5/M1 (D-205): mismo criterio que /kardex — link cuando el API
-                        ya resolvió a qué pantalla apunta la referencia. */}
-                    {m.refTargetType && m.refTargetId ? (
+                        ya resolvió a qué pantalla apunta la referencia y el rol de quien
+                        mira puede entrar ahí (revisor: sin el chequeo, un rol sin acceso
+                        al destino topaba con "No tienes permiso"). */}
+                    {m.refTargetType &&
+                    m.refTargetId &&
+                    REF_TARGET_ROLES[m.refTargetType].includes(user.role) ? (
                       <Link
                         className={LINK_CLASSNAME}
                         href={`${REF_TARGET_ROUTES[m.refTargetType]}/${m.refTargetId}`}
@@ -516,7 +521,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
                     {m.refType === 'SALE' && (
                       <div className="text-xs text-muted-foreground">
                         Factura:{' '}
-                        {m.invoiceId ? (
+                        {m.invoiceId && INVOICE_LINK_ROLES.includes(user.role) ? (
                           <Link className={LINK_CLASSNAME} href={`/comprobantes/${m.invoiceId}`}>
                             ver
                           </Link>

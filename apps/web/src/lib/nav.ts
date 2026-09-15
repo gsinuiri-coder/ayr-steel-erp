@@ -23,7 +23,7 @@ import {
   UsersRound,
   Warehouse,
 } from 'lucide-react';
-import { Role } from '@ayr/shared';
+import { Role, type RefTargetType } from '@ayr/shared';
 
 export interface NavItem {
   title: string;
@@ -205,3 +205,34 @@ export function navForRole(role: Role): NavGroup[] {
     (g) => g.items.length > 0,
   );
 }
+
+/**
+ * F8-S5/M1 (D-205, hallazgo de `revisor`): a qué rol le sirve de verdad el link que el
+ * kardex arma a partir de `refTargetType`. `/kardex` lo ven los tres roles (línea 127 de
+ * arriba), pero sus destinos son más angostos que eso —`/compras` y `/corte` son de
+ * planta, `/pedidos` y `/comprobantes` son comerciales— así que sin este chequeo un
+ * VENDEDOR o un SUPERVISOR_PLANTA llegaban a un link que su propio `RoleGate` de destino
+ * rebota con "No tienes permiso para ver esta sección": no es una fuga (el API igual
+ * exige el rol), pero sí un link que parece roto para dos de los tres roles que ahora ven
+ * esta pantalla.
+ *
+ * `productionOrder` no sale de `NAV` porque `/produccion` no es un ítem de menú (D-190:
+ * redirige, se opera desde `/planta`) — el par se copia a mano del `RoleGate` real de
+ * `produccion-detalle-view.tsx`, y hay que mantenerlo si ese `RoleGate` cambia. Los demás
+ * si vienen de `NAV`, para no repetir una lista que ya existe.
+ */
+function rolesOfNavItem(href: string): readonly Role[] {
+  const item = NAV.flatMap((g) => g.items).find((i) => i.href === href);
+  if (!item) throw new Error(`No hay ítem de NAV para "${href}"`);
+  return item.roles;
+}
+
+export const REF_TARGET_ROLES: Record<RefTargetType, readonly Role[]> = {
+  purchase: rolesOfNavItem('/compras'),
+  cutting: rolesOfNavItem('/corte'),
+  salesOrder: rolesOfNavItem('/pedidos'),
+  productionOrder: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+};
+
+/** El comprobante de una venta (D-205): mismos roles que `/comprobantes` en `NAV`. */
+export const INVOICE_LINK_ROLES: readonly Role[] = rolesOfNavItem('/comprobantes');

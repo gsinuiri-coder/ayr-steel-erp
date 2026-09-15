@@ -24,6 +24,8 @@ import {
   formatTimestampDate,
   unitSymbol,
 } from '@/lib/format';
+import { INVOICE_LINK_ROLES, REF_TARGET_ROLES } from '@/lib/nav';
+import { useSession } from '@/lib/session';
 import { usePagination } from '@/lib/use-pagination';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
@@ -46,6 +48,7 @@ import {
  * un saldo corrido no significaría nada y el API lo manda en `null`.
  */
 export function KardexView() {
+  const { user } = useSession();
   const params = useSearchParams();
   const itemId = params.get('item') ?? '';
   // La URL la escribe cualquiera: un  inventado solo lograría un 400 y un
@@ -190,10 +193,15 @@ export function KardexView() {
                 </TableCell>
                 <TableCell className="hidden md:table-cell">
                   {/* F8-S5/M1 (D-205): la referencia se vuelve link cuando el API ya
-                      resolvió a qué pantalla apunta (`refTargetType`); si no, es el mismo
-                      texto de siempre — un `SPLIT`, una `SCRAP` o un `CLOSE_ADJUSTMENT`
-                      señalan la bobina que ya se está mirando y no necesitan link propio. */}
-                  {m.refTargetType && m.refTargetId ? (
+                      resolvió a qué pantalla apunta (`refTargetType`) y el rol de quien
+                      mira puede entrar ahí — `/kardex` la ven los tres roles, pero sus
+                      destinos son más angostos (revisor); sin el rol que corresponde queda
+                      como el mismo texto de siempre, no un link que el propio destino
+                      rebota. Un `SPLIT`, una `SCRAP` o un `CLOSE_ADJUSTMENT` señalan la
+                      bobina que ya se está mirando y no necesitan link propio. */}
+                  {m.refTargetType &&
+                  m.refTargetId &&
+                  REF_TARGET_ROLES[m.refTargetType].includes(user.role) ? (
                     <Link
                       className={LINK_CLASSNAME}
                       href={`${REF_TARGET_ROUTES[m.refTargetType]}/${m.refTargetId}`}
@@ -211,7 +219,7 @@ export function KardexView() {
                   {m.refType === 'SALE' && (
                     <div className="text-xs text-muted-foreground">
                       Factura:{' '}
-                      {m.invoiceId ? (
+                      {m.invoiceId && INVOICE_LINK_ROLES.includes(user.role) ? (
                         <Link className={LINK_CLASSNAME} href={`/comprobantes/${m.invoiceId}`}>
                           ver
                         </Link>
