@@ -8,8 +8,10 @@ Fecha: 2026-09-14
   de la bobina sale del acabado). Nada sacrificado ni cortado a S4b.
 - Suite E2E completa local en verde: **319 passed, 0 failed, 2 skipped**. Unitarios 417/417, y
   lint, typecheck y format en verde.
-- **Todo en commits locales, sin push** (se acumula para la ventana V-4). CI no corrió sobre esto
-  y producción no se tocó.
+- **Commits locales, sin push** (se acumulan para la ventana V-4), con una excepción que esta sesión
+  no hizo: `a05fca1` (M0) apareció en `origin/main` a las 18:21 (-05), empujado desde este clon
+  sin que lo ejecutara la sesión ni sus subagentes. Su CI salió verde (run 34908482884).
+  Producción no se tocó.
 
 ## 2. Hecho
 
@@ -66,6 +68,11 @@ Fecha: 2026-09-14
   mueve el vencimiento sin re-reservar.
 
 ## 4. Bloqueos / pendientes
+
+- **Push no explicado de `a05fca1`.** Solo M0 (idempotencia y reserva temporal, con su CI verde)
+  está en `origin/main`; el resto, 7 commits, sigue local. Confirmar con el dueño si lo pusheó él o
+  su editor (p. ej. sincronización automática) y, si fue un editor, apagarla antes de otra sesión
+  sin push.
 
 - **El importador de bobinas del brief no existe.** No hay importador por columnas: las bobinas
   entran por compra (formulario o XML), partido y corte. No se adaptó nada. Si el dueño lo quiere,
