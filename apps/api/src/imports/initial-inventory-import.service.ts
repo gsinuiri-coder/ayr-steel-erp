@@ -17,6 +17,7 @@ import {
   getField,
   parseCalendarDate,
   parseSpreadsheet,
+  pickRawValue,
   type ImportColumn,
 } from './parse-spreadsheet';
 
@@ -56,7 +57,7 @@ export class InitialInventoryImportService {
     const sheet = parseSpreadsheet(input.buffer);
     if (sheet.length === 0) throw new BadRequestException('El archivo no tiene ninguna fila');
     const fromExport = isCoilExport(sheet[0] ?? {});
-    const normalized = fromExport ? sheet.map(fromCoilExportRow) : sheet;
+    const normalized = sheet.map((r) => withOpeningKg(fromExport ? fromCoilExportRow(r) : r));
     assertColumns(normalized[0] ?? {});
 
     // V-4: en el formato del export, una bobina cerrada o sin kilos no es stock que abrir. Se
@@ -290,10 +291,9 @@ function field(raw: Record<string, unknown>, key: ColumnKey): string {
 //
 // La recarga de V-4 sube el export de las bobinas que `production` tenía antes de la limpia
 // (D-208), no la plantilla. Se traduce a las columnas de la plantilla y el resto del camino es
-// el mismo. Mapeo del dueño: los kilos de apertura son `KILOS ACTUALES` — la apertura es la
-// foto, no la historia; con los iniciales, las bobinas consumidas en parte abrían con kilos
-// que ya no existen (6.591 kg en el export real de V-4). `CÓDIGO SISTEMA` pasa a ser el código
-// de origen; el comprobante de compra, la factura de referencia.
+// el mismo. `CÓDIGO SISTEMA` pasa a ser el código de origen; el comprobante de compra, la
+// factura de referencia. Los kilos de apertura los resuelve `withOpeningKg`, para cualquier
+// formato.
 
 const EXPORT_COLUMNS = {
   systemCode: 'CÓDIGO SISTEMA',
@@ -317,10 +317,34 @@ export function fromCoilExportRow(raw: Record<string, unknown>): Record<string, 
   return {
     ...raw,
     [COLUMN_DEFS.externalCode]: exportField(raw, EXPORT_COLUMNS.systemCode),
-    [COLUMN_DEFS.weightKg]: exportField(raw, EXPORT_COLUMNS.currentKg),
     [COLUMN_DEFS.referenceInvoice]: exportField(raw, EXPORT_COLUMNS.invoice),
     [COLUMN_DEFS.referenceDate]: exportField(raw, EXPORT_COLUMNS.invoiceDate),
   };
+}
+
+/**
+ * Kilos de apertura (dueño, V-4): la apertura es la foto, no la historia. Si el archivo trae
+ * `KILOS ACTUALES` (el export), esos mandan — con los iniciales, las bobinas consumidas en parte
+ * abrían con 6.591 kg que ya no existían. Si no la trae (la plantilla, o el Excel definitivo
+ * depurado por el dueño), `KILOS INICIALES` ya es la foto.
+ */
+export function withOpeningKg(raw: Record<string, unknown>): Record<string, unknown> {
+  if (pickRawValue(raw, EXPORT_COLUMNS.currentKg) === undefined) return raw;
+  // Se quitan las variantes de encabezado de los dos (tildes, mayúsculas): si quedara la
+  // original, `pickRawValue` la encontraría primero y los iniciales volverían a mandar.
+  const rest = Object.fromEntries(
+    Object.entries(raw).filter(
+      ([key]) =>
+        pickRawValue({ [key]: true }, COLUMN_DEFS.weightKg) === undefined &&
+        pickRawValue({ [key]: true }, EXPORT_COLUMNS.currentKg) === undefined,
+    ),
+  );
+  return { ...rest, [COLUMN_DEFS.weightKg]: exportField(raw, EXPORT_COLUMNS.currentKg) };
+}
+
+/** El color del archivo contra el del acabado: 'ROJO' y 'Rojo' (D-203) son el mismo color. */
+export function sameColorName(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 /** Por defecto se omiten las cerradas y las que ya no tienen kilos (dueño, V-4). */
@@ -466,7 +490,7 @@ function parseRow(
     } else if (!needsColor && colorRaw !== '') {
       errors.push(`${COLUMN_DEFS.color}: el acabado ${finish.code} no lleva color.`);
     } else if (needsColor && colorRaw !== '' && finish.color) {
-      if (finish.color.name.trim().toLowerCase() !== colorRaw.trim().toLowerCase()) {
+      if (!sameColorName(finish.color.name, colorRaw)) {
         errors.push(
           `${COLUMN_DEFS.color} "${colorRaw}" no coincide con el del acabado ${finish.code} ` +
             `("${finish.color.name}"). El color de la bobina sale del acabado (D-203): si el ` +
