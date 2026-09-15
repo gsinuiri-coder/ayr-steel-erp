@@ -577,20 +577,22 @@ model BusinessLine {
 /// se pudieron mapear; la API los exige en toda alta y edición, y una migración posterior los
 /// pasa a `NOT NULL` cuando ya no quede ninguna fila sin mapear.
 model Finish {
-  id             String        @id @default(uuid()) @db.Uuid
-  code           String        @unique @db.VarChar(20)
-  name           String        @db.VarChar(120)
-  densityFactor  Decimal       @map("density_factor") @db.Decimal(10, 4)
-  kind           FinishKind?
+  id             String       @id @default(uuid()) @db.Uuid
+  code           String       @unique @db.VarChar(20)
+  name           String       @db.VarChar(120)
+  densityFactor  Decimal      @map("density_factor") @db.Decimal(10, 4)
+  /// D-209: obligatorio desde que la migración de esa decisión confirmó que ningún acabado
+  /// quedaba sin mapear. Antes (D-203) nacía nulo para las filas anteriores a D-203.
+  kind           FinishKind
   /// Obligatorio con `PREPINTADO`, nulo con `NATURAL` y `GALVANIZADO` (CHECK en la base).
-  colorId        String?       @map("color_id") @db.Uuid
-  color          Color?        @relation(fields: [colorId], references: [id])
-  /// Línea dura: un acabado pertenece a una sola línea de negocio.
-  businessLineId String?       @map("business_line_id") @db.Uuid
-  businessLine   BusinessLine? @relation(fields: [businessLineId], references: [id])
-  isActive       Boolean       @default(true) @map("is_active")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  colorId        String?      @map("color_id") @db.Uuid
+  color          Color?       @relation(fields: [colorId], references: [id])
+  /// Línea dura: un acabado pertenece a una sola línea de negocio. Obligatorio desde D-209.
+  businessLineId String       @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine @relation(fields: [businessLineId], references: [id])
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   coils         Coil[]
   purchaseItems PurchaseItem[]
