@@ -365,3 +365,33 @@ completos y acabado sin tipo) — resultados en `docs/PROGRESO.md`, sesión F8-V
 8. **[Agente] Deploy API** (`pnpm deploy:api`) **+ [dueño] verificación del web** + **[agente]
    `pnpm smoke:prod`** (solo lectura) + **[dueño] verificación final** en `/inventario`,
    `/bobinas` y `/acabados`.
+
+### Lo que la ejecución real de V-4 (2026-09-15) corrigió de este checklist
+
+El orden de arriba es el que se escribió en F8-V4prep; la ventana real encontró tres cosas que
+el ensayo contra la rama clonada no podía ver. **Si este checklist se reutiliza, rige esto.**
+
+1. **El código de D-209 no puede estar desplegado mientras quede un acabado sin tipo.** Esa es
+   la causa real de que el paso 5 no se pudiera hacer desde la UI. El commit de D-209 quita el
+   `?` de `Finish.kind`/`businessLineId` en `schema.prisma`, así que el cliente Prisma
+   compilado con él **revienta al leer cualquier acabado con `kind` null** («Attempted to
+   serialize non-enum-compatible value 'null' for enum 'FinishKind'»): el listado y la edición de
+   Acabados caen, y también cualquier script que use ese cliente. El ensayo no lo vio porque
+   completó los acabados con SQL y no con el código. Orden correcto para un cambio así: primero
+   se completan los datos con código que todavía acepta el null, y recién después se despliega
+   el código que lo prohíbe junto con su migración.
+2. **El deploy del API va antes del paso 5, no en el 8.** Con las migraciones de D-203 ya
+   aplicadas, el API anterior no conoce tipo/línea/color de un acabado: el web nuevo los
+   muestra pero no se guardan. Por (1), el API que se despliega en ese punto **no puede traer
+   todavía el schema de D-209**. En la ventana real el API se desplegó con D-209 incluido y
+   los 8 acabados se completaron con un script de un solo uso: `FinishesService.update` dentro
+   de un contexto de Nest, con un cliente Prisma aislado y generado sin la obligatoriedad (sin
+   SQL y sin tocar `node_modules`). Funciona, pero es un rodeo que el orden correcto evita.
+3. **El admin de producción no inicia sesión con el `ADMIN_PASSWORD` de `.env.setup`.** Es
+   lo esperado y no una fuga: `.env.setup` está en `.gitignore` (nunca estuvo en el repo), y en
+   producción ese valor es solo la **contraseña de arranque** que usa `prisma/seed.ts` para
+   _crear_ el admin con `mustChangePassword = true`. El seed nunca pisa la contraseña de un admin
+   que ya existe. **La credencial del admin de producción la gestiona el dueño, aparte.**
+   Ningún paso de agente debe depender de ella: `smoke:prod` usa un admin efímero de E2E, y una
+   escritura de catálogo sin UI va por un script que llama al servicio de dominio, nunca por un
+   login con la contraseña de arranque.

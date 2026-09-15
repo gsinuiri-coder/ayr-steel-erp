@@ -5143,7 +5143,7 @@ refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelv
   (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
   de otra sesión.
 
-## Ventana V-4 exprés — limpia total de producción (2026-09-15) — EN PAUSA tras el paso 4
+## Ventana V-4 exprés — limpia total + inventario real en producción (2026-09-15) — COMPLETADA
 
 Modo exprés autorizado por el dueño (CI no bloquea, gate PSE satisfecho en V4prep).
 
@@ -5166,12 +5166,39 @@ Modo exprés autorizado por el dueño (CI no bloquea, gate PSE satisfecho en V4p
   **`KILOS ACTUALES`** (decisión del dueño tras ver 6.591 kg consumidos en 4 bobinas: la
   apertura es la foto, no la historia). Export previo a la limpia, 43 bobinas (1 CLOSED):
   `local-data/bobinas-production-pre-limpia-v4.xlsx`.
-- **En espera:** el dueño entrega el Excel definitivo. Pendientes para retomar: paso 5 (dueño
-  completa en Acabados tipo, línea **y color** de `ALZ-AZUL-5002`, `ALZ-BLANCO`,
-  `ALZ-GRIS-7040`, `ALZ-NATURAL`, `ALZ-ROJO-3020`, `ALZ-VERDE-6002`, `ALZ-VERDE-6035`, `GALV` —
-  hoy los 8 sin color asignado), paso 6 (D-209), paso 7 (dry-run + carga), paso 8 (deploy API +
-  `smoke:prod`). **Hasta el deploy, el API de producción corre código anterior sobre un
-  esquema con D-203/D-205/D-206 aplicadas.**
+  El Excel definitivo del dueño (`local-data/inventario inicial.xlsx`, 15 filas depuradas)
+  trae una sola columna de kilos, así que el parser quedó (`8491883`): `KILOS ACTUALES` si la
+  columna existe, si no `KILOS INICIALES`. El cruce de color no distingue mayúsculas.
+- **Deploy del API adelantado** (antes del paso 5, por decisión del dueño): revisión
+  `ayr-steel-erp-api-00033-ww7`, health `ok/db ok`. El dueño no podía guardar los acabados
+  desde la UI con el API anterior.
+- **Paso 5 — Acabados, hecho por el agente** con los valores del dueño: `ALZ-NATURAL` NATURAL
+  sin color; `GALV` GALVANIZADO sin color, en Drywall; `ALZ-ROJO-3020` Rojo, `ALZ-AZUL-5002`
+  Azul, `ALZ-BLANCO` Blanco, `ALZ-GRIS-7040` Gris, `ALZ-VERDE-6002` y `ALZ-VERDE-6035` Verde,
+  todos PREPINTADO en Coberturas Aluzinc. No hubo que crear ningún color. **Causa real del
+  bloqueo:** el código de D-209 ya desplegado revienta al leer un acabado con `kind` null, así
+  que la pantalla de Acabados en producción probablemente dio 500 durante unos minutos, entre
+  el deploy y este paso. Tampoco se pudo usar el `PATCH`: el login de admin con la contraseña
+  de arranque de `.env.setup` da 401. Se completó con `FinishesService.update` en un contexto
+  de Nest con un cliente Prisma aislado y sin la obligatoriedad (sin SQL; temporales borrados).
+  Lecciones en el runbook de `docs/ENTORNOS.md`.
+- **Paso 6 — D-209** aplicada limpia: producción **66/66**, esquema al día.
+- **Paso 7 — Carga de inventario real (D-206)**, aprobada por el dueño tras el dry-run 15/15
+  (~22:00 UTC): **15 bobinas** OPEN (`SALDO-…`), fecha de operación 2026-09-15, **15 movimientos
+  de kardex `IMPORT` por 46.805 kg**, 15 saldos (46.805 kg), **valorizado S/ 132.520,06** sin IGV,
+  1 registro de auditoría `imports.initial-inventory`. Las 2 `ALZ-NATURAL` quedan sin color, que
+  es lo correcto. El comprobante de referencia de la fila 4 (`F001-1307`) quedó tal como vino en
+  el archivo.
+- **Paso 8 — `smoke:prod`** en verde (valorizado 15, reporte mensual 15). Productos
+  UPVC/reventa (`--kind products`): el dueño no entregó archivo en esta ventana.
+- **Pendientes post-ventana (dueño: próxima sesión corta):**
+  1. **CI, rama Neon `ci`:** D-209 quedó fallida ahí (21:11 UTC, P3009) y bloquea el job
+     «Smoke E2E y migraciones». Resolver con `migrate resolve --rolled-back` sobre `ci` o
+     reseteando la rama, completando antes sus acabados sin tipo.
+  2. **CI, runner:** los 4 specs del importador (`inventario-inicial-f8s6a*.spec.ts`) fallan
+     porque `scripts/import-initial-inventory.mjs` arma la URL del Docker local en vez de usar
+     la base del runner. La guarda de esquema lo reporta como «falta D-206». Nunca habían corrido
+     en CI.
 
 ## Sesión F8-V4prep — Cierre de S6a2 + herramientas de V-4 (2026-09-15) — CERRADA
 
