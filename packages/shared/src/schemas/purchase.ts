@@ -178,7 +178,9 @@ const purchaseItemInputSchema = z.object({
    * línea); pedirlo aparte era lo que dejaba bobinas prepintadas sin color. Un `colorId` que
    * todavía llegue se rechaza, en vez de ignorarlo en silencio: el que lo manda cree que cuenta.
    */
-  colorId: z.never({ invalid_type_error: 'El color de la bobina sale de su acabado: elige el acabado' }).optional(),
+  colorId: z
+    .never({ invalid_type_error: 'El color de la bobina sale de su acabado: elige el acabado' })
+    .optional(),
   widthMm: decimalStringSchema('MM', { positive: true }).optional(),
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
   /**
