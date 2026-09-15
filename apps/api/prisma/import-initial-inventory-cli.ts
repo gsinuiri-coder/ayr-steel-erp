@@ -56,6 +56,10 @@ const kind: 'coils' | 'products' = kindFlag;
 
 function printCoilRow(row: InitialInventoryRowSummary): void {
   const label = `  fila ${String(row.rowNumber)} (${row.externalCode || 'sin código'})`;
+  if (row.skipped) {
+    console.warn(`${label}: OMITIDA (${row.skipped})`);
+    return;
+  }
   if (row.ok) {
     console.warn(`${label}: OK${row.coilCode ? ` → ${row.coilCode}` : ''}`);
     return;
@@ -133,9 +137,11 @@ async function main(): Promise<void> {
     }
 
     const failed = report.rows.filter((r) => !r.ok).length;
+    const skipped = report.rows.filter((r) => 'skipped' in r && r.skipped).length;
+    const loaded = report.totalRows - failed - skipped;
     console.warn(
-      `\n${String(report.totalRows)} fila(s): ${String(report.totalRows - failed)} ok, ` +
-        `${String(failed)} con error.`,
+      `\n${String(report.totalRows)} fila(s): ${String(loaded)} ok, ` +
+        `${String(skipped)} omitida(s), ${String(failed)} con error.`,
     );
 
     if (!report.ok) {
@@ -152,7 +158,7 @@ async function main(): Promise<void> {
       return;
     }
     console.warn(
-      `\nListo: ${String(report.totalRows)} ${kind === 'coils' ? 'bobina(s)' : 'línea(s) de producto'} creada(s).`,
+      `\nListo: ${String(loaded)} ${kind === 'coils' ? 'bobina(s)' : 'línea(s) de producto'} creada(s).`,
     );
   } finally {
     await app.close();

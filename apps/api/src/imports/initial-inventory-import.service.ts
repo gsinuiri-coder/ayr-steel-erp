@@ -53,9 +53,34 @@ export class InitialInventoryImportService {
   ) {}
 
   async run(actor: RequestUser, input: RunInput): Promise<InitialInventoryReport> {
-    const raw = parseSpreadsheet(input.buffer);
-    if (raw.length === 0) throw new BadRequestException('El archivo no tiene ninguna fila');
-    assertColumns(raw[0] ?? {});
+    const sheet = parseSpreadsheet(input.buffer);
+    if (sheet.length === 0) throw new BadRequestException('El archivo no tiene ninguna fila');
+    const fromExport = isCoilExport(sheet[0] ?? {});
+    const normalized = fromExport ? sheet.map(fromCoilExportRow) : sheet;
+    assertColumns(normalized[0] ?? {});
+
+    // V-4: en el formato del export, una bobina cerrada o sin kilos no es stock que abrir. Se
+    // reporta como omitida (con su número de fila original) y no bloquea el resto del archivo.
+    const skippedByRow = new Map<number, string>();
+    const raw: Record<string, unknown>[] = [];
+    const rowNumbers: number[] = [];
+    normalized.forEach((r, i) => {
+      const reason = fromExport ? coilExportSkipReason(r) : null;
+      if (reason) skippedByRow.set(i + 1, reason);
+      else {
+        raw.push(r);
+        rowNumbers.push(i + 1);
+      }
+    });
+    const skippedSummaries = [...skippedByRow].map(([rowNumber, reason]) => ({
+      rowNumber,
+      externalCode: field(normalized[rowNumber - 1] ?? {}, 'externalCode'),
+      ok: true,
+      errors: [],
+      skipped: reason,
+    }));
+    const withSkipped = (summaries: InitialInventoryRowSummary[]): InitialInventoryRowSummary[] =>
+      [...summaries, ...skippedSummaries].sort((a, b) => a.rowNumber - b.rowNumber);
 
     // D-124: la misma validación que cualquier otra fecha de operación — no futura, no
     // anterior al piso de carga histórica. Una sola vez para todo el lote: las 500 bobinas
@@ -95,15 +120,17 @@ export class InitialInventoryImportService {
     );
 
     const seenInFile = new Set<string>();
-    const rows = raw.map((r, i) => parseRow(r, i + 1, byFinishCode, alreadyInBase, seenInFile));
+    const rows = raw.map((r, i) =>
+      parseRow(r, rowNumbers[i] ?? i + 1, byFinishCode, alreadyInBase, seenInFile, fromExport),
+    );
     const ok = rows.every((r) => r.errors.length === 0);
 
     if (!ok || !input.execute) {
       return {
-        totalRows: rows.length,
+        totalRows: rows.length + skippedSummaries.length,
         ok,
         executed: false,
-        rows: rows.map((r) => toRowSummary(r)),
+        rows: withSkipped(rows.map((r) => toRowSummary(r))),
       };
     }
 
@@ -153,10 +180,10 @@ export class InitialInventoryImportService {
 
     const coilCodeByRow = new Map(created.map((c) => [c.rowNumber, c.coilCode]));
     return {
-      totalRows: rows.length,
+      totalRows: rows.length + skippedSummaries.length,
       ok: true,
       executed: true,
-      rows: rows.map((r) => toRowSummary(r, coilCodeByRow.get(r.rowNumber))),
+      rows: withSkipped(rows.map((r) => toRowSummary(r, coilCodeByRow.get(r.rowNumber)))),
     };
   }
 
@@ -203,6 +230,8 @@ export interface InitialInventoryRowSummary {
   errors: string[];
   /** Solo cuando `executed: true` y la fila entró. */
   coilCode?: string;
+  /** Formato del export: la fila no se carga (bobina cerrada o sin kilos) y dice por qué. */
+  skipped?: string;
 }
 
 export interface InitialInventoryReport {
@@ -253,6 +282,52 @@ const COLUMNS: Record<ColumnKey, ImportColumn> = Object.fromEntries(
 
 function field(raw: Record<string, unknown>, key: ColumnKey): string {
   return getField(raw, COLUMNS[key]);
+}
+
+// ---------------------------------------------------------------------------
+// Formato del export de bobinas (`pnpm export:coils`, ventana V-4)
+// ---------------------------------------------------------------------------
+//
+// La recarga de V-4 sube el export de las bobinas que `production` tenía antes de la limpia
+// (D-208), no la plantilla. Se traduce a las columnas de la plantilla y el resto del camino es
+// el mismo. Mapeo confirmado por el dueño: los kilos de apertura son `KILOS INICIALES` (la
+// plantilla ya lee esa columna); `CÓDIGO SISTEMA` pasa a ser el código de origen; el
+// comprobante de compra, la factura de referencia.
+
+const EXPORT_COLUMNS = {
+  systemCode: 'CÓDIGO SISTEMA',
+  invoice: 'COMPROBANTE',
+  invoiceDate: 'FECHA DE COMPROBANTE',
+  status: 'ESTADO',
+  currentKg: 'KILOS ACTUALES',
+} as const;
+
+function exportField(raw: Record<string, unknown>, header: string): string {
+  return getField(raw, { key: header, header, required: false });
+}
+
+export function isCoilExport(first: Record<string, unknown>): boolean {
+  return (
+    exportField(first, EXPORT_COLUMNS.systemCode) !== '' && field(first, 'externalCode') === ''
+  );
+}
+
+export function fromCoilExportRow(raw: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...raw,
+    [COLUMN_DEFS.externalCode]: exportField(raw, EXPORT_COLUMNS.systemCode),
+    [COLUMN_DEFS.referenceInvoice]: exportField(raw, EXPORT_COLUMNS.invoice),
+    [COLUMN_DEFS.referenceDate]: exportField(raw, EXPORT_COLUMNS.invoiceDate),
+  };
+}
+
+/** Por defecto se omiten las cerradas y las que ya no tienen kilos (dueño, V-4). */
+export function coilExportSkipReason(raw: Record<string, unknown>): string | null {
+  const status = exportField(raw, EXPORT_COLUMNS.status).toUpperCase();
+  if (status === 'CLOSED') return 'bobina cerrada';
+  const currentKg = exportField(raw, EXPORT_COLUMNS.currentKg);
+  if (currentKg !== '' && !toDecimal(currentKg).gt(0)) return 'sin kilos actuales';
+  return null;
 }
 
 /** Largo real de la columna en la base (`coils.external_code VARCHAR(40)`, D-206). */
@@ -334,6 +409,7 @@ function parseRow(
   byFinishCode: ReadonlyMap<string, FinishRow>,
   alreadyInBase: ReadonlySet<string>,
   seenInFile: Set<string>,
+  fromExport = false,
 ): RowResult {
   const errors: string[] = [];
   const externalCode = field(raw, 'externalCode');
@@ -374,7 +450,10 @@ function parseRow(
     );
   }
 
-  const colorRaw = field(raw, 'color');
+  // En el export, el COLOR es el que la bobina tenía antes de que el dueño completara el tipo
+  // del acabado (paso 5 de V-4): si el acabado quedó sin color, esa columna ya no dice nada.
+  const colorRaw =
+    fromExport && finish?.kind && !finishKindHasColor(finish.kind) ? '' : field(raw, 'color');
   if (finish?.kind) {
     const needsColor = finishKindHasColor(finish.kind);
     if (needsColor && colorRaw === '') {
