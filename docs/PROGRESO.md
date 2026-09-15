@@ -5143,6 +5143,74 @@ refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelv
   (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
   de otra sesión.
 
+## Sesión F8-S6a — Carga de inventario inicial de bobinas (2026-09-15) — CERRADA
+
+M1 del brief: una herramienta de CLI para dar de alta el saldo físico de bobinas de un cliente
+nuevo antes de que llegue su historial real, con su kardex abierto al costo y la fecha que se
+declare. Decisión **D-206**, la única de esta sesión. **Todo en commits locales, sin push**: se
+acumula para la ventana V-4 (13 commits ahora, F8-S4 + F8-S5 + F8-S6a).
+
+- **Choque con D-150, resuelto antes de escribir código.** D-150 (Sesión Importadores,
+  2026-09-08) había eliminado todo importador directo al dominio por duplicar invariantes fuera
+  de sus servicios — exactamente lo que el brief pedía. Se le planteó el choque al dueño antes de
+  tocar nada; su respuesta autorizó la herramienta como **excepción única y explícita**, no como
+  reapertura de D-150, con cuatro condiciones que el código tiene que sostener (no solo declarar
+  en un comentario), registradas en D-206 (`docs/ARQUITECTURA.md` §0.2): hereda invariantes vía
+  `CoilsService.create`/`InventoryService.record` en vez de copiarlas; es de arranque (sin
+  controller, solo CLI, nunca actualiza una bobina existente); el inventario inicial no es una
+  compra (proveedor sembrado `isSystem`, factura de referencia solo texto en el kardex); y
+  cualquier futuro importador de bobinas para otro caso sigue prohibido por D-150 sin que haga
+  falta re-derivar el razonamiento.
+- **M1 — la herramienta.**
+  - `pnpm import:initial-inventory --file <xlsx/csv> --branch <local|demo|production> [--execute]
+[--confirm-production]`, mismo patrón dry-run/`--execute`/`--confirm-production` que los demás
+    scripts operativos.
+  - `InitialInventoryImportService.parseRow` valida cada fila contra el catálogo (acabado activo
+    y mapeado por D-203, color coincidente con el del acabado, duplicados dentro del archivo y
+    contra la base, `Decimal`/`decimalStringSchema` en kg/mm/costo) **antes** de abrir ninguna
+    transacción; solo si el archivo entero pasa y se pidió `--execute` se abre una única
+    transacción que crea todas las bobinas (todo o nada, sin `SAVEPOINT` por fila porque las
+    filas no dependen entre sí, a diferencia del importador de cotizaciones de D-152).
+  - Schema additivo: `Coil.externalCode` (nullable, indexado, para reconciliar contra el código
+    del cliente) y `Supplier.isSystem` (mismo patrón que `Customer.isSystem`/D-077, sembrado el
+    proveedor "Saldo inicial de inventario" en la migración y en `prisma/seed.ts` — lección de
+    "un dato inicial de una migración va también en el seed" aplicada de entrada).
+  - `CoilsService.create` gana wiring retrocompatible: `notes` y `externalCode` ahora también
+    viajan al movimiento de kardex de apertura (antes `notes` solo quedaba en `Coil`); ningún
+    llamador existente (compra, corte) manda esos campos, así que no cambia nada para ellos.
+  - `parseIssueDate`, privada del importador de cotizaciones, se extrae a `parseCalendarDate`
+    exportada en `parse-spreadsheet.ts` y se reusa acá — sin cambio de comportamiento en
+    cotizaciones.
+- **M2 — dataset y ensayo.** `docs/plantillas/inventario-inicial-ejemplo.csv` (12 filas válidas
+  con prepintados en cuatro colores, natural, galvanizado, PEN y USD con tipo de cambio, con y
+  sin factura de referencia, más 3 filas deliberadamente inválidas) y
+  `docs/plantillas/README-inventario-inicial.md` con las columnas, las reglas y cómo leer el
+  reporte. `e2e/tests/inventario-inicial-f8s6a.spec.ts` (3 tests): dry-run no escribe nada y
+  `--execute` crea la bobina con su kardex `IMPORT` y el color del acabado; una fila inválida
+  rechaza el archivo entero; un `externalCode` duplicado en la base rechaza esa fila.
+- **Revisión (`revisor`):** confirmó en código (no solo en comentarios) las tres primeras
+  condiciones de la excepción a D-150. Encontró y se corrigieron dos hallazgos reales — el largo
+  de `externalCode` no se validaba contra el `VARCHAR(40)` de la columna, así que un código
+  demasiado largo pasaba el dry-run como "OK" y recién reventaba en `--execute` con un error crudo
+  de Postgres; y el tipo de cambio en soles se comparaba por texto (`"1.00"` se rechazaba igual
+  que un TC real distinto de 1, con el mismo mensaje engañoso) en vez de por valor decimal — y se
+  retiró un tope de filas (`MAX_ROWS = 5000`) que nunca podía activarse porque `parseSpreadsheet`
+  ya limita a 2000 antes de que ese código se ejecute.
+- **Verificación de cierre, con una decisión explícita del dueño sobre su alcance.** La suite E2E
+  completa se lanzó tres veces contra la máquina local y las tres veces el proceso murió por falta
+  de memoria del host (no un defecto de código: llegó a 293/333 y luego a 321/333 sin ninguna
+  falla visible antes de morir cada vez — el mismo problema ambiental de sesiones anteriores).
+  Ante la pregunta directa del dueño sobre cuánto iba a demorar, se explicó la situación y el
+  dueño instruyó correr **solo lo relacionado** con el cambio en vez de forzar otra corrida
+  completa. Se corrió un subconjunto curado de 34 tests que cubre todo lo tocado por la sesión
+  (inventario inicial, D-203, huecos de catálogo F8-S5, kardex clickable F8-S5, importador de
+  cotizaciones, D-169, Fase 2a): **34/34 en verde, 9.7 min**, repetido después de los fixes de
+  revisión con el mismo resultado. `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check`
+  en verde para todo el monorepo. La suite completa queda sin una corrida 0-rojo de punta a punta
+  en esta sesión por el límite de memoria del host, no por ningún hallazgo — anotado para que la
+  próxima sesión que tenga una máquina más holgada la corra una vez antes de la ventana V-4.
+- Handoff completo: `docs/handoff/f8-s6a-inventario-inicial.md`.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
