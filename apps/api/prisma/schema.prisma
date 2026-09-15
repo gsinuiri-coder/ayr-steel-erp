@@ -734,6 +734,10 @@ model Supplier {
   coilSeq                Int      @default(0) @map("coil_seq")
   /// D-137: igual que en `Customer`. Lo creó una importación sin poder consultar el padrón.
   needsReview            Boolean  @default(false) @map("needs_review")
+  /// D-206: proveedor sembrado por el sistema ("Saldo inicial de inventario"), excepción única
+  /// a D-150. No se edita ni se da de baja desde ninguna ruta; existe para que la bobina de
+  /// arranque tenga el proveedor que el modelo exige sin que el archivo de carga declare uno.
+  isSystem               Boolean  @default(false) @map("is_system")
   isActive               Boolean  @default(true) @map("is_active")
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1067,6 +1071,11 @@ model Coil {
   productionInputs   ProductionOrderConsumption[]
   /// D-191: reportes en borrador que saldrían de esta bobina.
   reportDrafts       ProductionReportDraft[]
+  /// D-206: el código con el que el cliente identifica esta bobina en su propio inventario,
+  /// solo lo llena la carga inicial. Null en cualquier bobina que entró por compra, partido o
+  /// corte — no es un segundo identificador del sistema (`code`/RF-13 sigue siendo el único),
+  /// es la referencia que permite reconciliar contra la lista física del cliente.
+  externalCode       String?                      @map("external_code") @db.VarChar(40)
   /// Observaciones editables mientras la bobina está abierta (RF-20).
   notes              String?                      @db.VarChar(500)
   createdById        String                       @map("created_by_id") @db.Uuid
@@ -1081,6 +1090,7 @@ model Coil {
   @@index([typeKey])
   @@index([supplierId])
   @@index([parentCoilId])
+  @@index([externalCode])
   @@index([splitId])
   @@index([kind, typeKey])
   @@index([cuttingOrderCoilId])

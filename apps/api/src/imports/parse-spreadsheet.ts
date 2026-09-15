@@ -122,3 +122,23 @@ export function getField(raw: Record<string, unknown>, column: ImportColumn): st
   const value = byHeader !== undefined ? rawToString(byHeader) : rawToString(raw[column.key]);
   return value.length > MAX_CELL_CHARS ? value.slice(0, MAX_CELL_CHARS) : value;
 }
+
+/**
+ * `03/08/2026` → `2026-08-03`. También acepta la fecha ya en ISO. `null` si no se pudo leer.
+ *
+ * Vivía solo en el importador de cotizaciones (D-152); pasa acá con la carga inicial de
+ * inventario (D-206), que necesita la misma lectura para su columna de fecha de referencia —
+ * exactamente la razón por la que este archivo existe (D-150): la parte aburrida y ya probada
+ * de leer una fecha que un humano tipeó, para que el próximo importador no la vuelva a escribir.
+ */
+export function parseCalendarDate(value: string): string | null {
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
+  if (!match) return null;
+  const [, day = '', month = '', year = ''] = match;
+  const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  // `2026-02-31` pasa el patrón y no existe: se comprueba contra el calendario real.
+  const date = new Date(`${iso}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== iso ? null : iso;
+}

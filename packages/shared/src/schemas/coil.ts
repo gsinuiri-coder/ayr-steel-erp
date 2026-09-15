@@ -57,6 +57,9 @@ export const coilSchema = z.object({
   /** Código de la bobina madre, cuando esta nació de un partido (RF-15). */
   parentCoilCode: z.string().nullable(),
   splitId: z.string().uuid().nullable(),
+  /** D-206: código con el que el cliente identifica esta bobina en su propio inventario. Solo
+   *  lo lleva una bobina de carga inicial; `null` en cualquier otra (compra, partido, corte). */
+  externalCode: z.string().nullable(),
   notes: z.string().nullable(),
   /** Kilos disponibles según el kardex; puede diferir de `weightKg` tras consumos. */
   availableKg: z.string(),

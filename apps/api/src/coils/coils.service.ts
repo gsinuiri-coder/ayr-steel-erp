@@ -87,6 +87,10 @@ export interface CreateCoilInput {
    */
   kardexUnitCostPen?: string;
   notes?: string;
+  /** D-206: el código con el que el cliente identifica esta bobina en su propio inventario.
+   *  Solo lo manda la carga inicial (`InitialInventoryImportService`); el resto de vías no lo
+   *  llena y la bobina nace con `null`, igual que hasta ahora. */
+  externalCode?: string;
 }
 
 /**
@@ -173,6 +177,7 @@ export class CoilsService {
         splitId: input.splitId ?? null,
         kind: input.kind ?? CoilKind.COIL,
         cuttingOrderCoilId: input.cuttingOrderCoilId ?? null,
+        externalCode: input.externalCode ?? null,
         notes: input.notes ?? null,
         createdById: input.actorId,
         operationDate: toDateOnly(input.operationDate ?? businessToday()),
@@ -200,6 +205,14 @@ export class CoilsService {
       ),
       refType: input.refType,
       refId: input.refId,
+      // D-206: hasta acá `notes` solo quedaba en la bobina — el movimiento de apertura salía
+      // sin motivo. Ningún llamador existente (compra, corte) lo manda, así que no cambia nada
+      // para ellos; la carga inicial es la primera vez que hace falta verlo en el kardex y no
+      // solo en el detalle de la bobina. `inventory_movements.notes` es VARCHAR(240), más corto
+      // que el de la bobina (500): se recorta acá y no en el llamador para que ningún futuro
+      // llamador tenga que acordarse del límite del kardex.
+      notes:
+        input.notes === null || input.notes === undefined ? undefined : input.notes.slice(0, 240),
       actorId: input.actorId,
       operationDate: input.operationDate,
     });
@@ -568,6 +581,7 @@ export class CoilsService {
         parentCoilId: c.parentCoilId,
         parentCoilCode: c.parentCoil?.code ?? null,
         splitId: c.splitId,
+        externalCode: c.externalCode,
         notes: c.notes,
         availableKg,
         avgCostPen: avgCost.get(c.id) ?? '0.0000',

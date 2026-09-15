@@ -204,9 +204,54 @@ async function seedColors(): Promise<void> {
   console.warn(`Seed listo: ${SAMPLE_COLORS.length} colores de ejemplo (D-203)`);
 }
 
+/**
+ * D-206: el proveedor **«Saldo inicial de inventario»**, excepción única a D-150. Mismo
+ * criterio exacto que `seedGenericCustomer` (D-077) — ver ese comentario para el porqué de no
+ * forzar la marca sobre una fila que ya existe con otro nombre.
+ */
+const INITIAL_INVENTORY_SUPPLIER_CODE = 'SALDO';
+const INITIAL_INVENTORY_SUPPLIER_NAME = 'Saldo inicial de inventario';
+
+async function seedInitialInventorySupplier(): Promise<void> {
+  const existing = await prisma.supplier.findUnique({
+    where: { docType_docNumber: { docType: DocType.DNI, docNumber: '00000000' } },
+    select: { id: true, name: true, isSystem: true },
+  });
+
+  if (!existing) {
+    await prisma.supplier.create({
+      data: {
+        code: INITIAL_INVENTORY_SUPPLIER_CODE,
+        docType: DocType.DNI,
+        docNumber: '00000000',
+        name: INITIAL_INVENTORY_SUPPLIER_NAME,
+        creditDays: 0,
+        isSystem: true,
+        isActive: true,
+      },
+    });
+    console.warn('Seed listo: proveedor «Saldo inicial de inventario» (D-206)');
+    return;
+  }
+
+  if (existing.name !== INITIAL_INVENTORY_SUPPLIER_NAME) {
+    console.warn(
+      `Seed: el DNI 00000000 ya lo tiene «${existing.name}», que NO es el proveedor de saldo ` +
+        'inicial. No se toca. Si la carga inicial lo necesita, hay que liberar ese documento a ' +
+        'mano (D-206).',
+    );
+    return;
+  }
+  if (!existing.isSystem) {
+    await prisma.supplier.update({ where: { id: existing.id }, data: { isSystem: true } });
+  }
+  console.warn('Seed listo: proveedor «Saldo inicial de inventario» (D-206)');
+}
+
 async function main(): Promise<void> {
   await seedBusinessLinesAndPricing();
   await seedGenericCustomer();
+  await seedInitialInventorySupplier();
   await seedInvoicing();
   await seedColors();
 

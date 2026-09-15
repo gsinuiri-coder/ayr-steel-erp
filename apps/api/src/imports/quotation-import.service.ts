@@ -30,7 +30,12 @@ import { DocumentLookupService } from '../customers/document-lookup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { sellsByLength } from '../sales/sales-lines';
 import { QuotationsService } from '../sales/quotations.service';
-import { getField, parseSpreadsheet, type ImportColumn } from './parse-spreadsheet';
+import {
+  getField,
+  parseCalendarDate,
+  parseSpreadsheet,
+  type ImportColumn,
+} from './parse-spreadsheet';
 
 /**
  * Importador masivo de cotizaciones (D-152).
@@ -280,7 +285,7 @@ export class QuotationImportService {
     return {
       rowNumber,
       documentKey: field(raw, 'documentKey'),
-      issueDate: parseIssueDate(field(raw, 'issueDate')) ?? '',
+      issueDate: parseCalendarDate(field(raw, 'issueDate')) ?? '',
       customerId: customer?.id ?? null,
       padron,
       productId: product?.id ?? null,
@@ -304,7 +309,7 @@ export class QuotationImportService {
       needsPieces,
       currency,
       exchangeRate: exchangeRate === null ? null : toFixedString(exchangeRate, 'RATE'),
-      issues: parseIssueDate(field(raw, 'issueDate'))
+      issues: parseCalendarDate(field(raw, 'issueDate'))
         ? issues
         : [
             ...issues,
@@ -649,19 +654,6 @@ function hasHeader(raw: Record<string, unknown>, header: string): boolean {
 function customerDocOf(value: string): string | null {
   const match = /^(\d{8,11})\s*-/.exec(value.trim());
   return match?.[1] ?? null;
-}
-
-/** `03/08/2026` → `2026-08-03`. También acepta la fecha ya en ISO. */
-function parseIssueDate(value: string): string | null {
-  const trimmed = value.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
-  if (!match) return null;
-  const [, day = '', month = '', year = ''] = match;
-  const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-  // `2026-02-31` pasa el patrón y no existe: se comprueba contra el calendario real.
-  const date = new Date(`${iso}T00:00:00.000Z`);
-  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== iso ? null : iso;
 }
 
 /**
