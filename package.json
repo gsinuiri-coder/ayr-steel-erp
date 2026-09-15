@@ -43,6 +43,7 @@
     "check:roofing-catalog": "node scripts/check-roofing-catalog.mjs",
     "check:coil-skus": "node scripts/check-coil-skus.mjs",
     "import:initial-inventory": "node scripts/import-initial-inventory.mjs",
+    "export:coils": "node scripts/export-coils.mjs",
     "limpia:v4": "node scripts/production-cleanup-v4.mjs"
   },
   "devDependencies": {
