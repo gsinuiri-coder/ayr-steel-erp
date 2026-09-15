@@ -11,9 +11,13 @@
 //   pnpm import:initial-inventory --file "Inventario.xlsx" --execute [--branch local]
 //   pnpm import:initial-inventory --file "Inventario.xlsx" --execute --branch production --confirm-production
 //
+// `--kind coils` (default) carga bobinas; `--kind products` carga productos UPVC/reventa por
+// unidades (F8-S6a2) — dos archivos y dos servicios de dominio distintos, mismo wrapper:
+//   pnpm import:initial-inventory --file "Productos.xlsx" --kind products [--execute]
+//
 // `production` es una rama válida (D-206 es exactamente para el arranque real), pero `--execute`
 // contra ella exige además `--confirm-production` — sin el flag, aborta con el mensaje de abajo.
-// El dry-run **no** lo pide: solo lee el archivo y valida, nunca toca `coils`/`inventory_movements`.
+// El dry-run **no** lo pide: solo lee el archivo y valida, nunca toca `coils`/`products`/`inventory_movements`.
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';

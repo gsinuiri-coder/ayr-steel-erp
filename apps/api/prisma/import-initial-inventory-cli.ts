@@ -32,6 +32,10 @@ import {
   InitialInventoryImportService,
   type InitialInventoryRowSummary,
 } from '../src/imports/initial-inventory-import.service';
+import {
+  InitialInventoryProductImportService,
+  type ProductInitialInventoryRowSummary,
+} from '../src/imports/initial-inventory-product-import.service';
 
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
@@ -42,8 +46,15 @@ const filePath = argValue('--file');
 const execute = process.argv.includes('--execute');
 const operationDate = argValue('--operation-date');
 const actorEmailFlag = argValue('--actor-email');
+// F8-S6a2: `coils` (default, retrocompatible) carga bobinas; `products` carga productos
+// UPVC/reventa por unidades. Dos servicios de dominio distintos, un solo CLI de arranque.
+const kindFlag = argValue('--kind') ?? 'coils';
+if (kindFlag !== 'coils' && kindFlag !== 'products') {
+  throw new Error(`--kind tiene que ser "coils" o "products" (recibido: "${kindFlag}").`);
+}
+const kind: 'coils' | 'products' = kindFlag;
 
-function printRow(row: InitialInventoryRowSummary): void {
+function printCoilRow(row: InitialInventoryRowSummary): void {
   const label = `  fila ${String(row.rowNumber)} (${row.externalCode || 'sin código'})`;
   if (row.ok) {
     console.warn(`${label}: OK${row.coilCode ? ` → ${row.coilCode}` : ''}`);
@@ -53,11 +64,21 @@ function printRow(row: InitialInventoryRowSummary): void {
   for (const err of row.errors) console.error(`      - ${err}`);
 }
 
+function printProductRow(row: ProductInitialInventoryRowSummary): void {
+  const label = `  fila ${String(row.rowNumber)} (${row.sku || 'sin SKU'})`;
+  if (row.ok) {
+    console.warn(`${label}: OK${row.created ? ' → stock creado' : ''}`);
+    return;
+  }
+  console.error(`${label}:`);
+  for (const err of row.errors) console.error(`      - ${err}`);
+}
+
 async function main(): Promise<void> {
   if (!filePath) {
     throw new Error(
-      'Uso: import-initial-inventory-cli.ts --file <ruta.xlsx|csv> [--execute] ' +
-        '[--operation-date AAAA-MM-DD] [--actor-email correo]',
+      'Uso: import-initial-inventory-cli.ts --file <ruta.xlsx|csv> [--kind coils|products] ' +
+        '[--execute] [--operation-date AAAA-MM-DD] [--actor-email correo]',
     );
   }
 
@@ -94,20 +115,22 @@ async function main(): Promise<void> {
 
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
   try {
-    const imports = app.get(InitialInventoryImportService);
     const buffer = readFileSync(resolve(filePath));
     const fileName = filePath.split(/[\\/]/).pop() ?? 'inventario-inicial';
+    const runInput = { fileName, buffer, execute, operationDate, batchId: randomUUID() };
 
-    console.warn(`${execute ? 'Ejecutando' : 'Simulando (dry-run)'} ${fileName}…\n`);
-    const report = await imports.run(actor, {
-      fileName,
-      buffer,
-      execute,
-      operationDate,
-      batchId: randomUUID(),
-    });
+    console.warn(`${execute ? 'Ejecutando' : 'Simulando (dry-run)'} ${fileName} (${kind})…\n`);
 
-    for (const row of report.rows) printRow(row);
+    const report =
+      kind === 'coils'
+        ? await app.get(InitialInventoryImportService).run(actor, runInput)
+        : await app.get(InitialInventoryProductImportService).run(actor, runInput);
+
+    if (kind === 'coils') {
+      for (const row of report.rows as InitialInventoryRowSummary[]) printCoilRow(row);
+    } else {
+      for (const row of report.rows as ProductInitialInventoryRowSummary[]) printProductRow(row);
+    }
 
     const failed = report.rows.filter((r) => !r.ok).length;
     console.warn(
@@ -128,7 +151,9 @@ async function main(): Promise<void> {
       );
       return;
     }
-    console.warn(`\nListo: ${String(report.totalRows)} bobina(s) creada(s).`);
+    console.warn(
+      `\nListo: ${String(report.totalRows)} ${kind === 'coils' ? 'bobina(s)' : 'línea(s) de producto'} creada(s).`,
+    );
   } finally {
     await app.close();
   }

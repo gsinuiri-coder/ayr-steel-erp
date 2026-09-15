@@ -1,9 +1,18 @@
 # Carga de inventario inicial (D-206)
 
-Herramienta de **arranque**, no de uso diario: cada fila del archivo da de alta una bobina que
-el cliente ya tiene físicamente en su almacén, con el kardex abierto al costo y la fecha que
+Herramienta de **arranque**, no de uso diario: cada fila del archivo da de alta algo que el
+cliente ya tiene físicamente en su almacén, con el kardex abierto al costo y la fecha que
 declares. Es una excepción única a D-150 (que eliminó todos los importadores directos) — el
 detalle completo de por qué esta sí y las demás no está en `docs/ARQUITECTURA.md` §0.2, D-206.
+
+Dos modos, `--kind coils` (default) y `--kind products` (F8-S6a2), mismo comando y mismas reglas
+de fondo, para dos clases de saldo distintas:
+
+- **`coils`**: bobinas físicas de Drywall o Metallic Roofing (una fila = una bobina nueva, con su
+  código RF-13 propio).
+- **`products`**: stock por unidades de **cobertura UPVC y reventa** — las dos líneas donde el
+  producto ya es compra-venta pura (D-091) y no hay bobina detrás. El resto de este documento
+  describe primero `coils` y después `products` (ver «Productos (UPVC y reventa)» más abajo).
 
 Reglas que importan antes de tocar nada:
 
@@ -100,10 +109,98 @@ bobina y en su kardex, columna "Motivo"). Al final, un resumen dice cuántas fil
 cuántas no; si hay una sola con error, la línea "No se importó nada" confirma que el archivo
 completo se rechazó — corregí las filas marcadas y volvé a correr el dry-run.
 
-## Qué NO hace esta herramienta
+## Qué NO hace esta herramienta (bobinas)
 
 - No factura, no genera una compra ni aparece en reportes de compras — `FACTURA DE REFERENCIA`
   es solo texto libre.
 - No crea acabados ni colores.
 - No permite corregir una bobina ya importada: si el código está mal, hay que corregirla desde
   **Bobinas** (editar) como cualquier otra, o anularla si todavía no tuvo movimientos.
+
+---
+
+## Productos (UPVC y reventa) — F8-S6a2
+
+`--kind products` da de alta el saldo inicial de un producto de catálogo que se compra y se
+revende tal cual — cobertura UPVC (línea `Coberturas (UPVC)`) y reventa (línea `Reventa`). Cada
+fila **suma unidades a un SKU que ya existe**: no crea productos, no crea líneas de negocio y
+nunca toca un producto de fabricación propia (Drywall, Metallic Roofing) — eso lo decide el
+mismo campo `source` del producto (`PURCHASED` vs `MANUFACTURED`), nunca el SKU ni su texto.
+
+Reglas propias de este modo, además de las generales de arriba (todo o nada, dry-run por
+defecto):
+
+- **El SKU tiene que existir ya en el Catálogo**, estar activo, ser de la línea UPVC o Reventa, y
+  su `source` tiene que ser `Comprado` (`PURCHASED`). Un SKU de Drywall o Metallic Roofing, o uno
+  `Fabricado`, se rechaza con el motivo puntual.
+- **Nunca actualiza un producto con historial.** Si el SKU ya tiene algún movimiento de kardex
+  (de cualquier origen, no solo de esta herramienta), la fila se rechaza: esto es solo para el
+  arranque, antes de que el producto tenga movimiento real.
+- **El mismo SKU puede repetirse en el archivo** (a diferencia de `CÓDIGO BOBINA` en bobinas): son
+  unidades fungibles, así que dos filas del mismo SKU con costos distintos son dos entradas que
+  promedian, igual que dos facturas distintas de compra del mismo producto.
+
+### Columnas del archivo
+
+| Columna                    | Obligatoria               | Contenido                                                                                                     |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `SKU PRODUCTO`             | Sí                        | El SKU tal como aparece en Catálogo. Tiene que existir, estar activo, ser de línea UPVC/Reventa y `Comprado`. |
+| `UNIDADES`                 | Sí                        | Decimal mayor a cero, en la unidad del producto (`NIU`, `MTR`, etc. — la que ya tiene el SKU en Catálogo).    |
+| `COSTO UNITARIO (SIN IGV)` | Sí                        | Costo por unidad, **sin IGV**, en la moneda de la columna `MONEDA`.                                           |
+| `MONEDA`                   | Sí                        | `PEN` o `USD`.                                                                                                |
+| `TIPO DE CAMBIO`           | Solo si `MONEDA` es `USD` | El tipo de cambio de esa compra histórica. En soles, dejar vacío (siempre es 1).                              |
+| `FACTURA DE REFERENCIA`    | No                        | Solo trazabilidad, queda escrita en el kardex — no genera ninguna compra.                                     |
+| `FECHA DE REFERENCIA`      | No                        | `AAAA-MM-DD` o `DD/MM/AAAA`. Vacía → el kardex dice "fecha de carga".                                         |
+
+### El archivo de ejemplo
+
+`inventario-inicial-productos-ejemplo.csv` (esta misma carpeta) trae 8 filas válidas — tres SKU
+de UPVC y cuatro de reventa, en soles y en dólares, con y sin factura de referencia, y una
+segunda factura para un mismo SKU (para ver el promedio ponderado) — y 3 filas **deliberadamente
+inválidas** al final:
+
+- `INVALIDO-SKU-INEXISTENTE`: no está en ningún catálogo.
+- `EJ-UPVC-BLANCO` con `0` unidades: la cantidad tiene que ser mayor a cero.
+- `EJ-PERFIL-FABRICADO`: existe, pero es de Drywall — fuera de las líneas compra-reventa (UPVC,
+  Reventa) que alcanza esta herramienta. Un SKU fabricado **dentro** de UPVC/Reventa se rechaza
+  igual, con el motivo puntual ("es un producto fabricado").
+
+### Antes de ensayarlo
+
+El archivo referencia ocho SKU de ejemplo que no existen en ninguna base real — hay que crearlos
+primero en **Catálogo**:
+
+| SKU                   | Nombre                        | Línea             | Unidad | Origen    |
+| --------------------- | ----------------------------- | ----------------- | ------ | --------- |
+| `EJ-UPVC-BLANCO`      | Cobertura UPVC blanca         | Coberturas (UPVC) | `NIU`  | Comprado  |
+| `EJ-UPVC-GRIS`        | Cobertura UPVC gris           | Coberturas (UPVC) | `NIU`  | Comprado  |
+| `EJ-UPVC-TEJA`        | Cobertura UPVC teja           | Coberturas (UPVC) | `NIU`  | Comprado  |
+| `EJ-REVENTA-TORNILLO` | Tornillo autorroscante        | Reventa           | `NIU`  | Comprado  |
+| `EJ-REVENTA-SELLADOR` | Sellador de silicona          | Reventa           | `NIU`  | Comprado  |
+| `EJ-REVENTA-CLAVO`    | Clavo de acero                | Reventa           | `NIU`  | Comprado  |
+| `EJ-REVENTA-CINTA`    | Cinta para juntas             | Reventa           | `NIU`  | Comprado  |
+| `EJ-PERFIL-FABRICADO` | Perfil (solo para el rechazo) | Drywall           | `NIU`  | Fabricado |
+
+Con eso, el dry-run del archivo de ejemplo muestra 8 filas OK y 3 con error.
+
+### Cómo correr el comando
+
+```
+# Dry-run (no escribe nada) contra el Postgres local
+pnpm import:initial-inventory --file docs/plantillas/inventario-inicial-productos-ejemplo.csv --kind products --branch local
+
+# Ejecutar de verdad contra local, una vez que el dry-run sale limpio
+pnpm import:initial-inventory --file docs/plantillas/inventario-inicial-productos-ejemplo.csv --kind products --branch local --execute
+
+# Contra producción (la carga real, una sola vez, en la ventana V-4)
+pnpm import:initial-inventory --file "Productos cliente.xlsx" --kind products --branch production --execute --confirm-production
+```
+
+### Qué NO hace esta herramienta (productos)
+
+- No crea productos ni líneas de negocio.
+- No factura, no genera una compra ni aparece en reportes de compras.
+- No toca un producto de fabricación propia (Drywall, Metallic Roofing): eso es lo que existe la
+  carga de bobinas y la producción para hacer.
+- No permite corregir una fila ya importada: si el costo o la cantidad están mal, se ajusta desde
+  **Inventario** (ajuste manual) como cualquier otro movimiento.

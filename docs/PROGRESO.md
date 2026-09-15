@@ -5143,6 +5143,60 @@ refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelv
   (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
   de otra sesión.
 
+## Sesión F8-S6a2 — Carga de inventario inicial de productos (2026-09-15) — ABIERTA
+
+Extensión de F8-S6a/D-206 a productos por unidades (UPVC + reventa), bajo la misma excepción a
+D-150 y sus cuatro condiciones (D-207, `docs/ARQUITECTURA.md` §0.2). **Prioridad de la sesión
+fijada por el dueño**: M1 y M2 listos para una demo local en el día, la corrida de suite E2E
+completa (deuda OOM heredada de F8-S6a) queda para después de la demo — el cierre formal de esta
+sesión espera esa corrida.
+
+- **M1 — la herramienta.** `InitialInventoryProductImportService`
+  (`apps/api/src/imports/initial-inventory-product-import.service.ts`), mismo módulo
+  `InitialInventoryImportModule` (ahora también importa `InventoryModule`). El CLI
+  (`apps/api/prisma/import-initial-inventory-cli.ts`) gana `--kind coils|products` (default
+  `coils`, retrocompatible); el wrapper (`scripts/import-initial-inventory.mjs`) ya pasaba
+  cualquier flag no reconocido, así que no necesitó cambios más allá del comentario de uso.
+  - Cada fila valida el SKU contra Catálogo: tiene que existir, estar activo, ser de línea
+    `roofing` (UPVC) o `trading` (Reventa) y `source === PURCHASED` — nunca el SKU ni la línea
+    por sí sola deciden "es compra-reventa" (D-131 con una pregunta nueva, ver D-207).
+  - "Nunca actualiza un producto existente" (condición 2 de D-206) se reinterpreta para stock
+    fungible: rechaza la fila si el SKU **ya tiene algún movimiento de kardex**, de cualquier
+    origen. El mismo SKU sí puede repetirse dentro del archivo (dos facturas del mismo
+    producto promedian, como en una compra real).
+  - Sin proveedor `isSystem`: `InventoryMovement` no tiene columna de proveedor, así que
+    `refType: 'IMPORT'` alcanza para el rastro (condición 3, ver D-207).
+  - Sin cambio de schema: reusa `products`/`inventory_movements` tal cual.
+- **M2 — dataset y ensayo.** `docs/plantillas/inventario-inicial-productos-ejemplo.csv` (8 filas
+  válidas — UPVC y reventa, PEN y USD, con/sin factura, una segunda factura del mismo SKU — y 3
+  inválidas: SKU inexistente, unidades en cero, SKU fabricado dentro de Drywall) y sección propia
+  en `docs/plantillas/README-inventario-inicial.md`. **Dry-run real ejecutado contra Postgres
+  local** (`ayr_local_e2e`, con los 8 SKU de ejemplo creados por un script de un solo uso, borrado
+  al terminar): reporta exactamente 8 OK / 3 con error, igual a lo documentado.
+- `e2e/tests/inventario-inicial-productos-f8s6a2.spec.ts` (3 tests, mismo patrón que
+  `inventario-inicial-f8s6a.spec.ts`: corre el CLI real vía `spawnSync`): dry-run no escribe,
+  `--execute` crea el stock con su kardex `IMPORT`; SKU inexistente + producto fabricado dentro
+  de una línea compra-reventa tumban el archivo entero (todo o nada); un SKU con kardex previo
+  rechaza la segunda corrida sin sumar stock. **Verificado dos veces contra `local-e2e`**: 6/6 en
+  verde (los 3 de bobinas de F8-S6a + los 3 nuevos), ~4-6 min cada corrida.
+- `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check` en verde para todo el monorepo.
+- **Revisión (`revisor`):** confirmó las cuatro condiciones heredadas de D-206 y no encontró
+  bloqueantes. Un hallazgo bajo real, corregido: el bucle de escritura empujaba la fila a
+  "creada" sin mirar el resultado de `InventoryService.record`, que documenta devolver `null`
+  para una línea `NOOP` sin escribir nada — hoy inalcanzable (`ROOFING`/`TRADING` nacen `STOCK`
+  y no hay ruta que las cambie) pero, a diferencia de `CoilsService.create` (nunca `null`), esta
+  fila llama a `record` directo y no tenía por qué asumir que siempre escribió. Dos hallazgos
+  informativos sin acción: los casts de tipo del CLI entre `coils`/`products` dependen de que el
+  `kind` y la rama del ternario se mantengan sincronizados a mano (correcto hoy, sin garantía del
+  compilador); la comprobación de "SKU sin kardex previo" se resuelve antes de abrir la
+  transacción, mismo patrón (y misma ventana de carrera teórica, sin `UNIQUE` de base) que ya usa
+  la carga de bobinas para `externalCode` — aceptable para una herramienta de arranque que un
+  operador corre a mano.
+- **Pendiente para el cierre formal**: la suite E2E completa sigue sin una corrida 0-rojo de
+  punta a punta (deuda heredada de F8-S6a, límite de memoria del host) — se corre después de la
+  demo, antes de dar la sesión por cerrada. Hasta entonces esta sesión queda **ABIERTA** aunque
+  M1+M2 estén verificados por el subset relacionado.
+
 ## Sesión F8-S6a — Carga de inventario inicial de bobinas (2026-09-15) — CERRADA
 
 M1 del brief: una herramienta de CLI para dar de alta el saldo físico de bobinas de un cliente
