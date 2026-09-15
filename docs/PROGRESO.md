@@ -5143,6 +5143,36 @@ refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelv
   (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
   de otra sesión.
 
+## Ventana V-4 exprés — limpia total de producción (2026-09-15) — EN PAUSA tras el paso 4
+
+Modo exprés autorizado por el dueño (CI no bloquea, gate PSE satisfecho en V4prep).
+
+- **Paso 1 — Respaldo:** rama Neon `respaldo-pre-v4-20260915` (`br-sweet-resonance-aegd7jdg`,
+  parent `production`), creada 2026-09-15 21:09:55 UTC vía `run` quiet + `--output json`.
+- **Paso 2 — Push** del lote acumulado a `main` (`a76c02c`); CI no se esperó.
+- **Paso 3 — Migraciones:** 61 → **65/66**. Aplicadas D-203 (×2), D-205 y D-206, más el seed;
+  D-209 retenida para el paso 6 (su carpeta se sacó del directorio solo durante el
+  `migrate deploy`). D-203 no encontró colores duplicados.
+- **Paso 4 — Limpia (D-208)**, `--execute --confirm-production`, aprobada por el dueño tras el
+  dry-run: **3376 filas purgadas en 39 tablas** (73 cotizaciones, 5 pedidos, 6 OPs, 17 compras,
+  50 bobinas, 139 movimientos de kardex, 50 clientes, 9 proveedores, 1 factura ACCEPTED —de
+  práctica: la cuenta Nubefact de prod sigue en modo demo—, 1582 filas de importación, 1014 de
+  auditoría). Correlativos intactos. Verificación post (21:19 UTC): transaccional en 0 (quedan
+  solo el cliente «público en general», el proveedor del sistema y 1 fila de auditoría del
+  seed); catálogo intacto — 5 líneas, 174 productos, 6 colores, 9 acabados, 4 usuarios.
+- **Importador (paso 0):** la adaptación al formato de `pnpm export:coils` no existía en el
+  árbol; se implementó (`2009264`, `cc657fd`): `CÓDIGO SISTEMA` → código de origen,
+  `COMPROBANTE` → factura de referencia, omite cerradas/sin kilos. Kilos de apertura =
+  **`KILOS ACTUALES`** (decisión del dueño tras ver 6.591 kg consumidos en 4 bobinas: la
+  apertura es la foto, no la historia). Export previo a la limpia, 43 bobinas (1 CLOSED):
+  `local-data/bobinas-production-pre-limpia-v4.xlsx`.
+- **En espera:** el dueño entrega el Excel definitivo. Pendientes para retomar: paso 5 (dueño
+  completa en Acabados tipo, línea **y color** de `ALZ-AZUL-5002`, `ALZ-BLANCO`,
+  `ALZ-GRIS-7040`, `ALZ-NATURAL`, `ALZ-ROJO-3020`, `ALZ-VERDE-6002`, `ALZ-VERDE-6035`, `GALV` —
+  hoy los 8 sin color asignado), paso 6 (D-209), paso 7 (dry-run + carga), paso 8 (deploy API +
+  `smoke:prod`). **Hasta el deploy, el API de producción corre código anterior sobre un
+  esquema con D-203/D-205/D-206 aplicadas.**
+
 ## Sesión F8-V4prep — Cierre de S6a2 + herramientas de V-4 (2026-09-15) — CERRADA
 
 Cierra formalmente F8-S6a2 (deuda OOM de F8-S6a/F8-S6a2) y entrega las herramientas que la
