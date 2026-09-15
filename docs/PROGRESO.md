@@ -5101,6 +5101,48 @@ finishes WHERE kind IS NULL`.
   - Verificar en `dev:preview` las pantallas de Acabados, Colores (RAL), la compra de bobinas y
     Editar bobina.
 
+## Sesión F8-S5 — Catálogo coherente + kardex clickable (2026-09-15) — CERRADA
+
+Cierra la deuda de catálogo de F8-S4 (M0) y entrega el primer tramo de M1: la referencia de un
+movimiento de kardex se vuelve link, y el comprobante que cubre un despacho es un campo nuevo.
+Decisión D-205. **Todo en commits locales, sin push**: se acumula para la ventana V-4 (11 commits
+ahora, F8-S4 + F8-S5). Handoff completo: `docs/handoff/f8-s5-catalogo-kardex.md`.
+
+- **M0 (deuda de F8-S4, sin decisión nueva).**
+  - `CatalogService.assertFinishCoherence` valida, en alta y en edición, que el color del
+    producto coincida con el de su acabado y que la línea del acabado sea la del producto.
+  - El diálogo de producto deriva el color del acabado (mismo criterio que D-203/M2) en vez de
+    pedirlo aparte, y solo ofrece acabados de la línea del producto.
+  - La validación destapó el mismo hueco en el helper de E2E `createRoofingProduct`, que asumía
+    el color del `finishId` recibido sin comprobarlo; corregido con `finishForCoil` en la raíz.
+  - Cubierto por `e2e/tests/catalogo-huecos-f8s5.spec.ts` (4 tests).
+- **M1, primer tramo (D-205).**
+  - `InventoryService.findMovements` resuelve `refTargetType`/`refTargetId` por `(refType,
+refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelven una fila
+    hija (con fallback al id de la orden cuando el ajuste de cierre la referencia directo),
+    `SALE` resuelve el pedido del despacho.
+  - `kardex-view.tsx` y `bobina-detalle-view.tsx` vuelven la referencia un link, solo si el rol de
+    quien mira tiene acceso al destino.
+  - `dispatches.invoice_id` (columna nueva) enlaza un despacho a su comprobante, solo desde el
+    mostrador (D-099) — el único punto sin ambigüedad despacho↔comprobante.
+  - Cubierto por `e2e/tests/kardex-clickable-f8s5.spec.ts` (5 tests).
+- **Hallazgo de la propia suite E2E, no de `revisor`:** `inventory_movements` tiene un trigger
+  que rechaza cualquier `UPDATE` (`TRUNCATE` aparte). El primer diseño de `invoice_id` lo ponía
+  ahí; los 5 tests de mostrador de la corrida completa lo tumbaron con `PostgresError P0001`
+  antes de llegar a ningún commit. Se movió a `dispatches`, que sí se edita. **Lección para
+  sesiones futuras:** un campo nuevo sobre una tabla con reglas de integridad fuertes (append-
+  only, CHECK, trigger) se valida contra la suite completa antes de darlo por bueno, no solo por
+  lectura de código — misma raíz que D-123.
+- **Revisión (`revisor`), dos hallazgos, los dos corregidos:** el diálogo de producto mandaba el
+  color derivado en todo PATCH (bloqueaba editar un producto legado con OP viva por cualquier
+  campo); los links de kardex no respetaban los roles más angostos de sus pantallas de destino.
+- **Suite E2E completa local: 330 passed, 0 failed, 2 skipped.** Corrida completa dos veces
+  (antes y después de mover `invoice_id` a `dispatches`) más una focalizada de 19 specs tras los
+  fixes de revisión. Unitarios 417/417.
+- **No hecho, con motivo.** El flujo estándar de facturación no enlaza comprobante↔despacho
+  (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
+  de otra sesión.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
