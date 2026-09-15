@@ -286,6 +286,9 @@ export class PosService {
           items: order.items.map((i) => ({ salesOrderItemId: i.id, qty: i.qty.toFixed(3) })),
         });
         await this.invoicing.assignInTx(tx, actor, fiscalDocumentId);
+        // F8-S5/M1 (D-205): el único punto que sabe, sin adivinar, qué comprobante cubre
+        // qué despacho — nacen juntos, uno a uno, en esta misma transacción.
+        await this.dispatches.linkInvoiceInTx(tx, dispatchId, fiscalDocumentId);
 
         // 6. El cobro. El mostrador es contado: la venta se cobra entera en el acto, y el
         //    monto sale del **comprobante**, que es contra quien `addPaymentInTx` valida el

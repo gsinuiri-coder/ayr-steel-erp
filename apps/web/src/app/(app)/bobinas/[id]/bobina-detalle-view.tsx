@@ -13,6 +13,7 @@ import {
   CURRENCY_LABELS,
   Decimal,
   PRODUCTION_ORDER_STATUS_LABELS,
+  REF_TARGET_ROUTES,
   Role,
   type CoilConsumptionDto,
   type CoilDto,
@@ -499,7 +500,32 @@ export function BobinaDetalleView({ id }: { id: string }) {
                       <span className="ml-2 text-xs text-muted-foreground">anulación</span>
                     )}
                   </TableCell>
-                  <TableCell>{INVENTORY_REF_TYPE_LABELS[m.refType]}</TableCell>
+                  <TableCell>
+                    {/* F8-S5/M1 (D-205): mismo criterio que /kardex — link cuando el API
+                        ya resolvió a qué pantalla apunta la referencia. */}
+                    {m.refTargetType && m.refTargetId ? (
+                      <Link
+                        className={LINK_CLASSNAME}
+                        href={`${REF_TARGET_ROUTES[m.refTargetType]}/${m.refTargetId}`}
+                      >
+                        {INVENTORY_REF_TYPE_LABELS[m.refType]}
+                      </Link>
+                    ) : (
+                      INVENTORY_REF_TYPE_LABELS[m.refType]
+                    )}
+                    {m.refType === 'SALE' && (
+                      <div className="text-xs text-muted-foreground">
+                        Factura:{' '}
+                        {m.invoiceId ? (
+                          <Link className={LINK_CLASSNAME} href={`/comprobantes/${m.invoiceId}`}>
+                            ver
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
                     {m.type === 'ADJUST' ? '—' : formatQty(m.qty, unitSymbol(m.unit))}
                   </TableCell>

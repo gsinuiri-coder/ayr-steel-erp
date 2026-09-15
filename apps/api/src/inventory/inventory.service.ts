@@ -20,6 +20,7 @@ import {
   Decimal,
   fromDateOnly,
   paginate,
+  RefTargetType,
   toDateOnly,
   toDecimal,
   toFixedString,
@@ -591,6 +592,35 @@ export class InventoryService {
   }
 
   /**
+   * F8-S5/M1 (D-205): enlaza un comprobante al despacho que cubre. `inventory_movements` es
+   * append-only de verdad —un trigger en la base rechaza cualquier `UPDATE`, TRUNCATE aparte
+   * (`reset-test-db.ts`)—, así que el enlace no podía vivir ahí: vive en `dispatches`, que sí
+   * se edita (mismo lugar que su `status`). Un despacho con varias líneas comparte un solo
+   * comprobante de todas formas, así que guardarlo una vez en el despacho —y no repetido en
+   * cada movimiento— es además la forma correcta del dato, no solo la que el trigger permite.
+   *
+   * Se llama **solo** desde donde la relación despacho↔comprobante es uno a uno y sin
+   * adivinar (hoy, el mostrador — D-099, un despacho y un comprobante por venta, en la misma
+   * transacción). El flujo estándar de facturación no la llama: factura por `salesOrderId`
+   * sin decir qué despacho cubre, y un pedido puede tener varios despachos parciales —
+   * enlazar ahí sería inferir, y un enlace falso en un comprobante es peor que dejarlo sin
+   * enlazar (decisión del dueño, D-205).
+   *
+   * Idempotente (`invoice_id IS NULL`): un reintento sobre el mismo despacho no pisa un
+   * enlace que ya esté puesto.
+   */
+  async linkInvoiceToDispatch(
+    tx: Prisma.TransactionClient,
+    dispatchId: string,
+    invoiceId: string,
+  ): Promise<void> {
+    await tx.dispatch.updateMany({
+      where: { id: dispatchId, invoiceId: null },
+      data: { invoiceId },
+    });
+  }
+
+  /**
    * Crea el saldo si no existe y lo bloquea (`FOR UPDATE`) hasta el fin de la
    * transacción, para que dos movimientos concurrentes del mismo ítem no calculen el
    * promedio ponderado sobre el mismo saldo previo.
@@ -885,6 +915,7 @@ export class InventoryService {
 
     const labels = await this.resolveItemLabels(movements);
     const actors = await this.resolveActorNames(movements);
+    const refTargets = await this.resolveRefTargets(movements);
 
     // El saldo corrido se lleva por VALOR, no recalculando el promedio ponderado a
     // partir del `unitCost` de cada fila: una anulación (RF-18, RF-21) saca del saldo
@@ -916,6 +947,7 @@ export class InventoryService {
       }
       const runningAvg = runningQty.lte(0) ? new Decimal(0) : runningValue.div(runningQty);
       const label = labels.get(labelKey(m.itemType, m.itemId));
+      const target = m.refId ? refTargets.get(refTargetKey(m.refType, m.refId)) : undefined;
       return {
         id: m.id.toString(),
         businessLine: toSharedLineCode(m.businessLine.code),
@@ -929,6 +961,9 @@ export class InventoryService {
         totalCost: showCosts ? m.totalCost.toFixed(4) : null,
         refType: m.refType,
         refId: m.refId,
+        refTargetType: target?.type ?? null,
+        refTargetId: target?.id ?? null,
+        invoiceId: target?.invoiceId ?? null,
         notes: m.notes,
         reversalOfId: m.reversalOfId === null ? null : m.reversalOfId.toString(),
         reversedById: m.reversals[0] ? m.reversals[0].id.toString() : null,
@@ -1043,10 +1078,111 @@ export class InventoryService {
     });
     return new Map(users.map((u) => [u.id, u.name]));
   }
+
+  /**
+   * F8-S5/M1 (D-205): a qué pantalla enlaza cada `(refType, refId)`. Vive en este único
+   * lugar (`findMovements` es el único que arma `InventoryMovementDto`) para que la
+   * resolución no se repita ni diverja entre vistas.
+   *
+   * `PURCHASE` no necesita consulta: `refId` ya es el id de la compra. Los otros tres
+   * guardan el id de una fila **hija** y hace falta subir a la que tiene pantalla propia:
+   * `SALE` guarda el despacho (el pedido que factura sale de `dispatch.salesOrderId`),
+   * `CUTTING` guarda `cutting_order_coils.id` (`cutting.service.ts`: un fleje nace por
+   * bobina madre de la orden, no por la orden entera) y `PRODUCTION` es el caso irregular:
+   * casi siempre `refId` es un `production_reports.id`, pero el ajuste de cierre de
+   * coberturas (`roofing-production.service.ts`) lo escribe con el id de la **orden**
+   * directo. Los dos son UUID de tablas distintas, así que la colisión es teórica: se
+   * sondea primero el caso frecuente (reporte) y, si el id no aparece ahí, ya es el de la
+   * orden. Si `PRODUCTION` gana algún día un tercer destino, este sondeo deja de alcanzar —
+   * hace falta un discriminador explícito en la propia fila (`ref_kind`), no un tercer
+   * intento (D-205).
+   */
+  private async resolveRefTargets(
+    rows: { refType: InventoryRefType; refId: string | null }[],
+  ): Promise<Map<string, { type: RefTargetType; id: string; invoiceId?: string | null }>> {
+    const targets = new Map<
+      string,
+      { type: RefTargetType; id: string; invoiceId?: string | null }
+    >();
+    for (const r of rows) {
+      if (r.refId === null) continue;
+      if (r.refType === 'PURCHASE') {
+        targets.set(refTargetKey(r.refType, r.refId), {
+          type: RefTargetType.PURCHASE,
+          id: r.refId,
+        });
+      }
+    }
+
+    const refIdsOf = (refType: InventoryRefType): string[] => [
+      ...new Set(
+        rows
+          .filter(
+            (r): r is { refType: InventoryRefType; refId: string } =>
+              r.refType === refType && r.refId !== null,
+          )
+          .map((r) => r.refId),
+      ),
+    ];
+    const saleIds = refIdsOf('SALE');
+    const cuttingIds = refIdsOf('CUTTING');
+    const productionIds = refIdsOf('PRODUCTION');
+    const [dispatches, cuttingOrderCoils, reports] = await Promise.all([
+      saleIds.length
+        ? this.prisma.dispatch.findMany({
+            where: { id: { in: saleIds } },
+            select: { id: true, salesOrderId: true, invoiceId: true },
+          })
+        : Promise.resolve([]),
+      cuttingIds.length
+        ? this.prisma.cuttingOrderCoil.findMany({
+            where: { id: { in: cuttingIds } },
+            select: { id: true, cuttingOrderId: true },
+          })
+        : Promise.resolve([]),
+      productionIds.length
+        ? this.prisma.productionReport.findMany({
+            where: { id: { in: productionIds } },
+            select: { id: true, productionOrderId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    for (const d of dispatches) {
+      // D-205: el comprobante vive en el despacho, no en el movimiento (ver
+      // `linkInvoiceToDispatch`). Toda salida de este despacho —y su reversa, que comparte
+      // el mismo `refId`— resuelve al mismo comprobante sin nada que copiar.
+      targets.set(refTargetKey('SALE', d.id), {
+        type: RefTargetType.SALES_ORDER,
+        id: d.salesOrderId,
+        invoiceId: d.invoiceId,
+      });
+    }
+    for (const c of cuttingOrderCoils) {
+      targets.set(refTargetKey('CUTTING', c.id), {
+        type: RefTargetType.CUTTING,
+        id: c.cuttingOrderId,
+      });
+    }
+    const orderIdByReportId = new Map(reports.map((r) => [r.id, r.productionOrderId]));
+    for (const id of productionIds) {
+      const productionOrderId = orderIdByReportId.get(id) ?? id;
+      targets.set(refTargetKey('PRODUCTION', id), {
+        type: RefTargetType.PRODUCTION_ORDER,
+        id: productionOrderId,
+      });
+    }
+
+    return targets;
+  }
 }
 
 function labelKey(itemType: InventoryItemType, itemId: string): string {
   return `${itemType}:${itemId}`;
+}
+
+function refTargetKey(refType: InventoryRefType, refId: string): string {
+  return `${refType}:${refId}`;
 }
 
 /** `"GALV-0.50"` → `"Acabado GALV · 0.50 mm"` (RF-14). Sin consultar nada más. */

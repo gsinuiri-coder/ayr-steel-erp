@@ -10,6 +10,7 @@ import {
   INVENTORY_ITEM_TYPES,
   INVENTORY_MOVEMENT_TYPE_LABELS,
   INVENTORY_REF_TYPE_LABELS,
+  REF_TARGET_ROUTES,
   Role,
   type InventoryItemType,
   type InventoryMovementDto,
@@ -188,8 +189,37 @@ export function KardexView() {
                   )}
                 </TableCell>
                 <TableCell className="hidden md:table-cell">
-                  {INVENTORY_REF_TYPE_LABELS[m.refType]}
+                  {/* F8-S5/M1 (D-205): la referencia se vuelve link cuando el API ya
+                      resolvió a qué pantalla apunta (`refTargetType`); si no, es el mismo
+                      texto de siempre — un `SPLIT`, una `SCRAP` o un `CLOSE_ADJUSTMENT`
+                      señalan la bobina que ya se está mirando y no necesitan link propio. */}
+                  {m.refTargetType && m.refTargetId ? (
+                    <Link
+                      className={LINK_CLASSNAME}
+                      href={`${REF_TARGET_ROUTES[m.refTargetType]}/${m.refTargetId}`}
+                    >
+                      {INVENTORY_REF_TYPE_LABELS[m.refType]}
+                    </Link>
+                  ) : (
+                    INVENTORY_REF_TYPE_LABELS[m.refType]
+                  )}
                   {!singleItem && ` · ${BUSINESS_LINE_LABELS[m.businessLine]}`}
+                  {/* D-205: solo una venta puede llevar factura enlazada, y solo desde el
+                      mostrador (el único punto sin ambigüedad despacho↔comprobante). Sin
+                      enlace no es "sin comprobante": es "no enlazado todavía" — deuda
+                      documentada, no un hueco de datos. */}
+                  {m.refType === 'SALE' && (
+                    <div className="text-xs text-muted-foreground">
+                      Factura:{' '}
+                      {m.invoiceId ? (
+                        <Link className={LINK_CLASSNAME} href={`/comprobantes/${m.invoiceId}`}>
+                          ver
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="text-right">
                   {/* Un ADJUST no mueve cantidad: su `qty` son los kilos sobre los que se

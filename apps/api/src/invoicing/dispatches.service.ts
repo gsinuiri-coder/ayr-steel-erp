@@ -126,6 +126,20 @@ export class DispatchesService {
   }
 
   /**
+   * F8-S5/M1 (D-205): enlaza el comprobante recién emitido a las salidas de kardex de este
+   * despacho. Envuelve `InventoryService.linkInvoiceToDispatch` para que el mostrador (el
+   * único llamador — D-099) no importe `InventoryModule` directo: el POS solo habla con
+   * `sales`, `dispatches` e `invoicing`, nunca con inventario por su cuenta.
+   */
+  async linkInvoiceInTx(
+    tx: Prisma.TransactionClient,
+    dispatchId: string,
+    invoiceId: string,
+  ): Promise<void> {
+    await this.inventory.linkInvoiceToDispatch(tx, dispatchId, invoiceId);
+  }
+
+  /**
    * El cuerpo de `create`, **dentro de una transacción que abre el llamador**.
    *
    * Lo usa el mostrador (RF-60, D-099), que crea pedido, despacho, comprobante y cobro

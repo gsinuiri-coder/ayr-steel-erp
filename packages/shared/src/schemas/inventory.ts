@@ -5,6 +5,7 @@ import {
   INVENTORY_ITEM_TYPES,
   INVENTORY_MOVEMENT_TYPES,
   INVENTORY_REF_TYPES,
+  REF_TARGET_TYPES,
 } from '../enums';
 import { operationDateSchema } from './operation';
 import { paginationQuerySchema } from './pagination';
@@ -28,6 +29,17 @@ export const inventoryMovementSchema = z.object({
   totalCost: z.string().nullable(),
   refType: z.enum(INVENTORY_REF_TYPES),
   refId: z.string().nullable(),
+  /**
+   * F8-S5/M1 (D-205): a qué pantalla enlaza `refId`, ya resuelto por el API (ver
+   * `RefTargetType`). `null` cuando la referencia no tiene una pantalla propia a la que
+   * enlazar (una merma o un cierre señalan la misma bobina que ya se está viendo).
+   */
+  refTargetType: z.enum(REF_TARGET_TYPES).nullable(),
+  refTargetId: z.string().nullable(),
+  /** D-205: el comprobante que cubre esta salida, solo cuando se conoció sin ambigüedad al
+   *  emitirlo (hoy, únicamente el mostrador). `null` en el resto — no es "sin comprobante",
+   *  es "no enlazado todavía" (deuda documentada en D-205). */
+  invoiceId: z.string().nullable(),
   /** Motivo escrito por el usuario en una merma, una anulación o un ajuste de costo. */
   notes: z.string().nullable(),
   reversalOfId: z.string().nullable(),

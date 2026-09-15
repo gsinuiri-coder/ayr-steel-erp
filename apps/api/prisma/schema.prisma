@@ -589,8 +589,8 @@ model Finish {
   businessLineId String?       @map("business_line_id") @db.Uuid
   businessLine   BusinessLine? @relation(fields: [businessLineId], references: [id])
   isActive       Boolean       @default(true) @map("is_active")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   coils         Coil[]
   purchaseItems PurchaseItem[]
@@ -1990,10 +1990,13 @@ model FiscalDocument {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  items    FiscalDocumentItem[]
-  payments CustomerPayment[]
+  items              FiscalDocumentItem[]
+  payments           CustomerPayment[]
   /// Venta de mostrador que emitió este comprobante (Fase 7b, D-100). Null en el resto.
-  posSale  PosSale?
+  posSale            PosSale?
+  /// F8-S5/M1 (D-205): despachos que este comprobante cubre — hoy, solo el que el mostrador
+  /// enlaza en el acto, uno a uno (ver `Dispatch.invoiceId`).
+  dispatchesInvoiced Dispatch[]           @relation("DispatchInvoice")
 
   @@index([status, docType])
   @@index([customerId, status])
@@ -2098,6 +2101,18 @@ model Dispatch {
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  /// F8-S5/M1 (D-205): el comprobante (de venta, no la guía de remisión de `documents`) que
+  /// cubre este despacho, cuando se conoce **sin ambigüedad** al emitirlo — hoy, solo el
+  /// mostrador (D-099), que arma despacho y comprobante uno a uno en la misma transacción.
+  /// El flujo estándar de facturación no la llena: factura por `salesOrderId` sin decir qué
+  /// despacho cubre, y un pedido puede tener varios despachos parciales — enlazar ahí sería
+  /// inferir, y un enlace falso pesa más en auditoría que dejarlo sin enlazar. Vive acá y no
+  /// en `inventory_movements` porque esa tabla es append-only de verdad (trigger en la base,
+  /// TRUNCATE aparte): un despacho, en cambio, ya se edita (su `status`), y un despacho con
+  /// varias líneas comparte un solo comprobante de todas formas.
+  invoiceId String?         @map("invoice_id") @db.Uuid
+  invoice   FiscalDocument? @relation("DispatchInvoice", fields: [invoiceId], references: [id])
+
   items     DispatchItem[]
   /// Guías de remisión emitidas para este despacho. Es una lista y no una sola porque una
   /// guía rechazada conserva su correlativo y la corrección se emite aparte (D-072).
@@ -2107,6 +2122,7 @@ model Dispatch {
 
   @@index([salesOrderId, status])
   @@index([status, dispatchDate])
+  @@index([invoiceId])
   @@map("dispatches")
 }
 

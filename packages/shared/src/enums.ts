@@ -235,6 +235,31 @@ export const INVENTORY_REF_TYPE_LABELS: Record<InventoryRefType, string> = {
   IMPORT: 'Carga inicial',
 };
 
+/**
+ * A qué pantalla enlaza la referencia de un movimiento de kardex (F8-S5/M1, D-205).
+ *
+ * No es lo mismo que `InventoryRefType`: `PRODUCTION` guarda a veces un id de reporte y a
+ * veces uno de orden (el ajuste de cierre de coberturas referencia la orden directo), así que
+ * el API resuelve esa diferencia una sola vez (`InventoryService.findMovements`) y expone acá
+ * ya el destino final — el resto del sistema no vuelve a tener que adivinar cuál es cuál.
+ */
+export const RefTargetType = {
+  PURCHASE: 'purchase',
+  SALES_ORDER: 'salesOrder',
+  PRODUCTION_ORDER: 'productionOrder',
+  CUTTING: 'cutting',
+} as const;
+export type RefTargetType = (typeof RefTargetType)[keyof typeof RefTargetType];
+export const REF_TARGET_TYPES = Object.values(RefTargetType) as [RefTargetType, ...RefTargetType[]];
+/** Prefijo de ruta del web por tipo de destino. `SPLIT`/`SCRAP`/`CLOSE_ADJUSTMENT` no tienen
+ *  uno propio (referencian la misma bobina que ya se está mirando) y no entran acá. */
+export const REF_TARGET_ROUTES: Record<RefTargetType, string> = {
+  purchase: '/compras',
+  salesOrder: '/pedidos',
+  productionOrder: '/produccion',
+  cutting: '/corte',
+};
+
 /** Tipo de compra (D-030). Determina el formulario y qué pasa al recibirla. */
 export const PurchaseType = {
   COIL: 'COIL',
