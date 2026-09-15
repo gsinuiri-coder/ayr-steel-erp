@@ -27,8 +27,8 @@ describe('carga inicial desde el export de bobinas', () => {
     expect(row['CÓDIGO BOBINA']).toBe('TREAMP-ALZ-ROJO-3020-0.28-4786-1');
     expect(row['FACTURA DE REFERENCIA']).toBe('F001-13071');
     expect(row['FECHA DE REFERENCIA']).toBe('2026-04-01');
-    // Los kilos de apertura siguen siendo KILOS INICIALES (mapeo del dueño), no los actuales.
-    expect(row['KILOS INICIALES']).toBe('4786');
+    // La apertura es la foto: KILOS ACTUALES, no los iniciales (mapeo del dueño, V-4).
+    expect(row['KILOS INICIALES']).toBe('1200.5');
   });
 
   it('omite cerradas y sin kilos; carga las abiertas aunque estén consumidas en parte', () => {

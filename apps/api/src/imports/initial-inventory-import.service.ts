@@ -290,9 +290,10 @@ function field(raw: Record<string, unknown>, key: ColumnKey): string {
 //
 // La recarga de V-4 sube el export de las bobinas que `production` tenía antes de la limpia
 // (D-208), no la plantilla. Se traduce a las columnas de la plantilla y el resto del camino es
-// el mismo. Mapeo confirmado por el dueño: los kilos de apertura son `KILOS INICIALES` (la
-// plantilla ya lee esa columna); `CÓDIGO SISTEMA` pasa a ser el código de origen; el
-// comprobante de compra, la factura de referencia.
+// el mismo. Mapeo del dueño: los kilos de apertura son `KILOS ACTUALES` — la apertura es la
+// foto, no la historia; con los iniciales, las bobinas consumidas en parte abrían con kilos
+// que ya no existen (6.591 kg en el export real de V-4). `CÓDIGO SISTEMA` pasa a ser el código
+// de origen; el comprobante de compra, la factura de referencia.
 
 const EXPORT_COLUMNS = {
   systemCode: 'CÓDIGO SISTEMA',
@@ -316,6 +317,7 @@ export function fromCoilExportRow(raw: Record<string, unknown>): Record<string, 
   return {
     ...raw,
     [COLUMN_DEFS.externalCode]: exportField(raw, EXPORT_COLUMNS.systemCode),
+    [COLUMN_DEFS.weightKg]: exportField(raw, EXPORT_COLUMNS.currentKg),
     [COLUMN_DEFS.referenceInvoice]: exportField(raw, EXPORT_COLUMNS.invoice),
     [COLUMN_DEFS.referenceDate]: exportField(raw, EXPORT_COLUMNS.invoiceDate),
   };
