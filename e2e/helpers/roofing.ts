@@ -129,9 +129,86 @@ export async function createColor(api: APIRequestContext, hex = '#c8102e'): Prom
   );
 }
 
-/** Acabado con densidad fija, para que el kilo teórico sea comprobable a mano. */
-export async function createRoofingFinish(api: APIRequestContext): Promise<CreatedFinish> {
-  return createFinish(api, { densityFactor: TEST_DENSITY, businessLine: 'metallic-roofing' });
+/**
+ * Acabado con densidad fija, para que el kilo teórico sea comprobable a mano.
+ *
+ * D-203: con `colorId` nace PREPINTADO de ese color; sin él, NATURAL. El color de la bobina
+ * sale del acabado, así que un escenario con color necesita un acabado prepintado.
+ */
+export async function createRoofingFinish(
+  api: APIRequestContext,
+  options: { colorId?: string | null } = {},
+): Promise<CreatedFinish> {
+  return createFinish(api, {
+    densityFactor: TEST_DENSITY,
+    businessLine: ROOFING_LINE,
+    ...(options.colorId ? { kind: 'PREPINTADO', colorId: options.colorId } : { kind: 'NATURAL' }),
+  });
+}
+
+interface FinishIdentityDto {
+  id: string;
+  code: string;
+  name: string;
+  densityFactor: string;
+  kind: 'NATURAL' | 'PREPINTADO' | 'GALVANIZADO' | null;
+  colorId: string | null;
+  businessLine: string | null;
+}
+
+/**
+ * Variantes de acabado creadas por {@link finishForCoil}, por acabado base. La clave interna es
+ * `línea|color`. Se guarda la promesa (y no el id) para que dos compras en paralelo con el mismo
+ * par no creen dos variantes.
+ */
+const finishVariants = new Map<string, Map<string, Promise<string>>>();
+
+/**
+ * D-203: el acabado con el que de verdad se compra una bobina de `lineCode` y color `colorId`.
+ *
+ * Antes de D-203 el color viajaba suelto en el ítem de compra y cualquier acabado servía para
+ * cualquier color. Ahora el color **es** del acabado, así que muchos specs que compran «el
+ * acabado del escenario, pero en otro color» (o sin color) necesitan otro acabado. Si el base ya
+ * cumple (misma línea y mismo color) se usa tal cual; si no, se crea una variante con **la misma
+ * densidad** —el kilo teórico no cambia— PREPINTADO con ese color, o NATURAL sin color.
+ */
+export async function finishForCoil(
+  api: APIRequestContext,
+  baseFinishId: string,
+  lineCode: string,
+  colorId: string | null,
+): Promise<string> {
+  const byBase = finishVariants.get(baseFinishId) ?? new Map<string, Promise<string>>();
+  finishVariants.set(baseFinishId, byBase);
+  const key = `${lineCode}|${colorId ?? ''}`;
+  const cached = byBase.get(key);
+  if (cached) return cached;
+  const pending = (async () => {
+    const base = await getJson<FinishIdentityDto>(api, `/api/finishes/${baseFinishId}`);
+    if (base.kind !== null && base.businessLine === lineCode && base.colorId === colorId) {
+      return base.id;
+    }
+    const variant = await createFinish(api, {
+      densityFactor: base.densityFactor,
+      businessLine: lineCode,
+      ...(colorId ? { kind: 'PREPINTADO', colorId } : { kind: 'NATURAL' }),
+    });
+    return variant.id;
+  })();
+  byBase.set(key, pending);
+  // Un fallo no se memoiza: el siguiente intento vuelve a probar.
+  pending.catch(() => byBase.delete(key));
+  return pending;
+}
+
+/** Variantes vivas de un acabado base, para que la purga las desactive con él. */
+async function variantsOf(baseFinishId: string): Promise<string[]> {
+  const byBase = finishVariants.get(baseFinishId);
+  if (!byBase) return [];
+  const ids = await Promise.all(
+    [...byBase.values()].map((p) => p.catch(() => null as string | null)),
+  );
+  return ids.filter((id): id is string => id !== null && id !== baseFinishId);
 }
 
 /**
@@ -179,7 +256,12 @@ export async function createRoofingProduct(
 
 export interface RoofingCoilOptions {
   supplierId: string;
+  /**
+   * Acabado base. D-203: si su color o su línea no son los de esta compra, la bobina se compra
+   * con una variante de él (ver {@link finishForCoil}) y `coil.finishId` es el de la variante.
+   */
   finishId: string;
+  /** Color que tiene que tener la bobina; `null`/ausente = sin color. Ya no viaja en el ítem. */
   colorId?: string | null;
   weightKg?: string;
   thicknessMm?: string;
@@ -212,9 +294,11 @@ export async function buyRoofingCoil(
   api: APIRequestContext,
   options: RoofingCoilOptions,
 ): Promise<{ coil: CoilDto; purchaseId: string }> {
+  const lineCode = options.lineCode ?? ROOFING_LINE;
+  const finishId = await finishForCoil(api, options.finishId, lineCode, options.colorId ?? null);
   const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
     supplierId: options.supplierId,
-    businessLine: options.lineCode ?? ROOFING_LINE,
+    businessLine: lineCode,
     type: 'COIL',
     docType: 'FACTURA',
     series: 'F001',
@@ -229,10 +313,10 @@ export async function buyRoofingCoil(
         qty: options.weightKg ?? '2000',
         unit: 'KGM',
         unitPrice: options.unitPrice ?? '5',
-        finishId: options.finishId,
+        // D-203: sin `colorId` — el color de la bobina sale del acabado.
+        finishId,
         widthMm: options.widthMm ?? COIL_WIDTH,
         thicknessMm: options.thicknessMm ?? NOMINAL_THICKNESS,
-        ...(options.colorId ? { colorId: options.colorId } : {}),
         coilStatus: options.coilStatus ?? 'OPEN',
       },
     ],
@@ -271,10 +355,13 @@ export async function setupRoofingScenario(
   // —el producto necesita el acabado y el color, la compra necesita el proveedor— y se queda
   // secuencial, que es lo que este `Promise.all` tiene que respetar para no volverse una
   // carrera. Este escenario lo montan 51 casos, así que el viaje ahorrado se paga 51 veces.
-  const [supplier, finish, color] = await Promise.all([
+  // D-203: el acabado ya no es independiente del color (es PREPINTADO de ese color), así que
+  // espera al color; el proveedor sigue en paralelo.
+  const colorCreated = createColor(api);
+  const [supplier, color, finish] = await Promise.all([
     createCuttingSupplier(api),
-    createRoofingFinish(api),
-    createColor(api),
+    colorCreated,
+    colorCreated.then((c) => createRoofingFinish(api, { colorId: c.id })),
   ]);
   const { product } = await createRoofingProduct(api, {
     finishId: finish.id,
@@ -650,9 +737,13 @@ export async function purgeRoofingTrail(
       .catch(() => undefined);
   }
   if (trail.finishId) {
-    await api
-      .patch(`/api/finishes/${trail.finishId}`, { data: { isActive: false } })
-      .catch(() => undefined);
+    // D-203: con él, las variantes de color que `buyRoofingCoil` le creó. Un acabado activo con
+    // un color impide desactivar ese color, y el paso de abajo lo necesita.
+    const variants = await variantsOf(trail.finishId);
+    for (const id of [trail.finishId, ...variants]) {
+      await api.patch(`/api/finishes/${id}`, { data: { isActive: false } }).catch(() => undefined);
+    }
+    finishVariants.delete(trail.finishId);
   }
   // El color va al final: el API se niega a desactivarlo mientras un producto activo o una
   // bobina viva lo use, así que solo funciona después de todo lo anterior.

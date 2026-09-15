@@ -304,7 +304,8 @@ export async function setupCoilStock(
   options: { lineCode: string; weightKg?: string; unitPrice?: string },
 ): Promise<CoilScenario> {
   const supplier = await createCuttingSupplier(api);
-  const finish = await createFinish(api);
+  // D-203: el acabado es de la línea de la compra (natural, sin color).
+  const finish = await createFinish(api, { businessLine: options.lineCode });
   const weightKg = options.weightKg ?? '5000';
 
   const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
@@ -367,10 +368,11 @@ export async function buyCoilForSale(
   },
 ): Promise<CoilScenario> {
   const supplier = await createCuttingSupplier(api);
-  const finish = await createFinish(
-    api,
-    options.finishCode === undefined ? {} : { code: options.finishCode },
-  );
+  // D-203: el acabado es de la línea de la compra (natural, sin color).
+  const finish = await createFinish(api, {
+    businessLine: options.lineCode,
+    ...(options.finishCode === undefined ? {} : { code: options.finishCode }),
+  });
   const weightKg = options.weightKg ?? '500';
 
   const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
@@ -570,7 +572,8 @@ export async function setupCoilBatch(
   options: { lineCode: string; weightsKg: string[]; unitPrice?: string },
 ): Promise<CoilBatchScenario> {
   const supplier = await createCuttingSupplier(api);
-  const finish = await createFinish(api);
+  // D-203: el acabado es de la línea de la compra (natural, sin color).
+  const finish = await createFinish(api, { businessLine: options.lineCode });
 
   const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
     supplierId: supplier.id,

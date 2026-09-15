@@ -36,8 +36,10 @@ export interface CoilDto {
   id: string;
   code: string;
   kind: string;
-  /** D-085: color de la bobina; null en las galvanizadas. */
+  /** D-085/D-203: color de la bobina; sale de su acabado, null si el acabado no es prepintado. */
   colorId?: string | null;
+  /** D-203: el acabado es de donde sale el color. */
+  finishId?: string;
   purchaseId?: string | null;
   typeKey: string;
   status: string;
@@ -570,7 +572,11 @@ export async function setupScenario(
 ): Promise<Scenario> {
   // Independientes entre sí: dos altas contra dos tablas distintas. La compra de abajo sí
   // necesita las dos, así que va después.
-  const [supplier, finish] = await Promise.all([createCuttingSupplier(api), createFinish(api)]);
+  // D-203: el acabado es de la línea de la compra (Drywall, natural).
+  const [supplier, finish] = await Promise.all([
+    createCuttingSupplier(api),
+    createFinish(api, { businessLine: LINE }),
+  ]);
 
   const purchase = await postJson<PurchaseDto>(api, '/api/purchases', {
     supplierId: supplier.id,
