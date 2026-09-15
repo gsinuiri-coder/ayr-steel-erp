@@ -302,3 +302,66 @@ production`. Si alguna muta datos, se dice en `PROGRESO.md` cuál y qué hace.
      defecto.
 5. **Deploy:** `pnpm deploy:api` y verificar `/health`; web por push a `main` (Vercel).
 6. **`pnpm smoke:prod`** (solo lectura, D-126). Nunca `pnpm e2e:prod`.
+
+---
+
+## Checklist de la ventana V-4 (limpia total + migraciones + inventario real)
+
+La ventana más delicada del proyecto hasta ahora: vacía todo lo transaccional de `production`
+(D-208, `pnpm limpia:v4`) y exige tipo en acabados (D-209) antes de cargar el inventario real
+(D-206/D-207). Cada paso lleva quién lo hace — **dueño** o **agente** — y se anota en
+`docs/PROGRESO.md` con su resultado, igual que la ventana de deploy de arriba. Todo lo de M1/M2
+se ensayó de punta a punta contra una rama de ensayo de Neon clonada de `production`
+(F8-V4prep, 2026-09-15): dry-run y `--execute` de la limpia, y las dos ramas de D-209 (acabados
+completos y acabado sin tipo) — resultados en `docs/PROGRESO.md`, sesión F8-V4prep.
+
+0. **[Agente] Suite verde de punta a punta.** `pnpm e2e` completo, 0 rojos — la deuda OOM de
+   F8-S6a/F8-S6a2. Si el host no aguanta una corrida `dev`/`nest start` completa, correrla desde
+   un `git worktree` con builds de producción (`next start` + `node dist/main.js`), como
+   `scripts/e2e-latency.mjs` ya hace para F8-R1: nunca toca `apps/web/.next` del repo principal,
+   así que no interfiere con `pnpm dev:preview` del dueño. **Gate PSE**: `pnpm e2e:pse` con los
+   correlativos de 8 dígitos de D-202 — primera vez que se prueba que la cuenta demo de Nubefact
+   los acepta como primer número de una serie; si los rechaza, D-202 se revisa antes de seguir.
+1. **[Dueño] Respaldo Neon** de `production` (rama `respaldo-pre-deploy-AAAAMMDD`), mismo
+   patrón que el checklist de arriba.
+2. **[Agente] Push del lote acumulado + CI verde** (~10 min con Postgres del runner, D-202).
+3. **[Agente] Migraciones a `production`:** `pnpm db:prod` (todas las pendientes salvo D-209,
+   que exige el paso 5 antes — ver abajo). Verificar con
+   `node scripts/migrations-status.mjs --branch production`.
+4. **[Agente ejecuta, dueño aprueba] Limpia (D-208):**
+   - `pnpm limpia:v4 --branch production` (dry-run) → el dueño revisa los conteos por tabla y el
+     desglose de comprobantes.
+   - `pnpm limpia:v4 --execute --branch production --confirm-production` una vez aprobado.
+   - Purga cotizaciones, pedidos, OPs, reportes/staging, reservas, despachos, comprobantes,
+     cobranzas/pagos, compras, bobinas y su kardex, movimientos e inventario de productos,
+     clientes, proveedores, sesiones, auditoría, idempotencia, cambios de precio, caja/POS e
+     importaciones (staging). Sobreviven líneas de negocio, catálogo (productos, BOM, materia
+     prima), colores, acabados, usuarios y configuración; `exchange_rates`/`fiscal_series`
+     quedan fuera de su alcance a propósito (correlativos y TC no son «datos de práctica»).
+     Restaura el cliente «público en general» (D-077) y el proveedor «Saldo inicial de
+     inventario» (D-206) vía `pnpm db:seed` al final — es parte del propio script, no un paso
+     aparte.
+5. **[Dueño, en la UI] Completar el catálogo de Acabados.** Prerrequisito de D-209:
+   - Consolidar colores duplicados por criterio comercial (fusionar, p. ej., los rojos
+     3002/3020 en «Rojo» si la lista de precios del cliente no los distingue — la distinción es
+     comercial, no RAL).
+   - Consolidar acabados duplicados y completar tipo/color/línea en los que falten.
+6. **[Agente] Migración D-209 (obligatoriedad de acabados):** `pnpm db:prod` (ahora sí la aplica,
+   ya con el catálogo completo). **Si falla** porque quedó algún acabado sin tipo, el error
+   nombra los códigos exactos — no adivina nada — y hay que:
+   1. Completar esos acabados en la UI (volver al paso 5).
+   2. `pnpm exec prisma migrate resolve --rolled-back
+20260915120000_d209_acabados_tipo_obligatorio` contra `production` (mismo patrón
+      `DATABASE_URL`/`DIRECT_URL` por entorno, nunca por argv) antes de reintentar — Prisma deja
+      la migración en estado fallido y no aplica ninguna otra hasta resolverla.
+7. **[Agente ejecuta, dueño aprueba] Carga de inventario real (D-206/D-207):**
+   - `pnpm import:initial-inventory --file <bobinas.xlsx> --branch production` (dry-run) → el
+     dueño revisa el reporte fila por fila.
+   - `pnpm import:initial-inventory --file <productos.xlsx> --kind products --branch production`
+     (dry-run) → mismo revisión.
+   - `--execute --confirm-production` en los dos, una vez aprobados. Ninguno actualiza una fila
+     existente (D-206/D-207): un archivo con errores rechaza todo el archivo, nunca una carga
+     parcial.
+8. **[Agente] Deploy API** (`pnpm deploy:api`) **+ [dueño] verificación del web** + **[agente]
+   `pnpm smoke:prod`** (solo lectura) + **[dueño] verificación final** en `/inventario`,
+   `/bobinas` y `/acabados`.

@@ -5143,7 +5143,100 @@ refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelv
   (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
   de otra sesión.
 
-## Sesión F8-S6a2 — Carga de inventario inicial de productos (2026-09-15) — ABIERTA
+## Sesión F8-V4prep — Cierre de S6a2 + herramientas de V-4 (2026-09-15) — CERRADA
+
+Cierra formalmente F8-S6a2 (deuda OOM de F8-S6a/F8-S6a2) y entrega las herramientas que la
+ventana V-4 solo tiene que ejecutar: la limpia total de producción (D-208) y la migración de
+obligatoriedad de acabados (D-209), las dos ensayadas de punta a punta contra una rama de ensayo
+de Neon clonada de `production`. **Todo en commits locales, sin push**: se acumula para la
+ventana V-4 (19 commits ahora). Producción no se tocó — todo el ensayo corrió contra
+`ensayo-v4-20260915`, que Neon nunca borra (regla dura del `CLAUDE.md`) y queda para referencia.
+
+- **M0 — Suite E2E completa, 0 rojos (cierra la deuda OOM).** Tres sesiones (F8-S6a, F8-S6a2 y
+  esta) habían visto el proceso morir por falta de memoria del host antes de terminar. La causa
+  no era un defecto de código: `pnpm e2e` local corre `nest start` + `next dev` (dev, no
+  compilados) durante toda la corrida, y con ~330 specs en un solo worker eso acumula memoria en
+  procesos que nunca se reinician. La salida fue correr la suite desde un **`git worktree`**
+  aparte con **builds de producción** (`node dist/main.js` + `next start`), reusando
+  `scripts/e2e-latency.mjs` de F8-R1 con `--proxy-port 5434` (bypasea el proxy de latencia,
+  habla directo a Docker) — nunca toca `apps/web/.next` del repo principal, así que no
+  interfiere con `pnpm dev:preview` del dueño. Resultado: **331/333 en 35,9 min, sin ningún
+  síntoma de memoria**. Los 2 rojos de la primera corrida (`fase2a.spec.ts` — XML de factura;
+  `fase5a.spec.ts` — PDF en R2) resultaron ser **el entorno del worktree, no el producto**: el
+  worktree no tenía `apps/api/.env` (nunca se corrió `pnpm env:local` ahí) y por lo tanto
+  `R2_ACCOUNT_ID` quedaba vacío — `StorageService` degradaba sin PDF, exactamente el síntoma.
+  Reintentados con las credenciales reales de `.env.setup` inyectadas: **13/13 en verde**. Con
+  eso, la suite completa queda verificada en **336/336** (331 + 2 reintentados + 3 skipped) de
+  punta a punta. **F8-S6a2 queda CERRADA** con esto: M1+M2 de esa sesión ya estaban verificados
+  por su subset curado, y esta corrida completa la deuda pendiente que la dejaba abierta.
+  - **Dos incidentes propios durante el setup, documentados en memoria para no repetirlos:**
+    corrí `pnpm build` en el repo principal con `pnpm dev:preview` del dueño corriendo — `next
+build` (webpack) y el `next dev --turbopack` del preview escriben al mismo
+    `apps/web/.next`, y el preview quedó en 500 hasta que el dueño lo reinició (avisado en el
+    acto, nunca toqué su proceso); y un `docker compose --profile storage down` de más quitó
+    también `ayr-local-db` (no solo el MinIO que quería bajar) — los datos de `ayr_local`
+    sobrevivieron (el volumen no se toca sin `-v`), pero el contenedor tuvo que recrearse.
+- **M1 — `pnpm limpia:v4` (D-208).** Ver el detalle completo en D-208 (`docs/ARQUITECTURA.md`
+  §0.2). Un único `TRUNCATE ... RESTART IDENTITY CASCADE` sobre 39 tablas, con dry-run por
+  defecto, revalidación de conteos antes de ejecutar y verificación de que las 12 tablas
+  sobrevivientes no cambiaron de tamaño. **Toda ambigüedad del brief original se resolvió
+  preguntándole al dueño antes de escribir código**, no asumiendo un default: `customers`/
+  `suppliers` se purgan completos (con sus filas `isSystem` recreadas por el seed), `sessions`/
+  `audit_log` se purgan (excepción explícita a la regla dura de auditoría append-only, para esta
+  ventana única), `cash_sessions`/`pos_sales`/`import_batches`/`import_rows` se purgan,
+  `exchange_rates`/`fiscal_series` quedan fuera de alcance.
+  - **Ensayo real contra `ensayo-v4-20260915`** (clon de `production`, creado con
+    `neonctl branches create --no-secrets` — nunca `--secrets`, regla dura 5): dry-run y
+    `--execute` corridos dos veces cada uno. Conteos reales encontrados antes de purgar: 50
+    clientes, 9 proveedores, 1 comprobante `ACCEPTED`, 1582 filas de importación, 3343 filas en
+    total. Tras `--execute`: las 39 tablas en 0, las 12 sobrevivientes intactas (verificado
+    aparte contra `business_lines`, `products`, `colors`, `finishes`, `users`,
+    `fiscal_series.correlative`), y el cliente/proveedor sembrados recreados por el seed.
+  - **Dos bugs reales que el ensayo destapó** (ninguno lo hubiera visto un ensayo contra Docker
+    local, porque ahí `pnpm.cmd`/`.env.setup` no entran en juego de la misma forma): el
+    `execFileSync('pnpm.cmd', ...)` del paso de seed final revienta con `EINVAL` en Windows/Node
+    24 sin `shell: true` (mismo síntoma ya documentado en otros scripts del repo); y el wrapper
+    no pasaba `ADMIN_EMAIL`/`ADMIN_PASSWORD`, así que el seed heredaba el admin de desarrollo
+    local vía `dotenv/config` en vez del real de `.env.setup` — contra una rama Neon de verdad
+    eso podía crear un administrador de más. Los dos corregidos y reverificados.
+- **M2 — Migración `20260915120000_d209_acabados_tipo_obligatorio` (D-209).** Cierra la deuda
+  diferida de D-203. Ver el detalle en D-209. Ensayadas **las dos ramas** contra la misma rama de
+  ensayo: producción real tenía **8 acabados sin tipo** (`ALZ-AZUL-5002`, `ALZ-BLANCO`,
+  `ALZ-GRIS-7040`, `ALZ-NATURAL`, `ALZ-ROJO-3020`, `ALZ-VERDE-6002`, `ALZ-VERDE-6035`, `GALV`) —
+  la migración falló nombrándolos exactamente, como debía. Completados a mano (simulando al
+  dueño) y reintentada tras `prisma migrate resolve --rolled-back` (paso que solo un ensayo
+  contra Neon real iba a destapar: una migración fallida deja el historial bloqueado hasta
+  resolverla, algo que no pasa igual en una base local recién creada), aplicó limpio. De paso
+  quedó confirmado que el índice único case-insensitive de colores de D-203 no encuentra
+  duplicados en los datos reales de `production` — la otra deuda que el brief pedía revisar.
+  `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check` en verde para todo el monorepo
+  tras el cambio de `schema.prisma` (sin fallout: `kind`/`businessLineId` ya se exigían a nivel
+  de aplicación desde D-203).
+- **M3 — Runbook de la ventana V-4** en `docs/ENTORNOS.md` § «Checklist de la ventana V-4»: los
+  9 pasos en orden, cada uno con quién lo hace (dueño/agente), incluido el flujo de
+  `migrate resolve --rolled-back` si D-209 encuentra acabados incompletos. Dos avisos que el
+  brief pedía incluir («gap de endpoints», «marcador de ventana a elegir») no se encontraron en
+  ningún doc del repo; consultado el dueño, confirmó omitirlos. El rollover de correlativos de
+  D-202 (2028-04-22) sí quedó en el checklist, con su cita exacta.
+- **Revisión (`revisor`).** Contó los 51 modelos del schema uno por uno contra `PURGE_TABLES`/
+  `SURVIVOR_TABLES`: cubren exactamente los 51, sin faltantes ni duplicados — la verificación más
+  importante que pedía el brief. Confirmó que ninguna de las 12 tablas sobrevivientes tiene una
+  FK real hacia una tabla purgada (revisó los 12 modelos completos), que el reintento de D-209
+  tras `migrate resolve --rolled-back` repite todo desde cero sin estado a medio camino (la
+  migración entera va en una sola transacción de Prisma), y que el manejo de secretos cumple la
+  regla dura 5. Un hallazgo **medio**, corregido: el gate `--confirm-production` vivía solo en el
+  wrapper — invocar el `.ts` directo con credenciales de `production` copiadas a mano se lo
+  saltaba. Se agregó `AYR_LIMPIA_V4_CONFIRMED=1` como defensa redundante (el wrapper la setea
+  solo tras el gate), verificado que un `--execute --branch production` sin esa variable se
+  niega antes de tocar la base. Dos hallazgos bajos: alineación de `schema.prisma` desincronizada
+  tras quitar el `?` de `Finish.kind` (corregido con `prisma format`, que `format:check` no
+  cubre porque Prettier no toca `.prisma`) y el nombre `limpia:v4` en español, único en
+  `package.json` — se mantiene a propósito (ver D-208, el brief lo pidió textual tres veces).
+- Cierre: `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check` en verde de nuevo tras
+  los fixes de revisión. **F8-V4prep queda CERRADA.**
+- Handoff completo: `docs/handoff/f8-v4prep.md`.
+
+## Sesión F8-S6a2 — Carga de inventario inicial de productos (2026-09-15) — CERRADA
 
 Extensión de F8-S6a/D-206 a productos por unidades (UPVC + reventa), bajo la misma excepción a
 D-150 y sus cuatro condiciones (D-207, `docs/ARQUITECTURA.md` §0.2). **Prioridad de la sesión
@@ -5192,10 +5285,10 @@ sesión espera esa corrida.
   transacción, mismo patrón (y misma ventana de carrera teórica, sin `UNIQUE` de base) que ya usa
   la carga de bobinas para `externalCode` — aceptable para una herramienta de arranque que un
   operador corre a mano.
-- **Pendiente para el cierre formal**: la suite E2E completa sigue sin una corrida 0-rojo de
-  punta a punta (deuda heredada de F8-S6a, límite de memoria del host) — se corre después de la
-  demo, antes de dar la sesión por cerrada. Hasta entonces esta sesión queda **ABIERTA** aunque
-  M1+M2 estén verificados por el subset relacionado.
+- **RESUELTO en la Sesión F8-V4prep (2026-09-15).** La suite E2E completa corrió 0-rojo de
+  punta a punta (336/336, ver esa sesión arriba) desde un `git worktree` con builds de
+  producción, que esquiva el límite de memoria del host que había bloqueado tres corridas
+  seguidas. Con eso, esta sesión queda **CERRADA**.
 
 ## Sesión F8-S6a — Carga de inventario inicial de bobinas (2026-09-15) — CERRADA
 
