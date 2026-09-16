@@ -19,7 +19,8 @@ ERP web para una empresa peruana de transformación y venta de acero. Fuente de 
 ## Stack (D-002..D-008)
 
 - Monorepo `pnpm` + Turborepo: `apps/api` (NestJS 11, Prisma 6, pg-boss, config por Zod), `apps/web` (Next.js 15 App Router, Tailwind 4, shadcn/ui, TanStack Query, React Hook Form, Zod), `packages/shared` (schemas Zod, enums `Role`/`BusinessLine`, helper `Decimal`).
-- DB: Neon Postgres, proyecto `ayr-steel-erp`. Ramas: `production` (prod, **datos reales desde 2026-09-07**), `demo` (ensayos y capacitación), `dev` (local), `ci` (tests, se resetea por corrida). **Nunca borrar ramas de Neon.** Detalle en `docs/ENTORNOS.md`.
+- DB: Neon Postgres, proyecto `ayr-steel-erp`. Ramas: `production` (prod, **datos reales desde 2026-09-07**), `demo` (ensayos y capacitación), `dev` (local), `ci` (tests, se resetea por corrida). Detalle en `docs/ENTORNOS.md`.
+- **Ramas Neon (política desde 2026-09-16):** nunca se borran `production`, `dev`, `ci`, `demo` ni el respaldo del día D (`respaldo-pre-v4-20260915`). Los respaldos pre-ventana se pueden borrar con OK explícito del owner **POR NOMBRE** cuando: (1) la ventana está cerrada y verificada, y (2) existe un respaldo posterior que cubre el mismo estado. Conservar siempre los 2 respaldos post-día-D más recientes. Ramas de ensayo: solo con OK por nombre. Tras cada ventana verificada, borrar respaldos Neon de ventanas verificadas con más de 7 días, conservando siempre el del día D. Antes de borrar, verificar que el id coincide con el nombre; `neonctl` siempre vía `scripts/lib.mjs#run` con `quiet: true` y `--output json` (regla dura 5).
 - Hosting: API en Cloud Run `us-central1`; web en Vercel. El web llama al API por `/api/*` (rewrite de Next, D-015).
 - Auth propia (D-010): argon2id, JWT de acceso corto + refresh en tabla `sessions`, cookies httpOnly.
 

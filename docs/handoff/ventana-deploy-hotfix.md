@@ -91,6 +91,12 @@ revisión toma la credencial de Secret Manager.
 - **La rama `respaldo-pre-hotfix-2026-09-10` queda para siempre** (nunca se borran ramas de
   Neon), igual que `respaldo-pre-deploy-20260909` de la ventana anterior. Son ya dos; conviene
   decidir si se acumula una por ventana.
+  - _Nota 2026-09-16 (HOTFIX-DESFASE): decidido. La regla se reemplazó por la política de ramas
+    de `CLAUDE.md`, y con OK del dueño por nombre se borraron las dos:
+    `respaldo-pre-deploy-20260909` (`br-dark-firefly-aezu7m4q`) y
+    `respaldo-pre-hotfix-2026-09-10` (`br-muddy-flower-ae8ik7ae`). Las dos eran anteriores a la
+    carga de datos reales del día D (15-09): restaurar desde ellas perdía toda la operación
+    real, así que ya no servían como respaldo de producción._
 
 ---
 

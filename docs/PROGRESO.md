@@ -5310,6 +5310,10 @@ no está acá, no está vivo.
   `respaldo-pre-hotfix-2026-09-10`, `respaldo-pre-deploy-20260912`,
   `respaldo-pre-deploy-20260913` y `respaldo-pre-v4-20260915`, más la de ensayo
   `ensayo-v4-20260915`. Ninguna se borra (regla dura 5 de `CLAUDE.md`).
+  > **Nota 2026-09-16 (HOTFIX-DESFASE):** la regla «nunca borrar ramas de Neon» se reemplazó
+  > por la política de ramas de `CLAUDE.md` (stack). Con OK del dueño por nombre se borraron
+  > `respaldo-pre-deploy-20260909` y `respaldo-pre-hotfix-2026-09-10`; ver la sección
+  > «Incidente HOTFIX-DESFASE».
 - **Producción, esquema y despliegue.** `migrate status` **66/66 sin drift**. Cloud Run sirve
   la revisión **`ayr-steel-erp-api-00034-drz`** al 100 % con `Ready=True` — una más que la
   `00033-ww7` que registró la ventana: la `00034` es el deploy de D-210. `pnpm smoke:prod` en
@@ -5525,6 +5529,8 @@ obligatoriedad de acabados (D-209), las dos ensayadas de punta a punta contra un
 de Neon clonada de `production`. **Todo en commits locales, sin push**: se acumula para la
 ventana V-4 (19 commits ahora). Producción no se tocó — todo el ensayo corrió contra
 `ensayo-v4-20260915`, que Neon nunca borra (regla dura del `CLAUDE.md`) y queda para referencia.
+_(Nota 2026-09-16: esa regla se reemplazó por la política de ramas de `CLAUDE.md`; una rama de
+ensayo ahora se borra solo con OK del dueño por nombre. `ensayo-v4-20260915` se conserva.)_
 
 - **M0 — Suite E2E completa, 0 rojos (cierra la deuda OOM).** Tres sesiones (F8-S6a, F8-S6a2 y
   esta) habían visto el proceso morir por falta de memoria del host antes de terminar. La causa
