@@ -94,6 +94,9 @@ jobs:
       # un comprobante aceptado por SUNAT no se borra, se da de baja.
       NUBEFACT_URL: ${{ secrets.NUBEFACT_URL }}
       NUBEFACT_TOKEN: ${{ secrets.NUBEFACT_TOKEN }}
+      # D-216 (M0d): explícita para que la suite no cambie de comportamiento — solo
+      # `production` queda sin definirla.
+      PSE_ENABLED: 'true'
       # RUC receptor de los comprobantes de prueba. Vacío = los E2E saltan la aceptación
       # en vez de emitir contra un RUC que SUNAT no reconoce.
       E2E_CUSTOMER_RUC: ${{ secrets.E2E_CUSTOMER_RUC }}
@@ -164,6 +167,10 @@ jobs:
       THROTTLE_DISABLED: 'true'
       # Sin NUBEFACT_*: el smoke recorre la emisión por el camino sin PSE atado (contingencia,
       # D-073/D-080). La aceptación real es `pnpm e2e:pse`, fuera de CI.
+      # D-216 (M0d): `PSE_ENABLED=true` igual, para que ese camino sin credenciales siga
+      # siendo la contingencia de D-073 (toma correlativo, queda pendiente) y no el rechazo
+      # explícito nuevo — son dos caminos distintos y este job prueba el primero.
+      PSE_ENABLED: 'true'
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

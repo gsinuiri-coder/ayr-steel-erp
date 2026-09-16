@@ -102,6 +102,7 @@ export class PosService {
       genericMaxTotalPen: GENERIC_CUSTOMER_MAX_TOTAL_PEN,
       providerConfigured: settings.providerConfigured,
       providerOffline: settings.providerOffline,
+      pseEnabled: settings.pseEnabled,
     };
   }
 

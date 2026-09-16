@@ -10,6 +10,7 @@ import {
   TRANSFER_MODE_LABELS,
   type DispatchDto,
   type FiscalDocumentDto,
+  type InvoicingSettingsDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
@@ -51,6 +52,12 @@ export function DespachoDetalleView({ id }: { id: string }) {
     queryFn: () => api<DispatchDto>(`/dispatches/${id}`),
   });
   const d = dispatch.data;
+  // Misma clave de caché que `contingency-card`/`comprobante-detalle-view` (D-216).
+  const settings = useQuery({
+    queryKey: ['invoicing-settings'],
+    queryFn: () => api<InvoicingSettingsDto>('/invoicing/settings'),
+  });
+  const pseOff = settings.data !== undefined && !settings.data.pseEnabled;
 
   function onError(err: unknown): void {
     toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
@@ -153,7 +160,8 @@ export function DespachoDetalleView({ id }: { id: string }) {
               label:
                 d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía de remisión',
               show: canIssueNote,
-              disabled: busy,
+              disabled: busy || pseOff,
+              title: pseOff ? 'Emisión electrónica no habilitada en este entorno' : undefined,
               pending: issueNote.isPending,
               pendingText: 'Emitiendo…',
               onSelect: () => {

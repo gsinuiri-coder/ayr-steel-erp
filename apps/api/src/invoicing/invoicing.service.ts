@@ -61,6 +61,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { OperationDateService } from '../common/operation-date.service';
+import { ENV, type Env } from '../config/env';
 import { InventoryService } from '../inventory/inventory.service';
 import { rawMaterialSpecLabels } from '../sales/raw-material';
 import { StorageService } from '../documents/storage.service';
@@ -223,7 +224,23 @@ export class InvoicingService {
     // F8-S7/M3: para escribir `dispatches.invoice_id` por el mismo camino que el mostrador
     // (D-205). El módulo ya importaba `InventoryModule` porque el despacho mueve kardex.
     private readonly inventory: InventoryService,
+    // D-216/M0d: `PSE_ENABLED`. `ConfigModule` es `@Global()`, así que no hace falta tocar
+    // los imports del módulo.
+    @Inject(ENV) private readonly env: Env,
   ) {}
+
+  /**
+   * El gate explícito de D-216: sin `PSE_ENABLED`, cualquier camino que hablaría con el PSE
+   * rechaza acá, **antes** de tomar correlativo o de llamar al proveedor. No reemplaza a
+   * `NullInvoicingProvider` (D-071/D-073, la contingencia de una caída real): la diferencia
+   * es que esto es a propósito y lo dice, en vez de terminar en `SEND_ERROR` tras gastar un
+   * número.
+   */
+  private assertPseEnabled(): void {
+    if (!this.env.PSE_ENABLED) {
+      throw new BadRequestException('Emisión electrónica no habilitada en este entorno');
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Configuración (D-073)
@@ -264,6 +281,7 @@ export class InvoicingService {
       alertAfterHours: row.alertAfterHours,
       providerConfigured: this.provider.configured,
       providerName: this.provider.name,
+      pseEnabled: this.env.PSE_ENABLED,
       updatedAt: row.updatedAt.toISOString(),
     };
   }
@@ -1457,6 +1475,12 @@ export class InvoicingService {
    * revirtiera un correlativo ya tomado, que es exactamente el hueco que D-072 evita.
    */
   async send(actor: RequestUser, id: string): Promise<FiscalDocumentDto> {
+    // D-216/M0d: acá y no en `assignInTx`/`assign`, que el mostrador también usa
+    // (D-099) **dentro** de la transacción atómica de la venta — esa vía tiene que seguir
+    // completando la venta con el PSE apagado o caído (D-073, "la operación nunca para por
+    // el PSE"); rechazar ahí adentro la revertiría entera. `send()` es la emisión
+    // **standalone** de un borrador ya creado (botón "Emitir"), sin nada más atado.
+    this.assertPseEnabled();
     await this.assertOwnership(actor, id, 'emitirlo');
     await this.assign(actor, id);
     await this.deliver(id);
@@ -2046,6 +2070,7 @@ export class InvoicingService {
 
   /** Reintento manual del envío (D-073). El job hace lo mismo, sin usuario. */
   async retry(actor: RequestUser, id: string): Promise<FiscalDocumentDto> {
+    this.assertPseEnabled();
     const document = await this.prisma.fiscalDocument.findUnique({
       where: { id },
       select: { id: true, status: true, docType: true },
@@ -2080,6 +2105,7 @@ export class InvoicingService {
     // recorría la cola cada quince minutos solo para volver a marcarla con error y para
     // inflar el contador de intentos, que es justo lo que distingue "todavía no salió" de
     // "salió y no entra".
+    if (!this.env.PSE_ENABLED) return 0;
     const settings = await this.settingsRow();
     if (settings.providerOffline) return 0;
 
@@ -2107,6 +2133,7 @@ export class InvoicingService {
    * documento que quedó `PENDING` con ticket, y una baja en trámite.
    */
   async refreshStatus(actor: RequestUser, id: string): Promise<FiscalDocumentDto> {
+    this.assertPseEnabled();
     const document = await this.prisma.fiscalDocument.findUnique({
       where: { id },
       include: documentInclude,
@@ -2233,6 +2260,7 @@ export class InvoicingService {
    *   de baja encima sería restar dos veces la misma operación.
    */
   async voidDocument(actor: RequestUser, id: string, reason: string): Promise<FiscalDocumentDto> {
+    this.assertPseEnabled();
     const document = await this.prisma.fiscalDocument.findUnique({
       where: { id },
       include: {
@@ -2380,6 +2408,7 @@ export class InvoicingService {
    * su correlativo (D-072)—, pero **solo una vigente a la vez**.
    */
   async issueDispatchNote(actor: RequestUser, dispatchId: string): Promise<FiscalDocumentDto> {
+    this.assertPseEnabled();
     const documentId = await this.prisma.$transaction(async (tx) => {
       // F8-S1/M2: el mismo lock que `DispatchesService.reverse` sobre esta tabla. Sin él,
       // dos clicks en "Emitir guía" leían los dos `dispatch.documents` sin ninguna vigente
@@ -2601,6 +2630,27 @@ export class InvoicingService {
    * un proveedor nuevo, escrito por otra persona, no tiene por qué recordarla.
    */
   private async callProvider(call: () => Promise<ProviderResult>): Promise<ProviderResult> {
+    // D-216/M0d: la mitad silenciosa del gate. Los puntos de entrada de arriba
+    // (`send`/`retry`/`refreshStatus`/`voidDocument`/`issueDispatchNote`) rechazan con
+    // `assertPseEnabled` antes de llegar acá, pero `deliver`/`deliverAny`/`sendPending`
+    // también pasan por acá **fuera** de la transacción que abrió el mostrador (D-073: "la
+    // operación nunca para por el PSE") — ahí no se puede lanzar. Con el flag apagado, esto
+    // deja el resultado exactamente como si no hubiera credenciales (`NullInvoicingProvider`,
+    // mismo `code`), en vez de arriesgarse a que un `NUBEFACT_URL`/`TOKEN` configurado por
+    // error mientras el flag está apagado igual le hable al proveedor real.
+    if (!this.env.PSE_ENABLED) {
+      return {
+        outcome: 'ERROR',
+        ticket: null,
+        sunatHash: null,
+        pdfUrl: null,
+        xmlUrl: null,
+        cdrUrl: null,
+        code: 'PROVIDER_UNAVAILABLE',
+        message: 'Emisión electrónica no habilitada en este entorno',
+        raw: { reason: 'PSE_ENABLED=false' },
+      };
+    }
     try {
       return await call();
     } catch (err) {

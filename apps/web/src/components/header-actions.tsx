@@ -49,6 +49,8 @@ export interface HeaderAction {
   pending?: boolean;
   pendingText?: string;
   destructive?: boolean;
+  /** Aviso nativo (`title`) para cuando `disabled` viene de una razón que conviene explicar. */
+  title?: string;
 }
 
 export function HeaderActions({
@@ -136,6 +138,7 @@ function PrimaryButton({
       disabled={a.disabled}
       pending={a.pending}
       pendingText={a.pendingText}
+      title={a.title}
       onClick={() => {
         a.onSelect?.();
       }}
@@ -165,6 +168,7 @@ function MenuAction({ action: a }: { action: HeaderAction }) {
     <DropdownMenuItem
       variant={variant}
       disabled={a.disabled === true || a.pending === true}
+      title={a.title}
       onSelect={() => {
         a.onSelect?.();
       }}

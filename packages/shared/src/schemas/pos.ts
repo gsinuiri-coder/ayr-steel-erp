@@ -370,6 +370,8 @@ export const posContextSchema = z.object({
   providerConfigured: z.boolean(),
   /** Interruptor manual de contingencia (D-073). */
   providerOffline: z.boolean(),
+  /** D-216: apagado explícito de la emisión electrónica; ver `invoicingSettingsSchema`. */
+  pseEnabled: z.boolean(),
 });
 export type PosContextDto = z.infer<typeof posContextSchema>;
 

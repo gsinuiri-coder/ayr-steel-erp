@@ -114,7 +114,15 @@ export function ContingencyCard() {
   // Nada que decir: proveedor en línea, configurado, sin cola y sin nadie que pueda tocar
   // las series. Para un administrador la tarjeta se queda: las series son lo primero que
   // hay que mirar cuando el PSE rechaza por forma.
-  if (!s.providerOffline && s.providerConfigured && pendingCount === 0 && !isAdmin) return null;
+  if (
+    s.pseEnabled &&
+    !s.providerOffline &&
+    s.providerConfigured &&
+    pendingCount === 0 &&
+    !isAdmin
+  ) {
+    return null;
+  }
 
   return (
     <Card>
@@ -122,7 +130,16 @@ export function ContingencyCard() {
         <CardTitle className="text-sm">Estado del envío al PSE</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {!s.providerConfigured && (
+        {!s.pseEnabled && (
+          <Alert>
+            <AlertDescription>
+              <strong>Emisión electrónica no habilitada.</strong> Este entorno tiene el PSE
+              apagado a propósito: toda emisión, anulación o guía electrónica se rechaza antes
+              de tomar correlativo. Los comprobantes manuales no se ven afectados.
+            </AlertDescription>
+          </Alert>
+        )}
+        {s.pseEnabled && !s.providerConfigured && (
           <Alert>
             <AlertDescription>
               No hay proveedor de facturación configurado. Los comprobantes se emiten y toman número
@@ -217,7 +234,8 @@ export function ContingencyCard() {
             <Button
               variant="outline"
               size="sm"
-              disabled={busy || pendingCount === 0}
+              disabled={busy || pendingCount === 0 || !s.pseEnabled}
+              title={s.pseEnabled ? undefined : 'Emisión electrónica no habilitada'}
               pending={sweep.isPending}
               pendingText="Reintentando…"
               onClick={() => {

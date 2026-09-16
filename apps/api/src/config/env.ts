@@ -65,6 +65,20 @@ const envSchema = z.object({
   NUBEFACT_URL: z.string().default(''),
   NUBEFACT_TOKEN: z.string().default(''),
   /**
+   * Apagado explícito de la emisión electrónica (D-216/M0d). Sin definir = `false`: es el
+   * estado de `production` hoy, que solo opera comprobantes manuales (D-153) mientras
+   * dura la migración. `NUBEFACT_URL`/`NUBEFACT_TOKEN` vacías ya dejaban la emisión en
+   * contingencia (D-073, `NullInvoicingProvider`), pero ese camino igual toma correlativo
+   * y termina en `SEND_ERROR`: esta variable corta **antes**, con un rechazo de negocio
+   * explícito, para no gastar numeración en un entorno donde el PSE está apagado a
+   * propósito y no caído. Se define `true` en `dev`, `demo`, `ci` (incluido el runner) para
+   * que la suite y `e2e:pse` no cambien de comportamiento.
+   */
+  PSE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /**
    * Tolerancia de espesor del filtro de bobina de la OP de coberturas (D-086), en mm.
    * Vacío = la constante compartida (0.02 mm). Existe como variable y **no** como pantalla
    * a propósito: un número que la operación no cambia todos los días no necesita UI, y una

@@ -28,6 +28,9 @@ const apiEnv = [
   // es válido y deja el módulo en contingencia (D-073), que no es un fallo de arranque.
   `NUBEFACT_URL=${setup.NUBEFACT_URL ?? setup.NUBEFACT_DEMO_URL ?? ''}`,
   `NUBEFACT_TOKEN=${setup.NUBEFACT_TOKEN ?? setup.NUBEFACT_DEMO_TOKEN ?? ''}`,
+  // D-216 (M0d): explícita acá para que dev/local se comporte como siempre (`production`
+  // es la única rama que la deja sin definir, así que queda apagada con solo desplegar).
+  'PSE_ENABLED=true',
   // RUC receptor de los comprobantes de prueba (Fase 5b). SUNAT valida que **exista**, así
   // que un RUC inventado con dígito verificador correcto vuelve rechazado y gasta un
   // correlativo. Decisión del dueño: se usa el RUC de la propia empresa (emisor = receptor),

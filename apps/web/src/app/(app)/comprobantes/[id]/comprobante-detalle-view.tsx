@@ -511,6 +511,10 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     creditNote.isPending ||
     addPayment.isPending ||
     reversePayment.isPending;
+  // D-216/M0d: solo lo que de verdad habla con el PSE. `discard`/`annul`/`issue-date` son
+  // internos al ERP y siguen intactos con el flag apagado.
+  const pseOff = settings.data !== undefined && !settings.data.pseEnabled;
+  const pseOffTitle = 'Emisión electrónica no habilitada en este entorno';
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -574,7 +578,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               key: 'send',
               label: 'Emitir y enviar al PSE',
               show: isDraft,
-              disabled: busy,
+              disabled: busy || pseOff,
+              title: pseOff ? pseOffTitle : undefined,
               pending: send.isPending,
               pendingText: 'Enviando…',
               onSelect: () => {
@@ -598,7 +603,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               key: 'correct',
               label: 'Corregir y reemitir',
               show: canCorrect,
-              disabled: busy,
+              disabled: busy || pseOff,
+              title: pseOff ? pseOffTitle : undefined,
               pending: correct.isPending,
               pendingText: 'Corrigiendo…',
               onSelect: () => {
@@ -610,7 +616,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               key: 'retry',
               label: 'Reintentar envío',
               show: canRetry,
-              disabled: busy,
+              disabled: busy || pseOff,
+              title: pseOff ? pseOffTitle : undefined,
               pending: retry.isPending,
               pendingText: 'Reintentando…',
               onSelect: () => {
@@ -622,7 +629,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               key: 'query',
               label: 'Consultar al PSE',
               show: canQuery,
-              disabled: busy,
+              disabled: busy || pseOff,
+              title: pseOff ? pseOffTitle : undefined,
               pending: refreshStatus.isPending,
               pendingText: 'Consultando…',
               onSelect: () => {
@@ -673,7 +681,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               label: 'Dar de baja',
               show: canVoid || canVoidDispatchNote,
               destructive: true,
-              disabled: busy,
+              disabled: busy || pseOff,
+              title: pseOff ? pseOffTitle : undefined,
               onSelect: () => {
                 if (busy) return;
                 setVoidOpen(true);

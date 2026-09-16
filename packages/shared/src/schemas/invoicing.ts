@@ -482,6 +482,14 @@ export const invoicingSettingsSchema = z.object({
   /** `true` cuando hay credenciales del PSE configuradas; `false` con el proveedor nulo. */
   providerConfigured: z.boolean(),
   providerName: z.string(),
+  /**
+   * D-216: `PSE_ENABLED` del entorno. `false` es un apagado **a propósito** (p. ej.
+   * `production` mientras dura la migración, D-153) y se distingue de `providerOffline`
+   * —la contingencia manual de una caída real— y de `providerConfigured` —si hay
+   * credenciales—: los tres pueden variar independientemente y la UI necesita saber cuál
+   * de los tres es la razón para mostrar el aviso correcto.
+   */
+  pseEnabled: z.boolean(),
   updatedAt: z.string(),
 });
 export type InvoicingSettingsDto = z.infer<typeof invoicingSettingsSchema>;

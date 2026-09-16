@@ -142,6 +142,28 @@ try {
         fail(check.label, err instanceof Error ? err.message : String(err));
       }
     }
+
+    // D-216: `PSE_ENABLED` tiene que quedar apagado con solo desplegar — nadie lo setea a
+    // mano en Cloud Run. Si algún día aparece encendido en `production`, es una fuga de
+    // configuración y el smoke tiene que decirlo, no un lector del panel de Comprobantes.
+    try {
+      const res = await fetch(`${baseUrl}/api/invoicing/settings`, { headers: { cookie } });
+      if (!res.ok) {
+        fail('emisión electrónica apagada (D-216)', `HTTP ${res.status}`);
+      } else {
+        const settings = await res.json();
+        if (settings.pseEnabled === false) {
+          ok('emisión electrónica apagada (D-216)');
+        } else {
+          fail(
+            'emisión electrónica apagada (D-216)',
+            `PSE_ENABLED quedó encendido en production (pseEnabled=${String(settings.pseEnabled)})`,
+          );
+        }
+      }
+    } catch (err) {
+      fail('emisión electrónica apagada (D-216)', err instanceof Error ? err.message : String(err));
+    }
   }
 } finally {
   if (cleanup() !== 0) {

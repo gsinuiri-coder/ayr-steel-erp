@@ -21,6 +21,16 @@ Cuatro ramas de Neon, cuatro propósitos que no se mezclan. **Ninguna se borra n
   `--branch local` o `--branch local-e2e` corre contra las bases de Docker.
 - Nunca se usa la cuenta real del dueño para verificar nada: se crea un ADMINISTRADOR
   efímero `e2e-...@ayr.test` y se borra al terminar (D-024).
+- **`PSE_ENABLED` (D-216): sin definir en `production`, a propósito.** Es el apagado
+  explícito de toda emisión electrónica —factura, boleta, nota de crédito, GRE,
+  anulación, consulta de estado— mientras dura la migración (D-153: prod solo opera
+  comprobantes manuales). Con el flag apagado, el API rechaza **antes** de tomar
+  correlativo, con un mensaje de negocio claro; no depende de que `NUBEFACT_URL`/
+  `NUBEFACT_TOKEN` falten (eso sigue siendo la contingencia normal de D-073, para
+  cuando el PSE esté habilitado y el proveedor no responda). Se define `PSE_ENABLED=true`
+  en `dev` (`scripts/write-local-env.mjs`, heredado por `demo` vía `apps/api/.env`) y en
+  `ci` (los dos jobs de `.github/workflows/ci.yml`) para que ningún entorno de prueba
+  cambie de comportamiento. Verificar en `smoke:prod` que quedó apagado tras un deploy.
 
 ## demo
 
