@@ -6144,6 +6144,146 @@ paginación entre fuentes documentado, no resuelto).
   producción dedicados, como ya quedó anotado al cerrar RF-S1.
 - `/handoff rf-s2` con el resumen de cierre.
 
+## Sesión RF-S2-CIERRE (2026-09-16) — bloqueantes antes de integrar
+
+Continuación de RF-S2, mismo worktree y rama (`rf-s2`), con un brief de cierre que pedía
+verificar (y resolver o justificar con contraejemplo, no solo documentar) tres puntos
+concretos antes de dar la rama por lista para UAT/integración, más correr la suite E2E
+**completa** con builds de producción — lo único de RF-S2 que había quedado sin correr. Seis
+commits más sobre `rf-s2`, todos locales; `main` sigue intacto.
+
+### PASO 0 — rebase contra `origin/main`
+
+`origin/main` (`f92a3df`) resultó ser **ancestro** de `rf-s2`, no una rama que hubiera
+avanzado por delante: `git rebase origin/main` fue un no-op ("Current branch rf-s2 is up to
+date"). Las commits de RF-S1 que el brief daba por "ya desplegadas" siguen sin push a
+`origin/main` — el dueño las debe haber desplegado a Cloud Run/Vercel directo desde el
+checkout local (los scripts `deploy:api`/`deploy:web` no dependen de git push), no vía CI.
+Sin conflictos, nada que reportar.
+
+### M1 — `audit_log` append-only real: verificado, sin brecha (D-221)
+
+Los tres puntos que pedía revisar el brief ya estaban resueltos desde antes de esta sesión:
+
+- El trigger `audit_log_no_update_delete` (migración `20260902170000`) ya rechaza
+  `UPDATE`/`DELETE` sin ninguna excepción por entorno.
+- `audit_log` no tiene ninguna FK, ni hacia ni desde otra tabla (censo de todas las
+  migraciones).
+- Ningún helper de seed/E2E/script hace `DELETE`/`TRUNCATE` puntual sobre `audit_log`. El
+  único `TRUNCATE` que la toca es el reset completo de `reset-test-db.ts` (documentado desde
+  antes: `TRUNCATE` no dispara el trigger de fila, a propósito, para poder vaciar la base de
+  pruebas entre corridas), restringido a la lista blanca de `test-db-guard.ts`.
+
+Nada de esto necesitaba migración ni cambio de código. Lo que faltaba: un test contra una
+base real, no un mock — `e2e/tests/audit-log-immutable.spec.ts` (dispara un alta de usuario,
+ubica la fila en `audit_log` vía `GET /audit`, intenta `UPDATE`/`DELETE` directo con
+`e2e/helpers/db.ts`, los dos rechazan). Ver D-221.
+
+### M2 — límite de paginación entre fuentes (D-220): resuelto, con prueba (no solo documentado)
+
+El brief pedía un diseño concreto (`<=` en todas las fuentes + `pageSize + 1` + descarte por
+tupla del lado del servidor) o, si era estructuralmente imposible sin rediseño, parar y
+reportar un contraejemplo. Ninguna de las dos cosas hizo falta: la corrección de D-220 sobre
+el desempate por `BigInt` (ya cerrada en la sesión anterior) alcanza sola, porque el algoritmo
+"top-`pageSize` por fuente, mezclado, recortado al `pageSize` global" es correcto en general
+—si una fila está dentro del top-`pageSize` global, ninguna fuente puede tener `pageSize`
+filas propias por delante de ella sin contradecir esa premisa—. La duda no quedó solo en el
+argumento: se buscó el contraejemplo más agresivo posible y no apareció. Tres pruebas nuevas
+en `audit-query.service.spec.ts` (con un fake de Prisma que ahora sí respeta
+`where`/`orderBy`/`take`, a diferencia del anterior): 3 fuentes con 10 filas cada una en el
+mismo instante exacto, `pageSize` 4, paginando hasta agotar el cursor — las 30 aparecen sin
+duplicados ni huecos; una carga masiva de 25 SKUs de precios de lista en el mismo instante —
+las 25 aparecen; un cursor con una fuente inventada — 400. D-220 se actualizó de "deuda" a
+"resuelta".
+
+### M3 — invariante de transacción de `AuditService` (D-222)
+
+No existía ningún test que verificara esto — se escribió uno. `audit-tx-invariant.spec.ts`
+recorre por glob **todos** los `*.service.ts` de `apps/api/src` (82 sub-tests, no una lista a
+mano) y confirma: (a) todo `this.audit.write(` pasa literalmente `tx`, nunca `this.prisma`
+(censo: ~100 llamadas, cero excepciones); (b) `this.audit.log()` —el atajo no transaccional a
+propósito para login/logout y los tres eventos dirigidos por el PSE, ya documentado en
+D-219— solo aparece en esos tres archivos exactos. Corre en cada `pnpm test`: si un servicio
+nuevo rompe cualquiera de las dos cosas, se cae de inmediato.
+
+### Suite E2E completa (builds de producción) — lo que faltaba de RF-S2
+
+Corrida desde este mismo worktree (que ya cumple el aislamiento del `apps/web/.next` propio
+que pide `CLAUDE.md`), con `next build`/`nest build` y `CI=true` (fuerza `next
+start`/`node dist/main.js`, el mismo camino que usa el job `e2e` de GitHub Actions).
+
+**Primer intento, en blanco**: `node dist/main.js` no carga `apps/api/.env` con `dotenv` de
+la misma forma que `nest start` en modo dev — hubo que pasar `DATABASE_URL`/`DIRECT_URL`/
+`JWT_SECRET`/`ADMIN_EMAIL`/`ADMIN_PASSWORD` explícitos (valores del Postgres local, ninguno es
+secreto de verdad, mismo criterio que ya documenta `local-docker-env.mjs`), igual que hace el
+job de CI con los suyos.
+
+**Segundo intento, 345/356**: faltaba `PSE_ENABLED=true` — el job de CI lo define
+explícitamente (D-216) precisamente para que la suite no cambie de comportamiento; sin él, 8
+escenarios que sí intentan emitir (y no están gateados por `pse.accepts`, porque no necesitan
+que SUNAT acepte, solo que el intento se procese) rebotan con "Emisión electrónica no
+habilitada en este entorno", y un noveno (`idempotencia-f8s1-m2`, una carrera de dos
+emisiones en paralelo) queda con 0 ganadores en vez de 1 por el mismo motivo. Con
+`PSE_ENABLED=true`, los 9 pasan.
+
+**Resultado final, definitivo: 356 tests — 351 pasan, 3 se saltan, 2 fallan.**
+
+- **3 saltados**, los tres por el mismo diseño ya existente y documentado
+  (`probePse()`/`e2e/helpers/invoicing.ts`): este entorno no tiene credenciales reales de
+  Nubefact (`NUBEFACT_URL`/`NUBEFACT_TOKEN` vacíos, ninguna es un secreto que el agente deba o
+  pueda tener), así que `providerConfigured` da `false` y ningún comprobante puede llegar a
+  `ACCEPTED`/`REJECTED` de verdad. Los escenarios que dependen de esa aceptación real
+  (`fase5b-bordes.spec.ts:92`, `fase7b.spec.ts:254` y `:339`, los tres sobre reversas después
+  de un estado que SUNAT tendría que confirmar) se saltan **por diseño**, con el motivo
+  impreso — el mismo comportamiento documentado que ya tiene la suite para correr "en local
+  (con PSE demo), en CI (sin credenciales) y contra producción" sin fallar por algo que no es
+  un defecto.
+- **2 fallan, los dos por la misma causa: R2 (almacenamiento de archivos) sin configurar en
+  este entorno** (`R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`R2_BUCKET`
+  vacíos — tampoco son secretos que el agente deba tener). Confirmado leyendo el código, no
+  supuesto: `StorageService.putObject` (`apps/api/src/documents/storage.service.ts`) tira
+  `ServiceUnavailableException` cuando el cliente S3 es `null` (sin las cuatro variables). A
+  diferencia del PDF de un comprobante ya emitido (`invoicing.service.ts#storeFiles`, que sí
+  es _best-effort_ a propósito, D-068 — "que un archivo no se pueda guardar no puede
+  desaceptar un comprobante que SUNAT ya aceptó"), estos dos caminos **no** tienen ese mismo
+  tratamiento: `PurchasesService.previewFromXml` llama a `putObject` sin `try/catch`
+  (`fase2a.spec.ts:359`, el "Leído del XML" nunca aparece porque el preview entero falla con
+  503), y la generación del PDF de una cotización nueva (Fase 5a) tampoco lo atrapa
+  (`fase5a.spec.ts:100`, `quotation.pdfKey` queda `null`). **Ninguno de los dos es una
+  regresión de esta sesión ni de RF-S2**: son rutas de código de fases muy anteriores
+  (Fase 2a y Fase 5a) que nunca se habían ejercitado en un entorno sin R2 real hasta esta
+  corrida. No se tocó ese código — está fuera del alcance de una sesión de auditoría, y
+  arreglarlo (¿el XML fuente y el PDF de cotización deberían ser _best-effort_ como el PDF de
+  invoicing, o de verdad hace falta que fallen sin R2?) es una decisión de diseño del dueño,
+  no algo para resolver de paso.
+
+**Lo que esto confirma para el cierre de RF-S2 en sí**: ningún test de `apps/api/src/audit/`
+ni ningún spec E2E de la sesión (`auditoria-d218.spec.ts`, `audit-log-immutable.spec.ts`)
+está entre las 2 fallas ni entre los 3 saltados — el visor de auditoría y todo lo que esta
+sesión construyó pasa limpio en la corrida completa.
+
+### Verificación
+
+- `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check`: verde. **40 test suites,
+  568 tests, 0 fallidos** (subió de 483 al cierre de RF-S2: 82 de `audit-tx-invariant.spec.ts`
+  más 3 de la paginación entre fuentes).
+- E2E completo: **356 tests — 351 pasan, 3 se saltan por diseño (sin credenciales de PSE), 2
+  fallan por R2 sin configurar (ajeno a esta sesión)**, arriba.
+
+### Decisiones nuevas (`ARQUITECTURA.md` §0.2)
+
+D-220 actualizada (deuda → resuelta, con el argumento y la evidencia empírica). D-221 (M1,
+verificación sin brecha). D-222 (M3, centinela nuevo).
+
+### Pendientes que esta sesión deja
+
+- **Los 2 fallos de E2E por R2 sin configurar** (arriba): no bloquean el cierre de RF-S2 —
+  son de Fase 2a y Fase 5a, no de auditoría — pero quedan anotados para que el dueño decida
+  si `previewFromXml` y el PDF de cotización deberían tratar R2 como _best-effort_ (como ya
+  hace `invoicing.service.ts#storeFiles`) o si de verdad tienen que fallar sin R2 configurado.
+- **`rf-s2` sigue sin merge ni push.** El dueño decide cuándo integrarla.
+- `/handoff rf-s2-cierre` con el resumen de este cierre.
+
 ## Incidente HOTFIX-DESFASE — web publicado sin su API (2026-09-16) — RESUELTO
 
 **Síntoma.** En producción todo comprobante abría con 401 + `TypeError` y la pantalla se caía.
