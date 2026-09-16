@@ -35,6 +35,7 @@ import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
+import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -188,6 +189,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
           <Badge variant={COIL_TONE[c.status]} className="mt-2">
             {COIL_STATUS_LABELS[c.status]}
           </Badge>
+          <AuditHistoryLink entityType="coils" entityId={c.id} />
           {/*
             F8-S3b/M3: principal + «⋯». Principal: partir, la operación del día a día sobre una
             bobina con saldo; sin saldo o cerrada, cerrarla o reabrirla; anulada, el PDF.

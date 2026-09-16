@@ -26,6 +26,7 @@ import { PromisedDateControl } from '@/components/production-queue';
 import { ProductionOrdersCard } from './production-orders-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -257,72 +258,75 @@ export function PedidoDetalleView({ id }: { id: string }) {
           cierra (D-074); con el pedido anulado no hay principal. Facturar corre por separado y
           no cierra el pedido, así que va al menú con el resto.
         */}
-        <HeaderActions
-          primary={['dispatch']}
-          actions={[
-            {
-              key: 'dispatch',
-              label: 'Despachar',
-              show: canOperate,
-              href: `/despachos/nuevo?pedido=${o.id}`,
-            },
-            {
-              key: 'invoice',
-              label: 'Emitir comprobante',
-              show: canOperate,
-              href: `/comprobantes/nuevo?pedido=${o.id}`,
-            },
-            // D-149: el papel que baja al taller, sin importes.
-            ...plantSheetActions.map((a) => ({ ...a, show: canOperate && a.show !== false })),
-            // D-160: el espacio de producción, acotado a este pedido.
-            {
-              key: 'produce',
-              label: `Producir (${String(queuedRoofingLines)})`,
-              show: isAdmin && canOperate && queuedRoofingLines > 0,
-              href: `/planta?pedido=${o.id}`,
-            },
-            // D-148: una OP por cada línea a medida que todavía no la tiene, de una vez. Solo
-            // ADMINISTRADOR: VENDEDOR —que sí ve este pedido— no llega al endpoint (§3.4).
-            {
-              key: 'generate',
-              label: `Generar todas las órdenes (${String(pendingRoofingLines)})`,
-              show: isAdmin && canOperate && pendingRoofingLines > 0,
-              disabled: busy,
-              pending: generateOrders.isPending,
-              pendingText: 'Generando…',
-              onSelect: () => {
-                if (busy) return;
-                setGenerateOpen(true);
+        <div className="flex items-center gap-2">
+          <AuditHistoryLink entityType="sales_orders" entityId={o.id} />
+          <HeaderActions
+            primary={['dispatch']}
+            actions={[
+              {
+                key: 'dispatch',
+                label: 'Despachar',
+                show: canOperate,
+                href: `/despachos/nuevo?pedido=${o.id}`,
               },
-            },
-            {
-              key: 'add-items',
-              label: 'Agregar ítems',
-              show: canEditAsOwner,
-              href: `/pedidos/${o.id}/agregar`,
-            },
-            {
-              key: 'change-customer',
-              label: 'Cambiar cliente',
-              show: canEditAsAdmin,
-              disabled: busy,
-              onSelect: () => {
-                setChangingCustomer(true);
+              {
+                key: 'invoice',
+                label: 'Emitir comprobante',
+                show: canOperate,
+                href: `/comprobantes/nuevo?pedido=${o.id}`,
               },
-            },
-            {
-              key: 'cancel',
-              label: 'Anular pedido',
-              show: isAdmin && canCancel,
-              destructive: true,
-              disabled: busy,
-              onSelect: () => {
-                if (busy) return;
-                setCancelOpen(true);
+              // D-149: el papel que baja al taller, sin importes.
+              ...plantSheetActions.map((a) => ({ ...a, show: canOperate && a.show !== false })),
+              // D-160: el espacio de producción, acotado a este pedido.
+              {
+                key: 'produce',
+                label: `Producir (${String(queuedRoofingLines)})`,
+                show: isAdmin && canOperate && queuedRoofingLines > 0,
+                href: `/planta?pedido=${o.id}`,
               },
-            },
-          ]}
-        />
+              // D-148: una OP por cada línea a medida que todavía no la tiene, de una vez. Solo
+              // ADMINISTRADOR: VENDEDOR —que sí ve este pedido— no llega al endpoint (§3.4).
+              {
+                key: 'generate',
+                label: `Generar todas las órdenes (${String(pendingRoofingLines)})`,
+                show: isAdmin && canOperate && pendingRoofingLines > 0,
+                disabled: busy,
+                pending: generateOrders.isPending,
+                pendingText: 'Generando…',
+                onSelect: () => {
+                  if (busy) return;
+                  setGenerateOpen(true);
+                },
+              },
+              {
+                key: 'add-items',
+                label: 'Agregar ítems',
+                show: canEditAsOwner,
+                href: `/pedidos/${o.id}/agregar`,
+              },
+              {
+                key: 'change-customer',
+                label: 'Cambiar cliente',
+                show: canEditAsAdmin,
+                disabled: busy,
+                onSelect: () => {
+                  setChangingCustomer(true);
+                },
+              },
+              {
+                key: 'cancel',
+                label: 'Anular pedido',
+                show: isAdmin && canCancel,
+                destructive: true,
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setCancelOpen(true);
+                },
+              },
+            ]}
+          />
+        </div>
         {/*
           La fecha de las órdenes (D-124) vivía debajo del botón; dentro de un menú no tiene
           dónde ir, así que generar pasa por un diálogo corto que la ofrece antes de crear nada.

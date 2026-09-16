@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
   AUDIT_ENTITY_TYPES,
@@ -111,9 +112,22 @@ function EventDiff({ event }: { event: AuditEventDto }) {
  * barato de calcular (D-218: presupuesto de consultas fijo, sin `COUNT` por fuente).
  * Admin-only: `RoleGate` corta la vista, y el API vuelve a exigir el rol del lado del server.
  */
+/** `AUDIT_ENTITY_TYPES` no exporta el tipo como un `Set`, y `includes` de un array `readonly
+ *  string[]` no acepta un `string` suelto sin este cast — el valor ya se valida acá. */
+function isAuditEntityType(value: string): value is AuditEntityType {
+  return (AUDIT_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
 export function AuditoriaView() {
-  const [entityType, setEntityType] = useState<AuditEntityType | typeof ALL>(ALL);
-  const [entityId, setEntityId] = useState('');
+  // M4/D-218 (sacrificable, se llegó a tiempo): un "Historial" en el detalle de un pedido,
+  // cotización, bobina o comprobante enlaza acá con `?entityType=&entityId=` — se lee una
+  // sola vez al montar, como el `?item=` de /kardex, no como estado controlado por la URL.
+  const initialParams = useSearchParams();
+  const [entityType, setEntityType] = useState<AuditEntityType | typeof ALL>(() => {
+    const raw = initialParams.get('entityType');
+    return raw && isAuditEntityType(raw) ? raw : ALL;
+  });
+  const [entityId, setEntityId] = useState(() => initialParams.get('entityId') ?? '');
   const [actorId, setActorId] = useState<string>(ALL);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');

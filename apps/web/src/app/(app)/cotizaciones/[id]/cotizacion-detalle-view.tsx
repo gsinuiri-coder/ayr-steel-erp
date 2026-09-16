@@ -17,6 +17,7 @@ import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } f
 import { invalidateSales } from '@/lib/sales-queries';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -170,57 +171,60 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           cotización); si no, editar; si tampoco, el PDF. Duplicar funciona en cualquier estado
           (D-119). La descarga es directa desde el API (D-068), no depende de `pdfKey`.
         */}
-        <HeaderActions
-          primary={['confirm', 'edit', 'pdf']}
-          actions={[
-            { key: 'pdf', label: 'Descargar PDF', download: `/api/sales/quotations/${q.id}/pdf` },
-            { key: 'edit', label: 'Editar', show: canEdit, href: `/cotizaciones/${q.id}/editar` },
-            {
-              key: 'reserve',
-              label: 'Reservar',
-              show: canReserve,
-              disabled: busy,
-              pending: reserve.isPending,
-              pendingText: 'Reservando…',
-              onSelect: () => {
-                if (busy) return;
-                reserve.mutate();
+        <div className="flex items-center gap-2">
+          <AuditHistoryLink entityType="quotations" entityId={q.id} />
+          <HeaderActions
+            primary={['confirm', 'edit', 'pdf']}
+            actions={[
+              { key: 'pdf', label: 'Descargar PDF', download: `/api/sales/quotations/${q.id}/pdf` },
+              { key: 'edit', label: 'Editar', show: canEdit, href: `/cotizaciones/${q.id}/editar` },
+              {
+                key: 'reserve',
+                label: 'Reservar',
+                show: canReserve,
+                disabled: busy,
+                pending: reserve.isPending,
+                pendingText: 'Reservando…',
+                onSelect: () => {
+                  if (busy) return;
+                  reserve.mutate();
+                },
               },
-            },
-            {
-              key: 'confirm',
-              label: 'Confirmar',
-              show: canConfirm,
-              disabled: busy,
-              onSelect: () => {
-                if (busy) return;
-                setConfirmOpen(true);
+              {
+                key: 'confirm',
+                label: 'Confirmar',
+                show: canConfirm,
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setConfirmOpen(true);
+                },
               },
-            },
-            {
-              key: 'duplicate',
-              label: 'Duplicar',
-              disabled: busy,
-              pending: duplicate.isPending,
-              pendingText: 'Duplicando…',
-              onSelect: () => {
-                if (busy) return;
-                duplicate.mutate();
+              {
+                key: 'duplicate',
+                label: 'Duplicar',
+                disabled: busy,
+                pending: duplicate.isPending,
+                pendingText: 'Duplicando…',
+                onSelect: () => {
+                  if (busy) return;
+                  duplicate.mutate();
+                },
               },
-            },
-            {
-              key: 'cancel',
-              label: 'Anular',
-              show: canCancel,
-              destructive: true,
-              disabled: busy,
-              onSelect: () => {
-                if (busy) return;
-                setCancelOpen(true);
+              {
+                key: 'cancel',
+                label: 'Anular',
+                show: canCancel,
+                destructive: true,
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setCancelOpen(true);
+                },
               },
-            },
-          ]}
-        />
+            ]}
+          />
+        </div>
       </div>
 
       {q.status === 'EMITTED' && q.isExpired && (
