@@ -152,6 +152,13 @@ describe('documentBalance (D-075)', () => {
     expect(documentBalance({ ...base, status: FiscalDocumentStatus.REJECTED })).toBe('0.0000');
   });
 
+  it('un borrador tampoco debe nada (HOTFIX-401/M2)', () => {
+    // No tomó correlativo, no salió al PSE, el cliente no lo vio — mostrarlo con el total
+    // completo como saldo pendiente (y «Vencido» si su fecha ya pasó) fue el bug real:
+    // tres borradores del mismo pedido aparecían cada uno con el total como deuda.
+    expect(documentBalance({ ...base, status: FiscalDocumentStatus.DRAFT })).toBe('0.0000');
+  });
+
   it('un importado anulado por dentro tampoco debe nada (D-110)', () => {
     // Es la mitad que hace útil a la anulación de M-4: sin esto el comprobante quedaba
     // marcado y su deuda seguía en pie, que es exactamente el agujero que vino a tapar.

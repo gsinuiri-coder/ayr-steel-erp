@@ -116,6 +116,11 @@ export function voidPathFor(
  * Un comprobante anulado no debe nada: la baja lo da por no emitido, así que su saldo es
  * cero aunque tuviera cobros —esos cobros se revierten aparte, y mientras no se hayan
  * revertido siguen siendo dinero recibido, no una deuda del cliente.
+ *
+ * HOTFIX-401/M2: un `DRAFT` tampoco debe nada — no tomó correlativo, no salió al PSE, el
+ * cliente no lo vio. Sin esto, un borrador aparecía en pantalla con el total completo como
+ * saldo pendiente, «Vencido» si su fecha de vencimiento ya pasó, y contaba en cualquier
+ * filtro derivado de saldo (comprobantes, cobranzas) que no lo excluyera aparte.
  */
 export function documentBalance(input: {
   status: FiscalDocumentStatus;
@@ -124,6 +129,7 @@ export function documentBalance(input: {
   creditedPen: DecimalInput;
 }): string {
   if (
+    input.status === FiscalDocumentStatus.DRAFT ||
     input.status === FiscalDocumentStatus.VOIDED ||
     input.status === FiscalDocumentStatus.REJECTED ||
     // D-110: un importado anulado por dentro tampoco debe nada. Es la mitad que hace útil a
@@ -307,6 +313,12 @@ export const createInvoiceSchema = z
       .array(invoiceItemInputSchema)
       .min(1, 'Al menos una línea')
       .max(MAX_INVOICE_ITEMS, `Máximo ${MAX_INVOICE_ITEMS} líneas`),
+    /**
+     * HOTFIX-401/M2: un doble click o un reintento de red no debe crear un segundo
+     * borrador — mismo criterio que ya usa un cobro (D-182). Opcional: quien no la manda
+     * sigue sin este guardrail, como ya documenta `claimIdempotencyKey`.
+     */
+    idempotencyKey: z.string().min(1).max(128).optional(),
   })
   .superRefine((input, ctx) => {
     if (input.paymentTerms === 'CONTADO' && input.dueDate !== undefined) {
@@ -1079,3 +1091,13 @@ export const updateManualIssueDateSchema = z
     assertIssueDateWindow(input.issueDate, ctx, ['issueDate']);
   });
 export type UpdateManualIssueDateInput = z.infer<typeof updateManualIssueDateSchema>;
+
+/**
+ * HOTFIX-401/M2: descartar un borrador ya pedía confirmación en la UI, pero no dejaba
+ * ningún motivo — la auditoría (`invoicing.document.discard-draft`) quedaba con el antes
+ * del comprobante y nada de por qué. Mismo mínimo que corregir la fecha de emisión.
+ */
+export const discardDraftSchema = z.object({
+  reason: z.string().trim().min(3, 'Explicá el motivo').max(200),
+});
+export type DiscardDraftInput = z.infer<typeof discardDraftSchema>;

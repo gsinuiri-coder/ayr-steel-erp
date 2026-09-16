@@ -18,6 +18,7 @@ import {
   createCustomerPaymentSchema,
   createFiscalSeriesSchema,
   createInvoiceSchema,
+  discardDraftSchema,
   registerManualSchema,
   updateManualIssueDateSchema,
   fiscalDocumentQuerySchema,
@@ -31,6 +32,7 @@ import {
   type CreateCustomerPaymentInput,
   type CreateFiscalSeriesInput,
   type CreateInvoiceInput,
+  type DiscardDraftInput,
   type RegisterManualInput,
   type UpdateManualIssueDateInput,
   type FiscalDocumentDto,
@@ -224,14 +226,18 @@ export class InvoicingController {
   /**
    * Descarta un borrador. Es lo único que se borra en este módulo, y solo porque un
    * borrador no existe fiscalmente (D-072).
+   *
+   * HOTFIX-401/M2: motivo obligatorio, igual que corregir la fecha de emisión — sin él la
+   * auditoría quedaba con el antes del comprobante y nada de por qué se descartó.
    */
   @Delete('documents/:id')
   @HttpCode(204)
   discardDraft(
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(discardDraftSchema)) body: DiscardDraftInput,
   ): Promise<void> {
-    return this.invoicing.discardDraft(actor, id);
+    return this.invoicing.discardDraft(actor, id, body.reason);
   }
 
   /** D-072/D-073: toma correlativo, deja el documento emitido y lo manda al PSE. */

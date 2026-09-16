@@ -60,6 +60,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { ENV, type Env } from '../config/env';
 import { InventoryService } from '../inventory/inventory.service';
@@ -458,14 +459,26 @@ export class InvoicingService {
     // puede usar. Un VENDEDOR emite con fecha de hoy y nada más.
     this.operationDate.assertIssueDate(actor, input.issueDate);
 
+    // HOTFIX-401/M2: un doble click o un reintento de red no debe crear un segundo borrador
+    // — mismo criterio que ya usa un cobro (D-182). Sin `idempotencyKey` (el mostrador, que
+    // abre su propia transacción y llama esto directo) siempre `claimed: true`: el guardrail
+    // es opt-in, no un requisito nuevo para quien no lo pide.
+    const claim = await claimIdempotencyKey(tx, 'invoice-create', input.idempotencyKey);
+    if (!claim.claimed) return claim.resourceId;
+
     // D-187: el comprobante es el corte de la edición del pedido confirmado (precio, cliente,
     // ítems, cantidades), y esas ediciones toman el lock del pedido. Tomarlo acá **antes** de
     // leer cliente y líneas serializa las dos cosas: sin él, un borrador creado mientras el
     // administrador cambiaba un precio copiaba el precio viejo y el registro decía otro.
+    // HOTFIX-401/M2: la misma fila trae `total_pen`, que hace falta más abajo para el tope
+    // de cuánto de este pedido ya está facturado o en borrador.
+    let orderTotalPen: string | null = null;
     if (input.salesOrderId) {
-      await tx.$queryRaw`
-        SELECT "id" FROM "sales_orders" WHERE "id" = ${input.salesOrderId}::uuid FOR UPDATE
+      const [locked] = await tx.$queryRaw<{ total_pen: Prisma.Decimal }[]>`
+        SELECT "total_pen" FROM "sales_orders" WHERE "id" = ${input.salesOrderId}::uuid FOR UPDATE
       `;
+      if (!locked) throw new NotFoundException('Pedido no encontrado');
+      orderTotalPen = locked.total_pen.toString();
     }
 
     const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
@@ -539,6 +552,31 @@ export class InvoicingService {
     const totals = sumLineTotals(lines);
     const serialized = serializeSalesTotals(totals);
 
+    // HOTFIX-401/M2: la suma de lo ya facturado o en borrador de este pedido, más este
+    // comprobante, no puede pasar el total del pedido. Sin este tope, cada click de
+    // "Facturar" que no declaraba un despacho creaba un borrador nuevo por el total
+    // completo — nada impedía tres borradores del mismo pedido a la vez.
+    if (input.salesOrderId && orderTotalPen !== null) {
+      const existing = await tx.fiscalDocument.aggregate({
+        where: {
+          salesOrderId: input.salesOrderId,
+          status: { in: [...STANDING_DOCUMENT_STATUSES] },
+          docType: { not: FiscalDocType.NOTA_CREDITO },
+          archivedAt: null,
+        },
+        _sum: { totalPen: true },
+      });
+      const alreadyCommitted = toDecimal(
+        (existing._sum?.totalPen ?? new Prisma.Decimal(0)).toString(),
+      );
+      const orderTotal = toDecimal(orderTotalPen);
+      if (alreadyCommitted.plus(totals.total).gt(orderTotal)) {
+        throw new BadRequestException(
+          `Este pedido ya tiene S/ ${alreadyCommitted.toFixed(2)} entre comprobantes emitidos y borradores, de un total de S/ ${orderTotal.toFixed(2)}: este comprobante de S/ ${totals.total.toFixed(2)} lo pasaría. Descarta algún borrador sobrante antes de crear otro.`,
+        );
+      }
+    }
+
     // D-077: bloqueo suave del tope de SUNAT. La excepción existe, la puede usar solo
     // ADMINISTRADOR y **queda escrita en el propio comprobante**, que es la diferencia
     // entre una regla que se puede saltar y una que se puede saltar dejando constancia.
@@ -561,6 +599,7 @@ export class InvoicingService {
 
     const created = await tx.fiscalDocument.create({
       data: {
+        id: claim.resourceId,
         docType: input.docType,
         status: FiscalDocumentStatus.DRAFT,
         customerId: customer.id,
@@ -1318,8 +1357,11 @@ export class InvoicingService {
    *
    * Sin esto, un borrador creado por error se quedaba en la lista para siempre: la baja
    * exige un comprobante aceptado y no había ninguna otra puerta.
+   *
+   * HOTFIX-401/M2: `reason` es obligatorio (el schema del controller ya lo exige) — antes
+   * la auditoría quedaba con el antes del comprobante y nada de por qué se descartó.
    */
-  async discardDraft(actor: RequestUser, id: string): Promise<void> {
+  async discardDraft(actor: RequestUser, id: string, reason: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       const document = await tx.fiscalDocument.findUnique({
         where: { id },
@@ -1342,7 +1384,7 @@ export class InvoicingService {
         action: 'invoicing.document.discard-draft',
         entity: 'fiscal_documents',
         entityId: id,
-        before: { docType: document.docType, totalPen: document.totalPen.toFixed(4) },
+        before: { docType: document.docType, totalPen: document.totalPen.toFixed(4), reason },
       });
       // F8-S7/M3: soltar el enlace de D-205 **antes** de borrar. `dispatches.invoice_id` es
       // `ON DELETE RESTRICT`, así que un borrador que declaró un despacho no se podía
