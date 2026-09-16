@@ -5150,6 +5150,103 @@ refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelv
   (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
   de otra sesión.
 
+## Sesión HOTFIX-401 (2026-09-16) — M2 cerrada, M1 (401 en borrador) bloqueada esperando evidencia
+
+Worktree `ayr-steel-erp-hotfix-401`, rama `hotfix-401` desde `origin/main` (`f92a3df`, prod) —
+NO desde `main` local (que tiene RF-S1 sin push) ni desde `rf-s2`. Cuatro commits locales,
+**sin push**. `git rebase origin/main` no hizo falta correrlo: la rama ya nace de ahí.
+
+### M1 — 401 al abrir un borrador de comprobante: **bloqueada**
+
+El brief traía `URL: <PEGAR URL>` sin completar — la evidencia central no llegó a esta
+sesión. Investigación hecha sin poder reproducir:
+
+- Guard de `GET /invoicing/documents/:id` sin cambios en el commit D-211..D-213.
+- `issueDateChanges` (la adición F8-S7 más obvia para un `TypeError` de `.length`) está
+  resguardada en el único lugar que construye el DTO (`'issueDateChanges' in row ? ... : []`)
+  — nunca llega `undefined` al frontend por ese camino.
+- Sin colisión de cache entre lista (`['fiscal-documents']`) y detalle
+  (`['fiscal-document', id]`) — claves distintas.
+- Reproducido sin éxito: borrador simple, borrador con `dispatchId` real, como
+  ADMINISTRADOR y como VENDEDOR — los tres renderizan sin 401 ni error.
+
+**Sigue bloqueada.** Hace falta la URL real (o al menos: id/número del comprobante que
+falla en producción, su `origin`, si tiene `dispatchId`) para retomarla.
+
+### M2 — borradores duplicados: **cerrada**
+
+PASO 0 (reportado antes de código): `createInTx` no tenía `idempotencyKey` (D-182) ni tope
+contra `sales_orders.total_pen`; `documentBalance` (`@ayr/shared`) no excluía `DRAFT` de su
+cálculo (solo `VOIDED`/`REJECTED`/`ANNULLED`) — un borrador mostraba el total completo como
+saldo pendiente y, con `dueDate` vencida, "Vencido". `assertStillAvailable` (emisión) ya
+revalidaba línea por línea; `receivables.service.ts` (Cobranzas) ya excluía `DRAFT` de la
+CxC agregada; "Descartar borrador" ya existía, sin motivo obligatorio.
+
+Fix (D-214):
+
+- `idempotencyKey` en `createInTx`, mismo patrón que un cobro (D-182).
+- Tope nuevo: `DRAFT` + `LIVE_DOCUMENT_STATUSES` (sin notas de crédito, sin archivados) de
+  un pedido no puede pasar su `total_pen`.
+- `documentBalance` da `0.0000` para `DRAFT` (`isOverdue` queda corregido como consecuencia).
+- `discardDraft` exige `reason`.
+- Migración `20260916180000_hotfix401_no_duplicate_drafts`: dos índices únicos parciales
+  (`WHERE status = 'DRAFT' AND doc_type <> 'NOTA_CREDITO'`) como respaldo de base, con un
+  chequeo de duplicados que revienta con mensaje claro en vez de fallar a mitad de crear el
+  índice. La exclusión de nota de crédito se encontró corriendo la suite E2E existente
+  contra la primera versión de la migración (P2002 al crear una NC sobre un pedido que ya
+  tenía otro borrador) — no estaba en el primer intento.
+
+**Verificación**: `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check` en verde
+(32 test suites, 431 tests). Suite E2E de comprobantes/facturación con builds de producción:
+`comprobante-manual(-ui)`, `despacho-declarado-f8s7`, `fase5a(-bordes)`, `fase5b(-bordes)`,
+`fase7b(-bordes)`, `fase7e(-ajustes-d121|-bordes)`, `fecha-emision-manual-f8s7`,
+`idempotencia-f8s1-m2` y el spec nuevo `hotfix-401-borradores-duplicados` (7 casos): **74
+pasan, 1 falla** — `fase5a.spec.ts:100` por R2 (`R2_ACCOUNT_ID`/etc. vacíos en este entorno,
+ninguno es un secreto que el agente deba tener), **ajeno a este hotfix**: la generación del
+PDF de una cotización nueva no atrapa ese error, mismo hallazgo que ya documentó el cierre
+de RF-S2 sobre `fase2a.spec.ts`/`fase5a.spec.ts`. Dos specs existentes
+(`despacho-declarado-f8s7`, `fecha-emision-manual-f8s7`) llamaban a `DELETE
+/invoicing/documents/:id` con el contrato viejo (sin `reason`) — actualizados.
+
+**Consulta de solo lectura para el dueño**, antes de aplicar la migración en `dev`/`demo`/
+`production` — encuentra los pedidos/despachos con más de un borrador para descartar los
+sobrantes desde la UI primero (la migración además corre este mismo chequeo sola y aborta
+con mensaje claro si hay duplicados, pero esto da el detalle):
+
+```sql
+SELECT
+  'PED-' || lpad(so.seq::text, 6, '0') AS pedido,
+  fd.id AS borrador_id,
+  fd.doc_type,
+  fd.total_pen,
+  fd.payment_terms,
+  fd.created_at,
+  fd.dispatch_id
+FROM fiscal_documents fd
+JOIN sales_orders so ON so.id = fd.sales_order_id
+WHERE fd.status = 'DRAFT'
+  AND fd.sales_order_id IN (
+    SELECT sales_order_id FROM fiscal_documents
+    WHERE status = 'DRAFT' AND dispatch_id IS NULL AND sales_order_id IS NOT NULL
+      AND doc_type <> 'NOTA_CREDITO'
+    GROUP BY sales_order_id HAVING COUNT(*) > 1
+    UNION
+    SELECT sales_order_id FROM fiscal_documents
+    WHERE status = 'DRAFT' AND dispatch_id IS NOT NULL AND doc_type <> 'NOTA_CREDITO'
+    GROUP BY sales_order_id, dispatch_id HAVING COUNT(*) > 1
+  )
+ORDER BY so.seq, fd.created_at;
+```
+
+### Pendientes
+
+- M1 (401): esperando la URL/evidencia real para retomar.
+- Migración de M2 sin aplicar contra `dev`/`demo`/`production` — solo contra el Postgres
+  local (`ayr_local_e2e`). Acción humana: correr la consulta de arriba en `production`
+  antes de `pnpm db:deploy`/`db:prod`.
+- `hotfix-401` sin merge ni push.
+- `/handoff hotfix-401` con el resumen de cierre.
+
 ## Sesión F8-S7 — Pulido y feedback de uso real (2026-09-16) — CERRADA
 
 Primera sesión de producto con **producción en uso real** (D-211..D-213). Todo lo de acá salió
