@@ -23,6 +23,7 @@ import { getField, parseSpreadsheet, type ImportColumn } from '../imports/parse-
 import { PrismaService } from '../prisma/prisma.service';
 import { computePriceFloors, type PriceFloorCandidate } from '../sales/price-floor';
 import {
+  PRICE_FLOOR_UNUSED_TOLERANCE_MM,
   priceListValueChanged,
   recordPriceListChanges,
   type RecordPriceListChangeInput,
@@ -39,10 +40,6 @@ const COLUMNS = {
   sku: { key: 'sku', header: 'SKU', required: true },
   priceWithIgvPen: { key: 'priceWithIgvPen', header: 'PRECIO CON IGV', required: true },
 } satisfies Record<string, ImportColumn>;
-
-/** Tolerancia del plan de corte (D-086): solo la usa el costo de `RAW_MATERIAL`, que un
- *  candidato de catálogo (`PRODUCT`) nunca toma. No hay un valor "correcto" que pasar acá. */
-const UNUSED_TOLERANCE_MM = '0.02';
 
 @Injectable()
 export class PriceListImportService {
@@ -185,7 +182,7 @@ export class PriceListImportService {
 
     if (floorCandidates.length > 0) {
       const floors = await this.prisma.$transaction((tx) =>
-        computePriceFloors(tx, floorCandidates, UNUSED_TOLERANCE_MM),
+        computePriceFloors(tx, floorCandidates, PRICE_FLOOR_UNUSED_TOLERANCE_MM),
       );
       for (const candidate of floorCandidates) {
         const idx = rowIndexByProductId.get(candidate.at);
@@ -230,6 +227,18 @@ export class PriceListImportService {
     actor: RequestUser,
     input: ConfirmPriceListImportInput,
   ): Promise<PriceListImportResultDto> {
+    // El preview ya rechaza un SKU duplicado dentro del archivo (ERROR), así que la UI nunca
+    // debería mandar el mismo producto dos veces acá — pero el endpoint no depende de que la
+    // UI se porte bien: dos filas del mismo producto escribirían dos changelog con el mismo
+    // "antes" (el de antes de la transacción), y el segundo mentiría.
+    const duplicateProductIds = input.rows
+      .map((r) => r.productId)
+      .filter((id, i, all) => all.indexOf(id) !== i);
+    if (duplicateProductIds.length > 0) {
+      throw new BadRequestException(
+        `Producto repetido en la confirmación: ${[...new Set(duplicateProductIds)].join(', ')}`,
+      );
+    }
     return this.prisma.$transaction(
       async (tx) => {
         const claim = await claimIdempotencyKey(tx, 'pl-import:confirm', input.idempotencyKey);

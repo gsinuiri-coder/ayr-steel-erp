@@ -31,6 +31,7 @@
       "Bash(git push:*)",
       "Bash(gh pr merge:*)",
       "Bash(gh repo sync:*)",
+      "Bash(gh api:*)",
       "Read(./.env*)",
       "Read(**/.env*)"
     ],

@@ -26,7 +26,11 @@ import { ColorsService } from '../colors/colors.service';
 import { toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
 import { computePriceFloors } from '../sales/price-floor';
-import { priceListValueChanged, recordPriceListChange } from './price-list-changes';
+import {
+  PRICE_FLOOR_UNUSED_TOLERANCE_MM,
+  priceListValueChanged,
+  recordPriceListChange,
+} from './price-list-changes';
 
 /** Catálogo de productos por línea (RF-50). Mutaciones solo ADMINISTRADOR. */
 @Injectable()
@@ -352,9 +356,7 @@ export class CatalogService {
             cost: { kind: 'PRODUCT', productId: product.id },
           },
         ],
-        // Tolerancia del plan de corte (D-086): solo la usa el costo de `RAW_MATERIAL`, que
-        // un candidato `PRODUCT` nunca toma — no hay valor "correcto" que pasar acá.
-        '0.02',
+        PRICE_FLOOR_UNUSED_TOLERANCE_MM,
       ),
     );
     const floor = floors.get(product.id);

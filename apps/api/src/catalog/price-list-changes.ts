@@ -8,6 +8,14 @@ import { toDecimal, type Decimal } from '@ayr/shared';
  * «7.5000») no son un cambio.
  */
 
+/**
+ * `computePriceFloors` pide una tolerancia de plan de corte (D-086) que solo usa para el
+ * costo de `RAW_MATERIAL` — un candidato de catálogo (`PRODUCT`, todo lo de M1/M2) nunca la
+ * toca, así que no hay un valor "correcto" que pasar. Una sola constante para no repetir el
+ * mismo comentario en cada llamador (`CatalogService.priceFloor`, `PriceListImportService`).
+ */
+export const PRICE_FLOOR_UNUSED_TOLERANCE_MM = '0.02';
+
 export interface RecordPriceListChangeInput {
   productId: string;
   /** `null` cuando el producto no tenía precio de lista antes del cambio. */

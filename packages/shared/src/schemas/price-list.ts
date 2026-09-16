@@ -106,7 +106,11 @@ export const confirmPriceListImportSchema = z.object({
         afterValuePen: decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY }),
       }),
     )
-    .min(1, 'No hay filas para confirmar'),
+    .min(1, 'No hay filas para confirmar')
+    // Mismo tope que `parseSpreadsheet` (`apps/api/src/imports/parse-spreadsheet.ts`) le
+    // aplica al archivo: acá el límite de negocio no puede depender solo del que el body
+    // parser de Express imponga por tamaño de payload.
+    .max(2000, 'Máximo 2000 filas por confirmación'),
   idempotencyKey: idempotencyKeySchema.optional(),
 });
 export type ConfirmPriceListImportInput = z.infer<typeof confirmPriceListImportSchema>;

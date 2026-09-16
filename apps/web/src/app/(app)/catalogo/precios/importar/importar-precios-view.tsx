@@ -65,7 +65,8 @@ async function toApiError(res: Response): Promise<ApiError> {
   let message = `El API respondió ${String(res.status)}`;
   try {
     const parsed = JSON.parse(text) as { message?: string | string[] };
-    if (parsed.message) message = Array.isArray(parsed.message) ? parsed.message.join('; ') : parsed.message;
+    if (parsed.message)
+      message = Array.isArray(parsed.message) ? parsed.message.join('; ') : parsed.message;
   } catch {
     /* el cuerpo no era JSON */
   }
@@ -91,7 +92,8 @@ export function ImportarPreciosView() {
       setResult(null);
       setReverted(null);
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo leer el archivo'),
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo leer el archivo'),
   });
 
   const confirm = useMutation({
@@ -105,7 +107,9 @@ export function ImportarPreciosView() {
       );
       const body = {
         rows: rows.map((r) => ({ productId: r.productId, afterValuePen: r.afterValuePen })),
-        idempotencyKey: idempotency.current(JSON.stringify(rows.map((r) => [r.productId, r.afterValuePen]))),
+        idempotencyKey: idempotency.current(
+          JSON.stringify(rows.map((r) => [r.productId, r.afterValuePen])),
+        ),
       };
       const res = await fetch('/api/catalog/price-list/import', {
         method: 'POST',
@@ -154,7 +158,9 @@ export function ImportarPreciosView() {
 
   const hasErrors = (preview?.summary.errors ?? 0) > 0;
   const confirmableCount = preview
-    ? preview.rows.filter((r) => r.status === 'NEW' || r.status === 'CHANGED' || r.status === 'WARNING').length
+    ? preview.rows.filter(
+        (r) => r.status === 'NEW' || r.status === 'CHANGED' || r.status === 'WARNING',
+      ).length
     : 0;
 
   return (
@@ -268,9 +274,7 @@ export function ImportarPreciosView() {
       {result && !reverted && (
         <Alert>
           <AlertDescription className="flex items-center justify-between gap-4">
-            <span>
-              Lote confirmado: {result.changed} precio(s) actualizado(s).
-            </span>
+            <span>Lote confirmado: {result.changed} precio(s) actualizado(s).</span>
             <Button
               variant="outline"
               size="sm"

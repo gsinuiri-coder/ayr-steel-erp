@@ -1,5 +1,6 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import type { AuditService } from '../audit/audit.service';
+import type { RequestUser } from '../auth/auth.types';
 import type { PrismaService } from '../prisma/prisma.service';
 import { PriceListImportService } from './price-list-import.service';
 
@@ -179,5 +180,229 @@ describe('PriceListImportService.preview (D-217/M1c)', () => {
     const preview = await svc.preview(csvBuffer(['TR-1,110']));
     expect(preview.rows[0]).toMatchObject({ status: 'WARNING' });
     expect(preview.rows[0]?.message).toMatch(/piso/);
+  });
+});
+
+const ACTOR: RequestUser = {
+  id: 'admin-1',
+  email: 'admin@ayr.test',
+  name: 'Admin',
+  role: Role.ADMINISTRADOR,
+  mustChangePassword: false,
+  sessionId: 'session-1',
+};
+
+/**
+ * Fake `PrismaService` para `confirm()`. Sin `idempotencyKey` en el input, `claimIdempotencyKey`
+ * nunca toca `tx` (ver `common/idempotency.ts`): no hace falta mockear `$queryRaw` ni
+ * `idempotencyKey.findUnique` para estos tests.
+ */
+function fakePrismaForConfirm(options: {
+  products: { id: string; isActive?: boolean; listPricePen?: string | null }[];
+}): { prisma: PrismaService; tx: { product: { update: jest.Mock } } } {
+  const products = options.products.map((p) => ({
+    id: p.id,
+    isActive: p.isActive ?? true,
+    listPricePen:
+      p.listPricePen === null || p.listPricePen === undefined
+        ? null
+        : new Prisma.Decimal(p.listPricePen),
+  }));
+  const tx = {
+    product: {
+      findMany: jest.fn().mockImplementation((args: { where: { id: { in: string[] } } }) => {
+        const ids = new Set(args.where.id.in);
+        return Promise.resolve(products.filter((p) => ids.has(p.id)));
+      }),
+      update: jest.fn().mockResolvedValue(undefined),
+    },
+    productListPriceChange: {
+      createMany: jest.fn().mockResolvedValue(undefined),
+    },
+  };
+  const prisma = {
+    $transaction: jest.fn().mockImplementation((fn: (tx: unknown) => unknown) => fn(tx)),
+  } as unknown as PrismaService;
+  return { prisma, tx };
+}
+
+describe('PriceListImportService.confirm (D-217/M1c)', () => {
+  it('una fila que dejó de ser un cambio real se ignora, no rechaza el lote ni la escribe', async () => {
+    // El producto ya quedó en 10.0000 (otra edición, entre el preview y la confirmación); la
+    // fila que confirma manda ese mismo valor.
+    const { prisma, tx } = fakePrismaForConfirm({
+      products: [{ id: 'p-1', listPricePen: '10.0000' }],
+    });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    const result = await svc.confirm(ACTOR, {
+      rows: [{ productId: 'p-1', afterValuePen: '10.0000' }],
+    });
+
+    expect(result.changed).toBe(0);
+    expect(tx.product.update).not.toHaveBeenCalled();
+  });
+
+  it('producto desactivado a mitad de la carga rechaza el lote entero', async () => {
+    const { prisma } = fakePrismaForConfirm({
+      products: [
+        { id: 'p-1', listPricePen: null },
+        { id: 'p-2', isActive: false, listPricePen: null },
+      ],
+    });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    await expect(
+      svc.confirm(ACTOR, {
+        rows: [
+          { productId: 'p-1', afterValuePen: '10.0000' },
+          { productId: 'p-2', afterValuePen: '20.0000' },
+        ],
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining('desactivado') });
+  });
+
+  it('producto repetido en la confirmación se rechaza antes de abrir la transacción', async () => {
+    const { prisma } = fakePrismaForConfirm({ products: [{ id: 'p-1', listPricePen: null }] });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    await expect(
+      svc.confirm(ACTOR, {
+        rows: [
+          { productId: 'p-1', afterValuePen: '10.0000' },
+          { productId: 'p-1', afterValuePen: '20.0000' },
+        ],
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining('repetido') });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('cambio real: actualiza el producto y registra un solo changelog', async () => {
+    const { prisma, tx } = fakePrismaForConfirm({
+      products: [{ id: 'p-1', listPricePen: '10.0000' }],
+    });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    const result = await svc.confirm(ACTOR, {
+      rows: [{ productId: 'p-1', afterValuePen: '12.0000' }],
+    });
+
+    expect(result.changed).toBe(1);
+    expect(tx.product.update).toHaveBeenCalledWith({
+      where: { id: 'p-1' },
+      data: { listPricePen: '12.0000' },
+    });
+  });
+});
+
+interface FakeChangeRow {
+  id: string;
+  productId: string;
+  beforeValuePen: string | null;
+  afterValuePen: string | null;
+}
+
+function toRowDecimal(v: string | null): Prisma.Decimal | null {
+  return v === null ? null : new Prisma.Decimal(v);
+}
+
+/**
+ * Fake `PrismaService` para `revert()`. `productListPriceChange.findMany` se llama dos veces
+ * con formas de `where` distintas (las filas del lote, y el último cambio por producto) — se
+ * discrimina por la presencia de `batchId`.
+ */
+function fakePrismaForRevert(options: {
+  batchRows: FakeChangeRow[];
+  alreadyReverted?: boolean;
+  /** productId -> id del cambio más reciente. Por defecto, el propio id del lote (no bloqueado). */
+  latestIdByProductId?: Record<string, string>;
+  productSkus?: Record<string, string>;
+}): PrismaService {
+  const latest = new Map(
+    options.batchRows.map((r) => [r.productId, options.latestIdByProductId?.[r.productId] ?? r.id]),
+  );
+  const tx = {
+    productListPriceChange: {
+      findMany: jest.fn().mockImplementation((args: { where: { batchId?: string } }) => {
+        if (args.where.batchId !== undefined) {
+          return Promise.resolve(
+            options.batchRows.map((r) => ({
+              ...r,
+              beforeValuePen: toRowDecimal(r.beforeValuePen),
+              afterValuePen: toRowDecimal(r.afterValuePen),
+            })),
+          );
+        }
+        return Promise.resolve([...latest.entries()].map(([productId, id]) => ({ productId, id })));
+      }),
+      findFirst: jest.fn().mockResolvedValue(options.alreadyReverted ? { id: 'existing' } : null),
+      createMany: jest.fn().mockResolvedValue(undefined),
+    },
+    product: {
+      findMany: jest
+        .fn()
+        .mockImplementation((args: { where: { id: { in: string[] } } }) =>
+          Promise.resolve(args.where.id.in.map((id) => ({ sku: options.productSkus?.[id] ?? id }))),
+        ),
+      update: jest.fn().mockResolvedValue(undefined),
+    },
+  };
+  return {
+    $transaction: jest.fn().mockImplementation((fn: (tx: unknown) => unknown) => fn(tx)),
+  } as unknown as PrismaService;
+}
+
+describe('PriceListImportService.revert (D-217/M1c)', () => {
+  it('revierte un lote sin cambios posteriores: restaura el valor anterior de cada fila', async () => {
+    const prisma = fakePrismaForRevert({
+      batchRows: [
+        { id: 'chg-1', productId: 'p-1', beforeValuePen: '10.0000', afterValuePen: '12.0000' },
+      ],
+    });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    const result = await svc.revert(ACTOR, 'batch-1', {});
+
+    expect(result.reverted).toBe(1);
+  });
+
+  it('lote ya revertido: 409, no reintenta', async () => {
+    const prisma = fakePrismaForRevert({
+      batchRows: [
+        { id: 'chg-1', productId: 'p-1', beforeValuePen: '10.0000', afterValuePen: '12.0000' },
+      ],
+      alreadyReverted: true,
+    });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    await expect(svc.revert(ACTOR, 'batch-1', {})).rejects.toMatchObject({
+      message: expect.stringContaining('ya fue revertido'),
+    });
+  });
+
+  it('un SKU del lote tuvo un cambio posterior: rechaza y lo nombra, sin tocar nada', async () => {
+    const prisma = fakePrismaForRevert({
+      batchRows: [
+        { id: 'chg-1', productId: 'p-1', beforeValuePen: '10.0000', afterValuePen: '12.0000' },
+        { id: 'chg-2', productId: 'p-2', beforeValuePen: '5.0000', afterValuePen: '6.0000' },
+      ],
+      // p-1 tuvo un cambio posterior (otro id); p-2 sigue siendo el último.
+      latestIdByProductId: { 'p-1': 'chg-3-posterior' },
+      productSkus: { 'p-1': 'TR-BLOQUEADO' },
+    });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    await expect(svc.revert(ACTOR, 'batch-1', {})).rejects.toMatchObject({
+      message: expect.stringContaining('TR-BLOQUEADO'),
+    });
+  });
+
+  it('lote inexistente: 404', async () => {
+    const prisma = fakePrismaForRevert({ batchRows: [] });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    await expect(svc.revert(ACTOR, 'batch-inexistente', {})).rejects.toMatchObject({
+      message: expect.stringContaining('no encontrado'),
+    });
   });
 });
