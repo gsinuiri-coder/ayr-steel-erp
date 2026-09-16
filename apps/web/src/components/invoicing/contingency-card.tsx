@@ -133,9 +133,9 @@ export function ContingencyCard() {
         {!s.pseEnabled && (
           <Alert>
             <AlertDescription>
-              <strong>Emisión electrónica no habilitada.</strong> Este entorno tiene el PSE
-              apagado a propósito: toda emisión, anulación o guía electrónica se rechaza antes
-              de tomar correlativo. Los comprobantes manuales no se ven afectados.
+              <strong>Emisión electrónica no habilitada.</strong> Este entorno tiene el PSE apagado
+              a propósito: toda emisión, anulación o guía electrónica se rechaza antes de tomar
+              correlativo. Los comprobantes manuales no se ven afectados.
             </AlertDescription>
           </Alert>
         )}

@@ -973,7 +973,8 @@ export async function purgeInvoicingTrail(
     // de cupo. La anulación interna (`annulExternal`, D-110/D-153) es el camino correcto
     // para los dos orígenes y no toca al proveedor.
     if (document.origin !== 'ISSUED_HERE') {
-      await api.post(`/api/invoicing/documents/${document.id}/annul`, { data: { reason } })
+      await api
+        .post(`/api/invoicing/documents/${document.id}/annul`, { data: { reason } })
         .catch(() => undefined);
       continue;
     }

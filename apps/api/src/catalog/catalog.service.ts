@@ -7,6 +7,7 @@ import {
 import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
   isPlausiblePieceLength,
+  MAX_PAGE_SIZE,
   PIECE_LENGTH_RANGE_LABEL,
   ROOFING_KIND_UNIT,
   RoofingProductKind,
@@ -14,7 +15,9 @@ import {
   toDecimal,
   type CreateProductInput,
   type FinishKind,
+  type PriceListFloorDto,
   type ProductDto,
+  type ProductListPriceChangeDto,
   type UpdateProductInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -22,6 +25,8 @@ import type { RequestUser } from '../auth/auth.types';
 import { ColorsService } from '../colors/colors.service';
 import { toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
+import { computePriceFloors } from '../sales/price-floor';
+import { priceListValueChanged, recordPriceListChange } from './price-list-changes';
 
 /** Catálogo de productos por línea (RF-50). Mutaciones solo ADMINISTRADOR. */
 @Injectable()
@@ -140,6 +145,17 @@ export class CatalogService {
           entityId: created.id,
           after: auditView(created),
         });
+        // D-217/M1a: un producto nuevo con precio de lista ya de entrada también es un
+        // cambio de precio — `beforeValuePen` null lo distingue de una edición posterior.
+        if (created.listPricePen !== null) {
+          await recordPriceListChange(tx, {
+            productId: created.id,
+            beforeValuePen: null,
+            afterValuePen: created.listPricePen,
+            changedById: actor.id,
+            origin: 'INLINE',
+          });
+        }
         return created;
       });
       return toDto(product);
@@ -261,6 +277,14 @@ export class CatalogService {
     }
     if (input.isActive !== undefined) data.isActive = input.isActive;
 
+    // D-217/M1a: se compara **antes de escribir**, con `Decimal` y no con el string tal
+    // como llegó — «7.5» y «7.5000» no son un cambio, y `data.listPricePen` puede venir
+    // sin tocar (`undefined`, no entra acá) o como `null` (quitar el precio).
+    const listPriceTouched = input.listPricePen !== undefined;
+    const listPriceChanged =
+      listPriceTouched &&
+      priceListValueChanged(before.listPricePen, data.listPricePen as string | null);
+
     const after = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.product.update({
         where: { id },
@@ -275,6 +299,15 @@ export class CatalogService {
         before: auditView(before),
         after: auditView(updated),
       });
+      if (listPriceChanged) {
+        await recordPriceListChange(tx, {
+          productId: id,
+          beforeValuePen: before.listPricePen,
+          afterValuePen: updated.listPricePen,
+          changedById: actor.id,
+          origin: 'INLINE',
+        });
+      }
       return updated;
     });
     return toDto(after);
@@ -290,6 +323,83 @@ export class CatalogService {
         `El producto tiene ${live} orden(es) de producción en curso: ciérralas o anúlalas antes de cambiarle el color`,
       );
     }
+  }
+
+  /**
+   * D-217/M1b: el piso de D-163 para **este** producto, calculado por la misma función que
+   * lo aplica al vender (`computePriceFloors`) — para que el catálogo no pueda mostrar un
+   * mínimo distinto del que después rechaza una cotización. `null` sin costo en el kardex
+   * (sin costo no hay piso) o sin margen mínimo configurado para la línea.
+   */
+  async priceFloor(id: string): Promise<PriceListFloorDto> {
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      select: { id: true, sku: true, unit: true, businessLineId: true },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    const floors = await this.prisma.$transaction((tx) =>
+      computePriceFloors(
+        tx,
+        [
+          {
+            at: product.id,
+            sku: product.sku,
+            businessLineId: product.businessLineId,
+            basis: { kind: 'UNIT', unitLabel: product.unit },
+            // Solo lo lee `assertPriceFloor` para comparar y rechazar; acá solo se **lee**
+            // el piso, así que el valor propuesto no importa.
+            unitValuePen: '0',
+            cost: { kind: 'PRODUCT', productId: product.id },
+          },
+        ],
+        // Tolerancia del plan de corte (D-086): solo la usa el costo de `RAW_MATERIAL`, que
+        // un candidato `PRODUCT` nunca toma — no hay valor "correcto" que pasar acá.
+        '0.02',
+      ),
+    );
+    const floor = floors.get(product.id);
+    return {
+      minPricePen: floor?.minPricePen ?? null,
+      priceUnitLabel: floor?.priceUnitLabel ?? null,
+    };
+  }
+
+  /** Historial de `listPricePen` (D-217/M1). Sin `productId`, todo el catálogo. */
+  async findPriceListChanges(productId?: string): Promise<ProductListPriceChangeDto[]> {
+    const rows = await this.prisma.productListPriceChange.findMany({
+      where: productId ? { productId } : undefined,
+      orderBy: { changedAt: 'desc' },
+      // Mismo tope que cualquier otro listado del repo (D-113); sin `productId` es "los
+      // últimos cambios de todo el catálogo", no un reporte histórico completo.
+      take: MAX_PAGE_SIZE,
+    });
+    if (rows.length === 0) return [];
+    const [products, users] = await Promise.all([
+      this.prisma.product.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.productId))] } },
+        select: { id: true, sku: true, name: true },
+      }),
+      this.prisma.user.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.changedById))] } },
+        select: { id: true, name: true },
+      }),
+    ]);
+    const productById = new Map(products.map((p) => [p.id, p]));
+    const nameById = new Map(users.map((u) => [u.id, u.name]));
+    return rows.map((r) => ({
+      id: r.id,
+      productId: r.productId,
+      sku: productById.get(r.productId)?.sku ?? '',
+      productName: productById.get(r.productId)?.name ?? '',
+      beforeValuePen: r.beforeValuePen === null ? null : r.beforeValuePen.toFixed(4),
+      afterValuePen: r.afterValuePen === null ? null : r.afterValuePen.toFixed(4),
+      changedById: r.changedById,
+      changedByName: nameById.get(r.changedById) ?? '—',
+      changedAt: r.changedAt.toISOString(),
+      origin: r.origin,
+      batchId: r.batchId,
+      revertsBatchId: r.revertsBatchId,
+    }));
   }
 }
 

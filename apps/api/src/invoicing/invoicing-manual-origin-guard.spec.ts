@@ -1,5 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
-import { FiscalDocType, FiscalDocumentOrigin, FiscalDocumentStatus, Prisma, Role } from '@prisma/client';
+import {
+  FiscalDocType,
+  FiscalDocumentOrigin,
+  FiscalDocumentStatus,
+  Prisma,
+  Role,
+} from '@prisma/client';
 import { InvoicingService } from './invoicing.service';
 import type { ElectronicInvoicingProvider } from './ports/electronic-invoicing.port';
 import type { RequestUser } from '../auth/auth.types';
@@ -36,14 +42,23 @@ describe('InvoicingService.assignInTx — una nota de crédito de un afectado MA
 
   function fakeTx(affectedOrigin: FiscalDocumentOrigin) {
     return {
-      $queryRaw: jest.fn().mockResolvedValue([
-        { id: 'doc-1', status: FiscalDocumentStatus.DRAFT, doc_type: FiscalDocType.NOTA_CREDITO },
-      ]),
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValue([
+          { id: 'doc-1', status: FiscalDocumentStatus.DRAFT, doc_type: FiscalDocType.NOTA_CREDITO },
+        ]),
       fiscalDocument: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 'doc-1',
           docType: FiscalDocType.NOTA_CREDITO,
-          items: [{ id: 'item-1', qty: new Prisma.Decimal('1'), salesOrderItemId: null, affectedItemId: 'aff-item-1' }],
+          items: [
+            {
+              id: 'item-1',
+              qty: new Prisma.Decimal('1'),
+              salesOrderItemId: null,
+              affectedItemId: 'aff-item-1',
+            },
+          ],
           affectedDocument: {
             docType: FiscalDocType.FACTURA,
             origin: affectedOrigin,

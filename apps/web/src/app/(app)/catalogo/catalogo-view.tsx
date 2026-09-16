@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -32,6 +33,8 @@ import { ColorSwatch } from '@/components/colors/color-swatch';
 import { BomDialog } from './bom-dialog';
 import { ColoresPanel } from './colores-panel';
 import { ProductDialog } from '@/components/catalog/product-dialog';
+import { PriceListCell } from '@/components/catalog/price-list-cell';
+import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 
 /**
  * Qué productos llevan receta (D-059, D-087). Las mismas condiciones que valida
@@ -69,6 +72,7 @@ export function CatalogoView() {
     nonce: number;
   }>({ open: false, lineId: '', nonce: 0 });
   const [bomProduct, setBomProduct] = useState<ProductDto | null>(null);
+  const [historyProduct, setHistoryProduct] = useState<ProductDto | null>(null);
 
   const lines = useQuery({
     queryKey: ['business-lines'],
@@ -107,6 +111,11 @@ export function CatalogoView() {
           <h1 className="text-lg font-semibold">Catálogo</h1>
           <p className="text-xs text-muted-foreground">Productos por línea de negocio (RF-50).</p>
         </div>
+        {isAdmin && (
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/catalogo/precios/importar">Cargar precios de lista</Link>
+          </Button>
+        )}
       </div>
 
       <Tabs defaultValue={lines.data[0]?.id}>
@@ -152,6 +161,7 @@ export function CatalogoView() {
                       <TableHead>Unidad</TableHead>
                       <TableHead>Origen</TableHead>
                       <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Precio de lista (con IGV)</TableHead>
                       {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -186,6 +196,13 @@ export function CatalogoView() {
                           ) : (
                             <Badge variant="outline">Inactivo</Badge>
                           )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <PriceListCell
+                            product={p}
+                            isAdmin={isAdmin}
+                            onOpenHistory={setHistoryProduct}
+                          />
                         </TableCell>
                         {isAdmin && (
                           <TableCell className="text-right">
@@ -230,7 +247,7 @@ export function CatalogoView() {
                     {lineProducts.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={(isAdmin ? 6 : 5) + (usesColor(line.code) ? 1 : 0)}
+                          colSpan={(isAdmin ? 7 : 6) + (usesColor(line.code) ? 1 : 0)}
                           className="text-center text-muted-foreground"
                         >
                           Sin productos en esta línea.
@@ -267,6 +284,17 @@ export function CatalogoView() {
           product={bomProduct}
           onOpenChange={(open) => {
             if (!open) setBomProduct(null);
+          }}
+        />
+      )}
+
+      {historyProduct && (
+        <PriceListHistoryDialog
+          productId={historyProduct.id}
+          productSku={historyProduct.sku}
+          open
+          onOpenChange={(open) => {
+            if (!open) setHistoryProduct(null);
           }}
         />
       )}

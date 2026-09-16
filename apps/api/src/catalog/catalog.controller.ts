@@ -4,7 +4,9 @@ import {
   Role,
   updateProductSchema,
   type CreateProductInput,
+  type PriceListFloorDto,
   type ProductDto,
+  type ProductListPriceChangeDto,
   type UpdateProductInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -23,9 +25,23 @@ export class CatalogController {
     return this.catalog.findAll(businessLineId);
   }
 
+  // D-217/M1: antes de ':id' — un GET de un solo segmento matchea contra ':id' si se
+  // declara después, y 'price-list' se leería como un uuid inválido.
+  @Get('price-list/changes')
+  findPriceListChanges(
+    @Query('productId') productId?: string,
+  ): Promise<ProductListPriceChangeDto[]> {
+    return this.catalog.findPriceListChanges(productId);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string): Promise<ProductDto> {
     return this.catalog.findOne(id);
+  }
+
+  @Get(':id/price-floor')
+  priceFloor(@Param('id', ParseUUIDPipe) id: string): Promise<PriceListFloorDto> {
+    return this.catalog.priceFloor(id);
   }
 
   @Post()

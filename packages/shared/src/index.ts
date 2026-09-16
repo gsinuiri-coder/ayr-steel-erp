@@ -14,6 +14,7 @@ export * from './schemas/product';
 export * from './schemas/customer';
 export * from './schemas/supplier';
 export * from './schemas/pricing';
+export * from './schemas/price-list';
 export * from './schemas/exchange-rate';
 export * from './schemas/inventory';
 export * from './schemas/quotation-import';

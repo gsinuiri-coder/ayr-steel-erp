@@ -1811,6 +1811,39 @@ model SalesPriceChange {
   @@map("sales_price_changes")
 }
 
+/// D-217 (RF-S1/M1a): quién y cuándo tocó `products.list_price_pen`. Mismo criterio que
+/// `SalesPriceChange` (D-187): tabla propia y no `audit_log`, porque hace falta leer por
+/// producto y por lote con índice, no JSON libre sin índice por entidad hija. Sin relación
+/// Prisma a `Product`/`User` — mismo patrón que `SalesPriceChange.productId`/`changedById`,
+/// que tampoco la declaran — para no agregarle un campo inverso al catálogo entero.
+model ProductListPriceChange {
+  id             String                @id @default(uuid()) @db.Uuid
+  productId      String                @map("product_id") @db.Uuid
+  /// Sin IGV (D-068), null cuando el producto no tenía precio de lista antes del cambio.
+  beforeValuePen Decimal?              @map("before_value_pen") @db.Decimal(18, 4)
+  /// Sin IGV. Null cuando el cambio **quita** el precio de lista (vuelve a "sin precio").
+  afterValuePen  Decimal?              @map("after_value_pen") @db.Decimal(18, 4)
+  changedById    String                @map("changed_by_id") @db.Uuid
+  changedAt      DateTime              @default(now()) @map("changed_at") @db.Timestamptz(3)
+  origin         PriceListChangeOrigin
+  /// Solo con `origin = IMPORT`: agrupa las filas confirmadas en la misma carga masiva. Es
+  /// la clave que usa «revertir lote» para encontrarlas. Null con `origin = INLINE`.
+  batchId        String?               @map("batch_id") @db.Uuid
+  /// Cuando esta fila **es** la reversa de un lote: qué `batchId` deshizo. Null en todo lo
+  /// demás, incluido el propio lote revertido, que queda intacto (append-only: revertir
+  /// nunca borra ni edita la fila original, escribe filas nuevas).
+  revertsBatchId String?               @map("reverts_batch_id") @db.Uuid
+
+  @@index([productId, changedAt])
+  @@index([batchId])
+  @@map("product_list_price_changes")
+}
+
+enum PriceListChangeOrigin {
+  INLINE
+  IMPORT
+}
+
 // ---------------------------------------------------------------------------
 // Fase 5b — facturación electrónica, guía de remisión, despacho y cobranza
 // (RF-70, RF-74..RF-79, RF-86..RF-89; D-070..D-078)
