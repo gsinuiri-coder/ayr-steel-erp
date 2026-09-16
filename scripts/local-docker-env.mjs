@@ -17,8 +17,66 @@ export const DB_PASSWORD = 'ayr_local';
 export const DB_NAME_DEV = 'ayr_local';
 export const DB_NAME_E2E = 'ayr_local_e2e';
 
+// Base del Postgres de **servicio del runner** de GitHub Actions (`.github/workflows/ci.yml`,
+// job `e2e`, D-202). No es una base de esta máquina: vive acá porque `localTestDbUrls` tiene que
+// reconocerla para no pisarla con la de Docker cuando la suite corre en CI.
+export const DB_NAME_CI_E2E = 'ayr_ci_e2e';
+
 export function dbUrl(name) {
   return `postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${name}?schema=public`;
+}
+
+/**
+ * Base de pruebas de una rama `local`/`local-e2e`, **respetando la que ya venga en el entorno**
+ * cuando es una base de pruebas legítima.
+ *
+ * Existe por el defecto que dejó los 6 specs del importador en rojo en CI (auditoría post-V4):
+ * un script que arma la URL con `dbUrl(...)` sin mirar el entorno siempre apunta al Docker de
+ * la máquina del agente, y desde D-202 la suite de CI corre contra el Postgres **del runner**
+ * (`localhost:5432/ayr_ci_e2e`). El CLI se conectaba a una base que en el runner no existe y su
+ * guarda de esquema lo reportaba como «falta la migración de D-206», que es verdad de esa base
+ * y mentira del asunto.
+ *
+ * `??=` no alcanza acá: el wrapper compone el entorno del hijo, así que la decisión es *qué
+ * poner*, no *qué completar*.
+ *
+ * **Falla hacia el Docker local, nunca hacia afuera.** Una URL heredada solo gana si es una de
+ * las dos bases de pruebas reconocidas —misma forma que la lista blanca de
+ * `apps/api/prisma/test-db-guard.ts`, menos la rama Neon `ci`, que no es una rama «local»—; con
+ * cualquier otra cosa en `DATABASE_URL` (Neon `dev` exportado a mano para otra cosa, o peor)
+ * se ignora el entero y se usa la de Docker. Las dos URLs se deciden juntas y se validan las
+ * dos: `migrate`/lectura de esquema van por `DIRECT_URL` y la escritura por `DATABASE_URL`, y
+ * aprobar mirando una sola fue exactamente el agujero que documenta ese guard.
+ */
+export function localTestDbUrls(branch) {
+  const expected = { local: DB_NAME_DEV, 'local-e2e': DB_NAME_E2E }[branch];
+  if (!expected) return null;
+
+  const fromEnv = [process.env.DATABASE_URL, process.env.DIRECT_URL];
+  if (fromEnv.every((u) => u && isKnownTestDb(u, expected))) {
+    return { databaseUrl: fromEnv[0], directUrl: fromEnv[1], source: 'entorno' };
+  }
+  return { databaseUrl: dbUrl(expected), directUrl: dbUrl(expected), source: 'docker' };
+}
+
+function isKnownTestDb(raw, expected) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  const name = url.pathname.replace(/^\//, '');
+  const isLocalHost = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+  // El Postgres de docker-compose.yml, con la base que la rama pedida nombra: `--branch local`
+  // no puede terminar escribiendo en `ayr_local_e2e` ni al revés.
+  if (isLocalHost && name === expected) return true;
+  // El Postgres de servicio del job `e2e` (D-202). `GITHUB_ACTIONS=true` es parte de la
+  // condición: un `localhost/ayr_ci_e2e` en la máquina de alguien no es esta base aunque se
+  // llame igual (mismo criterio y misma razón que `test-db-guard.ts`).
+  return (
+    process.env.GITHUB_ACTIONS === 'true' && url.hostname === 'localhost' && name === DB_NAME_CI_E2E
+  );
 }
 
 export const LOCAL_JWT_SECRET =

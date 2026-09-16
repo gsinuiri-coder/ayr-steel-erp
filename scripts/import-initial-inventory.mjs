@@ -21,7 +21,12 @@
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
-import { DB_NAME_DEV, DB_NAME_E2E, dbUrl, LOCAL_ADMIN_EMAIL } from './local-docker-env.mjs';
+import {
+  DB_NAME_DEV,
+  DB_NAME_E2E,
+  localTestDbUrls,
+  LOCAL_ADMIN_EMAIL,
+} from './local-docker-env.mjs';
 
 const argv = process.argv.slice(2);
 const branch = argv.includes('--branch') ? argv[argv.indexOf('--branch') + 1] : 'local';
@@ -51,15 +56,24 @@ const passthroughArgs = argv
   .map((a, i, arr) => (PATH_FLAGS.has(arr[i - 1]) ? resolve(process.cwd(), a) : a));
 
 const apiDir = resolve(ROOT, 'apps/api');
-const localDb = LOCAL_DB_BY_BRANCH[branch];
+// `local`/`local-e2e` respetan las URLs que ya vengan en el entorno cuando son una base de
+// pruebas reconocida —el Postgres del runner en CI (D-202)—, y si no caen al Docker local; ver
+// `localTestDbUrls`. Las ramas de Neon siempre resuelven por `neonctl` (regla dura 5: la
+// credencial viaja por el entorno del hijo, nunca por argv).
+const localUrls = localTestDbUrls(branch);
 const env = {
   ...process.env,
-  DATABASE_URL: localDb ? dbUrl(localDb) : neonConnectionString(branch, { pooled: true }),
-  DIRECT_URL: localDb ? dbUrl(localDb) : neonConnectionString(branch, { pooled: false }),
-  // Local: el admin que siembra `pnpm dev:local`/el reset de pruebas. Neon: el que ya declaró
+  DATABASE_URL: localUrls ? localUrls.databaseUrl : neonConnectionString(branch, { pooled: true }),
+  DIRECT_URL: localUrls ? localUrls.directUrl : neonConnectionString(branch, { pooled: false }),
+  // Local: el admin que siembra `pnpm dev:local`/el reset de pruebas, salvo que el entorno ya
+  // declare otro — en CI el admin de la base de pruebas es `secrets.ADMIN_EMAIL`, y pisarlo con
+  // el de Docker deja al CLI buscando un actor que ahí no existe. Neon: el que ya declaró
   // `.env.setup` — `readEnvFile` nunca imprime valores (regla dura 5) y esto tampoco los repite.
-  ADMIN_EMAIL: localDb ? LOCAL_ADMIN_EMAIL : readEnvFile().ADMIN_EMAIL,
+  ADMIN_EMAIL: localUrls
+    ? (process.env.ADMIN_EMAIL ?? LOCAL_ADMIN_EMAIL)
+    : readEnvFile().ADMIN_EMAIL,
 };
+if (localUrls) console.log(`Base de pruebas: ${branch} (desde el ${localUrls.source})`);
 
 // Compila con `tsc` real (`tsconfig.cli.json`), no `tsx`/esbuild: el CLI levanta el árbol de
 // dependencias completo de Nest (`NestFactory.createApplicationContext`) para reusar

@@ -5204,11 +5204,50 @@ no está acá, no está vivo.
   se agregó al gate PSE del checklist de ventana, y la afirmación ya es cierta. **Una lista de
   pendientes que no se verifica miente**: es la segunda vez que pasa en este repo.
 
+### Sesión CI-SANA (2026-09-16) — `main` de vuelta a verde
+
+Cierra los dos pendientes que dejaban `main` roja (ver #1 y #2 tachados abajo) y salda la deuda
+de regla dura 13 que arrastraban los handoffs de `estabilizacion-d145` y `planta-tanda`:
+`inventario-inicial-plantilla.xlsx`, `subset.json` y `e2e-report.json` salen de la raíz del repo
+y pasan a `local-data/`. Ninguno estaba referenciado por código ni por workflows — solo los
+nombraban esos dos handoffs, como pendiente que nadie había cerrado. Las entradas que los
+cubrían siguen en `.gitignore` a propósito: si una herramienta vuelve a escribirlos en la raíz,
+la red sigue puesta.
+
+Cierre verde antes del push: `lint`, `typecheck`, `test` y `format:check`.
+
+**Bloqueo, y por qué la verificación de los 6 specs quedó en CI.** Docker Desktop no está
+corriendo en esta máquina y no se pudo levantar desde la sesión (tres intentos: `start` por
+`cmd`, ruta de Program Files inexistente —está en `AppData\Local\Programs\DockerDesktop`— y
+`Start-Process` por PowerShell, que lanzó sin error pero nunca dejó al daemon responder). Sin
+Docker no hay `ayr_local_e2e`, así que la suite local no corre. Se aplicó la regla dura 11:
+documentar y seguir con lo que no depende del comando. **La verificación que importa igual es la
+de CI**, porque el defecto solo se manifiesta en el runner: localmente el wrapper siempre
+acertaba la base. Lo que sí se verificó acá es el resolutor nuevo, con los 8 escenarios de
+`localTestDbUrls` — entre ellos los tres que no deben ganar nunca.
+
 ### Pendientes vivos
 
-Orden de prioridad. El #1 y el #2 son los que hoy dejan `main` en rojo.
+Orden de prioridad. Los dos que dejaban `main` en rojo se cerraron en la sesión CI-SANA
+(2026-09-16) y quedan tachados abajo con lo que se hizo; del #3 en adelante siguen vivos.
 
-1. **CI en rojo por el wrapper del importador (runner).** `main` lleva **4 corridas rojas
+1. ~~**CI en rojo por el wrapper del importador (runner).**~~ **RESUELTO (CI-SANA,
+   2026-09-16).** `localTestDbUrls` en `scripts/local-docker-env.mjs` decide la base de una rama
+   `local`/`local-e2e`: si `DATABASE_URL` **y** `DIRECT_URL` ya vienen en el entorno y son una
+   base de pruebas reconocida, ganan; si no, cae al Docker local. **Falla hacia adentro, nunca
+   hacia afuera**: la lista blanca es la misma forma que la de `apps/api/prisma/test-db-guard.ts`
+   —el Docker con la base que la rama pedida nombra, o `localhost/ayr_ci_e2e` **solo** con
+   `GITHUB_ACTIONS=true`— y con cualquier otra cosa en el entorno (un Neon `dev` exportado a
+   mano, por ejemplo) se ignora el entero y se usa la de Docker. Las dos URLs se deciden juntas
+   y se validan las dos, por la misma razón que documenta ese guard: `migrate` lee por
+   `DIRECT_URL` y la escritura va por `DATABASE_URL`, así que aprobar mirando una sola es el
+   agujero. Verificado con los 8 escenarios del resolutor, incluidos los tres peligrosos (Neon
+   exportado a mano, mezcla de las dos URLs, y el runner sin `GITHUB_ACTIONS`): los tres caen al
+   Docker. Segundo defecto que el mismo camino escondía y que también se arregló: el wrapper
+   pisaba `ADMIN_EMAIL` con el admin de Docker, y en CI el admin de la base de pruebas es
+   `secrets.ADMIN_EMAIL` — el CLI habría quedado buscando un actor que ahí no existe, con un
+   error que no habla de eso. Ahora el entorno gana si ya lo declara.
+   Detalle del original, para que no se pierda: `main` llevaba **4 corridas rojas
    seguidas** (desde `daec519`, 15-09 21:21 UTC); la última verde es la 34908482884 del 14-09.
    El job E2E da **327 passed / 6 failed**, y los 6 son los del importador: 3 de
    `e2e/tests/inventario-inicial-f8s6a.spec.ts` y 3 de
@@ -5220,14 +5259,19 @@ Orden de prioridad. El #1 y el #2 son los que hoy dejan `main` en rojo.
    `postgresql://ayr:ayr_ci@localhost:5432/ayr_ci_e2e` (D-202, `.github/workflows/ci.yml`). El
    CLI se conecta a una base que en el runner no existe y su guarda de esquema lo reporta como
    «Esta rama no tiene la migración `20260915100000_d206_carga_inicial_de_inventario`
-   aplicada». Dirección de fix (una línea de wrapper, no de producto): que `local`/`local-e2e`
-   respeten `DATABASE_URL`/`DIRECT_URL` del entorno cuando ya vienen definidas, en vez de
-   armarlas siempre. **`main` roja no se acepta como estado permanente.**
-2. **Rama `ci` de Neon bloqueada (P3009).** `20260915120000_d209_acabados_tipo_obligatorio`
-   quedó **fallida** ahí el 15-09 21:11:57 UTC y `migrate deploy` no aplica nada más, así que
-   el job «Smoke E2E y migraciones (Neon ci)» muere a los 34 s. Verificado hoy con
-   `node scripts/migrations-status.mjs --branch ci`. Se destraba completando antes los acabados
-   sin tipo de esa rama y después `prisma migrate resolve --rolled-back`, o reseteando la rama.
+   aplicada» — que es verdad de esa base y mentira del asunto.
+2. ~~**Rama `ci` de Neon bloqueada (P3009).**~~ **RESUELTO (CI-SANA, 2026-09-16).** La rama
+   quedó en **66/66, esquema al día**. Los 22 acabados sin tipo que la trababan eran **residuo
+   de corridas E2E** (códigos al azar como `EAMU806928`, ninguno con color ni línea), no datos
+   que completar: la rama se vacía en cada corrida y `prisma/seed.ts` no siembra acabados, así
+   que se vació y D-209 aplicó sin nada que rechazar. **No se recreó la rama en Neon, a
+   propósito:** `test-db-guard.ts` reconoce la rama `ci` por el prefijo de su endpoint de
+   cómputo (`ep-dry-butterfly-`), y recrearla le cambia el endpoint y rompe el guard — es la
+   misma trampa que D-181 ya documentó.
+   **La lección del orden, que costó un intento:** `reset-test-db.ts` arranca con un
+   `prisma migrate deploy`, que es exactamente lo que P3009 bloquea, **así que el reset no puede
+   destrabarse a sí mismo**. La secuencia que funciona es vaciar primero (con el mismo guard,
+   sin migrar), después `migrate resolve --rolled-back` y recién entonces `migrate deploy`.
 3. **Push fantasma de F8-S4: causa no confirmada, riesgo abierto.** `a05fca1` se empujó el
    14-09 a las 18:21:26 -05 y el reflog lo registra como `update by push` **desde este clon**,
    diez minutos después de su commit. Lo que la auditoría descarta: no hay hooks en
