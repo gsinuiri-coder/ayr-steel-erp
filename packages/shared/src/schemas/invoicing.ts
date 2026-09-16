@@ -165,10 +165,18 @@ const isoDateSchema = z
   .refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00.000Z`)), 'Fecha inválida');
 
 /**
- * Días hacia atrás que se admiten como fecha de emisión. SUNAT acepta comunicar un
- * comprobante con algunos días de atraso, pero no meses; y **nunca** uno futuro.
+ * Días hacia atrás que se admiten como fecha de emisión. **Nunca** una fecha futura.
+ *
+ * Eran 7 (D-072), la ventana con la que SUNAT acepta un comprobante atrasado. El dueño lo
+ * sube a 90 para poder registrar en el ERP comprobantes que ya salieron en papel desde la
+ * otra app durante la migración (D-153), que son de meses anteriores.
+ *
+ * **Lo que esto no cambia:** un comprobante que sí se manda al PSE sigue teniendo el plazo
+ * de SUNAT, y este schema ya no lo protege. Una factura fechada más allá de esa ventana
+ * vuelve rechazada **con el correlativo gastado**, que es exactamente lo que D-072 evitaba
+ * validando acá. El control de rol de D-133 sigue igual: retrofechar es de ADMINISTRADOR.
  */
-export const MAX_BACKDATED_ISSUE_DAYS = 7;
+export const MAX_BACKDATED_ISSUE_DAYS = 90;
 
 /**
  * Fecha de emisión válida contra el día de negocio (D-072).
