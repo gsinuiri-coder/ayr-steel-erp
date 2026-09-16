@@ -45,7 +45,7 @@
 | Ventana V-4 — Limpia total + inventario real en producción                                      | ✅ Completada (2026-09-15) | Modo exprés autorizado por el dueño. Respaldo `respaldo-pre-v4-20260915`, push del lote acumulado, migraciones a **66/66**, limpia de **3376 filas en 39 tablas**, acabados completados a mano, D-209 aplicada limpia y **carga real de 15 bobinas / 46.805 kg / S/ 132.520,06** con su kardex `IMPORT`. `smoke:prod` en verde. Tres hallazgos de la ejecución real quedaron en el runbook. Productos UPVC/reventa: el dueño no entregó archivo en esta ventana.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Auditoría post-V4                                                                               | ✅ Cerrada (2026-09-16)    | Verificación de solo lectura de todo lo cerrado entre F8-S4 y V-4, contra el sistema real. Confirma 66/66, revisión `00034` al 100 %, la carga de V-4 exacta y el catálogo coherente; descubre que **producción ya está en uso operativo real** (48 clientes, 70 cotizaciones, 7 compras, 3 bobinas más, 5 OPs cerradas y 3 facturas manuales entre el 15-09 y el 16-09) y que dos afirmaciones de cierre no se sostenían (eran 6 specs rotos en CI, no 4; el rollover de D-202 no estaba en el checklist que lo daba por escrito). Registra **D-210**, consolida todos los pendientes en una lista única y deja `main` **roja** como pendiente #1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Sesión F8-S7 — Pulido y feedback de uso real                                                    | ✅ Cerrada (2026-09-16)    | Primera sesión de producto con producción operando. M1 (D-211: la fecha de emisión de un comprobante **manual** se corrige, con motivo, historial visible en el detalle y el vencimiento corriéndose con ella para conservar el plazo), M2 (D-212: el acabado se elige por color comercial; el código técnico solo desambigua) y M3 (D-213: al facturar se **declara** qué despacho cubre el comprobante, cerrando la deuda que D-205 dejó escrita). M4 cosmético: se va el `<main>` anidado del layout. Additive only: una migración, una tabla. `revisor` encontró 3 bloqueantes —el primero rompía M3 en el caso más común, porque `fiscal_documents.dispatch_id` ya significaba otra cosa— más 2 altos de concurrencia y 4 medios, todos corregidos; `qa` sumó 11 casos, 11/11, sin defectos de producto. Cierre: lint/typecheck/format, 430/430 unitarios y **suite E2E completa 345 passed / 0 failed / 2 skipped**. Los tres únicos rojos los causó M2 y ninguno hablaba de acabados: se arreglaron mudando la regla de etiquetado a `@ayr/shared` para que pantalla y tests lean la misma. Handoff: `docs/handoff/f8-s7-pulido-feedback.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 8 — Auditoría, reportes, UAT                                                                    | 🟡 En curso                | F8-S1..F8-S4, F8-S5, F8-S6a, F8-S6a2, F8-V4prep y F8-S7 cerradas (nada sacrificado), Ventana V-4 completada, auditoría post-V4 cerrada y `main` de vuelta en verde (sesión CI-SANA). El cliente ya opera sobre producción con datos reales. Pendientes vivos en la sección «Post-V4» de este documento. Después, auditoría, reportes y UAT (RF-90..96), sin empezar.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 8 — Auditoría, reportes, UAT                                                                    | 🟡 En curso                | F8-S1..F8-S4, F8-S5, F8-S6a, F8-S6a2, F8-V4prep y F8-S7 cerradas (nada sacrificado), Ventana V-4 completada, auditoría post-V4 cerrada y `main` de vuelta en verde (sesión CI-SANA). El cliente ya opera sobre producción con datos reales. Pendientes vivos en la sección «Post-V4» de este documento. RF-S1 (M0 higiene + precios de lista, D-214..D-217) cerrada — ver sección propia más abajo. RF-90..96 (los cinco reportes + auditoría) sigue sin empezar; D-214 deja escrito que el plan de sesiones RF-S1..RF-S5 no es una renumeración de esos RF.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## Fase 0 — detalle
 
@@ -5415,19 +5415,14 @@ Orden de prioridad. Los dos que dejaban `main` en rojo se cerraron en la sesión
    `prisma migrate deploy`, que es exactamente lo que P3009 bloquea, **así que el reset no puede
    destrabarse a sí mismo**. La secuencia que funciona es vaciar primero (con el mismo guard,
    sin migrar), después `migrate resolve --rolled-back` y recién entonces `migrate deploy`.
-3. **Push fantasma de F8-S4: causa no confirmada, riesgo abierto.** `a05fca1` se empujó el
-   14-09 a las 18:21:26 -05 y el reflog lo registra como `update by push` **desde este clon**,
-   diez minutos después de su commit. Lo que la auditoría descarta: no hay hooks en
-   `.git/hooks` (está vacío), no hay `.vscode/` ni extensión de auto-push, `git config` local y
-   global no tienen `push.default` propio ni alias que empuje, no hay hooks en
-   `.claude/settings.json` ni en `settings.local.json`, no hay jobs del daemon activos desde el
-   09-09, y **ningún transcript de Claude Code de este proyecto contiene el comando que lo
-   empujó**. Lo que sí queda a la vista, y es el riesgo real hoy que `main` es producción:
-   `.claude/settings.json` combina `"defaultMode": "auto"` con `Bash(git:*)` en la lista
-   `allow`, así que **cualquier sesión de agente puede correr `git push` sin preguntar** — el
-   `deny` solo cubre `git push --force`. Mitigación propuesta, para decisión del dueño: sacar
-   `git push` del auto-allow (dejarlo en `ask`), que no estorba a ningún flujo porque el push
-   es siempre el último paso del cierre y siempre lo mira alguien.
+3. ~~**Push fantasma de F8-S4: causa no confirmada, riesgo abierto.**~~ **RESUELTO (RF-S1/M0a,
+   2026-09-16).** La causa del push de `a05fca1` sigue sin confirmarse (la auditoría de esta
+   fila la descartó de todo lo investigable: hooks, alias, `push.default`, transcripts), pero
+   el riesgo que señalaba —`.claude/settings.json` combinando `"defaultMode": "auto"` con
+   `Bash(git:*)` en `allow`— ya no existe: `Bash(git push:*)`, `Bash(gh pr merge:*)` y
+   `Bash(gh repo sync:*)` pasaron a `deny` (D-214). Verificado con un intento real de
+   `git push --dry-run`, denegado por el permiso. El agente ahora commitea en local y, al
+   cierre, imprime el comando de push para que lo corra el dueño (CLAUDE.md regla dura 6).
 4. **Stock de UPVC y reventa: segunda tanda pendiente.** La carga de V-4 fue **solo bobinas**.
    Verificado: no hay un solo saldo de producto en `ROOFING` ni en `TRADING` (los 2 saldos de
    producto que existen son coberturas fabricadas por las OPs de anoche). El dueño confirmó que
@@ -5452,7 +5447,13 @@ Orden de prioridad. Los dos que dejaban `main` en rojo se cerraron en la sesión
 - **Recetas de perfiles de drywall**: sin receta no hay costo de perfil (hoy hay 1 sola
   `product_boms` para 11 SKU de la línea).
 - Rendimiento del card «Cotizaciones sin stock disponible» (D-188).
-- Aviso de precio mínimo en el POS (D-163) — hoy no alcanzaría a nada: no hay precios de lista.
+- Aviso de precio mínimo en el POS (D-163) — RF-S1/M1 dejó la infraestructura de precios de
+  lista (edición, changelog, carga masiva), pero el POS sigue exento de D-163 (decisión
+  vigente, no revisada) y la mayoría de los SKU sigue sin `listPricePen` cargado — nadie corrió
+  todavía la carga masiva contra el catálogo real de producción.
+- **Card «SKUs con lista bajo piso»**: sacrificado en RF-S1 (M2) por tiempo. El diseño (una
+  sola consulta agregada, con presupuesto de queries) quedó escrito en el brief de la sesión;
+  no se empezó código.
 - **Merma del 1 %**: ahora sí se puede validar contra datos reales, porque los cierres de
   bobina que vengan son de producción real.
 - Búsqueda server-side en las listas de más de 150 filas.
@@ -5730,6 +5731,135 @@ acumula para la ventana V-4 (13 commits ahora, F8-S4 + F8-S5 + F8-S6a).
   en esta sesión por el límite de memoria del host, no por ningún hallazgo — anotado para que la
   próxima sesión que tenga una máquina más holgada la corra una vez antes de la ventana V-4.
 - Handoff completo: `docs/handoff/f8-s6a-inventario-inicial.md`.
+
+## Sesión RF-S1 (2026-09-16) — M0 higiene + precios de lista
+
+Sesión 1 de 5 del lote RF-S1 (auditoría, reportes y UAT — plan de sesiones del dueño, ver
+D-214 sobre por qué no es una renumeración de RF-90..96). Orden estricto M0 → M1 → M2 por
+instrucción del dueño; M0 y M1 se cerraron completos, **M2 se sacrificó por tiempo** (queda
+como backlog, ver más abajo). Seis commits sobre `main`, **sin push** (regla dura 6): `main`
+es producción, y el dueño corre el push al final de esta sección.
+
+### PASO 0 — lo que cambió el plan escrito
+
+- **RF-S1..RF-S5 no son RF-90..96.** `ARQUITECTURA.md` §4.8 nombra exactamente los cinco
+  reportes (RF-90..94) más auditoría (RF-95/96); el plan de sesiones agrupa bajo el mismo
+  rótulo higiene operativa y precios de lista, que no son RF nuevos — precios de lista viene
+  del backlog heredado («Aviso de precio mínimo en el POS», ver sesiones anteriores).
+  Registrado en D-214 para que una sesión futura no busque «RF-S3» en §4 y concluya que falta
+  escribirlo.
+- **`Product.listPricePen` ya existía** (D-068) y ya estaba prellenado en el modal de línea de
+  cotización y en el POS — el brief asumía que faltaba el campo; lo que faltaba era todo lo
+  que M1 construyó alrededor (changelog, edición dedicada, carga masiva). `check:price-floor`
+  reportaba 0 SKU porque **ningún producto activo tenía el campo seteado**, no porque el piso
+  dependiera de él — el piso (D-163) sale 100% del costo del kardex.
+- **El bug de `purgeInvoicingTrail` que describía el handoff de F8-S7 no reproduce.** El guard
+  que lo evitaría ya existía desde D-153 (commit `f045fa1`, anterior a F8-S7). El residuo real
+  y distinto —una nota de crédito borrador huérfana— se corrigió igual (D-215/M0c).
+
+### M0 — higiene
+
+- **M0a — push fuera del auto-allow (D-214).** `.claude/settings.json` combinaba
+  `defaultMode: auto` con `Bash(git:*)` en `allow` (hallazgo que ya estaba anotado como
+  pendiente #3 de la auditoría post-V4, sección de arriba): cualquier sesión de agente podía
+  empujar a `main` sin que nadie lo mirara. Ahora `Bash(git push:*)`, `Bash(gh pr merge:*)`,
+  `Bash(gh repo sync:*)` y **`Bash(gh api:*)`** (agregado en la segunda ronda, ver abajo)
+  están en `deny`. Verificado con intentos reales de `git push` y `gh api .../merge`, los dos
+  denegados. El agente ahora commitea en local y al cierre imprime el comando de push.
+- **M0b — dos notas de `CLAUDE.md`** que costaron tiempo en sesiones anteriores: el comando
+  correcto para un spec suelto de Playwright (`pnpm exec playwright test e2e/tests/<archivo>`,
+  nunca `pnpm e2e -- <archivo>`) y que la suite completa necesita builds de producción en esta
+  máquina (OOM con dev builds cerca del test 308).
+- **M0c — `purgeInvoicingTrail` (D-215).** Para un comprobante `MANUAL`/`IMPORTED`, el helper
+  de limpieza E2E intentaba la baja (que `assertIssuedHere` rechaza) y después una nota de
+  crédito de respaldo que quedaba como borrador huérfano cuando su `/send` rebotaba por el
+  guard de D-153. Ahora va directo a `/annul` (D-110), el camino correcto para esos dos
+  orígenes. Sentinela nuevo: `invoicing-manual-origin-guard.spec.ts`.
+- **M0d — `PSE_ENABLED` (D-216).** Variable de entorno nueva, default `false`: apaga la
+  emisión electrónica con un rechazo de negocio explícito **antes** de tomar correlativo, en
+  vez de tomarlo y terminar en `SEND_ERROR` (que es lo que hacía el fail-closed implícito por
+  falta de credenciales, D-071/D-073, que sigue existiendo para la contingencia real). El gate
+  vive en `send`/`voidDocument`/`issueDispatchNote`/`retry`/`refreshStatus` (rechazo explícito)
+  y en `callProvider` (silencioso, para los caminos que no pueden lanzar: `deliver`,
+  `sendPending`). **A propósito NO vive en `assignInTx`/`assign`**: el mostrador llama
+  `assignInTx` directo dentro de la transacción atómica de la venta (D-099), y D-073 exige que
+  la venta se complete con el PSE apagado o caído — el gate ahí adentro habría roto el POS
+  entero, que es justo el estado real de `production` hoy. Test de regresión que fija esa
+  asimetría. `PSE_ENABLED=true` explícito en `dev` (heredado por `demo`) y en los dos jobs de
+  CI; `production` queda sin definirla a propósito. `smoke:prod` verifica que siga apagada
+  después de cada deploy.
+- **M0e (Node 20→24 en Actions): sacrificado, sin tocar.** El brief pedía no adivinar
+  versiones; no se investigó si los majors actuales (`checkout@v4`, `setup-node@v4`, etc.)
+  declaran Node 24 en sus release notes. Sin cambios — `NODE_VERSION: 24` en `ci.yml` ya
+  configura el runtime del **proyecto**, que es independiente del runtime en el que GitHub
+  ejecuta la acción misma.
+
+### M1 — precios de lista (D-217)
+
+- **M1a — modelo.** `product_list_price_changes`: historial append-only, mismo criterio que
+  `SalesPriceChange` (D-187) — tabla propia y no `audit_log`, sin relación Prisma a
+  `Product`/`User` (mismo patrón que esa tabla). Migración escrita a mano (patrón de
+  D-211/D-216). Reusa `saleValueFromPrice`/`salePriceFromValue`/`money` de
+  `packages/shared/src/tax.ts`, el único helper del sistema para IGV↔sin IGV — no hizo falta
+  uno nuevo.
+- **M1b — edición inline** en `/catalogo` (solo admin): tipea con IGV, guarda sin IGV,
+  consulta el piso de D-163 después de guardar (`GET /catalog/:id/price-floor`, misma
+  `computePriceFloors` que ya usa ventas) y avisa si queda bajo el piso sin bloquear. Botón
+  «Historial» abre el changelog del SKU.
+- **M1c — carga masiva** en `/catalogo/precios/importar`: mismo criterio que el importador de
+  cotizaciones (D-152) — preview sin estado (no guarda archivo ni lote), confirmar todo-o-nada
+  con `idempotencyKey`. Preview clasifica NEW/CHANGED/UNCHANGED/WARNING/ERROR; SKU desconocido,
+  ambiguo entre líneas de negocio (el SKU no es único global, D-050) o precio inválido son
+  ERROR y bloquean confirmar; bajo el piso o sin costo en el kardex son WARNING y no bloquean.
+  Revertir un lote restaura los valores anteriores desde el changelog y rechaza si algún SKU
+  tuvo un cambio posterior, nombrándolo.
+- **Bug real encontrado en el smoke manual** (crear producto → editar inline → cargar xlsx con
+  errores/avisos → confirmar → revertir → ver historial completo, en el navegador contra
+  `dev:local`): el scope de idempotencia del revert (con el `batchId` interpolado) pasaba de
+  los 60 caracteres de `idempotency_keys.scope` y rompía con `P2010`/`22001` — no lo agarraba
+  ningún test unitario con mocks, solo Postgres real. Corregido acortando el prefijo.
+
+### Verificación
+
+- `revisor`, `auditor-seguridad` y `qa` en paralelo sobre el diff completo de la sesión, al
+  cerrar M0+M1 (patrón del CLAUDE.md: «al terminar cada punto grande»).
+  - `revisor`: 1 hallazgo MEDIO (sin test de `confirm()`/`revert()`, las dos piezas más
+    difíciles de razonar del importador) y 2 BAJO (dedup de `productId` en confirm; tolerancia
+    duplicada) — **los tres corregidos**: 12 specs nuevos con fakes de `tx`, guard de producto
+    repetido, constante compartida.
+  - `auditor-seguridad`: 1 hallazgo MEDIO (`Bash(gh:*)` seguía en `allow`, y `gh api
+.../pulls/N/merge -X PUT` reproduce `gh pr merge` sin matchear el `deny` literal) —
+    **corregido** (`Bash(gh api:*)` a `deny`, verificado con un intento real). 2 BAJO/INFO: falta
+    `.max(2000)` en el schema de confirmación (**corregido**) y `refreshStatus()` llama al
+    proveedor sin pasar por `callProvider()` en una rama que hoy no es alcanzable con el flag
+    apagado — anotado, no corregido (robustez a futuro, no fuga activa).
+  - `qa`: `e2e/tests/precios-lista-d217.spec.ts`, 6/6 en verde (edición inline + historial,
+    error bloqueante, carga OK + revertir con badge de reversa, y las dos regresiones de D-068
+    — prellenado y congelamiento al editar una cotización emitida). No encontró bugs de la app.
+- `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check` en verde para todo el
+  monorepo (dos rondas, antes y después de los hallazgos de revisión).
+- Suite E2E completa: **no se corrió esta sesión** (deuda conocida de memoria del host, ver
+  sesiones anteriores; correrla desde un worktree con builds de producción queda para el
+  cierre de ventana, no de esta sesión sola). El spec nuevo se corrió suelto dos veces.
+
+### Lo que M2 (sacrificado) habría sido
+
+Card «SKUs con lista bajo piso» en el Panel: una sola consulta agregada (con presupuesto de
+queries, lección del card sin-stock de D-188), SKU con lista bajo el piso + SKU sin costo
+contados aparte, click al catálogo filtrado. Diseño completo en el brief de la sesión; sin
+código. Candidato natural para la sesión RF-S2 si el dueño lo prioriza, o para cuando exista
+más catálogo con precio de lista cargado (hoy solo el producto de prueba de esta sesión lo
+tiene, en `dev`).
+
+### Pendientes que esta sesión deja
+
+- **M2** (arriba).
+- **`refreshStatus()` sin `callProvider()` en la rama `VOID_PENDING`** (auditor-seguridad,
+  arriba) — robustez, no bloqueante.
+- **Nadie corrió la carga masiva de precios contra el catálogo real de `production`.** La
+  infraestructura está lista; cargar precios reales es una decisión y una acción del dueño,
+  no de esta sesión.
+- `/handoff rf-s1` con el resumen de cierre.
 
 ## Bloqueos
 
