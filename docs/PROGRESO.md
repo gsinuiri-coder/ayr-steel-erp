@@ -5976,6 +5976,174 @@ tiene, en `dev`).
   no de esta sesión.
 - `/handoff rf-s1` con el resumen de cierre.
 
+## Sesión RF-S2 (2026-09-16) — Auditoría
+
+Sesión 2 de 5 del lote (ver D-214). Trabajada en un **worktree separado**
+(`ayr-steel-erp-rf-s2`, rama `rf-s2`, creada desde `49fe903`) por instrucción explícita del
+dueño: los commits de RF-S1 en `main` quedaban pendientes de `push`/deploy esa misma noche, y
+esta sesión no debía interferir. **Nueve commits, todos en `rf-s2`, ninguno en `main`, sin
+merge ni push** — el dueño decide cuándo integrar esta rama. Alcance M0→M1→M2→M3 completo,
+sin partir (instrucción del brief); M4 y M5 eran sacrificables y **se llegó a tiempo a las
+dos** — nada se sacrificó en esta sesión.
+
+### PASO 0 — lo que cambió el plan escrito
+
+- **El brief asumía una tabla `audit_events` nueva; ya existía `AuditLog`/`AuditService`**
+  (RF-95, desde Fase 1), append-only por trigger de base, y ya instrumentada en ~28 archivos
+  de servicios de dominio con ~105 acciones distintas. Construir una tabla en paralelo habría
+  duplicado exactamente lo que ya resolvía. Decisión: extender, no crear (D-218).
+- **Ninguna escritura sensible sortea su servicio de dominio para tocar la base directo** —
+  la condición de "STOP AND REPORT" del brief no se disparó. Verificado por censo (grep de
+  `action: '...'` y de los `actor`/`before`/`after` reales que arma cada `auditView()`), hecho
+  a mano después de que un subagente `fork` lanzado para esta misma investigación devolviera
+  una respuesta confusa y autorreferencial tras consumir ~823K tokens sin producir nada
+  usable — abandonado, no repetido.
+- Changelogs dedicados que **no** se duplican, se leen aparte y se unen en el visor:
+  `SalesPriceChange` (D-187), `ProductListPriceChange` (D-217), `FiscalDocumentIssueDateChange`
+  (D-211).
+
+### M0 — higiene heredada de RF-S1
+
+- **La fila de D-217 nunca se había agregado a `ARQUITECTURA.md` §0.2** pese a usarse en todo
+  el código de esa sesión — gap propio, encontrado y corregido al abrir esta sesión (commit
+  `dc83120`, antes de que existiera nada de D-218). Los otros pendientes que dejaba RF-S1 (la
+  card M2 sacrificada, la nota de `refreshStatus()` sin `callProvider()`) no eran defectos
+  bloqueantes y quedan donde estaban.
+
+### M1 — modelo (D-218)
+
+`AuditLog` gana `actor_kind` (`USER`/`SYSTEM`), `reason` y `request_id` (migración
+`20260916153802_d218_audit_log_actor_kind_reason_request_id`, additiva). `request_id` se
+propaga con `AsyncLocalStorage` (`apps/api/src/common/request-context.ts` +
+`request-id.middleware.ts`) sin tocar las firmas de los ~80 métodos que ya llaman a
+`AuditService`. `apps/api/src/audit/audit-redact.ts` redacta `before`/`after` por nombre de
+clave antes de persistir (segunda red — ningún caller de hoy manda un secreto, verificado en
+PASO 0) y trunca si el JSON supera ~8000 caracteres.
+
+### M2 — mapa acción→fuente y alcance de los tests (D-219)
+
+Censo completo (grep de `action: '...'` en `apps/api/src`, más las cuatro acciones de
+`users.service.ts` que arman el string dinámico según qué cambió):
+
+| Módulo (archivo)                                      | Entidad(es)                                         | Acciones                                                                                                                                  |
+| ----------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth/auth.service.ts`                                | sessions/users                                      | 4 (login, login.failed, logout, password.changed)                                                                                         |
+| `catalog/catalog.service.ts`                          | products                                            | 2 (create, update)                                                                                                                        |
+| `catalog/price-list-import.service.ts`                | products                                            | 2 (price-list-import.confirm/revert)                                                                                                      |
+| `coils/coil-operations.service.ts`                    | coils                                               | 7 (cancel, open, scrap, scrap-cancel, split, split-revert, update)                                                                        |
+| `colors/colors.service.ts`                            | colors                                              | 2 (create, update)                                                                                                                        |
+| `customers/customers.service.ts`                      | customers                                           | 2 (create, update)                                                                                                                        |
+| `cutting/cutting.service.ts`                          | cutting_orders                                      | 4 (cancel, receive, receive-reverse, send)                                                                                                |
+| `exchange-rates/exchange-rates.service.ts`            | exchange_rates                                      | 1 (manual-set)                                                                                                                            |
+| `finishes/finishes.service.ts`                        | finishes                                            | 2 (create, update)                                                                                                                        |
+| `imports/initial-inventory-import.service.ts`         | coils                                               | 1 (imports.initial-inventory)                                                                                                             |
+| `imports/initial-inventory-product-import.service.ts` | products                                            | 1 (imports.initial-inventory-products)                                                                                                    |
+| `invoicing/dispatches.service.ts`                     | coils, dispatches                                   | 4 (coils.close/open, dispatch.create/reverse)                                                                                             |
+| `invoicing/fiscal-import.service.ts`                  | fiscal_documents                                    | 1 (import.annul)                                                                                                                          |
+| `invoicing/invoicing.service.ts`                      | fiscal_documents, fiscal_series, invoicing_settings | 16 (credit-note.create, dispatch-note.create, document.\* ×10, series.create/toggle, settings.update)                                     |
+| `invoicing/receivables.service.ts`                    | customer_payments                                   | 2 (payment, payment-reverse)                                                                                                              |
+| `pos/cash-sessions.service.ts`                        | cash_sessions                                       | 2 (open, close)                                                                                                                           |
+| `pos/pos.service.ts`                                  | pos_sales                                           | 3 (create, void, void-start)                                                                                                              |
+| `pricing/pricing.service.ts`                          | pricing_settings                                    | 1 (update)                                                                                                                                |
+| `production/production.service.ts`                    | production_orders                                   | 8 (cancel, close, consume, create, release, reopen, report, report-reverse)                                                               |
+| `production/roofing-production.service.ts`            | production_orders                                   | 10 (cancel, close, create, create_batch, mount, plan, release, reopen, report, report-reverse)                                            |
+| `production/roofing-drafts.service.ts`                | production_orders                                   | 1 (drafts-commit)                                                                                                                         |
+| `purchases/purchases.service.ts`                      | coils, purchases                                    | 9 (cutting-cost, landed-cost, cancel, create, payment, payment-reverse, receive, update-document, xml-preview)                            |
+| `sales/quotations.service.ts`                         | quotations                                          | 5 (cancel, create, duplicate, expire, update)                                                                                             |
+| `sales/sales-order-edits.service.ts`                  | sales_orders                                        | 4 (add-items, customer, item-price, item-qty)                                                                                             |
+| `sales/sales-orders.service.ts`                       | sales_orders, reservations, sales_settings          | 8 (order.cancel/confirm/promised-delivery-date, quotation.recalculate/release/reserve-temporary, reservation.release, settings.update)    |
+| `suppliers/suppliers.service.ts`                      | suppliers                                           | 2 (create, update)                                                                                                                        |
+| `users/users.service.ts`                              | users                                               | 4 (create, update, deactivate, role.change, password.reset — las últimas 4 comparten un `action` armado según qué cambió, no 4 literales) |
+
+Lista literal completa y sus etiquetas en español: `apps/web/src/lib/audit-labels.ts`
+(`AUDIT_ACTION_LABELS`).
+
+**Decisión de alcance (D-219): no se escribió un test de auditoría por cada una de las ~105
+acciones.** Cada `audit.write(tx, …)` vive en la misma transacción Prisma que la escritura que
+audita — rollback y no-duplicado-por-reintento ya los prueban el motor de transacciones y
+`claimIdempotencyKey` (D-182) en cada una de esas escrituras. Se agregaron tests nuevos para lo
+que esta sesión construyó: `audit-redact.spec.ts`, los tres campos nuevos de
+`audit.service.spec.ts`, `audit-cursor.spec.ts` y `audit-query.service.spec.ts`.
+
+### M3 — visor unificado (backend + frontend)
+
+`GET /audit` (admin-only) une `audit_log` con los tres changelogs por un cursor
+`(occurredAt, fuente, id)` con desempate de rank fijo entre fuentes — presupuesto de consultas
+**fijo, 4 fuentes + 1 lookup de actores por página, nunca N+1** (probado). Rango de fechas: 31
+días por defecto, tope 12 meses. Frontend en **Administración › Auditoría**
+(`apps/web/src/app/(app)/auditoria/`): filtros (tipo de entidad, id de entidad, usuario, rango
+de fechas), diff campo por campo (nunca JSON crudo), "Cargar más" por cursor, fecha/hora en
+Lima.
+
+### M4 — "Historial" en el detalle (sacrificable, se llegó a tiempo)
+
+Link admin-only en pedidos, cotizaciones, bobinas y comprobantes hacia
+`/auditoria?entityType=&entityId=`, ya filtrado a esa entidad (`AuditHistoryLink`).
+
+### M5 — eventos de login (sacrificable, ya estaba cubierto)
+
+`auth.login`/`auth.login.failed`/`auth.logout` ya se escribían desde fases anteriores — esta
+sesión no tuvo que construir nada, solo verificarlo (censo de M2) y darle etiqueta en el visor.
+UAT caso 7 lo confirma manualmente.
+
+### Verificación
+
+- `revisor`, `auditor-seguridad` y `qa` en paralelo sobre el diff completo, al cerrar M3
+  (patrón del CLAUDE.md).
+  - `revisor`: 1 **ALTO** (el desempate del merge comparaba `id` de `audit_log` como texto en
+    vez de `BigInt` — podía perder una fila en el borde exacto de una página con dos filas del
+    mismo milisegundo) y 2 **MEDIO** (`entityId` sin validar como UUID para los 4 tipos que lo
+    necesitan → 500 en vez de 400; un límite estructural más amplio de la paginación entre
+    fuentes distintas). **El ALTO y el primer MEDIO, corregidos**; el segundo MEDIO queda
+    **documentado como deuda** en D-220 (rediseñar la paginación con buffer de continuación por
+    fuente no es un fix acotado).
+  - `auditor-seguridad`: 1 MEDIO (falta un índice `(entity, at)` para el filtro "solo tipo de
+    entidad" — **corregido**, migración D-220) y 2 BAJO (`decodeCursor` sin validar forma
+    numérica del id de `audit_log` ni traducir su error a 400 — **corregido**; regex de
+    redacción angosta — **ampliada**). Sin hallazgos de control de acceso, inyección ni
+    secretos expuestos.
+  - `qa`: `e2e/tests/auditoria-d218.spec.ts`, 2/2 en verde (alta de usuario visible filtrando
+    por tipo+id; VENDEDOR sin el ítem de menú, `RoleGate` corta la UI, `GET /audit` responde
+    403 del server). No encontró bugs de la app.
+- `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check` en verde para todo el
+  monorepo, después de aplicar los hallazgos de revisión. **39 test suites, 483 tests, 0
+  fallidos** (API — `packages/shared` y `apps/web` no tienen suite unitaria propia, convención
+  ya existente del repo, no de esta sesión). El único hallazgo de `format:check` fue
+  `apps/web/next-env.d.ts` (generado por `next build`/`dev`, gitignored, nunca commiteado) con
+  estilo distinto al de Prettier — se agregó a `.prettierignore` en vez de dejarlo fallar cada
+  vez que alguien corre un build local.
+- **Suite E2E completa: no se corrió esta sesión** (misma deuda de memoria del host que ya
+  documentó RF-S1 — correrla necesita builds de producción y un worktree dedicado, fuera del
+  alcance de esta sesión sola). El spec nuevo se corrió suelto, dos veces (antes y después de
+  las correcciones de D-220), las dos en verde.
+
+### Migraciones nuevas y ventana de despliegue
+
+- `20260916153802_d218_audit_log_actor_kind_reason_request_id` — additiva (3 columnas
+  nullable/con default, 2 índices). Aplicada contra `ayr_local` y `ayr_local_e2e`.
+- `20260916170000_d220_audit_log_entity_at_index` — additiva (1 índice nuevo). Aplicada contra
+  `ayr_local` y `ayr_local_e2e`.
+- Ninguna de las dos toca datos existentes ni requiere ventana de mantenimiento — son
+  candidatas normales para el próximo `pnpm db:prod`/`db:deploy` cuando el dueño decida
+  integrar `rf-s2`. No se aplicaron contra `production` ni contra ninguna rama de Neon: esta
+  sesión trabajó enteramente contra el Postgres local (Docker, `ayr_local`/`ayr_local_e2e`).
+
+### Decisiones nuevas (`ARQUITECTURA.md` §0.2)
+
+D-217 (fila que faltaba, RF-S1), D-218 (extender `audit_log` en vez de `audit_events`), D-219
+(alcance de los tests por acción), D-220 (cinco correcciones de revisión + el límite de
+paginación entre fuentes documentado, no resuelto).
+
+### Pendientes que esta sesión deja
+
+- **El límite estructural de la paginación entre fuentes** (D-220): pérdida posible de una
+  fila en el borde exacto de una página si dos fuentes distintas empatan al milisegundo y una
+  de ellas superó el `pageSize` en ese instante. Acotado hoy (hace falta una carga masiva
+  grande cruzando el borde), no bloqueante para el cierre de esta sesión.
+- Suite E2E completa (arriba) — sigue pendiente de una sesión con worktree y builds de
+  producción dedicados, como ya quedó anotado al cerrar RF-S1.
+- `/handoff rf-s2` con el resumen de cierre.
+
 ## Incidente HOTFIX-DESFASE — web publicado sin su API (2026-09-16) — RESUELTO
 
 **Síntoma.** En producción todo comprobante abría con 401 + `TypeError` y la pantalla se caía.
