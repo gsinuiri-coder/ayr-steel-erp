@@ -962,7 +962,21 @@ export async function purgeInvoicingTrail(
     d.docType === 'NOTA_CREDITO' ? 0 : d.docType === 'GUIA_REMISION_REMITENTE' ? 2 : 1;
   for (const document of [...documents].sort((a, b) => rank(a) - rank(b))) {
     if (document.status === 'DRAFT' || document.status === 'VOIDED') continue;
-    if (document.status === 'REJECTED') continue;
+    if (document.status === 'REJECTED' || document.status === 'ANNULLED') continue;
+    // D-215/M0c: un `MANUAL` o `IMPORTED` nunca pasó por el PSE, así que ni la baja
+    // (`assertIssuedHere` la rechaza con 400 antes de llamar al proveedor) ni la nota de
+    // crédito enviada (`assignInTx` rechaza con 400 si el afectado es `MANUAL`, D-153)
+    // tienen dónde llegar. Antes esta rama igual las intentaba: la baja fallaba dos veces
+    // gastando dos llamadas al PSE simuladas, y para un `MANUAL` la nota de crédito sí se
+    // **creaba** como borrador (`createCreditNote` solo bloquea `IMPORTED` al crear) y
+    // quedaba huérfana cuando el `/send` posterior rebotaba — residuo silencioso, no gasto
+    // de cupo. La anulación interna (`annulExternal`, D-110/D-153) es el camino correcto
+    // para los dos orígenes y no toca al proveedor.
+    if (document.origin !== 'ISSUED_HERE') {
+      await api.post(`/api/invoicing/documents/${document.id}/annul`, { data: { reason } })
+        .catch(() => undefined);
+      continue;
+    }
     // Dos intentos de baja, no uno: contra SUNAT la comunicación de baja **no es
     // instantánea**, así que la primera llamada puede volver sin confirmación aunque la
     // baja haya entrado. El segundo intento la reconoce ("ya fue anulado") y deja el
