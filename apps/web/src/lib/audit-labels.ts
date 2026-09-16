@@ -121,6 +121,36 @@ const CHANGELOG_ACTION_LABELS: Record<string, string> = {
   fiscal_document_issue_date_change: 'Corrección de fecha de emisión',
 };
 
+/** Etiquetas del filtro "Tipo de entidad" del visor — cubre todo `AUDIT_ENTITY_TYPES`. */
+export const AUDIT_ENTITY_TYPE_LABELS: Record<string, string> = {
+  cash_sessions: 'Sesiones de caja',
+  coil_splits: 'Partidos de bobina',
+  coils: 'Bobinas',
+  colors: 'Colores',
+  customer_payments: 'Cobros',
+  customers: 'Clientes',
+  cutting_orders: 'Órdenes de corte',
+  dispatches: 'Despachos',
+  exchange_rates: 'Tipo de cambio',
+  finishes: 'Acabados',
+  fiscal_documents: 'Comprobantes',
+  fiscal_series: 'Series de comprobante',
+  invoicing_settings: 'Configuración de facturación',
+  pos_sales: 'Ventas de mostrador',
+  pricing_settings: 'Configuración de precios',
+  product_boms: 'Recetas de producto',
+  production_orders: 'Órdenes de producción',
+  products: 'Productos',
+  purchases: 'Compras',
+  quotations: 'Cotizaciones',
+  reservations: 'Reservas',
+  sales_orders: 'Pedidos',
+  sales_settings: 'Configuración de ventas',
+  sessions: 'Sesiones',
+  suppliers: 'Proveedores',
+  users: 'Usuarios',
+};
+
 /** Nunca deja una acción sin leer: lo que no está en el mapa se separa por `.`/`-`/`_`. */
 function humanizeAction(action: string): string {
   const words = action.split(/[._-]/).filter(Boolean).join(' ');
@@ -130,4 +160,8 @@ function humanizeAction(action: string): string {
 export function auditActionLabel(action: string, source: string): string {
   if (source !== 'audit_log') return CHANGELOG_ACTION_LABELS[source] ?? humanizeAction(action);
   return AUDIT_ACTION_LABELS[action] ?? humanizeAction(action);
+}
+
+export function auditEntityTypeLabel(entityType: string): string {
+  return AUDIT_ENTITY_TYPE_LABELS[entityType] ?? humanizeAction(entityType);
 }

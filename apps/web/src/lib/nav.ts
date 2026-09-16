@@ -6,6 +6,7 @@ import {
   ClipboardList,
   FileText,
   Hammer,
+  History,
   Home,
   Layers,
   PackageSearch,
@@ -194,6 +195,13 @@ export const NAV: NavGroup[] = [
         href: '/configuracion/margenes',
         activePrefix: '/configuracion',
         icon: Percent,
+        roles: [Role.ADMINISTRADOR],
+      },
+      {
+        // D-218/RF-S2/M3: visor unificado de auditoría, admin-only (RF-95).
+        title: 'Auditoría',
+        href: '/auditoria',
+        icon: History,
         roles: [Role.ADMINISTRADOR],
       },
     ],
