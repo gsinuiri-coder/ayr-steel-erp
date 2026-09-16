@@ -5,6 +5,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { requestIdMiddleware } from './common/request-id.middleware';
 import { ENV, type Env } from './config/env';
 
 async function bootstrap(): Promise<void> {
@@ -15,6 +16,7 @@ async function bootstrap(): Promise<void> {
   app.set('trust proxy', 1);
   app.use(helmet());
   app.use(cookieParser());
+  app.use(requestIdMiddleware);
   app.enableCors({
     origin: env.webOrigins,
     credentials: true,

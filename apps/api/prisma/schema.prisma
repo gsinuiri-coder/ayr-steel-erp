@@ -505,20 +505,37 @@ model Session {
   @@map("sessions")
 }
 
-/// Auditoría append-only (§3.3, RF-95). Nunca se actualiza ni se borra.
+/// Auditoría append-only (§3.3, RF-95). Nunca se actualiza ni se borra (trigger de base,
+/// D-218/RF-S2: `audit_log_no_update_delete`, sin excepción de entorno).
 model AuditLog {
-  id       BigInt   @id @default(autoincrement())
-  actorId  String?  @map("actor_id") @db.Uuid
-  action   String   @db.VarChar(80)
-  entity   String   @db.VarChar(80)
-  entityId String?  @map("entity_id") @db.VarChar(80)
-  before   Json?
-  after    Json?
-  at       DateTime @default(now()) @db.Timestamptz(3)
+  id        BigInt         @id @default(autoincrement())
+  actorId   String?        @map("actor_id") @db.Uuid
+  /// D-218: quién generó el evento cuando `actorId` es null — un job o un proceso de
+  /// sistema, no "nadie". `USER` es el default (todo lo escrito antes de esta columna lo
+  /// era) y es el único valor que puede convivir con `actorId` no nulo.
+  actorKind AuditActorKind @default(USER) @map("actor_kind")
+  action    String         @db.VarChar(80)
+  entity    String         @db.VarChar(80)
+  entityId  String?        @map("entity_id") @db.VarChar(80)
+  before    Json?
+  after     Json?
+  /// D-218: motivo, cuando la operación lo pide (una reversa, una anulación). La mayoría de
+  /// los eventos no lo necesita — el `action` y el `before`/`after` ya dicen qué pasó.
+  reason    String?        @db.VarChar(500)
+  /// D-218: correlaciona todos los eventos de una misma petición HTTP (`RequestIdMiddleware`).
+  /// Nulo en lo escrito antes de esta columna y en los procesos de sistema sin request.
+  requestId String?        @map("request_id") @db.Uuid
+  at        DateTime       @default(now()) @db.Timestamptz(3)
 
-  @@index([entity, entityId])
+  @@index([entity, entityId, at])
   @@index([actorId, at])
+  @@index([at])
   @@map("audit_log")
+}
+
+enum AuditActorKind {
+  USER
+  SYSTEM
 }
 
 /// Deduplicación de creaciones repetibles (D-182, F8-S1/M2): un reporte de producción o un
