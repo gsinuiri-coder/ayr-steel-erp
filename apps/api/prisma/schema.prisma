@@ -528,6 +528,11 @@ model AuditLog {
   at        DateTime       @default(now()) @db.Timestamptz(3)
 
   @@index([entity, entityId, at])
+  /// D-220: el filtro "solo tipo de entidad" del visor (sin `entityId`) no usa el índice de
+  /// arriba — ordena primero por `entityId`, así que Postgres no puede entregar ya ordenado
+  /// por `at DESC` para ese `entity` y termina ordenando en memoria toda la tabla de esa
+  /// entidad en el rango pedido. Este índice cubre ese caso.
+  @@index([entity, at])
   @@index([actorId, at])
   @@index([at])
   @@map("audit_log")

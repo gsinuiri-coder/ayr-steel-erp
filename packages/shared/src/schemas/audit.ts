@@ -80,6 +80,16 @@ export const AUDIT_MAX_RANGE_MONTHS = 12;
 export const AUDIT_PAGE_SIZE = 50;
 export const AUDIT_MAX_PAGE_SIZE = 200;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Los `entityType` cuyo adaptador de changelog filtra `entityId` contra una columna
+ * `@db.Uuid` (`salesOrderId`/`quotationId`/`productId`/`documentId` en
+ * `AuditQueryService`). Un `entityId` que no tiene forma de UUID ahí revienta Postgres con un
+ * error de sintaxis, no un 400 de negocio — se valida acá antes de llegar a la consulta.
+ */
+const AUDIT_UUID_ENTITY_TYPES = ['sales_orders', 'quotations', 'products', 'fiscal_documents'];
+
 export const auditQuerySchema = z
   .object({
     entityType: z.enum(AUDIT_ENTITY_TYPES).optional(),
@@ -100,7 +110,15 @@ export const auditQuerySchema = z
   .refine((q) => q.entityId === undefined || q.entityType !== undefined, {
     message: 'entityId exige entityType',
     path: ['entityId'],
-  });
+  })
+  .refine(
+    (q) =>
+      q.entityId === undefined ||
+      q.entityType === undefined ||
+      !AUDIT_UUID_ENTITY_TYPES.includes(q.entityType) ||
+      UUID_RE.test(q.entityId),
+    { message: 'entityId debe ser un UUID para este tipo de entidad', path: ['entityId'] },
+  );
 export type AuditQuery = z.infer<typeof auditQuerySchema>;
 
 export const auditPageSchema = z.object({

@@ -6,10 +6,14 @@
  * blanca de campos, nunca el modelo de Prisma entero). Esto es la segunda red, no la
  * primera: si un llamador futuro pasa el objeto completo por descuido, una clave que
  * *parezca* un secreto no llega a quedar en texto plano en una tabla que después va a tener
- * un visor abierto a todo ADMINISTRADOR (M3) — mismo criterio y mismo patrón de regex que
- * `scripts/lib.mjs#run` ya usa para los mensajes de error de un proceso hijo (regla dura 5).
+ * un visor abierto a todo ADMINISTRADOR (M3) — mismo criterio (redactar por nombre de clave)
+ * que `scripts/lib.mjs#run` ya usa para los mensajes de error de un proceso hijo (regla dura
+ * 5), aunque acá la lista de palabras es más ancha: la de `lib.mjs` es específica de las
+ * credenciales de Neon/gcloud que esa regla documenta, esta es la segunda red genérica de
+ * cualquier servicio de dominio.
  */
-const SECRET_KEY_PATTERN = /secret|password|token/i;
+const SECRET_KEY_PATTERN =
+  /secret|password|token|apikey|authorization|credential|cookie|privatekey|clientid/i;
 const REDACTED = '[redactado]';
 
 /** Tope por evento (before + after combinados), documentado: ~8000 caracteres de JSON. Un

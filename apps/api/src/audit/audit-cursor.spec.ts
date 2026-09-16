@@ -13,6 +13,33 @@ describe('audit-cursor (D-218/RF-S2)', () => {
     expect(() => decodeCursor(Buffer.from('{}').toString('base64url'))).toThrow();
   });
 
+  it('decodeCursor rechaza una fuente desconocida', () => {
+    const raw = Buffer.from(
+      JSON.stringify({ occurredAt: '2026-09-16T10:00:00.000Z', source: 'no_existe', id: '1' }),
+    ).toString('base64url');
+    expect(() => decodeCursor(raw)).toThrow('Cursor de auditoría inválido');
+  });
+
+  it('decodeCursor rechaza un id no numérico para audit_log (revienta BigInt() más abajo)', () => {
+    const raw = Buffer.from(
+      JSON.stringify({
+        occurredAt: '2026-09-16T10:00:00.000Z',
+        source: 'audit_log',
+        id: 'no-es-un-bigint',
+      }),
+    ).toString('base64url');
+    expect(() => decodeCursor(raw)).toThrow('Cursor de auditoría inválido');
+  });
+
+  it('decodeCursor acepta un id no numérico para una fuente de UUID', () => {
+    const c = {
+      occurredAt: '2026-09-16T10:00:00.000Z',
+      source: 'sales_price_change' as const,
+      id: 'c1a2b3c4-d5e6-4f78-9012-3456789abcde',
+    };
+    expect(decodeCursor(encodeCursor(c))).toEqual(c);
+  });
+
   it('sin cursor, no hay condición de borde', () => {
     expect(afterCursorWhere(sourceRank('audit_log'), null)).toBeNull();
   });

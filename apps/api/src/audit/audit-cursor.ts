@@ -32,7 +32,13 @@ export function decodeCursor(raw: string): AuditCursor {
       parsed === null ||
       typeof (parsed as { occurredAt?: unknown }).occurredAt !== 'string' ||
       typeof (parsed as { source?: unknown }).source !== 'string' ||
-      typeof (parsed as { id?: unknown }).id !== 'string'
+      typeof (parsed as { id?: unknown }).id !== 'string' ||
+      !AUDIT_SOURCES.includes((parsed as { source: AuditSource }).source) ||
+      // `audit_log.id` es BigInt (`audit-query.service.ts` lo pasa por `BigInt(...)` para el
+      // `where` de la página siguiente): un cursor crafteado a mano con un id no numérico ahí
+      // revienta `BigInt(...)` con un error sin capturar en vez de este 400 controlado.
+      ((parsed as { source: AuditSource }).source === 'audit_log' &&
+        !/^\d+$/.test((parsed as { id: string }).id))
     ) {
       throw new Error('forma inválida');
     }

@@ -58,7 +58,7 @@ export class AuditQueryService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findPage(query: AuditQuery): Promise<AuditPageDto> {
-    const cursor = query.cursor ? decodeCursor(query.cursor) : null;
+    const cursor = query.cursor ? this.decodeCursorOrThrow(query.cursor) : null;
     const { fromUtc, toUtc } = this.resolveRange(query.from, query.to);
 
     const filters: Filters = {
@@ -81,7 +81,18 @@ export class AuditQueryService {
       if (byTime !== 0) return byTime;
       const byRank = sourceRank(a.source) - sourceRank(b.source);
       if (byRank !== 0) return byRank;
-      return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+      // Mismo rank: mismo desempate que `afterCursorWhere` usa en el `where` de Prisma para
+      // esta fuente — comparar como texto un `id` de `audit_log` (BigInt) es incorrecto en
+      // cuanto los ids cruzan una cantidad de dígitos ("10" < "9" como texto), y desalinearía
+      // el orden en memoria del que arma la página siguiente contra el `id: { lt: BigInt(...) } `
+      // que de verdad corre en la base.
+      return a.source === 'audit_log'
+        ? BigInt(a.id) < BigInt(b.id)
+          ? 1
+          : -1
+        : a.id < b.id
+          ? 1
+          : -1;
     });
     const page = merged.slice(0, query.pageSize);
 
@@ -105,6 +116,16 @@ export class AuditQueryService {
       items: page.map((p) => this.toDto(p, actorNameById)),
       nextCursor,
     };
+  }
+
+  /** `decodeCursor` tira un `Error` plano (no una `HttpException`): sin este envoltorio, un
+   *  cursor inválido/crafteado a mano terminaba en 500 genérico en vez de un 400 de negocio. */
+  private decodeCursorOrThrow(raw: string): AuditCursor {
+    try {
+      return decodeCursor(raw);
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : 'Cursor inválido');
+    }
   }
 
   /** Rango por defecto: los últimos 31 días. Tope: 12 meses — el dueño lo pidió acotado. */

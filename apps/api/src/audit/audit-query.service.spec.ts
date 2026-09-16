@@ -130,6 +130,47 @@ describe('AuditQueryService.findPage (D-218)', () => {
     expect(page.items[1]!.source).toBe('audit_log');
   });
 
+  it('desempata dos filas de audit_log con el mismo instante por id numérico, no por texto', async () => {
+    // Regresión: comparar `id` como texto pone "10" antes que "9" (falso: 9n es menor). Dos
+    // filas de `audit_log` con el mismo `at` (mismo milisegundo, plausible dentro de una misma
+    // transacción) tienen que quedar en el mismo orden que el `ORDER BY id DESC` de la
+    // consulta real — el mayor primero — o el corte de página puede perder la fila de id
+    // mayor para siempre.
+    const sameInstant = NOW;
+    const { prisma } = fakePrisma({
+      auditLogRows: [
+        {
+          id: 10n,
+          at: sameInstant,
+          actorId: null,
+          actorKind: 'SYSTEM',
+          action: 'job.sweep',
+          entity: 'sessions',
+          entityId: null,
+          before: null,
+          after: null,
+          reason: null,
+        },
+        {
+          id: 9n,
+          at: sameInstant,
+          actorId: null,
+          actorKind: 'SYSTEM',
+          action: 'job.sweep',
+          entity: 'sessions',
+          entityId: null,
+          before: null,
+          after: null,
+          reason: null,
+        },
+      ],
+    });
+    const service = new AuditQueryService(prisma);
+    const page = await service.findPage({ pageSize: 50 });
+
+    expect(page.items.map((i) => i.id)).toEqual(['10', '9']);
+  });
+
   it('hasMore: si una fuente devolvió exactamente pageSize filas, arma un cursor', async () => {
     const rows = Array.from({ length: 2 }, (_, i) => ({
       id: BigInt(i + 1),
