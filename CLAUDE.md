@@ -35,7 +35,7 @@ ERP web para una empresa peruana de transformación y venta de acero. Fuente de 
    - La contraseña del rol `neondb_owner` es **la misma en las cuatro ramas** de Neon: exponer la cadena de `dev` o de `demo` es exponer la de `production`.
    - **Un comando también las imprime cuando sale bien**, y esa es la tercera vía. `neonctl branches create` escribe `connection_uris` —con la contraseña en texto plano— en su **salida de éxito**, no en un error: las dos viñetas de arriba no lo cubrían y por eso pasó (ventana del 2026-09-10, 11:54 UTC; ver `docs/PROGRESO.md`). Todo comando que pueda emitir credenciales —`neonctl`, cualquier `connection-string`, un dump de configuración, `gcloud … describe` sobre un secreto— se invoca **vía `scripts/lib.mjs#run` con `quiet: true` y `--output json`**, leyendo del JSON solo los campos que hacen falta. Nunca directo por `cmd /c` con la salida a la vista, ni con `stdio: 'inherit'`.
    - **Ante una fuga: la credencial se rota, no se «tiene cuidado».** Rotar `neondb_owner` es `neonctl roles reset-password` y después actualizar `.env.setup`, los secretos de Secret Manager en GCP y los de GitHub Actions. Mientras no se rote, la credencial de producción está comprometida y hay que decirlo en `docs/PROGRESO.md` con la fecha y la hora exactas del incidente.
-6. **Git**: nunca `git push --force`. Commits pequeños por punto de alcance.
+6. **Git**: `git push` (en cualquier forma) está fuera del auto-allow (`deny` en `.claude/settings.json`, D-214/M0a): el agente nunca empuja, ni con `--force` ni sin él. El agente commitea en local, en commits pequeños por punto de alcance, y al cierre imprime la lista de commits y el comando de push; lo corre el dueño. Lo mismo alcanza a fusionar o sincronizar por `gh` (`gh pr merge`, `gh repo sync`): son push indirecto y están denegados igual.
 7. **Windows**: scripts cross-platform (Node/pnpm), sin bash-isms. `gcloud` se invoca vía `cmd /c gcloud ...` desde Git Bash.
 8. **Comandos desde la raíz (D-063)**: nunca prefijar un comando con `cd ... &&`. Correr siempre desde la raíz del repo con rutas relativas (`grep -rn "x" apps/api/src`, no `cd apps/api && grep ...`). Un comando de diagnóstico (`grep`/`rg`/`ls`/`find`/`head`/`tail`/`wc`) **jamás** apunta a `.env*` ni a rutas que puedan expandirse a ellos: la regla dura 5 y el `deny` de `Read(**/.env*)` (D-062) no se esquivan por Bash.
 9. **Nunca correr la suite E2E contra producción (D-126).** `pnpm e2e:prod` queda prohibido como rutina desde que producción tiene datos reales: crea compras, bobinas, órdenes y despachos que el kardex append-only no siempre puede deshacer. La verificación post-deploy es `pnpm smoke:prod` (solo lectura). La suite completa vive en local y en CI (rama `ci`). `pnpm prod:purge-e2e` queda solo para emergencias, y cada uso se documenta en `docs/PROGRESO.md`.
@@ -64,6 +64,9 @@ pnpm dev:local                       # Postgres en Docker + migrate + seed + api
 pnpm dev:preview                     # api :4000 + web :4001 contra ayr_local — puertos del DUEÑO (regla dura 15)
 pnpm db:local reset|snapshot <n>|restore <n>   # operar el Postgres local (Docker)
 pnpm e2e                     # Playwright, por defecto contra el Postgres local (Docker); en CI, Postgres del runner (D-202)
+pnpm exec playwright test e2e/tests/<archivo>.spec.ts   # UN spec suelto. "pnpm e2e -- <archivo>" NO sirve para esto:
+                              # el filtro posicional se ignora y corre la suite completa en silencio (con --grep sí anda,
+                              # porque es una opción y no un posicional).
 pnpm e2e:smoke               # ~12 specs representativos; en CI, contra Neon rama ci (D-202)
 pnpm e2e:pse                 # solo los casos @pse (necesitan cupo de la cuenta demo de Nubefact, docs/ENTORNOS.md)
 pnpm env:demo | db:demo | dev:demo   # entorno de ensayo (rama Neon demo, D-125)
@@ -74,6 +77,8 @@ pnpm secrets:gh              # gh secret set desde .env.setup
 pnpm deploy:api | deploy:web # Cloud Run / Vercel
 pnpm monitors                # UptimeRobot
 ```
+
+**Suite completa en esta máquina:** en modo dev el host no aguanta la corrida completa — la mata por memoria cerca del test 308 de ~347. No intentar `pnpm e2e` completo con builds de dev. Correrla desde un `git worktree` con builds de producción (`next start` + `node dist/main.js`, patrón de `scripts/e2e-latency.mjs`): entra entera y tarda ~25 min en vez de ~1,6 h con OOM. El worktree evita pisar `apps/web/.next` del repo principal, que es el de `pnpm dev:preview` del dueño (regla dura 15).
 
 ## Subagentes (`.claude/agents/`)
 
@@ -88,4 +93,4 @@ pnpm monitors                # UptimeRobot
 2. Actualizar `docs/PROGRESO.md` (estado, bloqueos).
 3. Nuevas decisiones → `docs/ARQUITECTURA.md` §0.2 (y `docs/DECISIONES.md` si necesitan contexto).
 4. `/handoff <fase-o-tema>` → `docs/handoff/<nombre>.md`.
-5. Commit y push a `main`. Verificar CI verde en GitHub Actions.
+5. Commits locales (nunca push, regla dura 6): al cierre, imprimir la lista de commits y el comando de push para que lo corra el dueño. Después de que empuje, verificar CI verde en GitHub Actions.
