@@ -5867,6 +5867,101 @@ tiene, en `dev`).
   no de esta sesión.
 - `/handoff rf-s1` con el resumen de cierre.
 
+## Incidente HOTFIX-DESFASE — web publicado sin su API (2026-09-16) — RESUELTO
+
+**Síntoma.** En producción todo comprobante abría con 401 + `TypeError` y la pantalla se caía.
+
+**Causa.** La ventana F8-S7 hizo push de `f92a3df` a `main` (12:46 UTC), y eso publicó el web en
+Vercel solo, pero **nadie desplegó la API**. Cloud Run seguía sirviendo
+`ayr-steel-erp-api-00034-drz` (02:38 UTC, anterior a `f92a3df`), y el web nuevo llamaba a
+endpoints y leía campos de D-211..D-213 que esa API no tenía. Además la migración de D-211 no
+estaba aplicada. La revisión no llevaba ningún dato del commit (imagen por digest, sin label),
+así que el desfase no se veía desde Cloud Run.
+
+**Fix (sin cambios de código).**
+
+| Paso               | Resultado                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Worktree           | `git worktree add ../ayr-deploy-f92a3df f92a3df`, HEAD `f92a3dffb509…` verificado; ni `main` local (RF-S1 sin push) ni `hotfix-401` ni `rf-s2`. Borrado al cierre.                                                                                                                                                                                                                                      |
+| Cupo de ramas Neon | El proyecto estaba en 10/10. Con OK del dueño por nombre se borraron `respaldo-pre-deploy-20260909` (`br-dark-firefly-aezu7m4q`) y `respaldo-pre-hotfix-2026-09-10` (`br-muddy-flower-ae8ik7ae`), verificando id = nombre antes de cada borrado. Razón: las dos eran anteriores a la carga real del día D (15-09); restaurar desde ellas perdía toda la operación real. Nueva política en `CLAUDE.md`.  |
+| Respaldo           | Rama `pre-api-f92a3df` (`br-orange-scene-aexe1p9y`), creada 2026-09-16T23:16:54Z desde `production`, `ready`. Neon queda en 9 ramas.                                                                                                                                                                                                                                                                    |
+| Migración          | Pendiente única: `20260916060618_s7_fecha_emision_manual_editable` (D-211, solo agrega: tabla `fiscal_document_issue_date_changes` + índice + FK). `migrate deploy` → **67/67**, `migrate status` sin pendientes. `migrate diff` **no vacío**, pero solo con el drift previo que D-211 ya documenta (defaults de `operation_date`, FK recreadas, dos índices y un renombre); la tabla nueva no aparece. |
+| Deploy             | `gcloud run deploy ayr-steel-erp-api --source . --update-labels git-sha=f92a3df`, **sin** flags de env ni secretos (no `pnpm deploy:api`, que las reescribe). Mismo `Dockerfile`/`.gcloudignore` sin cambios desde Fase 0. Revisión **`ayr-steel-erp-api-00035-rd9`** al 100 %, label `git-sha=f92a3df` en servicio y revisión.                                                                         |
+| Paridad de config  | Nombres de variables y secretos de `00035-rd9` idénticos a `00034-drz` (comparados sin imprimir valores), incluida la variable de nombre roto, que no se tocó. cpu 1 / 512Mi / max 2 / puerto 8080 iguales.                                                                                                                                                                                             |
+| Verificación       | `/health` 200 directo y por `v2.mareliac.pe/api/health` (`db: ok`). `pnpm smoke:prod` 6/7: la única falla es el chequeo de D-216 (`PSE_ENABLED`), que vive en `main` local (RF-S1, sin push) y la API `f92a3df` no expone — esperable, no una regresión. Dueño: los dos comprobantes (`7bef5114…`, `30bcccd9…`) **abren sin 401 ni crash — verificado por el dueño**. Incidente resuelto.               |
+
+**Prevención.** Regla nueva en `CLAUDE.md`: toda ventana cierra comparando el label `git-sha` de
+la revisión activa con `origin/main`, y la API se despliega siempre con ese label. Además: el
+smoke de prod se corre desde un worktree en el mismo SHA desplegado (el 6/7 de esta ventana fue
+por correrlo desde `main` local), y un `migrate diff` no vacío en una ventana solo se acepta si
+coincide exactamente con el drift ya documentado.
+
+### Hallazgo colateral — variables de entorno de Cloud Run con nombre roto (severidad BAJA)
+
+Desde al menos la revisión `00029-n7q` (2026-09-10), y también en `00033`, `00034` y `00035`,
+Cloud Run no tiene `NODE_ENV`, `WEB_ORIGIN` ni `JOBS_ENABLED`: tiene **una sola variable**
+cuyo nombre es literalmente `"^|^NODE_ENV` (con la comilla) y cuyo valor, de 77 caracteres, es
+el resto de la lista.
+
+- **Causa.** `scripts/deploy-api.mjs` pasa `--set-env-vars ^|^NODE_ENV=…|WEB_ORIGIN=…|JOBS_ENABLED=true`
+  por `lib.mjs#run`, que en Windows arma `cmd /d /s /c` y `q()` envuelve en comillas todo
+  argumento con `^` o `|`. La comilla llega pegada al argumento que ve `gcloud.cmd`, el prefijo
+  `^|^` ya no está al principio, gcloud no lo reconoce como delimitador y parte por comas: una
+  sola variable.
+- **Impacto real (auditado sobre `f92a3df`, solo lectura).** `apps/api/src/config/env.ts` las
+  lee con defaults, y los usos son pocos:
+  - `NODE_ENV` → `isProduction` → solo `cookieSecure` (`env.ts:119`, usado en
+    `auth/cookies.ts:11`). **Sin impacto**: el `Dockerfile:23` fija `ENV NODE_ENV=production`
+    en la imagen, así que las cookies salen `Secure`.
+  - `WEB_ORIGIN` → CORS (`main.ts:19`). Queda en el default `http://localhost:3001`, verificado:
+    un preflight desde `https://v2.mareliac.pe` no recibe `Access-Control-Allow-Origin`, y uno
+    desde `http://localhost:3001` sí. **Sin impacto funcional**: el navegador nunca llama a la
+    API directo, el proxy `/api/*` del web es server-side (D-022). Que CORS acepte
+    `localhost:3001` con credenciales no expone nada: las cookies de sesión son del dominio del
+    web y `SameSite=lax`.
+  - `JOBS_ENABLED` → pg-boss y jobs (`jobs.service.ts:23`, `quotation-expiry.job.ts:32`,
+    `invoicing-send.job.ts:34`). El default es `true`, que es el valor buscado. **Sin impacto.**
+  - No hay Swagger, rutas de test/e2e/seed/purga ni detalle de errores que dependan de
+    `NODE_ENV`: los 23 controladores son de dominio más `health`. `THROTTLE_DISABLED` no está
+    seteada (default `false`): rate limit activo.
+- **Fix propuesto (NO ejecutado, sesión propia con OK del dueño).**
+  1. `deploy-api.mjs`: dejar `--set-env-vars` y pasar las variables con
+     `--env-vars-file <yaml temporal>`, que no pasa por el parseo de `cmd`; después del deploy,
+     comparar los nombres de las variables de la revisión nueva contra la lista esperada y
+     fallar si no coinciden. Agregar `--update-labels git-sha=<sha>`.
+  2. Corregir producción con un YAML de `NODE_ENV: production`, `WEB_ORIGIN: https://v2.mareliac.pe`
+     (sumar `https://ayr-steel-erp-web.vercel.app` solo si se decide mantenerlo) y
+     `JOBS_ENABLED: "true"`:
+     `gcloud run services update ayr-steel-erp-api --region us-central1 --env-vars-file <yaml> --update-labels git-sha=<sha activo>`.
+     `--env-vars-file` reemplaza la lista entera de variables planas, lo que elimina también
+     `"^|^NODE_ENV` sin tener que escribir ese nombre en la shell. **Verificar antes en `demo` o
+     con la comparación de nombres** que no quita los secretos montados; si los quitara, repetir
+     `--update-secrets` con la lista de `deploy-api.mjs`.
+
+### Deuda registrada para S3 (sin ejecutar)
+
+1. **Drift de schema en producción.** `migrate diff` contra `production` (con `schema.prisma`
+   de `f92a3df`) muestra, y es exactamente lo que este incidente acepta como drift documentado:
+   - defaults de `operation_date` en `coils`, `cutting_orders`, `inventory_movements`,
+     `production_orders` y `production_reports` (la base tiene
+     `(now() AT TIME ZONE 'America/Lima')::date`, el schema no);
+   - FK recreadas en `dispatches.invoice_id`, `finishes.color_id`, `production_orders.bom_id`,
+     `products.finish_id` y `raw_material_specs.color_id`;
+   - índices que la base tiene y el schema no: `products(finish_id)` y
+     `sales_orders(origin, status)`;
+   - índice renombrado `raw_material_specs_lookup_idx` →
+     `raw_material_specs_business_line_id_thickness_mm_idx`.
+
+   Fix: migración de reconciliación, **ensayada primero en una rama Neon clonada de
+   `production`**, que alinee `schema.prisma` con la base. Probablemente declarando en el
+   schema lo que la base ya tiene y no al revés: los defaults de `operation_date` son D-124.
+   Cualquier diferencia contra esta lista en una ventana futura → PARA.
+
+2. **`deploy-api.mjs` y las variables rotas.** Pasar a `--env-vars-file` con verificación
+   post-deploy de los nombres de variables; probar primero en `demo` si toca los secretos
+   montados. Recién después fijar `NODE_ENV`/`WEB_ORIGIN`/`JOBS_ENABLED` en producción y quitar
+   `"^|^NODE_ENV` (ver hallazgo colateral arriba).
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
