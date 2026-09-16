@@ -300,6 +300,11 @@ production`. Si alguna muta datos, se dice en `PROGRESO.md` cuál y qué hace.
      así que no hace falta dejar la cuenta en 0 exacto para no chocar con números viejos. Un
      rojo de «documento ya existe» después de D-202 **no** se acepta por clasificación: es un
      defecto.
+   - **Rollover: el 2028-04-22.** El offset de D-202 es
+     `10 000 000 + (epoch en segundos mod 80 000 000)`, y ese rango da la vuelta ese día: a
+     partir de ahí los correlativos vuelven a empezar y hay que **vaciar la cuenta demo una
+     vez** para que no choquen con números ya usados. Cita exacta en D-202
+     (`docs/ARQUITECTURA.md` §0.2).
 5. **Deploy:** `pnpm deploy:api` y verificar `/health`; web por push a `main` (Vercel).
 6. **`pnpm smoke:prod`** (solo lectura, D-126). Nunca `pnpm e2e:prod`.
 
