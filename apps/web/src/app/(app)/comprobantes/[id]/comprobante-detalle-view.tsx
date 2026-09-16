@@ -114,7 +114,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
 
   const discard = useMutation({
     // El API responde 204 sin cuerpo; `api` devuelve `undefined` en ese caso.
-    mutationFn: () => api<undefined>(`/invoicing/documents/${id}`, { method: 'DELETE' }),
+    // HOTFIX-401/M2: motivo obligatorio, para que la auditoría diga por qué.
+    mutationFn: (reason: string) =>
+      api<undefined>(`/invoicing/documents/${id}`, { method: 'DELETE', body: { reason } }),
     onSuccess: () => {
       toast.success('Borrador descartado');
       refresh();
@@ -1107,40 +1109,17 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         {d.sendAttempts > 0 && <> Intentos de envío: {d.sendAttempts}.</>}
       </div>
 
-      <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Descartar este borrador</DialogTitle>
-            <DialogDescription>
-              Un borrador no tomó correlativo y SUNAT nunca supo de él, así que se borra sin dejar
-              hueco en la numeración. Es lo único de facturación que se borra de verdad: todo lo
-              demás se anula y se conserva.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDiscardOpen(false);
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              pending={discard.isPending}
-              pendingText="Descartando…"
-              onClick={() => {
-                if (busy) return;
-                discard.mutate();
-              }}
-            >
-              Descartar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog
+        open={discardOpen}
+        onOpenChange={setDiscardOpen}
+        title="Descartar este borrador"
+        description="Un borrador no tomó correlativo y SUNAT nunca supo de él, así que se borra sin dejar hueco en la numeración. Es lo único de facturación que se borra de verdad: todo lo demás se anula y se conserva."
+        confirmLabel="Descartar"
+        pending={discard.isPending}
+        onConfirm={(reason) => {
+          discard.mutate(reason);
+        }}
+      />
 
       {/*
         D-153: el terminal manual. Pide lo mismo que `send` saca de la serie del ERP —serie y

@@ -30,6 +30,7 @@ import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -218,6 +219,9 @@ export function NuevoComprobanteView() {
   const overGenericCap =
     isGenericCustomer && totals?.total.gt(toDecimal(GENERIC_CUSTOMER_MAX_TOTAL_PEN)) === true;
 
+  // HOTFIX-401/M2: un doble click (o un reintento tras un 502/504 de proxy) no debe crear
+  // un segundo borrador — mismo criterio que ya usa el cobro en el detalle del comprobante.
+  const createKey = useIdempotencyKey();
   const create = useMutation({
     mutationFn: () => {
       const items =
@@ -250,8 +254,12 @@ export function NuevoComprobanteView() {
           ...(notes.trim() ? { notes: notes.trim() } : {}),
           forceGenericCustomer: forceGeneric,
           items,
+          idempotencyKey: createKey.current(),
         },
       });
+    },
+    onSettled: (_data, error) => {
+      createKey.settle(error ?? undefined);
     },
     onSuccess: (created) => {
       toast.success('Borrador creado: revísalo y emítelo');
