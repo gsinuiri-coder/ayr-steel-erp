@@ -61,3 +61,33 @@ export async function clearQuotationValidity(quotationId: string): Promise<void>
     await db.$disconnect();
   }
 }
+
+/**
+ * Intenta un `UPDATE`/`DELETE` directo sobre una fila real de `audit_log` (RF-95/RF-S2-CIERRE):
+ * lo único que el API no puede hacer por diseño (no hay ruta que lo permita) y que necesita
+ * verificarse contra la base real, no con un mock — el trigger `audit_log_no_update_delete`
+ * (migración `20260902170000`) es lo que de verdad lo impide, y un mock de Prisma no lo tiene.
+ * Cada llamada abre y cierra su propia conexión (mismo patrón que el resto del archivo);
+ * ambas rechazan con el error de Postgres si el trigger sigue vigente, cosa que el spec afirma.
+ */
+export async function updateAuditLogRow(id: string, reason: string): Promise<void> {
+  const db = testDatabaseClient();
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE "audit_log" SET "reason" = $1 WHERE "id" = $2::bigint`,
+      reason,
+      id,
+    );
+  } finally {
+    await db.$disconnect();
+  }
+}
+
+export async function deleteAuditLogRow(id: string): Promise<void> {
+  const db = testDatabaseClient();
+  try {
+    await db.$executeRawUnsafe(`DELETE FROM "audit_log" WHERE "id" = $1::bigint`, id);
+  } finally {
+    await db.$disconnect();
+  }
+}
