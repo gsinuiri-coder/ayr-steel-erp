@@ -36,9 +36,10 @@ export const inventoryMovementSchema = z.object({
    */
   refTargetType: z.enum(REF_TARGET_TYPES).nullable(),
   refTargetId: z.string().nullable(),
-  /** D-205: el comprobante que cubre esta salida, solo cuando se conoció sin ambigüedad al
-   *  emitirlo (hoy, únicamente el mostrador). `null` en el resto — no es "sin comprobante",
-   *  es "no enlazado todavía" (deuda documentada en D-205). */
+  /** D-205: el comprobante que cubre esta salida, cuando se supo sin ambigüedad al emitirlo.
+   *  Dos caminos, los dos explícitos: el mostrador (D-099) y, desde D-213, el flujo estándar
+   *  cuando quien factura **declara** el despacho. `null` no es "sin comprobante": es "no
+   *  enlazado" — nunca se infiere (D-205). */
   invoiceId: z.string().nullable(),
   /** Motivo escrito por el usuario en una merma, una anulación o un ajuste de costo. */
   notes: z.string().nullable(),

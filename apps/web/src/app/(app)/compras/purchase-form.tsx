@@ -9,7 +9,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import {
-  FINISH_KIND_LABELS,
   BUSINESS_LINE_LABELS,
   BUSINESS_LINES,
   COIL_BUSINESS_LINES,
@@ -35,6 +34,8 @@ import {
   type PurchaseDto,
   type PurchaseListItemDto,
   type SupplierDto,
+  FINISH_FIELD_LABEL,
+  finishLabels,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
@@ -818,7 +819,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                     name={`items.${index}.finishId`}
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Acabado</FormLabel>
+                        <FormLabel>{FINISH_FIELD_LABEL}</FormLabel>
                         <Select value={field.value ?? ''} onValueChange={field.onChange}>
                           <FormControl>
                             <SelectTrigger className="w-full">
@@ -828,20 +829,22 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                           <SelectContent>
                             {/* D-203: solo acabados completos de la línea de la compra. Uno sin
                                 tipo no dice qué color lleva la bobina. */}
-                            {finishes.data
-                              ?.filter(
+                            {(() => {
+                              const options = (finishes.data ?? []).filter(
                                 (f) =>
                                   (f.isActive || f.id === field.value) &&
                                   f.kind !== null &&
                                   f.businessLine === businessLine,
-                              )
-                              .map((f) => (
+                              );
+                              // F8-S7/M2: el color comercial manda; el código solo aparece si
+                              // dos opciones de **esta** lista comparten color.
+                              const labels = finishLabels(options);
+                              return options.map((f) => (
                                 <SelectItem key={f.id} value={f.id}>
-                                  {f.code} — {f.name}
-                                  {f.kind ? ` · ${FINISH_KIND_LABELS[f.kind]}` : ''}
-                                  {f.colorName ? ` · ${f.colorName}` : ''}
+                                  {labels.get(f.id) ?? f.code}
                                 </SelectItem>
-                              ))}
+                              ));
+                            })()}
                           </SelectContent>
                         </Select>
                         <FinishColorHint

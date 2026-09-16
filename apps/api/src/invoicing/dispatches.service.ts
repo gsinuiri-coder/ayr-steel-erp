@@ -83,6 +83,10 @@ const dispatchInclude = {
     orderBy: { createdAt: 'desc' },
     select: { id: true, number: true, status: true },
   },
+  // F8-S7/M3 (D-205): el comprobante que este despacho cubre. `invoice` es la relación del
+  // `invoice_id` del propio despacho — no confundir con `documents`, que son las guías de
+  // remisión emitidas **para** él.
+  invoice: { select: { id: true, number: true, status: true } },
 } satisfies Prisma.DispatchInclude;
 
 type DispatchRow = Prisma.DispatchGetPayload<{ include: typeof dispatchInclude }>;
@@ -607,6 +611,11 @@ export class DispatchesService {
             status: DispatchStatus.REVERSED,
             reversedAt: new Date(),
             reversedById: actor.id,
+            // F8-S7/M3: la reversa devuelve la mercadería al kardex, así que este despacho ya
+            // no cubre ningún comprobante (D-205). Dejar el enlace puesto es un dato que
+            // contradice al kardex y que nadie vuelve a mirar: la pantalla de emisión filtra
+            // los revertidos, así que no saltaría por ningún lado.
+            invoiceId: null,
           },
         });
 
@@ -1070,6 +1079,9 @@ export class DispatchesService {
       carrierDocNumber: row.carrierDocNumber,
       carrierName: row.carrierName,
       notes: row.notes,
+      invoiceId: row.invoice?.id ?? null,
+      invoiceNumber: row.invoice?.number ?? null,
+      invoiceStatus: row.invoice?.status ?? null,
       dispatchNoteId: note?.id ?? null,
       dispatchNoteNumber: note?.number ?? null,
       dispatchNoteStatus: note?.status ?? null,

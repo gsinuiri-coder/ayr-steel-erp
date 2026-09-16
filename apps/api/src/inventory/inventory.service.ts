@@ -600,24 +600,48 @@ export class InventoryService {
    * cada movimiento— es además la forma correcta del dato, no solo la que el trigger permite.
    *
    * Se llama **solo** desde donde la relación despacho↔comprobante es uno a uno y sin
-   * adivinar (hoy, el mostrador — D-099, un despacho y un comprobante por venta, en la misma
-   * transacción). El flujo estándar de facturación no la llama: factura por `salesOrderId`
-   * sin decir qué despacho cubre, y un pedido puede tener varios despachos parciales —
-   * enlazar ahí sería inferir, y un enlace falso en un comprobante es peor que dejarlo sin
-   * enlazar (decisión del dueño, D-205).
+   * adivinar. Dos llamadores, los dos explícitos: el mostrador (D-099, un despacho y un
+   * comprobante por venta en la misma transacción) y, desde D-213, el flujo estándar cuando
+   * quien factura **declara** el despacho. Lo que sigue prohibido es inferirlo: un pedido
+   * puede tener varios despachos parciales, y un enlace falso en un comprobante es peor que
+   * dejarlo sin enlazar (decisión del dueño, D-205).
    *
-   * Idempotente (`invoice_id IS NULL`): un reintento sobre el mismo despacho no pisa un
-   * enlace que ya esté puesto.
+   * **No es idempotente por descuido, lo es a propósito**, y por eso devuelve si escribió: un
+   * reintento sobre el mismo despacho no pisa un enlace ya puesto, y el llamador que pierde
+   * una carrera se entera en vez de creer que enlazó. El `false` es un error del llamador (no
+   * tomó el lock de la fila antes de decidir), no un caso normal.
    */
   async linkInvoiceToDispatch(
     tx: Prisma.TransactionClient,
     dispatchId: string,
     invoiceId: string,
-  ): Promise<void> {
-    await tx.dispatch.updateMany({
+  ): Promise<boolean> {
+    const linked = await tx.dispatch.updateMany({
       where: { id: dispatchId, invoiceId: null },
       data: { invoiceId },
     });
+    return linked.count === 1;
+  }
+
+  /**
+   * Suelta el enlace de D-205 cuando el comprobante que lo tomó deja de existir o de contar
+   * (F8-S7/M3): un borrador descartado, un rechazado, una baja, una anulación.
+   *
+   * Hace falta porque el enlace se toma al **crear** el comprobante, que es antes de saber si
+   * va a existir de verdad. Sin esto el despacho quedaba ocupado por un comprobante muerto y
+   * no se podía volver a facturar por ningún camino — y en el caso del borrador ni siquiera se
+   * podía descartar, porque la FK es `ON DELETE RESTRICT`.
+   */
+  async unlinkInvoiceFromDispatches(
+    tx: Prisma.TransactionClient,
+    invoiceId: string,
+  ): Promise<void> {
+    await tx.dispatch.updateMany({ where: { invoiceId }, data: { invoiceId: null } });
+  }
+
+  /** La otra mitad: suelta lo que tenga **este despacho**, sea cual sea el comprobante. */
+  async unlinkInvoiceFromDispatch(tx: Prisma.TransactionClient, dispatchId: string): Promise<void> {
+    await tx.dispatch.updateMany({ where: { id: dispatchId }, data: { invoiceId: null } });
   }
 
   /**

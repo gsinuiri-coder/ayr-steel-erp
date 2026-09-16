@@ -19,6 +19,8 @@ import {
   toDecimal,
   type FinishDto,
   type ProductDto,
+  FINISH_FIELD_LABEL,
+  finishLabels,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
@@ -164,6 +166,8 @@ export function ProductDialog({
   const finishOptions = (finishes.data ?? []).filter(
     (f) => f.id === product?.finishId || (f.isActive && f.businessLine === businessLineCode),
   );
+  // F8-S7/M2: el SKU de cobertura se elige por color, que es como lo pide el cliente.
+  const finishOptionLabels = finishLabels(finishOptions);
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -319,7 +323,7 @@ export function ProductDialog({
                     field.value === product?.finishId && chosenFinish?.kind === null;
                   return (
                     <FormItem>
-                      <FormLabel>Acabado</FormLabel>
+                      <FormLabel>{FINISH_FIELD_LABEL}</FormLabel>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger className="w-full" disabled={finishes.isPending}>
@@ -331,9 +335,10 @@ export function ProductDialog({
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
+                          {/* F8-S7/M2: color comercial; el código solo si dos comparten color. */}
                           {finishOptions.map((f) => (
                             <SelectItem key={f.id} value={f.id}>
-                              {f.code} — {f.name}
+                              {finishOptionLabels.get(f.id) ?? f.code}
                               {f.isActive ? '' : ' (desactivado)'}
                             </SelectItem>
                           ))}

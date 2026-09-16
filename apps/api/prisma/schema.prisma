@@ -2006,9 +2006,13 @@ model FiscalDocument {
   payments           CustomerPayment[]
   /// Venta de mostrador que emitió este comprobante (Fase 7b, D-100). Null en el resto.
   posSale            PosSale?
-  /// F8-S5/M1 (D-205): despachos que este comprobante cubre — hoy, solo el que el mostrador
-  /// enlaza en el acto, uno a uno (ver `Dispatch.invoiceId`).
-  dispatchesInvoiced Dispatch[]           @relation("DispatchInvoice")
+  /// F8-S5/M1 (D-205): despachos que este comprobante cubre — el que enlaza el mostrador en
+  /// el acto, o el que se declaró al facturar desde D-213 (ver `Dispatch.invoiceId`). **No
+  /// confundir con `dispatchId`**, que es la otra punta y significa otra cosa: que este
+  /// documento *es* la guía de remisión de ese despacho.
+  dispatchesInvoiced Dispatch[]                      @relation("DispatchInvoice")
+  /// F8-S7/M1: correcciones de la fecha de emisión. Solo un manual puede tener filas acá.
+  issueDateChanges   FiscalDocumentIssueDateChange[]
 
   @@index([status, docType])
   @@index([customerId, status])
@@ -2022,6 +2026,37 @@ model FiscalDocument {
   @@index([number])
   @@index([importBatchId])
   @@map("fiscal_documents")
+}
+
+/// Corrección de la fecha de emisión de un comprobante **manual** (F8-S7/M1).
+///
+/// Mismo patrón que `SalesPriceChange` (D-187): una fila por cambio, con el antes, el
+/// después, quién y cuándo. La diferencia con un `audit_log` —que también lo registra— es
+/// que esto **se muestra en el detalle del comprobante**: la fecha de un papel es un dato
+/// que el cliente compara contra el documento físico, y que haya sido corregida es parte de
+/// lo que necesita ver sin pedirle a nadie que lea la auditoría.
+///
+/// Solo comprobantes con `origin = MANUAL` llegan acá; la regla la sostiene el servicio, no
+/// una constraint, porque `origin` puede en teoría cambiar (un borrador se cierra como
+/// manual) y una FK no sabe expresar «en el momento del cambio».
+model FiscalDocumentIssueDateChange {
+  id              String         @id @default(uuid()) @db.Uuid
+  documentId      String         @map("document_id") @db.Uuid
+  document        FiscalDocument @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  /// Fecha de emisión antes y después. `DATE`, igual que `fiscal_documents.issue_date`.
+  beforeIssueDate DateTime       @map("before_issue_date") @db.Date
+  afterIssueDate  DateTime       @map("after_issue_date") @db.Date
+  /// Vencimiento antes y después, cuando el comprobante es a crédito y se movió con la
+  /// emisión. Null en un `CONTADO`, que no tiene vencimiento que mover.
+  beforeDueDate   DateTime?      @map("before_due_date") @db.Date
+  afterDueDate    DateTime?      @map("after_due_date") @db.Date
+  /// Por qué se corrigió, en palabras de quien lo hizo.
+  reason          String         @db.VarChar(200)
+  changedById     String         @map("changed_by_id") @db.Uuid
+  changedAt       DateTime       @default(now()) @map("changed_at") @db.Timestamptz(3)
+
+  @@index([documentId, changedAt])
+  @@map("fiscal_document_issue_date_changes")
 }
 
 /// Línea de un comprobante de pago. **Las guías de remisión no tienen líneas acá**: las
@@ -2114,11 +2149,14 @@ model Dispatch {
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   /// F8-S5/M1 (D-205): el comprobante (de venta, no la guía de remisión de `documents`) que
-  /// cubre este despacho, cuando se conoce **sin ambigüedad** al emitirlo — hoy, solo el
-  /// mostrador (D-099), que arma despacho y comprobante uno a uno en la misma transacción.
-  /// El flujo estándar de facturación no la llena: factura por `salesOrderId` sin decir qué
-  /// despacho cubre, y un pedido puede tener varios despachos parciales — enlazar ahí sería
-  /// inferir, y un enlace falso pesa más en auditoría que dejarlo sin enlazar. Vive acá y no
+  /// cubre este despacho, cuando se conoce **sin ambigüedad** al emitirlo. Dos caminos, los
+  /// dos explícitos: el mostrador (D-099), que arma despacho y comprobante uno a uno en la
+  /// misma transacción, y desde **D-213** el flujo estándar cuando quien factura **declara**
+  /// el despacho. Lo que sigue prohibido es inferirlo: un pedido puede tener varios despachos
+  /// parciales, y un enlace falso pesa más en auditoría que dejarlo sin enlazar.
+  /// El enlace se toma al **crear** el comprobante, así que puede quedar apuntando a uno que
+  /// después muere (borrador descartado, rechazado, anulado): lo que ocupa el despacho es un
+  /// comprobante **vivo**, no la mera presencia del id. Vive acá y no
   /// en `inventory_movements` porque esa tabla es append-only de verdad (trigger en la base,
   /// TRUNCATE aparte): un despacho, en cambio, ya se edita (su `status`), y un despacho con
   /// varias líneas comparte un solo comprobante de todas formas.

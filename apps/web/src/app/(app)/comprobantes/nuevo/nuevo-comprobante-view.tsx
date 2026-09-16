@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -16,7 +16,9 @@ import {
   businessToday,
   salesTotals,
   toDecimal,
+  LIVE_DOCUMENT_STATUSES,
   type CustomerDto,
+  type DispatchListItemDto,
   type FiscalDocType,
   type FiscalDocumentDto,
   type PaymentTerms,
@@ -26,7 +28,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { useSession } from '@/lib/session';
-import { formatMoney, isPositiveDecimal, unitSymbol } from '@/lib/format';
+import { formatDate, formatMoney, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -74,6 +76,10 @@ export function NuevoComprobanteView() {
   const [docType, setDocType] = useState<FiscalDocType>('FACTURA');
   const [customerId, setCustomerId] = useState<string>('');
   const [salesOrderId, setSalesOrderId] = useState<string>(searchParams.get('pedido') ?? NONE);
+  // F8-S7/M3: el despacho que el comprobante declara cubrir (D-205). `NONE` = no se declara.
+  const [dispatchId, setDispatchId] = useState<string>(NONE);
+  /** Si el usuario ya eligió despacho a mano, la preselección deja de opinar. */
+  const dispatchTouched = useRef(false);
   const [issueDate, setIssueDate] = useState(businessToday());
   const [paymentTerms, setPaymentTerms] = useState<PaymentTerms>('CONTADO');
   const [dueDate, setDueDate] = useState('');
@@ -101,6 +107,47 @@ export function NuevoComprobanteView() {
     queryFn: () => api<SalesOrderProgressDto>(`/invoicing/orders/${salesOrderId}/progress`),
     enabled: salesOrderId !== NONE,
   });
+
+  /**
+   * F8-S7/M3 (D-205): los despachos del pedido, para poder **declarar** cuál cubre este
+   * comprobante. Solo se ofrecen los que siguen en pie y todavía no tienen comprobante: uno
+   * revertido no se factura, y uno ya enlazado lo rechaza el API.
+   */
+  const dispatches = useQuery({
+    queryKey: ['dispatches', 'for-invoice', salesOrderId],
+    queryFn: () =>
+      fetchAllForPicker<DispatchListItemDto>('/invoicing/dispatches', { salesOrderId }),
+    enabled: salesOrderId !== NONE,
+  });
+  const linkableDispatches = (dispatches.data ?? []).filter(
+    (d) =>
+      d.status !== 'REVERSED' &&
+      // No alcanza con `invoiceId === null`: el enlace se toma al crear el comprobante, así
+      // que un borrador descartado o un rechazado lo dejan puesto sin ocupar nada. Lo que
+      // ocupa el despacho es un comprobante **vivo**, que es la misma lista blanca que aplica
+      // el API al validar.
+      (d.invoiceStatus === null || !LIVE_DOCUMENT_STATUSES.includes(d.invoiceStatus)),
+  );
+
+  /**
+   * Preselecciona el despacho **solo cuando hay exactamente uno** que enlazar. Con dos o
+   * más no se elige por el usuario: D-205 descartó inferir el despacho justamente porque un
+   * link equivocado en auditoría pesa más que uno vacío, y "el primero de la lista" es una
+   * inferencia con otro nombre. Se reinicia al cambiar de pedido.
+   */
+  useEffect(() => {
+    if (salesOrderId === NONE) {
+      setDispatchId(NONE);
+      dispatchTouched.current = false;
+      return;
+    }
+    // Un refetch (foco de ventana, invalidación) no pisa lo que el usuario ya eligió: la
+    // preselección es una comodidad del primer render, no una corrección permanente.
+    if (dispatchTouched.current) return;
+    setDispatchId(linkableDispatches.length === 1 ? (linkableDispatches[0]?.id ?? NONE) : NONE);
+    // Depende del pedido y de la **respuesta**, no de `linkableDispatches`, que se recalcula
+    // en cada render: es el mismo criterio que el efecto del cliente de acá abajo.
+  }, [salesOrderId, dispatches.data]);
 
   // Elegir el pedido fija el cliente: facturar a otro sería emitirle a alguien que no
   // compró. El cliente sale del **avance del pedido**, que se pide por id, y no de la
@@ -196,6 +243,7 @@ export function NuevoComprobanteView() {
           docType,
           customerId,
           ...(salesOrderId !== NONE ? { salesOrderId } : {}),
+          ...(dispatchId !== NONE ? { dispatchId } : {}),
           issueDate,
           paymentTerms,
           ...(paymentTerms === 'CREDITO' && dueDate ? { dueDate } : {}),
@@ -285,6 +333,35 @@ export function NuevoComprobanteView() {
               </SelectContent>
             </Select>
           </div>
+
+          {salesOrderId !== NONE && linkableDispatches.length > 0 && (
+            <div className="space-y-1">
+              <Label>Despacho que factura</Label>
+              <Select
+                value={dispatchId}
+                onValueChange={(value) => {
+                  dispatchTouched.current = true;
+                  setDispatchId(value);
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Sin declarar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Sin declarar</SelectItem>
+                  {linkableDispatches.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.code} · {formatDate(d.dispatchDate)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Enlaza el comprobante con la salida de mercadería que cubre. Queda en el kardex del
+                despacho; si no corresponde a ninguno en particular, dejalo sin declarar.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1">
             <Label>Cliente</Label>

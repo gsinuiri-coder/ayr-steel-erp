@@ -18,6 +18,7 @@ import {
 } from '@prisma/client';
 import {
   businessToday,
+  shiftDate,
   Decimal,
   DERIVED_FILTER_FETCH_CAP,
   documentBalance,
@@ -46,6 +47,7 @@ import {
   type CreateCreditNoteInput,
   type CreateInvoiceInput,
   type RegisterManualInput,
+  type UpdateManualIssueDateInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentQuery,
@@ -59,6 +61,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { OperationDateService } from '../common/operation-date.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { rawMaterialSpecLabels } from '../sales/raw-material';
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -122,7 +125,23 @@ const documentInclude = {
   },
 } satisfies Prisma.FiscalDocumentInclude;
 
+/**
+ * F8-S7/M1: el historial de correcciones de fecha, **solo para el detalle**.
+ *
+ * Aparte de `documentInclude` a propósito: el listado descarta este campo (`toListDtos`), así
+ * que traerlo ahí sería un join por página —y con `pendingOnly`, por `DERIVED_FILTER_FETCH_CAP`
+ * filas— para tirarlo a la basura. Más reciente primero, que es como se lee un historial.
+ */
+const documentDetailInclude = {
+  ...documentInclude,
+  issueDateChanges: { orderBy: { changedAt: 'desc' } },
+} satisfies Prisma.FiscalDocumentInclude;
+
 type DocumentRow = Prisma.FiscalDocumentGetPayload<{ include: typeof documentInclude }>;
+/** Lo mismo más el historial de correcciones de fecha (F8-S7/M1), solo en el detalle. */
+type DocumentDetailRow = Prisma.FiscalDocumentGetPayload<{
+  include: typeof documentDetailInclude;
+}>;
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -201,6 +220,9 @@ export class InvoicingService {
     @Inject(ELECTRONIC_INVOICING_PROVIDER)
     private readonly provider: ElectronicInvoicingProvider,
     private readonly operationDate: OperationDateService,
+    // F8-S7/M3: para escribir `dispatches.invoice_id` por el mismo camino que el mostrador
+    // (D-205). El módulo ya importaba `InventoryModule` porque el despacho mueve kardex.
+    private readonly inventory: InventoryService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -445,6 +467,48 @@ export class InvoicingService {
       );
     }
 
+    // F8-S7/M3 (D-205): el despacho que este comprobante cubre, **declarado**. Se valida que
+    // exista, que sea del mismo pedido y que no esté ya facturado; nada se infiere. Sin esta
+    // comprobación, `dispatch_id` podía apuntar al despacho de otro cliente por un uuid mal
+    // copiado, y el enlace que D-205 creó para auditar habría pasado a mentir.
+    if (input.dispatchId) {
+      // **El lock va antes de leer `invoice_id`**, igual que `issueDispatchNote` sobre esta
+      // misma tabla. Sin él, dos emisiones concurrentes sobre el mismo despacho leen las dos
+      // un `invoice_id` nulo y las dos pasan: `linkInvoiceToDispatch` es idempotente
+      // (`WHERE invoice_id IS NULL`), así que la que pierde no escribe **y no se entera**, y
+      // el despacho queda declarando cubrir un comprobante que no es el que lo declaró.
+      await tx.$queryRaw`
+        SELECT "id" FROM "dispatches" WHERE "id" = ${input.dispatchId}::uuid FOR UPDATE
+      `;
+      const dispatch = await tx.dispatch.findUnique({
+        where: { id: input.dispatchId },
+        select: {
+          id: true,
+          salesOrderId: true,
+          status: true,
+          invoice: { select: { id: true, number: true, status: true } },
+        },
+      });
+      if (!dispatch) throw new NotFoundException('El despacho no existe');
+      // **Solo un comprobante vivo ocupa el despacho.** Con `invoice_id !== null` a secas, un
+      // borrador descartado, un rechazado o un anulado lo dejaban ocupado para siempre: el
+      // enlace se toma al crear el borrador, que es antes de saber si ese comprobante va a
+      // existir de verdad. Misma lista blanca que usan la baja y la anulación.
+      if (dispatch.invoice && LIVE_DOCUMENT_STATUSES.includes(dispatch.invoice.status)) {
+        throw new ConflictException(
+          `Ese despacho ya está enlazado al comprobante ${dispatch.invoice.number ?? 'en borrador'}`,
+        );
+      }
+      if (!input.salesOrderId || dispatch.salesOrderId !== input.salesOrderId) {
+        throw new BadRequestException('El despacho no pertenece al pedido que se está facturando');
+      }
+      // Un despacho revertido devolvió su mercadería al stock (RF-71): no hay nada que
+      // facturar, y enlazarlo sería declarar una salida que el kardex ya deshizo.
+      if (dispatch.status === DispatchStatus.REVERSED) {
+        throw new BadRequestException('Un despacho revertido no se factura');
+      }
+    }
+
     const lines = await this.resolveLines(tx, input);
     // D-169: **la cabecera suma sus propias líneas.** Recalcularla desde `cantidad × unitario`
     // deshacía, un renglón más abajo, lo que `resolveLines` acababa de hacer: la línea que
@@ -483,6 +547,13 @@ export class InvoicingService {
         status: FiscalDocumentStatus.DRAFT,
         customerId: customer.id,
         salesOrderId: input.salesOrderId ?? null,
+        // **`dispatchId` NO se escribe acá, y no es un olvido.** En `fiscal_documents` esa
+        // columna significa «esta **guía de remisión** es del despacho X», y el CHECK
+        // `fiscal_documents_shape_ck` (Fase 5b) la exige nula en todo lo que no sea una GRE.
+        // Además es la que define `Dispatch.documents`: una factura ahí se haría pasar por la
+        // guía vigente del despacho y apagaría el botón de emitirla. El enlace de D-205 vive
+        // en `dispatches.invoice_id`, que es una pregunta distinta —«qué comprobante cubre
+        // esta salida»— y se escribe más abajo.
         issueDate: toDateOnly(input.issueDate),
         paymentTerms: input.paymentTerms,
         dueDate: dueDate === null ? null : toDateOnly(dueDate),
@@ -512,6 +583,24 @@ export class InvoicingService {
       },
     });
 
+    // F8-S7/M3: el enlace de D-205. Va por `InventoryService`, el mismo camino que usa el
+    // mostrador, y no con un `update` suelto: ese servicio es el único que escribe
+    // `dispatches.invoice_id`. El despacho puede traer un enlace **muerto** (un borrador
+    // descartado, un rechazado), que la validación de arriba ya dejó pasar: se suelta primero
+    // para que el `WHERE invoice_id IS NULL` del link pueda escribir.
+    if (input.dispatchId) {
+      await this.inventory.unlinkInvoiceFromDispatch(tx, input.dispatchId);
+      const linked = await this.inventory.linkInvoiceToDispatch(tx, input.dispatchId, created.id);
+      // Con el `FOR UPDATE` de arriba esto no debería poder pasar; si pasa, es que alguien
+      // enlazó por un camino sin lock y el enlace quedaría mintiendo. Cortar es lo correcto:
+      // la transacción entera se deshace y no queda un comprobante declarando lo que no es.
+      if (!linked) {
+        throw new ConflictException(
+          'El despacho fue enlazado a otro comprobante mientras se emitía este: volvé a intentarlo',
+        );
+      }
+    }
+
     await this.audit.write(tx, {
       actorId: actor.id,
       action: 'invoicing.document.create',
@@ -522,6 +611,7 @@ export class InvoicingService {
         customer: customer.name,
         totalPen: serialized.totalPen,
         genericOverride: overrideById !== null,
+        dispatchId: input.dispatchId ?? null,
       },
     });
     return created.id;
@@ -1036,6 +1126,171 @@ export class InvoicingService {
   }
 
   /**
+   * Corrige la fecha de emisión de un comprobante **manual** (F8-S7/M1).
+   *
+   * Pedido del cliente tras cargar los primeros comprobantes de la migración: el papel ya
+   * existe con su fecha impresa y al tipearla se puede errar; hasta acá no había ninguna
+   * puerta para corregirla.
+   *
+   * **Por qué solo los manuales.** Un `ISSUED_HERE` mandó su fecha al PSE y la tiene en un
+   * CDR firmado: cambiarla en el ERP la desalinearía de lo que SUNAT tiene, en silencio y
+   * sin forma de deshacerlo. Un `IMPORTED` es el reflejo de lo que emitió la otra app, y su
+   * fecha se corrige allá y se reimporta (RF-72). El manual es el único origen donde el ERP
+   * **es** la fuente de verdad del dato (D-153), y por eso el único donde puede corregirlo.
+   *
+   * **El vencimiento se mueve con la emisión, conservando los días de plazo.** No es un
+   * detalle cosmético: dejarlo quieto convierte una factura a 30 días en una a 23 sin que
+   * nadie lo pida, y eso sale después en un reporte de mora como si el cliente se hubiera
+   * atrasado. Conservar el delta respeta lo que se pactó sin tener que adivinar si la fecha
+   * salió de `customers.credit_days` o la tipeó alguien —el dato guardado no lo distingue—.
+   * Como igual es un efecto colateral, exige `confirmDueDateShift`: la UI muestra el
+   * vencimiento nuevo antes de confirmar, y sin el flag no se toca nada.
+   */
+  async updateManualIssueDate(
+    actor: RequestUser,
+    id: string,
+    input: UpdateManualIssueDateInput,
+  ): Promise<FiscalDocumentDto> {
+    // D-133: mismo control de rol y mismas cotas que al emitir. La ventana de SUNAT
+    // (D-072/D-210) ya la validó el schema.
+    this.operationDate.assertIssueDate(actor, input.issueDate);
+
+    await this.prisma.$transaction(async (tx) => {
+      // **El lock va antes de leer**, igual que `createCreditNote`, `registerManual`,
+      // `voidDocument` y `annulExternal` sobre esta misma tabla. Los guardrails de abajo
+      // —que no haya cobro ni nota de crédito por delante de la fecha nueva— se evalúan
+      // sobre lo que se lee acá: sin el lock son una foto, y un cobro registrado en paralelo
+      // entra por la ventana que el método dice cerrar.
+      await tx.$queryRaw`
+        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
+      `;
+      const document = await tx.fiscalDocument.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          origin: true,
+          status: true,
+          issueDate: true,
+          dueDate: true,
+          paymentTerms: true,
+          annulledAt: true,
+          archivedAt: true,
+          // Qué comprobante acredita este, cuando el que se corrige **es** una nota de
+          // crédito: `registerManual` también las cierra como manuales, así que la cota vale
+          // en los dos sentidos.
+          affectedDocument: { select: { number: true, issueDate: true } },
+          creditNotes: {
+            // Por estado y no solo por `archivedAt`: una nota rechazada o dada de baja no
+            // acredita nada, y bloquear la corrección con ella dejaba el comprobante
+            // atascado por un papel que no existe. Misma lista blanca que el resto del módulo.
+            where: { archivedAt: null, status: { in: LIVE_DOCUMENT_STATUSES } },
+            select: { number: true, issueDate: true },
+          },
+          payments: {
+            where: { reversedAt: null },
+            select: { date: true },
+          },
+        },
+      });
+      if (!document) throw new NotFoundException('El comprobante no existe');
+      if (document.origin !== FiscalDocumentOrigin.MANUAL) {
+        throw new ConflictException(
+          'Solo se puede corregir la fecha de un comprobante manual: la de uno electrónico ' +
+            'viajó al PSE y vive en su CDR',
+        );
+      }
+      if (document.annulledAt !== null) {
+        throw new ConflictException('Un comprobante anulado ya no se corrige');
+      }
+      if (document.archivedAt !== null) {
+        throw new ConflictException('Esta versión fue archivada por una reimportación');
+      }
+      // Hoy `origin = MANUAL` implica `ACCEPTED` o `ANNULLED` (`applyManualNumber` los cierra
+      // así), pero eso es una invariante implícita de otro método: si algún día un manual
+      // puede quedar en otro estado, esto corta acá y no se descubre por un dato raro.
+      if (document.status !== FiscalDocumentStatus.ACCEPTED) {
+        throw new ConflictException('Solo se corrige la fecha de un comprobante aceptado');
+      }
+
+      const before = document.issueDate.toISOString().slice(0, 10);
+      if (before === input.issueDate) {
+        throw new ConflictException(`La fecha de emisión ya es ${input.issueDate}`);
+      }
+
+      // Una nota de crédito no puede ser anterior al comprobante que acredita, y un cobro no
+      // puede existir antes de que el comprobante se emita. Las dos son incoherencias que hoy
+      // no se pueden crear por ningún otro camino, así que tampoco se crean por este.
+      const earlierNote = document.creditNotes.find(
+        (n) => n.issueDate.toISOString().slice(0, 10) < input.issueDate,
+      );
+      if (earlierNote) {
+        throw new ConflictException(
+          `La nota de crédito ${earlierNote.number ?? ''} es del ` +
+            `${earlierNote.issueDate.toISOString().slice(0, 10)}: la emisión no puede quedar después`,
+        );
+      }
+      const earlierPayment = document.payments.find(
+        (p) => p.date.toISOString().slice(0, 10) < input.issueDate,
+      );
+      if (earlierPayment) {
+        throw new ConflictException(
+          `Hay un cobro del ${earlierPayment.date.toISOString().slice(0, 10)}: ` +
+            'la emisión no puede quedar después',
+        );
+      }
+      // La mitad simétrica: si el que se corrige **es** una nota de crédito, no puede quedar
+      // fechada antes del comprobante que acredita. Es la misma incoherencia mirada desde el
+      // otro lado, y sin esto la cota de arriba solo cubría una dirección.
+      const affected = document.affectedDocument;
+      if (affected && input.issueDate < affected.issueDate.toISOString().slice(0, 10)) {
+        throw new ConflictException(
+          `Esta nota acredita a ${affected.number ?? 'un comprobante'} del ` +
+            `${affected.issueDate.toISOString().slice(0, 10)}: no puede quedar fechada antes`,
+        );
+      }
+
+      // El vencimiento se corre los mismos días que la emisión. `CONTADO` no tiene ninguno.
+      const beforeDue = document.dueDate ? document.dueDate.toISOString().slice(0, 10) : null;
+      const afterDue = beforeDue === null ? null : shiftDate(beforeDue, before, input.issueDate);
+      if (afterDue !== beforeDue && !input.confirmDueDateShift) {
+        throw new ConflictException(
+          `Mover la emisión al ${input.issueDate} corre el vencimiento del ${beforeDue} al ` +
+            `${afterDue}: confirmá el cambio para aplicarlo`,
+        );
+      }
+
+      await tx.fiscalDocument.update({
+        where: { id },
+        data: {
+          issueDate: toDateOnly(input.issueDate),
+          dueDate: afterDue ? toDateOnly(afterDue) : null,
+        },
+      });
+      await tx.fiscalDocumentIssueDateChange.create({
+        data: {
+          documentId: id,
+          beforeIssueDate: toDateOnly(before),
+          afterIssueDate: toDateOnly(input.issueDate),
+          beforeDueDate: beforeDue ? toDateOnly(beforeDue) : null,
+          afterDueDate: afterDue ? toDateOnly(afterDue) : null,
+          reason: input.reason,
+          changedById: actor.id,
+        },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.document.update-issue-date',
+        entity: 'fiscal_documents',
+        entityId: id,
+        before: { issueDate: before, dueDate: beforeDue },
+        after: { issueDate: input.issueDate, dueDate: afterDue, reason: input.reason },
+      });
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
    * Descarta un borrador (RF-70).
    *
    * **Es la única fila de este módulo que se borra de verdad**, y puede serlo justamente
@@ -1071,7 +1326,11 @@ export class InvoicingService {
         entityId: id,
         before: { docType: document.docType, totalPen: document.totalPen.toFixed(4) },
       });
-      // Las líneas caen por `onDelete: Cascade`.
+      // F8-S7/M3: soltar el enlace de D-205 **antes** de borrar. `dispatches.invoice_id` es
+      // `ON DELETE RESTRICT`, así que un borrador que declaró un despacho no se podía
+      // descartar por ningún camino: el delete moría con un P2003 y el comprobante quedaba
+      // atascado en la lista para siempre. Las líneas sí caen por `onDelete: Cascade`.
+      await this.inventory.unlinkInvoiceFromDispatches(tx, id);
       await tx.fiscalDocument.delete({ where: { id } });
     });
   }
@@ -2604,9 +2863,15 @@ export class InvoicingService {
     const credited = await this.creditedQtyByItem(rows.flatMap((r) => r.items.map((i) => i.id)));
     return rows.map((row) => {
       const dto = this.toDto(row, settings.alertAfterHours, actors, credited);
-      // El listado no lleva líneas, cobros ni notas: la lista muestra totales y estado, y
-      // arrastrarlos multiplicaría por diez el tamaño de la respuesta.
-      const { items, payments: _payments, creditNotes: _creditNotes, ...rest } = dto;
+      // El listado no lleva líneas, cobros, notas ni correcciones de fecha: la lista muestra
+      // totales y estado, y arrastrarlos multiplicaría por diez el tamaño de la respuesta.
+      const {
+        items,
+        payments: _payments,
+        creditNotes: _creditNotes,
+        issueDateChanges: _issueDateChanges,
+        ...rest
+      } = dto;
       return { ...rest, itemCount: items.length };
     });
   }
@@ -2614,7 +2879,9 @@ export class InvoicingService {
   async findOne(id: string): Promise<FiscalDocumentDto> {
     const row = await this.prisma.fiscalDocument.findUnique({
       where: { id },
-      include: documentInclude,
+      // El único que trae el historial de correcciones: es lo que se ve en el detalle y lo
+      // que el listado tira (F8-S7/M1).
+      include: documentDetailInclude,
     });
     if (!row) throw new NotFoundException('Comprobante no encontrado');
     const settings = await this.settingsRow();
@@ -2710,7 +2977,7 @@ export class InvoicingService {
   }
 
   /** Todos los ids de usuario que un documento necesita resolver para su DTO. */
-  private actorIdsOf(row: DocumentRow): (string | null)[] {
+  private actorIdsOf(row: DocumentRow | DocumentDetailRow): (string | null)[] {
     return [
       row.createdById,
       row.genericCustomerOverrideById,
@@ -2720,11 +2987,13 @@ export class InvoicingService {
       row.annulledById,
       row.voidedById,
       ...row.payments.flatMap((p) => [p.createdById, p.reversedById]),
+      // F8-S7/M1: quién corrigió la fecha, por el mismo motivo que los dos de arriba.
+      ...('issueDateChanges' in row ? row.issueDateChanges : []).map((c) => c.changedById),
     ];
   }
 
   private toDto(
-    row: DocumentRow,
+    row: DocumentRow | DocumentDetailRow,
     alertAfterHours: number,
     actors: Map<string, string>,
     creditedByItem: Map<string, Decimal>,
@@ -2853,6 +3122,16 @@ export class InvoicingService {
         status: n.status,
         issueDate: n.issueDate.toISOString().slice(0, 10),
         totalPen: n.totalPen.toFixed(4),
+      })),
+      issueDateChanges: ('issueDateChanges' in row ? row.issueDateChanges : []).map((c) => ({
+        id: c.id,
+        beforeIssueDate: c.beforeIssueDate.toISOString().slice(0, 10),
+        afterIssueDate: c.afterIssueDate.toISOString().slice(0, 10),
+        beforeDueDate: c.beforeDueDate ? c.beforeDueDate.toISOString().slice(0, 10) : null,
+        afterDueDate: c.afterDueDate ? c.afterDueDate.toISOString().slice(0, 10) : null,
+        reason: c.reason,
+        changedByName: actors.get(c.changedById) ?? null,
+        changedAt: c.changedAt.toISOString(),
       })),
     };
   }

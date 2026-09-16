@@ -75,3 +75,45 @@ export function capToQuotationValidity(expiresAt: Date, validUntil: string | nul
   const endOfValidity = new Date(`${validUntil}T23:59:59.999-05:00`);
   return endOfValidity.getTime() < expiresAt.getTime() ? endOfValidity : expiresAt;
 }
+
+/**
+ * Corre una fecha los mismos días que se movió otra (F8-S7/M1).
+ *
+ * Es cómo el vencimiento de un comprobante sigue a su fecha de emisión cuando se la corrige:
+ * lo que se conserva es **el plazo pactado**, no la fecha de vencimiento. Se hace por delta y
+ * no recalculando con `customers.credit_days` porque el dato guardado no distingue si el
+ * vencimiento salió de esos días o lo tipeó alguien a mano (D-075 admite las dos), y
+ * recalcular pisaría el segundo caso sin avisar.
+ *
+ * Vive en `@ayr/shared` y no en el API porque **la pantalla muestra el vencimiento nuevo antes
+ * de confirmar**: con una copia de la cuenta en cada lado, el número que se lee y el que se
+ * guarda podían separarse sin que nada fallara. Es la misma razón por la que `dueDateFor`
+ * tiene una sola implementación.
+ *
+ * Aritmética en UTC sobre fechas `YYYY-MM-DD` que alguien más ya resolvió en la zona
+ * correcta: acá no se lee ningún "hoy", solo se suman días a una fecha de negocio dada.
+ */
+export function shiftDate(date: string, fromAnchor: string, toAnchor: string): string {
+  return addDays(date, daysBetween(fromAnchor, toAnchor));
+}
+
+/**
+ * Suma (o resta, con negativo) días calendario a una fecha `YYYY-MM-DD`.
+ *
+ * Aritmética en UTC sobre una fecha de negocio que alguien más ya resolvió en la zona
+ * correcta: acá no se lee ningún "hoy". Es la pieza con la que se arman los plazos —el
+ * vencimiento de D-075, el corrimiento de D-211, el piso de la ventana de emisión de
+ * D-072/D-210— sin que cada llamador repita el `setUTCDate` y se equivoque de zona.
+ */
+export function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Días calendario entre dos fechas `YYYY-MM-DD` (negativo si la segunda es anterior). */
+export function daysBetween(from: string, to: string): number {
+  return Math.round(
+    (Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86_400_000,
+  );
+}

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { FINISH_FIELD_LABEL } from '@ayr/shared';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import {
   adminApi,
@@ -11,6 +12,7 @@ import {
   postJson,
   type CreatedFinish,
   type CreatedSupplier,
+  finishOptionLabel,
 } from '../helpers/api';
 import { today } from '../helpers/production';
 import { loginAndSetPassword, selectOption } from '../helpers/ui';
@@ -146,7 +148,7 @@ interface CoilLineInput {
 async function fillCoilLine(page: Page, index: number, line: CoilLineInput): Promise<void> {
   await selectOption(
     page,
-    page.getByRole('combobox', { name: 'Acabado' }).nth(index),
+    page.getByRole('combobox', { name: FINISH_FIELD_LABEL }).nth(index),
     line.finishLabel,
   );
   await page.getByLabel('Descripción').nth(index).fill(line.description);
@@ -244,7 +246,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await page.getByRole('button', { name: 'Agregar bobina' }).click();
       await expect(page.getByLabel('Peso (kg)')).toHaveCount(2);
       await fillCoilLine(page, 0, {
-        finishLabel: `${finish.code} — ${finish.name}`,
+        finishLabel: finishOptionLabel(finish),
         description: 'Bobina E2E gruesa',
         widthMm: '1200',
         thicknessMm: '2',
@@ -252,7 +254,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
         unitPricePerKg: '4',
       });
       await fillCoilLine(page, 1, {
-        finishLabel: `${finish.code} — ${finish.name}`,
+        finishLabel: finishOptionLabel(finish),
         description: 'Bobina E2E delgada',
         widthMm: '1000',
         thicknessMm: '0.9',
@@ -415,11 +417,19 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await expect(page.getByLabel('Precio por kg').nth(1)).toHaveValue('2.0000');
 
       // Los datos físicos no vienen en el comprobante: los completa el usuario.
-      const finishLabel = `${finish.code} — ${finish.name}`;
-      await selectOption(page, page.getByRole('combobox', { name: 'Acabado' }).nth(0), finishLabel);
+      const finishLabel = finishOptionLabel(finish);
+      await selectOption(
+        page,
+        page.getByRole('combobox', { name: FINISH_FIELD_LABEL }).nth(0),
+        finishLabel,
+      );
       await page.getByLabel('Ancho (mm)').nth(0).fill('1220');
       await page.getByLabel('Espesor (mm)').nth(0).fill('2');
-      await selectOption(page, page.getByRole('combobox', { name: 'Acabado' }).nth(1), finishLabel);
+      await selectOption(
+        page,
+        page.getByRole('combobox', { name: FINISH_FIELD_LABEL }).nth(1),
+        finishLabel,
+      );
       await page.getByLabel('Ancho (mm)').nth(1).fill('1000');
       await page.getByLabel('Espesor (mm)').nth(1).fill('1.5');
 

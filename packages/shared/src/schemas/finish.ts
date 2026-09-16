@@ -125,3 +125,54 @@ export const updateFinishSchema = z
   .partial()
   .refine((d) => Object.keys(d).length > 0, { message: 'Nada que actualizar' });
 export type UpdateFinishInput = z.infer<typeof updateFinishSchema>;
+
+/**
+ * Cómo se nombra un acabado **en la pantalla** (F8-S7/M2).
+ *
+ * El catálogo los identifica por código técnico (`ALZ-ROJO-3020`), que es lo correcto para el
+ * SKU, el `typeKey` y cualquier cruce de datos. Pero el vendedor que elige una bobina para
+ * cotizar no piensa en `ALZ-ROJO-3020`: piensa «rojo». Pedido del cliente tras usar la app:
+ * el selector hablaba en el idioma del catálogo y no en el del mostrador.
+ *
+ * **Es solo presentación.** D-203 queda intacto: el acabado sigue siendo tipo + color + línea,
+ * el `colorId` sigue saliendo del acabado y todo filtrado y emparejamiento sigue yendo por id
+ * (D-085). Acá no se decide nada, solo se elige qué texto se lee.
+ *
+ * La regla:
+ * - Un **prepintado** se muestra por su color comercial (`Rojo`, `Azul`), que es su rasgo
+ *   distintivo y lo único que el cliente pide por teléfono.
+ * - `NATURAL` y `GALVANIZADO` no tienen color: se muestran por su nombre, que ya es del
+ *   idioma del negocio (`Aluzinc natural`, `Galvanizado`).
+ * - El **código técnico solo aparece cuando hace falta para desambiguar**: si dos acabados
+ *   activos comparten color comercial —dos rojos de RAL distinto, que es exactamente el caso
+ *   que el catálogo real tiene con `ALZ-ROJO-3002` y `ALZ-ROJO-3020`—, elegir a ciegas entre
+ *   dos «Rojo» es peor que leer un código. Ahí, y solo ahí, se agrega.
+ *
+ * Por eso la etiqueta depende del **conjunto** que se está mostrando y no del acabado solo:
+ * la misma fila se lee «Rojo» en una lista donde es el único rojo y «Rojo (ALZ-ROJO-3020)» en
+ * una donde no. `finishLabels` calcula los duplicados una vez para toda la lista.
+ */
+export function finishLabels(finishes: readonly FinishDto[]): Map<string, string> {
+  const seen = new Map<string, number>();
+  for (const f of finishes) {
+    const base = baseLabelOf(f);
+    seen.set(base, (seen.get(base) ?? 0) + 1);
+  }
+  return new Map(
+    finishes.map((f) => {
+      const base = baseLabelOf(f);
+      // El código desambigua; el RAL no, porque no todo color del proveedor tiene uno.
+      return [f.id, (seen.get(base) ?? 0) > 1 ? `${base} (${f.code})` : base];
+    }),
+  );
+}
+
+function baseLabelOf(finish: FinishDto): string {
+  if (finish.kind === 'PREPINTADO' && finish.colorName) return finish.colorName;
+  // Sin nombre no queda más que el código: un acabado sin `name` no debería existir, pero la
+  // pantalla no es el lugar donde eso se descubre a los gritos.
+  return finish.name || finish.code;
+}
+
+/** El mismo texto para las dos mitades de la pregunta, en el `<label>` del campo. */
+export const FINISH_FIELD_LABEL = 'Acabado / Color';

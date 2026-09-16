@@ -44,7 +44,8 @@
 | Sesión F8-V4prep — Cierre de S6a2 + herramientas de V-4                                         | ✅ Cerrada (2026-09-15)    | D-208 (`pnpm limpia:v4`: `TRUNCATE` de 39 tablas preservando 12 de catálogo y configuración, dry-run por defecto, doble gate para producción) y D-209 (la migración que hace obligatorios `kind` y `business_line_id` en `finishes`, con un `DO $$` que nombra los acabados incompletos en vez de adivinar un valor). Suite E2E completa 0-rojo desde un worktree con builds de producción, que cierra la deuda OOM heredada. Runbook de la ventana en `docs/ENTORNOS.md`. Handoff: `docs/handoff/f8-v4prep.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Ventana V-4 — Limpia total + inventario real en producción                                      | ✅ Completada (2026-09-15) | Modo exprés autorizado por el dueño. Respaldo `respaldo-pre-v4-20260915`, push del lote acumulado, migraciones a **66/66**, limpia de **3376 filas en 39 tablas**, acabados completados a mano, D-209 aplicada limpia y **carga real de 15 bobinas / 46.805 kg / S/ 132.520,06** con su kardex `IMPORT`. `smoke:prod` en verde. Tres hallazgos de la ejecución real quedaron en el runbook. Productos UPVC/reventa: el dueño no entregó archivo en esta ventana.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Auditoría post-V4                                                                               | ✅ Cerrada (2026-09-16)    | Verificación de solo lectura de todo lo cerrado entre F8-S4 y V-4, contra el sistema real. Confirma 66/66, revisión `00034` al 100 %, la carga de V-4 exacta y el catálogo coherente; descubre que **producción ya está en uso operativo real** (48 clientes, 70 cotizaciones, 7 compras, 3 bobinas más, 5 OPs cerradas y 3 facturas manuales entre el 15-09 y el 16-09) y que dos afirmaciones de cierre no se sostenían (eran 6 specs rotos en CI, no 4; el rollover de D-202 no estaba en el checklist que lo daba por escrito). Registra **D-210**, consolida todos los pendientes en una lista única y deja `main` **roja** como pendiente #1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 8 — Auditoría, reportes, UAT                                                                    | 🟡 En curso                | F8-S1, F8-S2, F8-S2b, F8-S3, F8-S3b, F8-S3c, F8-R1, F8-R2, F8-S4, F8-S5, F8-S6a, F8-S6a2 y F8-V4prep cerradas (nada sacrificado), Ventana V-4 completada y auditoría post-V4 cerrada. El cliente ya opera sobre producción con datos reales. Pendientes vivos en la sección «Post-V4» de este documento; los dos primeros dejan `main` en rojo. Después, auditoría, reportes y UAT (RF-90..96), sin empezar.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Sesión F8-S7 — Pulido y feedback de uso real                                                    | ✅ Cerrada (2026-09-16)    | Primera sesión de producto con producción operando. M1 (D-211: la fecha de emisión de un comprobante **manual** se corrige, con motivo, historial visible en el detalle y el vencimiento corriéndose con ella para conservar el plazo), M2 (D-212: el acabado se elige por color comercial; el código técnico solo desambigua) y M3 (D-213: al facturar se **declara** qué despacho cubre el comprobante, cerrando la deuda que D-205 dejó escrita). M4 cosmético: se va el `<main>` anidado del layout. Additive only: una migración, una tabla. `revisor` encontró 3 bloqueantes —el primero rompía M3 en el caso más común, porque `fiscal_documents.dispatch_id` ya significaba otra cosa— más 2 altos de concurrencia y 4 medios, todos corregidos; `qa` sumó 11 casos, 11/11, sin defectos de producto. Cierre: lint/typecheck/format, 430/430 unitarios y **suite E2E completa 345 passed / 0 failed / 2 skipped**. Los tres únicos rojos los causó M2 y ninguno hablaba de acabados: se arreglaron mudando la regla de etiquetado a `@ayr/shared` para que pantalla y tests lean la misma. Handoff: `docs/handoff/f8-s7-pulido-feedback.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 8 — Auditoría, reportes, UAT                                                                    | 🟡 En curso                | F8-S1..F8-S4, F8-S5, F8-S6a, F8-S6a2, F8-V4prep y F8-S7 cerradas (nada sacrificado), Ventana V-4 completada, auditoría post-V4 cerrada y `main` de vuelta en verde (sesión CI-SANA). El cliente ya opera sobre producción con datos reales. Pendientes vivos en la sección «Post-V4» de este documento. Después, auditoría, reportes y UAT (RF-90..96), sin empezar.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ## Fase 0 — detalle
 
@@ -5148,6 +5149,148 @@ refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelv
 - **No hecho, con motivo.** El flujo estándar de facturación no enlaza comprobante↔despacho
   (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
   de otra sesión.
+
+## Sesión F8-S7 — Pulido y feedback de uso real (2026-09-16) — CERRADA
+
+Primera sesión de producto con **producción en uso real** (D-211..D-213). Todo lo de acá salió
+de que el cliente usara la app durante la migración, no de un backlog: la fecha de un papel que
+se tipeó mal y no se podía corregir, un selector que habla en el idioma del catálogo y no en el
+del mostrador, y la punta que D-205 dejó explícitamente escrita como deuda.
+
+Regla de la sesión: **additive only**. La única migración
+(`20260916060618_s7_fecha_emision_manual_editable`) crea una tabla y nada más.
+
+- **M1 — La fecha de emisión de un comprobante manual se corrige (D-211).**
+  `PATCH /invoicing/documents/:id/issue-date`, con motivo obligatorio, historial propio
+  (`fiscal_document_issue_date_changes`) **visible en el detalle** y no solo en la auditoría.
+  Solo `origin = MANUAL`, solo ADMINISTRADOR, misma ventana y mismas cotas que emitir. El
+  vencimiento se corre los mismos días que la emisión, se muestra antes de confirmar y exige
+  `confirmDueDateShift`. No se corrige un anulado ni una versión archivada, y la emisión no
+  puede quedar después de una nota de crédito viva ni de un cobro vigente.
+- **M2 — El acabado se elige por color comercial (D-212).** `finishLabels` en
+  `apps/web/src/lib/finish-label.ts`, aplicado en los cuatro selectores (compra, edición de
+  bobina, alta de producto, receta). El código técnico aparece **solo** cuando dos acabados de
+  la misma lista comparten color. Cero cambios de dominio: D-203 y D-085 intactos.
+- **M3 — `dispatchId` al facturar (D-213), cierra la deuda que D-205 dejó escrita.** Declarado y
+  nunca inferido: se valida pertenencia al pedido, que no esté revertido y que no tenga ya
+  comprobante, y se escriben las dos puntas del enlace. La pantalla preselecciona solo si hay
+  exactamente un despacho enlazable.
+- **M4 — cosméticos.** Ver el cierre de la sesión: era el módulo sacrificable del brief.
+
+### Lo que esta sesión encontró y no venía en el brief
+
+- **Drift preexistente entre `schema.prisma` y las migraciones.** `prisma migrate dev` para la
+  tabla de M1 generó, además del `CREATE TABLE`, un arrastre que nadie pidió: `DROP INDEX` de
+  `products_finish_id_idx` y `sales_orders_origin_status_idx`, `DROP DEFAULT` del
+  `operation_date` de cinco tablas (`coils`, `cutting_orders`, `inventory_movements`,
+  `production_orders`, `production_reports`), un `RENAME INDEX` de `raw_material_specs` y cuatro
+  FK recreadas. **No es de esta sesión**: son diferencias entre lo que las migraciones
+  escribieron a mano y lo que `schema.prisma` declara, acumuladas desde antes. Pasa
+  desapercibido porque nada de eso afecta al cliente de Prisma —un índice es rendimiento y un
+  `DEFAULT` que la aplicación siempre pisa da igual—, y `migrate status`/`migrate deploy` no lo
+  miran: **solo aparece cuando alguien genera una migración nueva**. La de M1 se escribió a mano
+  con el `CREATE TABLE` solo. Queda como deuda: mientras no se concilie, **toda migración
+  generada con `migrate dev` hay que leerla entera antes de commitearla**, porque va a traer
+  esto de arrastre y producción está en uso real.
+- **La base local del dueño (`ayr_local`) se repuso.** El `migrate dev` de arriba se corrió
+  contra ella y le aplicó ese arrastre; se resolvió con `pnpm db:local reset`, que la recrea
+  desde las migraciones + seed. No se perdió nada: tenía 0 bobinas, 0 cotizaciones, 0 pedidos y
+  0 comprobantes — solo el cliente «público en general» del seed. **La lección para la próxima:
+  una migración se genera contra la base descartable, no contra la del dueño** (regla dura 15
+  cubre los puertos de `dev:preview`; su base merece el mismo cuidado).
+- **`shiftDate` nació duplicada y el lint la cazó.** La cuenta del corrimiento del vencimiento
+  se escribió primero en `invoicing-math.ts` y después, sin querer, otra vez en la pantalla —
+  que es donde se le promete al usuario el vencimiento nuevo. La regla de `no-restricted-syntax`
+  contra `toISOString().slice(0, 10)` la delató. Vive una sola vez en `@ayr/shared`, que es lo
+  que `resolveDueDate` ya había dejado escrito con todas las letras: dos implementaciones de la
+  misma cuenta son dos resultados que se pueden separar sin que nada falle.
+
+### Revisión y pruebas
+
+**`revisor` encontró tres bloqueantes, y el primero habría roto M3 en el caso más común.**
+
+1. **`fiscal_documents.dispatch_id` tiene dueño, y no es este enlace.** La primera versión de M3
+   escribía esa columna además de `dispatches.invoice_id`. En `fiscal_documents` esa columna
+   significa **«este documento _es_ la guía de remisión de ese despacho»**, y el CHECK
+   `fiscal_documents_shape_ck` (Fase 5b) la exige **nula** en todo lo que no sea una GRE: una
+   factura con despacho declarado terminaba en 500, y justo en el caso que la pantalla
+   preselecciona (pedido con un solo despacho). Se quitó: el enlace de D-205 vive en
+   `dispatches.invoice_id` y nada más. **La lección no es «faltó probar»**: la columna se
+   eligió por su nombre, sin releer qué preguntaba. Es la forma que toma acá la regla dura 14
+   —dos preguntas distintas que el compilador no distingue— sobre dos columnas en vez de dos
+   funciones.
+2. **Y por eso mismo, la factura se disfrazaba de guía.** `Dispatch.documents` es la relación
+   inversa de esa columna y no filtra por tipo: con una factura ahí, el despacho mostraba
+   `F001-…` en el campo «Guía», **desaparecía el botón de emitir la guía de remisión** y la
+   reversa se bloqueaba con un mensaje que mandaba a dar de baja un comprobante que no era una
+   guía. Todo eso cae solo al no escribir la columna.
+3. **El enlace se toma al crear el comprobante, que es antes de saber si va a existir.** Un
+   borrador con despacho declarado **no se podía descartar** (`dispatches_invoice_id_fkey` es
+   `ON DELETE RESTRICT` → P2003 → 500), y un rechazado o un anulado dejaban el despacho ocupado
+   para siempre. Ahora `discardDraft` suelta el enlace antes de borrar, lo que ocupa un
+   despacho es un comprobante **vivo** (`LIVE_DOCUMENT_STATUSES`, la misma lista blanca que usa
+   el resto del módulo) y revertir un despacho también lo suelta.
+
+Los dos **altos**, del mismo tirón: `updateManualIssueDate` no tomaba `FOR UPDATE` —todos sus
+pares lo toman y lo dejan comentado como lección— así que sus guardrails de cobro y de nota de
+crédito se evaluaban sobre una foto; y la validación del despacho tampoco lockeaba, con lo que
+dos emisiones concurrentes pasaban las dos y `linkInvoiceToDispatch`, que es idempotente,
+**no avisaba** a la que perdía. Ahora devuelve si escribió y el llamador corta.
+
+**El defecto más vergonzoso lo cazó el lint, no el revisor:** `/^d{4}-d{2}-d{2}$/`, sin las
+barras invertidas. Nunca matcheaba, así que el aviso del vencimiento nuevo **no se renderizaba
+nunca** mientras la mutación mandaba `confirmDueDateShift: true` — el corrimiento habría pasado
+en silencio, que es exactamente lo que ese flag existe para impedir. Se lo comió un heredoc al
+escribir el archivo desde la shell, y **volvió a pasar en el intento de arreglarlo por el mismo
+camino**: es la regla dura 16, aprendida en vivo. Se corrigió con la herramienta de edición, que
+no pasa por shell, y la expresión quedó en una sola constante.
+
+**`qa` sumó 11 casos** (`fecha-emision-manual-f8s7.spec.ts`, 6; `despacho-declarado-f8s7.spec.ts`,
+5), **11/11 en verde y sin defectos de producto**. El caso que más importa es el de M3 que afirma
+201 y no 500, y que `fiscalDocument.dispatchId` sigue en `null`: es el bloqueante 1 convertido en
+centinela. Sumó por su cuenta uno que no estaba en el encargo —un borrador descartado suelta el
+despacho y se puede volver a facturar—, que es justo la regresión que el bloqueante 3 dejaría
+volver.
+
+### Dos cosas operativas que la sesión dejó verificadas
+
+- **`pnpm e2e -- <archivo>` corre la suite entera, en silencio.** Con `--grep` funciona porque es
+  una opción; con una **ruta**, el `--` llega a Playwright y el filtro posicional se ignora. Le
+  costó 1,6 h de reloj a `qa`. La forma correcta para un archivo suelto es
+  `pnpm exec playwright test e2e/tests/<archivo>.spec.ts`.
+- **`purgeInvoicingTrail` gasta cupo de Nubefact con los comprobantes manuales.** Un manual
+  `ACCEPTED` no admite baja ante SUNAT, así que la purga cae en su rama genérica y **emite una
+  nota de crédito real contra el PSE**; `createCreditNote` bloquea `IMPORTED` pero no `MANUAL`.
+  `comprobante-manual.spec.ts` purga manuales aceptados con ese helper, así que cada corrida
+  completa probablemente se lleva unos comprobantes del cupo de 50 de la cuenta demo. Los specs
+  nuevos lo esquivan cerrando con anulación interna (D-110/D-153) antes de purgar. **El helper
+  queda por revisar**: no se tocó en esta sesión porque es de la infraestructura de pruebas y
+  merece su propio cambio.
+
+### Cierre
+
+`lint`, `typecheck`, `format:check` y **430/430 unitarios** en verde. Suite E2E completa:
+**345 passed, 0 failed, 2 skipped** (los dos del cupo PSE), 24,9 min.
+
+**Los tres únicos rojos de la sesión los causó M2, y ninguno hablaba de acabados.** Los specs
+armaban el texto de la opción a mano (`` `${finish.code} — ${finish.name}` ``) y M2 lo reemplazó
+por el color comercial: se cayeron `acabados-d203` (1) y `fase2a` (2), los tres en el formulario
+de compra de bobinas. **No se arreglaron ajustando selectores**, que los habría dejado listos
+para romperse en el próximo cambio de etiqueta: `finishLabels` y `FINISH_FIELD_LABEL` se
+mudaron de `apps/web/src/lib/` a `@ayr/shared` —donde ya viven `FINISH_KIND_LABELS` y el resto
+de los `*_LABELS`, así que no es un lugar forzado— y ahora la pantalla y los tests leen **la
+misma función**: los specs piden `finishOptionLabel(finish)` (helper nuevo en
+`e2e/helpers/api.ts`) en vez de construir el string. El día que la etiqueta cambie otra vez, los
+tests la siguen solos. Es la misma lección de `shiftDate`, encontrada por segunda vez en la
+misma sesión y por el mismo camino: **una regla copiada en dos lados son dos reglas**.
+
+**La corrida completa necesitó builds de producción.** En modo dev (`next dev` +
+`nest start --watch`) el sistema la mató por falta de memoria en el test 308 de 347, con cero
+fallos hasta ahí. Se relanzó con los builds —`CI=1` es lo que hace que `playwright.config.ts`
+levante `start` en vez de `dev`, y entonces hay que dar a mano las variables que el bloque
+`!isCI` completaba solo— y entró entera. **No hizo falta el worktree** que el runbook de
+F8-V4prep menciona: ese existe para no pisar `apps/web/.next` mientras corre el `dev:preview`
+del dueño, y no estaba levantado. De yapa, 24,9 min contra ~1,6 h en modo dev.
 
 ## Post-V4 — auditoría de verificación y pendientes vivos (2026-09-16)
 

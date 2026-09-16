@@ -12,6 +12,7 @@ import {
   type FinishDto,
   type ProductBomDto,
   type ProductDto,
+  finishLabels,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { isPositiveDecimal } from '@/lib/format';
@@ -141,6 +142,8 @@ export function BomDialog({
   const finishOptions = (finishes.data ?? []).filter(
     (f) => f.isActive || f.id === bom.data?.finishId,
   );
+  // F8-S7/M2: el fleje se pide por color, igual que la bobina.
+  const finishOptionLabels = finishLabels(finishOptions);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -204,7 +207,7 @@ export function BomDialog({
                   name="finishId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Acabado del fleje</FormLabel>
+                      <FormLabel>Acabado / Color del fleje</FormLabel>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger className="w-full" disabled={finishes.isPending}>
@@ -218,7 +221,7 @@ export function BomDialog({
                         <SelectContent>
                           {finishOptions.map((f) => (
                             <SelectItem key={f.id} value={f.id}>
-                              {f.code} — {f.name}
+                              {finishOptionLabels.get(f.id) ?? f.code}
                               {f.isActive ? '' : ' (desactivado)'}
                             </SelectItem>
                           ))}

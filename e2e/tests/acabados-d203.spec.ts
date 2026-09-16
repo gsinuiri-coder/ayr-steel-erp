@@ -1,5 +1,14 @@
+import { FINISH_FIELD_LABEL } from '@ayr/shared';
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, createFinish, createUser, getItems, getJson, postJson } from '../helpers/api';
+import {
+  adminApi,
+  createFinish,
+  createUser,
+  finishOptionLabel,
+  getItems,
+  getJson,
+  postJson,
+} from '../helpers/api';
 import {
   createCuttingSupplier,
   today,
@@ -464,18 +473,20 @@ test.describe('F8-S4 — acabado con tipo, color y línea; la bobina toma el col
       await page.goto('/compras/nueva?tipo=COIL');
       await expect(page.getByRole('heading', { name: 'Nueva compra' })).toBeVisible();
 
-      const finishField = page.getByRole('combobox', { name: 'Acabado' }).first();
+      const finishField = page.getByRole('combobox', { name: FINISH_FIELD_LABEL }).first();
       await expect(finishField).toBeVisible();
       // Ya no hay campo «Color» en la línea de la bobina.
       await expect(page.getByLabel('Color', { exact: true })).toHaveCount(0);
 
       // La compra nace en Drywall: el acabado de Coberturas no se ofrece.
       await finishField.click();
-      await expect(page.getByRole('option', { name: prepainted.code })).toBeVisible();
-      await expect(page.getByRole('option', { name: roofingOnly.code })).toHaveCount(0);
+      await expect(page.getByRole('option', { name: finishOptionLabel(prepainted) })).toBeVisible();
+      await expect(page.getByRole('option', { name: finishOptionLabel(roofingOnly) })).toHaveCount(
+        0,
+      );
       await page.keyboard.press('Escape');
 
-      await selectOption(page, finishField, `${prepainted.code} — ${prepainted.name}`);
+      await selectOption(page, finishField, finishOptionLabel(prepainted));
       await expect(page.getByText('Color de la bobina:')).toBeVisible();
       await expect(page.getByText('Color de la bobina:')).toContainText(color.name);
     } finally {

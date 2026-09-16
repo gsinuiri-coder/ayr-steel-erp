@@ -19,6 +19,7 @@ import {
   createFiscalSeriesSchema,
   createInvoiceSchema,
   registerManualSchema,
+  updateManualIssueDateSchema,
   fiscalDocumentQuerySchema,
   paginationQuerySchema,
   reverseCustomerPaymentSchema,
@@ -31,6 +32,7 @@ import {
   type CreateFiscalSeriesInput,
   type CreateInvoiceInput,
   type RegisterManualInput,
+  type UpdateManualIssueDateInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentQuery,
@@ -256,6 +258,24 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(registerManualSchema)) body: RegisterManualInput,
   ): Promise<FiscalDocumentDto> {
     return this.invoicing.registerManual(actor, id, body);
+  }
+
+  /**
+   * F8-S7/M1: corrige la fecha de emisión de un comprobante manual (D-153).
+   *
+   * `@Roles(ADMINISTRADOR)` además del control de `assertIssueDate`: el del servicio existe
+   * porque una fecha distinta de hoy es retrofechar (D-133), pero acá **toda** llamada es una
+   * corrección de un hecho ya registrado, así que el rol se exige en la puerta y no depende
+   * de qué fecha venga en el cuerpo.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Patch('documents/:id/issue-date')
+  updateIssueDate(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(updateManualIssueDateSchema)) body: UpdateManualIssueDateInput,
+  ): Promise<FiscalDocumentDto> {
+    return this.invoicing.updateManualIssueDate(actor, id, body);
   }
 
   /** D-073: reintento manual de un envío que no entró. */

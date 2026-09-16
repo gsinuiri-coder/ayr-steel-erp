@@ -1,6 +1,7 @@
 import { request, type APIRequestContext } from '@playwright/test';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { finishLabels, type FinishDto, type FinishKind } from '@ayr/shared';
 
 /** Credenciales del admin: variables E2E_* o, en local, apps/api/.env. */
 export function adminCredentials(): { email: string; password: string } {
@@ -157,6 +158,24 @@ export interface CreatedFinish {
   id: string;
   code: string;
   name: string;
+  /** F8-S7/M2: lo que decide cómo se lo nombra en pantalla. Ver `finishOptionLabel`. */
+  kind: FinishKind;
+  colorName: string | null;
+}
+
+/**
+ * El texto con el que este acabado aparece en un `<select>` (F8-S7/M2, D-212).
+ *
+ * Sale de `finishLabels` —la **misma** función que pinta la pantalla— y no de un string
+ * armado a mano: cuando M2 cambió la etiqueta de `CÓDIGO — Nombre` al color comercial, los
+ * tres specs que la tenían escrita a mano se cayeron, y ninguno hablaba de acabados.
+ *
+ * Se la llama con la lista de un solo elemento a propósito: un acabado de prueba tiene código
+ * y color únicos, así que nunca necesita el desempate por código. Si algún día un spec crea
+ * dos acabados del mismo color a propósito, tiene que pasarle los dos.
+ */
+export function finishOptionLabel(finish: CreatedFinish): string {
+  return finishLabels([finish as unknown as FinishDto]).get(finish.id) ?? finish.code;
 }
 
 /** Acabado de prueba con código único (entra en el código RF-13 de cada bobina). */
@@ -188,7 +207,13 @@ export async function createFinish(
     colorId: overrides.colorId ?? null,
     businessLine: overrides.businessLine ?? 'drywall',
   });
-  return { id: finish.id, code: finish.code, name: finish.name };
+  return {
+    id: finish.id,
+    code: finish.code,
+    name: finish.name,
+    kind: finish.kind,
+    colorName: finish.colorName,
+  };
 }
 
 export interface CreatedUser {

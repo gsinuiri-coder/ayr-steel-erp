@@ -14,9 +14,12 @@ import {
   PAYMENT_METHOD_LABELS,
   PAYMENT_METHODS,
   LIVE_DOCUMENT_STATUSES,
+  MAX_BACKDATED_ISSUE_DAYS,
   PAYMENT_TERMS_LABELS,
   Role,
+  addDays,
   businessToday,
+  shiftDate,
   toDecimal,
   type CreditNoteReason,
   type CustomerPaymentDto,
@@ -74,6 +77,9 @@ import { Stat, StatStrip } from '@/components/stat-strip';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
+/** `YYYY-MM-DD`. Una sola vez: escrita dos veces, una de las dos salió sin escapar. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 /** RF-70/RF-74/RF-75/RF-76: detalle del comprobante y sus acciones fiscales. */
 export function ComprobanteDetalleView({ id }: { id: string }) {
   const router = useRouter();
@@ -128,6 +134,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const [manualSeries, setManualSeries] = useState('');
   const [manualCorrelative, setManualCorrelative] = useState('');
 
+  // F8-S7/M1: corrección de la fecha de emisión de un manual.
+  const [issueDateOpen, setIssueDateOpen] = useState(false);
+  const [newIssueDate, setNewIssueDate] = useState('');
+  const [issueDateReason, setIssueDateReason] = useState('');
+
   /**
    * D-153: el otro terminal del borrador. No manda nada al PSE — cierra el comprobante con la
    * serie y el número del papel que ya salió de la otra app.
@@ -149,6 +160,35 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     },
     onError: (err: unknown) => {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo registrar el comprobante');
+    },
+  });
+
+  /**
+   * F8-S7/M1: corrige la fecha de emisión de un comprobante manual (D-153).
+   *
+   * `confirmDueDateShift` va siempre en true porque el diálogo ya muestra el vencimiento
+   * nuevo antes de confirmar: el flag existe para que el API no mueva nada que el usuario no
+   * haya visto, y acá lo vio.
+   */
+  const updateIssueDate = useMutation({
+    mutationFn: () =>
+      api<FiscalDocumentDto>(`/invoicing/documents/${id}/issue-date`, {
+        method: 'PATCH',
+        body: {
+          issueDate: newIssueDate,
+          reason: issueDateReason.trim(),
+          confirmDueDateShift: true,
+        },
+      }),
+    onSuccess: (updated) => {
+      toast.success(`Fecha de emisión corregida: ${updated.issueDate}`);
+      setIssueDateOpen(false);
+      setIssueDateReason('');
+      // Con el pedido y la cobranza: el vencimiento pudo moverse con la emisión.
+      refresh();
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo corregir la fecha');
     },
   });
 
@@ -367,6 +407,29 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
    */
   const isExternal = d.origin !== 'ISSUED_HERE';
   const canRetry = !isExternal && (d.status === 'ISSUED' || d.status === 'SEND_ERROR');
+  /**
+   * F8-S7/M1: solo un manual tiene la fecha corregible, y solo un ADMINISTRADOR (D-133).
+   * Un anulado o una versión archivada ya no se tocan — las mismas cotas que el servicio,
+   * dichas acá para no ofrecer un botón que solo puede terminar en 409.
+   */
+  const canEditIssueDate =
+    isAdmin && d.origin === 'MANUAL' && d.annulledAt === null && d.archivedAt === null;
+  // El vencimiento se corre los mismos días que la emisión. **La misma `shiftDate` que usa
+  // el API**, no una copia: lo que la pantalla promete antes de confirmar y lo que el
+  // servicio guarda tienen que ser el mismo número.
+  const shiftedDueDate =
+    d.dueDate !== null && ISO_DATE.test(newIssueDate)
+      ? shiftDate(d.dueDate, d.issueDate, newIssueDate)
+      : null;
+  // El piso de la ventana de emisión (D-072/D-210), para no gastar un 400 en algo que la
+  // pantalla ya tiene delante — el mismo criterio que `manualValid` con la serie.
+  const oldestIssueDate = addDays(businessToday(), -MAX_BACKDATED_ISSUE_DAYS);
+  const issueDateValid =
+    ISO_DATE.test(newIssueDate) &&
+    newIssueDate !== d.issueDate &&
+    newIssueDate <= businessToday() &&
+    newIssueDate >= oldestIssueDate &&
+    issueDateReason.trim().length >= 3;
   // Un rechazado que **ya se corrigió** no se vuelve a corregir: el API lo rechaza con un
   // 409, y lo útil es el enlace a su reemplazo.
   const canCorrect = d.status === 'REJECTED' && !isDispatchNote && d.replacedByDocumentId === null;
@@ -517,6 +580,18 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               onSelect: () => {
                 if (busy) return;
                 send.mutate();
+              },
+            },
+            {
+              key: 'issue-date',
+              label: 'Corregir fecha de emisión',
+              show: canEditIssueDate,
+              disabled: busy,
+              onSelect: () => {
+                if (busy) return;
+                setNewIssueDate(d.issueDate);
+                setIssueDateReason('');
+                setIssueDateOpen(true);
               },
             },
             {
@@ -966,6 +1041,47 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         </section>
       )}
 
+      {/*
+        F8-S7/M1: correcciones de la fecha de emisión. Se muestra acá y no solo en la
+        auditoría porque la fecha de un papel es lo que el cliente coteja contra el documento
+        físico: que haya sido corregida, cuándo y por qué es parte de lo que necesita ver.
+      */}
+      {d.issueDateChanges.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium">Correcciones de la fecha de emisión</h2>
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-background">
+                <TableRow>
+                  <TableHead>Cuándo</TableHead>
+                  <TableHead>Quién</TableHead>
+                  <TableHead>Emisión</TableHead>
+                  <TableHead>Vencimiento</TableHead>
+                  <TableHead>Motivo</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {d.issueDateChanges.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell>{formatTimestampDate(c.changedAt)}</TableCell>
+                    <TableCell>{c.changedByName ?? '—'}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {formatDate(c.beforeIssueDate)} → {formatDate(c.afterIssueDate)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {c.beforeDueDate === null
+                        ? '—'
+                        : `${formatDate(c.beforeDueDate)} → ${formatDate(c.afterDueDate ?? c.beforeDueDate)}`}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{c.reason}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+      )}
+
       {d.affectedDocumentNumber && (
         <div className="text-sm text-muted-foreground">
           Afecta a{' '}
@@ -1088,6 +1204,77 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               }}
             >
               Registrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={issueDateOpen} onOpenChange={setIssueDateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Corregir la fecha de emisión</DialogTitle>
+            <DialogDescription>
+              La fecha del papel, tal como está impresa. Solo se puede corregir en un comprobante
+              manual: la de uno electrónico viajó al PSE.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="new-issue-date">Fecha de emisión</Label>
+            <Input
+              id="new-issue-date"
+              type="date"
+              max={businessToday()}
+              min={oldestIssueDate}
+              value={newIssueDate}
+              onChange={(e) => {
+                setNewIssueDate(e.target.value);
+              }}
+            />
+            <p className="text-sm text-muted-foreground">
+              Actual: <span className="font-mono">{d.issueDate}</span>.
+            </p>
+          </div>
+          {shiftedDueDate !== null && shiftedDueDate !== d.dueDate && (
+            <Alert>
+              <AlertDescription>
+                El vencimiento se corre los mismos días, para conservar el plazo pactado: de{' '}
+                <span className="font-mono">{d.dueDate}</span> a{' '}
+                <span className="font-mono">{shiftedDueDate}</span>.
+              </AlertDescription>
+            </Alert>
+          )}
+          <div className="grid gap-1.5">
+            <Label htmlFor="issue-date-reason">Motivo</Label>
+            <Input
+              id="issue-date-reason"
+              autoComplete="off"
+              placeholder="Se tipeó mal la fecha del papel"
+              maxLength={200}
+              value={issueDateReason}
+              onChange={(e) => {
+                setIssueDateReason(e.target.value);
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIssueDateOpen(false);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={!issueDateValid || busy}
+              pending={updateIssueDate.isPending}
+              pendingText="Corrigiendo…"
+              onClick={() => {
+                if (busy) return;
+                updateIssueDate.mutate();
+              }}
+            >
+              Corregir
             </Button>
           </DialogFooter>
         </DialogContent>

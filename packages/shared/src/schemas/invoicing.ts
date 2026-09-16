@@ -276,6 +276,22 @@ export const createInvoiceSchema = z
     customerId: z.string({ required_error: 'El cliente es obligatorio' }).uuid(),
     /** Pedido de origen. Sin él es una venta directa y las líneas van libres. */
     salesOrderId: z.string().uuid().optional(),
+    /**
+     * Despacho que este comprobante cubre (D-205, F8-S7/M3). **Declarado, nunca inferido.**
+     *
+     * D-205 dejó `dispatches.invoice_id` poblado solo desde el mostrador, que es el único
+     * punto que arma un despacho y un comprobante uno a uno en la misma transacción. El flujo
+     * estándar factura por `salesOrderId` y no decía qué despacho cubre, así que el enlace
+     * quedaba vacío justo donde más se consulta: un pedido puede tener varios despachos
+     * parciales y varias facturas parciales.
+     *
+     * La alternativa —inferirlo cuando el pedido tiene un solo despacho sin facturar— la
+     * descartó el dueño **por diseño y no por costo**: una regla de inferencia puede enlazar
+     * la factura al despacho equivocado, y en auditoría un link falso pesa más que un guion.
+     * Por eso es opcional y explícito: la pantalla lo ofrece y lo preselecciona cuando hay uno
+     * solo, pero quien factura lo confirma.
+     */
+    dispatchId: z.string().uuid().optional(),
     issueDate: isoDateSchema,
     paymentTerms: z.enum(PAYMENT_TERMS).default('CONTADO'),
     /** Solo en crédito. Sin ella, se deriva de `customers.credit_days` (D-075). */
@@ -604,11 +620,28 @@ export const fiscalDocumentSchema = z.object({
       totalPen: z.string(),
     }),
   ),
+  /**
+   * F8-S7/M1: correcciones de la fecha de emisión, más reciente primero. Siempre vacío en un
+   * comprobante que no sea manual. Se muestra en el detalle y no solo en `audit_log` porque
+   * la fecha de un papel es un dato que el cliente coteja contra el documento físico.
+   */
+  issueDateChanges: z.array(
+    z.object({
+      id: z.string().uuid(),
+      beforeIssueDate: z.string(),
+      afterIssueDate: z.string(),
+      beforeDueDate: z.string().nullable(),
+      afterDueDate: z.string().nullable(),
+      reason: z.string(),
+      changedByName: z.string().nullable(),
+      changedAt: z.string(),
+    }),
+  ),
 });
 export type FiscalDocumentDto = z.infer<typeof fiscalDocumentSchema>;
 
 export const fiscalDocumentListItemSchema = fiscalDocumentSchema
-  .omit({ items: true, payments: true, creditNotes: true })
+  .omit({ items: true, payments: true, creditNotes: true, issueDateChanges: true })
   .extend({ itemCount: z.number().int() });
 export type FiscalDocumentListItemDto = z.infer<typeof fiscalDocumentListItemSchema>;
 
@@ -815,6 +848,24 @@ export const dispatchSchema = z.object({
   carrierDocNumber: z.string().nullable(),
   carrierName: z.string().nullable(),
   notes: z.string().nullable(),
+  /**
+   * F8-S7/M3 (D-205): el comprobante que este despacho cubre, cuando se declaró al
+   * facturarlo. `null` no es «sin facturar»: es «no enlazado», que es lo que pasa con todo
+   * despacho anterior a M3 y con el que se factura sin declararlo.
+   *
+   * Es lo que deja a la pantalla de emisión ofrecer solo los despachos que todavía no
+   * tienen comprobante, sin tener que pedir cada uno por separado.
+   */
+  invoiceId: z.string().uuid().nullable(),
+  invoiceNumber: z.string().nullable(),
+  /**
+   * Estado del comprobante enlazado. Hace falta junto al id porque el enlace se toma al
+   * **crear** el comprobante, antes de saber si va a existir: un borrador descartado, un
+   * rechazado o un anulado dejan el enlace puesto pero ya no ocupan el despacho, y la pantalla
+   * de emisión tiene que poder volver a ofrecerlo. Sin esto, `invoiceId !== null` alcanzaba
+   * para esconderlo para siempre.
+   */
+  invoiceStatus: z.enum(FISCAL_DOCUMENT_STATUSES).nullable(),
   /** Guía de remisión vigente del despacho (la última no rechazada), si ya se emitió. */
   dispatchNoteId: z.string().uuid().nullable(),
   dispatchNoteNumber: z.string().nullable(),
@@ -983,3 +1034,40 @@ export const registerManualSchema = z.object({
   correlative: z.number().int().min(1, 'El correlativo empieza en 1').max(99_999_999),
 });
 export type RegisterManualInput = z.infer<typeof registerManualSchema>;
+
+/**
+ * Corregir la fecha de emisión de un comprobante **manual** (F8-S7/M1).
+ *
+ * Pedido del cliente después de cargar los primeros comprobantes de la migración: el papel
+ * ya existe con su fecha impresa, y al tipearlo se puede errar. Hasta acá la fecha quedaba
+ * fija al crear el borrador y no había ninguna puerta para corregirla.
+ *
+ * **Alcance deliberadamente mínimo.** Solo `origin === MANUAL` (D-153: el papel salió de
+ * otra app, el ERP no habla del PSE por él), solo la fecha, y el rol lo sigue decidiendo
+ * `OperationDateService.assertIssueDate` (D-133: retrofechar es de ADMINISTRADOR). Un
+ * comprobante electrónico **no** se toca por ningún camino: su fecha viajó al PSE y está en
+ * un CDR que el ERP no puede reescribir.
+ *
+ * La ventana de `assertIssueDateWindow` (D-072, hoy 90 días por D-210) se aplica igual que
+ * al crearlo: es la misma pregunta —«¿esta fecha es una fecha de emisión válida?»— y
+ * responderla distinto acá sería dejar entrar por la corrección lo que la creación rechaza.
+ */
+export const updateManualIssueDateSchema = z
+  .object({
+    issueDate: isoDateSchema,
+    /**
+     * Confirmación explícita de que el vencimiento se mueve con la emisión. La UI muestra
+     * antes el vencimiento nuevo; sin este flag, un comprobante a crédito no se toca.
+     *
+     * Existe porque mover la emisión y **no** mover el vencimiento deja una cuenta por
+     * cobrar que vence a una distancia distinta de la pactada, en silencio. Que el efecto
+     * colateral se vea y se acepte es más barato que descubrirlo en un reporte de mora.
+     */
+    confirmDueDateShift: z.boolean().optional(),
+    /** Por qué se corrige. Queda en el registro de cambios y en la auditoría. */
+    reason: z.string().trim().min(3, 'Explicá el motivo de la corrección').max(200),
+  })
+  .superRefine((input, ctx) => {
+    assertIssueDateWindow(input.issueDate, ctx, ['issueDate']);
+  });
+export type UpdateManualIssueDateInput = z.infer<typeof updateManualIssueDateSchema>;

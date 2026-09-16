@@ -7,10 +7,11 @@ import {
   CURRENCIES,
   CURRENCY_LABELS,
   Decimal,
-  FINISH_KIND_LABELS,
   type Currency,
   type CoilDto,
   type FinishDto,
+  FINISH_FIELD_LABEL,
+  finishLabels,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
@@ -109,6 +110,7 @@ export function CoilEditDialog({
       f.id === coil.finishId ||
       (f.isActive && f.kind !== null && f.businessLine === coil.businessLine),
   );
+  const finishOptionLabels = finishLabels(finishOptions);
   const chosenFinish = finishes.data?.find((f) => f.id === finishId) ?? null;
   const notesChanged = notes.trim() !== (coil.notes ?? '');
   // Cambiar a moneda extranjera sin escribir el TC dejaría el recosteo con el `1.0000`
@@ -183,7 +185,7 @@ export function CoilEditDialog({
             )}
           </div>
           <div className="grid gap-1">
-            <Label htmlFor="edit-finish">Acabado</Label>
+            <Label htmlFor="edit-finish">{FINISH_FIELD_LABEL}</Label>
             <Select
               value={finishId}
               onValueChange={setFinishId}
@@ -195,10 +197,10 @@ export function CoilEditDialog({
                 />
               </SelectTrigger>
               <SelectContent>
+                {/* F8-S7/M2: color comercial, con el código solo si hay dos del mismo color. */}
                 {finishOptions.map((f) => (
                   <SelectItem key={f.id} value={f.id}>
-                    {f.code} — {f.name}
-                    {f.kind ? ` · ${FINISH_KIND_LABELS[f.kind]}` : ''}
+                    {finishOptionLabels.get(f.id) ?? f.code}
                   </SelectItem>
                 ))}
               </SelectContent>

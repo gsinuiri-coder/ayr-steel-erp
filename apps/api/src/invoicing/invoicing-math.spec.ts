@@ -4,6 +4,7 @@ import {
   FiscalDocumentStatus,
   payableBalance,
   salesTotals,
+  shiftDate,
   sumLineTotals,
   toDecimal,
   VOID_WINDOW_DAYS,
@@ -19,6 +20,46 @@ import { dueDateFor, isStalled, pendingQty, proratedQty } from './invoicing-math
  * deja pasar una factura vieja. Ninguno de esos errores rompe nada visible hasta que
  * alguien reclama por un cobro o SUNAT rechaza una comunicación.
  */
+
+describe('shiftDate (F8-S7/M1)', () => {
+  it('corre la fecha los mismos días que se movió el ancla, hacia adelante', () => {
+    // La emisión se mueve 5 días; el vencimiento también, y el plazo sigue siendo 30.
+    expect(shiftDate('2026-10-04', '2026-09-04', '2026-09-09')).toBe('2026-10-09');
+  });
+
+  it('y hacia atrás', () => {
+    expect(shiftDate('2026-10-04', '2026-09-04', '2026-08-30')).toBe('2026-09-29');
+  });
+
+  it('sin movimiento del ancla no toca la fecha', () => {
+    expect(shiftDate('2026-10-04', '2026-09-04', '2026-09-04')).toBe('2026-10-04');
+  });
+
+  it('cruza el fin de mes y el fin de año sin corrimiento', () => {
+    // 29 días de corrimiento (enero tiene 31), no 28: la cuenta la hace el calendario.
+    expect(shiftDate('2026-02-01', '2026-01-31', '2026-03-01')).toBe('2026-03-02');
+    expect(shiftDate('2027-01-04', '2026-12-30', '2026-12-31')).toBe('2027-01-05');
+  });
+
+  it('lo que conserva es el PLAZO, que es la razón de existir de la función', () => {
+    // La propiedad que importa: pase lo que pase con las fechas, la distancia entre emisión
+    // y vencimiento no cambia. Recalcular por `credit_days` habría pisado un vencimiento
+    // tipeado a mano; correr el delta lo respeta.
+    const emision = '2026-09-04';
+    const vencimiento = '2026-10-04';
+    const plazo = (a: string, b: string) =>
+      (Date.parse(`${b}T00:00:00.000Z`) - Date.parse(`${a}T00:00:00.000Z`)) / 86_400_000;
+    for (const nueva of ['2026-08-01', '2026-09-30', '2026-12-31', '2027-02-28']) {
+      expect(plazo(nueva, shiftDate(vencimiento, emision, nueva))).toBe(
+        plazo(emision, vencimiento),
+      );
+    }
+  });
+
+  it('atraviesa el cambio de año bisiesto sin perder un día', () => {
+    expect(shiftDate('2028-03-01', '2028-02-28', '2028-02-29')).toBe('2028-03-02');
+  });
+});
 
 describe('dueDateFor (D-075)', () => {
   it('al contado no hay vencimiento', () => {
