@@ -128,7 +128,10 @@ async function settleDocuments(api: APIRequestContext, documentIds: string[]): P
       .catch(() => null);
     if (!document) continue;
     if (document.status === 'DRAFT') {
-      await api.delete(`/api/invoicing/documents/${id}`).catch(() => undefined);
+      // HOTFIX-401/M2: descartar un borrador exige motivo.
+      await api
+        .delete(`/api/invoicing/documents/${id}`, { data: { reason: 'Limpieza E2E' } })
+        .catch(() => undefined);
       continue;
     }
     if (document.origin !== 'MANUAL') continue;
@@ -352,7 +355,10 @@ test.describe('D-213 — el despacho que cubre el comprobante se declara al fact
       // a existir.** Descartarlo (RF-70) tiene que devolver el despacho a la lista de los que
       // se pueden facturar; con `invoice_id !== null` a secas quedaba ocupado para siempre por
       // un comprobante que ya no existe.
-      const dropped = await api.delete(`/api/invoicing/documents/${discarded.id}`);
+      // HOTFIX-401/M2: descartar un borrador exige motivo.
+      const dropped = await api.delete(`/api/invoicing/documents/${discarded.id}`, {
+        data: { reason: 'Prueba E2E: volver a facturar el mismo despacho' },
+      });
       expect(dropped.ok(), await dropped.text()).toBe(true);
       expect(await dispatchRow(api, scenario.order.id, dispatch.id)).toMatchObject({
         invoiceId: null,

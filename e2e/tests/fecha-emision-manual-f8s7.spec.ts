@@ -180,7 +180,10 @@ async function cleanupDocuments(api: APIRequestContext, ids: string[]): Promise<
       await reversePayment(api, id, payment.id, reason).catch(() => undefined);
     }
     if (document.status === 'DRAFT') {
-      await api.delete(`/api/invoicing/documents/${id}`).catch(() => undefined);
+      // HOTFIX-401/M2: descartar un borrador exige motivo.
+      await api
+        .delete(`/api/invoicing/documents/${id}`, { data: { reason } })
+        .catch(() => undefined);
       continue;
     }
     await annulImported(api, id, reason).catch(() => undefined);
