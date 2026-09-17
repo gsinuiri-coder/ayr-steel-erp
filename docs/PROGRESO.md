@@ -6749,6 +6749,146 @@ desplegada sí.
 no ve), un "Historial" desde un detalle, una edición con motivo registrada. Commits de esta
 ventana sin pushear todavía (`74c6317`, `899151f`): imprimir para el dueño al cierre.
 
+## Sesión RF-S3 (2026-09-17) — Hardening: búsqueda, card sin-stock, PITR
+
+PASO 0 confirmó CI verde en `main` (`d00c870`) y midió lo necesario antes de codear: 665/821
+clientes activos y 1279/2565 productos activos en Neon `dev`; retención PITR real de 6 h
+(`history_retention_seconds: 21600`, no los 7 días que el plan permite); `findStockShortages`
+sin agregar (N por cotización × M por línea, derivado leyendo el código, no medido en vivo —
+`DEBUG=prisma:query` no se pudo capturar de forma confiable en Windows/cmd.exe). Worktree
+`ayr-steel-erp-rf-s3`, rama `rf-s3`, desde `origin/main` en `bc31eae`.
+
+**M0 — el flaky de `precios-lista-d217.spec.ts:255` no era un bug.** Diagnóstico completo (dos
+pasadas, la segunda corrigiendo la primera) en la nota dentro de "Sesión RF-S2-AJUSTES-UAT" más
+arriba: la causa real es el prefetch de rutas de un `next dev` recién levantado, no
+contaminación entre agentes concurrentes. Sin cambios de producto; `chooseOption`/
+`chooseProductWithStock` (`e2e/helpers/ui.ts`) ya reintentaban o pasaron a reintentar por esto.
+
+**M1 — búsqueda server-side (D-229).** `GET /customers/search` y `GET /catalog/search` (q≥2,
+tope 20, prefijo antes que contiene, `rankSearchMatches` compartido en `packages/shared`).
+`q` vacío u omitido es válido y devuelve los primeros `SEARCH_RESULT_LIMIT` sin filtro (D-156:
+el selector nunca abre vacío). `SearchSelectField`/`SearchSelectModal` ganan un modo async; el
+modal de producto con stock (D-188) cambia de fuente sin cambiar de forma. El valor ya elegido
+se hidrata por id (`GET /customers/:id`), así que editar una cotización o pedido viejo nunca
+muestra el selector vacío. Sin índice nuevo (D-229): el volumen de hoy no lo justifica. Tests:
+unitarios de umbral/tope/ranking, E2E de cotización nueva y de cambio de cliente de un pedido,
+los dos con búsqueda real.
+
+**M2 — card sin-stock agregado (D-228).** `findStockShortages` pasó de N+1-sobre-N+1 a un
+número de consultas fijo (presupuesto de D-228), verificado con un test que no crece ni con más
+cotizaciones ni con más líneas por cotización. Mismo resultado funcional: los dos E2E de D-188
+ya existentes siguieron en verde sin tocarlos, más tests nuevos de equivalencia para los casos
+de borde (reserva temporal propia, dos líneas de la misma cotización compitiendo por el mismo
+ítem, línea NOOP). Sigue recalculándose en cada lectura, sin estado guardado.
+
+**M3 — ensayo de restauración PITR**, con OK del dueño por nombre. Rama `ensayo-pitr-20260917`
+creada y restaurada (~1 h atrás) con el patrón de dos pasos de `neonctl`
+(`branches create --parent production`, después `branches restore <rama>
+"production@<timestamp>"` — el flag combinado `--parent rama@timestamp` no existe en `create`).
+Nunca se tocó `production` directamente. Retención real 6 h (no 7 días). Conteos de tablas
+clave idénticos entre la rama de ensayo y `production` (sin escrituras en la última hora, así
+que no había diferencia que explicar). RTO del lado de Neon: segundos; repuntar la API de
+verdad (secretos + deploy a la rama restaurada) no se ensayó — es el paso real de un incidente
+que esta ventana no simuló, documentado como tal en `docs/ENTORNOS.md`. Procedimiento paso a
+paso con responsable por paso, RPO/RTO medidos y cómo repuntar la API en un incidente real,
+todo en `docs/ENTORNOS.md` §"PITR — retención, RPO/RTO y procedimiento de restauración". La
+rama de ensayo queda viva hasta que el dueño autorice borrarla por nombre.
+
+**M4 (sacrificable) — card «SKUs con lista bajo piso» (D-224).** Implementado con el diseño ya
+escrito en RF-S1/M2: reusa `computePriceFloors` (D-150, nunca lógica paralela) batcheado sobre
+todo el catálogo activo con precio de lista. Mismo criterio de presupuesto de consultas que M2
+(test dedicado). Card nueva en el Panel, solo ADMINISTRADOR (`GET /catalog/price-list/floor-summary`
+con `@Roles(Role.ADMINISTRADOR)`), con link a la fila resaltada en Catálogo.
+
+### Hallazgos de `revisor` y `qa`, todos corregidos antes de cerrar
+
+**`revisor`** (lectura del diff):
+
+- **[ALTO] `GET /catalog/price-list/floor-summary` sin `@Roles`.** El control era solo del
+  lado del cliente (`enabled: isAdmin` en la card); el endpoint quedaba abierto a cualquier rol
+  autenticado, que podía ver qué SKU vende bajo margen en todo el catálogo. Agregado
+  `@Roles(Role.ADMINISTRADOR)` + test de metadata (`catalog.controller.spec.ts`) que confirma
+  que el guard real la va a exigir.
+- **[ALTO] `SearchSelectField` mostraba "no está entre las opciones" mientras la hidratación
+  por id todavía cargaba** — pasa siempre al abrir para editar una cotización/pedido con
+  cliente ya elegido, y un instante después de elegir uno nuevo. Agregado
+  `selectedOptionLoading` (el `isLoading` del `useQuery` de hidratación, que la vista ya tenía)
+  y el campo ahora lo respeta.
+- [MEDIO] la card de M4 mostraba `listPricePen`/`minPricePen` como strings crudos en vez de con
+  `formatMoney`. Corregido.
+- [BAJO, todos aplicados] `availabilityForShortages` paralelizó el loop de specs de materia
+  prima con `Promise.all`; el sentinel `'1'` de `?bajoPiso=` pasó a una constante compartida
+  (`apps/web/src/lib/catalog-links.ts`); `businessLine` inválido en `GET /catalog/search` ahora
+  devuelve 400 en vez de ignorarse en silencio; test nuevo de dos líneas de la misma cotización
+  compitiendo por el mismo ítem en `findStockShortages` (la aritmética ya era correcta —
+  verificado a mano contra `previewLinesOf` — pero no tenía centinela).
+
+**`qa`** (suite E2E completa, worktree + build de producción, 374 tests): **363 passed, 9
+failed, 2 skipped** en la primera corrida. 2 rojos son infraestructura conocida y ajena (R2 sin
+configurar en local, `fase2a.spec.ts:359`/`fase5a.spec.ts:100`, documentados desde antes). **Los
+otros 7 eran un defecto real de M1**, en dos formas del mismo problema:
+
+- **(A) `/customers/search` no matchea la etiqueta compuesta "Nombre — RUC/DNI".** Cinco specs
+  preexistentes (no tocados por M1) le pasaban a `chooseOption` la etiqueta completa como texto
+  de búsqueda — funcionaba en el modo síncrono viejo porque el filtro comparaba contra el label
+  entero con `includes()`, y dejó de funcionar cuando el campo empezó a buscar en el servidor
+  contra `name`/`docNumber` por separado. Arreglo: los 5 specs (`huecos-cobertura-f8s2b.spec.ts`
+  ×2, `plancha-largo-d166.spec.ts`, `precios-lista-d217.spec.ts`,
+  `product-stock-picker-f8s2b.spec.ts`) ahora le pasan el RUC/DNI completo como `searchText` —
+  parámetro nuevo de `chooseOption`, que sigue usando la etiqueta completa para el label y para
+  verificar que quedó elegido.
+- **(B) El selector de cliente ya no mostraba nada al abrir sin escribir**, rompiendo la
+  garantía D-156/F8-S3c/M4 de que el selector "siempre abre mostrando algo útil" —
+  `selector-cliente-f8s3c.spec.ts` lo prueba explícitamente. Arreglo, no solo en los tests: `q`
+  vacío u omitido en `searchQuerySchema` ahora es válido y significa "los primeros
+  `SEARCH_RESULT_LIMIT`, sin filtro de texto" (`contains: ''` matchea todo, así que la misma
+  consulta batcheada de siempre alcanza) — corregido en `/customers/search`, `/catalog/search`,
+  `SearchSelectModal` y `ProductStockPickerDialog`. Solo 1 carácter (ni "nada" ni alcanza para
+  acotar) sigue mostrando el aviso de mínimo.
+
+Una sexta falla apareció al re-verificar (no estaba en la lista original de `qa`, en el mismo
+archivo): `huecos-cobertura-f8s2b.spec.ts` esperaba el texto viejo "N de M productos" del
+picker, que con el rediseño de M1 pasó a "N resultados" — test actualizado al nuevo texto, sin
+tocar el componente (la aserción de fondo, que las filas desaparecen al filtrar y no solo dejan
+de resaltarse, sigue intacta).
+
+Con los 7+1 arreglos, los 5 specs afectados se re-verificaron con build de producción (sin el
+ruido de `next dev` en modo dev que M0 ya documentó): **18 passed, 0 failed, 0 skipped** —
+verde pleno, sin regresiones nuevas. (Antes de llegar a ese build de producción hubo dos
+corridas intermedias en modo dev con 1 y 3 rojos sueltos en `chooseOption` por timeout — mismo
+síntoma de M0, prefetch de rutas en frío, no un defecto de los arreglos; confirmado descartando
+la hipótesis de defecto porque las capturas de esas corridas mostraban el estado correcto en
+pantalla en el momento exacto del timeout.)
+
+### Suite E2E completa (worktree + build de producción)
+
+**Antes de las correcciones:** 363 passed, 9 failed (7 reales + 2 infraestructura conocida), 2
+skipped, ~27 min. **Después de las correcciones y de los 5 specs re-verificados en verde:**
+<<PENDIENTE — corrida de confirmación de la suite completa en curso al momento de escribir esta
+entrada; completar con el resultado final antes del cierre>>.
+
+### Migraciones de esta ventana
+
+Ninguna. M1/M2/M4 son código de servicio y consultas; M3 es solo Neon (rama de ensayo, no
+migración). Nada que desplegar a `production` en materia de esquema.
+
+### Pendientes que esta sesión deja
+
+- **La rama Neon `ensayo-pitr-20260917`** queda viva — se borra solo con OK del dueño por
+  nombre, y solo después de que confirme que ya la revisó.
+- **Repuntar la API a una rama restaurada (secretos + deploy) no se ensayó** — documentado en
+  `docs/ENTORNOS.md` como el paso real de un incidente que esta ventana no simuló.
+- **Nadie cargó todavía precios de lista reales contra el catálogo de `production`** (deuda de
+  D-217/D-224, sin cambios): la card de M4 no tiene nada que mostrar en producción hasta que eso
+  pase.
+- `/handoff rf-s3` con el resumen de cierre.
+- Commits de esta ventana sin pushear todavía (regla dura 6): imprimir la lista y el comando de
+  push para el dueño al cierre.
+
+### Siguiente sesión
+
+**S4 (Opus)** — inventario valorizado/merma + CxC, por plan.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
