@@ -14,6 +14,7 @@ import {
 } from '@ayr/shared';
 import { ApiError } from '@/lib/api';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
+import { AuditHistoryLink } from '@/components/audit-history-link';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -173,6 +174,8 @@ export function ImportarPreciosView() {
           </p>
         </div>
         <div className="flex gap-2">
+          {/* D-225: cada carga, cada reversa y cada SKU que tocaron quedan en el visor. */}
+          <AuditHistoryLink entityType="products" />
           <Button variant="outline" size="sm" asChild>
             <a href="/plantillas/precios-de-lista.csv" download>
               Descargar plantilla

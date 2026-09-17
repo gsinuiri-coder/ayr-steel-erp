@@ -23,6 +23,7 @@ import {
   finishLabels,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { AuditHistoryLink } from '@/components/audit-history-link';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
@@ -258,8 +259,9 @@ export function ProductDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+        <DialogHeader className="flex-row items-center justify-between gap-2 pr-8">
           <DialogTitle>{editing ? 'Editar producto' : 'Nuevo producto'}</DialogTitle>
+          {product && <AuditHistoryLink entityType="products" entityId={product.id} />}
         </DialogHeader>
         <Form {...form}>
           <form
