@@ -6629,6 +6629,16 @@ copiar el `R2_BUCKET` real (el mismo de Cloud Run producción) a `apps/api/.env`
 `docs/ENTORNOS.md` para el detalle y el riesgo documentado (credenciales de usuarios de
 `demo` = las de `production`).
 
+**Migraciones D-218/D-220 en `demo` — el ensayo real de la ventana S2.** `migrate status`
+sobre `demo` ya restablecida: solo las dos pendientes, como se esperaba. `audit_log` antes del
+`CREATE INDEX` de D-220: 300 filas, 240 kB — trivial, no sirve de estimador de duración para
+`production` (su `audit_log` es mucho más grande; se mide aparte en la ventana). `migrate
+deploy` aplicó las dos sin error, conteos antes/después iguales, `migrate status` 0
+pendientes. `migrate diff` no vacío, pero coincide **exactamente** con el drift ya
+documentado (Incidente HOTFIX-DESFASE, deuda S3 #1): mismas 5 tablas con default de
+`operation_date`, mismas 5 FK recreadas, mismos 2 índices, mismo renombre — ninguna diferencia
+nueva.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
