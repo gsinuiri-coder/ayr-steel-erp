@@ -5182,7 +5182,7 @@ saldo pendiente y, con `dueDate` vencida, "Vencido". `assertStillAvailable` (emi
 revalidaba línea por línea; `receivables.service.ts` (Cobranzas) ya excluía `DRAFT` de la
 CxC agregada; "Descartar borrador" ya existía, sin motivo obligatorio.
 
-Fix (D-214):
+Fix (D-223, registrada originalmente como D-214 — renumerada en VENTANA-S1+HOTFIX porque RF-S1 ya usaba D-214):
 
 - `idempotencyKey` en `createInTx`, mismo patrón que un cobro (D-182).
 - Tope nuevo: `DRAFT` + `LIVE_DOCUMENT_STATUSES` (sin notas de crédito, sin archivados) de

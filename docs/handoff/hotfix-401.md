@@ -10,7 +10,7 @@ propio, desde `origin/main` = prod) tiene 4 commits locales, **sin push**.
 
 ## Hecho
 
-- **M2 — un pedido no admite un segundo borrador que exceda su total** (D-214):
+- **M2 — un pedido no admite un segundo borrador que exceda su total** (D-223, antes D-214):
   `apps/api/src/invoicing/invoicing.service.ts` (`createInTx`: `idempotencyKey` + tope;
   `discardDraft`: `reason` obligatorio), `packages/shared/src/schemas/invoicing.ts`
   (`documentBalance` excluye `DRAFT`; `discardDraftSchema`), migración
@@ -25,7 +25,7 @@ propio, desde `origin/main` = prod) tiene 4 commits locales, **sin push**.
 
 ## Decisiones tomadas
 
-- **D-214**: idempotencia + tope por pedido + `documentBalance` excluye `DRAFT` + `reason`
+- **D-223** (registrada como D-214; renumerada al integrar con RF-S1, que ya usaba ese número): idempotencia + tope por pedido + `documentBalance` excluye `DRAFT` + `reason`
   obligatorio en `discardDraft` + dos índices únicos parciales (excluyendo `NOTA_CREDITO`).
 
 ## Bloqueos / pendientes
