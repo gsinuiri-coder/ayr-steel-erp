@@ -6475,6 +6475,70 @@ que ahora es regla explícita en `CLAUDE.md` (Secretos).
 `deploy-api.mjs`/variables rotas, guard por línea sin NC, limpieza de ramas Neon — nada
 vencido hoy) y D-224 (precio de lista sin cargar, tarea del dueño).
 
+## Sesión RF-S2-INTEGRA (2026-09-16/17) — rf-s2 sobre main + integración con S1/hotfix
+
+Worktree `ayr-steel-erp-rf-s2`, rama `rf-s2`. Sin merge ni push. Handoff:
+`docs/handoff/rf-s2-integra.md`.
+
+**PASO 0.** `origin/main` = `ae5bb1c`, no `ca6314d`, pero los tres commits de más son solo docs
+y scripts: `git diff --quiet ca6314d origin/main -- apps packages …` → 0. En `49fe903..rf-s2`
+hay 17 commits. El «16» de RF-S2-CIERRE deja afuera `dc83120`, la fila D-217 que `main` también
+tiene como `18ee393`. El «13» del handoff de la ventana no sale de ningún estado del reflog.
+
+Archivos que tocan los dos lados: los dos docs, `.prettierignore` (el mismo cambio exacto) y
+`comprobante-detalle-view.tsx`, en partes distintas del archivo. Nadie toca `schema.prisma`,
+AuditService, fiscal/pricing ni `settings.json`. Las migraciones de `rf-s2` (`…153802_d218`,
+`…170000_d220`) van después de `…142234_d217`; el hotfix no agregó migraciones.
+
+**M1 — rebase.** Solo hubo conflictos de docs, resueltos por script: las filas §0.2 se unen por
+número y se ordenan solo desde el bloque en conflicto, así la inversión D-123/D-122 que ya
+estaba en `main` queda como estaba; las secciones de PROGRESO quedan en orden cronológico.
+`dc83120` se saltó y `85a69c7` lo descartó git: quedan 15 commits. El código es idéntico al de
+`git merge-tree origin/main rf-s2`. Rama de respaldo local: `rf-s2-pre-rebase-b0e2aac`.
+
+Lint, typecheck, test (574) y format en verde. **`prisma migrate reset` no se corrió:** Prisma lo
+bloquea si lo lanza un agente sin el consentimiento del dueño en un mensaje nuevo. En su lugar,
+`migrate deploy` sobre una base descartable nueva (`ayr_migcheck_rf_s2`, Docker local, borrada
+después) aplicó las 70 migraciones limpias y en orden. El `migrate diff` restante es el drift ya
+conocido, sin nada de `audit_log`.
+
+**M2 — integración (D-225).**
+
+- Los precios de lista ya eran la tercera fuente del visor. No hay quinta fuente ni doble
+  instrumentación, y el presupuesto de consultas sigue en 4+1.
+- El descarte de borrador guarda el motivo en `audit_log.reason` y no en `before`.
+- El centinela D-222 fija la cantidad de `audit.log()` por archivo y revisa
+  `createInTx`/`discardDraft` (verificado por mutación).
+- Tests unitarios nuevos del empate lote ↔ SKU (carga + reversa, 52 filas), de la edición inline
+  (pageSize 1) y de `reason`. Dos E2E nuevos en `auditoria-d218.spec.ts`.
+- Links "Historial" en el historial de precio, en "Editar producto" y en la carga masiva.
+- Unitarios: 581.
+
+**M3 — suite completa** desde el worktree, con `next build`/`nest build` y `CI=true` (31,6 min):
+**365 pasan, 3 se saltan por diseño (PSE real), 1 flaky y 3 fallan.**
+
+- `fase2a.spec.ts:359` y `fase5a.spec.ts:100`: R2 sin configurar en local, los mismos dos de
+  RF-S2-CIERRE. El juez es la CI.
+- `auditoria-d218.spec.ts:64`: el test nuevo tenía un selector ambiguo. El alta con precio ya
+  deja su propio cambio de precio, así que había dos filas. Corregido y vuelto a correr aparte,
+  junto con `precios-lista-d217` y `hotfix-401-borradores-duplicados`: 20/20.
+- Flaky: `precios-lista-d217.spec.ts:255` (prellenado del precio en una línea de cotización),
+  que pasó al reintento y en la corrida aparte. No toca código de esta sesión.
+
+**M4.** `docs/analisis/cloud-run-env-impacto.md`. `NODE_ENV` efectivo es `production` (lo fija
+el `Dockerfile`), CORS en `localhost:3001` sin impacto funcional, `JOBS_ENABLED` vale `true` por
+default y no hay rutas de test/reset en runtime. **Nada grave**; todo tolerable para S3. La
+condición para la ventana de `rf-s2` es de procedimiento: desplegar con
+`gcloud run deploy --source .` sin flags de variables, no con `pnpm deploy:api`.
+
+**Pendientes.**
+
+- UX del visor: los precios de lista se ven sin IGV y con claves en inglés humanizado. Lo avisa
+  el caso 5 de `docs/uat/rf-s2.md`.
+- Los descartes hechos en producción entre `ca6314d` y el deploy de esta rama quedan con
+  `before.reason` (append-only).
+- Siguiente paso: push de `rf-s2` por el dueño + PR para la CI → UAT en `demo` → ventana propia.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.

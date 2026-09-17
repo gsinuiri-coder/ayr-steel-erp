@@ -63,6 +63,47 @@ después. Si ese mismo producto tuvo otro tipo de cambio general (por ejemplo se
 nombre), aparece como un evento aparte — son dos hechos distintos, no una sola fila que
 esconde al otro.
 
+**Agregado en RF-S2-INTEGRA (D-225), con la rama ya rebaseada sobre precios de lista:**
+
+- **Edición inline:** un solo cambio de precio deja **dos** filas con la misma hora: "Edición
+  de producto" (el producto entero, con el precio entre los campos que cambiaron) y "Cambio
+  de precio de lista" (solo el precio, con "Origin: INLINE"). Es a propósito, no un duplicado.
+- **Los valores del visor son sin IGV.** Son el `valor` que guarda el sistema (D-162). El
+  catálogo y el historial de precio del SKU muestran el precio **con** IGV: un 11.80 del
+  catálogo se ve como 10.0000 en el visor.
+- **Carga masiva:** una fila "Carga masiva de precios de lista confirmada" (cuántos SKUs se
+  enviaron y cuántos cambiaron) más una fila "Cambio de precio de lista" por cada SKU, todas
+  con la misma hora. **Revertir el lote** deja lo mismo en espejo: "Carga masiva de precios
+  de lista revertida" más una fila por SKU restaurado, con "Reverts batch id" apuntando al
+  lote original. Con 50 o más SKUs, "Cargar más" trae el resto sin repetir ni saltear
+  ninguno.
+- **Link "Historial":** en **Catálogo**, el historial de precio de un SKU y el diálogo "Editar
+  producto" tienen un botón **Historial** que abre el visor ya filtrado a ese producto. La
+  pantalla **Cargar precios de lista** tiene el mismo botón, filtrado a "Productos". Con un
+  usuario que no es ADMINISTRADOR, el botón no aparece.
+
+## 5b. Un borrador de comprobante descartado queda con su motivo
+
+**Qué probar:** que descartar un borrador —lo único de facturación que se borra de verdad—
+deja rastro de quién, cuándo y **por qué** (HOTFIX-401, D-223/D-225).
+
+1. En **Comprobantes**, crear un borrador cualquiera (o usar uno que sobre).
+2. Antes de descartarlo, anotar su dirección (`/comprobantes/<id>`): después de descartarlo, la
+   pantalla del comprobante ya no existe.
+3. Abrir el borrador, **Descartar borrador** y escribir un motivo reconocible (por ejemplo,
+   "UAT borrador duplicado").
+4. En **Auditoría**, elegir "Comprobantes" en "Tipo de entidad" y pegar el id del paso 2 en
+   "ID de entidad".
+
+**Resultado esperado:** dos filas. "Comprobante creado", con el tipo, el cliente y el total, y
+"Borrador de comprobante descartado", con el tipo y el total que tenía **y el motivo escrito
+en letra chica debajo del nombre de quien lo descartó**, no mezclado con los campos del detalle. El botón **Historial** del
+comprobante sirve para abrir el visor mientras el borrador todavía existe.
+
+> Los descartes hechos en producción entre el deploy de `ca6314d` y el de esta rama guardaron
+> el motivo como un campo más del detalle ("Reason: …"). No se reescriben (la auditoría no se
+> edita, D-221); desde este deploy el motivo sale en su lugar.
+
 ## 6. Más de una página de resultados
 
 **Qué probar:** que "Cargar más" trae la página siguiente sin perder ni repetir eventos.
