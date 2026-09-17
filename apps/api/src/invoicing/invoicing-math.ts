@@ -56,6 +56,29 @@ export function pendingQty(ordered: DecimalInput, done: DecimalInput): Decimal {
 }
 
 /**
+ * HOTFIX-401/M2 (D-223): lo que un pedido tiene **neto** facturado o en borrador, contra lo
+ * que cuesta. `committed` son los comprobantes en pie del pedido (borradores incluidos, sin
+ * notas de crédito); `credited`, las notas de crédito **vivas** que cuelgan de él.
+ *
+ * Restar lo acreditado es lo que deja facturar de nuevo lo que una nota de crédito devolvió:
+ * factura por el total → nota de crédito parcial → nueva factura por lo acreditado. Sin
+ * restarlo, el tope trataba al pedido como facturado entero para siempre. Una nota de crédito
+ * en borrador no acredita nada todavía y no entra.
+ */
+export function exceedsOrderTotal(input: {
+  orderTotal: DecimalInput;
+  committed: DecimalInput;
+  credited: DecimalInput;
+  newTotal: DecimalInput;
+}): { exceeds: boolean; net: Decimal } {
+  const net = toDecimal(input.committed).minus(toDecimal(input.credited));
+  return {
+    exceeds: net.plus(toDecimal(input.newTotal)).gt(toDecimal(input.orderTotal)),
+    net,
+  };
+}
+
+/**
  * Cuánto del material reservado se lleva un despacho parcial (D-074).
  *
  * La reserva de la línea (D-066) respalda **toda** la línea del pedido, y no siempre en la

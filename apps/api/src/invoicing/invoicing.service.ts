@@ -67,7 +67,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { rawMaterialSpecLabels } from '../sales/raw-material';
 import { StorageService } from '../documents/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { dueDateFor, isStalled, pendingQty } from './invoicing-math';
+import { dueDateFor, exceedsOrderTotal, isStalled, pendingQty } from './invoicing-math';
 import {
   ELECTRONIC_INVOICING_PROVIDER,
   type ElectronicInvoicingProvider,
@@ -556,23 +556,39 @@ export class InvoicingService {
     // comprobante, no puede pasar el total del pedido. Sin este tope, cada click de
     // "Facturar" que no declaraba un despacho creaba un borrador nuevo por el total
     // completo — nada impedía tres borradores del mismo pedido a la vez.
+    // D-223: las notas de crédito vivas del pedido restan (`exceedsOrderTotal`); lo que una
+    // nota devolvió se puede volver a facturar.
     if (input.salesOrderId && orderTotalPen !== null) {
-      const existing = await tx.fiscalDocument.aggregate({
-        where: {
-          salesOrderId: input.salesOrderId,
-          status: { in: [...STANDING_DOCUMENT_STATUSES] },
-          docType: { not: FiscalDocType.NOTA_CREDITO },
-          archivedAt: null,
-        },
-        _sum: { totalPen: true },
-      });
-      const alreadyCommitted = toDecimal(
-        (existing._sum?.totalPen ?? new Prisma.Decimal(0)).toString(),
-      );
+      const [existing, creditNotes] = await Promise.all([
+        tx.fiscalDocument.aggregate({
+          where: {
+            salesOrderId: input.salesOrderId,
+            status: { in: [...STANDING_DOCUMENT_STATUSES] },
+            docType: { not: FiscalDocType.NOTA_CREDITO },
+            archivedAt: null,
+          },
+          _sum: { totalPen: true },
+        }),
+        tx.fiscalDocument.aggregate({
+          where: {
+            salesOrderId: input.salesOrderId,
+            status: { in: LIVE_DOCUMENT_STATUSES },
+            docType: FiscalDocType.NOTA_CREDITO,
+            archivedAt: null,
+          },
+          _sum: { totalPen: true },
+        }),
+      ]);
       const orderTotal = toDecimal(orderTotalPen);
-      if (alreadyCommitted.plus(totals.total).gt(orderTotal)) {
+      const cap = exceedsOrderTotal({
+        orderTotal,
+        committed: (existing._sum?.totalPen ?? new Prisma.Decimal(0)).toString(),
+        credited: (creditNotes._sum?.totalPen ?? new Prisma.Decimal(0)).toString(),
+        newTotal: totals.total,
+      });
+      if (cap.exceeds) {
         throw new BadRequestException(
-          `Este pedido ya tiene S/ ${alreadyCommitted.toFixed(2)} entre comprobantes emitidos y borradores, de un total de S/ ${orderTotal.toFixed(2)}: este comprobante de S/ ${totals.total.toFixed(2)} lo pasaría. Descarta algún borrador sobrante antes de crear otro.`,
+          `Este pedido ya tiene S/ ${cap.net.toFixed(2)} entre comprobantes emitidos y borradores (descontadas las notas de crédito), de un total de S/ ${orderTotal.toFixed(2)}: este comprobante de S/ ${totals.total.toFixed(2)} lo pasaría. Descarta algún borrador sobrante antes de crear otro.`,
         );
       }
     }

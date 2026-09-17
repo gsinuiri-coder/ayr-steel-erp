@@ -10,7 +10,68 @@ import {
   VOID_WINDOW_DAYS,
   voidPathFor,
 } from '@ayr/shared';
-import { dueDateFor, isStalled, pendingQty, proratedQty } from './invoicing-math';
+import {
+  dueDateFor,
+  exceedsOrderTotal,
+  isStalled,
+  pendingQty,
+  proratedQty,
+} from './invoicing-math';
+
+describe('exceedsOrderTotal — tope de facturación por pedido (HOTFIX-401/M2, D-223)', () => {
+  const orderTotal = '1180.0000';
+
+  it('factura por el total, sin nota de crédito: una factura más se rechaza', () => {
+    const r = exceedsOrderTotal({
+      orderTotal,
+      committed: '1180.0000',
+      credited: '0',
+      newTotal: '0.0100',
+    });
+    expect(r.exceeds).toBe(true);
+  });
+
+  it('factura por el total → NC parcial → nueva factura por lo acreditado: se permite', () => {
+    const r = exceedsOrderTotal({
+      orderTotal,
+      committed: '1180.0000',
+      credited: '295.0000',
+      newTotal: '295.0000',
+    });
+    expect(r.exceeds).toBe(false);
+    expect(r.net.toFixed(4)).toBe('885.0000');
+  });
+
+  it('pero no por más de lo acreditado', () => {
+    const r = exceedsOrderTotal({
+      orderTotal,
+      committed: '1180.0000',
+      credited: '295.0000',
+      newTotal: '295.0001',
+    });
+    expect(r.exceeds).toBe(true);
+  });
+
+  it('llegar exacto al total del pedido se permite (el tope es estricto)', () => {
+    const r = exceedsOrderTotal({
+      orderTotal,
+      committed: '880.0000',
+      credited: '0',
+      newTotal: '300.0000',
+    });
+    expect(r.exceeds).toBe(false);
+  });
+
+  it('un segundo borrador por el total, sin nada acreditado: se rechaza (PED-000006)', () => {
+    const r = exceedsOrderTotal({
+      orderTotal,
+      committed: '1180.0000',
+      credited: '0',
+      newTotal: '1180.0000',
+    });
+    expect(r.exceeds).toBe(true);
+  });
+});
 
 /**
  * Reglas de calendario y de saldo de Fase 5b (D-072..D-075).
