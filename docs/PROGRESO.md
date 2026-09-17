@@ -5245,7 +5245,8 @@ ORDER BY so.seq, fd.created_at;
 - Migración de M2 sin aplicar contra `dev`/`demo`/`production` — solo contra el Postgres
   local (`ayr_local_e2e`). Acción humana: correr la consulta de arriba en `production`
   antes de `pnpm db:deploy`/`db:prod`.
-- `hotfix-401` sin merge ni push.
+- ~~`hotfix-401` sin merge ni push.~~ **RESUELTO**: llegó a `main` por `release/s1-hotfix` en
+  la ventana RF-S1+HOTFIX (ver esa sección más abajo), `ca6314d`.
 - `/handoff hotfix-401` con el resumen de cierre.
 
 ## Sesión F8-S7 — Pulido y feedback de uso real (2026-09-16) — CERRADA
@@ -6059,6 +6060,96 @@ el resto de la lista.
    post-deploy de los nombres de variables; probar primero en `demo` si toca los secretos
    montados. Recién después fijar `NODE_ENV`/`WEB_ORIGIN`/`JOBS_ENABLED` en producción y quitar
    `"^|^NODE_ENV` (ver hallazgo colateral arriba).
+3. **El guard por línea de pedido no descuenta notas de crédito (D-223).** `invoicedByItem`
+   (Fase 5b) sigue sin restar las notas de crédito vivas al decidir si una línea ya se
+   facturó completa: volver a facturar la misma línea después de una nota de crédito parcial
+   sobre esa línea se sigue frenando igual que si la nota de crédito no existiera. El tope
+   **por pedido** (D-223, esta ventana) sí las descuenta; el guard **por línea** es anterior y
+   quedó fuera de alcance del hotfix a propósito. Mismo patrón que `exceedsOrderTotal`
+   (`invoicing-math.ts`), aplicado a `invoicedByItem` — pendiente de brief del dueño.
+4. **Limpieza de ramas Neon.** Estado al cierre de esta ventana: 8 ramas — `production`, `dev`,
+   `ci`, `demo` (nunca se borran), `respaldo-pre-v4-20260915` (día D, nunca se borra),
+   `pre-api-f92a3df` (2026-09-16, incidente HOTFIX-DESFASE) y `pre-s1-hotfix-47b09e7`
+   (2026-09-17, esta ventana) — los 2 respaldos post-día-D más recientes, se conservan los
+   dos por política — y `ensayo-v4-20260915` (rama de ensayo, solo se borra con OK del dueño
+   por nombre). **Nada que borrar hoy**: ningún respaldo de una ventana ya verificada pasó los
+   7 días. Revisar de nuevo cuando `pre-api-f92a3df` cumpla una semana (≈ 2026-09-23) y esta
+   ventana esté verificada por más de 7 días.
+
+## Ventana RF-S1+HOTFIX — cierre y deploy (2026-09-16/17) — COMPLETADA
+
+Cierre de la ventana que integró RF-S1/M1 (precios de lista, D-217) con HOTFIX-401/M2
+(borradores duplicados, D-223 renumerada) sobre `main`. El dueño salió de modo automático
+para esta ventana: cada comando con credenciales de BD de prod se propuso y se aprobó uno por
+uno (regla nueva en `CLAUDE.md`, Secretos). RELEASE: `ca6314d`.
+
+**Migración.** `migrate status` contra `production` confirmó una sola pendiente,
+`20260916142234_d217_historial_precio_lista`; `pnpm db:prod` la aplicó (67 → 68 migraciones,
+seed idempotente sin tocar la contraseña real del admin) y `migrate status` quedó en 0
+pendientes. `migrate diff` posterior **no vacío**, pero coincide punto por punto con el drift
+ya documentado (`docs/PROGRESO.md`, «Incidente HOTFIX-DESFASE», deuda S3 #1): mismas 5 tablas
+con default de `operation_date`, mismas 5 FK recreadas, mismos 2 índices y el mismo renombre.
+Sin diferencias nuevas.
+
+**Deploy de API.** Desde el worktree `ayr-release-ca6314d` (limpio, `HEAD` en `ca6314d`):
+`gcloud run deploy ayr-steel-erp-api --source . --update-labels git-sha=ca6314d --quiet`, sin
+flags de env ni secretos. Revisión anterior `ayr-steel-erp-api-00035-rd9` (label
+`git-sha=f92a3df`) → nueva `ayr-steel-erp-api-00036-pj7` (label `git-sha=ca6314d`), 100% del
+tráfico. Verificado antes y después con `scripts/oneoff/20260916-describe-cloud-run.mjs`
+(solo lectura, vía `lib.mjs#run`): mismos 10 nombres de variable (incluida la rota
+`"^|^NODE_ENV`, deuda S3 #2, sin tocar) y mismos recursos (cpu 1 / 512Mi / max 2). `/health`
+`{"status":"ok","db":"ok"}`.
+
+**Push y web.** `git push origin main`: `f92a3df..ca6314d` (24 commits). CI del push, verde:
+run [35175690324](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35175690324)
+(16m43s). Vercel republicó `ca6314d` en producción sin acción manual (proyecto ligado al repo,
+D-019): deployment `dpl_5ieiV9h5uys4M6FawzQrFzqxf5Zc`, `Ready`, alias `v2.mareliac.pe`.
+`curl https://v2.mareliac.pe/api/health` → `db: ok` (web y API sirviendo el mismo release).
+
+**Regla git-sha (b).** `git diff --quiet ca6314d origin/main -- apps packages Dockerfile
+.gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` → exit 0: sin drift de runtime
+entre el SHA desplegado y `origin/main`. Formalizada en `CLAUDE.md`.
+
+**Smoke.** `pnpm smoke:prod` desde el worktree `ca6314d` (mismo SHA desplegado, no `main`
+local): **7/7 en verde** — health, login (admin efímero, borrado al final), 5 líneas de
+negocio, catálogo (174 filas), inventario valorizado (48 filas), bobinas (5), reporte mensual
+de bobinas (43), emisión electrónica apagada (D-216).
+
+**Smoke manual del dueño**, contra `ca6314d`/`00036-pj7`: comprobante abre sin 401 ni crash,
+botón de emisión electrónica deshabilitado (D-216), borrador doble no duplica (D-223), precio
+inline + revertir del catálogo (D-217) y catálogo de coberturas — los cinco **OK**.
+
+**`hotfix-401` queda integrado.** La rama `hotfix-401` (worktree `ayr-steel-erp-hotfix-401`)
+ya apuntaba a `ca6314d` antes de este push — sus cuatro commits (M2) llegaron a `main` por
+`release/s1-hotfix`. El pendiente «`hotfix-401` sin merge ni push» de la sección «Sesión
+HOTFIX-401» de arriba queda **resuelto** por este push. **M1 (401 al abrir un borrador) sigue
+bloqueada**: nadie trajo la URL/evidencia real pedida en esa sesión; no se tocó en esta
+ventana y no está resuelta por este deploy.
+
+**PR #1** (`release/s1-hotfix` → `main`, «S1 + hotfix borradores (NO MERGE)»): su CI, corrida
+antes de este cierre, [35171657158](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35171657158)
+— lint/typecheck/unit, 364 E2E (Postgres del runner), análisis estático y 35 E2E de smoke
+(Neon `ci`), los cuatro jobs en verde. Se cierra sin merge (los commits ya están en `main` por
+push directo) y se borra `release/s1-hotfix`.
+
+**D-224 nueva** (`docs/ARQUITECTURA.md` §0.2): `check:price-floor` contra `production`
+post-D-217 sigue en 0 SKU activos con precio de lista — mismo número que antes de construir el
+editor y la carga masiva, porque nadie cargó todavía ningún `listPricePen` real. No es un
+defecto: el reporte compara valor de lista contra el piso de D-163 (que sale del costo del
+kardex), y sin precio de lista no hay con qué comparar. D-223 se amplió con la verificación por
+mutación del `FOR UPDATE` y el bug de `idempotencyKey` (`.max(128)` contra columna
+`VarChar(100)`) que corrigió `ca6314d`.
+
+**No documentado — pendiente de que el dueño lo complete.** El brief de cierre mencionaba «el
+bloqueo del clasificador y cómo se resolvió»; no se encontró ninguna referencia a «clasificador»
+en `docs/PROGRESO.md`, `docs/ARQUITECTURA.md` ni en el código de esta ventana, y no hay
+registro de él en lo visible de esta sesión (que arrancó con `/clear` desde el paso 2). Si
+ocurrió antes del `/clear`, hace falta que el dueño lo dicte para dejarlo escrito — no se
+inventó una explicación.
+
+**Deuda que deja la ventana:** ver «Deuda registrada para S3» arriba (drift de schema,
+`deploy-api.mjs`/variables rotas, guard por línea sin NC, limpieza de ramas Neon — nada
+vencido hoy) y D-224 (precio de lista sin cargar, tarea del dueño).
 
 ## Bloqueos
 
