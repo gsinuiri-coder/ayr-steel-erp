@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -28,7 +28,7 @@ import {
   type PaymentMethod,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { useSession } from '@/lib/session';
+import { ME_QUERY_KEY, useSession } from '@/lib/session';
 import {
   formatDate,
   formatMoney,
@@ -102,8 +102,21 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const document = useQuery({
     queryKey: ['fiscal-document', id],
     queryFn: () => api<FiscalDocumentDto>(`/invoicing/documents/${id}`),
+    // Un 401 que sobrevivió al refresh de `api()` no se arregla reintentando.
+    retry: (count, err) => !(err instanceof ApiError && err.status === 401) && count < 2,
   });
   const d = document.data;
+  // HOTFIX-DESFASE: un 401 del detalle no decide solo que la sesión murió — lo decide
+  // `SessionProvider` con `/auth/me`, que es el re-login estándar (`/login?next=…`). Acá se
+  // le pide que vuelva a mirar: si la sesión cayó, redirige; si sigue viva, el 401 era de
+  // este recurso y se muestra como error con «Reintentar», sin dejar la pantalla muerta.
+  const unauthorized =
+    document.isError && document.error instanceof ApiError && document.error.status === 401;
+  // `errorUpdatedAt`: cada 401 nuevo (un «Reintentar») vuelve a preguntar, no solo el primero.
+  const errorAt = document.errorUpdatedAt;
+  useEffect(() => {
+    if (unauthorized) void queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+  }, [unauthorized, errorAt, queryClient]);
 
   function onError(err: unknown): void {
     toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
@@ -377,12 +390,25 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   if (document.isError || !d) {
     return (
       <RoleGate allow={SALES_ROLES}>
-        <Alert variant="destructive">
-          <AlertDescription>No se pudo cargar el comprobante.</AlertDescription>
+        <Alert variant="destructive" role="alert">
+          <AlertDescription className="flex flex-wrap items-center gap-2">
+            <span>
+              {`No se pudo cargar el comprobante${
+                document.error instanceof ApiError ? `: ${document.error.message}` : '.'
+              }`}
+            </span>
+            <Button variant="outline" size="sm" onClick={() => void document.refetch()}>
+              Reintentar
+            </Button>
+          </AlertDescription>
         </Alert>
       </RoleGate>
     );
   }
+  // HOTFIX-DESFASE: con un API más viejo que el web (la ventana F8-S7 publicó el web sin su
+  // API) el campo no venía y `.length` tiraba la pantalla entera con un TypeError. Un campo
+  // que falta se lee como vacío; nunca debe romper el detalle.
+  const issueDateChanges = d.issueDateChanges ?? [];
 
   // Una guía de remisión comparte tabla y pantalla con los comprobantes, pero su envío
   // arma otro payload y su corrección vive en el despacho.
@@ -1057,7 +1083,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         auditoría porque la fecha de un papel es lo que el cliente coteja contra el documento
         físico: que haya sido corregida, cuándo y por qué es parte de lo que necesita ver.
       */}
-      {d.issueDateChanges.length > 0 && (
+      {issueDateChanges.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-medium">Correcciones de la fecha de emisión</h2>
           <div className="rounded-lg border">
@@ -1072,7 +1098,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {d.issueDateChanges.map((c) => (
+                {issueDateChanges.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell>{formatTimestampDate(c.changedAt)}</TableCell>
                     <TableCell>{c.changedByName ?? '—'}</TableCell>
