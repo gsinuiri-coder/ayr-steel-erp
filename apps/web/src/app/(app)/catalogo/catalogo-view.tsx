@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -73,6 +74,11 @@ export function CatalogoView() {
   }>({ open: false, lineId: '', nonce: 0 });
   const [bomProduct, setBomProduct] = useState<ProductDto | null>(null);
   const [historyProduct, setHistoryProduct] = useState<ProductDto | null>(null);
+  // RF-S3/M4: el card «SKUs con lista bajo piso» del Panel enlaza acá con
+  // `?bajoPiso=<productId>` — un id concreto resalta esa fila (y abre su línea), el valor
+  // `1` (más de 8 en el card) solo llega a la vista sin resaltar nada en particular.
+  const highlightProductId = useSearchParams().get('bajoPiso');
+  const [activeLineId, setActiveLineId] = useState<string | null>(null);
 
   const lines = useQuery({
     queryKey: ['business-lines'],
@@ -82,6 +88,22 @@ export function CatalogoView() {
     queryKey: CATALOG_QUERY_KEY,
     queryFn: () => api<ProductDto[]>('/catalog'),
   });
+
+  useEffect(() => {
+    if (activeLineId !== null || !lines.data) return;
+    const highlighted =
+      highlightProductId && highlightProductId !== '1'
+        ? products.data?.find((p) => p.id === highlightProductId)
+        : undefined;
+    setActiveLineId(highlighted?.businessLineId ?? lines.data[0]?.id ?? null);
+  }, [activeLineId, highlightProductId, lines.data, products.data]);
+
+  useEffect(() => {
+    if (!highlightProductId || highlightProductId === '1') return;
+    document
+      .getElementById(`catalog-row-${highlightProductId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightProductId, activeLineId]);
 
   const openDialog = (lineId: string, product?: ProductDto) => {
     setDialog((d) => ({ open: true, product, lineId, nonce: d.nonce + 1 }));
@@ -118,7 +140,7 @@ export function CatalogoView() {
         )}
       </div>
 
-      <Tabs defaultValue={lines.data[0]?.id}>
+      <Tabs value={activeLineId ?? lines.data[0]?.id} onValueChange={setActiveLineId}>
         <TabsList>
           {lines.data.map((l) => (
             <TabsTrigger key={l.id} value={l.id}>
@@ -167,7 +189,14 @@ export function CatalogoView() {
                   </TableHeader>
                   <TableBody>
                     {lineProducts.map((p) => (
-                      <TableRow key={p.id} data-state={p.isActive ? undefined : 'inactive'}>
+                      <TableRow
+                        key={p.id}
+                        id={`catalog-row-${p.id}`}
+                        data-state={p.isActive ? undefined : 'inactive'}
+                        className={
+                          p.id === highlightProductId ? 'bg-amber-500/10 outline-amber-500/50' : ''
+                        }
+                      >
                         <TableCell className="font-medium">{p.sku}</TableCell>
                         <TableCell>{p.name}</TableCell>
                         {usesColor(line.code) && (

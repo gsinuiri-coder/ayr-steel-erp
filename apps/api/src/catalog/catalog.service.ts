@@ -7,17 +7,22 @@ import {
 import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
   BusinessLine as SharedLineCode,
+  Decimal,
   isPlausiblePieceLength,
   MAX_PAGE_SIZE,
+  money,
   PIECE_LENGTH_RANGE_LABEL,
   rankSearchMatches,
   ROOFING_KIND_UNIT,
   RoofingProductKind,
+  salePriceFromValue,
   theoreticalKgPerSellingUnit,
   toDecimal,
+  toFixedString,
   type CreateProductInput,
   type FinishKind,
   type PriceListFloorDto,
+  type PriceListFloorSummaryDto,
   type ProductDto,
   type ProductListPriceChangeDto,
   type UpdateProductInput,
@@ -392,6 +397,84 @@ export class CatalogService {
     return {
       minPricePen: floor?.minPricePen ?? null,
       priceUnitLabel: floor?.priceUnitLabel ?? null,
+    };
+  }
+
+  /**
+   * RF-S3/M4 (sacrificable, D-224): cuántos SKU activos con precio de lista cargado quedan
+   * por debajo del piso de D-163 — el insumo para el card del Panel. Misma cuenta que
+   * `computePriceFloors` usa para el rechazo al vender y para `priceFloor(id)` de un SKU
+   * suelto (D-150: nunca una lógica paralela), batcheada sobre **todo** el catálogo: dos
+   * consultas para traer productos y margen mínimo por línea, más las que
+   * `computePriceFloors` ya batchea internamente para el costo (nunca una por SKU).
+   */
+  async findPriceListFloorSummary(): Promise<PriceListFloorSummaryDto> {
+    const products = await this.prisma.product.findMany({
+      where: { isActive: true, listPricePen: { not: null } },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        unit: true,
+        listPricePen: true,
+        businessLineId: true,
+      },
+      orderBy: { sku: 'asc' },
+    });
+    if (products.length === 0) {
+      return { totalWithListPrice: 0, withoutFloor: 0, belowFloor: [] };
+    }
+
+    const floors = await this.prisma.$transaction((tx) =>
+      computePriceFloors(
+        tx,
+        products.map((p) => ({
+          at: p.id,
+          sku: p.sku,
+          businessLineId: p.businessLineId,
+          basis: { kind: 'UNIT' as const, unitLabel: p.unit },
+          // Solo se lee el piso, nunca se rechaza nada acá: el valor propuesto no importa.
+          unitValuePen: '0',
+          cost: { kind: 'PRODUCT' as const, productId: p.id },
+        })),
+        PRICE_FLOOR_UNUSED_TOLERANCE_MM,
+      ),
+    );
+
+    let withoutFloor = 0;
+    const belowFloor: (PriceListFloorSummaryDto['belowFloor'][number] & { gapPct: Decimal })[] = [];
+    for (const p of products) {
+      const floor = floors.get(p.id);
+      // `computePriceFloors` no pone entrada para un SKU sin costo en el kardex o sin
+      // margen mínimo configurado (D-163: sin piso no hay infractor que avisar).
+      if (!floor) {
+        withoutFloor += 1;
+        continue;
+      }
+      const listValuePen = toDecimal(p.listPricePen?.toString() ?? '0');
+      const minValuePen = toDecimal(floor.minValuePen);
+      if (listValuePen.gte(minValuePen)) continue;
+      belowFloor.push({
+        productId: p.id,
+        sku: p.sku,
+        name: p.name,
+        listPricePen: toFixedString(money(salePriceFromValue(listValuePen)), 'MONEY'),
+        minPricePen: floor.minPricePen,
+        priceUnitLabel: floor.priceUnitLabel,
+        // De más lejos del piso a menos (D-224/check:price-floor): es el orden en el que
+        // conviene mirarlos, y no depende de una consulta más — es aritmética sobre lo ya
+        // traído.
+        gapPct: minValuePen.lte(0)
+          ? new Decimal(0)
+          : listValuePen.minus(minValuePen).div(minValuePen).times(100),
+      });
+    }
+    belowFloor.sort((a, b) => a.gapPct.comparedTo(b.gapPct));
+
+    return {
+      totalWithListPrice: products.length,
+      withoutFloor,
+      belowFloor: belowFloor.map(({ gapPct: _gapPct, ...rest }) => rest),
     };
   }
 

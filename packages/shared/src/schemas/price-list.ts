@@ -48,6 +48,31 @@ export const priceListFloorSchema = z.object({
 export type PriceListFloorDto = z.infer<typeof priceListFloorSchema>;
 
 // ---------------------------------------------------------------------------
+// Resumen agregado (RF-S3/M4, sacrificable): tarjeta del Panel «SKUs con lista bajo piso»
+// ---------------------------------------------------------------------------
+
+export const priceListFloorSummaryItemSchema = z.object({
+  productId: z.string().uuid(),
+  sku: z.string(),
+  name: z.string(),
+  /** Con IGV, en la unidad de venta del SKU — como se lee en el catálogo (D-162). */
+  listPricePen: z.string(),
+  minPricePen: z.string(),
+  priceUnitLabel: z.string(),
+});
+export type PriceListFloorSummaryItemDto = z.infer<typeof priceListFloorSummaryItemSchema>;
+
+export const priceListFloorSummarySchema = z.object({
+  /** SKU activos con precio de lista cargado — el universo sobre el que se calculó. */
+  totalWithListPrice: z.number().int(),
+  /** Sin costo en el kardex o sin margen mínimo configurado (D-163: sin piso, no es infractor). */
+  withoutFloor: z.number().int(),
+  /** De más lejos del piso a menos, igual que `check:price-floor` (D-224). */
+  belowFloor: z.array(priceListFloorSummaryItemSchema),
+});
+export type PriceListFloorSummaryDto = z.infer<typeof priceListFloorSummarySchema>;
+
+// ---------------------------------------------------------------------------
 // Carga masiva — preview (M1c)
 // ---------------------------------------------------------------------------
 

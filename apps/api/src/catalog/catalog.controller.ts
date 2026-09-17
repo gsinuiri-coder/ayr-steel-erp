@@ -8,6 +8,7 @@ import {
   type BusinessLine,
   type CreateProductInput,
   type PriceListFloorDto,
+  type PriceListFloorSummaryDto,
   type ProductDto,
   type ProductListPriceChangeDto,
   type SearchQuery,
@@ -51,6 +52,15 @@ export class CatalogController {
       ? (businessLine as BusinessLine)
       : undefined;
     return this.catalog.search(query.q, line);
+  }
+
+  /**
+   * RF-S3/M4 (sacrificable): resumen agregado para el card del Panel. Va **antes** de
+   * `:id`, mismo motivo que `price-list/changes` y `search`.
+   */
+  @Get('price-list/floor-summary')
+  findPriceListFloorSummary(): Promise<PriceListFloorSummaryDto> {
+    return this.catalog.findPriceListFloorSummary();
   }
 
   @Get(':id')
