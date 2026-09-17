@@ -1395,12 +1395,17 @@ export class InvoicingService {
 
       // La auditoría **antes** del borrado: después no quedaría a qué apuntar, y RF-95 pide
       // que la acción quede registrada aunque la fila desaparezca.
+      // D-225: el motivo va en la columna `reason` de D-218, no dentro de `before` — `before`
+      // es el estado previo del comprobante, y el visor muestra el motivo en su propia
+      // columna. Las filas escritas entre el deploy de `ca6314d` y este cambio lo tienen en
+      // `before.reason`; no se reescriben (audit_log es append-only, D-221).
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'invoicing.document.discard-draft',
         entity: 'fiscal_documents',
         entityId: id,
-        before: { docType: document.docType, totalPen: document.totalPen.toFixed(4), reason },
+        before: { docType: document.docType, totalPen: document.totalPen.toFixed(4) },
+        reason,
       });
       // F8-S7/M3: soltar el enlace de D-205 **antes** de borrar. `dispatches.invoice_id` es
       // `ON DELETE RESTRICT`, así que un borrador que declaró un despacho no se podía

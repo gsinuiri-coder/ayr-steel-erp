@@ -78,4 +78,62 @@ describe('AuditService: toda escritura de dominio pasa por una transacción real
     );
     expect(new Set(withLog)).toEqual(LOG_ALLOWLIST);
   });
+
+  // D-225/RF-S2-INTEGRA: la lista blanca es por archivo, y `invoicing.service.ts` está en ella
+  // por tres eventos del PSE. Sin esto, pasar el descarte o la creación de un borrador
+  // (HOTFIX-401, D-223) a `audit.log(` —fuera de la transacción del `DELETE`/`INSERT`— no
+  // haría caer nada: el archivo ya usaba `log`. Se fija la cantidad exacta por archivo y se
+  // mira adentro de los dos métodos del hotfix.
+  it('cada archivo de la lista blanca tiene exactamente sus audit.log() conocidos, ni uno más', () => {
+    const counts = Object.fromEntries(
+      [...LOG_ALLOWLIST].map((rel) => [
+        rel,
+        readFileSync(join(SRC_ROOT, rel), 'utf8').split('this.audit.log(').length - 1,
+      ]),
+    );
+    expect(counts).toEqual({
+      'auth/auth.service.ts': 4,
+      'invoicing/invoicing.service.ts': 5,
+      'purchases/purchases.service.ts': 1,
+    });
+  });
+
+  it.each([
+    ['createInTx', "'invoicing.document.create'"],
+    ['discardDraft', "'invoicing.document.discard-draft'"],
+  ])(
+    'invoicing.service.ts#%s audita con write(tx) dentro de su transacción, nunca con log()',
+    (method, action) => {
+      const body = methodBody(
+        readFileSync(join(SRC_ROOT, 'invoicing/invoicing.service.ts'), 'utf8'),
+        method,
+      );
+      expect(body).not.toContain('this.audit.log(');
+      const write = /this\.audit\.write\(\s*tx,\s*\{([\s\S]*?)\}\);/.exec(body);
+      expect(write?.[1]).toContain(`action: ${action}`);
+    },
+  );
+
+  it('invoicing.service.ts#discardDraft guarda el motivo en la columna reason (D-225), no en before', () => {
+    const body = methodBody(
+      readFileSync(join(SRC_ROOT, 'invoicing/invoicing.service.ts'), 'utf8'),
+      'discardDraft',
+    );
+    const write = /this\.audit\.write\(\s*tx,\s*\{([\s\S]*?)\}\);/.exec(body)?.[1] ?? '';
+    expect(write).toMatch(/^\s*reason,\s*$/m);
+    expect(write).not.toMatch(/before:[^\n]*reason/);
+  });
 });
+
+/** El cuerpo de `async <name>(` —de su primera `{` después de la firma a la que la cierra. */
+function methodBody(src: string, name: string): string {
+  const start = src.indexOf(`  async ${name}(`);
+  if (start === -1) throw new Error(`No se encontró el método ${name}`);
+  const open = src.indexOf('{', src.indexOf('): Promise<', start));
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1);
+  }
+  throw new Error(`Llaves sin cerrar en ${name}`);
+}
