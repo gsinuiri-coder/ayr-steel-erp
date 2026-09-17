@@ -6533,11 +6533,61 @@ condición para la ventana de `rf-s2` es de procedimiento: desplegar con
 
 **Pendientes.**
 
-- UX del visor: los precios de lista se ven sin IGV y con claves en inglés humanizado. Lo avisa
-  el caso 5 de `docs/uat/rf-s2.md`.
+- ~~UX del visor: los precios de lista se ven sin IGV y con claves en inglés humanizado. Lo
+  avisa el caso 5 de `docs/uat/rf-s2.md`.~~ Resuelto, ver «Sesión RF-S2-AJUSTES-UAT» abajo.
 - Los descartes hechos en producción entre `ca6314d` y el deploy de esta rama quedan con
   `before.reason` (append-only).
 - Siguiente paso: push de `rf-s2` por el dueño + PR para la CI → UAT en `demo` → ventana propia.
+
+## Sesión RF-S2-AJUSTES-UAT (2026-09-17) — visor en español y con IGV, antes de UAT
+
+Mismo worktree (`ayr-steel-erp-rf-s2`, rama `rf-s2`). Sin merge ni push. Alcance: el punto 1 del
+brief de la ventana ("ajustes antes de UAT"): visor de auditoría, el flaky conocido y
+`docs/uat/rf-s2.md`.
+
+**Visor (D-226).** `audit-labels.ts` suma `auditFieldLabel`/`auditFieldValueLabel` (mapa de
+clave → español para los tres changelogs dedicados: `lineNumber`, `unitValuePen`,
+`valuePerMeterPen`, `valuePen`, `listPricePen`, `origin` con sus valores, `batchId`,
+`revertsBatchId`, `issueDate`, `dueDate`, `reason`) e `isPriceListValueField`, que convierte
+`valuePen`/`listPricePen` con IGV (`salePriceFromValue` + `money` + `toFixedString(...,
+'MONEY')`, el mismo trío de `price-list-cell.tsx`/D-217). El resto de `audit_log` (los ~105
+`action` de servicios de dominio) sigue sin traducirse a propósito — D-218 ya descartó ese mapa
+por costoso, y esta sesión no lo revive.
+
+**Test unitario nuevo:** `apps/web/src/lib/audit-labels.spec.ts`, primera prueba unitaria del
+web. `apps/web` no tenía runner (`"test": "echo sin-tests-unitarios-en-web"`) aunque D-011 ya
+preveía Vitest/Jest ahí; se agregó `vitest` (devDependency, `--save-exact`, sin `^` como el
+resto del repo, D-017) y `vitest.config.mts` (alias `@/` → `src/`, extensión `.mts` para que el
+config loader de Vite no ambigüe ESM/CommonJS, mismo criterio que `eslint.config.mjs` y
+`postcss.config.mjs`). `apps/web/package.json#test` pasa a `vitest run`, y `.github/workflows/ci.yml`
+(job `calidad`) suma el paso `pnpm --filter @ayr/web test` — antes nada ejecutaba el placeholder
+en CI, así que este test es el primero que de verdad corre ahí.
+
+**E2E ajustado:** `auditoria-d218.spec.ts` esperaba los valores crudos sin IGV (`12.5000` para
+la edición, `10.0000` para el alta) en las filas de "Cambio de precio de lista" y "Edición de
+producto"; con la conversión, el visor muestra `14.75` y `11.80` (verificado con la aritmética
+real de `salePriceFromValue`/`money`, no a mano: `10.0000 → 11.8000`, `12.5000 → 14.7500`, que
+`formatMoney` redondea a 2 decimales). Assertions actualizadas a los montos con IGV.
+
+**Flaky `precios-lista-d217.spec.ts:255`** (ya registrado en RF-S2-INTEGRA: pasó al reintento,
+no toca código de esa sesión). **Causa probable, no confirmada por una corrida que lo
+reproduzca:** el test elige un producto en el picker de stock
+(`chooseProductWithStock`/`sales-document-form.tsx`) y de inmediato espera el precio unitario
+prellenado. `chooseProduct` (el callback que corre al elegir) lee el valor de lista de
+`productById`, un `Map` derivado de `products.data` — el resultado de un `useQuery` propio de la
+lista de productos, **no** del `stock-panel` que sí espera el modal antes de mostrar el botón
+"Elegir". Si ese `useQuery` de productos todavía no resolvió cuando se hace clic en "Elegir"
+(cold start del test, o el picker corriendo antes de que la lista termine de cargar),
+`productById.get(productId)` da `undefined`, `listValue` sale `undefined` y `patchLine` no
+escribe ningún precio — la línea queda vacía en vez de `11.8000`, y el `toHaveValue` reintenta
+sin nunca convertirse en verdadero porque nada dispara un segundo intento de `chooseProduct`
+tras resolver la query. No se tocó nada de `sales-document-form.tsx` en esta sesión: mover la
+lectura del precio de lista a depender del mismo dato que ya espera el modal (o re-ejecutar el
+prellenado cuando `products.data` cambie) es trabajo de una sesión que sí toque ese archivo, no
+de esta. Documentado para que la próxima vez que aparezca no se lea como "flaky sin causa".
+
+**Pendiente de esta sesión:** `docs/uat/rf-s2.md` (quitar el aviso del caso 5) y CI del punto 2
+del brief — ver el resto de esta ventana en el handoff que cierre la sesión.
 
 ## Bloqueos
 
