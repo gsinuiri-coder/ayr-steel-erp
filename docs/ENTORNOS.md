@@ -36,6 +36,68 @@ Cuatro ramas de Neon, cuatro propósitos que no se mezclan. **Ninguna se borra n
   Nubefact comprobantes pendientes de clientes reales. Verificar en `smoke:prod` que
   `PSE_ENABLED` quedó apagado tras un deploy a `production`.
 
+## PITR — retención, RPO/RTO y procedimiento de restauración
+
+Ensayado en RF-S3/M3 (2026-09-17) contra `production` con OK del dueño por nombre, sin
+tocar la rama real en ningún momento: todo el ensayo pasó por una rama nueva
+(`ensayo-pitr-20260917`), nunca por un `restore` sobre `production` misma.
+
+- **Retención real: 6 horas** (`history_retention_seconds: 21600`, medido en PASO 0 de
+  esta ventana vía `neonctl projects get --output json`). El plan Launch permite
+  configurarla hasta 7 días, pero hoy está en el valor por defecto — subirla es un cambio
+  de configuración del proyecto Neon, no del código, y queda para que el dueño lo decida
+  con el costo de storage que implica (más historia = más WAL retenido).
+- **RPO (punto de recuperación posible): entre 0 y 6 horas**, nunca más — la retención es
+  el techo duro de cuánto se puede retroceder. Dentro de esa ventana, el RPO real de un
+  incidente concreto depende de **cuándo se detecta**: Neon permite apuntar a cualquier
+  timestamp o LSN dentro de las 6 horas, así que la pérdida de datos es "lo que pasó entre
+  el instante bueno elegido y el momento de restaurar", no un valor fijo.
+- **RTO medido de la parte de Neon: segundos.** El ensayo completo —crear una rama nueva
+  desde `production` y restaurarla (`neonctl branches restore`) a un punto ~1 hora atrás—
+  tardó menos de 10 segundos de punta a punta, sin cómputo dedicado más allá del que trae
+  la rama por defecto. **Eso no es el RTO completo de un incidente real**: repuntar la API
+  a los datos restaurados exige además actualizar los secretos de conexión (Secret
+  Manager/GitHub Actions) y volver a desplegar Cloud Run (`pnpm deploy:api`), que es la
+  parte que de verdad toma minutos y no se ensayó en esta ventana — hacerlo de verdad
+  significa desplegar la API apuntando a una rama que no es `production`, y eso sí exige
+  aprobación del dueño aparte, en el momento de un incidente real, no como ensayo.
+- **Conteos comparados** (`customers`, `quotations`, `sales_orders`, `production_orders`,
+  `coils`, `inventory_movements`, `fiscal_documents`, `audit_log`): **idénticos** entre
+  `production` y `ensayo-pitr-20260917` en el momento del ensayo — no hubo escritura en
+  `production` en la hora anterior, así que no hay diferencia que explicar. Confirma que
+  la rama restaurada es una copia fiel del punto pedido, no que el punto pedido tuviera
+  algo distinto que mostrar.
+
+### Procedimiento paso a paso (incidente real)
+
+1. **[Dueño] Decidir el punto de restauración.** El timestamp o LSN de "el último estado
+   bueno conocido", dentro de las 6 horas de retención. Cuanto antes se detecte el
+   incidente, más cerca de él se puede apuntar.
+2. **[Dueño o agente con aprobación manual] Crear la rama de rescate**, nunca restaurar
+   `production` en el lugar:
+   ```
+   neonctl branches create --project-id frosty-cherry-97873994 --name rescate-<fecha> --parent production --no-secrets --output json
+   neonctl branches restore rescate-<fecha> "production@<timestamp-ISO>" --project-id frosty-cherry-97873994 --output json
+   ```
+   (vía `scripts/lib.mjs#run`, `quiet: true`, nunca `--secrets` en la salida — regla dura 5).
+3. **[Dueño] Verificar la rama de rescate** antes de repuntar nada: conteos de tablas
+   clave contra lo que se espera, y que el problema que causó el incidente no esté
+   presente en ese punto.
+4. **[Dueño] Repuntar la API**: nueva cadena de conexión de `rescate-<fecha>` a Secret
+   Manager (`pnpm secrets:gcp` si hace falta) y `pnpm deploy:api`. El web no cambia (habla
+   con el API por `/api/*`, D-015).
+5. **[Dueño] Verificar** con `pnpm smoke:prod` (solo lectura) antes de dar el incidente por
+   cerrado.
+6. **Documentar** en `docs/PROGRESO.md`: hora exacta del incidente, punto de restauración
+   elegido, y qué se perdió (si algo) entre ese punto y el incidente.
+7. La rama `rescate-<fecha>` (o `ensayo-pitr-<fecha>`) se borra solo con OK del dueño **por
+   nombre**, y solo después de confirmar que `production` ya está sana — nunca antes.
+
+### Ramas de ensayo/respaldo vigentes (2026-09-17)
+
+Ninguna se borra sin OK del dueño por nombre (regla dura de `CLAUDE.md`). `ensayo-pitr-20260917`
+queda para verificación del dueño; se borra cuando lo autorice.
+
 ## demo
 
 Existe para lo que antes se hacía contra producción: ensayar el flujo completo, capacitar a
