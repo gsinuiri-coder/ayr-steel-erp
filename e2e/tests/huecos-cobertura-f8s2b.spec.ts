@@ -164,6 +164,9 @@ test.describe('F8-S2b — huecos de cobertura', () => {
         page,
         page.getByLabel('Cliente', { exact: true }),
         `${customer.name} — ${customer.docNumber}`,
+        // RF-S3/M1: el campo ahora busca en el servidor contra `name`/`docNumber` por
+        // separado, no contra la etiqueta concatenada — el RUC/DNI completo sí matchea.
+        customer.docNumber,
       );
 
       await page.getByLabel('Línea de negocio de la línea 1').click();
@@ -209,6 +212,7 @@ test.describe('F8-S2b — huecos de cobertura', () => {
       page,
       page.getByLabel('Cliente', { exact: true }),
       `${customer.name} — ${customer.docNumber}`,
+      customer.docNumber,
     );
     await page.getByLabel('Línea de negocio de la línea 1').click();
     await page.getByRole('option', { name: LINE_LABEL.roofing, exact: true }).click();
@@ -216,24 +220,24 @@ test.describe('F8-S2b — huecos de cobertura', () => {
     await page.getByLabel('Producto de la línea 1').click();
     const dialog = page.getByRole('dialog');
 
-    // Sin filtrar, los dos conviven en la lista.
+    // Sin filtrar, los dos conviven en la lista (RF-S3/M1: vacío muestra los primeros
+    // resultados sin escribir nada, ya no "el total de la línea" — el conteo que se lee acá
+    // solo importa como referencia de que hay más de un resultado; lo que de verdad prueba
+    // el test es que filtrar hace desaparecer filas, no solo dejarlas de resaltar).
     await expect(dialog.getByRole('row', { name: new RegExp(productA.sku) })).toBeVisible();
     await expect(dialog.getByRole('row', { name: new RegExp(productB.sku) })).toBeVisible();
-    const baseline = await dialog.getByText(/de \d+ productos/).textContent();
-    const total = /de (\d+) productos/.exec(baseline ?? '')?.[1];
-    expect(total, `no se pudo leer el total de "${baseline ?? ''}"`).toBeDefined();
 
     // Filtrar por el SKU de A: el de B desaparece de verdad, no solo "no se resalta".
     await dialog.getByLabel('Filtrar productos').fill(productA.sku);
     await expect(dialog.getByRole('row', { name: new RegExp(productA.sku) })).toBeVisible();
     await expect(dialog.getByRole('row', { name: new RegExp(productB.sku) })).toHaveCount(0);
-    await expect(dialog.getByText(`1 de ${total} productos`)).toBeVisible();
+    await expect(dialog.getByText('1 resultado')).toBeVisible();
 
     // Y al revés: filtrar por B saca a A de la lista.
     await dialog.getByLabel('Filtrar productos').fill(productB.sku);
     await expect(dialog.getByRole('row', { name: new RegExp(productB.sku) })).toBeVisible();
     await expect(dialog.getByRole('row', { name: new RegExp(productA.sku) })).toHaveCount(0);
-    await expect(dialog.getByText(`1 de ${total} productos`)).toBeVisible();
+    await expect(dialog.getByText('1 resultado')).toBeVisible();
   });
 
   test('D-187: cancelar el diálogo de precio o cantidad y reabrirlo en otra línea no arrastra lo tipeado', async ({

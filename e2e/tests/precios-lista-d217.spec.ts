@@ -268,6 +268,8 @@ test.describe('D-068 (regresión) — prellenado de precio y congelamiento en co
         page,
         page.getByLabel('Cliente', { exact: true }),
         `${customer.name} — ${customer.docNumber}`,
+        // RF-S3/M1: el campo busca en el servidor contra `name`/`docNumber` por separado.
+        customer.docNumber,
       );
       await page.getByLabel('Línea de negocio de la línea 1').click();
       await page.getByRole('option', { name: 'Coberturas (UPVC)', exact: true }).click();

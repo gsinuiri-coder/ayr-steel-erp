@@ -419,6 +419,7 @@ export function ChangeCustomerDialog({
                   ? { id: selectedCustomer.data.id, label: customerLabel(selectedCustomer.data) }
                   : null
               }
+              selectedOptionLoading={selectedCustomer.isLoading}
               search={(q) =>
                 api<CustomerDto[]>(`/customers/search?q=${encodeURIComponent(q)}`).then((list) =>
                   list

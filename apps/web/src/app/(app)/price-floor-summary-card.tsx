@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { Role, type PriceListFloorSummaryDto } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { CATALOG_BAJO_PISO_VER_TODOS } from '@/lib/catalog-links';
+import { formatMoney } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -69,13 +71,14 @@ export function PriceFloorSummaryCard() {
               <span className="text-xs text-muted-foreground">{r.name}</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              S/ {r.listPricePen} de lista, mínimo S/ {r.minPricePen} por {r.priceUnitLabel}
+              {formatMoney(r.listPricePen)} de lista, mínimo {formatMoney(r.minPricePen)} por{' '}
+              {r.priceUnitLabel}
             </p>
           </Link>
         ))}
         {rows.length > 8 && (
           <Link
-            href="/catalogo?bajoPiso=1"
+            href={`/catalogo?bajoPiso=${CATALOG_BAJO_PISO_VER_TODOS}`}
             className="text-center text-xs text-muted-foreground hover:underline"
           >
             Ver los {rows.length} en el catálogo

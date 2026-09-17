@@ -17,6 +17,7 @@ import {
   type ProductDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { CATALOG_BAJO_PISO_VER_TODOS } from '@/lib/catalog-links';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -92,14 +93,14 @@ export function CatalogoView() {
   useEffect(() => {
     if (activeLineId !== null || !lines.data) return;
     const highlighted =
-      highlightProductId && highlightProductId !== '1'
+      highlightProductId && highlightProductId !== CATALOG_BAJO_PISO_VER_TODOS
         ? products.data?.find((p) => p.id === highlightProductId)
         : undefined;
     setActiveLineId(highlighted?.businessLineId ?? lines.data[0]?.id ?? null);
   }, [activeLineId, highlightProductId, lines.data, products.data]);
 
   useEffect(() => {
-    if (!highlightProductId || highlightProductId === '1') return;
+    if (!highlightProductId || highlightProductId === CATALOG_BAJO_PISO_VER_TODOS) return;
     document
       .getElementById(`catalog-row-${highlightProductId}`)
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' });

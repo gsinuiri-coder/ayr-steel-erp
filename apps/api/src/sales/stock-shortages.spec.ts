@@ -315,4 +315,44 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     const result = await service.findStockShortages();
     expect(result).toEqual([]);
   });
+
+  it('dos líneas de la MISMA cotización compiten por el mismo ítem: la primera se sirve, a la segunda le falta el resto (hallazgo de revisor)', async () => {
+    const row = quotationRow({
+      id: 'q-1',
+      seq: 1,
+      items: [
+        {
+          lineNumber: 1,
+          productId: 'p-1',
+          qty: '6',
+          reserveItemType: InventoryItemType.PRODUCT,
+          reserveItemId: 'item-1',
+          reserveQty: '6',
+          reserveUnit: 'NIU',
+        },
+        {
+          lineNumber: 2,
+          productId: 'p-1',
+          qty: '6',
+          reserveItemType: InventoryItemType.PRODUCT,
+          reserveItemId: 'item-1',
+          reserveQty: '6',
+          reserveUnit: 'NIU',
+        },
+      ],
+    });
+    setQuotations([row]);
+    // 10 físicos, nada reservado por nadie: entre las dos líneas piden 12, sobran 10.
+    prisma.inventoryBalance.findMany.mockResolvedValue([
+      { itemId: 'item-1', qty: new Decimal('10') },
+    ]);
+
+    const result = await service.findStockShortages();
+
+    // La línea 1 toma 6 de los 10 (orden de la cotización, igual que `previewLinesOf`); a la
+    // línea 2 le quedan 4 disponibles para pedir 6 — faltan 2, nunca 6 (eso sería contar el
+    // ítem dos veces) ni 0 (eso sería no descontar lo que ya tomó la línea 1).
+    const entry = result.find((r) => r.quotationId === 'q-1');
+    expect(entry?.lines).toEqual([expect.objectContaining({ lineNumber: 2, missingQty: '2.000' })]);
+  });
 });

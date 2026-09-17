@@ -213,6 +213,8 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
         page,
         page.getByLabel('Cliente', { exact: true }),
         `${customer.name} — ${customer.docNumber}`,
+        // RF-S3/M1: el campo busca en el servidor contra `name`/`docNumber` por separado.
+        customer.docNumber,
       );
       await page.getByRole('button', { name: /Agregar línea/i }).click();
 

@@ -7,6 +7,14 @@ import { z } from 'zod';
  * cualquier cosa sin devolver medio maestro — y el tope es el mismo `SEARCH_RESULT_LIMIT` en
  * los dos maestros que lo usan hoy (clientes, catálogo), para que el selector compartido no
  * tenga que saber cuál es cuál.
+ *
+ * **`q` vacío u omitido es válido, y no es "sin buscar": es "los primeros
+ * `SEARCH_RESULT_LIMIT`, sin filtro de texto".** (RF-S3/cierre, hallazgo de `qa` contra
+ * `e2e/tests/selector-cliente-f8s3c.spec.ts`, D-156/F8-S3c/M4: el selector de cliente
+ * siempre tiene que abrir mostrando algo útil, sin obligar a escribir primero — antes del
+ * modo `search` eso lo garantizaba traer el maestro entero, y quitarlo sin este caso
+ * dejaba el modal vacío al abrir.) Lo que sigue sin sentido es **un solo carácter**: ni es
+ * "nada" ni alcanza para acotar de verdad, así que ese caso sigue rechazado.
  */
 export const SEARCH_MIN_CHARS = 2;
 export const SEARCH_RESULT_LIMIT = 20;
@@ -15,8 +23,12 @@ export const searchQuerySchema = z.object({
   q: z
     .string()
     .trim()
-    .min(SEARCH_MIN_CHARS, `Escribe al menos ${String(SEARCH_MIN_CHARS)} caracteres`)
-    .max(80),
+    .max(80)
+    .optional()
+    .refine(
+      (v) => v === undefined || v === '' || v.length >= SEARCH_MIN_CHARS,
+      `Escribe al menos ${String(SEARCH_MIN_CHARS)} caracteres, o nada para ver los primeros resultados`,
+    ),
 });
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
 

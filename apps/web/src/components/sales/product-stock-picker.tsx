@@ -153,7 +153,10 @@ export function ProductStockPickerDialog({
   const [filter, setFilter] = useState('');
   const debouncedFilter = useDebounced(filter, 250);
   const trimmed = debouncedFilter.trim();
-  const belowMinChars = trimmed.length < SEARCH_MIN_CHARS;
+  // RF-S3/cierre: vacío no es "por debajo del mínimo" (ver el mismo ajuste en
+  // `search-select-modal.tsx`) — abrir el picker sin escribir muestra los primeros
+  // `SEARCH_RESULT_LIMIT` de la línea, en vez de nada.
+  const belowMinChars = trimmed.length > 0 && trimmed.length < SEARCH_MIN_CHARS;
 
   // El filtro no sobrevive al cierre (mismo motivo que `SearchSelectModal`, D-156): sin esto,
   // reabrir el picker de otra línea —o el mismo después de elegir— mostraba la búsqueda de la

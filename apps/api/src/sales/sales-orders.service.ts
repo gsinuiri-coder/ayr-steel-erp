@@ -948,11 +948,17 @@ export class SalesOrdersService {
     const allLines = [...resolved.values()];
     const baseAvailable = new Map<string, Decimal>();
 
-    // Materia prima: una llamada a `rawMaterialAvailability` por spec real distinta. Sin
-    // `exceptQuotationIds` — el ajuste "no restarse a sí misma" se suma después, por
-    // cotización, con `ownTemporary`.
-    for (const spec of specRefById.values()) {
-      const availability = await rawMaterialAvailability(this.prisma, spec, tolerance, {});
+    // Materia prima: una llamada a `rawMaterialAvailability` por spec real distinta, todas
+    // en paralelo (hallazgo de `revisor`: antes era secuencial, desentonaba con el resto del
+    // método, que sí batchea con `Promise.all`). Sin `exceptQuotationIds` — el ajuste "no
+    // restarse a sí misma" se suma después, por cotización, con `ownTemporary`.
+    const specAvailabilities = await Promise.all(
+      [...specRefById.values()].map(async (spec) => ({
+        spec,
+        availability: await rawMaterialAvailability(this.prisma, spec, tolerance, {}),
+      })),
+    );
+    for (const { spec, availability } of specAvailabilities) {
       baseAvailable.set(`${InventoryItemTypeEnum.RAW_MATERIAL}:${spec.id}`, availability.available);
     }
     // La spec virtual (sin fila todavía) vale 0 — ver el comentario en `resolveLinesForShortages`.

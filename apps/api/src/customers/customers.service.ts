@@ -74,20 +74,26 @@ export class CustomersService {
    * RF-S3/M1: el selector de cliente de cotizaciones y pedidos ya no trae el maestro entero
    * (D-113 solo lo hizo para el listado paginado del admin). Solo activos: un cliente dado de
    * baja no tiene por qué aparecer en un selector de venta nueva.
+   *
+   * `q` vacío u omitido no es "sin buscar": `contains: ''` matchea cualquier fila (`ILIKE
+   * '%%'`), así que sin texto esto da igual "los primeros `SEARCH_RESULT_LIMIT` activos,
+   * alfabético" — el selector siempre abre mostrando algo (D-156/F8-S3c/M4), sin volver a
+   * traer el maestro entero para lograrlo.
    */
-  async search(q: string): Promise<CustomerDto[]> {
+  async search(q?: string): Promise<CustomerDto[]> {
+    const needle = q ?? '';
     const candidates = await this.prisma.customer.findMany({
       where: {
         isActive: true,
         OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { docNumber: { contains: q, mode: 'insensitive' } },
+          { name: { contains: needle, mode: 'insensitive' } },
+          { docNumber: { contains: needle, mode: 'insensitive' } },
         ],
       },
       orderBy: { name: 'asc' },
       take: SEARCH_CANDIDATE_POOL,
     });
-    return rankSearchMatches(candidates, q, (c) => [c.name, c.docNumber]).map(toDto);
+    return rankSearchMatches(candidates, needle, (c) => [c.name, c.docNumber]).map(toDto);
   }
 
   async findOne(id: string): Promise<CustomerDto> {

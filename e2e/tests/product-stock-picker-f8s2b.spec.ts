@@ -89,6 +89,8 @@ test.describe('F8-S2b/M1 — picker de producto con stock', () => {
         page,
         page.getByLabel('Cliente', { exact: true }),
         `${customer.name} — ${customer.docNumber}`,
+        // RF-S3/M1: el campo busca en el servidor contra `name`/`docNumber` por separado.
+        customer.docNumber,
       );
       // La cotización nueva ya nace con una línea vacía: no hace falta "Agregar línea" para
       // la primera.

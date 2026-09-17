@@ -67,21 +67,22 @@ export class CatalogService {
    * `businessLine` es el código compartido (`@ayr/shared`), como ya lo maneja el formulario de
    * ventas — se traduce una sola vez acá, no en cada llamador.
    */
-  async search(q: string, businessLine?: SharedLineCode): Promise<ProductDto[]> {
+  async search(q?: string, businessLine?: SharedLineCode): Promise<ProductDto[]> {
+    const needle = q ?? '';
     const candidates = await this.prisma.product.findMany({
       where: {
         isActive: true,
         ...(businessLine ? { businessLine: { code: toPrismaLineCode(businessLine) } } : {}),
         OR: [
-          { sku: { contains: q, mode: 'insensitive' } },
-          { name: { contains: q, mode: 'insensitive' } },
+          { sku: { contains: needle, mode: 'insensitive' } },
+          { name: { contains: needle, mode: 'insensitive' } },
         ],
       },
       include: PRODUCT_RELATIONS,
       orderBy: { name: 'asc' },
       take: SEARCH_CANDIDATE_POOL,
     });
-    return rankSearchMatches(candidates, q, (p) => [p.sku, p.name]).map(toDto);
+    return rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]).map(toDto);
   }
 
   /**

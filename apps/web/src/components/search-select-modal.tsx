@@ -139,7 +139,12 @@ export function SearchSelectModal({
 
   const trimmed = filter.trim();
   const debouncedTrimmed = debouncedFilter.trim();
-  const belowMinChars = isAsync && debouncedTrimmed.length < minChars;
+  // RF-S3/cierre (hallazgo de `qa` contra `selector-cliente-f8s3c.spec.ts`, D-156/F8-S3c/M4):
+  // vacío no es "por debajo del mínimo" — es "sin filtro de texto", y el servicio ya sabe
+  // devolver los primeros `SEARCH_RESULT_LIMIT` para ese caso (ver `searchQuerySchema`). Solo
+  // 1..minChars-1 caracteres es la zona muerta real: ni "nada" ni alcanza para acotar.
+  const belowMinChars =
+    isAsync && debouncedTrimmed.length > 0 && debouncedTrimmed.length < minChars;
 
   const serverSearch = useQuery({
     queryKey: ['search-select-modal', title, debouncedTrimmed],
@@ -240,7 +245,9 @@ export function SearchSelectModal({
                       {isAsync
                         ? serverSearch.isFetching
                           ? 'Buscando…'
-                          : 'Ninguna opción coincide con ese texto.'
+                          : debouncedTrimmed === ''
+                            ? (emptyMessage ?? 'No hay ninguna opción registrada todavía.')
+                            : 'Ninguna opción coincide con ese texto.'
                         : (options ?? []).length === 0
                           ? (emptyMessage ?? 'No hay ninguna opción registrada todavía.')
                           : 'Ninguna opción coincide con ese texto.'}
@@ -278,6 +285,7 @@ export function SearchSelectField({
   options,
   search,
   selectedOption,
+  selectedOptionLoading = false,
   minChars,
   value,
   disabled,
@@ -304,6 +312,15 @@ export function SearchSelectField({
    * pedido viejo mostraría el selector vacío aunque el cliente/producto elegido exista.
    */
   selectedOption?: SearchSelectOption | null;
+  /**
+   * RF-S3/cierre (hallazgo de `revisor`): mientras la hidratación de `selectedOption`
+   * todavía está en vuelo (la primera carga de `useQuery`, no un refetch de fondo), no hay
+   * forma de distinguir "no existe" de "todavía no llegó" — sin esto, abrir para editar una
+   * cotización o un pedido con cliente ya elegido mostraba un instante "no está entre las
+   * opciones" sobre un cliente que sí existe y está activo, y lo mismo pasaba justo después
+   * de elegir uno nuevo. El llamador pasa el `isLoading` de su propio `useQuery`.
+   */
+  selectedOptionLoading?: boolean;
   minChars?: number;
   value: string | null;
   disabled?: boolean;
@@ -343,7 +360,8 @@ export function SearchSelectField({
    * puesto. Pasa con un maestro que filtra inactivos y con la ventana entre crear un
    * registro y que la lista se refresque.
    */
-  const missing = value !== null && value !== '' && selected === null;
+  const missing =
+    value !== null && value !== '' && selected === null && !(isAsync && selectedOptionLoading);
 
   if (!isAsync && !forceModal && (options ?? []).length <= SEARCH_SELECT_THRESHOLD) {
     const syncOptions = options ?? [];

@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   BUSINESS_LINES,
   createProductSchema,
@@ -48,17 +58,31 @@ export class CatalogController {
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQuery,
     @Query('businessLine') businessLine?: string,
   ): Promise<ProductDto[]> {
-    const line = (BUSINESS_LINES as readonly string[]).includes(businessLine ?? '')
-      ? (businessLine as BusinessLine)
-      : undefined;
-    return this.catalog.search(query.q, line);
+    // Hallazgo de `revisor` (RF-S3/cierre): un `businessLine` mal escrito se ignoraba en
+    // silencio y la búsqueda seguía sin filtrar — un typo del front mostraba productos de
+    // cualquier línea sin avisar nada. `undefined` (el parámetro no vino) sigue siendo "sin
+    // filtro", a propósito; lo que ya no se acepta es un valor que no es ninguna línea real.
+    if (
+      businessLine !== undefined &&
+      !(BUSINESS_LINES as readonly string[]).includes(businessLine)
+    ) {
+      throw new BadRequestException(`Línea de negocio inválida: ${businessLine}`);
+    }
+    return this.catalog.search(query.q, businessLine as BusinessLine | undefined);
   }
 
   /**
    * RF-S3/M4 (sacrificable): resumen agregado para el card del Panel. Va **antes** de
    * `:id`, mismo motivo que `price-list/changes` y `search`.
+   *
+   * Solo ADMINISTRADOR (hallazgo de `revisor`, RF-S3/cierre): el margen mínimo por línea
+   * que decide este piso vive en Administración → Márgenes (D-175), y sin este guard
+   * cualquier rol autenticado podía pedir el endpoint directo y ver qué SKU se vende bajo
+   * margen en todo el catálogo — el control anterior era solo del lado del cliente
+   * (`enabled: isAdmin` en la card), que no protege nada.
    */
   @Get('price-list/floor-summary')
+  @Roles(Role.ADMINISTRADOR)
   findPriceListFloorSummary(): Promise<PriceListFloorSummaryDto> {
     return this.catalog.findPriceListFloorSummary();
   }
