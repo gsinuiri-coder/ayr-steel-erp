@@ -79,10 +79,18 @@ test.describe('Auditoría (D-225) — precio de lista y borrador descartado en e
     await page.goto(`/auditoria?entityType=products&entityId=${product.id}`);
     await expect(page.getByRole('heading', { name: 'Auditoría' })).toBeVisible();
 
+    // El alta con precio ya deja su propio cambio (sin precio → 10): se busca el de la edición.
+    const priceRows = page.getByRole('row').filter({ hasText: 'Cambio de precio de lista' });
+    await expect(priceRows.filter({ hasText: '12.5000' })).toBeVisible({ timeout: 15_000 });
     await expect(
-      page.getByRole('row').filter({ hasText: 'Cambio de precio de lista' }),
-    ).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole('row').filter({ hasText: 'Edición de producto' })).toBeVisible();
+      priceRows.filter({ hasText: '10.0000' }).filter({ hasNotText: '12.5000' }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole('row')
+        .filter({ hasText: 'Edición de producto' })
+        .filter({ hasText: '12.5000' }),
+    ).toBeVisible();
   });
 
   test('descartar un borrador deja la creación y el descarte, con el motivo a la vista', async ({
