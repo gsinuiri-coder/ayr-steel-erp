@@ -67,14 +67,15 @@ esconde al otro.
 
 - **Edición inline:** un solo cambio de precio deja **dos** filas con la misma hora: "Edición
   de producto" (el producto entero, con el precio entre los campos que cambiaron) y "Cambio
-  de precio de lista" (solo el precio, con "Origin: INLINE"). Es a propósito, no un duplicado.
-- **Los valores del visor son sin IGV.** Son el `valor` que guarda el sistema (D-162). El
-  catálogo y el historial de precio del SKU muestran el precio **con** IGV: un 11.80 del
-  catálogo se ve como 10.0000 en el visor.
+  de precio de lista" (solo el precio, con "Origen: Edición en catálogo"). Es a propósito, no
+  un duplicado.
+- **Los valores de precio de lista se ven con IGV, igual que en el catálogo.** El sistema
+  guarda el `valor` sin IGV (D-162), pero el visor lo convierte antes de mostrarlo: el mismo
+  precio se ve igual acá que en el catálogo, nunca el número crudo que guarda la base.
 - **Carga masiva:** una fila "Carga masiva de precios de lista confirmada" (cuántos SKUs se
   enviaron y cuántos cambiaron) más una fila "Cambio de precio de lista" por cada SKU, todas
   con la misma hora. **Revertir el lote** deja lo mismo en espejo: "Carga masiva de precios
-  de lista revertida" más una fila por SKU restaurado, con "Reverts batch id" apuntando al
+  de lista revertida" más una fila por SKU restaurado, con "Revierte al lote" apuntando al
   lote original. Con 50 o más SKUs, "Cargar más" trae el resto sin repetir ni saltear
   ninguno.
 - **Link "Historial":** en **Catálogo**, el historial de precio de un SKU y el diálogo "Editar
@@ -101,8 +102,9 @@ en letra chica debajo del nombre de quien lo descartó**, no mezclado con los ca
 comprobante sirve para abrir el visor mientras el borrador todavía existe.
 
 > Los descartes hechos en producción entre el deploy de `ca6314d` y el de esta rama guardaron
-> el motivo como un campo más del detalle ("Reason: …"). No se reescriben (la auditoría no se
-> edita, D-221); desde este deploy el motivo sale en su lugar.
+> el motivo como un campo más del detalle ("Motivo: …", dentro de "antes"). No se reescriben
+> (la auditoría no se edita, D-221); desde este deploy el motivo sale en su lugar, en letra
+> chica debajo del nombre de quien lo descartó.
 
 ## 6. Más de una página de resultados
 
