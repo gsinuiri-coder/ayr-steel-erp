@@ -32,7 +32,24 @@ const isWin = process.platform === 'win32';
 const res = spawnSync(isWin ? 'pnpm.cmd' : 'pnpm', ['run', 'dev'], {
   cwd: ROOT,
   // El override viaja por entorno y gana sobre `apps/api/.env`: NestJS lee `process.env`.
-  env: { ...process.env, ...demo, AYR_ENVIRONMENT: 'demo' },
+  //
+  // R2/PSE/jobs apagados mientras `demo` sea copia de datos reales (ajustes antes de UAT
+  // S2, D-227): `apps/api/.env` (heredado de `pnpm env:local`) puede traer el `R2_BUCKET`
+  // real de producción, y con `PSE_ENABLED`/`JOBS_ENABLED` en `true` el reintento de envío
+  // al PSE (`invoicing-send.job.ts`) reenviaría al sandbox de Nubefact comprobantes
+  // pendientes clonados de producción. Ninguno de los dos hace falta para el guion de UAT.
+  env: {
+    ...process.env,
+    ...demo,
+    AYR_ENVIRONMENT: 'demo',
+    R2_ACCOUNT_ID: '',
+    R2_ACCESS_KEY_ID: '',
+    R2_SECRET_ACCESS_KEY: '',
+    R2_BUCKET: '',
+    R2_ENDPOINT: '',
+    PSE_ENABLED: 'false',
+    JOBS_ENABLED: 'false',
+  },
   stdio: 'inherit',
   shell: isWin,
 });

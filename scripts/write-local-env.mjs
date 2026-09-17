@@ -11,6 +11,23 @@ const setup = readEnvFile();
 const pooled = neonConnectionString(branch, { pooled: true });
 const direct = neonConnectionString(branch, { pooled: false });
 
+// R2 fuera de todo entorno local por defecto: `.env.setup#R2_BUCKET` es el bucket real de
+// producción (compartido con GCP/GitHub Secrets), y hasta esta sesión `pnpm env:local` lo
+// escribía tal cual en `apps/api/.env` — cualquier XML/PDF subido en local o en `demo`
+// (que hereda este archivo, ver `dev-demo.mjs`) iba al bucket de producción. Un
+// `R2_BUCKET_DEV` propio en `.env.setup` (mismo `R2_ACCOUNT_ID`/claves, otro bucket) es la
+// única forma de tener R2 local sin ese riesgo; sin él, las cinco quedan vacías y
+// `StorageService` responde 503 (degradación ya prevista, D-227).
+const r2Lines = setup.R2_BUCKET_DEV
+  ? [
+      `R2_ACCOUNT_ID=${setup.R2_ACCOUNT_ID ?? ''}`,
+      `R2_ACCESS_KEY_ID=${setup.R2_ACCESS_KEY_ID ?? ''}`,
+      `R2_SECRET_ACCESS_KEY=${setup.R2_SECRET_ACCESS_KEY ?? ''}`,
+      `R2_BUCKET=${setup.R2_BUCKET_DEV}`,
+      `R2_ENDPOINT=${setup.R2_ENDPOINT ?? ''}`,
+    ]
+  : ['R2_ACCOUNT_ID=', 'R2_ACCESS_KEY_ID=', 'R2_SECRET_ACCESS_KEY=', 'R2_BUCKET=', 'R2_ENDPOINT='];
+
 const apiEnv = [
   `# Generado por scripts/write-local-env.mjs (rama Neon: ${branch}). No commitear.`,
   'NODE_ENV=development',
@@ -37,11 +54,7 @@ const apiEnv = [
   // que existe y no involucra a ningún tercero. Vacío = los E2E saltan la aceptación en vez
   // de emitir contra un RUC que no existe.
   `E2E_CUSTOMER_RUC=${setup.E2E_CUSTOMER_RUC ?? ''}`,
-  `R2_ACCOUNT_ID=${setup.R2_ACCOUNT_ID ?? ''}`,
-  `R2_ACCESS_KEY_ID=${setup.R2_ACCESS_KEY_ID ?? ''}`,
-  `R2_SECRET_ACCESS_KEY=${setup.R2_SECRET_ACCESS_KEY ?? ''}`,
-  `R2_BUCKET=${setup.R2_BUCKET ?? ''}`,
-  `R2_ENDPOINT=${setup.R2_ENDPOINT ?? ''}`,
+  ...r2Lines,
   '',
 ].join('\n');
 writeFileSync(resolve(ROOT, 'apps/api/.env'), apiEnv);

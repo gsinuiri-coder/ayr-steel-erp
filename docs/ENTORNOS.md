@@ -3,12 +3,12 @@
 Cuatro ramas de Neon, cuatro propósitos que no se mezclan. **Ninguna se borra nunca**
 (regla dura del `CLAUDE.md`); la que haga falta reponer se rehace clonándola de su padre.
 
-| Rama         | Para qué                                       | Quién la usa                   | Datos                                |
-| ------------ | ---------------------------------------------- | ------------------------------ | ------------------------------------ |
-| `production` | La empresa. **Datos reales desde 2026-09-07.** | Vendedores, planta, el dueño   | Reales. No se ensucian ni se purgan. |
-| `demo`       | Ensayos, capacitación y carga de prueba        | El dueño y quien esté probando | Copia de `production` al 2026-09-06  |
-| `dev`        | Desarrollo local del día a día                 | El agente y el dueño en local  | Descartables                         |
-| `ci`         | La suite E2E completa en GitHub Actions        | CI                             | Se resetea en cada corrida           |
+| Rama         | Para qué                                       | Quién la usa                   | Datos                                       |
+| ------------ | ---------------------------------------------- | ------------------------------ | ------------------------------------------- |
+| `production` | La empresa. **Datos reales desde 2026-09-07.** | Vendedores, planta, el dueño   | Reales. No se ensucian ni se purgan.        |
+| `demo`       | Ensayos, capacitación y carga de prueba        | El dueño y quien esté probando | Copia de `production`, R2/PSE/jobs apagados |
+| `dev`        | Desarrollo local del día a día                 | El agente y el dueño en local  | Descartables                                |
+| `ci`         | La suite E2E completa en GitHub Actions        | CI                             | Se resetea en cada corrida                  |
 
 ## production
 
@@ -28,9 +28,13 @@ Cuatro ramas de Neon, cuatro propósitos que no se mezclan. **Ninguna se borra n
   correlativo, con un mensaje de negocio claro; no depende de que `NUBEFACT_URL`/
   `NUBEFACT_TOKEN` falten (eso sigue siendo la contingencia normal de D-073, para
   cuando el PSE esté habilitado y el proveedor no responda). Se define `PSE_ENABLED=true`
-  en `dev` (`scripts/write-local-env.mjs`, heredado por `demo` vía `apps/api/.env`) y en
-  `ci` (los dos jobs de `.github/workflows/ci.yml`) para que ningún entorno de prueba
-  cambie de comportamiento. Verificar en `smoke:prod` que quedó apagado tras un deploy.
+  en `dev` (`scripts/write-local-env.mjs`) y en `ci` (los dos jobs de
+  `.github/workflows/ci.yml`) para que esos entornos de prueba no cambien de comportamiento.
+  **`demo` es la excepción, y a propósito (D-227):** `dev-demo.mjs` lo fuerza a `false`
+  —igual que `JOBS_ENABLED`— porque `demo` es copia de datos reales y con los dos en
+  `true` el reintento de envío al PSE (`invoicing-send.job.ts`) reenviaría al sandbox de
+  Nubefact comprobantes pendientes de clientes reales. Verificar en `smoke:prod` que
+  `PSE_ENABLED` quedó apagado tras un deploy a `production`.
 
 ## demo
 
@@ -46,6 +50,25 @@ pnpm dev:demo    # levanta api :3000 + web :3001 contra demo
 `pnpm dev:demo` **no toca** `apps/api/.env`: inyecta la conexión por variables de entorno al
 proceso, así que `pnpm dev` sigue apuntando a `dev` y las dos cosas conviven. `.env.demo` está
 cubierto por el `.env.*` del `.gitignore`.
+
+### Salidas externas: apagadas mientras demo sea copia de datos reales (D-227)
+
+`demo` es un clon de `production` (ver abajo): trae sus mismos clientes, RUCs y comprobantes.
+`dev-demo.mjs` fuerza estas variables sin importar lo que traiga `apps/api/.env`:
+
+- **`R2_*` vacías.** `apps/api/.env` (generado por `pnpm env:local`) puede traer el
+  `R2_BUCKET` real de producción si `.env.setup` no tiene un `R2_BUCKET_DEV` propio (ver
+  `## dev` abajo). Con las cinco vacías, `StorageService` responde `503` al pedir un
+  adjunto — degradación ya prevista, la misma que en Docker local sin MinIO — en vez de
+  subir o bajar del bucket real.
+- **`PSE_ENABLED=false` y `JOBS_ENABLED=false`.** Apaga la emisión electrónica y el job que
+  reintenta envíos pendientes al PSE (`invoicing-send.job.ts`): sin esto, reenviaría al
+  sandbox de Nubefact comprobantes de clientes reales clonados de `production`.
+
+**Las credenciales de los usuarios de `demo` son las de `production`** (es un clon: mismos
+hashes de contraseña). Lo único propio es la sesión del ADMINISTRADOR de `.env.demo`
+(`JWT_SECRET`/`ADMIN_PASSWORD` generados por `pnpm env:demo`, nunca los de producción) — un
+vendedor real no puede entrar a `demo` con su contraseña real sin que alguien se la dé.
 
 ### Demo tiene secretos propios, y eso no es opcional
 
@@ -77,6 +100,13 @@ vivas de usuarios reales.
 
 `pnpm env:local` genera `apps/api/.env` y `apps/web/.env.local`; `pnpm dev`, `pnpm db:migrate`,
 `pnpm db:seed`. Es la única rama contra la que se corre `prisma migrate dev`.
+
+**R2 apagado por defecto (D-227).** `write-local-env.mjs` ya no copia el `R2_BUCKET` de
+`.env.setup` a `apps/api/.env` — ese bucket es el mismo que usa Cloud Run en producción
+(compartido también con GitHub Secrets), y local nunca debería escribir ahí. Sin un
+`R2_BUCKET_DEV` propio en `.env.setup` (mismas credenciales de cuenta, otro bucket), las
+cinco `R2_*` quedan vacías y `StorageService` responde `503` — igual que Docker local sin
+el perfil `storage` de MinIO.
 
 ## local (Docker) — no es Neon
 
