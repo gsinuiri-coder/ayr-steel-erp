@@ -1,0 +1,11 @@
+#!/bin/sh
+
+if [ "${AYR_OWNER_PUSH:-}" = "1" ]; then
+  exit 0
+fi
+
+cat >&2 <<'EOF'
+AYR Steel ERP: push bloqueado para agentes.
+Solo el dueño puede publicar. Si eres el dueño, repite el comando con AYR_OWNER_PUSH=1.
+EOF
+exit 1
