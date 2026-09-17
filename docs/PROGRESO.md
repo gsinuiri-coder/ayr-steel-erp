@@ -6653,6 +6653,56 @@ deshabilitado (JOBS_ENABLED=false)`, sin `InvoicingSendJob` ni `QuotationExpiryJ
 alcanza por sí solo — si la variable no está en `globalPassThroughEnv` (o en el `env`/
 `passThroughEnv` de la tarea), Turbo la filtra antes de que el proceso hijo la vea, sin avisar.
 
+## Ventana S2 (2026-09-17) — deploy de auditoría (D-218/D-220) a producción
+
+UAT en `demo` **aprobado por el cliente sin observaciones**. Ventana nocturna chica, desde el
+worktree principal (`main`).
+
+**1 — CI.** `origin/main` no había avanzado desde el inicio de la sesión (`ae5bb1c`); `rf-s2`
+ya lo incluía completo (rebaseado en RF-S2-INTEGRA), así que no hizo falta rebase. Push de los
+4 commits nuevos de la sesión (D-226/D-227) → CI de PR #2, run
+[35194965329](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35194965329): verde.
+
+**2 — Respaldo Neon.** `respaldo-pre-s2-20260917` (`br-round-hat-aepspkbl`) desde `production`.
+8→9 ramas, sin necesidad de limpiar ninguna por tope.
+
+**3 — Merge.** `git checkout main && git merge --ff-only rf-s2 && git push origin main`, corrido
+por el dueño. `origin/main` → `bc31eae`. CI de `main`
+([35225447438](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35225447438)):
+verde. RELEASE = `bc31eae`.
+
+**4 — Migraciones en `production`** (aprobación manual del dueño en cada comando). `migrate
+status`: solo D-218/D-220 pendientes, igual que en `demo`. `audit_log` antes del índice de
+D-220: 300 filas, 240 kB — sin riesgo, no hizo falta `CONCURRENTLY`. `migrate deploy`: las dos
+aplicadas sin error. `migrate status` post: 0 pendientes.
+
+**5 — Deploy de API y corrección de la deuda S3 #2 (variables de entorno rotas).**
+`scripts/deploy-api.mjs` pasó de `--set-env-vars` (que en Windows rompía el delimitador `^|^`
+contra `cmd /d /s /c` y colapsaba `NODE_ENV`/`WEB_ORIGIN`/`JOBS_ENABLED` en una sola variable
+de nombre `"^|^NODE_ENV`, hallazgo de la ventana RF-S1+HOTFIX) a `--env-vars-file` (YAML
+temporal, sin pasar por ese parseo), sumó `--update-labels git-sha` (faltaba del todo en el
+script) y una verificación post-deploy de que los nombres de variable/secreto de la revisión
+activa son exactamente los 12 esperados. `WEB_ORIGIN`: los dos dominios
+(`https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`, decisión del dueño — quedaba
+pendiente desde RF-S1+HOTFIX). Deploy desde `main` local en `74c6317` (RELEASE +
+`deploy-api.mjs`): revisión **`ayr-steel-erp-api-00037-njl`** al 100%, label
+`git-sha=74c6317`. Primera corrida de la verificación post-deploy falló por un bug propio (el
+`value()` de `gcloud` une listas con `;`, no con salto de línea) — el deploy en sí ya había
+salido bien, confirmado aparte con una lectura de solo lectura de los 12 nombres exactos, sin
+el nombre roto. Corregido en un commit aparte (`899151f`, no toca runtime — verificado con
+`git diff --quiet 74c6317 HEAD -- apps packages Dockerfile .gcloudignore package.json
+pnpm-lock.yaml pnpm-workspace.yaml`, exit 0). `/health` `db: ok`.
+
+**6 — Vercel y smoke.** No se pudo confirmar por API qué commit sirve Vercel (token del CLI
+vencido, mismo problema de la sesión del 2026-09-05); el push de `main` ya disparó el deploy
+automático por la integración de GitHub. `pnpm smoke:prod`: **7/7**, incluido "emisión
+electrónica apagada (D-216)" — antes fallaba (revisión `f92a3df` no la exponía); ahora la API
+desplegada sí.
+
+**Pendiente:** verificación manual del dueño — visor de auditoría en prod (admin ve, no-admin
+no ve), un "Historial" desde un detalle, una edición con motivo registrada. Commits de esta
+ventana sin pushear todavía (`74c6317`, `899151f`): imprimir para el dueño al cierre.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
