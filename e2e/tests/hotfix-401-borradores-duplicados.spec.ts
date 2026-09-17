@@ -134,6 +134,51 @@ test.describe('Tope: no se factura más del total del pedido', () => {
     expect(((await third.json()) as { message: string }).message).toContain('ya tiene');
   });
 
+  test('tres creaciones concurrentes por el total, sin clave: se crea exactamente una', async ({
+    baseURL,
+  }) => {
+    // D-223: sin índice único, lo que impide el caso PED-000006 bajo concurrencia es el
+    // `SELECT … FOR UPDATE` del pedido en `createInTx`: las transacciones se serializan en
+    // ese lock y cada una recalcula el tope viendo lo que la anterior ya commiteó (READ
+    // COMMITTED, snapshot por sentencia). Sin clave de idempotencia a propósito: es el
+    // camino que no tiene ningún otro freno.
+    const api = await adminApi(baseURL!);
+    const scenario = await setupOrderScenario(api);
+    const body = invoiceBody({
+      docType: 'FACTURA',
+      customerId: scenario.customer.id,
+      salesOrderId: scenario.order.id,
+      items: [
+        { salesOrderItemId: scenario.item.id, qty: scenario.item.qty, unitPricePen: '8.0000' },
+      ],
+    });
+    const responses = await Promise.all(
+      [0, 1, 2].map(() => api.post('/api/invoicing/documents', { data: body })),
+    );
+    const statuses = responses.map((r) => r.status()).sort();
+    expect(statuses, 'una sola creación; las otras dos chocan con el tope').toEqual([
+      201, 400, 400,
+    ]);
+  });
+
+  test('una idempotencyKey más larga que la columna se rechaza con 400, no con 500', async ({
+    baseURL,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const customer = await createInvoiceableCustomer(api);
+    const res = await api.post('/api/invoicing/documents', {
+      data: {
+        ...invoiceBody({
+          docType: 'FACTURA',
+          customerId: customer.id,
+          items: [freeLine('1', '10.0000')],
+        }),
+        idempotencyKey: 'k'.repeat(101),
+      },
+    });
+    expect(res.status()).toBe(400);
+  });
+
   test('un borrador con despacho declarado no cuenta dos veces contra el mismo despacho', async ({
     baseURL,
   }) => {

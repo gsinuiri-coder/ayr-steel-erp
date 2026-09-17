@@ -18,7 +18,7 @@ import {
   TransferMode,
 } from '../enums';
 import { reasonSchema } from './coil';
-import { idempotencyFields } from './idempotency';
+import { idempotencyFields, idempotencyKeySchema } from './idempotency';
 import { backdatableFields } from './operation';
 import { paginationQuerySchema } from './pagination';
 import { businessToday } from '../business-date';
@@ -318,7 +318,9 @@ export const createInvoiceSchema = z
      * borrador — mismo criterio que ya usa un cobro (D-182). Opcional: quien no la manda
      * sigue sin este guardrail, como ya documenta `claimIdempotencyKey`.
      */
-    idempotencyKey: z.string().min(1).max(128).optional(),
+    // El mismo schema que el resto (VarChar(100) en `idempotency_keys`): con `.max(128)` una
+    // clave de 101-128 caracteres pasaba la validación y reventaba en el INSERT.
+    idempotencyKey: idempotencyKeySchema.optional(),
   })
   .superRefine((input, ctx) => {
     if (input.paymentTerms === 'CONTADO' && input.dueDate !== undefined) {
