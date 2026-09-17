@@ -6589,6 +6589,46 @@ de esta. Documentado para que la próxima vez que aparezca no se lea como "flaky
 **Pendiente de esta sesión:** `docs/uat/rf-s2.md` (quitar el aviso del caso 5) y CI del punto 2
 del brief — ver el resto de esta ventana en el handoff que cierre la sesión.
 
+**CI (punto 2 del brief).** PR #2 (`rf-s2` → `main`, solo CI, sin merge). Run
+[35187666089](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35187666089):
+**verde en los 4 jobs**, incluido el paso nuevo `pnpm --filter @ayr/web test` dentro de
+`calidad` — primera corrida real del Vitest de D-226 en CI. Sin `fase2a:359`/`fase5a:100` ni
+el flaky de precios en esta corrida.
+
+**Hallazgo — `demo` nunca tuvo datos de capacitación reales; se restableció desde `production`
+sin respaldo (D-227).** Al preparar el UAT, `migrate status` contra `demo` mostró 22
+migraciones pendientes (desde `D-146`, no solo `D-218`/`D-220` esperadas). Investigando por
+qué, la causa resultó estructural: `demo` se creó el 2026-09-06T22:48:08Z — un día **antes**
+de que `production` tuviera datos reales (2026-09-07, CLAUDE.md) — y lo que clonó fue resaca
+de E2E de antes del lanzamiento, no datos de capacitación cargados a mano después. Confirmado
+con conteos: 968 `finishes` en total, **0** coincidiendo con los 3 códigos reales que `D-203`
+mapea (todos con forma `E2E...`/"Acabado E2E ..."/códigos aleatorios de 10 caracteres); el
+100% de las 1985 bobinas de `demo` con `created_at` entre el 2026-09-02 y el 2026-09-06;
+289/291 clientes y 1078/1617 productos con "E2E" en nombre/RUC/SKU. Confirmado en una rama de
+ensayo descartable (`ensayo-demo-s2`, creada y borrada en esta sesión) que `migrate deploy`
+fallaría en seco en `D-209_acabados_tipo_obligatorio`, que hace `RAISE EXCEPTION` explícito si
+queda algún `finishes.kind IS NULL` — con 968 acabados sin mapear, nombraba los 968 códigos en
+el mensaje de error.
+
+**Decisión del dueño: el `demo` viejo se descarta sin respaldo.** No es un recorte de
+alcance — es que la resaca de E2E no tenía ningún valor que preservar. Se creó primero
+`pre-uat-s2-demo` (respaldo por las dudas) y se la borró después, al confirmar que el reset
+—`neonctl branches reset demo --parent`— no podía correr con `demo` teniendo un hijo (Neon
+exige `--preserve-under-name` para eso, que habría creado una tercera copia redundante de la
+misma resaca) y que preservarla no aportaba nada. Verificado post-reset: mismo id de rama y
+mismo endpoint/host (`ep-orange-field-aeb2zt49...`, sin cambios), padre = `production`,
+conteos plausibles de datos reales (48 clientes, 174 productos, 43 bobinas, 13 pedidos, 70
+cotizaciones — coincide con "70 cotizaciones de producción" ya documentado en D-224 —, 4
+comprobantes, 9 acabados) y 0 filas con huella de E2E. 8 ramas Neon en total tras esta
+ventana.
+
+**Salidas externas de `demo` apagadas (D-227), commit aparte.** `write-local-env.mjs` dejó de
+copiar el `R2_BUCKET` real (el mismo de Cloud Run producción) a `apps/api/.env` salvo que
+`.env.setup` tenga un `R2_BUCKET_DEV` propio; `dev-demo.mjs` fuerza además `R2_*` vacías y
+`PSE_ENABLED`/`JOBS_ENABLED=false`, sin importar lo que traiga `apps/api/.env` heredado. Ver
+`docs/ENTORNOS.md` para el detalle y el riesgo documentado (credenciales de usuarios de
+`demo` = las de `production`).
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
