@@ -6594,21 +6594,25 @@ real de `salePriceFromValue`/`money`, no a mano: `10.0000 → 11.8000`, `12.5000
 `formatMoney` redondea a 2 decimales). Assertions actualizadas a los montos con IGV.
 
 **Flaky `precios-lista-d217.spec.ts:255`** (ya registrado en RF-S2-INTEGRA: pasó al reintento,
-no toca código de esa sesión). **Causa probable, no confirmada por una corrida que lo
-reproduzca:** el test elige un producto en el picker de stock
-(`chooseProductWithStock`/`sales-document-form.tsx`) y de inmediato espera el precio unitario
-prellenado. `chooseProduct` (el callback que corre al elegir) lee el valor de lista de
-`productById`, un `Map` derivado de `products.data` — el resultado de un `useQuery` propio de la
-lista de productos, **no** del `stock-panel` que sí espera el modal antes de mostrar el botón
-"Elegir". Si ese `useQuery` de productos todavía no resolvió cuando se hace clic en "Elegir"
-(cold start del test, o el picker corriendo antes de que la lista termine de cargar),
-`productById.get(productId)` da `undefined`, `listValue` sale `undefined` y `patchLine` no
-escribe ningún precio — la línea queda vacía en vez de `11.8000`, y el `toHaveValue` reintenta
-sin nunca convertirse en verdadero porque nada dispara un segundo intento de `chooseProduct`
-tras resolver la query. No se tocó nada de `sales-document-form.tsx` en esta sesión: mover la
-lectura del precio de lista a depender del mismo dato que ya espera el modal (o re-ejecutar el
-prellenado cuando `products.data` cambie) es trabajo de una sesión que sí toque ese archivo, no
-de esta. Documentado para que la próxima vez que aparezca no se lea como "flaky sin causa".
+no toca código de esa sesión). **Causa probable documentada entonces, descartada en RF-S3/M0
+con una corrida que sí lo reprodujo — y la reproducción resultó ser ruido de sesión, no del
+producto.** La hipótesis de esta fila (que `chooseProduct` lee `productById` antes de que el
+`useQuery` de `/catalog` resuelva) no se sostiene leyendo el código: el botón "Elegir" del
+picker de stock y el `Map` `productById` derivan del **mismo** `products.data` en el **mismo**
+render (`sales-document-form.tsx`), así que no pueden desincronizarse entre sí — si el botón
+muestra un SKU real, el catálogo ya cargó, y `productById` también lo tiene.
+
+**RF-S3/M0 (2026-09-17).** `pnpm exec playwright test ... --repeat-each=10` sobre este spec dio
+primero **4/10 rojos**, todos fallando en `chooseOption` al elegir el **cliente** (no el
+producto) con un timeout de 30s esperando el predicado. El trace de la corrida mostró
+`[Fast Refresh] rebuilding` de `next dev` disparándose cada 1-3 segundos durante todo el test,
+incluso a mitad de un click — y esa corrida coincidió con dos subagentes trabajando en paralelo
+sobre el **mismo worktree** (`ayr-steel-erp-rf-s3`). Es contaminación de sesión: otro proceso
+tocando archivos del árbol que `next dev` vigila, no una carrera de la app. Repetido en
+aislamiento (sin agentes concurrentes en el worktree): **10/10 verde, 6.1 min**. Lección para
+toda sesión futura: **nunca correr E2E contra un worktree que otro agente esté editando o
+ejecutando en paralelo** — el síntoma no se parece en nada a su causa real, igual que ya pasó
+con «una suite de Playwright a la vez» y `test-results/` compartido.
 
 **Pendiente de esta sesión:** `docs/uat/rf-s2.md` (quitar el aviso del caso 5) y CI del punto 2
 del brief — ver el resto de esta ventana en el handoff que cierre la sesión.
