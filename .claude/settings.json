@@ -32,6 +32,7 @@
       "Bash(gh pr merge:*)",
       "Bash(gh repo sync:*)",
       "Bash(gh api:*)",
+      "Bash(gh workflow run:*)",
       "Read(./.env*)",
       "Read(**/.env*)"
     ],
