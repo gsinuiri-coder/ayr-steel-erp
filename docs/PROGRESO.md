@@ -6614,7 +6614,7 @@ archivo de `apps/web`/`packages/shared` durante la corrida.
 **Causa real, confirmada en M1 con un `next dev` aislado en reposo:** con la app quieta (sin
 navegar) durante 15 s no hubo un solo `rebuilding` ni un cambio de archivo en `apps/web`. El
 patrón sí aparece al **navegar por primera vez** en un `next dev` recién levantado: cada ruta
-nueva se compila on-demand, y el sidebar de la app (con ~20 enlaces) dispara el *prefetch* de
+nueva se compila on-demand, y el sidebar de la app (con ~20 enlaces) dispara el _prefetch_ de
 Next de varias de esas rutas en segundo plano — cada una compila y empuja su propio evento de
 Fast Refresh al cliente, aunque la página abierta no cambie. Un test que es de los **primeros**
 en tocar un `next dev` recién levantado puede pisar varias de estas compilaciones seguidas; una

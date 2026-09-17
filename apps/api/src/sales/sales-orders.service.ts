@@ -118,6 +118,7 @@ import {
   findRawMaterialSpec,
   findRawMaterialSpecs,
   rawMaterialCoilIds,
+  type RawMaterialSpecRef,
 } from './raw-material';
 
 function toDateOnly(value: string): Date {
@@ -179,6 +180,33 @@ const orderInclude = {
 
 type OrderRow = Prisma.SalesOrderGetPayload<{ include: typeof orderInclude }>;
 type ReservationRow = OrderRow['reservations'][number];
+
+/** RF-S3/M2: lo mismo que `previewLinesOf` necesita de una cotización, para `findStockShortages`. */
+const shortageQuotationInclude = {
+  customer: { select: { name: true } },
+  items: {
+    orderBy: { lineNumber: 'asc' },
+    include: {
+      product: {
+        select: {
+          sku: true,
+          lengthMm: true,
+          businessLine: { select: { inventoryStrategy: true } },
+        },
+      },
+      pieces: { orderBy: { lineNumber: 'asc' } },
+    },
+  },
+} satisfies Prisma.QuotationInclude;
+type ShortageQuotation = Prisma.QuotationGetPayload<{ include: typeof shortageQuotationInclude }>;
+
+/** Lo que cada línea resuelve para reservar, ya sin depender de la cotización que lo pidió. */
+interface ShortageReserveInfo {
+  reserveItemType: InventoryItemType;
+  reserveItemId: string;
+  reserveQty: string;
+  reserveUnit: string;
+}
 
 /** Lo que puede cambiar el llamador de `createDirectInTx` (ver cada campo). */
 export interface CreateDirectOptions {
@@ -709,59 +737,284 @@ export class SalesOrdersService {
   async findStockShortages(): Promise<QuotationStockShortageDto[]> {
     const quotations = await this.prisma.quotation.findMany({
       where: { status: QuotationStatus.EMITTED },
-      include: {
-        customer: { select: { name: true } },
-        items: {
-          orderBy: { lineNumber: 'asc' },
-          include: {
-            product: {
-              select: {
-                sku: true,
-                lengthMm: true,
-                businessLine: { select: { inventoryStrategy: true } },
-              },
-            },
-            pieces: { orderBy: { lineNumber: 'asc' } },
-          },
-        },
-      },
+      include: shortageQuotationInclude,
       orderBy: { seq: 'asc' },
     });
     if (quotations.length === 0) return [];
 
     const today = businessToday();
-    const out: QuotationStockShortageDto[] = [];
-    for (const quotation of quotations) {
-      if (quotation.items.length === 0) continue;
-      const validUntil = quotation.validUntil?.toISOString().slice(0, 10) ?? null;
-      if (validUntil !== null && isQuotationExpired(validUntil, today)) continue;
+    const live = quotations.filter((q) => {
+      if (q.items.length === 0) return false;
+      const validUntil = q.validUntil?.toISOString().slice(0, 10) ?? null;
+      return !(validUntil !== null && isQuotationExpired(validUntil, today));
+    });
+    if (live.length === 0) return [];
 
-      const { lines } = await this.previewLinesOf(quotation.id, quotation.items);
-      // `flatMap` y no `filter`: además de descartar, estrecha el tipo de `shortfallQty`, así
-      // que de acá para abajo no hace falta ninguna aserción (mismo patrón que
-      // `resolveSalesLines`).
-      const short = lines.flatMap((l) =>
-        l.shortfallQty !== null ? [{ ...l, shortfallQty: l.shortfallQty }] : [],
-      );
+    // RF-S3/M2 (D-228): antes, `previewLinesOf` corría una vez **por cotización** y dentro
+    // otra vez **por línea** — el número de consultas crecía con las dos cosas. Acá se
+    // resuelve todo en dos pasadas batcheadas (clasificar, después traer el disponible una
+    // vez por cada ítem/spec **distinto**, no por cotización ni por línea) y el resto es
+    // aritmética en memoria; ver `resolveLinesForShortages`/`availabilityForShortages`.
+    const { resolved, specRefById } = await this.resolveLinesForShortages(live);
+    const { baseAvailable, ownTemporary, labels } = await this.availabilityForShortages(
+      live,
+      resolved,
+      specRefById,
+    );
+
+    const out: QuotationStockShortageDto[] = [];
+    for (const quotation of live) {
+      // Lo que las líneas anteriores del mismo documento ya tomaron de cada ítem: dos líneas
+      // del mismo color y espesor compiten por el mismo agregado (igual que `previewLinesOf`).
+      const taken = new Map<string, Decimal>();
+      const short: QuotationStockShortageDto['lines'] = [];
+      for (const item of quotation.items) {
+        const line = resolved.get(`${quotation.id}|${String(item.lineNumber)}`);
+        const withoutInventory = !carriesInventory(item.product.businessLine);
+        if (!line || (line.reserveItemType === InventoryItemTypeEnum.PRODUCT && withoutInventory)) {
+          continue;
+        }
+        const qty = toDecimal(line.reserveQty);
+        const key = `${line.reserveItemType}:${line.reserveItemId}`;
+        const base = baseAvailable.get(key) ?? new Decimal(0);
+        const own = ownTemporary.get(`${quotation.id}|${key}`) ?? new Decimal(0);
+        const available = base.plus(own);
+        const forThisLine = available.minus(taken.get(key) ?? new Decimal(0));
+        taken.set(key, (taken.get(key) ?? new Decimal(0)).plus(qty));
+        if (qty.lte(forThisLine)) continue;
+        short.push({
+          lineNumber: item.lineNumber,
+          productSku: item.product.sku,
+          label: labels.get(line.reserveItemId)?.label ?? line.reserveItemId,
+          missingQty: qty.minus(Decimal.max(forThisLine, new Decimal(0))).toFixed(3),
+          unit: line.reserveUnit,
+        });
+      }
       if (short.length === 0) continue;
       out.push({
         quotationId: quotation.id,
         quotationCode: quotationCode(quotation.seq),
         customerName: quotation.customer.name,
-        lines: short.map((l) => ({
-          lineNumber: l.lineNumber,
-          productSku: l.productSku,
-          // `reserveLabel`/`reserveUnit` son `string | null` en el tipo porque una línea
-          // `action: 'NONE'` no reserva nada — pero esta ya se filtró por `shortfallQty !==
-          // null`, y eso solo ocurre en las ramas que sí los llenan. El `??` es defensivo
-          // (el tipo no puede expresar esa correlación), no un caso real que falte cubrir.
-          label: l.reserveLabel ?? l.productSku,
-          missingQty: l.shortfallQty,
-          unit: l.reserveUnit ?? l.unit,
-        })),
+        lines: short,
       });
     }
     return out;
+  }
+
+  /**
+   * RF-S3/M2: clasifica cada línea de cada cotización (materia prima a medida vs. lo que ya
+   * tenía guardado) y resuelve las specs de materia prima **una vez por combinación
+   * distinta** de línea/color/espesor, no una vez por línea. Mismo criterio de
+   * `resolveRawMaterial`: si una sola línea de una cotización no se puede clasificar (le
+   * falta espesor/ancho al catálogo), **ninguna** línea de esa cotización entra al resultado
+   * — la fila entera queda fuera de `resolved`, y el llamador la trata como `NONE`.
+   */
+  private async resolveLinesForShortages(quotations: ShortageQuotation[]): Promise<{
+    resolved: Map<string, ShortageReserveInfo>;
+    specRefById: Map<string, RawMaterialSpecRef>;
+  }> {
+    const productIds = [...new Set(quotations.flatMap((q) => q.items.map((i) => i.productId)))];
+    const products =
+      productIds.length === 0
+        ? []
+        : await this.prisma.product.findMany({
+            where: { id: { in: productIds } },
+            select: ROOFING_PRODUCT_SELECT,
+          });
+    const productById = new Map(products.map((p) => [p.id, p]));
+
+    interface RawCandidate {
+      tripleKey: string;
+      kg: string;
+    }
+    const rawByLineKey = new Map<string, RawCandidate>();
+    const stockByLineKey = new Map<string, ShortageReserveInfo>();
+    const tripleByKey = new Map<
+      string,
+      { businessLineId: string; colorId: string | null; thicknessMm: string }
+    >();
+    const failedQuotationIds = new Set<string>();
+
+    for (const quotation of quotations) {
+      const lineKeysOfThisQuotation: string[] = [];
+      try {
+        for (const item of quotation.items) {
+          const lineKey = `${quotation.id}|${String(item.lineNumber)}`;
+          lineKeysOfThisQuotation.push(lineKey);
+          const product = productById.get(item.productId);
+          if (product && isMadeToOrder(product)) {
+            const at = `Línea ${String(item.lineNumber)}`;
+            const thicknessMm = roofingSpecThicknessMm(product, at);
+            const tripleKey = `${product.businessLineId}|${product.colorId ?? ''}|${thicknessMm}`;
+            tripleByKey.set(tripleKey, {
+              businessLineId: product.businessLineId,
+              colorId: product.colorId,
+              thicknessMm,
+            });
+            const kg = toFixedString(
+              theoreticalKgForMeters(product, orderedMeters(product, item.qty.toString()), at),
+              'KG',
+            );
+            rawByLineKey.set(lineKey, { tripleKey, kg });
+          } else {
+            stockByLineKey.set(lineKey, {
+              reserveItemType: item.reserveItemType,
+              reserveItemId: item.reserveItemId,
+              reserveQty: item.reserveQty.toFixed(3),
+              reserveUnit: item.reserveUnit,
+            });
+          }
+        }
+      } catch {
+        // Un producto a medida con el catálogo incompleto no deja calcular el material: la
+        // cotización entera queda sin datos de faltante, igual que hoy (regla dura 12: se
+        // documenta la equivalencia, no se inventa una mejora que `previewLinesOf` no tiene).
+        failedQuotationIds.add(quotation.id);
+        for (const lineKey of lineKeysOfThisQuotation) {
+          rawByLineKey.delete(lineKey);
+          stockByLineKey.delete(lineKey);
+        }
+      }
+    }
+
+    // Las specs reales, de una sola pasada: se sobre-trae por línea de negocio (Prisma no
+    // compara tuplas) y la tripla exacta se filtra en memoria — mismo costo que hoy paga
+    // `findRawMaterialSpec`, una vez para todas las combinaciones en vez de una por línea.
+    const businessLineIds = [...new Set([...tripleByKey.values()].map((t) => t.businessLineId))];
+    const specRows =
+      businessLineIds.length === 0
+        ? []
+        : await this.prisma.rawMaterialSpec.findMany({
+            where: { businessLineId: { in: businessLineIds } },
+            select: { id: true, businessLineId: true, colorId: true, thicknessMm: true },
+          });
+    const specByTripleKey = new Map<string, RawMaterialSpecRef>();
+    for (const row of specRows) {
+      const spec: RawMaterialSpecRef = {
+        id: row.id,
+        businessLineId: row.businessLineId,
+        colorId: row.colorId,
+        thicknessMm: row.thicknessMm.toFixed(2),
+      };
+      specByTripleKey.set(`${spec.businessLineId}|${spec.colorId ?? ''}|${spec.thicknessMm}`, spec);
+    }
+
+    const resolved = new Map<string, ShortageReserveInfo>();
+    const specRefById = new Map<string, RawMaterialSpecRef>();
+    for (const quotation of quotations) {
+      if (failedQuotationIds.has(quotation.id)) continue;
+      for (const item of quotation.items) {
+        const lineKey = `${quotation.id}|${String(item.lineNumber)}`;
+        const raw = rawByLineKey.get(lineKey);
+        if (raw) {
+          // Una spec sin fila todavía (`findRawMaterialSpec` la llamaría "virtual") se queda
+          // sin id — igual que hoy: `previewLinesOf` la vuelve a buscar por id después de
+          // resolverla y no la encuentra, así que su disponible es 0 (ver
+          // `availabilityForShortages`), nunca el disponible real de las bobinas que calzan.
+          const spec = specByTripleKey.get(raw.tripleKey);
+          if (spec) specRefById.set(spec.id, spec);
+          resolved.set(lineKey, {
+            reserveItemType: InventoryItemTypeEnum.RAW_MATERIAL,
+            reserveItemId: spec?.id ?? '',
+            reserveQty: raw.kg,
+            reserveUnit: Unit.KGM,
+          });
+        } else {
+          const stock = stockByLineKey.get(lineKey);
+          if (stock) resolved.set(lineKey, stock);
+        }
+      }
+    }
+    return { resolved, specRefById };
+  }
+
+  /**
+   * RF-S3/M2: el disponible de cada ítem/spec **distinto** que aparece en `resolved`, una
+   * sola vez cada uno — nunca una vez por cotización ni por línea. El ajuste por cotización
+   * (D-185/D-186: la reserva temporal propia no se resta a sí misma) se separa en una sola
+   * consulta agrupada por cotización e ítem, en vez de repetir `rawMaterialAvailability`/
+   * `reservedByItem` con `exceptQuotationIds` distinto para cada una.
+   */
+  private async availabilityForShortages(
+    quotations: ShortageQuotation[],
+    resolved: Map<string, ShortageReserveInfo>,
+    specRefById: Map<string, RawMaterialSpecRef>,
+  ): Promise<{
+    baseAvailable: Map<string, Decimal>;
+    ownTemporary: Map<string, Decimal>;
+    labels: Map<string, { label: string; name: string }>;
+  }> {
+    const tolerance = roofingToleranceMm(this.env);
+    const allLines = [...resolved.values()];
+    const baseAvailable = new Map<string, Decimal>();
+
+    // Materia prima: una llamada a `rawMaterialAvailability` por spec real distinta. Sin
+    // `exceptQuotationIds` — el ajuste "no restarse a sí misma" se suma después, por
+    // cotización, con `ownTemporary`.
+    for (const spec of specRefById.values()) {
+      const availability = await rawMaterialAvailability(this.prisma, spec, tolerance, {});
+      baseAvailable.set(`${InventoryItemTypeEnum.RAW_MATERIAL}:${spec.id}`, availability.available);
+    }
+    // La spec virtual (sin fila todavía) vale 0 — ver el comentario en `resolveLinesForShortages`.
+    baseAvailable.set(`${InventoryItemTypeEnum.RAW_MATERIAL}:`, new Decimal(0));
+
+    // Estable/producto (y bobina completa, D-170): un `inventoryBalance.findMany` y un
+    // `reservedByItem` por **tipo** de ítem presente, no por línea.
+    const idsByType = new Map<InventoryItemType, Set<string>>();
+    for (const line of allLines) {
+      if (line.reserveItemType === InventoryItemTypeEnum.RAW_MATERIAL) continue;
+      const ids = idsByType.get(line.reserveItemType) ?? new Set<string>();
+      ids.add(line.reserveItemId);
+      idsByType.set(line.reserveItemType, ids);
+    }
+    for (const [itemType, idsSet] of idsByType) {
+      const ids = [...idsSet];
+      const [balances, reserved] = await Promise.all([
+        this.prisma.inventoryBalance.findMany({
+          where: { itemType, itemId: { in: ids } },
+          select: { itemId: true, qty: true },
+        }),
+        reservedByItem(this.prisma, itemType, ids, {}),
+      ]);
+      const physicalById = new Map<string, Decimal>();
+      for (const b of balances) {
+        physicalById.set(
+          b.itemId,
+          (physicalById.get(b.itemId) ?? new Decimal(0)).plus(toDecimal(b.qty.toString())),
+        );
+      }
+      for (const id of ids) {
+        const physical = physicalById.get(id) ?? new Decimal(0);
+        baseAvailable.set(`${itemType}:${id}`, physical.minus(reserved.get(id) ?? new Decimal(0)));
+      }
+    }
+
+    // El ajuste por cotización: cuánto tiene reservado de forma temporal, ella sola, cada
+    // (cotización, ítem) — una sola consulta agrupada, en vez de una por cotización.
+    const realKeys = [...baseAvailable.keys()].filter((k) => !k.endsWith(':'));
+    const ownTemporary = new Map<string, Decimal>();
+    const quotationIds = quotations.map((q) => q.id);
+    if (quotationIds.length > 0 && realKeys.length > 0) {
+      const itemIds = [...new Set(realKeys.map((k) => k.slice(k.indexOf(':') + 1)))];
+      const rows = await this.prisma.quotationReservation.findMany({
+        where: {
+          ...liveTemporaryWhere(),
+          quotationId: { in: quotationIds },
+          itemId: { in: itemIds },
+        },
+        select: { quotationId: true, itemType: true, itemId: true, qty: true },
+      });
+      for (const row of rows) {
+        const key = `${row.quotationId}|${row.itemType}:${row.itemId}`;
+        ownTemporary.set(
+          key,
+          (ownTemporary.get(key) ?? new Decimal(0)).plus(toDecimal(row.qty.toString())),
+        );
+      }
+    }
+
+    const labels = await this.reserveLabels(allLines);
+    return { baseAvailable, ownTemporary, labels };
   }
 
   // -------------------------------------------------------------------------
