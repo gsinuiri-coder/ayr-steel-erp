@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, createUser } from '../helpers/api';
+import { createInvoiceableCustomer, freeLine, invoiceBody } from '../helpers/invoicing';
 import { getExpectingError } from '../helpers/production';
+import { createSellableProduct } from '../helpers/sales';
 import { loginAndSetPassword } from '../helpers/ui';
 
 /**
@@ -50,6 +52,70 @@ test.describe('Auditoría (RF-95, D-218) — un administrador ve una acción sen
     const row = page.getByRole('row').filter({ hasText: created.id });
     await expect(row).toBeVisible({ timeout: 15_000 });
     await expect(row).toContainText('Usuarios');
+  });
+});
+
+/**
+ * D-225/RF-S2-INTEGRA: lo que S1 (precios de lista, D-217) y el hotfix de borradores (D-223)
+ * escriben tiene que verse en el visor. Se entra por la URL que arma el link "Historial"
+ * (`?entityType=&entityId=`), igual que desde el detalle.
+ */
+test.describe('Auditoría (D-225) — precio de lista y borrador descartado en el visor', () => {
+  test('una edición del precio de lista deja la edición del producto y el cambio de precio', async ({
+    page,
+    baseURL,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const product = await createSellableProduct(api, {
+      lineCode: 'roofing',
+      listPricePen: '10.0000',
+    });
+    const patched = await api.patch(`/api/catalog/${product.id}`, {
+      data: { listPricePen: '12.5000' },
+    });
+    expect(patched.ok(), await patched.text()).toBeTruthy();
+
+    await loginAsAdmin(page);
+    await page.goto(`/auditoria?entityType=products&entityId=${product.id}`);
+    await expect(page.getByRole('heading', { name: 'Auditoría' })).toBeVisible();
+
+    await expect(
+      page.getByRole('row').filter({ hasText: 'Cambio de precio de lista' }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('row').filter({ hasText: 'Edición de producto' })).toBeVisible();
+  });
+
+  test('descartar un borrador deja la creación y el descarte, con el motivo a la vista', async ({
+    page,
+    baseURL,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const customer = await createInvoiceableCustomer(api);
+    const created = await api.post('/api/invoicing/documents', {
+      data: invoiceBody({
+        docType: 'FACTURA',
+        customerId: customer.id,
+        items: [freeLine('1', '10.0000')],
+      }),
+    });
+    expect(created.ok(), await created.text()).toBeTruthy();
+    const draft = (await created.json()) as { id: string };
+    const reason = `E2E D-225 borrador de más ${draft.id.slice(0, 8)}`;
+    const discarded = await api.delete(`/api/invoicing/documents/${draft.id}`, {
+      data: { reason },
+    });
+    expect(discarded.status()).toBe(204);
+
+    await loginAsAdmin(page);
+    await page.goto(`/auditoria?entityType=fiscal_documents&entityId=${draft.id}`);
+    await expect(page.getByRole('heading', { name: 'Auditoría' })).toBeVisible();
+
+    const discardRow = page
+      .getByRole('row')
+      .filter({ hasText: 'Borrador de comprobante descartado' });
+    await expect(discardRow).toBeVisible({ timeout: 15_000 });
+    await expect(discardRow).toContainText(reason);
+    await expect(page.getByRole('row').filter({ hasText: 'Comprobante creado' })).toBeVisible();
   });
 });
 

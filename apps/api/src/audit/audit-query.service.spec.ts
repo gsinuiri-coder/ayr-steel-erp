@@ -415,6 +415,99 @@ describe('AuditQueryService.findPage — paginación completa sin pérdidas (D-2
     expect(new Set(items.map((i) => i.id)).size).toBe(25);
   });
 
+  // D-225/RF-S2-INTEGRA: una carga masiva y su reversa escriben, en la MISMA transacción, una
+  // fila de lote en `audit_log` y una fila por SKU en `product_list_price_changes`. Las dos
+  // toman `now()` de Postgres —la hora de inicio de la transacción—, así que empatan al
+  // microsegundo entre fuentes distintas: el caso real del límite de D-220.
+  it('carga masiva + su reversa (D-217): lote de audit_log y filas por SKU empatadas, las 52 aparecen en orden estable', async () => {
+    const LATER = new Date(NOW.getTime() + 60_000);
+    const batchRow = (id: bigint, at: Date, action: string): Row => ({
+      ...auditLogRow(id, at),
+      actorKind: 'USER',
+      action,
+      entity: 'products',
+      entityId: `batch-${String(id)}`,
+    });
+    const auditLogRows = [
+      batchRow(1n, NOW, 'catalog.price-list-import.confirm'),
+      batchRow(2n, LATER, 'catalog.price-list-import.revert'),
+    ];
+    const productPriceRows = [
+      ...Array.from({ length: 25 }, (_, i) =>
+        productPriceRow(`imp-${String(i + 1).padStart(2, '0')}`, NOW),
+      ),
+      ...Array.from({ length: 25 }, (_, i) => ({
+        ...productPriceRow(`rev-${String(i + 1).padStart(2, '0')}`, LATER),
+        batchId: 'batch-2',
+        revertsBatchId: 'batch-1',
+      })),
+    ];
+    const service = new AuditQueryService(fakeQueryablePrisma({ auditLogRows, productPriceRows }));
+
+    const items = await drainAllPages(service, { pageSize: 4, entityType: 'products' });
+
+    expect(items).toHaveLength(52);
+    expect(new Set(items.map((i) => `${i.source}:${i.id}`)).size).toBe(52);
+    // Reversa (más nueva) primero: su fila de lote y después sus 25 SKUs; recién ahí la carga.
+    expect(items[0]).toEqual({ source: 'audit_log', id: '2' });
+    expect(items.slice(1, 26).every((i) => i.id.startsWith('rev-'))).toBe(true);
+    expect(items[26]).toEqual({ source: 'audit_log', id: '1' });
+    expect(items.slice(27).every((i) => i.id.startsWith('imp-'))).toBe(true);
+  });
+
+  it('edición inline de un precio de lista (D-217): catalog.update y el cambio de precio empatados, pageSize 1, los dos aparecen', async () => {
+    const productId = 'p-inline';
+    const auditLogRows: Row[] = [
+      {
+        ...auditLogRow(7n, NOW),
+        actorKind: 'USER',
+        action: 'catalog.update',
+        entity: 'products',
+        entityId: productId,
+      },
+    ];
+    const productPriceRows: Row[] = [
+      { ...productPriceRow('inline-1', NOW), productId, origin: 'INLINE', batchId: null },
+    ];
+    const service = new AuditQueryService(fakeQueryablePrisma({ auditLogRows, productPriceRows }));
+
+    const items = await drainAllPages(service, {
+      pageSize: 1,
+      entityType: 'products',
+      entityId: productId,
+    });
+
+    expect(items).toEqual([
+      { source: 'audit_log', id: '7' },
+      { source: 'product_list_price_change', id: 'inline-1' },
+    ]);
+  });
+
+  it('descarte de borrador (D-223/D-225): el motivo llega al visor en `reason`, no escondido en before', async () => {
+    const auditLogRows: Row[] = [
+      {
+        ...auditLogRow(9n, NOW),
+        actorKind: 'USER',
+        action: 'invoicing.document.discard-draft',
+        entity: 'fiscal_documents',
+        entityId: 'doc-1',
+        before: { docType: 'FACTURA', totalPen: '118.0000' },
+        reason: 'Borrador duplicado por doble click',
+      },
+    ];
+    const service = new AuditQueryService(fakeQueryablePrisma({ auditLogRows }));
+
+    const page = await service.findPage({
+      pageSize: 10,
+      entityType: 'fiscal_documents',
+      entityId: 'doc-1',
+    });
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]!.reason).toBe('Borrador duplicado por doble click');
+    expect(page.items[0]!.before).toEqual({ docType: 'FACTURA', totalPen: '118.0000' });
+  });
+
   it('un cursor manipulado a mano (fuente inexistente) se rechaza con 400, no revienta la paginación', async () => {
     const prisma = fakeQueryablePrisma({});
     const service = new AuditQueryService(prisma);
