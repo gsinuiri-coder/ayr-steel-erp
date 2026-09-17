@@ -22,7 +22,7 @@ migración D-217 aplicada, API redeployada, push a `main` y web verificado — t
   35175690324). Vercel republicó `ca6314d` sin acción manual; `v2.mareliac.pe/api/health`
   responde `db: ok`.
 - Regla git-sha (b) nueva en `CLAUDE.md`: `git diff --quiet <sha> origin/main -- apps
-  packages Dockerfile .gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` en vez de
+packages Dockerfile .gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` en vez de
   exigir igualdad exacta de SHA (el cierre agrega commits de solo docs después del deploy).
 - `pnpm smoke:prod` desde worktree `ca6314d`: 7/7. Smoke manual del dueño (comprobante,
   botón electrónico, borrador doble, precio inline+revertir, catálogo de coberturas): 5/5 OK.
@@ -37,7 +37,7 @@ migración D-217 aplicada, API redeployada, push a `main` y web verificado — t
 - `docs/PROGRESO.md`: sección "Ventana RF-S1+HOTFIX — cierre y deploy" + 2 ítems nuevos en
   "Deuda registrada para S3" (guard por línea sin NC, estado de limpieza de ramas Neon).
 - `.claude/settings.json`: deny de `git push`/`gh api`/`gh pr merge`/`gh repo sync`/`gh
-  workflow run` restaurado (se había quitado para esta ventana).
+workflow run` restaurado (se había quitado para esta ventana).
 
 ## Decisiones tomadas
 
@@ -95,5 +95,5 @@ seguir:
 3. UAT en `demo` (`pnpm env:demo`/`db:demo`/`dev:demo`) antes de proponer otra ventana de
    deploy a `production`.
 4. Ventana de deploy propia para `rf-s2`, con el mismo checklist de esta (`git-sha`, `migrate
-   diff`, `smoke:prod` desde worktree en el SHA desplegado, credenciales de prod solo con el
+diff`, `smoke:prod` desde worktree en el SHA desplegado, credenciales de prod solo con el
    dueño fuera de modo automático).
