@@ -108,8 +108,11 @@ const envNames = run('gcloud', [
   '--format',
   'value(spec.template.spec.containers[0].env[].name)',
 ])
+  // `value()` de gcloud une los elementos de una lista repetida con `;`, no con salto de
+  // línea (se vio recién al correr esto por primera vez: todo el listado llegó pegado en
+  // el `No esperadas` del error, con los `;` adentro).
   .trim()
-  .split(/\r?\n/)
+  .split(/[;\r\n]+/)
   .filter(Boolean)
   .sort();
 const expectedEnvNames = [...Object.keys(ENV_VARS)].sort();
