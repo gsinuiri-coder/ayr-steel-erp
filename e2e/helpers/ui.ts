@@ -52,8 +52,25 @@ export async function expectChosen(field: Locator, label: string): Promise<void>
   await expect.poll(() => chosenLabelOf(field), { timeout: 20_000 }).toBe(label);
 }
 
-/** Elige una opción por su etiqueta visible, en cualquiera de las dos formas del campo. */
-export async function chooseOption(page: Page, field: Locator, optionLabel: string): Promise<void> {
+/**
+ * Elige una opción por su etiqueta visible, en cualquiera de las dos formas del campo.
+ *
+ * `searchText` (RF-S3/M1) es lo que se escribe en el filtro; por defecto es `optionLabel`
+ * entero, que es lo que siempre hizo falta en el modo síncrono (D-156) — el filtro compara
+ * contra el label completo con `includes()`, así que el label entero también matchea contra
+ * sí mismo. Un campo que **busca en el servidor** (`GET /customers/search`) ya no filtra por
+ * el label concatenado ("nombre — documento"): compara contra `name`/`docNumber` por
+ * separado, y ese string junto no es substring de ninguno de los dos. Ahí hace falta pasar
+ * un `searchText` más angosto (el nombre solo, o un fragmento) que sí matchee en el servidor,
+ * mientras `optionLabel` sigue siendo la etiqueta completa contra la que se verifica que
+ * quedó elegido.
+ */
+export async function chooseOption(
+  page: Page,
+  field: Locator,
+  optionLabel: string,
+  searchText: string = optionLabel,
+): Promise<void> {
   await expect
     .poll(
       async () => {
@@ -64,7 +81,7 @@ export async function chooseOption(page: Page, field: Locator, optionLabel: stri
           } else {
             await field.click({ timeout: 2_000 });
             const modal = page.getByRole('dialog');
-            await modal.getByLabel('Filtrar opciones').fill(optionLabel, { timeout: 2_000 });
+            await modal.getByLabel('Filtrar opciones').fill(searchText, { timeout: 2_000 });
             // El botón de la fila no siempre dice «Seleccionar» — F8-S3c/M4 le puso «Elegir»
             // al campo de cliente (`actionLabel`) — así que se busca por la fila, no por el
             // nombre accesible del botón.
@@ -92,16 +109,39 @@ export async function chooseOption(page: Page, field: Locator, optionLabel: stri
  * `chooseOption`— porque el punto del picker es mostrar el disponible, que un `<option>` de
  * un desplegable no puede llevar. `productField` es el botón con
  * `aria-label="Producto de la línea N"`.
+ *
+ * RF-S3/M1: reintenta como `chooseOption`, por el mismo motivo — en local, `next dev`
+ * recompila rutas bajo demanda (D-201) y un `[Fast Refresh]` a mitad de la secuencia
+ * desmonta la página, cierra el modal y deja un `click()` de un solo intento esperando para
+ * siempre un diálogo que ya no existe. Confirmado con trace real (RF-S3/M1, PASO 0 y M1):
+ * el mismo síntoma que ya se documentó para `precios-lista-d217.spec.ts`.
  */
 export async function chooseProductWithStock(
   page: Page,
   productField: Locator,
   sku: string,
 ): Promise<void> {
-  await productField.click();
-  const modal = page.getByRole('dialog');
-  await modal.getByLabel('Filtrar productos').fill(sku);
-  await modal.getByRole('button', { name: `Elegir ${sku}`, exact: true }).click();
+  await expect
+    .poll(
+      async () => {
+        if ((await productField.textContent())?.includes(sku)) return true;
+        try {
+          await productField.click({ timeout: 2_000 });
+          const modal = page.getByRole('dialog');
+          await modal.getByLabel('Filtrar productos').fill(sku, { timeout: 2_000 });
+          await modal
+            .getByRole('button', { name: `Elegir ${sku}`, exact: true })
+            .click({ timeout: 2_000 });
+        } catch {
+          // La página se remontó a mitad de camino (modal cerrado, campo repintado) o el
+          // producto todavía no llegó: se reintenta desde el principio.
+          return false;
+        }
+        return (await productField.textContent())?.includes(sku) ?? false;
+      },
+      { timeout: 30_000, intervals: [300, 700, 1_500] },
+    )
+    .toBe(true);
 }
 
 /**
