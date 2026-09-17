@@ -6639,6 +6639,20 @@ documentado (Incidente HOTFIX-DESFASE, deuda S3 #1): mismas 5 tablas con default
 `operation_date`, mismas 5 FK recreadas, mismos 2 índices, mismo renombre — ninguna diferencia
 nueva.
 
+**Casi un incidente: Turbo se comía el apagado de PSE/jobs de `demo`.** Primer `pnpm dev:demo`
+tras el fix de D-227: el log de arranque mostró `[InvoicingSendJob] Job de reintento de envío
+al PSE programado` — el job que D-227 debía apagar. Causa: `dev-demo.mjs` pasa
+`PSE_ENABLED`/`JOBS_ENABLED`/`R2_*` por `env` a `pnpm run dev` (= `turbo run dev`), y
+`turbo.json#globalPassThroughEnv` solo dejaba pasar `DATABASE_URL`/`DIRECT_URL`/`JWT_SECRET`/
+`NODE_ENV`/`CI` al proceso hijo — las siete variables nuevas llegaban `undefined` a `nest
+start`, y el schema de Zod (`JOBS_ENABLED` default `true`) las reponía con su valor por
+defecto. Se cortó el proceso a los segundos (nadie llegó a usar la app), se agregaron las
+siete a `globalPassThroughEnv` y se verificó el reintento: `[JobsService] pg-boss
+deshabilitado (JOBS_ENABLED=false)`, sin `InvoicingSendJob` ni `QuotationExpiryJob` en el log.
+**La lección:** un override de `env` en un `spawnSync` que atraviesa `turbo run <task>` no
+alcanza por sí solo — si la variable no está en `globalPassThroughEnv` (o en el `env`/
+`passThroughEnv` de la tarea), Turbo la filtra antes de que el proceso hijo la vea, sin avisar.
+
 ## Bloqueos
 
 Ninguno abierto. B-01 (facturación GCP) fue resuelta por el dueño el 2026-09-02; ver "B-01 — resuelta" abajo para el detalle de cómo se cerró y qué se aprendió en el proceso.
