@@ -5150,28 +5150,36 @@ refId)` en un único lugar: `PURCHASE` directo, `CUTTING` y `PRODUCTION` resuelv
   (D-205 ya deja la dirección correcta: declarar el despacho al facturar, no inferirlo) — alcance
   de otra sesión.
 
-## Sesión HOTFIX-401 (2026-09-16) — M2 cerrada, M1 (401 en borrador) bloqueada esperando evidencia
+## Sesión HOTFIX-401 (2026-09-16) — M1 y M2 cerradas (M1 resuelta en la ventana RF-S1+HOTFIX)
 
 Worktree `ayr-steel-erp-hotfix-401`, rama `hotfix-401` desde `origin/main` (`f92a3df`, prod) —
 NO desde `main` local (que tiene RF-S1 sin push) ni desde `rf-s2`. Cuatro commits locales,
 **sin push**. `git rebase origin/main` no hizo falta correrlo: la rama ya nace de ahí.
 
-### M1 — 401 al abrir un borrador de comprobante: **bloqueada**
+### M1 — 401 al abrir un borrador de comprobante: **RESUELTA (corrección, ventana RF-S1+HOTFIX)**
 
-El brief traía `URL: <PEGAR URL>` sin completar — la evidencia central no llegó a esta
-sesión. Investigación hecha sin poder reproducir:
+El brief traía `URL: <PEGAR URL>` sin completar, y la investigación de esta sesión no pudo
+reproducirla por lo mismo que no encontraba causa: **no era un bug de este código**, era el
+mismo síntoma del incidente «HOTFIX-DESFASE» (ver esa sección más abajo) mirado desde otro
+ángulo. La ventana F8-S7 había publicado el web con F8-S7/D-211..D-213 sin desplegar la API
+(seguía en `ayr-steel-erp-api-00034-drz`, anterior a esos cambios): el web nuevo leía
+`issueDateChanges.length` de una respuesta que esa API no traía, y el detalle del comprobante
+caía con `TypeError` — que en producción, delante del dueño, se ve indistinguible de un 401.
+Investigación de esta sesión: correcta en lo que pudo verificar (el guard de
+`GET /invoicing/documents/:id` sin cambios, `issueDateChanges` resguardada en el DTO builder,
+sin colisión de cache) y no reprodujo porque probó contra un entorno con web y API ya
+parejos, no contra el desfase real de producción.
 
-- Guard de `GET /invoicing/documents/:id` sin cambios en el commit D-211..D-213.
-- `issueDateChanges` (la adición F8-S7 más obvia para un `TypeError` de `.length`) está
-  resguardada en el único lugar que construye el DTO (`'issueDateChanges' in row ? ... : []`)
-  — nunca llega `undefined` al frontend por ese camino.
-- Sin colisión de cache entre lista (`['fiscal-documents']`) y detalle
-  (`['fiscal-document', id]`) — claves distintas.
-- Reproducido sin éxito: borrador simple, borrador con `dispatchId` real, como
-  ADMINISTRADOR y como VENDEDOR — los tres renderizan sin 401 ni error.
-
-**Sigue bloqueada.** Hace falta la URL real (o al menos: id/número del comprobante que
-falla en producción, su `origin`, si tiene `dispatchId`) para retomarla.
+**Fix, en dos partes:** (1) deploy de la API a `f92a3df` (revisión `00035-rd9`) más la
+migración `20260916060618_s7_fecha_emision_manual_editable` (D-211), que le dan a la API el
+campo que el web ya esperaba — incidente cerrado el 2026-09-16, verificado por el dueño contra
+dos comprobantes reales (`7bef5114…`, `30bcccd9…`); (2) endurecido en `ca6314d` (commit
+`47b09e7`, esta ventana): `e2e/tests/comprobante-detalle-defensivo.spec.ts` (4/4) prueba que
+una respuesta **sin** `issueDateChanges`/`dispatchId`/`dispatchCode` muestra igual el
+comprobante sin crash, que un 401 con sesión caída revalida a `/login?next=…`, y que
+cualquier otro error se ve con «Reintentar» — para que un desfase web/API futuro no vuelva a
+tumbar la pantalla entera. Verificado por el dueño en producción en el smoke manual de esta
+ventana.
 
 ### M2 — borradores duplicados: **cerrada**
 
@@ -5241,7 +5249,9 @@ ORDER BY so.seq, fd.created_at;
 
 ### Pendientes
 
-- M1 (401): esperando la URL/evidencia real para retomar.
+- ~~M1 (401): esperando la URL/evidencia real para retomar.~~ **RESUELTO** en la ventana
+  RF-S1+HOTFIX: era el mismo desfase web/API del Incidente HOTFIX-DESFASE, no un bug propio
+  (ver la sección M1 arriba).
 - Migración de M2 sin aplicar contra `dev`/`demo`/`production` — solo contra el Postgres
   local (`ayr_local_e2e`). Acción humana: correr la consulta de arriba en `production`
   antes de `pnpm db:deploy`/`db:prod`.
@@ -6122,15 +6132,19 @@ inline + revertir del catálogo (D-217) y catálogo de coberturas — los cinco 
 **`hotfix-401` queda integrado.** La rama `hotfix-401` (worktree `ayr-steel-erp-hotfix-401`)
 ya apuntaba a `ca6314d` antes de este push — sus cuatro commits (M2) llegaron a `main` por
 `release/s1-hotfix`. El pendiente «`hotfix-401` sin merge ni push» de la sección «Sesión
-HOTFIX-401» de arriba queda **resuelto** por este push. **M1 (401 al abrir un borrador) sigue
-bloqueada**: nadie trajo la URL/evidencia real pedida en esa sesión; no se tocó en esta
-ventana y no está resuelta por este deploy.
+HOTFIX-401» de arriba queda **resuelto** por este push. **M1 (401 al abrir un borrador) también
+queda resuelta** (corrección sobre el reporte inicial de este cierre): no era un bug propio,
+era el mismo desfase web/API del Incidente HOTFIX-DESFASE mirado sin saberlo — ver el detalle
+en la sección M1 de «Sesión HOTFIX-401» arriba. La única deuda que deja es la defensa nueva
+(`comprobante-detalle-defensivo.spec.ts`, ya en `ca6314d`), no una investigación pendiente.
 
 **PR #1** (`release/s1-hotfix` → `main`, «S1 + hotfix borradores (NO MERGE)»): su CI, corrida
 antes de este cierre, [35171657158](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35171657158)
 — lint/typecheck/unit, 364 E2E (Postgres del runner), análisis estático y 35 E2E de smoke
-(Neon `ci`), los cuatro jobs en verde. Se cierra sin merge (los commits ya están en `main` por
-push directo) y se borra `release/s1-hotfix`.
+(Neon `ci`), los cuatro jobs en verde. GitHub lo marcó **MERGED** solo al llegar los mismos
+commits a `main` por push directo (no hubo `gh pr merge`, que sigue denegado); no se pudo
+`gh pr close`, que rechaza un PR ya `MERGED`. Su rama `release/s1-hotfix` se borró en el
+cierre.
 
 **D-224 nueva** (`docs/ARQUITECTURA.md` §0.2): `check:price-floor` contra `production`
 post-D-217 sigue en 0 SKU activos con precio de lista — mismo número que antes de construir el
@@ -6140,12 +6154,14 @@ kardex), y sin precio de lista no hay con qué comparar. D-223 se amplió con la
 mutación del `FOR UPDATE` y el bug de `idempotencyKey` (`.max(128)` contra columna
 `VarChar(100)`) que corrigió `ca6314d`.
 
-**No documentado — pendiente de que el dueño lo complete.** El brief de cierre mencionaba «el
-bloqueo del clasificador y cómo se resolvió»; no se encontró ninguna referencia a «clasificador»
-en `docs/PROGRESO.md`, `docs/ARQUITECTURA.md` ni en el código de esta ventana, y no hay
-registro de él en lo visible de esta sesión (que arrancó con `/clear` desde el paso 2). Si
-ocurrió antes del `/clear`, hace falta que el dueño lo dicte para dejarlo escrito — no se
-inventó una explicación.
+**El bloqueo del clasificador (paso 2 de la ventana, antes del `/clear`).** El modo automático
+de Claude Code bloqueó `neonctl connection-string` contra `production` al preparar
+`migrate deploy` — una protección propia de la herramienta ("Credential Materialization") que
+frena la materialización de una credencial de base de datos real cuando nadie está mirando
+cada ejecución. Decisión correcta: no se buscó una vía alternativa para esquivarlo: se resolvió
+sacando al dueño de modo automático para que aprobara manualmente cada comando con
+credenciales de BD de prod — la misma condición bajo la que corrió el resto de esta ventana, y
+que ahora es regla explícita en `CLAUDE.md` (Secretos).
 
 **Deuda que deja la ventana:** ver «Deuda registrada para S3» arriba (drift de schema,
 `deploy-api.mjs`/variables rotas, guard por línea sin NC, limpieza de ramas Neon — nada

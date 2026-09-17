@@ -6,7 +6,9 @@ Ventana de cierre y deploy que integró **RF-S1/M1** (precios de lista, D-217) c
 **HOTFIX-401/M2** (borradores duplicados, D-223) sobre `main`, con el dueño fuera de modo
 automático aprobando cada comando con credenciales de BD de prod. RELEASE **`ca6314d`**:
 migración D-217 aplicada, API redeployada, push a `main` y web verificado — todo en verde.
-`hotfix-401` (M1, 401 al abrir un borrador) **sigue bloqueada**, sin tocar en esta ventana.
+`hotfix-401` queda integrado completo: M1 (401 al abrir un borrador) resultó ser el mismo
+desfase web/API del Incidente HOTFIX-DESFASE, ya resuelto y ahora endurecido con un test
+defensivo nuevo en `ca6314d`.
 
 ## Hecho
 
@@ -28,8 +30,20 @@ packages Dockerfile .gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yam
   botón electrónico, borrador doble, precio inline+revertir, catálogo de coberturas): 5/5 OK.
 - `hotfix-401` llegó a `main` por `release/s1-hotfix` (worktree/branch ya apuntaba a `ca6314d`
   antes del push) — el pendiente de la sesión HOTFIX-401 («sin merge ni push») queda resuelto.
-- PR #1 (`release/s1-hotfix` → `main`) cerrado sin merge (contenido ya en `main` por push
-  directo) y su rama borrada.
+- **M1 de HOTFIX-401 (401 al abrir un borrador) también queda resuelta**, corrigiendo el
+  reporte inicial de esta ventana: no era un bug propio, era el Incidente HOTFIX-DESFASE (web
+  publicado sin su API) mirado sin saberlo — el `TypeError` de `issueDateChanges.length` se ve
+  indistinguible de un 401 delante del dueño. Fix real ya aplicado el 2026-09-16 (deploy
+  `f92a3df`/`00035-rd9` + migración D-211); esta ventana suma la defensa
+  (`comprobante-detalle-defensivo.spec.ts`, 4/4) en `ca6314d`.
+- PR #1 (`release/s1-hotfix` → `main`): GitHub lo marcó `MERGED` solo con llegar los mismos
+  commits a `main` (no se usó `gh pr merge`, sigue denegado); `gh pr close` no aplica sobre un
+  PR ya `MERGED`. Su rama se borró en el cierre.
+- **El bloqueo del clasificador** (paso 2 de la ventana, antes del `/clear` de esta sesión): el
+  modo automático de Claude Code bloqueó `neonctl connection-string` contra `production` al
+  preparar `migrate deploy` (protección de "Credential Materialization"). Resuelto sin buscar
+  vía alternativa: el dueño salió de modo automático y aprobó cada comando con credenciales de
+  BD de prod uno por uno — la misma condición bajo la que corrió el resto de esta ventana.
 - Nuevas decisiones: **D-224** (`check:price-floor` sigue en 0 SKU con `listPricePen`
   cargado, esperado tras D-217 hasta que el dueño cargue precios de lista reales). **D-223**
   ampliada con el bug de `idempotencyKeySchema` (`.max(128)` vs `VarChar(100)`) y la
@@ -49,14 +63,6 @@ workflow run` restaurado (se había quitado para esta ventana).
 
 ## Bloqueos / pendientes
 
-- **M1 de HOTFIX-401 (401 al abrir un borrador) sigue bloqueada.** Falta la URL/evidencia
-  real de producción (id o número del comprobante, `origin`, si tiene `dispatchId`) para
-  reproducirla dirigida en vez de a ciegas. No se tocó en esta ventana.
-- **No documentado por falta de información**: el brief de cierre mencionaba «el bloqueo del
-  clasificador y cómo se resolvió» — no hay rastro de "clasificador" en `docs/` ni en el
-  código, y esta sesión arrancó con `/clear` en el paso 2, así que no hay contexto propio
-  sobre eso. Si pasó antes del `/clear`, hace falta que el dueño lo dicte para dejarlo en
-  `docs/PROGRESO.md`.
 - **Deuda de S3 sin ejecutar** (ver `docs/PROGRESO.md`): drift de schema en `production`,
   `deploy-api.mjs`/variables rotas de Cloud Run, guard por línea (`invoicedByItem`) sin
   descontar notas de crédito, limpieza de ramas Neon (nada vencido hoy).
