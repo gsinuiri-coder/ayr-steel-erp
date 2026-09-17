@@ -165,3 +165,64 @@ export function auditActionLabel(action: string, source: string): string {
 export function auditEntityTypeLabel(entityType: string): string {
   return AUDIT_ENTITY_TYPE_LABELS[entityType] ?? humanizeAction(entityType);
 }
+
+/**
+ * Etiquetas de campo para el diff `before`/`after` del visor (D-225/ajustes UAT). D-218 descartó
+ * a propósito un mapa por fuente para los ~105 `action` de `audit_log` (antes/después libre por
+ * cada servicio de dominio) — eso sigue sin traducirse y cae en `humanizeFieldKey`. Lo que sí es
+ * finito y vale la pena mapear son las claves de los tres changelogs dedicados que el visor ya
+ * conoce por nombre (`sales_price_change`, `product_list_price_change`,
+ * `fiscal_document_issue_date_change`) más `listPricePen`, que llega dentro de `audit_log` desde
+ * `catalog.update` (D-217).
+ */
+const AUDIT_FIELD_LABELS: Record<string, string> = {
+  lineNumber: 'Línea',
+  unitValuePen: 'Precio unitario (sin IGV)',
+  valuePerMeterPen: 'Precio por metro (sin IGV)',
+  valuePen: 'Precio de lista',
+  listPricePen: 'Precio de lista',
+  origin: 'Origen',
+  batchId: 'Lote',
+  revertsBatchId: 'Revierte al lote',
+  issueDate: 'Fecha de emisión',
+  dueDate: 'Fecha de vencimiento',
+  reason: 'Motivo',
+};
+
+/** Valores de campo que también llegan como código en inglés (p.ej. `origin: 'INLINE'`). */
+const AUDIT_FIELD_VALUE_LABELS: Record<string, Record<string, string>> = {
+  origin: {
+    INLINE: 'Edición en catálogo',
+    IMPORT: 'Carga masiva',
+  },
+};
+
+/** `"valuePerMeterPen"` → `"Value per meter pen"`: separa por mayúscula/`_` cuando la clave no
+ *  está en `AUDIT_FIELD_LABELS`. Nunca deja una clave sin leer, aunque sea menos prolija. */
+function humanizeFieldKey(key: string): string {
+  const spaced = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+}
+
+export function auditFieldLabel(key: string): string {
+  return AUDIT_FIELD_LABELS[key] ?? humanizeFieldKey(key);
+}
+
+/** `null` cuando el valor no tiene una traducción conocida — el llamador decide el formato. */
+export function auditFieldValueLabel(key: string, value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  return AUDIT_FIELD_VALUE_LABELS[key]?.[value] ?? null;
+}
+
+/**
+ * `true` cuando el campo guarda un valor de venta sin IGV (D-162) que el catálogo muestra con
+ * IGV (D-217): el precio de lista, tanto en su changelog dedicado (`valuePen`) como en el
+ * `before`/`after` que `catalog.update` deja en `audit_log` (`listPricePen`).
+ */
+export function isPriceListValueField(source: string, action: string, key: string): boolean {
+  if (source === 'product_list_price_change' && key === 'valuePen') return true;
+  if (source === 'audit_log' && action === 'catalog.update' && key === 'listPricePen') {
+    return true;
+  }
+  return false;
+}

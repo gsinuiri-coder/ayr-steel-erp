@@ -80,16 +80,15 @@ test.describe('Auditoría (D-225) — precio de lista y borrador descartado en e
     await expect(page.getByRole('heading', { name: 'Auditoría' })).toBeVisible();
 
     // El alta con precio ya deja su propio cambio (sin precio → 10): se busca el de la edición.
+    // El visor muestra el precio de lista con IGV, como el catálogo (D-217/ajustes UAT):
+    // 10.0000 y 12.5000 (sin IGV, lo que guarda `listPricePen`) se ven como 11.80 y 14.75.
     const priceRows = page.getByRole('row').filter({ hasText: 'Cambio de precio de lista' });
-    await expect(priceRows.filter({ hasText: '12.5000' })).toBeVisible({ timeout: 15_000 });
+    await expect(priceRows.filter({ hasText: '14.75' })).toBeVisible({ timeout: 15_000 });
     await expect(
-      priceRows.filter({ hasText: '10.0000' }).filter({ hasNotText: '12.5000' }),
+      priceRows.filter({ hasText: '11.80' }).filter({ hasNotText: '14.75' }),
     ).toBeVisible();
     await expect(
-      page
-        .getByRole('row')
-        .filter({ hasText: 'Edición de producto' })
-        .filter({ hasText: '12.5000' }),
+      page.getByRole('row').filter({ hasText: 'Edición de producto' }).filter({ hasText: '14.75' }),
     ).toBeVisible();
   });
 

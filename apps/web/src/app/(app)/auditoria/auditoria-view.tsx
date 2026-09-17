@@ -7,14 +7,24 @@ import {
   AUDIT_ENTITY_TYPES,
   AUDIT_SOURCE_LABELS,
   BUSINESS_TIME_ZONE,
+  money,
   Role,
+  salePriceFromValue,
+  toFixedString,
   type AuditEntityType,
   type AuditEventDto,
   type AuditPageDto,
   type UserDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { auditActionLabel, auditEntityTypeLabel } from '@/lib/audit-labels';
+import {
+  auditActionLabel,
+  auditEntityTypeLabel,
+  auditFieldLabel,
+  auditFieldValueLabel,
+  isPriceListValueField,
+} from '@/lib/audit-labels';
+import { formatMoney } from '@/lib/format';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
@@ -51,15 +61,17 @@ function formatDateTime(iso: string): string {
   }).format(new Date(iso));
 }
 
-/** `"valuePerMeterPen"` → `"value per meter pen"`. Los campos son identificadores en inglés
- *  (D-idioma); no hay una etiqueta en español por campo sin mantener un mapa por fuente, así
- *  que se separan en palabras en vez de mostrarse pegados. */
-function humanizeFieldKey(key: string): string {
-  const spaced = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+/** Precio de lista (D-217): se guarda sin IGV y el catálogo lo muestra con IGV — el visor sigue
+ *  el mismo vocabulario en vez de mostrar el valor crudo de la base (D-225/ajustes UAT). */
+function formatPriceListValue(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  return formatMoney(toFixedString(money(salePriceFromValue(value as string)), 'MONEY'));
 }
 
-function formatFieldValue(value: unknown): string {
+function formatFieldValue(event: AuditEventDto, key: string, value: unknown): string {
+  if (isPriceListValueField(event.source, event.action, key)) return formatPriceListValue(value);
+  const mapped = auditFieldValueLabel(key, value);
+  if (mapped) return mapped;
   if (value === null || value === undefined) return '—';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
@@ -94,10 +106,12 @@ function EventDiff({ event }: { event: AuditEventDto }) {
         const hasAfter = event.after !== null && k in event.after;
         return (
           <li key={k}>
-            <span className="text-muted-foreground">{humanizeFieldKey(k)}: </span>
-            {hasBefore && <span>{formatFieldValue(event.before?.[k])}</span>}
+            <span className="text-muted-foreground">{auditFieldLabel(k)}: </span>
+            {hasBefore && <span>{formatFieldValue(event, k, event.before?.[k])}</span>}
             {hasBefore && hasAfter && <span className="text-muted-foreground"> → </span>}
-            {hasAfter && <span className="font-medium">{formatFieldValue(event.after?.[k])}</span>}
+            {hasAfter && (
+              <span className="font-medium">{formatFieldValue(event, k, event.after?.[k])}</span>
+            )}
           </li>
         );
       })}

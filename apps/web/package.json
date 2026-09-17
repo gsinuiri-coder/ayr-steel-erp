@@ -8,7 +8,7 @@
     "start": "next start -p 3001",
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo sin-tests-unitarios-en-web"
+    "test": "vitest run"
   },
   "dependencies": {
     "@ayr/shared": "workspace:*",
@@ -38,6 +38,7 @@
     "@types/react-dom": "19.2.5",
     "eslint": "9.39.5",
     "tailwindcss": "4.3.3",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
   }
 }
