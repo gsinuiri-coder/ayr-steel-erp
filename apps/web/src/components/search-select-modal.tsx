@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { SEARCH_MIN_CHARS } from '@ayr/shared';
+import { useDebounced } from '@/lib/use-debounced';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -32,23 +35,30 @@ import {
  * El componente no sabe qué está eligiendo: recibe opciones `{ id, label, hint }` y devuelve
  * el id. Es lo que le permite servir para clientes, productos y cualquier maestro que la
  * auditoría de campos-callejón encuentre después.
+ *
+ * **RF-S3/M1: dos modos, no dos componentes.** `options` (síncrono) sigue siendo "ya tengo
+ * el maestro entero cargado, filtro en memoria" — lo usa el importador, que necesita el
+ * maestro completo de todas formas para resolver filas (D-152). `search` (servidor) es
+ * "no cargues nada hasta que el usuario escriba" — lo usan el cliente y el producto de
+ * cotizaciones/pedidos, que antes traían el maestro entero solo para poblar este campo. Los
+ * dos modos comparten la tabla, el debounce y el patrón crear-desde-campo; lo que cambia es
+ * de dónde salen las filas.
  */
 
 /**
  * A partir de cuántas opciones el campo deja de ser un desplegable y pasa a ser el buscador.
+ * Solo aplica al modo síncrono: el modo `search` siempre es botón + modal, porque no hay
+ * lista completa de la que medir el tamaño.
  *
  * **20 desde el saneamiento E2E**, por decisión del dueño. Estaba en 50 y producción tenía 49
  * clientes activos: el vendedor quedaba a un cliente de distancia del buscador y mientras
  * tanto elegía de una lista de 49 nombres reconociéndolos de vista. Con 20 el buscador entra
  * donde de verdad hace falta y el desplegable se queda para los maestros que son de verdad
  * cortos, que es la única cosa para la que es mejor.
- *
- * Alcanza a tres campos: el cliente de la cotización, el cliente del comprobante en el
- * importador y el producto de la fila (que ya estaba del lado del buscador, con 174 productos).
  */
 export const SEARCH_SELECT_THRESHOLD = 20;
 
-/** Cuántas filas se pintan por vez. Filtrar es barato; pintar 900 filas no. */
+/** Cuántas filas se pintan por vez en modo síncrono. Filtrar es barato; pintar 900 filas no. */
 const PAGE = 50;
 
 export interface SearchSelectOption {
@@ -71,6 +81,8 @@ export function SearchSelectModal({
   title,
   description,
   options,
+  search,
+  minChars = SEARCH_MIN_CHARS,
   columns,
   actionLabel = 'Seleccionar',
   selectedId,
@@ -82,7 +94,15 @@ export function SearchSelectModal({
   open: boolean;
   title: string;
   description?: string;
-  options: readonly SearchSelectOption[];
+  /** Modo síncrono: el maestro entero, ya cargado. Exclusivo con `search`. */
+  options?: readonly SearchSelectOption[];
+  /**
+   * RF-S3/M1, modo servidor: exclusivo con `options`. Se llama con el texto ya debounceado
+   * (250 ms) y solo cuando tiene al menos `minChars` caracteres — por debajo no busca nada,
+   * ni en el servidor ni en memoria.
+   */
+  search?: (q: string) => Promise<SearchSelectOption[]>;
+  minChars?: number;
   /** Encabezados de las columnas extra, en el orden de `cells`. */
   columns?: readonly string[];
   /** Rótulo de la última columna y de su botón. `Montar` en el selector de bobinas. */
@@ -103,8 +123,10 @@ export function SearchSelectModal({
    */
   emptyMessage?: string;
 }) {
+  const isAsync = search !== undefined;
   const [filter, setFilter] = useState('');
   const [shown, setShown] = useState(PAGE);
+  const debouncedFilter = useDebounced(filter, 250);
 
   // El filtro no sobrevive al cierre: reabrir el modal con el texto de la búsqueda anterior
   // lo muestra vacío ("0 de 12 opciones") sobre una lista que sí tiene lo que se busca.
@@ -115,13 +137,29 @@ export function SearchSelectModal({
     }
   }, [open]);
 
-  const matches = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    if (needle === '') return options;
-    return options.filter((o) =>
+  const trimmed = filter.trim();
+  const debouncedTrimmed = debouncedFilter.trim();
+  const belowMinChars = isAsync && debouncedTrimmed.length < minChars;
+
+  const serverSearch = useQuery({
+    queryKey: ['search-select-modal', title, debouncedTrimmed],
+    queryFn: () => (search ? search(debouncedTrimmed) : Promise.resolve([])),
+    enabled: open && isAsync && !belowMinChars,
+  });
+
+  const staticMatches = useMemo(() => {
+    if (isAsync) return [];
+    const needle = trimmed.toLowerCase();
+    const all = options ?? [];
+    if (needle === '') return all;
+    return all.filter((o) =>
       `${o.label} ${o.hint ?? ''} ${o.searchText ?? ''}`.toLowerCase().includes(needle),
     );
-  }, [options, filter]);
+  }, [isAsync, options, trimmed]);
+
+  const matches = isAsync ? (serverSearch.data ?? []) : staticMatches;
+  // En modo servidor el tope de 20 ya lo puso la API: no hay "ver más" que pedir.
+  const visible = isAsync ? matches : matches.slice(0, shown);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -143,7 +181,13 @@ export function SearchSelectModal({
           />
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
-              {matches.length} de {options.length} opciones
+              {isAsync
+                ? belowMinChars
+                  ? `Escribe al menos ${String(minChars)} caracteres para buscar.`
+                  : serverSearch.isFetching
+                    ? 'Buscando…'
+                    : `${String(matches.length)} resultado${matches.length === 1 ? '' : 's'}`
+                : `${String(matches.length)} de ${String((options ?? []).length)} opciones: filtra por cualquier parte del texto.`}
             </p>
             {extraAction}
           </div>
@@ -159,7 +203,7 @@ export function SearchSelectModal({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {matches.slice(0, shown).map((option) => (
+                {visible.map((option) => (
                   <TableRow key={option.id}>
                     <TableCell>
                       <div className="font-medium">{option.label}</div>
@@ -187,22 +231,26 @@ export function SearchSelectModal({
                     </TableCell>
                   </TableRow>
                 ))}
-                {matches.length === 0 && (
+                {visible.length === 0 && !belowMinChars && (
                   <TableRow>
                     <TableCell
                       colSpan={2 + (columns?.length ?? 0)}
                       className="text-center text-muted-foreground"
                     >
-                      {options.length === 0
-                        ? (emptyMessage ?? 'No hay ninguna opción registrada todavía.')
-                        : 'Ninguna opción coincide con ese texto.'}
+                      {isAsync
+                        ? serverSearch.isFetching
+                          ? 'Buscando…'
+                          : 'Ninguna opción coincide con ese texto.'
+                        : (options ?? []).length === 0
+                          ? (emptyMessage ?? 'No hay ninguna opción registrada todavía.')
+                          : 'Ninguna opción coincide con ese texto.'}
                     </TableCell>
                   </TableRow>
                 )}
               </TableBody>
             </Table>
           </div>
-          {matches.length > shown && (
+          {!isAsync && matches.length > shown && (
             <Button
               variant="outline"
               onClick={() => {
@@ -219,13 +267,18 @@ export function SearchSelectModal({
 }
 
 /**
- * El campo: desplegable cuando la lista es corta, botón + modal cuando es larga. Quien lo
- * usa no decide cuál: decide el número de opciones, que es el dato que de verdad manda.
+ * El campo: desplegable cuando la lista es corta, botón + modal cuando es larga (modo
+ * síncrono), o siempre botón + modal cuando busca en el servidor (modo `search`, RF-S3/M1).
+ * Quien lo usa no decide la forma del modo síncrono: decide el número de opciones, que es el
+ * dato que de verdad manda.
  */
 export function SearchSelectField({
   label,
   placeholder,
   options,
+  search,
+  selectedOption,
+  minChars,
   value,
   disabled,
   onChange,
@@ -239,7 +292,19 @@ export function SearchSelectField({
   /** Se usa como `aria-label` y como título del modal. */
   label: string;
   placeholder: string;
-  options: readonly SearchSelectOption[];
+  /** Modo síncrono: el maestro entero, ya cargado. Exclusivo con `search`. */
+  options?: readonly SearchSelectOption[];
+  /** RF-S3/M1, modo servidor: exclusivo con `options`. Ver `SearchSelectModal`. */
+  search?: (q: string) => Promise<SearchSelectOption[]>;
+  /**
+   * RF-S3/M1: el rótulo de lo ya elegido, **hidratado por id fuera de este componente** (p.
+   * ej. `GET /customers/:id`). En modo `search` no existe una lista completa de la que sacar
+   * el label de lo ya elegido —por diseño, es lo que evita traerla— así que quien usa el
+   * campo lo resuelve una vez, por id, y se lo pasa. Sin esto, editar una cotización o un
+   * pedido viejo mostraría el selector vacío aunque el cliente/producto elegido exista.
+   */
+  selectedOption?: SearchSelectOption | null;
+  minChars?: number;
   value: string | null;
   disabled?: boolean;
   onChange: (id: string) => void;
@@ -258,8 +323,7 @@ export function SearchSelectField({
   /**
    * F8-S3c/M4: el campo nunca cae al `<select>` corto, ni con cero opciones — es el selector
    * de cliente, que tiene que poder abrirse (y ofrecer el alta) también en un maestro vacío.
-   * Los demás campos (producto, el cliente del importador) no lo pasan y siguen decidiendo
-   * por el número de opciones (D-156).
+   * Sin efecto en modo `search`, que ya es siempre modal.
    */
   forceModal?: boolean;
   actionLabel?: string;
@@ -268,7 +332,10 @@ export function SearchSelectField({
   emptyMessage?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const selected = options.find((o) => o.id === value) ?? null;
+  const isAsync = search !== undefined;
+  const selected = isAsync
+    ? (selectedOption ?? null)
+    : ((options ?? []).find((o) => o.id === value) ?? null);
   /**
    * Elegido, pero **fuera de la lista**: el id existe y ninguna opción lo ofrece. Sin
    * decirlo, el campo se ve exactamente igual que uno vacío —el `<select>` queda en blanco
@@ -278,7 +345,8 @@ export function SearchSelectField({
    */
   const missing = value !== null && value !== '' && selected === null;
 
-  if (!forceModal && options.length <= SEARCH_SELECT_THRESHOLD) {
+  if (!isAsync && !forceModal && (options ?? []).length <= SEARCH_SELECT_THRESHOLD) {
+    const syncOptions = options ?? [];
     return (
       <div className="grid gap-1">
         <select
@@ -292,7 +360,7 @@ export function SearchSelectField({
           }}
         >
           <option value="">{placeholder}</option>
-          {options.map((o) => (
+          {syncOptions.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label}
             </option>
@@ -328,11 +396,15 @@ export function SearchSelectField({
         open={open}
         title={`Elegir · ${label}`}
         description={
-          options.length === 0
-            ? 'Todavía no hay ninguna opción en este maestro.'
-            : `${options.length} opciones: filtra por cualquier parte del texto.`
+          isAsync
+            ? undefined
+            : (options ?? []).length === 0
+              ? 'Todavía no hay ninguna opción en este maestro.'
+              : `${String((options ?? []).length)} opciones: filtra por cualquier parte del texto.`
         }
-        options={options}
+        options={isAsync ? undefined : options}
+        search={search}
+        minChars={minChars}
         actionLabel={actionLabel}
         selectedId={value}
         onSelect={onChange}

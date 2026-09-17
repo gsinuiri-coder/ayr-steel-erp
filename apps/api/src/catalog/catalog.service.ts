@@ -6,9 +6,11 @@ import {
 } from '@nestjs/common';
 import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
+  BusinessLine as SharedLineCode,
   isPlausiblePieceLength,
   MAX_PAGE_SIZE,
   PIECE_LENGTH_RANGE_LABEL,
+  rankSearchMatches,
   ROOFING_KIND_UNIT,
   RoofingProductKind,
   theoreticalKgPerSellingUnit,
@@ -23,7 +25,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { ColorsService } from '../colors/colors.service';
-import { toSharedLineCode } from '../common/business-line-code';
+import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
 import { computePriceFloors } from '../sales/price-floor';
 import {
@@ -31,6 +33,9 @@ import {
   priceListValueChanged,
   recordPriceListChange,
 } from './price-list-changes';
+
+/** Mismo criterio que `SEARCH_CANDIDATE_POOL` de `CustomersService` (RF-S3/M1). */
+const SEARCH_CANDIDATE_POOL = 100;
 
 /** Catálogo de productos por línea (RF-50). Mutaciones solo ADMINISTRADOR. */
 @Injectable()
@@ -48,6 +53,30 @@ export class CatalogService {
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
     return products.map(toDto);
+  }
+
+  /**
+   * RF-S3/M1: el selector de producto (con stock, D-188) ya no filtra en el navegador sobre
+   * el catálogo entero cargado una vez (D-119) — ese catálogo sigue existiendo para lo que sí
+   * lo necesita (precio/unidad de las líneas ya elegidas), esto es solo para poblar el picker.
+   * `businessLine` es el código compartido (`@ayr/shared`), como ya lo maneja el formulario de
+   * ventas — se traduce una sola vez acá, no en cada llamador.
+   */
+  async search(q: string, businessLine?: SharedLineCode): Promise<ProductDto[]> {
+    const candidates = await this.prisma.product.findMany({
+      where: {
+        isActive: true,
+        ...(businessLine ? { businessLine: { code: toPrismaLineCode(businessLine) } } : {}),
+        OR: [
+          { sku: { contains: q, mode: 'insensitive' } },
+          { name: { contains: q, mode: 'insensitive' } },
+        ],
+      },
+      include: PRODUCT_RELATIONS,
+      orderBy: { name: 'asc' },
+      take: SEARCH_CANDIDATE_POOL,
+    });
+    return rankSearchMatches(candidates, q, (p) => [p.sku, p.name]).map(toDto);
   }
 
   /**

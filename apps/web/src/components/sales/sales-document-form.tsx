@@ -45,8 +45,14 @@ import {
   ProductStockPickerDialog,
   RawMaterialPoolList,
 } from '@/components/sales/product-stock-picker';
-import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
-import { formatMoney, formatQty, isPositiveDecimal, todayIso, unitSymbol } from '@/lib/format';
+import {
+  customerLabel,
+  formatMoney,
+  formatQty,
+  isPositiveDecimal,
+  todayIso,
+  unitSymbol,
+} from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
@@ -327,9 +333,14 @@ export function SalesDocumentForm({
   const [nextKey, setNextKey] = useState(initial ? initial.items.length + 1 : 1);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const customers = useQuery({
-    queryKey: ['customers'],
-    queryFn: () => fetchAllForPicker<CustomerDto>('/customers'),
+  // RF-S3/M1: el selector de cliente busca en el servidor (`customerSearch` más abajo) y ya
+  // no trae el maestro entero. Esto solo hidrata por id lo que **ya** está elegido —al editar
+  // una cotización o un pedido viejo— para que el botón no se vea vacío mientras el cliente
+  // real sigue existiendo y activo.
+  const selectedCustomer = useQuery({
+    queryKey: ['customer', customerId],
+    queryFn: () => api<CustomerDto>(`/customers/${customerId}`),
+    enabled: customerId !== '',
   });
   const businessLines = useQuery({
     queryKey: ['business-lines'],
@@ -694,7 +705,7 @@ export function SalesDocumentForm({
         </p>
       </div>
 
-      {(customers.isError || businessLines.isError) && (
+      {(selectedCustomer.isError || businessLines.isError) && (
         <Alert variant="destructive">
           <AlertDescription>
             No se pudieron cargar los maestros. Recarga la página.
@@ -707,26 +718,14 @@ export function SalesDocumentForm({
           <div className="grid gap-2 md:col-span-2">
             <Label htmlFor="customer">Cliente</Label>
             {/*
-            D-156: el mismo campo que el importador. Con pocos clientes es un desplegable y
-            con muchos, un botón que abre un buscador — y **quien lo usa no elige cuál**:
-            elige el número de opciones, que es el dato que de verdad manda.
+            RF-S3/M1: busca en el servidor (`GET /customers/search`) en vez de traer el
+            maestro entero (D-156 lo dejaba andar hasta 200 clientes, y por encima de eso los
+            últimos no aparecían — medido en producción, ventana del 2026-09-10). El valor ya
+            elegido se hidrata por id (`selectedCustomer` arriba): editar una cotización o un
+            pedido viejo no depende de que su cliente esté entre los primeros resultados.
 
-            **F8-S3c/M4: acá siempre es el modal (`forceModal`)**, aunque el maestro tenga
-            pocos clientes o ninguno — es el selector de la venta, no un campo cualquiera, y
-            un `<select>` vacío no ofrece nada. El «+ Crear cliente» pasó de estar al lado del
-            campo a vivir **dentro** del modal (D-156, patrón crear-desde-campo): sigue a la
-            vista con la lista vacía o filtrada a cero, que es justo cuando hace falta, y el
-            alta cierra el modal además de elegir al cliente.
-
-            Lo que reemplaza era un `<Select>` plano de hasta 200 opciones **sin búsqueda**:
-            para elegir un cliente había que reconocerlo de vista en una lista larguísima.
-
-            Ojo con lo que esto **no** arregla: `fetchAllForPicker` sigue trayendo como mucho
-            `MAX_PAGE_SIZE` clientes y `/customers` ordena por `isActive desc, name asc`, así
-            que con más de 200 activos los últimos siguen sin aparecer. Esto da búsqueda sobre
-            lo cargado; levantar el tope es buscar del lado del servidor —`/customers` ya
-            acepta `search`— y es un cambio propio, no un renglón de este. Hoy no aprieta: en
-            producción hay 49 clientes activos (medido en la ventana del 2026-09-10).
+            Sigue siendo siempre el modal (no hay modo `<select>` corto en `search`): es el
+            selector de la venta, y el «+ Crear cliente» vive dentro (D-156).
           */}
             <SearchSelectField
               id="customer"
@@ -734,16 +733,23 @@ export function SalesDocumentForm({
               label="Cliente"
               placeholder="Elige un cliente"
               actionLabel="Elegir"
-              forceModal
               emptyMessage="No hay ningún cliente registrado todavía: créalo con «+ Crear cliente»."
               value={customerId === '' ? null : customerId}
-              options={(customers.data ?? [])
-                .filter((c) => c.isActive)
-                .map((c) => ({ id: c.id, label: `${c.name} — ${c.docNumber}` }))}
+              selectedOption={
+                selectedCustomer.data
+                  ? { id: selectedCustomer.data.id, label: customerLabel(selectedCustomer.data) }
+                  : null
+              }
+              search={(q) =>
+                api<CustomerDto[]>(`/customers/search?q=${encodeURIComponent(q)}`).then((list) =>
+                  list.map((c) => ({ id: c.id, label: customerLabel(c) })),
+                )
+              }
               onChange={setCustomerId}
               extraAction={({ close }) => (
                 <ExpressCreateCustomer
                   onCreated={(created) => {
+                    queryClient.setQueryData(['customer', created.id], created);
                     setCustomerId(created.id);
                     close();
                   }}
@@ -1128,7 +1134,6 @@ function LineRow({
                   onOpenChange={setPickerOpen}
                   businessLine={l.businessLine}
                   businessLineLabel={BUSINESS_LINE_LABELS[l.businessLine]}
-                  activeProducts={activeProducts ?? []}
                   selectedProductId={l.productId}
                   onSelect={onChooseProduct}
                 />

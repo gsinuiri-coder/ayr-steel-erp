@@ -8,6 +8,7 @@ import {
 import { Prisma, type Customer } from '@prisma/client';
 import {
   paginate,
+  rankSearchMatches,
   Role,
   toSkipTake,
   type CreateCustomerInput,
@@ -19,6 +20,16 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+
+/**
+ * Cuántas filas trae SQL antes de rankear en JS (RF-S3/M1). Más que
+ * `SEARCH_RESULT_LIMIT` a propósito: con `contains` no hay forma de que Postgres devuelva
+ * "los prefijos primero" en el propio `ORDER BY` sin `pg_trgm`, así que se trae un lote
+ * generoso ordenado por nombre y se rankea en memoria. Con los volúmenes de hoy (paso 0 de
+ * esta ventana: 821 clientes) esto es un solo `ILIKE` sobre una tabla chica — no hace falta
+ * índice todavía (D-229).
+ */
+const SEARCH_CANDIDATE_POOL = 100;
 
 /**
  * Clientes (RF-80, RF-82, RF-85).
@@ -57,6 +68,26 @@ export class CustomersService {
       }),
     ]);
     return paginate(customers.map(toDto), total, query);
+  }
+
+  /**
+   * RF-S3/M1: el selector de cliente de cotizaciones y pedidos ya no trae el maestro entero
+   * (D-113 solo lo hizo para el listado paginado del admin). Solo activos: un cliente dado de
+   * baja no tiene por qué aparecer en un selector de venta nueva.
+   */
+  async search(q: string): Promise<CustomerDto[]> {
+    const candidates = await this.prisma.customer.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { name: { contains: q, mode: 'insensitive' } },
+          { docNumber: { contains: q, mode: 'insensitive' } },
+        ],
+      },
+      orderBy: { name: 'asc' },
+      take: SEARCH_CANDIDATE_POOL,
+    });
+    return rankSearchMatches(candidates, q, (c) => [c.name, c.docNumber]).map(toDto);
   }
 
   async findOne(id: string): Promise<CustomerDto> {

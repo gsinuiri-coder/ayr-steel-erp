@@ -1,4 +1,19 @@
-import { BUSINESS_TIME_ZONE, businessToday, Decimal, type Currency } from '@ayr/shared';
+import {
+  BUSINESS_TIME_ZONE,
+  businessToday,
+  Decimal,
+  type Currency,
+  type CustomerDto,
+} from '@ayr/shared';
+
+/**
+ * RF-S3/M1: la misma etiqueta en los tres lugares que muestran un cliente elegido
+ * (cotización/pedido nuevo, cambiar cliente de un pedido, importador) — antes cada uno la
+ * armaba a mano y dos de los tres ya coincidían por casualidad.
+ */
+export function customerLabel(c: Pick<CustomerDto, 'name' | 'docNumber'>): string {
+  return `${c.name} — ${c.docNumber}`;
+}
 
 /**
  * Formateo para mostrar. Los valores llegan del API como string con su escala fija

@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  SEARCH_MIN_CHARS,
+  SEARCH_RESULT_LIMIT,
   toDecimal,
   toFixedString,
   type BusinessLine,
@@ -43,13 +45,11 @@ import {
  * elegir** (D-188): el aviso de faltante vive en la fila, una vez que se tipea la cantidad,
  * y en la tarjeta del Panel una vez que la cotización se guarda.
  *
- * El tope de `productIds` de `/sales/stock-panel` (50, el mismo que `MAX_SALES_ITEMS`) es
- * el motivo de que la consulta de stock siga al **filtro**, no a la línea de negocio entera:
- * una línea con más de 50 SKU activos sigue completa y buscable —viene del catálogo, ya
- * cargado— y lo único que se acota es para cuántas filas visibles se pide el disponible.
+ * RF-S3/M1: la lista de opciones ya no es el catálogo entero filtrado en el navegador — es
+ * `GET /catalog/search`, acotada a `SEARCH_RESULT_LIMIT` (20) por el servidor, bien por
+ * debajo del tope de `/sales/stock-panel` (50, `MAX_SALES_ITEMS`): el disponible se pide para
+ * exactamente lo que la búsqueda de hoy muestra, sin recortar de nuevo.
  */
-
-const STOCK_QUERY_CAP = 50;
 
 interface AvailabilitySummary {
   text: string;
@@ -140,7 +140,6 @@ export function ProductStockPickerDialog({
   onOpenChange,
   businessLine,
   businessLineLabel,
-  activeProducts,
   selectedProductId,
   onSelect,
 }: {
@@ -148,14 +147,13 @@ export function ProductStockPickerDialog({
   onOpenChange: (open: boolean) => void;
   businessLine: BusinessLine;
   businessLineLabel: string;
-  /** Ya filtrados por línea de negocio y activos (D-119): el catálogo entero es gratis, ya
-   * está cargado; lo que cuesta es el disponible, y eso se pide acotado más abajo. */
-  activeProducts: ProductDto[];
   selectedProductId: string;
   onSelect: (productId: string) => void;
 }) {
   const [filter, setFilter] = useState('');
   const debouncedFilter = useDebounced(filter, 250);
+  const trimmed = debouncedFilter.trim();
+  const belowMinChars = trimmed.length < SEARCH_MIN_CHARS;
 
   // El filtro no sobrevive al cierre (mismo motivo que `SearchSelectModal`, D-156): sin esto,
   // reabrir el picker de otra línea —o el mismo después de elegir— mostraba la búsqueda de la
@@ -164,25 +162,22 @@ export function ProductStockPickerDialog({
     if (open) setFilter('');
   }, [open]);
 
-  const matches = useMemo(() => {
-    const needle = debouncedFilter.trim().toLowerCase();
-    if (needle === '') return activeProducts;
-    return activeProducts.filter(
-      (p) => p.sku.toLowerCase().includes(needle) || p.name.toLowerCase().includes(needle),
-    );
-  }, [activeProducts, debouncedFilter]);
-
+  // RF-S3/M1: busca en el servidor (`GET /catalog/search`) en vez de filtrar el catálogo
+  // entero ya cargado del formulario (D-119 sigue existiendo ahí, pero solo para el precio y
+  // la unidad de las líneas ya elegidas — este modal no lo necesita más).
+  const productsSearch = useQuery({
+    queryKey: ['catalog-search', businessLine, trimmed],
+    queryFn: () =>
+      api<ProductDto[]>(
+        `/catalog/search?${new URLSearchParams({ q: trimmed, businessLine }).toString()}`,
+      ),
+    enabled: open && !belowMinChars,
+  });
+  const matches = productsSearch.data ?? [];
   // El disponible se pide para lo que la búsqueda de HOY muestra, no para la línea entera:
-  // así el tope de 50 de `/sales/stock-panel` nunca se pisa, sea cual sea el tamaño del
-  // catálogo de la línea.
-  const stockIds = useMemo(
-    () =>
-      [...matches]
-        .sort((a, b) => a.sku.localeCompare(b.sku))
-        .slice(0, STOCK_QUERY_CAP)
-        .map((p) => p.id),
-    [matches],
-  );
+  // así el tope de 50 de `/sales/stock-panel` nunca se pisa. `SEARCH_RESULT_LIMIT` (20) ya
+  // es menor que ese tope, así que no hace falta recortar de nuevo.
+  const stockIds = matches.map((p) => p.id);
 
   const stockPanel = useQuery({
     queryKey: ['stock-panel-picker', businessLine, stockIds.join(',')],
@@ -196,7 +191,9 @@ export function ProductStockPickerDialog({
     enabled: open && stockIds.length > 0,
   });
   const stockByProductId = new Map((stockPanel.data?.products ?? []).map((p) => [p.productId, p]));
-  const truncated = matches.length > stockIds.length;
+  // Heurística, no un conteo exacto: si el servidor devolvió el tope, es probable que haya
+  // más SKU sin mostrar — no hay forma barata de saber cuántos sin una segunda consulta.
+  const mayHaveMore = matches.length === SEARCH_RESULT_LIMIT;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -220,9 +217,13 @@ export function ProductStockPickerDialog({
             }}
           />
           <p className="text-xs text-muted-foreground">
-            {matches.length} de {activeProducts.length} productos
-            {truncated &&
-              ` · el disponible se muestra para los primeros ${String(STOCK_QUERY_CAP)}: sigue filtrando para ver el de los demás`}
+            {belowMinChars
+              ? `Escribe al menos ${String(SEARCH_MIN_CHARS)} caracteres para buscar.`
+              : productsSearch.isFetching
+                ? 'Buscando…'
+                : `${String(matches.length)} resultado${matches.length === 1 ? '' : 's'}${
+                    mayHaveMore ? ' · sigue escribiendo para acotar' : ''
+                  }`}
           </p>
           {/* F8-S3b/M1: sin scroll horizontal. Tabla de ancho fijo y celdas que parten línea —
               la base de `TableCell` es `whitespace-nowrap`, y un nombre largo o un disponible
@@ -239,7 +240,7 @@ export function ProductStockPickerDialog({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {matches.slice(0, STOCK_QUERY_CAP).map((p) => {
+                {matches.map((p) => {
                   const availability = availabilityOf(
                     stockByProductId.get(p.id),
                     unitSymbol(p.unit),
@@ -275,11 +276,11 @@ export function ProductStockPickerDialog({
                     </TableRow>
                   );
                 })}
-                {matches.length === 0 && (
+                {matches.length === 0 && !belowMinChars && (
                   <TableRow>
                     <TableCell colSpan={3} className="text-center text-muted-foreground">
-                      {activeProducts.length === 0
-                        ? 'Esta línea no tiene productos activos.'
+                      {productsSearch.isFetching
+                        ? 'Buscando…'
                         : 'Ningún producto coincide con ese texto.'}
                     </TableCell>
                   </TableRow>

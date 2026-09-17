@@ -16,12 +16,14 @@ import {
   docNumberLengths,
   DocType,
   Role,
+  searchQuerySchema,
   updateCustomerSchema,
   type CreateCustomerInput,
   type CustomerDto,
   type CustomerQuery,
   type DocumentLookupDto,
   type PaginatedResult,
+  type SearchQuery,
   type UpdateCustomerInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -77,6 +79,17 @@ export class CustomersController {
       throw new BadRequestException(`Número de ${type} inválido`);
     }
     return this.lookup.lookup(type, number);
+  }
+
+  /**
+   * RF-S3/M1: selector de cliente de cotizaciones y pedidos. Va **antes** de `:id` por el
+   * mismo motivo que `lookup` — es una ruta fija, no un id.
+   */
+  @Get('search')
+  search(
+    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQuery,
+  ): Promise<CustomerDto[]> {
+    return this.customers.search(query.q);
   }
 
   @Get(':id')

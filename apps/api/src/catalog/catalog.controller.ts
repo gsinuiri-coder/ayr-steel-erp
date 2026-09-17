@@ -1,12 +1,16 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import {
+  BUSINESS_LINES,
   createProductSchema,
   Role,
+  searchQuerySchema,
   updateProductSchema,
+  type BusinessLine,
   type CreateProductInput,
   type PriceListFloorDto,
   type ProductDto,
   type ProductListPriceChangeDto,
+  type SearchQuery,
   type UpdateProductInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -32,6 +36,21 @@ export class CatalogController {
     @Query('productId') productId?: string,
   ): Promise<ProductListPriceChangeDto[]> {
     return this.catalog.findPriceListChanges(productId);
+  }
+
+  /**
+   * RF-S3/M1: selector de producto con stock (D-188). Va **antes** de `:id`, mismo motivo
+   * que `price-list/changes`.
+   */
+  @Get('search')
+  search(
+    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQuery,
+    @Query('businessLine') businessLine?: string,
+  ): Promise<ProductDto[]> {
+    const line = (BUSINESS_LINES as readonly string[]).includes(businessLine ?? '')
+      ? (businessLine as BusinessLine)
+      : undefined;
+    return this.catalog.search(query.q, line);
   }
 
   @Get(':id')

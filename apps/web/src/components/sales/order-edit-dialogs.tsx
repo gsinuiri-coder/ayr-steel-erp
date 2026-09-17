@@ -14,8 +14,7 @@ import {
   type SalesOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
-import { isPositiveDecimal, unitSymbol } from '@/lib/format';
+import { customerLabel, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
@@ -364,10 +363,12 @@ export function ChangeCustomerDialog({
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const customers = useQuery({
-    queryKey: ['customers'],
-    queryFn: () => fetchAllForPicker<CustomerDto>('/customers'),
-    enabled: open,
+  // RF-S3/M1: busca en el servidor; solo hidrata por id lo que el usuario acaba de elegir
+  // (no hay valor previo que mostrar — se empieza en `null`, D-187).
+  const selectedCustomer = useQuery({
+    queryKey: ['customer', customerId],
+    queryFn: () => api<CustomerDto>(`/customers/${customerId}`),
+    enabled: customerId !== null,
   });
 
   useEffect(() => {
@@ -413,9 +414,18 @@ export function ChangeCustomerDialog({
               label="Cliente nuevo"
               placeholder="Elige un cliente"
               value={customerId}
-              options={(customers.data ?? [])
-                .filter((c) => c.isActive && c.id !== order.customerId)
-                .map((c) => ({ id: c.id, label: `${c.name} — ${c.docNumber}` }))}
+              selectedOption={
+                selectedCustomer.data
+                  ? { id: selectedCustomer.data.id, label: customerLabel(selectedCustomer.data) }
+                  : null
+              }
+              search={(q) =>
+                api<CustomerDto[]>(`/customers/search?q=${encodeURIComponent(q)}`).then((list) =>
+                  list
+                    .filter((c) => c.id !== order.customerId)
+                    .map((c) => ({ id: c.id, label: customerLabel(c) })),
+                )
+              }
               onChange={(id) => {
                 setCustomerId(id);
                 setError(null);
