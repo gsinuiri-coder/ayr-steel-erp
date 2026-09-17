@@ -6863,9 +6863,12 @@ pantalla en el momento exacto del timeout.)
 ### Suite E2E completa (worktree + build de producción)
 
 **Antes de las correcciones:** 363 passed, 9 failed (7 reales + 2 infraestructura conocida), 2
-skipped, ~27 min. **Después de las correcciones y de los 5 specs re-verificados en verde:**
-<<PENDIENTE — corrida de confirmación de la suite completa en curso al momento de escribir esta
-entrada; completar con el resultado final antes del cierre>>.
+skipped, ~27 min. **Después de las correcciones**, corrida de confirmación completa (374 tests,
+21.9 min): **370 passed, 2 failed, 2 skipped**. Los 2 rojos son exactamente los 2 de
+infraestructura ya conocidos (R2 sin configurar en local: `fase2a.spec.ts:359`,
+`fase5a.spec.ts:100`), mismo archivo y misma línea que antes — ningún rojo nuevo. 363 + 7
+corregidos = 370: confirma que los arreglos cerraron los 7 rojos que esta ventana había
+introducido sin abrir ninguno.
 
 ### Migraciones de esta ventana
 

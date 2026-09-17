@@ -9,8 +9,10 @@ agregada de presupuesto fijo (M2), se ensayó una restauración PITR real sin to
 (M3) y se implementó la card sacrificable "SKUs con lista bajo piso" que RF-S1 había diseñado
 sin código (M4). `revisor` encontró 2 hallazgos ALTO (uno de seguridad, uno funcional) y varios
 menores, todos corregidos; `qa` encontró 7 regresiones reales en specs preexistentes por el
-cambio de M1, las 7 corregidas y re-verificadas en verde con build de producción. Sin push
-(regla dura 6): comandos al final de este documento.
+cambio de M1, las 7 corregidas. Suite E2E completa de confirmación (374 tests, build de
+producción): **370 passed, 2 failed (los 2 de infraestructura R2 ya conocidos, ajenos a esta
+ventana), 2 skipped** — sin regresiones nuevas. Sin push (regla dura 6): comandos al final de
+este documento.
 
 ## 2. Hecho
 
@@ -83,9 +85,6 @@ Nada bloqueado al cierre. Deuda que esta sesión deja o hereda sin cambios:
 4. **Drift de schema en `production`** (deuda S3 #1, heredada, sin tocar): defaults de
    `operation_date` en 5 tablas, 5 FK recreadas, 2 índices y un renombre.
 5. **El guard por línea de pedido no descuenta notas de crédito** (D-223, heredada, sin tocar).
-6. Suite E2E completa re-corrida una vez más tras las correcciones para confirmar el número
-   final de cierre — ver `docs/PROGRESO.md` para el resultado (pendiente al momento de escribir
-   este handoff, corriendo en background).
 
 Ninguno requiere acción humana externa (proveedor, soporte) salvo la aprobación de borrado de
 la rama de ensayo Neon (punto 1) y la carga de precios de lista reales (punto 3), ambas del
