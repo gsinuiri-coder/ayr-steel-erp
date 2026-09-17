@@ -6604,15 +6604,33 @@ muestra un SKU real, el catálogo ya cargó, y `productById` también lo tiene.
 
 **RF-S3/M0 (2026-09-17).** `pnpm exec playwright test ... --repeat-each=10` sobre este spec dio
 primero **4/10 rojos**, todos fallando en `chooseOption` al elegir el **cliente** (no el
-producto) con un timeout de 30s esperando el predicado. El trace de la corrida mostró
+producto) con un timeout esperando el predicado. El trace de esa corrida mostró
 `[Fast Refresh] rebuilding` de `next dev` disparándose cada 1-3 segundos durante todo el test,
-incluso a mitad de un click — y esa corrida coincidió con dos subagentes trabajando en paralelo
-sobre el **mismo worktree** (`ayr-steel-erp-rf-s3`). Es contaminación de sesión: otro proceso
-tocando archivos del árbol que `next dev` vigila, no una carrera de la app. Repetido en
-aislamiento (sin agentes concurrentes en el worktree): **10/10 verde, 6.1 min**. Lección para
-toda sesión futura: **nunca correr E2E contra un worktree que otro agente esté editando o
-ejecutando en paralelo** — el síntoma no se parece en nada a su causa real, igual que ya pasó
-con «una suite de Playwright a la vez» y `test-results/` compartido.
+incluso a mitad de un click. La primera hipótesis —contaminación por dos subagentes editando el
+mismo worktree en paralelo— quedó **descartada en M1**: el mismo patrón de recompilaciones
+seguidas volvió a aparecer en una corrida **sin ningún agente concurrente** y sin editar ni un
+archivo de `apps/web`/`packages/shared` durante la corrida.
+
+**Causa real, confirmada en M1 con un `next dev` aislado en reposo:** con la app quieta (sin
+navegar) durante 15 s no hubo un solo `rebuilding` ni un cambio de archivo en `apps/web`. El
+patrón sí aparece al **navegar por primera vez** en un `next dev` recién levantado: cada ruta
+nueva se compila on-demand, y el sidebar de la app (con ~20 enlaces) dispara el *prefetch* de
+Next de varias de esas rutas en segundo plano — cada una compila y empuja su propio evento de
+Fast Refresh al cliente, aunque la página abierta no cambie. Un test que es de los **primeros**
+en tocar un `next dev` recién levantado puede pisar varias de estas compilaciones seguidas; una
+vez que las rutas quedan tibias (repeats 2..10 del mismo server, o cualquier corrida posterior
+en el mismo proceso), no vuelve a pasar — que es exactamente por qué **10/10 en aislamiento
+salió verde**: no porque no hubiera agentes, sino porque para el repeat 2 ya todo estaba
+compilado. La solución que ya usa el repo para la suite completa (`next build` + `next start`
+desde un worktree, sin `next dev`) no tiene este problema porque no hay Fast Refresh en absoluto.
+
+**No hay nada que arreglar en el producto.** El síntoma es enteramente de correr contra `next
+dev` en frío; en CI (build de producción) y en la suite completa vía worktree no aparece. Lo que
+sí es una lección reusable: un `.click()` de un solo intento contra un modal que puede
+desmontarse a mitad de camino (D-188/D-156) no tiene margen — por eso `chooseOption` y (desde
+M1) `chooseProductWithStock` reintentan solos; ver `e2e/helpers/ui.ts`. Ningún caller nuevo de un
+picker modal debería escribir su propio `.click()` de un solo intento cuando el helper resistente
+ya existe.
 
 **Pendiente de esta sesión:** `docs/uat/rf-s2.md` (quitar el aviso del caso 5) y CI del punto 2
 del brief — ver el resto de esta ventana en el handoff que cierre la sesión.
