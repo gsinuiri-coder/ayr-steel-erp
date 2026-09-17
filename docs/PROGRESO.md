@@ -5195,6 +5195,7 @@ Fix (D-223, registrada originalmente como D-214 — renumerada en VENTANA-S1+HOT
   índice. La exclusión de nota de crédito se encontró corriendo la suite E2E existente
   contra la primera versión de la migración (P2002 al crear una NC sobre un pedido que ya
   tenía otro borrador) — no estaba en el primer intento.
+  > **Nota 2026-09-16 (VENTANA-S1+HOTFIX):** esta migración **se retiró** antes de aplicarse en ninguna base compartida; la regla es solo el tope bajo lock. Ver la fila D-223 de `ARQUITECTURA.md`.
 
 **Verificación**: `pnpm lint && pnpm typecheck && pnpm test && pnpm format:check` en verde
 (32 test suites, 431 tests). Suite E2E de comprobantes/facturación con builds de producción:

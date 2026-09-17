@@ -206,7 +206,11 @@ try {
       // Un borrador nunca tomó correlativo (D-072), así que no hay baja que comunicar a
       // SUNAT: se descarta. Es lo único de este módulo que se borra de verdad, y puede
       // serlo justamente porque no existe fiscalmente.
-      const res = await call(`/invoicing/documents/${document.id}`, { method: 'DELETE' });
+      const res = await call(`/invoicing/documents/${document.id}`, {
+        method: 'DELETE',
+        // HOTFIX-401/M2 (D-223): descartar exige motivo.
+        body: { reason: 'Purga de datos de prueba E2E (prod:purge-e2e)' },
+      });
       console.log(
         res.ok
           ? `  borrador de ${document.docType} descartado`

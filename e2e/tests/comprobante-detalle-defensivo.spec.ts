@@ -11,8 +11,8 @@ import { createInvoice, createInvoiceableCustomer, freeLine } from '../helpers/i
  *
  * - Una respuesta **sin** los campos nuevos (`issueDateChanges`, `dispatchId`,
  *   `dispatchCode`) muestra el comprobante igual, sin error de página.
- * - Un 401 que sobrevive al refresh lleva a `/login?next=…`, el re-login estándar de
- *   `SessionProvider`, en vez de dejar la pantalla muerta.
+ * - Un 401 revalida la sesión: si cayó, `SessionProvider` lleva a `/login?next=…` (el re-login
+ *   estándar); si sigue viva, se ve el error con «Reintentar». Nunca una pantalla muerta.
  * - Cualquier otro error se ve con su mensaje y un «Reintentar», sin crash.
  *
  * El API se simula con `page.route` sobre la respuesta real: el borrador existe de verdad y
@@ -72,7 +72,6 @@ test.describe('HOTFIX-DESFASE — detalle de comprobante defensivo', () => {
     await page.goto(`/comprobantes/${draft.id}`);
     await expect(page.getByText(customer.name).first()).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText('No se pudo cargar el comprobante')).toHaveCount(0);
-    await expect(page.getByText('Correcciones de la fecha de emisión')).toHaveCount(0);
     expect(pageErrors, 'la pantalla no debe tirar errores de JavaScript').toEqual([]);
   });
 

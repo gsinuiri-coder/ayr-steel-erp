@@ -54,6 +54,15 @@ test.describe('Doble click / reintento con la misma clave de idempotencia', () =
       }),
       idempotencyKey,
     };
+    // El cliente facturable se reusa entre tests: se cuenta el delta, no el total.
+    const countFor = async () =>
+      (
+        await getJson<{ total: number }>(
+          api,
+          `/api/invoicing/documents?customerId=${customer.id}&pageSize=1`,
+        )
+      ).total;
+    const before = await countFor();
     const r1 = await api.post('/api/invoicing/documents', { data: body });
     const r2 = await api.post('/api/invoicing/documents', { data: body });
     expect(r1.ok()).toBeTruthy();
@@ -61,12 +70,9 @@ test.describe('Doble click / reintento con la misma clave de idempotencia', () =
     const d1 = (await r1.json()) as { id: string };
     const d2 = (await r2.json()) as { id: string };
     expect(d2.id).toBe(d1.id);
-
-    const list = await getJson<{ items: { id: string }[] }>(
-      api,
-      `/api/invoicing/documents?customerId=${customer.id}`,
+    expect(await countFor(), 'dos envíos con la misma clave crean un solo documento').toBe(
+      before + 1,
     );
-    expect(list.items.filter((d) => d.id === d1.id)).toHaveLength(1);
   });
 });
 
@@ -98,6 +104,34 @@ test.describe('Tope: no se factura más del total del pedido', () => {
     expect(second.status()).toBe(400);
     const err = (await second.json()) as { message: string };
     expect(err.message).toContain('ya tiene');
+  });
+
+  test('dos borradores parciales del mismo pedido se permiten hasta el total; el tercero no', async ({
+    baseURL,
+  }) => {
+    // D-223 (revisión de la ventana): el tope es la regla, no "un borrador por pedido". Un
+    // pedido se puede facturar por partes —p. ej. un comprobante por despacho (D-213)— y
+    // preparar dos borradores parciales a la vez es legítimo.
+    const api = await adminApi(baseURL!);
+    const scenario = await setupOrderScenario(api, { coilKg: '1000' });
+    const half = (Number(scenario.item.qty) / 2).toFixed(3);
+    const partial = invoiceBody({
+      docType: 'FACTURA',
+      customerId: scenario.customer.id,
+      salesOrderId: scenario.order.id,
+      items: [{ salesOrderItemId: scenario.item.id, qty: half, unitPricePen: '8.0000' }],
+    });
+    const first = await api.post('/api/invoicing/documents', { data: partial });
+    expect(first.ok(), 'primer borrador parcial').toBeTruthy();
+    const second = await api.post('/api/invoicing/documents', { data: partial });
+    expect(
+      second.ok(),
+      'segundo borrador parcial: entre los dos llegan justo al total',
+    ).toBeTruthy();
+
+    const third = await api.post('/api/invoicing/documents', { data: partial });
+    expect(third.status()).toBe(400);
+    expect(((await third.json()) as { message: string }).message).toContain('ya tiene');
   });
 
   test('un borrador con despacho declarado no cuenta dos veces contra el mismo despacho', async ({
@@ -158,7 +192,9 @@ test.describe('Un borrador no es una deuda', () => {
 
     const pending = await getJson<{ items: { id: string }[] }>(
       api,
-      '/api/invoicing/documents?pendingOnly=true',
+      // Con `customerId`: sin él, el borrador podía quedar fuera por el corte de
+      // `DERIVED_FILTER_FETCH_CAP` y el test pasar sin probar nada.
+      `/api/invoicing/documents?pendingOnly=true&customerId=${customer.id}`,
     );
     expect(pending.items.some((d) => d.id === draft.id)).toBe(false);
   });

@@ -241,21 +241,23 @@ export function NuevoComprobanteView() {
                 unitPricePen: l.unitPricePen.trim(),
               }));
 
+      const body = {
+        docType,
+        customerId,
+        ...(salesOrderId !== NONE ? { salesOrderId } : {}),
+        ...(dispatchId !== NONE ? { dispatchId } : {}),
+        issueDate,
+        paymentTerms,
+        ...(paymentTerms === 'CREDITO' && dueDate ? { dueDate } : {}),
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+        forceGenericCustomer: forceGeneric,
+        items,
+      };
       return api<FiscalDocumentDto>('/invoicing/documents', {
         method: 'POST',
-        body: {
-          docType,
-          customerId,
-          ...(salesOrderId !== NONE ? { salesOrderId } : {}),
-          ...(dispatchId !== NONE ? { dispatchId } : {}),
-          issueDate,
-          paymentTerms,
-          ...(paymentTerms === 'CREDITO' && dueDate ? { dueDate } : {}),
-          ...(notes.trim() ? { notes: notes.trim() } : {}),
-          forceGenericCustomer: forceGeneric,
-          items,
-          idempotencyKey: createKey.current(),
-        },
+        // La huella es el contenido (F8-S4/M0): si tras un corte de red se corrige el
+        // formulario, el reenvío es otro borrador y sale con otra clave.
+        body: { ...body, idempotencyKey: createKey.current(JSON.stringify(body)) },
       });
     },
     onSettled: (_data, error) => {

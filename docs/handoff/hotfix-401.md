@@ -18,6 +18,7 @@ propio, desde `origin/main` = prod) tiene 4 commits locales, **sin push**.
   (`comprobante-detalle-view.tsx`, `nuevo-comprobante-view.tsx`), E2E
   (`hotfix-401-borradores-duplicados.spec.ts`, 7 casos, más 2 specs existentes actualizados
   al contrato nuevo de `discardDraft`).
+  > **Nota 2026-09-16 (VENTANA-S1+HOTFIX):** esta migración **se retiró** antes de aplicarse en ninguna base compartida; la regla es solo el tope bajo lock. Ver la fila D-223 de `ARQUITECTURA.md`.
 - **M1 — investigación sin reproducir**: guard de `GET /invoicing/documents/:id` sin
   cambios; `issueDateChanges` resguardada en el único DTO builder; sin colisión de cache
   lista/detalle; 3 intentos de reproducción (borrador simple, con `dispatchId`, como

@@ -2058,13 +2058,6 @@ model FiscalDocument {
   /// (el índice único parcial solo cubre las vigentes).
   @@index([number])
   @@index([importBatchId])
-  /// HOTFIX-401/M2: como mucho un borrador de comprobante por pedido sin despacho
-  /// declarado, y como mucho uno por despacho declarado — dos índices únicos **parciales**
-  /// (`WHERE status = 'DRAFT' AND doc_type <> 'NOTA_CREDITO'`, creados en la migración a
-  /// mano). La nota de crédito queda afuera: cuelga del mismo pedido que la factura que
-  /// afecta, pero es un documento distinto del que este índice cuenta. Mismo motivo que el
-  /// de `Purchase` más arriba: Prisma no sabe expresar la condición `WHERE`, así que acá
-  /// queda documentado y la migración manda.
   @@map("fiscal_documents")
 }
 
