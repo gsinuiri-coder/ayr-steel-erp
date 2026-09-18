@@ -59,6 +59,17 @@ describe('CatalogService.findPriceListFloorSummary (RF-S3/M4)', () => {
     service = moduleRef.get(CatalogService);
   });
 
+  it('devuelve el resumen vacío sin consultar pisos cuando no hay precios de lista', async () => {
+    prisma.product.findMany.mockResolvedValue([]);
+
+    await expect(service.findPriceListFloorSummary()).resolves.toEqual({
+      totalWithListPrice: 0,
+      withoutFloor: 0,
+      belowFloor: [],
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('el número de consultas es el mismo con 1 SKU que con 50 (nunca una por SKU)', async () => {
     prisma.product.findMany.mockResolvedValue([productRow()]);
     prisma.pricingSetting.findMany.mockResolvedValue([

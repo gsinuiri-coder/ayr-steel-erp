@@ -125,6 +125,11 @@ function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
+/** Orden binario estable para UUID, SKU y firmas internas; reproduce `Array.sort()` sin locale. */
+export function compareTechnicalCode(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 const orderInclude = {
   customer: { select: { id: true, name: true, docNumber: true } },
   quotation: { select: { id: true, seq: true } },
@@ -1351,9 +1356,7 @@ export class SalesOrdersService {
     );
 
     const coilItems = sorted.filter((i) => i.reserveItemType === InventoryItemTypeEnum.COIL);
-    const coilIds = [...new Set(coilItems.map((i) => i.reserveItemId))].sort((a, b) =>
-      a < b ? -1 : a > b ? 1 : 0,
-    );
+    const coilIds = [...new Set(coilItems.map((i) => i.reserveItemId))].sort(compareTechnicalCode);
 
     // D-134: las líneas que prometen materia prima genérica. El agregado no es un ítem de
     // inventario y no tiene saldo propio que bloquear, pero **sí** tiene bobinas: las que
@@ -1373,9 +1376,7 @@ export class SalesOrdersService {
     // conjuntos se solapan: una transacción tiene la #5 y espera la #3 mientras la otra
     // tiene la #3 y espera la #5. Ordenar dentro de cada lock no alcanza; hay que ordenar
     // el conjunto entero y pedirlo de una vez.
-    const lockIds = [...new Set([...coilIds, ...rawCoilIds])].sort((a, b) =>
-      a < b ? -1 : a > b ? 1 : 0,
-    );
+    const lockIds = [...new Set([...coilIds, ...rawCoilIds])].sort(compareTechnicalCode);
     if (lockIds.length > 0) {
       await tx.$queryRaw`
         SELECT "id" FROM "coils" WHERE "id" = ANY(${lockIds}::uuid[]) ORDER BY "id" FOR UPDATE
@@ -1837,7 +1838,7 @@ export class SalesOrdersService {
     ): string =>
       rows
         .map((r) => `${String(r.lineNumber)}|${r.type}|${r.id}|${toDecimal(r.qty).toFixed(3)}`)
-        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+        .sort(compareTechnicalCode)
         .join(';');
     const before = signature(
       current.map((r) => ({

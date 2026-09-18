@@ -56,6 +56,23 @@ describe('CustomersService.search (RF-S3/M1)', () => {
     );
   });
 
+  it('sin texto conserva el listado inicial de activos', async () => {
+    prisma.customer.findMany.mockResolvedValue([]);
+
+    await service.search();
+
+    expect(prisma.customer.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { name: { contains: '', mode: 'insensitive' } },
+            { docNumber: { contains: '', mode: 'insensitive' } },
+          ],
+        }),
+      }),
+    );
+  });
+
   it('el prefijo va antes que un "contiene" en cualquier otra posición', async () => {
     const contains = customer({ id: 'c-contains', name: 'La Metálica ACM' });
     const prefix = customer({ id: 'c-prefix', name: 'ACM Distribuidora' });

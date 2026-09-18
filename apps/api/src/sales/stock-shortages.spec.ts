@@ -7,7 +7,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { RoofingProductionService } from '../production/roofing-production.service';
 import { PrismaService } from '../prisma/prisma.service';
 import * as rawMaterialModule from './raw-material';
-import { SalesOrdersService } from './sales-orders.service';
+import { compareTechnicalCode, SalesOrdersService } from './sales-orders.service';
 
 jest.mock('./raw-material', () => ({
   ...jest.requireActual<typeof rawMaterialModule>('./raw-material'),
@@ -525,5 +525,17 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     await expect(service.findStockShortages()).resolves.toEqual([]);
     expect(prisma.rawMaterialSpec.findMany).not.toHaveBeenCalled();
     expect(rawMaterialAvailabilityMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('compareTechnicalCode', () => {
+  it('conserva el orden binario previo para códigos y contempla igualdad', () => {
+    expect(['b', 'a', 'a', '10', '2'].sort(compareTechnicalCode)).toEqual([
+      '10',
+      '2',
+      'a',
+      'a',
+      'b',
+    ]);
   });
 });
