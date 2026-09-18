@@ -9,7 +9,7 @@
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:cov": "vitest run --coverage"
+    "test:cov": "vitest run --coverage --coverage.reporter=lcov"
   },
   "dependencies": {
     "@ayr/shared": "workspace:*",
