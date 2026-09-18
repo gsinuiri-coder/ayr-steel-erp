@@ -39,7 +39,7 @@ import {
   type StockPanelDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { ExpressCreateCustomer, ExpressCreateProduct } from '@/components/express-create';
+import { ExpressCreateCustomer } from '@/components/express-create';
 import { SearchSelectField } from '@/components/search-select-modal';
 import {
   ProductStockPickerDialog,
@@ -1144,19 +1144,6 @@ function LineRow({
                 <p className="text-xs text-muted-foreground">
                   Esta línea no tiene productos activos.
                 </p>
-              )}
-              {/*
-                D-156: el SKU que falta se da de alta desde acá, con la línea de la fila ya
-                elegida. Es el callejón más caro del sistema: hasta ahora había que salir al
-                catálogo con la cotización a medio llenar.
-              */}
-              {l.businessLine !== '' && (
-                <ExpressCreateProduct
-                  businessLine={l.businessLine}
-                  onCreated={(created) => {
-                    onChooseProduct(created.id);
-                  }}
-                />
               )}
             </div>
           )}

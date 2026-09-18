@@ -85,7 +85,7 @@ export function SearchSelectModal({
   search,
   minChars = SEARCH_MIN_CHARS,
   columns,
-  actionLabel = 'Seleccionar',
+  actionLabel = 'Elegir',
   selectedId,
   onSelect,
   onOpenChange,
@@ -197,28 +197,47 @@ export function SearchSelectModal({
             </p>
             {extraAction}
           </div>
-          <div className="max-h-80 overflow-y-auto rounded-lg border">
-            <Table>
+          <div className="max-h-80 overflow-x-hidden overflow-y-auto rounded-lg border">
+            <Table className="table-fixed">
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Opción</TableHead>
                   {(columns ?? []).map((column) => (
-                    <TableHead key={column}>{column}</TableHead>
+                    <TableHead key={column} className="whitespace-normal">
+                      {column}
+                    </TableHead>
                   ))}
                   <TableHead className="w-32 text-right">{actionLabel}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {visible.map((option) => (
-                  <TableRow key={option.id}>
-                    <TableCell>
-                      <div className="font-medium">{option.label}</div>
+                  <TableRow
+                    key={option.id}
+                    tabIndex={0}
+                    className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    onClick={() => {
+                      onSelect(option.id);
+                      onOpenChange(false);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onSelect(option.id);
+                        onOpenChange(false);
+                      }
+                    }}
+                  >
+                    <TableCell className="whitespace-normal break-words">
+                      <div className="font-medium break-words">{option.label}</div>
                       {option.hint !== undefined && (
-                        <div className="text-xs text-muted-foreground">{option.hint}</div>
+                        <div className="text-xs break-words text-muted-foreground">
+                          {option.hint}
+                        </div>
                       )}
                     </TableCell>
                     {(columns ?? []).map((column, i) => (
-                      <TableCell key={column} className="text-sm">
+                      <TableCell key={column} className="text-sm whitespace-normal break-words">
                         {option.cells?.[i] ?? '—'}
                       </TableCell>
                     ))}
@@ -227,12 +246,13 @@ export function SearchSelectModal({
                         size="sm"
                         variant={option.id === selectedId ? 'default' : 'outline'}
                         aria-label={`${actionLabel} ${option.label}`}
-                        onClick={() => {
+                        onClick={(event) => {
+                          event.stopPropagation();
                           onSelect(option.id);
                           onOpenChange(false);
                         }}
                       >
-                        {option.id === selectedId ? 'Elegida' : actionLabel}
+                        {actionLabel}
                       </Button>
                     </TableCell>
                   </TableRow>

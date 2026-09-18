@@ -121,5 +121,29 @@ test.describe('F8-S3c/M4 — el selector de cliente siempre abre el buscador', (
     await expect(
       modal.getByRole('button', { name: `Elegir ${b.name} — ${b.docNumber}`, exact: true }),
     ).toBeVisible();
+    const rowA = modal.getByRole('row').filter({ hasText: a.docNumber });
+    const rowB = modal.getByRole('row').filter({ hasText: b.docNumber });
+    await expect(rowA).toContainText(a.docNumber);
+    await expect(rowB).toContainText(b.docNumber);
+    const overflow = await modal.locator('[data-slot="table-container"]').evaluate((table) => ({
+      table: table.scrollWidth - table.clientWidth,
+      wrapper: table.parentElement!.scrollWidth - table.parentElement!.clientWidth,
+    }));
+    expect(overflow.table, 'la tabla de clientes desborda a lo ancho').toBeLessThanOrEqual(0);
+    expect(overflow.wrapper, 'el modal de clientes desborda a lo ancho').toBeLessThanOrEqual(0);
+
+    // La fila completa elige, no solo el botón de la última columna.
+    await rowA.click();
+    await expect(modal).toBeHidden();
+    await expect(field).toContainText(a.docNumber);
+
+    // Y la misma acción está disponible con teclado sobre la fila.
+    await field.click();
+    const reopened = page.getByRole('dialog', { name: 'Elegir · Cliente' });
+    const keyboardRow = reopened.getByRole('row').filter({ hasText: b.docNumber });
+    await keyboardRow.focus();
+    await page.keyboard.press('Enter');
+    await expect(reopened).toBeHidden();
+    await expect(field).toContainText(b.docNumber);
   });
 });
