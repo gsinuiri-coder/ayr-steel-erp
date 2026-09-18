@@ -186,16 +186,14 @@ async function receivedCoilPurchase(
 }
 
 /**
- * Kardex completo de una bobina, en orden cronológico. El API lo devuelve del más
- * reciente al más antiguo (así lo pinta la vista), así que acá se invierte para poder
- * leer las aserciones en el orden en que ocurrieron los movimientos.
+ * Kardex completo de una bobina, en orden cronológico ascendente (D-237).
  */
 async function coilMovements(api: APIRequestContext, coilId: string): Promise<MovementDto[]> {
   const movements = await getItems<MovementDto>(
     api,
     `/api/inventory/movements?itemType=COIL&itemId=${coilId}`,
   );
-  return movements.reverse();
+  return movements;
 }
 
 /** Saldo del kardex de una bobina (cantidad y costo promedio vigente). */

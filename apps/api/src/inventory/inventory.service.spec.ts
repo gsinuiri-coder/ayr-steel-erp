@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { InventoryStrategy, type Prisma } from '@prisma/client';
+import { Decimal } from '@ayr/shared';
 import { ENV } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService, type RecordMovementInput } from './inventory.service';
@@ -537,6 +538,88 @@ describe('InventoryService (§3.2, D-028)', () => {
         service.reverse(fake.tx, first!.id, ACTOR, 'Compra anulada'),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '1000.000' });
+    });
+  });
+
+  describe('consulta del kardex (D-237)', () => {
+    function movement(id: bigint, operationDate: string) {
+      return {
+        id,
+        businessLine: { code: 'drywall' },
+        itemType: 'COIL',
+        itemId: ITEM,
+        type: 'IN',
+        qty: new Decimal('10.000'),
+        unit: 'KGM',
+        unitCost: new Decimal('5.0000'),
+        totalCost: new Decimal('50.0000'),
+        refType: 'PURCHASE',
+        refId: null,
+        notes: null,
+        reversalOfId: null,
+        reversals: [],
+        actorId: null,
+        at: new Date(`${operationDate}T12:00:00.000Z`),
+        operationDate: new Date(`${operationDate}T00:00:00.000Z`),
+      };
+    }
+
+    function setReadPrisma(rows: ReturnType<typeof movement>[], total = rows.length) {
+      const findMany = jest.fn().mockResolvedValue(rows);
+      const count = jest.fn().mockResolvedValue(total);
+      const prisma = {
+        inventoryMovement: { findMany, count },
+        product: { findMany: jest.fn().mockResolvedValue([]) },
+        coil: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ id: ITEM, code: 'BOB-E2E', typeKey: 'GALV-0.50' }]),
+        },
+      };
+      (service as unknown as { prisma: PrismaService }).prisma = prisma as unknown as PrismaService;
+      return { findMany, count };
+    }
+
+    it('entrega el historial individual completo en orden ascendente y como una sola página', async () => {
+      const oldMovement = movement(1n, '2026-09-01');
+      const newMovement = movement(2n, '2026-09-02');
+      const prisma = setReadPrisma([oldMovement, newMovement]);
+
+      const result = await service.findMovements(
+        { itemType: 'COIL', itemId: ITEM, page: 9, pageSize: 1 },
+        true,
+      );
+
+      expect(result.items.map((row) => row.id)).toEqual(['1', '2']);
+      expect(result.items.map((row) => row.balanceQty)).toEqual(['10.000', '20.000']);
+      expect(result).toMatchObject({ total: 2, page: 1, pageSize: 2 });
+      expect(prisma.count).not.toHaveBeenCalled();
+      expect(prisma.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: [{ operationDate: 'asc' }, { id: 'asc' }],
+          skip: 0,
+          take: 10_000,
+        }),
+      );
+    });
+
+    it('conserva reciente primero y la paginación en el listado mezclado', async () => {
+      const newMovement = movement(2n, '2026-09-02');
+      const oldMovement = movement(1n, '2026-09-01');
+      const prisma = setReadPrisma([newMovement, oldMovement], 12);
+
+      const result = await service.findMovements({ page: 2, pageSize: 2 }, false);
+
+      expect(result.items.map((row) => row.id)).toEqual(['2', '1']);
+      expect(result).toMatchObject({ total: 12, page: 2, pageSize: 2 });
+      expect(prisma.count).toHaveBeenCalledTimes(1);
+      expect(prisma.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: [{ operationDate: 'desc' }, { id: 'desc' }],
+          skip: 2,
+          take: 2,
+        }),
+      );
     });
   });
 });
