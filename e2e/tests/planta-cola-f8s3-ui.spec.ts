@@ -203,7 +203,17 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
         page.getByRole('heading', { name: 'Historial de órdenes', exact: true }),
       ).toBeVisible();
       await expect(page.getByText('Historial de órdenes de producción')).toBeVisible();
-      await expect(page.getByRole('link', { name: firstCode, exact: true })).toBeVisible();
+      const historyGroup = page
+        .getByRole('link', { name: a.order.code, exact: true })
+        .locator('xpath=ancestor::div[@data-slot="card"][1]');
+      await expect(historyGroup).toContainText(customer.name);
+      await expect(
+        historyGroup.getByRole('link', { name: firstCode, exact: true }),
+      ).toHaveAttribute('href', `/produccion/${first!}`);
+      await expect(
+        historyGroup.getByRole('link', { name: secondCode, exact: true }),
+      ).toHaveAttribute('href', `/produccion/${second!}`);
+      await expect(historyGroup).toContainText('2 órdenes');
       // Y ya no convive plegado con la lista de pedidos.
       await expect(
         page.getByRole('region', { name: 'Pedidos con producción pendiente' }),
