@@ -1,12 +1,22 @@
 import { Test } from '@nestjs/testing';
-import { InventoryItemType, InventoryStrategy } from '@prisma/client';
-import { Decimal } from '@ayr/shared';
+import { InventoryItemType, InventoryStrategy, RoofingProductKind } from '@prisma/client';
+import { Decimal, Unit } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import { InventoryService } from '../inventory/inventory.service';
 import { RoofingProductionService } from '../production/roofing-production.service';
 import { PrismaService } from '../prisma/prisma.service';
+import * as rawMaterialModule from './raw-material';
 import { SalesOrdersService } from './sales-orders.service';
+
+jest.mock('./raw-material', () => ({
+  ...jest.requireActual<typeof rawMaterialModule>('./raw-material'),
+  rawMaterialAvailability: jest.fn(),
+  rawMaterialSpecLabels: jest.fn(),
+}));
+
+const rawMaterialAvailabilityMock = jest.mocked(rawMaterialModule.rawMaterialAvailability);
+const rawMaterialSpecLabelsMock = jest.mocked(rawMaterialModule.rawMaterialSpecLabels);
 
 /**
  * RF-S3/M2 (D-228) — el card "Cotizaciones sin stock disponible" no puede volver a costar una
@@ -24,6 +34,7 @@ function quotationRow(overrides: {
   id: string;
   seq: number;
   customerName?: string;
+  validUntil?: Date | null;
   items: {
     lineNumber: number;
     productId: string;
@@ -39,7 +50,7 @@ function quotationRow(overrides: {
   return {
     id: overrides.id,
     seq: overrides.seq,
-    validUntil: null,
+    validUntil: overrides.validUntil ?? null,
     customer: { name: overrides.customerName ?? 'ACME SAC' },
     items: overrides.items.map((i) => ({
       lineNumber: i.lineNumber,
@@ -58,6 +69,22 @@ function quotationRow(overrides: {
       },
       pieces: [],
     })),
+  };
+}
+
+function madeToOrderProduct(overrides: { thicknessMm?: Decimal | null } = {}) {
+  return {
+    id: 'p-raw',
+    sku: 'TECHO-ROJO',
+    colorId: 'color-1',
+    businessLineId: 'bl-roofing',
+    thicknessMm: overrides.thicknessMm === undefined ? new Decimal('0.50') : overrides.thicknessMm,
+    widthMm: new Decimal('1000.00'),
+    unit: Unit.MTR,
+    lengthMm: null,
+    roofingKind: RoofingProductKind.A_MEDIDA,
+    color: { name: 'Rojo' },
+    finish: { densityFactor: new Decimal('1.0000') },
   };
 }
 
@@ -120,6 +147,9 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       ],
     }).compile();
     service = moduleRef.get(SalesOrdersService);
+    rawMaterialAvailabilityMock.mockReset();
+    rawMaterialSpecLabelsMock.mockReset();
+    rawMaterialSpecLabelsMock.mockResolvedValue(new Map());
     jest.useFakeTimers().setSystemTime(NOW);
   });
 
@@ -354,5 +384,146 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     // ítem dos veces) ni 0 (eso sería no descontar lo que ya tomó la línea 1).
     const entry = result.find((r) => r.quotationId === 'q-1');
     expect(entry?.lines).toEqual([expect.objectContaining({ lineNumber: 2, missingQty: '2.000' })]);
+  });
+
+  it('descarta temprano una consulta vacía y cotizaciones vencidas sin resolver inventario', async () => {
+    setQuotations([]);
+    await expect(service.findStockShortages()).resolves.toEqual([]);
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+
+    setQuotations([
+      quotationRow({
+        id: 'q-expired',
+        seq: 1,
+        validUntil: new Date('2026-09-16T00:00:00.000Z'),
+        items: [
+          {
+            lineNumber: 1,
+            productId: 'p-1',
+            qty: '1',
+            reserveItemType: InventoryItemType.PRODUCT,
+            reserveItemId: 'item-1',
+            reserveQty: '1',
+            reserveUnit: Unit.NIU,
+          },
+        ],
+      }),
+    ]);
+
+    await expect(service.findStockShortages()).resolves.toEqual([]);
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it('resuelve una cobertura a medida por spec real y usa su disponibilidad y etiqueta', async () => {
+    setQuotations([
+      quotationRow({
+        id: 'q-raw',
+        seq: 10,
+        items: [
+          {
+            lineNumber: 1,
+            productId: 'p-raw',
+            qty: '10',
+            reserveItemType: InventoryItemType.PRODUCT,
+            reserveItemId: 'legacy-product-id',
+            reserveQty: '10',
+            reserveUnit: Unit.MTR,
+            sku: 'TECHO-ROJO',
+          },
+        ],
+      }),
+    ]);
+    prisma.product.findMany.mockResolvedValue([madeToOrderProduct()]);
+    prisma.rawMaterialSpec.findMany.mockResolvedValue([
+      {
+        id: 'spec-1',
+        businessLineId: 'bl-roofing',
+        colorId: 'color-1',
+        thicknessMm: new Decimal('0.50'),
+      },
+    ]);
+    rawMaterialAvailabilityMock.mockResolvedValue({
+      available: new Decimal('0'),
+    } as Awaited<ReturnType<typeof rawMaterialModule.rawMaterialAvailability>>);
+    rawMaterialSpecLabelsMock.mockResolvedValue(new Map([['spec-1', 'Bobina 0.50 mm ROJO']]));
+
+    const result = await service.findStockShortages();
+
+    expect(rawMaterialAvailabilityMock).toHaveBeenCalledTimes(1);
+    expect(rawMaterialAvailabilityMock).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ id: 'spec-1', thicknessMm: '0.50' }),
+      expect.any(String),
+      {},
+    );
+    expect(result).toEqual([
+      expect.objectContaining({
+        quotationId: 'q-raw',
+        lines: [
+          expect.objectContaining({
+            productSku: 'TECHO-ROJO',
+            label: 'Bobina 0.50 mm ROJO',
+            unit: Unit.KGM,
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it('trata una spec todavía virtual como disponible cero sin consultar bobinas', async () => {
+    setQuotations([
+      quotationRow({
+        id: 'q-virtual',
+        seq: 11,
+        items: [
+          {
+            lineNumber: 1,
+            productId: 'p-raw',
+            qty: '2',
+            reserveItemType: InventoryItemType.PRODUCT,
+            reserveItemId: 'legacy-product-id',
+            reserveQty: '2',
+            reserveUnit: Unit.MTR,
+            sku: 'TECHO-ROJO',
+          },
+        ],
+      }),
+    ]);
+    prisma.product.findMany.mockResolvedValue([madeToOrderProduct()]);
+    prisma.rawMaterialSpec.findMany.mockResolvedValue([]);
+
+    const result = await service.findStockShortages();
+
+    expect(rawMaterialAvailabilityMock).not.toHaveBeenCalled();
+    expect(prisma.quotationReservation.findMany).not.toHaveBeenCalled();
+    expect(result[0]?.lines[0]).toEqual(
+      expect.objectContaining({ productSku: 'TECHO-ROJO', unit: Unit.KGM }),
+    );
+  });
+
+  it('omite toda la cotización si el catálogo a medida no permite calcular el material', async () => {
+    setQuotations([
+      quotationRow({
+        id: 'q-invalid',
+        seq: 12,
+        items: [
+          {
+            lineNumber: 1,
+            productId: 'p-raw',
+            qty: '2',
+            reserveItemType: InventoryItemType.PRODUCT,
+            reserveItemId: 'legacy-product-id',
+            reserveQty: '2',
+            reserveUnit: Unit.MTR,
+            sku: 'TECHO-INCOMPLETO',
+          },
+        ],
+      }),
+    ]);
+    prisma.product.findMany.mockResolvedValue([madeToOrderProduct({ thicknessMm: null })]);
+
+    await expect(service.findStockShortages()).resolves.toEqual([]);
+    expect(prisma.rawMaterialSpec.findMany).not.toHaveBeenCalled();
+    expect(rawMaterialAvailabilityMock).not.toHaveBeenCalled();
   });
 });

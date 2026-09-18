@@ -1351,7 +1351,9 @@ export class SalesOrdersService {
     );
 
     const coilItems = sorted.filter((i) => i.reserveItemType === InventoryItemTypeEnum.COIL);
-    const coilIds = [...new Set(coilItems.map((i) => i.reserveItemId))].sort();
+    const coilIds = [...new Set(coilItems.map((i) => i.reserveItemId))].sort((a, b) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
 
     // D-134: las líneas que prometen materia prima genérica. El agregado no es un ítem de
     // inventario y no tiene saldo propio que bloquear, pero **sí** tiene bobinas: las que
@@ -1371,7 +1373,9 @@ export class SalesOrdersService {
     // conjuntos se solapan: una transacción tiene la #5 y espera la #3 mientras la otra
     // tiene la #3 y espera la #5. Ordenar dentro de cada lock no alcanza; hay que ordenar
     // el conjunto entero y pedirlo de una vez.
-    const lockIds = [...new Set([...coilIds, ...rawCoilIds])].sort();
+    const lockIds = [...new Set([...coilIds, ...rawCoilIds])].sort((a, b) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
     if (lockIds.length > 0) {
       await tx.$queryRaw`
         SELECT "id" FROM "coils" WHERE "id" = ANY(${lockIds}::uuid[]) ORDER BY "id" FOR UPDATE
@@ -1833,7 +1837,7 @@ export class SalesOrdersService {
     ): string =>
       rows
         .map((r) => `${String(r.lineNumber)}|${r.type}|${r.id}|${toDecimal(r.qty).toFixed(3)}`)
-        .sort()
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
         .join(';');
     const before = signature(
       current.map((r) => ({
