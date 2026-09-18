@@ -27,12 +27,10 @@ de runtime, datos, infraestructura desplegada ni producción. La CI del PR es el
 
 ## 4. Bloqueos / pendientes
 
-- **Hook sin verificación ejecutable dentro del sandbox.** `sh.exe` está bloqueado. El dueño
-  debe ejecutar fuera del sandbox los dos dry-runs de la sección siguiente; no se declara verde.
 - **Revisión independiente pendiente.** Tres intentos con `agy` 1.2.5 en modo plan/sandbox
   fallaron porque no pudo escribir su estado bajo `~/.gemini` y el modo headless denegó el
-  permiso de comando. Repetir el pase fuera del sandbox; no se abrió el aislamiento con
-  `--dangerously-skip-permissions`.
+  permiso de comando. Corregir los permisos de `~/.gemini` o repetir el pase en un entorno que
+  pueda escribir allí; no usar `--dangerously-skip-permissions` para desbloquearlo.
 - Los unitarios web locales quedaron bloqueados por `spawn EPERM`; CI Linux es la evidencia.
 - E2E completa no aplica porque el diff es exclusivamente docs/configuración de agentes.
 
@@ -43,8 +41,8 @@ git push --dry-run origin HEAD:main
 $env:AYR_OWNER_PUSH='1'; git push --dry-run origin HEAD:main; Remove-Item Env:AYR_OWNER_PUSH
 ```
 
-El primer comando debe imprimir el bloqueo AYR; el segundo debe llegar al dry-run de Git sin ese
-mensaje. Ninguno publica por `--dry-run`.
+El dueño ejecutó la verificación fuera del sandbox: sin la variable el hook bloqueó `main`, una
+rama de trabajo pasó y `AYR_OWNER_PUSH=1` permitió el bypass. Ningún dry-run publicó cambios.
 
 ```powershell
 pnpm format:check
@@ -58,5 +56,6 @@ Web: pendiente de CI por la restricción de procesos hijos del sandbox.
 
 ## 6. Siguiente sesión
 
-Esperar la CI del PR de `chore/agents`, presentar al dueño el resumen de D-232 y detenerse. Solo
-con su OK explícito se mergea a `main`; después se confirma la CI de `main`.
+El dueño dio el OK explícito de D-232 para mergear el PR #4. Después del merge y de confirmar la
+CI de `main`, rebasar `rf-s3` sobre ese `main` nuevo y completar su QA sin mergearlo fuera de la
+ventana de deploy.

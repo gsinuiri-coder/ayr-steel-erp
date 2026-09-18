@@ -59,10 +59,9 @@
   importaba `AGENTS.md` y definía únicamente el rol de solo lectura.
 - **Skills compartidas.** `ayr-revisor` fija la revisión recíproca Codex → `agy` y `agy` →
   Codex; cierre, QA y handoff ya no dependen de fuentes eliminadas y reflejan D-232.
-- **Hook pendiente de verificación externa.** `.githooks/pre-push` deja pasar ramas de trabajo y
-  bloquea el destino `refs/heads/main` salvo `AYR_OWNER_PUSH=1`. El sandbox impide ejecutar
-  `sh.exe`, así que no se declara verificado: `docs/agentes/README.md` deja los dos comandos
-  exactos con `--dry-run` para probar bloqueo y bypass fuera del sandbox.
+- **Hook verificado por el dueño fuera del sandbox.** `.githooks/pre-push` bloqueó el destino
+  `refs/heads/main` sin la variable, dejó pasar una rama de trabajo y permitió el bypass con
+  `AYR_OWNER_PUSH=1`; los tres casos se probaron con `--dry-run`, sin publicar cambios.
 - **QA local.** Format, lint y typecheck verdes; API 581/581 unitarios. Los 8 unitarios del web
   no arrancaron por límites del sandbox (`spawn EPERM` con el loader normal; el loader alterno
   no pudo cargar CommonJS) y quedan a cargo de CI Linux. E2E completa no aplica: solo cambiaron
