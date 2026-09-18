@@ -12,6 +12,7 @@
     "lint": "turbo run lint && eslint e2e",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:scripts": "node --test scripts/*.test.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml,css}\"",
     "e2e": "playwright test",

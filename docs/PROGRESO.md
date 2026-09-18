@@ -104,6 +104,13 @@
   [35352376572](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35352376572)
   verde: calidad/unitarios, análisis estático, E2E completa 371 passed/0 failed/3 skipped y
   smoke Neon 35 passed/0 failed/2 skipped.
+- **Grind post-RF-S3 — credencial de demo (D-236).** Resuelta la contradicción detectada en la
+  UAT: `db-demo.mjs` ahora pasa `SEED_ADMIN_FOR_TESTS=1`, por lo que el seed sí reemplaza el hash
+  clonado de producción con la contraseña propia de `.env.demo`. El flag queda limitado a demo;
+  no se ejecutó `db:demo` ni se modificaron datos o schema. Se añadió un test centinela de scripts
+  y su ejecución al job de calidad de CI. Revisión independiente bloqueada tras tres intentos:
+  Antigravity headless no detectó primero el workspace y luego auto-denegó dos veces el permiso
+  `command` requerido para leer el diff; no se usó `--dangerously-skip-permissions`.
 
 ## Fase 0 — detalle
 

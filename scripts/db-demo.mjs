@@ -37,6 +37,9 @@ const env = {
   JWT_SECRET: demo.JWT_SECRET,
   ADMIN_EMAIL: demo.ADMIN_EMAIL,
   ADMIN_PASSWORD: demo.ADMIN_PASSWORD,
+  // Demo se reconstruye desde production y el admin ya existe. Sin este modo, el upsert del
+  // seed preserva el hash real y contradice la credencial propia que `.env.demo` acaba de crear.
+  SEED_ADMIN_FOR_TESTS: '1',
 };
 const apiDir = resolve(ROOT, 'apps/api');
 const isWin = process.platform === 'win32';

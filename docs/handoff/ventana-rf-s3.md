@@ -42,10 +42,9 @@ verificación real de selectores/cards verde y CI de `main` completa en verde.
 
 ## 4. Bloqueos / pendientes
 
-- **Deuda `db-demo.mjs`:** promete sembrar el administrador con la contraseña de `.env.demo`,
-  pero no define `SEED_ADMIN_FOR_TESTS=1`; sobre el clon de producción conserva el hash de
-  producción. Resolver en una sesión de grind: corregir el script o corregir la promesa de la
-  documentación. No se tocó en esta ventana.
+- **Deuda `db-demo.mjs` resuelta después de la ventana (D-236):** el dueño eligió conservar la
+  promesa documental y corregir el script. `db:demo` ahora define `SEED_ADMIN_FOR_TESTS=1`, por
+  lo que reemplaza el hash clonado con la contraseña propia de `.env.demo`.
 - El dueño eliminará la rama remota `rf-s3`; el agente retira solo worktree y rama local.
 - La rama Neon `ensayo-pitr-20260917` solo puede borrarse con OK explícito del dueño por nombre.
 - No hay bloqueo funcional ni rollback pendiente. Si apareciera una regresión, la opción
@@ -69,5 +68,5 @@ esperados; no hubo rojos que clasificar.
 
 ## 6. Siguiente sesión
 
-Sesión de grind ya indicada por el dueño: resolver la contradicción de `db-demo.mjs` y su
-documentación, sin encadenar cambios funcionales de RF-S3.
+La deuda de `db-demo.mjs` quedó resuelta por D-236. No hay una siguiente tarea autorizada en
+este handoff.

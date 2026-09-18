@@ -33,6 +33,7 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: pnpm test:scripts
       - run: pnpm --filter @ayr/api test:cov
       - run: pnpm --filter @ayr/web test:cov
       - uses: actions/upload-artifact@v4
