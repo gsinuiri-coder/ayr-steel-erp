@@ -1,64 +1,62 @@
-# Handoff — CHORE-AGENTS: infraestructura compartida de agentes
+# Handoff — CHORE-AGENTS: política de push y esquema de dos agentes
 
 ## 1. Resumen
 
-La rama `chore/agents` deja a Codex como agente principal, Antigravity como segundo
-implementador/revisor y Claude Code en solo lectura. Las reglas y seis procedimientos quedan
-versionados y se verificaron con los binarios instalados. Todo está listo para push del dueño;
-no se tocó aplicación, datos, deploy ni el worktree `rf-s3`.
+`chore/agents` deja activa D-232, reduce el esquema a Codex y Antigravity (D-233) y retira los
+adaptadores de Claude Code. Solo cambia documentación y configuración de agentes: no toca rutas
+de runtime, datos, infraestructura desplegada ni producción. La CI del PR es el gate de merge.
 
 ## 2. Hecho
 
-- `AGENTS.md` quedó como fuente canónica fusionada; `CLAUDE.md`, `GEMINI.md` y
-  `.agents/rules/00-ayr.md` son adaptadores sin reglas divergentes.
-- Se portaron las seis skills en `.agents/skills/`: arranque, revisión, QA, cierre, handoff y
-  ventana. Se documentó invocación automática o explícita con `$ayr-*`; M3 de custom prompts se
-  descartó por decisión del dueño.
-- `scripts/setup-agentes.mjs` y `pnpm setup:agentes` configuran de forma idempotente
-  `core.hooksPath`, el worktree y las skills de Antigravity, preservando configuración ajena.
-- `.githooks/pre-push` bloquea pushes de agentes salvo `AYR_OWNER_PUSH=1`.
-- Claude Code quedó restringido a lectura; conserva comandos de diagnóstico y niega edición,
-  mutaciones Git/GitHub, intérpretes, gestores de paquetes y CLIs de infraestructura.
-- Se añadió la plantilla vigente `docs/handoff/_plantilla.md` y la guía
-  `docs/agentes/README.md` con perfiles de Codex y las particularidades verificadas de
-  Antigravity 1.2.5.
+- `AGENTS.md` permite push de ramas de trabajo y exige resumen + OK explícito del dueño antes de
+  cualquier push o merge a `main`; `gh repo sync` y borrar ramas protegidas siguen prohibidos.
+- `.githooks/pre-push` inspecciona cada ref remoto, permite ramas de trabajo y bloquea
+  `refs/heads/main` salvo `AYR_OWNER_PUSH=1`.
+- Se eliminaron `CLAUDE.md` y `.claude/`. La revisión previa confirmó que `CLAUDE.md` solo
+  importaba `AGENTS.md` y definía el rol: no había una regla técnica exclusiva que migrar.
+- `AGENTS.md` §2 queda con Codex principal y `agy` segundo implementador. `ayr-revisor` fija la
+  revisión cruzada Codex → `agy` y `agy` → Codex; nadie firma su propio cambio.
+- Se actualizaron `ayr-cierre`, `ayr-handoff`, `ayr-qa` y `docs/agentes/README.md` para no dejar
+  fuentes eliminadas ni una política de push obsoleta.
 
 ## 3. Decisiones tomadas
 
-- **D-230** — Toda ambigüedad de alcance o política obliga a detenerse, presentar recomendación
-  y esperar decisión del dueño. Sustituye la autorización histórica de aplicar la recomendación
-  sin preguntar; evita decisiones silenciosas con varios agentes escritores.
+- **D-232** — Un agente solo puede empujar o mergear `main` después de presentar commits, CI,
+  despliegue y riesgo, y recibir el OK explícito del dueño en la sesión; sustituye D-231.
+- **D-233** — Quedan dos agentes: Codex y Antigravity, con revisión recíproca obligatoria.
 
 ## 4. Bloqueos / pendientes
 
-- Ningún bloqueo de producto o infraestructura.
-- Tras clonar o crear un worktree nuevo, ejecutar `pnpm setup:agentes` y abrir la primera sesión
-  de Antigravity desde la raíz con `agy --new-project`.
-- Claude Code muestra que `Edit(**)` es la regla que cubre Write/Edit/NotebookEdit en 2.1.274;
-  no volver a introducir las formas inválidas `Write(**)` o `NotebookEdit(**)`.
-- E2E completa quedó omitida deliberadamente porque esta sesión no tocó aplicación ni flujo.
+- **Hook sin verificación ejecutable dentro del sandbox.** `sh.exe` está bloqueado. El dueño
+  debe ejecutar fuera del sandbox los dos dry-runs de la sección siguiente; no se declara verde.
+- **Revisión independiente pendiente.** Tres intentos con `agy` 1.2.5 en modo plan/sandbox
+  fallaron porque no pudo escribir su estado bajo `~/.gemini` y el modo headless denegó el
+  permiso de comando. Repetir el pase fuera del sandbox; no se abrió el aislamiento con
+  `--dangerously-skip-permissions`.
+- Los unitarios web locales quedaron bloqueados por `spawn EPERM`; CI Linux es la evidencia.
+- E2E completa no aplica porque el diff es exclusivamente docs/configuración de agentes.
 
 ## 5. Cómo verificar
 
-```bash
-pnpm setup:agentes
-git config --local --get core.hooksPath
-git push --dry-run origin HEAD:refs/heads/chore-agents-hook-test
+```powershell
+git push --dry-run origin HEAD:main
+$env:AYR_OWNER_PUSH='1'; git push --dry-run origin HEAD:main; Remove-Item Env:AYR_OWNER_PUSH
+```
 
-codex exec --ephemeral -s read-only -c 'approval_policy="never"' \
-  '$ayr-arranque Indica la primera fuente que debes leer y no escribas archivos.'
-agy --new-project
+El primer comando debe imprimir el bloqueo AYR; el segundo debe llegar al dry-run de Git sin ese
+mensaje. Ninguno publica por `--dry-run`.
 
+```powershell
+pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm test
 ```
 
-Resultados de esta sesión: lint y typecheck verdes; 589 unitarios passed, 0 failed, 0 skipped.
-El hook abortó el dry-run antes de contactar al remoto. Antigravity reconoció `AGENTS.md` y las
-seis skills. Claude devolvió `permission_denials` para `Write` y no creó el probe.
+Resultados locales: format, lint y typecheck verdes; API 581 passed / 0 failed / 0 skipped.
+Web: pendiente de CI por la restricción de procesos hijos del sandbox.
 
 ## 6. Siguiente sesión
 
-El dueño empuja `chore/agents` y verifica CI. No hay otra tarea autorizada ni se encadena una
-ventana de producto desde este handoff.
+Esperar la CI del PR de `chore/agents`, presentar al dueño el resumen de D-232 y detenerse. Solo
+con su OK explícito se mergea a `main`; después se confirma la CI de `main`.

@@ -20,10 +20,11 @@ description: 'Cierra una sesión de AYR Steel ERP después de revisión y QA: co
    - `$ayr-handoff` para `docs/handoff/<sesion>.md`.
 5. Revisa `git status`, el diff final y los archivos ignorados relevantes. No dejes procesos ni
    worktrees auxiliares colgados.
-6. Crea commits locales pequeños y temáticos, conventional commits en español. Nunca hagas
-   `git push`, merge remoto, `gh api`, `gh pr merge`, `gh repo sync` ni borres ramas remotas.
-7. Entrega la lista de commits y el comando exacto de push con `AYR_OWNER_PUSH=1` para que lo
-   ejecute el dueño. Después del push humano, verifica CI antes de declarar cierre definitivo.
+6. Crea commits pequeños y temáticos, conventional commits en español. Puedes empujar la rama de
+   trabajo y abrir su PR. Nunca uses `gh repo sync` ni borres ramas protegidas.
+7. Empuja la rama de trabajo y entrega la lista de commits y el estado de CI. Antes de cualquier
+   push o merge a `main`, presenta el resumen de D-232 y espera el OK explícito del dueño; solo
+   entonces usa `AYR_OWNER_PUSH=1`. Verifica CI antes de declarar cierre definitivo.
 
-Fuentes: protocolo de cierre de `CLAUDE.md`, `AGENTS.md` §5 y `$ayr-handoff`. No existe un
+Fuentes: protocolo de cierre de `AGENTS.md` §5 y `$ayr-handoff`. No existe un
 comando `/goal` versionado; no se inventa uno.

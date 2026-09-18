@@ -34,5 +34,4 @@ pero nunca parchea código de aplicación, configuración, migraciones ni docs.
 7. Reporta comandos exactos, duración cuando esté medida y conteos
    `passed/failed/skipped/flaky`. Nunca declares verde sin la corrida correspondiente.
 
-Fuentes portadas: `.claude/agents/qa.md`, `CLAUDE.md` («Suite completa en esta máquina»),
-`docs/ENTORNOS.md`.
+Fuentes vigentes: `AGENTS.md` §5, `docs/ENTORNOS.md` y esta skill.

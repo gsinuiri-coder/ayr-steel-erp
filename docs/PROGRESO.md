@@ -49,25 +49,28 @@
 
 ## Sesión CHORE-AGENTS — infraestructura compartida de agentes (2026-09-17)
 
-- **Reglas canónicas.** `AGENTS.md` fusiona sin pérdida las reglas operativas de `CLAUDE.md`
-  con el brief del dueño. Se corrigieron la fecha de datos reales, D-126 y los detalles técnicos
-  de Decimal, `sellsByLength`/`isMadeToMeasure`, entornos, sesiones, git-sha y seguridad. D-230
-  sustituye la antigua autorización de resolver ambigüedades sin detenerse.
-- **Skills compartidas.** Quedaron versionadas `ayr-arranque`, `ayr-revisor`, `ayr-qa`,
-  `ayr-cierre`, `ayr-handoff` y `ayr-ventana` bajo `.agents/skills/`. Codex 0.154 cargó
-  `$ayr-arranque`; Antigravity 1.2.5 enumeró las seis skills y reconoció las reglas al asociar
-  este worktree con `agy --new-project`. No se instalaron custom prompts deprecados.
-- **Roles y guardrails.** Claude Code 2.1.274 quedó en solo lectura mediante `@AGENTS.md` y
-  `.claude/settings.json`; una llamada real a `Write` terminó en `permission_denials` y no creó
-  el archivo de prueba. `.githooks/pre-push` bloqueó un `git push --dry-run`; solo permite al
-  dueño continuar con `AYR_OWNER_PUSH=1`. `pnpm setup:agentes` instala el hook y fusiona la
-  configuración local de Antigravity sin borrar entradas ajenas.
-- **Revisión independiente.** Antigravity reportó un frontmatter duplicado y la falta de crear
-  `~/.gemini/config/` en una máquina nueva; ambos hallazgos quedaron corregidos.
-- **QA.** Prettier de archivos tocados, lint y typecheck verdes. Unitarios: API 581/581, web
-  8/8, shared sin tests; 589 passed, 0 failed, 0 skipped. El primer lint rojo (13 025 errores)
-  fue infraestructura local por cliente Prisma no generado; `db:generate` lo resolvió y la
-  repetición pasó. E2E completa no aplica: no se tocó código de aplicación ni flujo de negocio.
+- **Reglas canónicas.** `AGENTS.md` conserva las reglas técnicas y operativas en una sola fuente.
+  D-230 mantiene la parada ante ambigüedad; D-232 sustituye D-231 y permite a los agentes
+  empujar o mergear `main` solo después de presentar commits, CI, despliegue y riesgo, y recibir
+  el OK explícito del dueño. `gh repo sync` y borrar ramas protegidas siguen prohibidos.
+- **Dos agentes (D-233).** El esquema queda en Codex CLI como principal y Antigravity (`agy`)
+  como segundo implementador/revisor. Se eliminaron `CLAUDE.md`, `.claude/` y sus referencias
+  activas; la auditoría previa confirmó que `CLAUDE.md` no tenía una regla técnica exclusiva:
+  importaba `AGENTS.md` y definía únicamente el rol de solo lectura.
+- **Skills compartidas.** `ayr-revisor` fija la revisión recíproca Codex → `agy` y `agy` →
+  Codex; cierre, QA y handoff ya no dependen de fuentes eliminadas y reflejan D-232.
+- **Hook pendiente de verificación externa.** `.githooks/pre-push` deja pasar ramas de trabajo y
+  bloquea el destino `refs/heads/main` salvo `AYR_OWNER_PUSH=1`. El sandbox impide ejecutar
+  `sh.exe`, así que no se declara verificado: `docs/agentes/README.md` deja los dos comandos
+  exactos con `--dry-run` para probar bloqueo y bypass fuera del sandbox.
+- **QA local.** Format, lint y typecheck verdes; API 581/581 unitarios. Los 8 unitarios del web
+  no arrancaron por límites del sandbox (`spawn EPERM` con el loader normal; el loader alterno
+  no pudo cargar CommonJS) y quedan a cargo de CI Linux. E2E completa no aplica: solo cambiaron
+  docs y configuración de agentes, sin rutas de runtime.
+- **Revisión independiente bloqueada.** Se intentó tres veces con Antigravity 1.2.5 en modo
+  plan/sandbox; el CLI no pudo persistir bajo `~/.gemini` y terminó pidiendo un permiso de
+  comando que el modo headless no puede aprobar. No se usó `--dangerously-skip-permissions`
+  porque habría roto el aislamiento del revisor. El pase debe repetirse fuera del sandbox.
 
 ## Fase 0 — detalle
 

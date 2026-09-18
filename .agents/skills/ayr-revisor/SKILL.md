@@ -5,8 +5,9 @@ description: Realiza la revisión independiente de un diff o conjunto de archivo
 
 # Revisión independiente AYR
 
-Esta skill es de solo lectura. El revisor **no puede ser autor** del cambio; si lo fue, debe
-detenerse e indicar que Codex, Antigravity o Claude Code distinto debe hacer el pase.
+Esta skill es de solo lectura. El revisor **no puede ser autor** del cambio: si escribió Codex,
+revisa Antigravity (`agy`); si escribió `agy`, revisa Codex. Si el agente actual fue el autor,
+debe detenerse y entregar el pase al otro.
 
 1. Lee `AGENTS.md`, `docs/ARQUITECTURA.md` §0.2 y §3.3, y las decisiones/RF del alcance.
 2. Obtén `git diff`, `git diff --cached`, `git status --porcelain` y los archivos nuevos. Si se
@@ -25,4 +26,4 @@ detenerse e indicar que Codex, Antigravity o Claude Code distinto debe hacer el 
    `Corregir N hallazgos bloqueantes/altos antes de commit`. Declara explícitamente cuando no
    haya hallazgos.
 
-Fuente portada: `.claude/agents/revisor.md`; reglas vigentes: `AGENTS.md`.
+Fuentes vigentes: `AGENTS.md`, `docs/ARQUITECTURA.md` y esta skill.

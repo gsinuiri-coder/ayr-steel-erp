@@ -1,8 +1,7 @@
 # Agentes de AYR Steel ERP
 
 La configuración canónica vive en `AGENTS.md`. Codex CLI y Antigravity comparten las skills
-versionadas en `.agents/skills/`; Claude Code importa las reglas desde `CLAUDE.md` y queda en
-solo lectura mediante `.claude/settings.json`.
+versionadas en `.agents/skills/`.
 
 ## Instalación local
 
@@ -18,6 +17,31 @@ claves. También permite `read_file` solo para el worktree y los comandos de dia
 `git diff`, `git log`, `git show` y `git status`; no concede escritura. Si ya existe un
 `core.hooksPath` distinto o el JSON de Antigravity no es válido, se detiene y lo informa en
 lugar de sobrescribirlo. No instala prompts ni escribe en `$CODEX_HOME`.
+
+## Publicación de ramas y PRs
+
+Los agentes pueden empujar sus ramas de trabajo y abrir PRs contra `main`. Para empujar o mergear
+a `main` deben presentar primero al dueño un resumen de commits, CI, despliegue y riesgo, y
+recibir su OK explícito en la sesión. Sin ese OK no pueden hacerlo. `gh repo sync` y el borrado
+de ramas protegidas siguen prohibidos.
+
+El hook `.githooks/pre-push` inspecciona el ref remoto de cada actualización: deja pasar ramas de
+trabajo y bloquea cualquier destino `refs/heads/main`. Después del OK de D-232 se habilita con
+`AYR_OWNER_PUSH=1`.
+
+La comprobación del hook queda pendiente fuera del sandbox, que bloqueó `sh.exe`. El dueño debe
+correr exactamente estos dos comandos desde la raíz de un worktree:
+
+```powershell
+git push --dry-run origin HEAD:main
+```
+
+```powershell
+$env:AYR_OWNER_PUSH='1'; git push --dry-run origin HEAD:main; Remove-Item Env:AYR_OWNER_PUSH
+```
+
+El primero debe mostrar el bloqueo de AYR; el segundo debe llegar al dry-run de Git sin ese
+mensaje. Ninguno publica cambios porque ambos usan `--dry-run`.
 
 Antigravity IDE recibe el puntero de `.agents/rules/00-ayr.md`. En Antigravity CLI 1.2.5 se
 comprobó que un worktree enlazado sin proyecto asociado no inyecta las reglas al contexto. La

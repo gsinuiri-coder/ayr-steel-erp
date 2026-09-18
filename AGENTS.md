@@ -1,7 +1,7 @@
 # AGENTS.md — Reglas del repositorio AYR Steel ERP
 
-Archivo canónico de contexto para TODOS los agentes que trabajan este repo:
-Codex CLI, Antigravity (`agy`) y Claude Code (vía `CLAUDE.md`, que importa este archivo).
+Archivo canónico de contexto para TODOS los agentes que trabajan este repo: Codex CLI y
+Antigravity (`agy`).
 
 > Si una regla de este archivo choca con lo que el agente cree saber, manda este archivo.
 > Si choca con una instrucción directa del dueño en la sesión, manda el dueño y se registra
@@ -47,21 +47,19 @@ largo.
 
 ---
 
-## 2. Los tres agentes
+## 2. Los dos agentes
 
-| Agente                  | Rol                                                                                                                                              | Escritura                                             | Modo                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------ |
-| **Codex CLI**           | **Agente principal.** Sesiones de ventana (`RF-Sn`), features, migraciones, cierre                                                               | Sí, en su worktree                                    | aprobación **Auto** (`workspace-write`), nunca Full Access         |
-| **Antigravity (`agy`)** | **Segundo implementador.** Tareas acotadas en paralelo y revisión cruzada del trabajo de Codex                                                   | Sí, en su propio worktree; solo lectura cuando revisa | acotado                                                            |
-| **Claude Code**         | **Solo lectura.** Investigación, revisión, segunda opinión de seguridad, auditoría OWASP/secretos/dependencias y lectura de la historia del repo | **No**                                                | plan / read-only, sin Edit/Write/NotebookEdit ni Bash de escritura |
+| Agente                  | Rol                                                                                            | Escritura                                             | Modo                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------- |
+| **Codex CLI**           | **Agente principal.** Sesiones de ventana (`RF-Sn`), features, migraciones, cierre             | Sí, en su worktree                                    | aprobación **Auto** (`workspace-write`), nunca Full Access |
+| **Antigravity (`agy`)** | **Segundo implementador.** Tareas acotadas en paralelo y revisión cruzada del trabajo de Codex | Sí, en su propio worktree; solo lectura cuando revisa | acotado                                                    |
 
 Reglas de convivencia, sin excepción:
 
 1. **Un solo agente escritor por worktree y por rama.** Dos agentes no comparten directorio.
    Cada sesión vive en su worktree: `ayr-steel-erp-<rama>`.
-2. **El revisor nunca es el autor.** Quien escribió el código no firma su propia revisión: si
-   implementó Codex, revisa `agy` o Claude Code; si implementó `agy`, revisa Codex. Sin pase de
-   revisión independiente, la sesión no cierra.
+2. **El revisor nunca es el autor.** Si implementó Codex, revisa `agy`; si implementó `agy`,
+   revisa Codex. Sin pase de revisión independiente, la sesión no cierra.
 3. **Una rama por ventana/tarea**, desde `origin/main` actualizado. Nunca se trabaja directo
    sobre `main`. Antes de abrir rama: `git fetch` y CI de `main` verde
    (`gh run list --branch main --limit 3`).
@@ -76,11 +74,10 @@ Reglas de convivencia, sin excepción:
 
 ## 3. Reglas duras (nunca se saltan)
 
-1. **`git push` está prohibido para los agentes.** Un push a `main` publica Vercel: un push es
-   un deploy y exige humano. El agente deja el comando escrito y el dueño lo corre. Tampoco
-   merge o sincronización indirecta (`gh api`, `gh pr merge`, `gh repo sync`, borrado de ramas
-   remotas). `gh pr create` solo después de que el dueño confirme que empujó. Un hook
-   `pre-push` versionado bloquea el push salvo `AYR_OWNER_PUSH=1`.
+1. **Los agentes pueden empujar ramas de trabajo y abrir PRs.** Solo pueden empujar o mergear a
+   `main` después de presentar al dueño un resumen de commits, CI, despliegue y riesgo, y recibir
+   su OK explícito en la sesión. Sin ese OK, `main` sigue bloqueada por el hook; con él, se usa
+   `AYR_OWNER_PUSH=1`. `gh repo sync` y el borrado de ramas protegidas siguen prohibidos.
 2. **Credenciales nunca en argv ni impresas.** Los comandos que podrían imprimirlas (p. ej.
    `neonctl`) van en modo silencioso y con `--output json`. Las cadenas de conexión viajan por
    entorno o archivo, jamás por línea de comandos.
@@ -160,8 +157,9 @@ Reglas de convivencia, sin excepción:
   con `git diff --quiet <sha-desplegado> origin/main -- apps packages Dockerfile .gcloudignore
 package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 significa
   desalineación de runtime y obliga a parar.
-- `pnpm setup:agentes` configura `core.hooksPath=.githooks`. `.githooks/pre-push` bloquea todo
-  push de agentes; únicamente el dueño lo habilita con `AYR_OWNER_PUSH=1`.
+- `pnpm setup:agentes` configura `core.hooksPath=.githooks`. `.githooks/pre-push` permite ramas
+  de trabajo y bloquea cualquier push cuyo destino sea `main`; `AYR_OWNER_PUSH=1` solo se usa
+  después del OK explícito del dueño exigido por D-232.
 
 ### 3.3 Datos reales, Neon y operaciones destructivas
 
@@ -252,16 +250,15 @@ de consultas, tiempos y filas se reportan medidos, no estimados.
 producción** (con dev builds la máquina local muere por OOM cerca del test 308), reportando
 passed/failed/skipped y clasificando cada rojo como producto o infraestructura. Después:
 `docs/ARQUITECTURA.md §0.2`, `docs/PROGRESO.md`, `docs/handoff/<sesion>.md`, guion UAT en
-`docs/uat/<sesion>.md` cuando toca UI o flujo de negocio, y el comando exacto de push para el
-dueño.
+`docs/uat/<sesion>.md` cuando toca UI o flujo de negocio, y la rama de trabajo empujada para CI.
 
 Para un spec Playwright suelto usar
 `pnpm exec playwright test e2e/tests/<archivo>.spec.ts`. No usar
 `pnpm e2e -- <archivo>`: Playwright ignora silenciosamente ese filtro posicional y ejecuta la
 suite completa. `--grep` sí funciona por ser una opción.
 
-Después de que el dueño haga el push, verificar la CI de GitHub Actions antes de declarar la
-sesión cerrada.
+Después del push de la rama de trabajo, verificar la CI de GitHub Actions antes de declarar la
+sesión cerrada. Un merge o push a `main` sigue el punto de control de D-232.
 
 ---
 
@@ -312,16 +309,14 @@ exacto en cada ventana.
 
 ## 9. Dónde vive la configuración de cada agente
 
-| Archivo                           | Lo lee                                                    | Para qué                                        |
-| --------------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
-| `AGENTS.md` (raíz)                | Codex CLI; Antigravity y Claude Code mediante adaptadores | Reglas canónicas                                |
-| `GEMINI.md`                       | Antigravity CLI 1.2.5                                     | Importa `AGENTS.md`; no contiene reglas propias |
-| `.agents/skills/<skill>/SKILL.md` | Codex CLI                                                 | Procedimientos ejecutables                      |
-| `.agents/rules/00-ayr.md`         | Antigravity IDE                                           | Puntero a `AGENTS.md`, sin duplicar contenido   |
-| `CLAUDE.md`                       | Claude Code                                               | `@AGENTS.md` + su modo solo lectura             |
-| `.claude/settings.json`           | Claude Code                                               | Deny de escritura y de push                     |
-| `.githooks/pre-push`              | git (todos)                                               | Bloqueo de push salvo dueño                     |
-| `docs/agentes/README.md`          | Personas y agentes                                        | Instalación, invocación y perfiles sugeridos    |
+| Archivo                           | Lo lee                  | Para qué                                        |
+| --------------------------------- | ----------------------- | ----------------------------------------------- |
+| `AGENTS.md` (raíz)                | Codex CLI y Antigravity | Reglas canónicas                                |
+| `GEMINI.md`                       | Antigravity CLI 1.2.5   | Importa `AGENTS.md`; no contiene reglas propias |
+| `.agents/skills/<skill>/SKILL.md` | Codex CLI y Antigravity | Procedimientos ejecutables                      |
+| `.agents/rules/00-ayr.md`         | Antigravity IDE         | Puntero a `AGENTS.md`, sin duplicar contenido   |
+| `.githooks/pre-push`              | git (todos)             | Bloqueo de pushes a `main` sin OK del dueño     |
+| `docs/agentes/README.md`          | Personas y agentes      | Instalación, invocación y perfiles sugeridos    |
 
 Perfiles sugeridos en `~/.codex/config.toml`: uno de grind (effort medio), uno de
 diseño/diagnóstico (effort alto) y uno de solo lectura para revisión.
@@ -330,7 +325,8 @@ diseño/diagnóstico (effort alto) y uno de solo lectura para revisión.
 
 ## 10. Qué NO hacer, resumido
 
-- No empujar, no mergear, no borrar ramas remotas.
+- No empujar ni mergear a `main` sin el resumen y OK explícito de D-232; no usar `gh repo sync`
+  ni borrar ramas protegidas.
 - No tocar 4000/4001.
 - No correr SQL contra prod ni imprimir credenciales.
 - No inventar alcance ni "aprovechar y de paso arreglar" fuera del milestone.

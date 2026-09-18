@@ -15,8 +15,8 @@ description: Escribe el handoff canónico de una sesión AYR para transferir est
    4. **Bloqueos / pendientes**: causa, alcance no completado y acción humana necesaria.
    5. **Cómo verificar**: comandos exactos, resultados esperados y URLs cuando apliquen.
    6. **Siguiente sesión**: primera tarea concreta autorizada; no inventar ni encadenar alcance.
-3. Incluye pruebas ejecutadas con conteos y clasificación de rojos, commits locales y comando de
-   push del dueño cuando corresponda.
+3. Incluye pruebas ejecutadas con conteos y clasificación de rojos, commits y estado de la rama
+   remota/CI; para `main`, registra el resumen y OK exigidos por D-232 cuando corresponda.
 4. Actualiza `docs/PROGRESO.md` si el estado cambió y muestra el contenido final al dueño.
 
-Fuentes: `.claude/commands/handoff.md` y handoffs existentes en `docs/handoff/`.
+Fuentes: `AGENTS.md` §5 y handoffs existentes en `docs/handoff/`.
