@@ -70,6 +70,21 @@
   plan/sandbox; el CLI no pudo persistir bajo `~/.gemini` y terminó pidiendo un permiso de
   comando que el modo headless no puede aprobar. No se usó `--dangerously-skip-permissions`
   porque habría roto el aislamiento del revisor. El pase debe repetirse fuera del sandbox.
+- **Integración completada con OK del dueño.** El hook fue verificado fuera del sandbox y el
+  dueño autorizó explícitamente el merge de PR #4 según D-232. `chore/agents` quedó en `main`
+  como `ffe4cee`; CI del PR [35300213796](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35300213796)
+  y CI de `main` [35301808282](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35301808282),
+  ambas verdes. El pase cruzado de `agy` sigue pendiente por permisos de `~/.gemini`.
+- **RF-S3 rebasada después del merge.** Los 16 commits se reaplicaron sobre `ffe4cee`; el único
+  conflicto fue `docs/ARQUITECTURA.md` §0.2 y se resolvió conservando D-228, D-229, D-232 y
+  D-233. QA local posterior: lint y typecheck verdes; API 613/613 en verde con Jest
+  `--runInBand`; build de shared/API verde. Unitarios web, build web y E2E local no pudieron
+  ejecutarse por `spawn EPERM` y falta de acceso del sandbox al Docker local; la CI del SHA
+  rebasado es la evidencia obligatoria de builds de producción y suite completa.
+- **Limpieza/estado local.** `origin/rf-s2` y `origin/rama-de-descarte` no existen. El worktree
+  `ayr-steel-erp-hotfix-401` está limpio en `hotfix-401`, 0 commits adelante y 40 atrás de
+  `main`; se recomienda retirarlo cuando ya no se necesite conservar el directorio. El puerto
+  3011 no tenía listener al comprobarlo y no se tocó ningún proceso.
 
 ## Fase 0 — detalle
 

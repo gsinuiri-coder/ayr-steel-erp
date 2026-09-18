@@ -2,9 +2,11 @@
 
 ## 1. Resumen
 
-`chore/agents` deja activa D-232, reduce el esquema a Codex y Antigravity (D-233) y retira los
-adaptadores de Claude Code. Solo cambia documentación y configuración de agentes: no toca rutas
-de runtime, datos, infraestructura desplegada ni producción. La CI del PR es el gate de merge.
+`chore/agents` quedó mergeada en `main` mediante el PR #4 como `ffe4cee`, después del resumen
+de D-232 y del OK explícito del dueño. Reduce el esquema a Codex y Antigravity (D-233) y retira
+los adaptadores de Claude Code. Solo cambió documentación y configuración de agentes: no tocó
+rutas de runtime, datos, infraestructura desplegada ni producción. La CI del PR y la de `main`
+quedaron verdes.
 
 ## 2. Hecho
 
@@ -18,6 +20,11 @@ de runtime, datos, infraestructura desplegada ni producción. La CI del PR es el
   revisión cruzada Codex → `agy` y `agy` → Codex; nadie firma su propio cambio.
 - Se actualizaron `ayr-cierre`, `ayr-handoff`, `ayr-qa` y `docs/agentes/README.md` para no dejar
   fuentes eliminadas ni una política de push obsoleta.
+- PR #4 mergeado con `AYR_OWNER_PUSH=1` únicamente después del OK del dueño. CI del PR:
+  <https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35300213796>. CI de `main`:
+  <https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35301808282>.
+- `rf-s3` se rebasó de nuevo sobre el `main` resultante, conservando D-228, D-229, D-232 y
+  D-233. Su PR #3 sigue reservado para una ventana de deploy; no se mergea suelto.
 
 ## 3. Decisiones tomadas
 
@@ -56,6 +63,6 @@ Web: pendiente de CI por la restricción de procesos hijos del sandbox.
 
 ## 6. Siguiente sesión
 
-El dueño dio el OK explícito de D-232 para mergear el PR #4. Después del merge y de confirmar la
-CI de `main`, rebasar `rf-s3` sobre ese `main` nuevo y completar su QA sin mergearlo fuera de la
-ventana de deploy.
+Ventana de deploy de RF-S3: conservar el orden migraciones si aplicaran → API → merge/publicación
+web, y ejecutar el UAT de `docs/uat/rf-s3.md` en demo. Antes, queda pendiente el pase cruzado de
+`agy`, corrigiendo los permisos de `~/.gemini` sin desactivar el sandbox.
