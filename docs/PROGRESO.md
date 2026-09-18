@@ -115,6 +115,31 @@
   resolver esa infraestructura antes de la próxima sesión de código es obligatorio para volver
   a cumplir D-233.
 
+## Sesión RF-S3b (2026-09-18) — UX operativa de kardex, planta y selectores
+
+- **Cinco milestones implementados.** D-237 deja el kardex individual completo y ascendente sin
+  paginación; el listado mezclado continúa paginado y reciente primero. `/planta` agrupa su
+  historial por pedido y anida las OP sin cambiar `/produccion/:id`. Los selectores aceptan clic
+  en toda la fila y teclado, muestran RUC/DNI, mantienen `Elegir` y evitan overflow horizontal.
+  Se retiraron exactamente dos altas contextuales de producto/SKU: el formulario compartido de
+  cotización/pedido y el importador de cotizaciones; `+ Crear cliente` permanece.
+- **ProductDialog medido.** Drywall, Coberturas Aluzinc, UPVC, Reventa y Servicios quedaron sin
+  overflow horizontal y con acciones visibles en 1366×768 y 1920×1080. Anchos medidos: 672 px
+  en 1366; 669–672 px en 1920. Alturas: Drywall 469 px, Coberturas 664–665 px y las otras
+  variantes 364–365 px. Overflow horizontal interno y de página: 0 px en las diez combinaciones.
+- **Calidad confirmada hasta el bloqueo.** Lint y typecheck verdes; 626/626 unitarios verdes;
+  build de producción verde. La tanda E2E afectada dio 7 verdes y 3 rojos clasificados como
+  defectos de prueba; tras corregirlos, la repetición fue 4/4 verde. Una suite completa de 375
+  casos detectó expectativas antiguas de orden en Fase 2b/Fase 7 y luego colapsó el entorno en
+  el caso 254, contaminando el resto; se actualizaron esas expectativas, pero la repetición
+  limpia y el detector quedaron bloqueados porque un proceso ajeno (`yacco/frontend/moalv-v1`)
+  ocupa el puerto 3000 y no se tocó.
+- **Revisión independiente bloqueada por tercera sesión.** `agy` fue invocado tres veces en
+  solo lectura; auto-denegó `command` dos veces y `escalate_admin` una vez. No se usó
+  `--dangerously-skip-permissions`. El archivo global de Antigravity confía otros worktrees,
+  pero no `ayr-steel-erp-rf-s3b`. Hasta habilitar lectura de este worktree y completar el pase
+  cruzado no se hacen commits ni push: RF-S3b permanece abierta.
+
 ## Fase 0 — detalle
 
 | #   | Entregable                                                   | Estado                                                                                                                       |
