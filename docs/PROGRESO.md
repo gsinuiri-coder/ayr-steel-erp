@@ -110,7 +110,10 @@
   no se ejecutó `db:demo` ni se modificaron datos o schema. Se añadió un test centinela de scripts
   y su ejecución al job de calidad de CI. Revisión independiente bloqueada tras tres intentos:
   Antigravity headless no detectó primero el workspace y luego auto-denegó dos veces el permiso
-  `command` requerido para leer el diff; no se usó `--dangerously-skip-permissions`.
+  `command` requerido para leer el diff; no se usó `--dangerously-skip-permissions`. Es la
+  segunda sesión en que la revisión cruzada falla por permisos headless bajo `~/.gemini`;
+  resolver esa infraestructura antes de la próxima sesión de código es obligatorio para volver
+  a cumplir D-233.
 
 ## Fase 0 — detalle
 

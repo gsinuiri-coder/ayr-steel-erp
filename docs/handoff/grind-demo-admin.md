@@ -23,7 +23,11 @@ vive en `fix/demo-admin-seed`; no se ejecutó contra Neon ni se tocaron schema o
 
 - La revisión independiente con Antigravity quedó bloqueada tras tres intentos: el modo headless
   auto-deniega el permiso `command` necesario para leer el diff. No se usó el modo sin permisos.
-- Falta CI remota y el OK D-232 del dueño antes de integrar a `main`.
+  Es la segunda sesión afectada por permisos headless bajo `~/.gemini`; resolver esa
+  infraestructura **antes de la próxima sesión de código** queda como deuda obligatoria, porque
+  sin el pase cruzado D-233 está incompleto.
+- CI del PR #5 verde y OK explícito D-232 recibido para integrar a `main` con
+  `AYR_OWNER_PUSH=1`.
 
 ## 5. Cómo verificar
 
@@ -40,4 +44,5 @@ ambas verificaciones quedaron verdes. No aplica E2E: no cambian rutas de aplicac
 
 ## 6. Siguiente sesión
 
-Revisar la CI del PR y, si queda verde, presentar el resumen D-232 al dueño antes del merge.
+Resolver los permisos headless de Antigravity bajo `~/.gemini` y demostrar un pase cruzado de
+solo lectura antes de iniciar otra sesión de código.
