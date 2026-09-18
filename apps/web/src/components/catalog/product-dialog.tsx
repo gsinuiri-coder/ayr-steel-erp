@@ -258,7 +258,7 @@ export function ProductDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-2xl">
         <DialogHeader className="flex-row items-center justify-between gap-2 pr-8">
           <DialogTitle>{editing ? 'Editar producto' : 'Nuevo producto'}</DialogTitle>
           {product && <AuditHistoryLink entityType="products" entityId={product.id} />}
@@ -268,309 +268,316 @@ export function ProductDialog({
             onSubmit={form.handleSubmit((v) => {
               save.mutate(v);
             })}
-            className="grid gap-4"
+            className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]"
             noValidate
           >
-            {form.formState.errors.root && (
-              <p role="alert" className="text-sm text-destructive">
-                {form.formState.errors.root.message}
-              </p>
-            )}
-            <FormField
-              control={form.control}
-              name="sku"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>SKU</FormLabel>
-                  <FormControl>
-                    <Input disabled={editing} autoComplete="off" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+            <div className="grid min-h-0 gap-3 overflow-x-hidden overflow-y-auto overscroll-contain pr-1 md:grid-cols-2">
+              {form.formState.errors.root && (
+                <p role="alert" className="text-sm text-destructive md:col-span-2">
+                  {form.formState.errors.root.message}
+                </p>
               )}
-            />
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Nombre</FormLabel>
-                  <FormControl>
-                    <Input autoComplete="off" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="unit"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Unidad</FormLabel>
-                  <FormControl>
-                    <Input placeholder="kg, unidad, m…" autoComplete="off" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            {showRoofingFields && (
               <FormField
                 control={form.control}
-                name="finishId"
-                render={({ field }) => {
-                  const chosenFinish = finishes.data?.find((f) => f.id === field.value) ?? null;
-                  const legacyUnmapped =
-                    field.value === product?.finishId && chosenFinish?.kind === null;
-                  return (
+                name="sku"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>SKU</FormLabel>
+                    <FormControl>
+                      <Input disabled={editing} autoComplete="off" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nombre</FormLabel>
+                    <FormControl>
+                      <Input autoComplete="off" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="unit"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Unidad</FormLabel>
+                    <FormControl>
+                      <Input placeholder="kg, unidad, m…" autoComplete="off" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {showRoofingFields && (
+                <FormField
+                  control={form.control}
+                  name="finishId"
+                  render={({ field }) => {
+                    const chosenFinish = finishes.data?.find((f) => f.id === field.value) ?? null;
+                    const legacyUnmapped =
+                      field.value === product?.finishId && chosenFinish?.kind === null;
+                    return (
+                      <FormItem className="md:col-span-2">
+                        <FormLabel>{FINISH_FIELD_LABEL}</FormLabel>
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <FormControl>
+                            <SelectTrigger className="w-full" disabled={finishes.isPending}>
+                              <SelectValue
+                                placeholder={
+                                  finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
+                                }
+                              />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {/* F8-S7/M2: color comercial; el código solo si dos comparten color. */}
+                            {finishOptions.map((f) => (
+                              <SelectItem key={f.id} value={f.id}>
+                                {finishOptionLabels.get(f.id) ?? f.code}
+                                {f.isActive ? '' : ' (desactivado)'}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          De su factor de densidad salen los kilos teóricos por metro lineal (RF-25,
+                          D-122). El acabado ya no vive en la receta: una cobertura no lleva.
+                        </p>
+                        {showColor && (
+                          <p className="text-sm text-muted-foreground">
+                            Color:{' '}
+                            {legacyUnmapped ? (
+                              <>
+                                {product?.colorName && product.colorHex ? (
+                                  <ColorSwatch
+                                    color={{ name: product.colorName, hexColor: product.colorHex }}
+                                  />
+                                ) : (
+                                  'sin color'
+                                )}{' '}
+                                (acabado sin tipo)
+                              </>
+                            ) : chosenFinish?.colorName && chosenFinish.colorHex ? (
+                              <ColorSwatch
+                                color={{
+                                  name: chosenFinish.colorName,
+                                  hexColor: chosenFinish.colorHex,
+                                }}
+                              />
+                            ) : chosenFinish ? (
+                              'sin color'
+                            ) : (
+                              '—'
+                            )}
+                            . El color sale del acabado (D-086): para corregirlo, elige el acabado
+                            correcto.
+                          </p>
+                        )}
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
+                />
+              )}
+              {showRoofingFields && (
+                <FormField
+                  control={form.control}
+                  name="roofingKind"
+                  render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{FINISH_FIELD_LABEL}</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      <FormLabel>Subtipo de cobertura</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          // Subtipo y unidad son el mismo hecho (el API y un CHECK lo exigen):
+                          // elegir el subtipo fija la unidad en vez de dejar que discrepen.
+                          form.setValue('unit', ROOFING_KIND_UNIT[value as RoofingProductKind]);
+                        }}
+                      >
                         <FormControl>
-                          <SelectTrigger className="w-full" disabled={finishes.isPending}>
-                            <SelectValue
-                              placeholder={
-                                finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
-                              }
-                            />
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Elige el subtipo" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {/* F8-S7/M2: color comercial; el código solo si dos comparten color. */}
-                          {finishOptions.map((f) => (
-                            <SelectItem key={f.id} value={f.id}>
-                              {finishOptionLabels.get(f.id) ?? f.code}
-                              {f.isActive ? '' : ' (desactivado)'}
+                          {ROOFING_PRODUCT_KINDS.map((kind) => (
+                            <SelectItem key={kind} value={kind}>
+                              {ROOFING_PRODUCT_KIND_LABELS[kind]}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-muted-foreground">
-                        De su factor de densidad salen los kilos teóricos por metro lineal (RF-25,
-                        D-122). El acabado ya no vive en la receta: una cobertura no lleva.
+                        {
+                          ROOFING_PRODUCT_KIND_HINTS[
+                            (field.value || 'A_MEDIDA') as RoofingProductKind
+                          ]
+                        }
                       </p>
-                      {showColor && (
-                        <p className="text-sm text-muted-foreground">
-                          Color:{' '}
-                          {legacyUnmapped ? (
-                            <>
-                              {product?.colorName && product.colorHex ? (
-                                <ColorSwatch
-                                  color={{ name: product.colorName, hexColor: product.colorHex }}
-                                />
-                              ) : (
-                                'sin color'
-                              )}{' '}
-                              (acabado sin tipo)
-                            </>
-                          ) : chosenFinish?.colorName && chosenFinish.colorHex ? (
-                            <ColorSwatch
-                              color={{
-                                name: chosenFinish.colorName,
-                                hexColor: chosenFinish.colorHex,
-                              }}
-                            />
-                          ) : chosenFinish ? (
-                            'sin color'
-                          ) : (
-                            '—'
-                          )}
-                          . El color sale del acabado (D-086): para corregirlo, elige el acabado
-                          correcto.
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+              {showRoofingFields && (
+                <FormField
+                  control={form.control}
+                  name="thicknessMm"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Espesor (mm)</FormLabel>
+                      <FormControl>
+                        <Input inputMode="decimal" autoComplete="off" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+              {(showRoofingFields || showDrywallFields) && (
+                <FormField
+                  control={form.control}
+                  name="widthMm"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {showDrywallFields ? 'Ancho de la pieza (mm)' : 'Ancho (mm)'}
+                      </FormLabel>
+                      <FormControl>
+                        <Input inputMode="decimal" autoComplete="off" {...field} />
+                      </FormControl>
+                      {showRoofingFields && (
+                        <p className="text-xs text-muted-foreground">
+                          Nominal, para cotizar y calcular kg teóricos (D-118). La producción real
+                          usa el ancho del rollo que se monte (D-086), no este dato.
                         </p>
                       )}
                       <FormMessage />
                     </FormItem>
-                  );
-                }}
-              />
-            )}
-            {showRoofingFields && (
-              <FormField
-                control={form.control}
-                name="roofingKind"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Subtipo de cobertura</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={(value) => {
-                        field.onChange(value);
-                        // Subtipo y unidad son el mismo hecho (el API y un CHECK lo exigen):
-                        // elegir el subtipo fija la unidad en vez de dejar que discrepen.
-                        form.setValue('unit', ROOFING_KIND_UNIT[value as RoofingProductKind]);
-                      }}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Elige el subtipo" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {ROOFING_PRODUCT_KINDS.map((kind) => (
-                          <SelectItem key={kind} value={kind}>
-                            {ROOFING_PRODUCT_KIND_LABELS[kind]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {
-                        ROOFING_PRODUCT_KIND_HINTS[
-                          (field.value || 'A_MEDIDA') as RoofingProductKind
-                        ]
-                      }
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
-            {showRoofingFields && (
-              <FormField
-                control={form.control}
-                name="thicknessMm"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Espesor (mm)</FormLabel>
-                    <FormControl>
-                      <Input inputMode="decimal" autoComplete="off" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
-            {(showRoofingFields || showDrywallFields) && (
-              <FormField
-                control={form.control}
-                name="widthMm"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      {showDrywallFields ? 'Ancho de la pieza (mm)' : 'Ancho (mm)'}
-                    </FormLabel>
-                    <FormControl>
-                      <Input inputMode="decimal" autoComplete="off" {...field} />
-                    </FormControl>
-                    {showRoofingFields && (
-                      <p className="text-xs text-muted-foreground">
-                        Nominal, para cotizar y calcular kg teóricos (D-118). La producción real usa
-                        el ancho del rollo que se monte (D-086), no este dato.
-                      </p>
-                    )}
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
-            {showRoofingFields && form.watch('roofingKind') === RoofingProductKind.PLANCHA && (
-              <FormField
-                control={form.control}
-                name="lengthMm"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Largo de la plancha (mm)</FormLabel>
-                    <FormControl>
-                      <Input inputMode="decimal" autoComplete="off" placeholder="3000" {...field} />
-                    </FormControl>
-                    {/* D-166: el equivalente en metros, en vivo. El campo pide milímetros y
-                        todo el resto de la pantalla de coberturas trabaja en metros, así que
-                        las tres planchas del catálogo terminaron con "3" y "6" donde iban
-                        3 000 y 6 000 — y la cotización salía mil veces más barata sin que
-                        nada avisara. Ver el número traducido mientras se tipea lo hace obvio
-                        en el momento, que es cuando se puede corregir sin consecuencias. */}
-                    <PlateLengthHint lengthMm={field.value} />
-                    <p className="text-xs text-muted-foreground">
-                      Solo la plancha de catálogo tiene largo fijo. A medida, el largo lo trae cada
-                      línea de la cotización.
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
-            {showDrywallFields && (
-              <>
+                  )}
+                />
+              )}
+              {showRoofingFields && form.watch('roofingKind') === RoofingProductKind.PLANCHA && (
                 <FormField
                   control={form.control}
                   name="lengthMm"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Largo de la pieza (mm)</FormLabel>
+                      <FormLabel>Largo de la plancha (mm)</FormLabel>
                       <FormControl>
-                        <Input inputMode="decimal" autoComplete="off" {...field} />
+                        <Input
+                          inputMode="decimal"
+                          autoComplete="off"
+                          placeholder="3000"
+                          {...field}
+                        />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="pieceWeightKg"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Peso de la pieza (kg)</FormLabel>
-                      <FormControl>
-                        <Input inputMode="decimal" autoComplete="off" {...field} />
-                      </FormControl>
+                      {/* D-166: el equivalente en metros, en vivo. El campo pide milímetros y
+                        todo el resto de la pantalla de coberturas trabaja en metros, así que
+                        las tres planchas del catálogo terminaron con "3" y "6" donde iban
+                        3 000 y 6 000 — y la cotización salía mil veces más barata sin que
+                        nada avisara. Ver el número traducido mientras se tipea lo hace obvio
+                        en el momento, que es cuando se puede corregir sin consecuencias. */}
+                      <PlateLengthHint lengthMm={field.value} />
                       <p className="text-xs text-muted-foreground">
-                        Declarado, no calculado: la sección del perfil no es un prisma simple.
+                        Solo la plancha de catálogo tiene largo fijo. A medida, el largo lo trae
+                        cada línea de la cotización.
                       </p>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              </>
-            )}
-            <FormField
-              control={form.control}
-              name="listPricePen"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Precio de lista (S/, sin IGV)</FormLabel>
-                  <FormControl>
-                    <Input
-                      inputMode="decimal"
-                      placeholder="Opcional"
-                      autoComplete="off"
-                      {...field}
-                    />
-                  </FormControl>
-                  <p className="text-xs text-muted-foreground">
-                    Se sugiere al cotizar (D-068). El vendedor lo puede editar en la línea; queda
-                    registrado el precio de lista junto al cotizado.
-                  </p>
-                  <FormMessage />
-                </FormItem>
               )}
-            />
-            <FormField
-              control={form.control}
-              name="source"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Origen</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
+              {showDrywallFields && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="lengthMm"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Largo de la pieza (mm)</FormLabel>
+                        <FormControl>
+                          <Input inputMode="decimal" autoComplete="off" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="pieceWeightKg"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Peso de la pieza (kg)</FormLabel>
+                        <FormControl>
+                          <Input inputMode="decimal" autoComplete="off" {...field} />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Declarado, no calculado: la sección del perfil no es un prisma simple.
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </>
+              )}
+              <FormField
+                control={form.control}
+                name="listPricePen"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Precio de lista (S/, sin IGV)</FormLabel>
                     <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
+                      <Input
+                        inputMode="decimal"
+                        placeholder="Opcional"
+                        autoComplete="off"
+                        {...field}
+                      />
                     </FormControl>
-                    <SelectContent>
-                      {PRODUCT_SOURCES.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {PRODUCT_SOURCE_LABELS[s]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <DialogFooter>
+                    <p className="text-xs text-muted-foreground">
+                      Se sugiere al cotizar (D-068). El vendedor lo puede editar en la línea; queda
+                      registrado el precio de lista junto al cotizado.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="source"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Origen</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {PRODUCT_SOURCES.map((s) => (
+                          <SelectItem key={s} value={s}>
+                            {PRODUCT_SOURCE_LABELS[s]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <DialogFooter className="mt-4">
               <Button
                 type="button"
                 variant="outline"
