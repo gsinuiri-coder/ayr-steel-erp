@@ -85,6 +85,12 @@ Nada bloqueado al cierre. Deuda que esta sesión deja o hereda sin cambios:
 4. **Drift de schema en `production`** (deuda S3 #1, heredada, sin tocar): defaults de
    `operation_date` en 5 tablas, 5 FK recreadas, 2 índices y un renombre.
 5. **El guard por línea de pedido no descuenta notas de crédito** (D-223, heredada, sin tocar).
+6. **`db-demo.mjs` contradice su promesa sobre el administrador de demo.** El script afirma que
+   siembra el admin con la contraseña propia de `.env.demo`, pero no define
+   `SEED_ADMIN_FOR_TESTS=1`; sobre un clon de `production`, `seed.ts` conserva el
+   `passwordHash` existente y la contraseña generada devuelve `401`. Resolver en una sesión de
+   grind: o el script actualiza realmente el hash de demo, o la documentación deja de prometerlo.
+   No se corrige dentro de la ventana RF-S3.
 
 Ninguno requiere acción humana externa (proveedor, soporte) salvo la aprobación de borrado de
 la rama de ensayo Neon (punto 1) y la carga de precios de lista reales (punto 3), ambas del

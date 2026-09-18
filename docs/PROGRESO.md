@@ -85,6 +85,25 @@
   `ayr-steel-erp-hotfix-401` está limpio en `hotfix-401`, 0 commits adelante y 40 atrás de
   `main`; se recomienda retirarlo cuando ya no se necesite conservar el directorio. El puerto
   3011 no tenía listener al comprobarlo y no se tocó ningún proceso.
+- **Ventana de producción RF-S3 cerrada (2026-09-18).** Sin respaldo ni migraciones porque
+  RF-S3 no cambia schema ni datos; el drift comprobado siguió siendo exactamente el conocido.
+  UAT demo: casos 1–6 OK. El `401` inicial fue la sesión purgada por `db:demo` y los 30 s del
+  primer selector fueron hidratación fría de Next en desarrollo; con login fresco, Caso 1 dio
+  3/3 OK. API desplegada primero desde `d25f6b2` en Cloud Run, revisión
+  `ayr-steel-erp-api-00038-ljx`, 100 % de tráfico, health/DB OK, label `git-sha=d25f6b2`, los 12
+  nombres de variables/secretos esperados y `WEB_ORIGIN` con ambos dominios. Tras el OK explícito
+  del dueño exigido por D-232, PR #3 entró por fast-forward a `main` y Vercel publicó el mismo
+  SHA. `pnpm smoke:prod` quedó verde: health 200, login, 5 líneas de negocio, 174 productos, 48
+  filas de inventario valorizado, 5 bobinas, 43 filas del reporte mensual y PSE apagado; el
+  administrador efímero fue retirado. En la app real, los selectores de cliente y producto
+  buscaron contra el servidor, la card de faltantes cargó 54 cotizaciones y la card bajo piso
+  cargó sin error con 0 resultados. `/customers/search` midió 517 ms sin caché en la sesión real
+  del dueño; muestra adicional de cinco términos: 381, 401, 438, 375 y 470 ms, con 48 clientes
+  activos. D-235 mantiene D-229 sin índice. Rollback no requerido; opción preservada:
+  `00037-njl` más revert del merge, solo con OK del dueño. CI de `main`
+  [35352376572](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/35352376572)
+  verde: calidad/unitarios, análisis estático, E2E completa 371 passed/0 failed/3 skipped y
+  smoke Neon 35 passed/0 failed/2 skipped.
 
 ## Fase 0 — detalle
 
