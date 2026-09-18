@@ -66,6 +66,24 @@ describe('CatalogService.search (RF-S3/M1)', () => {
     );
   });
 
+  it('una búsqueda inicial sin texto usa cadena vacía y conserva el límite del selector', async () => {
+    prisma.product.findMany.mockResolvedValue([]);
+
+    await service.search();
+
+    expect(prisma.product.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { sku: { contains: '', mode: 'insensitive' } },
+            { name: { contains: '', mode: 'insensitive' } },
+          ],
+        }),
+        take: 100,
+      }),
+    );
+  });
+
   it('filtra por línea de negocio cuando se pasa (traduce el código compartido al de Prisma)', async () => {
     prisma.product.findMany.mockResolvedValue([]);
     await service.search('pla', 'metallic-roofing');

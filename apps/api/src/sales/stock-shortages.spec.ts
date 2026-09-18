@@ -72,11 +72,13 @@ function quotationRow(overrides: {
   };
 }
 
-function madeToOrderProduct(overrides: { thicknessMm?: Decimal | null } = {}) {
+function madeToOrderProduct(
+  overrides: { thicknessMm?: Decimal | null; colorId?: string | null } = {},
+) {
   return {
     id: 'p-raw',
     sku: 'TECHO-ROJO',
-    colorId: 'color-1',
+    colorId: overrides.colorId === undefined ? 'color-1' : overrides.colorId,
     businessLineId: 'bl-roofing',
     thicknessMm: overrides.thicknessMm === undefined ? new Decimal('0.50') : overrides.thicknessMm,
     widthMm: new Decimal('1000.00'),
@@ -414,6 +416,20 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     expect(prisma.product.findMany).not.toHaveBeenCalled();
   });
 
+  it('ignora cotizaciones emitidas sin líneas sin consultar catálogo ni inventario', async () => {
+    setQuotations([
+      quotationRow({
+        id: 'q-empty',
+        seq: 2,
+        items: [],
+      }),
+    ]);
+
+    await expect(service.findStockShortages()).resolves.toEqual([]);
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+    expect(prisma.inventoryBalance.findMany).not.toHaveBeenCalled();
+  });
+
   it('resuelve una cobertura a medida por spec real y usa su disponibilidad y etiqueta', async () => {
     setQuotations([
       quotationRow({
@@ -501,6 +517,49 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     );
   });
 
+  it('resuelve el agregado sin color usando la misma clave nula del producto y de la spec', async () => {
+    setQuotations([
+      quotationRow({
+        id: 'q-without-color',
+        seq: 13,
+        items: [
+          {
+            lineNumber: 1,
+            productId: 'p-raw',
+            qty: '2',
+            reserveItemType: InventoryItemType.PRODUCT,
+            reserveItemId: 'legacy-product-id',
+            reserveQty: '2',
+            reserveUnit: Unit.MTR,
+            sku: 'TECHO-NATURAL',
+          },
+        ],
+      }),
+    ]);
+    prisma.product.findMany.mockResolvedValue([madeToOrderProduct({ colorId: null })]);
+    prisma.rawMaterialSpec.findMany.mockResolvedValue([
+      {
+        id: 'spec-natural',
+        businessLineId: 'bl-roofing',
+        colorId: null,
+        thicknessMm: new Decimal('0.50'),
+      },
+    ]);
+    rawMaterialAvailabilityMock.mockResolvedValue({
+      available: new Decimal('0'),
+    } as Awaited<ReturnType<typeof rawMaterialModule.rawMaterialAvailability>>);
+
+    const result = await service.findStockShortages();
+
+    expect(rawMaterialAvailabilityMock).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ id: 'spec-natural', colorId: null }),
+      expect.any(String),
+      {},
+    );
+    expect(result[0]?.lines[0]).toEqual(expect.objectContaining({ productSku: 'TECHO-NATURAL' }));
+  });
+
   it('omite toda la cotización si el catálogo a medida no permite calcular el material', async () => {
     setQuotations([
       quotationRow({
@@ -525,6 +584,61 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     await expect(service.findStockShortages()).resolves.toEqual([]);
     expect(prisma.rawMaterialSpec.findMany).not.toHaveBeenCalled();
     expect(rawMaterialAvailabilityMock).not.toHaveBeenCalled();
+  });
+
+  it('bloquea la unión de bobinas en orden binario estable antes de validar sus estados', async () => {
+    const expectedFailure = new Error('fin deliberado después del lock');
+    let lockedIds: unknown;
+    const tx = {
+      $queryRaw: jest.fn((_strings: TemplateStringsArray, ids: unknown) => {
+        lockedIds = ids;
+        return Promise.resolve([]);
+      }),
+      productBom: { findMany: jest.fn().mockRejectedValue(expectedFailure) },
+    };
+    const privateService = service as unknown as {
+      reserveLines: (
+        transaction: object,
+        items: {
+          lineNumber: number;
+          productId: string;
+          reserveItemType: InventoryItemType;
+          reserveItemId: string;
+          reserveQty: string;
+          reserveUnit: string;
+        }[],
+        holder: string,
+        write: () => Promise<void>,
+      ) => Promise<number>;
+    };
+    const items = [
+      {
+        lineNumber: 1,
+        productId: 'p-b',
+        reserveItemType: InventoryItemType.COIL,
+        reserveItemId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        reserveQty: '1',
+        reserveUnit: Unit.KGM,
+      },
+      {
+        lineNumber: 2,
+        productId: 'p-a',
+        reserveItemType: InventoryItemType.COIL,
+        reserveItemId: '11111111-1111-1111-1111-111111111111',
+        reserveQty: '1',
+        reserveUnit: Unit.KGM,
+      },
+    ];
+
+    await expect(
+      privateService.reserveLines(tx, items, 'la reserva', () => Promise.resolve()),
+    ).rejects.toBe(expectedFailure);
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(lockedIds).toEqual([
+      '11111111-1111-1111-1111-111111111111',
+      'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    ]);
   });
 });
 

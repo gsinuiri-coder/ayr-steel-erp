@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { SEARCH_MIN_CHARS } from '@ayr/shared';
 import { useDebounced } from '@/lib/use-debounced';
+import { asyncSearchStatus, belowSearchMinimum } from '@/lib/search-status';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -143,8 +144,7 @@ export function SearchSelectModal({
   // vacío no es "por debajo del mínimo" — es "sin filtro de texto", y el servicio ya sabe
   // devolver los primeros `SEARCH_RESULT_LIMIT` para ese caso (ver `searchQuerySchema`). Solo
   // 1..minChars-1 caracteres es la zona muerta real: ni "nada" ni alcanza para acotar.
-  const belowMinChars =
-    isAsync && debouncedTrimmed.length > 0 && debouncedTrimmed.length < minChars;
+  const belowMinChars = isAsync && belowSearchMinimum(debouncedTrimmed, minChars);
 
   const serverSearch = useQuery({
     queryKey: ['search-select-modal', title, debouncedTrimmed],
@@ -187,11 +187,12 @@ export function SearchSelectModal({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
               {isAsync
-                ? belowMinChars
-                  ? `Escribe al menos ${String(minChars)} caracteres para buscar.`
-                  : serverSearch.isFetching
-                    ? 'Buscando…'
-                    : `${String(matches.length)} resultado${matches.length === 1 ? '' : 's'}`
+                ? asyncSearchStatus({
+                    belowMinimum: belowMinChars,
+                    isFetching: serverSearch.isFetching,
+                    count: matches.length,
+                    minChars,
+                  })
                 : `${String(matches.length)} de ${String((options ?? []).length)} opciones: filtra por cualquier parte del texto.`}
             </p>
             {extraAction}

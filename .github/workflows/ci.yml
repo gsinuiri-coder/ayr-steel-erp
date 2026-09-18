@@ -34,12 +34,18 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm --filter @ayr/api test:cov
-      - run: pnpm --filter @ayr/web test
+      - run: pnpm --filter @ayr/web test:cov
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-api
           path: apps/api/coverage/lcov.info
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-web
+          path: apps/web/coverage/lcov.info
           if-no-files-found: ignore
 
   e2e:
@@ -229,6 +235,11 @@ jobs:
         with:
           name: coverage-api
           path: apps/api/coverage
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-web
+          path: apps/web/coverage
         continue-on-error: true
       - name: SonarCloud
         if: ${{ env.SONAR_TOKEN != '' }}

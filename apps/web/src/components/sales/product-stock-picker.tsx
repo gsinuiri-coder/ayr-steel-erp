@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  SEARCH_MIN_CHARS,
   SEARCH_RESULT_LIMIT,
   toDecimal,
   toFixedString,
@@ -15,6 +14,7 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatQty, unitSymbol } from '@/lib/format';
+import { asyncSearchStatus, belowSearchMinimum } from '@/lib/search-status';
 import { useDebounced } from '@/lib/use-debounced';
 import { Button } from '@/components/ui/button';
 import {
@@ -156,7 +156,7 @@ export function ProductStockPickerDialog({
   // RF-S3/cierre: vacío no es "por debajo del mínimo" (ver el mismo ajuste en
   // `search-select-modal.tsx`) — abrir el picker sin escribir muestra los primeros
   // `SEARCH_RESULT_LIMIT` de la línea, en vez de nada.
-  const belowMinChars = trimmed.length > 0 && trimmed.length < SEARCH_MIN_CHARS;
+  const belowMinChars = belowSearchMinimum(trimmed);
 
   // El filtro no sobrevive al cierre (mismo motivo que `SearchSelectModal`, D-156): sin esto,
   // reabrir el picker de otra línea —o el mismo después de elegir— mostraba la búsqueda de la
@@ -220,13 +220,12 @@ export function ProductStockPickerDialog({
             }}
           />
           <p className="text-xs text-muted-foreground">
-            {belowMinChars
-              ? `Escribe al menos ${String(SEARCH_MIN_CHARS)} caracteres para buscar.`
-              : productsSearch.isFetching
-                ? 'Buscando…'
-                : `${String(matches.length)} resultado${matches.length === 1 ? '' : 's'}${
-                    mayHaveMore ? ' · sigue escribiendo para acotar' : ''
-                  }`}
+            {asyncSearchStatus({
+              belowMinimum: belowMinChars,
+              isFetching: productsSearch.isFetching,
+              count: matches.length,
+              mayHaveMore,
+            })}
           </p>
           {/* F8-S3b/M1: sin scroll horizontal. Tabla de ancho fijo y celdas que parten línea —
               la base de `TableCell` es `whitespace-nowrap`, y un nombre largo o un disponible
