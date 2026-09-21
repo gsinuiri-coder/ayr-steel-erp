@@ -14,9 +14,9 @@ test.describe('Alcance de Vendedor (UI)', () => {
     });
     sellerEmail = user.email;
     // Ensure we have some stock
-    const { finish } = await setupCoilStock(api, { lineCode: 'ROOFING' });
+    const { finish } = await setupCoilStock(api, { lineCode: 'metallic-roofing' });
     const p = await createSellableProduct(api, {
-      lineCode: 'ROOFING',
+      lineCode: 'metallic-roofing',
       unit: 'MTR',
       roofingKind: 'A_MEDIDA',
       finishId: finish.id,

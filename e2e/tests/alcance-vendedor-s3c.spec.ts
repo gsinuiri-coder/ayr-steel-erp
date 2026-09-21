@@ -18,16 +18,16 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const supervisor = await createUser(api, 'SUPERVISOR_PLANTA');
 
     const customerA = await createCustomer(api);
-    const pDrywall = await createSellableProduct(api, { lineCode: 'DRYWALL' });
+    const pDrywall = await createSellableProduct(api, { lineCode: 'drywall' });
     const productId = pDrywall.id;
-    await setupCoilStock(api, { lineCode: 'DRYWALL', weightKg: '5000' });
+    await setupCoilStock(api, { lineCode: 'drywall', weightKg: '5000' });
 
     const { finish: finishRoofing } = await setupCoilStock(api, {
-      lineCode: 'ROOFING',
+      lineCode: 'metallic-roofing',
       weightKg: '5000',
     });
     const pRoofing = await createSellableProduct(api, {
-      lineCode: 'ROOFING',
+      lineCode: 'metallic-roofing',
       unit: 'MTR',
       roofingKind: 'A_MEDIDA',
       finishId: finishRoofing.id,
@@ -289,11 +289,11 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     });
 
     const { finish: finishRoofing } = await setupCoilStock(api, {
-      lineCode: 'ROOFING',
+      lineCode: 'metallic-roofing',
       weightKg: '5000',
     });
     const pRoofing = await createSellableProduct(api, {
-      lineCode: 'ROOFING',
+      lineCode: 'metallic-roofing',
       unit: 'MTR',
       roofingKind: 'A_MEDIDA',
       finishId: finishRoofing.id,
