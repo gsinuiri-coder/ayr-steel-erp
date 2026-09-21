@@ -1,21 +1,20 @@
 import { test, expect } from '@playwright/test';
-import { createUser, login } from '../helpers/api';
+import { adminApi, createUser, login } from '../helpers/api';
 import { setupCoilStock } from '../helpers/sales';
 import { Role } from '@ayr/shared';
 
 test.describe('Alcance de Vendedor (UI)', () => {
   let sellerEmail: string;
 
-  test.beforeAll(async ({ request }) => {
-    sellerEmail = `vendedor-ui-${Date.now()}@test.com`;
-    await createUser(request, {
+  test.beforeAll(async ({ baseURL }) => {
+    const api = await adminApi(baseURL!);
+    const user = await createUser(api, 'VENDEDOR', {
       name: 'Vendedor UI',
-      email: sellerEmail,
-      role: Role.VENDEDOR,
       password: 'password123',
     });
+    sellerEmail = user.email;
     // Ensure we have some stock
-    await setupCoilStock(request);
+    await setupCoilStock(api);
   });
 
   test('Vendedor agrega producto teórico desde catálogo (sin ver costos)', async ({ page }) => {
