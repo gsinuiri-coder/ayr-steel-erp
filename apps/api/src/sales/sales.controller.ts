@@ -113,6 +113,7 @@ export class SalesController {
    * "stock-shortages" como si fuera un id.
    */
   @Get('quotations/stock-shortages')
+  @Roles(Role.ADMINISTRADOR)
   findStockShortages(@CurrentUser() actor: RequestUser): Promise<QuotationStockShortageDto[]> {
     return this.orders.findStockShortages(actor);
   }

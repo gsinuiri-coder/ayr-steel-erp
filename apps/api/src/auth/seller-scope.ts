@@ -16,7 +16,7 @@ export function assertSellerAccess(
   sellerId: string | null,
   entity = 'Recurso',
 ): void {
-  if (actor.role === Role.ADMINISTRADOR) return;
+  if (actor.role !== Role.VENDEDOR) return;
   if (sellerId === actor.id) return;
   throw new NotFoundException(`${entity} no encontrado`);
 }

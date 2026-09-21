@@ -516,7 +516,7 @@ el ensayo contra la rama clonada no podía ver. **Si este checklist se reutiliza
 1. **Respaldo Neon**: Crear rama de respaldo pre-deploy.
 2. **Dry-run**: Verificar que el backfill de sellerId se probó en ensayo (ej. ensayo-s3c-20260920).
 3. **Aviso a vendedores**: Comunicar la parada breve para el deploy.
-4. **Orden estricto de despliegue**: 
+4. **Orden estricto de despliegue**:
    - Migraciones: pnpm db:prod (Aplica el seller_id en sales_orders y iscal_documents).
    - Backend: pnpm deploy:api (Habilita el bloqueo 403 de alcance).
    - Frontend: pnpm deploy:web (Publica el Dashboard del vendedor y oculta menús sin acceso).

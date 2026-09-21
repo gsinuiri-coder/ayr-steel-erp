@@ -10,7 +10,7 @@ import type { DashboardDto } from '@ayr/shared';
 
 export function SellerDashboardCards() {
   const { user } = useSession();
-  
+
   // Disponible para VENDEDOR, ADMINISTRADOR, SUPERVISOR_PLANTA (ya filtrados en el backend)
   const allowed = ['VENDEDOR', 'ADMINISTRADOR', 'SUPERVISOR_PLANTA'].includes(user.role);
 

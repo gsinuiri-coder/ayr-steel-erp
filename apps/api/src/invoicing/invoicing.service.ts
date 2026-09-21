@@ -880,9 +880,22 @@ export class InvoicingService {
       `;
       const affected = await tx.fiscalDocument.findUnique({
         where: { id: affectedId },
-        include: { items: { orderBy: { lineNumber: 'asc' } }, customer: true },
+        include: {
+          items: { orderBy: { lineNumber: 'asc' } },
+          customer: true,
+          salesOrder: { select: { sellerId: true } },
+          dispatch: { select: { salesOrder: { select: { sellerId: true } } } },
+        },
       });
       if (!affected) throw new NotFoundException('Comprobante no encontrado');
+      // RF-S3c: el vendedor solo opera sobre sus propios comprobantes.
+      {
+        const ownerId =
+          affected.salesOrder?.sellerId ??
+          affected.dispatch?.salesOrder?.sellerId ??
+          affected.createdById;
+        assertSellerAccess(actor, ownerId, 'Comprobante');
+      }
       // D-153: sobre un manual **sí** hay nota de crédito, pero manual — el afectado salió de
       // la otra app y su NC también. Acá solo se corta lo importado, que no tiene vuelta por
       // ningún lado; que el modo del terminal coincida con el del afectado lo exige `send` y
@@ -903,13 +916,6 @@ export class InvoicingService {
       if (affected.status !== FiscalDocumentStatus.ACCEPTED) {
         throw new BadRequestException(
           `Solo se acredita un comprobante aceptado por SUNAT; este está ${affected.status}`,
-        );
-      }
-      // Acreditar tiene el mismo efecto económico que dar de baja —el saldo se va a cero—,
-      // así que sigue la misma regla de propiedad que emitir.
-      if (actor.role !== Role.ADMINISTRADOR && affected.createdById !== actor.id) {
-        throw new ForbiddenException(
-          'El comprobante es de otro vendedor: no puedes emitir su nota de crédito',
         );
       }
 
@@ -1382,7 +1388,15 @@ export class InvoicingService {
     await this.prisma.$transaction(async (tx) => {
       const document = await tx.fiscalDocument.findUnique({
         where: { id },
-        select: { id: true, status: true, docType: true, createdById: true, totalPen: true },
+        select: {
+          id: true,
+          status: true,
+          docType: true,
+          createdById: true,
+          totalPen: true,
+          salesOrder: { select: { sellerId: true } },
+          dispatch: { select: { salesOrder: { select: { sellerId: true } } } },
+        },
       });
       if (!document) throw new NotFoundException('Comprobante no encontrado');
       if (document.status !== FiscalDocumentStatus.DRAFT) {
@@ -1390,8 +1404,12 @@ export class InvoicingService {
           'Solo se descarta un borrador: un documento que ya tomó correlativo se da de baja, no se borra',
         );
       }
-      if (actor.role !== Role.ADMINISTRADOR && document.createdById !== actor.id) {
-        throw new ForbiddenException('El borrador es de otro vendedor: no puedes descartarlo');
+      {
+        const ownerId =
+          document.salesOrder?.sellerId ??
+          document.dispatch?.salesOrder?.sellerId ??
+          document.createdById;
+        assertSellerAccess(actor, ownerId, 'Comprobante');
       }
 
       // La auditoría **antes** del borrado: después no quedaría a qué apuntar, y RF-95 pide
@@ -1446,14 +1464,22 @@ export class InvoicingService {
     const newId = await this.prisma.$transaction(async (tx) => {
       const rejected = await tx.fiscalDocument.findUnique({
         where: { id },
-        include: { items: { orderBy: { lineNumber: 'asc' } } },
+        include: {
+          items: { orderBy: { lineNumber: 'asc' } },
+          salesOrder: { select: { sellerId: true } },
+          dispatch: { select: { salesOrder: { select: { sellerId: true } } } },
+        },
       });
       if (!rejected) throw new NotFoundException('Comprobante no encontrado');
       if (rejected.status !== FiscalDocumentStatus.REJECTED) {
         throw new BadRequestException('Solo se corrige un comprobante rechazado');
       }
-      if (actor.role !== Role.ADMINISTRADOR && rejected.createdById !== actor.id) {
-        throw new ForbiddenException('El comprobante es de otro vendedor: no puedes corregirlo');
+      {
+        const ownerId =
+          rejected.salesOrder?.sellerId ??
+          rejected.dispatch?.salesOrder?.sellerId ??
+          rejected.createdById;
+        assertSellerAccess(actor, ownerId, 'Comprobante');
       }
       const existing = await tx.fiscalDocument.findFirst({
         where: { replacesDocumentId: id },
@@ -1552,24 +1578,25 @@ export class InvoicingService {
   }
 
   /**
-   * Un vendedor solo opera **sobre sus propios** documentos; el administrador, sobre
-   * todos. Es la misma regla que RF-66 impuso en cotizaciones (`assertOwnership` en
-   * `QuotationsService`) y por el mismo motivo: con solo el id, cualquier vendedor podía
-   * emitir el borrador de un compañero — y emitir es irreversible, toma correlativo y lo
-   * manda a SUNAT a nombre de la empresa.
-   *
-   * La **lectura** queda abierta: la lista es del equipo comercial entero.
+   * RF-S3c: el vendedor solo opera sobre **sus propios** comprobantes (vía sellerId del
+   * pedido). El administrador y otros roles (planta) pasan sin restricción.
    */
-  private async assertOwnership(actor: RequestUser, id: string, action: string): Promise<void> {
-    if (actor.role === Role.ADMINISTRADOR) return;
+  private async assertOwnership(actor: RequestUser, id: string, _action: string): Promise<void> {
+    if (actor.role !== Role.VENDEDOR) return;
     const document = await this.prisma.fiscalDocument.findUnique({
       where: { id },
-      select: { createdById: true },
+      select: {
+        createdById: true,
+        salesOrder: { select: { sellerId: true } },
+        dispatch: { select: { salesOrder: { select: { sellerId: true } } } },
+      },
     });
     if (!document) throw new NotFoundException('Comprobante no encontrado');
-    if (document.createdById !== actor.id) {
-      throw new ForbiddenException(`El comprobante es de otro vendedor: no puedes ${action}`);
-    }
+    const ownerId =
+      document.salesOrder?.sellerId ??
+      document.dispatch?.salesOrder?.sellerId ??
+      document.createdById;
+    assertSellerAccess(actor, ownerId, 'Comprobante');
   }
 
   /** Fase 1: correlativo y estado `ISSUED`, en su propia transacción. */

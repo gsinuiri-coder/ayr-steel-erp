@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { assertSellerAccess } from '../auth/seller-scope';
 import { FiscalDocType, FiscalDocumentStatus, Prisma } from '@prisma/client';
 import {
   businessToday,
@@ -108,9 +109,18 @@ export class ReceivablesService {
           where: { status: { in: LIVE_STATUSES }, archivedAt: null },
           select: { totalPen: true },
         },
+        salesOrder: { select: { sellerId: true } },
+        dispatch: { select: { salesOrder: { select: { sellerId: true } } } },
       },
     });
     if (!document) throw new NotFoundException('Comprobante no encontrado');
+
+    // RF-S3c: el vendedor solo cobra sus propios comprobantes.
+    const ownerId =
+      document.salesOrder?.sellerId ??
+      document.dispatch?.salesOrder?.sellerId ??
+      document.createdById;
+    assertSellerAccess(actor, ownerId, 'Comprobante');
 
     if (document.docType === FiscalDocType.NOTA_CREDITO) {
       throw new BadRequestException(

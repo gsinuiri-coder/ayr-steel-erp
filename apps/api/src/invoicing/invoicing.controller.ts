@@ -355,6 +355,7 @@ export class InvoicingController {
    * distintos y no colisionan.
    */
   @Get('receivables')
+  @Roles(Role.ADMINISTRADOR)
   receivables(
     @Query(new ZodValidationPipe(paginationQuerySchema)) query: PaginationQuery,
   ): Promise<PaginatedResult<ReceivableSummaryDto>> {
@@ -366,6 +367,7 @@ export class InvoicingController {
    * sobre todos los clientes con deuda, no solo la página que devuelve `receivables`.
    */
   @Get('receivables/summary')
+  @Roles(Role.ADMINISTRADOR)
   receivablesTotals(): Promise<ReceivableTotalsDto> {
     return this.receivablesService.totals();
   }

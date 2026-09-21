@@ -110,24 +110,6 @@ export class QuotationsService {
     return { toleranceMm: roofingToleranceMm(this.env) };
   }
 
-  /**
-   * RF-66 dice "una cotización **propia**": un vendedor no toca las de otro.
-   *
-   * Sin esto, con solo el id (que `GET /sales/quotations` devuelve a cualquier vendedor) se
-   * podía editar el borrador de un compañero, emitirlo, confirmarlo —creando un pedido y una
-   * reserva a nombre de su cliente— o anulárselo. El `audit_log` dejaba el rastro, pero el
-   * daño ya estaba hecho.
-   *
-   * La **lectura** sigue abierta a todo el equipo comercial: RF-69 pide una lista de
-   * cotizaciones, no una lista por vendedor, y en una empresa de este tamaño ver lo que
-   * cotizó el compañero es parte del trabajo. El ADMINISTRADOR opera cualquiera.
-   */
-  private assertOwnership(actor: RequestUser, createdById: string, _action: string): void {
-    if (actor.role === Role.ADMINISTRADOR) return;
-    if (actor.id === createdById) return;
-    throw new NotFoundException('Cotización no encontrada');
-  }
-
   // -------------------------------------------------------------------------
   // RF-61 — alta y edición
   // -------------------------------------------------------------------------
@@ -221,7 +203,7 @@ export class QuotationsService {
   async update(actor: RequestUser, id: string, input: UpdateQuotationInput): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
-      this.assertOwnership(actor, current.createdById, 'editarla');
+      assertSellerAccess(actor, current.sellerId, 'Cotización');
       if (current.status === QuotationStatus.CONFIRMED) {
         throw new BadRequestException(
           'La cotización ya está confirmada: lo que se edita desde ahora es el pedido.',
@@ -620,7 +602,7 @@ export class QuotationsService {
   async cancel(actor: RequestUser, id: string, reason: string): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
-      this.assertOwnership(actor, current.createdById, 'anularla');
+      assertSellerAccess(actor, current.sellerId, 'Cotización');
       if (current.status === QuotationStatus.CANCELLED) {
         throw new ConflictException('La cotización ya está anulada');
       }
@@ -666,7 +648,7 @@ export class QuotationsService {
     reason: string,
   ): Promise<QuotationDto> {
     const newSeller = await this.prisma.user.findUnique({
-      where: { id: newSellerId, isActive: true, role: 'VENDEDOR' },
+      where: { id: newSellerId, active: true, role: 'VENDEDOR' },
     });
     if (!newSeller) {
       throw new BadRequestException(
