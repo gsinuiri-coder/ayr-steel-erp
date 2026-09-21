@@ -6,12 +6,12 @@ import { useSession } from '@/lib/session';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle, Clock, Factory, Truck } from 'lucide-react';
 
-type DashboardDto = {
+interface DashboardDto {
   expiringQuotations: number;
   expiringReservations: number;
   productionOrders: number;
   readyOrders: number;
-};
+}
 
 export function SellerDashboardCards() {
   const { user } = useSession();
