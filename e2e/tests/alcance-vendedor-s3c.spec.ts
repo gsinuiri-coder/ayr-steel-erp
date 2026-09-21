@@ -55,33 +55,33 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     });
 
     // A accede
-    await expect(contextA.get(/api/sales/quotations/ + quoteId)).resolves.toMatchObject({
+    await expect(contextA.get('/api/sales/quotations/' + quoteId)).resolves.toMatchObject({
       ok: () => true,
     });
 
     // B no accede
-    await expect(contextB.get(/api/sales/quotations/ + quoteId)).resolves.toMatchObject({
+    await expect(contextB.get('/api/sales/quotations/' + quoteId)).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
-    await expect(contextB.post(/api/sales/quotations/ + quoteId + /duplicate)).resolves.toMatchObject({
+    await expect(contextB.post('/api/sales/quotations/' + quoteId + '/duplicate')).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
-    await expect(contextB.post(/api/sales/quotations/ + quoteId + /confirm-preview)).resolves.toMatchObject({
+    await expect(contextB.post('/api/sales/quotations/' + quoteId + '/confirm-preview')).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
     // CRÍTICA 4: Confirm preview temprano (ya verificado arriba)
 
     // Confirmar pedido (A)
-    const previewRes = await contextA.post(/api/sales/quotations/ + quoteId + /confirm-preview);
+    const previewRes = await contextA.post('/api/sales/quotations/' + quoteId + '/confirm-preview');
     expect(previewRes.ok()).toBeTruthy();
-    const confirmRes = await contextA.post(/api/sales/quotations/ + quoteId + /confirm);
+    const confirmRes = await contextA.post('/api/sales/quotations/' + quoteId + '/confirm');
     expect(confirmRes.ok()).toBeTruthy();
     const orderA = await confirmRes.json();
     const orderId = orderA.id;
 
     // Vendedor B no ve pedido
-    await expect(contextB.get(/api/sales/orders/ + orderId)).resolves.toMatchObject({
+    await expect(contextB.get('/api/sales/orders/' + orderId)).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
@@ -94,29 +94,29 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     });
 
     // Vendedor B no ve PDF de planta ajeno (CRÍTICA 2)
-    await expect(contextB.get(/api/sales/orders/ + orderId + /pdf-planta)).resolves.toMatchObject({
+    await expect(contextB.get('/api/sales/orders/' + orderId + '/pdf-planta')).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
     // Admin SÍ puede ver PDF de planta
-    const pdfPlantaAdmin = await contextAdmin.get(/api/sales/orders/ + orderId + /pdf-planta);
+    const pdfPlantaAdmin = await contextAdmin.get('/api/sales/orders/' + orderId + '/pdf-planta');
     expect(pdfPlantaAdmin.ok()).toBeTruthy();
 
     // OP (403)
-    await expect(contextB.get(/api/production/orders)).resolves.toMatchObject({
+    await expect(contextB.get('/api/production/orders')).resolves.toMatchObject({
       _initializer: { status: 403 },
     });
 
     // Confirmar Roofing
-    await contextA.post(/api/sales/quotations/ + roofingQuoteId + /confirm-preview);
+    await contextA.post('/api/sales/quotations/' + roofingQuoteId + '/confirm-preview');
     const confirmRoofingRes = await contextA.post(
-      /api/sales/quotations/ + roofingQuoteId + /confirm,
+      '/api/sales/quotations/' + roofingQuoteId + '/confirm',
     );
     expect(confirmRoofingRes.ok()).toBeTruthy();
     const roofingOrder = await confirmRoofingRes.json();
 
     // Planta Despacha (como Admin o Supervisor) el Drywall
-    const dispatchRes = await contextAdmin.post(/api/invoicing/dispatches, {
+    const dispatchRes = await contextAdmin.post('/api/invoicing/dispatches', {
       data: {
         customerId: customerA.id,
         salesOrderId: orderId,
@@ -134,7 +134,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const dispatchId = (await dispatchRes.json()).id;
 
     // Vendedor B intenta acceder al despacho
-    await expect(contextB.get(/api/invoicing/dispatches/ + dispatchId)).resolves.toMatchObject({
+    await expect(contextB.get('/api/invoicing/dispatches/' + dispatchId)).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
@@ -152,10 +152,10 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const docId = (await invRes.json()).id;
 
     // Vendedor B no puede ver el XML/PDF del documento ajeno
-    await expect(contextB.get(/api/invoicing/documents/ + docId + /pdf)).resolves.toMatchObject({
+    await expect(contextB.get('/api/invoicing/documents/' + docId + '/pdf')).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
-    await expect(contextB.get(/api/invoicing/documents/ + docId + /xml)).resolves.toMatchObject({
+    await expect(contextB.get('/api/invoicing/documents/' + docId + '/xml')).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
@@ -192,7 +192,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     // SUPERVISOR_PLANTA recibe 403 en POST /coils/:id/cancel
     const coilId = coils.data[0].id;
     await expect(
-      contextSup.post(/api/coils/ + coilId + /cancel, {
+      contextSup.post('/api/coils/' + coilId + '/cancel', {
         data: { reason: 'Test' },
       }),
     ).resolves.toMatchObject({ _initializer: { status: 403 } });
@@ -213,7 +213,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
 
     // CRÍTICA 3: Payments test - Vendedor B intenta registrar pago en documento de A
     await expect(
-      contextB.post(/api/invoicing/documents/ + docId + /payments, {
+      contextB.post('/api/invoicing/documents/' + docId + '/payments', {
         data: {
           date: businessToday(),
           amountPen: '10.00',
@@ -225,21 +225,21 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     });
 
     // CRÍTICA 2: Reassign test A -> B
-    const reassignRes = await contextAdmin.patch(/api/sales/quotations/ + quoteId + /seller, {
+    const reassignRes = await contextAdmin.patch('/api/sales/quotations/' + quoteId + '/seller', {
       data: { newSellerId: vendedorB.id, reason: 'Cambio' },
     });
     expect(reassignRes.ok()).toBeTruthy();
 
     // A ya no puede operar la cotización/pedido
-    await expect(contextA.get(/api/sales/quotations/ + quoteId)).resolves.toMatchObject({
+    await expect(contextA.get('/api/sales/quotations/' + quoteId)).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
-    await expect(contextA.get(/api/sales/orders/ + orderId)).resolves.toMatchObject({
+    await expect(contextA.get('/api/sales/orders/' + orderId)).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
     // B ahora puede operar
-    const getOrderB = await contextB.get(/api/sales/orders/ + orderId);
+    const getOrderB = await contextB.get('/api/sales/orders/' + orderId);
     expect(getOrderB.ok()).toBeTruthy();
   });
 
@@ -287,9 +287,9 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       pieces: [{ lengthMm: '3500', qty: 1 }],
     });
 
-    const previewRes = await contextB.post(/api/sales/quotations/ + qId + /confirm-preview);
+    const previewRes = await contextB.post('/api/sales/quotations/' + qId + '/confirm-preview');
     expect(previewRes.ok()).toBeTruthy();
-    const confirmRes = await contextB.post(/api/sales/quotations/ + qId + /confirm);
+    const confirmRes = await contextB.post('/api/sales/quotations/' + qId + '/confirm');
     expect(confirmRes.ok()).toBeTruthy();
 
     const resA = await contextA.get('/api/sales/orders/lines-without-order');
