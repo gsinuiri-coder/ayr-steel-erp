@@ -2334,7 +2334,11 @@ export class SalesOrdersService {
    */
   async findLinesWithoutOrder(actor: RequestUser): Promise<LineWithoutOrderDto[]> {
     const reservations = await this.prisma.reservation.findMany({
-      where: { status: ReservationStatus.ACTIVE, itemType: InventoryItemTypeEnum.RAW_MATERIAL, salesOrder: sellerWhere(actor) },
+      where: {
+        status: ReservationStatus.ACTIVE,
+        itemType: InventoryItemTypeEnum.RAW_MATERIAL,
+        salesOrder: sellerWhere(actor),
+      },
       include: {
         salesOrder: {
           select: {

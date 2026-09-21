@@ -109,13 +109,19 @@ export class CoilsController {
   }
 
   @Get(':id')
-  findOne(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<CoilDto> {
+  findOne(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CoilDto> {
     return this.coils.findOne(id, canSeeCosts(actor));
   }
 
   /** Bobinas hijas de esta bobina (RF-15), para la vista de detalle. */
   @Get(':id/children')
-  findChildren(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<CoilDto[]> {
+  findChildren(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CoilDto[]> {
     return this.coils.findChildren(id, canSeeCosts(actor));
   }
 
@@ -127,7 +133,10 @@ export class CoilsController {
 
   /** OP —y pedido detrás de ella— que montaron esta bobina (D-172, T4). */
   @Get(':id/consumptions')
-  findConsumptions(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<CoilConsumptionDto[]> {
+  findConsumptions(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CoilConsumptionDto[]> {
     return this.coils.findConsumptions(id, actor);
   }
 

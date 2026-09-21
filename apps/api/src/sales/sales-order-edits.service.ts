@@ -593,7 +593,13 @@ export class SalesOrderEditsService {
     _what: string,
   ): Promise<LockedOrder> {
     const rows = await tx.$queryRaw<
-      { id: string; seq: number; status: SalesOrderStatus; created_by_id: string; seller_id: string | null; }[]
+      {
+        id: string;
+        seq: number;
+        status: SalesOrderStatus;
+        created_by_id: string;
+        seller_id: string | null;
+      }[]
     >`
       SELECT "id", "seq", "status", "created_by_id", "seller_id"
       FROM "sales_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE
@@ -619,7 +625,13 @@ export class SalesOrderEditsService {
         `El pedido ya tiene comprobante (${label}): no se puede ${_what}. Corrige con una nota de crédito.`,
       );
     }
-    return { id: head.id, seq: head.seq, status: head.status, createdById: head.created_by_id, sellerId: head.seller_id };
+    return {
+      id: head.id,
+      seq: head.seq,
+      status: head.status,
+      createdById: head.created_by_id,
+      sellerId: head.seller_id,
+    };
   }
 
   private assertOwner(actor: RequestUser, order: LockedOrder, _what: string): void {

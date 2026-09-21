@@ -197,7 +197,7 @@ export class QuotationsService {
 
     await this.audit.write(tx, {
       actorId: actor.id,
-        action: 'sales.quotation.create',
+      action: 'sales.quotation.create',
       entity: 'quotations',
       entityId: quotation.id,
       after: {

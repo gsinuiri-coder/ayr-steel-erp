@@ -449,7 +449,12 @@ export class CoilsService {
             reservation: {
               select: {
                 salesOrder: {
-                  select: { id: true, seq: true, sellerId: true, customer: { select: { name: true } } },
+                  select: {
+                    id: true,
+                    seq: true,
+                    sellerId: true,
+                    customer: { select: { name: true } },
+                  },
                 },
               },
             },

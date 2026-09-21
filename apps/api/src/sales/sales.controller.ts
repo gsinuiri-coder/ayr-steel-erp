@@ -148,7 +148,11 @@ export class SalesController {
   // por eso suma SUPERVISOR_PLANTA a los roles de la clase (§3.4). No lleva importes, así que
   // no le abre nada de lo que el resto del módulo le oculta a ese rol.
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
-  async plantOrderPdf(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor: RequestUser, @Res() res: Response): Promise<void> {
+  async plantOrderPdf(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: RequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
     const { buffer, filename } = await this.orders.plantPdf(id, actor);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
