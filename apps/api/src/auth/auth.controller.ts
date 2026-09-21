@@ -30,7 +30,6 @@ import { Public } from './decorators/public.decorator';
 
 type Cookies = Partial<Record<string, string>>;
 
-@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -98,6 +97,7 @@ export class AuthController {
   }
 
   @Get('me')
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
   me(@CurrentUser() user: RequestUser): { user: AuthUser } {
     const { sessionId: _sid, ...rest } = user;
     return { user: rest };
@@ -105,6 +105,7 @@ export class AuthController {
 
   @Post('change-password')
   @HttpCode(204)
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
   async changePassword(
     @CurrentUser() user: RequestUser,
     @Body(new ZodValidationPipe(changePasswordSchema)) body: ChangePasswordInput,
