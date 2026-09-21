@@ -51,5 +51,6 @@ Se completó la sanidad exigida por la revisión cruzada de M1 y se restableció
 - La ejecución local de E2E falla intencionadamente contra `auth.login` (403 Forbidden local DB policy) porque el gate oficial es el CI.
 
 ## 4. Próximos pasos
+
 1. Claude Code debe realizar la lectura de este handoff y la revisión del PR #7.
 2. Tras la validación, podrá comenzar oficialmente el hito **M2 (Estado LISTO derivado)**.
