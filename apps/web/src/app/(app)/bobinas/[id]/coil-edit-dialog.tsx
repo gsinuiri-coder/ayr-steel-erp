@@ -67,9 +67,9 @@ export function CoilEditDialog({
   const [widthMm, setWidthMm] = useState(coil.widthMm);
   const [finishId, setFinishId] = useState(coil.finishId);
   const [notes, setNotes] = useState(coil.notes ?? '');
-  const [currency, setCurrency] = useState<Currency>(coil.currency);
-  const [exchangeRate, setExchangeRate] = useState(coil.exchangeRate);
-  const [unitCostPerKg, setUnitCostPerKg] = useState(coil.unitCostPerKg);
+  const [currency, setCurrency] = useState<Currency>(coil.currency ?? 'PEN');
+  const [exchangeRate, setExchangeRate] = useState(coil.exchangeRate ?? '');
+  const [unitCostPerKg, setUnitCostPerKg] = useState(coil.unitCostPerKg ?? '');
   const [reason, setReason] = useState('');
 
   // La bobina se lee de un ref y no de las dependencias: si una invalidación refresca
@@ -83,9 +83,9 @@ export function CoilEditDialog({
     setWidthMm(current.widthMm);
     setFinishId(current.finishId);
     setNotes(current.notes ?? '');
-    setCurrency(current.currency);
-    setExchangeRate(current.exchangeRate);
-    setUnitCostPerKg(current.unitCostPerKg);
+    setCurrency(current.currency ?? 'PEN');
+    setExchangeRate(current.exchangeRate ?? '');
+    setUnitCostPerKg(current.unitCostPerKg ?? '');
     setReason('');
   }, [open]);
 
@@ -95,8 +95,8 @@ export function CoilEditDialog({
   const costChanged =
     canEditCost &&
     (currency !== coil.currency ||
-      !decimalEquals(exchangeRate, coil.exchangeRate) ||
-      !decimalEquals(unitCostPerKg, coil.unitCostPerKg));
+      !decimalEquals(exchangeRate, coil.exchangeRate ?? '') ||
+      !decimalEquals(unitCostPerKg, coil.unitCostPerKg ?? ''));
   const widthChanged = !decimalEquals(widthMm, coil.widthMm);
   const finishChanged = finishId !== coil.finishId;
   // D-203: el color de la bobina sale del acabado; se corrige cambiando el acabado.

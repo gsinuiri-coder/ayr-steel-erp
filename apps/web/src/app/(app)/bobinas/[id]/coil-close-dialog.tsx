@@ -64,7 +64,7 @@ export function CoilCloseDialog({
   }, [open]);
 
   const balance = new Decimal(coil.availableKg);
-  const avgCost = new Decimal(coil.avgCostPen);
+  const avgCost = new Decimal(coil.avgCostPen ?? 0);
   // La coma decimal se normaliza a punto **y es `typed` lo que se manda**, no el texto crudo:
   // mandar el crudo hacía que `12,5` pasara la validación de la pantalla, mostrara la
   // liquidación y después rebotara con un 400 del schema de Zod. Es el mismo defecto de D-163

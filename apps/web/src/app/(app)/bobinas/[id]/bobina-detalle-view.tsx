@@ -25,6 +25,7 @@ import { COIL_SPLIT_TONE, COIL_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
 import {
   formatMoney,
+  formatMoneyOrDash,
   formatQty,
   formatTimestampDate,
   isPositiveDecimal,
@@ -295,17 +296,27 @@ export function BobinaDetalleView({ id }: { id: string }) {
             <CardTitle>Costo</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1 text-sm">
-            <Row label="Moneda" value={CURRENCY_LABELS[c.currency]} />
-            {c.currency !== 'PEN' && <Row label="Tipo de cambio" value={c.exchangeRate} />}
-            <Row label="Costo por kg" value={formatMoney(c.unitCostPerKg, c.currency, 4)} />
-            <Row label="Costo total" value={formatMoney(c.totalCost, c.currency)} />
-            <Row label="Costo total en soles" value={formatMoney(c.totalCostPen)} />
+            <Row label="Moneda" value={c.currency ? CURRENCY_LABELS[c.currency] : '—'} />
+            {c.currency !== 'PEN' && <Row label="Tipo de cambio" value={c.exchangeRate ?? '—'} />}
+            <Row
+              label="Costo por kg"
+              value={formatMoneyOrDash(c.unitCostPerKg, c.currency ?? 'PEN', 4)}
+            />
+            <Row label="Costo total" value={formatMoneyOrDash(c.totalCost, c.currency ?? 'PEN')} />
+            <Row label="Costo total en soles" value={formatMoneyOrDash(c.totalCostPen)} />
             {/* D-164: el promedio del kardex, que puede diferir del costo de compra tras un
                 landed cost (D-043) o un partido, y es con el que se valoriza lo que salga. */}
-            <Row label="Promedio del kardex" value={`${formatMoney(c.avgCostPen, 'PEN', 4)}/kg`} />
+            <Row
+              label="Promedio del kardex"
+              value={c.avgCostPen ? `${formatMoneyOrDash(c.avgCostPen, 'PEN', 4)}/kg` : '—'}
+            />
             <Row
               label="Saldo valorizado"
-              value={formatMoney(new Decimal(c.availableKg).times(c.avgCostPen).toFixed(4))}
+              value={
+                c.avgCostPen
+                  ? formatMoneyOrDash(new Decimal(c.availableKg).times(c.avgCostPen).toFixed(4))
+                  : '—'
+              }
             />
           </CardContent>
         </Card>

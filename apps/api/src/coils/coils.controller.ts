@@ -199,7 +199,6 @@ export class CoilsController {
   }
 
   /** Anular la bobina (RF-21). Solo si no tiene movimientos aparte del ingreso inicial. */
-  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Post(':id/cancel')
   @Roles(Role.ADMINISTRADOR)
   cancel(
