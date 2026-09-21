@@ -2557,16 +2557,51 @@ export class SalesOrdersService {
       }),
     ]);
     const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
+
+    // M2: Compute readiness for list
+    const ops = await this.prisma.productionOrder.findMany({
+      where: { reservation: { salesOrderId: { in: rows.map((r) => r.id) } } },
+      select: {
+        status: true,
+        kind: true,
+        reservation: { select: { salesOrderId: true, salesOrderItem: { select: { reserveQty: true } } } },
+        reports: { where: { status: 'ACTIVE' }, select: { metersM: true } },
+      },
+    });
+
+    const contextByOrderId = new Map<string, { queueStatus: QueueStatus | null; readiness: OrderReadinessDto }>();
+    for (const row of rows) {
+      const orderOps = ops.filter((op) => op.reservation?.salesOrderId === row.id);
+      const liveRoofing = orderOps.filter(
+        (o) => o.kind === 'ROOFING' && (o.status === 'DRAFT' || o.status === 'IN_PROGRESS'),
+      );
+      const queueStatus = liveRoofing.some((o) => o.status === 'IN_PROGRESS')
+        ? 'EN_PRODUCCION'
+        : liveRoofing.length > 0
+          ? 'EN_COLA'
+          : null;
+
+      const readinessOrders = orderOps.map((op) => {
+        const orderedMl = op.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000';
+        const reportedMl = op.reports
+          .reduce((sum, r) => sum + (r.metersM ? Number(r.metersM) : 0), 0)
+          .toFixed(3);
+        return { status: op.status, orderedMl, reportedMl };
+      });
+      const readiness = deriveOrderReadiness(readinessOrders);
+      contextByOrderId.set(row.id, { queueStatus, readiness });
+    }
+
     const items = rows.map((r) => {
       const dto = this.toDto(
         { ...r, items: [], reservations: [], fiscalDocuments: [] },
         new Map(),
         actors,
+        contextByOrderId.get(r.id),
       );
       const {
         items: _items,
         reservations: _reservations,
-        queueStatus: _queueStatus,
         importedDocumentId: _importedDocumentId,
         importedDocumentNumber: _importedDocumentNumber,
         priceChanges: _priceChanges,

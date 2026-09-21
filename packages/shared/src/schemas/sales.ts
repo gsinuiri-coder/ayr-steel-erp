@@ -924,11 +924,11 @@ export const salesOrderListItemSchema = salesOrderSchema
   // D-119: `businessLines` sale de `items`, que el listado tampoco carga (mismo motivo).
   // D-141: el número del comprobante importado exige un join más por fila y nadie lo
   // muestra en la lista; `origin` sí queda, que es una columna y es lo que se filtra.
+  // NOTA: readiness SÍ se expone (M2).
   .omit({
     items: true,
     reservations: true,
     queueStatus: true,
-    readiness: true,
     businessLines: true,
     importedDocumentId: true,
     importedDocumentNumber: true,

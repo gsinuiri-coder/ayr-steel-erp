@@ -510,3 +510,14 @@ el ensayo contra la rama clonada no podía ver. **Si este checklist se reutiliza
    Ningún paso de agente debe depender de ella: `smoke:prod` usa un admin efímero de E2E, y una
    escritura de catálogo sin UI va por un script que llama al servicio de dominio, nunca por un
    login con la contraseña de arranque.
+
+### Checklist de Ventana S3c (Alcance de Vendedor y Dashboard)
+
+1. **Respaldo Neon**: Crear rama de respaldo pre-deploy.
+2. **Dry-run**: Verificar que el backfill de sellerId se probó en ensayo (ej. ensayo-s3c-20260920).
+3. **Aviso a vendedores**: Comunicar la parada breve para el deploy.
+4. **Orden estricto de despliegue**: 
+   - Migraciones: pnpm db:prod (Aplica el seller_id en sales_orders y iscal_documents).
+   - Backend: pnpm deploy:api (Habilita el bloqueo 403 de alcance).
+   - Frontend: pnpm deploy:web (Publica el Dashboard del vendedor y oculta menús sin acceso).
+5. **Smoke Test**: pnpm smoke:prod para validar el entorno y que la emisión PSE siga apagada.

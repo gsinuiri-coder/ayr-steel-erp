@@ -46,3 +46,18 @@ test.describe('Alcance de Vendedor (UI)', () => {
     await expect(page.locator('table')).toContainText('TR4');
   });
 });
+
+test('Dashboard del vendedor tiene sus cards y oculta los de admin', async ({ page }) => {
+  await login(page, sellerEmail, 'password123');
+  await page.goto('/');
+
+  // Cards del vendedor
+  await expect(page.getByText('Cotizaciones por vencer')).toBeVisible();
+  await expect(page.getByText('Reservas por expirar')).toBeVisible();
+  await expect(page.getByText('Pedidos en producción')).toBeVisible();
+  await expect(page.getByText('Pedidos listos')).toBeVisible();
+
+  // No debe haber cards de administrador
+  await expect(page.getByText('Cotizaciones sin stock disponible')).toBeHidden();
+  await expect(page.getByText('Precios bajo el piso')).toBeHidden();
+});
