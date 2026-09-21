@@ -44,11 +44,11 @@ export function formatMoney(value: string, currency: Currency = 'PEN', decimals 
  * leería como un costo real de S/ 0.00.
  */
 export function formatMoneyOrDash(
-  value: string | null,
+  value: string | null | undefined,
   currency: Currency = 'PEN',
   decimals = 2,
 ): string {
-  return value === null ? '—' : formatMoney(value, currency, decimals);
+  return value == null ? '—' : formatMoney(value, currency, decimals);
 }
 
 /**

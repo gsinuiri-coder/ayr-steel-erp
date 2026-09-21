@@ -7196,3 +7196,17 @@ node scripts/backfill-seller-scope.mjs --branch ensayo-s3c-20260920
 El wrapper es dry-run por defecto; no agregar `--execute` sin la aprobación correspondiente.
 El guard E2E actual rechaza `ayr_rf_s3c_e2e` porque su lista blanca todavía solo admite
 `ayr_local_e2e`, `ayr_ci_e2e` bajo CI y Neon `ci`; por D-230/D-234 no se amplió ni se reseteó.
+
+### M1 — alcance y costos (bloqueado por E2E)
+
+Se uniformó el alcance del vendedor en despachos, progreso de pedido, comprobantes y descargas
+PDF/XML/CDR; la cola de OP de coberturas filtra por `sellerId`; el kardex (`GET /inventory/movements`)
+y márgenes (`GET /pricing`) quedaron restringidos al administrador/supervisor según corresponda;
+los DTO de inventario y bobina vendible omiten campos de costo para VENDEDOR. El centinela
+`apps/api/src/auth/seller-scope.spec.ts` cubre A/B y administrador; 48 suites y 622 unitarios
+quedaron verdes.
+
+El gate E2E cruzado A/B/admin no puede ejecutarse con la base aislada `ayr_rf_s3c_e2e`: el
+guard de `apps/api/prisma/test-db-guard.ts` la rechaza por lista blanca. No se amplió el guard
+ni se hizo reset; M1 no se declara completo y no se abre PR hasta que el dueño decida el nombre
+permitido o habilite una base E2E compatible.

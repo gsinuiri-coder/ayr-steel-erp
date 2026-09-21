@@ -3072,7 +3072,9 @@ export class SalesOrdersService {
           status: c.status as 'OPEN' | 'CLOSED',
           availableQty: qty.minus(res).toFixed(3),
           minPricePen: floors.get(c.id)?.minPricePen ?? null,
-          avgCostPen: actor.role === Role.ADMINISTRADOR ? (avgCostById.get(c.id) ?? null) : null,
+          ...(actor.role === Role.ADMINISTRADOR
+            ? { avgCostPen: avgCostById.get(c.id) ?? null }
+            : {}),
         };
       })
       .filter((c) => toDecimal(c.availableQty).gt(0));

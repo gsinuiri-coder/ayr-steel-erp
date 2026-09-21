@@ -1158,7 +1158,7 @@ export const sellableCoilSchema = z.object({
    * la aritmética mental; lo que sigue sin viajar es el costo del **documento** de compra, el
    * proveedor y el landed cost, que es lo que §3.4 le oculta al vendedor.
    */
-  avgCostPen: z.string().nullable(),
+  avgCostPen: z.string().nullable().optional(),
 });
 export type SellableCoilDto = z.infer<typeof sellableCoilSchema>;
 

@@ -13,6 +13,7 @@ import {
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { InventoryService } from './inventory.service';
 
@@ -45,6 +46,7 @@ export class InventoryController {
   }
 
   @Get('movements')
+  @Roles(Role.ADMINISTRADOR)
   findMovements(
     @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(inventoryQuerySchema)) query: InventoryQuery,

@@ -60,6 +60,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { assertSellerAccess } from '../auth/seller-scope';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { ENV, type Env } from '../config/env';
@@ -103,8 +104,8 @@ const documentInclude = {
     },
   },
   seriesRef: { select: { series: true } },
-  salesOrder: { select: { id: true, seq: true } },
-  dispatch: { select: { id: true, seq: true } },
+  salesOrder: { select: { id: true, seq: true, sellerId: true } },
+  dispatch: { select: { id: true, seq: true, salesOrder: { select: { sellerId: true } } } },
   affectedDocument: {
     select: {
       id: true,
@@ -440,7 +441,7 @@ export class InvoicingService {
     const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input), {
       timeout: 30_000,
     });
-    return this.findOne(id);
+    return this.findOne(id, actor);
   }
 
   /**
@@ -2484,11 +2485,12 @@ export class InvoicingService {
       const dispatch = await tx.dispatch.findUnique({
         where: { id: dispatchId },
         include: {
-          salesOrder: { select: { id: true, customerId: true } },
+          salesOrder: { select: { id: true, customerId: true, sellerId: true } },
           documents: { select: { id: true, number: true, status: true } },
         },
       });
       if (!dispatch) throw new NotFoundException('Despacho no encontrado');
+      assertSellerAccess(actor, dispatch.salesOrder.sellerId, 'Despacho');
       if (dispatch.status !== DispatchStatus.ISSUED) {
         throw new BadRequestException('Un despacho revertido no tiene guía que emitir');
       }
@@ -2539,7 +2541,7 @@ export class InvoicingService {
 
     await this.assign(actor, documentId);
     await this.deliverDispatchNote(documentId);
-    return this.findOne(documentId);
+    return this.findOne(documentId, actor);
   }
 
   /**
@@ -2748,6 +2750,7 @@ export class InvoicingService {
    * con la primera reversa que alguien olvide restar, y acá hay reversas de las dos cosas.
    */
   async orderProgress(
+    actor: RequestUser,
     salesOrderId: string,
     options: { withPrices: boolean } = { withPrices: true },
   ): Promise<SalesOrderProgressDto> {
@@ -2774,6 +2777,7 @@ export class InvoicingService {
       },
     });
     if (!order) throw new NotFoundException('Pedido no encontrado');
+    assertSellerAccess(actor, order.sellerId, 'Pedido');
 
     const itemIds = order.items.map((i) => i.id);
 
@@ -2911,7 +2915,7 @@ export class InvoicingService {
     return out;
   }
 
-  async findAll(query: FiscalDocumentQuery): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
+  async findAll(query: FiscalDocumentQuery, actor?: RequestUser): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
     const where: Prisma.FiscalDocumentWhereInput = {
       status: query.status,
       docType: query.docType,
@@ -2921,6 +2925,15 @@ export class InvoicingService {
       // RF-72: la versión archivada por una reimportación deja de ser el comprobante y sale
       // de la lista. Sigue existiendo, y se llega a ella desde la vigente que la reemplazó.
       ...(query.includeArchived ? {} : { archivedAt: null }),
+      ...(actor && actor.role !== Role.ADMINISTRADOR
+        ? {
+            OR: [
+              { createdById: actor.id },
+              { salesOrder: { sellerId: actor.id } },
+              { dispatch: { salesOrder: { sellerId: actor.id } } },
+            ],
+          }
+        : {}),
     };
     if (query.pendingOnly) {
       // El saldo es derivado (D-075) y no se puede sumar en SQL sin duplicar la regla que
@@ -2989,7 +3002,7 @@ export class InvoicingService {
     });
   }
 
-  async findOne(id: string): Promise<FiscalDocumentDto> {
+  async findOne(id: string, actor?: RequestUser): Promise<FiscalDocumentDto> {
     const row = await this.prisma.fiscalDocument.findUnique({
       where: { id },
       // El único que trae el historial de correcciones: es lo que se ve en el detalle y lo
@@ -2997,6 +3010,10 @@ export class InvoicingService {
       include: documentDetailInclude,
     });
     if (!row) throw new NotFoundException('Comprobante no encontrado');
+    if (actor) {
+      const ownerId = row.salesOrder?.sellerId ?? row.dispatch?.salesOrder?.sellerId ?? row.createdById;
+      assertSellerAccess(actor, ownerId, 'Comprobante');
+    }
     const settings = await this.settingsRow();
     const actors = await this.resolveActorNames(this.actorIdsOf(row));
     const credited = await this.creditedQtyByItem(row.items.map((i) => i.id));
@@ -3056,12 +3073,25 @@ export class InvoicingService {
   async file(
     id: string,
     kind: 'pdf' | 'xml' | 'cdr',
+    actor?: RequestUser,
   ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
     const row = await this.prisma.fiscalDocument.findUnique({
       where: { id },
-      select: { number: true, pdfKey: true, xmlKey: true, cdrKey: true },
+      select: {
+        number: true,
+        pdfKey: true,
+        xmlKey: true,
+        cdrKey: true,
+        createdById: true,
+        salesOrder: { select: { sellerId: true } },
+        dispatch: { select: { salesOrder: { select: { sellerId: true } } } },
+      },
     });
     if (!row) throw new NotFoundException('Comprobante no encontrado');
+    if (actor) {
+      const ownerId = row.salesOrder?.sellerId ?? row.dispatch?.salesOrder?.sellerId ?? row.createdById;
+      assertSellerAccess(actor, ownerId, 'Comprobante');
+    }
     const key = kind === 'pdf' ? row.pdfKey : kind === 'xml' ? row.xmlKey : row.cdrKey;
     if (!key) {
       throw new NotFoundException(

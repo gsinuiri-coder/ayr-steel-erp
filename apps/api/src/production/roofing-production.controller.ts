@@ -109,8 +109,8 @@ export class RoofingProductionController {
    */
   @Get('queue')
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
-  queue(): Promise<ProductionQueueEntryDto[]> {
-    return this.roofing.queue();
+  queue(@CurrentUser() actor: RequestUser): Promise<ProductionQueueEntryDto[]> {
+    return this.roofing.queue(actor);
   }
 
   /** Prioridad manual excepcional de una orden (D-094 → D-189): solo ADMINISTRADOR, con motivo. */

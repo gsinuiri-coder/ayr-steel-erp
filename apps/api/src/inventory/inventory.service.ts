@@ -795,8 +795,9 @@ export class InventoryService {
         unit: b.unit,
         reservedQty: reservedQty.toFixed(3),
         availableQty: qty.minus(reservedQty).toFixed(3),
-        avgCost: showCosts ? avgCost.toFixed(4) : null,
-        totalValue: showCosts ? toFixedString(qty.times(avgCost), 'MONEY') : null,
+        ...(showCosts
+          ? { avgCost: avgCost.toFixed(4), totalValue: toFixedString(qty.times(avgCost), 'MONEY') }
+          : {}),
         updatedAt: b.updatedAt.toISOString(),
       };
     });
@@ -870,10 +871,15 @@ export class InventoryService {
         unit: g.unit,
         reservedQty: g.reserved.toFixed(3),
         availableQty: g.qty.minus(g.reserved).toFixed(3),
-        avgCostPen: showCosts
-          ? toFixedString(g.qty.lte(0) ? new Decimal(0) : g.value.div(g.qty), 'MONEY')
-          : null,
-        totalValuePen: showCosts ? toFixedString(g.value, 'MONEY') : null,
+        ...(showCosts
+          ? {
+              avgCostPen: toFixedString(
+                g.qty.lte(0) ? new Decimal(0) : g.value.div(g.qty),
+                'MONEY',
+              ),
+              totalValuePen: toFixedString(g.value, 'MONEY'),
+            }
+          : {}),
         itemCount: g.ids.length,
         // Solo tiene sentido enlazar al kardex de un ítem cuando el grupo es uno solo.
         itemId: g.ids.length === 1 ? (g.ids[0] ?? null) : null,
@@ -889,7 +895,7 @@ export class InventoryService {
       businessLine,
       coils: rows.filter((r) => r.itemType === 'COIL'),
       products: rows.filter((r) => r.itemType === 'PRODUCT'),
-      totalValuePen: showCosts ? toFixedString(total, 'MONEY') : null,
+      ...(showCosts ? { totalValuePen: toFixedString(total, 'MONEY') } : {}),
     };
   }
 
@@ -981,8 +987,9 @@ export class InventoryService {
         type: m.type,
         qty: qty.toFixed(3),
         unit: m.unit,
-        unitCost: showCosts ? unitCost.toFixed(4) : null,
-        totalCost: showCosts ? m.totalCost.toFixed(4) : null,
+        ...(showCosts
+          ? { unitCost: unitCost.toFixed(4), totalCost: m.totalCost.toFixed(4) }
+          : {}),
         refType: m.refType,
         refId: m.refId,
         refTargetType: target?.type ?? null,
@@ -996,7 +1003,9 @@ export class InventoryService {
         at: m.at.toISOString(),
         operationDate: fromDateOnly(m.operationDate),
         balanceQty: singleItem ? runningQty.toFixed(3) : null,
-        balanceAvgCost: singleItem && showCosts ? toFixedString(runningAvg, 'MONEY') : null,
+        ...(singleItem && showCosts
+          ? { balanceAvgCost: toFixedString(runningAvg, 'MONEY') }
+          : {}),
       } satisfies InventoryMovementDto;
     });
 

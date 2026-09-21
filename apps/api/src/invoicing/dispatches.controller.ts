@@ -49,14 +49,15 @@ export class DispatchesController {
 
   @Get()
   findAll(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(dispatchQuerySchema)) query: DispatchQuery,
   ): Promise<PaginatedResult<DispatchListItemDto>> {
-    return this.dispatches.findAll(query);
+    return this.dispatches.findAll(query, actor);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<DispatchDto> {
-    return this.dispatches.findOne(id);
+  findOne(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<DispatchDto> {
+    return this.dispatches.findOne(id, actor);
   }
 
   /** RF-77: saca la mercadería, mueve kardex y cierra el pedido (D-074). */
