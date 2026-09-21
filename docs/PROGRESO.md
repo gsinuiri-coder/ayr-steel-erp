@@ -2,6 +2,17 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` §3.7.
 
+## Sesión RF-S3b — cierre post-merge (2026-09-20)
+
+- PR #6 se mergeó a `main` con OK explícito D-232; merge commit `fb443a5`, usando
+  `AYR_OWNER_PUSH=1`.
+- CI del PR `9a78bb2`: lint/typecheck/unit, análisis estático, E2E completo y smoke Neon verdes.
+  La CI no corre en pushes a ramas de trabajo: corre en pushes a `main` y PRs hacia `main`.
+  Abrir el PR temprano es la vía para obtener veredicto sin depender del entorno local.
+- Agy completó la revisión cruzada sin hallazgos bloqueantes, altos ni medios. Los 7 rojos previos
+  fueron defectos de prueba y quedaron corregidos. Todo worktree nuevo se registra con
+  `agy --new-project` desde su raíz antes de empezar.
+
 ## Estado general
 
 | Fase                                                                                            | Estado                     | Cierre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |

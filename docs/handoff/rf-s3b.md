@@ -1,5 +1,23 @@
 # Handoff — RF-S3b
 
+## Cierre posterior al merge (2026-09-20)
+
+RF-S3b fue entregada mediante PR #6 a `main` con merge commit `fb443a5`, tras OK explícito del
+dueño conforme a D-232 y usando `AYR_OWNER_PUSH=1`. La CI del PR en `9a78bb2` quedó verde en
+lint/typecheck/unit, análisis estático, E2E completo y smoke Neon. Los 7 rojos previos fueron
+defectos de prueba corregidos; agy revisó de forma independiente sin hallazgos bloqueantes,
+altos ni medios (dejó dos notas bajas).
+
+Todo worktree nuevo se registra en agy con `agy --new-project` desde su raíz antes de empezar a
+trabajar. La CI no corre en pushes a ramas de trabajo: corre en pushes a `main` y en PRs hacia
+`main`; abrir el PR temprano es la vía para obtener el veredicto sin depender del entorno local.
+
+Tras el merge, la CI de `main` se lanzó desde `fb443a5`; queda pendiente confirmar su resultado
+antes del cierre final. El worktree y la rama local se retiran después de esa confirmación; la
+rama remota `rf-s3b` queda para borrado por el dueño.
+
+Este apartado supersede los pendientes historicos de las secciones siguientes.
+
 ## 1. Resumen
 
 Los cinco milestones funcionales están implementados en el worktree `rf-s3b`, sin migraciones
