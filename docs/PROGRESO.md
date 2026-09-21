@@ -7211,3 +7211,7 @@ El gate E2E cruzado A/B/admin no puede ejecutarse con la base aislada `ayr_rf_s3
 guard de `apps/api/prisma/test-db-guard.ts` la rechaza por lista blanca. No se amplió el guard
 ni se hizo reset; M1 no se declara completo y no se abre PR hasta que el dueño decida el nombre
 permitido o habilite una base E2E compatible.
+
+## RF-S3c: Gap de deploy (M1)
+
+El backend ahora bloquea el acceso de VENDEDOR a Kardex y Auditoría mediante Guards y decoradores @Roles. En la web antigua (fb443a5), el vendedor aún podría ver los links en el menú, pero al hacer clic, el API nuevo devolverá un 403 Forbidden bloqueando correctamente los datos subyacentes sin romper la aplicación completa. La versión web actual ya oculta los menús, garantizando la compatibilidad.
