@@ -26,12 +26,14 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const { finish: finishRoofing } = await setupCoilStock(api, {
       lineCode: 'metallic-roofing',
       weightKg: '5000',
+      thicknessMm: '0.43',
     });
     const pRoofing = await createSellableProduct(api, {
       lineCode: 'metallic-roofing',
       unit: 'MTR',
       roofingKind: 'A_MEDIDA',
-      finishId: finishRoofing.id,
+        finishId: finishRoofing.id,
+        thicknessMm: '0.43',
     });
     const roofingProductId = pRoofing.id;
 
@@ -271,12 +273,14 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const { finish: finishRoofing } = await setupCoilStock(api, {
       lineCode: 'metallic-roofing',
       weightKg: '5000',
+      thicknessMm: '0.43',
     });
     const pRoofing = await createSellableProduct(api, {
       lineCode: 'metallic-roofing',
       unit: 'MTR',
       roofingKind: 'A_MEDIDA',
-      finishId: finishRoofing.id,
+        finishId: finishRoofing.id,
+        thicknessMm: '0.43',
     });
     const roofingProductId = pRoofing.id;
 

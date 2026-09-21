@@ -16,12 +16,13 @@ test.describe('Alcance de Vendedor (UI)', () => {
     });
     sellerEmail = user.email;
     // Ensure we have some stock
-    const { finish } = await setupCoilStock(api, { lineCode: 'metallic-roofing' });
+    const { finish } = await setupCoilStock(api, { lineCode: 'metallic-roofing', thicknessMm: '0.43' });
     const p = await createSellableProduct(api, {
       lineCode: 'metallic-roofing',
       unit: 'MTR',
       roofingKind: 'A_MEDIDA',
       finishId: finish.id,
+      thicknessMm: '0.43',
     });
     testSku = p.sku;
   });

@@ -47,7 +47,7 @@ export class InventoryController {
   }
 
   @Get('movements')
-  @Roles(Role.ADMINISTRADOR)
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   findMovements(
     @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(inventoryQuerySchema)) query: InventoryQuery,
