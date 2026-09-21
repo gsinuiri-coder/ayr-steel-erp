@@ -248,7 +248,23 @@ export function ProductStockPickerDialog({
                     unitSymbol(p.unit),
                   );
                   return (
-                    <TableRow key={p.id}>
+                    <TableRow
+                      key={p.id}
+                      tabIndex={0}
+                      aria-label={`Elegir ${p.sku}`}
+                      className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                      onClick={() => {
+                        onSelect(p.id);
+                        onOpenChange(false);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onSelect(p.id);
+                          onOpenChange(false);
+                        }
+                      }}
+                    >
                       <TableCell className="whitespace-normal break-words">
                         <div className="font-medium">{p.sku}</div>
                         <div className="text-xs text-muted-foreground">{p.name}</div>
@@ -267,12 +283,13 @@ export function ProductStockPickerDialog({
                           size="sm"
                           variant={p.id === selectedProductId ? 'default' : 'outline'}
                           aria-label={`Elegir ${p.sku}`}
-                          onClick={() => {
+                          onClick={(event) => {
+                            event.stopPropagation();
                             onSelect(p.id);
                             onOpenChange(false);
                           }}
                         >
-                          {p.id === selectedProductId ? 'Elegido' : 'Elegir'}
+                          Elegir
                         </Button>
                       </TableCell>
                     </TableRow>

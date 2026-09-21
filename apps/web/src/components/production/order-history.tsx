@@ -15,8 +15,6 @@ import {
 import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { formatMoneyOrDash, formatQty, formatTimestampDate } from '@/lib/format';
-import { SortableTableHead } from '@/components/sortable-table-head';
-import { compareBy, useSort } from '@/lib/use-sort';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -28,24 +26,18 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LINK_CLASSNAME } from '@/lib/utils';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 
 const ALL = 'ALL';
 
 /**
- * Historial de órdenes de producción (RF-34, RF-30): todas, de las dos líneas, con filtros.
+ * Historial de producción (RF-34, RF-30): pedidos con sus OP dentro, de las dos líneas.
  *
  * **D-190: era la página `/produccion`** y salió de la navegación. La cola vive en `/planta`,
  * las órdenes de un pedido en su detalle, y este listado —el único lugar que mostraba las
  * cerradas, las anuladas y las corridas de drywall sin pedido, con su merma y su costo— se
- * reubicó entero como sección plegable de `/planta`. No se perdió ninguna columna.
+ * reubicó en `/planta`. RF-S3b conserva el detalle de cada OP pero recupera la unidad mental
+ * de la vista principal: primero el pedido, luego sus órdenes. Las corridas a stock quedan en
+ * un grupo explícito y las rutas `/produccion/:id` siguen siendo el detalle auditable.
  *
  * Un solo listado para las dos líneas de transformación (D-087): comparten tabla,
  * correlativo y estados, y para quien las administra una orden es una orden.
@@ -62,25 +54,9 @@ export function OrderHistory() {
     queryKey: ['production-orders', queryString],
     queryFn: () => api<ProductionOrderListItemDto[]>(`/production${queryString}`),
   });
-  // S10b/M1: esta lista no pagina (D-113 la deja en un tope de 500, no en páginas), así
-  // que el sort acá sí cubre el conjunto entero, no solo lo visible. El orden por defecto
-  // del servidor (por `seq` descendente) no se toca salvo que el usuario clickee.
-  const [sort, toggleSort] = useSort<'code' | 'createdAt' | 'status'>();
-  const rows =
-    sort.key === null
-      ? (orders.data ?? [])
-      : [...(orders.data ?? [])].sort((a, b) => {
-          switch (sort.key) {
-            case 'code':
-              return compareBy(sort.dir, a.code, b.code);
-            case 'createdAt':
-              return compareBy(sort.dir, a.createdAt, b.createdAt);
-            case 'status':
-              return compareBy(sort.dir, a.status, b.status);
-            default:
-              return 0;
-          }
-        });
+  // El servidor ya entrega las OP por correlativo descendente (D-113). El primer encuentro
+  // fija también el orden de los pedidos: actividad de producción más reciente primero.
+  const groups = groupHistoryByOrder(orders.data ?? []);
 
   return (
     <Card>
@@ -127,128 +103,123 @@ export function OrderHistory() {
           </Select>
         </div>
 
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <SortableTableHead
-                  active={sort.key === 'code'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('code');
-                  }}
+        {orders.isPending && <Skeleton className="h-64 w-full" />}
+        {orders.isError && (
+          <p className="text-sm text-destructive">
+            No se pudieron cargar las órdenes de producción.
+          </p>
+        )}
+        {groups.map((group) => (
+          <Card key={group.key}>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+                {group.salesOrderId === null ? (
+                  <span>Corridas sin pedido</span>
+                ) : (
+                  <Link href={`/pedidos/${group.salesOrderId}`} className={LINK_CLASSNAME}>
+                    {group.salesOrderCode}
+                  </Link>
+                )}
+                {group.customerName !== null && (
+                  <span className="text-sm font-normal text-muted-foreground">
+                    {group.customerName}
+                  </span>
+                )}
+                <Badge variant="outline">
+                  {group.orders.length} {group.orders.length === 1 ? 'orden' : 'órdenes'}
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-2">
+              {group.orders.map((o) => (
+                <div
+                  key={o.id}
+                  className="grid gap-2 rounded-lg border p-3 xl:grid-cols-[minmax(12rem,1.4fr)_repeat(5,minmax(7rem,auto))] xl:items-center"
                 >
-                  Orden
-                </SortableTableHead>
-                <TableHead>Producto</TableHead>
-                <TableHead className="text-right">Producido</TableHead>
-                <TableHead className="text-right">Material asignado</TableHead>
-                <TableHead className="text-right">Merma</TableHead>
-                <TableHead className="text-right">Costo unitario</TableHead>
-                <SortableTableHead
-                  active={sort.key === 'createdAt'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('createdAt');
-                  }}
-                >
-                  Creada
-                </SortableTableHead>
-                <SortableTableHead
-                  active={sort.key === 'status'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('status');
-                  }}
-                >
-                  Estado
-                </SortableTableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {orders.isPending &&
-                [0, 1, 2].map((i) => (
-                  <TableRow key={i}>
-                    <TableCell colSpan={8}>
-                      <Skeleton className="h-5 w-full" />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              {orders.isError && (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-destructive">
-                    No se pudieron cargar las órdenes de producción.
-                  </TableCell>
-                </TableRow>
-              )}
-              {rows.map((o) => (
-                <TableRow key={o.id}>
-                  <TableCell className="font-mono font-medium">
-                    <Link href={`/produccion/${o.id}`} className={LINK_CLASSNAME}>
+                  <div className="min-w-0">
+                    <Link
+                      href={`/produccion/${o.id}`}
+                      className={`font-mono font-medium ${LINK_CLASSNAME}`}
+                    >
                       {o.code}
                     </Link>
-                  </TableCell>
-                  <TableCell>
-                    <div className="font-medium">
-                      {o.productSku}
-                      <span className="ml-2 text-xs font-normal text-muted-foreground">
-                        {o.productName}
-                      </span>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {PRODUCTION_ORDER_KIND_LABELS[o.kind]}
-                      {o.salesOrderCode !== null && o.salesOrderId !== null && (
-                        <>
-                          {' · '}
-                          <Link href={`/pedidos/${o.salesOrderId}`} className={LINK_CLASSNAME}>
-                            {o.salesOrderCode}
-                          </Link>
-                        </>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {/* D-083: una cobertura a medida se produce en metros, no en piezas. */}
-                    {o.metersReported === null ? (
-                      <>
-                        {o.piecesReported}
-                        {o.targetPieces !== null && (
-                          <span className="text-muted-foreground"> / {o.targetPieces}</span>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        {o.metersReported} m
-                        <span className="text-muted-foreground"> · {o.piecesReported} pzs</span>
-                      </>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">{formatQty(o.assignedKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">
-                    {o.scrapKg ? formatQty(o.scrapKg, 'kg') : '—'}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatMoneyOrDash(o.unitCostPen, 'PEN', 4)}
-                  </TableCell>
-                  <TableCell>{formatTimestampDate(o.createdAt)}</TableCell>
-                  <TableCell>
+                    <p className="break-words text-sm font-medium">
+                      {o.productSku} · {o.productName}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {PRODUCTION_ORDER_KIND_LABELS[o.kind]} · creada{' '}
+                      {formatTimestampDate(o.createdAt)}
+                    </p>
+                  </div>
+                  <HistoryMetric label="Producido" value={producedLabel(o)} />
+                  <HistoryMetric label="Material" value={formatQty(o.assignedKg, 'kg')} />
+                  <HistoryMetric
+                    label="Merma"
+                    value={o.scrapKg ? formatQty(o.scrapKg, 'kg') : '—'}
+                  />
+                  <HistoryMetric
+                    label="Costo unit."
+                    value={formatMoneyOrDash(o.unitCostPen, 'PEN', 4)}
+                  />
+                  <div className="xl:text-right">
                     <Badge variant={PRODUCTION_ORDER_TONE[o.status]}>
                       {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
                     </Badge>
-                  </TableCell>
-                </TableRow>
+                  </div>
+                </div>
               ))}
-              {orders.isSuccess && rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground">
-                    No hay órdenes de producción que coincidan con el filtro.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+            </CardContent>
+          </Card>
+        ))}
+        {orders.isSuccess && groups.length === 0 && (
+          <p className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+            No hay órdenes de producción que coincidan con el filtro.
+          </p>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+interface HistoryGroup {
+  key: string;
+  salesOrderId: string | null;
+  salesOrderCode: string | null;
+  customerName: string | null;
+  orders: ProductionOrderListItemDto[];
+}
+
+function groupHistoryByOrder(rows: readonly ProductionOrderListItemDto[]): HistoryGroup[] {
+  const groups = new Map<string, HistoryGroup>();
+  for (const order of rows) {
+    const key = order.salesOrderId ?? 'sin-pedido';
+    const group = groups.get(key) ?? {
+      key,
+      salesOrderId: order.salesOrderId,
+      salesOrderCode: order.salesOrderCode,
+      customerName: order.customerName,
+      orders: [],
+    };
+    group.orders.push(order);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+function producedLabel(order: ProductionOrderListItemDto): string {
+  if (order.metersReported === null) {
+    return order.targetPieces === null
+      ? `${String(order.piecesReported)} pzs`
+      : `${String(order.piecesReported)} / ${String(order.targetPieces)} pzs`;
+  }
+  return `${order.metersReported} m · ${String(order.piecesReported)} pzs`;
+}
+
+function HistoryMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 xl:block xl:text-right">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <p className="text-sm tabular-nums">{value}</p>
+    </div>
   );
 }

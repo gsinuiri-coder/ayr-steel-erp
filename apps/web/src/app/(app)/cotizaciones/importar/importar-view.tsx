@@ -28,7 +28,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
-import { ExpressCreateCustomer, ExpressCreateProduct } from '@/components/express-create';
+import { ExpressCreateCustomer } from '@/components/express-create';
 import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -182,15 +182,11 @@ export function ImportarCotizacionesView() {
    * vuelve a aparecer sobre algo que ya está elegido.
    */
   const [createdCustomers, setCreatedCustomers] = useState<CustomerDto[]>([]);
-  const [createdProducts, setCreatedProducts] = useState<ProductDto[]>([]);
   const allCustomers = useMemo(
     () => mergeById(customers.data?.items ?? [], createdCustomers),
     [customers.data, createdCustomers],
   );
-  const allProducts = useMemo(
-    () => mergeById(products.data ?? [], createdProducts),
-    [products.data, createdProducts],
-  );
+  const allProducts = products.data ?? [];
   // Las opciones de los dos maestros, una sola vez para las 141 filas: rearmarlas por celda
   // era un recorrido del catálogo entero por render de cada fila.
   const customerOptions = useMemo(
@@ -476,9 +472,6 @@ export function ImportarCotizacionesView() {
                       setCreatedCustomers((prev) => [...prev, created]);
                       setDocumentCustomer(group.key, created.id);
                     }}
-                    onCreatedProduct={(created) => {
-                      setCreatedProducts((prev) => [...prev, created]);
-                    }}
                   />
                 ))}
               </div>
@@ -643,7 +636,6 @@ function DocumentGroupCard({
   onCustomer,
   onChange,
   onCreatedCustomer,
-  onCreatedProduct,
 }: {
   group: DocumentGroup;
   open: boolean;
@@ -655,7 +647,6 @@ function DocumentGroupCard({
   onCustomer: (customerId: string) => void;
   onChange: (rowNumber: number, documentKey: string, patch: RowEdit) => void;
   onCreatedCustomer: (customer: CustomerDto) => void;
-  onCreatedProduct: (product: ProductDto) => void;
 }) {
   const status =
     group.live === 0
@@ -713,6 +704,7 @@ function DocumentGroupCard({
         <SearchSelectField
           label={`Cliente de ${group.key}`}
           placeholder={group.padron === null ? 'Elige el cliente' : 'Se creará desde el padrón'}
+          actionLabel="Elegir"
           options={customerOptions}
           value={group.customerId}
           disabled={disabled}
@@ -771,7 +763,6 @@ function DocumentGroupCard({
                   onChange={(patch) => {
                     onChange(row.raw.rowNumber, group.key, patch);
                   }}
-                  onCreatedProduct={onCreatedProduct}
                 />
               ))}
             </tbody>
@@ -802,13 +793,11 @@ function ImportRow({
   productOptions,
   disabled,
   onChange,
-  onCreatedProduct,
 }: {
   row: ResolvedRow;
   productOptions: readonly SearchSelectOption[];
   disabled: boolean;
   onChange: (patch: RowEdit) => void;
-  onCreatedProduct: (product: ProductDto) => void;
 }) {
   const { raw } = row;
   const excluded = raw.excludedReason !== null;
@@ -849,19 +838,12 @@ function ImportRow({
               <SearchSelectField
                 label={`Producto de la fila ${String(raw.rowNumber)}`}
                 placeholder="Elige el producto"
+                actionLabel="Elegir"
                 options={productOptions}
                 value={row.productId}
                 disabled={disabled}
                 onChange={(id) => {
                   onChange({ productId: id });
-                }}
-              />
-              <ExpressCreateProduct
-                initial={{ sku: raw.rawSku, name: raw.rawProductName || raw.rawSku }}
-                disabled={disabled}
-                onCreated={(created) => {
-                  onCreatedProduct(created);
-                  onChange({ productId: created.id });
                 }}
               />
             </div>

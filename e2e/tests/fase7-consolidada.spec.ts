@@ -406,8 +406,8 @@ test.describe('D-124 — fecha de operación', () => {
 
       const productKardex = await kardexOf(api, 'PRODUCT', product.id);
       const dates = productKardex.map((m) => m.operationDate);
-      // El API devuelve el más reciente primero: la lista tiene que venir no creciente.
-      expect([...dates].sort().reverse()).toEqual(dates);
+      // D-237: el kardex individual se devuelve completo y en orden cronológico ascendente.
+      expect([...dates].sort()).toEqual(dates);
       expect(dates).toContain(AUG_PRODUCTION_REPORT);
       expect(dates).toContain(AUG_DISPATCH);
       // Y todos se acaban de grabar: es la diferencia entera entre `at` y `operationDate`.
@@ -713,11 +713,10 @@ test.describe('D-124 — fecha de operación', () => {
 
       const movements = await kardexOf(api, 'PRODUCT', product.id);
       expect(movements).toHaveLength(2);
-      // El kardex los muestra en orden de **fecha de operación** (más reciente primero), que
-      // es el inverso del orden en que se grabaron: el de agosto quedó por debajo del de hoy
-      // aunque se haya tipeado después.
-      expect(movements.map((m) => m.operationDate)).toEqual([today(), AUG_COIL_IN]);
-      expect(Number(movements[0]!.id)).toBeLessThan(Number(movements[1]!.id));
+      // D-237: el kardex individual los muestra en orden cronológico ascendente, aunque el
+      // movimiento retrofechado se haya insertado después que el movimiento de hoy.
+      expect(movements.map((m) => m.operationDate)).toEqual([AUG_COIL_IN, today()]);
+      expect(Number(movements[0]!.id)).toBeGreaterThan(Number(movements[1]!.id));
     } finally {
       for (const purchaseId of [...purchases].reverse()) {
         await api

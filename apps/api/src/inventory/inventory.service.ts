@@ -1000,8 +1000,12 @@ export class InventoryService {
       } satisfies InventoryMovementDto;
     });
 
-    // Más reciente primero para la vista; el cálculo del saldo corrido necesitaba el orden inverso.
-    const items = dtos.reverse();
+    // El kardex de un ítem se entrega en el mismo orden cronológico en el que se calculó
+    // el saldo corrido: del movimiento más antiguo al más reciente. El listado mezclado
+    // conserva su contrato de página reciente y su orden descendente: no es el historial
+    // de una bobina o producto y, al paginar, la primera página tiene que seguir siendo la
+    // relevante para el usuario.
+    const items = singleItem ? dtos : dtos.reverse();
     // El de un ítem concreto no pagina: es "todo lo que hay", una sola página que lo
     // contiene entero. Decirlo así (en vez de fingir page/pageSize del pedido) es lo que
     // hace que `PaginatedResult` no mienta sobre cuántas páginas hay.

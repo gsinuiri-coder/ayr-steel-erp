@@ -116,7 +116,7 @@ async function buyCoil(
   return { coil: coil!, purchaseId: purchase.id };
 }
 
-/** El último movimiento del kardex de la bobina, que es el que el cierre acaba de emitir. */
+/** El último movimiento cronológico del kardex de la bobina, que es el que el cierre acaba de emitir. */
 async function lastMovement(api: APIRequestContext, coilId: string): Promise<MovementDto> {
   const rows = await movements(api, coilId);
   const last = rows.at(-1);
@@ -130,7 +130,8 @@ async function movements(api: APIRequestContext, coilId: string): Promise<Moveme
     api,
     `/api/inventory/movements?itemType=COIL&itemId=${coilId}`,
   );
-  return rows.reverse();
+  // D-237: el API ya entrega el historial individual ascendente.
+  return rows;
 }
 
 /**

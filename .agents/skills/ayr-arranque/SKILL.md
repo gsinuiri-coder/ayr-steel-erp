@@ -5,6 +5,8 @@ description: 'Inicia una sesión o ventana de AYR Steel ERP: valida rama, CI y c
 
 # Arranque AYR
 
+0. **Antes de empezar a trabajar en un worktree nuevo**, regístralo desde su raíz en Antigravity con `agy --new-project`. Esto debe ocurrir al inicio, no al cierre: sin ese registro la revisión cruzada puede auto-denegar la lectura del proyecto.
+
 1. Lee `AGENTS.md` completo. Sus reglas prevalecen sobre documentación histórica.
 2. Sin modificar archivos, ejecuta `git fetch`, confirma que la rama/worktree de la tarea parte
    del `origin/main` vigente y consulta `gh run list --branch main --limit 3`. No abras ni uses
