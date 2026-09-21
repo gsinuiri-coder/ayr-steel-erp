@@ -406,8 +406,8 @@ test.describe('D-124 — fecha de operación', () => {
 
       const productKardex = await kardexOf(api, 'PRODUCT', product.id);
       const dates = productKardex.map((m) => m.operationDate);
-      // El API devuelve el más reciente primero: la lista tiene que venir no creciente.
-      expect([...dates].sort().reverse()).toEqual(dates);
+      // D-237: el kardex individual se devuelve completo y en orden cronológico ascendente.
+      expect([...dates].sort()).toEqual(dates);
       expect(dates).toContain(AUG_PRODUCTION_REPORT);
       expect(dates).toContain(AUG_DISPATCH);
       // Y todos se acaban de grabar: es la diferencia entera entre `at` y `operationDate`.
