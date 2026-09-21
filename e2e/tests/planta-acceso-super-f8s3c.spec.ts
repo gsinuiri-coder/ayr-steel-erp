@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { businessToday } from '@ayr/shared';
 import { adminApi, createUser } from '../helpers/api';
-import { createCustomer, setupCoilStock } from '../helpers/sales';
+import { createCustomer, setupCoilStock, createSellableProduct } from '../helpers/sales';
+import { apiAs } from '../helpers/production';
 
-test.describe('Acceso Supervisor de Planta (CRÍTICA 1)', () => {
+test.describe('Acceso Supervisor de Planta (CRITICA 1)', () => {
   test('SUPERVISOR_PLANTA puede operar punta a punta la OP de otro usuario y descargar hoja de planta', async ({
     baseURL,
-    request,
   }) => {
     const api = await adminApi(baseURL!);
 
@@ -15,72 +15,62 @@ test.describe('Acceso Supervisor de Planta (CRÍTICA 1)', () => {
 
     const customer = await createCustomer(api);
 
-    const { productId, coilId } = await setupCoilStock(api, {
-      businessLine: 'ROOFING',
-      code: 'PLN-SUP-1',
-      thicknessMm: '0.45',
-      widthMm: '1200',
+    const { finish, coil } = await setupCoilStock(api, {
+      lineCode: 'metallic-roofing',
       weightKg: '5000',
+      thicknessMm: '0.45',
     });
 
-    // 1. Vendedor crea cotización y la confirma
-    const contextVen = await request.newContext();
-    await contextVen.post('/api/auth/login', {
-      data: { email: vendedor.email, password: vendedor.password },
+    const productRes = await createSellableProduct(api, {
+      lineCode: 'metallic-roofing',
+      unit: 'MTR',
+      roofingKind: 'A_MEDIDA',
+      finishId: finish.id,
+      thicknessMm: '0.45',
     });
 
-    const quoteRes = await contextVen.post('/api/sales/quotations', {
+    const apiVen = await apiAs(baseURL!, vendedor);
+
+    const quoteRes = await apiVen.post('/api/sales/quotations', {
       data: {
         customerId: customer.id,
-        businessLine: 'ROOFING',
+        businessLine: 'metallic-roofing',
         issueDate: businessToday(),
-        items: [{ productId, qty: '10', lengthMeters: '3.00' }],
+        items: [{ productId: productRes.id, qty: '30', pieces: [{ lengthMm: '3000', qty: 10 }] }],
       },
     });
     expect(quoteRes.ok()).toBeTruthy();
     const { id: quoteId } = await quoteRes.json();
 
-    const confirmRes = await contextVen.post(`/api/sales/quotations/${quoteId}/confirm`);
+    const confirmRes = await apiVen.post(`/api/sales/quotations/${quoteId}/confirm`);
     expect(confirmRes.ok()).toBeTruthy();
     const order = await confirmRes.json();
     const orderId = order.id;
 
-    // Obtener el ID de la orden de producción desde la reserva del vendedor
     const productionOrderId = order.reservations[0].productionOrderId;
     expect(productionOrderId).toBeDefined();
 
-    // 2. Supervisor de Planta (actor de la prueba)
-    const contextSup = await request.newContext();
-    await contextSup.post('/api/auth/login', {
-      data: { email: supervisor.email, password: supervisor.password },
-    });
+    const apiSup = await apiAs(baseURL!, supervisor);
 
-    // Supervisor lista la cola de planta (debería verla y no tener 403 ni 404)
-    const opsRes = await contextSup.get('/api/production/orders');
+    const opsRes = await apiSup.get('/api/production/roofing/queue');
     expect(opsRes.ok()).toBeTruthy();
 
-    // Supervisor descarga la hoja de planta
-    const pdfRes = await contextSup.get(`/api/sales/orders/${orderId}/pdf-planta`);
+    const pdfRes = await apiSup.get(`/api/sales/orders/${orderId}/pdf-planta`);
     expect(pdfRes.ok()).toBeTruthy();
 
-    // Supervisor monta la bobina
-    const mountRes = await contextSup.post(`/api/production/${productionOrderId}/mount`, {
-      data: { coilId },
+    const mountRes = await apiSup.post(`/api/production/roofing/${productionOrderId}/mount`, {
+      data: { coilId: coil.id },
     });
     expect(mountRes.ok()).toBeTruthy();
 
-    // Supervisor reporta piezas
-    const piecesRes = await contextSup.post(`/api/production/${productionOrderId}/pieces`, {
-      data: { good: 10, scrap: 0, date: businessToday(), reportScrap: false },
+    const piecesRes = await apiSup.post(`/api/production/roofing/${productionOrderId}/pieces`, {
+      data: { reportedQty: 10, scrappedQty: 0, date: businessToday() },
     });
     expect(piecesRes.ok()).toBeTruthy();
 
-    // Supervisor cierra la OP
-    const closeRes = await contextSup.post(`/api/production/${productionOrderId}/close`, {
+    const closeRes = await apiSup.post(`/api/production/roofing/${productionOrderId}/close`, {
       data: { force: false },
     });
     expect(closeRes.ok()).toBeTruthy();
-
-    // El supervisor pudo hacer todo el flujo sin que "assertSellerAccess" lo bloqueara
   });
 });

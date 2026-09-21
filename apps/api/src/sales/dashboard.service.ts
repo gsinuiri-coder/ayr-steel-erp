@@ -18,7 +18,7 @@ export class DashboardService {
       where: {
         sellerId,
         status: QuotationStatus.DRAFT,
-        validUntil: { lte: in3Days },
+        validUntil: { lte: new Date(`${in3Days}T00:00:00.000Z`) },
       },
     });
 

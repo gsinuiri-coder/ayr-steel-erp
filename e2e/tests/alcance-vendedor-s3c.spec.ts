@@ -19,7 +19,10 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const supervisor = await createUser(api, 'SUPERVISOR_PLANTA');
 
     const customerA = await createCustomer(api);
-    const pDrywall = await createSellableProduct(api, { lineCode: 'drywall' });
+    const pDrywall = await createSellableProduct(api, {
+      lineCode: 'drywall',
+      listPricePen: '15.00',
+    });
     const productId = pDrywall.id;
     await setupCoilStock(api, { lineCode: 'drywall', weightKg: '5000' });
 

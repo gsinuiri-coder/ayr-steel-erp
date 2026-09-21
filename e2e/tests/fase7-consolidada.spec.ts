@@ -469,9 +469,9 @@ test.describe('D-124 — fecha de operación', () => {
     // es la única forma de comprobar que el 403 lo pone D-124 y no el guardia de la ruta.
     // Sobre `POST /purchases/:id/receive`, por ejemplo, un vendedor recibe un 403 genérico
     // sin haber llegado nunca a la validación de la fecha, y el test pasaría por vacío.
-    const sc = await setupOrderScenario(api, { coilKg: '500', qty: '50' });
     const seller = await createUser(api, 'VENDEDOR');
     const sellerApi = await apiAs(baseURL!, seller);
+    const sc = await setupOrderScenario(sellerApi, { coilKg: '500', qty: '50' });
     const supervisor = await createUser(api, 'SUPERVISOR_PLANTA');
     const supervisorApi = await apiAs(baseURL!, supervisor);
     const supplier = await createCuttingSupplier(api);

@@ -1020,19 +1020,19 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
           items: [{ productId: scenario.product.id, qty: metersOf(editRows), pieces: editRows }],
         }),
       );
-      expect(cannotEdit.status).toBe(403);
+      expect(cannotEdit.status).toBe(404);
       // D-185: reservar también es operar la cotización.
       const cannotReserve = await postExpectingError(
         otherApi,
         `/api/sales/quotations/${quotation.id}/reserve`,
       );
-      expect(cannotReserve.status).toBe(403);
+      expect(cannotReserve.status).toBe(404);
       const cannotCancel = await postExpectingError(
         otherApi,
         `/api/sales/quotations/${quotation.id}/cancel`,
         { reason: 'Intento sobre la cotización de otro' },
       );
-      expect(cannotCancel.status).toBe(403);
+      expect(cannotCancel.status).toBe(404);
 
       // El ADMINISTRADOR sí opera cualquiera: edita la del vendedor…
       const edited = await putJson<QuotationDto>(
@@ -1058,7 +1058,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         otherApi,
         `/api/sales/quotations/${quotation.id}/confirm`,
       );
-      expect(cannotConfirm.status).toBe(403);
+      expect(cannotConfirm.status).toBe(404);
       const panelBefore = await stockPanel(api, {
         businessLine: COVER_LINE,
         productIds: [scenario.product.id],
