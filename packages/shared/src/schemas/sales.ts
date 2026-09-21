@@ -854,6 +854,13 @@ export const ORDER_READINESS = [
   'LISTO',
   'LISTO_CON_FALTANTE',
 ] as const;
+export const orderReadinessSchema = z.object({
+  status: z.enum(ORDER_READINESS),
+  orderedMl: z.string(),
+  reportedMl: z.string(),
+  missingMl: z.string(),
+});
+export type OrderReadinessDto = z.infer<typeof orderReadinessSchema>;
 
 export const salesOrderSchema = z.object({
   id: z.string().uuid(),
@@ -899,6 +906,7 @@ export const salesOrderSchema = z.object({
   priceChanges: z.array(z.lazy(() => salesPriceChangeSchema)),
   /** D-187: no anulado y sin comprobante (factura o boleta, en borrador o viva). */
   isEditable: z.boolean(),
+  readiness: orderReadinessSchema,
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 
@@ -913,6 +921,7 @@ export const salesOrderListItemSchema = salesOrderSchema
     items: true,
     reservations: true,
     queueStatus: true,
+    readiness: true,
     businessLines: true,
     importedDocumentId: true,
     importedDocumentNumber: true,

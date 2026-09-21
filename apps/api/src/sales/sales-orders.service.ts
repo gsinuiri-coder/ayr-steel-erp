@@ -73,7 +73,9 @@ import {
   type StockPanelDto,
   type StockPanelQuery,
   type SellableCoilQuery,
+  type OrderReadinessDto,
 } from '@ayr/shared';
+import { deriveOrderReadiness } from './order-readiness';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
@@ -2445,22 +2447,37 @@ export class SalesOrdersService {
     });
   }
 
-  /**
-   * Estado del pedido frente a la cola, para el detalle de `/pedidos/[id]` (D-189): con
-   * alguna orden de coberturas **en curso**, `EN_PRODUCCION`; si no, con alguna **no
-   * iniciada** (la cola), `EN_COLA`; sin órdenes vivas, `null`.
-   */
-  private async computeQueueStatus(row: OrderRow): Promise<QueueStatus | null> {
-    const live = await this.prisma.productionOrder.findMany({
-      where: {
-        kind: 'ROOFING',
-        status: { in: ['DRAFT', 'IN_PROGRESS'] },
-        reservation: { salesOrderId: row.id },
+  private async computeOrderContext(row: OrderRow): Promise<{
+    queueStatus: QueueStatus | null;
+    readiness: OrderReadinessDto;
+  }> {
+    const ops = await this.prisma.productionOrder.findMany({
+      where: { reservation: { salesOrderId: row.id } },
+      select: {
+        status: true,
+        kind: true,
+        orderedMl: true,
+        reportedMl: true,
       },
-      select: { status: true },
     });
-    if (live.some((o) => o.status === 'IN_PROGRESS')) return 'EN_PRODUCCION';
-    return live.length > 0 ? 'EN_COLA' : null;
+
+    const liveRoofing = ops.filter(
+      (o) => o.kind === 'ROOFING' && (o.status === 'DRAFT' || o.status === 'IN_PROGRESS'),
+    );
+    const queueStatus = liveRoofing.some((o) => o.status === 'IN_PROGRESS')
+      ? 'EN_PRODUCCION'
+      : liveRoofing.length > 0
+        ? 'EN_COLA'
+        : null;
+
+    const readinessOrders = ops.map((op) => ({
+      status: op.status,
+      orderedMl: op.orderedMl.toString(),
+      reportedMl: op.reportedMl.toString(),
+    }));
+    const readiness = deriveOrderReadiness(readinessOrders);
+
+    return { queueStatus, readiness };
   }
 
   // -------------------------------------------------------------------------
@@ -2554,9 +2571,9 @@ export class SalesOrdersService {
     if (!row) throw new NotFoundException('Pedido no encontrado');
     if (actor) assertSellerAccess(actor, row.sellerId, 'Pedido');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
-    const [actors, queueStatus, priceChanges, invoice] = await Promise.all([
+    const [actors, context, priceChanges, invoice] = await Promise.all([
       this.resolveActorNames([row.createdById]),
-      this.computeQueueStatus(row),
+      this.computeOrderContext(row),
       findPriceChanges(this.prisma, { salesOrderId: id }),
       // D-187: el mismo corte que `SalesOrderEditsService.lockEditable`.
       this.prisma.fiscalDocument.findFirst({
@@ -2570,7 +2587,7 @@ export class SalesOrdersService {
       }),
     ]);
     return {
-      ...this.toDto(row, labels, actors, queueStatus),
+      ...this.toDto(row, labels, actors, context),
       priceChanges,
       isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
     };
@@ -3266,7 +3283,7 @@ export class SalesOrdersService {
     row: OrderRow,
     labels: Map<string, { label: string; name: string }>,
     actors: Map<string, string>,
-    queueStatus: QueueStatus | null = null,
+    context?: { queueStatus: QueueStatus | null; readiness: OrderReadinessDto },
   ): SalesOrderDto {
     return {
       id: row.id,
@@ -3299,9 +3316,15 @@ export class SalesOrdersService {
       promisedDeliveryDate: row.promisedDeliveryDate
         ? row.promisedDeliveryDate.toISOString().slice(0, 10)
         : null,
-      queueStatus,
+      queueStatus: context?.queueStatus ?? null,
       priceChanges: [],
       isEditable: false,
+      readiness: context?.readiness ?? {
+        status: 'SIN_PRODUCCION',
+        orderedMl: '0.000',
+        reportedMl: '0.000',
+        missingMl: '0.000',
+      },
     };
   }
 }
