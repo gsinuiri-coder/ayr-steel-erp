@@ -30,6 +30,7 @@ import {
   createCustomer,
   createDirectOrder,
   purgeSalesTrail,
+  setupCoilStock,
   type SalesOrderDto,
 } from '../helpers/sales';
 import {
@@ -50,6 +51,7 @@ import {
   dispatchOrder,
   purgeInvoicingTrail,
   setupOrderScenario,
+  createInvoiceableCustomer,
 } from '../helpers/invoicing';
 
 /**
@@ -471,7 +473,24 @@ test.describe('D-124 — fecha de operación', () => {
     // sin haber llegado nunca a la validación de la fecha, y el test pasaría por vacío.
     const seller = await createUser(api, 'VENDEDOR');
     const sellerApi = await apiAs(baseURL!, seller);
-    const sc = await setupOrderScenario(sellerApi, { coilKg: '500', qty: '50' });
+    
+    // El pedido debe ser del vendedor para que pueda despacharlo en el paso (b), pero 
+    // la compra y el inventario los debe crear el admin.
+    const [customer, stock] = await Promise.all([
+      createInvoiceableCustomer(api),
+      setupCoilStock(api, { lineCode: LINE, weightKg: '500' }),
+    ]);
+    const sc = await createDirectOrder(sellerApi, {
+      customerId: customer.id,
+      businessLine: LINE,
+      items: [
+        {
+          saleCoilId: stock.coil.id,
+          qty: stock.coil.availableKg,
+          unitPricePen: '8.0000',
+        },
+      ],
+    }).then(order => ({ order, item: order.items[0]! }));
     const supervisor = await createUser(api, 'SUPERVISOR_PLANTA');
     const supervisorApi = await apiAs(baseURL!, supervisor);
     const supplier = await createCuttingSupplier(api);

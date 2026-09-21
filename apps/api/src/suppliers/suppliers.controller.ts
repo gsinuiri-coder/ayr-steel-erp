@@ -29,7 +29,7 @@ import { DocumentLookupService } from '../customers/document-lookup.service';
 import { SuppliersService } from './suppliers.service';
 
 /** RF-81/RF-83/RF-85: proveedores. Lectura para todos, mutación solo ADMINISTRADOR. */
-@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 @Controller('suppliers')
 export class SuppliersController {
   constructor(

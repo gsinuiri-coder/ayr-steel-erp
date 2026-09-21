@@ -27,6 +27,7 @@ test.describe('Acceso Supervisor de Planta (CRITICA 1)', () => {
       roofingKind: 'A_MEDIDA',
       finishId: finish.id,
       thicknessMm: '0.45',
+      listPricePen: '10',
     });
 
     const apiVen = await apiAs(baseURL!, vendedor);
@@ -39,6 +40,9 @@ test.describe('Acceso Supervisor de Planta (CRITICA 1)', () => {
         items: [{ productId: productRes.id, qty: '30', pieces: [{ lengthMm: '3000', qty: 10 }] }],
       },
     });
+    if (!quoteRes.ok()) {
+      console.log(await quoteRes.text());
+    }
     expect(quoteRes.ok()).toBeTruthy();
     const { id: quoteId } = await quoteRes.json();
 

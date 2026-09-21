@@ -1,4 +1,4 @@
-﻿import { test, expect } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { businessToday } from '@ayr/shared';
 import { apiAs } from '../helpers/production';
 import { adminApi, createUser } from '../helpers/api';
@@ -193,15 +193,11 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     }
 
     const coilResA = await contextA.get('/api/coils');
-    expect(coilResA.ok()).toBeTruthy();
-    const coils = await coilResA.json();
-    expect(coils.data.length).toBeGreaterThan(0);
-    for (const c of coils.data) {
-      expect(c.unitCostPerKg).toBeNull();
-      expect(c.totalCostPen).toBeNull();
-    }
+    expect(coilResA.status()).toBe(403);
 
     // SUPERVISOR_PLANTA recibe 403 en POST /coils/:id/cancel
+    const coilsResAdmin = await contextAdmin.get('/api/coils');
+    const coils = await coilsResAdmin.json();
     const coilId = coils.data[0].id;
     await expect(
       contextSup.post('/api/coils/' + coilId + '/cancel', {

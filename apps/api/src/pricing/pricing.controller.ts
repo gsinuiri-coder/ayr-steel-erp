@@ -13,7 +13,7 @@ import { PricingService } from './pricing.service';
 
 /** D-032: márgenes por línea. Lectura para todos, edición solo ADMINISTRADOR. */
 @Controller('pricing')
-@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 export class PricingController {
   constructor(private readonly pricing: PricingService) {}
 

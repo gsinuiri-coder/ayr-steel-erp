@@ -1004,11 +1004,11 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       });
       trail.quotationIds = [quotation.id];
 
-      // Leerla sí: RF-69 pide una lista de cotizaciones, no una lista por vendedor.
-      const read = await getJson<QuotationDto>(otherApi, `/api/sales/quotations/${quotation.id}`);
-      expect(read.id).toBe(quotation.id);
+      // S3c: El vendedor ya no puede leer cotizaciones ajenas.
+      const cannotRead = await getJson<{ statusCode: number }>(otherApi, `/api/sales/quotations/${quotation.id}`, { throwOnHttpError: false });
+      expect(cannotRead.statusCode).toBe(404);
       const list = await getItems<{ id: string }>(otherApi, '/api/sales/quotations');
-      expect(list.map((q) => q.id)).toContain(quotation.id);
+      expect(list.map((q) => q.id)).not.toContain(quotation.id);
 
       // Operarla, no.
       const editRows = pieces([1, 1]);
