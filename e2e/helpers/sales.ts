@@ -258,7 +258,7 @@ export async function createSellableProduct(
     roofingKind?: 'PLANCHA' | 'A_MEDIDA';
     /** D-122: acabado del SKU. Obligatorio en Metallic Roofing; de él sale la densidad. */
     finishId?: string;
-      thicknessMm?: string;
+    thicknessMm?: string;
   },
 ): Promise<ProductDto & { listPricePen: string | null }> {
   const lineId = await businessLineId(api, options.lineCode);

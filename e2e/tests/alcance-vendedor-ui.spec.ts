@@ -16,7 +16,10 @@ test.describe('Alcance de Vendedor (UI)', () => {
     });
     sellerEmail = user.email;
     // Ensure we have some stock
-    const { finish } = await setupCoilStock(api, { lineCode: 'metallic-roofing', thicknessMm: '0.43' });
+    const { finish } = await setupCoilStock(api, {
+      lineCode: 'metallic-roofing',
+      thicknessMm: '0.43',
+    });
     const p = await createSellableProduct(api, {
       lineCode: 'metallic-roofing',
       unit: 'MTR',

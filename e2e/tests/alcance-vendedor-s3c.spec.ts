@@ -32,8 +32,8 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       lineCode: 'metallic-roofing',
       unit: 'MTR',
       roofingKind: 'A_MEDIDA',
-        finishId: finishRoofing.id,
-        thicknessMm: '0.43',
+      finishId: finishRoofing.id,
+      thicknessMm: '0.43',
     });
     const roofingProductId = pRoofing.id;
 
@@ -279,8 +279,8 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       lineCode: 'metallic-roofing',
       unit: 'MTR',
       roofingKind: 'A_MEDIDA',
-        finishId: finishRoofing.id,
-        thicknessMm: '0.43',
+      finishId: finishRoofing.id,
+      thicknessMm: '0.43',
     });
     const roofingProductId = pRoofing.id;
 
