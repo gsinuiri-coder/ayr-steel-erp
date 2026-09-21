@@ -1,14 +1,13 @@
-# Handoff: RF-S3C - Alcance, Panel del Vendedor y Reasignación
+﻿# Handoff: RF-S3C - Alcance, Panel del Vendedor y Reasignación
 
 ## Estado
-- **Rama:** `rf-s3c` (Push actualizado).
-- **M1:** Fugas cerradas.
-- **M2:** Estado de orden LISTO implementado (agregado como campo `readiness`).
-- **M3:** Panel de Vendedor (`DashboardController` con 4 consultas agregadas mediante `$queryRaw` + unitario con presupuesto estricto de consultas).
-- **M4 (Bonus/Sacrificable):** Reasignación de vendedor a cotizaciones (Solo-Admin, evento de `audit_log` -> `sales.quotation.reassign`).
-- **CI / Pruebas:** Todos los flujos API de TypeScript (Typecheck, Lint) y Pruebas Unitarias están verdes tras re-exportar `@ayr/shared` schemas con `pnpm --filter @ayr/shared run build`. E2E local delegada a la CI por bloqueo de guard de prueba.
-- **Documentación:** Creado `docs/uat/rf-s3c.md` e insertado el avance final de los milestones en `docs/PROGRESO.md`.
+- **Rama:** f-s3c (Push a PR #7)
+- **M1:** Fugas cerradas, indLinesWithoutOrder testeada con alcance en E2E y E2E de UI de Vendedor para abrir catálogo en cotización (no ve rentabilidad).
+- **M2:** Expuesto estado derivado LISTO, LISTO_CON_FALTANTE, EN_PRODUCCION en detalle y listado de pedidos, con casos de bordes testeados en order-readiness.spec.ts.
+- **M3:** Panel de Vendedor Web (SellerDashboardCards) renderizado con métricas parametrizadas seguras mediante $queryRaw. Testeado en Playwright UI para asegurar ocultamiento de cards de admin.
+- **M4:** Reasignación de vendedor a cotizaciones (Solo-Admin, validación de que Vendedor Destino exista, esté activo y sea VENDEDOR con test propio).
+- **Documentación:** Creado docs/uat/rf-s3c.md, añadido S3c Checklist en docs/ENTORNOS.md, agregadas D-238 (cambio de roles) y D-239 en docs/ARQUITECTURA.md, y reporte actualizado en docs/PROGRESO.md.
 
 ## Próximo Paso (Revisión Cruzada)
-- **Agente Revisor:** Claude Code.
-- **Acción requerida:** Ejecutar skill `$ayr-revisor` sobre los diffs de `rf-s3c` frente a `main`. Validar la correcta adherencia a la regla del alcance (sobre todo `computeOrderContext` y `DashboardService`), así como el cumplimiento de la matriz solicitada. Validar las E2Es cruzadas en CI.
+- **Agente Revisor:** Codex CLI (ahora secundario tras D-238).
+- **Acción requerida:** Validar E2E y Smoke en CI en el PR #7. Si está verde, se cierra la ventana.

@@ -659,12 +659,19 @@ export class QuotationsService {
   /**
    * M4: reasignar cotización y pedidos derivados a otro vendedor (solo ADMINISTRADOR).
    */
-  async reassign(actor: RequestUser, id: string, newSellerId: string, reason: string): Promise<QuotationDto> {
+  async reassign(
+    actor: RequestUser,
+    id: string,
+    newSellerId: string,
+    reason: string,
+  ): Promise<QuotationDto> {
     const newSeller = await this.prisma.user.findUnique({
       where: { id: newSellerId, isActive: true, role: 'VENDEDOR' },
     });
     if (!newSeller) {
-      throw new BadRequestException('El vendedor destino no existe, no está activo o no tiene rol VENDEDOR');
+      throw new BadRequestException(
+        'El vendedor destino no existe, no está activo o no tiene rol VENDEDOR',
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {

@@ -2564,12 +2564,17 @@ export class SalesOrdersService {
       select: {
         status: true,
         kind: true,
-        reservation: { select: { salesOrderId: true, salesOrderItem: { select: { reserveQty: true } } } },
+        reservation: {
+          select: { salesOrderId: true, salesOrderItem: { select: { reserveQty: true } } },
+        },
         reports: { where: { status: 'ACTIVE' }, select: { metersM: true } },
       },
     });
 
-    const contextByOrderId = new Map<string, { queueStatus: QueueStatus | null; readiness: OrderReadinessDto }>();
+    const contextByOrderId = new Map<
+      string,
+      { queueStatus: QueueStatus | null; readiness: OrderReadinessDto }
+    >();
     for (const row of rows) {
       const orderOps = ops.filter((op) => op.reservation?.salesOrderId === row.id);
       const liveRoofing = orderOps.filter(

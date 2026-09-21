@@ -26,24 +26,39 @@ describe('QuotationsService - Reassign', () => {
 
   it('arroja 400 si el nuevo vendedor no existe o no es VENDEDOR', async () => {
     mockPrisma.user.findUnique.mockResolvedValueOnce(null);
-    await expect(service.reassign(actor, 'q-1', 'v-2', 'reason')).rejects.toThrow(BadRequestException);
+    await expect(service.reassign(actor, 'q-1', 'v-2', 'reason')).rejects.toThrow(
+      BadRequestException,
+    );
   });
 
   it('pasa si el nuevo vendedor es VENDEDOR activo', async () => {
-    mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'v-2', role: 'VENDEDOR', isActive: true });
-    mockPrisma.$queryRaw.mockResolvedValueOnce([{
-      id: 'q-1', seq: 1, status: 'DRAFT', valid_until: null, created_by_id: 'v-1', seller_id: 'v-1', notes: ''
-    }]);
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: 'v-2',
+      role: 'VENDEDOR',
+      isActive: true,
+    });
+    mockPrisma.$queryRaw.mockResolvedValueOnce([
+      {
+        id: 'q-1',
+        seq: 1,
+        status: 'DRAFT',
+        valid_until: null,
+        created_by_id: 'v-1',
+        seller_id: 'v-1',
+        notes: '',
+      },
+    ]);
     mockPrisma.$transaction.mockImplementation(async (cb: any) => cb(mockPrisma));
     mockPrisma.quotation.update.mockResolvedValueOnce({});
     mockPrisma.salesOrder.updateMany.mockResolvedValueOnce({ count: 1 });
-    
+
     jest.spyOn(service as any, 'findOne').mockResolvedValueOnce({ id: 'q-1' });
 
     const res = await service.reassign(actor, 'q-1', 'v-2', 'reason');
     expect(res.id).toBe('q-1');
     expect(mockPrisma.quotation.update).toHaveBeenCalledWith({
-      where: { id: 'q-1' }, data: { sellerId: 'v-2' }
+      where: { id: 'q-1' },
+      data: { sellerId: 'v-2' },
     });
   });
 });
