@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { adminApi, createUser, login } from '../helpers/api';
-import { setupCoilStock } from '../helpers/sales';
-import { Role } from '@ayr/shared';
+import { setupCoilStock, createSellableProduct } from '../helpers/sales';
 
 test.describe('Alcance de Vendedor (UI)', () => {
   let sellerEmail: string;
+  let testSku: string;
 
   test.beforeAll(async ({ baseURL }) => {
     const api = await adminApi(baseURL!);
@@ -14,7 +14,14 @@ test.describe('Alcance de Vendedor (UI)', () => {
     });
     sellerEmail = user.email;
     // Ensure we have some stock
-    await setupCoilStock(api);
+    const { finish } = await setupCoilStock(api, { lineCode: 'ROOFING' });
+    const p = await createSellableProduct(api, {
+      lineCode: 'ROOFING',
+      unit: 'MTR',
+      roofingKind: 'A_MEDIDA',
+      finishId: finish.id,
+    });
+    testSku = p.sku;
   });
 
   test('Vendedor agrega producto teórico desde catálogo (sin ver costos)', async ({ page }) => {
@@ -26,11 +33,11 @@ test.describe('Alcance de Vendedor (UI)', () => {
 
     await page.getByRole('button', { name: 'Agregar producto' }).click();
 
-    await page.getByPlaceholder(/Buscar/i).fill('TR4');
+    await page.getByPlaceholder(/Buscar/i).fill(testSku);
     await page.waitForTimeout(500);
 
     // El catálogo tiene tarjetas
-    const producto = page.locator('div').filter({ hasText: /^TR4/ }).first();
+    const producto = page.locator('div').filter({ hasText: new RegExp(`^${testSku}`) }).first();
 
     // Verificar que el stock ML teórico aparece
     await expect(producto).toContainText(/ML/i);
@@ -43,21 +50,21 @@ test.describe('Alcance de Vendedor (UI)', () => {
     await producto.getByRole('button', { name: 'Agregar' }).first().click();
 
     // Verificamos que se haya agregado a la tabla de líneas
-    await expect(page.locator('table')).toContainText('TR4');
+    await expect(page.locator('table')).toContainText(testSku);
   });
-});
 
-test('Dashboard del vendedor tiene sus cards y oculta los de admin', async ({ page }) => {
-  await login(page, sellerEmail, 'password123');
-  await page.goto('/');
+  test('Dashboard del vendedor tiene sus cards y oculta los de admin', async ({ page }) => {
+    await login(page, sellerEmail, 'password123');
+    await page.goto('/');
 
-  // Cards del vendedor
-  await expect(page.getByText('Cotizaciones por vencer')).toBeVisible();
-  await expect(page.getByText('Reservas por expirar')).toBeVisible();
-  await expect(page.getByText('Pedidos en producción')).toBeVisible();
-  await expect(page.getByText('Pedidos listos')).toBeVisible();
+    // Cards del vendedor
+    await expect(page.getByText('Cotizaciones por vencer')).toBeVisible();
+    await expect(page.getByText('Reservas por expirar')).toBeVisible();
+    await expect(page.getByText('Pedidos en producción')).toBeVisible();
+    await expect(page.getByText('Pedidos listos')).toBeVisible();
 
-  // No debe haber cards de administrador
-  await expect(page.getByText('Cotizaciones sin stock disponible')).toBeHidden();
-  await expect(page.getByText('Precios bajo el piso')).toBeHidden();
+    // No debe haber cards de administrador
+    await expect(page.getByText('Cotizaciones sin stock disponible')).toBeHidden();
+    await expect(page.getByText('Precios bajo el piso')).toBeHidden();
+  });
 });
