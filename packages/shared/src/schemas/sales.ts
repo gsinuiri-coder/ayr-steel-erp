@@ -1245,4 +1245,4 @@ export function serializeSalesTotals(totals: SalesLineTotals): {
 }
 
 /** Redondeo a kilos de una cantidad de reserva; centraliza la escala (D-003). */
-export const reserveQty = (v: DecimalInput): Decimal => roun
+export const reserveQty = (v: DecimalInput): Decimal => roundTo(v, 'KG');
