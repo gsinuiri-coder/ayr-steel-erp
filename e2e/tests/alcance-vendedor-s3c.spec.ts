@@ -256,21 +256,25 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
           amountPen: '10.00',
           method: 'CASH',
         },
-      })
+      }),
     ).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
     // CRÍTICA 2: Reassign test A -> B
     const reassignRes = await contextAdmin.patch(`/api/sales/quotations/${quoteId}/seller`, {
-      data: { newSellerId: vendedorB.id, reason: 'Cambio' }
+      data: { newSellerId: vendedorB.id, reason: 'Cambio' },
     });
     expect(reassignRes.ok()).toBeTruthy();
 
     // A ya no puede operar la cotización/pedido
-    await expect(contextA.get(`/api/sales/quotations/${quoteId}`)).resolves.toMatchObject({ _initializer: { status: 404 } });
-    await expect(contextA.get(`/api/sales/orders/${orderId}`)).resolves.toMatchObject({ _initializer: { status: 404 } });
-    
+    await expect(contextA.get(`/api/sales/quotations/${quoteId}`)).resolves.toMatchObject({
+      _initializer: { status: 404 },
+    });
+    await expect(contextA.get(`/api/sales/orders/${orderId}`)).resolves.toMatchObject({
+      _initializer: { status: 404 },
+    });
+
     // B ahora puede operar
     const getOrderB = await contextB.get(`/api/sales/orders/${orderId}`);
     expect(getOrderB.ok()).toBeTruthy();
