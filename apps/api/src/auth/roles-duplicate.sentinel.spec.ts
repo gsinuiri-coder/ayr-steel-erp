@@ -47,7 +47,7 @@ describe('Centinela de Decoradores Duplicados', () => {
 
     function visit(node: ts.Node) {
       if (ts.isClassDeclaration(node)) {
-        checkDecorators(node, `la clase ${node.name?.text || 'anónima'}`);
+        checkDecorators(node, `la clase ${node.name?.text ?? 'anónima'}`);
       } else if (ts.isMethodDeclaration(node)) {
         const methodName = ts.isIdentifier(node.name) ? node.name.text : 'desconocido';
         checkDecorators(node, `el método ${methodName}`);

@@ -24,7 +24,6 @@ import {
 import { COIL_SPLIT_TONE, COIL_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
 import {
-  formatMoney,
   formatMoneyOrDash,
   formatQty,
   formatTimestampDate,
