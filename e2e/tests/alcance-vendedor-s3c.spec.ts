@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { businessToday } from '@ayr/shared';
 import { adminApi, createUser, getJson, postJson } from '../helpers/api';
 import { createCustomer, setupCoilStock, createQuotation } from '../helpers/sales';
 import { BusinessLineCode } from '@ayr/shared';
@@ -63,7 +64,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       data: {
         customerId: customerA.id,
         businessLine: 'DRYWALL',
-        issueDate: new Date().toISOString().slice(0, 10),
+        issueDate: businessToday(),
         items: [{ productId, qty: '10' }],
       },
     });
@@ -76,7 +77,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       data: {
         customerId: customerA.id,
         businessLine: 'ROOFING',
-        issueDate: new Date().toISOString().slice(0, 10),
+        issueDate: businessToday(),
         items: [{ productId: roofingProductId, qty: '10', lengthMeters: '3.00' }],
       },
     });
@@ -157,7 +158,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       data: {
         customerId: customerA.id,
         salesOrderId: orderId,
-        issueDate: new Date().toISOString().slice(0, 10),
+        issueDate: businessToday(),
         transport: {
           reason: 'VENTA',
           vehiclePlate: 'ABC-123',
@@ -180,7 +181,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       data: {
         customerId: customerA.id,
         type: 'BOLETA',
-        issueDate: new Date().toISOString().slice(0, 10),
+        issueDate: businessToday(),
         dispatchId: dispatchId,
         paymentTerm: 'CONTADO',
       },
@@ -233,5 +234,79 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
         data: { reason: 'Test' },
       }),
     ).resolves.toMatchObject({ _initializer: { status: 403 } });
+  });
+
+  test('Vendedor A no ve líneas sueltas de Vendedor B en lines-without-order, y Admin sí', async ({
+    baseURL,
+    request,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const vendedorA = await createUser(api, 'VENDEDOR');
+    const vendedorB = await createUser(api, 'VENDEDOR');
+    const admin = await createUser(api, 'ADMINISTRADOR');
+
+    const customerB = await createCustomer(api);
+
+    // Contexts
+    const contextA = await request.newContext();
+    await contextA.post('/api/auth/login', {
+      data: { email: vendedorA.email, password: vendedorA.password },
+    });
+
+    const contextB = await request.newContext();
+    await contextB.post('/api/auth/login', {
+      data: { email: vendedorB.email, password: vendedorB.password },
+    });
+
+    const contextAdmin = await request.newContext();
+    await contextAdmin.post('/api/auth/login', {
+      data: { email: admin.email, password: admin.password },
+    });
+
+    const { productId: roofingProductId } = await setupCoilStock(api, {
+      businessLine: 'ROOFING',
+      code: 'ALC-VEN-LINES',
+      thicknessMm: '0.30',
+      widthMm: '1000',
+      weightKg: '5000',
+    });
+
+    // Create quote as B
+    const res = await contextB.post('/api/sales/quotations', {
+      data: {
+        customerId: customerB.id,
+        issueDate: businessToday(),
+        validDays: 15,
+        currency: 'PEN',
+        exchangeRate: '1',
+        items: [
+          {
+            quantity: 1,
+            productType: 'ROOFING',
+            roofingKind: 'A_MEDIDA',
+            thicknessCode: '0.30',
+            finishId: 1,
+            widthId: 1,
+            lengthMeters: '3.50',
+            unitPricePen: '30.00',
+          },
+        ],
+      },
+    });
+    expect(res.ok()).toBeTruthy();
+    const { id: qId } = await res.json();
+
+    const previewRes = await contextB.post(`/api/sales/quotations/${qId}/confirm-preview`);
+    expect(previewRes.ok()).toBeTruthy();
+    const confirmRes = await contextB.post(`/api/sales/quotations/${qId}/confirm`);
+    expect(confirmRes.ok()).toBeTruthy();
+
+    const resA = await contextA.get('/api/sales/orders/lines-without-order');
+    const linesA = await resA.json();
+    expect(linesA.find((l: any) => l.quotationId === qId)).toBeUndefined();
+
+    const resAdmin = await contextAdmin.get('/api/sales/orders/lines-without-order');
+    const linesAdmin = await resAdmin.json();
+    expect(linesAdmin.find((l: any) => l.quotationId === qId)).toBeDefined();
   });
 });
