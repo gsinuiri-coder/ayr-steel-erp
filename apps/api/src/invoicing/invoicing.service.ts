@@ -2915,7 +2915,10 @@ export class InvoicingService {
     return out;
   }
 
-  async findAll(query: FiscalDocumentQuery, actor?: RequestUser): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
+  async findAll(
+    query: FiscalDocumentQuery,
+    actor?: RequestUser,
+  ): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
     const where: Prisma.FiscalDocumentWhereInput = {
       status: query.status,
       docType: query.docType,
@@ -3011,7 +3014,8 @@ export class InvoicingService {
     });
     if (!row) throw new NotFoundException('Comprobante no encontrado');
     if (actor) {
-      const ownerId = row.salesOrder?.sellerId ?? row.dispatch?.salesOrder?.sellerId ?? row.createdById;
+      const ownerId =
+        row.salesOrder?.sellerId ?? row.dispatch?.salesOrder?.sellerId ?? row.createdById;
       assertSellerAccess(actor, ownerId, 'Comprobante');
     }
     const settings = await this.settingsRow();
@@ -3089,7 +3093,8 @@ export class InvoicingService {
     });
     if (!row) throw new NotFoundException('Comprobante no encontrado');
     if (actor) {
-      const ownerId = row.salesOrder?.sellerId ?? row.dispatch?.salesOrder?.sellerId ?? row.createdById;
+      const ownerId =
+        row.salesOrder?.sellerId ?? row.dispatch?.salesOrder?.sellerId ?? row.createdById;
       assertSellerAccess(actor, ownerId, 'Comprobante');
     }
     const key = kind === 'pdf' ? row.pdfKey : kind === 'xml' ? row.xmlKey : row.cdrKey;

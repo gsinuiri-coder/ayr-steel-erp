@@ -291,7 +291,10 @@ export class SalesOrdersService {
         if (!head) throw new NotFoundException('Cotización no encontrada');
         // RF-66: confirmar es el acto del vendedor **sobre su propia** cotización. Sin esto,
         // cualquier vendedor podía comprometer stock a nombre del cliente de otro.
-        if (actor.role !== Role.ADMINISTRADOR && actor.id !== (head.seller_id ?? head.created_by_id)) {
+        if (
+          actor.role !== Role.ADMINISTRADOR &&
+          actor.id !== (head.seller_id ?? head.created_by_id)
+        ) {
           throw new NotFoundException('Cotización no encontrada');
         }
 
@@ -2469,7 +2472,10 @@ export class SalesOrdersService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(actor: RequestUser, query: SalesOrderQuery): Promise<PaginatedResult<SalesOrderListItemDto>> {
+  async findAll(
+    actor: RequestUser,
+    query: SalesOrderQuery,
+  ): Promise<PaginatedResult<SalesOrderListItemDto>> {
     // El código del pedido (`PED-000123`) es `salesOrderCode(seq)`, no una columna: buscar
     // "PED-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o quien
     // pega el código de un pedido para encontrarlo (el uso más común del buscador) se
@@ -2976,7 +2982,10 @@ export class SalesOrdersService {
    * anulada/vendida), de kind `COIL` (un fleje no se vende como bobina), sin custodia de
    * producción y con saldo. Solo Drywall y Metallic Roofing tienen bobina (C).
    */
-  async findSellableCoils(actor: RequestUser, query: SellableCoilQuery): Promise<SellableCoilDto[]> {
+  async findSellableCoils(
+    actor: RequestUser,
+    query: SellableCoilQuery,
+  ): Promise<SellableCoilDto[]> {
     const lines = query.businessLine ? [query.businessLine] : [...COIL_BUSINESS_LINES];
     const coils = await this.prisma.coil.findMany({
       where: {

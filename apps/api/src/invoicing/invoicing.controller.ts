@@ -179,7 +179,10 @@ export class InvoicingController {
   }
 
   @Get('documents/:id')
-  findOne(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<FiscalDocumentDto> {
+  findOne(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<FiscalDocumentDto> {
     return this.invoicing.findOne(id, actor);
   }
 
@@ -190,21 +193,38 @@ export class InvoicingController {
    * cotización.
    */
   @Get('documents/:id/pdf')
-  pdf(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
+  pdf(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
     return this.sendFile(actor, id, 'pdf', res);
   }
 
   @Get('documents/:id/xml')
-  xml(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
+  xml(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
     return this.sendFile(actor, id, 'xml', res);
   }
 
   @Get('documents/:id/cdr')
-  cdr(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
+  cdr(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
     return this.sendFile(actor, id, 'cdr', res);
   }
 
-  private async sendFile(actor: RequestUser, id: string, kind: 'pdf' | 'xml' | 'cdr', res: Response): Promise<void> {
+  private async sendFile(
+    actor: RequestUser,
+    id: string,
+    kind: 'pdf' | 'xml' | 'cdr',
+    res: Response,
+  ): Promise<void> {
     const { buffer, filename, contentType } = await this.invoicing.file(id, kind, actor);
     res.setHeader('Content-Type', contentType);
     // El nombre sale de un correlativo del sistema y hoy no puede llevar comillas ni

@@ -10,9 +10,15 @@ async function report(): Promise<void> {
     prisma.quotation.groupBy({ by: ['createdById', 'sellerId'], _count: true }),
     prisma.salesOrder.groupBy({ by: ['createdById', 'sellerId'], _count: true }),
   ]);
-  for (const [label, rows] of [['cotizaciones', quotations], ['pedidos', orders]] as const) {
+  for (const [label, rows] of [
+    ['cotizaciones', quotations],
+    ['pedidos', orders],
+  ] as const) {
     console.log(label);
-    for (const row of rows) console.log(`  creador=${row.createdById} vendedor=${row.sellerId ?? 'NULL'} filas=${row._count}`);
+    for (const row of rows)
+      console.log(
+        `  creador=${row.createdById} vendedor=${row.sellerId ?? 'NULL'} filas=${row._count}`,
+      );
   }
 }
 
@@ -32,7 +38,9 @@ async function main(): Promise<void> {
   await report();
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-}).finally(() => prisma.$disconnect());
+main()
+  .catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());

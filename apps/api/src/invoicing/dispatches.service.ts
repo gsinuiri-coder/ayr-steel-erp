@@ -910,7 +910,10 @@ export class DispatchesService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: DispatchQuery, actor?: RequestUser): Promise<PaginatedResult<DispatchListItemDto>> {
+  async findAll(
+    query: DispatchQuery,
+    actor?: RequestUser,
+  ): Promise<PaginatedResult<DispatchListItemDto>> {
     const where: Prisma.DispatchWhereInput = {
       status: query.status,
       salesOrderId: query.salesOrderId,

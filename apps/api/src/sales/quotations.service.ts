@@ -707,7 +707,10 @@ export class QuotationsService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(actor: RequestUser, query: QuotationQuery): Promise<PaginatedResult<QuotationListItemDto>> {
+  async findAll(
+    actor: RequestUser,
+    query: QuotationQuery,
+  ): Promise<PaginatedResult<QuotationListItemDto>> {
     // El código de la cotización (`COT-000123`) es `quotationCode(seq)`, no una columna:
     // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
     // quien pega el código de una cotización para encontrarla (el uso más común del

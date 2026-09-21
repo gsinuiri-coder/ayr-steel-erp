@@ -56,7 +56,10 @@ export class DispatchesController {
   }
 
   @Get(':id')
-  findOne(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<DispatchDto> {
+  findOne(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<DispatchDto> {
     return this.dispatches.findOne(id, actor);
   }
 

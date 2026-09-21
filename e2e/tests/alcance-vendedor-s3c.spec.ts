@@ -10,7 +10,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     request,
   }) => {
     const api = await adminApi(baseURL!);
-    
+
     // Create users
     const vendedorA = await createUser(api, 'VENDEDOR');
     const vendedorB = await createUser(api, 'VENDEDOR');
@@ -39,8 +39,10 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     // Get an active product
     const productsRes = await api.get('/api/catalog');
     const products = await productsRes.json();
-    const product = products.find((p: any) => p.status === 'ACTIVE' && p.businessLine === 'DRYWALL');
-    
+    const product = products.find(
+      (p: any) => p.status === 'ACTIVE' && p.businessLine === 'DRYWALL',
+    );
+
     // Create quotation for Vendedor A
     const resQA = await contextA.post('/api/sales/quotations', {
       data: {
@@ -82,12 +84,12 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const quotationB = await resQB.json();
 
     // 1. Direct URL isolation checks
-    
+
     // A sees A
     expect((await contextA.get(`/api/sales/quotations/${quotationA.id}`)).status()).toBe(200);
     // B sees B
     expect((await contextB.get(`/api/sales/quotations/${quotationB.id}`)).status()).toBe(200);
-    
+
     // A cannot see B
     expect((await contextA.get(`/api/sales/quotations/${quotationB.id}`)).status()).toBe(404);
     // B cannot see A

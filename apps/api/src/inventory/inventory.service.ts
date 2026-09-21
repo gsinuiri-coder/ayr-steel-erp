@@ -987,9 +987,7 @@ export class InventoryService {
         type: m.type,
         qty: qty.toFixed(3),
         unit: m.unit,
-        ...(showCosts
-          ? { unitCost: unitCost.toFixed(4), totalCost: m.totalCost.toFixed(4) }
-          : {}),
+        ...(showCosts ? { unitCost: unitCost.toFixed(4), totalCost: m.totalCost.toFixed(4) } : {}),
         refType: m.refType,
         refId: m.refId,
         refTargetType: target?.type ?? null,
@@ -1003,9 +1001,7 @@ export class InventoryService {
         at: m.at.toISOString(),
         operationDate: fromDateOnly(m.operationDate),
         balanceQty: singleItem ? runningQty.toFixed(3) : null,
-        ...(singleItem && showCosts
-          ? { balanceAvgCost: toFixedString(runningAvg, 'MONEY') }
-          : {}),
+        ...(singleItem && showCosts ? { balanceAvgCost: toFixedString(runningAvg, 'MONEY') } : {}),
       } satisfies InventoryMovementDto;
     });
 

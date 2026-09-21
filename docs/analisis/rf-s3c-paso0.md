@@ -22,25 +22,25 @@ Leyenda: A=administrador, P=supervisor de planta, V=vendedor; `*` significa que 
 rol deja pasar pero no hay alcance por dueño consistente. Los endpoints públicos de auth y
 health se excluyen de la matriz autenticada.
 
-| Prefijo y rutas | A | P | V | Estado de alcance actual |
-| --- | :-: | :-: | :-: | --- |
-| `audit` GET | sí | no | no | admin |
-| `users` GET/POST/PATCH/DELETE | sí | no | no | admin |
-| `catalog`, `business-lines`, `colors`, `finishes`, `exchange-rates` GET | sí | sí | sí | catálogo compartido |
-| altas/cambios de catálogo, colores, acabados, precios, tipos de cambio e importación de lista | sí | no | no | admin |
-| `customers` GET, lookup, search, detalle, POST, PATCH | sí | no | sí* | cartera compartida; DTO no lleva agregados |
-| `inventory` balances, movements, summary | sí | sí | sí* | vendedor recibía kardex y campos costeados como `null`; la ruta de kardex seguía expuesta |
-| `coils` GET, detalle, PDF, children/splits/consumptions, report PDF; operaciones | sí | sí | no | no aplica V, pero enlaces cruzados pueden filtrar datos desde pedidos |
-| `purchases`, `suppliers`, `cutting`, `reports` | sí | parcial P | no | administrativo/planta |
-| `production` lista/detalle y `production/roofing` cola/drafts | sí | sí | algunos GET* | las rutas GET de roofing admiten V sin alcance; mutaciones son A/P salvo excepciones explícitas |
-| `sales/quotations` lista/detalle/PDF/stock-shortages | sí | no | sí* | lista y lectura cruzada abiertas |
-| `sales/quotations` create/update/duplicate/confirm-preview/confirm/reserve/release/cancel | sí | no | sí* | algunas mutaciones revisan `createdById`, responden 403 y otras no |
-| `sales/temporary-reservations`, `sales/orders`, `sales/orders/:id`, `sales/orders/:id/pdf-planta`, `sales/reservations` | sí | parcial P | sí* | lecturas globales; pedido usa `createdById` solo en ediciones |
-| edición de pedido (cantidad/agregar ítem) | sí | no | sí* | chequeo de `createdById`, 403; precio/cliente/cancelar siguen admin |
-| `dispatches` lista/detalle/crear/guía | sí | sí | sí* | globales, sin dueño |
-| `invoicing/orders/:id/progress`, documentos lista/detalle/PDF/XML/CDR | sí | parcial P | sí* | documentos tienen algunos checks por `createdById`, no por pedido |
-| configuración, series, emisión, envío, anulaciones, cuentas por cobrar y pagos | sí | no | no (salvo lecturas anteriores) | admin |
-| `pos` contexto/productos/turnos/ventas | sí | no | sí* | es otro flujo; fuera del panel comercial, requiere política explícita antes de habilitar alcance |
+| Prefijo y rutas                                                                                                         |  A  |     P     |               V                | Estado de alcance actual                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------- | :-: | :-------: | :----------------------------: | ------------------------------------------------------------------------------------------------ |
+| `audit` GET                                                                                                             | sí  |    no     |               no               | admin                                                                                            |
+| `users` GET/POST/PATCH/DELETE                                                                                           | sí  |    no     |               no               | admin                                                                                            |
+| `catalog`, `business-lines`, `colors`, `finishes`, `exchange-rates` GET                                                 | sí  |    sí     |               sí               | catálogo compartido                                                                              |
+| altas/cambios de catálogo, colores, acabados, precios, tipos de cambio e importación de lista                           | sí  |    no     |               no               | admin                                                                                            |
+| `customers` GET, lookup, search, detalle, POST, PATCH                                                                   | sí  |    no     |              sí*               | cartera compartida; DTO no lleva agregados                                                       |
+| `inventory` balances, movements, summary                                                                                | sí  |    sí     |              sí*               | vendedor recibía kardex y campos costeados como `null`; la ruta de kardex seguía expuesta        |
+| `coils` GET, detalle, PDF, children/splits/consumptions, report PDF; operaciones                                        | sí  |    sí     |               no               | no aplica V, pero enlaces cruzados pueden filtrar datos desde pedidos                            |
+| `purchases`, `suppliers`, `cutting`, `reports`                                                                          | sí  | parcial P |               no               | administrativo/planta                                                                            |
+| `production` lista/detalle y `production/roofing` cola/drafts                                                           | sí  |    sí     |          algunos GET*          | las rutas GET de roofing admiten V sin alcance; mutaciones son A/P salvo excepciones explícitas  |
+| `sales/quotations` lista/detalle/PDF/stock-shortages                                                                    | sí  |    no     |              sí*               | lista y lectura cruzada abiertas                                                                 |
+| `sales/quotations` create/update/duplicate/confirm-preview/confirm/reserve/release/cancel                               | sí  |    no     |              sí*               | algunas mutaciones revisan `createdById`, responden 403 y otras no                               |
+| `sales/temporary-reservations`, `sales/orders`, `sales/orders/:id`, `sales/orders/:id/pdf-planta`, `sales/reservations` | sí  | parcial P |              sí*               | lecturas globales; pedido usa `createdById` solo en ediciones                                    |
+| edición de pedido (cantidad/agregar ítem)                                                                               | sí  |    no     |              sí*               | chequeo de `createdById`, 403; precio/cliente/cancelar siguen admin                              |
+| `dispatches` lista/detalle/crear/guía                                                                                   | sí  |    sí     |              sí*               | globales, sin dueño                                                                              |
+| `invoicing/orders/:id/progress`, documentos lista/detalle/PDF/XML/CDR                                                   | sí  | parcial P |              sí*               | documentos tienen algunos checks por `createdById`, no por pedido                                |
+| configuración, series, emisión, envío, anulaciones, cuentas por cobrar y pagos                                          | sí  |    no     | no (salvo lecturas anteriores) | admin                                                                                            |
+| `pos` contexto/productos/turnos/ventas                                                                                  | sí  |    no     |              sí*               | es otro flujo; fuera del panel comercial, requiere política explícita antes de habilitar alcance |
 
 El inventario exhaustivo de controladores está en `apps/api/src/**/**.controller.ts`; M1 debe
 convertir esta matriz en metadata comprobable por el centinela, con default-deny para V, en vez

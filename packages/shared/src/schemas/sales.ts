@@ -848,7 +848,12 @@ export const lineWithoutOrderSchema = z.object({
 });
 export type LineWithoutOrderDto = z.infer<typeof lineWithoutOrderSchema>;
 
-export const ORDER_READINESS = ['SIN_PRODUCCION','EN_PRODUCCION','LISTO','LISTO_CON_FALTANTE'] as const;
+export const ORDER_READINESS = [
+  'SIN_PRODUCCION',
+  'EN_PRODUCCION',
+  'LISTO',
+  'LISTO_CON_FALTANTE',
+] as const;
 export const orderReadinessSchema = z.object({
   status: z.enum(ORDER_READINESS),
   orderedMl: z.string(),
@@ -1240,4 +1245,4 @@ export function serializeSalesTotals(totals: SalesLineTotals): {
 }
 
 /** Redondeo a kilos de una cantidad de reserva; centraliza la escala (D-003). */
-export const reserveQty = (v: DecimalInput): Decimal => roundTo(v, 'KG');
+export const reserveQty = (v: DecimalInput): Decimal => roun

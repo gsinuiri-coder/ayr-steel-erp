@@ -28,31 +28,31 @@ describe('Centinela de Alcance Comercial (RF-S3c)', () => {
     '%s: declara explcitamente su poltica de alcance (tiene @Roles o @Public, o excluye VENDEDOR por defecto)',
     (rel) => {
       const src = readFileSync(join(SRC_ROOT, rel), 'utf8');
-      
+
       const classRolesMatch = src.match(/@Roles\(([^)]*)\)(?:[\s\S]*?)export class/);
       const classHasRoles = !!classRolesMatch;
       const classRoles = classRolesMatch ? classRolesMatch[1] : '';
 
       const methodRegex = /@(Get|Post|Patch|Put|Delete)\([^)]*\)[\s\S]*?(?:async\s+)?(\w+)\s*\(/g;
-      
+
       let match;
       while ((match = methodRegex.exec(src)) !== null) {
         if (match[2] === 'Roles') continue;
 
         const methodStart = match.index;
         const chunk = src.substring(Math.max(0, methodStart - 300), methodStart);
-        
+
         const isPublic = chunk.includes('@Public()');
         const methodRolesMatch = chunk.match(/@Roles\(([^)]*)\)/);
-        
+
         if (isPublic) continue;
 
         const effectiveRoles = methodRolesMatch ? methodRolesMatch[1] : classRoles;
-        
+
         if (!classHasRoles && !methodRolesMatch) {
           throw new Error(
             `El mtodo "${match[2]}" en ${rel} no declara explcitamente @Roles() ni @Public(). ` +
-            `Toda ruta debe declarar su poltica de alcance (ej. @Roles(Role.ADMINISTRADOR)).`
+              `Toda ruta debe declarar su poltica de alcance (ej. @Roles(Role.ADMINISTRADOR)).`,
           );
         }
       }

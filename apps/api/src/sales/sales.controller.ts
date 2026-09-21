@@ -116,13 +116,20 @@ export class SalesController {
   }
 
   @Get('quotations/:id')
-  findQuotation(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<QuotationDto> {
+  findQuotation(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<QuotationDto> {
     return this.quotations.findOne(id, actor);
   }
 
   /** PDF de la cotización (D-068). Se descarga desde R2; se genera al vuelo si falta. */
   @Get('quotations/:id/pdf')
-  async quotationPdf(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
+  async quotationPdf(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
     const { buffer, filename } = await this.quotations.pdf(id, actor);
     res.setHeader('Content-Type', 'application/pdf');
     // `attachment` y no `inline`: el nombre viene de un correlativo del sistema, no del
@@ -230,7 +237,9 @@ export class SalesController {
 
   /** D-185: la vista «Reservas temporales vigentes». */
   @Get('temporary-reservations')
-  temporaryReservations(@CurrentUser() actor: RequestUser): Promise<TemporaryReservationListItemDto[]> {
+  temporaryReservations(
+    @CurrentUser() actor: RequestUser,
+  ): Promise<TemporaryReservationListItemDto[]> {
     return this.orders.findTemporaryReservations(actor);
   }
 
@@ -295,7 +304,10 @@ export class SalesController {
   }
 
   @Get('orders/:id')
-  findOrder(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<SalesOrderDto> {
+  findOrder(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<SalesOrderDto> {
     return this.orders.findOne(id, actor);
   }
 
