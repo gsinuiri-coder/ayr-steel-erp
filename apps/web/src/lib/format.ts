@@ -48,7 +48,7 @@ export function formatMoneyOrDash(
   currency: Currency = 'PEN',
   decimals = 2,
 ): string {
-  return value == null ? '—' : formatMoney(value, currency, decimals);
+  return value === null || value === undefined ? '—' : formatMoney(value, currency, decimals);
 }
 
 /**

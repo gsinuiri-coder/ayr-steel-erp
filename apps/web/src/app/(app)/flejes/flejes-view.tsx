@@ -128,7 +128,7 @@ export function FlejesView() {
               </TableRow>
             )}
           </TableBody>
-          {stock.data && stock.data.length > 0 && stock.data[0]?.totalValuePen != null && (
+          {stock.data && stock.data.length > 0 && stock.data[0]?.totalValuePen !== null && stock.data[0]?.totalValuePen !== undefined && (
             <tfoot>
               <TableRow>
                 <TableCell colSpan={5} className="text-right font-medium">
