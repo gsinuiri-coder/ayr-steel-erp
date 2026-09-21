@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { InventoryItemType, InventoryStrategy, RoofingProductKind } from '@prisma/client';
+import { InventoryItemType, InventoryStrategy, Role, RoofingProductKind } from '@prisma/client';
 import { Decimal, Unit } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
@@ -29,6 +29,14 @@ const rawMaterialSpecLabelsMock = jest.mocked(rawMaterialModule.rawMaterialSpecL
  */
 
 const NOW = new Date('2026-09-17T12:00:00.000Z');
+const ADMIN = {
+  id: 'admin-1',
+  email: 'admin@ayr.test',
+  name: 'Administrador',
+  role: Role.ADMINISTRADOR,
+  mustChangePassword: false,
+  sessionId: 'session-admin-1',
+};
 
 function quotationRow(overrides: {
   id: string;
@@ -182,7 +190,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       }),
     ];
     setQuotations(oneQuotation);
-    await service.findStockShortages();
+    await service.findStockShortages(ADMIN);
     const withOne = { ...callCounts };
 
     resetCounts();
@@ -204,7 +212,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       }),
     );
     setQuotations(fiveQuotations);
-    await service.findStockShortages();
+    await service.findStockShortages(ADMIN);
     const withFive = { ...callCounts };
 
     // Una sola vez cada consulta, sin importar cuántas cotizaciones compartan el ítem: si
@@ -250,7 +258,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       }),
     );
     setQuotations(rows);
-    await service.findStockShortages();
+    await service.findStockShortages(ADMIN);
 
     // inventoryBalance/reservation/quotationReservation.groupBy: una vez por tipo de ítem
     // presente (acá solo PRODUCT), nunca una vez por línea ni por cotización.
@@ -312,7 +320,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       },
     ]);
 
-    const result = await service.findStockShortages();
+    const result = await service.findStockShortages(ADMIN);
 
     // q-holder: disponible = 10 - 10 (reservado por todos) + 10 (lo suyo, que no se resta a
     // sí misma) = 10 — le sobra para sus 10, sin faltante.
@@ -344,7 +352,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     setQuotations([row]);
     prisma.inventoryBalance.findMany.mockResolvedValue([]);
 
-    const result = await service.findStockShortages();
+    const result = await service.findStockShortages(ADMIN);
     expect(result).toEqual([]);
   });
 
@@ -379,7 +387,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       { itemId: 'item-1', qty: new Decimal('10') },
     ]);
 
-    const result = await service.findStockShortages();
+    const result = await service.findStockShortages(ADMIN);
 
     // La línea 1 toma 6 de los 10 (orden de la cotización, igual que `previewLinesOf`); a la
     // línea 2 le quedan 4 disponibles para pedir 6 — faltan 2, nunca 6 (eso sería contar el
@@ -390,7 +398,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
 
   it('descarta temprano una consulta vacía y cotizaciones vencidas sin resolver inventario', async () => {
     setQuotations([]);
-    await expect(service.findStockShortages()).resolves.toEqual([]);
+    await expect(service.findStockShortages(ADMIN)).resolves.toEqual([]);
     expect(prisma.product.findMany).not.toHaveBeenCalled();
 
     setQuotations([
@@ -412,7 +420,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       }),
     ]);
 
-    await expect(service.findStockShortages()).resolves.toEqual([]);
+    await expect(service.findStockShortages(ADMIN)).resolves.toEqual([]);
     expect(prisma.product.findMany).not.toHaveBeenCalled();
   });
 
@@ -425,7 +433,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       }),
     ]);
 
-    await expect(service.findStockShortages()).resolves.toEqual([]);
+    await expect(service.findStockShortages(ADMIN)).resolves.toEqual([]);
     expect(prisma.product.findMany).not.toHaveBeenCalled();
     expect(prisma.inventoryBalance.findMany).not.toHaveBeenCalled();
   });
@@ -463,7 +471,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     } as Awaited<ReturnType<typeof rawMaterialModule.rawMaterialAvailability>>);
     rawMaterialSpecLabelsMock.mockResolvedValue(new Map([['spec-1', 'Bobina 0.50 mm ROJO']]));
 
-    const result = await service.findStockShortages();
+    const result = await service.findStockShortages(ADMIN);
 
     expect(rawMaterialAvailabilityMock).toHaveBeenCalledTimes(1);
     expect(rawMaterialAvailabilityMock).toHaveBeenCalledWith(
@@ -508,7 +516,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     prisma.product.findMany.mockResolvedValue([madeToOrderProduct()]);
     prisma.rawMaterialSpec.findMany.mockResolvedValue([]);
 
-    const result = await service.findStockShortages();
+    const result = await service.findStockShortages(ADMIN);
 
     expect(rawMaterialAvailabilityMock).not.toHaveBeenCalled();
     expect(prisma.quotationReservation.findMany).not.toHaveBeenCalled();
@@ -549,7 +557,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
       available: new Decimal('0'),
     } as Awaited<ReturnType<typeof rawMaterialModule.rawMaterialAvailability>>);
 
-    const result = await service.findStockShortages();
+    const result = await service.findStockShortages(ADMIN);
 
     expect(rawMaterialAvailabilityMock).toHaveBeenCalledWith(
       prisma,
@@ -581,7 +589,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
     ]);
     prisma.product.findMany.mockResolvedValue([madeToOrderProduct({ thicknessMm: null })]);
 
-    await expect(service.findStockShortages()).resolves.toEqual([]);
+    await expect(service.findStockShortages(ADMIN)).resolves.toEqual([]);
     expect(prisma.rawMaterialSpec.findMany).not.toHaveBeenCalled();
     expect(rawMaterialAvailabilityMock).not.toHaveBeenCalled();
   });

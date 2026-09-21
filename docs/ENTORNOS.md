@@ -177,6 +177,14 @@ desarrollar sin red y para que la suite E2E corra rápido y aislada. Nunca reemp
 (la rama Neon sigue siendo donde se prueba contra el motor real antes de un deploy), pero para
 el día a día alcanza y es mucho más rápido.
 
+El contenedor `ayr-local-db` es compartido entre worktrees. Cada worktree que necesite aislarse
+crea dos bases propias en ese mismo contenedor —`ayr_<worktree>` para desarrollo y
+`ayr_<worktree>_e2e` para Playwright— y apunta sus archivos ignorados `apps/api/.env` y
+`apps/web/.env.local` a esas bases. Nunca se leen, migran ni resetean las bases de otro worktree;
+el nombre de la base es parte del aislamiento. Antes de vaciar una base E2E nueva, el guard de
+`apps/api/prisma/test-db-guard.ts` debe aceptarla explícitamente; si la rechaza, se detiene la
+sesión y no se amplía el guard de forma silenciosa.
+
 Un solo contenedor, dos bases (`docker/postgres-init`): `ayr_local` para `pnpm dev:local` y
 `ayr_local_e2e`, exclusiva de la suite, que se vacía en cada corrida — así una no pisa a la
 otra. El puerto es `5434` (no 5433: ver `scripts/local-docker-env.mjs` si algún día choca con

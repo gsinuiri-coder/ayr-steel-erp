@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -629,7 +628,7 @@ export class SalesOrderEditsService {
 
   private assertOwner(actor: RequestUser, order: LockedOrder, what: string): void {
     if (actor.role !== Role.ADMINISTRADOR && actor.id !== order.createdById) {
-      throw new ForbiddenException(`El pedido es de otro vendedor: no puedes ${what}`);
+      throw new NotFoundException('Pedido no encontrado');
     }
   }
 

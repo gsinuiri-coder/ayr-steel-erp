@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -78,6 +77,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
+import { assertSellerAccess, quotationSellerWhere, sellerWhere } from '../auth/seller-scope';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -281,17 +281,18 @@ export class SalesOrdersService {
             status: QuotationStatus;
             valid_until: Date | null;
             created_by_id: string;
+            seller_id: string | null;
           }[]
         >`
-        SELECT "id", "seq", "status", "valid_until", "created_by_id"
+        SELECT "id", "seq", "status", "valid_until", "created_by_id", "seller_id"
         FROM "quotations" WHERE "id" = ${quotationId}::uuid FOR UPDATE
       `;
         const head = rows[0];
         if (!head) throw new NotFoundException('Cotización no encontrada');
         // RF-66: confirmar es el acto del vendedor **sobre su propia** cotización. Sin esto,
         // cualquier vendedor podía comprometer stock a nombre del cliente de otro.
-        if (actor.role !== Role.ADMINISTRADOR && actor.id !== head.created_by_id) {
-          throw new ForbiddenException('La cotización es de otro vendedor: no puedes confirmarla');
+        if (actor.role !== Role.ADMINISTRADOR && actor.id !== (head.seller_id ?? head.created_by_id)) {
+          throw new NotFoundException('Cotización no encontrada');
         }
 
         if (head.status === QuotationStatus.CONFIRMED) {
@@ -377,6 +378,7 @@ export class SalesOrdersService {
         const order = await tx.salesOrder.create({
           data: {
             quotationId,
+            sellerId: quotation.sellerId ?? quotation.createdById,
             customerId: quotation.customerId,
             status: SalesOrderStatus.CONFIRMED,
             issueDate: toDateOnly(businessToday()),
@@ -739,9 +741,9 @@ export class SalesOrdersService {
    * El costo es leer todas las emitidas vigentes en cada consulta — aceptable: es el mismo
    * conjunto, acotado, que ya recorre `/reservas-temporales` y la propia cola de vencimiento.
    */
-  async findStockShortages(): Promise<QuotationStockShortageDto[]> {
+  async findStockShortages(actor: RequestUser): Promise<QuotationStockShortageDto[]> {
     const quotations = await this.prisma.quotation.findMany({
-      where: { status: QuotationStatus.EMITTED },
+      where: { status: QuotationStatus.EMITTED, ...quotationSellerWhere(actor) },
       include: shortageQuotationInclude,
       orderBy: { seq: 'asc' },
     });
@@ -1146,6 +1148,7 @@ export class SalesOrdersService {
         totalPen: totals.totalPen,
         notes: input.notes ?? null,
         createdById: actor.id,
+        sellerId: actor.id,
         promisedDeliveryDate: input.promisedDeliveryDate
           ? toDateOnly(input.promisedDeliveryDate)
           : null,
@@ -1655,15 +1658,16 @@ export class SalesOrdersService {
         status: QuotationStatus;
         valid_until: Date | null;
         created_by_id: string;
+        seller_id: string | null;
       }[]
     >`
-      SELECT "id", "seq", "status", "valid_until", "created_by_id"
+      SELECT "id", "seq", "status", "valid_until", "created_by_id", "seller_id"
       FROM "quotations" WHERE "id" = ${quotationId}::uuid FOR UPDATE
     `;
     const head = rows[0];
     if (!head) throw new NotFoundException('Cotización no encontrada');
-    if (actor.role !== Role.ADMINISTRADOR && actor.id !== head.created_by_id) {
-      throw new ForbiddenException(`La cotización es de otro vendedor: no puedes ${action}`);
+    if (actor.role !== Role.ADMINISTRADOR && actor.id !== (head.seller_id ?? head.created_by_id)) {
+      throw new NotFoundException('Cotización no encontrada');
     }
     return {
       id: head.id,
@@ -1940,10 +1944,10 @@ export class SalesOrdersService {
   }
 
   /** La vista «Reservas temporales vigentes» (D-185): una fila por cotización. */
-  async findTemporaryReservations(): Promise<TemporaryReservationListItemDto[]> {
+  async findTemporaryReservations(actor: RequestUser): Promise<TemporaryReservationListItemDto[]> {
     await this.prisma.$transaction((tx) => sweepExpiredTemporaryReservations(tx));
     const rows = await this.prisma.quotationReservation.findMany({
-      where: liveTemporaryWhere(),
+      where: { ...liveTemporaryWhere(), quotation: quotationSellerWhere(actor) },
       include: {
         quotation: { select: { id: true, seq: true, customer: { select: { name: true } } } },
       },
@@ -2465,13 +2469,14 @@ export class SalesOrdersService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: SalesOrderQuery): Promise<PaginatedResult<SalesOrderListItemDto>> {
+  async findAll(actor: RequestUser, query: SalesOrderQuery): Promise<PaginatedResult<SalesOrderListItemDto>> {
     // El código del pedido (`PED-000123`) es `salesOrderCode(seq)`, no una columna: buscar
     // "PED-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o quien
     // pega el código de un pedido para encontrarlo (el uso más común del buscador) se
     // quedaba sin resultados (Fase 7d, hallazgo de revisión).
     const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
     const where: Prisma.SalesOrderWhereInput = {
+      ...sellerWhere(actor),
       status: query.status,
       customerId: query.customerId,
       // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
@@ -2543,9 +2548,10 @@ export class SalesOrdersService {
     return paginate(items, total, query);
   }
 
-  async findOne(id: string): Promise<SalesOrderDto> {
+  async findOne(id: string, actor?: RequestUser): Promise<SalesOrderDto> {
     const row = await this.prisma.salesOrder.findUnique({ where: { id }, include: orderInclude });
     if (!row) throw new NotFoundException('Pedido no encontrado');
+    if (actor) assertSellerAccess(actor, row.sellerId, 'Pedido');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
     const [actors, queueStatus, priceChanges, invoice] = await Promise.all([
       this.resolveActorNames([row.createdById]),
@@ -2686,7 +2692,7 @@ export class SalesOrdersService {
    * prima (lo que una cobertura a medida va a consumir, en kilos y en metros teóricos) y el
    * **stock por SKU** (lo que se vende tal cual: planchas, perfiles, UPVC).
    */
-  async stockPanel(query: StockPanelQuery): Promise<StockPanelDto> {
+  async stockPanel(actor: RequestUser, query: StockPanelQuery): Promise<StockPanelDto> {
     const [rawMaterial, products] = await Promise.all([
       query.businessLine === undefined
         ? Promise.resolve<RawMaterialStockDto[]>([])
@@ -2970,7 +2976,7 @@ export class SalesOrdersService {
    * anulada/vendida), de kind `COIL` (un fleje no se vende como bobina), sin custodia de
    * producción y con saldo. Solo Drywall y Metallic Roofing tienen bobina (C).
    */
-  async findSellableCoils(query: SellableCoilQuery): Promise<SellableCoilDto[]> {
+  async findSellableCoils(actor: RequestUser, query: SellableCoilQuery): Promise<SellableCoilDto[]> {
     const lines = query.businessLine ? [query.businessLine] : [...COIL_BUSINESS_LINES];
     const coils = await this.prisma.coil.findMany({
       where: {
@@ -3066,18 +3072,19 @@ export class SalesOrdersService {
           status: c.status as 'OPEN' | 'CLOSED',
           availableQty: qty.minus(res).toFixed(3),
           minPricePen: floors.get(c.id)?.minPricePen ?? null,
-          avgCostPen: avgCostById.get(c.id) ?? null,
+          avgCostPen: actor.role === Role.ADMINISTRADOR ? (avgCostById.get(c.id) ?? null) : null,
         };
       })
       .filter((c) => toDecimal(c.availableQty).gt(0));
   }
 
-  async findReservations(query: ReservationQuery): Promise<ReservationDto[]> {
+  async findReservations(actor: RequestUser, query: ReservationQuery): Promise<ReservationDto[]> {
     const rows = await this.prisma.reservation.findMany({
       where: {
         status: query.status,
         itemId: query.itemId,
         salesOrderId: query.salesOrderId,
+        salesOrder: sellerWhere(actor),
       },
       include: {
         salesOrder: {

@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -40,6 +39,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { assertSellerAccess, quotationSellerWhere } from '../auth/seller-scope';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { ENV, type Env } from '../config/env';
 import { StorageService } from '../documents/storage.service';
@@ -125,7 +125,7 @@ export class QuotationsService {
   private assertOwnership(actor: RequestUser, createdById: string, action: string): void {
     if (actor.role === Role.ADMINISTRADOR) return;
     if (actor.id === createdById) return;
-    throw new ForbiddenException(`La cotización es de otro vendedor: no puedes ${action}`);
+    throw new NotFoundException('Cotización no encontrada');
   }
 
   // -------------------------------------------------------------------------
@@ -135,7 +135,7 @@ export class QuotationsService {
   async create(actor: RequestUser, input: CreateQuotationInput): Promise<QuotationDto> {
     const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input));
     await this.generatePdf(id);
-    return this.findOne(id);
+    return this.findOne(id, actor);
   }
 
   /**
@@ -190,6 +190,7 @@ export class QuotationsService {
         totalPen: totals.totalPen,
         notes: input.notes ?? null,
         createdById: actor.id,
+        sellerId: actor.id,
         items: { create: lines.map(toItemCreate) },
       },
     });
@@ -580,12 +581,13 @@ export class QuotationsService {
    * Ese es también el motivo de que este `GET` no escriba nada: el PDF se escribe en el
    * alta, la edición y el duplicado, que son `POST`/`PUT`.
    */
-  async pdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+  async pdf(id: string, actor?: RequestUser): Promise<{ buffer: Buffer; filename: string }> {
     const row = await this.prisma.quotation.findUnique({
       where: { id },
-      select: { id: true, seq: true, status: true, validUntil: true, pdfKey: true },
+      select: { id: true, seq: true, status: true, validUntil: true, pdfKey: true, sellerId: true },
     });
     if (!row) throw new NotFoundException('Cotización no encontrada');
+    if (actor) assertSellerAccess(actor, row.sellerId, 'Cotización');
 
     const filename = `${quotationCode(row.seq)}.pdf`;
     // Con el estado **efectivo**, no el guardado: una emitida cuya fecha ya pasó no puede
@@ -705,13 +707,14 @@ export class QuotationsService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: QuotationQuery): Promise<PaginatedResult<QuotationListItemDto>> {
+  async findAll(actor: RequestUser, query: QuotationQuery): Promise<PaginatedResult<QuotationListItemDto>> {
     // El código de la cotización (`COT-000123`) es `quotationCode(seq)`, no una columna:
     // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
     // quien pega el código de una cotización para encontrarla (el uso más común del
     // buscador) se quedaba sin resultados (Fase 7d, hallazgo de revisión).
     const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
     const where: Prisma.QuotationWhereInput = {
+      ...quotationSellerWhere(actor),
       status: query.status,
       customerId: query.customerId,
       // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
@@ -755,12 +758,13 @@ export class QuotationsService {
     return paginate(items, total, query);
   }
 
-  async findOne(id: string): Promise<QuotationDto> {
+  async findOne(id: string, actor?: RequestUser): Promise<QuotationDto> {
     const row = await this.prisma.quotation.findUnique({
       where: { id },
       include: quotationInclude,
     });
     if (!row) throw new NotFoundException('Cotización no encontrada');
+    if (actor) assertSellerAccess(actor, row.sellerId, 'Cotización');
     const labels = await this.reserveLabels(row.items);
     const actors = await this.resolveActorNames([row.createdById]);
     const [temporary, priceChanges] = await Promise.all([

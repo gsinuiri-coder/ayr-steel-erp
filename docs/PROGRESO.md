@@ -7178,3 +7178,21 @@ build` por separado (no dependen del binario recién generado si el cliente ya e
 - **Fase 1.** El E2E de CI (`imports`) sube archivos reales al bucket R2 de producción (`R2_BUCKET` es el mismo en GCP y en GitHub Secrets); quedan objetos de prueba con prefijo `imports/...` en R2 tras cada corrida de CI. No es un riesgo de seguridad, pero conviene un bucket o prefijo separado para CI si el volumen de corridas crece (anotado para Fase 7).
 - Prisma expone el enum `BusinessLineCode` con los nombres declarados en el schema (`DRYWALL`, `METALLIC_ROOFING`...), no con el valor de `@map` (`drywall`, `metallic-roofing`...); `apps/api/src/common/business-line-code.ts` es el único lugar que traduce entre eso y el `BusinessLine` de `@ayr/shared`. Si se agrega una sexta línea de negocio, hay que tocar ese mapa además del enum de Prisma y el de `@ayr/shared`.
 - **`ADMIN_PASSWORD` de `.env.setup` ya no es la contraseña real del admin en `production`.** El dueño la cambió al completar el flujo de `mustChangePassword` en su primer ingreso (cierre de Fase 0). Un intento de `POST /auth/login` contra producción con las credenciales de `.env.setup` devuelve `401 Credenciales inválidas` (evidencia de esta sesión, sin haber tocado nada). **Nunca** intentar loguearse como el admin real contra producción para verificar algo: usar siempre un administrador efímero (`apps/api/prisma/e2e-admin.ts` + `cleanup-e2e-users.ts`, patrón D-024) igual que hace `pnpm e2e:prod`.
+## RF-S3c — verificación M0 local (2026-09-21)
+
+`prisma generate`, `typecheck`, `lint` y `pnpm test` quedaron verdes (47 suites, 620 tests).
+La migración `20260920120000_rf_s3c_seller_scope` se aplicó en la base local exclusiva
+`ayr_rf_s3c` del contenedor Docker compartido; no se tocó Neon. El backfill se ensayó con
+dos vendedores, administrador, varios creadores y filas `seller_id=NULL`: el dry-run fue
+solo lectura y `--execute` rellenó las seis filas desde `created_by_id`.
+
+El dry-run contra una rama clonada de Neon queda a cargo del dueño por D-234. Comando exacto,
+desde la raíz del worktree, después de configurar esa rama y su entorno fuera de esta sesión:
+
+```text
+node scripts/backfill-seller-scope.mjs --branch ensayo-s3c-20260920
+```
+
+El wrapper es dry-run por defecto; no agregar `--execute` sin la aprobación correspondiente.
+El guard E2E actual rechaza `ayr_rf_s3c_e2e` porque su lista blanca todavía solo admite
+`ayr_local_e2e`, `ayr_ci_e2e` bajo CI y Neon `ci`; por D-230/D-234 no se amplió ni se reseteó.
