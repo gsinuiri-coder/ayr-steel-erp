@@ -22,9 +22,9 @@ describe('política de alcance RF-S3c', () => {
   });
 
   it('presenta un recurso ajeno como inexistente', () => {
-    expect(() => assertSellerAccess(seller, 'seller-b', 'Pedido')).toThrow(NotFoundException);
-    expect(() => assertSellerAccess(seller, null, 'Pedido')).toThrow(NotFoundException);
-    expect(() => assertSellerAccess(seller, seller.id, 'Pedido')).not.toThrow();
-    expect(() => assertSellerAccess(admin, 'seller-b', 'Pedido')).not.toThrow();
+    expect(() => { assertSellerAccess(seller, 'seller-b', 'Pedido'); }).toThrow(NotFoundException);
+    expect(() => { assertSellerAccess(seller, null, 'Pedido'); }).toThrow(NotFoundException);
+    expect(() => { assertSellerAccess(seller, seller.id, 'Pedido'); }).not.toThrow();
+    expect(() => { assertSellerAccess(admin, 'seller-b', 'Pedido'); }).not.toThrow();
   });
 });

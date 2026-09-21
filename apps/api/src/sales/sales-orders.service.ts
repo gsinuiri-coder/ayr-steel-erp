@@ -289,14 +289,7 @@ export class SalesOrdersService {
       `;
         const head = rows[0];
         if (!head) throw new NotFoundException('Cotización no encontrada');
-        // RF-66: confirmar es el acto del vendedor **sobre su propia** cotización. Sin esto,
-        // cualquier vendedor podía comprometer stock a nombre del cliente de otro.
-        if (
-          actor.role !== Role.ADMINISTRADOR &&
-          actor.id !== (head.seller_id ?? head.created_by_id)
-        ) {
-          throw new NotFoundException('Cotización no encontrada');
-        }
+        assertSellerAccess(actor, head.seller_id, 'Cotización');
 
         if (head.status === QuotationStatus.CONFIRMED) {
           throw new ConflictException('La cotización ya fue confirmada');
@@ -535,11 +528,9 @@ export class SalesOrdersService {
       },
     });
     if (!quotation) throw new NotFoundException('Cotización no encontrada');
+    assertSellerAccess(actor, quotation.sellerId, 'Cotización');
 
     const blockers: string[] = [];
-    if (actor.role !== Role.ADMINISTRADOR && actor.id !== quotation.createdById) {
-      blockers.push('La cotización es de otro vendedor: no puedes confirmarla');
-    }
     const validUntil = quotation.validUntil?.toISOString().slice(0, 10) ?? null;
     if (quotation.status !== QuotationStatus.EMITTED) {
       blockers.push(`Solo se confirma una cotización emitida; esta está ${quotation.status}`);
@@ -1647,7 +1638,7 @@ export class SalesOrdersService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     quotationId: string,
-    action: string,
+    _action: string,
   ): Promise<{
     id: string;
     seq: number;
@@ -2341,9 +2332,9 @@ export class SalesOrdersService {
    * D-134: una venta de bobina entera (RF-73) sigue siendo una reserva `COIL` y **no** entra:
    * ese rollo se despacha, no se fabrica.
    */
-  async findLinesWithoutOrder(): Promise<LineWithoutOrderDto[]> {
+  async findLinesWithoutOrder(actor: RequestUser): Promise<LineWithoutOrderDto[]> {
     const reservations = await this.prisma.reservation.findMany({
-      where: { status: ReservationStatus.ACTIVE, itemType: InventoryItemTypeEnum.RAW_MATERIAL },
+      where: { status: ReservationStatus.ACTIVE, itemType: InventoryItemTypeEnum.RAW_MATERIAL, salesOrder: sellerWhere(actor) },
       include: {
         salesOrder: {
           select: {
@@ -2591,10 +2582,11 @@ export class SalesOrdersService {
    *
    * Sin importes, a propósito: ver `plant-order-pdf.ts`.
    */
-  async plantPdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+  async plantPdf(id: string, actor: RequestUser): Promise<{ buffer: Buffer; filename: string }> {
     const row = await this.prisma.salesOrder.findUnique({
       where: { id },
       select: {
+        sellerId: true,
         seq: true,
         status: true,
         issueDate: true,
@@ -2632,6 +2624,7 @@ export class SalesOrdersService {
       },
     });
     if (!row) throw new NotFoundException('Pedido no encontrado');
+    assertSellerAccess(actor, row.sellerId, 'Pedido');
     if (row.status === SalesOrderStatus.CANCELLED) {
       throw new BadRequestException('El pedido está anulado: no hay nada que producir');
     }

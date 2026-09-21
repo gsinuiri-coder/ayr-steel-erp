@@ -29,7 +29,7 @@ describe('Centinela de Alcance Comercial (RF-S3c)', () => {
     (rel) => {
       const src = readFileSync(join(SRC_ROOT, rel), 'utf8');
 
-      const classRolesMatch = src.match(/@Roles\(([^)]*)\)(?:[\s\S]*?)export class/);
+      const classRolesMatch = /@Roles\(([^)]*)\)(?:[\s\S]*?)export class/.exec(src);
       const classHasRoles = !!classRolesMatch;
       const classRoles = classRolesMatch ? classRolesMatch[1] : '';
 
@@ -43,11 +43,11 @@ describe('Centinela de Alcance Comercial (RF-S3c)', () => {
         const chunk = src.substring(Math.max(0, methodStart - 300), methodStart);
 
         const isPublic = chunk.includes('@Public()');
-        const methodRolesMatch = chunk.match(/@Roles\(([^)]*)\)/);
+        const methodRolesMatch = /@Roles\(([^)]*)\)/.exec(chunk);
 
         if (isPublic) continue;
 
-        const effectiveRoles = methodRolesMatch ? methodRolesMatch[1] : classRoles;
+        const _effectiveRoles = methodRolesMatch ? methodRolesMatch[1] : classRoles;
 
         if (!classHasRoles && !methodRolesMatch) {
           throw new Error(

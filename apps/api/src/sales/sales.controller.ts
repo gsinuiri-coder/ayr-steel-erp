@@ -148,8 +148,8 @@ export class SalesController {
   // por eso suma SUPERVISOR_PLANTA a los roles de la clase (§3.4). No lleva importes, así que
   // no le abre nada de lo que el resto del módulo le oculta a ese rol.
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
-  async plantOrderPdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
-    const { buffer, filename } = await this.orders.plantPdf(id);
+  async plantOrderPdf(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor: RequestUser, @Res() res: Response): Promise<void> {
+    const { buffer, filename } = await this.orders.plantPdf(id, actor);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -220,7 +220,7 @@ export class SalesController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<QuotationDto> {
     await this.orders.reserveTemporarily(actor, id);
-    return this.quotations.findOne(id);
+    return this.quotations.findOne(id, actor);
   }
 
   /** D-185: liberar a mano la reserva temporal vigente. Motivo obligatorio. */
@@ -232,7 +232,7 @@ export class SalesController {
     body: ReleaseTemporaryReservationInput,
   ): Promise<QuotationDto> {
     await this.orders.releaseTemporary(actor, id, body.reason);
-    return this.quotations.findOne(id);
+    return this.quotations.findOne(id, actor);
   }
 
   /** D-185: la vista «Reservas temporales vigentes». */
@@ -299,8 +299,8 @@ export class SalesController {
    */
   @Get('orders/lines-without-order')
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
-  findLinesWithoutOrder(): Promise<LineWithoutOrderDto[]> {
-    return this.orders.findLinesWithoutOrder();
+  findLinesWithoutOrder(@CurrentUser() actor: RequestUser): Promise<LineWithoutOrderDto[]> {
+    return this.orders.findLinesWithoutOrder(actor);
   }
 
   @Get('orders/:id')

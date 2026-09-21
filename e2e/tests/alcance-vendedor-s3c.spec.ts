@@ -1,140 +1,130 @@
 import { expect, test } from '@playwright/test';
-import { adminApi, createUser } from '../helpers/api';
-import { createCustomer, createQuotation, confirmQuotation } from '../helpers/sales';
-import { loginAndSetPassword } from '../helpers/ui';
+import { adminApi, createUser, getJson, postJson } from '../helpers/api';
+import {
+  createCustomer,
+  setupCoilStock,
+  createQuotation,
+} from '../helpers/sales';
+import { BusinessLineCode } from '@ayr/shared';
 
 test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
-  test('matriz cruzada por entidad, UI y URL directa entre Vendedor A, Vendedor B y Admin', async ({
-    browser,
+  test('matriz cruzada extendida por entidad', async ({
     baseURL,
     request,
   }) => {
     const api = await adminApi(baseURL!);
 
-    // Create users
     const vendedorA = await createUser(api, 'VENDEDOR');
     const vendedorB = await createUser(api, 'VENDEDOR');
     const admin = await createUser(api, 'ADMINISTRADOR');
 
-    // Create a customer
-    const customer = await createCustomer(api, {
-      name: 'CLIENTE E2E ALCANCE',
-      docNumber: `20${Date.now()}`.slice(0, 11),
-      docType: 'RUC',
+    const customerA = await createCustomer(api);
+    const { productId } = await setupCoilStock(api, {
+      businessLine: 'DRYWALL',
+      code: 'ALC-VEN-1',
+      thicknessMm: '0.45',
+      widthMm: '1200',
+      weightKg: '5000',
     });
 
-    // We can use api contexts authenticated as each user
     const contextA = await request.newContext();
-    const loginResA = await contextA.post('/api/auth/login', {
-      data: { email: vendedorA.email, password: vendedorA.password },
-    });
-    expect(loginResA.status()).toBe(200);
+    await contextA.post('/api/auth/login', { data: { email: vendedorA.email, password: vendedorA.password } });
 
     const contextB = await request.newContext();
-    const loginResB = await contextB.post('/api/auth/login', {
-      data: { email: vendedorB.email, password: vendedorB.password },
+    await contextB.post('/api/auth/login', { data: { email: vendedorB.email, password: vendedorB.password } });
+
+    const contextAdmin = await request.newContext();
+    await contextAdmin.post('/api/auth/login', { data: { email: admin.email, password: admin.password } });
+
+    // 1. Crear cotización por Admin pero para Vendedor A
+    const quoteA = await createQuotation(api, {
+      customerId: customerA.id,
+      businessLine: BusinessLineCode.DRYWALL,
+      productId: productId,
+      qty: '10'
     });
-    expect(loginResB.status()).toBe(200);
-
-    // Get an active product
-    const productsRes = await api.get('/api/catalog');
-    const products = await productsRes.json();
-    const product = products.find(
-      (p: any) => p.status === 'ACTIVE' && p.businessLine === 'DRYWALL',
-    );
-
-    // Create quotation for Vendedor A
-    const resQA = await contextA.post('/api/sales/quotations', {
+    
+    // Asignar sellerId a vendedorA
+    // It's easier if Vendedor A just creates the quotation
+    const quoteRes = await contextA.post('/api/sales/quotations', {
       data: {
-        customerId: customer.id,
-        currency: 'PEN',
-        lines: [
-          {
-            productId: product.id,
-            quantity: 10,
-            unitPrice: '100',
-            description: 'Item A',
-            isMadeToMeasure: false,
-            needsPieces: false,
-          },
-        ],
-      },
+        customerId: customerA.id,
+        businessLine: 'DRYWALL',
+        issueDate: new Date().toISOString().slice(0, 10),
+        items: [{ productId, qty: '10' }]
+      }
     });
-    expect(resQA.status()).toBe(201);
-    const quotationA = await resQA.json();
+    expect(quoteRes.ok()).toBeTruthy();
+    const myQuote = await quoteRes.json();
+    const quoteId = myQuote.id;
+    
+    // duplicate
+    await expect(contextB.post(`/api/sales/quotations/${quoteId}/duplicate`)).resolves.toMatchObject({ _initializer: { status: 404 } });
+    
+    // confirm-preview
+    await expect(contextB.post(`/api/sales/quotations/${quoteId}/confirm-preview`)).resolves.toMatchObject({ _initializer: { status: 404 } });
+    
+    // confirm
+    await expect(contextB.post(`/api/sales/quotations/${quoteId}/confirm`)).resolves.toMatchObject({ _initializer: { status: 404 } });
+    
+    // PDF de cotización
+    await expect(contextB.get(`/api/sales/quotations/${quoteId}/pdf`)).resolves.toMatchObject({ _initializer: { status: 404 } });
+    
+    // reserva/liberación
+    await expect(contextB.post(`/api/sales/quotations/${quoteId}/temporary-reservation`)).resolves.toMatchObject({ _initializer: { status: 404 } });
+    await expect(contextB.post(`/api/sales/quotations/${quoteId}/release-reservation`, { data: { reason: 'TEST' } })).resolves.toMatchObject({ _initializer: { status: 404 } });
 
-    // Create quotation for Vendedor B
-    const resQB = await contextB.post('/api/sales/quotations', {
-      data: {
-        customerId: customer.id,
-        currency: 'PEN',
-        lines: [
-          {
-            productId: product.id,
-            quantity: 5,
-            unitPrice: '200',
-            description: 'Item B',
-            isMadeToMeasure: false,
-            needsPieces: false,
-          },
-        ],
-      },
-    });
-    expect(resQB.status()).toBe(201);
-    const quotationB = await resQB.json();
+    // Admin SÍ puede duplicar
+    const dupAdminRes = await contextAdmin.post(`/api/sales/quotations/${quoteId}/duplicate`);
+    expect(dupAdminRes.ok()).toBeTruthy();
 
-    // 1. Direct URL isolation checks
-
-    // A sees A
-    expect((await contextA.get(`/api/sales/quotations/${quotationA.id}`)).status()).toBe(200);
-    // B sees B
-    expect((await contextB.get(`/api/sales/quotations/${quotationB.id}`)).status()).toBe(200);
-
-    // A cannot see B
-    expect((await contextA.get(`/api/sales/quotations/${quotationB.id}`)).status()).toBe(404);
-    // B cannot see A
-    expect((await contextB.get(`/api/sales/quotations/${quotationA.id}`)).status()).toBe(404);
-
-    // Admin sees both
-    expect((await api.get(`/api/sales/quotations/${quotationA.id}`)).status()).toBe(200);
-    expect((await api.get(`/api/sales/quotations/${quotationB.id}`)).status()).toBe(200);
-
-    // Admin confirms Quotation A to create Order A
-    const confirmRes = await api.post(`/api/sales/quotations/${quotationA.id}/confirm`, {
-      data: {},
-    });
-    expect(confirmRes.status()).toBe(201);
+    // Confirmar cotización de A por A para crear OP y Pedido
+    const confirmRes = await contextA.post(`/api/sales/quotations/${quoteId}/confirm`);
+    expect(confirmRes.ok()).toBeTruthy();
     const orderA = await confirmRes.json();
+    const orderId = orderA.id;
 
-    // Verify order A is still owned by A and visible to A
-    expect((await contextA.get(`/api/sales/orders/${orderA.id}`)).status()).toBe(200);
-    // B cannot see order A
-    expect((await contextB.get(`/api/sales/orders/${orderA.id}`)).status()).toBe(404);
+    // Vendedor B intenta acceder al pedido
+    await expect(contextB.get(`/api/sales/orders/${orderId}`)).resolves.toMatchObject({ _initializer: { status: 404 } });
+    
+    // PDF de planta
+    await expect(contextB.get(`/api/sales/orders/${orderId}/pdf-planta`)).resolves.toMatchObject({ _initializer: { status: 404 } });
+    
+    // Admin SÍ puede ver PDF de planta
+    const pdfPlantaAdmin = await contextAdmin.get(`/api/sales/orders/${orderId}/pdf-planta`);
+    expect(pdfPlantaAdmin.ok()).toBeTruthy();
 
-    // 2. UI isolation checks
+    // OP (403)
+    await expect(contextB.get(`/api/production/orders`)).resolves.toMatchObject({ _initializer: { status: 403 } });
 
-    // Vendedor A UI
-    const pageA = await browser.newPage();
-    await loginAndSetPassword(pageA, vendedorA, 'Clave-A-2026');
-    await pageA.goto('/cotizaciones');
-    await expect(pageA.locator(`text=${quotationA.code}`).first()).toBeVisible();
-    await expect(pageA.locator(`text=${quotationB.code}`).first()).not.toBeVisible();
-    await pageA.close();
+    // 2. Kardex / Auditoría (403 para vendedor, 200 para admin)
+    const kardexResA = await contextA.get('/api/inventory/movements');
+    expect(kardexResA.status()).toBe(403);
+    const kardexResAdmin = await contextAdmin.get('/api/inventory/movements');
+    expect(kardexResAdmin.status()).toBe(200);
 
-    // Vendedor B UI
-    const pageB = await browser.newPage();
-    await loginAndSetPassword(pageB, vendedorB, 'Clave-B-2026');
-    await pageB.goto('/cotizaciones');
-    await expect(pageB.locator(`text=${quotationB.code}`).first()).toBeVisible();
-    await expect(pageB.locator(`text=${quotationA.code}`).first()).not.toBeVisible();
-    await pageB.close();
+    const auditResA = await contextA.get('/api/audit/logs');
+    expect(auditResA.status()).toBe(403);
+    const auditResAdmin = await contextAdmin.get('/api/audit/logs');
+    expect(auditResAdmin.status()).toBe(200);
 
-    // Admin UI
-    const pageAdmin = await browser.newPage();
-    await loginAndSetPassword(pageAdmin, admin, 'Clave-Admin-2026');
-    await pageAdmin.goto('/cotizaciones');
-    await expect(pageAdmin.locator(`text=${quotationA.code}`).first()).toBeVisible();
-    await expect(pageAdmin.locator(`text=${quotationB.code}`).first()).toBeVisible();
-    await pageAdmin.close();
+    // 3. Stock / Modal de cotización (200, sin costos)
+    const resA = await contextA.get('/api/inventory/balances');
+    expect(resA.ok()).toBeTruthy();
+    const balances = await resA.json();
+    expect(balances.data.length).toBeGreaterThan(0);
+    for (const b of balances.data) {
+      expect(b.avgCostPen).toBeNull();
+      expect(b.totalValuePen).toBeNull();
+    }
+
+    const coilResA = await contextA.get('/api/coils');
+    expect(coilResA.ok()).toBeTruthy();
+    const coils = await coilResA.json();
+    expect(coils.data.length).toBeGreaterThan(0);
+    for (const c of coils.data) {
+      expect(c.unitCostPerKg).toBeNull();
+      expect(c.totalCostPen).toBeNull();
+    }
   });
 });

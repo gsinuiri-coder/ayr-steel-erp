@@ -1,3 +1,4 @@
+import type { RequestUser } from '../auth/auth.types';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   BusinessLineCode,
@@ -320,7 +321,7 @@ export class CoilsService {
     return tx.coil.findUniqueOrThrow({ where: { id: coilId } });
   }
 
-  async findAll(query: CoilQuery): Promise<PaginatedResult<CoilDto>> {
+  async findAll(query: CoilQuery, canSeeCosts = true): Promise<PaginatedResult<CoilDto>> {
     // D-121: el saldo vive en el kardex, no en la fila de la bobina, así que el filtro
     // sale de una subconsulta a `inventory_balances` en vez de una condición SQL directa.
     let availabilityIds: string[] | undefined;
@@ -369,28 +370,28 @@ export class CoilsService {
         take,
       }),
     ]);
-    return paginate(await this.toDtos(coils), total, query);
+    return paginate(await this.toDtos(coils, canSeeCosts), total, query);
   }
 
-  async findOne(id: string): Promise<CoilDto> {
+  async findOne(id: string, canSeeCosts = true): Promise<CoilDto> {
     const coil = await this.prisma.coil.findUnique({
       where: { id },
       include: COIL_RELATIONS,
     });
     if (!coil) throw new NotFoundException('Bobina no encontrada');
-    const [dto] = await this.toDtos([coil]);
+    const [dto] = await this.toDtos([coil], canSeeCosts);
     if (!dto) throw new NotFoundException('Bobina no encontrada');
     return dto;
   }
 
   /** Bobinas hijas nacidas de partidos de esta bobina (RF-15), incluidas las revertidas. */
-  async findChildren(parentCoilId: string): Promise<CoilDto[]> {
+  async findChildren(parentCoilId: string, canSeeCosts = true): Promise<CoilDto[]> {
     const coils = await this.prisma.coil.findMany({
       where: { parentCoilId },
       include: COIL_RELATIONS,
       orderBy: { createdAt: 'asc' },
     });
-    return this.toDtos(coils);
+    return this.toDtos(coils, canSeeCosts);
   }
 
   /** Partidos de una bobina (RF-15/RF-16), con sus hijas, para la vista de detalle. */
@@ -434,7 +435,7 @@ export class CoilsService {
    * opuesta del `consumptions` que ya trae `ProductionOrderDto` (RF-34, D-060): esa lista
    * las bobinas que una OP montó, esta lista las OP que montaron una bobina.
    */
-  async findConsumptions(coilId: string): Promise<CoilConsumptionDto[]> {
+  async findConsumptions(coilId: string, actor: RequestUser): Promise<CoilConsumptionDto[]> {
     const rows = await this.prisma.productionOrderConsumption.findMany({
       where: { coilId },
       include: {
@@ -448,7 +449,7 @@ export class CoilsService {
             reservation: {
               select: {
                 salesOrder: {
-                  select: { id: true, seq: true, customer: { select: { name: true } } },
+                  select: { id: true, seq: true, sellerId: true, customer: { select: { name: true } } },
                 },
               },
             },
@@ -458,7 +459,10 @@ export class CoilsService {
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((r) => {
-      const salesOrder = r.productionOrder.reservation?.salesOrder ?? null;
+      let salesOrder = r.productionOrder.reservation?.salesOrder ?? null;
+      if (salesOrder && actor.role === 'VENDEDOR' && salesOrder.sellerId !== actor.id) {
+        salesOrder = null;
+      }
       return {
         id: r.id,
         productionOrderId: r.productionOrder.id,
@@ -482,7 +486,8 @@ export class CoilsService {
   async pdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
     const [coil, consumptions, movements] = await Promise.all([
       this.findOne(id),
-      this.findConsumptions(id),
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      this.findConsumptions(id, { role: 'ADMINISTRADOR', id: '' } as any),
       this.inventory.findMovements(
         { itemType: 'COIL', itemId: id, page: 1, pageSize: MAX_PAGE_SIZE },
         true,
@@ -535,7 +540,7 @@ export class CoilsService {
   }
 
   /** Adjunta a cada bobina sus kilos disponibles según el kardex (no según `weightKg`). */
-  private async toDtos(coils: CoilWithRelations[]): Promise<CoilDto[]> {
+  private async toDtos(coils: CoilWithRelations[], canSeeCosts = true): Promise<CoilDto[]> {
     if (coils.length === 0) return [];
     const balances = await this.prisma.inventoryBalance.findMany({
       where: { itemType: 'COIL', itemId: { in: coils.map((c) => c.id) } },
@@ -572,11 +577,11 @@ export class CoilsService {
         colorCode: c.color?.code ?? null,
         colorName: c.color?.name ?? null,
         colorHex: c.color?.hexColor ?? null,
-        currency: c.currency,
-        exchangeRate: c.exchangeRate.toFixed(4),
-        unitCostPerKg: c.unitCostPerKg.toFixed(4),
-        totalCost: c.totalCost.toFixed(4),
-        totalCostPen: c.totalCostPen.toFixed(4),
+        currency: canSeeCosts ? c.currency : null,
+        exchangeRate: canSeeCosts ? c.exchangeRate.toFixed(4) : null,
+        unitCostPerKg: canSeeCosts ? c.unitCostPerKg.toFixed(4) : null,
+        totalCost: canSeeCosts ? c.totalCost.toFixed(4) : null,
+        totalCostPen: canSeeCosts ? c.totalCostPen.toFixed(4) : null,
         status: c.status,
         parentCoilId: c.parentCoilId,
         parentCoilCode: c.parentCoil?.code ?? null,
@@ -584,7 +589,7 @@ export class CoilsService {
         externalCode: c.externalCode,
         notes: c.notes,
         availableKg,
-        avgCostPen: avgCost.get(c.id) ?? '0.0000',
+        avgCostPen: canSeeCosts ? (avgCost.get(c.id) ?? '0.0000') : null,
         equivalentMeters: meters === null ? null : meters.toFixed(3),
         operationDate: fromDateOnly(c.operationDate),
         createdAt: c.createdAt.toISOString(),

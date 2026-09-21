@@ -4,11 +4,11 @@ import type { RequestUser } from './auth.types';
 
 /** Política única de alcance comercial RF-S3c. Lo ajeno se presenta como inexistente. */
 export function sellerWhere(actor: RequestUser): Prisma.SalesOrderWhereInput {
-  return actor.role === Role.ADMINISTRADOR ? {} : { sellerId: actor.id };
+  return actor.role === Role.VENDEDOR ? { sellerId: actor.id } : {};
 }
 
 export function quotationSellerWhere(actor: RequestUser): Prisma.QuotationWhereInput {
-  return actor.role === Role.ADMINISTRADOR ? {} : { sellerId: actor.id };
+  return actor.role === Role.VENDEDOR ? { sellerId: actor.id } : {};
 }
 
 export function assertSellerAccess(

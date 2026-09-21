@@ -31,6 +31,10 @@ import {
   type UpdateCoilInput,
 } from '@ayr/shared';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+
+function canSeeCosts(actor: RequestUser): boolean {
+  return actor.role === Role.ADMINISTRADOR || actor.role === Role.SUPERVISOR_PLANTA;
+}
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -48,7 +52,7 @@ import { CoilsService } from './coils.service';
  * cambiar su moneda, su tipo de cambio o su costo son solo de ADMINISTRADOR.
  */
 @Controller('coils')
-@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+@Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
 export class CoilsController {
   constructor(
     private readonly coils: CoilsService,
@@ -57,15 +61,17 @@ export class CoilsController {
 
   @Get()
   findAll(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(coilQuerySchema)) query: CoilQuery,
   ): Promise<PaginatedResult<CoilDto>> {
-    return this.coils.findAll(query);
+    return this.coils.findAll(query, canSeeCosts(actor));
   }
 
   /**
    * PDF del conjunto filtrado actual de la lista (T6, D-173). Va antes de `:id` porque
    * `report-pdf` es una ruta fija (mismo motivo que `splits`/`scraps` más abajo).
    */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Get('report-pdf')
   async reportPdf(
     @Query(new ZodValidationPipe(coilQuerySchema)) query: CoilQuery,
@@ -81,6 +87,7 @@ export class CoilsController {
    * Anular una merma (RF-18). Va antes de `:id` porque `splits` y `scraps` son rutas
    * fijas y Nest resuelve por orden de declaración.
    */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Post('scraps/:movementId/cancel')
   cancelScrap(
     @CurrentUser() actor: RequestUser,
@@ -91,6 +98,7 @@ export class CoilsController {
   }
 
   /** Revertir un partido (RF-16). */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Post('splits/:splitId/revert')
   revertSplit(
     @CurrentUser() actor: RequestUser,
@@ -101,16 +109,17 @@ export class CoilsController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<CoilDto> {
-    return this.coils.findOne(id);
+  findOne(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<CoilDto> {
+    return this.coils.findOne(id, canSeeCosts(actor));
   }
 
   /** Bobinas hijas de esta bobina (RF-15), para la vista de detalle. */
   @Get(':id/children')
-  findChildren(@Param('id', ParseUUIDPipe) id: string): Promise<CoilDto[]> {
-    return this.coils.findChildren(id);
+  findChildren(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<CoilDto[]> {
+    return this.coils.findChildren(id, canSeeCosts(actor));
   }
 
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Get(':id/splits')
   findSplits(@Param('id', ParseUUIDPipe) id: string): Promise<CoilSplitDto[]> {
     return this.coils.findSplits(id);
@@ -118,11 +127,12 @@ export class CoilsController {
 
   /** OP —y pedido detrás de ella— que montaron esta bobina (D-172, T4). */
   @Get(':id/consumptions')
-  findConsumptions(@Param('id', ParseUUIDPipe) id: string): Promise<CoilConsumptionDto[]> {
-    return this.coils.findConsumptions(id);
+  findConsumptions(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<CoilConsumptionDto[]> {
+    return this.coils.findConsumptions(id, actor);
   }
 
   /** PDF de esta bobina (T6, D-173): identificación, saldo, OP y kardex. */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Get(':id/pdf')
   async pdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
     const { buffer, filename } = await this.coils.pdf(id);
@@ -132,6 +142,7 @@ export class CoilsController {
   }
 
   /** Partir la bobina en hijas por ancho (RF-15). */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Post(':id/split')
   split(
     @CurrentUser() actor: RequestUser,
@@ -142,6 +153,7 @@ export class CoilsController {
   }
 
   /** Registrar merma sobre la bobina (RF-17, D-040). */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Post(':id/scrap')
   scrap(
     @CurrentUser() actor: RequestUser,
@@ -152,6 +164,7 @@ export class CoilsController {
   }
 
   /** Abrir o cerrar la bobina (RF-19). */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Post(':id/status')
   setStatus(
     @CurrentUser() actor: RequestUser,
@@ -166,6 +179,7 @@ export class CoilsController {
    * campos de costo: la ruta la comparten los dos roles porque el ancho y las notas sí
    * son suyos (D-045).
    */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Patch(':id')
   update(
     @CurrentUser() actor: RequestUser,
@@ -176,6 +190,7 @@ export class CoilsController {
   }
 
   /** Anular la bobina (RF-21). Solo si no tiene movimientos aparte del ingreso inicial. */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Post(':id/cancel')
   @Roles(Role.ADMINISTRADOR)
   cancel(

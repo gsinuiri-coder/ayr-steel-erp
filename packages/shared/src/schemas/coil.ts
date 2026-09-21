@@ -46,7 +46,7 @@ export const coilSchema = z.object({
   colorCode: z.string().nullable(),
   colorName: z.string().nullable(),
   colorHex: z.string().nullable(),
-  currency: z.enum(CURRENCIES),
+  currency: z.enum(CURRENCIES).nullable(),
   exchangeRate: z.string(),
   /** Costo por kg SIN IGV (D-038). El landed cost (D-043) lo puede subir. */
   unitCostPerKg: z.string(),

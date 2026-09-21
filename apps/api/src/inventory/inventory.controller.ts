@@ -33,7 +33,7 @@ const summaryQuerySchema = z.object({
  * cerrarle la ruta entera, el servicio le devuelve los campos de costo en `null`, así
  * ve el stock que necesita para cotizar sin ver cuánto costó comprarlo.
  */
-@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+@Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
 @Controller('inventory')
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}

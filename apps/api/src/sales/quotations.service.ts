@@ -122,7 +122,7 @@ export class QuotationsService {
    * cotizaciones, no una lista por vendedor, y en una empresa de este tamaño ver lo que
    * cotizó el compañero es parte del trabajo. El ADMINISTRADOR opera cualquiera.
    */
-  private assertOwnership(actor: RequestUser, createdById: string, action: string): void {
+  private assertOwnership(actor: RequestUser, createdById: string, _action: string): void {
     if (actor.role === Role.ADMINISTRADOR) return;
     if (actor.id === createdById) return;
     throw new NotFoundException('Cotización no encontrada');
@@ -197,7 +197,7 @@ export class QuotationsService {
 
     await this.audit.write(tx, {
       actorId: actor.id,
-      action: 'sales.quotation.create',
+        action: 'sales.quotation.create',
       entity: 'quotations',
       entityId: quotation.id,
       after: {
@@ -395,6 +395,7 @@ export class QuotationsService {
       },
     });
     if (!source) throw new NotFoundException('Cotización no encontrada');
+    if (actor) assertSellerAccess(actor, source.sellerId, 'Cotización');
     if (source.items.length === 0) {
       throw new BadRequestException('La cotización no tiene líneas que duplicar');
     }
@@ -470,6 +471,7 @@ export class QuotationsService {
           totalPen: totals.totalPen,
           notes: source.notes,
           createdById: actor.id,
+          sellerId: actor.id,
           items: { create: lines.map(toItemCreate) },
         },
       });

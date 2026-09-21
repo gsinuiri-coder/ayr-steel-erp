@@ -1,3 +1,4 @@
+import { assertSellerAccess } from '../auth/seller-scope';
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   DispatchStatus,
@@ -14,7 +15,6 @@ import {
   carriesInventory,
   MAX_SALES_ITEMS,
   productionOrderCode,
-  Role,
   salesLineTotals,
   salesOrderCode,
   STANDING_DOCUMENT_STATUSES,
@@ -46,6 +46,7 @@ interface LockedOrder {
   seq: number;
   status: SalesOrderStatus;
   createdById: string;
+  sellerId: string | null;
 }
 
 /**
@@ -589,18 +590,18 @@ export class SalesOrderEditsService {
   private async lockEditable(
     tx: Prisma.TransactionClient,
     orderId: string,
-    what: string,
+    _what: string,
   ): Promise<LockedOrder> {
     const rows = await tx.$queryRaw<
-      { id: string; seq: number; status: SalesOrderStatus; created_by_id: string }[]
+      { id: string; seq: number; status: SalesOrderStatus; created_by_id: string; seller_id: string | null; }[]
     >`
-      SELECT "id", "seq", "status", "created_by_id"
+      SELECT "id", "seq", "status", "created_by_id", "seller_id"
       FROM "sales_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE
     `;
     const head = rows[0];
     if (!head) throw new NotFoundException('Pedido no encontrado');
     if (head.status === SalesOrderStatus.CANCELLED) {
-      throw new BadRequestException(`El pedido está anulado: no se puede ${what}`);
+      throw new BadRequestException(`El pedido está anulado: no se puede ${_what}`);
     }
     const document = await tx.fiscalDocument.findFirst({
       where: {
@@ -615,16 +616,14 @@ export class SalesOrderEditsService {
       // Un borrador todavía no tiene número: se nombra por su tipo.
       const label = document.number ?? `${document.docType.toLowerCase()} en borrador`;
       throw new BadRequestException(
-        `El pedido ya tiene comprobante (${label}): no se puede ${what}. Corrige con una nota de crédito.`,
+        `El pedido ya tiene comprobante (${label}): no se puede ${_what}. Corrige con una nota de crédito.`,
       );
     }
-    return { id: head.id, seq: head.seq, status: head.status, createdById: head.created_by_id };
+    return { id: head.id, seq: head.seq, status: head.status, createdById: head.created_by_id, sellerId: head.seller_id };
   }
 
-  private assertOwner(actor: RequestUser, order: LockedOrder, what: string): void {
-    if (actor.role !== Role.ADMINISTRADOR && actor.id !== order.createdById) {
-      throw new NotFoundException('Pedido no encontrado');
-    }
+  private assertOwner(actor: RequestUser, order: LockedOrder, _what: string): void {
+    assertSellerAccess(actor, order.sellerId, 'Pedido');
   }
 
   private async requireItem(tx: Prisma.TransactionClient, orderId: string, itemId: string) {
