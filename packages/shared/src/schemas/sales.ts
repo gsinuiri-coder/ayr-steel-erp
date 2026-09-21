@@ -483,6 +483,13 @@ export type UpdateQuotationInput = z.infer<typeof updateQuotationSchema>;
 export const cancelQuotationSchema = z.object({ reason: reasonSchema });
 export type CancelQuotationInput = z.infer<typeof cancelQuotationSchema>;
 
+/** M4: reasignar cotización y pedidos derivados a otro vendedor. Solo administrador. */
+export const reassignSellerSchema = z.object({
+  sellerId: z.string().uuid(),
+  reason: reasonSchema,
+});
+export type ReassignSellerInput = z.infer<typeof reassignSellerSchema>;
+
 export const quotationSchema = z.object({
   id: z.string().uuid(),
   /** `COT-000123`, derivado del correlativo (D-068). */

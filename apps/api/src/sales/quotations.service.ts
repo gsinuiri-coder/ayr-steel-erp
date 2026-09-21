@@ -653,7 +653,39 @@ export class QuotationsService {
       });
     });
 
-    return this.findOne(id);
+    return this.findOne(id, actor);
+  }
+
+  /**
+   * M4: reasignar cotización y pedidos derivados a otro vendedor (solo ADMINISTRADOR).
+   */
+  async reassign(actor: RequestUser, id: string, newSellerId: string, reason: string): Promise<QuotationDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const current = await this.lockQuotation(tx, id);
+      if (current.sellerId === newSellerId) {
+        throw new BadRequestException('El vendedor de destino es el mismo que el actual');
+      }
+
+      await tx.quotation.update({
+        where: { id },
+        data: { sellerId: newSellerId },
+      });
+
+      await tx.salesOrder.updateMany({
+        where: { quotationId: id },
+        data: { sellerId: newSellerId },
+      });
+
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.quotation.reassign',
+        entity: 'quotations',
+        entityId: id,
+        before: { sellerId: current.sellerId },
+        after: { sellerId: newSellerId, reason },
+      });
+    });
+    return this.findOne(id, actor);
   }
 
   // -------------------------------------------------------------------------
@@ -797,6 +829,7 @@ export class QuotationsService {
     status: QuotationStatus;
     validUntil: Date | null;
     createdById: string;
+    sellerId: string;
     notes: string | null;
   }> {
     const rows = await tx.$queryRaw<
@@ -806,11 +839,14 @@ export class QuotationsService {
         status: QuotationStatus;
         valid_until: Date | null;
         created_by_id: string;
+        seller_id: string;
         notes: string | null;
       }[]
     >`
-      SELECT "id", "seq", "status", "valid_until", "created_by_id", "notes"
-      FROM "quotations" WHERE "id" = ${id}::uuid FOR UPDATE
+      SELECT id, seq, status, valid_until, created_by_id, seller_id, notes
+      FROM "quotations"
+      WHERE "id" = ${id}::uuid
+      FOR UPDATE
     `;
     const row = rows[0];
     if (!row) throw new NotFoundException('Cotización no encontrada');
@@ -820,6 +856,7 @@ export class QuotationsService {
       status: row.status,
       validUntil: row.valid_until,
       createdById: row.created_by_id,
+      sellerId: row.seller_id,
       notes: row.notes,
     };
   }

@@ -22,6 +22,7 @@ import {
   type UpdateSalesOrderItemQtyInput,
   cancelQuotationSchema,
   cancelSalesOrderSchema,
+  reassignSellerSchema,
   confirmQuotationSchema,
   createQuotationSchema,
   createSalesOrderSchema,
@@ -43,6 +44,7 @@ import {
   updateQuotationSchema,
   type CancelQuotationInput,
   type CancelSalesOrderInput,
+  type ReassignSellerInput,
   type ConfirmQuotationInput,
   type CreateQuotationInput,
   type CreateSalesOrderInput,
@@ -270,6 +272,17 @@ export class SalesController {
     @Body(new ZodValidationPipe(cancelQuotationSchema)) body: CancelQuotationInput,
   ): Promise<QuotationDto> {
     return this.quotations.cancel(actor, id, body.reason);
+  }
+
+  /** M4: Reasignar cotización a otro vendedor */
+  @Patch('quotations/:id/seller')
+  @Roles(Role.ADMINISTRADOR)
+  reassignSeller(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reassignSellerSchema)) body: ReassignSellerInput,
+  ): Promise<QuotationDto> {
+    return this.quotations.reassign(actor, id, body.sellerId, body.reason);
   }
 
   /**
