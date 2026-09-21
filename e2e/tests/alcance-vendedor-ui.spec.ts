@@ -37,7 +37,10 @@ test.describe('Alcance de Vendedor (UI)', () => {
     await page.waitForTimeout(500);
 
     // El catálogo tiene tarjetas
-    const producto = page.locator('div').filter({ hasText: new RegExp(`^${testSku}`) }).first();
+    const producto = page
+      .locator('div')
+      .filter({ hasText: new RegExp(`^${testSku}`) })
+      .first();
 
     // Verificar que el stock ML teórico aparece
     await expect(producto).toContainText(/ML/i);
@@ -54,17 +57,21 @@ test.describe('Alcance de Vendedor (UI)', () => {
   });
 
   test('Dashboard del vendedor tiene sus cards y oculta los de admin', async ({ page }) => {
+    let firedShortages = false;
+    page.on('request', (req) => {
+      if (req.url().includes('/sales/quotations/stock-shortages')) firedShortages = true;
+    });
     await login(page, sellerEmail, 'password123');
     await page.goto('/');
 
-    // Cards del vendedor
     await expect(page.getByText('Cotizaciones por vencer')).toBeVisible();
     await expect(page.getByText('Reservas por expirar')).toBeVisible();
-    await expect(page.getByText('Pedidos en producción')).toBeVisible();
+    await expect(page.getByText('Pedidos en producci\xf3n')).toBeVisible();
     await expect(page.getByText('Pedidos listos')).toBeVisible();
 
-    // No debe haber cards de administrador
     await expect(page.getByText('Cotizaciones sin stock disponible')).toBeHidden();
     await expect(page.getByText('Precios bajo el piso')).toBeHidden();
+
+    expect(firedShortages).toBe(false);
   });
 });

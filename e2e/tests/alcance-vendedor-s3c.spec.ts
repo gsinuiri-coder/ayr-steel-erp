@@ -1,7 +1,12 @@
 ﻿import { test, expect } from '@playwright/test';
 import { businessToday } from '@ayr/shared';
 import { adminApi, createUser } from '../helpers/api';
-import { createCustomer, setupCoilStock, createSellableProduct, createQuotation } from '../helpers/sales';
+import {
+  createCustomer,
+  setupCoilStock,
+  createSellableProduct,
+  createQuotation,
+} from '../helpers/sales';
 
 test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
   test('matriz cruzada extendida por entidad', async ({ baseURL, playwright }) => {
@@ -17,7 +22,10 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const productId = pDrywall.id;
     await setupCoilStock(api, { lineCode: 'DRYWALL', weightKg: '5000' });
 
-    const { finish: finishRoofing } = await setupCoilStock(api, { lineCode: 'ROOFING', weightKg: '5000' });
+    const { finish: finishRoofing } = await setupCoilStock(api, {
+      lineCode: 'ROOFING',
+      weightKg: '5000',
+    });
     const pRoofing = await createSellableProduct(api, {
       lineCode: 'ROOFING',
       unit: 'MTR',
@@ -63,10 +71,14 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     await expect(contextB.get('/api/sales/quotations/' + quoteId)).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
-    await expect(contextB.post('/api/sales/quotations/' + quoteId + '/duplicate')).resolves.toMatchObject({
+    await expect(
+      contextB.post('/api/sales/quotations/' + quoteId + '/duplicate'),
+    ).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
-    await expect(contextB.post('/api/sales/quotations/' + quoteId + '/confirm-preview')).resolves.toMatchObject({
+    await expect(
+      contextB.post('/api/sales/quotations/' + quoteId + '/confirm-preview'),
+    ).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
@@ -94,7 +106,9 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     });
 
     // Vendedor B no ve PDF de planta ajeno (CRÍTICA 2)
-    await expect(contextB.get('/api/sales/orders/' + orderId + '/pdf-planta')).resolves.toMatchObject({
+    await expect(
+      contextB.get('/api/sales/orders/' + orderId + '/pdf-planta'),
+    ).resolves.toMatchObject({
       _initializer: { status: 404 },
     });
 
@@ -152,12 +166,16 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const docId = (await invRes.json()).id;
 
     // Vendedor B no puede ver el XML/PDF del documento ajeno
-    await expect(contextB.get('/api/invoicing/documents/' + docId + '/pdf')).resolves.toMatchObject({
-      _initializer: { status: 404 },
-    });
-    await expect(contextB.get('/api/invoicing/documents/' + docId + '/xml')).resolves.toMatchObject({
-      _initializer: { status: 404 },
-    });
+    await expect(contextB.get('/api/invoicing/documents/' + docId + '/pdf')).resolves.toMatchObject(
+      {
+        _initializer: { status: 404 },
+      },
+    );
+    await expect(contextB.get('/api/invoicing/documents/' + docId + '/xml')).resolves.toMatchObject(
+      {
+        _initializer: { status: 404 },
+      },
+    );
 
     // 2. Kardex / Auditoría (403 para vendedor, 200 para admin)
     const kardexResA = await contextA.get('/api/inventory/movements');
@@ -196,7 +214,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
         data: { reason: 'Test' },
       }),
     ).resolves.toMatchObject({ _initializer: { status: 403 } });
-    
+
     // CRÍTICA 5: Admin guards test (stock-shortages y receivables)
     await expect(contextA.get('/api/sales/quotations/stock-shortages')).resolves.toMatchObject({
       _initializer: { status: 403 },
@@ -270,7 +288,10 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       data: { email: admin.email, password: admin.password },
     });
 
-    const { finish: finishRoofing } = await setupCoilStock(api, { lineCode: 'ROOFING', weightKg: '5000' });
+    const { finish: finishRoofing } = await setupCoilStock(api, {
+      lineCode: 'ROOFING',
+      weightKg: '5000',
+    });
     const pRoofing = await createSellableProduct(api, {
       lineCode: 'ROOFING',
       unit: 'MTR',

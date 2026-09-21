@@ -96,7 +96,8 @@ export function BobinaDetalleView({ id }: { id: string }) {
     queryFn: () =>
       api<PaginatedResult<InventoryMovementDto>>(`/inventory/movements?itemType=COIL&itemId=${id}`),
   });
-  const movementRows = movements.data?.items ?? [];
+  const allMovements = movements.data?.items ?? [];
+  const movementRows = allMovements.slice(-10);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['coil', id] });
@@ -159,7 +160,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
    * del más reciente al más antiguo —así lo pinta la tabla—, así que ese movimiento es el
    * **primero** de la lista.
    */
-  const lastMovement = movementRows[0];
+  const lastMovement = allMovements[allMovements.length - 1];
   const liveCloseAdjustment =
     lastMovement?.refType === 'CLOSE_ADJUSTMENT' && !lastMovement.reversedById
       ? lastMovement

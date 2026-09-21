@@ -10,7 +10,6 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
-const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /**
  * D-188 (F8-S2b/M1): «Cotizaciones sin stock disponible», en el Panel.
@@ -23,18 +22,18 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
  */
 export function StockShortagesCard() {
   const { user } = useSession();
-  const isSalesRole = (SALES_ROLES as readonly string[]).includes(user.role);
+  const isAdmin = user.role === Role.ADMINISTRADOR;
 
   const shortages = useQuery({
     queryKey: ['quotation-stock-shortages'],
     queryFn: () => api<QuotationStockShortageDto[]>('/sales/quotations/stock-shortages'),
-    enabled: isSalesRole,
+    enabled: isAdmin,
     // El Panel es la primera pantalla del día: que el material liberado (o el que se lo
     // llevó otro pedido) se note sin recargar la pestaña a mano.
     refetchInterval: 60_000,
   });
 
-  if (!isSalesRole || shortages.isPending) return null;
+  if (!isAdmin || shortages.isPending) return null;
 
   if (shortages.isError) {
     return (
