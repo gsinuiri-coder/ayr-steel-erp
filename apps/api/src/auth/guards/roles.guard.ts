@@ -20,7 +20,13 @@ export class RolesGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (!roles || roles.length === 0) return true;
+    if (!roles || roles.length === 0) {
+      const req = context.switchToHttp().getRequest<Request & { user?: RequestUser }>();
+      if (req.user?.role === 'VENDEDOR') {
+        throw new ForbiddenException('No tienes permiso para esta acción (default-deny vendedor)');
+      }
+      return true;
+    }
     const req = context.switchToHttp().getRequest<Request & { user?: RequestUser }>();
     if (!req.user) return false;
     if (!roles.includes(req.user.role)) {

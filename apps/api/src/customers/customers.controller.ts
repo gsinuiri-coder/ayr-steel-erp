@@ -38,6 +38,7 @@ import { DocumentLookupService } from './document-lookup.service';
  * ADMINISTRADOR y VENDEDOR (D-076), con los campos sensibles —documento, días de crédito
  * y baja lógica— separados dentro del servicio, no por ruta.
  */
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 @Controller('customers')
 export class CustomersController {
   constructor(

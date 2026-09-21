@@ -848,6 +848,15 @@ export const lineWithoutOrderSchema = z.object({
 });
 export type LineWithoutOrderDto = z.infer<typeof lineWithoutOrderSchema>;
 
+export const ORDER_READINESS = ['SIN_PRODUCCION','EN_PRODUCCION','LISTO','LISTO_CON_FALTANTE'] as const;
+export const orderReadinessSchema = z.object({
+  status: z.enum(ORDER_READINESS),
+  orderedMl: z.string(),
+  reportedMl: z.string(),
+  missingMl: z.string(),
+});
+export type OrderReadinessDto = z.infer<typeof orderReadinessSchema>;
+
 export const salesOrderSchema = z.object({
   id: z.string().uuid(),
   /** `PED-000123`, derivado del correlativo (D-068). */
@@ -892,6 +901,7 @@ export const salesOrderSchema = z.object({
   priceChanges: z.array(z.lazy(() => salesPriceChangeSchema)),
   /** D-187: no anulado y sin comprobante (factura o boleta, en borrador o viva). */
   isEditable: z.boolean(),
+  readiness: orderReadinessSchema,
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 

@@ -1,12 +1,4 @@
-import { Decimal, toDecimal } from '@ayr/shared';
-
-export const ORDER_READINESS = [
-  'SIN_PRODUCCION',
-  'EN_PRODUCCION',
-  'LISTO',
-  'LISTO_CON_FALTANTE',
-] as const;
-export type OrderReadiness = (typeof ORDER_READINESS)[number];
+import { Decimal, toDecimal, type OrderReadinessDto } from '@ayr/shared';
 
 export interface ReadinessOrder {
   status: 'DRAFT' | 'IN_PROGRESS' | 'CLOSED' | 'CANCELLED';
@@ -15,12 +7,7 @@ export interface ReadinessOrder {
 }
 
 /** Estado derivado RF-S3c: sólo OP vivas, Decimal y sin persistir una columna/enum. */
-export function deriveOrderReadiness(orders: ReadinessOrder[]): {
-  status: OrderReadiness;
-  orderedMl: string;
-  reportedMl: string;
-  missingMl: string;
-} {
+export function deriveOrderReadiness(orders: ReadinessOrder[]): OrderReadinessDto {
   const live = orders.filter((order) => order.status !== 'CANCELLED');
   if (live.length === 0) return { status: 'SIN_PRODUCCION', orderedMl: '0.000', reportedMl: '0.000', missingMl: '0.000' };
   const orderedMl = live.reduce((total, order) => total.plus(toDecimal(order.orderedMl)), new Decimal(0));

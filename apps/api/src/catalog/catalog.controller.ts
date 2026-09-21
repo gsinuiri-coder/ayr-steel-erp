@@ -31,6 +31,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CatalogService } from './catalog.service';
 
 /** RF-50: catálogo por línea. Lectura para todos, mutación solo ADMINISTRADOR. */
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 @Controller('catalog')
 export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}

@@ -124,9 +124,9 @@ export const NAV: NavGroup[] = [
       { title: 'Líneas', href: '/lineas', icon: Layers, roles: ALL },
       { title: 'Acabados', href: '/acabados', icon: Palette, roles: ALL },
       { title: 'Catálogo', href: '/catalogo', icon: PackageSearch, roles: ALL },
-      { title: 'Inventario', href: '/inventario', icon: Warehouse, roles: ALL },
-      { title: 'Kardex', href: '/kardex', icon: ScrollText, roles: ALL },
-      { title: 'Flejes', href: '/flejes', icon: Scissors, roles: ALL },
+      { title: 'Inventario', href: '/inventario', icon: Warehouse, roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA] },
+      { title: 'Kardex', href: '/kardex', icon: ScrollText, roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA] },
+      { title: 'Flejes', href: '/flejes', icon: Scissors, roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA] },
     ],
   },
   {

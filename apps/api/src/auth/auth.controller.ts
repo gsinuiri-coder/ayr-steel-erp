@@ -1,3 +1,4 @@
+import { Roles } from './decorators/roles.decorator';
 import {
   Body,
   Controller,
@@ -18,6 +19,7 @@ import {
   type ChangePasswordInput,
   type LoginInput,
 } from '@ayr/shared';
+import { Role } from '@ayr/shared';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ENV, type Env } from '../config/env';
 import { AuthService } from './auth.service';
@@ -28,6 +30,7 @@ import { Public } from './decorators/public.decorator';
 
 type Cookies = Partial<Record<string, string>>;
 
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 @Controller('auth')
 export class AuthController {
   constructor(
