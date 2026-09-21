@@ -2456,8 +2456,17 @@ export class SalesOrdersService {
       select: {
         status: true,
         kind: true,
-        orderedMl: true,
-        reportedMl: true,
+        reservation: {
+          select: {
+            salesOrderItem: {
+              select: { reserveQty: true },
+            },
+          },
+        },
+        reports: {
+          where: { status: 'ACTIVE' },
+          select: { metersM: true },
+        },
       },
     });
 
@@ -2470,11 +2479,18 @@ export class SalesOrdersService {
         ? 'EN_COLA'
         : null;
 
-    const readinessOrders = ops.map((op) => ({
-      status: op.status,
-      orderedMl: op.orderedMl.toString(),
-      reportedMl: op.reportedMl.toString(),
-    }));
+    const readinessOrders = ops.map((op) => {
+      const orderedMl = op.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000';
+      const reportedMl = op.reports
+        .reduce((sum, r) => sum + (r.metersM ? Number(r.metersM) : 0), 0)
+        .toFixed(3);
+
+      return {
+        status: op.status,
+        orderedMl,
+        reportedMl,
+      };
+    });
     const readiness = deriveOrderReadiness(readinessOrders);
 
     return { queueStatus, readiness };
