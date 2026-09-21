@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
 import { QuotationsService } from './quotations.service';
 import { BadRequestException } from '@nestjs/common';
 
@@ -48,7 +49,7 @@ describe('QuotationsService - Reassign', () => {
         notes: '',
       },
     ]);
-    mockPrisma.$transaction.mockImplementation(async (cb: any) => cb(mockPrisma));
+    mockPrisma.$transaction.mockImplementation((cb: any) => cb(mockPrisma));
     mockPrisma.quotation.update.mockResolvedValueOnce({});
     mockPrisma.salesOrder.updateMany.mockResolvedValueOnce({ count: 1 });
 

@@ -23,7 +23,6 @@ import {
   isQuotationExpired,
   quotationValidUntil,
   paginate,
-  Role,
   quotationCode,
   salesOrderCode,
   toDecimal,

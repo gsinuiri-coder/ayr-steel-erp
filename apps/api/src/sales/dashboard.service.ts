@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotationStatus, TemporaryReservationStatus } from '@prisma/client';
-import { businessToday, addBusinessDays, capToQuotationValidity } from '@ayr/shared';
+import { businessToday, addBusinessDays } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 
 @Injectable()
@@ -24,8 +24,7 @@ export class DashboardService {
 
     // 2. Reservas temporales por expirar (ACTIVE, expiresAt <= today + 3)
     // El umbral de expiración por defecto ya está configurado en `temporaryReservationExpiry` pero
-    // se comparará con expiresAt en BD.
-    const in3DaysIso = new Date(in3Days).toISOString();
+    // El umbral de expiración por defecto ya está configurado en `temporaryReservationExpiry` pero
     const expiringReservations = await this.prisma.quotationReservation.count({
       where: {
         quotation: { sellerId },

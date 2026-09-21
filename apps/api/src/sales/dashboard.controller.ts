@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { Role } from '@ayr/shared';
 import { Roles } from '../auth/decorators/roles.decorator';

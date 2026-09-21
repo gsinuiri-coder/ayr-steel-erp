@@ -1,12 +1,17 @@
 'use client';
 
-import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle, Clock, Factory, Truck } from 'lucide-react';
-import type { DashboardDto } from '@ayr/shared';
+
+type DashboardDto = {
+  expiringQuotations: number;
+  expiringReservations: number;
+  productionOrders: number;
+  readyOrders: number;
+};
 
 export function SellerDashboardCards() {
   const { user } = useSession();
