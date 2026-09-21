@@ -1,5 +1,6 @@
 ﻿import { test, expect } from '@playwright/test';
 import { businessToday } from '@ayr/shared';
+import { apiAs } from '../helpers/production';
 import { adminApi, createUser } from '../helpers/api';
 import {
   createCustomer,
@@ -35,25 +36,13 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const roofingProductId = pRoofing.id;
 
     // Contexts
-    const contextA = await playwright.request.newContext({ baseURL });
-    await contextA.post('/api/auth/login', {
-      data: { email: vendedorA.email, password: vendedorA.password },
-    });
+    const contextA = await apiAs(baseURL!, vendedorA);
 
-    const contextB = await playwright.request.newContext({ baseURL });
-    await contextB.post('/api/auth/login', {
-      data: { email: vendedorB.email, password: vendedorB.password },
-    });
+    const contextB = await apiAs(baseURL!, vendedorB);
 
-    const contextAdmin = await playwright.request.newContext({ baseURL });
-    await contextAdmin.post('/api/auth/login', {
-      data: { email: admin.email, password: admin.password },
-    });
+    const contextAdmin = await apiAs(baseURL!, admin);
 
-    const contextSup = await playwright.request.newContext({ baseURL });
-    await contextSup.post('/api/auth/login', {
-      data: { email: supervisor.email, password: supervisor.password },
-    });
+    const contextSup = await apiAs(baseURL!, supervisor);
 
     // 1. Operaciones core
     const { quotationId: quoteId } = await createQuotation(contextA, {
@@ -273,20 +262,11 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const customerB = await createCustomer(api);
 
     // Contexts
-    const contextA = await playwright.request.newContext({ baseURL });
-    await contextA.post('/api/auth/login', {
-      data: { email: vendedorA.email, password: vendedorA.password },
-    });
+    const contextA = await apiAs(baseURL!, vendedorA);
 
-    const contextB = await playwright.request.newContext({ baseURL });
-    await contextB.post('/api/auth/login', {
-      data: { email: vendedorB.email, password: vendedorB.password },
-    });
+    const contextB = await apiAs(baseURL!, vendedorB);
 
-    const contextAdmin = await playwright.request.newContext({ baseURL });
-    await contextAdmin.post('/api/auth/login', {
-      data: { email: admin.email, password: admin.password },
-    });
+    const contextAdmin = await apiAs(baseURL!, admin);
 
     const { finish: finishRoofing } = await setupCoilStock(api, {
       lineCode: 'metallic-roofing',

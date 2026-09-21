@@ -1,14 +1,16 @@
 import { test, expect } from '@playwright/test';
-import { adminApi, createUser, login } from '../helpers/api';
+import { adminApi, createUser, type CreatedUser } from '../helpers/api';
+import { loginAndSetPassword } from '../helpers/ui';
 import { setupCoilStock, createSellableProduct } from '../helpers/sales';
 
 test.describe('Alcance de Vendedor (UI)', () => {
+  let user: CreatedUser;
   let sellerEmail: string;
   let testSku: string;
 
   test.beforeAll(async ({ baseURL }) => {
     const api = await adminApi(baseURL!);
-    const user = await createUser(api, 'VENDEDOR', {
+    user = await createUser(api, 'VENDEDOR', {
       name: 'Vendedor UI',
       password: 'password123',
     });
@@ -25,7 +27,7 @@ test.describe('Alcance de Vendedor (UI)', () => {
   });
 
   test('Vendedor agrega producto teórico desde catálogo (sin ver costos)', async ({ page }) => {
-    await login(page, sellerEmail, 'password123');
+    await loginAndSetPassword(page, user, 'password123');
 
     // Navegar a crear cotización
     await page.goto('/cotizaciones/nueva');
@@ -61,7 +63,7 @@ test.describe('Alcance de Vendedor (UI)', () => {
     page.on('request', (req) => {
       if (req.url().includes('/sales/quotations/stock-shortages')) firedShortages = true;
     });
-    await login(page, sellerEmail, 'password123');
+    await loginAndSetPassword(page, user, 'password123');
     await page.goto('/');
 
     await expect(page.getByText('Cotizaciones por vencer')).toBeVisible();
