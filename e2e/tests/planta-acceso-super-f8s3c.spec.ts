@@ -41,7 +41,7 @@ test.describe('Acceso Supervisor de Planta (CRITICA 1)', () => {
       },
     });
     if (!quoteRes.ok()) {
-      throw new Error("HTTP " + quoteRes.status() + " " + await quoteRes.text());
+      throw new Error('HTTP ' + quoteRes.status() + ' ' + (await quoteRes.text()));
     }
     const { id: quoteId } = await quoteRes.json();
 
