@@ -2556,7 +2556,7 @@ export class SalesOrdersService {
         take,
       }),
     ]);
-    const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
+    const actors = await this.resolveActorNames(rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]));
 
     // M2: Compute readiness for list
     const ops = await this.prisma.productionOrder.findMany({
@@ -2628,7 +2628,7 @@ export class SalesOrdersService {
     if (actor) assertSellerAccess(actor, row.sellerId, 'Pedido');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
     const [actors, context, priceChanges, invoice] = await Promise.all([
-      this.resolveActorNames([row.createdById]),
+      this.resolveActorNames([row.createdById, row.sellerId].filter(Boolean) as string[]),
       this.computeOrderContext(row),
       findPriceChanges(this.prisma, { salesOrderId: id }),
       // D-187: el mismo corte que `SalesOrderEditsService.lockEditable`.
@@ -3368,6 +3368,8 @@ export class SalesOrdersService {
       createdAt: row.createdAt.toISOString(),
       createdById: row.createdById,
       createdByName: actors.get(row.createdById) ?? null,
+      sellerId: row.sellerId ?? row.createdById,
+      sellerName: actors.get(row.sellerId ?? row.createdById) ?? null,
       cancelledAt: row.cancelledAt?.toISOString() ?? null,
       promisedDeliveryDate: row.promisedDeliveryDate
         ? row.promisedDeliveryDate.toISOString().slice(0, 10)

@@ -517,6 +517,8 @@ export const quotationSchema = z.object({
   items: z.array(salesItemSchema),
   createdAt: z.string(),
   createdByName: z.string().nullable(),
+  sellerId: z.string().uuid(),
+  sellerName: z.string().nullable(),
   emittedAt: z.string().nullable(),
   confirmedAt: z.string().nullable(),
   cancelledAt: z.string().nullable(),
@@ -901,6 +903,8 @@ export const salesOrderSchema = z.object({
   /** D-187: el dueño del pedido, que puede agregarle ítems y cambiar cantidades. */
   createdById: z.string().uuid(),
   createdByName: z.string().nullable(),
+  sellerId: z.string().uuid(),
+  sellerName: z.string().nullable(),
   cancelledAt: z.string().nullable(),
   promisedDeliveryDate: z.string().nullable(),
   /**
