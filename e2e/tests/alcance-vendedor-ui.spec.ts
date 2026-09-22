@@ -68,7 +68,7 @@ test.describe('Alcance de Vendedor (UI)', () => {
     expect(textContent).not.toMatch(/Costo/i);
 
     // Agregar a la cotización
-    await producto.getByRole('button', { name: 'Agregar' }).first().click();
+    await page.getByRole('row', { name: new RegExp(`Elegir ${testSku}`, 'i') }).click();
 
     // Verificamos que se haya agregado a la tabla de líneas
     await expect(page.locator('table')).toContainText(testSku);

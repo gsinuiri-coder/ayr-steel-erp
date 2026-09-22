@@ -1,4 +1,4 @@
-﻿import { test, expect } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { businessToday } from '@ayr/shared';
 import { apiAs } from '../helpers/production';
 import { adminApi, createUser, postJson, createSupplier } from '../helpers/api';
@@ -145,18 +145,23 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const roofingOrder = await confirmRoofingRes.json();
 
     // Planta Despacha (como Admin o Supervisor) el Drywall
-    const dispatchRes = await contextAdmin.post('/api/invoicing/dispatches', {
+    const dispatchRes = await contextAdmin.post('/api/dispatches', {
       data: {
-        customerId: customerA.id,
         salesOrderId: orderId,
-        issueDate: businessToday(),
-        transport: {
-          reason: 'VENTA',
-          vehiclePlate: 'ABC-123',
+        dispatchDate: businessToday(),
+        originAddress: 'Av. Almacén 100, Lima',
+        destinationAddress: 'Av. Cliente 200, Lima',
+        originUbigeo: '150101',
+        destinationUbigeo: '150132',
+        transferMode: 'PRIVATE',
+        totalWeightKg: '10.0',
+        privateTransport: {
+          licensePlate: 'ABC-123',
           driverDocType: 'DNI',
           driverDocNumber: '12345678',
+          driverName: 'Juan Perez',
         },
-        lines: [{ salesOrderLineId: orderA.items[0].id, qty: '10' }],
+        items: [{ salesOrderItemId: orderA.items[0].id, qty: '10', weightKg: '10.0' }],
       },
     });
     expect(dispatchRes.ok()).toBeTruthy();
@@ -169,10 +174,10 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const invRes = await contextAdmin.post('/api/invoicing/documents', {
       data: {
         customerId: customerA.id,
-        type: 'BOLETA',
+        salesOrderId: orderId,
+        docType: 'BOLETA',
         issueDate: businessToday(),
-        dispatchId: dispatchId,
-        paymentTerm: 'CONTADO',
+        paymentTermId: 'CONTADO',
       },
     });
     expect(invRes.ok()).toBeTruthy();
