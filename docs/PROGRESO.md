@@ -12,6 +12,18 @@ borrador/multi-montar, a medida y plancha de catálogo) y a drywall. El piso del
 de las salidas reales del kardex. Sin migración; toca API y web (deploy API → push web).
 Sin E2E local (corre en paralelo con rf-s4a/acc-demo): la juez es la CI.
 
+- CI del PR #10 (run 35770887406) verde: lint/typecheck/unit, análisis estático, E2E en
+  Postgres del runner **377 passed / 0 failed / 3 skipped**, smoke y migraciones Neon `ci`.
+- Deploy con OK D-232 del dueño: API desde `d366c40` → revisión `ayr-steel-erp-api-00040-9m9`,
+  label `git-sha=d366c40`, `/health` 200. Web por merge a `main`.
+- **Deuda: revisión cruzada pendiente (programada para 2026-09-23).** El hotfix se desplegó sin
+  el pase de revisión independiente de AGENTS.md §2.2: `agy` y Codex estaban sin saldo y el
+  revisor alterno se cortó por límite de API. Decisión del dueño por urgencia (producción
+  detenida). Revisar `d66de6b`, con foco en: reserva descontada por la salida topada,
+  `closeInTx` leyendo el piso de kardex (reportes de la misma transacción y reportes previos),
+  `RoofingBatchOrderDto.reportedKg` = suma de `consumedKg` de consumos vivos (reabrir D-193),
+  y que web, borrador y API den el mismo veredicto.
+
 ## Ventana RF-S3c — alcance comercial de vendedor (2026-09-22)
 
 Ventana exprés, con el sistema sin usuarios activos. PR #7 mergeado a `main` con OK explícito
