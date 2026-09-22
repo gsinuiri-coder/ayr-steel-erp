@@ -22,6 +22,7 @@ import {
   MAX_ORDER_REPORTS,
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
+  mountedKgForReport,
   piecesCount,
   piecesMeters,
   productionOrderCode,
@@ -98,6 +99,7 @@ import {
   roofingCloseAdjustmentPen,
   roofingCloseScrap,
   roofingCost,
+  reportsOutKg,
   roofingTheoreticalKg,
   type CoilGeometry,
 } from './roofing-math';
@@ -971,17 +973,30 @@ export class RoofingProductionService {
     // Un solo rollo por reporte, así que el reparto es trivial — pero pasa por el mismo
     // `allocateStripKg` que drywall para heredar su mensaje cuando el material no
     // alcanza, en vez de escribir una segunda versión del mismo chequeo.
+    const rowRemainingKg = toDecimal(row.assignedKg.toString()).minus(
+      toDecimal(row.consumedKg.toString()),
+    );
+    // D-246: si el teórico pasa lo montado y el acero ya salió (lo declarado cabe, o el
+    // exceso entra en la tolerancia), el reporte se topa en lo montado en vez de bloquear.
+    // El teórico queda en la fila del reporte como dato; el kardex sale por `outKg`.
+    const mounted = mountedKgForReport({
+      label: row.coil.code,
+      theoreticalKg: neededKg,
+      availableKg: rowRemainingKg,
+      declaredKg,
+    });
+    if (!mounted.ok) throw new BadRequestException(mounted.message);
+    if (mounted.note !== null) deviation.unshift(mounted.note);
+    const outKg = mounted.kg;
     const allocationRows: StripAllocationRow[] = [
       {
         consumptionId: row.id,
         coilId: row.coilId,
         coilCode: row.coil.code,
-        remainingKg: toDecimal(row.assignedKg.toString()).minus(
-          toDecimal(row.consumedKg.toString()),
-        ),
+        remainingKg: rowRemainingKg,
       },
     ];
-    const allocations = allocateStripKg(allocationRows, neededKg);
+    const allocations = allocateStripKg(allocationRows, outKg);
 
     // D-171: el nombre importa con cuatro predicados en juego. Lo que decide en qué unidad
     // entra lo producido al kardex es **la unidad de venta**, o sea `sellsByLength`, y no el
@@ -1017,7 +1032,7 @@ export class RoofingProductionService {
       // admite bobinas del color y el espesor del producto, que son exactamente las que
       // cumplen el agregado, así que cualquier kilo que esta orden role es un kilo del
       // agregado que el pedido prometía.
-      await consumeReservationQty(tx, order.reservationId, neededKg);
+      await consumeReservationQty(tx, order.reservationId, outKg);
       await tx.salesOrder.updateMany({
         where: { id: reservation.salesOrderId, status: SalesOrderStatus.CONFIRMED },
         data: { status: SalesOrderStatus.IN_PRODUCTION },
@@ -1178,6 +1193,7 @@ export class RoofingProductionService {
         outputQty: toFixedString(outputQty, 'KG'),
         outputUnit,
         theoreticalKg: toFixedString(neededKg, 'KG'),
+        outKg: toFixedString(outKg, 'KG'),
         declaredKg: declaredKg === null ? null : toFixedString(declaredKg, 'KG'),
         planMeters: progress.planMeters.toFixed(3),
         reportedMetersAfter: progress.reportedMeters.plus(newMeters).toFixed(3),
@@ -1302,8 +1318,12 @@ export class RoofingProductionService {
             new Decimal(0),
           )
           .toFixed(3),
-        reportedKg: order.reports
-          .reduce((acc, r) => acc.plus(toDecimal(r.theoreticalKg.toString())), new Decimal(0))
+        // D-246: lo que los reportes sacaron de verdad, no la suma de sus teóricos (un reporte
+        // topado en lo montado sacó menos). Con la orden abierta, el `consumedKg` de sus
+        // bobinas montadas es exactamente eso: solo lo mueven los reportes y sus reversas, y
+        // una bobina con consumo no se puede bajar. Es la cota que la pantalla usa al cerrar.
+        reportedKg: order.consumptions
+          .reduce((acc, c) => acc.plus(toDecimal(c.consumedKg.toString())), new Decimal(0))
           .toFixed(3),
         coils: order.consumptions.map((c) => ({
           coilId: c.coilId,
@@ -1710,10 +1730,26 @@ export class RoofingProductionService {
       orderBy: { createdAt: 'asc' },
     });
 
-    const reportedKg = reports.reduce(
-      (acc, r) => acc.plus(toDecimal(r.theoreticalKg.toString())),
-      new Decimal(0),
+    // D-246: el piso es lo que los reportes **sacaron** de la bobina, no la suma de sus
+    // teóricos: un reporte topado en lo montado sacó menos que su teórico. Para los reportes
+    // de antes de D-246 la salida es su teórico, así que el cierre les da lo mismo que antes.
+    const coilOuts = liveMovements(
+      await tx.inventoryMovement.findMany({
+        where: {
+          refType: 'PRODUCTION',
+          refId: { in: reports.map((r) => r.id) },
+          itemType: 'COIL',
+          type: 'OUT',
+        },
+        include: { reversals: { select: { id: true } } },
+      }),
     );
+    const outByReport = reportsOutKg(
+      reports.map((r) => ({ id: r.id, theoreticalKg: toDecimal(r.theoreticalKg.toString()) })),
+      coilOuts.map((m) => ({ refId: m.refId, qty: toDecimal(m.qty.toString()) })),
+    );
+    const outKgOf = (reportId: string) => outByReport.get(reportId) ?? new Decimal(0);
+    const reportedKg = reports.reduce((acc, r) => acc.plus(outKgOf(r.id)), new Decimal(0));
     const remainingKg = rows.reduce(
       (acc, r) =>
         acc.plus(
@@ -1736,7 +1772,8 @@ export class RoofingProductionService {
     const declaredByReportsKg = reports.some((r) => r.consumedKg !== null)
       ? Decimal.max(
           reports.reduce(
-            (acc, r) => acc.plus(toDecimal((r.consumedKg ?? r.theoreticalKg).toString())),
+            (acc, r) =>
+              acc.plus(r.consumedKg === null ? outKgOf(r.id) : toDecimal(r.consumedKg.toString())),
             new Decimal(0),
           ),
           reportedKg,

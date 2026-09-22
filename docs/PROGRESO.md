@@ -8,6 +8,11 @@ Sesión de solo lectura: **sin migración**, sin escrituras nuevas y sin tocar n
 dominio. PR [#9](https://github.com/gsinuiri-coder/ayr-steel-erp/pull/9), rama `rf-s4a`, **sin
 mergear** a la espera de la ventana y del OK de D-232. Agente: Claude Code.
 
+La rama incorpora el HOTFIX de D-246 (`ca05935`), que entró a `main` mientras esta sesión estaba
+abierta. El único cruce fueron estos dos documentos —los dos agregaron su sección o su fila al
+tope— y se resolvió conservando ambas cosas; **en código no hubo conflicto**: el hotfix vive en
+`production/` y estos reportes solo leen.
+
 Los tres milestones entraron, incluido el sacrificable.
 
 ### Lo que cambió respecto del brief, y por qué
@@ -119,6 +124,28 @@ Reliability D) y el handoff de RF-S3c pide evaluarlo antes de mergear RF-S4a. En
 de análisis estático salió verde, pero eso **no** dice nada del gate del PR anterior: los issues
 concretos siguen sin enumerarse porque el proyecto de SonarCloud es privado y el `SONAR_TOKEN`
 solo vive en los secrets de Actions. El dueño los pasa desde el dashboard.
+
+## HOTFIX kg teórico — planta bloqueada por tolerancia de laminado (2026-09-22)
+
+Producción real detenida: el reporte de 253 × 6.00 m de IMPO-ALZ-NATURAL-0.28-4010-11 pedía
+4 043.952 kg teóricos contra 4 010 kg montados, con el acero ya consumido. D-246: el reporte
+se topa en lo montado cuando lo declarado cabe o, sin declaración, el exceso es ≤ 1 % del
+teórico; fuera de eso sigue bloqueando. Aplica a coberturas (reporte, reporte+cierre,
+borrador/multi-montar, a medida y plancha de catálogo) y a drywall. El piso del cierre se lee
+de las salidas reales del kardex. Sin migración; toca API y web (deploy API → push web).
+Sin E2E local (corre en paralelo con rf-s4a/acc-demo): la juez es la CI.
+
+- CI del PR #10 (run 35770887406) verde: lint/typecheck/unit, análisis estático, E2E en
+  Postgres del runner **377 passed / 0 failed / 3 skipped**, smoke y migraciones Neon `ci`.
+- Deploy con OK D-232 del dueño: API desde `d366c40` → revisión `ayr-steel-erp-api-00040-9m9`,
+  label `git-sha=d366c40`, `/health` 200. Web por merge a `main`.
+- **Deuda: revisión cruzada pendiente (programada para 2026-09-23).** El hotfix se desplegó sin
+  el pase de revisión independiente de AGENTS.md §2.2: `agy` y Codex estaban sin saldo y el
+  revisor alterno se cortó por límite de API. Decisión del dueño por urgencia (producción
+  detenida). Revisar `d66de6b`, con foco en: reserva descontada por la salida topada,
+  `closeInTx` leyendo el piso de kardex (reportes de la misma transacción y reportes previos),
+  `RoofingBatchOrderDto.reportedKg` = suma de `consumedKg` de consumos vivos (reabrir D-193),
+  y que web, borrador y API den el mismo veredicto.
 
 ## Ventana RF-S3c — alcance comercial de vendedor (2026-09-22)
 
