@@ -875,6 +875,14 @@ export const STANDING_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
 export const RoofingProductKind = {
   PLANCHA: 'PLANCHA',
   A_MEDIDA: 'A_MEDIDA',
+  /**
+   * D-242: accesorio de cobertura (cumbrera, canaleta, tapajunta…). Sale de las **mismas**
+   * bobinas que el resto de coberturas y se vende por metro lineal, pero la roladora usa el
+   * ancho completo del rollo y saca varias piezas por pasada: `N = piso(ancho ÷ desarrollo)`.
+   * El desarrollo vive en `products.developmentMm` y es lo único que lo distingue de una
+   * cobertura a medida.
+   */
+  ACCESORIO: 'ACCESORIO',
 } as const;
 export type RoofingProductKind = (typeof RoofingProductKind)[keyof typeof RoofingProductKind];
 export const ROOFING_PRODUCT_KINDS = Object.values(RoofingProductKind) as [
@@ -884,16 +892,22 @@ export const ROOFING_PRODUCT_KINDS = Object.values(RoofingProductKind) as [
 export const ROOFING_PRODUCT_KIND_LABELS: Record<RoofingProductKind, string> = {
   PLANCHA: 'Plancha de catálogo',
   A_MEDIDA: 'A medida',
+  ACCESORIO: 'Accesorio',
 };
 export const ROOFING_PRODUCT_KIND_HINTS: Record<RoofingProductKind, string> = {
   PLANCHA: 'Largo fijo, se vende del stock que ya hay en almacén.',
   A_MEDIDA: 'Se cotiza por metro lineal con subítems de largo y se fabrica contra pedido.',
+  ACCESORIO:
+    'Se rola por su desarrollo usando el ancho completo de la bobina: cada pasada da varias piezas del mismo largo. Se vende por metro lineal.',
 };
 
 /** La unidad de venta que le corresponde a cada subtipo. Subtipo y unidad son el mismo hecho. */
 export const ROOFING_KIND_UNIT: Record<RoofingProductKind, string> = {
   PLANCHA: 'NIU',
   A_MEDIDA: 'MTR',
+  // D-242: el accesorio se vende por metro lineal igual que una cobertura a medida. Lo que
+  // cambia no es la unidad de venta, es cuántos metros salen de cada pasada.
+  ACCESORIO: 'MTR',
 };
 
 export const FiscalDocumentOrigin = {

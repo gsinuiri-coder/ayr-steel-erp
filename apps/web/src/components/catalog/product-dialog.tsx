@@ -6,6 +6,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import {
+  accessoryEdgeScrap,
+  accessoryEffectiveWidthMm,
   BusinessLine,
   isPlausiblePieceLength,
   PIECE_LENGTH_RANGE_LABEL,
@@ -83,6 +85,12 @@ const formSchema = z.object({
    * se muestra. Es lo que decide qué hace la confirmación de una cotización con esta línea.
    */
   roofingKind: z.string(),
+  /**
+   * D-242: desarrollo del accesorio en mm — el ancho de fleje que se lleva una pieza
+   * desplegada. Vacío fuera de un accesorio, donde el campo ni se muestra y el API lo
+   * rechaza si viene.
+   */
+  developmentMm: z.string().trim(),
 });
 type FormValues = z.infer<typeof formSchema>;
 
@@ -185,6 +193,7 @@ export function ProductDialog({
       // D-127: una cobertura nueva nace A MEDIDA — es el caso habitual del rubro y el que
       // el sistema hacía mal cuando el subtipo no existía. Una existente muestra el suyo.
       roofingKind: product?.roofingKind ?? (usesRoofingFields(businessLineCode) ? 'A_MEDIDA' : ''),
+      developmentMm: product?.developmentMm ?? '',
     },
   });
 
@@ -202,6 +211,11 @@ export function ProductDialog({
           showDrywallFields || roofingKind === RoofingProductKind.PLANCHA ? values.lengthMm : '',
         pieceWeightKg: showDrywallFields ? values.pieceWeightKg : '',
         roofingKind,
+        // D-242: el desarrollo es exactamente del accesorio. Mandarlo en cualquier otro
+        // subtipo lo rechaza el API y el CHECK de la base, y con razón: sería un número que
+        // ninguna cuenta lee.
+        developmentMm:
+          roofingKind === RoofingProductKind.ACCESORIO ? values.developmentMm : '',
       };
       if (editing) {
         // D-203/M2 aplicado al catálogo (F8-S5): el color sale del acabado, no se elige
@@ -466,6 +480,41 @@ export function ProductDialog({
                   )}
                 />
               )}
+              {showRoofingFields && form.watch('roofingKind') === RoofingProductKind.ACCESORIO && (
+                <FormField
+                  control={form.control}
+                  name="developmentMm"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Desarrollo (mm)</FormLabel>
+                      <FormControl>
+                        <Input
+                          inputMode="decimal"
+                          autoComplete="off"
+                          placeholder="300"
+                          {...field}
+                        />
+                      </FormControl>
+                      {/* Mismo criterio que el largo de la plancha (D-166): el campo pide
+                        milímetros y la pantalla de planta trabaja en metros, así que el
+                        número traducido va en vivo. Acá además se muestra lo que de verdad
+                        importa —cuántas piezas da una pasada— porque es el dato que decide
+                        el rendimiento de la corrida y nadie puede calcularlo de cabeza
+                        mientras tipea. */}
+                      <AccessoryPassHint
+                        widthMm={form.watch('widthMm')}
+                        developmentMm={field.value}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        El ancho de fleje que se lleva una pieza, desplegada. Cada pasada usa el
+                        ancho completo de la bobina y da varias piezas del mismo largo; el
+                        sobrante lateral es merma de canto.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               {showRoofingFields && form.watch('roofingKind') === RoofingProductKind.PLANCHA && (
                 <FormField
                   control={form.control}
@@ -600,6 +649,45 @@ export function ProductDialog({
         </Form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * D-242: el rendimiento del desarrollo tipeado, en vivo.
+ *
+ * Es el número que decide la corrida —cuántas piezas da una pasada y cuánto se va en canto—
+ * y nadie lo tiene de cabeza mientras carga el SKU. Mostrarlo acá es lo que hace obvio, en el
+ * momento, que un desarrollo de 305 mm rinde 3 piezas en 1 200 mm y 4 en 1 220: el borde que
+ * después obliga a avisarle al operario si el rollo montado no coincide con el nominal.
+ */
+function AccessoryPassHint({
+  widthMm,
+  developmentMm,
+}: {
+  widthMm: string;
+  developmentMm: string;
+}) {
+  const width = widthMm.trim().replace(',', '.');
+  const development = developmentMm.trim().replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(width) || !/^\d+(\.\d+)?$/.test(development)) return null;
+  const scrap = accessoryEdgeScrap(width, development);
+  if (scrap === null) {
+    return (
+      <p className="text-xs text-destructive">
+        Un desarrollo de {toDecimal(development).toFixed(2)} mm no entra en un ancho de{' '}
+        {toDecimal(width).toFixed(2)} mm: la bobina no da ni una pieza por pasada. El campo va en{' '}
+        <strong>milímetros</strong>.
+      </p>
+    );
+  }
+  const effective = accessoryEffectiveWidthMm(width, development);
+  return (
+    <p className="text-xs text-muted-foreground">
+      = {toDecimal(development).div(1000).toFixed(3)} m · <strong>{scrap.piecesPerPass}</strong>{' '}
+      {scrap.piecesPerPass === 1 ? 'pieza' : 'piezas'} por pasada con el ancho nominal · canto{' '}
+      {scrap.edgeMm.toFixed(2)} mm ({scrap.edgeRatio.times(100).toFixed(1)} %) · el metro vendido
+      cuenta {effective?.toFixed(2)} mm de ancho
+    </p>
   );
 }
 

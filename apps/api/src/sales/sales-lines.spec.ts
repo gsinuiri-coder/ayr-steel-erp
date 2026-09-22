@@ -1,6 +1,6 @@
 import { RoofingProductKind } from '@prisma/client';
 import { sellsByFixedLength, Unit } from '@ayr/shared';
-import { isMadeToMeasure, isMadeToOrder, sellsByLength } from './sales-lines';
+import { isAccessory, isMadeToMeasure, isMadeToOrder, sellsByLength } from './sales-lines';
 
 /**
  * **Centinela de D-131, ampliado por D-161.** Las preguntas que ya se confundieron dos veces,
@@ -122,6 +122,19 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       order: true,
       fixed: false,
     },
+    // **D-242: el accesorio.** Se vende por metro y se fabrica contra pedido igual que una
+    // cobertura a medida, pero `isMadeToMeasure` responde **false**: esa pregunta es por el
+    // subtipo `A_MEDIDA` y también decide la forma de la línea. Que `made` sea false y
+    // `order` true es exactamente el par que esta tabla existe para vigilar.
+    {
+      unit: Unit.MTR,
+      roofingKind: RoofingProductKind.ACCESORIO,
+      lengthMm: null,
+      byLength: true,
+      made: false,
+      order: true,
+      fixed: false,
+    },
   ];
 
   for (const c of cases) {
@@ -205,6 +218,25 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
     const perfil = { unit: Unit.NIU, roofingKind: null, lengthMm: LARGO };
     expect(isMadeToOrder(perfil)).toBe(false);
     expect(sellsByFixedLength(perfil)).toBe(false);
+
+    // **D-242: `isAccessory` contra `isMadeToMeasure`.** El par nuevo, y se parecen tanto que
+    // la tentación de responder uno con otro es la más fuerte de las cinco: las dos formas se
+    // venden por metro, las dos reservan bobina, las dos entran a la cola. Lo que las separa
+    // es con qué ancho se cuenta el material —el accesorio reparte el del rollo entre las
+    // piezas de la pasada—, así que confundirlas hace que un accesorio reserve N veces lo que
+    // consume, en silencio y con el compilador conforme.
+    const accesorio = { unit: Unit.MTR, roofingKind: RoofingProductKind.ACCESORIO, lengthMm: null };
+    expect(isAccessory(accesorio)).toBe(true);
+    expect(isMadeToMeasure(accesorio)).toBe(false);
+    expect(isAccessory(accesorio)).not.toBe(isMadeToMeasure(accesorio));
+    expect(isAccessory(aMedida)).toBe(false);
+    expect(isMadeToMeasure(aMedida)).toBe(true);
+
+    // Y las dos son mitades de `isMadeToOrder`, que sí responde que sí a las dos: preguntar
+    // «¿se fabrica?» con `isAccessory` dejaría a la cobertura a medida fuera de la cola.
+    expect(isMadeToOrder(accesorio)).toBe(true);
+    expect(isMadeToOrder(aMedida)).toBe(true);
+    expect(isAccessory(aMedida)).not.toBe(isMadeToOrder(aMedida));
   });
 
   it('una plancha con largo cero no se cotiza por metro: multiplicar por cero dejaría la línea en S/ 0', () => {

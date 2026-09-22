@@ -275,6 +275,11 @@ enum RoofingProductKind {
   /// A medida: se cotiza en metros lineales por subítems de largo y se **fabrica** contra
   /// pedido reservando kilos de bobina (RF-31, D-084).
   A_MEDIDA
+  /// D-242: accesorio (cumbrera, canaleta, tapajunta…). Sale de las **mismas** bobinas que
+  /// el resto de coberturas y se vende por metro lineal, como `A_MEDIDA`; lo que cambia es
+  /// que la roladora usa el ancho completo del rollo con un solo desarrollo por corte, así
+  /// que cada pasada da `piso(ancho ÷ desarrollo)` piezas del largo de la pasada.
+  ACCESORIO
 
   @@map("roofing_product_kind")
 }
@@ -680,6 +685,17 @@ model Product {
   /// que decide la rama de la confirmación: `A_MEDIDA` reserva kilos de bobina y va a la
   /// cola de producción; `PLANCHA` exige stock de producto terminado.
   roofingKind    RoofingProductKind? @map("roofing_kind")
+  /// D-242: **desarrollo** del accesorio en mm: el ancho de fleje que se lleva una pieza
+  /// —lo que mide la plantilla desplegada, antes de doblarla—. Obligatorio en `ACCESORIO`,
+  /// null en todo el resto (lo exige el `CHECK products_development_mm_check`, que Prisma
+  /// no sabe declarar y vive en la migración).
+  ///
+  /// No es el ancho de la pieza terminada ni el del rollo: de un rollo de `widthMm` salen
+  /// `piso(widthMm ÷ developmentMm)` piezas por pasada, y el sobrante lateral es el canto.
+  /// Toda la aritmética de material de un accesorio pasa por `accessoryEffectiveWidthMm`
+  /// de `@ayr/shared` —`ancho ÷ N`—, nunca por este número pelado: el canto lo paga el
+  /// metro vendido.
+  developmentMm  Decimal?            @map("development_mm") @db.Decimal(8, 2)
   isActive       Boolean             @default(true) @map("is_active")
   /// D-142: lote de importación de ventas (CLI) que creó este SKU a partir de una decisión
   /// del dueño (`decisiones.skus.crear`). Null en todo el resto del catálogo. Referencia

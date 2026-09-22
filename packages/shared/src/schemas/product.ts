@@ -45,6 +45,20 @@ export const productSchema = z.object({
    */
   roofingKind: z.enum(ROOFING_PRODUCT_KINDS).nullable(),
   /**
+   * D-242: desarrollo del accesorio en mm — el ancho de fleje que se lleva una pieza
+   * desplegada. Solo lo llevan los `ACCESORIO`; `null` en todo el resto.
+   */
+  developmentMm: z.string().nullable(),
+  /**
+   * D-242: piezas que da una pasada con el ancho **nominal** del SKU,
+   * `piso(widthMm ÷ developmentMm)`. `null` fuera de un accesorio o si falta geometría.
+   *
+   * Es una lectura, no un dato: al producir manda el ancho del rollo que se monte, y si ahí
+   * el número cambia, planta ve el aviso (D-242). Viaja en el DTO para que el catálogo y el
+   * formulario de venta puedan mostrar "4 piezas por pasada" sin repetir la cuenta.
+   */
+  piecesPerPass: z.number().int().nullable(),
+  /**
    * D-118/D-122: kilo teórico por unidad de venta, derivado de `thicknessMm`/`widthMm` y la
    * densidad del acabado **del propio producto** — `null` si falta cualquiera de los tres.
    * Con `unit = MTR` es kg **por metro lineal**; con largo fijo (`lengthMm`) es kg **por
@@ -132,6 +146,17 @@ const roofingKindSchema = z
   .nullable()
   .optional();
 
+/**
+ * D-242: desarrollo del accesorio. Mismo criterio que el resto de las medidas — cadena vacía
+ * es "sin dato" y se guarda `null`—; que sea obligatorio **solo** en `ACCESORIO` lo decide
+ * `CatalogService`, igual que el subtipo, porque es una regla de línea de negocio y no de
+ * forma del dato.
+ */
+const developmentMmSchema = z
+  .union([z.literal(''), decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM })])
+  .optional()
+  .transform((v) => (v === '' || v === undefined ? null : v));
+
 export const createProductSchema = z.object({
   businessLineId: z.string().uuid('Selecciona una línea de negocio'),
   sku: skuSchema,
@@ -146,6 +171,7 @@ export const createProductSchema = z.object({
   lengthMm: lengthMmSchema,
   pieceWeightKg: pieceWeightKgSchema,
   roofingKind: roofingKindSchema,
+  developmentMm: developmentMmSchema,
 });
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 
@@ -162,6 +188,7 @@ export const updateProductSchema = z
     lengthMm: lengthMmSchema,
     pieceWeightKg: pieceWeightKgSchema,
     roofingKind: roofingKindSchema,
+    developmentMm: developmentMmSchema,
     isActive: z.boolean(),
   })
   .partial()

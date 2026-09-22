@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
+  accessoryEffectiveWidthMm,
+  accessoryPiecesPerPass,
   BusinessLine as SharedLineCode,
   Decimal,
   isPlausiblePieceLength,
@@ -174,6 +176,7 @@ export class CatalogService {
             lengthMm: input.lengthMm,
             pieceWeightKg: input.pieceWeightKg,
             roofingKind,
+            developmentMm: input.developmentMm,
           },
           include: PRODUCT_RELATIONS,
         });
@@ -252,6 +255,7 @@ export class CatalogService {
       input.lengthMm !== undefined ||
       input.pieceWeightKg !== undefined ||
       input.roofingKind !== undefined ||
+      input.developmentMm !== undefined ||
       input.finishId !== undefined ||
       input.unit !== undefined;
     if (touchesStructured) {
@@ -270,6 +274,10 @@ export class CatalogService {
           input.pieceWeightKg !== undefined
             ? input.pieceWeightKg
             : decimalOrNull(before.pieceWeightKg, 'KG'),
+        developmentMm:
+          input.developmentMm !== undefined
+            ? input.developmentMm
+            : decimalOrNull(before.developmentMm, 'MM'),
       });
     }
 
@@ -285,6 +293,7 @@ export class CatalogService {
     if (input.lengthMm !== undefined) data.lengthMm = input.lengthMm;
     if (input.pieceWeightKg !== undefined) data.pieceWeightKg = input.pieceWeightKg;
     if (input.roofingKind !== undefined) data.roofingKind = input.roofingKind;
+    if (input.developmentMm !== undefined) data.developmentMm = input.developmentMm;
     // D-085: cambiar el color de un producto con receta viva movería el filtro de bobina
     // (D-086) por debajo de las órdenes en curso, que montaron el rollo contra el color
     // anterior. Mismo criterio que la unidad y el origen, unas líneas más arriba.
@@ -531,6 +540,7 @@ function assertStructuredFields(
     lengthMm: string | null;
     pieceWeightKg: string | null;
     roofingKind: RoofingProductKind | null;
+    developmentMm: string | null;
     unit: string | null;
     finishId: string | null;
   },
@@ -564,16 +574,52 @@ function assertStructuredFields(
     // metros lineales: de ahí salen los subítems de largo y el cálculo de kilos teóricos. Una
     // plancha se mide en lo que la empresa venda (unidades, casi siempre), y exigirle `NIU`
     // acá dejaría sin poder editarse a cualquier producto legado con otra unidad.
+    //
+    // D-242: el accesorio se suma del lado de "se mide en metros", no del de la plancha. La
+    // pregunta se escribe por el subtipo que **no** va en metros y no enumerando los que sí:
+    // con la lista al revés, cada subtipo nuevo entraba por el lado equivocado sin que nada
+    // avisara, que es exactamente lo que este archivo lleva tres decisiones evitando.
     const expectedUnit = ROOFING_KIND_UNIT[fields.roofingKind];
-    const unitOk =
-      fields.roofingKind === RoofingProductKind.A_MEDIDA
-        ? fields.unit === expectedUnit
-        : fields.unit !== 'MTR';
+    const isPlancha = fields.roofingKind === RoofingProductKind.PLANCHA;
+    const unitOk = isPlancha ? fields.unit !== 'MTR' : fields.unit === expectedUnit;
     if (!unitOk) {
       throw new BadRequestException(
-        fields.roofingKind === RoofingProductKind.A_MEDIDA
-          ? 'Una cobertura a medida se mide en metros lineales (MTR)'
-          : 'Una plancha de catálogo no se mide en metros lineales: eso es una cobertura a medida',
+        isPlancha
+          ? 'Una plancha de catálogo no se mide en metros lineales: eso es una cobertura a medida'
+          : fields.roofingKind === RoofingProductKind.ACCESORIO
+            ? 'Un accesorio se vende por metro lineal (MTR)'
+            : 'Una cobertura a medida se mide en metros lineales (MTR)',
+      );
+    }
+    // D-242: el desarrollo es lo único que distingue a un accesorio de una cobertura a
+    // medida, así que sin él el SKU no se puede producir: no hay forma de saber cuántas
+    // piezas da una pasada. Y al revés, un desarrollo en cualquier otro subtipo es un número
+    // que ninguna cuenta lee. El mismo par de reglas está en el CHECK de la base.
+    if (fields.roofingKind === RoofingProductKind.ACCESORIO) {
+      if (fields.developmentMm === null) {
+        throw new BadRequestException(
+          'El desarrollo del accesorio es obligatorio: es el ancho de fleje que se lleva una pieza, y de él salen las piezas por pasada',
+        );
+      }
+      // El ancho nominal tiene que dar al menos una pieza. Un desarrollo mayor que el rollo
+      // no es un SKU caro: es un SKU que no se puede rolar, y conviene saberlo acá y no
+      // cuando planta ya montó la bobina.
+      if (accessoryPiecesPerPass(fields.widthMm, fields.developmentMm) === null) {
+        throw new BadRequestException(
+          `Un desarrollo de ${toDecimal(fields.developmentMm).toFixed(2)} mm no entra en un ancho de ` +
+            `${toDecimal(fields.widthMm).toFixed(2)} mm: la bobina no da ni una pieza por pasada`,
+        );
+      }
+      // Mismo motivo que en `A_MEDIDA`: el largo lo traen los subítems de cada línea. Un
+      // largo fijo acá haría que el reporte de planta rechace cualquier otra medida (D-083).
+      if (fields.lengthMm !== null) {
+        throw new BadRequestException(
+          'Un accesorio no lleva largo fijo: el largo de cada pasada va en los subítems de la línea',
+        );
+      }
+    } else if (fields.developmentMm !== null) {
+      throw new BadRequestException(
+        'El desarrollo solo aplica a un accesorio: es lo que define cuántas piezas da una pasada',
       );
     }
     // El largo solo lo lleva la plancha: es su largo fijo. Una cobertura a medida no tiene
@@ -604,6 +650,8 @@ function assertStructuredFields(
     }
   } else if (fields.roofingKind !== null) {
     throw new BadRequestException('El subtipo de cobertura solo aplica a Metallic Roofing');
+  } else if (fields.developmentMm !== null) {
+    throw new BadRequestException('El desarrollo solo aplica a los accesorios de coberturas');
   }
   if (lineCode === BusinessLineCode.DRYWALL) {
     if (fields.widthMm === null) {
@@ -671,11 +719,32 @@ function theoreticalKgPerUnit(p: WithLineCode): string | null {
     theoreticalKgPerSellingUnit({
       unit: p.unit,
       thicknessMm: p.thicknessMm?.toFixed(2) ?? null,
-      widthMm: p.widthMm?.toFixed(2) ?? null,
+      // D-242: en un accesorio el ancho que consume un metro vendido **no** es el del rollo,
+      // es `ancho ÷ N`: cada pasada reparte el ancho completo entre las piezas que salen.
+      // Con el ancho pelado, el kg por metro que muestra el catálogo sería N veces el real.
+      widthMm: materialWidthMm(p),
       lengthMm: p.lengthMm?.toFixed(2) ?? null,
       densityFactor: p.finish?.densityFactor.toFixed(4) ?? null,
     })?.toFixed(3) ?? null
   );
+}
+
+/**
+ * D-242: el ancho con el que se calcula el **material** de este SKU.
+ *
+ * Es el ancho nominal salvo en un accesorio, donde es el ancho efectivo (`ancho ÷ N`). Toda
+ * cuenta de kilos del catálogo pasa por acá; el ancho pelado sigue siendo el que se muestra.
+ */
+function materialWidthMm(p: {
+  roofingKind: RoofingProductKind | null;
+  widthMm: Prisma.Decimal | null;
+  developmentMm: Prisma.Decimal | null;
+}): string | null {
+  if (p.widthMm === null) return null;
+  if (p.roofingKind !== RoofingProductKind.ACCESORIO || p.developmentMm === null) {
+    return p.widthMm.toFixed(2);
+  }
+  return accessoryEffectiveWidthMm(p.widthMm.toFixed(2), p.developmentMm.toFixed(2))?.toString() ?? null;
 }
 
 function toDto(p: WithLineCode): ProductDto {
@@ -700,6 +769,11 @@ function toDto(p: WithLineCode): ProductDto {
     lengthMm: p.lengthMm === null ? null : p.lengthMm.toFixed(2),
     pieceWeightKg: p.pieceWeightKg === null ? null : p.pieceWeightKg.toFixed(3),
     roofingKind: p.roofingKind,
+    developmentMm: p.developmentMm === null ? null : p.developmentMm.toFixed(2),
+    piecesPerPass:
+      p.roofingKind === RoofingProductKind.ACCESORIO && p.widthMm !== null && p.developmentMm !== null
+        ? accessoryPiecesPerPass(p.widthMm.toFixed(2), p.developmentMm.toFixed(2))
+        : null,
     theoreticalKgPerUnit: theoreticalKgPerUnit(p),
     isActive: p.isActive,
     source: p.source,
@@ -722,6 +796,10 @@ function auditView(p: Product): Prisma.InputJsonObject {
     widthMm: p.widthMm === null ? null : p.widthMm.toFixed(2),
     lengthMm: p.lengthMm === null ? null : p.lengthMm.toFixed(2),
     pieceWeightKg: p.pieceWeightKg === null ? null : p.pieceWeightKg.toFixed(3),
+    // D-242: el desarrollo cambia cuántas piezas da una pasada y con eso el kilo por metro
+    // de todo lo que se cotice después, así que su historia va al log como la del resto de
+    // la geometría.
+    developmentMm: p.developmentMm === null ? null : p.developmentMm.toFixed(2),
     isActive: p.isActive,
   };
 }

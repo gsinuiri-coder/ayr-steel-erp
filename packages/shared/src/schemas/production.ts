@@ -235,6 +235,74 @@ export function theoreticalKgPerSellingUnit(input: {
 }
 
 // --------------------------------------------------------------------------
+// D-242 — accesorios de cobertura: el ancho efectivo
+// --------------------------------------------------------------------------
+
+/**
+ * Piezas que da **una pasada** de un accesorio por una bobina de ese ancho (D-242):
+ * `piso(ancho ÷ desarrollo)`. Siempre se usa el ancho completo del rollo y un solo
+ * desarrollo por corte, así que el sobrante lateral —el canto— es merma del corte.
+ *
+ * `null` cuando la bobina no da ni una pieza (desarrollo mayor que el ancho) o cuando la
+ * geometría no es utilizable. Quien llama decide si eso es un error de dominio: acá no se
+ * lanza, igual que `equivalentMeters`.
+ */
+export function accessoryPiecesPerPass(
+  widthMm: DecimalInput,
+  developmentMm: DecimalInput,
+): number | null {
+  const width = toDecimal(widthMm);
+  const development = toDecimal(developmentMm);
+  if (width.lte(0) || development.lte(0)) return null;
+  const n = width.div(development).floor().toNumber();
+  return n >= 1 ? n : null;
+}
+
+/**
+ * **El ancho efectivo de un accesorio** (D-242), y con él toda su aritmética de material.
+ *
+ * Una pasada se lleva el ancho completo del rollo y devuelve `N` piezas del largo de la
+ * pasada. Repartir ese ancho entre las `N` piezas —`ancho ÷ N`— deja un número que se puede
+ * usar **en el lugar exacto donde el resto del dominio pone el ancho**: `kgPerMeter`,
+ * `piecesTheoreticalKg`, la reserva de materia prima, el costo y la reversa siguen valiendo
+ * sin saber que existe el accesorio, y el canto queda cobrado a los metros que se venden en
+ * vez de aparecer después como una merma sin explicación.
+ *
+ * Es `ancho ÷ N` y no el desarrollo pelado a propósito: con desarrollo de 300 mm en un rollo
+ * de 1220 mm entran 4 piezas y el ancho efectivo es 305 mm, no 300. Esos 5 mm por pieza son
+ * el canto, y el que los paga es el metro vendido.
+ */
+export function accessoryEffectiveWidthMm(
+  widthMm: DecimalInput,
+  developmentMm: DecimalInput,
+): Decimal | null {
+  const piecesPerPass = accessoryPiecesPerPass(widthMm, developmentMm);
+  if (piecesPerPass === null) return null;
+  // Sin redondear: es un insumo de `kgPerMeter`, no un resultado final. Redondearlo a la
+  // escala de mm acá movería el kilo por metro, que es el mismo motivo por el que
+  // `kgPerMeter` no redondea su propio intermedio.
+  return toDecimal(widthMm).div(piecesPerPass);
+}
+
+/**
+ * Lo que el canto se lleva, para **mostrarlo** (D-242, D-d): el ancho sobrante del rollo
+ * después de las `N` piezas, y su fracción sobre el ancho completo.
+ *
+ * No se almacena ni emite kardex: la salida de material ya sale por el ancho completo, así
+ * que el canto ya está cobrado. Esto es la lectura que explica por qué.
+ */
+export function accessoryEdgeScrap(
+  widthMm: DecimalInput,
+  developmentMm: DecimalInput,
+): { piecesPerPass: number; edgeMm: Decimal; edgeRatio: Decimal } | null {
+  const piecesPerPass = accessoryPiecesPerPass(widthMm, developmentMm);
+  if (piecesPerPass === null) return null;
+  const width = toDecimal(widthMm);
+  const edgeMm = width.minus(toDecimal(developmentMm).times(piecesPerPass));
+  return { piecesPerPass, edgeMm: roundTo(edgeMm, 'MM'), edgeRatio: edgeMm.div(width) };
+}
+
+// --------------------------------------------------------------------------
 // D-059 — receta en el maestro de productos
 // --------------------------------------------------------------------------
 
