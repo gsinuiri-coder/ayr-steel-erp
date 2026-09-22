@@ -8,6 +8,8 @@ import { QuotationsService } from './quotations.service';
 import { SalesController } from './sales.controller';
 import { SalesOrderEditsService } from './sales-order-edits.service';
 import { SalesOrdersService } from './sales-orders.service';
+import { DashboardController } from './dashboard.controller';
+import { DashboardService } from './dashboard.service';
 
 /**
  * Ciclo comercial de Fase 5a (D-064..D-069): cotización → confirmación → pedido + reserva.
@@ -25,8 +27,14 @@ import { SalesOrdersService } from './sales-orders.service';
   // D-186: `production` porque confirmar crea las OPs en la misma transacción que el pedido
   // (`createFromReservationInTx`). Producción no importa ventas, así que no hay ciclo.
   imports: [InventoryModule, DocumentsModule, JobsModule, ProductionModule],
-  controllers: [SalesController],
-  providers: [QuotationsService, SalesOrdersService, SalesOrderEditsService, QuotationExpiryJob],
+  controllers: [SalesController, DashboardController],
+  providers: [
+    QuotationsService,
+    SalesOrdersService,
+    SalesOrderEditsService,
+    QuotationExpiryJob,
+    DashboardService,
+  ],
   exports: [QuotationsService, SalesOrdersService],
 })
 export class SalesModule {}

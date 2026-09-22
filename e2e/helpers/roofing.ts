@@ -462,7 +462,6 @@ export async function quoteAndOrderLines(
 ): Promise<{ quotation: QuotationDto; order: SalesOrderDto }> {
   const quotation = await postJson<QuotationDto>(api, '/api/sales/quotations', {
     customerId: input.customerId,
-    businessLine: ROOFING_LINE,
     issueDate: today(),
     items: input.lines.map((line) => ({
       productId: line.productId,

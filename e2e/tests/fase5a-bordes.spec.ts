@@ -1004,11 +1004,11 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       });
       trail.quotationIds = [quotation.id];
 
-      // Leerla sí: RF-69 pide una lista de cotizaciones, no una lista por vendedor.
-      const read = await getJson<QuotationDto>(otherApi, `/api/sales/quotations/${quotation.id}`);
-      expect(read.id).toBe(quotation.id);
+      // S3c: El vendedor ya no puede leer cotizaciones ajenas.
+      const cannotRead = await getExpectingError(otherApi, `/api/sales/quotations/${quotation.id}`);
+      expect(cannotRead.status).toBe(404);
       const list = await getItems<{ id: string }>(otherApi, '/api/sales/quotations');
-      expect(list.map((q) => q.id)).toContain(quotation.id);
+      expect(list.map((q) => q.id)).not.toContain(quotation.id);
 
       // Operarla, no.
       const editRows = pieces([1, 1]);
@@ -1020,19 +1020,19 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
           items: [{ productId: scenario.product.id, qty: metersOf(editRows), pieces: editRows }],
         }),
       );
-      expect(cannotEdit.status).toBe(403);
+      expect(cannotEdit.status).toBe(404);
       // D-185: reservar también es operar la cotización.
       const cannotReserve = await postExpectingError(
         otherApi,
         `/api/sales/quotations/${quotation.id}/reserve`,
       );
-      expect(cannotReserve.status).toBe(403);
+      expect(cannotReserve.status).toBe(404);
       const cannotCancel = await postExpectingError(
         otherApi,
         `/api/sales/quotations/${quotation.id}/cancel`,
         { reason: 'Intento sobre la cotización de otro' },
       );
-      expect(cannotCancel.status).toBe(403);
+      expect(cannotCancel.status).toBe(404);
 
       // El ADMINISTRADOR sí opera cualquiera: edita la del vendedor…
       const edited = await putJson<QuotationDto>(
@@ -1058,7 +1058,7 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
         otherApi,
         `/api/sales/quotations/${quotation.id}/confirm`,
       );
-      expect(cannotConfirm.status).toBe(403);
+      expect(cannotConfirm.status).toBe(404);
       const panelBefore = await stockPanel(api, {
         businessLine: COVER_LINE,
         productIds: [scenario.product.id],

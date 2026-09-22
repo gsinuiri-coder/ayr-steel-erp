@@ -161,7 +161,7 @@ export class InvoicingController {
     @CurrentUser() actor: RequestUser,
     @Param('salesOrderId', ParseUUIDPipe) salesOrderId: string,
   ): Promise<SalesOrderProgressDto> {
-    return this.invoicing.orderProgress(salesOrderId, {
+    return this.invoicing.orderProgress(actor, salesOrderId, {
       withPrices: actor.role !== Role.SUPERVISOR_PLANTA,
     });
   }
@@ -172,14 +172,18 @@ export class InvoicingController {
 
   @Get('documents')
   findAll(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(fiscalDocumentQuerySchema)) query: FiscalDocumentQuery,
   ): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
-    return this.invoicing.findAll(query);
+    return this.invoicing.findAll(query, actor);
   }
 
   @Get('documents/:id')
-  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<FiscalDocumentDto> {
-    return this.invoicing.findOne(id);
+  findOne(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<FiscalDocumentDto> {
+    return this.invoicing.findOne(id, actor);
   }
 
   /**
@@ -189,22 +193,39 @@ export class InvoicingController {
    * cotización.
    */
   @Get('documents/:id/pdf')
-  pdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
-    return this.sendFile(id, 'pdf', res);
+  pdf(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.sendFile(actor, id, 'pdf', res);
   }
 
   @Get('documents/:id/xml')
-  xml(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
-    return this.sendFile(id, 'xml', res);
+  xml(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.sendFile(actor, id, 'xml', res);
   }
 
   @Get('documents/:id/cdr')
-  cdr(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
-    return this.sendFile(id, 'cdr', res);
+  cdr(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.sendFile(actor, id, 'cdr', res);
   }
 
-  private async sendFile(id: string, kind: 'pdf' | 'xml' | 'cdr', res: Response): Promise<void> {
-    const { buffer, filename, contentType } = await this.invoicing.file(id, kind);
+  private async sendFile(
+    actor: RequestUser,
+    id: string,
+    kind: 'pdf' | 'xml' | 'cdr',
+    res: Response,
+  ): Promise<void> {
+    const { buffer, filename, contentType } = await this.invoicing.file(id, kind, actor);
     res.setHeader('Content-Type', contentType);
     // El nombre sale de un correlativo del sistema y hoy no puede llevar comillas ni
     // saltos de línea; se sanea igual para que un futuro alta de series no reabra la
@@ -334,6 +355,7 @@ export class InvoicingController {
    * distintos y no colisionan.
    */
   @Get('receivables')
+  @Roles(Role.ADMINISTRADOR)
   receivables(
     @Query(new ZodValidationPipe(paginationQuerySchema)) query: PaginationQuery,
   ): Promise<PaginatedResult<ReceivableSummaryDto>> {
@@ -345,6 +367,7 @@ export class InvoicingController {
    * sobre todos los clientes con deuda, no solo la página que devuelve `receivables`.
    */
   @Get('receivables/summary')
+  @Roles(Role.ADMINISTRADOR)
   receivablesTotals(): Promise<ReceivableTotalsDto> {
     return this.receivablesService.totals();
   }

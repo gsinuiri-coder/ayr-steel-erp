@@ -899,7 +899,7 @@ export class InventoryService {
    * cronológico; en un listado mezclado ese saldo no tiene sentido y va en `null`.
    */
   async findMovements(
-    query: InventoryQuery,
+    query: Omit<InventoryQuery, 'page' | 'pageSize'> & { page?: number; pageSize?: number },
     showCosts: boolean,
   ): Promise<PaginatedResult<InventoryMovementDto>> {
     const singleItem = Boolean(query.itemId && query.itemType);
@@ -920,7 +920,9 @@ export class InventoryService {
     // tope de 10 000 es "todo lo que un solo ítem puede acumular", no una página. El
     // listado mezclado sí pagina, y se recorta a los más RECIENTES: cortar por los más
     // antiguos mostraba justo lo contrario de lo que dice la vista.
-    const { skip, take } = singleItem ? { skip: 0, take: 10_000 } : toSkipTake(query);
+    const { skip, take } = singleItem
+      ? { skip: 0, take: 10_000 }
+      : toSkipTake({ page: query.page ?? 1, pageSize: query.pageSize ?? 50 });
     const [total, movements] = await Promise.all([
       singleItem ? Promise.resolve(0) : this.prisma.inventoryMovement.count({ where }),
       this.prisma.inventoryMovement.findMany({
@@ -929,8 +931,8 @@ export class InventoryService {
         // D-124: ordena por fecha de operación; el `id` bigserial (orden real de grabación)
         // desempata dentro del mismo día, que es lo que hace determinista el saldo corrido.
         orderBy: singleItem
-          ? [{ operationDate: 'asc' }, { id: 'asc' }]
-          : [{ operationDate: 'desc' }, { id: 'desc' }],
+          ? [{ operationDate: 'asc' }, { at: 'asc' }, { id: 'asc' }]
+          : [{ operationDate: 'desc' }, { at: 'desc' }, { id: 'desc' }],
         skip,
         take,
       }),
@@ -1011,7 +1013,7 @@ export class InventoryService {
     // hace que `PaginatedResult` no mienta sobre cuántas páginas hay.
     return singleItem
       ? { items, total: items.length, page: 1, pageSize: Math.max(items.length, 1) }
-      : paginate(items, total, query);
+      : paginate(items, total, { page: query.page ?? 1, pageSize: query.pageSize ?? 50 });
   }
 
   /**
@@ -1021,7 +1023,7 @@ export class InventoryService {
    * que la vista después descarta.
    */
   private async openingBalance(
-    query: InventoryQuery,
+    query: Pick<InventoryQuery, 'itemType' | 'itemId'>,
     from: string,
   ): Promise<{ qty: Decimal; value: Decimal }> {
     const rows = await this.prisma.$queryRaw<{ qty: Prisma.Decimal; value: Prisma.Decimal }[]>`

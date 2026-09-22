@@ -23,7 +23,7 @@ import { usePagination } from '@/lib/use-pagination';
 import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
 import { RoleGate } from '@/components/role-gate';
 import { SortableTableHead } from '@/components/sortable-table-head';
-import { formatMoney, formatQty, isPositiveDecimal } from '@/lib/format';
+import { formatMoneyOrDash, formatQty, isPositiveDecimal } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { HeaderActions } from '@/components/header-actions';
 import { Input } from '@/components/ui/input';
@@ -344,7 +344,7 @@ export function BobinasView() {
                   {formatQty(c.availableKg, 'kg')}
                 </TableCell>
                 <TableCell className="hidden text-right lg:table-cell">
-                  {formatMoney(c.unitCostPerKg, c.currency, 4)}
+                  {formatMoneyOrDash(c.unitCostPerKg, c.currency ?? 'PEN', 4)}
                 </TableCell>
                 <TableCell>
                   <Badge variant={COIL_TONE[c.status]}>{COIL_STATUS_LABELS[c.status]}</Badge>

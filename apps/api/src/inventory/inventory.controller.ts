@@ -13,6 +13,7 @@ import {
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { InventoryService } from './inventory.service';
 
@@ -32,6 +33,7 @@ const summaryQuerySchema = z.object({
  * cerrarle la ruta entera, el servicio le devuelve los campos de costo en `null`, así
  * ve el stock que necesita para cotizar sin ver cuánto costó comprarlo.
  */
+@Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
 @Controller('inventory')
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
@@ -45,6 +47,7 @@ export class InventoryController {
   }
 
   @Get('movements')
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   findMovements(
     @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(inventoryQuerySchema)) query: InventoryQuery,

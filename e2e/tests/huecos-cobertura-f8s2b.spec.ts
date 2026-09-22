@@ -381,12 +381,8 @@ test.describe('F8-S2b — huecos de cobertura', () => {
       await postJson(api, `/api/sales/quotations/${rival.id}/reserve`);
 
       await loginAndSetPassword(page, vendedor, 'ClaveVendedorE2E-1!');
-      await expect(page.getByText('Cotizaciones sin stock disponible')).toBeVisible({
-        timeout: 30_000,
-      });
-      const row = page.getByRole('link', { name: new RegExp(quotation.code) });
-      await expect(row).toBeVisible();
-      await expect(row.getByText(/faltan 21\.200/)).toBeVisible();
+      // S3c: El VENDEDOR ya no ve la tarjeta de cotizaciones sin stock en el dashboard.
+      await expect(page.getByText('Cotizaciones sin stock disponible')).toHaveCount(0);
     } finally {
       await purgeRoofingTrail(api, trail);
     }

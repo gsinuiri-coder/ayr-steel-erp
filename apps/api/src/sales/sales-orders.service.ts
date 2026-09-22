@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -74,10 +73,18 @@ import {
   type StockPanelDto,
   type StockPanelQuery,
   type SellableCoilQuery,
+  type OrderReadinessDto,
 } from '@ayr/shared';
+import { deriveOrderReadiness } from './order-readiness';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
+import {
+  assertSellerAccess,
+  quotationSellerWhere,
+  resolveOrderSeller,
+  sellerWhere,
+} from '../auth/seller-scope';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -281,18 +288,15 @@ export class SalesOrdersService {
             status: QuotationStatus;
             valid_until: Date | null;
             created_by_id: string;
+            seller_id: string | null;
           }[]
         >`
-        SELECT "id", "seq", "status", "valid_until", "created_by_id"
+        SELECT "id", "seq", "status", "valid_until", "created_by_id", "seller_id"
         FROM "quotations" WHERE "id" = ${quotationId}::uuid FOR UPDATE
       `;
         const head = rows[0];
         if (!head) throw new NotFoundException('Cotización no encontrada');
-        // RF-66: confirmar es el acto del vendedor **sobre su propia** cotización. Sin esto,
-        // cualquier vendedor podía comprometer stock a nombre del cliente de otro.
-        if (actor.role !== Role.ADMINISTRADOR && actor.id !== head.created_by_id) {
-          throw new ForbiddenException('La cotización es de otro vendedor: no puedes confirmarla');
-        }
+        assertSellerAccess(actor, head.seller_id, 'Cotización');
 
         if (head.status === QuotationStatus.CONFIRMED) {
           throw new ConflictException('La cotización ya fue confirmada');
@@ -377,6 +381,9 @@ export class SalesOrdersService {
         const order = await tx.salesOrder.create({
           data: {
             quotationId,
+            // D-240: el dueño es el de la cotización, no `actor` — quien confirma suele ser
+            // un ADMINISTRADOR y el pedido tiene que quedarle al vendedor que cotizó.
+            sellerId: resolveOrderSeller({ quotation, createdById: actor.id }),
             customerId: quotation.customerId,
             status: SalesOrderStatus.CONFIRMED,
             issueDate: toDateOnly(businessToday()),
@@ -530,11 +537,9 @@ export class SalesOrdersService {
       },
     });
     if (!quotation) throw new NotFoundException('Cotización no encontrada');
+    assertSellerAccess(actor, quotation.sellerId, 'Cotización');
 
     const blockers: string[] = [];
-    if (actor.role !== Role.ADMINISTRADOR && actor.id !== quotation.createdById) {
-      blockers.push('La cotización es de otro vendedor: no puedes confirmarla');
-    }
     const validUntil = quotation.validUntil?.toISOString().slice(0, 10) ?? null;
     if (quotation.status !== QuotationStatus.EMITTED) {
       blockers.push(`Solo se confirma una cotización emitida; esta está ${quotation.status}`);
@@ -739,9 +744,9 @@ export class SalesOrdersService {
    * El costo es leer todas las emitidas vigentes en cada consulta — aceptable: es el mismo
    * conjunto, acotado, que ya recorre `/reservas-temporales` y la propia cola de vencimiento.
    */
-  async findStockShortages(): Promise<QuotationStockShortageDto[]> {
+  async findStockShortages(actor: RequestUser): Promise<QuotationStockShortageDto[]> {
     const quotations = await this.prisma.quotation.findMany({
-      where: { status: QuotationStatus.EMITTED },
+      where: { status: QuotationStatus.EMITTED, ...quotationSellerWhere(actor) },
       include: shortageQuotationInclude,
       orderBy: { seq: 'asc' },
     });
@@ -1146,6 +1151,7 @@ export class SalesOrdersService {
         totalPen: totals.totalPen,
         notes: input.notes ?? null,
         createdById: actor.id,
+        sellerId: actor.id,
         promisedDeliveryDate: input.promisedDeliveryDate
           ? toDateOnly(input.promisedDeliveryDate)
           : null,
@@ -1641,7 +1647,7 @@ export class SalesOrdersService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     quotationId: string,
-    action: string,
+    _action: string,
   ): Promise<{
     id: string;
     seq: number;
@@ -1655,15 +1661,16 @@ export class SalesOrdersService {
         status: QuotationStatus;
         valid_until: Date | null;
         created_by_id: string;
+        seller_id: string | null;
       }[]
     >`
-      SELECT "id", "seq", "status", "valid_until", "created_by_id"
+      SELECT "id", "seq", "status", "valid_until", "created_by_id", "seller_id"
       FROM "quotations" WHERE "id" = ${quotationId}::uuid FOR UPDATE
     `;
     const head = rows[0];
     if (!head) throw new NotFoundException('Cotización no encontrada');
-    if (actor.role !== Role.ADMINISTRADOR && actor.id !== head.created_by_id) {
-      throw new ForbiddenException(`La cotización es de otro vendedor: no puedes ${action}`);
+    if (actor.role !== Role.ADMINISTRADOR && actor.id !== (head.seller_id ?? head.created_by_id)) {
+      throw new NotFoundException('Cotización no encontrada');
     }
     return {
       id: head.id,
@@ -1940,10 +1947,10 @@ export class SalesOrdersService {
   }
 
   /** La vista «Reservas temporales vigentes» (D-185): una fila por cotización. */
-  async findTemporaryReservations(): Promise<TemporaryReservationListItemDto[]> {
+  async findTemporaryReservations(actor: RequestUser): Promise<TemporaryReservationListItemDto[]> {
     await this.prisma.$transaction((tx) => sweepExpiredTemporaryReservations(tx));
     const rows = await this.prisma.quotationReservation.findMany({
-      where: liveTemporaryWhere(),
+      where: { ...liveTemporaryWhere(), quotation: quotationSellerWhere(actor) },
       include: {
         quotation: { select: { id: true, seq: true, customer: { select: { name: true } } } },
       },
@@ -2334,9 +2341,13 @@ export class SalesOrdersService {
    * D-134: una venta de bobina entera (RF-73) sigue siendo una reserva `COIL` y **no** entra:
    * ese rollo se despacha, no se fabrica.
    */
-  async findLinesWithoutOrder(): Promise<LineWithoutOrderDto[]> {
+  async findLinesWithoutOrder(actor: RequestUser): Promise<LineWithoutOrderDto[]> {
     const reservations = await this.prisma.reservation.findMany({
-      where: { status: ReservationStatus.ACTIVE, itemType: InventoryItemTypeEnum.RAW_MATERIAL },
+      where: {
+        status: ReservationStatus.ACTIVE,
+        itemType: InventoryItemTypeEnum.RAW_MATERIAL,
+        salesOrder: sellerWhere(actor),
+      },
       include: {
         salesOrder: {
           select: {
@@ -2443,35 +2454,70 @@ export class SalesOrdersService {
     });
   }
 
-  /**
-   * Estado del pedido frente a la cola, para el detalle de `/pedidos/[id]` (D-189): con
-   * alguna orden de coberturas **en curso**, `EN_PRODUCCION`; si no, con alguna **no
-   * iniciada** (la cola), `EN_COLA`; sin órdenes vivas, `null`.
-   */
-  private async computeQueueStatus(row: OrderRow): Promise<QueueStatus | null> {
-    const live = await this.prisma.productionOrder.findMany({
-      where: {
-        kind: 'ROOFING',
-        status: { in: ['DRAFT', 'IN_PROGRESS'] },
-        reservation: { salesOrderId: row.id },
+  private async computeOrderContext(row: OrderRow): Promise<{
+    queueStatus: QueueStatus | null;
+    readiness: OrderReadinessDto;
+  }> {
+    const ops = await this.prisma.productionOrder.findMany({
+      where: { reservation: { salesOrderId: row.id } },
+      select: {
+        status: true,
+        kind: true,
+        reservation: {
+          select: {
+            salesOrderItem: {
+              select: { reserveQty: true },
+            },
+          },
+        },
+        reports: {
+          where: { status: 'ACTIVE' },
+          select: { metersM: true },
+        },
       },
-      select: { status: true },
     });
-    if (live.some((o) => o.status === 'IN_PROGRESS')) return 'EN_PRODUCCION';
-    return live.length > 0 ? 'EN_COLA' : null;
+
+    const liveRoofing = ops.filter(
+      (o) => o.kind === 'ROOFING' && (o.status === 'DRAFT' || o.status === 'IN_PROGRESS'),
+    );
+    const queueStatus = liveRoofing.some((o) => o.status === 'IN_PROGRESS')
+      ? 'EN_PRODUCCION'
+      : liveRoofing.length > 0
+        ? 'EN_COLA'
+        : null;
+
+    const readinessOrders = ops.map((op) => {
+      const orderedMl = op.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000';
+      const reportedMl = op.reports
+        .reduce((sum, r) => sum + (r.metersM ? Number(r.metersM) : 0), 0)
+        .toFixed(3);
+
+      return {
+        status: op.status,
+        orderedMl,
+        reportedMl,
+      };
+    });
+    const readiness = deriveOrderReadiness(readinessOrders);
+
+    return { queueStatus, readiness };
   }
 
   // -------------------------------------------------------------------------
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: SalesOrderQuery): Promise<PaginatedResult<SalesOrderListItemDto>> {
+  async findAll(
+    actor: RequestUser,
+    query: SalesOrderQuery,
+  ): Promise<PaginatedResult<SalesOrderListItemDto>> {
     // El código del pedido (`PED-000123`) es `salesOrderCode(seq)`, no una columna: buscar
     // "PED-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o quien
     // pega el código de un pedido para encontrarlo (el uso más común del buscador) se
     // quedaba sin resultados (Fase 7d, hallazgo de revisión).
     const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
     const where: Prisma.SalesOrderWhereInput = {
+      ...sellerWhere(actor),
       status: query.status,
       customerId: query.customerId,
       // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
@@ -2517,17 +2563,59 @@ export class SalesOrdersService {
         take,
       }),
     ]);
-    const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
+    const actors = await this.resolveActorNames(
+      rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
+    );
+
+    // M2: Compute readiness for list
+    const ops = await this.prisma.productionOrder.findMany({
+      where: { reservation: { salesOrderId: { in: rows.map((r) => r.id) } } },
+      select: {
+        status: true,
+        kind: true,
+        reservation: {
+          select: { salesOrderId: true, salesOrderItem: { select: { reserveQty: true } } },
+        },
+        reports: { where: { status: 'ACTIVE' }, select: { metersM: true } },
+      },
+    });
+
+    const contextByOrderId = new Map<
+      string,
+      { queueStatus: QueueStatus | null; readiness: OrderReadinessDto }
+    >();
+    for (const row of rows) {
+      const orderOps = ops.filter((op) => op.reservation?.salesOrderId === row.id);
+      const liveRoofing = orderOps.filter(
+        (o) => o.kind === 'ROOFING' && (o.status === 'DRAFT' || o.status === 'IN_PROGRESS'),
+      );
+      const queueStatus = liveRoofing.some((o) => o.status === 'IN_PROGRESS')
+        ? 'EN_PRODUCCION'
+        : liveRoofing.length > 0
+          ? 'EN_COLA'
+          : null;
+
+      const readinessOrders = orderOps.map((op) => {
+        const orderedMl = op.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000';
+        const reportedMl = op.reports
+          .reduce((sum, r) => sum + (r.metersM ? Number(r.metersM) : 0), 0)
+          .toFixed(3);
+        return { status: op.status, orderedMl, reportedMl };
+      });
+      const readiness = deriveOrderReadiness(readinessOrders);
+      contextByOrderId.set(row.id, { queueStatus, readiness });
+    }
+
     const items = rows.map((r) => {
       const dto = this.toDto(
         { ...r, items: [], reservations: [], fiscalDocuments: [] },
         new Map(),
         actors,
+        contextByOrderId.get(r.id),
       );
       const {
         items: _items,
         reservations: _reservations,
-        queueStatus: _queueStatus,
         importedDocumentId: _importedDocumentId,
         importedDocumentNumber: _importedDocumentNumber,
         priceChanges: _priceChanges,
@@ -2543,13 +2631,14 @@ export class SalesOrdersService {
     return paginate(items, total, query);
   }
 
-  async findOne(id: string): Promise<SalesOrderDto> {
+  async findOne(id: string, actor?: RequestUser): Promise<SalesOrderDto> {
     const row = await this.prisma.salesOrder.findUnique({ where: { id }, include: orderInclude });
     if (!row) throw new NotFoundException('Pedido no encontrado');
+    if (actor) assertSellerAccess(actor, row.sellerId, 'Pedido');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
-    const [actors, queueStatus, priceChanges, invoice] = await Promise.all([
-      this.resolveActorNames([row.createdById]),
-      this.computeQueueStatus(row),
+    const [actors, context, priceChanges, invoice] = await Promise.all([
+      this.resolveActorNames([row.createdById, row.sellerId].filter(Boolean) as string[]),
+      this.computeOrderContext(row),
       findPriceChanges(this.prisma, { salesOrderId: id }),
       // D-187: el mismo corte que `SalesOrderEditsService.lockEditable`.
       this.prisma.fiscalDocument.findFirst({
@@ -2563,7 +2652,7 @@ export class SalesOrdersService {
       }),
     ]);
     return {
-      ...this.toDto(row, labels, actors, queueStatus),
+      ...this.toDto(row, labels, actors, context),
       priceChanges,
       isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
     };
@@ -2579,10 +2668,11 @@ export class SalesOrdersService {
    *
    * Sin importes, a propósito: ver `plant-order-pdf.ts`.
    */
-  async plantPdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+  async plantPdf(id: string, actor: RequestUser): Promise<{ buffer: Buffer; filename: string }> {
     const row = await this.prisma.salesOrder.findUnique({
       where: { id },
       select: {
+        sellerId: true,
         seq: true,
         status: true,
         issueDate: true,
@@ -2620,6 +2710,7 @@ export class SalesOrdersService {
       },
     });
     if (!row) throw new NotFoundException('Pedido no encontrado');
+    assertSellerAccess(actor, row.sellerId, 'Pedido');
     if (row.status === SalesOrderStatus.CANCELLED) {
       throw new BadRequestException('El pedido está anulado: no hay nada que producir');
     }
@@ -2686,7 +2777,7 @@ export class SalesOrdersService {
    * prima (lo que una cobertura a medida va a consumir, en kilos y en metros teóricos) y el
    * **stock por SKU** (lo que se vende tal cual: planchas, perfiles, UPVC).
    */
-  async stockPanel(query: StockPanelQuery): Promise<StockPanelDto> {
+  async stockPanel(actor: RequestUser, query: StockPanelQuery): Promise<StockPanelDto> {
     const [rawMaterial, products] = await Promise.all([
       query.businessLine === undefined
         ? Promise.resolve<RawMaterialStockDto[]>([])
@@ -2970,7 +3061,10 @@ export class SalesOrdersService {
    * anulada/vendida), de kind `COIL` (un fleje no se vende como bobina), sin custodia de
    * producción y con saldo. Solo Drywall y Metallic Roofing tienen bobina (C).
    */
-  async findSellableCoils(query: SellableCoilQuery): Promise<SellableCoilDto[]> {
+  async findSellableCoils(
+    actor: RequestUser,
+    query: SellableCoilQuery,
+  ): Promise<SellableCoilDto[]> {
     const lines = query.businessLine ? [query.businessLine] : [...COIL_BUSINESS_LINES];
     const coils = await this.prisma.coil.findMany({
       where: {
@@ -3066,18 +3160,21 @@ export class SalesOrdersService {
           status: c.status as 'OPEN' | 'CLOSED',
           availableQty: qty.minus(res).toFixed(3),
           minPricePen: floors.get(c.id)?.minPricePen ?? null,
-          avgCostPen: avgCostById.get(c.id) ?? null,
+          ...(actor.role === Role.ADMINISTRADOR
+            ? { avgCostPen: avgCostById.get(c.id) ?? null }
+            : {}),
         };
       })
       .filter((c) => toDecimal(c.availableQty).gt(0));
   }
 
-  async findReservations(query: ReservationQuery): Promise<ReservationDto[]> {
+  async findReservations(actor: RequestUser, query: ReservationQuery): Promise<ReservationDto[]> {
     const rows = await this.prisma.reservation.findMany({
       where: {
         status: query.status,
         itemId: query.itemId,
         salesOrderId: query.salesOrderId,
+        salesOrder: sellerWhere(actor),
       },
       include: {
         salesOrder: {
@@ -3251,7 +3348,7 @@ export class SalesOrdersService {
     row: OrderRow,
     labels: Map<string, { label: string; name: string }>,
     actors: Map<string, string>,
-    queueStatus: QueueStatus | null = null,
+    context?: { queueStatus: QueueStatus | null; readiness: OrderReadinessDto },
   ): SalesOrderDto {
     return {
       id: row.id,
@@ -3280,13 +3377,21 @@ export class SalesOrdersService {
       createdAt: row.createdAt.toISOString(),
       createdById: row.createdById,
       createdByName: actors.get(row.createdById) ?? null,
+      sellerId: row.sellerId ?? row.createdById,
+      sellerName: actors.get(row.sellerId ?? row.createdById) ?? null,
       cancelledAt: row.cancelledAt?.toISOString() ?? null,
       promisedDeliveryDate: row.promisedDeliveryDate
         ? row.promisedDeliveryDate.toISOString().slice(0, 10)
         : null,
-      queueStatus,
+      queueStatus: context?.queueStatus ?? null,
       priceChanges: [],
       isEditable: false,
+      readiness: context?.readiness ?? {
+        status: 'SIN_PRODUCCION',
+        orderedMl: '0.000',
+        reportedMl: '0.000',
+        missingMl: '0.000',
+      },
     };
   }
 }

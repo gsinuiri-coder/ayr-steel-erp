@@ -36,6 +36,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { assertSellerAccess, sellerWhere } from '../auth/seller-scope';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -69,6 +70,7 @@ const dispatchInclude = {
       id: true,
       seq: true,
       status: true,
+      sellerId: true,
       customer: { select: { id: true, name: true, docNumber: true } },
     },
   },
@@ -180,6 +182,7 @@ export class DispatchesService {
       },
     });
     if (!order) throw new NotFoundException('Pedido no encontrado');
+    assertSellerAccess(actor, order.sellerId, 'Pedido');
     if (order.status === SalesOrderStatus.CANCELLED) {
       throw new BadRequestException('El pedido está anulado: no se puede despachar');
     }
@@ -633,7 +636,7 @@ export class DispatchesService {
       { timeout: 30_000 },
     );
 
-    return this.findOne(id);
+    return this.findOne(id, actor);
   }
 
   // -------------------------------------------------------------------------
@@ -907,10 +910,14 @@ export class DispatchesService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: DispatchQuery): Promise<PaginatedResult<DispatchListItemDto>> {
+  async findAll(
+    query: DispatchQuery,
+    actor?: RequestUser,
+  ): Promise<PaginatedResult<DispatchListItemDto>> {
     const where: Prisma.DispatchWhereInput = {
       status: query.status,
       salesOrderId: query.salesOrderId,
+      ...(actor ? { salesOrder: sellerWhere(actor) } : {}),
     };
     if (query.search) {
       where.OR = [
@@ -945,9 +952,10 @@ export class DispatchesService {
     return paginate(items, total, query);
   }
 
-  async findOne(id: string): Promise<DispatchDto> {
+  async findOne(id: string, actor?: RequestUser): Promise<DispatchDto> {
     const row = await this.prisma.dispatch.findUnique({ where: { id }, include: dispatchInclude });
     if (!row) throw new NotFoundException('Despacho no encontrado');
+    if (actor) assertSellerAccess(actor, row.salesOrder.sellerId, 'Despacho');
     const actors = await this.resolveActorNames([row.createdById, row.reversedById]);
 
     // Lo que hoy bloquearía la reversa, para que la pantalla lo diga antes de que alguien

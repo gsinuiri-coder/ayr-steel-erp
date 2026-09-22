@@ -22,6 +22,8 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+# salida de `playwright show-report`/`--reporter=html` cuando se le pasa otra carpeta
+report/
 
 # sistema
 .DS_Store

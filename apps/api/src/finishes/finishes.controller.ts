@@ -14,6 +14,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { FinishesService } from './finishes.service';
 
 /** RF-25: catálogo de acabados. Lectura para todos, mutación solo ADMINISTRADOR. */
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 @Controller('finishes')
 export class FinishesController {
   constructor(private readonly finishes: FinishesService) {}

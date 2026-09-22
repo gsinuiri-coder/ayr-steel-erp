@@ -303,18 +303,9 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       );
       expect(ownActive).toEqual([expect.objectContaining({ qty: '80.800' })]);
 
-      // En el pedido del administrador no es dueño: ni agregar ni cambiar cantidades.
+      // S3c: El vendedor ya no puede ver pedidos ajenos, recibe 404.
       await page.goto(`/pedidos/${foreignOrder.id}`);
-      await expect(page.getByRole('heading', { name: foreignOrder.code, level: 1 })).toBeVisible({
-        timeout: 60_000,
-      });
-      await expect(page.getByRole('link', { name: 'Agregar ítems' })).toHaveCount(0);
-      await expect(
-        page.getByRole('button', { name: 'Cambiar cantidad de la línea 1' }),
-      ).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'Cambiar precio de la línea 1' })).toHaveCount(
-        0,
-      );
+      await expect(page.getByRole('heading', { name: foreignOrder.code, level: 1 })).toHaveCount(0);
     } finally {
       await sellerApi.dispose();
       await purgeRoofingTrail(api, trail);

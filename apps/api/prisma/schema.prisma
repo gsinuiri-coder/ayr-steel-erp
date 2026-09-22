@@ -480,6 +480,8 @@ model User {
   sessions           Session[]
   /// Turnos de caja del punto de venta (Fase 7b, D-101).
   cashSessions       CashSession[] @relation("CashSessionUser")
+  sellerQuotations   Quotation[]   @relation("QuotationSeller")
+  sellerOrders       SalesOrder[]  @relation("SalesOrderSeller")
 
   @@map("users")
 }
@@ -1489,6 +1491,9 @@ model Quotation {
   /// Key en R2 del PDF generado al emitir (D-068). Se regenera si la cotización se reemite.
   pdfKey        String?         @map("pdf_key") @db.VarChar(300)
   createdById   String          @map("created_by_id") @db.Uuid
+  /// RF-S3c: dueño comercial estable; nullable sólo durante el backfill aditivo.
+  sellerId      String?         @map("seller_id") @db.Uuid
+  seller        User?           @relation("QuotationSeller", fields: [sellerId], references: [id])
   emittedAt     DateTime?       @map("emitted_at") @db.Timestamptz(3)
   confirmedAt   DateTime?       @map("confirmed_at") @db.Timestamptz(3)
   expiredAt     DateTime?       @map("expired_at") @db.Timestamptz(3)
@@ -1509,6 +1514,7 @@ model Quotation {
 
   @@index([customerId, status])
   @@index([status, validUntil])
+  @@index([sellerId, status, issueDate])
   @@map("quotations")
 }
 
@@ -1594,6 +1600,9 @@ model SalesOrder {
   totalPen             Decimal          @map("total_pen") @db.Decimal(18, 4)
   notes                String?          @db.VarChar(500)
   createdById          String           @map("created_by_id") @db.Uuid
+  /// RF-S3c: se copia al confirmar, nunca se vuelve a derivar de la cotización.
+  sellerId             String?          @map("seller_id") @db.Uuid
+  seller               User?            @relation("SalesOrderSeller", fields: [sellerId], references: [id])
   cancelledById        String?          @map("cancelled_by_id") @db.Uuid
   cancelledAt          DateTime?        @map("cancelled_at") @db.Timestamptz(3)
   /// Fecha prometida de entrega (Fase 7, D-096). Opcional; el vendedor la fija solo al
@@ -1620,6 +1629,7 @@ model SalesOrder {
   priceChanges    SalesPriceChange[]
 
   @@index([customerId, status])
+  @@index([sellerId, status, issueDate])
   @@index([quotationId])
   @@index([importBatchId])
   @@map("sales_orders")

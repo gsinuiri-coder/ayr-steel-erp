@@ -55,6 +55,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { sellerWhere } from '../auth/seller-scope';
 import { CoilOperationsService } from '../coils/coil-operations.service';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
@@ -1350,13 +1351,14 @@ export class RoofingProductionService {
    * porque la definición es esa y no el estado, y un borrador que las incumpla sería un
    * defecto que la cola no debe esconder poniéndolo delante de planta.
    */
-  async queue(): Promise<ProductionQueueEntryDto[]> {
+  async queue(actor?: RequestUser): Promise<ProductionQueueEntryDto[]> {
     const orders = await this.prisma.productionOrder.findMany({
       where: {
         kind: ProductionOrderKind.ROOFING,
         status: ProductionOrderStatus.DRAFT,
         consumptions: { none: { releasedAt: null } },
         reports: { none: { status: ProductionReportStatus.ACTIVE } },
+        ...(actor ? { reservation: { salesOrder: sellerWhere(actor) } } : {}),
       },
       include: {
         product: {

@@ -14,6 +14,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ExchangeRatesService } from './exchange-rates.service';
 
 /** D-029: tipo de cambio. Lectura para todos, edición manual solo ADMINISTRADOR. */
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 @Controller('exchange-rates')
 export class ExchangeRatesController {
   constructor(private readonly exchangeRates: ExchangeRatesService) {}

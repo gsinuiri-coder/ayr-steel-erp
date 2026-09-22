@@ -17,6 +17,7 @@ import { ColorsService } from './colors.service';
  * RF-54: maestro de colores (D-085). Lectura para todos —el vendedor lo necesita para
  * cotizar y planta para elegir el rollo—, mutación solo ADMINISTRADOR, igual que acabados.
  */
+@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
 @Controller('colors')
 export class ColorsController {
   constructor(private readonly colors: ColorsService) {}

@@ -128,19 +128,22 @@ export function FlejesView() {
               </TableRow>
             )}
           </TableBody>
-          {stock.data && stock.data.length > 0 && stock.data[0]?.totalValuePen !== null && (
-            <tfoot>
-              <TableRow>
-                <TableCell colSpan={5} className="text-right font-medium">
-                  Total valorizado
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  {formatMoneyOrDash(totalPen.toFixed(4))}
-                </TableCell>
-                <TableCell />
-              </TableRow>
-            </tfoot>
-          )}
+          {stock.data &&
+            stock.data.length > 0 &&
+            stock.data[0]?.totalValuePen !== null &&
+            stock.data[0]?.totalValuePen !== undefined && (
+              <tfoot>
+                <TableRow>
+                  <TableCell colSpan={5} className="text-right font-medium">
+                    Total valorizado
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {formatMoneyOrDash(totalPen.toFixed(4))}
+                  </TableCell>
+                  <TableCell />
+                </TableRow>
+              </tfoot>
+            )}
         </Table>
       </div>
     </RoleGate>

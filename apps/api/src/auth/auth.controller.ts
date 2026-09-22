@@ -1,3 +1,4 @@
+import { Roles } from './decorators/roles.decorator';
 import {
   Body,
   Controller,
@@ -18,6 +19,7 @@ import {
   type ChangePasswordInput,
   type LoginInput,
 } from '@ayr/shared';
+import { Role } from '@ayr/shared';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ENV, type Env } from '../config/env';
 import { AuthService } from './auth.service';
@@ -95,6 +97,7 @@ export class AuthController {
   }
 
   @Get('me')
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
   me(@CurrentUser() user: RequestUser): { user: AuthUser } {
     const { sessionId: _sid, ...rest } = user;
     return { user: rest };
@@ -102,6 +105,7 @@ export class AuthController {
 
   @Post('change-password')
   @HttpCode(204)
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
   async changePassword(
     @CurrentUser() user: RequestUser,
     @Body(new ZodValidationPipe(changePasswordSchema)) body: ChangePasswordInput,

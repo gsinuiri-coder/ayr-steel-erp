@@ -46,12 +46,12 @@ export const coilSchema = z.object({
   colorCode: z.string().nullable(),
   colorName: z.string().nullable(),
   colorHex: z.string().nullable(),
-  currency: z.enum(CURRENCIES),
-  exchangeRate: z.string(),
+  currency: z.enum(CURRENCIES).nullable(),
+  exchangeRate: z.string().nullable(),
   /** Costo por kg SIN IGV (D-038). El landed cost (D-043) lo puede subir. */
-  unitCostPerKg: z.string(),
-  totalCost: z.string(),
-  totalCostPen: z.string(),
+  unitCostPerKg: z.string().nullable(),
+  totalCost: z.string().nullable(),
+  totalCostPen: z.string().nullable(),
   status: z.enum(COIL_STATUSES),
   parentCoilId: z.string().uuid().nullable(),
   /** Código de la bobina madre, cuando esta nació de un partido (RF-15). */
@@ -71,7 +71,7 @@ export const coilSchema = z.object({
    * No abre nada: este módulo ya es solo de ADMINISTRADOR y SUPERVISOR_PLANTA justamente
    * porque el DTO lleva el costo de compra por kilo.
    */
-  avgCostPen: z.string(),
+  avgCostPen: z.string().nullable(),
   /**
    * Metro lineal equivalente del saldo disponible (C, Fase 7e / D-116):
    * `availableKg / (widthMm × thicknessMm × densityFactor)`. `null` cuando la geometría no

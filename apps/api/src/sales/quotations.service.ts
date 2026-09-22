@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -24,7 +23,6 @@ import {
   isQuotationExpired,
   quotationValidUntil,
   paginate,
-  Role,
   quotationCode,
   salesOrderCode,
   toDecimal,
@@ -40,6 +38,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { assertSellerAccess, quotationSellerWhere } from '../auth/seller-scope';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { ENV, type Env } from '../config/env';
 import { StorageService } from '../documents/storage.service';
@@ -110,24 +109,6 @@ export class QuotationsService {
     return { toleranceMm: roofingToleranceMm(this.env) };
   }
 
-  /**
-   * RF-66 dice "una cotización **propia**": un vendedor no toca las de otro.
-   *
-   * Sin esto, con solo el id (que `GET /sales/quotations` devuelve a cualquier vendedor) se
-   * podía editar el borrador de un compañero, emitirlo, confirmarlo —creando un pedido y una
-   * reserva a nombre de su cliente— o anulárselo. El `audit_log` dejaba el rastro, pero el
-   * daño ya estaba hecho.
-   *
-   * La **lectura** sigue abierta a todo el equipo comercial: RF-69 pide una lista de
-   * cotizaciones, no una lista por vendedor, y en una empresa de este tamaño ver lo que
-   * cotizó el compañero es parte del trabajo. El ADMINISTRADOR opera cualquiera.
-   */
-  private assertOwnership(actor: RequestUser, createdById: string, action: string): void {
-    if (actor.role === Role.ADMINISTRADOR) return;
-    if (actor.id === createdById) return;
-    throw new ForbiddenException(`La cotización es de otro vendedor: no puedes ${action}`);
-  }
-
   // -------------------------------------------------------------------------
   // RF-61 — alta y edición
   // -------------------------------------------------------------------------
@@ -135,7 +116,7 @@ export class QuotationsService {
   async create(actor: RequestUser, input: CreateQuotationInput): Promise<QuotationDto> {
     const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input));
     await this.generatePdf(id);
-    return this.findOne(id);
+    return this.findOne(id, actor);
   }
 
   /**
@@ -190,6 +171,7 @@ export class QuotationsService {
         totalPen: totals.totalPen,
         notes: input.notes ?? null,
         createdById: actor.id,
+        sellerId: actor.id,
         items: { create: lines.map(toItemCreate) },
       },
     });
@@ -220,7 +202,7 @@ export class QuotationsService {
   async update(actor: RequestUser, id: string, input: UpdateQuotationInput): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
-      this.assertOwnership(actor, current.createdById, 'editarla');
+      assertSellerAccess(actor, current.sellerId, 'Cotización');
       if (current.status === QuotationStatus.CONFIRMED) {
         throw new BadRequestException(
           'La cotización ya está confirmada: lo que se edita desde ahora es el pedido.',
@@ -394,6 +376,7 @@ export class QuotationsService {
       },
     });
     if (!source) throw new NotFoundException('Cotización no encontrada');
+    if (actor) assertSellerAccess(actor, source.sellerId, 'Cotización');
     if (source.items.length === 0) {
       throw new BadRequestException('La cotización no tiene líneas que duplicar');
     }
@@ -469,6 +452,7 @@ export class QuotationsService {
           totalPen: totals.totalPen,
           notes: source.notes,
           createdById: actor.id,
+          sellerId: actor.id,
           items: { create: lines.map(toItemCreate) },
         },
       });
@@ -580,12 +564,13 @@ export class QuotationsService {
    * Ese es también el motivo de que este `GET` no escriba nada: el PDF se escribe en el
    * alta, la edición y el duplicado, que son `POST`/`PUT`.
    */
-  async pdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+  async pdf(id: string, actor?: RequestUser): Promise<{ buffer: Buffer; filename: string }> {
     const row = await this.prisma.quotation.findUnique({
       where: { id },
-      select: { id: true, seq: true, status: true, validUntil: true, pdfKey: true },
+      select: { id: true, seq: true, status: true, validUntil: true, pdfKey: true, sellerId: true },
     });
     if (!row) throw new NotFoundException('Cotización no encontrada');
+    if (actor) assertSellerAccess(actor, row.sellerId, 'Cotización');
 
     const filename = `${quotationCode(row.seq)}.pdf`;
     // Con el estado **efectivo**, no el guardado: una emitida cuya fecha ya pasó no puede
@@ -616,7 +601,7 @@ export class QuotationsService {
   async cancel(actor: RequestUser, id: string, reason: string): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
-      this.assertOwnership(actor, current.createdById, 'anularla');
+      assertSellerAccess(actor, current.sellerId, 'Cotización');
       if (current.status === QuotationStatus.CANCELLED) {
         throw new ConflictException('La cotización ya está anulada');
       }
@@ -649,7 +634,53 @@ export class QuotationsService {
       });
     });
 
-    return this.findOne(id);
+    return this.findOne(id, actor);
+  }
+
+  /**
+   * M4: reasignar cotización y pedidos derivados a otro vendedor (solo ADMINISTRADOR).
+   */
+  async reassign(
+    actor: RequestUser,
+    id: string,
+    newSellerId: string,
+    reason: string,
+  ): Promise<QuotationDto> {
+    const newSeller = await this.prisma.user.findUnique({
+      where: { id: newSellerId, active: true, role: 'VENDEDOR' },
+    });
+    if (!newSeller) {
+      throw new BadRequestException(
+        'El vendedor destino no existe, no está activo o no tiene rol VENDEDOR',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const current = await this.lockQuotation(tx, id);
+      if (current.sellerId === newSellerId) {
+        throw new BadRequestException('El vendedor de destino es el mismo que el actual');
+      }
+
+      await tx.quotation.update({
+        where: { id },
+        data: { sellerId: newSellerId },
+      });
+
+      await tx.salesOrder.updateMany({
+        where: { quotationId: id },
+        data: { sellerId: newSellerId },
+      });
+
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.quotation.reassign',
+        entity: 'quotations',
+        entityId: id,
+        before: { sellerId: current.sellerId },
+        after: { sellerId: newSellerId, reason },
+      });
+    });
+    return this.findOne(id, actor);
   }
 
   // -------------------------------------------------------------------------
@@ -705,13 +736,17 @@ export class QuotationsService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  async findAll(query: QuotationQuery): Promise<PaginatedResult<QuotationListItemDto>> {
+  async findAll(
+    actor: RequestUser,
+    query: QuotationQuery,
+  ): Promise<PaginatedResult<QuotationListItemDto>> {
     // El código de la cotización (`COT-000123`) es `quotationCode(seq)`, no una columna:
     // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
     // quien pega el código de una cotización para encontrarla (el uso más común del
     // buscador) se quedaba sin resultados (Fase 7d, hallazgo de revisión).
     const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
     const where: Prisma.QuotationWhereInput = {
+      ...quotationSellerWhere(actor),
       status: query.status,
       customerId: query.customerId,
       // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
@@ -742,7 +777,9 @@ export class QuotationsService {
         take,
       }),
     ]);
-    const actors = await this.resolveActorNames(rows.map((r) => r.createdById));
+    const actors = await this.resolveActorNames(
+      rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
+    );
     const items = rows.map((r) => {
       const {
         items: _items,
@@ -755,14 +792,17 @@ export class QuotationsService {
     return paginate(items, total, query);
   }
 
-  async findOne(id: string): Promise<QuotationDto> {
+  async findOne(id: string, actor?: RequestUser): Promise<QuotationDto> {
     const row = await this.prisma.quotation.findUnique({
       where: { id },
       include: quotationInclude,
     });
     if (!row) throw new NotFoundException('Cotización no encontrada');
+    if (actor) assertSellerAccess(actor, row.sellerId, 'Cotización');
     const labels = await this.reserveLabels(row.items);
-    const actors = await this.resolveActorNames([row.createdById]);
+    const actors = await this.resolveActorNames(
+      [row.createdById, row.sellerId].filter(Boolean) as string[],
+    );
     const [temporary, priceChanges] = await Promise.all([
       this.orders.findQuotationTemporaryReservation(id),
       findPriceChanges(this.prisma, { quotationId: id }),
@@ -788,6 +828,7 @@ export class QuotationsService {
     status: QuotationStatus;
     validUntil: Date | null;
     createdById: string;
+    sellerId: string;
     notes: string | null;
   }> {
     const rows = await tx.$queryRaw<
@@ -797,11 +838,14 @@ export class QuotationsService {
         status: QuotationStatus;
         valid_until: Date | null;
         created_by_id: string;
+        seller_id: string;
         notes: string | null;
       }[]
     >`
-      SELECT "id", "seq", "status", "valid_until", "created_by_id", "notes"
-      FROM "quotations" WHERE "id" = ${id}::uuid FOR UPDATE
+      SELECT id, seq, status, valid_until, created_by_id, seller_id, notes
+      FROM "quotations"
+      WHERE "id" = ${id}::uuid
+      FOR UPDATE
     `;
     const row = rows[0];
     if (!row) throw new NotFoundException('Cotización no encontrada');
@@ -811,6 +855,7 @@ export class QuotationsService {
       status: row.status,
       validUntil: row.valid_until,
       createdById: row.created_by_id,
+      sellerId: row.seller_id,
       notes: row.notes,
     };
   }
@@ -912,6 +957,8 @@ export class QuotationsService {
       items: row.items.map((i) => toSalesItemDto(i, labels.get(i.reserveItemId) ?? '')),
       createdAt: row.createdAt.toISOString(),
       createdByName: actors.get(row.createdById) ?? null,
+      sellerId: row.sellerId ?? row.createdById,
+      sellerName: actors.get(row.sellerId ?? row.createdById) ?? null,
       emittedAt: row.emittedAt?.toISOString() ?? null,
       confirmedAt: row.confirmedAt?.toISOString() ?? null,
       cancelledAt: row.cancelledAt?.toISOString() ?? null,

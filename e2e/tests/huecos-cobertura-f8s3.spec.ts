@@ -203,7 +203,8 @@ test.describe('F8-S3 — huecos de cobertura', () => {
       const queue = await sellerApi.get('/api/production/roofing/queue');
       expect(queue.status()).toBe(200);
       const entries = (await queue.json()) as { orderId: string }[];
-      expect(entries.some((e) => e.orderId === opId)).toBe(true);
+      // S3c: El VENDEDOR ya no ve OPs ajenas en su cola.
+      expect(entries.some((e) => e.orderId === opId)).toBe(false);
 
       // Prioridad: solo ADMINISTRADOR; el supervisor recibe 403 y la OP sigue sin prioridad.
       const supPriority = await supervisorApi.patch(`/api/production/roofing/${opId}/priority`, {

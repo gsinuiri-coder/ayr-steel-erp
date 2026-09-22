@@ -24,8 +24,8 @@ export class ReportsController {
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
   // dice lo mismo, en vez de dejar que difieran. No es el caso de `/inventory`, que §3.4 sí le
   // abre al vendedor.
-  @Get('coils')
   @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Get('coils')
   coils(
     @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,

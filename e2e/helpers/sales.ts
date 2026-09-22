@@ -258,6 +258,7 @@ export async function createSellableProduct(
     roofingKind?: 'PLANCHA' | 'A_MEDIDA';
     /** D-122: acabado del SKU. Obligatorio en Metallic Roofing; de él sale la densidad. */
     finishId?: string;
+    thicknessMm?: string;
   },
 ): Promise<ProductDto & { listPricePen: string | null }> {
   const lineId = await businessLineId(api, options.lineCode);
@@ -270,7 +271,7 @@ export async function createSellableProduct(
       ? { widthMm: '100', lengthMm: '3000', pieceWeightKg: '6' }
       : options.lineCode === 'metallic-roofing'
         ? {
-            thicknessMm: '0.50',
+            thicknessMm: options.thicknessMm ?? '0.50',
             widthMm: '1000',
             ...(options.finishId === undefined ? {} : { finishId: options.finishId }),
             ...roofingKindFields(unit, options.roofingKind),
@@ -301,7 +302,7 @@ export interface CoilScenario {
  */
 export async function setupCoilStock(
   api: APIRequestContext,
-  options: { lineCode: string; weightKg?: string; unitPrice?: string },
+  options: { lineCode: string; weightKg?: string; unitPrice?: string; thicknessMm?: string },
 ): Promise<CoilScenario> {
   const supplier = await createCuttingSupplier(api);
   // D-203: el acabado es de la línea de la compra (natural, sin color).
@@ -327,7 +328,7 @@ export async function setupCoilStock(
         unitPrice: options.unitPrice ?? '5',
         finishId: finish.id,
         widthMm: '1200',
-        thicknessMm: '0.50',
+        thicknessMm: options.thicknessMm ?? '0.50',
         // D-117 (Fase 7e): nace CLOSED por defecto; este escenario reserva kilos de
         // materia prima de inmediato (`reserveFromCoilId`), que exige OPEN.
         coilStatus: 'OPEN',
@@ -394,7 +395,7 @@ export async function buyCoilForSale(
         unitPrice: options.unitPrice ?? '5',
         finishId: finish.id,
         widthMm: '1200',
-        thicknessMm: '0.50',
+        thicknessMm: options.thicknessMm ?? '0.50',
         // D-117: sin este campo la bobina nace CLOSED (el default real). Se manda solo
         // cuando el test pide explícitamente OPEN.
         ...(options.coilStatus ? { coilStatus: options.coilStatus } : {}),
@@ -538,7 +539,7 @@ export async function createQuotation(
 ): Promise<QuotationDto> {
   return postJson<QuotationDto>(api, '/api/sales/quotations', {
     customerId: input.customerId,
-    businessLine: input.businessLine,
+
     issueDate: input.issueDate ?? today(),
     ...(input.validityDays === undefined ? {} : { validityDays: input.validityDays }),
     items: [
@@ -593,7 +594,7 @@ export async function setupCoilBatch(
       unitPrice: options.unitPrice ?? '5',
       finishId: finish.id,
       widthMm: '1200',
-      thicknessMm: '0.50',
+      thicknessMm: options.thicknessMm ?? '0.50',
       // D-117 (Fase 7e): nace CLOSED por defecto; estos lotes se reservan por kilos.
       coilStatus: 'OPEN',
     })),
@@ -661,7 +662,7 @@ export async function createQuotationWithLines(
 ): Promise<QuotationDto> {
   return postJson<QuotationDto>(api, '/api/sales/quotations', {
     customerId: input.customerId,
-    businessLine: input.businessLine,
+
     issueDate: input.issueDate ?? today(),
     ...(input.validityDays === undefined ? {} : { validityDays: input.validityDays }),
     items: input.items.map(toLinePayload),
@@ -690,7 +691,7 @@ export async function createDirectOrder(
 ): Promise<SalesOrderDto> {
   return postJson<SalesOrderDto>(api, '/api/sales/orders', {
     customerId: input.customerId,
-    businessLine: input.businessLine,
+
     issueDate: input.issueDate ?? today(),
     items: input.items.map(toLinePayload),
   });

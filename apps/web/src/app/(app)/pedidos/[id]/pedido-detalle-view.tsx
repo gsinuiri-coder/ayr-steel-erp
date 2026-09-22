@@ -194,7 +194,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
   // D-187: precio y cliente son de ADMINISTRADOR; agregar ítems y cambiar cantidades, también
   // del vendedor dueño del pedido. El API es el que corta; esto solo evita ofrecer un 403.
   const canEditAsAdmin = o.isEditable && isAdmin;
-  const canEditAsOwner = o.isEditable && (isAdmin || user.id === o.createdById);
+  const canEditAsOwner = o.isEditable && (isAdmin || user.id === o.sellerId);
   const showLineActions = canEditAsAdmin || canEditAsOwner;
 
   return (

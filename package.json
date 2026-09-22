@@ -46,6 +46,7 @@
     "import:initial-inventory": "node scripts/import-initial-inventory.mjs",
     "export:coils": "node scripts/export-coils.mjs",
     "limpia:v4": "node scripts/production-cleanup-v4.mjs",
+    "backfill:seller-scope": "node scripts/backfill-seller-scope.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
   },
   "devDependencies": {

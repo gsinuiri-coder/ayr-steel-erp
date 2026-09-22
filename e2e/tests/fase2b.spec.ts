@@ -1405,21 +1405,11 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
       expect(row!.totalValuePen).toBeNull();
       expect(summary.totalValuePen).toBeNull();
 
-      // RF-53: lo mismo en el kardex del ítem, incluido el promedio del saldo corrido.
-      const movements = await getItems<MovementDto>(
-        vendedor,
+      // RF-S3c: El vendedor ya no tiene acceso al Kardex (movements).
+      const kardexRes = await vendedor.get(
         `/api/inventory/movements?itemType=COIL&itemId=${coil.id}`,
       );
-      expect(movements).toHaveLength(1);
-      expect(movements[0]).toMatchObject({
-        type: 'IN',
-        qty: '5000.000',
-        unit: 'KGM',
-        balanceQty: '5000.000',
-        unitCost: null,
-        totalCost: null,
-        balanceAvgCost: null,
-      });
+      expect(kardexRes.status()).toBe(403);
 
       // El mismo movimiento sí lleva costos para el administrador: los campos van en
       // `null` por rol, no porque el kardex esté vacío.

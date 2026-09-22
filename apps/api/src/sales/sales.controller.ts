@@ -22,6 +22,7 @@ import {
   type UpdateSalesOrderItemQtyInput,
   cancelQuotationSchema,
   cancelSalesOrderSchema,
+  reassignSellerSchema,
   confirmQuotationSchema,
   createQuotationSchema,
   createSalesOrderSchema,
@@ -43,6 +44,7 @@ import {
   updateQuotationSchema,
   type CancelQuotationInput,
   type CancelSalesOrderInput,
+  type ReassignSellerInput,
   type ConfirmQuotationInput,
   type CreateQuotationInput,
   type CreateSalesOrderInput,
@@ -99,9 +101,10 @@ export class SalesController {
 
   @Get('quotations')
   findQuotations(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(quotationQuerySchema)) query: QuotationQuery,
   ): Promise<PaginatedResult<QuotationListItemDto>> {
-    return this.quotations.findAll(query);
+    return this.quotations.findAll(actor, query);
   }
 
   /**
@@ -110,19 +113,27 @@ export class SalesController {
    * "stock-shortages" como si fuera un id.
    */
   @Get('quotations/stock-shortages')
-  findStockShortages(): Promise<QuotationStockShortageDto[]> {
-    return this.orders.findStockShortages();
+  @Roles(Role.ADMINISTRADOR)
+  findStockShortages(@CurrentUser() actor: RequestUser): Promise<QuotationStockShortageDto[]> {
+    return this.orders.findStockShortages(actor);
   }
 
   @Get('quotations/:id')
-  findQuotation(@Param('id', ParseUUIDPipe) id: string): Promise<QuotationDto> {
-    return this.quotations.findOne(id);
+  findQuotation(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<QuotationDto> {
+    return this.quotations.findOne(id, actor);
   }
 
   /** PDF de la cotización (D-068). Se descarga desde R2; se genera al vuelo si falta. */
   @Get('quotations/:id/pdf')
-  async quotationPdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
-    const { buffer, filename } = await this.quotations.pdf(id);
+  async quotationPdf(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { buffer, filename } = await this.quotations.pdf(id, actor);
     res.setHeader('Content-Type', 'application/pdf');
     // `attachment` y no `inline`: el nombre viene de un correlativo del sistema, no del
     // usuario, pero descargar en vez de renderizar deja al navegador fuera del asunto.
@@ -140,8 +151,12 @@ export class SalesController {
   // por eso suma SUPERVISOR_PLANTA a los roles de la clase (§3.4). No lleva importes, así que
   // no le abre nada de lo que el resto del módulo le oculta a ese rol.
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
-  async plantOrderPdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
-    const { buffer, filename } = await this.orders.plantPdf(id);
+  async plantOrderPdf(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: RequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { buffer, filename } = await this.orders.plantPdf(id, actor);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -212,7 +227,7 @@ export class SalesController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<QuotationDto> {
     await this.orders.reserveTemporarily(actor, id);
-    return this.quotations.findOne(id);
+    return this.quotations.findOne(id, actor);
   }
 
   /** D-185: liberar a mano la reserva temporal vigente. Motivo obligatorio. */
@@ -224,13 +239,15 @@ export class SalesController {
     body: ReleaseTemporaryReservationInput,
   ): Promise<QuotationDto> {
     await this.orders.releaseTemporary(actor, id, body.reason);
-    return this.quotations.findOne(id);
+    return this.quotations.findOne(id, actor);
   }
 
   /** D-185: la vista «Reservas temporales vigentes». */
   @Get('temporary-reservations')
-  temporaryReservations(): Promise<TemporaryReservationListItemDto[]> {
-    return this.orders.findTemporaryReservations();
+  temporaryReservations(
+    @CurrentUser() actor: RequestUser,
+  ): Promise<TemporaryReservationListItemDto[]> {
+    return this.orders.findTemporaryReservations(actor);
   }
 
   /** D-185: configuración comercial. La lee el equipo comercial; la cambia Administración. */
@@ -258,6 +275,17 @@ export class SalesController {
     return this.quotations.cancel(actor, id, body.reason);
   }
 
+  /** M4: Reasignar cotización a otro vendedor */
+  @Patch('quotations/:id/seller')
+  @Roles(Role.ADMINISTRADOR)
+  reassignSeller(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reassignSellerSchema)) body: ReassignSellerInput,
+  ): Promise<QuotationDto> {
+    return this.quotations.reassign(actor, id, body.sellerId, body.reason);
+  }
+
   /**
    * D-069: marca vencidas las cotizaciones cuya vigencia pasó. Lo corre el job diario de
    * pg-boss; el endpoint existe porque el API escala a cero en Cloud Run y hace falta
@@ -275,9 +303,10 @@ export class SalesController {
 
   @Get('orders')
   findOrders(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(salesOrderQuerySchema)) query: SalesOrderQuery,
   ): Promise<PaginatedResult<SalesOrderListItemDto>> {
-    return this.orders.findAll(query);
+    return this.orders.findAll(actor, query);
   }
 
   /**
@@ -288,13 +317,16 @@ export class SalesController {
    */
   @Get('orders/lines-without-order')
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
-  findLinesWithoutOrder(): Promise<LineWithoutOrderDto[]> {
-    return this.orders.findLinesWithoutOrder();
+  findLinesWithoutOrder(@CurrentUser() actor: RequestUser): Promise<LineWithoutOrderDto[]> {
+    return this.orders.findLinesWithoutOrder(actor);
   }
 
   @Get('orders/:id')
-  findOrder(@Param('id', ParseUUIDPipe) id: string): Promise<SalesOrderDto> {
-    return this.orders.findOne(id);
+  findOrder(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<SalesOrderDto> {
+    return this.orders.findOne(id, actor);
   }
 
   /** D-065: pedido directo, solo en líneas cuya cotización es opcional. */
@@ -397,9 +429,10 @@ export class SalesController {
    */
   @Get('stock-panel')
   stockPanel(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(stockPanelQuerySchema)) query: StockPanelQuery,
   ): Promise<StockPanelDto> {
-    return this.orders.stockPanel(query);
+    return this.orders.stockPanel(actor, query);
   }
 
   /**
@@ -410,9 +443,10 @@ export class SalesController {
    */
   @Get('sellable-coils')
   findSellableCoils(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(sellableCoilQuerySchema)) query: SellableCoilQuery,
   ): Promise<SellableCoilDto[]> {
-    return this.orders.findSellableCoils(query);
+    return this.orders.findSellableCoils(actor, query);
   }
 
   /**
@@ -425,9 +459,10 @@ export class SalesController {
   @Get('reservations')
   @Roles(Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA)
   findReservations(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(reservationQuerySchema)) query: ReservationQuery,
   ): Promise<ReservationDto[]> {
-    return this.orders.findReservations(query);
+    return this.orders.findReservations(actor, query);
   }
 
   /** Liberación manual (D-054): solo ADMINISTRADOR, siempre con motivo. */

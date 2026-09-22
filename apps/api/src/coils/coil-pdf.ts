@@ -60,7 +60,7 @@ export interface CoilPdfInput {
   status: CoilStatus;
   weightKg: string;
   availableKg: string;
-  avgCostPen: string;
+  avgCostPen: string | null;
   notes: string | null;
   operationDate: string;
   consumptions: CoilConsumptionDto[];

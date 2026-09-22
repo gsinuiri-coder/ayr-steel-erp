@@ -483,6 +483,13 @@ export type UpdateQuotationInput = z.infer<typeof updateQuotationSchema>;
 export const cancelQuotationSchema = z.object({ reason: reasonSchema });
 export type CancelQuotationInput = z.infer<typeof cancelQuotationSchema>;
 
+/** M4: reasignar cotización y pedidos derivados a otro vendedor. Solo administrador. */
+export const reassignSellerSchema = z.object({
+  sellerId: z.string().uuid(),
+  reason: reasonSchema,
+});
+export type ReassignSellerInput = z.infer<typeof reassignSellerSchema>;
+
 export const quotationSchema = z.object({
   id: z.string().uuid(),
   /** `COT-000123`, derivado del correlativo (D-068). */
@@ -510,6 +517,8 @@ export const quotationSchema = z.object({
   items: z.array(salesItemSchema),
   createdAt: z.string(),
   createdByName: z.string().nullable(),
+  sellerId: z.string().uuid(),
+  sellerName: z.string().nullable(),
   emittedAt: z.string().nullable(),
   confirmedAt: z.string().nullable(),
   cancelledAt: z.string().nullable(),
@@ -848,6 +857,20 @@ export const lineWithoutOrderSchema = z.object({
 });
 export type LineWithoutOrderDto = z.infer<typeof lineWithoutOrderSchema>;
 
+export const ORDER_READINESS = [
+  'SIN_PRODUCCION',
+  'EN_PRODUCCION',
+  'LISTO',
+  'LISTO_CON_FALTANTE',
+] as const;
+export const orderReadinessSchema = z.object({
+  status: z.enum(ORDER_READINESS),
+  orderedMl: z.string(),
+  reportedMl: z.string(),
+  missingMl: z.string(),
+});
+export type OrderReadinessDto = z.infer<typeof orderReadinessSchema>;
+
 export const salesOrderSchema = z.object({
   id: z.string().uuid(),
   /** `PED-000123`, derivado del correlativo (D-068). */
@@ -880,6 +903,8 @@ export const salesOrderSchema = z.object({
   /** D-187: el dueño del pedido, que puede agregarle ítems y cambiar cantidades. */
   createdById: z.string().uuid(),
   createdByName: z.string().nullable(),
+  sellerId: z.string().uuid(),
+  sellerName: z.string().nullable(),
   cancelledAt: z.string().nullable(),
   promisedDeliveryDate: z.string().nullable(),
   /**
@@ -892,6 +917,7 @@ export const salesOrderSchema = z.object({
   priceChanges: z.array(z.lazy(() => salesPriceChangeSchema)),
   /** D-187: no anulado y sin comprobante (factura o boleta, en borrador o viva). */
   isEditable: z.boolean(),
+  readiness: orderReadinessSchema,
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 
@@ -902,6 +928,7 @@ export const salesOrderListItemSchema = salesOrderSchema
   // D-119: `businessLines` sale de `items`, que el listado tampoco carga (mismo motivo).
   // D-141: el número del comprobante importado exige un join más por fila y nadie lo
   // muestra en la lista; `origin` sí queda, que es una columna y es lo que se filtra.
+  // NOTA: readiness SÍ se expone (M2).
   .omit({
     items: true,
     reservations: true,
@@ -1158,7 +1185,7 @@ export const sellableCoilSchema = z.object({
    * la aritmética mental; lo que sigue sin viajar es el costo del **documento** de compra, el
    * proveedor y el landed cost, que es lo que §3.4 le oculta al vendedor.
    */
-  avgCostPen: z.string().nullable(),
+  avgCostPen: z.string().nullable().optional(),
 });
 export type SellableCoilDto = z.infer<typeof sellableCoilSchema>;
 
