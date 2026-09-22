@@ -14,6 +14,7 @@ import {
   piecesTheoreticalKg,
   Role,
   roofingConsumptionDeviation,
+  mountedKgForReport,
   toDecimal,
   Unit,
   type ProductionOrderDto,
@@ -705,6 +706,11 @@ export function RoofingOrderPanel({
                     </p>
                   )}
                   {resolved.error !== null && <p className="text-destructive">{resolved.error}</p>}
+                  {resolved.yieldNote !== null && (
+                    <p role="status" className="text-sky-700 dark:text-sky-400">
+                      ℹ {resolved.yieldNote}
+                    </p>
+                  )}
                   {resolved.deviation !== null && (
                     <p className="text-amber-700 dark:text-amber-500">⚠ {resolved.deviation}</p>
                   )}
@@ -1223,6 +1229,8 @@ interface ResolvedDraft {
   error: string | null;
   /** Lo que el API **acepta** y anota igual (D-154): se muestra y no bloquea. */
   deviation: string | null;
+  /** D-246: el teórico pasa lo montado pero el acero ya salió; se topa y no es un error. */
+  yieldNote: string | null;
   /** La desviación que el borrador guardado va a dejar anotada, para retenerla tras ejecutar. */
   draftDeviation: string | null;
 }
@@ -1295,7 +1303,21 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
     toDecimal(order.remainingMeters).minus(othersMeters),
     new Decimal(0),
   );
-  const closeBounds = closeBoundsOf(order, draft.closeKg, draftKg);
+  // D-246: lo que el borrador va a **sacar** de cada bobina, topado en lo que le queda
+  // montado; el piso del cierre es eso y no su teórico.
+  const draftOutKg = order.coils.reduce(
+    (acc, c) =>
+      acc.plus(
+        Decimal.min(
+          order.drafts
+            .filter((d) => d.coilId === c.coilId)
+            .reduce((sum, d) => sum.plus(toDecimal(d.theoreticalKg)), new Decimal(0)),
+          toDecimal(c.remainingKg),
+        ),
+      ),
+    new Decimal(0),
+  );
+  const closeBounds = closeBoundsOf(order, draft.closeKg, draftOutKg);
 
   // D-089: lo declarado menos lo que las planchas representan es el despunte, y por encima del
   // umbral el API pide motivo. La pantalla lo **estima**; el 400 conserva su camino de vuelta.
@@ -1336,6 +1358,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
     closeBounds,
     error: null,
     deviation: null,
+    yieldNote: null,
     draftDeviation,
   };
 
@@ -1378,27 +1401,6 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
     };
   }
 
-  // Los kilos de la bobina que ya toman las otras filas del borrador, también.
-  if (coil !== undefined && newKg !== null) {
-    const taken = others
-      .filter((d) => d.coilId === coil.coilId)
-      .reduce((acc, d) => acc.plus(toDecimal(d.theoreticalKg)), new Decimal(0));
-    const left = toDecimal(coil.remainingKg).minus(taken);
-    if (newKg.gt(left)) {
-      return {
-        ...base,
-        pieces,
-        meters,
-        newKg,
-        completesPlan,
-        error:
-          `${coil.coilCode} tiene ${left.toFixed(3)} kg montados` +
-          (taken.gt(0) ? ' libres del borrador' : '') +
-          ` y esto necesita ${newKg.toFixed(3)} kg: monta más material.`,
-      };
-    }
-  }
-
   const kg = draft.consumedKg.trim();
   if (kg !== '' && (!/^\d+(\.\d{1,3})?$/.test(kg) || toDecimal(kg).lte(0))) {
     return {
@@ -1409,6 +1411,38 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       completesPlan,
       error: 'Los kilos van con hasta tres decimales.',
     };
+  }
+
+  // Los kilos de la bobina que ya toman las otras filas del borrador, también. D-246: cada
+  // fila sale topada en lo montado, así que entre todas nunca toman más que la bobina.
+  let yieldNote: string | null = null;
+  if (coil !== undefined && newKg !== null) {
+    const coilKg = toDecimal(coil.remainingKg);
+    const taken = Decimal.min(
+      others
+        .filter((d) => d.coilId === coil.coilId)
+        .reduce((acc, d) => acc.plus(toDecimal(d.theoreticalKg)), new Decimal(0)),
+      coilKg,
+    );
+    // D-246: la misma regla que el API. Si el acero ya salió (lo declarado cabe en lo
+    // montado, o el exceso entra en la tolerancia), avisa en vez de bloquear.
+    const mounted = mountedKgForReport({
+      label: coil.coilCode,
+      theoreticalKg: newKg,
+      availableKg: coilKg.minus(taken),
+      declaredKg: kg === '' ? null : kg,
+    });
+    if (!mounted.ok) {
+      return {
+        ...base,
+        pieces,
+        meters,
+        newKg,
+        completesPlan,
+        error: taken.gt(0) ? `${mounted.message} (descontando el borrador)` : mounted.message,
+      };
+    }
+    yieldNote = mounted.note;
   }
 
   // D-154: la desviación del kilo declarado **avisa**, con la misma función que el API.
@@ -1422,5 +1456,5 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
           planKg,
         });
 
-  return { ...base, pieces, meters, newKg, completesPlan, deviation };
+  return { ...base, pieces, meters, newKg, completesPlan, deviation, yieldNote };
 }
