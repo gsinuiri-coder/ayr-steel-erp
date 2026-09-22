@@ -67,6 +67,16 @@ dominio. Agente: Claude Code. Rama `rf-s4a`, PR
    fue código y CI. La primera lectura real es el guion UAT. Lo que sí está dicho es dónde van
    a aparecer (punto 2 y 3, y `docs/PROGRESO.md`).
 
+7. **Las dos pantallas sí se miraron, en un stack local, y ahí salió un defecto que ningún
+   test iba a ver.** El detalle desplegable de M1 comparte la tabla de su grupo, y sus datos
+   propios caían bajo encabezados ajenos: el **ancho** de la bobina bajo la columna «Espesor»
+   —`1,200.00 mm` debajo del rótulo que en la fila del grupo dice `0.45 mm`—, el estado bajo
+   «Color» y la fecha bajo «Bobinas». Cada dato era correcto y cada encabezado también; lo
+   que estaba mal era el cruce, y las aserciones no podían verlo porque miran el DTO del API,
+   donde las columnas no existen. Corregido en `edb80fb`. La lección para el siguiente: en
+   una tabla con filas de dos naturalezas, una columna solo se puede compartir si el
+   encabezado significa lo mismo para las dos.
+
 ## Lo que queda pendiente
 
 - **Ventana corta esta noche**, con OK del dueño (D-232). Sin migración: API → merge → web.

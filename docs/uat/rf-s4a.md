@@ -30,7 +30,10 @@ código y CI, así que los puntos 4 y 5 son tanto prueba como descubrimiento.
 2. Las bobinas están agrupadas por **línea / espesor / color**. Las galvanizadas (sin color)
    forman su propio grupo, rotulado «Sin color».
 3. Hacer clic en un grupo: se despliegan sus bobinas, cada una enlazada a su ficha. Abrir una y
-   comprobar que el saldo que muestra la ficha es el mismo que el del reporte.
+   comprobar que el saldo que muestra la ficha es el mismo que el del reporte. En la fila de
+   detalle, las tres columnas de la derecha —saldo, costo/kg y valor— tienen que caer bajo sus
+   encabezados, y los valores de las bobinas de un grupo tienen que sumar el valor del grupo.
+   El ancho y la fecha de alta van rotulados junto al código, no en columnas propias.
 4. **Cuadre contra el kardex**: elegir una bobina, abrir su kardex (`/kardex`) y comprobar que
    el saldo valorizado del último movimiento coincide con el «Valor» de esa fila.
 5. Sumar a mano la columna «Total» de la tabla de totales por línea: debe dar exactamente el
