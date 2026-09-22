@@ -9,8 +9,8 @@ dominio. Agente: Claude Code. Rama `rf-s4a`, PR
 |              |                                                                                                    |
 | ------------ | -------------------------------------------------------------------------------------------------- |
 | Rama         | `rf-s4a`, desde `origin/main` en `7a2c1c3`                                                         |
-| Commits      | `e27e750` (M1+M2), `f35bcaa` (M3), `cc1d6e0` (fix de totales), `edb80fb` (fix de la tabla) + docs  |
-| CI           | run `35776762981` **verde** sobre `96146a4`, ya con el hotfix D-246 incorporado                    |
+| Commits      | `e27e750` (M1+M2), `f35bcaa` (M3), `cc1d6e0`, `edb80fb`, `50a6450` (tres fixes) + docs             |
+| CI           | run `35782200058` **verde** sobre `50a6450`, con el hotfix D-246 incorporado                       |
 | Migración    | **ninguna**, y ninguna hace falta                                                                  |
 | Rutas nuevas | `GET /reports/inventory-valuation`, `GET /reports/sales-margin?from&to`, y sus dos `/xlsx`         |
 | Pantallas    | `/reportes/inventario-valorizado`, `/reportes/ventas-margen`, las dos en el menú de Administración |
