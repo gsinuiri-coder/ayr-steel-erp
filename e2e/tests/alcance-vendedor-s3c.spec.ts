@@ -184,8 +184,8 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const balances = await resA.json();
     expect(balances.length).toBeGreaterThan(0);
     for (const b of balances) {
-      expect(b.avgCostPen).toBeNull();
-      expect(b.totalValuePen).toBeNull();
+      expect(b.avgCostPen).toBeUndefined();
+      expect(b.totalValuePen).toBeUndefined();
     }
 
     const coilResA = await contextA.get('/api/coils');
