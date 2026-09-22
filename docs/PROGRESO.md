@@ -7338,3 +7338,50 @@ Se completaron los hitos del brief:
 - El CI (PR #7) corrió verde exitosamente tras los fix de Playwright.
 
 Pendiente: Handoff para revisión cruzada por Claude Code y prueba de UI con Playwright local/CI.
+
+## ACC-demo — accesorios de cobertura (2026-09-22, sin mergear)
+
+Sesión de demo: agente Claude Code, rama `acc-demo` desde `7a2c1c3`. **No toca producción**
+y la rama **no se mergea** hasta que el cliente valide el flujo (D-242).
+
+Se entregaron los cuatro milestones del brief:
+
+- **M1 — SKU de accesorio.** Tercer `roofingKind` (`ACCESORIO`) con `development_mm`, en dos
+  migraciones aditivas: el `ALTER TYPE ... ADD VALUE` va **solo**, porque Postgres no deja usar
+  un valor de enum en la misma transacción que lo crea y el `CHECK` de la segunda lo nombra. Se
+  extendió la lista blanca de `products_roofing_kind_unit_check` (`ACCESORIO` + `MTR`) y se
+  agregó `products_development_mm_check`. `isAccessory` entra a la familia de predicados de
+  `sales-lines.ts` como quinta pregunta, con su fila en el centinela.
+- **M2 — OP y reporte por pasadas.** El operario carga largo de pasada y cantidad de pasadas;
+  `accessoryConversion` resuelve `N` contra el rollo montado y convierte a piezas antes de que
+  nada más mire esas filas. El borrador (D-191) guarda **pasadas** y convierte al ejecutar: si
+  guardara piezas, `reportInTx` multiplicaría una segunda vez.
+- **M3 — A stock.** Reabre para accesorios la puerta que D-171 cerró para coberturas; la corrida
+  elige el largo, con la cota de D-166 (el campo va en milímetros).
+- **M4 — Datos de demo.** `scripts/oneoff/20260922-demo-accesorios.mjs` siembra por HTTP dos SKU,
+  bobina, cliente rotulado `CLIENTE DEMO ACCESORIOS` y un pedido con su OP en cola. Guion en
+  `docs/uat/acc-demo.md`.
+
+Verificación local (base `ayr_acc_demo`, exclusiva de esta sesión, creada en el contenedor
+compartido sin tocar ninguna otra):
+
+- `typecheck`, `lint`, `format:check` y **707 unitarios en 53 suites**, verdes.
+- Flujo real contra la app corriendo: un pedido de 36 ML reservó **25.688 kg**; 3 pasadas de
+  3 m dejaron 12 piezas, **36.000 m** de kardex y **25.692 kg** menos de bobina. Sin el ancho
+  efectivo habría reservado cuatro veces eso.
+- A stock: OP con plan de 9 × 3 m, 3 pasadas reportadas, **27.000 m disponibles** (reservado 0)
+  a 4.9469 S//m.
+- La suite E2E completa **no se corrió en local** por decisión del dueño (sesión en paralelo):
+  la juez es la CI del PR.
+
+Dos defectos que apareció **manejar la pantalla**, no la suite:
+
+1. El ML equivalente de la bobina **montada** usaba el ancho del rollo y no el del material: el
+   selector decía 1 576 m y la bobina montada 516 m, el mismo saldo rindiendo tres veces menos
+   de un renglón al otro.
+2. El desarrollo se mostraba en metros (`0.400 m`) donde el catálogo y la planta lo dicen en
+   milímetros.
+
+Pendiente de decisión del cliente (anotado en el guion): si un pedido de accesorio debe **tomar
+el stock** que ya existe o producir siempre. Hoy produce siempre, así que el saldo a stock solo
+se vende por mostrador — es la pregunta que D-171 dejó abierta y que ahora tiene caso real.
