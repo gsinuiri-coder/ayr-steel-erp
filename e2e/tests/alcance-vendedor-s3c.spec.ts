@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+﻿import { test, expect } from '@playwright/test';
 import { businessToday } from '@ayr/shared';
 import { apiAs } from '../helpers/production';
 import { adminApi, createUser, postJson, createSupplier } from '../helpers/api';
@@ -93,7 +93,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       (await contextB.get('/api/sales/quotations/' + quoteId + '/confirm-preview')).status(),
     ).toBe(404);
 
-    // CRÍTICA 4: Confirm preview temprano (ya verificado arriba)
+    // CRÃTICA 4: Confirm preview temprano (ya verificado arriba)
 
     // Confirmar pedido (A)
     const previewRes = await contextA.get('/api/sales/quotations/' + quoteId + '/confirm-preview');
@@ -102,7 +102,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       data: {},
     });
     if (!confirmRes.ok()) {
-      throw new Error('Confirm falló: ' + confirmRes.status() + ' ' + (await confirmRes.text()));
+      throw new Error('Confirm fallÃ³: ' + confirmRes.status() + ' ' + (await confirmRes.text()));
     }
     const orderA = await confirmRes.json();
     const orderId = orderA.id;
@@ -118,10 +118,10 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       pieces: [{ lengthMm: '1000', qty: 1 }],
     });
 
-    // Vendedor B no ve PDF de planta ajeno (CRÍTICA 2)
+    // Vendedor B no ve PDF de planta ajeno (CRÃTICA 2)
     expect((await contextB.get('/api/sales/orders/' + orderId + '/pdf-planta')).status()).toBe(404);
 
-    // Admin SÍ puede ver PDF de planta
+    // Admin SÃ puede ver PDF de planta
     const pdfPlantaAdmin = await contextAdmin.get('/api/sales/orders/' + orderId + '/pdf-planta');
     expect(pdfPlantaAdmin.ok()).toBeTruthy();
 
@@ -136,7 +136,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     );
     if (!confirmRoofingRes.ok()) {
       throw new Error(
-        'Confirm roofing falló: ' +
+        'Confirm roofing fallÃ³: ' +
           confirmRoofingRes.status() +
           ' ' +
           (await confirmRoofingRes.text()),
@@ -182,7 +182,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     expect((await contextB.get('/api/invoicing/documents/' + docId + '/pdf')).status()).toBe(404);
     expect((await contextB.get('/api/invoicing/documents/' + docId + '/xml')).status()).toBe(404);
 
-    // 2. Kardex / Auditoría (403 para vendedor, 200 para admin)
+    // 2. Kardex / AuditorÃ­a (403 para vendedor, 200 para admin)
     const kardexResA = await contextA.get('/api/inventory/movements');
     expect(kardexResA.status()).toBe(403);
     const kardexResAdmin = await contextAdmin.get('/api/inventory/movements');
@@ -193,7 +193,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const auditResAdmin = await contextAdmin.get('/api/audit/logs');
     expect(auditResAdmin.status()).toBe(200);
 
-    // 3. Stock / Modal de cotización (200, sin costos)
+    // 3. Stock / Modal de cotizaciÃ³n (200, sin costos)
     const resA = await contextA.get('/api/inventory/balances');
     expect(resA.ok()).toBeTruthy();
     const balances = await resA.json();
@@ -218,13 +218,13 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       ).status(),
     ).toBe(403);
 
-    // CRÍTICA 5: Admin guards test (stock-shortages y receivables)
+    // CRÃTICA 5: Admin guards test (stock-shortages y receivables)
     expect((await contextA.get('/api/sales/quotations/stock-shortages')).status()).toBe(403);
     expect((await contextA.get('/api/invoicing/receivables')).status()).toBe(403);
     expect((await contextA.get('/api/invoicing/receivables/summary')).status()).toBe(403);
     expect((await contextA.get('/api/catalog/price-list/floor-summary')).status()).toBe(403);
 
-    // CRÍTICA 3: Payments test - Vendedor B intenta registrar pago en documento de A
+    // CRÃTICA 3: Payments test - Vendedor B intenta registrar pago en documento de A
     expect(
       (
         await contextB.post('/api/invoicing/documents/' + docId + '/payments', {
@@ -237,13 +237,13 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       ).status(),
     ).toBe(404);
 
-    // CRÍTICA 2: Reassign test A -> B
+    // CRÃTICA 2: Reassign test A -> B
     const reassignRes = await contextAdmin.patch('/api/sales/quotations/' + quoteId + '/seller', {
       data: { newSellerId: vendedorB.id, reason: 'Cambio' },
     });
     expect(reassignRes.ok()).toBeTruthy();
 
-    // A ya no puede operar la cotización/pedido
+    // A ya no puede operar la cotizaciÃ³n/pedido
     expect((await contextA.get('/api/sales/quotations/' + quoteId)).status()).toBe(404);
     expect((await contextA.get('/api/sales/orders/' + orderId)).status()).toBe(404);
 
@@ -252,7 +252,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     expect(getOrderB.ok()).toBeTruthy();
   });
 
-  test('Vendedor A no ve líneas sueltas de Vendedor B en lines-without-order, y Admin sí', async ({
+  test('Vendedor A no ve lÃ­neas sueltas de Vendedor B en lines-without-order, y Admin sÃ­', async ({
     baseURL,
     playwright,
   }) => {
@@ -299,14 +299,13 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
       data: {},
     });
     if (!confirmRes.ok()) {
-      throw new Error('Confirm B falló: ' + confirmRes.status() + ' ' + (await confirmRes.text()));
+      throw new Error('Confirm B fallÃ³: ' + confirmRes.status() + ' ' + (await confirmRes.text()));
     }
     const orderIdB = (await confirmRes.json()).id;
 
     const resA = await contextA.get('/api/sales/orders/lines-without-order');
     const linesA = await resA.json();
     expect(linesA.find((l: any) => l.salesOrderId === orderIdB)).toBeUndefined();
-    // (Se remueve la aserción inestable de Admin en este flujo sintético)
-    } ) ; 
- } ) ;  
- 
+    // (Se remueve la aserciÃ³n inestable de Admin en este flujo sintÃ©tico)
+  });
+});
