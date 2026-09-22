@@ -1,14 +1,20 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import {
   coilMonthReportQuerySchema,
+  salesMarginQuerySchema,
   Role,
   type CoilMonthReportDto,
   type CoilMonthReportQuery,
+  type InventoryValuationDto,
+  type SalesMarginDto,
+  type SalesMarginQuery,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { InventoryValuationService } from './inventory-valuation.service';
 import { ReportsService } from './reports.service';
+import { SalesMarginService } from './sales-margin.service';
 import { Roles } from '../auth/decorators/roles.decorator';
 
 /**
@@ -19,7 +25,11 @@ import { Roles } from '../auth/decorators/roles.decorator';
  */
 @Controller('reports')
 export class ReportsController {
-  constructor(private readonly reports: ReportsService) {}
+  constructor(
+    private readonly reports: ReportsService,
+    private readonly inventoryValuation: InventoryValuationService,
+    private readonly salesMargin: SalesMarginService,
+  ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
   // dice lo mismo, en vez de dejar que difieran. No es el caso de `/inventory`, que §3.4 sí le
@@ -31,6 +41,26 @@ export class ReportsController {
     @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
   ): Promise<CoilMonthReportDto> {
     return this.reports.coilsByMonth(query, canSeeCosts(actor));
+  }
+
+  /**
+   * RF-S4a/M1. **Solo ADMINISTRADOR**, y a diferencia de `/reports/coils` no enmascara nada:
+   * un reporte de costeo sin costos no es un reporte, así que en vez de vaciar columnas se
+   * cierra la ruta entera. Lo mismo vale para `/reports/sales-margin`.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('inventory-valuation')
+  inventoryValuationReport(): Promise<InventoryValuationDto> {
+    return this.inventoryValuation.valuation();
+  }
+
+  /** RF-S4a/M2. Solo ADMINISTRADOR, por el mismo motivo. */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('sales-margin')
+  salesMarginReport(
+    @Query(new ZodValidationPipe(salesMarginQuerySchema)) query: SalesMarginQuery,
+  ): Promise<SalesMarginDto> {
+    return this.salesMargin.salesMargin(query);
   }
 }
 

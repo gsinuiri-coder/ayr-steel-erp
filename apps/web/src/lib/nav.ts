@@ -19,6 +19,7 @@ import {
   Store,
   Send,
   Timer,
+  TrendingUp,
   Truck,
   Users,
   UsersRound,
@@ -202,6 +203,21 @@ export const NAV: NavGroup[] = [
   {
     label: 'Administración',
     items: [
+      {
+        // RF-S4a/M1: van en Administración y no junto al reporte de bobinas porque llevan
+        // costos en cada fila y son solo del administrador. La ruta del API dice lo mismo.
+        title: 'Inventario valorizado',
+        href: '/reportes/inventario-valorizado',
+        icon: Boxes,
+        roles: [Role.ADMINISTRADOR],
+      },
+      {
+        // RF-S4a/M2.
+        title: 'Ventas y margen',
+        href: '/reportes/ventas-margen',
+        icon: TrendingUp,
+        roles: [Role.ADMINISTRADOR],
+      },
       { title: 'Usuarios', href: '/usuarios', icon: Users, roles: [Role.ADMINISTRADOR] },
       {
         // S10/M2: Márgenes y tipo de cambio comparten pantalla (pestañas en

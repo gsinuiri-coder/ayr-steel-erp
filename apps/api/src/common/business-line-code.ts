@@ -30,3 +30,28 @@ export function toSharedLineCode(code: PrismaLineCode): SharedLineCode {
 export function toPrismaLineCode(code: SharedLineCode): PrismaLineCode {
   return TO_PRISMA[code];
 }
+
+/**
+ * El código de línea tal como lo devuelve una **consulta cruda** (`bl."code"::text`).
+ *
+ * Es una tercera forma del mismo dato y hace falta nombrarla porque se confunde con las
+ * otras dos a simple vista. Postgres guarda la etiqueta del enum, que es el valor de `@map`
+ * (`'drywall'`), o sea **el identificador de @ayr/shared, no el nombre de Prisma**
+ * (`'DRYWALL'`). Pasarle ese texto a `toSharedLineCode` devuelve `undefined` en silencio,
+ * porque ese mapa está indexado por el nombre de Prisma; compararlo contra
+ * `toPrismaLineCode(...)` no matchea nunca, por lo mismo.
+ *
+ * Valida en vez de castear: una línea nueva en el enum de la base que nadie agregó acá tiene
+ * que reventar donde se lee, no aparecer como `undefined` en una pantalla de reportes.
+ */
+export function fromDbLineCode(code: string): SharedLineCode {
+  const shared = DB_TO_SHARED.get(code);
+  if (shared === undefined) {
+    throw new Error(`Línea de negocio desconocida en la base: ${code}`);
+  }
+  return shared;
+}
+
+const DB_TO_SHARED = new Map<string, SharedLineCode>(
+  Object.values(SharedLineCode).map((code) => [code, code]),
+);
