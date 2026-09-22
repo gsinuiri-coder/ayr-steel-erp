@@ -473,8 +473,8 @@ test.describe('D-124 — fecha de operación', () => {
     // sin haber llegado nunca a la validación de la fecha, y el test pasaría por vacío.
     const seller = await createUser(api, 'VENDEDOR');
     const sellerApi = await apiAs(baseURL!, seller);
-    
-    // El pedido debe ser del vendedor para que pueda despacharlo en el paso (b), pero 
+
+    // El pedido debe ser del vendedor para que pueda despacharlo en el paso (b), pero
     // la compra y el inventario los debe crear el admin.
     const [customer, stock] = await Promise.all([
       createInvoiceableCustomer(api),
@@ -490,7 +490,7 @@ test.describe('D-124 — fecha de operación', () => {
           unitPricePen: '8.0000',
         },
       ],
-    }).then(order => ({ order, item: order.items[0]! }));
+    }).then((order) => ({ order, item: order.items[0]! }));
     const supervisor = await createUser(api, 'SUPERVISOR_PLANTA');
     const supervisorApi = await apiAs(baseURL!, supervisor);
     const supplier = await createCuttingSupplier(api);
