@@ -513,11 +513,60 @@ el ensayo contra la rama clonada no podía ver. **Si este checklist se reutiliza
 
 ### Checklist de Ventana S3c (Alcance de Vendedor y Dashboard)
 
-1. **Respaldo Neon**: Crear rama de respaldo pre-deploy.
-2. **Dry-run**: Verificar que el backfill de sellerId se probó en ensayo (ej. ensayo-s3c-20260920).
-3. **Aviso a vendedores**: Comunicar la parada breve para el deploy.
-4. **Orden estricto de despliegue**:
-   - Migraciones: pnpm db:prod (Aplica el seller_id en sales_orders y iscal_documents).
-   - Backend: pnpm deploy:api (Habilita el bloqueo 403 de alcance).
-   - Frontend: pnpm deploy:web (Publica el Dashboard del vendedor y oculta menús sin acceso).
-5. **Smoke Test**: pnpm smoke:prod para validar el entorno y que la emisión PSE siga apagada.
+La migración `20260920120000_rf_s3c_seller_scope` es **aditiva**: agrega `seller_id` (nullable)
+a **`quotations` y `sales_orders`** —no a `fiscal_documents`; el alcance se resuelve por la
+cotización o el pedido, nunca por el comprobante—, dos FK a `users(id)` con `ON DELETE SET NULL`
+y dos índices `(seller_id, status, issue_date)`. No hay `DROP` ni `NOT NULL`: se queda puesta
+aunque haya que revertir el API.
+
+1. **Respaldo Neon**: crear la rama de respaldo pre-deploy desde `production` y verificar que
+   existe antes de seguir.
+2. **Ensayo**: aplicar migración y backfill en el clon (`ensayo-s3c-20260920`), dry-run y
+   `--execute`, y revisar los conteos antes de tocar `production`.
+3. **Aviso a vendedores**: comunicar la parada breve para el deploy.
+4. **El backfill en `production` va ANTES del deploy del API.** Si el API sale primero, cada
+   vendedor abre el sistema y ve su lista vacía hasta que el backfill termine.
+5. **Orden estricto de despliegue**:
+   - Migraciones: `pnpm db:prod`.
+   - Backfill: dry-run → revisar conteos → `--execute` (comandos abajo).
+   - Backend: `pnpm deploy:api` (aplica el ocultamiento 404 del alcance y el default-deny del
+     `RolesGuard`).
+   - Frontend: merge a `main`; Vercel publica el Dashboard del vendedor y oculta los menús sin
+     acceso.
+6. **Segunda pasada del backfill en dry-run**: debe dar 0 filas pendientes. Si aparecen, son
+   filas creadas entre el backfill y el deploy; se aplican con un `--execute` más.
+7. **Smoke Test**: `pnpm smoke:prod`, desde un worktree en el mismo SHA desplegado, para validar
+   el entorno y que la emisión PSE siga apagada.
+
+#### Comandos exactos del backfill (D-234: los ejecuta el dueño)
+
+Se corren desde la raíz del repo. Las credenciales las resuelve `neonConnectionString` desde
+`.env.setup` y viajan por el entorno del proceso hijo: **ninguna cadena de conexión va por
+`argv`**.
+
+```
+# Dry-run. No escribe una sola fila; por eso no pide --confirm-production.
+pnpm backfill:seller-scope --branch production
+
+# Execute. Sin --confirm-production aborta con un mensaje explícito.
+pnpm backfill:seller-scope --branch production --execute --confirm-production
+```
+
+El ensayo usa los mismos comandos cambiando la rama:
+
+```
+pnpm backfill:seller-scope --branch ensayo-s3c-20260920
+pnpm backfill:seller-scope --branch ensayo-s3c-20260920 --execute
+```
+
+El dry-run imprime: totales y cuántas filas están en `NULL`; conteos por vendedor con nombre,
+correo y rol; los pedidos cuyo creador difiere del creador de su cotización, con a quién quedan
+asignados; las cotizaciones que quedan a nombre de un ADMINISTRADOR; y las filas que la regla no
+alcanzaría. El `--execute` repite el reporte después de escribir y falla si quedó alguna fila sin
+dueño.
+
+**Regla que aplica (D-240)**: `quotations.seller_id = created_by_id`; `sales_orders.seller_id` =
+el `seller_id` **de su cotización**, y solo el pedido sin cotización usa su `created_by_id`. Es
+la misma función que usa el API al confirmar (`resolveOrderSeller`). Todas las escrituras filtran
+por `seller_id IS NULL`, así que el backfill es idempotente y no pisa una reasignación hecha con
+M4 (D-241).
