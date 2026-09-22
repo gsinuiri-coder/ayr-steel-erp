@@ -970,7 +970,7 @@ export function theoreticalKgForMeters(
     );
   }
   return kgPerMeter({
-    widthMm: materialWidthMm(product, at),
+    widthMm: materialWidthMm(product, product.widthMm.toFixed(2), at),
     thicknessMm: product.thicknessMm.toFixed(2),
     densityFactor: product.finish.densityFactor.toFixed(4),
   }).times(toDecimal(meters));
@@ -990,8 +990,7 @@ export function theoreticalKgForMeters(
  * Acá se usa el ancho **nominal** del SKU, que es lo único que se conoce al cotizar. Al
  * producir manda el ancho del rollo montado, y si ahí `N` cambia, planta lo ve (D-242).
  */
-function materialWidthMm(product: RoofingProductLike, at: string): string {
-  const widthMm = product.widthMm!.toFixed(2);
+function materialWidthMm(product: RoofingProductLike, widthMm: string, at: string): string {
   if (!isAccessory(product)) return widthMm;
   if (product.developmentMm === null) {
     throw new BadRequestException(

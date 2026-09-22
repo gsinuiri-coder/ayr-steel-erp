@@ -23,6 +23,7 @@ function product(overrides: Partial<Record<string, unknown>> = {}) {
     lengthMm: null,
     pieceWeightKg: null,
     roofingKind: null,
+    developmentMm: null,
     isActive: true,
     source: ProductSource.MANUFACTURED,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),

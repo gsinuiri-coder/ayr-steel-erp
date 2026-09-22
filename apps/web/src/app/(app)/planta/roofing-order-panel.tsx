@@ -252,6 +252,11 @@ export function RoofingOrderPanel({
   });
 
   const resolved = resolveDraft(order, draft);
+  /**
+   * D-242: piezas por pasada de la bobina con la que se está reportando, `null` fuera de un
+   * accesorio. Es lo que decide si el editor habla de pasadas o de planchas.
+   */
+  const accessoryPasses = resolved.coil?.piecesPerPass ?? null;
   const editing = order.drafts.find((d) => d.id === draft.editingDraftId) ?? null;
   const staleEditing = draft.editingDraftId !== null && editing === null && !refreshing;
   useEffect(() => {
@@ -667,10 +672,35 @@ export function RoofingOrderPanel({
               {editing !== null && (
                 <p className="text-sm font-medium">Corrigiendo la fila {editing.rowNumber}</p>
               )}
+              {/* D-242: el contrato del editor cambia con el subtipo, así que se dice antes de
+                que nadie tipee. Sin esto, «cantidad» significa planchas en una orden y pasadas
+                en la de al lado, y la única forma de saber cuál es acordarse. */}
+              {accessoryPasses !== null && (
+                <Alert>
+                  <AlertDescription>
+                    <strong>Accesorio:</strong> cargá el largo de cada pasada y cuántas pasadas.
+                    {resolved.coil !== undefined && (
+                      <>
+                        {' '}
+                        La bobina {resolved.coil.coilCode} da <strong>{accessoryPasses}</strong>{' '}
+                        {accessoryPasses === 1 ? 'pieza' : 'piezas'} por pasada
+                        {order.productDevelopmentMm !== null && (
+                          <> con un desarrollo de {mmToMeters(order.productDevelopmentMm)} m</>
+                        )}
+                        . Cada pasada usa el ancho completo del rollo; el sobrante lateral es
+                        merma de canto y ya está contado en los kilos.
+                      </>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
               <LengthEditor
                 rows={draft.rows ?? seedRows(order)}
                 idPrefix={`reporte-${order.orderId}`}
                 disabled={busy}
+                // D-242: la columna cuenta pasadas, no planchas. El rótulo es la mitad del
+                // contrato del campo y el `qtyLabel` ya existía justo para esto.
+                qtyLabel={accessoryPasses === null ? undefined : 'Pasadas'}
                 onChange={(rows) => {
                   onDraft({ rows });
                 }}
@@ -700,7 +730,13 @@ export function RoofingOrderPanel({
                 <div className="grid gap-1 text-sm">
                   {resolved.pieces && (
                     <p className="text-muted-foreground">
-                      {describePieces(resolved.pieces)} · {resolved.meters.toFixed(3)} m
+                      {/* D-242: en un accesorio lo tipeado son pasadas, así que la línea dice
+                        las dos cosas — lo que se cargó y lo que va a salir. Mostrar solo una
+                        obligaría al operario a multiplicar de cabeza justo antes de confirmar. */}
+                      {accessoryPasses === null
+                        ? describePieces(resolved.pieces)
+                        : `${describePieces(resolved.pieces)} (pasadas) → ${describePieces(resolved.outputPieces ?? [])}`}{' '}
+                      · {resolved.meters.toFixed(3)} m
                       {resolved.newKg !== null && <> · {resolved.newKg.toFixed(3)} kg teóricos</>}
                     </p>
                   )}
@@ -780,7 +816,19 @@ export function RoofingOrderPanel({
                       >
                         <TableCell>{d.rowNumber}</TableCell>
                         <TableCell className="font-mono">{d.coilCode}</TableCell>
-                        <TableCell>{describePieces(d.pieces)}</TableCell>
+                        {/* D-242: la fila guardada está en pasadas; los metros de la columna
+                          de al lado ya son los de las piezas que van a salir. Decir «2 × 4.00 m»
+                          al lado de «32.000 m» sin explicar el factor haría que la tabla
+                          parezca estar mintiendo. */}
+                        <TableCell>
+                          {describePieces(d.pieces)}
+                          {d.piecesPerPass !== null && (
+                            <span className="text-muted-foreground">
+                              {' '}
+                              × {d.piecesPerPass} por pasada
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">{d.meters}</TableCell>
                         <TableCell className="text-right tabular-nums">{d.theoreticalKg}</TableCell>
                         <TableCell className="text-right tabular-nums">
@@ -1203,7 +1251,18 @@ function seedRows(order: RoofingBatchOrderDto): PieceRow[] {
 interface ResolvedDraft {
   coil: RoofingBatchOrderDto['coils'][number] | undefined;
   planKg: Decimal | null;
+  /**
+   * Lo que planta **tipeó**, y lo único que se manda al API: pasadas en un accesorio (D-242),
+   * planchas en el resto. Convertirlo antes de mandarlo haría que el API multiplique por `N`
+   * una segunda vez.
+   */
   pieces: RoofingPieceDto[] | null;
+  /**
+   * D-242: lo que va a salir de la roladora — `pieces` con la cantidad multiplicada por las
+   * piezas por pasada. Es contra esto que se miden el plan, los kilos y los avisos, porque es
+   * lo que entra al kardex. Igual a `pieces` fuera de un accesorio.
+   */
+  outputPieces: RoofingPieceDto[] | null;
   meters: Decimal;
   newKg: Decimal | null;
   /** La fila que se escribe deja el borrador cubriendo exactamente el plan. */
@@ -1271,10 +1330,18 @@ function closeBoundsOf(
 function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedDraft {
   const coil =
     order.coils.length === 1 ? order.coils[0] : order.coils.find((c) => c.coilId === draft.coilId);
+  // D-242: `materialWidthMm` es el ancho del rollo salvo en un accesorio, donde ya viene
+  // repartido entre las piezas de la pasada (`ancho ÷ N`). Llega calculado del API a propósito:
+  // el kilo que esta pantalla muestra mientras se tipea tiene que ser el mismo que el API va a
+  // descontar del kardex.
   const geometry =
     coil === undefined
       ? null
-      : { widthMm: coil.widthMm, thicknessMm: coil.thicknessMm, densityFactor: coil.densityFactor };
+      : {
+          widthMm: coil.materialWidthMm,
+          thicknessMm: coil.thicknessMm,
+          densityFactor: coil.densityFactor,
+        };
   const planKg =
     geometry === null || order.planItems.length === 0
       ? null
@@ -1324,6 +1391,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
     coil,
     planKg,
     pieces: null,
+    outputPieces: null,
     meters: new Decimal(0),
     newKg: null,
     completesPlan: false,
@@ -1350,6 +1418,12 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
   }
 
   const pieces = parsed.pieces;
+  // D-242: lo tipeado son pasadas en un accesorio. Se convierte una sola vez —acá— y todo lo
+  // que sigue (plan, kilos, avisos) mide lo que de verdad va a salir de la roladora, igual
+  // que hace el API con la misma cuenta. Lo que se **manda** sigue siendo `pieces`.
+  const piecesPerPass = coil?.piecesPerPass ?? null;
+  const outputPieces =
+    piecesPerPass === null ? pieces : pieces.map((p) => ({ ...p, qty: p.qty * piecesPerPass }));
   if (order.productUnit !== Unit.MTR && order.productLengthMm !== null) {
     const fixed = toDecimal(order.productLengthMm);
     const off = pieces.find((p) => !toDecimal(p.lengthMm).equals(fixed));
@@ -1360,8 +1434,8 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       };
     }
   }
-  const meters = piecesMeters(pieces);
-  const newKg = geometry === null ? null : piecesTheoreticalKg(geometry, pieces);
+  const meters = piecesMeters(outputPieces);
+  const newKg = geometry === null ? null : piecesTheoreticalKg(geometry, outputPieces);
   const completesPlan = order.planItems.length > 0 && meters.equals(available);
 
   // D-146 con el borrador adentro: lo que ya ocupan las otras filas cuenta como reportado.
@@ -1369,6 +1443,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
     return {
       ...base,
       pieces,
+      outputPieces,
       meters,
       newKg,
       error:
@@ -1388,6 +1463,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       return {
         ...base,
         pieces,
+        outputPieces,
         meters,
         newKg,
         completesPlan,
@@ -1404,6 +1480,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
     return {
       ...base,
       pieces,
+      outputPieces,
       meters,
       newKg,
       completesPlan,
@@ -1422,5 +1499,5 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
           planKg,
         });
 
-  return { ...base, pieces, meters, newKg, completesPlan, deviation };
+  return { ...base, pieces, outputPieces, meters, newKg, completesPlan, deviation };
 }

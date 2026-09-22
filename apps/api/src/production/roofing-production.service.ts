@@ -93,6 +93,9 @@ import {
 } from './production-shared';
 import { ProductionService } from './production.service';
 import {
+  accessoryConversion,
+  accessoryPiecesFromPasses,
+  accessoryYieldWarning,
   derivePiecesPlan,
   metersFromKg,
   roofingCloseAdjustmentPen,
@@ -849,7 +852,16 @@ export class RoofingProductionService {
 
     const product = await tx.product.findUniqueOrThrow({
       where: { id: order.productId },
-      select: { sku: true, unit: true, lengthMm: true },
+      // D-242: el subtipo, el desarrollo y el ancho nominal son lo que convierte las pasadas
+      // que planta reporta en las piezas que entran al kardex.
+      select: {
+        sku: true,
+        unit: true,
+        lengthMm: true,
+        roofingKind: true,
+        developmentMm: true,
+        widthMm: true,
+      },
     });
 
     // D-083: una plancha de catálogo tiene el largo en su SKU. Reportar otro largo la
@@ -895,16 +907,31 @@ export class RoofingProductionService {
       );
     }
 
+    // -----------------------------------------------------------------------
+    // D-242 — una corrida de accesorios se reporta en pasadas
+    // -----------------------------------------------------------------------
+    //
+    // Lo que planta tipea es `{largo de pasada, cuántas pasadas}`; lo que sale de la roladora
+    // son `N` piezas de ese largo por cada pasada, con `N` del **rollo montado**. Las dos
+    // conversiones viven en `accessoryConversion` y se aplican acá, antes de que nada más
+    // mire estas filas: de este punto en adelante el servicio habla de piezas y de metros
+    // exactamente como en una cobertura a medida (D-c), y el ancho efectivo hace que el kilo
+    // salga por el ancho completo de cada pasada sin que ninguna otra cuenta se entere.
+    const accessory = accessoryConversion(product, row.coil.widthMm.toFixed(2));
     const geometry: CoilGeometry = {
-      widthMm: row.coil.widthMm.toFixed(2),
+      widthMm: accessory?.effectiveWidthMm ?? row.coil.widthMm.toFixed(2),
       thicknessMm: row.coil.thicknessMm.toFixed(2),
       densityFactor: row.coil.finish.densityFactor.toFixed(4),
     };
-    const pieces = input.pieces.map((p, i) => ({
+    const typedRows = input.pieces.map((p, i) => ({
       lineNumber: i + 1,
       lengthMm: toFixedString(p.lengthMm, 'MM'),
       qty: p.qty,
     }));
+    const pieces =
+      accessory === null
+        ? typedRows
+        : accessoryPiecesFromPasses(typedRows, accessory.piecesPerPass);
     const neededKg = roofingTheoreticalKg(geometry, pieces);
 
     // -----------------------------------------------------------------------
@@ -953,6 +980,15 @@ export class RoofingProductionService {
     // lado que el aviso del agregado.
     const declaredKg = input.consumedKg === undefined ? null : toDecimal(input.consumedKg);
     const deviation: string[] = [];
+    // D-242, ajuste 1: si el rollo montado no rinde lo que rendía el ancho del catálogo, el
+    // aviso va por el mismo canal que la desviación de kilos — queda en la fila del reporte,
+    // en el log y en la respuesta que ve el operario. No es un rechazo: el rollo es el que
+    // hay, y los metros que salen son los que salen. Lo que no puede pasar es que la corrida
+    // rinda distinto de lo cotizado y nadie se entere hasta el cierre.
+    if (accessory !== null) {
+      const note = accessoryYieldWarning(product.sku, accessory, row.coil.code);
+      if (note !== null) deviation.push(note);
+    }
     if (declaredKg !== null) {
       const alreadyDeclaredKg = liveReportRows.reduce(
         (acc, r) =>
@@ -1175,6 +1211,19 @@ export class RoofingProductionService {
         confirmedBackdate: input.confirmBackdate === true,
         coilCode: row.coil.code,
         plan: describePieces(pieces),
+        // D-242: lo que planta tipeó **y** lo que salió. Sin las dos lecturas, auditar una
+        // corrida de accesorios obliga a adivinar con qué `N` se convirtió, y `N` sale del
+        // ancho del rollo montado, que puede no ser el del catálogo.
+        accessory:
+          accessory === null
+            ? null
+            : {
+                passes: describePieces(typedRows),
+                piecesPerPass: accessory.piecesPerPass,
+                nominalPiecesPerPass: accessory.nominalPiecesPerPass,
+                effectiveWidthMm: accessory.effectiveWidthMm,
+                edgeMm: accessory.edgeMm,
+              },
         outputQty: toFixedString(outputQty, 'KG'),
         outputUnit,
         theoreticalKg: toFixedString(neededKg, 'KG'),
@@ -1213,7 +1262,19 @@ export class RoofingProductionService {
         ...(salesOrderId ? { reservation: { salesOrderId } } : {}),
       },
       include: {
-        product: { select: { sku: true, name: true, unit: true, lengthMm: true } },
+        // D-242: `roofingKind`/`developmentMm`/`widthMm` son lo que convierte las pasadas
+        // del borrador en las piezas que la pestaña muestra.
+        product: {
+          select: {
+            sku: true,
+            name: true,
+            unit: true,
+            lengthMm: true,
+            roofingKind: true,
+            developmentMm: true,
+            widthMm: true,
+          },
+        },
         items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
         reservation: {
           select: {
@@ -1257,7 +1318,10 @@ export class RoofingProductionService {
     });
 
     const rows = orders.map((order): RoofingBatchOrderDto => {
-      const drafts = order.reportDrafts.map(toDraftDto);
+      // D-242: cada fila se convierte contra **su** bobina, no contra la primera montada.
+      const drafts = order.reportDrafts.map((draft, i) =>
+        toDraftDto(draft, i, accessoryConversion(order.product, draft.coil.widthMm.toFixed(2))),
+      );
       const planPieces = order.items.map(toPieceLike);
       const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
       const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
@@ -1281,6 +1345,7 @@ export class RoofingProductionService {
         productUnit: order.product.unit,
         // D-159: `null` en una cobertura a medida — el largo lo trae cada línea del pedido.
         productLengthMm: order.product.lengthMm?.toFixed(2) ?? null,
+        productDevelopmentMm: order.product.developmentMm?.toFixed(2) ?? null,
         salesOrderId: salesOrder?.id ?? null,
         salesOrderCode: salesOrder ? salesOrderCode(salesOrder.seq) : null,
         customerName: salesOrder?.customer.name ?? null,
@@ -1305,19 +1370,25 @@ export class RoofingProductionService {
         reportedKg: order.reports
           .reduce((acc, r) => acc.plus(toDecimal(r.theoreticalKg.toString())), new Decimal(0))
           .toFixed(3),
-        coils: order.consumptions.map((c) => ({
-          coilId: c.coilId,
-          consumptionId: c.id,
-          coilCode: c.coil.code,
-          widthMm: c.coil.widthMm.toFixed(2),
-          thicknessMm: c.coil.thicknessMm.toFixed(2),
-          densityFactor: c.coil.finish.densityFactor.toFixed(4),
-          consumedKg: c.consumedKg.toFixed(3),
-          remainingKg: toFixedString(
-            toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
-            'KG',
-          ),
-        })),
+        coils: order.consumptions.map((c) => {
+          // D-242: el rendimiento se resuelve por bobina, acá, y viaja calculado al web.
+          const accessory = accessoryConversion(order.product, c.coil.widthMm.toFixed(2));
+          return {
+            coilId: c.coilId,
+            consumptionId: c.id,
+            coilCode: c.coil.code,
+            widthMm: c.coil.widthMm.toFixed(2),
+            thicknessMm: c.coil.thicknessMm.toFixed(2),
+            densityFactor: c.coil.finish.densityFactor.toFixed(4),
+            consumedKg: c.consumedKg.toFixed(3),
+            remainingKg: toFixedString(
+              toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
+              'KG',
+            ),
+            piecesPerPass: accessory?.piecesPerPass ?? null,
+            materialWidthMm: accessory?.effectiveWidthMm ?? c.coil.widthMm.toFixed(2),
+          };
+        }),
         drafts,
         draftMeters: drafts
           .reduce((acc, d) => acc.plus(toDecimal(d.meters)), new Decimal(0))
@@ -2571,8 +2642,14 @@ export class RoofingProductionService {
       )
       .map((c) => {
         const availableKg = qtyById.get(c.id) ?? new Decimal(0);
+        // D-242: con un accesorio, los metros que rinde un rollo dependen de cuántas piezas
+        // da cada pasada —y eso lo decide **este** rollo, no el ancho del catálogo—. Con el
+        // ancho pelado, el picker mostraría los metros de una cobertura a medida: hasta N
+        // veces menos de los que la bobina de verdad da, justo en la pantalla donde planta
+        // elige con cuál corre.
+        const accessory = accessoryConversion(product, c.widthMm.toFixed(2));
         const geometry: CoilGeometry = {
-          widthMm: c.widthMm.toFixed(2),
+          widthMm: accessory?.effectiveWidthMm ?? c.widthMm.toFixed(2),
           thicknessMm: c.thicknessMm.toFixed(2),
           densityFactor: c.finish.densityFactor.toFixed(4),
         };
@@ -2597,6 +2674,10 @@ export class RoofingProductionService {
           })(),
           availableKg: availableKg.toFixed(3),
           estimatedMeters: toFixedString(metersFromKg(geometry, availableKg.toFixed(3)), 'KG'),
+          // D-242: null fuera de un accesorio. Es el dato con el que planta compara dos
+          // rollos de anchos distintos, que es de lo que depende el rendimiento entero de
+          // la corrida.
+          piecesPerPass: accessory?.piecesPerPass ?? null,
         };
       });
   }

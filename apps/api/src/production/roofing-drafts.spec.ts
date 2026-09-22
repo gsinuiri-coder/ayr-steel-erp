@@ -18,7 +18,7 @@ function state(overrides: Partial<DraftCheckState> = {}): DraftCheckState {
     fixedLengthMm: null,
     planPieces: [{ lengthMm: '4000.00', qty: 10 }], // 40 m
     reportedMeters: new Decimal(0),
-    coils: [{ coilId: 'c1', coilCode: 'B-1', remainingKg: new Decimal('500'), geometry }],
+    coils: [{ coilId: 'c1', coilCode: 'B-1', remainingKg: new Decimal('500'), geometry, piecesPerPass: null }],
     ...overrides,
   };
 }
@@ -49,7 +49,15 @@ describe('checkDraftRows (D-191)', () => {
     const result = checkDraftRows(
       state({
         planPieces: [{ lengthMm: '4000.00', qty: 100 }],
-        coils: [{ coilId: 'c1', coilCode: 'B-1', remainingKg: new Decimal('100'), geometry }],
+        coils: [
+          {
+            coilId: 'c1',
+            coilCode: 'B-1',
+            remainingKg: new Decimal('100'),
+            geometry,
+            piecesPerPass: null,
+          },
+        ],
       }),
       [
         { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 5 }] }, // 80.8 kg
@@ -63,8 +71,14 @@ describe('checkDraftRows (D-191)', () => {
   it('con varias bobinas exige indicar de cuál; una bobina bajada rechaza la fila', () => {
     const two = state({
       coils: [
-        { coilId: 'c1', coilCode: 'B-1', remainingKg: new Decimal('500'), geometry },
-        { coilId: 'c2', coilCode: 'B-2', remainingKg: new Decimal('500'), geometry },
+        { coilId: 'c1', coilCode: 'B-1', remainingKg: new Decimal('500'), geometry, piecesPerPass: null },
+        {
+          coilId: 'c2',
+          coilCode: 'B-2',
+          remainingKg: new Decimal('500'),
+          geometry,
+          piecesPerPass: null,
+        },
       ],
     });
     expect(
@@ -80,6 +94,52 @@ describe('checkDraftRows (D-191)', () => {
       { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 1 }] },
     ]);
     expect(result).toMatchObject({ ok: false, rowNumber: 1 });
+  });
+
+  // -------------------------------------------------------------------------
+  // D-242 — el borrador de un accesorio está en pasadas
+  // -------------------------------------------------------------------------
+  //
+  // La fila dice «2 pasadas de 4 m»; contra el plan y contra la bobina se mide lo que de
+  // verdad sale, que con 4 piezas por pasada son 8 planchas y 32 m. Si el borrador midiera
+  // las pasadas como si fueran planchas, una orden de 40 m aceptaría cinco filas iguales
+  // —160 m— y recién al ejecutar la última aparecería el exceso.
+  const accessoryCoil = {
+    coilId: 'c1',
+    coilCode: 'B-1',
+    remainingKg: new Decimal('500'),
+    // Ancho efectivo: 1 000 ÷ 4 = 250 mm. El kilo sale igual que con el ancho completo por
+    // pasada, que es la invariante de D-b.
+    geometry: { widthMm: '250.00', thicknessMm: '0.50', densityFactor: '8.0000' },
+    piecesPerPass: 4,
+  };
+
+  it('mide las pasadas contra el plan en las piezas que van a salir', () => {
+    const result = checkDraftRows(state({ coils: [accessoryCoil] }), [
+      { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 2 }] },
+    ]);
+    expect(result.ok).toBe(true);
+    // 2 pasadas × 4 piezas × 4 m = 32 m, no 8 m.
+    if (result.ok) expect(result.rows[0]?.meters.toFixed(3)).toBe('32.000');
+  });
+
+  it('el plan de 40 m rechaza la segunda fila, que como pasadas parecería entrar', () => {
+    const result = checkDraftRows(state({ coils: [accessoryCoil] }), [
+      { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 2 }] }, // 32 m
+      { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 1 }] }, // +16 m = 48 m > 40
+    ]);
+    expect(result).toMatchObject({ ok: false, rowNumber: 2 });
+    if (!result.ok) expect(result.message).toMatch(/quedan 8\.000 m y esta fila suma 16\.000 m/);
+  });
+
+  it('el kilo de la pasada sale por el ancho completo del rollo', () => {
+    const result = checkDraftRows(state({ coils: [accessoryCoil] }), [
+      { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 2 }] },
+    ]);
+    expect(result.ok).toBe(true);
+    // 8 piezas × 4 m × 250 mm × 0.50 mm × 8.08 = 32.32 kg, que es exactamente lo mismo que
+    // 2 pasadas × 4 m × 1 000 mm de ancho completo. El canto ya está adentro.
+    if (result.ok) expect(result.rows[0]?.theoreticalKg.toFixed(3)).toBe('32.320');
   });
 });
 

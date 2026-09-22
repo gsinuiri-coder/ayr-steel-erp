@@ -678,7 +678,14 @@ export const roofingReportDraftSchema = z.object({
   rowNumber: z.number().int(),
   coilId: z.string().uuid(),
   coilCode: z.string(),
+  /**
+   * Lo que planta tipeó. D-242: en un accesorio son **pasadas**, no planchas — `qty` es la
+   * cantidad de pasadas de ese largo, y las piezas salen de multiplicarla por
+   * `piecesPerPass`.
+   */
   pieces: z.array(roofingPieceSchema),
+  /** D-242: piezas por pasada de la bobina de esta fila; `null` fuera de un accesorio. */
+  piecesPerPass: z.number().int().nullable(),
   meters: z.string(),
   /** Kilo teórico con la geometría de esa bobina (D-047): lo que saldría del kardex. */
   theoreticalKg: z.string(),
@@ -747,6 +754,21 @@ export const roofingBatchCoilSchema = z.object({
   /** Kilos ya rolados de esa asignación: por encima de cero la bobina ya no se puede bajar. */
   consumedKg: z.string(),
   remainingKg: z.string(),
+  /**
+   * D-242: piezas que da una pasada **con esta bobina**, `null` fuera de un accesorio. Lo
+   * decide el ancho del rollo montado y no el del catálogo, así que dos bobinas de la misma
+   * orden pueden rendir distinto.
+   */
+  piecesPerPass: z.number().int().nullable(),
+  /**
+   * D-242: el ancho con el que se cuenta el material de esta bobina — el suyo, salvo en un
+   * accesorio, donde es el efectivo (`ancho ÷ N`).
+   *
+   * Viaja calculado y no se deriva en el web a propósito: el kilo teórico que la pantalla
+   * muestra mientras se tipea tiene que ser **el mismo** número que el API va a descontar del
+   * kardex, y dos implementaciones del mismo piso son dos números que en algún borde difieren.
+   */
+  materialWidthMm: z.string(),
 });
 export type RoofingBatchCoilDto = z.infer<typeof roofingBatchCoilSchema>;
 
@@ -784,6 +806,12 @@ export const roofingBatchOrderSchema = z.object({
    * línea de la que sacarlo, que es justo cuando hace falta.
    */
   productLengthMm: z.string().nullable(),
+  /**
+   * D-242: desarrollo del accesorio, `null` en el resto. La pantalla de planta lo muestra al
+   * lado de las piezas por pasada porque es de dónde sale ese número, y verlo es lo que
+   * permite notar que el SKU está mal cargado antes de rolar la bobina entera.
+   */
+  productDevelopmentMm: z.string().nullable(),
   salesOrderId: z.string().uuid().nullable(),
   salesOrderCode: z.string().nullable(),
   customerName: z.string().nullable(),
@@ -880,7 +908,17 @@ export const roofingCoilOptionSchema = z.object({
     .nullable(),
   /** En una cerrada, el saldo que va a quedar **después** de reabrirla. */
   availableKg: z.string(),
-  /** Metros que salen de ese saldo con la geometría de esta bobina: lo que planta necesita ver. */
+  /**
+   * Metros que salen de ese saldo con la geometría de esta bobina: lo que planta necesita ver.
+   *
+   * D-242: en un accesorio son los metros **del accesorio**, con el ancho efectivo de este
+   * rollo. Un rollo más ancho puede dar una pieza más por pasada y con eso muchos metros más.
+   */
   estimatedMeters: z.string(),
+  /**
+   * D-242: piezas por pasada que da **esta** bobina, `null` fuera de un accesorio. Es con lo
+   * que planta compara dos rollos de anchos distintos antes de elegir con cuál corre.
+   */
+  piecesPerPass: z.number().int().nullable(),
 });
 export type RoofingCoilOptionDto = z.infer<typeof roofingCoilOptionSchema>;

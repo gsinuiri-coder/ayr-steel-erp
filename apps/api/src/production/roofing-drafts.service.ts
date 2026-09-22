@@ -25,6 +25,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { RawMaterialShortfall } from '../sales/raw-material';
 import { assertKind, lockOrder } from './production-shared';
 import { ProductionService } from './production.service';
+import { accessoryConversion } from './roofing-math';
 import {
   checkDraftRows,
   DRAFT_INCLUDE,
@@ -70,12 +71,25 @@ export class RoofingDraftsService {
   // -------------------------------------------------------------------------
 
   async list(orderId: string): Promise<RoofingReportDraftDto[]> {
-    const rows = await this.prisma.productionReportDraft.findMany({
-      where: { productionOrderId: orderId },
-      include: DRAFT_INCLUDE,
-      orderBy: { seq: 'asc' },
-    });
-    return rows.map(toDraftDto);
+    const [rows, order] = await Promise.all([
+      this.prisma.productionReportDraft.findMany({
+        where: { productionOrderId: orderId },
+        include: DRAFT_INCLUDE,
+        orderBy: { seq: 'asc' },
+      }),
+      this.prisma.productionOrder.findUniqueOrThrow({
+        where: { id: orderId },
+        // D-242: sin el producto no se sabe si las filas guardadas son pasadas o planchas.
+        select: {
+          product: {
+            select: { sku: true, roofingKind: true, developmentMm: true, widthMm: true },
+          },
+        },
+      }),
+    ]);
+    return rows.map((row, i) =>
+      toDraftDto(row, i, accessoryConversion(order.product, row.coil.widthMm.toFixed(2))),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -301,7 +315,15 @@ export class RoofingDraftsService {
     const [product, plan, reports, consumptions] = await Promise.all([
       tx.product.findUniqueOrThrow({
         where: { id: order.productId },
-        select: { sku: true, lengthMm: true },
+        // D-242: el subtipo, el desarrollo y el ancho nominal — lo que `accessoryConversion`
+        // necesita para saber cuántas piezas da una pasada en cada bobina montada.
+        select: {
+          sku: true,
+          lengthMm: true,
+          roofingKind: true,
+          developmentMm: true,
+          widthMm: true,
+        },
       }),
       tx.productionOrderItem.findMany({
         where: { productionOrderId: orderId },
@@ -334,16 +356,25 @@ export class RoofingDraftsService {
       planPieces: plan.map(toPieceLike),
       reportedMeters: piecesMeters(reports.flatMap((r) => r.piecesDetail.map(toPieceLike))),
       liveReports: reports.length,
-      coils: consumptions.map((c) => ({
-        coilId: c.coilId,
-        coilCode: c.coil.code,
-        remainingKg: toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
-        geometry: {
-          widthMm: c.coil.widthMm.toFixed(2),
-          thicknessMm: c.coil.thicknessMm.toFixed(2),
-          densityFactor: c.coil.finish.densityFactor.toFixed(4),
-        },
-      })),
+      coils: consumptions.map((c) => {
+        // D-242: la conversión se resuelve **por bobina**, porque `N` sale del ancho del
+        // rollo montado y no del catálogo. Dos rollos de anchos distintos en la misma orden
+        // rinden distinto, y cada fila del borrador se mide contra el suyo.
+        const accessory = accessoryConversion(product, c.coil.widthMm.toFixed(2));
+        return {
+          coilId: c.coilId,
+          coilCode: c.coil.code,
+          remainingKg: toDecimal(c.assignedKg.toString()).minus(
+            toDecimal(c.consumedKg.toString()),
+          ),
+          geometry: {
+            widthMm: accessory?.effectiveWidthMm ?? c.coil.widthMm.toFixed(2),
+            thicknessMm: c.coil.thicknessMm.toFixed(2),
+            densityFactor: c.coil.finish.densityFactor.toFixed(4),
+          },
+          piecesPerPass: accessory?.piecesPerPass ?? null,
+        };
+      }),
     };
   }
 

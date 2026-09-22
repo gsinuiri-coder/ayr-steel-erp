@@ -1618,6 +1618,10 @@ export class ProductionService {
         widthMm: true,
         lengthMm: true,
         roofingKind: true,
+        // D-242: el desarrollo del accesorio. Todo lo que produce una cobertura pasa por
+        // acá, así que traerlo una vez deja la conversión de pasadas a piezas disponible en
+        // montar, reportar y cerrar sin repetir la consulta.
+        developmentMm: true,
         finish: { select: { id: true, code: true, densityFactor: true, isActive: true } },
       },
     });

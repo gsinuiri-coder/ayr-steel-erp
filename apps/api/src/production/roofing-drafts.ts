@@ -10,7 +10,11 @@ import {
   type PieceLike,
   type RoofingReportDraftDto,
 } from '@ayr/shared';
-import { roofingTheoreticalKg, type CoilGeometry } from './roofing-math';
+import {
+  accessoryPiecesFromPasses,
+  roofingTheoreticalKg,
+  type CoilGeometry,
+} from './roofing-math';
 
 /**
  * D-191 — la validación del borrador de reportes, **pura**.
@@ -32,7 +36,21 @@ export interface DraftCoilState {
   coilCode: string;
   /** Kilos montados sin rolar: `assignedKg − consumedKg` de la asignación viva. */
   remainingKg: Decimal;
+  /**
+   * La geometría con la que se cuenta el material de **esta** bobina. En un accesorio ya
+   * viene con el ancho efectivo (`ancho ÷ N`, D-242): la arma quien conoce el producto, y
+   * acá se usa igual que siempre.
+   */
   geometry: CoilGeometry;
+  /**
+   * D-242: piezas por pasada de esta bobina, `null` fuera de un accesorio.
+   *
+   * El borrador guarda lo que planta **tipeó** —pasadas—, no las piezas: ejecutar llama a
+   * `reportInTx`, que es quien convierte (D-c). Si el borrador guardara piezas, ejecutarlo
+   * multiplicaría una segunda vez. Por eso la previsualización convierte acá y la fila
+   * persistida se queda en pasadas.
+   */
+  piecesPerPass: number | null;
 }
 
 export interface DraftCheckState {
@@ -103,9 +121,21 @@ export function checkDraftRows(
       }
     }
 
+    // D-242: la fila del borrador está en pasadas; el plan, el kardex y la bobina hablan de
+    // piezas. Se convierte una vez, acá, y de este punto en adelante la validación es la
+    // misma que la de una cobertura a medida — que es la razón de que el borrador y el
+    // reporte no puedan divergir.
+    const pieces =
+      coil.piecesPerPass === null
+        ? row.pieces
+        : accessoryPiecesFromPasses(
+            row.pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
+            coil.piecesPerPass,
+          );
+
     // D-146 con el borrador adentro: lo que ya ocupan las filas anteriores cuenta como si
     // estuviera reportado, porque al ejecutar lo va a estar.
-    const meters = piecesMeters(row.pieces);
+    const meters = piecesMeters(pieces);
     const progress = roofingPlanProgress(state.planPieces, state.reportedMeters.plus(draftMeters));
     if (roofingPlanOverrun(progress, meters).gt(0)) {
       return fail(
@@ -118,7 +148,7 @@ export function checkDraftRows(
       );
     }
 
-    const theoreticalKg = roofingTheoreticalKg(coil.geometry, row.pieces);
+    const theoreticalKg = roofingTheoreticalKg(coil.geometry, pieces);
     const alreadyKg = usedKg.get(coil.coilId) ?? new Decimal(0);
     const leftKg = coil.remainingKg.minus(alreadyKg);
     if (theoreticalKg.gt(leftKg)) {
@@ -152,22 +182,36 @@ export const DRAFT_INCLUDE = {
 
 export type DraftRow = Prisma.ProductionReportDraftGetPayload<{ include: typeof DRAFT_INCLUDE }>;
 
-export function toDraftDto(draft: DraftRow, index: number): RoofingReportDraftDto {
-  const pieces = draft.pieces.map((p) => ({
+export function toDraftDto(
+  draft: DraftRow,
+  index: number,
+  /**
+   * D-242: la conversión del accesorio contra **la bobina de esta fila**, o `null` fuera de
+   * un accesorio. Viaja como parámetro y no se deduce del producto acá porque `N` depende
+   * del rollo, y dos filas del mismo borrador pueden salir de rollos de anchos distintos.
+   */
+  accessory: { piecesPerPass: number; effectiveWidthMm: string } | null = null,
+): RoofingReportDraftDto {
+  // Lo que planta tipeó: pasadas en un accesorio, planchas en el resto.
+  const typed = draft.pieces.map((p) => ({
     lineNumber: p.lineNumber,
     lengthMm: p.lengthMm.toFixed(2),
     qty: p.qty,
   }));
+  // Lo que va a salir de la roladora, que es lo que el plan y el kardex miden.
+  const pieces =
+    accessory === null ? typed : accessoryPiecesFromPasses(typed, accessory.piecesPerPass);
   return {
     id: draft.id,
     rowNumber: index + 1,
     coilId: draft.coilId,
     coilCode: draft.coil.code,
-    pieces,
+    pieces: typed,
+    piecesPerPass: accessory?.piecesPerPass ?? null,
     meters: piecesMeters(pieces).toFixed(3),
     theoreticalKg: roofingTheoreticalKg(
       {
-        widthMm: draft.coil.widthMm.toFixed(2),
+        widthMm: accessory?.effectiveWidthMm ?? draft.coil.widthMm.toFixed(2),
         thicknessMm: draft.coil.thicknessMm.toFixed(2),
         densityFactor: draft.coil.finish.densityFactor.toFixed(4),
       },

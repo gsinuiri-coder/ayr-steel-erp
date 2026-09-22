@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
+import { RoofingProductKind, type Prisma } from '@prisma/client';
 import {
+  accessoryEdgeScrap,
+  accessoryEffectiveWidthMm,
+  accessoryPiecesPerPass,
   Decimal,
   equivalentMeters,
   piecesTheoreticalKg,
@@ -41,6 +45,113 @@ export function roofingTheoreticalKg(
   // que el módulo de coberturas ya usaba, no como una segunda cuenta: dos copias serían dos
   // topes distintos, que es exactamente lo que el tope de kg declarado no puede permitirse.
   return piecesTheoreticalKg(geometry, pieces);
+}
+
+// ---------------------------------------------------------------------------
+// D-242 — la pasada de un accesorio
+// ---------------------------------------------------------------------------
+
+/** Lo que hace falta del producto para saber si una OP rola un accesorio y con qué medida. */
+export interface AccessoryProductLike {
+  sku: string;
+  roofingKind: RoofingProductKind | null;
+  developmentMm: Prisma.Decimal | null;
+  /** Ancho **nominal** del SKU: con el que se cotizó, no con el que se produce. */
+  widthMm: Prisma.Decimal | null;
+}
+
+/**
+ * Todo lo que un accesorio cambia respecto de una cobertura a medida, resuelto **una vez**
+ * contra el rollo que de verdad está montado (D-242).
+ */
+export interface AccessoryConversion {
+  piecesPerPass: number;
+  /** `ancho del rollo ÷ N`: el ancho con el que se cuenta el material (D-b). */
+  effectiveWidthMm: string;
+  /** Piezas por pasada que daría el ancho **nominal** del SKU. `null` si no se puede saber. */
+  nominalPiecesPerPass: number | null;
+  /** Canto de cada pasada y su fracción del ancho, para mostrarlos (D-d). */
+  edgeMm: string;
+  edgeRatio: Decimal;
+}
+
+/**
+ * Resuelve la conversión de un accesorio contra la bobina montada.
+ *
+ * **Manda el ancho real del rollo, no el nominal** (ajuste 1 del dueño): un desarrollo de
+ * 305 mm rinde 3 piezas en un rollo de 1 200 mm y 4 en uno de 1 220, así que producir con el
+ * número de la cotización sería reportar metros que no salieron. Que los dos difieran no es
+ * un error —es el rollo que había— pero tiene que **verse**, y por eso la conversión devuelve
+ * también el nominal en vez de descartarlo.
+ *
+ * `null` cuando la OP no es de accesorios: quien llama sigue derecho por el camino de D-083.
+ */
+export function accessoryConversion(
+  product: AccessoryProductLike,
+  coilWidthMm: string,
+): AccessoryConversion | null {
+  if (product.roofingKind !== RoofingProductKind.ACCESORIO) return null;
+  if (product.developmentMm === null) {
+    throw new BadRequestException(
+      `${product.sku} es un accesorio sin desarrollo en el catálogo: sin él no se sabe cuántas piezas da una pasada`,
+    );
+  }
+  const developmentMm = product.developmentMm.toFixed(2);
+  const scrap = accessoryEdgeScrap(coilWidthMm, developmentMm);
+  const effective = accessoryEffectiveWidthMm(coilWidthMm, developmentMm);
+  if (scrap === null || effective === null) {
+    throw new BadRequestException(
+      `El desarrollo de ${product.sku} (${toDecimal(developmentMm).div(1000).toFixed(3)} m) no entra ` +
+        `en el ancho de la bobina montada (${toDecimal(coilWidthMm).div(1000).toFixed(3)} m): ` +
+        'esa bobina no da ni una pieza por pasada',
+    );
+  }
+  return {
+    piecesPerPass: scrap.piecesPerPass,
+    effectiveWidthMm: effective.toString(),
+    nominalPiecesPerPass:
+      product.widthMm === null
+        ? null
+        : accessoryPiecesPerPass(product.widthMm.toFixed(2), developmentMm),
+    edgeMm: scrap.edgeMm.toFixed(2),
+    edgeRatio: scrap.edgeRatio,
+  };
+}
+
+/**
+ * Las pasadas que planta reportó, convertidas en las piezas que entran al kardex (D-c).
+ *
+ * Se persisten **piezas** y no pasadas a propósito: así el kardex, el costo, la reversa y el
+ * progreso del plan siguen leyendo lo mismo que en una cobertura a medida, sin una segunda
+ * rama que pueda divergir. Una pasada de 3 m que da 4 piezas se guarda como 4 piezas de 3 m,
+ * que es lo que de verdad salió de la roladora.
+ */
+export function accessoryPiecesFromPasses<T extends { qty: number }>(
+  passes: readonly T[],
+  piecesPerPass: number,
+): T[] {
+  return passes.map((pass) => ({ ...pass, qty: pass.qty * piecesPerPass }));
+}
+
+/**
+ * El aviso de rendimiento (ajuste 1): lo que planta tiene que ver cuando el rollo montado no
+ * rinde lo que rendía el ancho con el que se cotizó. `null` cuando coinciden o no hay con qué
+ * comparar.
+ */
+export function accessoryYieldWarning(
+  sku: string,
+  conversion: AccessoryConversion,
+  coilCode: string,
+): string | null {
+  const nominal = conversion.nominalPiecesPerPass;
+  if (nominal === null || nominal === conversion.piecesPerPass) return null;
+  return (
+    `${sku}: la bobina ${coilCode} da ${conversion.piecesPerPass} ` +
+    `${conversion.piecesPerPass === 1 ? 'pieza' : 'piezas'} por pasada, y con el ancho del ` +
+    `catálogo daban ${nominal}. Los metros de esta corrida salen del rollo montado, así que ` +
+    `rinde ${conversion.piecesPerPass > nominal ? 'más' : 'menos'} de lo cotizado: revisá el ` +
+    'plan de corte antes de cerrar.'
+  );
 }
 
 /**
