@@ -142,46 +142,26 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
           (await confirmRoofingRes.text()),
       );
     }
-    const roofingOrder = await confirmRoofingRes.json();
+    const { dispatchOrder, createInvoice } = await import('../helpers/invoicing');
 
     // Planta Despacha (como Admin o Supervisor) el Drywall
-    const dispatchRes = await contextAdmin.post('/api/dispatches', {
-      data: {
-        salesOrderId: orderId,
-        dispatchDate: businessToday(),
-        originAddress: 'Av. Almacén 100, Lima',
-        destinationAddress: 'Av. Cliente 200, Lima',
-        originUbigeo: '150101',
-        destinationUbigeo: '150132',
-        transferMode: 'PRIVATE',
-        totalWeightKg: '10.0',
-        privateTransport: {
-          licensePlate: 'ABC-123',
-          driverDocType: 'DNI',
-          driverDocNumber: '12345678',
-          driverName: 'Juan Perez',
-        },
-        items: [{ salesOrderItemId: orderA.items[0].id, qty: '10', weightKg: '10.0' }],
-      },
+    const dispatch = await dispatchOrder(contextAdmin, {
+      salesOrderId: orderId,
+      items: [{ salesOrderItemId: orderA.items[0].id, qty: '10' }],
     });
-    expect(dispatchRes.ok()).toBeTruthy();
-    const dispatchId = (await dispatchRes.json()).id;
+    const dispatchId = dispatch.id;
 
     // Vendedor B intenta acceder al despacho
-    expect((await contextB.get('/api/invoicing/dispatches/' + dispatchId)).status()).toBe(404);
+    expect((await contextB.get('/api/dispatches/' + dispatchId)).status()).toBe(404);
 
     // Generar XML/CDR (comprobante)
-    const invRes = await contextAdmin.post('/api/invoicing/documents', {
-      data: {
-        customerId: customerA.id,
-        salesOrderId: orderId,
-        docType: 'BOLETA',
-        issueDate: businessToday(),
-        paymentTermId: 'CONTADO',
-      },
+    const doc = await createInvoice(contextAdmin, {
+      docType: 'BOLETA',
+      customerId: customerA.id,
+      salesOrderId: orderId,
+      items: [{ salesOrderItemId: orderA.items[0].id, qty: '10', unitPricePen: '10' }],
     });
-    expect(invRes.ok()).toBeTruthy();
-    const docId = (await invRes.json()).id;
+    const docId = doc.id;
 
     // Vendedor B no puede ver el XML/PDF del documento ajeno
     expect((await contextB.get('/api/invoicing/documents/' + docId + '/pdf')).status()).toBe(404);
