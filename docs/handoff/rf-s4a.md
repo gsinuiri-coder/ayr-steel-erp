@@ -9,7 +9,7 @@ dominio. Agente: Claude Code. Rama `rf-s4a`, PR
 |              |                                                                                                    |
 | ------------ | -------------------------------------------------------------------------------------------------- |
 | Rama         | `rf-s4a`, desde `origin/main` en `7a2c1c3`                                                         |
-| Commits      | `e27e750` (M1+M2), `f35bcaa` (M3), y el de cierre documental                                       |
+| Commits      | `e27e750` (M1+M2), `f35bcaa` (M3), `2a764e2` (docs), `cc1d6e0` (fix de totales)                    |
 | CI           | run `35759232778` **verde** sobre M1+M2; segunda corrida tras M3 y docs                            |
 | Migración    | **ninguna**, y ninguna hace falta                                                                  |
 | Rutas nuevas | `GET /reports/inventory-valuation`, `GET /reports/sales-margin?from&to`, y sus dos `/xlsx`         |
@@ -44,6 +44,15 @@ dominio. Agente: Claude Code. Rama `rf-s4a`, PR
    sospechoso es el nivel en el que se redondea, no la consulta: el valor se acumula sin
    redondear y solo se redondea al escribir la celda. Hay un test que fija exactamente eso
    (`inventory-valuation.service.spec.ts`, el caso de los tres valores de `0.00005`).
+
+   Dentro de M2 hay una segunda conciliación, y se rompió una vez durante la sesión: el total
+   de costo tiene que ser la suma de los totales por línea. Se rompía porque el monto del
+   pedido y su apertura por línea salían de dos agregados distintos, así que «qué filas de
+   costo cuentan» se decidía dos veces —y en el pedido con comprobantes fuera del rango las
+   dos decisiones no coincidían: 300 en el total contra 800 en la tabla por línea—. Ahora las
+   dos salen del mismo arreglo filtrado una sola vez, y hay un test con las tres clases de
+   fila conviviendo que falla si alguien vuelve a separarlas. Con una sola clase de fila los
+   dos caminos coinciden por casualidad, así que un test más simple no sirve.
 
 5. **Defecto preexistente, encontrado y NO corregido: `GET /reports/coils` (D-245).** Devuelve
    `businessLine: undefined` en cada fila y su filtro `?businessLine=` **devuelve cero filas
