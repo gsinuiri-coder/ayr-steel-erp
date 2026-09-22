@@ -103,8 +103,8 @@ mensual de bobinas sigue con el filtro roto en producción.
 
 ### Verificación
 
-- **CI verde** en el PR #9 sobre `1f70a60` (run `35773808790`), con solo commits documentales
-  después: lint, typecheck, 722 unitarios, E2E completo **382 passed / 0 failed / 3 skipped** en
+- **CI verde** en el PR #9 sobre `96146a4` (run `35776762981`), ya con el hotfix D-246
+  incorporado: lint, typecheck, 738 unitarios, E2E completo **382 passed / 0 failed / 3 skipped** en
   el Postgres del runner, y smoke sobre Neon `ci`. Los 3 skipped son los mismos de siempre, no
   aparecieron en esta sesión.
 - El E2E pasó de **380 a 385 tests** (377 → 382 pasados): exactamente los 5 nuevos de

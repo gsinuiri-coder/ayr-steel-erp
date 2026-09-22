@@ -10,7 +10,7 @@ dominio. Agente: Claude Code. Rama `rf-s4a`, PR
 | ------------ | -------------------------------------------------------------------------------------------------- |
 | Rama         | `rf-s4a`, desde `origin/main` en `7a2c1c3`                                                         |
 | Commits      | `e27e750` (M1+M2), `f35bcaa` (M3), `cc1d6e0` (fix de totales), `edb80fb` (fix de la tabla) + docs  |
-| CI           | run `35773808790` **verde** sobre `1f70a60`; lo posterior es solo documental                       |
+| CI           | run `35776762981` **verde** sobre `96146a4`, ya con el hotfix D-246 incorporado                    |
 | Migración    | **ninguna**, y ninguna hace falta                                                                  |
 | Rutas nuevas | `GET /reports/inventory-valuation`, `GET /reports/sales-margin?from&to`, y sus dos `/xlsx`         |
 | Pantallas    | `/reportes/inventario-valorizado`, `/reportes/ventas-margen`, las dos en el menú de Administración |
@@ -87,6 +87,11 @@ dominio. Agente: Claude Code. Rama `rf-s4a`, PR
   `SONAR_TOKEN` solo vive en los secrets de Actions.
 - **Revisión cruzada.** AGENTS.md §2.2: implementó Claude Code, así que revisa Antigravity.
   Sin ese pase la sesión no cierra.
+- **La rama trae el HOTFIX de D-246** (`ca05935`), que entró a `main` durante esta sesión. El
+  merge no tocó código —el hotfix vive en `production/` y estos reportes solo leen—, pero vale
+  saber que **ese hotfix se desplegó sin su propia revisión cruzada** y la tiene programada
+  aparte (ver su entrada en `docs/PROGRESO.md`). No es deuda de RF-S4a y esta sesión no lo
+  revisó; se anota para que nadie la dé por hecha al ver el código en esta rama.
 
 ## Guion UAT
 
