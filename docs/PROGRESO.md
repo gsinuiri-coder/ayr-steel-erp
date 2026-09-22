@@ -2,6 +2,82 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## Ventana RF-S4a — reportes de costeo (2026-09-22)
+
+Ventana corta, **sin migración**: los dos reportes son de solo lectura y no tocan ningún
+servicio de dominio. PR #9 mergeado a `main` con OK explícito D-232 del dueño; merge commit
+`da8b624`. Agente: Claude Code.
+
+### Qué quedó desplegado
+
+|           |                                                                                                 |
+| --------- | ----------------------------------------------------------------------------------------------- |
+| `main`    | `da8b624` (merge del PR #9)                                                                     |
+| API       | `ayr-steel-erp-api-00041-99q`, `git-sha=996d52e`, 100 % de tráfico, `{"status":"ok","db":"ok"}` |
+| Web       | deployment de producción de Vercel disparado por el merge, alias `v2.mareliac.pe`               |
+| Migración | **ninguna**                                                                                     |
+| Smoke     | `pnpm smoke:prod` verde desde el worktree en `996d52e`                                          |
+| Respaldo  | **no se tomó**: la ventana no escribe una sola fila (ver abajo)                                 |
+
+Alineación de runtime verificada: `git diff --quiet 996d52e origin/main -- apps packages
+Dockerfile .gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` → exit 0.
+
+El smoke leyó 106 filas de inventario valorizado y 92 del reporte mensual de bobinas, así que
+la ruta vieja sigue respondiendo y la base tiene los datos que el reporte nuevo va a mostrar.
+
+### Por qué esta ventana no tomó respaldo Neon
+
+A diferencia de S3c, acá no hay migración, ni backfill, ni escritura de ningún tipo: las cuatro
+rutas nuevas son `GET` y ningún servicio de dominio cambió. El diff contra `main` son 3 322
+líneas agregadas y **5 eliminadas**, y esas cinco son un `import`, un `constructor` y un
+`providers:` que se extendieron. Un respaldo protege contra un cambio de datos que acá no
+existe; el rollback es devolver el tráfico a `ayr-steel-erp-api-00040-9m9` (`git-sha=d366c40`),
+que sigue disponible.
+
+### Decisiones nuevas
+
+**D-242** a **D-245** y **D-247**, todas en `docs/ARQUITECTURA.md` §0.2. Las dos que más
+condicionan lo que venga:
+
+- **D-242**: el costo de venta sale de los movimientos `refType='SALE'` de los despachos del
+  pedido, **no** del consumo de sus OPs. La fórmula del brief cargaba al pedido el excedente de
+  sobreproducción y daba margen 100 % a un pedido servido desde stock.
+- **D-247**: en el desglose por línea, el costo se atribuye por el producto despachado y no por
+  `inventory_movements.business_line_id`. D-119 sigue mandando en el kardex; lo que no puede es
+  sostener una tabla de margen.
+
+### Deuda que el dueño decidió diferir a mañana (2026-09-23)
+
+1. **Quality gate de SonarCloud, en rojo en el PR #9.** A diferencia del PR #7 —donde no se
+   pudo enumerar nada— acá el gate dice exactamente qué falla, y es **una sola condición**:
+   `74.8% Coverage on New Code` contra el ≥ 80 % exigido. **Reliability no aparece**: el
+   `Reliability D` que arrastraba el PR #7 no se repite en este. El hueco de cobertura son 5,2
+   puntos y está en el web, que no tiene unitarios: las dos vistas nuevas suman ~600 líneas sin
+   test, contra una cobertura alta en el API (29 unitarios nuevos en `src/reports/`).
+2. **Revisión cruzada pendiente.** AGENTS.md §2.2 exige que revise quien no implementó, y los
+   otros agentes estaban sin saldo. Decisión del dueño por la ventana de esta noche. Revisar
+   `e27e750`, `f35bcaa`, `cc1d6e0`, `edb80fb` y `50a6450`, con foco en: el signo de las reversas
+   de despacho en `costsByOrder`, la precedencia de `resolveCostStatus` (D-243) y el
+   `LEFT JOIN` a `dispatch_items` que sostiene D-247 sin perder movimientos.
+
+Las dos deudas son de **esta** ventana y se suman a la revisión cruzada del hotfix D-246, que
+quedó pendiente por su cuenta.
+
+### Lo que todavía no se sabe
+
+Los conteos de `PARCIAL` y `NO_COMPARABLE` del mes en producción. Se leen desde la pantalla
+`/reportes/ventas-margen`; no se consultaron desde esta sesión por decisión del dueño (sin
+`SELECT` directo contra producción ni sesiones prestadas). La rama Neon `demo` **no sirve** para
+adelantarlos: está congelada en el 2026-09-17, le falta `20260920120000_rf_s3c_seller_scope`
+—la consulta del reporte revienta con `column so.seller_id does not exist`— y sus datos son un
+snapshot de 15 pedidos y 4 comprobantes vivos contra los 19 pedidos de producción. Conviene
+refrescarla desde `production` antes de usarla para UAT.
+
+### Rollback (no fue necesario)
+
+API → tráfico a `ayr-steel-erp-api-00040-9m9` (`git-sha=d366c40`). El web vuelve revirtiendo el
+merge. No hay migración que deshacer ni dato que restaurar.
+
 ## RF-S4a — reportes de costeo y ventas (2026-09-22)
 
 Sesión de solo lectura: **sin migración**, sin escrituras nuevas y sin tocar ningún servicio de
