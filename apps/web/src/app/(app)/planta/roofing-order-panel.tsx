@@ -120,7 +120,14 @@ export const NO_NOTES: SavedNotes = { pool: [], note: null };
  * `null` con geometría en cero (no debería pasar con datos reales).
  */
 function equivalentMetersOf(coil: RoofingBatchCoilDto): string | null {
-  return equivalentMeters(coil, coil.remainingKg)?.toFixed(3) ?? null;
+  // D-242: con el ancho **del material**, no el del rollo. En un accesorio son dos números
+  // distintos —el rollo se reparte entre las piezas de la pasada— y usar el del rollo dejaba
+  // la bobina montada diciendo 516 m donde el selector de bobinas, que ya usa el efectivo,
+  // decía 1 576. El mismo saldo no puede rendir tres veces menos de un renglón al otro.
+  return (
+    equivalentMeters({ ...coil, widthMm: coil.materialWidthMm }, coil.remainingKg)?.toFixed(3) ??
+    null
+  );
 }
 
 export function RoofingOrderPanel({
@@ -684,8 +691,11 @@ export function RoofingOrderPanel({
                         {' '}
                         La bobina {resolved.coil.coilCode} da <strong>{accessoryPasses}</strong>{' '}
                         {accessoryPasses === 1 ? 'pieza' : 'piezas'} por pasada
+                        {/* El desarrollo se lee en milímetros y no en metros: es como viene
+                          del catálogo y como lo dice la planta («cumbrera de 300»). En metros
+                          («0.300 m») obliga a traducirlo de vuelta para reconocerlo. */}
                         {order.productDevelopmentMm !== null && (
-                          <> con un desarrollo de {mmToMeters(order.productDevelopmentMm)} m</>
+                          <> con un desarrollo de {order.productDevelopmentMm} mm</>
                         )}
                         . Cada pasada usa el ancho completo del rollo; el sobrante lateral es merma
                         de canto y ya está contado en los kilos.
