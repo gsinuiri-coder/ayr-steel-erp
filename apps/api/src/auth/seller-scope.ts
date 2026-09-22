@@ -20,3 +20,21 @@ export function assertSellerAccess(
   if (sellerId === actor.id) return;
   throw new NotFoundException(`${entity} no encontrado`);
 }
+
+/**
+ * Dueño comercial de un pedido (D-240). El pedido que nace de una cotización hereda el dueño
+ * **de la cotización**, no de quien lo confirmó: confirmar es un acto operativo y a menudo lo
+ * hace un ADMINISTRADOR sobre la cotización de un vendedor. Solo el pedido directo —sin
+ * cotización— pertenece a quien lo creó.
+ *
+ * Vive acá, y no dentro del servicio, porque el backfill de `seller_id`
+ * (`apps/api/prisma/backfill-seller-scope.ts`) tiene que aplicar **esta misma** regla sobre las
+ * filas históricas. Dos copias de la regla fue exactamente el defecto que se corrigió.
+ */
+export function resolveOrderSeller(order: {
+  quotation: { sellerId: string | null; createdById: string } | null;
+  createdById: string;
+}): string {
+  if (order.quotation) return order.quotation.sellerId ?? order.quotation.createdById;
+  return order.createdById;
+}

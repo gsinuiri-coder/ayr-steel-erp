@@ -79,7 +79,12 @@ import { deriveOrderReadiness } from './order-readiness';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
-import { assertSellerAccess, quotationSellerWhere, sellerWhere } from '../auth/seller-scope';
+import {
+  assertSellerAccess,
+  quotationSellerWhere,
+  resolveOrderSeller,
+  sellerWhere,
+} from '../auth/seller-scope';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -376,7 +381,9 @@ export class SalesOrdersService {
         const order = await tx.salesOrder.create({
           data: {
             quotationId,
-            sellerId: quotation.sellerId ?? quotation.createdById,
+            // D-240: el dueño es el de la cotización, no `actor` — quien confirma suele ser
+            // un ADMINISTRADOR y el pedido tiene que quedarle al vendedor que cotizó.
+            sellerId: resolveOrderSeller({ quotation, createdById: actor.id }),
             customerId: quotation.customerId,
             status: SalesOrderStatus.CONFIRMED,
             issueDate: toDateOnly(businessToday()),
