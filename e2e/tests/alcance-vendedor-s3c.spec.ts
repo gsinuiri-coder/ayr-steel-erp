@@ -147,7 +147,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     // Planta Despacha (como Admin o Supervisor) el Drywall
     const dispatch = await dispatchOrder(contextAdmin, {
       salesOrderId: orderId,
-      items: [{ salesOrderItemId: orderA.items[0].id, qty: '10' }],
+      items: [{ salesOrderItemId: orderA.items[0].id, qty: '10', weightKg: '10.0' }],
     });
     const dispatchId = dispatch.id;
 
