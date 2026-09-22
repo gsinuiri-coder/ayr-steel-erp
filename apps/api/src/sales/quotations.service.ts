@@ -777,7 +777,9 @@ export class QuotationsService {
         take,
       }),
     ]);
-    const actors = await this.resolveActorNames(rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]));
+    const actors = await this.resolveActorNames(
+      rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
+    );
     const items = rows.map((r) => {
       const {
         items: _items,
@@ -798,7 +800,9 @@ export class QuotationsService {
     if (!row) throw new NotFoundException('Cotización no encontrada');
     if (actor) assertSellerAccess(actor, row.sellerId, 'Cotización');
     const labels = await this.reserveLabels(row.items);
-    const actors = await this.resolveActorNames([row.createdById, row.sellerId].filter(Boolean) as string[]);
+    const actors = await this.resolveActorNames(
+      [row.createdById, row.sellerId].filter(Boolean) as string[],
+    );
     const [temporary, priceChanges] = await Promise.all([
       this.orders.findQuotationTemporaryReservation(id),
       findPriceChanges(this.prisma, { quotationId: id }),

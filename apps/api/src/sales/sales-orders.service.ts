@@ -2556,7 +2556,9 @@ export class SalesOrdersService {
         take,
       }),
     ]);
-    const actors = await this.resolveActorNames(rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]));
+    const actors = await this.resolveActorNames(
+      rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
+    );
 
     // M2: Compute readiness for list
     const ops = await this.prisma.productionOrder.findMany({
