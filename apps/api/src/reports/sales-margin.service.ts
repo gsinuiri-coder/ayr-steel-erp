@@ -182,6 +182,20 @@ export class SalesMarginService {
    * la reversa de ese despacho es un `IN` con el mismo `total_cost` y lo devuelve. Un
    * `ADJUST` bajo `refType='SALE'` no existe hoy, y se firma al revés que el `OUT` para que
    * el día que exista siga cerrando contra el valorizado en vez de sumarse dos veces.
+   *
+   * **La línea de negocio sale del producto de la línea despachada, no del movimiento**
+   * (D-247). El movimiento lleva la línea del ítem que de verdad salió del almacén (D-119), y
+   * para el kardex eso es lo correcto; pero en una **reventa de bobina** (D-116) el ingreso se
+   * imputa al SKU de reventa —`trading`— y el acero sale de una bobina de `drywall`, así que
+   * con la línea del movimiento las dos mitades del mismo margen caían en filas distintas:
+   * `trading` con 100 % y `drywall` con el costo entero en negativo. Los totales generales
+   * eran correctos y el desglose, absurdo. Medir ingreso y costo sobre el mismo eje es lo
+   * único que hace que una tabla de margen por línea signifique algo.
+   *
+   * El `LEFT JOIN` al ítem del despacho es a propósito: si algún movimiento `SALE` no tuviera
+   * su fila —hoy no ocurre, todos nacen de `DispatchesService`— un `JOIN` lo dejaría fuera y
+   * el total de costo bajaría en silencio. Sin ítem cae de vuelta en la línea del movimiento,
+   * que es la respuesta vieja: peor atribuida, pero nunca perdida.
    */
   private costsByOrder(orderIds: string[]): Promise<CostRow[]> {
     if (orderIds.length === 0) return Promise.resolve([]);
@@ -189,7 +203,7 @@ export class SalesMarginService {
       SELECT
         d."sales_order_id",
         d."invoice_id",
-        bl."code"::text AS "business_line_code",
+        COALESCE(blp."code", blm."code")::text AS "business_line_code",
         COALESCE(SUM(
           CASE m."type"
             WHEN 'OUT' THEN m."total_cost"
@@ -199,10 +213,16 @@ export class SalesMarginService {
         ), 0) AS "cost_pen"
       FROM "inventory_movements" m
       JOIN "dispatches" d ON d."id"::text = m."ref_id"
-      JOIN "business_lines" bl ON bl."id" = m."business_line_id"
+      -- La reversa de un despacho es un movimiento nuevo: el ítem lo tiene el original, así
+      -- que se lo busca por el movimiento que anula.
+      LEFT JOIN "dispatch_items" di
+        ON di."movement_id" = COALESCE(m."reversal_of_id", m."id")
+      LEFT JOIN "products" p ON p."id" = di."product_id"
+      LEFT JOIN "business_lines" blp ON blp."id" = p."business_line_id"
+      JOIN "business_lines" blm ON blm."id" = m."business_line_id"
       WHERE m."ref_type" = 'SALE'
         AND d."sales_order_id" = ANY(${orderIds}::uuid[])
-      GROUP BY d."sales_order_id", d."invoice_id", bl."code"
+      GROUP BY d."sales_order_id", d."invoice_id", COALESCE(blp."code", blm."code")
     `;
   }
 

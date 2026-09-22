@@ -217,6 +217,26 @@ test.describe('RF-S4a — reportes de costeo', () => {
     expect(doc, 'la factura emitida tiene que colgar de su pedido').toBeDefined();
     expect(Number(doc!.salesPen)).toBeCloseTo(Number(invoice.subtotalPen), 2);
 
+    // D-247: **la venta y su costo caen en la misma línea de negocio**, y esta escena es
+    // justo la que lo rompía. En una reventa de bobina (D-116) el ingreso se imputa al SKU de
+    // reventa y el acero sale de una bobina de otra línea; con la línea del movimiento de
+    // kardex (D-119) las dos mitades del mismo margen quedaban en filas distintas —una con
+    // 100 % y la otra con el costo entero en negativo— y los totales generales, correctos.
+    // Por eso el guardrail no mira una fila: exige que la tabla por línea sume los totales.
+    const sumOf = (key: 'salesPen' | 'costPen'): number =>
+      Number(report.totalsByLine.reduce((acc, t) => acc + Number(t[key]), 0).toFixed(4));
+    expect(sumOf('salesPen')).toBeCloseTo(Number(report.totals.salesPen), 2);
+    expect(sumOf('costPen')).toBeCloseTo(Number(report.totals.costPen), 2);
+
+    // Y ninguna línea puede tener costo sin venta: eso es exactamente el síntoma del defecto.
+    for (const linea of report.totalsByLine) {
+      if (Number(linea.costPen) === 0) continue;
+      expect(
+        Number(linea.salesPen),
+        `la línea ${linea.businessLine ?? 'sin línea'} tiene costo pero no venta: el ingreso y su costo se están midiendo sobre ejes distintos`,
+      ).toBeGreaterThan(0);
+    }
+
     // Y la bobina vendida ya no vale nada en el inventario valorizado: el mismo hecho visto
     // desde los dos reportes, que es lo que los hace conciliables entre sí.
     const valuationAfter = await valuation(api);

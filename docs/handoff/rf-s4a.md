@@ -67,8 +67,19 @@ dominio. Agente: Claude Code. Rama `rf-s4a`, PR
    fue código y CI. La primera lectura real es el guion UAT. Lo que sí está dicho es dónde van
    a aparecer (punto 2 y 3, y `docs/PROGRESO.md`).
 
-7. **Las dos pantallas sí se miraron, en un stack local, y ahí salió un defecto que ningún
-   test iba a ver.** El detalle desplegable de M1 comparte la tabla de su grupo, y sus datos
+7. **El desglose por línea de M2 mide el costo por el producto despachado, no por el
+   movimiento (D-247).** Es lo contrario de lo que uno escribiría leyendo D-119, y por eso se
+   escribió mal la primera vez: en una reventa de bobina (D-116) el ingreso va al SKU de
+   reventa (`trading`) y el acero sale de una bobina de `drywall`, así que con la línea del
+   movimiento el mismo margen quedaba partido en dos filas —`trading` al 100 % y `drywall` con
+   el costo entero en negativo— con los totales generales correctos. D-119 sigue mandando en
+   el kardex y en el valorizado; lo que no puede es sostener una tabla de margen. El guardrail
+   del E2E no mira una fila: exige que la tabla por línea sume los totales y que ninguna línea
+   tenga costo sin venta.
+
+8. **Las dos pantallas sí se miraron, en un stack local, y ahí salieron dos defectos que
+   ningún test iba a ver** —el de arriba y este—. El detalle desplegable de M1 comparte la
+   tabla de su grupo, y sus datos
    propios caían bajo encabezados ajenos: el **ancho** de la bobina bajo la columna «Espesor»
    —`1,200.00 mm` debajo del rótulo que en la fila del grupo dice `0.45 mm`—, el estado bajo
    «Color» y la fecha bajo «Bobinas». Cada dato era correcto y cada encabezado también; lo
