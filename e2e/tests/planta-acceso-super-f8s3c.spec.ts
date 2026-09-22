@@ -45,8 +45,10 @@ test.describe('Acceso Supervisor de Planta (CRITICA 1)', () => {
     }
     const { id: quoteId } = await quoteRes.json();
 
+    const previewRes = await apiVen.get(`/api/sales/quotations/${quoteId}/confirm-preview`);
+    if (!previewRes.ok()) throw new Error('preview falló: ' + (await previewRes.text()));
     const confirmRes = await apiVen.post(`/api/sales/quotations/${quoteId}/confirm`);
-    expect(confirmRes.ok()).toBeTruthy();
+    if (!confirmRes.ok()) throw new Error('confirm falló: ' + (await confirmRes.text()));
     const order = await confirmRes.json();
     const orderId = order.id;
 
@@ -56,24 +58,24 @@ test.describe('Acceso Supervisor de Planta (CRITICA 1)', () => {
     const apiSup = await apiAs(baseURL!, supervisor);
 
     const opsRes = await apiSup.get('/api/production/roofing/queue');
-    expect(opsRes.ok()).toBeTruthy();
+    if (!opsRes.ok()) throw new Error('ops');
 
     const pdfRes = await apiSup.get(`/api/sales/orders/${orderId}/pdf-planta`);
-    expect(pdfRes.ok()).toBeTruthy();
+    if (!pdfRes.ok()) throw new Error('pdf');
 
-    const mountRes = await apiSup.post(`/api/production/roofing/${productionOrderId}/mount`, {
+    const mountRes = await apiSup.post(`/api/production/roofing/${productionOrderId}/coils`, {
       data: { coilId: coil.id },
     });
-    expect(mountRes.ok()).toBeTruthy();
+    if (!mountRes.ok()) throw new Error('mount');
 
-    const piecesRes = await apiSup.post(`/api/production/roofing/${productionOrderId}/pieces`, {
-      data: { reportedQty: 10, scrappedQty: 0, date: businessToday() },
+    const piecesRes = await apiSup.post(`/api/production/roofing/${productionOrderId}/report`, {
+      data: { pieces: [{ lengthMm: '3000', qty: 10 }] },
     });
-    expect(piecesRes.ok()).toBeTruthy();
+    if (!piecesRes.ok()) throw new Error('pieces');
 
     const closeRes = await apiSup.post(`/api/production/roofing/${productionOrderId}/close`, {
-      data: { force: false },
+      data: {},
     });
-    expect(closeRes.ok()).toBeTruthy();
+    if (!closeRes.ok()) throw new Error('close');
   });
 });
