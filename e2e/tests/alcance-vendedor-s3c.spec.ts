@@ -173,9 +173,9 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const kardexResAdmin = await contextAdmin.get('/api/inventory/movements');
     expect(kardexResAdmin.status()).toBe(200);
 
-    const auditResA = await contextA.get('/api/audit/logs');
+    const auditResA = await contextA.get('/api/audit');
     expect(auditResA.status()).toBe(403);
-    const auditResAdmin = await contextAdmin.get('/api/audit/logs');
+    const auditResAdmin = await contextAdmin.get('/api/audit');
     expect(auditResAdmin.status()).toBe(200);
 
     // 3. Stock / Modal de cotizaciÃ³n (200, sin costos)
