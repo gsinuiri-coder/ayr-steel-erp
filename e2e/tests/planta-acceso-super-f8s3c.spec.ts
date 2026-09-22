@@ -35,7 +35,7 @@ test.describe('Acceso Supervisor de Planta (CRITICA 1)', () => {
     const quoteRes = await apiVen.post('/api/sales/quotations', {
       data: {
         customerId: customer.id,
-        businessLine: 'metallic-roofing',
+
         issueDate: businessToday(),
         items: [{ productId: productRes.id, qty: '30', pieces: [{ lengthMm: '3000', qty: 10 }] }],
       },

@@ -539,7 +539,7 @@ export async function createQuotation(
 ): Promise<QuotationDto> {
   return postJson<QuotationDto>(api, '/api/sales/quotations', {
     customerId: input.customerId,
-    businessLine: input.businessLine,
+
     issueDate: input.issueDate ?? today(),
     ...(input.validityDays === undefined ? {} : { validityDays: input.validityDays }),
     items: [
@@ -662,7 +662,7 @@ export async function createQuotationWithLines(
 ): Promise<QuotationDto> {
   return postJson<QuotationDto>(api, '/api/sales/quotations', {
     customerId: input.customerId,
-    businessLine: input.businessLine,
+
     issueDate: input.issueDate ?? today(),
     ...(input.validityDays === undefined ? {} : { validityDays: input.validityDays }),
     items: input.items.map(toLinePayload),
@@ -691,7 +691,7 @@ export async function createDirectOrder(
 ): Promise<SalesOrderDto> {
   return postJson<SalesOrderDto>(api, '/api/sales/orders', {
     customerId: input.customerId,
-    businessLine: input.businessLine,
+
     issueDate: input.issueDate ?? today(),
     items: input.items.map(toLinePayload),
   });
