@@ -49,7 +49,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     });
     await postJson(api, `/api/purchases/${purchaseData.id}/receive`, {});
 
-    const { finish: finishRoofing } = await setupCoilStock(api, {
+    const { finish: finishRoofing, coil: roofingCoil } = await setupCoilStock(api, {
       lineCode: 'metallic-roofing',
       weightKg: '5000',
       thicknessMm: '0.43',
@@ -192,12 +192,9 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     expect(coilResA.status()).toBe(403);
 
     // SUPERVISOR_PLANTA recibe 403 en POST /coils/:id/cancel
-    const coilsResAdmin = await contextAdmin.get('/api/coils');
-    const coils = await coilsResAdmin.json();
-    const coilId = coils.data[0].id;
     expect(
       (
-        await contextSup.post('/api/coils/' + coilId + '/cancel', {
+        await contextSup.post('/api/coils/' + roofingCoil.id + '/cancel', {
           data: { reason: 'Test' },
         })
       ).status(),
