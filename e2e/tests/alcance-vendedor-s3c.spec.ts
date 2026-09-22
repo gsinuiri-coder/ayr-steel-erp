@@ -221,7 +221,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
 
     // CRÃTICA 2: Reassign test A -> B
     const reassignRes = await contextAdmin.patch('/api/sales/quotations/' + quoteId + '/seller', {
-      data: { newSellerId: vendedorB.id, reason: 'Cambio' },
+      data: { sellerId: vendedorB.id, reason: 'Cambio de vendedor E2E' },
     });
     expect(reassignRes.ok()).toBeTruthy();
 
