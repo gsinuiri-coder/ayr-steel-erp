@@ -107,7 +107,11 @@ export class RoofingDraftsService {
             `El borrador admite hasta ${MAX_DRAFT_ROWS} filas: ejecútalo antes de seguir cargando`,
           );
         }
-        const candidate = { coilId: input.coilId, pieces: input.pieces };
+        const candidate = {
+          coilId: input.coilId,
+          pieces: input.pieces,
+          consumedKg: input.consumedKg ?? null,
+        };
         const coilId = this.validate(state, [...existing.map(toRowLike), candidate], 'new');
         await tx.productionReportDraft.create({
           data: {
@@ -138,7 +142,11 @@ export class RoofingDraftsService {
         const index = existing.findIndex((d) => d.id === draftId);
         if (index < 0) throw new NotFoundException('Esa fila no está en el borrador de la orden');
         const rows = existing.map(toRowLike);
-        rows[index] = { coilId: input.coilId, pieces: input.pieces };
+        rows[index] = {
+          coilId: input.coilId,
+          pieces: input.pieces,
+          consumedKg: input.consumedKg ?? null,
+        };
         const coilId = this.validate(state, rows, index);
         await tx.productionReportDraftPiece.deleteMany({ where: { draftId } });
         await tx.productionReportDraft.update({
@@ -394,7 +402,11 @@ function toPieceLike(row: { lengthMm: Prisma.Decimal; qty: number }): PieceLike 
 }
 
 function toRowLike(draft: DraftRow): DraftRowLike {
-  return { coilId: draft.coilId, pieces: draft.pieces.map(toPieceLike) };
+  return {
+    coilId: draft.coilId,
+    pieces: draft.pieces.map(toPieceLike),
+    consumedKg: draft.consumedKg === null ? null : draft.consumedKg.toFixed(3),
+  };
 }
 
 function toPieceRows(pieces: readonly { lengthMm: string; qty: number }[]) {
