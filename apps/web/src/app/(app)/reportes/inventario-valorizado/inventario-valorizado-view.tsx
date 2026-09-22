@@ -13,6 +13,7 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney, formatQty } from '@/lib/format';
+import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -62,6 +63,18 @@ export function InventarioValorizadoView() {
               : 'Saldo de kardex por su costo promedio ponderado.'}
           </p>
         </div>
+        {/* Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que
+            esta pantalla, así que no hay dos caminos que puedan divergir. */}
+        <HeaderActions
+          primary={['xlsx']}
+          actions={[
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: '/api/reports/inventory-valuation/xlsx',
+            },
+          ]}
+        />
       </div>
 
       {report.data && (

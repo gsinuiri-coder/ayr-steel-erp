@@ -14,6 +14,7 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
+import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -84,6 +85,17 @@ export function VentasMargenView() {
               }}
             />
           </div>
+          {/* Descarga directa contra el API (patrón D-149), con el mismo rango que se ve. */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: `/api/reports/sales-margin/xlsx?from=${from}&to=${to}`,
+              },
+            ]}
+          />
         </div>
       </div>
 

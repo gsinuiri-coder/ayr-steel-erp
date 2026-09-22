@@ -1,4 +1,5 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   coilMonthReportQuerySchema,
   salesMarginQuerySchema,
@@ -13,6 +14,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { InventoryValuationService } from './inventory-valuation.service';
+import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
 import { ReportsService } from './reports.service';
 import { SalesMarginService } from './sales-margin.service';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -62,6 +64,38 @@ export class ReportsController {
   ): Promise<SalesMarginDto> {
     return this.salesMargin.salesMargin(query);
   }
+
+  /**
+   * RF-S4a/M3. El xlsx sale del **mismo DTO** que la pantalla, no de una segunda consulta:
+   * dos caminos hasta la base para la misma pregunta es cómo el archivo y la pantalla
+   * terminan diciendo números distintos.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('inventory-valuation/xlsx')
+  async inventoryValuationXlsxFile(@Res() res: Response): Promise<void> {
+    const report = await this.inventoryValuation.valuation();
+    sendXlsx(res, inventoryValuationXlsx(report));
+  }
+
+  /** RF-S4a/M3. */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('sales-margin/xlsx')
+  async salesMarginXlsxFile(
+    @Query(new ZodValidationPipe(salesMarginQuerySchema)) query: SalesMarginQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const report = await this.salesMargin.salesMargin(query);
+    sendXlsx(res, salesMarginXlsx(report));
+  }
+}
+
+function sendXlsx(res: Response, file: { buffer: Buffer; filename: string }): void {
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+  res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+  res.send(file.buffer);
 }
 
 function canSeeCosts(actor: RequestUser): boolean {
