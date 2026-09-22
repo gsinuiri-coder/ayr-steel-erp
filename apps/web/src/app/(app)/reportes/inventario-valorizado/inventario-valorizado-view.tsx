@@ -242,26 +242,35 @@ function CoilGroupRows({
         <TableCell className="text-right">{formatMoney(group.avgCostPen)}</TableCell>
         <TableCell className="text-right font-medium">{formatMoney(group.totalValuePen)}</TableCell>
       </TableRow>
+      {/*
+        El detalle comparte la tabla del grupo, así que solo puede usar las columnas cuyo
+        encabezado signifique lo mismo para una bobina que para su grupo: saldo, costo/kg y
+        valor. Lo que es propio de la bobina —ancho, estado, fecha de alta— va **dentro de la
+        primera celda** y rotulado, no repartido por las columnas de la izquierda: ahí el
+        ancho caía bajo «Espesor» y la fecha bajo «Bobinas», o sea un dato correcto debajo de
+        un rótulo que decía otra cosa.
+      */}
       {open &&
         group.coils.map((coil) => (
           <TableRow key={coil.id} className="bg-muted/40 text-xs">
-            <TableCell className="pl-8 font-mono">
-              <Link className={LINK_CLASSNAME} href={`/bobinas/${coil.id}`}>
-                {coil.code}
-              </Link>
+            <TableCell className="pl-8" colSpan={4}>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <Link className={`${LINK_CLASSNAME} font-mono`} href={`/bobinas/${coil.id}`}>
+                  {coil.code}
+                </Link>
+                <span className="text-muted-foreground">Ancho {formatQty(coil.widthMm, 'mm')}</span>
+                <span className="text-muted-foreground">Alta {formatDate(coil.operationDate)}</span>
+                {/*
+                  El estado solo se muestra cuando **no** es «Abierta»: una bobina con saldo
+                  que no está abierta es una anomalía (D-164 liquida el remanente al cerrar) y
+                  el reporte la delata en vez de filtrarla. Rotular las normales no aporta y
+                  deja la columna llena de insignias que nadie lee.
+                */}
+                {coil.status !== 'OPEN' && (
+                  <Badge variant="destructive">{COIL_STATUS_LABELS[coil.status]}</Badge>
+                )}
+              </div>
             </TableCell>
-            <TableCell className="text-right">{formatQty(coil.widthMm, 'mm')}</TableCell>
-            <TableCell>
-              {/*
-                El estado se muestra en el detalle porque una bobina con saldo que no está
-                abierta es una anomalía (D-164 liquida el remanente al cerrar): el reporte la
-                deja ver en vez de filtrarla, que la escondería del total.
-              */}
-              <Badge variant={coil.status === 'OPEN' ? 'secondary' : 'destructive'}>
-                {COIL_STATUS_LABELS[coil.status]}
-              </Badge>
-            </TableCell>
-            <TableCell className="text-right">{formatDate(coil.operationDate)}</TableCell>
             <TableCell className="text-right">{formatQty(coil.qtyKg, 'kg')}</TableCell>
             <TableCell className="text-right">{formatMoney(coil.avgCostPen)}</TableCell>
             <TableCell className="text-right">{formatMoney(coil.totalValuePen)}</TableCell>
