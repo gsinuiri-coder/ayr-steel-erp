@@ -2,6 +2,16 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## HOTFIX kg teórico — planta bloqueada por tolerancia de laminado (2026-09-22)
+
+Producción real detenida: el reporte de 253 × 6.00 m de IMPO-ALZ-NATURAL-0.28-4010-11 pedía
+4 043.952 kg teóricos contra 4 010 kg montados, con el acero ya consumido. D-246: el reporte
+se topa en lo montado cuando lo declarado cabe o, sin declaración, el exceso es ≤ 1 % del
+teórico; fuera de eso sigue bloqueando. Aplica a coberturas (reporte, reporte+cierre,
+borrador/multi-montar, a medida y plancha de catálogo) y a drywall. El piso del cierre se lee
+de las salidas reales del kardex. Sin migración; toca API y web (deploy API → push web).
+Sin E2E local (corre en paralelo con rf-s4a/acc-demo): la juez es la CI.
+
 ## Ventana RF-S3c — alcance comercial de vendedor (2026-09-22)
 
 Ventana exprés, con el sistema sin usuarios activos. PR #7 mergeado a `main` con OK explícito
