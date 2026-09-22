@@ -18,7 +18,15 @@ function state(overrides: Partial<DraftCheckState> = {}): DraftCheckState {
     fixedLengthMm: null,
     planPieces: [{ lengthMm: '4000.00', qty: 10 }], // 40 m
     reportedMeters: new Decimal(0),
-    coils: [{ coilId: 'c1', coilCode: 'B-1', remainingKg: new Decimal('500'), geometry, piecesPerPass: null }],
+    coils: [
+      {
+        coilId: 'c1',
+        coilCode: 'B-1',
+        remainingKg: new Decimal('500'),
+        geometry,
+        piecesPerPass: null,
+      },
+    ],
     ...overrides,
   };
 }
@@ -71,7 +79,13 @@ describe('checkDraftRows (D-191)', () => {
   it('con varias bobinas exige indicar de cuál; una bobina bajada rechaza la fila', () => {
     const two = state({
       coils: [
-        { coilId: 'c1', coilCode: 'B-1', remainingKg: new Decimal('500'), geometry, piecesPerPass: null },
+        {
+          coilId: 'c1',
+          coilCode: 'B-1',
+          remainingKg: new Decimal('500'),
+          geometry,
+          piecesPerPass: null,
+        },
         {
           coilId: 'c2',
           coilCode: 'B-2',

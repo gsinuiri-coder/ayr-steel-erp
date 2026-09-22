@@ -36,7 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { DrywallOrderPanel } from './drywall-order-panel';
 import { useProductionQueue } from '@/components/production-queue';
 import { OrderHistory } from '@/components/production/order-history';
-import { DrywallOrderCard, LinesWithoutOrderCard } from './new-order-cards';
+import { AccessoryStockCard, DrywallOrderCard, LinesWithoutOrderCard } from './new-order-cards';
 import { groupByPedido, seqOf, WITHOUT_SALES_ORDER } from './pedido-groups';
 import { PedidoList } from './pedido-list';
 import { PedidoPriorityControl } from './pedido-priority';
@@ -319,6 +319,7 @@ function NewOrderDrawer({ onCreated }: { onCreated: (orderId: string) => void })
         <div className="grid gap-4">
           <LinesWithoutOrderCard onCreated={created} />
           <DrywallOrderCard onCreated={created} />
+          <AccessoryStockCard onCreated={created} />
         </div>
       </SheetContent>
     </Sheet>

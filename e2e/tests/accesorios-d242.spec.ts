@@ -232,6 +232,48 @@ test.describe('D-242 — accesorios de cobertura (API)', () => {
     }
   });
 
+  test('a stock: la corrida elige el largo, no hay pedido detrás y el saldo queda libre', async () => {
+    // D-242 reabre para accesorios la puerta que D-171 cerró para coberturas. El largo lo
+    // elige la corrida porque un accesorio se vende por metro y no tiene uno fijo.
+    const { product, coil, trail } = await setup(api);
+    try {
+      // Sin largo no se puede: no hay de dónde sacarlo.
+      const noLength = await postExpectingError(api, '/api/production/roofing', {
+        productId: product.id,
+        targetPieces: 8,
+      });
+      expect(noLength.message).toMatch(/indica en qué largo se produce esta corrida/i);
+
+      // Y el largo va en milímetros, con la cota de D-166: «3» por 3 000 no entra.
+      const tinyLength = await postExpectingError(api, '/api/production/roofing', {
+        productId: product.id,
+        targetPieces: 8,
+        pieceLengthMm: '3.00',
+      });
+      expect(tinyLength.message).toMatch(/va en \*\*milímetros\*\*/);
+
+      const stockOrder = await postJson<ProductionOrderDto & { items: unknown[] }>(
+        api,
+        '/api/production/roofing',
+        { productId: product.id, targetPieces: 8, pieceLengthMm: '4000.00' },
+      );
+      trail.productionOrderIds?.push(stockOrder.id);
+      expect(stockOrder.targetPieces).toBe(8);
+      expect(stockOrder.salesOrderId ?? null).toBeNull();
+
+      await mountCoil(api, stockOrder.id, { coilId: coil.id });
+      // 2 pasadas de 4 m con 4 piezas por pasada = las 8 piezas de la meta.
+      await reportPieces(api, stockOrder.id, { coilId: coil.id, pieces: pieces([4, 2]) });
+
+      // El saldo entra **libre**: no hay pedido que lo reserve. Es stock de mostrador.
+      const balance = await balanceOf(api, 'PRODUCT', product.id);
+      expect(balance.qty).toBe('32.000');
+      expect(balance.reservedQty).toBe('0.000');
+    } finally {
+      await purgeRoofingTrail(api, trail);
+    }
+  });
+
   test('revertir el reporte devuelve los metros del accesorio y los kilos de la pasada', async () => {
     const { product, coil, opId, trail } = await setup(api);
     try {

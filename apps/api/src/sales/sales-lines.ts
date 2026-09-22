@@ -912,7 +912,9 @@ export function isMadeToOrder(product: MadeToOrderLike): boolean {
   // sí a un accesorio habría sido exactamente el error que D-131 y D-171 ya pagaron dos
   // veces — responder una pregunta con otra porque las dos devuelven `boolean`.
   return (
-    isMadeToMeasure(product) || isAccessory(product) || sellsByFixedLength(toFixedLengthLike(product))
+    isMadeToMeasure(product) ||
+    isAccessory(product) ||
+    sellsByFixedLength(toFixedLengthLike(product))
   );
 }
 

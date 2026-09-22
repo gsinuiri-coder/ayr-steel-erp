@@ -364,9 +364,7 @@ export class RoofingDraftsService {
         return {
           coilId: c.coilId,
           coilCode: c.coil.code,
-          remainingKg: toDecimal(c.assignedKg.toString()).minus(
-            toDecimal(c.consumedKg.toString()),
-          ),
+          remainingKg: toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
           geometry: {
             widthMm: accessory?.effectiveWidthMm ?? c.coil.widthMm.toFixed(2),
             thicknessMm: c.coil.thicknessMm.toFixed(2),

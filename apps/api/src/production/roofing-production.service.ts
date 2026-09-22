@@ -17,6 +17,8 @@ import {
   Decimal,
   describePieces,
   isOverdue,
+  isPlausiblePieceLength,
+  PIECE_LENGTH_RANGE_LABEL,
   queueSemaphore,
   fromDateOnly,
   MAX_ORDER_REPORTS,
@@ -79,7 +81,7 @@ import {
 } from '../sales/reservation-transfer';
 import { findRawMaterialShortfalls, type RawMaterialShortfall } from '../sales/raw-material';
 import { reservedByItem } from '../sales/reserved-ledger';
-import { sellsByLength } from '../sales/sales-lines';
+import { isAccessory, sellsByLength } from '../sales/sales-lines';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
 import { allocateStripKg, type StripAllocationRow } from './production-math';
 import {
@@ -199,10 +201,33 @@ export class RoofingProductionService {
         // tiene respuesta hoy, y por eso la puerta se cierra en vez de dejarse entreabierta.
         // `createToStock` sigue en el archivo, sin llamadores, para que reabrirla sea volver a
         // enchufarla y no volver a escribirla.
-        throw new BadRequestException(
-          'Una cobertura no se produce a stock: se fabrica contra el pedido que reserva su ' +
-            'material (D-171). Confirmá el pedido y producí desde su reserva.',
-        );
+        //
+        // -------------------------------------------------------------------
+        // **D-242 reabre la puerta, y solo para accesorios.** El dueño decidió que un
+        // accesorio se produce contra pedido **y** a stock: una cumbrera de 3 m es un
+        // artículo de mostrador, se repone de antemano y se vende del almacén.
+        //
+        // La pregunta que D-171 dejó abierta **sigue abierta** y ahora tiene dueño: hoy una
+        // línea de accesorio reserva materia prima y produce siempre (`isMadeToOrder`), así
+        // que el saldo a stock no lo consume ningún pedido — se vende por mostrador (RF-60)
+        // y nada más. Mientras no se decida si una línea de pedido debe tomarlo, esto es un
+        // saldo de mostrador y no un repuesto de la cola. Está anotado en el guion de la
+        // demo para confirmarlo con el cliente.
+        const product =
+          input.productId === undefined
+            ? null
+            : await tx.product.findUnique({
+                where: { id: input.productId },
+                select: { roofingKind: true },
+              });
+        if (product === null || !isAccessory(product)) {
+          throw new BadRequestException(
+            'Una cobertura no se produce a stock: se fabrica contra el pedido que reserva su ' +
+              'material (D-171). Confirmá el pedido y producí desde su reserva. ' +
+              'Los accesorios sí se producen a stock (D-242).',
+          );
+        }
+        return this.createToStock(tx, actor, input, orderOperationDate);
       }
       return this.createFromReservationInTx(tx, actor, {
         reservationId: input.reservationId,
@@ -389,16 +414,52 @@ export class RoofingProductionService {
     if (!product.isActive) throw new BadRequestException('El producto está desactivado');
 
     const roofing = await this.production.requireRoofingProduct(product.id);
-    if (roofing.lengthMm === null) {
+
+    // D-242: un accesorio **sí** se produce a stock, y el largo lo elige la corrida.
+    //
+    // No lo puede sacar del maestro como una plancha —se vende por metro y no tiene largo
+    // fijo— ni de un pedido, porque no hay ninguno detrás. Que lo elija quien programa la
+    // corrida es lo que hace que «producir cumbrera de 3 m para tener en almacén» sea una
+    // operación y no un pedido fantasma; el largo elegido es el que después limita el
+    // reporte, igual que el plan de una OP contra pedido.
+    const accessory = isAccessory(roofing);
+    const chosenLengthMm = input.pieceLengthMm ?? null;
+    if (accessory && chosenLengthMm === null) {
+      throw new BadRequestException(
+        `${roofing.sku} es un accesorio: indica en qué largo se produce esta corrida ` +
+          '(se vende por metro y no tiene largo fijo en el catálogo).',
+      );
+    }
+    if (!accessory && chosenLengthMm !== null) {
+      throw new BadRequestException(
+        `${roofing.sku} tiene su largo en el catálogo: esta corrida no lo elige`,
+      );
+    }
+    const pieceLengthMm = chosenLengthMm ?? roofing.lengthMm?.toFixed(2) ?? null;
+    if (pieceLengthMm === null) {
       throw new BadRequestException(
         `${roofing.sku} es una cobertura a medida: no tiene largo fijo para producir a stock. ` +
           'Solo se fabrica contra el pedido que reserva el material (RF-31, D-134).',
       );
     }
+    // D-166: el mismo rango de un largo tipeado a mano en cualquier otro lado. El campo va en
+    // milímetros y toda la pantalla de coberturas trabaja en metros: sin esta cota, «3» por
+    // 3 000 entra y la corrida entera queda con un plan de 3.6 cm.
+    if (accessory && !isPlausiblePieceLength(pieceLengthMm)) {
+      throw new BadRequestException(
+        `El largo de la corrida tiene que estar entre ${PIECE_LENGTH_RANGE_LABEL}: ` +
+          `${toDecimal(pieceLengthMm).toFixed(2)} mm son ${toDecimal(pieceLengthMm).div(1000).toFixed(3)} m. ` +
+          'El campo va en **milímetros** (3 metros son 3000).',
+      );
+    }
 
     // D-084/D-140: mismo plan de una sola línea que ya arma la cola cuando no hay subítems
-    // de pedido: el largo del SKU repetido tantas veces como la meta pide.
-    const items = derivePiecesPlan([], roofing.lengthMm.toFixed(2), input.targetPieces.toString());
+    // de pedido: el largo repetido tantas veces como la meta pide.
+    //
+    // D-242: en un accesorio la meta son **piezas**, igual que en una plancha — lo que cambia
+    // es que esas piezas salen de a `N` por pasada, y eso lo resuelve el reporte contra la
+    // bobina montada. El plan no lo puede saber: todavía no hay rollo.
+    const items = derivePiecesPlan([], pieceLengthMm, input.targetPieces.toString());
 
     const order = await tx.productionOrder.create({
       data: {
@@ -432,6 +493,9 @@ export class RoofingProductionService {
         productId: product.id,
         reservationId: null,
         targetPieces: input.targetPieces,
+        // D-242: en un accesorio el largo es una decisión de esta corrida y no del maestro,
+        // así que queda en el log. Null en una plancha, donde el largo es del SKU.
+        pieceLengthMm: accessory ? pieceLengthMm : null,
         plan: describePieces(items),
       },
     });

@@ -133,7 +133,10 @@ async function main() {
   // 3. Proveedor y bobina con saldo ---------------------------------------
   const supplier = await post('/suppliers', {
     // El código de proveedor son 3 a 6 **letras**, sin números: de ahí el tag en letras.
-    code: `DMO${randomUUID().replace(/[^a-z]/g, '').slice(0, 3).toUpperCase()}`,
+    code: `DMO${randomUUID()
+      .replace(/[^a-z]/g, '')
+      .slice(0, 3)
+      .toUpperCase()}`,
     docType: 'RUC',
     docNumber: `20${Math.floor(100000000 + Math.random() * 899999999)}`,
     name: `PROVEEDOR ${PREFIX} ${TAG}`,
@@ -205,7 +208,9 @@ async function main() {
   console.log('\nListo. Para la demo:');
   console.log(`  · Catálogo → buscar "${PREFIX}"`);
   console.log(`  · Planta → pedido ${order.code} → montar la bobina ${coil.code}`);
-  console.log('  · Reportar 3 pasadas de 3.00 m → 12 piezas, 36 ML, 25.689 kg (lo mismo que reservó)');
+  console.log(
+    '  · Reportar 3 pasadas de 3.00 m → 12 piezas, 36 ML, 25.689 kg (lo mismo que reservó)',
+  );
 }
 
 main().catch((err) => {

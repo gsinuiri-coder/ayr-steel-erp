@@ -498,6 +498,18 @@ export const createRoofingOrderSchema = z
       .min(1, 'Al menos una plancha')
       .max(MAX_PIECE_QTY, `Máximo ${MAX_PIECE_QTY} planchas por corrida`)
       .optional(),
+    /**
+     * D-242: largo de la pieza en una corrida a stock de **accesorios**, en mm.
+     *
+     * Una plancha de catálogo no lo lleva —su largo es del SKU— y un accesorio no puede
+     * sacarlo de ningún lado: se vende por metro y cada corrida elige en qué largo se
+     * almacena (3 m de cumbrera es una decisión de la planta, no del maestro). Con
+     * `targetPieces` forma el plan: tantas piezas de ese largo.
+     */
+    pieceLengthMm: decimalStringSchema('MM', {
+      positive: true,
+      max: MAX_VALUE.WIDTH_MM,
+    }).optional(),
     notes: z.string().trim().max(500).optional(),
   })
   .superRefine((v, ctx) => {
@@ -521,6 +533,16 @@ export const createRoofingOrderSchema = z
         code: z.ZodIssueCode.custom,
         path: ['targetPieces'],
         message: 'La cantidad objetivo es obligatoria para producir a stock',
+      });
+    }
+    // D-242: el largo es de la corrida a stock, no de una OP que nace de un pedido —ahí lo
+    // traen los subítems de la línea. Que viaje con `reservationId` sería un largo que nadie
+    // lee, y el que lo mandó creería haber elegido algo.
+    if (v.reservationId !== undefined && v.pieceLengthMm !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pieceLengthMm'],
+        message: 'El largo lo trae el pedido: solo una corrida a stock elige en qué largo produce',
       });
     }
   });

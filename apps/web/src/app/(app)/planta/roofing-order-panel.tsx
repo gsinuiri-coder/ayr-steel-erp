@@ -687,8 +687,8 @@ export function RoofingOrderPanel({
                         {order.productDevelopmentMm !== null && (
                           <> con un desarrollo de {mmToMeters(order.productDevelopmentMm)} m</>
                         )}
-                        . Cada pasada usa el ancho completo del rollo; el sobrante lateral es
-                        merma de canto y ya está contado en los kilos.
+                        . Cada pasada usa el ancho completo del rollo; el sobrante lateral es merma
+                        de canto y ya está contado en los kilos.
                       </>
                     )}
                   </AlertDescription>

@@ -7,8 +7,11 @@ import {
   describePieces,
   MAX_REPORT_PIECES,
   ProductBomKind,
+  RoofingProductKind,
+  toDecimal,
   type LineWithoutOrderDto,
   type ProductBomDto,
+  type ProductDto,
   type ProductionOrderDto,
   type ReservationDto,
 } from '@ayr/shared';
@@ -36,16 +39,17 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 
 /**
- * Las tres formas de **abrir** una orden de producción, juntas en un solo lugar (D-160).
+ * Las formas de **abrir** una orden de producción, juntas en un solo lugar (D-160).
  *
  * Estaban repartidas entre `planta-view.tsx` (perfiles) y `roofing-terminal.tsx` (coberturas),
  * que eran las dos mitades de la misma pantalla; al fundirse la terminal con el espacio de
  * producción, crear la orden dejó de ser el paso 1 de una pantalla y pasó a ser una sección
  * del workspace que se despliega cuando hace falta.
  *
- * Las tres son distintas porque el dominio las hace distintas: una cobertura a medida nace
- * del **pedido** que reserva el material (D-084), una plancha de catálogo nace de una meta a
- * stock (D-140), y un perfil de drywall nace del **producto** y su receta.
+ * Son distintas porque el dominio las hace distintas: una cobertura a medida nace del
+ * **pedido** que reserva el material (D-084), un perfil de drywall nace del **producto** y su
+ * receta, y un accesorio a stock (D-242) nace de una meta **y un largo**, porque se vende por
+ * metro y no tiene uno fijo.
  */
 
 /**
@@ -141,6 +145,147 @@ function LineWithoutOrderSummary({ entry }: { entry: LineWithoutOrderDto }) {
         {entry.promisedDeliveryDate ? formatDate(entry.promisedDeliveryDate) : 'sin fecha'}
       </div>
     </div>
+  );
+}
+
+/**
+ * D-242: una corrida de **accesorios a stock**.
+ *
+ * Es la cuarta forma de abrir una orden y no cabía en ninguna de las tres: un accesorio no
+ * nace de un pedido (se produce para tener en almacén), no tiene receta como un perfil de
+ * drywall, y no tiene largo fijo como una plancha —se vende por metro—. Así que la corrida
+ * elige dos cosas que ninguna otra elige: **en qué largo** se produce y **cuántas piezas**.
+ * Las pasadas salen de ahí cuando planta monte la bobina, porque recién entonces se sabe
+ * cuántas piezas da cada una.
+ */
+export function AccessoryStockCard({ onCreated }: { onCreated: (orderId: string) => void }) {
+  const queryClient = useQueryClient();
+  const [productId, setProductId] = useState('');
+  const [targetPieces, setTargetPieces] = useState('');
+  const [lengthM, setLengthM] = useState('');
+  const [orderDate, setOrderDate] = useState<string | undefined>(undefined);
+
+  const products = useQuery({
+    queryKey: ['catalog', 'accesorios'],
+    queryFn: () => api<ProductDto[]>('/catalog'),
+    select: (rows) =>
+      rows.filter((p) => p.isActive && p.roofingKind === RoofingProductKind.ACCESORIO),
+  });
+
+  const create = useMutation({
+    mutationFn: () =>
+      api<ProductionOrderDto>('/production/roofing', {
+        method: 'POST',
+        body: {
+          productId,
+          targetPieces: Number(targetPieces.trim()),
+          // El campo se tipea en metros y el API los pide en milímetros, igual que el resto
+          // de la pantalla de coberturas (D-166).
+          pieceLengthMm: toDecimal(lengthM.trim().replace(',', '.')).times(1000).toFixed(2),
+          operationDate: orderDate,
+        },
+      }),
+    onSuccess: (order) => {
+      toast.success(`Orden ${order.code} creada para stock`);
+      setProductId('');
+      setTargetPieces('');
+      setLengthM('');
+      invalidateProduction(queryClient);
+      onCreated(order.id);
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo crear la orden'),
+  });
+
+  const chosen = (products.data ?? []).find((p) => p.id === productId) ?? null;
+  const piecesValue = targetPieces.trim();
+  const piecesInvalid =
+    piecesValue === '' ||
+    !/^\d+$/.test(piecesValue) ||
+    Number(piecesValue) < 1 ||
+    Number(piecesValue) > MAX_REPORT_PIECES;
+  const lengthValue = lengthM.trim().replace(',', '.');
+  const lengthInvalid = lengthValue === '' || !/^\d+(\.\d+)?$/.test(lengthValue);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle>Accesorios a stock</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-x-4 gap-y-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
+        <p className="text-sm text-muted-foreground sm:col-span-4">
+          Para tener en almacén, sin pedido detrás. La corrida elige el largo porque un accesorio se
+          vende por metro y no tiene uno fijo; las piezas por pasada las decide la bobina que se
+          monte.
+        </p>
+        <div className="grid gap-2">
+          <Label htmlFor="planta-accesorio">Accesorio</Label>
+          <Select value={productId} onValueChange={setProductId}>
+            <SelectTrigger id="planta-accesorio">
+              <SelectValue placeholder="Elige el accesorio" />
+            </SelectTrigger>
+            <SelectContent>
+              {(products.data ?? []).map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.sku} — {p.name}
+                  {p.developmentMm !== null && <> (desarrollo {p.developmentMm} mm)</>}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="planta-acc-largo">Largo (m)</Label>
+          <Input
+            id="planta-acc-largo"
+            inputMode="decimal"
+            placeholder="3.00"
+            value={lengthM}
+            onChange={(e) => {
+              setLengthM(e.target.value);
+            }}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="planta-acc-meta">Piezas</Label>
+          <Input
+            id="planta-acc-meta"
+            inputMode="numeric"
+            placeholder="12"
+            value={targetPieces}
+            onChange={(e) => {
+              setTargetPieces(e.target.value);
+            }}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Button
+            disabled={!productId || piecesInvalid || lengthInvalid || create.isPending}
+            onClick={() => {
+              create.mutate();
+            }}
+          >
+            {create.isPending ? 'Creando…' : 'Crear orden'}
+          </Button>
+          <OperationDateField value={orderDate} onChange={setOrderDate} />
+        </div>
+        {chosen !== null && !piecesInvalid && !lengthInvalid && (
+          <p className="text-sm text-muted-foreground sm:col-span-4">
+            Plan: {piecesValue} piezas de {lengthValue} m ={' '}
+            {toDecimal(lengthValue).times(Number(piecesValue)).toFixed(3)} ML
+            {chosen.piecesPerPass !== null && (
+              <>
+                {' '}
+                · con el ancho del catálogo, {Math.ceil(
+                  Number(piecesValue) / chosen.piecesPerPass,
+                )}{' '}
+                pasadas
+              </>
+            )}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

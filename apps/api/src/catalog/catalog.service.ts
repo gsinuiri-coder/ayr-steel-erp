@@ -744,7 +744,9 @@ function materialWidthMm(p: {
   if (p.roofingKind !== RoofingProductKind.ACCESORIO || p.developmentMm === null) {
     return p.widthMm.toFixed(2);
   }
-  return accessoryEffectiveWidthMm(p.widthMm.toFixed(2), p.developmentMm.toFixed(2))?.toString() ?? null;
+  return (
+    accessoryEffectiveWidthMm(p.widthMm.toFixed(2), p.developmentMm.toFixed(2))?.toString() ?? null
+  );
 }
 
 function toDto(p: WithLineCode): ProductDto {
@@ -771,7 +773,9 @@ function toDto(p: WithLineCode): ProductDto {
     roofingKind: p.roofingKind,
     developmentMm: p.developmentMm === null ? null : p.developmentMm.toFixed(2),
     piecesPerPass:
-      p.roofingKind === RoofingProductKind.ACCESORIO && p.widthMm !== null && p.developmentMm !== null
+      p.roofingKind === RoofingProductKind.ACCESORIO &&
+      p.widthMm !== null &&
+      p.developmentMm !== null
         ? accessoryPiecesPerPass(p.widthMm.toFixed(2), p.developmentMm.toFixed(2))
         : null,
     theoreticalKgPerUnit: theoreticalKgPerUnit(p),

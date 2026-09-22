@@ -10,11 +10,7 @@ import {
   type PieceLike,
   type RoofingReportDraftDto,
 } from '@ayr/shared';
-import {
-  accessoryPiecesFromPasses,
-  roofingTheoreticalKg,
-  type CoilGeometry,
-} from './roofing-math';
+import { accessoryPiecesFromPasses, roofingTheoreticalKg, type CoilGeometry } from './roofing-math';
 
 /**
  * D-191 — la validación del borrador de reportes, **pura**.

@@ -214,8 +214,7 @@ export function ProductDialog({
         // D-242: el desarrollo es exactamente del accesorio. Mandarlo en cualquier otro
         // subtipo lo rechaza el API y el CHECK de la base, y con razón: sería un número que
         // ninguna cuenta lee.
-        developmentMm:
-          roofingKind === RoofingProductKind.ACCESORIO ? values.developmentMm : '',
+        developmentMm: roofingKind === RoofingProductKind.ACCESORIO ? values.developmentMm : '',
       };
       if (editing) {
         // D-203/M2 aplicado al catálogo (F8-S5): el color sale del acabado, no se elige
@@ -507,8 +506,8 @@ export function ProductDialog({
                       />
                       <p className="text-xs text-muted-foreground">
                         El ancho de fleje que se lleva una pieza, desplegada. Cada pasada usa el
-                        ancho completo de la bobina y da varias piezas del mismo largo; el
-                        sobrante lateral es merma de canto.
+                        ancho completo de la bobina y da varias piezas del mismo largo; el sobrante
+                        lateral es merma de canto.
                       </p>
                       <FormMessage />
                     </FormItem>
@@ -660,13 +659,7 @@ export function ProductDialog({
  * momento, que un desarrollo de 305 mm rinde 3 piezas en 1 200 mm y 4 en 1 220: el borde que
  * después obliga a avisarle al operario si el rollo montado no coincide con el nominal.
  */
-function AccessoryPassHint({
-  widthMm,
-  developmentMm,
-}: {
-  widthMm: string;
-  developmentMm: string;
-}) {
+function AccessoryPassHint({ widthMm, developmentMm }: { widthMm: string; developmentMm: string }) {
   const width = widthMm.trim().replace(',', '.');
   const development = developmentMm.trim().replace(',', '.');
   if (!/^\d+(\.\d+)?$/.test(width) || !/^\d+(\.\d+)?$/.test(development)) return null;
