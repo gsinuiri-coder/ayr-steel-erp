@@ -234,11 +234,18 @@ export async function createRoofingProduct(
     catalogWidthMm?: string;
     /** Con largo, es una plancha de catálogo (`NIU`); sin él, una cobertura a medida (`MTR`). */
     pieceLengthMm?: string;
+    /**
+     * D-242: con desarrollo es un **accesorio** (`MTR` + `ACCESORIO`), que se vende por metro
+     * como una cobertura a medida pero rinde `piso(ancho ÷ desarrollo)` piezas por pasada.
+     * Excluyente con `pieceLengthMm`: un accesorio no lleva largo fijo.
+     */
+    developmentMm?: string;
     listPricePen?: string;
   },
 ): Promise<{ product: ProductDto }> {
   const lineId = await businessLineId(api, ROOFING_LINE);
-  const madeToMeasure = options.pieceLengthMm === undefined;
+  const accessory = options.developmentMm !== undefined;
+  const madeToMeasure = options.pieceLengthMm === undefined && !accessory;
   const finishId = await finishForCoil(
     api,
     options.finishId,
@@ -247,9 +254,9 @@ export async function createRoofingProduct(
   );
   const product = await postJson<ProductDto>(api, '/api/catalog', {
     businessLineId: lineId,
-    sku: `E2E-COB${randomLetters(5)}`,
-    name: `Cobertura E2E ${randomLetters(3)}`,
-    unit: madeToMeasure ? 'MTR' : 'NIU',
+    sku: accessory ? `E2E-ACC${randomLetters(5)}` : `E2E-COB${randomLetters(5)}`,
+    name: accessory ? `Accesorio E2E ${randomLetters(3)}` : `Cobertura E2E ${randomLetters(3)}`,
+    unit: madeToMeasure || accessory ? 'MTR' : 'NIU',
     source: 'MANUFACTURED',
     listPricePen: options.listPricePen ?? '30',
     // D-118 (Fase 7e): Metallic Roofing exige espesor y ancho del SKU desde el alta.
@@ -260,9 +267,12 @@ export async function createRoofingProduct(
     // D-127: el subtipo es explícito y obligatorio en esta línea; antes se deducía de la
     // unidad. La plancha además lleva su largo fijo en el catálogo, y la cobertura a
     // medida tiene prohibido llevarlo.
-    ...(madeToMeasure
-      ? { roofingKind: 'A_MEDIDA' }
-      : { roofingKind: 'PLANCHA', lengthMm: options.pieceLengthMm }),
+    // D-242: el accesorio es el tercer subtipo y lleva su desarrollo en vez de un largo.
+    ...(accessory
+      ? { roofingKind: 'ACCESORIO', developmentMm: options.developmentMm }
+      : madeToMeasure
+        ? { roofingKind: 'A_MEDIDA' }
+        : { roofingKind: 'PLANCHA', lengthMm: options.pieceLengthMm }),
     ...(options.colorId ? { colorId: options.colorId } : {}),
   });
   return { product };
