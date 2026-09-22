@@ -2,6 +2,115 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## Ventana RF-S3c — alcance comercial de vendedor (2026-09-22)
+
+Ventana exprés, con el sistema sin usuarios activos. PR #7 mergeado a `main` con OK explícito
+D-232; merge commit `e1c6227`. El SHA desplegado es `bd84ab8` y cubre todo el runtime de `main`
+(`git diff --quiet bd84ab8 origin/main -- apps packages Dockerfile .gcloudignore package.json
+pnpm-lock.yaml pnpm-workspace.yaml` → exit 0).
+
+### El defecto que encontró el pre-vuelo, antes de tocar producción
+
+El backfill de `seller_id` escribía `sales_orders.seller_id = created_by_id`, una regla distinta
+de la que aplica el API al confirmar una cotización. Confirmar es un acto operativo que suele
+ejecutar un ADMINISTRADOR sobre la cotización de otro: con esa regla, el pedido quedaba a nombre
+de quien confirmó y salía del alcance de quien vendió — el defecto exacto que S3c venía a evitar.
+La causa era tener la regla escrita dos veces. Quedó una sola, `resolveOrderSeller`
+(`apps/api/src/auth/seller-scope.ts`), que usan el servicio y el backfill (**D-240**), con
+centinela en `seller-scope.spec.ts`. No era teórico: en producción alcanzaba a **16 de 19
+pedidos**, todos confirmados por el segundo administrador.
+
+También se corrigió el wrapper, que rechazaba `--branch production` de plano y dejaba la ventana
+sin forma de correr el backfill sin editar el script bajo presión. Ahora acepta production con
+`--confirm-production` para `--execute`; el dry-run no lo pide porque no escribe (**D-241**).
+
+### Barrido de `@Roles`, `origin/main` → `bd84ab8`
+
+197 rutas. El `RolesGuard` cambió de semántica —sin `@Roles` ya no es «pasan los tres roles» sino
+default-deny para VENDEDOR— así que la comparación se hizo sobre **acceso efectivo**, no sobre el
+texto del decorador. En `bd84ab8` no queda ninguna ruta sin `@Roles`: el default-deny es red, no
+la regla operativa.
+
+- **6 rutas cambian de acceso efectivo.** 4 son pérdidas, todas del VENDEDOR y todas dentro del
+  alcance S3c: `GET /inventory/movements`, `GET /invoicing/receivables`,
+  `GET /invoicing/receivables/summary`, `GET /sales/quotations/stock-shortages`. Las otras 2 son
+  rutas nuevas: `GET /sales/dashboard` y `PATCH /sales/quotations/:id/seller`.
+- **23 rutas** pasaron de implícitas a `@Roles(...)` explícito sin cambiar quién entra.
+- **SUPERVISOR_PLANTA y ADMINISTRADOR: cero pérdidas.**
+
+### Ejecución
+
+1. **Ensayo** en `ensayo-s3c-20260920` (`br-dry-field-aea77lat`): migración + backfill dry-run y
+   `--execute`. 70 cotizaciones, 14 pedidos, 11 con creador distinto al de su cotización. Segunda
+   corrida de `--execute`: 0 filas escritas — idempotencia verificada sobre datos, no sobre la
+   lectura del código.
+2. **Respaldo** `respaldo-pre-s3c-20260922` (`br-old-tooth-ae9txqcv`), padre `production`, LSN
+   `0/14D0C9F0`, creado con `--no-secrets --output json` vía `run(quiet)` y verificado releyendo
+   el listado.
+3. **Migración** `20260920120000_rf_s3c_seller_scope` (aditiva: 2 columnas nullable, 2 FK
+   `ON DELETE SET NULL`, 2 índices). `migrations-status` confirmó que era la única pendiente. El
+   drift conocido no apareció, como se esperaba: solo se manifiesta al **generar** una migración.
+4. **Backfill en producción antes del deploy del API.** Dry-run: 73 cotizaciones y 19 pedidos,
+   todos en NULL, 19 con cotización y 0 directos, 16 con creador distinto al de su cotización,
+   ningún VENDEDOR con datos. Execute: 73 + 19 + 0 escritas, 0 NULLs. Segunda pasada en dry-run
+   tras el merge: 0 pendientes.
+5. **API** a Cloud Run: revisión `ayr-steel-erp-api-00039-r4h`, `git-sha=bd84ab8`, 100 % de
+   tráfico, `{"status":"ok","db":"ok"}`, nombres de variables y secretos verificados,
+   `WEB_ORIGIN` con los dos dominios.
+6. **Web**: merge a `main` → deployment de producción de Vercel sobre `e1c6227`, con el alias
+   `v2.mareliac.pe`.
+7. **`pnpm smoke:prod` verde** desde el worktree en el SHA desplegado: health 200, login,
+   5 líneas de negocio, 176 productos, 96 filas de inventario valorizado, 5 bobinas, 90 filas del
+   reporte mensual y emisión electrónica apagada (D-216). Admin efímero retirado.
+
+### Verificación del seed de `db:prod`
+
+`db:prod` corre `migrate deploy` **y** el seed. Se comprobó por clave natural que no duplicó
+nada: 7 series fiscales, todas creadas el 2026-09-07 y ninguna tocada hoy (`FiscalSeries.series`
+es `@unique`, así que un duplicado es imposible en BD); los 8 comprobantes emitidos son manuales
+sin `series_id` (D-153) y ninguna serie quedó con el correlativo por detrás; 1 fila en
+`invoicing_settings`; 5 líneas de negocio con sus 5 `pricing_settings`; un solo cliente
+«PÚBLICO EN GENERAL» y un solo proveedor «Saldo inicial de inventario»; 4 usuarios sin correos
+repetidos; 6 colores sin repetir.
+
+### Estado del alcance comercial en producción
+
+Las 73 cotizaciones y los 19 pedidos quedaron a nombre de `Administrador <gsinuiri@gmail.com>`.
+Hoy **ningún VENDEDOR tiene datos**: la única cuenta con ese rol no creó nada. El backfill no le
+quita visibilidad a nadie, porque las dos personas que operan son ambas ADMINISTRADOR. Dos
+consecuencias, para no confundirlas más adelante:
+
+- El chequeo «un vendedor recibe 404 sobre un pedido ajeno» pasa **trivialmente**: para esa
+  cuenta todo pedido es ajeno. Sirve como prueba de que el guard vive, no de cartera propia.
+- Si se espera que vendedores reales sean dueños de cotizaciones históricas, **eso no lo hace el
+  backfill**: es trabajo de M4 (`PATCH /sales/quotations/:id/seller`), que arrastra el pedido y
+  deja rastro en `audit_log`. El backfill no volverá a tocar esas filas porque ya no están en
+  NULL. La creación de cuentas VENDEDOR y la reasignación de lo vivo quedan fuera de esta
+  ventana.
+
+### Deuda que deja la ventana
+
+- **Quality gate de SonarCloud en rojo sobre el PR #7**, sin que bloqueara el merge por decisión
+  del dueño: `20.3% Coverage on New Code` (exige ≥ 80 %) y `D Reliability Rating on New Code`
+  (exige ≥ A). **No se pudo enumerar los issues**: el proyecto de SonarCloud es privado, la API
+  anónima responde `Project doesn't exist`, el `SONAR_TOKEN` solo vive en los secrets de Actions
+  y el bot no dejó comentarios inline en el PR — solo el mismo resumen. Se evalúa antes del merge
+  de RF-S4a, con token o desde el dashboard.
+- **Documentos saneados en esta ventana.** El handoff de la sesión S3c y el checklist de
+  `ENTORNOS.md` decían que `seller_id` iba en `fiscal_documents`; la migración real toca
+  `quotations` y `sales_orders`. Además D-238 y D-239 estaban pegadas al final de
+  `ARQUITECTURA.md` como filas sueltas, fuera de la tabla de §0.2 y sin encabezado, así que no
+  renderizaban; se movieron a la tabla. El handoff tenía los acentos destruidos (U+FFFD) desde la
+  sesión anterior y se reescribió.
+- **`.env.setup` no existe en los worktrees nuevos**, y `db:prod` y `deploy:api` lo necesitan.
+  Se copió desde el checkout principal para esta ventana y se retiró al cerrar. Conviene que
+  `pnpm setup:agentes` lo contemple, o dejarlo anotado en el runbook de ventana.
+
+### Rollback (no fue necesario)
+
+Vercel → `dpl_264qqLSver3fDPYRHiRGtWb6yCbe`; API → tráfico a `ayr-steel-erp-api-00038-ljx`
+(`git-sha=d25f6b2`). La migración se queda por aditiva.
+
 ## SesiÃ³n RF-S3b â€” cierre post-merge (2026-09-20)
 
 - PR #6 se mergeÃ³ a `main` con OK explÃ­cito D-232; merge commit `fb443a5`, usando
