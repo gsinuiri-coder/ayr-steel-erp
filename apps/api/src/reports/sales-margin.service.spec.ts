@@ -224,6 +224,10 @@ describe('SalesMarginService', () => {
           // Lo que despachó el comprobante de afuera: existe, y no se cuenta.
           { orderId: 'o1', invoiceId: 'd-fuera', cost: '500.0000' },
         ],
+        salesByLine: [
+          { documentId: 'd1', line: 'drywall', subtotal: '400.0000' },
+          { documentId: 'd2', line: 'drywall', subtotal: '100.0000' },
+        ],
       });
 
       const report = await service.salesMargin(RANGE);
@@ -235,6 +239,9 @@ describe('SalesMarginService', () => {
       expect(order.costPen).toBe('300.0000');
       expect(order.salesPen).toBe('500.0000');
       expect(order.marginPen).toBe('200.0000');
+      // Y los totales por línea tienen que acotarse igual: arrastrar acá los 500 del
+      // comprobante de afuera dejaba `totalsByLine` diciendo 800 contra los 300 del total.
+      expect(report.totalsByLine[0]!.costPen).toBe('300.0000');
     });
 
     it('un comprobante sin pedido detrás es comparable consigo mismo', async () => {
@@ -345,6 +352,55 @@ describe('SalesMarginService', () => {
     expect(report.orders[0]!.marginPct).toBeNull();
     expect(report.orders[0]!.marginPen).toBe('-500.0000');
     expect(report.totals.marginPct).toBeNull();
+  });
+
+  it('el total de costo es siempre la suma de los totales por línea, mezclando los tres estados', async () => {
+    // La invariante que el reporte no puede romper: quien sume la columna de costo de la
+    // tabla por línea tiene que obtener el número grande de arriba. Se comprueba con las tres
+    // clases de fila conviviendo, que es cuando de verdad se rompe — con una sola clase, los
+    // dos caminos coinciden por casualidad.
+    const { service } = await buildService({
+      documents: [
+        { id: 'd1', subtotal: '1000.0000', orderId: 'o1', orderSeq: 1 },
+        { id: 'd2', subtotal: '500.0000', orderId: 'o2', orderSeq: 2 },
+        { id: 'd3', subtotal: '400.0000', orderId: 'o3', orderSeq: 3 },
+        { id: 'd4', subtotal: '300.0000', orderId: 'o4', orderSeq: 4 },
+      ],
+      // o3 queda NO_COMPARABLE; o4 tiene comprobantes afuera pero el suyo declara despacho.
+      outside: [
+        { orderId: 'o3', count: 2 },
+        { orderId: 'o4', count: 1 },
+      ],
+      pending: [{ orderId: 'o2', pending: true }],
+      costs: [
+        { orderId: 'o1', line: 'drywall', cost: '600.0000' },
+        { orderId: 'o1', line: 'metallic-roofing', cost: '100.0000' },
+        { orderId: 'o2', line: 'drywall', cost: '120.0000' },
+        { orderId: 'o3', line: 'drywall', cost: '900.0000' },
+        { orderId: 'o4', invoiceId: 'd4', line: 'trading', cost: '180.0000' },
+        { orderId: 'o4', invoiceId: 'd-fuera', line: 'trading', cost: '700.0000' },
+      ],
+      salesByLine: [
+        { documentId: 'd1', line: 'drywall', subtotal: '1000.0000' },
+        { documentId: 'd2', line: 'drywall', subtotal: '500.0000' },
+        { documentId: 'd3', line: 'drywall', subtotal: '400.0000' },
+        { documentId: 'd4', line: 'trading', subtotal: '300.0000' },
+      ],
+    });
+
+    const report = await service.salesMargin(RANGE);
+
+    const sumOf = (key: 'salesPen' | 'costPen'): string =>
+      report.totalsByLine.reduce((acc, t) => acc + Number(t[key]), 0).toFixed(4);
+
+    expect(sumOf('costPen')).toBe(report.totals.costPen);
+    expect(sumOf('salesPen')).toBe(report.totals.salesPen);
+    // 600 + 100 + 120 + 180: el 900 de o3 no entra porque no es comparable, y el 700 de o4 es
+    // del comprobante que quedó fuera del rango.
+    expect(report.totals.costPen).toBe('1000.0000');
+    expect(report.totals.partialOrderCount).toBe(1);
+    expect(report.totals.excludedOrderCount).toBe(1);
+    expect(report.totals.excludedSalesPen).toBe('400.0000');
   });
 
   it('presupuesto de consultas: seis, y el conteo no cambia con diez pedidos y veinte comprobantes', async () => {

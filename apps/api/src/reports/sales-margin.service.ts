@@ -312,19 +312,24 @@ export class SalesMarginService {
       opMaterial.map((r) => [r.sales_order_id, toDecimal(r.material_pen.toString())]),
     );
 
-    // Costo por pedido, y la parte de ese costo que sí tiene comprobante declarado.
-    const costByOrder = new Map<string, Decimal>();
+    // Las filas de costo se guardan **sin agregar** por pedido, porque el monto del pedido y
+    // su apertura por línea tienen que salir del mismo subconjunto de filas. Agregarlas acá
+    // obligaba a decidir dos veces cuáles cuentan —una para el total y otra para las líneas—,
+    // y las dos decisiones se separaron: el pedido con comprobantes fuera del rango sumaba
+    // solo su porción al total y el pedido **entero** a los totales por línea, así que
+    // `totals.costPen` y la suma de `totalsByLine` dejaban de coincidir.
+    const costRowsByOrder = new Map<string, CostRow[]>();
     const costByDocument = new Map<string, Decimal>();
-    const costByOrderLine = new Map<string, Map<string, Decimal>>();
     for (const row of costs) {
-      const cost = toDecimal(row.cost_pen.toString());
-      costByOrder.set(row.sales_order_id, (costByOrder.get(row.sales_order_id) ?? ZERO).plus(cost));
+      const rows = costRowsByOrder.get(row.sales_order_id) ?? [];
+      rows.push(row);
+      costRowsByOrder.set(row.sales_order_id, rows);
       if (row.invoice_id !== null) {
-        costByDocument.set(row.invoice_id, (costByDocument.get(row.invoice_id) ?? ZERO).plus(cost));
+        costByDocument.set(
+          row.invoice_id,
+          (costByDocument.get(row.invoice_id) ?? ZERO).plus(toDecimal(row.cost_pen.toString())),
+        );
       }
-      const lines = costByOrderLine.get(row.sales_order_id) ?? new Map<string, Decimal>();
-      lines.set(row.business_line_code, (lines.get(row.business_line_code) ?? ZERO).plus(cost));
-      costByOrderLine.set(row.sales_order_id, lines);
     }
 
     const salesLinesByDocument = new Map<string, SalesByLineRow[]>();
@@ -370,17 +375,27 @@ export class SalesMarginService {
       });
       const inTotals = costStatus !== 'NO_COMPARABLE';
 
-      // En `NO_COMPARABLE` el costo del pedido cubre más venta que la del rango, así que no
-      // se muestra: un costo entero contra una venta parcial es peor que ningún costo.
-      // Cuando todos los comprobantes del rango declaran su despacho, el costo exacto de esa
-      // porción es la suma de los costos de esos comprobantes, sin prorratear nada.
-      const cost = !inTotals
-        ? null
-        : hasOutside.has(orderId ?? '')
-          ? docs.reduce((acc, d) => acc.plus(costByDocument.get(d.id) ?? ZERO), ZERO)
-          : orderId === null
-            ? ZERO
-            : (costByOrder.get(orderId) ?? ZERO);
+      // **Las filas de costo que le tocan a este pedido**, elegidas una sola vez: de acá salen
+      // tanto el monto de la fila como su apertura por línea de negocio, y por eso los dos no
+      // pueden discrepar. Cuando el pedido tiene comprobantes fuera del rango, solo cuentan
+      // las filas de los despachos que declaran un comprobante **del rango**: esa porción
+      // tiene costo exacto propio y no hace falta prorratear nada. En cualquier otro caso
+      // cuentan todas, que es el costo entero del pedido.
+      const inRangeDocIds = new Set(docs.map((d) => d.id));
+      const orderCostRows =
+        orderId === null
+          ? []
+          : (costRowsByOrder.get(orderId) ?? []).filter(
+              (r) =>
+                !hasOutside.has(orderId) ||
+                (r.invoice_id !== null && inRangeDocIds.has(r.invoice_id)),
+            );
+
+      // En `NO_COMPARABLE` el costo del pedido cubre más venta que la del rango, así que no se
+      // muestra: un costo entero contra una venta parcial es peor que ningún costo.
+      const cost = inTotals
+        ? orderCostRows.reduce((acc, r) => acc.plus(toDecimal(r.cost_pen.toString())), ZERO)
+        : null;
 
       const documentDtos: SalesMarginDocumentDto[] = docs.map((d) => {
         const docSales = signedSubtotal(d);
@@ -438,13 +453,13 @@ export class SalesMarginService {
           lineTotals.set(line, bucket);
         }
       }
-      for (const [line, lineCost] of costByOrderLine.get(orderId ?? '') ?? []) {
-        const bucket = lineTotals.get(line) ?? { sales: ZERO, cost: ZERO };
-        // En `PARCIAL` y en el caso completo el costo del pedido entero es el que entra; en
-        // el caso con comprobantes fuera del rango ya se excluyó o se acotó arriba, así que
-        // acá no se vuelve a decidir.
-        bucket.cost = bucket.cost.plus(lineCost);
-        lineTotals.set(line, bucket);
+      // **Las mismas filas que dieron `cost`**, abiertas por línea. Que sea el mismo arreglo y
+      // no otra lectura es lo que garantiza que `totals.costPen` sea exactamente la suma de
+      // `totalsByLine[].costPen`; decidirlo por segunda vez acá es lo que las separaba.
+      for (const row of orderCostRows) {
+        const bucket = lineTotals.get(row.business_line_code) ?? { sales: ZERO, cost: ZERO };
+        bucket.cost = bucket.cost.plus(toDecimal(row.cost_pen.toString()));
+        lineTotals.set(row.business_line_code, bucket);
       }
     }
 
