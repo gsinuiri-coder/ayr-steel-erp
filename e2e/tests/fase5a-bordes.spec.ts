@@ -1005,12 +1005,8 @@ test.describe('Fase 5a — bordes de cotización, pedido y reserva', () => {
       trail.quotationIds = [quotation.id];
 
       // S3c: El vendedor ya no puede leer cotizaciones ajenas.
-      const cannotRead = await getJson<{ statusCode: number }>(
-        otherApi,
-        `/api/sales/quotations/${quotation.id}`,
-        { throwOnHttpError: false },
-      );
-      expect(cannotRead.statusCode).toBe(404);
+      const cannotRead = await getExpectingError(otherApi, `/api/sales/quotations/${quotation.id}`);
+      expect(cannotRead.status).toBe(404);
       const list = await getItems<{ id: string }>(otherApi, '/api/sales/quotations');
       expect(list.map((q) => q.id)).not.toContain(quotation.id);
 

@@ -37,7 +37,7 @@ test.describe('Alcance de Vendedor (UI)', () => {
     await page.goto('/cotizaciones/nueva');
     await expect(page).toHaveURL(/\/cotizaciones\/.+/);
 
-    await page.getByRole('button', { name: 'Agregar producto' }).click();
+    await page.getByRole('button', { name: 'Producto de la línea 1' }).click();
 
     await page.getByPlaceholder(/Buscar/i).fill(testSku);
     await page.waitForTimeout(500);

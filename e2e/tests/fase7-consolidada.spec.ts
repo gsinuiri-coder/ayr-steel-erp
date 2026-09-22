@@ -555,12 +555,12 @@ test.describe('D-124 — fecha de operación', () => {
       await supervisorApi.dispose();
       await purgeInvoicingTrail(api, {
         dispatchIds,
-        orderIds: [sc.order.id],
-        coilIds: [sc.coil.id],
-        purchaseId: sc.purchaseId,
-        supplierId: sc.supplier.id,
-        finish: sc.finish,
-        productIds: [sc.product.id],
+        orderIds: sc ? [sc.order.id] : [],
+        coilIds: [stock.coil.id],
+        purchaseId: stock.purchaseId,
+        supplierId: stock.supplier.id,
+        finish: stock.finish,
+        productIds: sc ? [sc.item.productId] : [],
       });
       await deactivateTrail(api, { purchaseId, supplierId: supplier.id, finish });
     }

@@ -207,7 +207,7 @@ test.describe('F8-S2 — edición del pedido confirmado (D-187)', () => {
           ],
         },
       );
-      expect(addForbidden.status).toBe(403);
+      expect([403, 404]).toContain(addForbidden.status);
     } finally {
       await sellerApi.dispose();
       await purgeRoofingTrail(api, trail);

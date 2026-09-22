@@ -95,7 +95,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const { quotationId: roofingQuoteId } = await createQuotation(contextA, {
       customerId: customerA.id,
       productId: roofingProductId,
-      qty: '1',
+      qty: '3.5',
       pieces: [{ lengthMm: '3500', qty: 1 }],
     });
 
@@ -287,7 +287,7 @@ test.describe('Alcance Comercial de Vendedor (RF-S3c)', () => {
     const { quotationId: qId } = await createQuotation(contextB, {
       customerId: customerB.id,
       productId: roofingProductId,
-      qty: '1',
+      qty: '3.5',
       pieces: [{ lengthMm: '3500', qty: 1 }],
     });
 
