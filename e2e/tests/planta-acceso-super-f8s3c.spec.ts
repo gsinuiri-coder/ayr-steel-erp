@@ -41,9 +41,8 @@ test.describe('Acceso Supervisor de Planta (CRITICA 1)', () => {
       },
     });
     if (!quoteRes.ok()) {
-      console.log(await quoteRes.text());
+      throw new Error("HTTP " + quoteRes.status() + " " + await quoteRes.text());
     }
-    expect(quoteRes.ok()).toBeTruthy();
     const { id: quoteId } = await quoteRes.json();
 
     const confirmRes = await apiVen.post(`/api/sales/quotations/${quoteId}/confirm`);
