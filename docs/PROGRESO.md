@@ -7532,3 +7532,29 @@ Se completaron los hitos del brief:
 - El CI (PR #7) corrió verde exitosamente tras los fix de Playwright.
 
 Pendiente: Handoff para revisión cruzada por Claude Code y prueba de UI con Playwright local/CI.
+
+## Descarte de `acc-demo` — accesorios de cobertura a stock (2026-09-23)
+
+**Prototipo rechazado en demo al cliente.** La rama `acc-demo` (worktree
+`ayr-steel-erp-acc-demo`) implementaba accesorios de cobertura como tercer `roofingKind`
+(`ACCESORIO`), con ancho efectivo, reporte por pasadas y producción a stock — documentado ahí
+como D-242 (SKU/aritmética) y D-248 (decisión consolidada, tras renumerar D-242 para no chocar
+con el D-242 real de RF-S4a ya en `main`). El dueño mostró el prototipo al cliente y el
+resultado fue negativo; se descarta la rama completa: worktree, rama local y `origin/acc-demo`.
+
+**Punta descartada, recuperable si hace falta**: `fce82d7115b84d03d79df736590a4edcdfaa8444`
+(`fix(planta): la cola promete el kilo teorico con el ancho efectivo (D-248)`, 2026-09-22). 9
+commits sobre `origin/main` en el momento del descarte (desde `6d74f3b`, SKU de accesorio, hasta
+`fce82d7`).
+
+**Colisión de numeración verificada antes de borrar, sin escritura**: el D-248 de `acc-demo` (el
+consolidado de accesorios) **no** es el mismo D-248 que ya existe en las ramas vivas
+`docs/ventana-rf-s4a`/`hotfix-d249` (ahí D-248 es la excepción de autorrevisión de RF-S4a,
+decisión no relacionada). Ambas ramas reclamaron D-248 en paralelo desde la misma base
+(`origin/main` en D-247) sin verse entre sí. Como `acc-demo` se descarta completo y nunca llega
+a mergearse, esa colisión no llega a materializarse en ningún log compartido: `docs/ARQUITECTURA.md`
+de `main` sigue con un solo D-248 (el de la excepción de autorrevisión) en cuanto
+`docs/ventana-rf-s4a`/`hotfix-d249` mergeen. El D-242 de `acc-demo` tampoco choca con el D-242 real
+de RF-S4a (costo de venta por kardex de despachos): ya estaba renumerado a D-248 en el propio
+`docs/ARQUITECTURA.md` de la rama antes del descarte. Si el prototipo de accesorios se retoma
+algún día, necesita un número D-nnn nuevo — ni 242 ni 248 están libres.
