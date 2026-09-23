@@ -121,10 +121,13 @@ export async function findCoilSaleProducts(
 
 /**
  * D-252: los tokens de color o tipo que el catálogo conoce, para el normalizador. Los colores
- * activos (por su color comercial) y los tipos sin color.
+ * del catálogo (por su color comercial) y los tipos sin color.
  */
 export async function knownCoilAttributes(tx: Prisma.TransactionClient): Promise<Set<string>> {
-  const colors = await tx.color.findMany({ where: { isActive: true }, select: { code: true } });
+  // **Todos** los colores, activos o no: un color dado de baja sigue siendo del catálogo, y sus
+  // bobinas y productos existentes tienen que seguir interpretándose. Con solo los activos, la
+  // normalización paraba sobre cada `BOB…` de un color retirado (lo mostró la suite E2E).
+  const colors = await tx.color.findMany({ select: { code: true } });
   return new Set([
     // Un color cuyo código es solo un RAL no tiene color comercial: no entra como token.
     ...colors.map((c) => commercialColorToken(c.code)).filter((t) => t !== ''),

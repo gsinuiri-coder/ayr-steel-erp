@@ -360,16 +360,18 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
     }
   });
 
-  test('fuera del importador, mandar el importe de línea es un 400', async () => {
+  test('D-255 (R2): fuera del importador el importe de línea es una forma válida, una sola y cuadrada', async () => {
     /**
-     * Copiar el importe sin recalcularlo es seguro **porque solo el importador puede hacerlo**.
-     * Si el formulario normal pudiera mandarlo, sería un campo por el que entra cualquier cifra
-     * sin que ninguna cuenta la contradiga.
+     * Hasta RF-S4b esto era un 400: solo el importador mandaba el importe. R2 lo invierte —el
+     * importe de la línea es el dato en todo documento— y lo que queda cerrado es otra cosa: dos
+     * formas de precio a la vez (el API elegiría en silencio cuál manda) y un trío del papel que
+     * no cuadra (una línea gravada con IGV cero o negativo, autorrevisión RF-S4b).
      */
     const scenario = await setupScenario(api, '100');
+    const quotationIds: string[] = [];
 
     try {
-      const rejected = await postExpectingError(api, '/api/sales/quotations', {
+      const twoForms = await postExpectingError(api, '/api/sales/quotations', {
         customerId: scenario.customer.id,
         issueDate: today(),
         items: [
@@ -381,9 +383,35 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
           },
         ],
       });
-      expect(rejected.status).toBe(400);
-      expect(rejected.message).toContain('importador de comprobantes');
+      expect(twoForms.status).toBe(400);
+      expect(twoForms.message).toContain('una sola de las tres');
+
+      const badTriplet = await postExpectingError(api, '/api/sales/quotations', {
+        customerId: scenario.customer.id,
+        issueDate: today(),
+        items: [
+          {
+            productId: scenario.product.id,
+            qty: '10',
+            netAmountPen: '100.0000',
+            igvAmountPen: '0.0000',
+            totalAmountPen: '100.0000',
+          },
+        ],
+      });
+      expect(badTriplet.status).toBe(400);
+      expect(badTriplet.message).toContain('no cuadran');
+
+      const created = await postJson<QuotationDto>(api, '/api/sales/quotations', {
+        customerId: scenario.customer.id,
+        issueDate: today(),
+        items: [{ productId: scenario.product.id, qty: '10', netAmountPen: '25.0000' }],
+      });
+      quotationIds.push(created.id);
+      expect(created.items[0]!.subtotalPen).toBe('25.0000');
+      expect(created.items[0]!.unitPricePen).toBe('2.5000');
     } finally {
+      await purgeSalesTrail(api, { quotationIds });
       await deactivateTrail(api, {
         purchaseId: scenario.purchaseId,
         supplierId: scenario.supplierId,
