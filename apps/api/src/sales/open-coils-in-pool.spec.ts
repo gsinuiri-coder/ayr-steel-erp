@@ -60,10 +60,10 @@ describe('openCoilCodesInPool', () => {
   it('filtra por bobina abierta y espesor exacto en la consulta', async () => {
     const tx = txWith([], []);
     await openCoilCodesInPool(tx, PRODUCT);
-    const args = (tx.coil.findMany as jest.Mock).mock.calls[0]?.[0] as {
-      where: { kind: CoilKind; status: CoilStatus; thicknessMm: string };
-    };
-    expect(args.where).toMatchObject({
+    const calls = (tx.coil.findMany as jest.Mock).mock.calls as [
+      { where: { kind: CoilKind; status: CoilStatus; thicknessMm: string } },
+    ][];
+    expect(calls[0]?.[0].where).toMatchObject({
       kind: CoilKind.COIL,
       status: CoilStatus.OPEN,
       thicknessMm: '0.38',
