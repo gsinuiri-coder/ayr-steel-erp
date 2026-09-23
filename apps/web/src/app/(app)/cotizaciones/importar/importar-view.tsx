@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  derivedUnitValue,
   describePieces,
+  money,
   piecesMeters,
   suggestedRoofingPlanText,
   MAX_PAGE_SIZE,
@@ -15,8 +17,10 @@ import {
   MIN_PIECE_LENGTH_MM,
   Role,
   toDecimal,
+  toFixedString,
   Unit,
   type Decimal,
+  type CoilPoolCandidateDto,
   type CustomerDto,
   type ProductDto,
   type QuotationImportPadronDto,
@@ -26,7 +30,7 @@ import {
   type RoofingPieceDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatQty } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { ExpressCreateCustomer } from '@/components/express-create';
 import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
@@ -36,6 +40,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 
 /**
@@ -79,6 +90,14 @@ interface RowEdit {
   productId?: string;
   qty?: string;
   unitPricePen?: string;
+  /**
+   * D-255: el **valor de venta** (importe de la línea sin IGV) tipeado a mano. Con él el
+   * unitario pasa a ser derivado (`importe ÷ cantidad`) y la fila pierde el IGV y el total del
+   * papel. Editar la cantidad o el precio lo descarta, como descartaba el importe del archivo.
+   */
+  netAmountPen?: string;
+  /** D-254 (R1): la bobina del pool que eligió quien revisa, en una fila de bobina. */
+  saleCoilId?: string;
   /** Texto del plan de corte, formato `4x20, 1x1.9`. Vacío = el que trajo el preview. */
   plan?: string;
   removed?: boolean;
@@ -201,7 +220,11 @@ export function ImportarCotizacionesView() {
   const customerIds = useMemo(() => new Set(allCustomers.map((c) => c.id)), [allCustomers]);
   const rows = useMemo(
     () =>
-      (preview?.rows ?? []).map((row) => resolveRow(row, edits[row.rowNumber] ?? {}, productsById)),
+      markSharedCoils(
+        (preview?.rows ?? []).map((row) =>
+          resolveRow(row, edits[row.rowNumber] ?? {}, productsById),
+        ),
+      ),
     [preview, edits, productsById],
   );
   // D-158: las filas agrupadas por comprobante, con **su** cliente resuelto en la cabecera.
@@ -230,7 +253,7 @@ export function ImportarCotizacionesView() {
     () =>
       new Set(
         groupByDocument(
-          (preview?.rows ?? []).map((row) => resolveRow(row, {}, productsById)),
+          markSharedCoils((preview?.rows ?? []).map((row) => resolveRow(row, {}, productsById))),
           {},
           customerIds,
         )
@@ -293,8 +316,12 @@ export function ImportarCotizacionesView() {
               // Si alguien corrigió la cantidad o el precio de esta fila, el importe del
               // archivo dejó de describirla: mandarlo haría que la corrección no cambiara el
               // importe, y el rechazo por tolerancia culparía al Excel de una diferencia que
-              // introdujo la corrección.
+              // introdujo la corrección. D-255: o el valor de venta que se tipeó a mano.
               ...(r.netAmountPen ? { netAmountPen: r.netAmountPen } : {}),
+              // D-255: el IGV y el total del papel, solo con la fila intacta y si cuadraban.
+              ...(r.paperIgvTotal ?? {}),
+              // D-254: la bobina del pool que vende la línea.
+              ...(r.coilLine && r.saleCoilId ? { saleCoilId: r.saleCoilId } : {}),
               ...(r.raw.rawProductName ? { description: r.raw.rawProductName } : {}),
               ...(r.pieces ? { pieces: r.pieces } : {}),
             })),
@@ -743,12 +770,14 @@ function DocumentGroupCard({
           role="region"
           aria-label={`Líneas de ${group.key}`}
         >
-          <table className="w-full min-w-[52rem] text-sm">
+          <table className="w-full min-w-[60rem] text-sm">
             <thead className="text-left text-xs uppercase text-muted-foreground">
               <tr className="border-b">
                 <th className="py-2 pr-3 font-medium">Producto</th>
                 <th className="py-2 pr-3 text-right font-medium">Cantidad</th>
                 <th className="py-2 pr-3 text-right font-medium">Valor unit. S/</th>
+                {/* D-255: el importe de la línea es el dato; el unitario se deriva de él. */}
+                <th className="py-2 pr-3 text-right font-medium">Valor de venta S/</th>
                 <th className="py-2 pr-3 font-medium">Plan de corte</th>
                 <th className="py-2 font-medium" />
               </tr>
@@ -805,7 +834,7 @@ function ImportRow({
   if (row.removed) {
     return (
       <tr className="border-b text-muted-foreground">
-        <td className="py-2 pr-3" colSpan={4}>
+        <td className="py-2 pr-3" colSpan={5}>
           Fila quitada de la importación.
         </td>
         <td className="py-2">
@@ -832,6 +861,14 @@ function ImportRow({
             <div>{raw.rawSku}</div>
             <div className="mt-1 w-56 text-muted-foreground">{raw.excludedReason}</div>
           </div>
+        ) : row.coilLine ? (
+          <CoilRowCell
+            row={row}
+            disabled={disabled}
+            onChoose={(coilId) => {
+              onChange({ saleCoilId: coilId });
+            }}
+          />
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
@@ -865,7 +902,13 @@ function ImportRow({
             value={row.qty}
             disabled={disabled}
             onChange={(e) => {
-              onChange({ qty: e.target.value });
+              // D-255: tocar la cantidad descarta el valor de venta tipeado, y el unitario que
+              // se ve (el derivado) pasa a ser el tipeado, para no cambiar de número bajo el cursor.
+              onChange(
+                row.netEdited
+                  ? { qty: e.target.value, netAmountPen: undefined, unitPricePen: row.unitPricePen }
+                  : { qty: e.target.value },
+              );
             }}
           />
         )}
@@ -882,7 +925,8 @@ function ImportRow({
             value={row.unitPricePen}
             disabled={disabled}
             onChange={(e) => {
-              onChange({ unitPricePen: e.target.value });
+              // Tipear el unitario vuelve a la forma de siempre: el importe sale de él.
+              onChange({ unitPricePen: e.target.value, netAmountPen: undefined });
             }}
           />
         )}
@@ -891,18 +935,45 @@ function ImportRow({
             {raw.currency} · TC {raw.exchangeRate}
           </div>
         )}
+        {row.netEdited && (
+          <div className="mt-1 text-xs text-muted-foreground">Derivado del valor de venta</div>
+        )}
+        <Issue row={row} field="unitPrice" />
+      </td>
+      <td className="py-3 pr-3 text-right">
+        {excluded ? (
+          <span className="text-xs">{raw.netAmountPen}</span>
+        ) : (
+          <Input
+            aria-label={`Valor de venta de la fila ${String(raw.rowNumber)}`}
+            inputMode="decimal"
+            className="h-9 w-28 text-right text-xs"
+            value={row.netText}
+            disabled={disabled}
+            onChange={(e) => {
+              onChange({ netAmountPen: e.target.value });
+            }}
+          />
+        )}
         {/*
           D-169: el importe con el que la línea se va a crear, y de dónde sale. Se muestra
           siempre y no solo cuando difiere: el punto de la decisión es que el vendedor sepa
           que el número del papel se copia, y una etiqueta que aparece nada más cuando hay
-          diferencia no enseña la regla, solo el caso raro.
+          diferencia no enseña la regla, solo el caso raro. D-255: y ahora se puede tipear;
+          el unitario se deriva de él.
         */}
-        <div className="mt-1 text-xs text-muted-foreground">
-          {row.netAmountPen !== null
-            ? `Importe del archivo: ${formatMoney(row.netAmountPen, 'PEN', 2)}`
-            : 'Importe recalculado: cantidad × precio'}
-        </div>
-        <Issue row={row} field="unitPrice" />
+        {!excluded && (
+          <div className="mt-1 text-xs text-muted-foreground">
+            {row.netEdited
+              ? 'Importe tipeado: el unitario se deriva'
+              : row.netAmountPen !== null
+                ? row.paperIgvTotal
+                  ? `Importe del archivo · total ${formatMoney(row.paperIgvTotal.totalAmountPen, 'PEN', 2)}`
+                  : 'Importe del archivo'
+                : 'Importe recalculado: cantidad × precio'}
+          </div>
+        )}
+        <Issue row={row} field="netAmount" />
       </td>
       <td className="py-3 pr-3">
         {row.needsPieces ? (
@@ -945,6 +1016,57 @@ function ImportRow({
       </td>
     </tr>
   );
+}
+
+/**
+ * D-254 (R1): la celda de producto de una fila con código de bobina. El producto no se elige:
+ * es el SKU canónico que el normalizador dedujo del código. Lo que se elige es **cuál bobina**
+ * del pool atiende la línea, entre las candidatas que el API calculó (espesor exacto, mismo
+ * color comercial o tipo, libres y con saldo suficiente). Sin candidatas no hay nada que
+ * elegir y la fila queda bloqueada con el motivo del API.
+ */
+function CoilRowCell({
+  row,
+  disabled,
+  onChoose,
+}: {
+  row: ResolvedRow;
+  disabled: boolean;
+  onChoose: (coilId: string) => void;
+}) {
+  const { raw } = row;
+  return (
+    <div className="grid w-60 gap-1">
+      <div className="font-mono text-xs font-medium">
+        {raw.productSku ?? 'Sin producto de venta'}
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {raw.rawSku} · pool: {formatQty(raw.coilPoolAvailableKg ?? '0.000', 'kg')} disponibles
+      </div>
+      {raw.coilCandidates.length > 0 && (
+        <Select value={row.saleCoilId ?? ''} onValueChange={onChoose} disabled={disabled}>
+          <SelectTrigger
+            className="h-9 w-full text-xs"
+            aria-label={`Bobina de la fila ${String(raw.rowNumber)}`}
+          >
+            <SelectValue placeholder="Elige la bobina" />
+          </SelectTrigger>
+          <SelectContent>
+            {raw.coilCandidates.map((c) => (
+              <SelectItem key={c.coilId} value={c.coilId}>
+                {coilCandidateLabel(c)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </div>
+  );
+}
+
+/** `BOB-0012 · 1200.00 mm · 4,194.000 kg`: lo que distingue a dos bobinas del mismo pool. */
+function coilCandidateLabel(c: CoilPoolCandidateDto): string {
+  return `${c.code} · ${c.widthMm} mm · ${formatQty(c.balanceKg, 'kg')}`;
 }
 
 /**
@@ -991,9 +1113,19 @@ interface ResolvedRow {
   /**
    * D-169: el importe del papel, o `null` cuando esta fila dejó de responder a él porque
    * alguien editó su cantidad o su precio. Es la señal que decide si el API copia el importe
-   * o lo recalcula.
+   * o lo recalcula. D-255: o el valor de venta que se tipeó a mano, a escala de dinero.
    */
   netAmountPen: string | null;
+  /** D-255: `true` cuando el valor de venta lo tipeó quien revisa y el unitario es derivado. */
+  netEdited: boolean;
+  /** D-255: lo que muestra el campo del valor de venta. */
+  netText: string;
+  /** D-255: el IGV y el total del papel, solo mientras la fila siga intacta y cuadren. */
+  paperIgvTotal: { igvAmountPen: string; totalAmountPen: string } | null;
+  /** D-254: la fila trae un código de bobina y se vende desde el pool. */
+  coilLine: boolean;
+  /** D-254: la bobina elegida (por el preview o a mano), o `null`. */
+  saleCoilId: string | null;
   needsPieces: boolean;
   planText: string;
   pieces: RoofingPieceDto[] | null;
@@ -1012,9 +1144,24 @@ function resolveRow(
   edit: RowEdit,
   productsById: ReadonlyMap<string, ProductDto>,
 ): ResolvedRow {
-  const productId = edit.productId ?? raw.productId;
+  // D-254: el producto de una fila de bobina es el SKU canónico y no se cambia a mano.
+  const productId = raw.coilLine ? raw.productId : (edit.productId ?? raw.productId);
   const qty = edit.qty ?? raw.qty;
-  const unitPricePen = edit.unitPricePen ?? raw.unitPricePen;
+  const saleCoilId = raw.coilLine ? (edit.saleCoilId ?? raw.saleCoilId) : null;
+  /**
+   * D-255: con el valor de venta tipeado, el unitario **se deriva** de él (`importe ÷
+   * cantidad`, a cuatro decimales para mostrar y para mandar). Mandarlo es lo que mantiene
+   * honesta la comprobación de tolerancia del API: sin él viajaría el unitario del archivo y
+   * el importe nuevo se leería como un desvío del papel.
+   */
+  const netEdited = edit.netAmountPen !== undefined;
+  const netTyped = (edit.netAmountPen ?? '').trim();
+  const netValid = netEdited && /^\d+(\.\d{1,4})?$/.test(netTyped) && toDecimal(netTyped).gt(0);
+  const unitPricePen = netEdited
+    ? netValid && isNumeric(qty) && toDecimal(qty.trim()).gt(0)
+      ? toFixedString(money(derivedUnitValue(qty.trim(), netTyped)), 'MONEY')
+      : ''
+    : (edit.unitPricePen ?? raw.unitPricePen);
   // **Con el producto elegido, no con el del archivo.** Quien exige los largos es la unidad
   // (D-131), y cambiar el producto en el desplegable cambia la respuesta: sin recalcular, una
   // fila reasignada a un producto por metro lineal dejaba la celda del plan apagada y el
@@ -1046,14 +1193,31 @@ function resolveRow(
   // Los avisos del servidor que **no** dependen de lo editable se conservan tal cual: el
   // desajuste de unidad es del par archivo↔producto y sigue valiendo mientras el producto sea
   // el mismo.
+  //
+  // D-254: en una fila de bobina, el error del producto es **el de la bobina** («elige cuál»,
+  // «queda para revisión»). Elegir una candidata lo resuelve; sin candidatas no hay qué elegir
+  // y el error del API queda en pie.
+  const coilChosen =
+    raw.coilLine && saleCoilId !== null && raw.coilCandidates.some((c) => c.coilId === saleCoilId);
   for (const issue of raw.issues) {
-    if (issue.field === 'product' && productId !== null && productId === raw.productId) {
+    if (
+      issue.field === 'product' &&
+      (raw.coilLine || (productId !== null && productId === raw.productId))
+    ) {
+      if (coilChosen && issue.severity === 'error') continue;
       issues.push(issue);
+    }
+  }
+  if (raw.coilLine && productId !== null && !coilChosen && raw.coilCandidates.length > 0) {
+    if (!issues.some((i) => i.field === 'product' && i.severity === 'error')) {
+      issues.push({ field: 'product', severity: 'error', message: 'Elige la bobina del pool.' });
     }
   }
 
   const productsLoaded = productsById.size > 0;
-  if (!productId || (productsLoaded && !productsById.has(productId))) {
+  // Una fila de bobina sin producto ya trae el motivo del API; «créalo con el botón» no aplica.
+  const coilWithoutProduct = raw.coilLine && !productId && issues.length > 0;
+  if (!coilWithoutProduct && (!productId || (productsLoaded && !productsById.has(productId)))) {
     issues.unshift({
       field: 'product',
       severity: 'error',
@@ -1070,11 +1234,31 @@ function resolveRow(
     });
   }
   // Mismo motivo que la cantidad: el patrón corta **antes** de que `toDecimal` vea la coma.
-  if (!/^\d+(\.\d{1,4})?$/.test(unitPricePen.trim()) || toDecimal(unitPricePen.trim()).lte(0)) {
+  if (netEdited) {
+    if (!netValid) {
+      issues.push({
+        field: 'netAmount',
+        severity: 'error',
+        message: 'El valor de venta va con punto y hasta cuatro decimales, mayor a cero.',
+      });
+    }
+  } else if (
+    !/^\d+(\.\d{1,4})?$/.test(unitPricePen.trim()) ||
+    toDecimal(unitPricePen.trim()).lte(0)
+  ) {
     issues.push({
       field: 'unitPrice',
       severity: 'error',
       message: 'El precio va con hasta cuatro decimales.',
+    });
+  }
+  // D-254: la bobina elegida tiene que alcanzar para la cantidad de la línea.
+  const chosenCoil = raw.coilCandidates.find((c) => c.coilId === saleCoilId);
+  if (chosenCoil && isNumeric(qty) && toDecimal(qty.trim()).gt(toDecimal(chosenCoil.balanceKg))) {
+    issues.push({
+      field: 'qty',
+      severity: 'error',
+      message: `${chosenCoil.code} tiene ${formatQty(chosenCoil.balanceKg, 'kg')}: no alcanza para la línea.`,
     });
   }
   if (!raw.issueDate) {
@@ -1108,7 +1292,21 @@ function resolveRow(
   // el archivo trajo. Se compara contra `raw` y no contra un flag propio: `edit.qty` puede
   // existir con el mismo valor —abrir el campo y volver a escribir lo mismo— y eso no cambia
   // nada del papel.
-  const untouched = qty === raw.qty && unitPricePen === raw.unitPricePen;
+  const untouched = !netEdited && qty === raw.qty && unitPricePen === raw.unitPricePen;
+  const netAmountPen = netEdited
+    ? netValid
+      ? toFixedString(netTyped, 'MONEY')
+      : null
+    : untouched && raw.netAmountPen
+      ? raw.netAmountPen
+      : null;
+  // Lo que muestra el campo: lo tipeado, el importe del papel o `cantidad × precio`.
+  const netText = netEdited
+    ? (edit.netAmountPen ?? '')
+    : (netAmountPen ??
+      (isNumeric(qty) && /^\d+(\.\d{1,4})?$/.test(unitPricePen.trim())
+        ? toFixedString(money(toDecimal(qty.trim()).times(toDecimal(unitPricePen.trim()))), 'MONEY')
+        : ''));
 
   return {
     raw,
@@ -1116,12 +1314,51 @@ function resolveRow(
     productId,
     qty,
     unitPricePen,
-    netAmountPen: untouched && raw.netAmountPen ? raw.netAmountPen : null,
+    netAmountPen,
+    netEdited,
+    netText,
+    // D-255: viajan juntos y solo con el importe del papel intacto (el API los exige así).
+    paperIgvTotal:
+      untouched && raw.netAmountPen && raw.igvAmountPen && raw.totalAmountPen
+        ? { igvAmountPen: raw.igvAmountPen, totalAmountPen: raw.totalAmountPen }
+        : null,
+    coilLine: raw.coilLine,
+    saleCoilId,
     needsPieces,
     planText,
     pieces,
     issues,
   };
+}
+
+/**
+ * D-254: una bobina, una línea. Dos filas vivas del archivo que quedaron con la misma bobina
+ * —elegida a mano en las dos— se marcan las dos: el API rechazaría el documento entero, y acá
+ * se ve cuál es la fila que hay que cambiar sin ir y volver.
+ */
+function markSharedCoils(rows: ResolvedRow[]): ResolvedRow[] {
+  const count = new Map<string, number>();
+  for (const r of rows) {
+    if (isLive(r) && r.coilLine && r.saleCoilId !== null) {
+      count.set(r.saleCoilId, (count.get(r.saleCoilId) ?? 0) + 1);
+    }
+  }
+  return rows.map((r) =>
+    isLive(r) && r.coilLine && r.saleCoilId !== null && (count.get(r.saleCoilId) ?? 0) > 1
+      ? {
+          ...r,
+          issues: [
+            ...r.issues,
+            {
+              field: 'product',
+              severity: 'error' as const,
+              message:
+                'Otra línea del archivo quedó con la misma bobina: elige cuál atiende a cada una.',
+            },
+          ],
+        }
+      : r,
+  );
 }
 
 /**
