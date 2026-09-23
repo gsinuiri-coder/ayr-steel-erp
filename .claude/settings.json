@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "deny": ["Bash(gh repo sync*)"],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git merge *)",
+      "Bash(gh pr merge *)",
+      "Bash(gcloud run deploy *)",
+      "Bash(gcloud run services update *)",
+      "Bash(gcloud run services replace *)",
+      "Bash(pnpm deploy:api*)",
+      "Bash(pnpm deploy:web*)",
+      "Bash(vercel *)",
+      "Bash(neonctl *)",
+      "Bash(pnpm db:prod*)",
+      "Bash(pnpm prod:*)",
+      "Bash(node scripts/db-prod.mjs*)",
+      "Bash(node scripts/production-cleanup-v4.mjs*)",
+      "Bash(node scripts/prod-reset-go-live.mjs*)",
+      "Bash(node scripts/prod-e2e-purge.mjs*)",
+      "Bash(node scripts/prod-e2e-leftovers.mjs*)",
+      "Bash(git branch -D *)",
+      "Bash(rm -rf *)"
+    ]
+  }
+}

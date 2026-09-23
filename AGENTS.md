@@ -86,10 +86,17 @@ Reglas de convivencia, sin excepción:
 
 ## 3. Reglas duras (nunca se saltan)
 
-1. **Los agentes pueden empujar ramas de trabajo y abrir PRs.** Solo pueden empujar o mergear a
-   `main` después de presentar al dueño un resumen de commits, CI, despliegue y riesgo, y recibir
-   su OK explícito en la sesión. Sin ese OK, `main` sigue bloqueada por el hook; con él, se usa
-   `AYR_OWNER_PUSH=1`. `gh repo sync` y el borrado de ramas protegidas siguen prohibidos.
+1. **Nada queda bloqueado por regla salvo dos excepciones irreversibles: `gh repo sync` y borrar
+   una rama protegida siguen prohibidos sin excepción** (D-251) — no tienen reversa y el dueño
+   los puede correr a mano si hace falta. Para toda otra **acción sensible** —push, merge a
+   `main`, deploy (Cloud Run/Vercel), cualquier comando contra Neon `production`, borrados, y
+   escrituras de datos en `production`— el agente **propone el comando exacto y se detiene a
+   esperar el OK explícito del dueño en la sesión**, vía las reglas `ask` de
+   `.claude/settings.json` (D-251). Con el OK, el agente mismo la ejecuta — no hace falta que el
+   dueño la tipee, aunque puede seguir prefiriéndolo caso por caso. Push a `main` sigue exigiendo
+   además `AYR_OWNER_PUSH=1`: el hook de `.githooks/pre-push` es una red de seguridad aparte del
+   `ask`, no un reemplazo — un hook de git no puede "preguntar" en medio de un `push`, solo
+   permitirlo o bloquearlo en el acto.
 2. **Credenciales nunca en argv ni impresas.** Los comandos que podrían imprimirlas (p. ej.
    `neonctl`) van en modo silencioso y con `--output json`. Las cadenas de conexión viajan por
    entorno o archivo, jamás por línea de comandos.
@@ -153,8 +160,9 @@ Reglas de convivencia, sin excepción:
   Actions. Mientras no se rote, producción está comprometida y el incidente se registra en
   `docs/PROGRESO.md` con fecha y hora exactas.
 - `migrate deploy`, `migrate diff`, `db:prod` y cualquier comando con credenciales de BD de
-  producción se ejecutan con el dueño fuera de modo automático, con aprobación manual
-  individual por comando. Una autorización de ventana no permite encadenarlos.
+  producción son acción sensible (D-251): el agente propone el comando exacto y espera el OK
+  explícito del dueño por cada uno vía el `ask` de `.claude/settings.json` — una autorización de
+  ventana no permite encadenarlos — y con el OK, el agente lo ejecuta él mismo.
 
 ### 3.2 Git, deploy y sincronización de artefactos
 
@@ -328,6 +336,7 @@ exacto en cada ventana.
 | `.agents/skills/<skill>/SKILL.md` | Codex CLI y Antigravity | Procedimientos ejecutables                      |
 | `.agents/rules/00-ayr.md`         | Antigravity IDE         | Puntero a `AGENTS.md`, sin duplicar contenido   |
 | `.githooks/pre-push`              | git (todos)             | Bloqueo de pushes a `main` sin OK del dueño     |
+| `.claude/settings.json`           | Claude Code             | `ask` técnico sobre acciones sensibles (D-251)  |
 | `docs/agentes/README.md`          | Personas y agentes      | Instalación, invocación y perfiles sugeridos    |
 
 Perfiles sugeridos en `~/.codex/config.toml`: uno de grind (effort medio), uno de
