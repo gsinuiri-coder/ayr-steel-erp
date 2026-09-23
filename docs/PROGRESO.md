@@ -77,6 +77,73 @@ en `.agents/skills/ayr-arranque/SKILL.md:8` y `.agents/skills/ayr-revisor/SKILL.
 hizo en esta sesión**. Referencias fuera del repo (`~/.codex/ayr-*.config.toml`,
 `~/AppData/Local/agy/`) quedaron solo listadas, sin tocar, por ser de otra herramienta.
 
+## Hotfix D-249 — tolerancia simétrica y filtro de línea (2026-09-22)
+
+Rama `hotfix-d249`, **sin empujar**. Cierra los dos hallazgos de
+`docs/revision/rf-s4a-d246.md`: el P1 de D-246 y el defecto de D-245. Sin migración.
+
+### Lo que se arregló
+
+- **D-249** — la rama «con declaración» de `mountedKgForReport` no tenía techo: cualquier cifra
+  declarada que cupiera en lo montado saltaba el 1 % de tolerancia. Un reporte de 4 043,952 kg
+  teóricos contra **1 kg montado** se aceptaba sacando 1 kg. El kardex quedaba cuadrado —por eso
+  ninguna invariante lo delataba— pero la plancha entraba subvalorizada, y ese costo es el que
+  lee el margen de D-242. Ahora el exceso se acota antes de mirar la declaración.
+- **D-250** — `/reports/coils` mezclaba el nombre del enum de Prisma con la etiqueta que guarda
+  Postgres: devolvía `businessLine: undefined` en cada fila y su filtro daba **cero filas
+  siempre**. Verificado contra base: antes 11 filas sin filtro y 0 con cualquier filtro; después
+  7 + 4, y la suma de los filtros reconstruye el total.
+
+743 unitarios verdes. El E2E gana el caso que faltaba —el filtro por línea—, que es el que
+convierte el silencio en rojo: el único test que tocaba esa ruta la llamaba sin filtro.
+
+**La regla quedó más estricta que ayer.** Si planta encuentra un caso legítimo por encima del
+1 %, ahora se bloquea aunque declaren kilos. La salida no es revertir sino subir
+`THEORETICAL_KG_TOLERANCE_RATIO` con evidencia, o corregir la geometría del producto.
+
+### M2 — el barrido del patrón: un solo sitio roto
+
+Comprobado contra la base, no deducido: el ORM devuelve el **nombre** del enum (`DRYWALL`) y
+`$queryRaw` la **etiqueta** de `@map` (`drywall`). Los dos mapas de `business-line-code.ts` están
+indexados por el nombre, así que solo el camino crudo podía romperse — y solo `/reports/coils`
+lo hacía. Los ~40 usos restantes de `toSharedLineCode` reciben el valor del ORM y son correctos;
+los servicios de RF-S4a ya usaban `fromDbLineCode`; `BUSINESS_LINE_LABELS` (D-174) se indexa con
+el código de shared, que es el que viaja en los DTO.
+
+**El importador de cotizaciones queda descartado como sospechoso.** No clasifica líneas: resuelve
+productos por SKU y la línea sale del producto. Que una venta de bobina aparezca como Reventa es
+**deliberado** —D-116 + D-037 la facturan contra un SKU de `trading`, `sales-lines.ts:616,634`—
+y lo que cambió la percepción fue D-247: antes el ingreso caía en `trading` y el costo en la
+línea del acero, y ahora los dos caen en `trading`. El reporte pasó de estar mal a estar bien, y
+eso hizo visible una clasificación que siempre estuvo. Si el negocio quiere verla bajo la línea
+del acero, el cambio es de D-116/D-037 y no del reporte.
+
+### M3 — por qué hay pedidos que no pasan a LISTO
+
+`LISTO` exige que **todas** las OP vivas estén `CLOSED`; decide por estado, no por metros. Tres
+mecanismos, los tres confirmados con tests:
+
+1. una OP con **todo reportado pero sin cerrar** deja el pedido `EN_PRODUCCION` con
+   `missingMl = 0.000` — el caso que más se parece a lo reportado;
+2. **una sola OP en `DRAFT`** entre varias cerradas ancla el pedido entero (D-186 crea las OP al
+   confirmar, y si una línea se resuelve de otra forma esa OP queda ahí);
+3. con **todas las OP anuladas** el pedido vuelve a `SIN_PRODUCCION`, nunca a `LISTO`.
+
+**Dos hipótesis probadas y descartadas**, anotadas para que nadie las recorra otra vez: el punto
+flotante de `sales-orders.service.ts:2492` (real como violación de D-003, pero el `.toFixed(3)`
+lo absorbe, y haría falta un desvío de más de 0,0005 m para cambiar el veredicto) y la
+invalidación de queries (`invalidateProduction` sí refresca `sales-orders` y `sales-order`).
+
+**Lo accionable:** mientras el defecto de D-246 existió, un reporte bloqueado dejaba su OP
+`IN_PROGRESS` y el pedido `EN_PRODUCCION`. El hotfix de la mañana desbloqueó los reportes nuevos,
+pero **las OP que quedaron abiertas siguen abiertas y hay que cerrarlas a mano**. La consulta de
+diagnóstico que separa los tres casos está en `docs/handoff/hotfix-d249.md`.
+
+### Pendiente
+
+Dos revisiones cruzadas: RF-S4a (D-248) y este hotfix. Las escribió el mismo agente, así que
+ninguna de las dos la puede firmar él.
+
 ## Ventana RF-S4a — reportes de costeo (2026-09-22)
 
 Ventana corta, **sin migración**: los dos reportes son de solo lectura y no tocan ningún
