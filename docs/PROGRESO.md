@@ -79,8 +79,16 @@ no lo toca (decisión 4 del dueño, test `accepted-files-sku-rename.spec.ts`).
 
 ### Verificación
 
-- Unitarios: API **788** passed (eran 743 al empezar), web **11** passed. `pnpm lint`,
+- Unitarios: API **796** passed (eran 743 al empezar), web **11** passed. `pnpm lint`,
   `pnpm typecheck` y `prettier --check` verdes.
+- Autorrevisión (`docs/revision/rf-s4b-autorrevision.md`): 2 P0 y 9 P1 encontrados; los P0 y
+  ocho P1 corregidos con tests, uno documentado; los P2 corregidos o anotados como pendientes.
+- La primera corrida de la suite completa mostró una cascada de rojos que **no era del producto**:
+  la limpieza de los specs apagaba el `BOB…` de venta, que desde D-252 es compartido por el pool
+  (`BOB050NATURAL`), y dejaba sin producto de venta a todos los specs siguientes. Corregido en
+  los helpers (`3b3668d`). **Lo mismo puede pasar en producción** si alguien desactiva a mano un
+  `BOB…` canónico: las bobinas de su pool dejan de poder venderse. Queda como pendiente para el
+  dueño: impedir desactivar un producto de venta de bobina con bobinas abiertas en su pool.
 - M0 corrido en rojo antes de tocar código: 25/25 unitarios de R1/R2 fallando.
 - E2E nuevos, corridos aislados en local (`pnpm exec playwright test <spec>`): COT-000002 al
   importar (1/1), COT-000002 por el barrido (1/1), normalización con reportes RF-S4a iguales al

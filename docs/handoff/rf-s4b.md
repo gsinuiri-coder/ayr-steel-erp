@@ -85,6 +85,10 @@ normalización se deshace desde la auditoría (`catalog.product-rename-sku`,
 - Pendientes del dueño sin implementar: bobina 3020 en OP ROJO (D-252); pool real de kg con
   despacho multi-bobina (D-254).
 - M3: el render de la vista de margen (decisión del dueño sobre jsdom/testing-library vs D-011).
+- **Decisión del dueño:** desactivar a mano un `BOB…` canónico deja sin producto de venta a
+  todas las bobinas de su pool (lo mostró la suite E2E). Propuesta: el catálogo rechaza
+  desactivar un producto de venta de bobina mientras su pool tenga bobinas abiertas.
+- Autorrevisión: pendientes P2 listados en `docs/revision/rf-s4b-autorrevision.md`.
 - E2E nuevos para la UI del selector de bobina del importador, el importe editable, el modo de
   precio del pedido y «Cambiar bobina»: la cobertura de hoy es por API.
 - Limpiar el worktree del subagente web (`.claude/worktrees/agent-…`) y su rama local al cerrar.
