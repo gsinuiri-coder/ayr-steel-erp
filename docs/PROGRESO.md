@@ -85,8 +85,20 @@ no lo toca (decisión 4 del dueño, test `accepted-files-sku-rename.spec.ts`).
   alcanzable con unitarios sin tocar el web. Se agregaron 133 tests de los servicios que
   escriben datos (normalización, barrido, ediciones de pedido, importador, pool, catálogo,
   `sales-lines`): cobertura de líneas nuevas de la API **97.9 %** (558/570), medida cruzando el
-  `lcov` con `git diff`. El gate real se confirma en la CI del push. Nota: el gate venía fallando
-  en 6 de los últimos 7 PRs (#13 se mergeó con 0 %).
+  `lcov` con `git diff`. Nota: el gate venía fallando en 6 de los últimos 7 PRs (#13 se mergeó
+  con 0 %).
+  **Pero con la API al 97.9 % Sonar seguía dando 74.8 %**, y la causa no era de tests: el log del
+  scanner decía «Could not resolve 33 file paths … ../../packages/shared/src/…». `packages/shared/src`
+  está en `sonar.sources`, la API lo resuelve compilado desde `dist/` y el paquete no tiene runner
+  propio, así que todo lo que se agregaba ahí contaba como código sin cobertura. Se arregló en dos
+  pasos: `apps/api/jest.config.js` mapea `@ayr/shared` a su fuente (y `rootDir` a la raíz del
+  repo), y `scripts/fix-lcov-paths.mjs` reescribe las rutas `../../packages/…` del lcov a
+  `packages/…`, que el scanner sí resuelve. Resultado en la CI del PR #14: **80.6 %** (gate ≥ 80 %
+  en verde). **El margen es corto**: cualquier PR con código nuevo en `packages/shared` o ramas sin
+  probar lo vuelve a hundir. Efecto lateral bueno: jest ya no corre contra un `dist/` viejo de
+  shared (la trampa P2 del handoff de D-249). Para depurar el gate la próxima vez: el log del job
+  «Análisis estático» (`gh api repos/…/actions/jobs/<id>/logs`) dice qué rutas no resolvió; el
+  proyecto es privado y sin el token no se puede leer el dashboard.
 - Unitarios: API **929** passed (eran 743 al empezar), web **11** passed. `pnpm lint`,
   `pnpm typecheck` y `prettier --check` verdes.
 - Autorrevisión (`docs/revision/rf-s4b-autorrevision.md`): 2 P0 y 9 P1 encontrados; los P0 y

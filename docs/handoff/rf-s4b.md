@@ -23,7 +23,7 @@ con OK del dueño comando por comando (D-251).
 
 - **PR:** [#14](https://github.com/gsinuiri-coder/ayr-steel-erp/pull/14), abierto hacia `main`,
   **sin mergear**.
-- **CI:** ver la sección «CI del PR» más abajo (job por job, con el resultado de la última corrida).
+- **CI:** verde, job por job y con el gate de Sonar (80.6 %); ver «CI del PR #14» más abajo.
 - **Revisión independiente:** mañana (jueves 2026-09-24). Es el pase cruzado de AGENTS.md §2.2:
   lo que revisa el segundo revisor es esta rama entera, con foco en lo que ya señala
   `docs/revision/rf-s4b-autorrevision.md` (los P2 pendientes) y en la resolución bobina → producto
@@ -32,6 +32,31 @@ con OK del dueño comando por comando (D-251).
 - **Ventana:** jueves 2026-09-24 por la noche, antes de la revisión del viernes. Necesita, en este
   orden: (1) CI verde incluido el gate de Sonar, (2) el pase cruzado sin P0/P1 abiertos, (3) tu OK
   a cada comando de producción (D-251).
+
+## CI del PR #14
+
+Última corrida, sobre `dd5ebd4` (todo verde):
+
+| Job                                      | Resultado | Duración |
+| ---------------------------------------- | --------- | -------- |
+| Lint, typecheck y unit                   | pass      | 1m29s    |
+| E2E Playwright (Postgres del runner)     | pass      | 15m22s   |
+| Smoke E2E y migraciones (Neon `ci`)      | pass      | 25m53s   |
+| Análisis estático (SonarCloud o Semgrep) | pass      | 1m14s    |
+| SonarCloud Code Analysis (quality gate)  | pass      | 55s      |
+| Vercel / Vercel Preview Comments         | pass      | —        |
+
+- **Historia de la corrida.** La primera dio todo verde salvo el quality gate de Sonar (12.6 % de
+  cobertura en código nuevo, exige ≥ 80 %), que **no era de infraestructura**. Se arregló en tres
+  empujes: tests unitarios de los servicios sin cobertura (API 97.9 %), luego el mapeo de
+  `@ayr/shared` a su fuente en jest, y por último la reescritura de rutas del lcov que el scanner
+  no resolvía. Gate final: **80.6 %**. El E2E del runner pasó las tres veces.
+- **Smoke con migración:** el job «Smoke E2E y migraciones (Neon `ci`)» aplica
+  `20260923180000_rf_s4b_products_merged_into` sobre Neon `ci`. Es la primera prueba de la
+  migración fuera de Docker local, y pasó.
+- **Margen del gate: 0.6 puntos.** Cualquier cambio que agregue código sin cobertura antes de la
+  ventana puede volver a ponerlo en rojo; conviene no tocar código de la rama salvo por hallazgos
+  del pase cruzado, y correr `pnpm --filter @ayr/api test:cov` antes de cada empuje.
 
 ## Lo que el siguiente tiene que saber antes de tocar esto
 
@@ -97,11 +122,13 @@ normalización se deshace desde la auditoría (`catalog.product-rename-sku`,
 
 - Unitarios: API 929/929, web 11/11. `pnpm lint`, `pnpm typecheck`, `prettier --check` verdes.
 - **SonarCloud:** el gate falló en el primer push (12.6 % de cobertura en código nuevo, exige
-  ≥ 80 %). Se cubrió con unitarios: 97.9 % en la API. Reconfirmar en la CI del segundo push.
+  ≥ 80 %). Se cubrió la API con unitarios (97.9 %), y luego se descubrió que Sonar no resolvía las
+  rutas de `packages/shared` del lcov (ver PROGRESO). Con las dos correcciones el gate pasó con
+  **80.6 %** — margen corto.
 - E2E completo con builds de producción: 331/36/2/20 en la primera corrida; todo rojo
   clasificado (infraestructura del runner local salvo dos, corregidos). Re-corrida de los rojos y
   del tramo sin correr: 80/2/1, los dos explicados. Detalle en `docs/PROGRESO.md`.
-- **Falta la CI del PR** (R2 y PSE reales): la rama no está en el remoto.
+- **CI del PR #14** (R2 y PSE reales incluidos): verde; ver «CI del PR #14».
 
 ## Lo que queda pendiente
 
