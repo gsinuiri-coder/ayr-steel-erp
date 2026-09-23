@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   BusinessLineCode,
+  FinishKind,
   InventoryItemType,
   QuotationStatus,
   SalesOrderStatus,
@@ -251,23 +252,21 @@ export async function buildPlan(tx: Prisma.TransactionClient): Promise<Normaliza
   }
   const finishes = await tx.finish.findMany({
     where: { id: { in: [...new Set(coils.map((c) => c.finishId))] } },
-    select: { id: true, code: true, densityFactor: true, businessLineId: true },
+    select: { id: true, code: true, kind: true, densityFactor: true },
   });
   const finishById = new Map(finishes.map((f) => [f.id, f]));
   for (const [sku, list] of coilsBySku) {
+    // Mismo criterio que el alta (`assertNoBaseCollision`): solo un prepintado esconde la base,
+    // y lo que la delata es la densidad.
     const used = [...new Set(list.map((c) => c.finishId))].flatMap((id) => {
       const f = finishById.get(id);
-      return f ? [f] : [];
+      return f?.kind === FinishKind.PREPINTADO ? [f] : [];
     });
     const [first] = used;
-    const clash = used.find(
-      (f) =>
-        first !== undefined &&
-        (f.businessLineId !== first.businessLineId || !f.densityFactor.equals(first.densityFactor)),
-    );
+    const clash = used.find((f) => first !== undefined && !f.densityFactor.equals(first.densityFactor));
     if (first && clash) {
       stops.push(
-        `${sku}: los acabados ${first.code} y ${clash.code} comparten SKU pero no la base (línea o densidad)`,
+        `${sku}: los acabados ${first.code} y ${clash.code} comparten SKU pero no la base (densidades distintas)`,
       );
     }
   }

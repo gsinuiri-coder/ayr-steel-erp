@@ -138,10 +138,12 @@ function attributeOf(finish: { kind: FinishKind; color: { code: string } | null 
 }
 
 /**
- * D-252 punto 3: dos acabados que comparten color comercial o tipo **no** pueden diferir en lo
- * que el SKU nuevo ya no dice — la base (aluzinc o galvanizado), que en el modelo vive en la
- * densidad y en la línea de negocio del acabado. Si difieren, venderlas bajo un mismo SKU sería
- * mezclar dos materiales, así que el alta de la bobina se rechaza nombrando los dos acabados.
+ * D-252 punto 3: dos acabados que comparten SKU **no** pueden diferir en lo que el SKU nuevo ya
+ * no dice — la base (aluzinc o galvanizado). Solo un **prepintado** puede esconderla: en uno sin
+ * color el tipo (`NATURAL`, `GALVANIZADO`) ya es la base y va en el SKU. En un prepintado el
+ * modelo no la guarda en ningún campo propio; lo que la delata es la **densidad** del acabado.
+ * La línea de negocio no cuenta: el mismo color vive a propósito en dos líneas con la misma
+ * densidad (`finishForCoil`, D-203) y se vende con el mismo SKU de reventa.
  */
 export async function assertNoBaseCollision(
   tx: Prisma.TransactionClient,
@@ -155,7 +157,7 @@ export async function assertNoBaseCollision(
   },
 ): Promise<void> {
   const attribute = attributeOf(finish);
-  if (attribute === null) return;
+  if (attribute === null || finish.kind !== FinishKind.PREPINTADO) return;
   const siblings = await tx.finish.findMany({
     where: { kind: finish.kind, isActive: true, id: { not: finish.id } },
     select: {
@@ -167,14 +169,12 @@ export async function assertNoBaseCollision(
     },
   });
   const clash = siblings.find(
-    (s) =>
-      attributeOf(s) === attribute &&
-      (s.businessLineId !== finish.businessLineId || !s.densityFactor.equals(finish.densityFactor)),
+    (s) => attributeOf(s) === attribute && !s.densityFactor.equals(finish.densityFactor),
   );
   if (clash) {
     throw new BadRequestException(
       `Los acabados ${finish.code} y ${clash.code} comparten el SKU de bobina (${COIL_SKU_PREFIX}…${attribute}) pero no la base: ` +
-        'difieren en la línea de negocio o en la densidad. Corrige el catálogo de acabados antes de dar de alta la bobina (D-252).',
+        'tienen densidades distintas. Corrige el catálogo de acabados antes de dar de alta la bobina (D-252).',
     );
   }
 }
@@ -249,8 +249,10 @@ export async function coilPoolKeyOfProduct(
   if (parsed.ok) {
     return { sku: parsed.sku, thicknessMm: parsed.thicknessMm, attribute: parsed.attribute };
   }
-  // El SKU viejo (D-037/D-168): `BOB` + código de acabado + espesor con dos decimales.
-  const legacy = /^BOB(.+?)(\d+\.\d{2})$/.exec(product.sku.toUpperCase());
+  // El SKU viejo (D-037/D-168): `BOB` + código de acabado + espesor con dos decimales. El
+  // espesor lleva **un** dígito entero (`0.38`): con `\d+` un acabado que termina en dígitos
+  // (`EDBO089957`) se comía el espesor entero y el producto no se reconocía.
+  const legacy = /^BOB(.+?)(\d\.\d{2})$/.exec(product.sku.toUpperCase());
   if (!legacy) return null;
   const [, finishCode = '', thicknessMm = ''] = legacy;
   const finish = await tx.finish.findUnique({

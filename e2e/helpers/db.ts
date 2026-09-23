@@ -110,6 +110,62 @@ export async function insertLegacyCoilProduct(sku: string, name: string): Promis
   }
 }
 
+/**
+ * RF-S4b: deja un producto con el SKU de **antes** de D-252 (`BOB{acabado}{espesor}`), que es
+ * como están los de producción hasta que corra la normalización. Desde D-252 el alta de la
+ * bobina ya crea el canónico, así que el estado viejo solo se reproduce acá.
+ */
+export async function setProductSkuForTest(productId: string, sku: string): Promise<void> {
+  const db = testDatabaseClient();
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE "products" SET "sku" = $1 WHERE "id" = $2::uuid`,
+      sku,
+      productId,
+    );
+  } finally {
+    await db.$disconnect();
+  }
+}
+
+/**
+ * RF-S4b: deja la línea 1 de una cotización como quedó COT-000002 en producción — enganchada a
+ * un producto (el `BOB…` suelto) que reserva su propio saldo, y con los importes recalculados
+ * desde un unitario de cuatro decimales —. Es el estado que el barrido tiene que encontrar y
+ * corregir; ninguna ruta del API lo puede producir ya (D-254/D-255).
+ */
+export async function breakQuotationLineForTest(
+  quotationId: string,
+  line: { productId: string; unitPricePen: string; subtotalPen: string; igvPen: string; totalPen: string },
+): Promise<void> {
+  const db = testDatabaseClient();
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE "quotation_items"
+       SET "product_id" = $2::uuid, "reserve_item_type" = 'PRODUCT', "reserve_item_id" = $2::uuid,
+           "reserve_unit" = 'KGM', "unit_price_pen" = $3::numeric, "subtotal_pen" = $4::numeric,
+           "igv_pen" = $5::numeric, "total_pen" = $6::numeric
+       WHERE "quotation_id" = $1::uuid AND "line_number" = 1`,
+      quotationId,
+      line.productId,
+      line.unitPricePen,
+      line.subtotalPen,
+      line.igvPen,
+      line.totalPen,
+    );
+    await db.$executeRawUnsafe(
+      `UPDATE "quotations" SET "subtotal_pen" = $2::numeric, "igv_pen" = $3::numeric, "total_pen" = $4::numeric
+       WHERE "id" = $1::uuid`,
+      quotationId,
+      line.subtotalPen,
+      line.igvPen,
+      line.totalPen,
+    );
+  } finally {
+    await db.$disconnect();
+  }
+}
+
 export async function deleteAuditLogRow(id: string): Promise<void> {
   const db = testDatabaseClient();
   try {

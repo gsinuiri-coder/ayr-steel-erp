@@ -72,8 +72,11 @@ test.describe('D-168 — SKU de venta directa de una bobina con acabado con guio
       const coil = await getJson<CoilDto>(api, `/api/coils/${stock.coil.id}`);
       expect(coil.typeKey).toBe(`${finishCode}-0.50`);
 
-      // D-037: el producto que el alta generó conserva los guiones del acabado.
-      const expectedSku = `BOB${finishCode}0.50`;
+      // D-252 (RF-S4b) reemplazó el SKU `BOB{acabado}{espesor}` de D-037 por el canónico:
+      // espesor en centésimas con tres dígitos + color comercial o tipo. El código del acabado,
+      // con sus guiones, ya no entra en el SKU; lo que D-168 protege —que el producto que creó
+      // el alta sea el que la venta encuentra— sigue siendo el corazón del caso.
+      const expectedSku = `BOB050${stock.finish.kind}`;
       const offered = await sellableCoils(api, DISPATCH_LINE);
       const mine = offered.find((c) => c.coilId === stock.coil.id);
       expect(mine, 'la bobina con acabado con guiones no aparece como vendible').toBeDefined();
@@ -90,7 +93,7 @@ test.describe('D-168 — SKU de venta directa de una bobina con acabado con guio
 
       const line = order.items[0]!;
       expect(line.productSku).toBe(expectedSku);
-      // Y el producto existe de verdad en el catálogo con ese SKU: es el que creó `coilSku` al
+      // Y el producto existe de verdad en el catálogo con ese SKU: es el que creó el alta al
       // recibir la compra, no uno que la venta haya inventado por el camino.
       const product = await getJson<ProductDto>(api, `/api/catalog/${line.productId}`);
       expect(product.sku).toBe(expectedSku);

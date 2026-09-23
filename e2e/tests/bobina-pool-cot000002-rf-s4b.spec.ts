@@ -1,8 +1,12 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, createSupplier, getJson, postJson } from '../helpers/api';
-import { insertLegacyCoilProduct } from '../helpers/db';
+import { breakQuotationLineForTest, insertLegacyCoilProduct } from '../helpers/db';
 import {
   commitImport,
+  csvOf,
   customerCell,
   documentKey,
   previewImport,
@@ -31,7 +35,7 @@ import {
  * tal cual: el pedido cuadra 14679.00 sin que nadie lo toque.
  */
 
-test.describe.configure({ timeout: 240_000 });
+test.describe.configure({ timeout: 600_000 });
 
 const QTY = '4194.000';
 
@@ -117,4 +121,122 @@ test.describe('RF-S4b — un código de bobina del origen resuelve al pool, no a
       await purgeSalesTrail(api, { orderIds, quotationIds });
     }
   });
+
+  test('el barrido encuentra COT-000002 tal como quedó en producción y la deja confirmable, sin tocarla a mano', async ({
+    baseURL,
+  }) => {
+    const color = await createColor(api, '#0e4c96');
+    const finish = await createRoofingFinish(api, { colorId: color.id });
+    const supplier = await createSupplier(api, { name: 'E2E Proveedor RF-S4b barrido' });
+    const { coil } = await buyRoofingCoil(api, {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      colorId: color.id,
+      weightKg: '4194',
+      thicknessMm: '0.38',
+      widthMm: '1200',
+    });
+    const customer = await createCustomer(api);
+    const sourceCode = `BOB38${color.code}`;
+    const looseId = await insertLegacyCoilProduct(sourceCode, `Bobina suelta heredada ${color.code}`);
+
+    const quotationIds: string[] = [];
+    const orderIds: string[] = [];
+    try {
+      const row: SheetRow = {
+        issueDate: '07/08/2026',
+        docType: 'Factura',
+        documentKey: documentKey(),
+        customer: customerCell(customer),
+        sku: sourceCode,
+        productName: `BOBINA ALUZINC ${color.code} 0.38 X 1200 RAL 5002`,
+        unit: 'KILOGRAMO',
+        qty: '4194.0000000000',
+        netAmount: '12439.831',
+        igv: '2239.169',
+        totalAmount: '14679.000',
+      };
+      const parsed = await previewImport(api, [row]);
+      const result = await commitImport(api, [toInput(parsed.rows[0]!)]);
+      const listed = await getJson<{ items: { id: string; code: string }[] }>(
+        api,
+        '/api/sales/quotations?pageSize=200',
+      );
+      const quotation = listed.items.find((q) => q.code === result.codes[0])!;
+      quotationIds.push(quotation.id);
+
+      // Lo que pasó en producción: el importador de antes la enganchó al suelto, y la edición con
+      // precio con IGV 3.5 la dejó en 12439.82 / 14678.99.
+      await breakQuotationLineForTest(quotation.id, {
+        productId: looseId,
+        unitPricePen: '2.9661',
+        subtotalPen: '12439.8234',
+        igvPen: '2239.1682',
+        totalPen: '14678.9916',
+      });
+
+      const file = path.join(test.info().outputDir, 'ventas.csv');
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, csvOf([row]), 'utf8');
+
+      // --- Dry-run: (a) y (b) sobre esta cotización, con la bobina a la que se va a atar ---
+      const report = sweep(file, []) as SweepReportDto;
+      const doc = report.documents.find((d) => d.id === quotation.id);
+      expect(doc?.open).toBe(true);
+      expect(doc?.findings[0]?.product?.autoCoilId).toBe(coil.id);
+      expect(doc?.findings[0]?.amounts?.paper).toEqual({
+        net: '12439.8310',
+        igv: '2239.1690',
+        total: '14679.0000',
+      });
+
+      // --- Execute: corrige los abiertos ---
+      const run = sweep(file, ['--execute']) as { fixed: { code: string }[] };
+      expect(run.fixed.map((f) => f.code)).toContain(quotation.code);
+      // Un contexto nuevo después de la CLI: el anterior quedó ~2 minutos ocioso mientras la CLI
+      // compilaba y corría, y su primera petición moría con ECONNRESET en tres corridas seguidas
+      // (el servidor ya había cerrado el socket keep-alive; un `fetch` nuevo contestaba 200 en
+      // el acto). Es de la conexión, no del barrido.
+      const fresh = await adminApi(baseURL!);
+      const fixed = await getJson<QuotationDto>(fresh, `/api/sales/quotations/${quotation.id}`);
+      expect(fixed.items[0]!.reserveItemType).toBe('COIL');
+      expect(fixed.items[0]!.reserveItemId).toBe(coil.id);
+      expect(fixed.totalPen).toBe('14679.0000');
+
+      // El criterio de éxito del dueño: se confirma contra el pool y cuadra 14679.00.
+      const order = await postJson<SalesOrderDto>(
+        fresh,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+        {},
+      );
+      orderIds.push(order.id);
+      expect(order.items[0]!.reserveItemId).toBe(coil.id);
+      expect(order.totalPen).toBe('14679.0000');
+      await fresh.dispose();
+    } finally {
+      await purgeSalesTrail(api, { orderIds, quotationIds });
+    }
+  });
 });
+
+interface SweepReportDto {
+  documents: {
+    id: string;
+    open: boolean;
+    findings: {
+      product: { autoCoilId: string | null } | null;
+      amounts: { paper: { net: string; igv: string | null; total: string | null } } | null;
+    }[];
+  }[];
+}
+
+/** La CLI real del barrido contra la base de pruebas, con el reporte en JSON. */
+function sweep(file: string, args: string[]): unknown {
+  const res = spawnSync(
+    'node',
+    ['scripts/sweep-imported-documents.mjs', '--branch', 'local-e2e', '--file', file, '--json', ...args],
+    { cwd: process.cwd(), encoding: 'utf8', timeout: 300_000 },
+  );
+  expect(res.status, `el barrido falló:\n${res.stderr}`).toBe(0);
+  return JSON.parse(res.stdout.trim().split('\n').pop() ?? '');
+}

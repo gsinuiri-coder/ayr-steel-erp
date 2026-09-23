@@ -116,6 +116,8 @@ async function main(): Promise<void> {
     }
     console.warn(`Corregidos: ${String(result.fixed.length)} documento(s).`);
     for (const f of result.fixed) console.warn(`  ${f.kind} ${f.code}: líneas ${f.lines.join(', ')}`);
+    console.warn(`\nRechazados por el dominio al corregir: ${String(result.failed.length)}.`);
+    for (const f of result.failed) console.error(`  ${f.kind} ${f.code}: ${f.reason}`);
     console.warn(`\n(c) Quedan para el dueño: ${String(result.pending.length)} documento(s).`);
     for (const d of result.pending) printDocument(d);
   } finally {

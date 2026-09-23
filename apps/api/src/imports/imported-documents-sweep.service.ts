@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable } from '@nestjs/common';
 import {
   FiscalDocType,
   InventoryItemType,
@@ -83,6 +83,8 @@ export interface SweepReport {
 
 export interface SweepExecution {
   fixed: { kind: SweepDocKind; code: string; lines: number[] }[];
+  /** Los que el dominio rechazó al corregir, con el motivo. Quedan en (c). */
+  failed: { kind: SweepDocKind; code: string; reason: string }[];
   /** (c) después del execute: abiertos con hallazgos que quedan para el dueño. */
   pending: SweepDocument[];
 }
@@ -210,47 +212,65 @@ export class ImportedDocumentsSweepService {
   async execute(actor: RequestUser, paper: readonly PaperLine[]): Promise<SweepExecution> {
     const report = await this.report(paper);
     const fixed: SweepExecution['fixed'] = [];
+    const failed: SweepExecution['failed'] = [];
     const reason = 'Barrido de lo importado (RF-S4b): comprobante de origen';
     for (const doc of report.documents) {
       if (!doc.open || doc.unmatched !== null || doc.findings.length === 0) continue;
       if (doc.findings.some((f) => f.product !== null && f.product.autoCoilId === null)) continue;
-      if (doc.kind === 'COTIZACION') {
-        await this.fixQuotation(actor, doc, paper);
-      } else {
-        for (const f of doc.findings) {
-          const line = await this.prisma.salesOrderItem.findFirstOrThrow({
-            where: { salesOrderId: doc.id, lineNumber: f.lineNumber },
-            select: { id: true },
-          });
-          if (f.product?.autoCoilId) {
-            await this.edits.updateItemCoil(actor, doc.id, line.id, {
-              saleCoilId: f.product.autoCoilId,
-              reason,
-            });
-          }
-          if (f.amounts) {
-            await this.edits.restorePaperAmounts(
-              actor,
-              doc.id,
-              line.id,
-              {
-                netAmountPen: f.amounts.paper.net,
-                ...(f.amounts.paper.igv !== null && f.amounts.paper.total !== null
-                  ? { igvAmountPen: f.amounts.paper.igv, totalAmountPen: f.amounts.paper.total }
-                  : {}),
-              },
-              reason,
-            );
-          }
-        }
+      try {
+        await this.fixDocument(actor, doc, paper, reason);
+        fixed.push({ kind: doc.kind, code: doc.code, lines: doc.findings.map((f) => f.lineNumber) });
+      } catch (err) {
+        // Un documento que el dominio rechaza (p. ej. la bobina ya no alcanza) no tumba el resto:
+        // se reporta con el motivo y queda en (c). Cada corrección es su propia transacción.
+        if (!(err instanceof HttpException)) throw err;
+        failed.push({ kind: doc.kind, code: doc.code, reason: err.message });
       }
-      fixed.push({ kind: doc.kind, code: doc.code, lines: doc.findings.map((f) => f.lineNumber) });
     }
     const after = await this.report(paper);
     return {
       fixed,
+      failed,
       pending: after.documents.filter((d) => d.open && (d.findings.length > 0 || d.unmatched)),
     };
+  }
+
+  private async fixDocument(
+    actor: RequestUser,
+    doc: SweepDocument,
+    paper: readonly PaperLine[],
+    reason: string,
+  ): Promise<void> {
+    if (doc.kind === 'COTIZACION') {
+      await this.fixQuotation(actor, doc, paper);
+      return;
+    }
+    for (const f of doc.findings) {
+      const line = await this.prisma.salesOrderItem.findFirstOrThrow({
+        where: { salesOrderId: doc.id, lineNumber: f.lineNumber },
+        select: { id: true },
+      });
+      if (f.product?.autoCoilId) {
+        await this.edits.updateItemCoil(actor, doc.id, line.id, {
+          saleCoilId: f.product.autoCoilId,
+          reason,
+        });
+      }
+      if (f.amounts) {
+        await this.edits.restorePaperAmounts(
+          actor,
+          doc.id,
+          line.id,
+          {
+            netAmountPen: f.amounts.paper.net,
+            ...(f.amounts.paper.igv !== null && f.amounts.paper.total !== null
+              ? { igvAmountPen: f.amounts.paper.igv, totalAmountPen: f.amounts.paper.total }
+              : {}),
+          },
+          reason,
+        );
+      }
+    }
   }
 
   private async review(
