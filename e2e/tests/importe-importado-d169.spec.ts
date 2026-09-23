@@ -383,8 +383,8 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
           },
         ],
       });
+      // Lo corta el `superRefine` del schema, así que el 400 es el genérico del pipe de Zod.
       expect(twoForms.status).toBe(400);
-      expect(twoForms.message).toContain('una sola de las tres');
 
       const badTriplet = await postExpectingError(api, '/api/sales/quotations', {
         customerId: scenario.customer.id,
