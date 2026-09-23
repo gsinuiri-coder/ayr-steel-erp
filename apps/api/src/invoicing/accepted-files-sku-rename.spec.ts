@@ -32,7 +32,11 @@ describe('D-253 — un comprobante aceptado sirve su XML/PDF guardado aunque el 
     Object.assign(svc, {
       prisma: {
         fiscalDocument: { findUnique },
-        product: { findUnique: productFindAny, findMany: productFindAny, findFirst: productFindAny },
+        product: {
+          findUnique: productFindAny,
+          findMany: productFindAny,
+          findFirst: productFindAny,
+        },
       },
       storage: { getObject },
     });
@@ -42,14 +46,17 @@ describe('D-253 — un comprobante aceptado sirve su XML/PDF guardado aunque el 
   it.each([
     ['pdf', STORED_PDF, 'fiscal/doc-1.pdf'],
     ['xml', STORED_XML, 'fiscal/doc-1.xml'],
-  ] as const)('%s: devuelve los bytes guardados y no mira el producto', async (kind, bytes, key) => {
-    const s = service();
-    const file = await s.svc.file('doc-1', kind);
-    expect(s.getObject).toHaveBeenCalledWith(key);
-    expect(file.buffer.equals(bytes)).toBe(true);
-    // Ni siquiera se pide el producto: el SKU renombrado (`BOB038AZUL`) no tiene por dónde entrar.
-    expect(s.productFindAny).not.toHaveBeenCalled();
-    const select = (s.findUnique.mock.calls[0]?.[0] as { select: Record<string, unknown> }).select;
-    expect(Object.keys(select)).not.toContain('items');
-  });
+  ] as const)(
+    '%s: devuelve los bytes guardados y no mira el producto',
+    async (kind, bytes, key) => {
+      const s = service();
+      const file = await s.svc.file('doc-1', kind);
+      expect(s.getObject).toHaveBeenCalledWith(key);
+      expect(file.buffer.equals(bytes)).toBe(true);
+      // Ni siquiera se pide el producto: el SKU renombrado (`BOB038AZUL`) no tiene por dónde entrar.
+      expect(s.productFindAny).not.toHaveBeenCalled();
+      const calls = s.findUnique.mock.calls as [{ select: Record<string, unknown> }][];
+      expect(Object.keys(calls[0]?.[0].select ?? {})).not.toContain('items');
+    },
+  );
 });

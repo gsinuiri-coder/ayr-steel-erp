@@ -410,7 +410,10 @@ export async function resolveSalesLines(
     // D-169: la tolerancia del importador compara el importe del papel contra el unitario **que
     // trae la fila** (el que el preview mostró), no contra el derivado — que por construcción
     // lo reproduce y no detectaría nada.
-    const computed = salesLineTotals({ qty: item.qty, unitPricePen: item.unitPricePen ?? unitPricePen });
+    const computed = salesLineTotals({
+      qty: item.qty,
+      unitPricePen: item.unitPricePen ?? unitPricePen,
+    });
     if (item.netAmountPen !== undefined && options.exactAmounts !== undefined) {
       adjustments.push({
         at,

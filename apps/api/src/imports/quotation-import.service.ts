@@ -413,7 +413,10 @@ export class QuotationImportService {
         { thicknessMm: parsed.thicknessMm, attribute: parsed.attribute },
         qty === null ? '0' : toFixedString(qty, 'KG'),
       );
-      const product = await this.coilSaleProductOf(pool.candidates.map((c) => c.coilId), parsed.sku);
+      const product = await this.coilSaleProductOf(
+        pool.candidates.map((c) => c.coilId),
+        parsed.sku,
+      );
       out.set(row.index, {
         product,
         candidates: pool.candidates,
@@ -423,22 +426,24 @@ export class QuotationImportService {
           pool.candidates.length > 0 && product === null
             ? `${parsed.sku}: las bobinas del pool no tienen producto de venta; revisa el catálogo antes de importar.`
             : pool.candidates.length === 0
-            ? `${parsed.sku}: ninguna bobina libre del pool tiene ${qty === null ? 'la cantidad' : `${toFixedString(qty, 'KG')} kg`} (disponible en el pool: ${pool.availableKg} kg). La línea queda para revisión.`
-            : pool.autoCoilId === null
-              ? `${parsed.sku}: hay ${String(pool.candidates.length)} bobinas que pueden atender la línea; elige cuál.`
-              : null,
+              ? `${parsed.sku}: ninguna bobina libre del pool tiene ${qty === null ? 'la cantidad' : `${toFixedString(qty, 'KG')} kg`} (disponible en el pool: ${pool.availableKg} kg). La línea queda para revisión.`
+              : pool.autoCoilId === null
+                ? `${parsed.sku}: hay ${String(pool.candidates.length)} bobinas que pueden atender la línea; elige cuál.`
+                : null,
       });
     }
 
     // Una bobina, una fila: la elección automática que se repite queda para revisión.
     const autoCount = new Map<string, number>();
     for (const r of out.values()) {
-      if (r.saleCoilId !== null) autoCount.set(r.saleCoilId, (autoCount.get(r.saleCoilId) ?? 0) + 1);
+      if (r.saleCoilId !== null)
+        autoCount.set(r.saleCoilId, (autoCount.get(r.saleCoilId) ?? 0) + 1);
     }
     for (const r of out.values()) {
       if (r.saleCoilId !== null && (autoCount.get(r.saleCoilId) ?? 0) > 1) {
         r.saleCoilId = null;
-        r.problem = 'Otra línea del archivo quedó con la misma bobina: elige cuál atiende a cada una.';
+        r.problem =
+          'Otra línea del archivo quedó con la misma bobina: elige cuál atiende a cada una.';
       }
     }
     return out;
@@ -799,7 +804,11 @@ export function readPaperLines(buffer: Buffer): PaperLine[] {
     const igv = parseAmount(field(r, 'igv'));
     const total = parseAmount(field(r, 'totalAmount'));
     const triplet =
-      netPen !== null && !isForeign && igv !== null && total !== null && paperTriplet(netPen, igv, total);
+      netPen !== null &&
+      !isForeign &&
+      igv !== null &&
+      total !== null &&
+      paperTriplet(netPen, igv, total);
     return {
       rowNumber: i + 1,
       documentKey: field(r, 'documentKey'),

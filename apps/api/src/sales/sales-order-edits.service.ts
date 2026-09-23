@@ -329,7 +329,9 @@ export class SalesOrderEditsService {
           select: { id: true },
         });
         if (dispatched) {
-          throw new BadRequestException(`${at}: ya tiene despachos, así que su bobina no se cambia`);
+          throw new BadRequestException(
+            `${at}: ya tiene despachos, así que su bobina no se cambia`,
+          );
         }
         const pool = await lineCoilPool(tx, item);
         if (pool === null) {
@@ -906,9 +908,10 @@ export class SalesOrderEditsService {
       ...(item.valuePerMeterPen !== null
         ? { valuePerMeterPen: item.valuePerMeterPen.toFixed(4) }
         : {
-            unitPricePen: derivedUnitValue(item.qty.toString(), item.subtotalPen.toString()).toFixed(
-              DERIVED_UNIT_VALUE_DECIMALS,
-            ),
+            unitPricePen: derivedUnitValue(
+              item.qty.toString(),
+              item.subtotalPen.toString(),
+            ).toFixed(DERIVED_UNIT_VALUE_DECIMALS),
           }),
     };
     const pieces =

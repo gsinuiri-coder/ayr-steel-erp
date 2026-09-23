@@ -36,7 +36,9 @@ function printGroup(group: NormalizationGroup): void {
     `  ${target} · ${String(group.principal.uses)} movimientos · ${String(group.coils)} bobinas · ${group.kg} kg`,
   );
   for (const m of group.merged) {
-    console.warn(`      + se une ${m.sku} («${m.name}») · ${String(m.uses)} movimientos → queda inactivo`);
+    console.warn(
+      `      + se une ${m.sku} («${m.name}») · ${String(m.uses)} movimientos → queda inactivo`,
+    );
   }
 }
 
@@ -48,7 +50,9 @@ function printPlan(plan: NormalizationPlan): void {
   console.warn(`\nYa canónicos, sin cambios: ${String(plan.unchanged)}`);
   console.warn(`\nNo interpretables (${String(plan.uninterpretable.length)}):`);
   for (const u of plan.uninterpretable) console.warn(`  ${u.sku} («${u.name}»)`);
-  console.warn(`\nDocumentos abiertos con productos a unir (${String(plan.openDocuments.length)}):`);
+  console.warn(
+    `\nDocumentos abiertos con productos a unir (${String(plan.openDocuments.length)}):`,
+  );
   for (const d of plan.openDocuments) {
     console.warn(`  ${d.kind} ${d.code} (${d.status}) → ${d.productSku}`);
   }

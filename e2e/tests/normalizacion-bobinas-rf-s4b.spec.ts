@@ -130,7 +130,10 @@ test.describe('RF-S4b — normalización de SKU de bobina', () => {
 
     const day = today();
     const valuationBefore = await getJson<ValuationDto>(api, '/api/reports/inventory-valuation');
-    const marginBefore = await getJson<MarginDto>(api, `/api/reports/sales-margin?from=${day}&to=${day}`);
+    const marginBefore = await getJson<MarginDto>(
+      api,
+      `/api/reports/sales-margin?from=${day}&to=${day}`,
+    );
 
     // --- Dry-run: el plan dice lo que va a hacer, sin paradas ---
     const plan = normalize([]) as NormalizationPlanDto;
@@ -164,7 +167,10 @@ test.describe('RF-S4b — normalización de SKU de bobina', () => {
 
     // Los reportes de RF-S4a, al centavo.
     const valuationAfter = await getJson<ValuationDto>(api, '/api/reports/inventory-valuation');
-    const marginAfter = await getJson<MarginDto>(api, `/api/reports/sales-margin?from=${day}&to=${day}`);
+    const marginAfter = await getJson<MarginDto>(
+      api,
+      `/api/reports/sales-margin?from=${day}&to=${day}`,
+    );
     expect(valuationAfter.totals).toEqual(valuationBefore.totals);
     expect(marginAfter.totals).toEqual(marginBefore.totals);
 

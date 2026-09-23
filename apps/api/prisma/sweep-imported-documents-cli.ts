@@ -47,7 +47,9 @@ function printDocument(doc: SweepDocument): void {
       const fix = f.product.autoCoilCode
         ? `→ se ata a ${f.product.autoCoilCode}`
         : `→ ${String(f.product.candidates)} candidata(s): elige a mano`;
-      console.warn(`      (a) línea ${String(f.lineNumber)} ${f.productSku}: ${f.product.reason} ${fix}`);
+      console.warn(
+        `      (a) línea ${String(f.lineNumber)} ${f.productSku}: ${f.product.reason} ${fix}`,
+      );
     }
     if (f.amounts) {
       const p = f.amounts.paper;
@@ -61,7 +63,10 @@ function printDocument(doc: SweepDocument): void {
 }
 
 async function main(): Promise<void> {
-  if (!filePath) throw new Error('Uso: sweep-imported-documents-cli.ts --file <export.xlsx> [--execute] [--json]');
+  if (!filePath)
+    throw new Error(
+      'Uso: sweep-imported-documents-cli.ts --file <export.xlsx> [--execute] [--json]',
+    );
   const prisma = new PrismaClient();
   const actorEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   if (!actorEmail) throw new Error('Falta ADMIN_EMAIL en el entorno');
@@ -98,12 +103,18 @@ async function main(): Promise<void> {
           (d.unmatched !== null ||
             d.findings.some((f) => f.product !== null && f.product.autoCoilId === null)),
       );
-      console.warn(`Simulando (dry-run): ${String(report.reviewed)} documento(s) importado(s) revisado(s).\n`);
-      console.warn(`(a) Líneas con un producto que R1 resolvería distinto — ${String(a.length)} documento(s):`);
+      console.warn(
+        `Simulando (dry-run): ${String(report.reviewed)} documento(s) importado(s) revisado(s).\n`,
+      );
+      console.warn(
+        `(a) Líneas con un producto que R1 resolvería distinto — ${String(a.length)} documento(s):`,
+      );
       for (const d of a) printDocument(d);
       console.warn(`\n(b) Importes que no son los del papel — ${String(b.length)} documento(s):`);
       for (const d of b) printDocument(d);
-      console.warn(`\n(c) Abiertos que el execute no resuelve solo — ${String(c.length)} documento(s):`);
+      console.warn(
+        `\n(c) Abiertos que el execute no resuelve solo — ${String(c.length)} documento(s):`,
+      );
       for (const d of c) printDocument(d);
       const unmatched = withIssues.filter((d) => d.unmatched);
       console.warn(`\nSin comparar contra el papel: ${String(unmatched.length)} documento(s).`);
@@ -115,7 +126,8 @@ async function main(): Promise<void> {
       return;
     }
     console.warn(`Corregidos: ${String(result.fixed.length)} documento(s).`);
-    for (const f of result.fixed) console.warn(`  ${f.kind} ${f.code}: líneas ${f.lines.join(', ')}`);
+    for (const f of result.fixed)
+      console.warn(`  ${f.kind} ${f.code}: líneas ${f.lines.join(', ')}`);
     console.warn(`\nRechazados por el dominio al corregir: ${String(result.failed.length)}.`);
     for (const f of result.failed) console.error(`  ${f.kind} ${f.code}: ${f.reason}`);
     console.warn(`\n(c) Quedan para el dueño: ${String(result.pending.length)} documento(s).`);

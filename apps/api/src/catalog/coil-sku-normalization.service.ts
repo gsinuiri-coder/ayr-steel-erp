@@ -263,7 +263,9 @@ export async function buildPlan(tx: Prisma.TransactionClient): Promise<Normaliza
       return f?.kind === FinishKind.PREPINTADO ? [f] : [];
     });
     const [first] = used;
-    const clash = used.find((f) => first !== undefined && !f.densityFactor.equals(first.densityFactor));
+    const clash = used.find(
+      (f) => first !== undefined && !f.densityFactor.equals(first.densityFactor),
+    );
     if (first && clash) {
       stops.push(
         `${sku}: los acabados ${first.code} y ${clash.code} comparten SKU pero no la base (densidades distintas)`,
@@ -308,7 +310,12 @@ export async function buildPlan(tx: Prisma.TransactionClient): Promise<Normaliza
     const kg = list.reduce((acc, c) => acc.plus(kgById.get(c.id) ?? 0), new Decimal(0));
     const group: NormalizationGroup = {
       canonicalSku,
-      principal: { id: principal.id, sku: principal.sku, name: principal.name, uses: principal.uses },
+      principal: {
+        id: principal.id,
+        sku: principal.sku,
+        name: principal.name,
+        uses: principal.uses,
+      },
       renamePrincipal: principal.sku !== canonicalSku,
       merged: merged.map(({ fromCoil: _f, ...m }) => m),
       coils: list.length,

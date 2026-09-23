@@ -140,7 +140,13 @@ export class ImportedDocumentsSweepService {
 
     const quotations = await this.prisma.quotation.findMany({
       where: { notes: { startsWith: EXTERNAL_INVOICE_NOTES_PREFIX } },
-      select: { id: true, seq: true, status: true, notes: true, items: { select: LINE_SELECT, orderBy: { lineNumber: 'asc' } } },
+      select: {
+        id: true,
+        seq: true,
+        status: true,
+        notes: true,
+        items: { select: LINE_SELECT, orderBy: { lineNumber: 'asc' } },
+      },
       orderBy: { seq: 'asc' },
     });
     const orders = await this.prisma.salesOrder.findMany({
@@ -219,7 +225,11 @@ export class ImportedDocumentsSweepService {
       if (doc.findings.some((f) => f.product !== null && f.product.autoCoilId === null)) continue;
       try {
         await this.fixDocument(actor, doc, paper, reason);
-        fixed.push({ kind: doc.kind, code: doc.code, lines: doc.findings.map((f) => f.lineNumber) });
+        fixed.push({
+          kind: doc.kind,
+          code: doc.code,
+          lines: doc.findings.map((f) => f.lineNumber),
+        });
       } catch (err) {
         // Un documento que el dominio rechaza (p. ej. la bobina ya no alcanza) no tumba el resto:
         // se reporta con el motivo y queda en (c). Cada corrección es su propia transacción.
@@ -313,7 +323,12 @@ export class ImportedDocumentsSweepService {
       const product = await this.productFinding(line, source, known, doc.scope);
       const amounts = amountsFinding(line, source);
       if (product || amounts) {
-        findings.push({ lineNumber: line.lineNumber, productSku: line.product.sku, product, amounts });
+        findings.push({
+          lineNumber: line.lineNumber,
+          productSku: line.product.sku,
+          product,
+          amounts,
+        });
       }
     }
     return { ...base, unmatched: null, findings };
@@ -326,9 +341,11 @@ export class ImportedDocumentsSweepService {
     known: ReadonlySet<string>,
     scope: { exceptQuotationIds?: string[]; exceptSalesOrderIds?: string[] },
   ): Promise<SweepLineFinding['product']> {
-    const parsed = normalizeCoilSku({ code: source.rawSku, description: source.productName }, known);
-    const coilish =
-      parsed.ok || /^\s*BOB/i.test(source.rawSku) || isCoilSaleProduct(line.product);
+    const parsed = normalizeCoilSku(
+      { code: source.rawSku, description: source.productName },
+      known,
+    );
+    const coilish = parsed.ok || /^\s*BOB/i.test(source.rawSku) || isCoilSaleProduct(line.product);
     if (coilish && line.reserveItemType !== InventoryItemType.COIL) {
       if (!parsed.ok) {
         return { reason: parsed.reason, autoCoilId: null, autoCoilCode: null, candidates: 0 };
@@ -393,10 +410,20 @@ export class ImportedDocumentsSweepService {
             };
       const qty = line.qty.toString();
       if (finding?.product?.autoCoilId) {
-        return { saleCoilId: finding.product.autoCoilId, qty, description: line.description, ...paperAmounts };
+        return {
+          saleCoilId: finding.product.autoCoilId,
+          qty,
+          description: line.description,
+          ...paperAmounts,
+        };
       }
       if (line.reserveItemType === InventoryItemType.COIL) {
-        return { saleCoilId: line.reserveItemId, qty, description: line.description, ...paperAmounts };
+        return {
+          saleCoilId: line.reserveItemId,
+          qty,
+          description: line.description,
+          ...paperAmounts,
+        };
       }
       return {
         productId: line.productId,

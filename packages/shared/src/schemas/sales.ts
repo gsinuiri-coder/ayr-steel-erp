@@ -1116,9 +1116,12 @@ export const updateSalesOrderItemPriceSchema = z
     netAmountPen: priceSchema.optional(),
   })
   .superRefine((v, ctx) => {
-    const forms = [v.unitPricePen, v.valuePerMeterPen, v.unitPriceWithIgvPen, v.netAmountPen].filter(
-      (f) => f !== undefined,
-    ).length;
+    const forms = [
+      v.unitPricePen,
+      v.valuePerMeterPen,
+      v.unitPriceWithIgvPen,
+      v.netAmountPen,
+    ].filter((f) => f !== undefined).length;
     if (forms !== 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1156,7 +1159,12 @@ export const coilPoolSchema = z.object({
   sku: z.string(),
   availableKg: z.string(),
   candidates: z.array(
-    z.object({ coilId: z.string().uuid(), code: z.string(), widthMm: z.string(), balanceKg: z.string() }),
+    z.object({
+      coilId: z.string().uuid(),
+      code: z.string(),
+      widthMm: z.string(),
+      balanceKg: z.string(),
+    }),
   ),
   autoCoilId: z.string().uuid().nullable(),
 });

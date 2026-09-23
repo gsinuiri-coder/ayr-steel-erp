@@ -346,10 +346,7 @@ export class QuotationsService {
     // D-255: con el importe de la línea sigue viajando el IGV y el total **del papel** que la
     // línea tenía guardados, para que editar un documento importado no le recalcule el IGV al
     // 18 % y lo separe del comprobante en diezmilésimas.
-    const withPaper = (
-      item: SalesItemInput,
-      row: (typeof stored)[number],
-    ): SalesItemInput => ({
+    const withPaper = (item: SalesItemInput, row: (typeof stored)[number]): SalesItemInput => ({
       ...item,
       netAmountPen: row.subtotalPen.toFixed(4),
       igvAmountPen: row.igvPen.toFixed(4),

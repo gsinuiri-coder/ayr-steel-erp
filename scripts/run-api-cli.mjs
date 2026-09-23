@@ -26,21 +26,29 @@ export function runApiCli({ compiled, what, pathFlags = new Set() }) {
       `--branch tiene que ser "dev", "demo", "production", "local" o "local-e2e" (recibido: "${branch}").`,
     );
   }
-  if (branch === 'production' && argv.includes('--execute') && !argv.includes('--confirm-production')) {
+  if (
+    branch === 'production' &&
+    argv.includes('--execute') &&
+    !argv.includes('--confirm-production')
+  ) {
     throw new Error(
       `--execute contra production ${what} — agregá --confirm-production si es justo lo que querés hacer. Sin ese flag, no se ejecuta.`,
     );
   }
 
   const passthroughArgs = argv
-    .filter((a, i) => a !== '--branch' && argv[i - 1] !== '--branch' && a !== '--confirm-production')
+    .filter(
+      (a, i) => a !== '--branch' && argv[i - 1] !== '--branch' && a !== '--confirm-production',
+    )
     .map((a, i, arr) => (pathFlags.has(arr[i - 1]) ? resolve(process.cwd(), a) : a));
 
   const apiDir = resolve(ROOT, 'apps/api');
   const localUrls = localTestDbUrls(branch);
   const env = {
     ...process.env,
-    DATABASE_URL: localUrls ? localUrls.databaseUrl : neonConnectionString(branch, { pooled: true }),
+    DATABASE_URL: localUrls
+      ? localUrls.databaseUrl
+      : neonConnectionString(branch, { pooled: true }),
     DIRECT_URL: localUrls ? localUrls.directUrl : neonConnectionString(branch, { pooled: false }),
     ADMIN_EMAIL: localUrls
       ? (process.env.ADMIN_EMAIL ?? LOCAL_ADMIN_EMAIL)

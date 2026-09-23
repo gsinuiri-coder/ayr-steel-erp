@@ -42,9 +42,9 @@ describe('D-252 — el SKU canónico se arma desde espesor + color comercial o t
     expect(canonicalCoilSku({ kind: FinishKind.PREPINTADO, colorCode: 'ROJO' }, '0.38')).toBe(
       'BOB038ROJO',
     );
-    expect(
-      canonicalCoilSku({ kind: FinishKind.PREPINTADO, colorCode: 'ROJO-3020' }, '0.38'),
-    ).toBe('BOB038ROJO');
+    expect(canonicalCoilSku({ kind: FinishKind.PREPINTADO, colorCode: 'ROJO-3020' }, '0.38')).toBe(
+      'BOB038ROJO',
+    );
     expect(canonicalCoilSku({ kind: FinishKind.NATURAL, colorCode: null }, '0.40')).toBe(
       'BOB040NATURAL',
     );
@@ -65,7 +65,9 @@ describe('D-252 — el normalizador acepta las variantes del origen y devuelve e
     ['BOB045GALVANIZADO', 'BOB045GALVANIZADO'],
     ['BOB45GALV', 'BOB045GALVANIZADO'],
   ])('%s → %s', (code, expected) => {
-    expect(normalizeCoilSku({ code }, KNOWN)).toEqual(expect.objectContaining({ ok: true, sku: expected }));
+    expect(normalizeCoilSku({ code }, KNOWN)).toEqual(
+      expect.objectContaining({ ok: true, sku: expected }),
+    );
   });
 
   it.each([

@@ -403,7 +403,8 @@ export class SalesController {
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Param('itemId', ParseUUIDPipe) itemId: string,
-    @Body(new ZodValidationPipe(updateSalesOrderItemCoilSchema)) body: UpdateSalesOrderItemCoilInput,
+    @Body(new ZodValidationPipe(updateSalesOrderItemCoilSchema))
+    body: UpdateSalesOrderItemCoilInput,
   ): Promise<SalesOrderDto> {
     return this.edits.updateItemCoil(actor, id, itemId, body);
   }

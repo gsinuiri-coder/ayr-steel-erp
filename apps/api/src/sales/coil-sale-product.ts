@@ -371,8 +371,7 @@ export async function coilPoolFor(
     }
   }
   const exact = candidates.filter((c) => toDecimal(c.balanceKg).equals(need));
-  const auto =
-    candidates.length === 1 ? candidates[0] : exact.length === 1 ? exact[0] : undefined;
+  const auto = candidates.length === 1 ? candidates[0] : exact.length === 1 ? exact[0] : undefined;
   return {
     availableKg: toFixedString(available, 'KG'),
     candidates,

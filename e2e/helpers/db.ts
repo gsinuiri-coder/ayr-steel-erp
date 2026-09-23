@@ -103,7 +103,8 @@ export async function insertLegacyCoilProduct(sku: string, name: string): Promis
       name,
     );
     const id = rows[0]?.id;
-    if (id === undefined) throw new Error('No existe la línea de negocio trading en la base de pruebas');
+    if (id === undefined)
+      throw new Error('No existe la línea de negocio trading en la base de pruebas');
     return id;
   } finally {
     await db.$disconnect();
@@ -136,7 +137,13 @@ export async function setProductSkuForTest(productId: string, sku: string): Prom
  */
 export async function breakQuotationLineForTest(
   quotationId: string,
-  line: { productId: string; unitPricePen: string; subtotalPen: string; igvPen: string; totalPen: string },
+  line: {
+    productId: string;
+    unitPricePen: string;
+    subtotalPen: string;
+    igvPen: string;
+    totalPen: string;
+  },
 ): Promise<void> {
   const db = testDatabaseClient();
   try {

@@ -188,7 +188,8 @@ function thicknessOf(raw: string): string | null {
 function fromCode(code: string, known: ReadonlySet<string>): CoilSkuParse {
   const compact = code.replace(/\s+/g, '').toUpperCase();
   const match = /^BOB(\d\.\d{1,2}|\d+)([A-Z][A-Z0-9]*)$/.exec(compact);
-  if (!match) return { ok: false, reason: `${code.trim()} no tiene la forma BOB + espesor + color` };
+  if (!match)
+    return { ok: false, reason: `${code.trim()} no tiene la forma BOB + espesor + color` };
   const [, rawThickness = '', rawAttribute = ''] = match;
   const thicknessMm = thicknessOf(rawThickness);
   if (thicknessMm === null) {
@@ -196,7 +197,10 @@ function fromCode(code: string, known: ReadonlySet<string>): CoilSkuParse {
   }
   const attribute = knownAttribute(rawAttribute, known);
   if (attribute === null) {
-    return { ok: false, reason: `${code.trim()}: «${rawAttribute}» no es un color ni un tipo del catálogo` };
+    return {
+      ok: false,
+      reason: `${code.trim()}: «${rawAttribute}» no es un color ni un tipo del catálogo`,
+    };
   }
   return {
     ok: true,

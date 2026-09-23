@@ -138,7 +138,10 @@ test.describe('RF-S4b — un código de bobina del origen resuelve al pool, no a
     });
     const customer = await createCustomer(api);
     const sourceCode = `BOB38${color.code}`;
-    const looseId = await insertLegacyCoilProduct(sourceCode, `Bobina suelta heredada ${color.code}`);
+    const looseId = await insertLegacyCoilProduct(
+      sourceCode,
+      `Bobina suelta heredada ${color.code}`,
+    );
 
     const quotationIds: string[] = [];
     const orderIds: string[] = [];
@@ -234,7 +237,15 @@ interface SweepReportDto {
 function sweep(file: string, args: string[]): unknown {
   const res = spawnSync(
     'node',
-    ['scripts/sweep-imported-documents.mjs', '--branch', 'local-e2e', '--file', file, '--json', ...args],
+    [
+      'scripts/sweep-imported-documents.mjs',
+      '--branch',
+      'local-e2e',
+      '--file',
+      file,
+      '--json',
+      ...args,
+    ],
     { cwd: process.cwd(), encoding: 'utf8', timeout: 300_000 },
   );
   expect(res.status, `el barrido falló:\n${res.stderr}`).toBe(0);

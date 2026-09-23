@@ -330,7 +330,13 @@ export const quotationImportRowSchema = quotationImportRowInputSchema
   })
   // El preview manda strings crudos: una fila con la cantidad vacía o el importe ilegible
   // tiene que **llegar a la pantalla** con su marca, no morir en el parseo del archivo entero.
-  .omit({ qty: true, unitPricePen: true, netAmountPen: true, igvAmountPen: true, totalAmountPen: true })
+  .omit({
+    qty: true,
+    unitPricePen: true,
+    netAmountPen: true,
+    igvAmountPen: true,
+    totalAmountPen: true,
+  })
   .extend({
     qty: z.string(),
     unitPricePen: z.string(),
