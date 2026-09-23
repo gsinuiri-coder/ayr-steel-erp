@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import { businessMonth } from '@ayr/shared';
 import {
   adminApi,
   createFinish,
@@ -93,6 +94,8 @@ interface DatedMovement extends MovementDto {
 interface CoilReportRow {
   id: string;
   code: string;
+  /** D-249: se declara acá porque hasta el arreglo **no venía en el JSON** (D-245). */
+  businessLine: string;
   openingKg: string;
   weightKg: string;
   closingKg: string;
@@ -108,8 +111,13 @@ interface CoilMonthReport {
   totals: { openingKg: string; weightKg: string; closingKg: string };
 }
 
-function coilReport(api: APIRequestContext, month: string): Promise<CoilMonthReport> {
-  return getJson<CoilMonthReport>(api, `/api/reports/coils?month=${month}`);
+function coilReport(
+  api: APIRequestContext,
+  month: string,
+  businessLine?: string,
+): Promise<CoilMonthReport> {
+  const filtro = businessLine === undefined ? '' : `&businessLine=${businessLine}`;
+  return getJson<CoilMonthReport>(api, `/api/reports/coils?month=${month}${filtro}`);
 }
 
 /** Kardex de un ítem, tal cual lo devuelve el API (más reciente primero) — sin reordenar. */
@@ -854,3 +862,61 @@ test.describe('D-124 — fecha de operación', () => {
     }
   });
 });
+
+/**
+ * D-249 / D-245 — el filtro por línea de `GET /reports/coils` devolvía **cero filas siempre** y
+ * `businessLine` no venía en el JSON.
+ *
+ * El defecto sobrevivió porque el único caso que tocaba esta ruta la llamaba sin filtro y no
+ * miraba esa columna: el test que faltaba no es una aserción más, es el que convierte un
+ * silencio en un rojo. Por eso acá se verifica lo que un `toFixed` no puede tapar — que la
+ * suma de los filtros reconstruya el total sin filtro.
+ */
+test.describe('D-249 — el filtro por línea del reporte mensual de bobinas', () => {
+  test('devuelve filas por línea, con businessLine poblado, y las partes suman el total', async ({
+    baseURL,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const mes = businessMonth();
+
+    // Dos bobinas en líneas distintas: sin esto el caso pasaría con un catálogo de una sola.
+    await setupCoilStock(api, { lineCode: 'drywall', weightKg: '700' });
+    await setupCoilStock(api, {
+      lineCode: 'metallic-roofing',
+      weightKg: '600',
+      thicknessMm: '0.45',
+    });
+
+    const completo = await coilReport(api, mes);
+    expect(completo.rows.length, 'el reporte sin filtro tiene que traer bobinas').toBeGreaterThan(
+      0,
+    );
+
+    // 1. La línea viaja en el JSON. `undefined` era el síntoma de D-245 y no lanza solo.
+    for (const row of completo.rows) {
+      expect(row.businessLine, `${row.code} vino sin línea de negocio`).toBeTruthy();
+      expect(LINEAS_DE_NEGOCIO).toContain(row.businessLine);
+    }
+
+    // 2. Cada línea presente devuelve exactamente sus bobinas, y ninguna ajena.
+    const presentes = [...new Set(completo.rows.map((r) => r.businessLine))];
+    expect(presentes.length, 'el escenario tiene que cubrir más de una línea').toBeGreaterThan(1);
+
+    let sumaFiltrada = 0;
+    for (const linea of LINEAS_DE_NEGOCIO) {
+      const filtrado = await coilReport(api, mes, linea);
+      sumaFiltrada += filtrado.rows.length;
+      for (const row of filtrado.rows) {
+        expect(row.businessLine, `${row.code} se coló en el filtro de ${linea}`).toBe(linea);
+      }
+      const esperadas = completo.rows.filter((r) => r.businessLine === linea).length;
+      expect(filtrado.rows.length, `el filtro de ${linea} no trajo lo que debía`).toBe(esperadas);
+    }
+
+    // 3. La partición es exacta: ninguna bobina se pierde ni se cuenta dos veces.
+    expect(sumaFiltrada).toBe(completo.rows.length);
+  });
+});
+
+/** Las cinco líneas de `BusinessLine`, tal como el API las devuelve y las acepta. */
+const LINEAS_DE_NEGOCIO = ['drywall', 'metallic-roofing', 'roofing', 'trading', 'services'];

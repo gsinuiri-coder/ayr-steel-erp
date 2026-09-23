@@ -12,7 +12,7 @@ import {
   type CoilMonthReportQuery,
   type CoilMonthReportRowDto,
 } from '@ayr/shared';
-import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { fromDbLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Una fila cruda del reporte mensual, tal como la devuelve la consulta agregada. */
@@ -48,7 +48,12 @@ export class ReportsService {
     const month = query.month ?? businessMonth();
     const from = startOfMonth(month);
     const nextFrom = startOfNextMonth(month);
-    const lineCode = query.businessLine ? toPrismaLineCode(query.businessLine) : null;
+    // D-249: la consulta compara contra `bl."code"::text`, que es la **etiqueta** del enum de
+    // Postgres —el valor de `@map`— y esa es exactamente la forma que ya tiene
+    // `query.businessLine`. Traducirla con `toPrismaLineCode` la convertía en el **nombre** de
+    // Prisma (`'DRYWALL'`), y la comparación `'drywall' = 'DRYWALL'` era falsa siempre: el
+    // filtro devolvía cero filas para cualquier línea. Ver D-245.
+    const lineCode = query.businessLine ?? null;
 
     // Una sola consulta agregada: con una por bobina, un mes con doscientas bobinas eran
     // doscientos viajes a Neon para una pantalla que se abre a diario.
@@ -104,9 +109,10 @@ export class ReportsService {
         code: r.code,
         typeKey: r.type_key,
         kind: r.kind as CoilMonthReportRowDto['kind'],
-        businessLine: toSharedLineCode(
-          r.business_line_code as Parameters<typeof toSharedLineCode>[0],
-        ),
+        // D-249: `fromDbLineCode` y no `toSharedLineCode`, porque el valor viene de una
+        // consulta cruda. `toSharedLineCode` indexa por el nombre de Prisma y devolvía
+        // `undefined` para todas las filas: la clave desaparecía del JSON sin error.
+        businessLine: fromDbLineCode(r.business_line_code),
         colorName: r.color_name,
         widthMm: r.width_mm.toFixed(2),
         openingKg: opening.toFixed(3),
