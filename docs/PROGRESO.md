@@ -79,7 +79,15 @@ no lo toca (decisión 4 del dueño, test `accepted-files-sku-rename.spec.ts`).
 
 ### Verificación
 
-- Unitarios: API **796** passed (eran 743 al empezar), web **11** passed. `pnpm lint`,
+- **SonarCloud (PR #14): el gate falló por cobertura en código nuevo, 12.6 % contra ≥ 80 %.** No
+  era de infraestructura: era deuda de tests nuestra. Sonar solo cuenta las líneas de la API
+  (el 12.6 % coincide con ~72 de las 570 líneas nuevas cubiertas), así que el 80 % era
+  alcanzable con unitarios sin tocar el web. Se agregaron 133 tests de los servicios que
+  escriben datos (normalización, barrido, ediciones de pedido, importador, pool, catálogo,
+  `sales-lines`): cobertura de líneas nuevas de la API **97.9 %** (558/570), medida cruzando el
+  `lcov` con `git diff`. El gate real se confirma en la CI del push. Nota: el gate venía fallando
+  en 6 de los últimos 7 PRs (#13 se mergeó con 0 %).
+- Unitarios: API **929** passed (eran 743 al empezar), web **11** passed. `pnpm lint`,
   `pnpm typecheck` y `prettier --check` verdes.
 - Autorrevisión (`docs/revision/rf-s4b-autorrevision.md`): 2 P0 y 9 P1 encontrados; los P0 y
   ocho P1 corregidos con tests, uno documentado; los P2 corregidos o anotados como pendientes.

@@ -81,7 +81,9 @@ normalización se deshace desde la auditoría (`catalog.product-rename-sku`,
 
 ## Verificación
 
-- Unitarios: API 796/796, web 11/11. `pnpm lint`, `pnpm typecheck`, `prettier --check` verdes.
+- Unitarios: API 929/929, web 11/11. `pnpm lint`, `pnpm typecheck`, `prettier --check` verdes.
+- **SonarCloud:** el gate falló en el primer push (12.6 % de cobertura en código nuevo, exige
+  ≥ 80 %). Se cubrió con unitarios: 97.9 % en la API. Reconfirmar en la CI del segundo push.
 - E2E completo con builds de producción: 331/36/2/20 en la primera corrida; todo rojo
   clasificado (infraestructura del runner local salvo dos, corregidos). Re-corrida de los rojos y
   del tramo sin correr: 80/2/1, los dos explicados. Detalle en `docs/PROGRESO.md`.
