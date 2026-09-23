@@ -31,13 +31,13 @@ declaración, que conserva su única función propia (exigir `declared ≤ avail
 
 Verificado con cálculo propio, no con los comentarios del código:
 
-| caso | teórico | montado | declarado | exceso | tolerancia (1 % del teórico) | veredicto esperado | veredicto real |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| ventana D-246 | 4043.952 | 4010.000 | 4010.000 / *(sin declarar)* | 33.952 | 40.43952 | acepta (33.952 ≤ 40.43952) | **acepta**, `kg=4010.000` |
-| exceso 2 % | 4043.952 | 3960.000 | 3960.000 / *(sin declarar)* | 83.952 | 40.43952 | rechaza (83.952 > 40.43952) | **rechaza**, con y sin declarar |
-| absurdo P1-1 | 4043.952 | 1.000 | 0.500 | 4042.952 | 40.43952 | rechaza (4042.952 ≫ 40.43952) | **rechaza** |
-| borde exacto | 1000.000 | 990.000 | 990.000 | 10.000 | 10.000 | acepta (10.000 ≤ 10.000, `lte`) | **acepta** |
-| borde + 1 g | 1000.000 | 989.999 | 989.999 | 10.001 | 10.000 | rechaza (10.001 > 10.000) | **rechaza** |
+| caso          | teórico  | montado  | declarado                   | exceso   | tolerancia (1 % del teórico) | veredicto esperado              | veredicto real                  |
+| ------------- | -------- | -------- | --------------------------- | -------- | ---------------------------- | ------------------------------- | ------------------------------- |
+| ventana D-246 | 4043.952 | 4010.000 | 4010.000 / _(sin declarar)_ | 33.952   | 40.43952                     | acepta (33.952 ≤ 40.43952)      | **acepta**, `kg=4010.000`       |
+| exceso 2 %    | 4043.952 | 3960.000 | 3960.000 / _(sin declarar)_ | 83.952   | 40.43952                     | rechaza (83.952 > 40.43952)     | **rechaza**, con y sin declarar |
+| absurdo P1-1  | 4043.952 | 1.000    | 0.500                       | 4042.952 | 40.43952                     | rechaza (4042.952 ≫ 40.43952)   | **rechaza**                     |
+| borde exacto  | 1000.000 | 990.000  | 990.000                     | 10.000   | 10.000                       | acepta (10.000 ≤ 10.000, `lte`) | **acepta**                      |
+| borde + 1 g   | 1000.000 | 989.999  | 989.999                     | 10.001   | 10.000                       | rechaza (10.001 > 10.000)       | **rechaza**                     |
 
 Los cinco casos son cálculo manual con la aritmética de la función (`excess = theoretical -
 available`, `tolerance = theoretical × 0.01`, comparación con `.gt`/`.lte`), no una lectura de
@@ -163,7 +163,7 @@ candidato a P0 por escritura de kardex fuera de transacción.
 ## Qué no se ejecutó en esta revisión
 
 - El E2E de `e2e/tests/fase7-consolidada.spec.ts` (bloque `D-249 — el filtro por línea del
-  reporte mensual de bobinas`) se leyó línea por línea pero **no se corrió**: exige levantar el
+reporte mensual de bobinas`) se leyó línea por línea pero **no se corrió**: exige levantar el
   stack local (Postgres + API) y el encargo pedía confirmar M0 con los tests unitarios, no correr
   la suite completa. La lógica del test coincide con la reproducción documentada en
   `docs/PROGRESO.md` (11 filas sin filtro → 7 + 4 con filtro, suma exacta) y con el fix leído en
@@ -174,12 +174,12 @@ candidato a P0 por escritura de kardex fuera de transacción.
 
 ## Resumen de hallazgos
 
-| id  | sev | dónde | qué |
-| --- | --- | --- | --- |
-| — | — | `production.ts:478-509` | M0 verificado: tolerancia simétrica correcta en los 5 casos calculados a mano; sin hallazgo |
-| — | — | `mounted-kg.spec.ts` (bloque D-249) | M1 verificado: los 3 tests nuevos fallan sin el fix y pasan con él; centinelas reales |
-| — | — | `reports.service.ts`, `production.ts` | M2 verificado: ambos cambios son cálculo puro / `SELECT`; ningún camino escribe kardex fuera de transacción |
-| **P2-proceso** | P2 | `apps/api` + `packages/shared` | `apps/api` resuelve `@ayr/shared` contra `dist/`, no `src/`; editar `src` sin `pnpm --filter @ayr/shared run build` produce falsos verdes/rojos en `jest` de `apps/api`. No es un defecto de este hotfix, pero conviene que el pase cruzado real lo tenga presente si repite el experimento de M1. |
+| id             | sev | dónde                                 | qué                                                                                                                                                                                                                                                                                                |
+| -------------- | --- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| —              | —   | `production.ts:478-509`               | M0 verificado: tolerancia simétrica correcta en los 5 casos calculados a mano; sin hallazgo                                                                                                                                                                                                        |
+| —              | —   | `mounted-kg.spec.ts` (bloque D-249)   | M1 verificado: los 3 tests nuevos fallan sin el fix y pasan con él; centinelas reales                                                                                                                                                                                                              |
+| —              | —   | `reports.service.ts`, `production.ts` | M2 verificado: ambos cambios son cálculo puro / `SELECT`; ningún camino escribe kardex fuera de transacción                                                                                                                                                                                        |
+| **P2-proceso** | P2  | `apps/api` + `packages/shared`        | `apps/api` resuelve `@ayr/shared` contra `dist/`, no `src/`; editar `src` sin `pnpm --filter @ayr/shared run build` produce falsos verdes/rojos en `jest` de `apps/api`. No es un defecto de este hotfix, pero conviene que el pase cruzado real lo tenga presente si repite el experimento de M1. |
 
 Este hotfix **sigue pendiente de revisión por un agente distinto** del que lo implementó
 (AGENTS.md §2.2). Esta autorrevisión reduce el riesgo de que M0/M1/M2 tengan un defecto grosero,

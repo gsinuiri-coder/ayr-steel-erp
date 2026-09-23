@@ -397,7 +397,7 @@ producción queda para la ventana que el dueño autorice.
   Client locales estaban desactualizados (de antes de RF-S3c/D-240/D-241, campo `seller_id`), lo
   que rompía el `tsc -p tsconfig.cli.json` del importador con decenas de errores ajenos a esta
   tarea. Se regeneraron con `pnpm --filter @ayr/shared build` y `pnpm --filter @ayr/api
-  db:generate` — solo artefactos generados localmente, sin tocar datos ni schema.
+db:generate` — solo artefactos generados localmente, sin tocar datos ni schema.
 - **Corrección de catálogo, con OK del dueño**: el dueño confirmó que el `source` estaba mal
   cargado (ya lo había corregido en `production`) y pidió corregirlo también en `demo`. Se hizo
   vía `CatalogService.update` (mismo servicio que `PATCH /catalog/:id`, D-131) desde un contexto
@@ -405,7 +405,7 @@ producción queda para la ventana que el dueño autorice.
   `audit_log`. El script de la corrección era una mutación puntual y se borró al terminar (junto
   con su entrada temporal en `tsconfig.cli.json`), siguiendo la regla de scripts de un solo uso.
 - **Dry-run contra demo (segundo intento), tras la corrección**: `3 ok, 0 omitida(s), 0 con
-  error`.
+error`.
 - **Execute contra demo**: `3 línea(s) de producto creada(s)`. Verificado: 3 saldos (970 / 1.061
   / 58 unidades), 1 movimiento `IMPORT` cada uno, `avgCost` igual al costo del archivo, **total
   valorizado S/ 123.359,29 sin IGV** — exacto.

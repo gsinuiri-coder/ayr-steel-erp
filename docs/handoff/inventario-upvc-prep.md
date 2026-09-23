@@ -11,43 +11,45 @@ tocó en esta sesión — el dueño ya había corregido el `source` de los tres 
 - **PASO 1 — Verificación de catálogo.** `UPVC36MT`, `UPVC6MT` y `UPVC36MTAZUL` existían,
   activos, línea `ROOFING` (Coberturas UPVC), pero con `source = MANUFACTURED` en `demo` (el
   dueño ya lo había corregido en `production`). Diagnóstico reusable: `node
-  scripts/oneoff/20260922-check-upvc-catalog.mjs --branch <rama>` (solo lectura).
+scripts/oneoff/20260922-check-upvc-catalog.mjs --branch <rama>` (solo lectura).
 - **Corrección de catálogo en `demo`.** Con el OK del dueño, se corrigió `source` de los tres
   SKU a `PURCHASED` vía `CatalogService.update` (el mismo servicio que usa `PATCH
-  /catalog/:id`, D-131) — nunca SQL directo. Queda auditado en `audit_log` (`catalog.update`,
+/catalog/:id`, D-131) — nunca SQL directo. Queda auditado en `audit_log` (`catalog.update`,
   actor = el `ADMINISTRADOR` de `.env.setup`). El script one-off que hizo el cambio
   (`oneoff-fix-upvc-source.ts`) y su entrada temporal en `tsconfig.cli.json` ya se borraron —
   era una mutación puntual, no una herramienta para dejar viva.
 - **PASO 2 — Archivo armado.** `local-data/inventario-inicial-upvc-2026-09-22.csv` (no
   versionado, `local-data/` está en `.gitignore`), 3 filas:
 
-  | SKU | Unidades | Costo unitario (PEN, sin IGV) |
-  | --- | --- | --- |
-  | `UPVC36MT` | 970 | 43,2203 |
-  | `UPVC6MT` | 1061 | 74,5763 |
-  | `UPVC36MTAZUL` | 58 | 39,8300 |
+  | SKU            | Unidades | Costo unitario (PEN, sin IGV) |
+  | -------------- | -------- | ----------------------------- |
+  | `UPVC36MT`     | 970      | 43,2203                       |
+  | `UPVC6MT`      | 1061     | 74,5763                       |
+  | `UPVC36MTAZUL` | 58       | 39,8300                       |
 
   `FACTURA DE REFERENCIA` en las tres filas lleva la factura y el proveedor reales que pidió el
   dueño, como texto libre (D-206: no genera compra ni proveedor) — ese dato real queda solo en
   el archivo de `local-data/`, no en este handoff. `FECHA DE REFERENCIA` vacía (el kardex quedó
   con «fecha de carga»).
+
 - **PASO 3 — Dry-run contra `demo`, tras la corrección**: `3 fila(s): 3 ok, 0 omitida(s), 0 con
-  error.`
+error.`
 - **PASO 4 — Execute contra `demo`**: `3 línea(s) de producto creada(s)`, sin filas omitidas ni
   con error. Verificado con `node scripts/oneoff/20260922-verify-upvc-balances.mjs --branch
-  demo` (solo lectura, se deja para reusar):
+demo` (solo lectura, se deja para reusar):
 
-  | SKU | Saldo | `avgCost` | Movimientos | Valorizado |
-  | --- | --- | --- | --- | --- |
-  | `UPVC36MT` | 970,000 | 43,2203 | 1 (`IMPORT`) | S/ 41.923,69 |
-  | `UPVC6MT` | 1.061,000 | 74,5763 | 1 (`IMPORT`) | S/ 79.125,45 |
-  | `UPVC36MTAZUL` | 58,000 | 39,8300 | 1 (`IMPORT`) | S/ 2.310,14 |
+  | SKU            | Saldo     | `avgCost` | Movimientos  | Valorizado   |
+  | -------------- | --------- | --------- | ------------ | ------------ |
+  | `UPVC36MT`     | 970,000   | 43,2203   | 1 (`IMPORT`) | S/ 41.923,69 |
+  | `UPVC6MT`      | 1.061,000 | 74,5763   | 1 (`IMPORT`) | S/ 79.125,45 |
+  | `UPVC36MTAZUL` | 58,000    | 39,8300   | 1 (`IMPORT`) | S/ 2.310,14  |
 
   **TOTAL valorizado: S/ 123.359,29 sin IGV** — cuadra exacto con lo pedido.
+
 - **Trabajo de entorno necesario para poder compilar el CLI**: `packages/shared/dist` y el
   Prisma Client locales estaban desactualizados (de antes del merge de RF-S3c/D-240/D-241,
   campo `seller_id`). Se corrió `pnpm --filter @ayr/shared build` y `pnpm --filter @ayr/api
-  db:generate` — solo regenera artefactos locales, no toca datos ni schema.
+db:generate` — solo regenera artefactos locales, no toca datos ni schema.
 
 ## 3. Decisiones tomadas
 
