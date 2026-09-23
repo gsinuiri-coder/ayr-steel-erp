@@ -475,6 +475,27 @@ export function mountedKgForReport(input: {
     `${theoretical.toFixed(3)} kg y quedaban ${available.toFixed(3)} kg montados; se descuentan ` +
     `los ${available.toFixed(3)} kg (${excess.toFixed(3)} kg de tolerancia de laminado). ` +
     'No es un error.';
+  const tolerance = theoretical.times(toDecimal(THEORETICAL_KG_TOLERANCE_RATIO));
+  const pct = toDecimal(THEORETICAL_KG_TOLERANCE_RATIO).times(100).toFixed(0);
+
+  // D-249: **la declaración habilita el tope, no lo desacota.** Hasta acá era al revés:
+  // declarar cualquier cifra que cupiera en lo montado saltaba la tolerancia por completo, así
+  // que un reporte de 4 043 kg teóricos contra 1 kg montado se aceptaba sacando 1 kg. El kardex
+  // seguía cuadrado —sale lo mismo que entra— pero la plancha entraba valorizada por una
+  // fracción de su material, y ese costo es el que después lee el margen de RF-S4a (D-242): un
+  // dedazo en planta terminaba como margen inflado en un reporte de gerencia. El único freno
+  // era `roofingConsumptionDeviation`, que avisa y deja pasar.
+  if (excess.gt(tolerance)) {
+    return {
+      ok: false,
+      message:
+        `${label} tiene ${available.toFixed(3)} kg montados y lo reportado equivale a ` +
+        `${theoretical.toFixed(3)} kg: la diferencia (${excess.toFixed(3)} kg) pasa la tolerancia ` +
+        `del ${pct} % del teórico. Revisa las piezas reportadas o la bobina elegida; si de verdad ` +
+        'salió todo el acero, monta el material que falta.',
+    };
+  }
+
   if (input.declaredKg !== null) {
     const declared = roundTo(input.declaredKg, 'KG');
     if (declared.lte(available)) return { ok: true, kg: available, capped: true, note };
@@ -485,17 +506,7 @@ export function mountedKgForReport(input: {
         'consumidos: monta más material o corrige la cifra.',
     };
   }
-  if (excess.lte(theoretical.times(toDecimal(THEORETICAL_KG_TOLERANCE_RATIO)))) {
-    return { ok: true, kg: available, capped: true, note };
-  }
-  return {
-    ok: false,
-    message:
-      `${label} tiene ${available.toFixed(3)} kg montados y lo reportado equivale a ` +
-      `${theoretical.toFixed(3)} kg: la diferencia (${excess.toFixed(3)} kg) pasa la tolerancia ` +
-      `del ${toDecimal(THEORETICAL_KG_TOLERANCE_RATIO).times(100).toFixed(0)} %. Si el acero ya ` +
-      'salió, declara los kg consumidos; si no, monta más material.',
-  };
+  return { ok: true, kg: available, capped: true, note };
 }
 
 // --------------------------------------------------------------------------

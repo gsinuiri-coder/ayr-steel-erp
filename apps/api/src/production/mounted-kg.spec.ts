@@ -97,7 +97,7 @@ describe('mountedKgForReport (D-246)', () => {
       declaredKg: null,
     });
     expect(beyond.ok).toBe(false);
-    if (!beyond.ok) expect(beyond.message).toMatch(/pasa la tolerancia del 1 %.*declara los kg/);
+    if (!beyond.ok) expect(beyond.message).toMatch(/pasa la tolerancia del 1 % del teórico/);
   });
 
   it('sin exceso no topa ni avisa: sale el teórico, como siempre', () => {
@@ -237,5 +237,83 @@ describe('cierre de la bobina después de un reporte topado (D-164 + D-246)', ()
     expect(plan?.kind).toBe('SURPLUS');
     expect(plan?.qtyKg.toFixed(3)).toBe('12.500');
     expect(plan?.totalCostPen.toFixed(4)).toBe('50.0000');
+  });
+});
+
+/**
+ * D-249 — la tolerancia es **simétrica**: declarar habilita el tope, no lo desacota.
+ *
+ * Las tres filas son las de la tabla de `docs/revision/rf-s4a-d246.md`. La tercera es la que
+ * cambia de veredicto: hasta D-249 se aceptaba, y sacaba 1 kg de kardex por unas planchas que
+ * equivalen a 4 043 kg de acero. El kardex quedaba cuadrado y el producto, subvalorizado — y
+ * ese costo es el que lee el margen de RF-S4a (D-242).
+ */
+describe('mountedKgForReport — tolerancia simétrica (D-249)', () => {
+  const REAL = '4043.952';
+
+  it('el caso real de la ventana sigue pasando: exceso 0,84 % dentro del 1 %', () => {
+    for (const declaredKg of ['4010.000', null]) {
+      const r = mountedKgForReport({
+        label: 'BOB-1',
+        theoreticalKg: REAL,
+        availableKg: '4010.000',
+        declaredKg,
+      });
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.kg.toFixed(3)).toBe('4010.000');
+    }
+  });
+
+  it('un exceso del 2 % rechaza, se declare o no: antes declarar lo salteaba', () => {
+    for (const declaredKg of ['3960.000', null]) {
+      const r = mountedKgForReport({
+        label: 'BOB-1',
+        theoreticalKg: REAL,
+        availableKg: '3960.000',
+        declaredKg,
+      });
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it('el absurdo del hallazgo P1-1 ahora rechaza: 4 043 kg teóricos contra 1 kg montado', () => {
+    const r = mountedKgForReport({
+      label: 'BOB-1',
+      theoreticalKg: REAL,
+      availableKg: '1.000',
+      declaredKg: '0.500',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/pasa la tolerancia del 1 % del teórico/);
+  });
+
+  it('declarar más de lo montado sigue teniendo su propio mensaje, dentro de tolerancia', () => {
+    const r = mountedKgForReport({
+      label: 'BOB-1',
+      theoreticalKg: REAL,
+      availableKg: '4010.000',
+      declaredKg: '4020.000',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/monta más material o corrige la cifra/);
+  });
+
+  it('el borde exacto de la tolerancia pasa declarando, y un gramo más no', () => {
+    // teórico 1000 → tolerancia 10.000 kg exactos.
+    const borde = mountedKgForReport({
+      label: 'BOB-1',
+      theoreticalKg: '1000.000',
+      availableKg: '990.000',
+      declaredKg: '990.000',
+    });
+    expect(borde.ok).toBe(true);
+
+    const pasado = mountedKgForReport({
+      label: 'BOB-1',
+      theoreticalKg: '1000.000',
+      availableKg: '989.999',
+      declaredKg: '989.999',
+    });
+    expect(pasado.ok).toBe(false);
   });
 });
