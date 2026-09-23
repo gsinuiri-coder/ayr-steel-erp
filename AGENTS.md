@@ -47,27 +47,39 @@ largo.
 
 ---
 
-## 2. Los dos agentes
+## 2. El agente
 
-| Agente                  | Rol                                                                                            | Escritura                                             | Modo                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------- |
-| **Codex CLI**           | **Agente principal.** Sesiones de ventana (`RF-Sn`), features, migraciones, cierre             | Sí, en su worktree                                    | aprobación **Auto** (`workspace-write`), nunca Full Access |
-| **Antigravity (`agy`)** | **Segundo implementador.** Tareas acotadas en paralelo y revisión cruzada del trabajo de Codex | Sí, en su propio worktree; solo lectura cuando revisa | acotado                                                    |
+**Único agente que trabaja este repo: Claude Code.** El esquema anterior de dos agentes (Codex
+CLI como principal, Antigravity/`agy` como segundo implementador y revisor cruzado) quedó
+discontinuado; ninguno de los dos participa hoy. Codex y Antigravity siguen apareciendo en
+handoffs y decisiones anteriores a esta fecha como registro histórico — no se reescriben.
+
+Claude Code crea **subagentes internos** (revisor, qa, investigador, auditor-seguridad, u otro
+según la tarea) cuando la sesión los necesita. Un subagente no es un segundo agente: comparte
+el mismo proceso y, salvo que se lo aísle a propósito, el mismo contexto de quien lo lanzó.
 
 Reglas de convivencia, sin excepción:
 
-1. **Un solo agente escritor por worktree y por rama.** Dos agentes no comparten directorio.
-   Cada sesión vive en su worktree: `ayr-steel-erp-<rama>`.
-2. **El revisor nunca es el autor.** Si implementó Codex, revisa `agy`; si implementó `agy`,
-   revisa Codex. Sin pase de revisión independiente, la sesión no cierra.
+1. **Un solo agente escritor por worktree y por rama.** Dos sesiones de Claude Code no comparten
+   directorio. Cada sesión vive en su worktree: `ayr-steel-erp-<rama>`. Los worktrees se
+   conservan como práctica vigente aunque haya un solo agente: la suite E2E completa solo entra
+   con builds de producción, y eso exige un worktree aislado del checkout principal.
+2. **El revisor nunca es el autor.** Sin un segundo agente disponible, la revisión la hace un
+   **subagente nuevo que no leyó el handoff de implementación** de la sesión que escribió el
+   cambio — mismo criterio que la excepción documentada en D-248. Ese pase se marca
+   explícitamente como **autorrevisión** y no vale como pase cruzado: es una lista de riesgos
+   para quien revise después con ojos frescos, no una aprobación. La sesión no cierra dándolo
+   por un pase independiente. La pieza que queda con autorrevisión se registra en
+   `docs/PROGRESO.md` como **PENDIENTE DE REVISIÓN INDEPENDIENTE**, con fecha y motivo, para
+   poder recuperarla cuando haya un segundo revisor.
 3. **Una rama por ventana/tarea**, desde `origin/main` actualizado. Nunca se trabaja directo
    sobre `main`. Antes de abrir rama: `git fetch` y CI de `main` verde
    (`gh run list --branch main --limit 3`).
-4. El agente que abre sesión **lee primero** `AGENTS.md` → `docs/PROGRESO.md` → último handoff,
-   y **reporta el estado entendido antes de escribir código** (skill `ayr-arranque`).
-5. **El handoff es el único canal de traspaso entre agentes** (skill `ayr-handoff`). Lo que no
-   está en el handoff, en `PROGRESO.md` o en una decisión `D-nnn`, no existe para el siguiente.
-6. Ningún agente arranca una sesión nueva por iniciativa propia ni encadena tareas fuera del
+4. La sesión que abre **lee primero** `AGENTS.md` → `docs/PROGRESO.md` → último handoff, y
+   **reporta el estado entendido antes de escribir código** (skill `ayr-arranque`).
+5. **El handoff es el único canal de traspaso entre sesiones** (skill `ayr-handoff`). Lo que no
+   está en el handoff, en `PROGRESO.md` o en una decisión `D-nnn`, no existe para la siguiente.
+6. Ninguna sesión arranca una sesión nueva por iniciativa propia ni encadena tareas fuera del
    prompt que recibió.
 
 ---

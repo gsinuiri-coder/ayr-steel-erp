@@ -2,6 +2,24 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## PENDIENTE DE REVISIÓN INDEPENDIENTE (registro, 2026-09-23)
+
+Por `AGENTS.md` §2.2: con un solo agente, la revisión de una sesión la hace un subagente que no
+leyó el handoff de implementación, marcada como autorrevisión y sin valor de pase cruzado. Las
+piezas en ese estado, a recuperar cuando haya un segundo revisor:
+
+- **RF-S4a** (2026-09-22). Autorrevisión documentada en `docs/revision/rf-s4a-d246.md` y en
+  D-248 de `docs/ventana-rf-s4a` (sin mergear): la escribió el mismo agente que implementó
+  RF-S4a, en la sesión inmediatamente anterior. Motivo: `agy` y Codex estaban sin saldo y
+  RF-S4a ya estaba desplegado.
+- **HOTFIX D-249** (2026-09-22, rama `hotfix-d249`, sin push). Tolerancia de laminado simétrica.
+  Motivo: continuación directa de la sesión de RF-S4a, mismo agente, sin segundo revisor
+  disponible.
+- **Este cambio de `AGENTS.md` §2** (2026-09-23, esta sesión). Reescribe el esquema de agentes y
+  la propia regla de revisión que lo documenta; no hay una sesión distinta que lo haya mirado
+  con ojos frescos. Motivo: sesión de limpieza de un solo agente, sin segundo revisor
+  disponible — el mismo motivo estructural que documenta la regla.
+
 ## Limpieza de residuos y coherencia del repo (2026-09-23)
 
 Sesión de limpieza tras quedar Claude Code como único agente. Corrida desde `main` (no desde un
