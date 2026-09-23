@@ -43,6 +43,8 @@ pnpm-debug.log*
 /local-data/
 /*.xlsx
 *.decisiones.json
+# RF-S4b: el dueño deja exports reales en tmp/ antes de moverlos a local-data/.
+/tmp/
 
 # Salidas de Playwright que quedan sueltas en la raíz (regla dura 13: nada de esto se
 # commitea, y además rompen `pnpm format:check`).

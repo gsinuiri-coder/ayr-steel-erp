@@ -27,6 +27,8 @@ const HEADERS = [
   'UNIDAD MEDIDA',
   'CANTIDAD',
   'VALOR DE VENTA',
+  'IGV',
+  'PRECIO DE VENTA',
 ] as const;
 
 export interface SheetRow {
@@ -43,6 +45,10 @@ export interface SheetRow {
   qty: string;
   /** «VALOR DE VENTA»: el **importe** de la línea, sin IGV. Es el dato que D-169 copia. */
   netAmount: string;
+  /** «IGV» de la línea. Opcional: los archivos viejos del helper no lo traían. */
+  igv?: string;
+  /** «PRECIO DE VENTA»: el importe **con** IGV de la línea. Opcional por lo mismo. */
+  totalAmount?: string;
 }
 
 export function csvOf(rows: readonly SheetRow[]): string {
@@ -60,6 +66,8 @@ export function csvOf(rows: readonly SheetRow[]): string {
       r.unit,
       r.qty,
       r.netAmount,
+      r.igv ?? '',
+      r.totalAmount ?? '',
     ].join(','),
   );
   return [HEADERS.join(','), ...body].join('\n');
@@ -75,6 +83,13 @@ export interface PreviewRow {
   unitPricePen: string;
   /** D-169: el importe del papel, ya en soles y sin IGV. Cadena vacía si la fila no lo pudo leer. */
   netAmountPen: string;
+  /** D-255: el IGV y el importe con IGV del papel, cuando el archivo los trae y cuadran. */
+  igvAmountPen?: string;
+  totalAmountPen?: string;
+  /** D-254: la bobina del pool a la que se ató la línea de un código de bobina, si hubo una sola. */
+  saleCoilId?: string | null;
+  /** D-252: el SKU del producto resuelto (el canónico, en una bobina). */
+  productSku?: string | null;
   rawSku: string;
   needsPieces: boolean;
   pieces?: { lengthMm: string; qty: number }[];
@@ -118,6 +133,9 @@ export function toInput(row: PreviewRow): Record<string, unknown> {
     qty: row.qty,
     unitPricePen: row.unitPricePen,
     ...(row.netAmountPen ? { netAmountPen: row.netAmountPen } : {}),
+    ...(row.igvAmountPen ? { igvAmountPen: row.igvAmountPen } : {}),
+    ...(row.totalAmountPen ? { totalAmountPen: row.totalAmountPen } : {}),
+    ...(row.saleCoilId ? { saleCoilId: row.saleCoilId } : {}),
     ...(row.pieces ? { pieces: row.pieces } : {}),
   };
 }

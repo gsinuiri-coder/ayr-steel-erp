@@ -83,6 +83,33 @@ export async function updateAuditLogRow(id: string, reason: string): Promise<voi
   }
 }
 
+/**
+ * RF-S4b: un producto `BOB…` **suelto** en la línea de reventa, como el `BOB38AZUL` que
+ * producción tiene cargado a mano desde antes de D-252 (sin saldo y sin ninguna bobina detrás).
+ * Desde D-257 el catálogo ya no deja darlo de alta por el API, así que el dato heredado solo se
+ * puede reproducir acá, contra la base de pruebas.
+ */
+export async function insertLegacyCoilProduct(sku: string, name: string): Promise<string> {
+  const db = testDatabaseClient() as RawClient & {
+    $queryRawUnsafe: <T>(query: string, ...values: unknown[]) => Promise<T>;
+  };
+  try {
+    const rows = await db.$queryRawUnsafe<{ id: string }[]>(
+      `INSERT INTO "products" ("id", "business_line_id", "sku", "name", "unit", "source", "is_active", "created_at", "updated_at")
+       SELECT gen_random_uuid(), bl."id", $1, $2, 'KGM', 'PURCHASED', true, now(), now()
+       FROM "business_lines" bl WHERE bl."code" = 'trading'
+       RETURNING "id"::text AS "id"`,
+      sku,
+      name,
+    );
+    const id = rows[0]?.id;
+    if (id === undefined) throw new Error('No existe la línea de negocio trading en la base de pruebas');
+    return id;
+  } finally {
+    await db.$disconnect();
+  }
+}
+
 export async function deleteAuditLogRow(id: string): Promise<void> {
   const db = testDatabaseClient();
   try {
