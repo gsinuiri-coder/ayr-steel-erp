@@ -144,6 +144,13 @@ diagnóstico que separa los tres casos está en `docs/handoff/hotfix-d249.md`.
 Dos revisiones cruzadas: RF-S4a (D-248) y este hotfix. Las escribió el mismo agente, así que
 ninguna de las dos la puede firmar él.
 
+**PENDIENTE DE REVISIÓN INDEPENDIENTE.** Este hotfix (D-249/D-250) ahora tiene una autorrevisión
+en `docs/revision/hotfix-d249-autorrevision.md`, con el mismo banner de excepción que D-248
+(mismo motivo: sin agente distinto disponible para un pase cruzado). Verificó con cálculo propio
+y tests corridos que M0 (tolerancia simétrica) es correcta, que los tests nuevos de M1 fallan sin
+el fix, y que M0/M2 no tocan kardex fuera de transacción. Sigue debiendo el pase cruzado real por
+un agente distinto del implementador, según AGENTS.md §2.2.
+
 ## Ventana RF-S4a — reportes de costeo (2026-09-22)
 
 Ventana corta, **sin migración**: los dos reportes son de solo lectura y no tocan ningún
