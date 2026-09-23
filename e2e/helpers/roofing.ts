@@ -740,6 +740,12 @@ export async function purgeRoofingTrail(
       .catch(() => undefined);
   }
   for (const productId of trail.productIds ?? []) {
+    // D-252: el `BOB…` de venta es compartido por el pool; ver `deactivateTrail`.
+    const product = await api
+      .get(`/api/catalog/${productId}`)
+      .then((r) => (r.ok() ? (r.json() as Promise<{ sku: string }>) : null))
+      .catch(() => null);
+    if (product?.sku.startsWith('BOB')) continue;
     await api
       .patch(`/api/catalog/${productId}`, { data: { isActive: false } })
       .catch(() => undefined);

@@ -739,6 +739,15 @@ export async function deactivateTrail(
       .catch(() => undefined);
   }
   for (const productId of [...(trail.productIds ?? []), trail.productId].filter(Boolean)) {
+    // D-252 (RF-S4b): el producto de venta de una bobina es **compartido** por todas las
+    // bobinas de su pool (`BOB050NATURAL`), no uno por acabado como el SKU viejo. Apagarlo en
+    // la limpieza de un test deja sin producto de venta a todos los que vienen después
+    // («no existe el producto de venta directa»): se deja activo.
+    const product = await api
+      .get(`/api/catalog/${productId}`)
+      .then((r) => (r.ok() ? (r.json() as Promise<{ sku: string }>) : null))
+      .catch(() => null);
+    if (product?.sku.startsWith('BOB')) continue;
     await api
       .patch(`/api/catalog/${productId}`, { data: { isActive: false } })
       .catch(() => undefined);
