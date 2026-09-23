@@ -19,6 +19,20 @@ con OK del dueño comando por comando (D-251).
 | Guion UAT       | `docs/uat/rf-s4b.md`                                                                             |
 | Autorrevisión   | `docs/revision/rf-s4b-autorrevision.md` — **no** vale como pase cruzado                          |
 
+## Estado y calendario
+
+- **PR:** [#14](https://github.com/gsinuiri-coder/ayr-steel-erp/pull/14), abierto hacia `main`,
+  **sin mergear**.
+- **CI:** ver la sección «CI del PR» más abajo (job por job, con el resultado de la última corrida).
+- **Revisión independiente:** mañana (jueves 2026-09-24). Es el pase cruzado de AGENTS.md §2.2:
+  lo que revisa el segundo revisor es esta rama entera, con foco en lo que ya señala
+  `docs/revision/rf-s4b-autorrevision.md` (los P2 pendientes) y en la resolución bobina → producto
+  y la derivación de importes. Sin ese pase la pieza sigue **PENDIENTE DE REVISIÓN INDEPENDIENTE**
+  en `docs/PROGRESO.md`.
+- **Ventana:** jueves 2026-09-24 por la noche, antes de la revisión del viernes. Necesita, en este
+  orden: (1) CI verde incluido el gate de Sonar, (2) el pase cruzado sin P0/P1 abiertos, (3) tu OK
+  a cada comando de producción (D-251).
+
 ## Lo que el siguiente tiene que saber antes de tocar esto
 
 1. **Una bobina no le pertenece a un producto.** El saldo vive en el kardex de la bobina y el
