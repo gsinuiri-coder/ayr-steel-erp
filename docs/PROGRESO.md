@@ -2,6 +2,63 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## Limpieza de residuos y coherencia del repo (2026-09-23)
+
+Sesión de limpieza tras quedar Claude Code como único agente. Corrida desde `main` (no desde un
+worktree), con inventario completo antes de cualquier borrado y OK del dueño ítem por ítem. No
+se tocó ningún worktree/rama con trabajo vivo no integrado.
+
+**`main` local realineado.** Al empezar, `main` tenía 3 commits propios sin push (2 de la sesión
+de inventario UPVC + el descarte de `acc-demo`, ver sección de arriba) y estaba 18 commits
+detrás de `origin/main` (RF-S4a, HOTFIX kg teórico). Se rebasaron los 3 commits sobre
+`origin/main` actualizado; 2 conflictos en `docs/PROGRESO.md` —ambos del tipo "las dos ramas
+agregaron su sección en el mismo punto del archivo", nunca contenido superpuesto— resueltos
+conservando ambas historias en orden cronológico (HOTFIX 14:44 → RF-S4a 16:47 → sesión UPVC
+20:48/21:01 → descarte de `acc-demo` hoy). **`main` local queda 3 commits adelante de
+`origin/main`, sin pushear**: por decisión del dueño, el push (`git push origin main`) lo hace
+él directamente (regla dura 1, D-232) — no se usó `AYR_OWNER_PUSH`.
+
+**Borrados, con OK explícito del dueño ítem por ítem:**
+
+- Ramas ya mergeadas en `origin/main`, sin contenido que se pierda: `rf-s4a` (local + remoto,
+  PR #9), `origin/docs/ventana-rf-s3c` (PR #8), `origin/hotfix-kg-teorico` (PR #10).
+- `rf-s2-pre-rebase-b0e2aac` (local, sin remoto) — backup pre-rebase del 2026-09-16; verificado
+  que su contenido (D-218..D-222) ya vive en `main` bajo otros hashes.
+- `.playwright-mcp/` (untracked) — logs/snapshots de una sesión interactiva de debugging ya
+  cerrada. `.worktrees/` — directorio vacío sin uso desde el 18/09 (los worktrees reales son
+  carpetas hermanas `../ayr-steel-erp-*`).
+- `apps/api/prisma/oneoff-upvc-catalog-report.ts` y `oneoff-verify-upvc-balances.ts` — residuo
+  de la sesión de inventario UPVC (su propio comentario decía "se borra al cerrar la sesión");
+  duplicados en función por `scripts/oneoff/20260922-check-upvc-catalog.mjs` y
+  `20260922-verify-upvc-balances.mjs`, que sí se conservan (uso reusable, solo lectura).
+- `scripts/oneoff/20260916-deploy-api-ca6314d.mjs`, `20260916-describe-cloud-run.mjs`,
+  `20260916-list-neon-branches.mjs` — atados a un SHA/branch de la ventana del 2026-09-16, ya
+  cerrada.
+- `local-data/r1/` (2,7 MB, diagnósticos F8-R1), `local-data/v4prep/` (188 KB, diagnósticos
+  V4prep), `local-data/db-local-snapshots/` (vacío desde el 8/09), `local-data/e2e-report.json`
+  y `local-data/subset.json` (salidas sueltas de Playwright) — residuo de sesiones ya cerradas.
+  Los `.xlsx`/`.json` de cargas ya ejecutadas (`bobinas-production-*`, `COMPRAS.xlsx`,
+  `inventario inicial.xlsx`, `Ventas Detalladas*`) se conservan a pedido del dueño, como rastro
+  de auditoría.
+
+**No se tocó** (trabajo vivo no integrado o intocable explícito): worktree/rama `hotfix-d249`
+(5 commits sin push), worktree/rama `docs/ventana-rf-s4a` (1 commit sin push), rama Neon
+`respaldo-pre-v4-20260915`. `acc-demo` se descartó por separado (ver sección de arriba, mismo
+día) por decisión del dueño tras la demo al cliente.
+
+**Efecto colateral del rebase, no un defecto de la limpieza**: con `main` ya alineado a
+`origin/main`, `pnpm lint` salió en rojo (108 errores "Unsafe call/member access… type that
+could not be resolved" en `apps/web/src/lib/*.spec.ts`) porque `node_modules` de este worktree
+nunca vio la dependencia `vitest` que RF-S4a agregó (D-226) — `pnpm install` la trajo
+(`+31` paquetes) y `pnpm lint`/`pnpm typecheck` quedaron verdes.
+
+**Pendiente, no cerrado**: el PASO 2 del brief (diff propuesto de `AGENTS.md` §2 "Los dos
+agentes" reflejando el esquema de un único agente, y revisión de `docs/agentes/README.md` —hoy
+es enteramente instalación/perfiles de Codex y Antigravity— y de las dos menciones a `agy`/Codex
+en `.agents/skills/ayr-arranque/SKILL.md:8` y `.agents/skills/ayr-revisor/SKILL.md:8-9`) **no se
+hizo en esta sesión**. Referencias fuera del repo (`~/.codex/ayr-*.config.toml`,
+`~/AppData/Local/agy/`) quedaron solo listadas, sin tocar, por ser de otra herramienta.
+
 ## RF-S4a — reportes de costeo y ventas (2026-09-22)
 
 Sesión de solo lectura: **sin migración**, sin escrituras nuevas y sin tocar ningún servicio de
