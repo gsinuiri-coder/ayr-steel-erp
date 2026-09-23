@@ -97,6 +97,7 @@ import {
 import { ProductionService } from './production.service';
 import {
   accessoryConversion,
+  accessoryPlanWidthMm,
   accessoryPiecesFromPasses,
   accessoryYieldWarning,
   derivePiecesPlan,
@@ -1522,6 +1523,8 @@ export class RoofingProductionService {
             name: true,
             thicknessMm: true,
             widthMm: true,
+            roofingKind: true,
+            developmentMm: true,
             color: { select: { name: true } },
             finish: { select: { densityFactor: true } },
           },
@@ -1559,10 +1562,17 @@ export class RoofingProductionService {
       const product = order.product;
       // El kilo teórico sale de la geometría **del SKU**: la orden todavía no montó ninguna
       // bobina, y es el mismo número que el vendedor vio al cotizar (D-134/D-122).
+      //
+      // D-248: y por eso en un accesorio tiene que ir el ancho **efectivo**. Con el nominal, la
+      // cola prometía los kilos de una cobertura del ancho del rollo —102.756 kg para el mismo
+      // plan que el pedido reservó a 25.688— y es el número con el que planta decide si le
+      // alcanza el material, así que N veces de más no es un detalle de pantalla.
+      const materialWidthMm =
+        product.widthMm === null ? null : accessoryPlanWidthMm(product, product.widthMm.toFixed(2));
       const geometry: CoilGeometry | null =
-        product.thicknessMm !== null && product.widthMm !== null && product.finish !== null
+        product.thicknessMm !== null && materialWidthMm !== null && product.finish !== null
           ? {
-              widthMm: product.widthMm.toFixed(2),
+              widthMm: materialWidthMm,
               thicknessMm: product.thicknessMm.toFixed(2),
               densityFactor: product.finish.densityFactor.toFixed(4),
             }

@@ -134,6 +134,29 @@ export function accessoryPiecesFromPasses<T extends { qty: number }>(
 }
 
 /**
+ * D-248: el ancho con el que se cuenta el material **antes de montar ninguna bobina** — la
+ * cola de producción, que muestra el kilo teórico del plan con la geometría del SKU.
+ *
+ * Es el ancho nominal salvo en un accesorio, donde es el efectivo con ese mismo ancho. No
+ * lanza y cae de vuelta en el nominal si al SKU le falta el desarrollo: la cola es una lectura
+ * y tiene que seguir dibujándose aunque un SKU esté a medio cargar — el alta lo rechaza
+ * (`CatalogService`) y producir lo rechaza (`accessoryConversion`), que son los dos momentos
+ * en que el dato incompleto sí tiene que frenar algo.
+ */
+export function accessoryPlanWidthMm(
+  product: { roofingKind: RoofingProductKind | null; developmentMm: Prisma.Decimal | null },
+  nominalWidthMm: string,
+): string {
+  if (product.roofingKind !== RoofingProductKind.ACCESORIO || product.developmentMm === null) {
+    return nominalWidthMm;
+  }
+  return (
+    accessoryEffectiveWidthMm(nominalWidthMm, product.developmentMm.toFixed(2))?.toString() ??
+    nominalWidthMm
+  );
+}
+
+/**
  * El aviso de rendimiento (ajuste 1): lo que planta tiene que ver cuando el rollo montado no
  * rinde lo que rendía el ancho con el que se cotizó. `null` cuando coinciden o no hay con qué
  * comparar.
