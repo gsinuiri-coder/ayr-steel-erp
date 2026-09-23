@@ -1,4 +1,4 @@
--- D-242, primera mitad: el valor nuevo del enum, **solo**.
+-- D-248, primera mitad: el valor nuevo del enum, **solo**.
 --
 -- Va en su propia migración y no junto al resto por una regla de Postgres: un valor agregado
 -- con `ALTER TYPE ... ADD VALUE` no se puede **usar** en la misma transacción que lo crea, y

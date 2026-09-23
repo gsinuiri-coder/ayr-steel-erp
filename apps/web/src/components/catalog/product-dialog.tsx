@@ -86,7 +86,7 @@ const formSchema = z.object({
    */
   roofingKind: z.string(),
   /**
-   * D-242: desarrollo del accesorio en mm — el ancho de fleje que se lleva una pieza
+   * D-248: desarrollo del accesorio en mm — el ancho de fleje que se lleva una pieza
    * desplegada. Vacío fuera de un accesorio, donde el campo ni se muestra y el API lo
    * rechaza si viene.
    */
@@ -211,7 +211,7 @@ export function ProductDialog({
           showDrywallFields || roofingKind === RoofingProductKind.PLANCHA ? values.lengthMm : '',
         pieceWeightKg: showDrywallFields ? values.pieceWeightKg : '',
         roofingKind,
-        // D-242: el desarrollo es exactamente del accesorio. Mandarlo en cualquier otro
+        // D-248: el desarrollo es exactamente del accesorio. Mandarlo en cualquier otro
         // subtipo lo rechaza el API y el CHECK de la base, y con razón: sería un número que
         // ninguna cuenta lee.
         developmentMm: roofingKind === RoofingProductKind.ACCESORIO ? values.developmentMm : '',
@@ -652,7 +652,7 @@ export function ProductDialog({
 }
 
 /**
- * D-242: el rendimiento del desarrollo tipeado, en vivo.
+ * D-248: el rendimiento del desarrollo tipeado, en vivo.
  *
  * Es el número que decide la corrida —cuántas piezas da una pasada y cuánto se va en canto—
  * y nadie lo tiene de cabeza mientras carga el SKU. Mostrarlo acá es lo que hace obvio, en el

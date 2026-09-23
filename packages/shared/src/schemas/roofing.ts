@@ -499,7 +499,7 @@ export const createRoofingOrderSchema = z
       .max(MAX_PIECE_QTY, `Máximo ${MAX_PIECE_QTY} planchas por corrida`)
       .optional(),
     /**
-     * D-242: largo de la pieza en una corrida a stock de **accesorios**, en mm.
+     * D-248: largo de la pieza en una corrida a stock de **accesorios**, en mm.
      *
      * Una plancha de catálogo no lo lleva —su largo es del SKU— y un accesorio no puede
      * sacarlo de ningún lado: se vende por metro y cada corrida elige en qué largo se
@@ -535,7 +535,7 @@ export const createRoofingOrderSchema = z
         message: 'La cantidad objetivo es obligatoria para producir a stock',
       });
     }
-    // D-242: el largo es de la corrida a stock, no de una OP que nace de un pedido —ahí lo
+    // D-248: el largo es de la corrida a stock, no de una OP que nace de un pedido —ahí lo
     // traen los subítems de la línea. Que viaje con `reservationId` sería un largo que nadie
     // lee, y el que lo mandó creería haber elegido algo.
     if (v.reservationId !== undefined && v.pieceLengthMm !== undefined) {
@@ -701,12 +701,12 @@ export const roofingReportDraftSchema = z.object({
   coilId: z.string().uuid(),
   coilCode: z.string(),
   /**
-   * Lo que planta tipeó. D-242: en un accesorio son **pasadas**, no planchas — `qty` es la
+   * Lo que planta tipeó. D-248: en un accesorio son **pasadas**, no planchas — `qty` es la
    * cantidad de pasadas de ese largo, y las piezas salen de multiplicarla por
    * `piecesPerPass`.
    */
   pieces: z.array(roofingPieceSchema),
-  /** D-242: piezas por pasada de la bobina de esta fila; `null` fuera de un accesorio. */
+  /** D-248: piezas por pasada de la bobina de esta fila; `null` fuera de un accesorio. */
   piecesPerPass: z.number().int().nullable(),
   meters: z.string(),
   /** Kilo teórico con la geometría de esa bobina (D-047): lo que saldría del kardex. */
@@ -777,13 +777,13 @@ export const roofingBatchCoilSchema = z.object({
   consumedKg: z.string(),
   remainingKg: z.string(),
   /**
-   * D-242: piezas que da una pasada **con esta bobina**, `null` fuera de un accesorio. Lo
+   * D-248: piezas que da una pasada **con esta bobina**, `null` fuera de un accesorio. Lo
    * decide el ancho del rollo montado y no el del catálogo, así que dos bobinas de la misma
    * orden pueden rendir distinto.
    */
   piecesPerPass: z.number().int().nullable(),
   /**
-   * D-242: el ancho con el que se cuenta el material de esta bobina — el suyo, salvo en un
+   * D-248: el ancho con el que se cuenta el material de esta bobina — el suyo, salvo en un
    * accesorio, donde es el efectivo (`ancho ÷ N`).
    *
    * Viaja calculado y no se deriva en el web a propósito: el kilo teórico que la pantalla
@@ -829,7 +829,7 @@ export const roofingBatchOrderSchema = z.object({
    */
   productLengthMm: z.string().nullable(),
   /**
-   * D-242: desarrollo del accesorio, `null` en el resto. La pantalla de planta lo muestra al
+   * D-248: desarrollo del accesorio, `null` en el resto. La pantalla de planta lo muestra al
    * lado de las piezas por pasada porque es de dónde sale ese número, y verlo es lo que
    * permite notar que el SKU está mal cargado antes de rolar la bobina entera.
    */
@@ -933,12 +933,12 @@ export const roofingCoilOptionSchema = z.object({
   /**
    * Metros que salen de ese saldo con la geometría de esta bobina: lo que planta necesita ver.
    *
-   * D-242: en un accesorio son los metros **del accesorio**, con el ancho efectivo de este
+   * D-248: en un accesorio son los metros **del accesorio**, con el ancho efectivo de este
    * rollo. Un rollo más ancho puede dar una pieza más por pasada y con eso muchos metros más.
    */
   estimatedMeters: z.string(),
   /**
-   * D-242: piezas por pasada que da **esta** bobina, `null` fuera de un accesorio. Es con lo
+   * D-248: piezas por pasada que da **esta** bobina, `null` fuera de un accesorio. Es con lo
    * que planta compara dos rollos de anchos distintos antes de elegir con cuál corre.
    */
   piecesPerPass: z.number().int().nullable(),

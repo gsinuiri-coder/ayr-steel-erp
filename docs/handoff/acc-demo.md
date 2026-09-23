@@ -2,7 +2,7 @@
 
 ## 1. Resumen
 
-Accesorios de cobertura (D-242) para **validar con el cliente**: SKU con desarrollo, OP que se
+Accesorios de cobertura (D-248) para **validar con el cliente**: SKU con desarrollo, OP que se
 reporta en pasadas, producción a stock y datos de demo. Rama `acc-demo` desde `7a2c1c3`, PR en
 **draft**; **no se mergea** hasta que el cliente valide. Producción intacta. Verificación local
 verde (707 unitarios, 53 suites) y flujo probado contra la app corriendo; la suite E2E completa
@@ -11,8 +11,8 @@ la juzga la CI del PR.
 ## 2. Hecho
 
 - **M1 — SKU de accesorio.** `ACCESORIO` como tercer `roofingKind` + `products.development_mm`,
-  en **dos** migraciones aditivas (`20260922150000_d242_accesorio_enum` y
-  `20260922150100_d242_accesorios_de_cobertura`). La primera solo agrega el valor al enum: PG no
+  en **dos** migraciones aditivas (`20260922150000_d248_accesorio_enum` y
+  `20260922150100_d248_accesorios_de_cobertura`). La primera solo agrega el valor al enum: PG no
   deja usarlo en la misma transacción que lo crea, y el `CHECK` de la segunda lo nombra.
   `products_roofing_kind_unit_check` se extendió (era lista blanca) y se sumó
   `products_development_mm_check`. Predicado `isAccessory` en `apps/api/src/sales/sales-lines.ts`
@@ -33,7 +33,7 @@ Commits, en orden: `6d74f3b` (M1) · `c1852af` (M2) · `d95316d` (E2E + guion de
 
 ## 3. Decisiones tomadas
 
-- **D-242** — la decisión completa está en `docs/ARQUITECTURA.md` §0.2. En corto: ancho efectivo
+- **D-248** — la decisión completa está en `docs/ARQUITECTURA.md` §0.2. En corto: ancho efectivo
   `ancho ÷ N` en toda la aritmética de material; `N` sale del **rollo montado**, no del catálogo;
   se tipean pasadas y se persisten piezas; el canto es merma derivada que se muestra y no emite
   kardex; a stock sí, y ahí la corrida elige el largo.
@@ -51,7 +51,7 @@ antes de escribir código.
 - **La migración contra Neon `demo` la corre el dueño** (D-234). Comando exacto en §5.
 - **La suite E2E completa no se corrió en local**, por decisión del dueño (había otra sesión en
   paralelo y las dos comparten `test-results/`). El spec nuevo
-  `e2e/tests/accesorios-d242.spec.ts` no tiene corrida local: **la juez es la CI del PR**.
+  `e2e/tests/accesorios-d248.spec.ts` no tiene corrida local: **la juez es la CI del PR**.
 - Nada sacrificado: M1–M4 entraron completos.
 
 ## 5. Cómo verificar
@@ -74,7 +74,7 @@ pnpm --filter @ayr/api exec jest src/production/roofing-drafts.spec.ts   # 9 pas
 E2E del flujo (lo corre la CI; en local exige base E2E libre):
 
 ```bash
-pnpm exec playwright test e2e/tests/accesorios-d242.spec.ts
+pnpm exec playwright test e2e/tests/accesorios-d248.spec.ts
 ```
 
 **Migración contra la rama Neon `demo` — la corre el dueño** (D-234), con el entorno de esa rama
@@ -84,7 +84,7 @@ ya configurado fuera de la sesión, desde la raíz del worktree:
 pnpm --filter @ayr/api exec prisma migrate deploy
 ```
 
-Aplica las dos migraciones de D-242. Son aditivas: una columna nullable, un valor de enum y dos
+Aplica las dos migraciones de D-248. Son aditivas: una columna nullable, un valor de enum y dos
 CHECK; ningún SKU existente cambia de forma y el API viejo las ignora.
 
 Datos de demo, después de la migración y con `pnpm dev:demo` levantado:

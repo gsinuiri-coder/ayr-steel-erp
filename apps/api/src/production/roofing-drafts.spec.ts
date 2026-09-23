@@ -111,7 +111,7 @@ describe('checkDraftRows (D-191)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // D-242 — el borrador de un accesorio está en pasadas
+  // D-248 — el borrador de un accesorio está en pasadas
   // -------------------------------------------------------------------------
   //
   // La fila dice «2 pasadas de 4 m»; contra el plan y contra la bobina se mide lo que de

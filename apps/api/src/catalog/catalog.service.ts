@@ -575,7 +575,7 @@ function assertStructuredFields(
     // plancha se mide en lo que la empresa venda (unidades, casi siempre), y exigirle `NIU`
     // acá dejaría sin poder editarse a cualquier producto legado con otra unidad.
     //
-    // D-242: el accesorio se suma del lado de "se mide en metros", no del de la plancha. La
+    // D-248: el accesorio se suma del lado de "se mide en metros", no del de la plancha. La
     // pregunta se escribe por el subtipo que **no** va en metros y no enumerando los que sí:
     // con la lista al revés, cada subtipo nuevo entraba por el lado equivocado sin que nada
     // avisara, que es exactamente lo que este archivo lleva tres decisiones evitando.
@@ -591,7 +591,7 @@ function assertStructuredFields(
             : 'Una cobertura a medida se mide en metros lineales (MTR)',
       );
     }
-    // D-242: el desarrollo es lo único que distingue a un accesorio de una cobertura a
+    // D-248: el desarrollo es lo único que distingue a un accesorio de una cobertura a
     // medida, así que sin él el SKU no se puede producir: no hay forma de saber cuántas
     // piezas da una pasada. Y al revés, un desarrollo en cualquier otro subtipo es un número
     // que ninguna cuenta lee. El mismo par de reglas está en el CHECK de la base.
@@ -719,7 +719,7 @@ function theoreticalKgPerUnit(p: WithLineCode): string | null {
     theoreticalKgPerSellingUnit({
       unit: p.unit,
       thicknessMm: p.thicknessMm?.toFixed(2) ?? null,
-      // D-242: en un accesorio el ancho que consume un metro vendido **no** es el del rollo,
+      // D-248: en un accesorio el ancho que consume un metro vendido **no** es el del rollo,
       // es `ancho ÷ N`: cada pasada reparte el ancho completo entre las piezas que salen.
       // Con el ancho pelado, el kg por metro que muestra el catálogo sería N veces el real.
       widthMm: materialWidthMm(p),
@@ -730,7 +730,7 @@ function theoreticalKgPerUnit(p: WithLineCode): string | null {
 }
 
 /**
- * D-242: el ancho con el que se calcula el **material** de este SKU.
+ * D-248: el ancho con el que se calcula el **material** de este SKU.
  *
  * Es el ancho nominal salvo en un accesorio, donde es el ancho efectivo (`ancho ÷ N`). Toda
  * cuenta de kilos del catálogo pasa por acá; el ancho pelado sigue siendo el que se muestra.
@@ -800,7 +800,7 @@ function auditView(p: Product): Prisma.InputJsonObject {
     widthMm: p.widthMm === null ? null : p.widthMm.toFixed(2),
     lengthMm: p.lengthMm === null ? null : p.lengthMm.toFixed(2),
     pieceWeightKg: p.pieceWeightKg === null ? null : p.pieceWeightKg.toFixed(3),
-    // D-242: el desarrollo cambia cuántas piezas da una pasada y con eso el kilo por metro
+    // D-248: el desarrollo cambia cuántas piezas da una pasada y con eso el kilo por metro
     // de todo lo que se cotice después, así que su historia va al log como la del resto de
     // la geometría.
     developmentMm: p.developmentMm === null ? null : p.developmentMm.toFixed(2),

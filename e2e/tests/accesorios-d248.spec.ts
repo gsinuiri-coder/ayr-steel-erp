@@ -17,7 +17,7 @@ import {
 import { businessLineId, createCuttingSupplier } from '../helpers/production';
 
 /**
- * D-242 — accesorios de cobertura (cumbrera, canaleta, tapajunta), por API.
+ * D-248 — accesorios de cobertura (cumbrera, canaleta, tapajunta), por API.
  *
  * Lo que protege, en una línea: **una pasada usa el ancho completo de la bobina y devuelve
  * `N = piso(ancho ÷ desarrollo)` piezas**, así que los metros que entran al kardex son `N`
@@ -78,7 +78,7 @@ async function setup(
   return { product, coil, order, opId, trail };
 }
 
-test.describe('D-242 — accesorios de cobertura (API)', () => {
+test.describe('D-248 — accesorios de cobertura (API)', () => {
   let api: APIRequestContext;
   test.beforeAll(async ({ baseURL }) => {
     api = await adminApi(baseURL!);
@@ -233,7 +233,7 @@ test.describe('D-242 — accesorios de cobertura (API)', () => {
   });
 
   test('a stock: la corrida elige el largo, no hay pedido detrás y el saldo queda libre', async () => {
-    // D-242 reabre para accesorios la puerta que D-171 cerró para coberturas. El largo lo
+    // D-248 reabre para accesorios la puerta que D-171 cerró para coberturas. El largo lo
     // elige la corrida porque un accesorio se vende por metro y no tiene uno fijo.
     const { product, coil, trail } = await setup(api);
     try {

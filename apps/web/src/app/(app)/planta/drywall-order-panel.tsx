@@ -8,7 +8,9 @@ import {
   Decimal,
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
+  mountedKgForReport,
   PRODUCTION_ORDER_STATUS_LABELS,
+  theoreticalKg,
   type ProductionOrderDto,
   type ProductionStripOptionDto,
 } from '@ayr/shared';
@@ -175,7 +177,19 @@ export function DrywallOrderPanel({
   const theoreticalDelta = theoreticalPieces.minus(o.piecesReported);
   const trimmed = pieces.trim();
   const piecesValid = /^\d+$/.test(trimmed) && Number(trimmed) > 0;
-  const overCapacity = piecesValid && Number(trimmed) > maxPieces;
+  // D-246: la misma regla que el API. Dentro de la tolerancia, el último reporte del fleje
+  // se topa en lo montado y avisa; fuera de ella no alcanza.
+  const capacity =
+    piecesValid && kgPerPiece.gt(0)
+      ? mountedKgForReport({
+          label: o.code,
+          theoreticalKg: theoreticalKg(Number(trimmed), kgPerPiece),
+          availableKg: pendingKg,
+          declaredKg: null,
+        })
+      : null;
+  const overCapacity = piecesValid && !capacity?.ok;
+  const yieldNote = capacity?.ok === true ? capacity.note : null;
   const isLive = o.status === 'DRAFT' || o.status === 'IN_PROGRESS';
 
   return (
@@ -270,6 +284,12 @@ export function DrywallOrderPanel({
                   {' '}
                   Con el fleje montado solo alcanza para {maxPieces} piezas: consume otro fleje
                   antes de reportar.
+                </span>
+              )}
+              {yieldNote !== null && (
+                <span role="status" className="text-sky-700 dark:text-sky-400">
+                  {' '}
+                  {yieldNote}
                 </span>
               )}
             </p>

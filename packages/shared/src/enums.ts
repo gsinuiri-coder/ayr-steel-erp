@@ -876,7 +876,7 @@ export const RoofingProductKind = {
   PLANCHA: 'PLANCHA',
   A_MEDIDA: 'A_MEDIDA',
   /**
-   * D-242: accesorio de cobertura (cumbrera, canaleta, tapajunta…). Sale de las **mismas**
+   * D-248: accesorio de cobertura (cumbrera, canaleta, tapajunta…). Sale de las **mismas**
    * bobinas que el resto de coberturas y se vende por metro lineal, pero la roladora usa el
    * ancho completo del rollo y saca varias piezas por pasada: `N = piso(ancho ÷ desarrollo)`.
    * El desarrollo vive en `products.developmentMm` y es lo único que lo distingue de una
@@ -905,7 +905,7 @@ export const ROOFING_PRODUCT_KIND_HINTS: Record<RoofingProductKind, string> = {
 export const ROOFING_KIND_UNIT: Record<RoofingProductKind, string> = {
   PLANCHA: 'NIU',
   A_MEDIDA: 'MTR',
-  // D-242: el accesorio se vende por metro lineal igual que una cobertura a medida. Lo que
+  // D-248: el accesorio se vende por metro lineal igual que una cobertura a medida. Lo que
   // cambia no es la unidad de venta, es cuántos metros salen de cada pasada.
   ACCESORIO: 'MTR',
 };

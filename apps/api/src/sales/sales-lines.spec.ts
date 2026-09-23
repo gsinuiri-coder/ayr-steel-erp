@@ -122,7 +122,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       order: true,
       fixed: false,
     },
-    // **D-242: el accesorio.** Se vende por metro y se fabrica contra pedido igual que una
+    // **D-248: el accesorio.** Se vende por metro y se fabrica contra pedido igual que una
     // cobertura a medida, pero `isMadeToMeasure` responde **false**: esa pregunta es por el
     // subtipo `A_MEDIDA` y también decide la forma de la línea. Que `made` sea false y
     // `order` true es exactamente el par que esta tabla existe para vigilar.
@@ -219,7 +219,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
     expect(isMadeToOrder(perfil)).toBe(false);
     expect(sellsByFixedLength(perfil)).toBe(false);
 
-    // **D-242: `isAccessory` contra `isMadeToMeasure`.** El par nuevo, y se parecen tanto que
+    // **D-248: `isAccessory` contra `isMadeToMeasure`.** El par nuevo, y se parecen tanto que
     // la tentación de responder uno con otro es la más fuerte de las cinco: las dos formas se
     // venden por metro, las dos reservan bobina, las dos entran a la cola. Lo que las separa
     // es con qué ancho se cuenta el material —el accesorio reparte el del rollo entre las

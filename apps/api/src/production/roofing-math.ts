@@ -48,7 +48,7 @@ export function roofingTheoreticalKg(
 }
 
 // ---------------------------------------------------------------------------
-// D-242 — la pasada de un accesorio
+// D-248 — la pasada de un accesorio
 // ---------------------------------------------------------------------------
 
 /** Lo que hace falta del producto para saber si una OP rola un accesorio y con qué medida. */
@@ -62,7 +62,7 @@ export interface AccessoryProductLike {
 
 /**
  * Todo lo que un accesorio cambia respecto de una cobertura a medida, resuelto **una vez**
- * contra el rollo que de verdad está montado (D-242).
+ * contra el rollo que de verdad está montado (D-248).
  */
 export interface AccessoryConversion {
   piecesPerPass: number;
@@ -194,7 +194,7 @@ export function metersFromKg(geometry: CoilGeometry, availableKg: string): Decim
 export interface RoofingCloseInput {
   /** Kilos que planta declara que la bobina consumió de verdad (D-089). */
   declaredKg: Decimal;
-  /** Kilos teóricos ya emitidos por los reportes vigentes. */
+  /** Kilos que los reportes vigentes sacaron de la bobina (D-246: `reportsOutKg`). */
   reportedKg: Decimal;
   /** Kilos todavía asignados a la orden y no consumidos. */
   remainingKg: Decimal;
@@ -223,6 +223,28 @@ export function roofingCloseScrap(input: RoofingCloseInput): RoofingCloseResult 
   const scrapKg = Decimal.max(input.declaredKg.minus(input.reportedKg), new Decimal(0));
   const scrapRatio = input.declaredKg.lte(0) ? new Decimal(0) : scrapKg.div(input.declaredKg);
   return { scrapKg: roundTo(scrapKg, 'KG'), scrapRatio };
+}
+
+/**
+ * D-246 — los kilos que cada reporte vigente **sacó de verdad** de la bobina, leídos de sus
+ * salidas de kardex (`refType = PRODUCTION`, `refId = reporte`).
+ *
+ * Hasta D-246 la salida era siempre el teórico y el cierre podía sumar `theoreticalKg`; desde
+ * que un reporte se topa en lo montado, el teórico puede pasar lo que salió y el cierre
+ * exigiría como piso kilos que la bobina nunca tuvo. Un reporte hecho con la regla anterior
+ * tiene su salida igual a su teórico, así que el resultado para él no cambia. Si un reporte no
+ * tuviera salida (no debería pasar), cuenta su teórico: el piso nunca baja por un dato ausente.
+ */
+export function reportsOutKg(
+  reports: readonly { id: string; theoreticalKg: Decimal }[],
+  coilOuts: readonly { refId: string | null; qty: Decimal }[],
+): Map<string, Decimal> {
+  const byReport = new Map<string, Decimal>();
+  for (const out of coilOuts) {
+    if (out.refId === null) continue;
+    byReport.set(out.refId, (byReport.get(out.refId) ?? new Decimal(0)).plus(out.qty));
+  }
+  return new Map(reports.map((r) => [r.id, byReport.get(r.id) ?? r.theoreticalKg] as const));
 }
 
 export interface RoofingCostInput {

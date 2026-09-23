@@ -79,7 +79,7 @@ export class RoofingDraftsService {
       }),
       this.prisma.productionOrder.findUniqueOrThrow({
         where: { id: orderId },
-        // D-242: sin el producto no se sabe si las filas guardadas son pasadas o planchas.
+        // D-248: sin el producto no se sabe si las filas guardadas son pasadas o planchas.
         select: {
           product: {
             select: { sku: true, roofingKind: true, developmentMm: true, widthMm: true },
@@ -121,7 +121,11 @@ export class RoofingDraftsService {
             `El borrador admite hasta ${MAX_DRAFT_ROWS} filas: ejecútalo antes de seguir cargando`,
           );
         }
-        const candidate = { coilId: input.coilId, pieces: input.pieces };
+        const candidate = {
+          coilId: input.coilId,
+          pieces: input.pieces,
+          consumedKg: input.consumedKg ?? null,
+        };
         const coilId = this.validate(state, [...existing.map(toRowLike), candidate], 'new');
         await tx.productionReportDraft.create({
           data: {
@@ -152,7 +156,11 @@ export class RoofingDraftsService {
         const index = existing.findIndex((d) => d.id === draftId);
         if (index < 0) throw new NotFoundException('Esa fila no está en el borrador de la orden');
         const rows = existing.map(toRowLike);
-        rows[index] = { coilId: input.coilId, pieces: input.pieces };
+        rows[index] = {
+          coilId: input.coilId,
+          pieces: input.pieces,
+          consumedKg: input.consumedKg ?? null,
+        };
         const coilId = this.validate(state, rows, index);
         await tx.productionReportDraftPiece.deleteMany({ where: { draftId } });
         await tx.productionReportDraft.update({
@@ -315,7 +323,7 @@ export class RoofingDraftsService {
     const [product, plan, reports, consumptions] = await Promise.all([
       tx.product.findUniqueOrThrow({
         where: { id: order.productId },
-        // D-242: el subtipo, el desarrollo y el ancho nominal — lo que `accessoryConversion`
+        // D-248: el subtipo, el desarrollo y el ancho nominal — lo que `accessoryConversion`
         // necesita para saber cuántas piezas da una pasada en cada bobina montada.
         select: {
           sku: true,
@@ -357,7 +365,7 @@ export class RoofingDraftsService {
       reportedMeters: piecesMeters(reports.flatMap((r) => r.piecesDetail.map(toPieceLike))),
       liveReports: reports.length,
       coils: consumptions.map((c) => {
-        // D-242: la conversión se resuelve **por bobina**, porque `N` sale del ancho del
+        // D-248: la conversión se resuelve **por bobina**, porque `N` sale del ancho del
         // rollo montado y no del catálogo. Dos rollos de anchos distintos en la misma orden
         // rinden distinto, y cada fila del borrador se mide contra el suyo.
         const accessory = accessoryConversion(product, c.coil.widthMm.toFixed(2));
@@ -423,7 +431,11 @@ function toPieceLike(row: { lengthMm: Prisma.Decimal; qty: number }): PieceLike 
 }
 
 function toRowLike(draft: DraftRow): DraftRowLike {
-  return { coilId: draft.coilId, pieces: draft.pieces.map(toPieceLike) };
+  return {
+    coilId: draft.coilId,
+    pieces: draft.pieces.map(toPieceLike),
+    consumedKg: draft.consumedKg === null ? null : draft.consumedKg.toFixed(3),
+  };
 }
 
 function toPieceRows(pieces: readonly { lengthMm: string; qty: number }[]) {

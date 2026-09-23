@@ -45,16 +45,16 @@ export const productSchema = z.object({
    */
   roofingKind: z.enum(ROOFING_PRODUCT_KINDS).nullable(),
   /**
-   * D-242: desarrollo del accesorio en mm — el ancho de fleje que se lleva una pieza
+   * D-248: desarrollo del accesorio en mm — el ancho de fleje que se lleva una pieza
    * desplegada. Solo lo llevan los `ACCESORIO`; `null` en todo el resto.
    */
   developmentMm: z.string().nullable(),
   /**
-   * D-242: piezas que da una pasada con el ancho **nominal** del SKU,
+   * D-248: piezas que da una pasada con el ancho **nominal** del SKU,
    * `piso(widthMm ÷ developmentMm)`. `null` fuera de un accesorio o si falta geometría.
    *
    * Es una lectura, no un dato: al producir manda el ancho del rollo que se monte, y si ahí
-   * el número cambia, planta ve el aviso (D-242). Viaja en el DTO para que el catálogo y el
+   * el número cambia, planta ve el aviso (D-248). Viaja en el DTO para que el catálogo y el
    * formulario de venta puedan mostrar "4 piezas por pasada" sin repetir la cuenta.
    */
   piecesPerPass: z.number().int().nullable(),
@@ -147,7 +147,7 @@ const roofingKindSchema = z
   .optional();
 
 /**
- * D-242: desarrollo del accesorio. Mismo criterio que el resto de las medidas — cadena vacía
+ * D-248: desarrollo del accesorio. Mismo criterio que el resto de las medidas — cadena vacía
  * es "sin dato" y se guarda `null`—; que sea obligatorio **solo** en `ACCESORIO` lo decide
  * `CatalogService`, igual que el subtipo, porque es una regla de línea de negocio y no de
  * forma del dato.

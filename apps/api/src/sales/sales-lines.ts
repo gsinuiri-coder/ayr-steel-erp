@@ -166,7 +166,7 @@ export async function resolveSalesLines(
       // D-127: el subtipo decide la rama de la reserva. La geometría y la densidad del
       // acabado son lo que convierte metros lineales en kilos de bobina.
       roofingKind: true,
-      // D-242: el desarrollo del accesorio. Sin él, `theoreticalKgForMeters` no puede
+      // D-248: el desarrollo del accesorio. Sin él, `theoreticalKgForMeters` no puede
       // repartir el ancho del rollo entre las piezas de la pasada y la línea reservaría N
       // veces el material que se va a llevar.
       developmentMm: true,
@@ -789,7 +789,7 @@ interface RoofingProductLike {
    */
   unit: string;
   lengthMm: Prisma.Decimal | null;
-  /** D-242: el desarrollo del accesorio, del que sale su ancho efectivo. Null en el resto. */
+  /** D-248: el desarrollo del accesorio, del que sale su ancho efectivo. Null en el resto. */
   developmentMm: Prisma.Decimal | null;
   color: { name: string } | null;
   finish: { densityFactor: Prisma.Decimal } | null;
@@ -807,7 +807,7 @@ export const ROOFING_PRODUCT_SELECT = {
   unit: true,
   lengthMm: true,
   roofingKind: true,
-  // D-242: sin el desarrollo, un accesorio reserva los kilos de una cobertura a medida —N
+  // D-248: sin el desarrollo, un accesorio reserva los kilos de una cobertura a medida —N
   // veces los que de verdad consume.
   developmentMm: true,
   color: { select: { name: true } },
@@ -831,7 +831,7 @@ export function isMadeToMeasure(product: { roofingKind: RoofingProductKind | nul
 }
 
 /**
- * D-242, la quinta de la familia: **¿esta línea es un accesorio de cobertura?**
+ * D-248, la quinta de la familia: **¿esta línea es un accesorio de cobertura?**
  *
  * Es el subtipo declarado, igual que `isMadeToMeasure`, y por el mismo motivo: el accesorio
  * se distingue de una cobertura a medida por el desarrollo, no por la unidad ni por el largo
@@ -899,14 +899,14 @@ export function sellsByLength(product: { unit: string }): boolean {
  *   **subtipo, la unidad y el largo**.
  * - `isMadeToMeasure` — *¿se cotiza a la medida del cliente?* → el **subtipo `A_MEDIDA`**. Desde
  *   D-171 ya **no** decide la rama de la reserva; decide la forma de la línea.
- * - `isAccessory` — *¿es un accesorio, con su desarrollo?* (D-242) → el **subtipo `ACCESORIO`**.
+ * - `isAccessory` — *¿es un accesorio, con su desarrollo?* (D-248) → el **subtipo `ACCESORIO`**.
  *   Decide con qué ancho se cuenta el material, no la rama de la reserva.
  * - `isMadeToOrder` — *¿la reserva es materia prima y hay que producirla?* → las tres de arriba.
  *
  * El centinela es `sales-lines.spec.ts`, con la tabla completa de combinaciones.
  */
 export function isMadeToOrder(product: MadeToOrderLike): boolean {
-  // D-242: el accesorio entra por su propia puerta y no por `isMadeToMeasure`. Las dos
+  // D-248: el accesorio entra por su propia puerta y no por `isMadeToMeasure`. Las dos
   // reservan bobina y las dos van a la cola, pero son preguntas distintas: `isMadeToMeasure`
   // también decide la forma de la línea en el formulario de venta, y hacerle responder que
   // sí a un accesorio habría sido exactamente el error que D-131 y D-171 ya pagaron dos
@@ -979,7 +979,7 @@ export function theoreticalKgForMeters(
 }
 
 /**
- * D-242: **el ancho con el que esta línea cuenta el material**, que en un accesorio no es el
+ * D-248: **el ancho con el que esta línea cuenta el material**, que en un accesorio no es el
  * ancho del SKU.
  *
  * Una pasada se lleva el ancho completo del rollo y devuelve `N = piso(ancho ÷ desarrollo)`
@@ -990,7 +990,7 @@ export function theoreticalKgForMeters(
  * merma que nadie encargó.
  *
  * Acá se usa el ancho **nominal** del SKU, que es lo único que se conoce al cotizar. Al
- * producir manda el ancho del rollo montado, y si ahí `N` cambia, planta lo ve (D-242).
+ * producir manda el ancho del rollo montado, y si ahí `N` cambia, planta lo ve (D-248).
  */
 function materialWidthMm(product: RoofingProductLike, widthMm: string, at: string): string {
   if (!isAccessory(product)) return widthMm;

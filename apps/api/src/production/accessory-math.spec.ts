@@ -9,7 +9,7 @@ import {
 } from '@ayr/shared';
 
 /**
- * Aritmética de los accesorios de cobertura (D-242).
+ * Aritmética de los accesorios de cobertura (D-248).
  *
  * El accesorio sale de la **misma** bobina que el resto de coberturas, pero la roladora usa
  * el ancho completo del rollo con un solo desarrollo por corte: cada pasada devuelve
@@ -21,7 +21,7 @@ import {
  */
 const coil = { widthMm: '1200.00', thicknessMm: '0.30', densityFactor: '7.8500' };
 
-describe('accessoryPiecesPerPass (D-242)', () => {
+describe('accessoryPiecesPerPass (D-248)', () => {
   it('cuenta las piezas de una pasada con el piso de la división', () => {
     // 1200 ÷ 300 = 4 exactas: el ejemplo del dueño, cumbrera de 300 mm de desarrollo.
     expect(accessoryPiecesPerPass('1200.00', '300.00')).toBe(4);
@@ -42,7 +42,7 @@ describe('accessoryPiecesPerPass (D-242)', () => {
   });
 });
 
-describe('accessoryEffectiveWidthMm (D-242, D-b)', () => {
+describe('accessoryEffectiveWidthMm (D-248, D-b)', () => {
   it('reparte el ancho completo entre las piezas de la pasada', () => {
     // 4 piezas de un rollo de 1200: cada una se lleva 300 mm y no sobra canto.
     expect(accessoryEffectiveWidthMm('1200.00', '300.00')?.toFixed(2)).toBe('300.00');

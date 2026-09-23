@@ -235,7 +235,7 @@ export async function createRoofingProduct(
     /** Con largo, es una plancha de catálogo (`NIU`); sin él, una cobertura a medida (`MTR`). */
     pieceLengthMm?: string;
     /**
-     * D-242: con desarrollo es un **accesorio** (`MTR` + `ACCESORIO`), que se vende por metro
+     * D-248: con desarrollo es un **accesorio** (`MTR` + `ACCESORIO`), que se vende por metro
      * como una cobertura a medida pero rinde `piso(ancho ÷ desarrollo)` piezas por pasada.
      * Excluyente con `pieceLengthMm`: un accesorio no lleva largo fijo.
      */
@@ -267,7 +267,7 @@ export async function createRoofingProduct(
     // D-127: el subtipo es explícito y obligatorio en esta línea; antes se deducía de la
     // unidad. La plancha además lleva su largo fijo en el catálogo, y la cobertura a
     // medida tiene prohibido llevarlo.
-    // D-242: el accesorio es el tercer subtipo y lleva su desarrollo en vez de un largo.
+    // D-248: el accesorio es el tercer subtipo y lleva su desarrollo en vez de un largo.
     ...(accessory
       ? { roofingKind: 'ACCESORIO', developmentMm: options.developmentMm }
       : madeToMeasure

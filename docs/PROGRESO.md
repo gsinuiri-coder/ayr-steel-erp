@@ -2,6 +2,151 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## RF-S4a — reportes de costeo y ventas (2026-09-22)
+
+Sesión de solo lectura: **sin migración**, sin escrituras nuevas y sin tocar ningún servicio de
+dominio. PR [#9](https://github.com/gsinuiri-coder/ayr-steel-erp/pull/9), rama `rf-s4a`, **sin
+mergear** a la espera de la ventana y del OK de D-232. Agente: Claude Code.
+
+La rama incorpora el HOTFIX de D-246 (`ca05935`), que entró a `main` mientras esta sesión estaba
+abierta. El único cruce fueron estos dos documentos —los dos agregaron su sección o su fila al
+tope— y se resolvió conservando ambas cosas; **en código no hubo conflicto**: el hotfix vive en
+`production/` y estos reportes solo leen.
+
+Los tres milestones entraron, incluido el sacrificable.
+
+### Lo que cambió respecto del brief, y por qué
+
+El brief definía el costo del pedido como «kg consumidos por sus OPs + costo de reventa según
+su movimiento de salida». Esa fórmula rompe en dos casos que el sistema ya produce hoy, así que
+se presentó la contradicción antes de escribir código (D-230) y el dueño decidió **D-242**:
+
+1. **Sobreproducción.** `roofing-production.service.ts` dice, en su propio comentario, que
+   producir de más «es normal y esperable» y que el excedente «entra al kardex como stock
+   libre». Con la fórmula del brief, ese excedente que se quedó en el almacén se le carga al
+   pedido y le hunde el margen.
+2. **Pedido servido desde stock.** Una OP a stock nace con `targetPieces` y sin `reservationId`
+   (D-140/D-145): no pertenece a ningún pedido. Un pedido atendido con esas planchas no tendría
+   OPs propias, y habría salido con costo 0 y **margen 100 %** — el número inventado que el
+   propio brief prohibía.
+
+El costo sale entonces de los movimientos `refType='SALE'` de los despachos del pedido, que es
+donde ya está valorizado al promedio ponderado para producto fabricado, plancha de catálogo y
+bobina de reventa por igual. El material que sí consumieron las OPs se muestra en una columna
+aparte, rotulada como lo que es: una pregunta de planta.
+
+### Cuándo el reporte dice que no sabe (D-243)
+
+El borde lo planteó el dueño al aprobar el plan: el rango filtra comprobantes, pero el costo
+del pedido cubre todos sus despachos. Precedencia por fila, sin prorrateo en ninguna rama:
+
+| Estado          | Condición                                                                        | Totales                                      |
+| --------------- | -------------------------------------------------------------------------------- | -------------------------------------------- |
+| `COMPLETO`      | Sin comprobantes vivos fuera del rango, y todo lo facturado ya despachado        | suma                                         |
+| `COMPLETO`      | Con comprobantes afuera, pero **cada** uno del rango declara su despacho (D-205) | suma solo esa porción, exacta                |
+| `PARCIAL`       | Quedan líneas facturadas sin despachar: el costo es un piso, el margen un techo  | suma, y el total declara `partialOrderCount` |
+| `NO_COMPARABLE` | Con comprobantes afuera y alguno del rango sin despacho declarado                | **no suma**, se lista aparte                 |
+
+El prorrateo no aparece porque el único caso donde sería exacto es la segunda fila, y ahí el
+dato exacto ya existe sin prorratear.
+
+### Un defecto propio, encontrado revisando el código ya empujado
+
+Esa segunda fila de la tabla —el pedido con comprobantes afuera cuyos comprobantes del rango sí
+declaran despacho— salió mal en el primer commit: el monto de la fila se acotaba a esa porción,
+pero los totales **por línea de negocio** sumaban el costo del pedido entero. Con los números
+del test, el total decía 300 y la suma de la tabla por línea, 800.
+
+La causa no fue la aritmética sino la forma: había dos agregados distintos —uno por pedido y
+otro por pedido y línea— construidos **antes** de saber qué filas contaban, así que la decisión
+de cuáles entran se tomaba dos veces y las dos se separaron. Las filas de costo ahora se guardan
+sin agregar, se filtran una sola vez por pedido, y de ese mismo arreglo salen el monto y su
+apertura: ya no pueden discrepar por construcción.
+
+Lo fijan dos tests, y **se comprobó que fallan** al quitar el filtro, en vez de asumir que eran
+buenos. El que importa mezcla las tres clases de fila a la vez: con una sola clase los dos
+caminos coinciden por casualidad y el test pasa sin probar nada.
+
+### Casos cuyo costo no se puede trazar
+
+El brief pedía reportarlos acá, y la respuesta honesta es que **no se sabe**: estos reportes no
+se han corrido nunca contra producción. La sesión fue código y CI, y la primera lectura real es
+el guion UAT (`docs/uat/rf-s4a.md`), que trae una sección dedicada a contarlos. Lo que sí está
+identificado es **dónde** van a aparecer:
+
+- **Comprobantes sin despacho declarado.** `Dispatch.invoiceId` solo se llena en el mostrador
+  (D-100) y en el despacho declarado al facturar (D-213). Todo lo facturado antes de D-213 y
+  fuera del mostrador tiene el costo trazable **al pedido pero no al comprobante**, y sale con
+  el costo en blanco en la fila del comprobante. Son la mayoría de los 19 pedidos vivos.
+- **Pedidos que cruzan el corte de mes.** Facturados en parte en un mes y en parte en otro, sin
+  el enlace de arriba: caen en `NO_COMPARABLE` y quedan fuera de los totales. Cuántos son,
+  depende del rango que se pida; el reporte los cuenta en `excludedOrderCount` y muestra su
+  venta en `excludedSalesPen`, así que el UAT lo va a decir en la primera corrida.
+- **Líneas libres de comprobante** (servicios, ajustes de nota de crédito): no tienen producto
+  del cual derivar la línea de negocio y van al grupo «sin línea» en los totales.
+
+### Defecto preexistente encontrado, **no corregido** (D-245)
+
+`GET /reports/coils` (RF-90, desplegado en producción) traduce mal el código de línea de
+negocio. Postgres guarda la etiqueta del enum, que es el valor de `@map` (`'drywall'`), pero
+`toSharedLineCode` está indexado por el nombre de Prisma (`'DRYWALL'`). Dos consecuencias, las
+dos verificadas sin base de datos:
+
+1. cada fila devuelve `businessLine: undefined` (la clave desaparece del JSON);
+2. `?businessLine=…` compara `'drywall'` contra `'DRYWALL'` y **devuelve cero filas siempre**.
+
+Sobrevivió porque el único E2E que toca esa ruta (`fase7-consolidada.spec.ts:112`) llama sin
+filtro y no mira esa columna. **Queda sin corregir a propósito**: está fuera del alcance de
+RF-S4a y la corrección es del dueño (§10). El código nuevo no lo hereda —usa `fromDbLineCode`,
+que valida en vez de castear—, pero mientras nadie toque `reports.service.ts`, el reporte
+mensual de bobinas sigue con el filtro roto en producción.
+
+### Verificación
+
+- **CI verde** en el PR #9 sobre `50a6450` (run `35782200058`), con el hotfix D-246
+  incorporado: lint, typecheck, 738 unitarios, E2E completo **382 passed / 0 failed / 3 skipped** en
+  el Postgres del runner, y smoke sobre Neon `ci`. Los 3 skipped son los mismos de siempre, no
+  aparecieron en esta sesión.
+- El E2E pasó de **380 a 385 tests** (377 → 382 pasados): exactamente los 5 nuevos de
+  `e2e/tests/reportes-costeo-rf-s4a.spec.ts`, así que corrieron de verdad y no quedaron
+  filtrados.
+- 29 unitarios nuevos en `apps/api/src/reports/`: conciliación contra el kardex, presupuesto de
+  consultas (2 fijas en M1, 6 en M2, verificadas contra N creciente por D-228), las tres ramas
+  de D-243, la invariante entre el total de costo y los totales por línea, y el tipo de celda
+  del xlsx.
+- La suite E2E **no se corrió en local** por decisión del dueño: sesión en paralelo con
+  `acc-demo`, con la CI del PR como única juez.
+
+### Deuda que esta sesión hereda y no resuelve
+
+El **quality gate de SonarCloud quedó rojo en el PR #7** (20.3 % de cobertura en código nuevo,
+Reliability D) y el handoff de RF-S3c pide evaluarlo antes de mergear RF-S4a. En este PR el job
+de análisis estático salió verde, pero eso **no** dice nada del gate del PR anterior: los issues
+concretos siguen sin enumerarse porque el proyecto de SonarCloud es privado y el `SONAR_TOKEN`
+solo vive en los secrets de Actions. El dueño los pasa desde el dashboard.
+
+## HOTFIX kg teórico — planta bloqueada por tolerancia de laminado (2026-09-22)
+
+Producción real detenida: el reporte de 253 × 6.00 m de IMPO-ALZ-NATURAL-0.28-4010-11 pedía
+4 043.952 kg teóricos contra 4 010 kg montados, con el acero ya consumido. D-246: el reporte
+se topa en lo montado cuando lo declarado cabe o, sin declaración, el exceso es ≤ 1 % del
+teórico; fuera de eso sigue bloqueando. Aplica a coberturas (reporte, reporte+cierre,
+borrador/multi-montar, a medida y plancha de catálogo) y a drywall. El piso del cierre se lee
+de las salidas reales del kardex. Sin migración; toca API y web (deploy API → push web).
+Sin E2E local (corre en paralelo con rf-s4a/acc-demo): la juez es la CI.
+
+- CI del PR #10 (run 35770887406) verde: lint/typecheck/unit, análisis estático, E2E en
+  Postgres del runner **377 passed / 0 failed / 3 skipped**, smoke y migraciones Neon `ci`.
+- Deploy con OK D-232 del dueño: API desde `d366c40` → revisión `ayr-steel-erp-api-00040-9m9`,
+  label `git-sha=d366c40`, `/health` 200. Web por merge a `main`.
+- **Deuda: revisión cruzada pendiente (programada para 2026-09-23).** El hotfix se desplegó sin
+  el pase de revisión independiente de AGENTS.md §2.2: `agy` y Codex estaban sin saldo y el
+  revisor alterno se cortó por límite de API. Decisión del dueño por urgencia (producción
+  detenida). Revisar `d66de6b`, con foco en: reserva descontada por la salida topada,
+  `closeInTx` leyendo el piso de kardex (reportes de la misma transacción y reportes previos),
+  `RoofingBatchOrderDto.reportedKg` = suma de `consumedKg` de consumos vivos (reabrir D-193),
+  y que web, borrador y API den el mismo veredicto.
+
 ## Ventana RF-S3c — alcance comercial de vendedor (2026-09-22)
 
 Ventana exprés, con el sistema sin usuarios activos. PR #7 mergeado a `main` con OK explícito
@@ -7342,7 +7487,7 @@ Pendiente: Handoff para revisión cruzada por Claude Code y prueba de UI con Pla
 ## ACC-demo — accesorios de cobertura (2026-09-22, sin mergear)
 
 Sesión de demo: agente Claude Code, rama `acc-demo` desde `7a2c1c3`. **No toca producción**
-y la rama **no se mergea** hasta que el cliente valide el flujo (D-242).
+y la rama **no se mergea** hasta que el cliente valide el flujo (D-248).
 
 Se entregaron los cuatro milestones del brief:
 

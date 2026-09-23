@@ -17,6 +17,7 @@ import {
   MAX_ORDER_REPORTS,
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
+  mountedKgForReport,
   piecesMeters,
   productionOrderCode,
   salesOrderCode,
@@ -591,7 +592,17 @@ export class ProductionService {
             consumedByRow.get(r.id) ?? new Decimal(0),
           ),
         }));
-        const allocations = allocateStripKg(allocationRows, neededKg);
+        // D-246: la misma causa que coberturas. Si el teórico pasa lo montado dentro de la
+        // tolerancia, el acero ya salió: se topa en lo montado en vez de bloquear.
+        const mounted = mountedKgForReport({
+          label: productionOrderCode(order.seq),
+          theoreticalKg: neededKg,
+          availableKg: allocationRows.reduce((acc, r) => acc.plus(r.remainingKg), new Decimal(0)),
+          declaredKg: null,
+        });
+        // Fuera de la tolerancia, el rechazo de siempre: drywall no declara kilos, así que el
+        // mensaje de coberturas («declara los kg consumidos») no le sirve a planta.
+        const allocations = allocateStripKg(allocationRows, mounted.ok ? mounted.kg : neededKg);
 
         // D-054/D-066: la reserva se marca CONSUMIDA **antes** de mover el kardex. Si fuera
         // al revés, la invariante `disponible ≥ reservado` bloquearía justo la salida que
@@ -689,6 +700,8 @@ export class ProductionService {
           data: {
             materialCostPen: toFixedString(materialCostPen, 'MONEY'),
             unitCostPen: toFixedString(unitCostPen, 'MONEY'),
+            // D-246: el tope en lo montado queda anotado en el reporte, igual que en coberturas.
+            rawMaterialWarning: mounted.ok ? mounted.note : null,
           },
         });
 
@@ -703,6 +716,7 @@ export class ProductionService {
             confirmedBackdate: input.confirmBackdate === true,
             pieces: input.pieces,
             theoreticalKg: toFixedString(neededKg, 'KG'),
+            outKg: toFixedString(mounted.ok ? mounted.kg : neededKg, 'KG'),
             materialCostPen: toFixedString(materialCostPen, 'MONEY'),
             strips: allocations.map((a) => `${a.coilCode}: ${a.kg.toFixed(3)} kg`),
           },
@@ -1618,7 +1632,7 @@ export class ProductionService {
         widthMm: true,
         lengthMm: true,
         roofingKind: true,
-        // D-242: el desarrollo del accesorio. Todo lo que produce una cobertura pasa por
+        // D-248: el desarrollo del accesorio. Todo lo que produce una cobertura pasa por
         // acá, así que traerlo una vez deja la conversión de pasadas a piezas disponible en
         // montar, reportar y cerrar sin repetir la consulta.
         developmentMm: true,

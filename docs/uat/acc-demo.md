@@ -1,4 +1,4 @@
-# Guion de demo: accesorios de cobertura (D-242)
+# Guion de demo: accesorios de cobertura (D-248)
 
 ## Qué se muestra
 
@@ -28,8 +28,8 @@ sistema calcula piezas, metros y kilos.**
    pnpm --filter @ayr/api exec prisma migrate deploy
    ```
 
-   Aplica las dos migraciones de D-242 (`20260922150000_d242_accesorio_enum` y
-   `20260922150100_d242_accesorios_de_cobertura`). Son **aditivas**: una columna nullable, un
+   Aplica las dos migraciones de D-248 (`20260922150000_d248_accesorio_enum` y
+   `20260922150100_d248_accesorios_de_cobertura`). Son **aditivas**: una columna nullable, un
    valor de enum y dos CHECK. Ningún SKU existente cambia de forma.
 
 2. Levantar la app contra `demo`:
@@ -128,6 +128,6 @@ hacerlas en voz alta y anotar la respuesta: cada una es una decisión `D-nnn` de
 ## Lo que esta demo **no** muestra
 
 - No hay despacho ni comprobante del accesorio: el flujo comercial es el mismo que ya existe y
-  no cambió con D-242.
+  no cambió con D-248.
 - No hay precios por volumen ni listas por cliente: el accesorio usa el precio de lista normal.
 - **Nada de esto está en producción.** La rama no se mergea hasta que el cliente valide.

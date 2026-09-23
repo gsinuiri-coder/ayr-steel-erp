@@ -73,6 +73,18 @@ export const MAX_SCRAP_RATIO_WITHOUT_REASON = 0.1;
 export const MAX_CONSUMPTION_DEVIATION_RATIO = 0.1;
 
 /**
+ * D-246 — cuánto puede pasarse el kilo **teórico** de un reporte del material montado sin
+ * que planta declare kilos, como fracción del teórico.
+ *
+ * La bobina real rinde algo más de metro por kilo que la geometría (tolerancia de laminado):
+ * el último reporte de un rollo puede "necesitar" unos kilos más de los que quedan montados
+ * cuando el acero ya salió entero. Es el mismo 1 % de `NORMAL_SCRAP_RATE_PCT` pero es otra
+ * pregunta —cuánto se aparta el rollo de la geometría, no cuánto se pierde—, por eso vive en
+ * su propia constante. Coberturas y drywall la comparten: la causa es la misma.
+ */
+export const THEORETICAL_KG_TOLERANCE_RATIO = '0.01';
+
+/**
  * D-165 — **la merma normal, en puntos porcentuales**, absorbida dentro del estándar.
  *
  * Regla del cliente confirmada por el dueño: convertir geometría en kilos rinde siempre un
@@ -235,11 +247,11 @@ export function theoreticalKgPerSellingUnit(input: {
 }
 
 // --------------------------------------------------------------------------
-// D-242 — accesorios de cobertura: el ancho efectivo
+// D-248 — accesorios de cobertura: el ancho efectivo
 // --------------------------------------------------------------------------
 
 /**
- * Piezas que da **una pasada** de un accesorio por una bobina de ese ancho (D-242):
+ * Piezas que da **una pasada** de un accesorio por una bobina de ese ancho (D-248):
  * `piso(ancho ÷ desarrollo)`. Siempre se usa el ancho completo del rollo y un solo
  * desarrollo por corte, así que el sobrante lateral —el canto— es merma del corte.
  *
@@ -259,7 +271,7 @@ export function accessoryPiecesPerPass(
 }
 
 /**
- * **El ancho efectivo de un accesorio** (D-242), y con él toda su aritmética de material.
+ * **El ancho efectivo de un accesorio** (D-248), y con él toda su aritmética de material.
  *
  * Una pasada se lleva el ancho completo del rollo y devuelve `N` piezas del largo de la
  * pasada. Repartir ese ancho entre las `N` piezas —`ancho ÷ N`— deja un número que se puede
@@ -285,7 +297,7 @@ export function accessoryEffectiveWidthMm(
 }
 
 /**
- * Lo que el canto se lleva, para **mostrarlo** (D-242, D-d): el ancho sobrante del rollo
+ * Lo que el canto se lleva, para **mostrarlo** (D-248, D-d): el ancho sobrante del rollo
  * después de las `N` piezas, y su fracción sobre el ancho completo.
  *
  * No se almacena ni emite kardex: la salida de material ya sale por el ancho completo, así
@@ -485,6 +497,73 @@ export function roofingConsumptionDeviation(input: {
   }
 
   return notes.length === 0 ? null : notes.join(' ');
+}
+
+export type MountedKgResult =
+  /** `kg` es lo que sale del kardex; `note` explica el tope cuando lo hubo (no es un error). */
+  { ok: true; kg: Decimal; capped: boolean; note: string | null } | { ok: false; message: string };
+
+/**
+ * D-246 — los kilos que un reporte saca del material montado.
+ *
+ * El kardex sale por el **teórico** de lo reportado (D-047), salvo cuando ese teórico pasa lo
+ * montado sin rolar. Entonces el acero ya salió y no hay nada más que montar, así que el
+ * reporte se **topa en lo montado** —la bobina queda en cero, nunca negativa— siempre que:
+ *
+ * - planta haya declarado kilos consumidos y lo declarado quepa en lo montado, o
+ * - sin declaración, el exceso del teórico no pase `THEORETICAL_KG_TOLERANCE_RATIO`.
+ *
+ * Fuera de eso sí falta material montado y el reporte se rechaza. Vive acá porque la pantalla
+ * de planta, el borrador y el reporte del API tienen que dar exactamente el mismo veredicto.
+ */
+export function mountedKgForReport(input: {
+  /** Quién tiene el material: el código de la bobina, o de la orden en drywall. */
+  label: string;
+  theoreticalKg: DecimalInput;
+  /** Kilos montados sin rolar que quedan. */
+  availableKg: DecimalInput;
+  /** Kilos que planta declara para este reporte, o `null` si no declaró. */
+  declaredKg: DecimalInput | null;
+}): MountedKgResult {
+  const theoretical = roundTo(input.theoreticalKg, 'KG');
+  const available = roundTo(input.availableKg, 'KG');
+  if (theoretical.lte(available)) {
+    return { ok: true, kg: theoretical, capped: false, note: null };
+  }
+  const label = input.label;
+  if (available.lte(0)) {
+    return {
+      ok: false,
+      message: `${label} no tiene kilos montados sin rolar: monta más material.`,
+    };
+  }
+  const excess = theoretical.minus(available);
+  const note =
+    `${label}: el material rindió más de lo teórico. Lo reportado equivale a ` +
+    `${theoretical.toFixed(3)} kg y quedaban ${available.toFixed(3)} kg montados; se descuentan ` +
+    `los ${available.toFixed(3)} kg (${excess.toFixed(3)} kg de tolerancia de laminado). ` +
+    'No es un error.';
+  if (input.declaredKg !== null) {
+    const declared = roundTo(input.declaredKg, 'KG');
+    if (declared.lte(available)) return { ok: true, kg: available, capped: true, note };
+    return {
+      ok: false,
+      message:
+        `${label} tiene ${available.toFixed(3)} kg montados y se declaran ${declared.toFixed(3)} kg ` +
+        'consumidos: monta más material o corrige la cifra.',
+    };
+  }
+  if (excess.lte(theoretical.times(toDecimal(THEORETICAL_KG_TOLERANCE_RATIO)))) {
+    return { ok: true, kg: available, capped: true, note };
+  }
+  return {
+    ok: false,
+    message:
+      `${label} tiene ${available.toFixed(3)} kg montados y lo reportado equivale a ` +
+      `${theoretical.toFixed(3)} kg: la diferencia (${excess.toFixed(3)} kg) pasa la tolerancia ` +
+      `del ${toDecimal(THEORETICAL_KG_TOLERANCE_RATIO).times(100).toFixed(0)} %. Si el acero ya ` +
+      'salió, declara los kg consumidos; si no, monta más material.',
+  };
 }
 
 // --------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-// Datos de demo de accesorios de cobertura (D-242) — M4 de la sesión ACC-demo.
+// Datos de demo de accesorios de cobertura (D-248) — M4 de la sesión ACC-demo.
 //
 // Crea, **por HTTP contra el API** (nunca SQL: todo pasa por servicios de dominio), el
 // escenario mínimo para mostrar el flujo completo en vivo:

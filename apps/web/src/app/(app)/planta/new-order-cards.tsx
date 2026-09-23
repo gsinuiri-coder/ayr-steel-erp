@@ -48,7 +48,7 @@ import { Skeleton } from '@/components/ui/skeleton';
  *
  * Son distintas porque el dominio las hace distintas: una cobertura a medida nace del
  * **pedido** que reserva el material (D-084), un perfil de drywall nace del **producto** y su
- * receta, y un accesorio a stock (D-242) nace de una meta **y un largo**, porque se vende por
+ * receta, y un accesorio a stock (D-248) nace de una meta **y un largo**, porque se vende por
  * metro y no tiene uno fijo.
  */
 
@@ -149,7 +149,7 @@ function LineWithoutOrderSummary({ entry }: { entry: LineWithoutOrderDto }) {
 }
 
 /**
- * D-242: una corrida de **accesorios a stock**.
+ * D-248: una corrida de **accesorios a stock**.
  *
  * Es la cuarta forma de abrir una orden y no cabía en ninguna de las tres: un accesorio no
  * nace de un pedido (se produce para tener en almacén), no tiene receta como un perfil de

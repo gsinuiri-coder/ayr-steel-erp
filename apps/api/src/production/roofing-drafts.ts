@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import {
   Decimal,
+  mountedKgForReport,
   piecesMeters,
   productionOrderCode,
   roofingPlanOverrun,
@@ -34,12 +35,12 @@ export interface DraftCoilState {
   remainingKg: Decimal;
   /**
    * La geometría con la que se cuenta el material de **esta** bobina. En un accesorio ya
-   * viene con el ancho efectivo (`ancho ÷ N`, D-242): la arma quien conoce el producto, y
+   * viene con el ancho efectivo (`ancho ÷ N`, D-248): la arma quien conoce el producto, y
    * acá se usa igual que siempre.
    */
   geometry: CoilGeometry;
   /**
-   * D-242: piezas por pasada de esta bobina, `null` fuera de un accesorio.
+   * D-248: piezas por pasada de esta bobina, `null` fuera de un accesorio.
    *
    * El borrador guarda lo que planta **tipeó** —pasadas—, no las piezas: ejecutar llama a
    * `reportInTx`, que es quien convierte (D-c). Si el borrador guardara piezas, ejecutarlo
@@ -63,12 +64,16 @@ export interface DraftCheckState {
 export interface DraftRowLike {
   coilId: string | undefined;
   pieces: readonly PieceLike[];
+  /** Kilos declarados de la fila (D-246: si caben en lo montado, la fila se topa ahí). */
+  consumedKg?: string | null;
 }
 
 export interface DraftRowCheck {
   coil: DraftCoilState;
   meters: Decimal;
   theoreticalKg: Decimal;
+  /** Lo que la fila va a sacar de la bobina al ejecutarse (D-246). */
+  outKg: Decimal;
 }
 
 export type DraftCheckResult =
@@ -117,7 +122,7 @@ export function checkDraftRows(
       }
     }
 
-    // D-242: la fila del borrador está en pasadas; el plan, el kardex y la bobina hablan de
+    // D-248: la fila del borrador está en pasadas; el plan, el kardex y la bobina hablan de
     // piezas. Se convierte una vez, acá, y de este punto en adelante la validación es la
     // misma que la de una cobertura a medida — que es la razón de que el borrador y el
     // reporte no puedan divergir.
@@ -147,17 +152,25 @@ export function checkDraftRows(
     const theoreticalKg = roofingTheoreticalKg(coil.geometry, pieces);
     const alreadyKg = usedKg.get(coil.coilId) ?? new Decimal(0);
     const leftKg = coil.remainingKg.minus(alreadyKg);
-    if (theoreticalKg.gt(leftKg)) {
+    // D-246: la misma regla que el reporte del API, fila por fila. Una fila topada deja la
+    // bobina en cero para las que siguen: el borrador acumula lo que **sale**, no el teórico.
+    const mounted = mountedKgForReport({
+      label: coil.coilCode,
+      theoreticalKg,
+      availableKg: leftKg,
+      declaredKg: row.consumedKg ?? null,
+    });
+    if (!mounted.ok) {
       return fail(
-        `${coil.coilCode} tiene ${toFixedString(coil.remainingKg, 'KG')} kg montados sin rolar` +
-          (alreadyKg.gt(0) ? ` y el borrador ya ocupa ${toFixedString(alreadyKg, 'KG')} kg` : '') +
-          `: esta fila necesita ${toFixedString(theoreticalKg, 'KG')} kg. Monta más material.`,
+        alreadyKg.gt(0)
+          ? `${mounted.message} (el borrador ya ocupa ${toFixedString(alreadyKg, 'KG')} kg de ${toFixedString(coil.remainingKg, 'KG')} kg montados sin rolar)`
+          : mounted.message,
       );
     }
 
-    usedKg.set(coil.coilId, alreadyKg.plus(theoreticalKg));
+    usedKg.set(coil.coilId, alreadyKg.plus(mounted.kg));
     draftMeters = draftMeters.plus(meters);
-    checks.push({ coil, meters, theoreticalKg });
+    checks.push({ coil, meters, theoreticalKg, outKg: mounted.kg });
   }
 
   return { ok: true, rows: checks };
@@ -182,7 +195,7 @@ export function toDraftDto(
   draft: DraftRow,
   index: number,
   /**
-   * D-242: la conversión del accesorio contra **la bobina de esta fila**, o `null` fuera de
+   * D-248: la conversión del accesorio contra **la bobina de esta fila**, o `null` fuera de
    * un accesorio. Viaja como parámetro y no se deduce del producto acá porque `N` depende
    * del rollo, y dos filas del mismo borrador pueden salir de rollos de anchos distintos.
    */

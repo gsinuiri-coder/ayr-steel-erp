@@ -1,4 +1,4 @@
--- D-242, segunda mitad: el desarrollo del accesorio y los CHECK que lo sostienen.
+-- D-248, segunda mitad: el desarrollo del accesorio y los CHECK que lo sostienen.
 --
 -- **Aditiva**: una columna nullable y dos constraints. Ningún SKU existente cambia de forma,
 -- y ninguna fila viva puede violar los CHECK nuevos (todas tienen `development_mm` NULL y un

@@ -275,7 +275,7 @@ enum RoofingProductKind {
   /// A medida: se cotiza en metros lineales por subítems de largo y se **fabrica** contra
   /// pedido reservando kilos de bobina (RF-31, D-084).
   A_MEDIDA
-  /// D-242: accesorio (cumbrera, canaleta, tapajunta…). Sale de las **mismas** bobinas que
+  /// D-248: accesorio (cumbrera, canaleta, tapajunta…). Sale de las **mismas** bobinas que
   /// el resto de coberturas y se vende por metro lineal, como `A_MEDIDA`; lo que cambia es
   /// que la roladora usa el ancho completo del rollo con un solo desarrollo por corte, así
   /// que cada pasada da `piso(ancho ÷ desarrollo)` piezas del largo de la pasada.
@@ -685,7 +685,7 @@ model Product {
   /// que decide la rama de la confirmación: `A_MEDIDA` reserva kilos de bobina y va a la
   /// cola de producción; `PLANCHA` exige stock de producto terminado.
   roofingKind    RoofingProductKind? @map("roofing_kind")
-  /// D-242: **desarrollo** del accesorio en mm: el ancho de fleje que se lleva una pieza
+  /// D-248: **desarrollo** del accesorio en mm: el ancho de fleje que se lleva una pieza
   /// —lo que mide la plantilla desplegada, antes de doblarla—. Obligatorio en `ACCESORIO`,
   /// null en todo el resto (lo exige el `CHECK products_development_mm_check`, que Prisma
   /// no sabe declarar y vive en la migración).

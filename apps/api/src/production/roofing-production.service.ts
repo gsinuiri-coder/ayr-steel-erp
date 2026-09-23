@@ -24,6 +24,7 @@ import {
   MAX_ORDER_REPORTS,
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
+  mountedKgForReport,
   piecesCount,
   piecesMeters,
   productionOrderCode,
@@ -103,6 +104,7 @@ import {
   roofingCloseAdjustmentPen,
   roofingCloseScrap,
   roofingCost,
+  reportsOutKg,
   roofingTheoreticalKg,
   type CoilGeometry,
 } from './roofing-math';
@@ -203,7 +205,7 @@ export class RoofingProductionService {
         // enchufarla y no volver a escribirla.
         //
         // -------------------------------------------------------------------
-        // **D-242 reabre la puerta, y solo para accesorios.** El dueño decidió que un
+        // **D-248 reabre la puerta, y solo para accesorios.** El dueño decidió que un
         // accesorio se produce contra pedido **y** a stock: una cumbrera de 3 m es un
         // artículo de mostrador, se repone de antemano y se vende del almacén.
         //
@@ -224,7 +226,7 @@ export class RoofingProductionService {
           throw new BadRequestException(
             'Una cobertura no se produce a stock: se fabrica contra el pedido que reserva su ' +
               'material (D-171). Confirmá el pedido y producí desde su reserva. ' +
-              'Los accesorios sí se producen a stock (D-242).',
+              'Los accesorios sí se producen a stock (D-248).',
           );
         }
         return this.createToStock(tx, actor, input, orderOperationDate);
@@ -415,7 +417,7 @@ export class RoofingProductionService {
 
     const roofing = await this.production.requireRoofingProduct(product.id);
 
-    // D-242: un accesorio **sí** se produce a stock, y el largo lo elige la corrida.
+    // D-248: un accesorio **sí** se produce a stock, y el largo lo elige la corrida.
     //
     // No lo puede sacar del maestro como una plancha —se vende por metro y no tiene largo
     // fijo— ni de un pedido, porque no hay ninguno detrás. Que lo elija quien programa la
@@ -456,7 +458,7 @@ export class RoofingProductionService {
     // D-084/D-140: mismo plan de una sola línea que ya arma la cola cuando no hay subítems
     // de pedido: el largo repetido tantas veces como la meta pide.
     //
-    // D-242: en un accesorio la meta son **piezas**, igual que en una plancha — lo que cambia
+    // D-248: en un accesorio la meta son **piezas**, igual que en una plancha — lo que cambia
     // es que esas piezas salen de a `N` por pasada, y eso lo resuelve el reporte contra la
     // bobina montada. El plan no lo puede saber: todavía no hay rollo.
     const items = derivePiecesPlan([], pieceLengthMm, input.targetPieces.toString());
@@ -493,7 +495,7 @@ export class RoofingProductionService {
         productId: product.id,
         reservationId: null,
         targetPieces: input.targetPieces,
-        // D-242: en un accesorio el largo es una decisión de esta corrida y no del maestro,
+        // D-248: en un accesorio el largo es una decisión de esta corrida y no del maestro,
         // así que queda en el log. Null en una plancha, donde el largo es del SKU.
         pieceLengthMm: accessory ? pieceLengthMm : null,
         plan: describePieces(items),
@@ -916,7 +918,7 @@ export class RoofingProductionService {
 
     const product = await tx.product.findUniqueOrThrow({
       where: { id: order.productId },
-      // D-242: el subtipo, el desarrollo y el ancho nominal son lo que convierte las pasadas
+      // D-248: el subtipo, el desarrollo y el ancho nominal son lo que convierte las pasadas
       // que planta reporta en las piezas que entran al kardex.
       select: {
         sku: true,
@@ -972,7 +974,7 @@ export class RoofingProductionService {
     }
 
     // -----------------------------------------------------------------------
-    // D-242 — una corrida de accesorios se reporta en pasadas
+    // D-248 — una corrida de accesorios se reporta en pasadas
     // -----------------------------------------------------------------------
     //
     // Lo que planta tipea es `{largo de pasada, cuántas pasadas}`; lo que sale de la roladora
@@ -1044,7 +1046,7 @@ export class RoofingProductionService {
     // lado que el aviso del agregado.
     const declaredKg = input.consumedKg === undefined ? null : toDecimal(input.consumedKg);
     const deviation: string[] = [];
-    // D-242, ajuste 1: si el rollo montado no rinde lo que rendía el ancho del catálogo, el
+    // D-248, ajuste 1: si el rollo montado no rinde lo que rendía el ancho del catálogo, el
     // aviso va por el mismo canal que la desviación de kilos — queda en la fila del reporte,
     // en el log y en la respuesta que ve el operario. No es un rechazo: el rollo es el que
     // hay, y los metros que salen son los que salen. Lo que no puede pasar es que la corrida
@@ -1071,17 +1073,30 @@ export class RoofingProductionService {
     // Un solo rollo por reporte, así que el reparto es trivial — pero pasa por el mismo
     // `allocateStripKg` que drywall para heredar su mensaje cuando el material no
     // alcanza, en vez de escribir una segunda versión del mismo chequeo.
+    const rowRemainingKg = toDecimal(row.assignedKg.toString()).minus(
+      toDecimal(row.consumedKg.toString()),
+    );
+    // D-246: si el teórico pasa lo montado y el acero ya salió (lo declarado cabe, o el
+    // exceso entra en la tolerancia), el reporte se topa en lo montado en vez de bloquear.
+    // El teórico queda en la fila del reporte como dato; el kardex sale por `outKg`.
+    const mounted = mountedKgForReport({
+      label: row.coil.code,
+      theoreticalKg: neededKg,
+      availableKg: rowRemainingKg,
+      declaredKg,
+    });
+    if (!mounted.ok) throw new BadRequestException(mounted.message);
+    if (mounted.note !== null) deviation.unshift(mounted.note);
+    const outKg = mounted.kg;
     const allocationRows: StripAllocationRow[] = [
       {
         consumptionId: row.id,
         coilId: row.coilId,
         coilCode: row.coil.code,
-        remainingKg: toDecimal(row.assignedKg.toString()).minus(
-          toDecimal(row.consumedKg.toString()),
-        ),
+        remainingKg: rowRemainingKg,
       },
     ];
-    const allocations = allocateStripKg(allocationRows, neededKg);
+    const allocations = allocateStripKg(allocationRows, outKg);
 
     // D-171: el nombre importa con cuatro predicados en juego. Lo que decide en qué unidad
     // entra lo producido al kardex es **la unidad de venta**, o sea `sellsByLength`, y no el
@@ -1117,7 +1132,7 @@ export class RoofingProductionService {
       // admite bobinas del color y el espesor del producto, que son exactamente las que
       // cumplen el agregado, así que cualquier kilo que esta orden role es un kilo del
       // agregado que el pedido prometía.
-      await consumeReservationQty(tx, order.reservationId, neededKg);
+      await consumeReservationQty(tx, order.reservationId, outKg);
       await tx.salesOrder.updateMany({
         where: { id: reservation.salesOrderId, status: SalesOrderStatus.CONFIRMED },
         data: { status: SalesOrderStatus.IN_PRODUCTION },
@@ -1275,7 +1290,7 @@ export class RoofingProductionService {
         confirmedBackdate: input.confirmBackdate === true,
         coilCode: row.coil.code,
         plan: describePieces(pieces),
-        // D-242: lo que planta tipeó **y** lo que salió. Sin las dos lecturas, auditar una
+        // D-248: lo que planta tipeó **y** lo que salió. Sin las dos lecturas, auditar una
         // corrida de accesorios obliga a adivinar con qué `N` se convirtió, y `N` sale del
         // ancho del rollo montado, que puede no ser el del catálogo.
         accessory:
@@ -1291,6 +1306,7 @@ export class RoofingProductionService {
         outputQty: toFixedString(outputQty, 'KG'),
         outputUnit,
         theoreticalKg: toFixedString(neededKg, 'KG'),
+        outKg: toFixedString(outKg, 'KG'),
         declaredKg: declaredKg === null ? null : toFixedString(declaredKg, 'KG'),
         planMeters: progress.planMeters.toFixed(3),
         reportedMetersAfter: progress.reportedMeters.plus(newMeters).toFixed(3),
@@ -1326,7 +1342,7 @@ export class RoofingProductionService {
         ...(salesOrderId ? { reservation: { salesOrderId } } : {}),
       },
       include: {
-        // D-242: `roofingKind`/`developmentMm`/`widthMm` son lo que convierte las pasadas
+        // D-248: `roofingKind`/`developmentMm`/`widthMm` son lo que convierte las pasadas
         // del borrador en las piezas que la pestaña muestra.
         product: {
           select: {
@@ -1382,7 +1398,7 @@ export class RoofingProductionService {
     });
 
     const rows = orders.map((order): RoofingBatchOrderDto => {
-      // D-242: cada fila se convierte contra **su** bobina, no contra la primera montada.
+      // D-248: cada fila se convierte contra **su** bobina, no contra la primera montada.
       const drafts = order.reportDrafts.map((draft, i) =>
         toDraftDto(draft, i, accessoryConversion(order.product, draft.coil.widthMm.toFixed(2))),
       );
@@ -1431,11 +1447,15 @@ export class RoofingProductionService {
             new Decimal(0),
           )
           .toFixed(3),
-        reportedKg: order.reports
-          .reduce((acc, r) => acc.plus(toDecimal(r.theoreticalKg.toString())), new Decimal(0))
+        // D-246: lo que los reportes sacaron de verdad, no la suma de sus teóricos (un reporte
+        // topado en lo montado sacó menos). Con la orden abierta, el `consumedKg` de sus
+        // bobinas montadas es exactamente eso: solo lo mueven los reportes y sus reversas, y
+        // una bobina con consumo no se puede bajar. Es la cota que la pantalla usa al cerrar.
+        reportedKg: order.consumptions
+          .reduce((acc, c) => acc.plus(toDecimal(c.consumedKg.toString())), new Decimal(0))
           .toFixed(3),
         coils: order.consumptions.map((c) => {
-          // D-242: el rendimiento se resuelve por bobina, acá, y viaja calculado al web.
+          // D-248: el rendimiento se resuelve por bobina, acá, y viaja calculado al web.
           const accessory = accessoryConversion(order.product, c.coil.widthMm.toFixed(2));
           return {
             coilId: c.coilId,
@@ -1845,10 +1865,26 @@ export class RoofingProductionService {
       orderBy: { createdAt: 'asc' },
     });
 
-    const reportedKg = reports.reduce(
-      (acc, r) => acc.plus(toDecimal(r.theoreticalKg.toString())),
-      new Decimal(0),
+    // D-246: el piso es lo que los reportes **sacaron** de la bobina, no la suma de sus
+    // teóricos: un reporte topado en lo montado sacó menos que su teórico. Para los reportes
+    // de antes de D-246 la salida es su teórico, así que el cierre les da lo mismo que antes.
+    const coilOuts = liveMovements(
+      await tx.inventoryMovement.findMany({
+        where: {
+          refType: 'PRODUCTION',
+          refId: { in: reports.map((r) => r.id) },
+          itemType: 'COIL',
+          type: 'OUT',
+        },
+        include: { reversals: { select: { id: true } } },
+      }),
     );
+    const outByReport = reportsOutKg(
+      reports.map((r) => ({ id: r.id, theoreticalKg: toDecimal(r.theoreticalKg.toString()) })),
+      coilOuts.map((m) => ({ refId: m.refId, qty: toDecimal(m.qty.toString()) })),
+    );
+    const outKgOf = (reportId: string) => outByReport.get(reportId) ?? new Decimal(0);
+    const reportedKg = reports.reduce((acc, r) => acc.plus(outKgOf(r.id)), new Decimal(0));
     const remainingKg = rows.reduce(
       (acc, r) =>
         acc.plus(
@@ -1871,7 +1907,8 @@ export class RoofingProductionService {
     const declaredByReportsKg = reports.some((r) => r.consumedKg !== null)
       ? Decimal.max(
           reports.reduce(
-            (acc, r) => acc.plus(toDecimal((r.consumedKg ?? r.theoreticalKg).toString())),
+            (acc, r) =>
+              acc.plus(r.consumedKg === null ? outKgOf(r.id) : toDecimal(r.consumedKg.toString())),
             new Decimal(0),
           ),
           reportedKg,
@@ -2706,7 +2743,7 @@ export class RoofingProductionService {
       )
       .map((c) => {
         const availableKg = qtyById.get(c.id) ?? new Decimal(0);
-        // D-242: con un accesorio, los metros que rinde un rollo dependen de cuántas piezas
+        // D-248: con un accesorio, los metros que rinde un rollo dependen de cuántas piezas
         // da cada pasada —y eso lo decide **este** rollo, no el ancho del catálogo—. Con el
         // ancho pelado, el picker mostraría los metros de una cobertura a medida: hasta N
         // veces menos de los que la bobina de verdad da, justo en la pantalla donde planta
@@ -2738,7 +2775,7 @@ export class RoofingProductionService {
           })(),
           availableKg: availableKg.toFixed(3),
           estimatedMeters: toFixedString(metersFromKg(geometry, availableKg.toFixed(3)), 'KG'),
-          // D-242: null fuera de un accesorio. Es el dato con el que planta compara dos
+          // D-248: null fuera de un accesorio. Es el dato con el que planta compara dos
           // rollos de anchos distintos, que es de lo que depende el rendimiento entero de
           // la corrida.
           piecesPerPass: accessory?.piecesPerPass ?? null,
