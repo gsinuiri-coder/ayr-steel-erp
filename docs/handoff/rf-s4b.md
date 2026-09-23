@@ -79,6 +79,14 @@ Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3
 normalización se deshace desde la auditoría (`catalog.product-rename-sku`,
 `catalog.product-merge`) o restaurando la rama de respaldo si hiciera falta.
 
+## Verificación
+
+- Unitarios: API 796/796, web 11/11. `pnpm lint`, `pnpm typecheck`, `prettier --check` verdes.
+- E2E completo con builds de producción: 331/36/2/20 en la primera corrida; todo rojo
+  clasificado (infraestructura del runner local salvo dos, corregidos). Re-corrida de los rojos y
+  del tramo sin correr: 80/2/1, los dos explicados. Detalle en `docs/PROGRESO.md`.
+- **Falta la CI del PR** (R2 y PSE reales): la rama no está en el remoto.
+
 ## Lo que queda pendiente
 
 - **Pase cruzado independiente** (AGENTS.md §2.2) — registrado en `PROGRESO.md`.

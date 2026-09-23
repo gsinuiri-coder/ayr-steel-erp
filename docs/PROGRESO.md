@@ -93,7 +93,22 @@ no lo toca (decisión 4 del dueño, test `accepted-files-sku-rename.spec.ts`).
 - E2E nuevos, corridos aislados en local (`pnpm exec playwright test <spec>`): COT-000002 al
   importar (1/1), COT-000002 por el barrido (1/1), normalización con reportes RF-S4a iguales al
   centavo (1/1), D-168 actualizado a D-252 (1/1).
-- Suite E2E completa con builds de producción: ver el handoff `docs/handoff/rf-s4b.md`.
+- Suite E2E completa con builds de producción (`node scripts/e2e-latency.mjs`, `next start` +
+  `node dist/main.js`, desde el worktree, 99.4 min): **331 passed / 36 failed / 2 skipped / 20
+  did not run.** Clasificación:
+  - 24 rojos + 20 sin correr, **infraestructura**: el stack local murió alrededor del test 346
+    (el login por el web devolvía 500 «Unexpected token ':'» después de un timeout de planta).
+  - 7 rojos, **infraestructura/entorno**: `PSE_ENABLED` sin definir en el runner local («Emisión
+    electrónica no habilitada»); en CI está en `true`.
+  - 2 rojos, **infraestructura**: R2 no configurado en local (PDF de cotización en fase5a, XML de
+    compra en fase2a); las credenciales solo viven en los secrets de CI.
+  - 1 rojo, **producto, corregido** (`b6963ab`): la normalización paraba sobre `BOB…` de colores
+    dados de baja.
+  - 1 rojo, **prueba, corregido**: D-169 esperaba el 400 que R2 elimina a propósito.
+- Re-corrida con builds de producción y `PSE_ENABLED=true` de los specs con rojos y de todo el
+  tramo que no corrió (83 tests, 21.5 min): **80 passed / 2 failed / 1 skipped**. Los dos: fase2a
+  (R2, infraestructura, esta rama no toca compras) y D-169 (aserción del mensaje del pipe de Zod;
+  corregida, el spec aislado da 7/7). La cobertura de R2 real queda para la CI del PR.
 - M3 (sacrificable): spec del controlador de reportes hecho; el render de la vista de margen
   **no** —D-011 verifica la UI con Playwright y un render en vitest exigiría sumar jsdom y
   testing-library, que es decisión del dueño—.
