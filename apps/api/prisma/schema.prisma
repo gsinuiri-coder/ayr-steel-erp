@@ -686,6 +686,13 @@ model Product {
   /// suelta, sin FK, mismo criterio que `refId` en el kardex: sirve para que la purga de un
   /// lote sepa qué borrar y qué conservar por estar referenciado fuera de él.
   importBatchId  String?             @map("import_batch_id") @db.Uuid
+  /// D-253 (RF-S4b): el producto **principal** al que este se unió. Un producto unido queda
+  /// inactivo con su SKU viejo —la historia cerrada sigue apuntándole— y nadie lo vuelve a
+  /// ofrecer ni a resolver. CHECK en la base: unido ⇒ inactivo y distinto de sí mismo. Sin
+  /// cadenas: el principal está activo y sin `mergedIntoId` (lo impone el servicio de unión).
+  mergedIntoId   String?             @map("merged_into_id") @db.Uuid
+  mergedInto     Product?            @relation("ProductMerge", fields: [mergedIntoId], references: [id], onDelete: Restrict)
+  mergedFrom     Product[]           @relation("ProductMerge")
   createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -702,6 +709,7 @@ model Product {
   @@index([businessLineId])
   @@index([colorId])
   @@index([importBatchId])
+  @@index([mergedIntoId])
   @@map("products")
 }
 

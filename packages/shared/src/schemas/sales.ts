@@ -1110,17 +1110,57 @@ export const updateSalesOrderItemPriceSchema = z
   .object({
     unitPricePen: priceSchema.optional(),
     valuePerMeterPen: priceSchema.optional(),
+    /** D-255 (R2): el precio unitario con IGV; el total es el dato y el resto se deriva. */
+    unitPriceWithIgvPen: priceSchema.optional(),
+    /** D-255 (R2): el importe de la línea sin IGV (valor de venta); el unitario se deriva. */
+    netAmountPen: priceSchema.optional(),
   })
   .superRefine((v, ctx) => {
-    if ((v.unitPricePen === undefined) === (v.valuePerMeterPen === undefined)) {
+    const forms = [v.unitPricePen, v.valuePerMeterPen, v.unitPriceWithIgvPen, v.netAmountPen].filter(
+      (f) => f !== undefined,
+    ).length;
+    if (forms !== 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['unitPricePen'],
-        message: 'Manda el valor unitario o el valor por metro (uno de los dos)',
+        message:
+          'Manda una sola forma del precio: valor unitario, valor por metro, precio con IGV o importe de la línea',
       });
     }
   });
 export type UpdateSalesOrderItemPriceInput = z.infer<typeof updateSalesOrderItemPriceSchema>;
+
+/**
+ * D-254 (R1): atar una línea de un pedido a una bobina del pool —la que la vende—. Es la
+ * salida para una línea con código de bobina que quedó sin bobina (varias candidatas o
+ * ninguna) o enganchada a un producto `BOB…` suelto (COT-000002). La cantidad y el importe no
+ * cambian: los manda el papel (D-255).
+ */
+export const updateSalesOrderItemCoilSchema = z.object({
+  saleCoilId: z.string().uuid(),
+  reason: z.string().trim().min(3).max(240),
+});
+export type UpdateSalesOrderItemCoilInput = z.infer<typeof updateSalesOrderItemCoilSchema>;
+
+/** D-254: las bobinas del pool de un producto de venta de bobina, para los selectores. */
+export const coilPoolQuerySchema = z.object({
+  productId: z.string().uuid(),
+  qty: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
+  /** El documento que pregunta: su propia reserva no le quita candidatas. */
+  exceptSalesOrderId: z.string().uuid().optional(),
+  exceptQuotationId: z.string().uuid().optional(),
+});
+export type CoilPoolQuery = z.infer<typeof coilPoolQuerySchema>;
+
+export const coilPoolSchema = z.object({
+  sku: z.string(),
+  availableKg: z.string(),
+  candidates: z.array(
+    z.object({ coilId: z.string().uuid(), code: z.string(), widthMm: z.string(), balanceKg: z.string() }),
+  ),
+  autoCoilId: z.string().uuid().nullable(),
+});
+export type CoilPoolDto = z.infer<typeof coilPoolSchema>;
 
 /**
  * Nueva cantidad de una línea confirmada. Una línea a medida manda sus largos, y la cantidad

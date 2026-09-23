@@ -758,6 +758,63 @@ export class QuotationImportService {
 }
 
 // ---------------------------------------------------------------------------
+// RF-S4b: el papel, para el barrido de lo ya importado
+// ---------------------------------------------------------------------------
+
+/** Una línea del comprobante de origen, leída igual que la lee el preview. */
+export interface PaperLine {
+  rowNumber: number;
+  documentKey: string;
+  rawSku: string;
+  productName: string;
+  qty: string | null;
+  /** Valor de venta en soles, a escala de dinero. `null` si la fila no lo trae legible. */
+  netAmountPen: string | null;
+  /** IGV y total del papel, solo si cuadran con el valor (D-255). */
+  igvAmountPen: string | null;
+  totalAmountPen: string | null;
+  /** Una nota de crédito o un documento ajustado: el importador no los trae. */
+  excluded: boolean;
+}
+
+/**
+ * Las líneas del export de ventas detalladas, con la misma lectura que `preview`: mismo
+ * redondeo de la cantidad, misma conversión de moneda y la misma regla del trío del papel. El
+ * barrido compara contra esto, así que no puede leer el archivo de otra forma.
+ */
+export function readPaperLines(buffer: Buffer): PaperLine[] {
+  const raw = parseSpreadsheet(buffer);
+  assertColumns(raw[0] ?? {});
+  return raw.map((r, i) => {
+    const docType = field(r, 'docType');
+    const qty = parseAmount(field(r, 'qty'));
+    const net = parseAmount(field(r, 'netAmount'));
+    const currency = field(r, 'currency');
+    const rate = parseAmount(field(r, 'exchangeRate'));
+    const isForeign = /d[óo]lar/i.test(currency);
+    const netPen =
+      net === null || (isForeign && rate === null)
+        ? null
+        : money(isForeign && rate ? net.times(rate) : net);
+    const igv = parseAmount(field(r, 'igv'));
+    const total = parseAmount(field(r, 'totalAmount'));
+    const triplet =
+      netPen !== null && !isForeign && igv !== null && total !== null && paperTriplet(netPen, igv, total);
+    return {
+      rowNumber: i + 1,
+      documentKey: field(r, 'documentKey'),
+      rawSku: field(r, 'sku'),
+      productName: field(r, 'productName'),
+      qty: qty === null ? null : toFixedString(qty, 'KG'),
+      netAmountPen: netPen === null ? null : toFixedString(netPen, 'MONEY'),
+      igvAmountPen: triplet && igv ? toFixedString(money(igv), 'MONEY') : null,
+      totalAmountPen: triplet && total ? toFixedString(money(total), 'MONEY') : null,
+      excluded: /nota/i.test(docType) || field(r, 'adjustedDocument') !== '',
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Lectura del archivo
 // ---------------------------------------------------------------------------
 

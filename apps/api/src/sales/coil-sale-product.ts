@@ -15,6 +15,7 @@ import {
   commercialColorToken,
   COIL_SKU_PREFIX,
   Decimal,
+  normalizeCoilSku,
   toDecimal,
   toFixedString,
   Unit,
@@ -211,6 +212,75 @@ export async function ensureCoilSaleProduct(
     },
     update: {},
   });
+}
+
+/** El pool de un SKU canónico: el SKU, el espesor y el color comercial o tipo. */
+export interface CoilPoolKey {
+  sku: string;
+  thicknessMm: string;
+  attribute: string;
+}
+
+/** El pool al que pertenece una bobina concreta. */
+export function coilPoolKeyOf(identity: CoilSaleIdentity): CoilPoolKey | null {
+  const attribute = attributeOf(identity.finish);
+  if (attribute === null) return null;
+  return { sku: coilSaleSkus(identity).canonical, thicknessMm: thicknessOf(identity), attribute };
+}
+
+/**
+ * D-254: el pool de un **producto de venta de bobina**, cualquiera sea la forma de su SKU: el
+ * canónico (`BOB038AZUL`), uno heredado cargado a mano (`BOB38AZUL`, que el normalizador
+ * interpreta, con la descripción de respaldo) o el viejo de la transición (`BOBALZ-AZUL0.38`,
+ * que se reconoce por el código del acabado). `null` si no es un producto de bobina o no se
+ * puede interpretar.
+ */
+export async function coilPoolKeyOfProduct(
+  tx: Prisma.TransactionClient,
+  product: { sku: string; name: string; businessLine: { code: BusinessLineCode } },
+  description?: string | null,
+): Promise<CoilPoolKey | null> {
+  if (!isCoilSaleProduct(product)) return null;
+  const known = await knownCoilAttributes(tx);
+  const parsed = normalizeCoilSku(
+    { code: product.sku, description: description ?? product.name },
+    known,
+  );
+  if (parsed.ok) {
+    return { sku: parsed.sku, thicknessMm: parsed.thicknessMm, attribute: parsed.attribute };
+  }
+  // El SKU viejo (D-037/D-168): `BOB` + código de acabado + espesor con dos decimales.
+  const legacy = /^BOB(.+?)(\d+\.\d{2})$/.exec(product.sku.toUpperCase());
+  if (!legacy) return null;
+  const [, finishCode = '', thicknessMm = ''] = legacy;
+  const finish = await tx.finish.findUnique({
+    where: { code: finishCode },
+    select: { code: true, kind: true, color: { select: { code: true } } },
+  });
+  return finish === null ? null : coilPoolKeyOf({ thicknessMm, finish });
+}
+
+/**
+ * D-254: el pool de una línea de documento. La que ya vende una bobina sale de esa bobina; la
+ * que está enganchada a un producto de bobina (COT-000002), de ese producto.
+ */
+export async function lineCoilPool(
+  tx: Prisma.TransactionClient,
+  line: {
+    description: string;
+    reserveItemType: InventoryItemType;
+    reserveItemId: string;
+    product: { sku: string; name: string; businessLine: { code: BusinessLineCode } };
+  },
+): Promise<CoilPoolKey | null> {
+  if (line.reserveItemType === InventoryItemType.COIL) {
+    const coil = await tx.coil.findUnique({
+      where: { id: line.reserveItemId },
+      select: COIL_SALE_IDENTITY_SELECT,
+    });
+    return coil === null ? null : coilPoolKeyOf(coil);
+  }
+  return coilPoolKeyOfProduct(tx, line.product, line.description);
 }
 
 // ---------------------------------------------------------------------------

@@ -332,24 +332,59 @@ export class QuotationsService {
   ): Promise<SalesItemInput[]> {
     const stored = await tx.quotationItem.findMany({
       where: { quotationId },
-      select: { productId: true, qty: true, unitPricePen: true, subtotalPen: true },
+      select: {
+        productId: true,
+        qty: true,
+        unitPricePen: true,
+        subtotalPen: true,
+        igvPen: true,
+        totalPen: true,
+      },
       orderBy: { lineNumber: 'asc' },
     });
     const available = stored.map((row) => ({ row, taken: false }));
+    // D-255: con el importe de la línea sigue viajando el IGV y el total **del papel** que la
+    // línea tenía guardados, para que editar un documento importado no le recalcule el IGV al
+    // 18 % y lo separe del comprobante en diezmilésimas.
+    const withPaper = (
+      item: SalesItemInput,
+      row: (typeof stored)[number],
+    ): SalesItemInput => ({
+      ...item,
+      netAmountPen: row.subtotalPen.toFixed(4),
+      igvAmountPen: row.igvPen.toFixed(4),
+      totalAmountPen: row.totalPen.toFixed(4),
+    });
 
     return items.map((item) => {
+      const sameQty = (row: (typeof stored)[number]): boolean =>
+        toDecimal(row.qty.toString()).equals(toDecimal(item.qty));
+      // D-255 (R2): la línea que ya trae su importe manda el suyo. Si es el que tenía guardado
+      // (la edición cambió el producto o la bobina, no el importe), se le devuelve el papel entero.
+      if (item.netAmountPen !== undefined) {
+        const same = available.find(
+          (c) =>
+            !c.taken &&
+            sameQty(c.row) &&
+            toDecimal(c.row.subtotalPen.toString()).equals(toDecimal(item.netAmountPen ?? '0')),
+        );
+        if (!same || item.igvAmountPen !== undefined) return item;
+        same.taken = true;
+        return withPaper(item, same.row);
+      }
       const { productId, unitPricePen } = item;
       if (unitPricePen === undefined || productId === undefined) return item;
       const match = available.find(
         (candidate) =>
           !candidate.taken &&
           candidate.row.productId === productId &&
-          toDecimal(candidate.row.qty.toString()).equals(toDecimal(item.qty)) &&
+          sameQty(candidate.row) &&
           toDecimal(candidate.row.unitPricePen.toString()).equals(toDecimal(unitPricePen)),
       );
       if (!match) return item;
       match.taken = true;
-      return { ...item, netAmountPen: match.row.subtotalPen.toFixed(4) };
+      const { unitPricePen: _typed, ...rest } = item;
+      return withPaper(rest, match.row);
     });
   }
 

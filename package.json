@@ -44,6 +44,8 @@
     "check:roofing-catalog": "node scripts/check-roofing-catalog.mjs",
     "check:coil-skus": "node scripts/check-coil-skus.mjs",
     "import:initial-inventory": "node scripts/import-initial-inventory.mjs",
+    "normalize:coil-skus": "node scripts/normalize-coil-skus.mjs",
+    "sweep:imported": "node scripts/sweep-imported-documents.mjs",
     "export:coils": "node scripts/export-coils.mjs",
     "limpia:v4": "node scripts/production-cleanup-v4.mjs",
     "backfill:seller-scope": "node scripts/backfill-seller-scope.mjs",

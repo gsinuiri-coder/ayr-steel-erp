@@ -13,17 +13,24 @@ import {
 import {
   businessToday,
   carriesInventory,
+  DERIVED_UNIT_VALUE_DECIMALS,
+  derivedUnitValue,
+  isImportedQuotation,
+  lineAmounts,
   MAX_SALES_ITEMS,
+  money,
   productionOrderCode,
-  salesLineTotals,
   salesOrderCode,
   STANDING_DOCUMENT_STATUSES,
   toDecimal,
   toFixedString,
+  Unit,
   type AddSalesOrderItemsInput,
   type ChangeSalesOrderCustomerInput,
+  type LineAmountBasis,
   type SalesItemInput,
   type SalesOrderDto,
+  type UpdateSalesOrderItemCoilInput,
   type UpdateSalesOrderItemPriceInput,
   type UpdateSalesOrderItemQtyInput,
 } from '@ayr/shared';
@@ -35,6 +42,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import { derivePiecesPlan } from '../production/roofing-math';
 import { RoofingProductionService } from '../production/roofing-production.service';
+import {
+  COIL_SALE_IDENTITY_SELECT,
+  coilPoolFor,
+  coilSaleSkus,
+  findCoilSaleProducts,
+  lineCoilPool,
+} from './coil-sale-product';
 import { recordPriceChanges } from './price-changes';
 import { assertPriceFloor } from './price-floor';
 import { resolveSalesLines } from './sales-lines';
@@ -47,6 +61,8 @@ interface LockedOrder {
   status: SalesOrderStatus;
   createdById: string;
   sellerId: string | null;
+  /** D-256: el pedido nació de una cotización importada (D-152). */
+  imported: boolean;
 }
 
 /**
@@ -91,6 +107,11 @@ export class SalesOrderEditsService {
       const order = await this.lockEditable(tx, orderId, 'cambiar el precio');
       const item = await this.requireItem(tx, orderId, itemId);
       const at = `Línea ${item.lineNumber}`;
+      // D-256 (aclaración de D-163): lo que trajo el importador ya se vendió, a los precios a los
+      // que se vendió. Corregirle una línea al pedido —igual que a la cotización— no la vuelve
+      // una oferta nueva, así que no pasa por el piso; queda auditado como exento.
+      const imported = order.imported;
+      const floor = imported ? undefined : { toleranceMm: roofingToleranceMm(this.env) };
 
       let next: {
         unitPricePen: string;
@@ -103,44 +124,53 @@ export class SalesOrderEditsService {
         // Venta de bobina entera (D-116): la cantidad es el saldo que se reservó y el precio es
         // por kg. No pasa por `resolveSalesLines`, que volvería a leer el saldo **disponible**
         // de la bobina —cero, porque este mismo pedido la tiene reservada— y rechazaría.
-        if (input.unitPricePen === undefined) {
+        // D-255 (R2): por kg, con IGV o por importe de línea; el unitario se deriva.
+        const basis: LineAmountBasis | null =
+          input.netAmountPen !== undefined
+            ? { netAmountPen: input.netAmountPen }
+            : input.unitPriceWithIgvPen !== undefined
+              ? { unitPriceWithIgvPen: input.unitPriceWithIgvPen }
+              : input.unitPricePen !== undefined
+                ? { unitValuePen: input.unitPricePen }
+                : null;
+        if (basis === null) {
           throw new BadRequestException(`${at}: la venta de una bobina se cotiza por kg`);
         }
+        const amounts = lineAmounts(item.qty.toString(), basis);
+        const unitPricePen = toFixedString(money(amounts.unitValue), 'MONEY');
         const coil = await tx.coil.findUniqueOrThrow({
           where: { id: item.reserveItemId },
           select: { code: true },
         });
-        await assertPriceFloor(
-          tx,
-          [
-            {
-              at,
-              sku: coil.code,
-              businessLineId: item.product.businessLineId,
-              basis: { kind: 'UNIT', unitLabel: 'kg' },
-              unitValuePen: input.unitPricePen,
-              cost: { kind: 'COIL', coilId: item.reserveItemId },
-            },
-          ],
-          roofingToleranceMm(this.env),
-        );
-        const totals = salesLineTotals({
-          qty: item.qty.toString(),
-          unitPricePen: input.unitPricePen,
-        });
+        if (floor) {
+          await assertPriceFloor(
+            tx,
+            [
+              {
+                at,
+                sku: coil.code,
+                businessLineId: item.product.businessLineId,
+                basis: { kind: 'UNIT', unitLabel: 'kg' },
+                unitValuePen: unitPricePen,
+                cost: { kind: 'COIL', coilId: item.reserveItemId },
+              },
+            ],
+            floor.toleranceMm,
+          );
+        }
         next = {
-          unitPricePen: toFixedString(input.unitPricePen, 'MONEY'),
+          unitPricePen,
           valuePerMeterPen: null,
-          subtotalPen: toFixedString(totals.subtotal, 'MONEY'),
-          igvPen: toFixedString(totals.igv, 'MONEY'),
-          totalPen: toFixedString(totals.total, 'MONEY'),
+          subtotalPen: toFixedString(amounts.subtotal, 'MONEY'),
+          igvPen: toFixedString(amounts.igv, 'MONEY'),
+          totalPen: toFixedString(amounts.total, 'MONEY'),
         };
       } else {
         // El resto recalcula la línea entera por el mismo camino que la cotización —mismo
         // redondeo, misma regla del valor por metro (D-161), mismo piso (D-163)— y se queda
         // solo con el precio y los importes: lo reservado no cambia con el precio.
         const [line] = await resolveSalesLines(tx, [this.lineInput(item, { price: input })], {
-          priceFloor: { toleranceMm: roofingToleranceMm(this.env) },
+          ...(floor ? { priceFloor: floor } : {}),
           firstLineNumber: item.lineNumber,
         });
         if (!line) throw new NotFoundException(`${at}: no se pudo recalcular`);
@@ -182,10 +212,195 @@ export class SalesOrderEditsService {
         after: {
           unitPricePen: next.unitPricePen,
           valuePerMeterPen: next.valuePerMeterPen,
+          subtotalPen: next.subtotalPen,
           totalPen: totals.totalPen,
+          // D-255: la forma en que se cargó el precio; D-256: la exención del piso, con nombre.
+          priceForm:
+            input.netAmountPen !== undefined
+              ? 'IMPORTE_DE_LINEA'
+              : input.unitPriceWithIgvPen !== undefined
+                ? 'PRECIO_CON_IGV'
+                : input.valuePerMeterPen !== undefined
+                  ? 'VALOR_POR_METRO'
+                  : 'VALOR_UNITARIO',
+          ...(imported ? { priceFloorExempt: 'D-163/D-256: pedido importado' } : {}),
         },
       });
     });
+    return this.orders.findOne(orderId);
+  }
+
+  // -------------------------------------------------------------------------
+  // D-255 (R2): restablecer el importe del comprobante de origen (barrido)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Devuelve a una línea de un pedido **importado y abierto** los importes del comprobante de
+   * origen: el valor de venta y, si el papel los trae y cuadran, su IGV y su total. El unitario
+   * se deriva (D-255). Solo lo usa el barrido de lo importado, con auditoría; un pedido con
+   * comprobante no se toca (`lockEditable`), y uno que no viene del importador tampoco.
+   */
+  async restorePaperAmounts(
+    actor: RequestUser,
+    orderId: string,
+    itemId: string,
+    paper: { netAmountPen: string; igvAmountPen?: string; totalAmountPen?: string },
+    reason: string,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockEditable(tx, orderId, 'restablecer importes');
+      if (!order.imported) {
+        throw new BadRequestException(
+          `${salesOrderCode(order.seq)} no viene del importador: no tiene comprobante de origen`,
+        );
+      }
+      const item = await this.requireItem(tx, orderId, itemId);
+      const amounts = lineAmounts(
+        item.qty.toString(),
+        paper.igvAmountPen !== undefined && paper.totalAmountPen !== undefined
+          ? {
+              netAmountPen: paper.netAmountPen,
+              igvAmountPen: paper.igvAmountPen,
+              totalAmountPen: paper.totalAmountPen,
+            }
+          : { netAmountPen: paper.netAmountPen },
+      );
+      const next = {
+        unitPricePen: toFixedString(money(amounts.unitValue), 'MONEY'),
+        valuePerMeterPen: item.valuePerMeterPen?.toFixed(4) ?? null,
+        subtotalPen: toFixedString(amounts.subtotal, 'MONEY'),
+        igvPen: toFixedString(amounts.igv, 'MONEY'),
+        totalPen: toFixedString(amounts.total, 'MONEY'),
+      };
+      await recordPriceChanges(
+        tx,
+        { salesOrderId: orderId },
+        [item],
+        [{ lineNumber: item.lineNumber, productId: item.productId, ...next }],
+        actor.id,
+      );
+      await tx.salesOrderItem.update({ where: { id: item.id }, data: next });
+      const totals = await this.refreshTotals(tx, orderId);
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.order.item-paper-amounts',
+        entity: 'sales_orders',
+        entityId: orderId,
+        before: {
+          code: salesOrderCode(order.seq),
+          lineNumber: item.lineNumber,
+          subtotalPen: item.subtotalPen.toFixed(4),
+          igvPen: item.igvPen.toFixed(4),
+          totalPen: item.totalPen.toFixed(4),
+        },
+        after: { ...next, orderTotalPen: totals.totalPen },
+        reason,
+      });
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // D-254 (R1): atar una línea a una bobina del pool
+  // -------------------------------------------------------------------------
+
+  /**
+   * Ata la línea a una bobina concreta del pool de su SKU de bobina. La cantidad y el importe no
+   * cambian —los manda el papel (D-255)—; lo que cambia es qué bobina se promete y, si la línea
+   * estaba enganchada a un `BOB…` suelto (COT-000002), el producto pasa al de venta canónico.
+   *
+   * Solo se ofrece una bobina que el pool acepta para esta línea: mismo espesor exacto y mismo
+   * color comercial o tipo, libre y con saldo ≥ la cantidad (D-254). La reserva propia del pedido
+   * no le quita candidatas.
+   */
+  async updateItemCoil(
+    actor: RequestUser,
+    orderId: string,
+    itemId: string,
+    input: UpdateSalesOrderItemCoilInput,
+  ): Promise<SalesOrderDto> {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const order = await this.lockEditable(tx, orderId, 'cambiar la bobina');
+        this.assertOwner(actor, order, 'cambiarle la bobina');
+        const item = await this.requireItem(tx, orderId, itemId);
+        const at = `Línea ${item.lineNumber}`;
+        const dispatched = await tx.dispatchItem.findFirst({
+          where: { salesOrderItemId: item.id, dispatch: { status: DispatchStatus.ISSUED } },
+          select: { id: true },
+        });
+        if (dispatched) {
+          throw new BadRequestException(`${at}: ya tiene despachos, así que su bobina no se cambia`);
+        }
+        const pool = await lineCoilPool(tx, item);
+        if (pool === null) {
+          throw new BadRequestException(
+            `${at}: ${item.product.sku} no es una venta de bobina, así que no se ata a una bobina`,
+          );
+        }
+        const qty = toFixedString(item.qty.toString(), 'KG');
+        const candidates = await coilPoolFor(tx, pool, qty, { exceptSalesOrderIds: [orderId] });
+        if (!candidates.candidates.some((c) => c.coilId === input.saleCoilId)) {
+          throw new BadRequestException(
+            `${at}: esa bobina no está en el pool de ${pool.sku} con ${qty} kg libres (espesor exacto, mismo color o tipo, sin reserva ni OP)`,
+          );
+        }
+        const coil = await tx.coil.findUniqueOrThrow({
+          where: { id: input.saleCoilId },
+          select: { id: true, code: true, ...COIL_SALE_IDENTITY_SELECT },
+        });
+        const product = (await findCoilSaleProducts(tx, [coil])).get(coilSaleSkus(coil).canonical);
+        if (!product) {
+          throw new NotFoundException(`${coil.code}: no existe el producto de venta de la bobina`);
+        }
+
+        await tx.$queryRaw`
+          SELECT "id" FROM "reservations" WHERE "sales_order_item_id" = ${item.id}::uuid
+          ORDER BY "id" FOR UPDATE
+        `;
+        await tx.reservation.updateMany({
+          where: { salesOrderItemId: item.id, status: ReservationStatus.ACTIVE },
+          data: {
+            qty: '0',
+            status: ReservationStatus.RELEASED,
+            releasedAt: new Date(),
+            releasedById: actor.id,
+          },
+        });
+        const updated = await tx.salesOrderItem.update({
+          where: { id: item.id },
+          data: {
+            productId: product.id,
+            unit: Unit.KGM,
+            reserveItemType: InventoryItemType.COIL,
+            reserveItemId: coil.id,
+            reserveQty: qty,
+            reserveUnit: Unit.KGM,
+          },
+        });
+        await this.orders.createReservations(tx, actor, orderId, [updated]);
+
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'sales.order.item-coil',
+          entity: 'sales_orders',
+          entityId: orderId,
+          before: {
+            code: salesOrderCode(order.seq),
+            lineNumber: item.lineNumber,
+            productSku: item.product.sku,
+            reserveItemType: item.reserveItemType,
+            reserveItemId: item.reserveItemId,
+          },
+          after: {
+            productSku: product.sku,
+            coilCode: coil.code,
+            reserveQty: qty,
+            reason: input.reason,
+          },
+        });
+      },
+      { timeout: 30_000 },
+    );
     return this.orders.findOne(orderId);
   }
 
@@ -599,9 +814,10 @@ export class SalesOrderEditsService {
         status: SalesOrderStatus;
         created_by_id: string;
         seller_id: string | null;
+        notes: string | null;
       }[]
     >`
-      SELECT "id", "seq", "status", "created_by_id", "seller_id"
+      SELECT "id", "seq", "status", "created_by_id", "seller_id", "notes"
       FROM "sales_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE
     `;
     const head = rows[0];
@@ -631,6 +847,8 @@ export class SalesOrderEditsService {
       status: head.status,
       createdById: head.created_by_id,
       sellerId: head.seller_id,
+      // D-152: confirmar una cotización importada copia sus observaciones al pedido.
+      imported: isImportedQuotation(head.notes),
     };
   }
 
@@ -642,7 +860,15 @@ export class SalesOrderEditsService {
     const item = await tx.salesOrderItem.findFirst({
       where: { id: itemId, salesOrderId: orderId },
       include: {
-        product: { select: { businessLineId: true, lengthMm: true } },
+        product: {
+          select: {
+            businessLineId: true,
+            lengthMm: true,
+            sku: true,
+            name: true,
+            businessLine: { select: { code: true } },
+          },
+        },
         pieces: { orderBy: { lineNumber: 'asc' } },
       },
     });
@@ -663,6 +889,7 @@ export class SalesOrderEditsService {
       qty: Prisma.Decimal;
       unitPricePen: Prisma.Decimal;
       valuePerMeterPen: Prisma.Decimal | null;
+      subtotalPen: Prisma.Decimal;
       description: string;
       pieces: { lengthMm: Prisma.Decimal; qty: number }[];
     },
@@ -672,10 +899,17 @@ export class SalesOrderEditsService {
       pieces?: UpdateSalesOrderItemQtyInput['pieces'];
     },
   ): SalesItemInput {
-    const price = change.price ?? {
+    // D-255 (R2): sin precio nuevo, el de la línea **derivado de su importe** con diez
+    // decimales, nunca los cuatro guardados: cambiar la cantidad de una línea de 3840 kg por
+    // S/ 11 715.254 con 3.0508 se iba 18 céntimos.
+    const price: UpdateSalesOrderItemPriceInput = change.price ?? {
       ...(item.valuePerMeterPen !== null
         ? { valuePerMeterPen: item.valuePerMeterPen.toFixed(4) }
-        : { unitPricePen: item.unitPricePen.toFixed(4) }),
+        : {
+            unitPricePen: derivedUnitValue(item.qty.toString(), item.subtotalPen.toString()).toFixed(
+              DERIVED_UNIT_VALUE_DECIMALS,
+            ),
+          }),
     };
     const pieces =
       change.pieces ??
@@ -688,9 +922,13 @@ export class SalesOrderEditsService {
       ...(change.pieces === undefined ? { description: item.description } : {}),
       ...(price.valuePerMeterPen !== undefined
         ? { valuePerMeterPen: price.valuePerMeterPen }
-        : price.unitPricePen !== undefined
-          ? { unitPricePen: price.unitPricePen }
-          : {}),
+        : price.netAmountPen !== undefined
+          ? { netAmountPen: price.netAmountPen }
+          : price.unitPriceWithIgvPen !== undefined
+            ? { unitPriceWithIgvPen: price.unitPriceWithIgvPen }
+            : price.unitPricePen !== undefined
+              ? { unitPricePen: price.unitPricePen }
+              : {}),
       ...(pieces !== undefined ? { pieces } : {}),
     };
   }

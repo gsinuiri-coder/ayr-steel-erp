@@ -35,6 +35,8 @@ import { DashboardService } from './dashboard.service';
     QuotationExpiryJob,
     DashboardService,
   ],
-  exports: [QuotationsService, SalesOrdersService],
+  // RF-S4b: `SalesOrderEditsService` lo usa el barrido de lo importado (atar bobina, restablecer
+  // importes del papel) por el mismo camino auditado que la pantalla.
+  exports: [QuotationsService, SalesOrdersService, SalesOrderEditsService],
 })
 export class SalesModule {}

@@ -5,6 +5,11 @@
     "outDir": "./dist-cli",
     "incremental": false
   },
-  "include": ["src", "prisma/import-initial-inventory-cli.ts"],
+  "include": [
+    "src",
+    "prisma/import-initial-inventory-cli.ts",
+    "prisma/normalize-coil-skus-cli.ts",
+    "prisma/sweep-imported-documents-cli.ts"
+  ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

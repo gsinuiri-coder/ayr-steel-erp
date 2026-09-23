@@ -145,10 +145,12 @@ export function buildInvoicePayload(command: IssueDocumentCommand): Record<strin
       // Con IGV, calculado en Decimal y recién después convertido (D-003): en `number`,
       // 11.86 × 1.18 daba 13.994799999999998 y el PSE valida coherencia entre el valor
       // unitario, el precio unitario y los totales.
+      // D-255: con los mismos diez decimales que el valor unitario (manual JSON v3.0 de
+      // Nubefact: «hasta con 10 decimales»), para que precio y valor no se separen al redondear.
       precio_unitario: Number(
         toDecimal(line.unitPricePen)
           .times(toDecimal(command.igvRatePct).div(100).plus(1))
-          .toFixed(4),
+          .toFixed(10),
       ),
       subtotal: Number(line.subtotalPen),
       tipo_de_igv: IGV_TYPE_TAXED,

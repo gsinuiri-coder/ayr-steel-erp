@@ -27,6 +27,8 @@ import {
   GRE_TRANSFER_MODES,
   TransferMode,
   IGV_RATE_PCT,
+  DERIVED_UNIT_VALUE_DECIMALS,
+  derivedUnitValue,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginate,
   paginateInMemory,
@@ -796,7 +798,13 @@ export class InvoicingService {
           );
         }
         usedHere.set(orderItem.id, (usedHere.get(orderItem.id) ?? new Decimal(0)).plus(qty));
-        const price = item.unitPricePen ?? orderItem.unitPricePen.toString();
+        // D-255 (R2): sin precio editado, el unitario de la línea del pedido **derivado de su
+        // importe** con diez decimales, nunca los cuatro guardados para mostrar.
+        const price =
+          item.unitPricePen ??
+          derivedUnitValue(orderItem.qty.toString(), orderItem.subtotalPen.toString()).toFixed(
+            DERIVED_UNIT_VALUE_DECIMALS,
+          );
         // D-169: **la línea que factura el pedido entero a su propio precio copia su importe**
         // en vez de recalcularlo. En un pedido nacido del importador (D-152) ese importe es el
         // del comprobante que ya se emitió, y recalcularlo dejaba la cuenta por cobrar unos
@@ -1979,7 +1987,12 @@ export class InvoicingService {
         description: i.description,
         unit: i.unit,
         qty: i.qty.toFixed(3),
-        unitPricePen: i.unitPricePen.toFixed(4),
+        // D-255 (R2): al PSE va el unitario **derivado del importe** con diez decimales —lo
+        // que acepta `valor_unitario` según el manual JSON v3.0 de Nubefact—, no los cuatro
+        // guardados para mostrar: 3.0508 × 3840 no es 11 715.254 y el PSE valida coherencia.
+        unitPricePen: derivedUnitValue(i.qty.toString(), i.subtotalPen.toString()).toFixed(
+          DERIVED_UNIT_VALUE_DECIMALS,
+        ),
         subtotalPen: i.subtotalPen.toFixed(4),
         igvPen: i.igvPen.toFixed(4),
         totalPen: i.totalPen.toFixed(4),

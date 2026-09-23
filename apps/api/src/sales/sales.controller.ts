@@ -14,10 +14,15 @@ import type { Response } from 'express';
 import {
   addSalesOrderItemsSchema,
   changeSalesOrderCustomerSchema,
+  coilPoolQuerySchema,
+  updateSalesOrderItemCoilSchema,
   updateSalesOrderItemPriceSchema,
   updateSalesOrderItemQtySchema,
   type AddSalesOrderItemsInput,
   type ChangeSalesOrderCustomerInput,
+  type CoilPoolDto,
+  type CoilPoolQuery,
+  type UpdateSalesOrderItemCoilInput,
   type UpdateSalesOrderItemPriceInput,
   type UpdateSalesOrderItemQtyInput,
   cancelQuotationSchema,
@@ -387,6 +392,31 @@ export class SalesController {
     @Body(new ZodValidationPipe(updateSalesOrderItemQtySchema)) body: UpdateSalesOrderItemQtyInput,
   ): Promise<SalesOrderDto> {
     return this.edits.updateItemQty(actor, id, itemId, body);
+  }
+
+  /**
+   * D-254 (R1): atar una línea a una bobina del pool de su SKU de bobina, con motivo. La
+   * cantidad y el importe no cambian. Dueño o ADMINISTRADOR, como la cantidad.
+   */
+  @Patch('orders/:id/items/:itemId/coil')
+  updateOrderItemCoil(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body(new ZodValidationPipe(updateSalesOrderItemCoilSchema)) body: UpdateSalesOrderItemCoilInput,
+  ): Promise<SalesOrderDto> {
+    return this.edits.updateItemCoil(actor, id, itemId, body);
+  }
+
+  /**
+   * D-254: las bobinas del pool de un producto de venta de bobina que pueden atender una línea
+   * de esa cantidad, para el selector de la edición de cotizaciones y pedidos. Sin costos.
+   */
+  @Get('coil-pool')
+  coilPool(
+    @Query(new ZodValidationPipe(coilPoolQuerySchema)) query: CoilPoolQuery,
+  ): Promise<CoilPoolDto> {
+    return this.orders.coilPool(query);
   }
 
   /** Agregar ítems (reserva + OP), aun con despacho parcial: dueño o ADMINISTRADOR. */

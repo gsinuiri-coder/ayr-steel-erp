@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CustomersModule } from '../customers/customers.module';
 import { SalesModule } from '../sales/sales.module';
 import { QuotationImportController } from './quotation-import.controller';
+import { ImportedDocumentsSweepService } from './imported-documents-sweep.service';
 import { QuotationImportService } from './quotation-import.service';
 
 /**
@@ -14,6 +15,8 @@ import { QuotationImportService } from './quotation-import.service';
 @Module({
   imports: [SalesModule, CustomersModule],
   controllers: [QuotationImportController],
-  providers: [QuotationImportService],
+  // RF-S4b: el barrido de lo importado lo usa solo su CLI (dry-run por defecto), sin ruta HTTP.
+  providers: [QuotationImportService, ImportedDocumentsSweepService],
+  exports: [ImportedDocumentsSweepService],
 })
 export class QuotationImportModule {}

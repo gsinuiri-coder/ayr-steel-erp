@@ -26,6 +26,7 @@ import {
   type ProductDto,
   type ProductListPriceChangeDto,
   type UpdateProductInput,
+  COIL_SKU_PREFIX,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -151,6 +152,14 @@ export class CatalogService {
   async create(actor: RequestUser, input: CreateProductInput): Promise<ProductDto> {
     const line = await this.prisma.businessLine.findUnique({ where: { id: input.businessLineId } });
     if (!line) throw new BadRequestException('Línea de negocio inválida');
+    // D-257 (RF-S4b): el SKU de una bobina **se genera** desde espesor + color comercial o tipo al
+    // dar de alta la bobina (D-252); no se tipea. Un `BOB…` suelto es exactamente lo que produjo
+    // COT-000002: un producto sin saldo ni bobinas detrás que el importador tomó por la bobina.
+    if (input.sku.toUpperCase().startsWith(COIL_SKU_PREFIX)) {
+      throw new BadRequestException(
+        `Los SKU ${COIL_SKU_PREFIX}… son de bobina y se generan solos al dar de alta la bobina (espesor + color o tipo, D-252): no se crean a mano`,
+      );
+    }
     const colorId = await this.colors.resolveActive(input.colorId);
     const finish = await this.resolveActiveFinish(input.finishId);
     const roofingKind = input.roofingKind ?? null;

@@ -55,6 +55,8 @@ import {
   toSkipTake,
   Unit,
   type BusinessLine,
+  type CoilPoolDto,
+  type CoilPoolQuery,
   type CreateSalesOrderInput,
   type PaginatedResult,
   type LineWithoutOrderDto,
@@ -109,6 +111,7 @@ import {
   theoreticalKgForMeters,
   toSalesItemDto,
 } from './sales-lines';
+import { coilPoolFor, coilPoolKeyOfProduct } from './coil-sale-product';
 import { buildPlantOrderPdf } from './plant-order-pdf';
 import { findPriceChanges } from './price-changes';
 import {
@@ -3054,6 +3057,28 @@ export class SalesOrdersService {
         ? row
         : { ...row, minPricePen: floor.minPricePen, minValuePen: floor.minValuePen };
     });
+  }
+
+  /**
+   * D-254: las candidatas del pool de un producto de venta de bobina para una cantidad. Es lo
+   * que muestran los selectores de bobina de la edición de cotizaciones y pedidos; la regla es la
+   * misma que aplica el importador (`coilPoolFor`).
+   */
+  async coilPool(query: CoilPoolQuery): Promise<CoilPoolDto> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: query.productId },
+      select: { sku: true, name: true, businessLine: { select: { code: true } } },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    const key = await coilPoolKeyOfProduct(this.prisma, product);
+    if (key === null) {
+      throw new BadRequestException(`${product.sku} no es un producto de venta de bobina`);
+    }
+    const pool = await coilPoolFor(this.prisma, key, query.qty, {
+      ...(query.exceptSalesOrderId ? { exceptSalesOrderIds: [query.exceptSalesOrderId] } : {}),
+      ...(query.exceptQuotationId ? { exceptQuotationIds: [query.exceptQuotationId] } : {}),
+    });
+    return { sku: key.sku, ...pool };
   }
 
   /**

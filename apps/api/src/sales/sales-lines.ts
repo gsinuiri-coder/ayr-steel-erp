@@ -1,14 +1,13 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
-  BusinessLineCode,
   CoilKind,
   CoilStatus,
   InventoryItemType,
+  type BusinessLineCode,
   type Prisma,
 } from '@prisma/client';
 import {
   carriesInventory,
-  coilSkuFromTypeKey,
   Decimal,
   describePieces,
   fixedLengthUnitValue,
