@@ -51,6 +51,13 @@ export const QUOTATION_IMPORT_COLUMNS = {
   unit: 'UNIDAD MEDIDA',
   qty: 'CANTIDAD',
   netAmount: 'VALOR DE VENTA',
+  /**
+   * D-255: el IGV y el importe con IGV de la línea. **Opcionales**: cuando el archivo los trae y
+   * cuadran con el valor de venta (`paperTriplet`), los tres importes del papel se guardan tal
+   * cual; si faltan o no cuadran, el IGV se calcula como siempre.
+   */
+  igv: 'IGV',
+  totalAmount: 'PRECIO DE VENTA',
 } as const;
 
 /** Las que sin ellas el archivo no es este archivo. */
@@ -244,11 +251,33 @@ export const quotationImportRowInputSchema = z.object({
    * archivo de una diferencia que introdujo la corrección.
    */
   netAmountPen: decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY }).optional(),
+  /**
+   * D-255: el IGV y el importe con IGV del papel. Viajan juntos, y solo con `netAmountPen`: una
+   * fila editada pierde los tres.
+   */
+  igvAmountPen: decimalStringSchema('MONEY', { max: MAX_VALUE.MONEY }).optional(),
+  totalAmountPen: decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY }).optional(),
+  /**
+   * D-254 (R1): la bobina del pool que atiende una línea con código de bobina. La elige el
+   * preview cuando hay una sola candidata (o una sola con el saldo exacto del papel); si no, la
+   * elige quien revisa. Con ella la línea es una venta de bobina y `productId` es el producto de
+   * venta canónico de esa bobina.
+   */
+  saleCoilId: z.string().uuid().optional(),
   description: z.string().trim().max(240).optional(),
   /** D-083: los largos de una cobertura a medida. Ausente en toda línea simple. */
   pieces: roofingPiecesSchema.optional(),
 });
 export type QuotationImportRowInput = z.infer<typeof quotationImportRowInputSchema>;
+
+/** D-254: una bobina del pool que puede atender la línea, para el selector del preview. */
+export const coilPoolCandidateSchema = z.object({
+  coilId: z.string().uuid(),
+  code: z.string(),
+  widthMm: z.string(),
+  balanceKg: z.string(),
+});
+export type CoilPoolCandidateDto = z.infer<typeof coilPoolCandidateSchema>;
 
 /** Una fila del preview: lo de arriba más lo que hace falta para pintarla y decidirla. */
 export const quotationImportRowSchema = quotationImportRowInputSchema
@@ -279,6 +308,16 @@ export const quotationImportRowSchema = quotationImportRowInputSchema
      * de cobertura: son dos preguntas distintas y confundirlas es exactamente D-131.
      */
     needsPieces: z.boolean(),
+    /**
+     * D-252/D-254 (R1): la fila trae un **código de bobina** que el normalizador interpretó. Su
+     * producto es el SKU canónico y su disponibilidad es el pool; nunca un producto suelto.
+     */
+    coilLine: z.boolean(),
+    /** D-254: las bobinas del pool que pueden atender la línea. Vacío fuera de una línea de bobina. */
+    coilCandidates: z.array(coilPoolCandidateSchema),
+    /** D-254: lo disponible en el pool, en kg. `null` fuera de una línea de bobina. */
+    coilPoolAvailableKg: z.string().nullable(),
+    saleCoilId: z.string().uuid().nullable(),
     currency: z.string(),
     /** Solo informativo: con qué tipo de cambio se llevó el precio a soles. */
     exchangeRate: z.string().nullable(),
@@ -291,11 +330,14 @@ export const quotationImportRowSchema = quotationImportRowInputSchema
   })
   // El preview manda strings crudos: una fila con la cantidad vacía o el importe ilegible
   // tiene que **llegar a la pantalla** con su marca, no morir en el parseo del archivo entero.
-  .omit({ qty: true, unitPricePen: true, netAmountPen: true })
+  .omit({ qty: true, unitPricePen: true, netAmountPen: true, igvAmountPen: true, totalAmountPen: true })
   .extend({
     qty: z.string(),
     unitPricePen: z.string(),
     netAmountPen: z.string(),
+    /** D-255: cadena vacía cuando el archivo no los trae o no cuadran. */
+    igvAmountPen: z.string(),
+    totalAmountPen: z.string(),
   });
 export type QuotationImportRowDto = z.infer<typeof quotationImportRowSchema>;
 

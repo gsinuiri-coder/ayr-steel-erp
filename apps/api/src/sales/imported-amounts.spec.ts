@@ -205,14 +205,15 @@ describe('D-169 — el importe del archivo se copia, no se recalcula', () => {
     ).rejects.toThrow(/se separan S\/ 80\.00/);
   });
 
-  it('fuera del importador, mandar el importe exacto es un 400', async () => {
-    // La cotización manual y el pedido directo no pasan la opción: sin este corte, cualquier
-    // cliente HTTP podría fijar el importe de una línea a mano y el precio unitario quedaría
-    // de adorno.
-    await expect(
-      resolveSalesLines(txWith(), [
-        { productId: 'p-1', qty: '3.000', unitPricePen: '33.3333', netAmountPen: '999.0000' },
-      ]),
-    ).rejects.toThrow(/solo lo trae el importador/);
+  it('D-255 (R2): fuera del importador, el importe de línea es una forma válida de cargar el precio', async () => {
+    // Hasta RF-S4b era un 400: el importe solo lo traía el importador. R2 lo invierte —el
+    // importe de la línea es el dato en todo documento— y el unitario pasa a derivarse de él.
+    // Lo que **no** pasa fuera del importador es la tolerancia del documento: no hay papel
+    // contra el que medirla.
+    const [line] = await resolveSalesLines(txWith(), [
+      { productId: 'p-1', qty: '3.000', netAmountPen: '100.0000' },
+    ]);
+    expect(line?.subtotalPen).toBe('100.0000');
+    expect(line?.unitPricePen).toBe('33.3333');
   });
 });

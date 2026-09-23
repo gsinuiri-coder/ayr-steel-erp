@@ -97,6 +97,93 @@ export function salesLineTotalsFromNet(netPen: DecimalInput): SalesLineTotals {
 }
 
 /**
+ * D-255: decimales del unitario **derivado**. Es lo que acepta `valor_unitario` en el manual de
+ * integración JSON v3.0 de Nubefact («hasta con 10 decimales»). Los cuatro decimales de
+ * `unit_price_pen` (D-003) quedan para mostrar; ninguna cuenta vuelve a salir de ellos.
+ */
+export const DERIVED_UNIT_VALUE_DECIMALS = 10;
+
+/**
+ * D-255: el valor unitario sin IGV que se deriva del importe de la línea.
+ *
+ * Es la única forma de volver del importe al unitario: `importe ÷ cantidad` a diez decimales,
+ * redondeo al medio hacia arriba. Con cuatro decimales, 3840 kg por S/ 11 715.254 no tenía
+ * ningún unitario que lo reprodujera (3.0508 se iba −0.18 y 3.0509, +0.20); con diez,
+ * `3.0508473958 × 3840` vuelve al importe con una diferencia de 5 × 10⁻⁸.
+ */
+export function derivedUnitValue(qty: DecimalInput, subtotalPen: DecimalInput): Decimal {
+  const q = toDecimal(qty);
+  if (q.lte(0)) return new Decimal(0);
+  return toDecimal(subtotalPen)
+    .div(q)
+    .toDecimalPlaces(DERIVED_UNIT_VALUE_DECIMALS, Decimal.ROUND_HALF_UP);
+}
+
+/**
+ * D-255: **cómo se cargó el importe de una línea** (R2). Una sola de las tres formas; las otras
+ * cifras se derivan de ella.
+ *
+ * - `unitValuePen`: el valor unitario sin IGV (la forma de siempre). El importe es
+ *   `redondeo(cantidad × valor)`.
+ * - `unitPriceWithIgvPen`: el precio unitario **con** IGV, que es como negocia el vendedor
+ *   (D-162). El dato es el total `redondeo(cantidad × precio)`; el subtotal sale de dividirlo y
+ *   el IGV es la resta, así que el total que el cliente paga es exacto. Antes el formulario
+ *   dividía el precio entre 1.18 a cuatro decimales y el API volvía a multiplicar: 3.5 × 4194
+ *   salía 14 678.99 en vez de 14 679.00 (COT-000002).
+ * - `netAmountPen`: el importe de la línea sin IGV. Con `igvAmountPen` y `totalAmountPen`, los
+ *   tres importes del papel se guardan tal cual (el importador, cuando el archivo los trae y
+ *   cuadran: el sistema de origen parte del precio con IGV y su IGV es la resta, así que
+ *   recalcularlo al 18 % separaba el total del papel en diezmilésimas que la cobranza, que
+ *   redondea al céntimo hacia arriba, convertía en un céntimo de más).
+ */
+export type LineAmountBasis =
+  | { unitValuePen: DecimalInput }
+  | { unitPriceWithIgvPen: DecimalInput }
+  | { netAmountPen: DecimalInput; igvAmountPen?: DecimalInput; totalAmountPen?: DecimalInput };
+
+export interface LineAmounts extends SalesLineTotals {
+  /** El unitario sin IGV derivado del importe, a diez decimales (D-255). */
+  unitValue: Decimal;
+}
+
+/** D-255: los importes de una línea desde la forma en que se cargaron. El importe manda. */
+export function lineAmounts(qty: DecimalInput, basis: LineAmountBasis): LineAmounts {
+  let totals: SalesLineTotals;
+  if ('unitValuePen' in basis) {
+    totals = salesLineTotals({ qty, unitPricePen: basis.unitValuePen });
+  } else if ('unitPriceWithIgvPen' in basis) {
+    const total = money(toDecimal(qty).times(toDecimal(basis.unitPriceWithIgvPen)));
+    const subtotal = money(total.div(toDecimal(IGV_RATE_PCT).div(100).plus(1)));
+    totals = { subtotal, igv: total.minus(subtotal), total };
+  } else if (basis.igvAmountPen !== undefined && basis.totalAmountPen !== undefined) {
+    const subtotal = money(basis.netAmountPen);
+    const total = money(basis.totalAmountPen);
+    totals = { subtotal, igv: total.minus(subtotal), total };
+  } else {
+    totals = salesLineTotalsFromNet(basis.netAmountPen);
+  }
+  return { ...totals, unitValue: derivedUnitValue(qty, totals.subtotal) };
+}
+
+/**
+ * D-255: ¿los tres importes del papel cuadran entre sí? El IGV tiene que ser la resta exacta y
+ * estar a menos de un céntimo del 18 % del subtotal (el papel redondea a tres decimales). Si no
+ * cuadran, el importador se queda con el valor de venta y deriva el resto.
+ */
+export function paperTriplet(
+  netPen: DecimalInput,
+  igvPen: DecimalInput,
+  totalPen: DecimalInput,
+): boolean {
+  const net = toDecimal(netPen);
+  const igv = toDecimal(igvPen);
+  const total = toDecimal(totalPen);
+  if (!net.plus(igv).equals(total)) return false;
+  const expected = net.times(toDecimal(IGV_RATE_PCT)).div(100);
+  return igv.minus(expected).abs().lte('0.01');
+}
+
+/**
  * D-169: cuánto se separa el importe del papel de `cantidad × valor unitario`.
  *
  * Positivo cuando el papel dice más que la cuenta. Es el número que se muestra por línea y el
@@ -194,6 +281,8 @@ const isoDateSchema = z
 
 const qtySchema = decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG });
 const priceSchema = decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY });
+/** D-255: un importe que puede ser cero (el IGV del papel de una línea inafecta). */
+const moneyAmountSchema = decimalStringSchema('MONEY', { max: MAX_VALUE.MONEY });
 
 /**
  * La unidad de un producto es texto libre en el maestro (`products.unit`, VarChar(20)):
@@ -311,8 +400,26 @@ export const salesItemInputSchema = z.object({
    *
    * Con esto, el importe **se copia** y lo que se deriva es el unitario, que es el orden
    * correcto: el unitario es el dato calculado del papel y el importe es el dato firmado.
+   *
+   * **D-255 (R2): ya no es exclusivo del importador.** El importe de la línea es el dato en
+   * toda línea de todo producto: el alta y la edición de cotizaciones y pedidos también pueden
+   * cargarlo, y el unitario se deriva con diez decimales (`lineAmounts`).
    */
   netAmountPen: priceSchema.optional(),
+  /**
+   * D-255: el IGV y el importe con IGV **del papel**, junto con `netAmountPen`. Solo los manda el
+   * importador cuando el archivo trae las tres columnas y cuadran (`paperTriplet`): así el total
+   * del pedido es el del comprobante al céntimo, sin recalcular el IGV al 18 %.
+   */
+  igvAmountPen: moneyAmountSchema.optional(),
+  totalAmountPen: priceSchema.optional(),
+  /**
+   * D-255 (R2): el **precio unitario con IGV**, que es lo que el vendedor negocia (D-162). El
+   * dato que se guarda es el total `redondeo(cantidad × precio)`; el subtotal y el IGV se
+   * derivan de él. Es la forma en que el web manda el precio desde RF-S4b: dividir el precio
+   * entre 1.18 en el navegador y mandar cuatro decimales perdía céntimos en líneas grandes.
+   */
+  unitPriceWithIgvPen: priceSchema.optional(),
   description: z.string().trim().max(240).optional(),
   /**
    * D-116 (Fase 7e): venta de una bobina completa (RF-73), virgen o con saldo parcial. El
@@ -362,6 +469,34 @@ const salesItemsSchema = z
           code: z.ZodIssueCode.custom,
           path: [i, 'valuePerMeterPen'],
           message: 'Manda el valor por metro o el valor unitario, no los dos',
+        });
+      }
+      // D-255: una sola forma de cargar el importe. Dos formas a la vez dejarían al API
+      // eligiendo cuál manda, y la regla es que manda la que el usuario cargó.
+      const forms = [
+        item.unitPricePen,
+        item.valuePerMeterPen,
+        item.unitPriceWithIgvPen,
+        item.netAmountPen,
+      ].filter((v) => v !== undefined).length;
+      if (forms > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [i, 'netAmountPen'],
+          message:
+            'Carga el precio con IGV, el valor unitario o el importe de la línea: una sola de las tres',
+        });
+      }
+      if (
+        (item.igvAmountPen !== undefined || item.totalAmountPen !== undefined) &&
+        (item.netAmountPen === undefined ||
+          item.igvAmountPen === undefined ||
+          item.totalAmountPen === undefined)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [i, 'totalAmountPen'],
+          message: 'El IGV y el total del papel viajan juntos y con el importe de la línea',
         });
       }
       if (item.valuePerMeterPen !== undefined && item.pieces !== undefined) {

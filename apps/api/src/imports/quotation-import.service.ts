@@ -8,6 +8,10 @@ import {
   IMPORT_ROUNDING_TOLERANCE_PEN,
   MAX_PADRON_LOOKUPS,
   money,
+  normalizeCoilSku,
+  paperTriplet,
+  Unit,
+  type CoilPoolCandidateDto,
   MAX_QUOTATION_IMPORT_ROWS,
   PADRON_LOOKUP_CONCURRENCY,
   QUOTATION_IMPORT_COLUMNS,
@@ -28,6 +32,12 @@ import type { RequestUser } from '../auth/auth.types';
 import { CustomersService } from '../customers/customers.service';
 import { DocumentLookupService } from '../customers/document-lookup.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  COIL_SALE_IDENTITY_SELECT,
+  coilPoolFor,
+  findCoilSaleProducts,
+  knownCoilAttributes,
+} from '../sales/coil-sale-product';
 import { sellsByLength } from '../sales/sales-lines';
 import { QuotationsService } from '../sales/quotations.service';
 import {
@@ -78,7 +88,13 @@ export class QuotationImportService {
     const docNumbers = [...new Set(raw.map((r) => customerDocOf(field(r, 'customer'))))].filter(
       (v) => v !== null,
     );
-    const skus = [...new Set(raw.map((r) => field(r, 'sku')))].filter((v) => v !== '');
+    // D-252/D-254 (R1): las filas con código de bobina se resuelven **antes** y aparte. Su
+    // producto es el SKU canónico y su disponibilidad el pool; jamás el producto de catálogo que
+    // coincida letra por letra con el código del origen (así nació COT-000002).
+    const coilRows = await this.resolveCoilRows(raw);
+    const skus = [
+      ...new Set(raw.filter((_, i) => !coilRows.has(i)).map((r) => field(r, 'sku'))),
+    ].filter((v) => v !== '');
     const [customers, products] = await Promise.all([
       this.prisma.customer.findMany({
         where: { docNumber: { in: docNumbers }, isActive: true },
@@ -123,7 +139,9 @@ export class QuotationImportService {
     // resuelve dando de alta un tercero, se resuelve eligiendo cuál de los dos es.
     const padron = await this.lookupPadron(docNumbers.filter((d) => byDoc.get(d) === undefined));
 
-    const rows = raw.map((r, i) => this.toPreviewRow(r, i + 1, byDoc, bySku, importedKeys, padron));
+    const rows = raw.map((r, i) =>
+      this.toPreviewRow(r, i + 1, byDoc, bySku, importedKeys, padron, coilRows.get(i)),
+    );
     const importable = rows.filter((r) => r.excludedReason === null);
     return {
       fileName,
@@ -141,6 +159,7 @@ export class QuotationImportService {
     bySku: Map<string, Match<{ id: string; sku: string; name: string; unit: string }>>,
     importedKeys: ReadonlySet<string>,
     padronByDoc: ReadonlyMap<string, QuotationImportPadronDto>,
+    coil: CoilRowResolution | undefined,
   ): QuotationImportRowDto {
     const rawCustomer = field(raw, 'customer');
     const rawSku = field(raw, 'sku');
@@ -183,9 +202,16 @@ export class QuotationImportService {
       });
     }
 
-    const productMatch = bySku.get(rawSku);
-    const product = productMatch?.unique === true ? productMatch.value : null;
-    if (!product) {
+    const productMatch = coil === undefined ? bySku.get(rawSku) : undefined;
+    const product =
+      coil !== undefined ? coil.product : productMatch?.unique === true ? productMatch.value : null;
+    if (coil !== undefined) {
+      // D-254: la fila de bobina se revisa por la bobina, no por el producto. Sin interpretación,
+      // o sin una única candidata, queda marcada para que la elija quien revisa.
+      if (coil.problem !== null) {
+        issues.push({ field: 'product', severity: 'error', message: coil.problem });
+      }
+    } else if (!product) {
       issues.push({
         field: 'product',
         severity: 'error',
@@ -246,6 +272,20 @@ export class QuotationImportService {
       }
     }
 
+    // D-255: el IGV y el importe con IGV del papel, solo en soles y solo si cuadran con el valor
+    // de venta. En dólares no: convertir los tres por separado ya no suma exacto, y ahí manda
+    // el valor de venta con el IGV calculado, como hasta ahora.
+    const paperIgv = parseAmount(field(raw, 'igv'));
+    const paperTotal = parseAmount(field(raw, 'totalAmount'));
+    const triplet =
+      netAmountPen !== null &&
+      !/d[óo]lar/i.test(currency) &&
+      paperIgv !== null &&
+      paperTotal !== null &&
+      paperTriplet(netAmountPen, paperIgv, paperTotal)
+        ? { igv: money(paperIgv), total: money(paperTotal) }
+        : null;
+
     // **La unidad, no el subtipo.** Quien exige los largos es `sellsByLength` de
     // `sales-lines.ts` (`unit === 'MTR'`), y es la distinción exacta de D-131: preguntar por el
     // subtipo respondía otra cosa. Un SKU en `MTR` que no sea `A_MEDIDA` pasaba el preview sin
@@ -293,6 +333,12 @@ export class QuotationImportService {
       unitPricePen: unitPricePen === null ? '' : toFixedString(unitPricePen, 'MONEY'),
       // D-169: el importe del papel, en soles y sin IGV. Es lo que se persiste como subtotal.
       netAmountPen: netAmountPen === null ? '' : toFixedString(netAmountPen, 'MONEY'),
+      igvAmountPen: triplet === null ? '' : toFixedString(triplet.igv, 'MONEY'),
+      totalAmountPen: triplet === null ? '' : toFixedString(triplet.total, 'MONEY'),
+      coilLine: coil !== undefined,
+      coilCandidates: coil?.candidates ?? [],
+      coilPoolAvailableKg: coil?.availableKg ?? null,
+      saleCoilId: coil?.saleCoilId ?? null,
       // El lector recorta a 512 y el schema del confirm topa en 240: sin este recorte, un
       // nombre largo tumbaba el archivo entero con un error de Zod que la pantalla no sabe
       // atribuir a ninguna fila.
@@ -321,6 +367,98 @@ export class QuotationImportService {
           ],
       excludedReason,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // D-252/D-254 (R1) — las filas con código de bobina
+  // -------------------------------------------------------------------------
+
+  /**
+   * Las filas del archivo que traen un código de bobina, ya resueltas contra el pool.
+   *
+   * Es fila de bobina la que tiene un código `BOB…` o una descripción de bobina. Si el
+   * normalizador la interpreta, su producto es el SKU canónico y su disponibilidad las bobinas
+   * del pool (D-254); si no, queda marcada para revisión con el motivo. **Nunca** se resuelve al
+   * producto de catálogo que coincida con el código del origen.
+   *
+   * La elección automática es por fila, y dos filas del mismo archivo no pueden quedarse con la
+   * misma bobina: si la elección de las dos cae en la misma, ninguna la toma sola y las dos quedan
+   * para revisión. Elegir por el orden de las filas sería elegir por orden de alta.
+   */
+  private async resolveCoilRows(
+    raw: readonly Record<string, unknown>[],
+  ): Promise<Map<number, CoilRowResolution>> {
+    const out = new Map<number, CoilRowResolution>();
+    const coilish = raw
+      .map((r, index) => ({ index, code: field(r, 'sku'), description: field(r, 'productName') }))
+      .filter((r) => /^\s*BOB/i.test(r.code) || /\bBOBINA\b/i.test(r.description));
+    if (coilish.length === 0) return out;
+
+    const known = await knownCoilAttributes(this.prisma);
+    for (const row of coilish) {
+      const parsed = normalizeCoilSku({ code: row.code, description: row.description }, known);
+      if (!parsed.ok) {
+        out.set(row.index, {
+          product: null,
+          candidates: [],
+          availableKg: null,
+          saleCoilId: null,
+          problem: `No se pudo interpretar el código de bobina: ${parsed.reason}. La línea queda para revisión.`,
+        });
+        continue;
+      }
+      const qty = parseAmount(field(raw[row.index] ?? {}, 'qty'));
+      const pool = await coilPoolFor(
+        this.prisma,
+        { thicknessMm: parsed.thicknessMm, attribute: parsed.attribute },
+        qty === null ? '0' : toFixedString(qty, 'KG'),
+      );
+      const product = await this.coilSaleProductOf(pool.candidates.map((c) => c.coilId), parsed.sku);
+      out.set(row.index, {
+        product,
+        candidates: pool.candidates,
+        availableKg: pool.availableKg,
+        saleCoilId: pool.autoCoilId,
+        problem:
+          pool.candidates.length > 0 && product === null
+            ? `${parsed.sku}: las bobinas del pool no tienen producto de venta; revisa el catálogo antes de importar.`
+            : pool.candidates.length === 0
+            ? `${parsed.sku}: ninguna bobina libre del pool tiene ${qty === null ? 'la cantidad' : `${toFixedString(qty, 'KG')} kg`} (disponible en el pool: ${pool.availableKg} kg). La línea queda para revisión.`
+            : pool.autoCoilId === null
+              ? `${parsed.sku}: hay ${String(pool.candidates.length)} bobinas que pueden atender la línea; elige cuál.`
+              : null,
+      });
+    }
+
+    // Una bobina, una fila: la elección automática que se repite queda para revisión.
+    const autoCount = new Map<string, number>();
+    for (const r of out.values()) {
+      if (r.saleCoilId !== null) autoCount.set(r.saleCoilId, (autoCount.get(r.saleCoilId) ?? 0) + 1);
+    }
+    for (const r of out.values()) {
+      if (r.saleCoilId !== null && (autoCount.get(r.saleCoilId) ?? 0) > 1) {
+        r.saleCoilId = null;
+        r.problem = 'Otra línea del archivo quedó con la misma bobina: elige cuál atiende a cada una.';
+      }
+    }
+    return out;
+  }
+
+  /** El producto de venta canónico (o el viejo, en la transición) de las bobinas del pool. */
+  private async coilSaleProductOf(
+    coilIds: readonly string[],
+    canonicalSku: string,
+  ): Promise<CoilRowResolution['product']> {
+    if (coilIds.length === 0) return null;
+    const coils = await this.prisma.coil.findMany({
+      where: { id: { in: [...coilIds] } },
+      select: COIL_SALE_IDENTITY_SELECT,
+    });
+    const products = await findCoilSaleProducts(this.prisma, coils);
+    const product = products.get(canonicalSku);
+    return product
+      ? { id: product.id, sku: product.sku, name: product.name, unit: Unit.KGM, roofingKind: null }
+      : null;
   }
 
   // -------------------------------------------------------------------------
@@ -557,6 +695,14 @@ export class QuotationImportService {
                   // comprobante lo necesita, pero el subtotal sale de acá. Ausente en la fila
                   // que el usuario editó: ahí manda lo que tipeó y el importe se recalcula.
                   ...(r.netAmountPen === undefined ? {} : { netAmountPen: r.netAmountPen }),
+                  // D-255: y con el IGV y el total del papel, si la fila los trajo y cuadraban.
+                  ...(r.netAmountPen !== undefined &&
+                  r.igvAmountPen !== undefined &&
+                  r.totalAmountPen !== undefined
+                    ? { igvAmountPen: r.igvAmountPen, totalAmountPen: r.totalAmountPen }
+                    : {}),
+                  // D-254: una línea de bobina vende esa bobina, por la cantidad del papel.
+                  ...(r.saleCoilId === undefined ? {} : { saleCoilId: r.saleCoilId }),
                   ...(r.description ? { description: r.description } : {}),
                   ...(r.pieces ? { pieces: r.pieces } : {}),
                 })),
@@ -697,6 +843,16 @@ function messageOf(err: HttpException): string {
   if (typeof message === 'string') return message;
   if (Array.isArray(message)) return message.join(', ');
   return err.message;
+}
+
+/** D-254: lo que el preview sabe de una fila con código de bobina. */
+interface CoilRowResolution {
+  product: { id: string; sku: string; name: string; unit: string; roofingKind: null } | null;
+  candidates: CoilPoolCandidateDto[];
+  availableKg: string | null;
+  saleCoilId: string | null;
+  /** El motivo por el que la fila queda para revisión, o `null` si se resolvió sola. */
+  problem: string | null;
 }
 
 /**

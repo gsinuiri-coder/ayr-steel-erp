@@ -5,15 +5,12 @@ import {
   CoilStatus,
   Currency,
   InventoryRefType,
-  ProductSource,
   Prisma,
   type Coil,
 } from '@prisma/client';
 import {
   businessToday,
   coilCode,
-  coilProductName,
-  coilSku,
   coilTypeKey,
   equivalentMeters,
   fromDateOnly,
@@ -35,6 +32,7 @@ import {
 import { toSharedLineCode, toPrismaLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ensureCoilSaleProduct } from '../sales/coil-sale-product';
 import { buildCoilPdf, buildCoilsReportPdf } from './coil-pdf';
 
 /** Datos mínimos para dar de alta una bobina. Los códigos se derivan aquí, no los trae el llamador. */
@@ -187,7 +185,7 @@ export class CoilsService {
     // El producto de `trading` es uno por `typeKey`: en un partido todas las hijas
     // comparten acabado y espesor, así que basta asegurarlo una vez.
     if (!preloaded?.tradingProductEnsured) {
-      await this.ensureTradingProduct(tx, finish, input.thicknessMm);
+      await this.ensureTradingProduct(tx, input.finishId, input.thicknessMm);
     }
 
     const movement = await this.inventory.record(tx, {
@@ -249,7 +247,7 @@ export class CoilsService {
     if (!finish) throw new NotFoundException('Acabado no encontrado');
 
     const last = await this.nextSequence(tx, input.supplierId, input.count);
-    await this.ensureTradingProduct(tx, finish, input.thicknessMm);
+    await this.ensureTradingProduct(tx, input.finishId, input.thicknessMm);
 
     return {
       supplier,
@@ -278,32 +276,32 @@ export class CoilsService {
   }
 
   /**
-   * D-037: la bobina sin transformar se vende como un producto de la línea `trading`
-   * con SKU `BOB{finishCode}{thicknessMm}`, uno por `typeKey`. Se crea al dar de alta
-   * la primera bobina de ese tipo; si ya existe, no se toca.
+   * D-037: la bobina sin transformar se vende como un producto de la línea `trading`.
+   * Se crea al dar de alta la primera bobina de su tipo; si ya existe, no se toca.
+   *
+   * D-252: con el SKU **canónico** (`BOB038ROJO`: espesor + color comercial o tipo), uno por
+   * pool y no uno por `typeKey` — dos acabados del mismo color comercial comparten producto.
+   * La regla y el chequeo de choque de base viven en `ensureCoilSaleProduct`.
    */
   async ensureTradingProduct(
     tx: Prisma.TransactionClient,
-    finish: { code: string; name: string },
+    finishId: string,
     thicknessMm: string,
   ): Promise<void> {
-    const trading = await tx.businessLine.findUnique({
-      where: { code: BusinessLineCode.TRADING },
-    });
-    if (!trading) return;
-
-    const sku = coilSku(finish.code, thicknessMm);
-    await tx.product.upsert({
-      where: { businessLineId_sku: { businessLineId: trading.id, sku } },
-      create: {
-        businessLineId: trading.id,
-        sku,
-        name: coilProductName(finish.name, thicknessMm),
-        unit: Unit.KGM,
-        source: ProductSource.PURCHASED,
+    const finish = await tx.finish.findUnique({
+      where: { id: finishId },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        kind: true,
+        densityFactor: true,
+        businessLineId: true,
+        color: { select: { code: true } },
       },
-      update: {},
     });
+    if (!finish) throw new NotFoundException('Acabado no encontrado');
+    await ensureCoilSaleProduct(tx, finish, thicknessMm);
   }
 
   /**

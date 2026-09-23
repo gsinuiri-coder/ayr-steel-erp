@@ -1,12 +1,20 @@
 import { Test } from '@nestjs/testing';
-import { Currency, type Prisma } from '@prisma/client';
+import { Currency, Prisma } from '@prisma/client';
 import { coilCode, coilSku, coilSkuFromTypeKey, coilTypeKey } from '@ayr/shared';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoilsService, type CreateCoilInput } from './coils.service';
 
 const SUPPLIER = { id: 'sup-1', code: 'ACERO', name: 'Aceros del Norte' };
-const FINISH = { id: 'fin-1', code: 'GALV', name: 'Galvanizado' };
+const FINISH = {
+  id: 'fin-1',
+  code: 'GALV',
+  name: 'Galvanizado',
+  kind: 'GALVANIZADO',
+  densityFactor: new Prisma.Decimal('7.8500'),
+  businessLineId: 'line-drywall',
+  color: null,
+};
 const ACTOR = '11111111-1111-4111-8111-111111111111';
 
 function input(overrides: Partial<CreateCoilInput> = {}): CreateCoilInput {
@@ -35,7 +43,11 @@ function createFakeTx() {
 
   const tx = {
     supplier: { findUnique: jest.fn().mockResolvedValue(SUPPLIER) },
-    finish: { findUnique: jest.fn().mockResolvedValue(FINISH) },
+    finish: {
+      findUnique: jest.fn().mockResolvedValue(FINISH),
+      // D-252: el chequeo de choque de base busca acabados hermanos. Sin hermanos, no hay choque.
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     businessLine: { findUnique: jest.fn().mockResolvedValue({ id: 'line-trading' }) },
     product: {
       upsert: jest.fn((args: { where: unknown; create: Record<string, unknown> }) => {
@@ -174,12 +186,13 @@ describe('CoilsService.create (RF-10..RF-14)', () => {
     expect(new Set(codes).size).toBe(2);
   });
 
-  it('asegura el producto de trading con el SKU de D-037 y emite la entrada de kardex', async () => {
+  it('asegura el producto de trading con el SKU canónico de D-252 y emite la entrada de kardex', async () => {
     const fake = createFakeTx();
     await service.create(fake.tx, input());
 
+    // D-252: espesor en centésimas con tres dígitos + tipo (sin color). Ya no `BOBGALV0.50`.
     expect(fake.upserts[0]?.create).toMatchObject({
-      sku: 'BOBGALV0.50',
+      sku: 'BOB050GALVANIZADO',
       name: 'Bobina Galvanizado 0.50 mm',
       unit: 'KGM',
     });

@@ -889,7 +889,7 @@ export class CoilOperationsService {
           await this.initialMovement(tx, coilId);
           data.finish = { connect: { id: finish.id } };
           data.typeKey = coilTypeKey(finish.code, coil.thicknessMm.toFixed(2));
-          await this.coils.ensureTradingProduct(tx, finish, coil.thicknessMm.toFixed(2));
+          await this.coils.ensureTradingProduct(tx, finish.id, coil.thicknessMm.toFixed(2));
           // El código (RF-13) no se regenera: es la etiqueta física pegada al rollo, y cambiarla
           // dejaría el papel y el sistema diciendo dos cosas distintas.
           // El trigger `coils_color_from_finish` lo haría igual; escribirlo deja el `update`

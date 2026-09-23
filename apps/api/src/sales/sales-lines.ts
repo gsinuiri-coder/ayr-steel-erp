@@ -15,6 +15,7 @@ import {
   importRoundingTolerance,
   isPlausiblePieceLength,
   kgPerMeter,
+  lineAmounts,
   money,
   PIECE_LENGTH_RANGE_LABEL,
   piecesMeters,
@@ -22,16 +23,22 @@ import {
   RoofingProductKind,
   roundingAdjustment,
   salesLineTotals,
-  salesLineTotalsFromNet,
   sellsByFixedLength,
   toDecimal,
   toFixedString,
   Unit,
+  type LineAmountBasis,
   type RoofingPieceDto,
   type SalesItemDto,
   type SalesItemInput,
 } from '@ayr/shared';
 import { toSharedLineCode } from '../common/business-line-code';
+import {
+  COIL_SALE_IDENTITY_SELECT,
+  coilSaleSkus,
+  findCoilSaleProducts,
+  isCoilSaleProduct,
+} from './coil-sale-product';
 import { assertPriceFloor, type PriceFloorCandidate } from './price-floor';
 import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material';
 import { reservedByItem } from './reserved-ledger';
@@ -173,7 +180,7 @@ export async function resolveSalesLines(
       colorId: true,
       color: { select: { name: true } },
       finish: { select: { densityFactor: true } },
-      businessLine: { select: { inventoryStrategy: true } },
+      businessLine: { select: { inventoryStrategy: true, code: true } },
     },
   });
   const productById = new Map(products.map((p) => [p.id, p]));
@@ -223,27 +230,32 @@ export async function resolveSalesLines(
     const lineNumber = (options.firstLineNumber ?? 1) + index;
     const at = `Línea ${lineNumber}`;
 
-    // D-169: **antes de cualquier rama**, y no dentro de la del producto de catálogo. El
-    // importe exacto solo lo trae el importador; fuera de ahí es un 400 y no un campo que se
-    // ignora. Puesto más abajo, una línea de venta de bobina lo descartaba en silencio — el
-    // contrato decía una cosa y una de las dos ramas hacía otra.
-    if (item.netAmountPen !== undefined && options.exactAmounts === undefined) {
-      throw new BadRequestException(
-        `${at}: el importe exacto de línea solo lo trae el importador de comprobantes (D-169)`,
-      );
-    }
+    // D-255 (R2): el importe de la línea es el dato en toda línea, así que `netAmountPen` ya no
+    // es exclusivo del importador (D-169 lo rechazaba acá con un 400). Lo que sigue siendo del
+    // importador es la **tolerancia** del documento, más abajo.
 
     if (item.saleCoilId !== undefined) {
       const sale = saleCoilById.get(item.saleCoilId);
       if (!sale) throw new NotFoundException(`${at}: bobina a vender no encontrada`);
-      const unitPricePen = item.unitPricePen;
-      if (unitPricePen === undefined) {
+      // D-254: una línea que viene del papel (importador, o la edición de un documento
+      // importado) vende **la cantidad del papel** sobre una bobina con saldo suficiente; el
+      // alta a mano sigue vendiendo el saldo completo (D-116).
+      const paperQty = options.exactAmounts !== undefined;
+      if (paperQty && toDecimal(item.qty).gt(toDecimal(sale.qty))) {
+        throw new BadRequestException(
+          `${at}: ${sale.coilCode} tiene ${sale.qty} kg disponibles y la línea vende ${toDecimal(item.qty).toFixed(3)}`,
+        );
+      }
+      const qty = paperQty ? toFixedString(toDecimal(item.qty), 'KG') : sale.qty;
+      const basis = amountBasisOf(item, item.unitPricePen ?? null);
+      if (basis === null) {
         throw new BadRequestException(
           `${at}: la venta de una bobina es a precio negociado, escribe el precio por kg`,
         );
       }
-      const totals = salesLineTotals({ qty: sale.qty, unitPricePen });
-      const description = item.description ?? `Bobina ${sale.coilCode} × ${sale.qty} kg`;
+      const amounts = lineAmounts(qty, basis);
+      const unitPricePen = toFixedString(money(amounts.unitValue), 'MONEY');
+      const description = item.description ?? `Bobina ${sale.coilCode} × ${qty} kg`;
       floorCandidates.push({
         at,
         sku: sale.coilCode,
@@ -257,17 +269,17 @@ export async function resolveSalesLines(
         productId: sale.productId,
         businessLineId: sale.productBusinessLineId,
         description,
-        qty: sale.qty,
+        qty,
         unit: Unit.KGM,
         listPricePen: null,
         unitPricePen,
         valuePerMeterPen: null,
-        subtotalPen: toFixedString(totals.subtotal, 'MONEY'),
-        igvPen: toFixedString(totals.igv, 'MONEY'),
-        totalPen: toFixedString(totals.total, 'MONEY'),
+        subtotalPen: toFixedString(amounts.subtotal, 'MONEY'),
+        igvPen: toFixedString(amounts.igv, 'MONEY'),
+        totalPen: toFixedString(amounts.total, 'MONEY'),
         reserveItemType: InventoryItemType.COIL,
         reserveItemId: sale.coilId,
-        reserveQty: sale.qty,
+        reserveQty: qty,
         reserveUnit: Unit.KGM,
         pieces: [],
         productSku: sale.productSku,
@@ -283,6 +295,14 @@ export async function resolveSalesLines(
     if (!product) throw new NotFoundException(`${at}: producto no encontrado`);
     if (!product.isActive) {
       throw new BadRequestException(`${at}: el producto ${product.sku} está desactivado`);
+    }
+    // D-254 (R1): un producto de venta de bobina **no** se vende como producto de catálogo. Su
+    // disponibilidad es el pool de bobinas, no un saldo propio que nunca tiene: vendido así,
+    // confirmar rebotaba con «BOB38AZUL tiene 0.000 KGM disponibles» (COT-000002).
+    if (isCoilSaleProduct(product)) {
+      throw new BadRequestException(
+        `${at}: ${product.sku} es el producto de venta de una bobina: elige la bobina que se vende (venta directa)`,
+      );
     }
     // D-167: una línea de negocio `NOOP` **se cotiza y se vende**. Lo que no hace es
     // prometer existencias: no reserva, no mueve kardex y no tiene costo promedio contra el
@@ -318,14 +338,16 @@ export async function resolveSalesLines(
       );
     }
     const valuePerMeterPen = item.valuePerMeterPen ?? null;
-    const unitPricePen =
+    // D-255: sin forma de importe explícita, el valor unitario de siempre (o el de lista).
+    const typedUnitValuePen =
       valuePerMeterPen !== null && product.lengthMm !== null
         ? toFixedString(
             money(fixedLengthUnitValue(product.lengthMm.toFixed(2), valuePerMeterPen)),
             'MONEY',
           )
         : (item.unitPricePen ?? listPricePen);
-    if (unitPricePen === null) {
+    const basis = amountBasisOf(item, typedUnitValuePen);
+    if (basis === null) {
       throw new BadRequestException(
         `${at}: el producto ${product.sku} no tiene valor de lista; escribe el ${byFixedLength ? 'valor por metro' : 'valor unitario'} en la línea`,
       );
@@ -382,19 +404,22 @@ export async function resolveSalesLines(
       );
     }
 
-    // D-169: el importe del papel manda sobre el recálculo. El rechazo por fuera del
-    // importador ya se hizo arriba, antes de las ramas.
-    const computed = salesLineTotals({ qty: item.qty, unitPricePen });
-    const totals =
-      item.netAmountPen === undefined ? computed : salesLineTotalsFromNet(item.netAmountPen);
-    if (item.netAmountPen !== undefined) {
+    // D-255 (R2): el importe manda y el unitario se deriva con diez decimales; el que se guarda
+    // (cuatro) es solo para mostrar. El piso (D-163) compara ese derivado a su propia escala.
+    const totals = lineAmounts(item.qty, basis);
+    const unitPricePen = toFixedString(money(totals.unitValue), 'MONEY');
+    // D-169: la tolerancia del importador compara el importe del papel contra el unitario **que
+    // trae la fila** (el que el preview mostró), no contra el derivado — que por construcción
+    // lo reproduce y no detectaría nada.
+    const computed = salesLineTotals({ qty: item.qty, unitPricePen: item.unitPricePen ?? unitPricePen });
+    if (item.netAmountPen !== undefined && options.exactAmounts !== undefined) {
       adjustments.push({
         at,
         sku: product.sku,
         qty: item.qty,
         adjustment: roundingAdjustment({
           qty: item.qty,
-          unitPricePen,
+          unitPricePen: item.unitPricePen ?? unitPricePen,
           subtotalPen: item.netAmountPen,
         }),
         netPen: toDecimal(item.netAmountPen),
@@ -599,6 +624,30 @@ function assertWithinRoundingTolerance(
   );
 }
 
+/**
+ * D-255 (R2): la forma en que se cargó el importe de la línea. El importe de línea manda sobre
+ * el precio con IGV, y los dos sobre el valor unitario (tipeado, por metro o de lista), que es
+ * `fallbackUnitValuePen`. `null` cuando no hay ninguna forma de ponerle precio.
+ */
+function amountBasisOf(
+  item: SalesItemInput,
+  fallbackUnitValuePen: string | null,
+): LineAmountBasis | null {
+  if (item.netAmountPen !== undefined) {
+    return item.igvAmountPen !== undefined && item.totalAmountPen !== undefined
+      ? {
+          netAmountPen: item.netAmountPen,
+          igvAmountPen: item.igvAmountPen,
+          totalAmountPen: item.totalAmountPen,
+        }
+      : { netAmountPen: item.netAmountPen };
+  }
+  if (item.unitPriceWithIgvPen !== undefined) {
+    return { unitPriceWithIgvPen: item.unitPriceWithIgvPen };
+  }
+  return fallbackUnitValuePen === null ? null : { unitValuePen: fallbackUnitValuePen };
+}
+
 /** Lo que hace falta para armar una línea de venta de bobina completa (D-116). */
 interface SaleCoilResolution {
   coilId: string;
@@ -627,20 +676,13 @@ async function resolveSaleCoils(
 
   const coils = await tx.coil.findMany({
     where: { id: { in: coilIds } },
-    select: { id: true, code: true, kind: true, status: true, typeKey: true },
+    select: { id: true, code: true, kind: true, status: true, ...COIL_SALE_IDENTITY_SELECT },
   });
   const coilById = new Map(coils.map((c) => [c.id, c]));
 
-  const trading = await tx.businessLine.findUnique({ where: { code: BusinessLineCode.TRADING } });
-  const skus = [...new Set(coils.map((c) => coilSkuFromTypeKey(c.typeKey)))];
-  const products =
-    trading && skus.length > 0
-      ? await tx.product.findMany({
-          where: { businessLineId: trading.id, sku: { in: skus } },
-          select: { id: true, sku: true, name: true, businessLineId: true },
-        })
-      : [];
-  const productBySku = new Map(products.map((p) => [p.sku, p]));
+  // D-252/D-253: el producto de venta sale del espesor y el color comercial o tipo —canónico
+  // primero, el SKU viejo de la transición como respaldo— y nunca es un producto inactivo.
+  const productBySku = await findCoilSaleProducts(tx, coils);
 
   const [balances, reservedById] = await Promise.all([
     tx.inventoryBalance.findMany({
@@ -663,7 +705,7 @@ async function resolveSaleCoils(
         `${coil.code} no está disponible (${coil.status}): solo se vende una bobina abierta o cerrada`,
       );
     }
-    const sku = coilSkuFromTypeKey(coil.typeKey);
+    const sku = coilSaleSkus(coil).canonical;
     const product = productBySku.get(sku);
     if (!product) {
       throw new NotFoundException(`${coil.code}: no existe el producto de venta directa (${sku})`);
