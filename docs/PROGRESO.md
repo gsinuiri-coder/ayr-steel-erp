@@ -87,8 +87,10 @@ no lo toca (decisión 4 del dueño, test `accepted-files-sku-rename.spec.ts`).
   la limpieza de los specs apagaba el `BOB…` de venta, que desde D-252 es compartido por el pool
   (`BOB050NATURAL`), y dejaba sin producto de venta a todos los specs siguientes. Corregido en
   los helpers (`3b3668d`). **Lo mismo puede pasar en producción** si alguien desactiva a mano un
-  `BOB…` canónico: las bobinas de su pool dejan de poder venderse. Queda como pendiente para el
-  dueño: impedir desactivar un producto de venta de bobina con bobinas abiertas en su pool.
+  `BOB…` canónico: las bobinas de su pool dejan de poder venderse. **Resuelto por decisión
+  del dueño** (aclaración de D-257): el catálogo rechaza desactivarlo mientras su pool tenga
+  bobinas abiertas con saldo; unitario `open-coils-in-pool.spec.ts` y E2E en
+  `bobina-pool-cot000002-rf-s4b.spec.ts`.
 - M0 corrido en rojo antes de tocar código: 25/25 unitarios de R1/R2 fallando.
 - E2E nuevos, corridos aislados en local (`pnpm exec playwright test <spec>`): COT-000002 al
   importar (1/1), COT-000002 por el barrido (1/1), normalización con reportes RF-S4a iguales al
@@ -109,9 +111,9 @@ no lo toca (decisión 4 del dueño, test `accepted-files-sku-rename.spec.ts`).
   tramo que no corrió (83 tests, 21.5 min): **80 passed / 2 failed / 1 skipped**. Los dos: fase2a
   (R2, infraestructura, esta rama no toca compras) y D-169 (aserción del mensaje del pipe de Zod;
   corregida, el spec aislado da 7/7). La cobertura de R2 real queda para la CI del PR.
-- M3 (sacrificable): spec del controlador de reportes hecho; el render de la vista de margen
-  **no** —D-011 verifica la UI con Playwright y un render en vitest exigiría sumar jsdom y
-  testing-library, que es decisión del dueño—.
+- M3 (sacrificable): spec del controlador de reportes hecho. **Pendiente: el render de la vista
+  de margen — requiere decidir D-011.** Por decisión del dueño no se agrega jsdom ni
+  testing-library en esta sesión.
 
 ## Limpieza de residuos y coherencia del repo (2026-09-23)
 

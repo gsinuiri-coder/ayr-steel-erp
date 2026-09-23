@@ -30,6 +30,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { isCoilSaleProduct, openCoilCodesInPool } from '../sales/coil-sale-product';
 import { ColorsService } from '../colors/colors.service';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
@@ -227,6 +228,19 @@ export class CatalogService {
       throw new BadRequestException(
         `${before.sku} está unido a otro producto (D-253): no se reactiva, se vende el principal`,
       );
+    }
+
+    // D-257 (aclaración): un producto de venta de bobina no se desactiva mientras su pool tenga
+    // bobinas abiertas con saldo. Es compartido por todas ellas (D-252): apagarlo las deja sin
+    // producto de venta, y la venta rebota con «no existe el producto de venta directa».
+    if (input.isActive === false && before.isActive && isCoilSaleProduct(before)) {
+      const open = await openCoilCodesInPool(this.prisma, before);
+      if (open.length > 0) {
+        const shown = open.slice(0, 3).join(', ');
+        throw new BadRequestException(
+          `${before.sku} es el producto de venta de ${String(open.length)} bobina(s) abierta(s) con saldo (${shown}${open.length > 3 ? '…' : ''}): ciérralas o véndelas antes de desactivarlo`,
+        );
+      }
     }
 
     // D-055/D-059: la receta valida al crearse que el producto sea fabricado y se mida en

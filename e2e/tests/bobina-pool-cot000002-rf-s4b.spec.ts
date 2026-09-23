@@ -122,6 +122,35 @@ test.describe('RF-S4b — un código de bobina del origen resuelve al pool, no a
     }
   });
 
+  test('D-257: el BOB… de venta no se desactiva mientras su pool tenga bobinas abiertas', async () => {
+    const color = await createColor(api, '#0e4c96');
+    const finish = await createRoofingFinish(api, { colorId: color.id });
+    const supplier = await createSupplier(api, { name: 'E2E Proveedor RF-S4b desactivar' });
+    const { coil } = await buyRoofingCoil(api, {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      colorId: color.id,
+      weightKg: '900',
+      thicknessMm: '0.38',
+      widthMm: '1200',
+    });
+    const catalog = await getJson<{ id: string; sku: string; isActive: boolean }[]>(
+      api,
+      '/api/catalog',
+    );
+    const product = catalog.find((p) => p.sku === `BOB038${color.code}`);
+    expect(product, 'el alta de la bobina no creó el producto de venta').toBeDefined();
+
+    const refused = await api.patch(`/api/catalog/${product!.id}`, { data: { isActive: false } });
+    expect(refused.status()).toBe(400);
+    expect(await refused.text()).toContain('bobina(s) abierta(s) con saldo');
+
+    // Sin bobinas abiertas en el pool, se puede: la anulación de la bobina la saca del pool.
+    await postJson(api, `/api/coils/${coil.id}/cancel`, { reason: 'Limpieza de prueba E2E' });
+    const allowed = await api.patch(`/api/catalog/${product!.id}`, { data: { isActive: false } });
+    expect(allowed.ok(), await allowed.text()).toBe(true);
+  });
+
   test('el barrido encuentra COT-000002 tal como quedó en producción y la deja confirmable, sin tocarla a mano', async ({
     baseURL,
   }) => {

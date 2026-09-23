@@ -298,6 +298,45 @@ export async function lineCoilPool(
   return coilPoolKeyOfProduct(tx, line.product, line.description);
 }
 
+/**
+ * D-257 (aclaración): las bobinas **abiertas con saldo** del pool de un producto de venta de
+ * bobina, sin mirar reservas ni OP. Es lo que impide desactivarlo: apagar el `BOB…` canónico
+ * deja sin producto de venta a todas esas bobinas («no existe el producto de venta directa»).
+ * Devuelve los códigos, para nombrarlos en el rechazo.
+ */
+export async function openCoilCodesInPool(
+  tx: Prisma.TransactionClient,
+  product: { sku: string; name: string; businessLine: { code: BusinessLineCode } },
+): Promise<string[]> {
+  const key = await coilPoolKeyOfProduct(tx, product);
+  if (key === null) return [];
+  const coils = await tx.coil.findMany({
+    where: {
+      kind: CoilKind.COIL,
+      status: CoilStatus.OPEN,
+      thicknessMm: toFixedString(key.thicknessMm, 'MM'),
+    },
+    select: {
+      id: true,
+      code: true,
+      finish: { select: { kind: true, color: { select: { code: true } } } },
+    },
+    orderBy: { code: 'asc' },
+  });
+  const inPool = coils.filter((c) => attributeOf(c.finish) === key.attribute);
+  if (inPool.length === 0) return [];
+  const balances = await tx.inventoryBalance.findMany({
+    where: {
+      itemType: InventoryItemType.COIL,
+      itemId: { in: inPool.map((c) => c.id) },
+      qty: { gt: 0 },
+    },
+    select: { itemId: true },
+  });
+  const withBalance = new Set(balances.map((b) => b.itemId));
+  return inPool.filter((c) => withBalance.has(c.id)).map((c) => c.code);
+}
+
 // ---------------------------------------------------------------------------
 // D-254: el pool de bobinas de un SKU canónico
 // ---------------------------------------------------------------------------
