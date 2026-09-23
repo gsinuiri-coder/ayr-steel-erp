@@ -147,6 +147,39 @@ Sin E2E local (corre en paralelo con rf-s4a/acc-demo): la juez es la CI.
   `RoofingBatchOrderDto.reportedKg` = suma de `consumedKg` de consumos vivos (reabrir D-193),
   y que web, borrador y API den el mismo veredicto.
 
+## Sesión Inventario inicial UPVC — preparación y dry-run contra demo (2026-09-22)
+
+Objetivo: preparar el archivo de la segunda tanda de inventario inicial pendiente desde V-4 (ver
+«Pendientes vivos» ítem 4, abajo) y validarlo con `--kind products` contra `demo`. Producción no
+se tocó.
+
+- **Catálogo (demo) verificado**: `UPVC36MT`, `UPVC6MT` y `UPVC36MTAZUL` existen, están activos y
+  son de la línea `ROOFING` (Coberturas UPVC). **Bloqueo encontrado**: los tres tienen
+  `source = MANUFACTURED`, no `PURCHASED` — contradice `AGENTS.md` §7 («UPVC es compra-reventa»)
+  y D-207 exige `PURCHASED` para que el importador los acepte. Ninguno tiene color cargado
+  (`colorId` null) pese a que el nombre dice ROJO/ROJO/AZUL; esto no bloquea la herramienta (no
+  valida color en `--kind products`, solo en bobinas) pero es un hueco de catálogo aparte, a
+  decisión del dueño si corresponde completarlo.
+- **Archivo armado**: `local-data/inventario-inicial-upvc-2026-09-22.csv`, 3 filas consolidadas
+  (970 / 1061 / 58 unidades a 43,2203 / 74,5763 / 39,8300 PEN sin IGV), total **S/ 123.359,29 sin
+  IGV** (cuadra con lo pedido). Las tres filas llevan la referencia de factura y proveedor que
+  pidió el dueño como texto libre en `FACTURA DE REFERENCIA` (D-206: solo trazabilidad, no
+  genera compra ni proveedor) — dato real, queda solo en el archivo de `local-data/`, no acá.
+- **Dry-run contra demo**: 0 ok / 0 omitida / **3 con error** — las tres rechazadas por «es un
+  producto fabricado (source MANUFACTURED)». No se corrió `--execute` (regla dura 16: ambigüedad
+  de catálogo se detiene y espera decisión del dueño).
+- **Efecto colateral necesario para poder compilar el CLI**: `packages/shared/dist` y el Prisma
+  Client locales estaban desactualizados (de antes de RF-S3c/D-240/D-241, campo `seller_id`), lo
+  que rompía el `tsc -p tsconfig.cli.json` del importador con decenas de errores ajenos a esta
+  tarea. Se regeneraron con `pnpm --filter @ayr/shared build` y `pnpm --filter @ayr/api
+  db:generate` — solo artefactos generados localmente, sin tocar datos ni schema.
+- **Pendiente — decisión del dueño**: ¿el `source` de estos 3 SKU está mal cargado en el
+  catálogo (se corrige a `PURCHASED`) o son SKU equivocados y hay otros que deberían usarse para
+  compra-reventa? El archivo queda listo en `local-data/` para la ventana de producción una vez
+  que el catálogo se corrija y un nuevo dry-run salga limpio.
+- Diagnóstico reusable: `scripts/oneoff/20260922-check-upvc-catalog.mjs` (solo lectura, lista el
+  catálogo `ROOFING` completo contra cualquier rama) — útil para re-verificar tras la corrección.
+
 ## Ventana RF-S3c — alcance comercial de vendedor (2026-09-22)
 
 Ventana exprés, con el sistema sin usuarios activos. PR #7 mergeado a `main` con OK explícito
@@ -5900,6 +5933,10 @@ Orden de prioridad. Los dos que dejaban `main` en rojo se cerraron en la sesiÃ�
    el cliente tiene ese stock; falta su archivo para correr
    `pnpm import:initial-inventory --kind products --branch production --execute --confirm-production`
    (D-207). La herramienta ya estÃ¡ probada y no necesita trabajo.
+   **ActualizaciÃ³n 2026-09-22** (ver Â«SesiÃ³n Inventario inicial UPVCÂ» al inicio de este
+   archivo): el archivo ya estÃ¡ armado, pero el dry-run contra `demo` lo rechaza â€” los 3 SKU
+   tienen `source = MANUFACTURED` en catÃ¡logo, no `PURCHASED`. Bloqueado hasta que el dueÃ±o
+   decida cÃ³mo corregir el catÃ¡logo.
 5. **`pnpm e2e:pse` nunca se validÃ³ contra Nubefact con los correlativos de 8 dÃ­gitos de
    D-202.** Se omitiÃ³ en el modo exprÃ©s de V-4. Es la Ãºnica verificaciÃ³n que queda de que la
    cuenta demo acepta un correlativo de 8 dÃ­gitos como primer nÃºmero de una serie. Necesita
