@@ -55,6 +55,11 @@ export interface SweepLineFinding {
     autoCoilCode: string | null;
     candidates: number;
   } | null;
+  /**
+   * La cantidad de la línea no es la del papel (alguien la editó a propósito). El importe del
+   * papel no se le puede pegar —describe otra cantidad—, así que la línea queda para el dueño.
+   */
+  qtyMismatch: { paper: string; stored: string } | null;
   /** (b): el importe guardado no es el del papel. */
   amounts: {
     stored: { net: string; igv: string; total: string };
@@ -222,7 +227,13 @@ export class ImportedDocumentsSweepService {
     const reason = 'Barrido de lo importado (RF-S4b): comprobante de origen';
     for (const doc of report.documents) {
       if (!doc.open || doc.unmatched !== null || doc.findings.length === 0) continue;
-      if (doc.findings.some((f) => f.product !== null && f.product.autoCoilId === null)) continue;
+      if (
+        doc.findings.some(
+          (f) => f.qtyMismatch !== null || (f.product !== null && f.product.autoCoilId === null),
+        )
+      ) {
+        continue;
+      }
       try {
         await this.fixDocument(actor, doc, paper, reason);
         fixed.push({
@@ -255,32 +266,40 @@ export class ImportedDocumentsSweepService {
       await this.fixQuotation(actor, doc, paper);
       return;
     }
-    for (const f of doc.findings) {
-      const line = await this.prisma.salesOrderItem.findFirstOrThrow({
-        where: { salesOrderId: doc.id, lineNumber: f.lineNumber },
-        select: { id: true },
-      });
-      if (f.product?.autoCoilId) {
-        await this.edits.updateItemCoil(actor, doc.id, line.id, {
-          saleCoilId: f.product.autoCoilId,
-          reason,
-        });
-      }
-      if (f.amounts) {
-        await this.edits.restorePaperAmounts(
-          actor,
-          doc.id,
-          line.id,
-          {
-            netAmountPen: f.amounts.paper.net,
-            ...(f.amounts.paper.igv !== null && f.amounts.paper.total !== null
-              ? { igvAmountPen: f.amounts.paper.igv, totalAmountPen: f.amounts.paper.total }
-              : {}),
-          },
-          reason,
-        );
-      }
-    }
+    // Un pedido se corrige **entero o nada**: una sola transacción para todas sus líneas, así
+    // un rechazo en la línea 2 no deja la 1 corregida (autorrevisión RF-S4b, P1).
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const f of doc.findings) {
+          const line = await tx.salesOrderItem.findFirstOrThrow({
+            where: { salesOrderId: doc.id, lineNumber: f.lineNumber },
+            select: { id: true },
+          });
+          if (f.product?.autoCoilId) {
+            await this.edits.updateItemCoilInTx(tx, actor, doc.id, line.id, {
+              saleCoilId: f.product.autoCoilId,
+              reason,
+            });
+          }
+          if (f.amounts) {
+            await this.edits.restorePaperAmountsInTx(
+              tx,
+              actor,
+              doc.id,
+              line.id,
+              {
+                netAmountPen: f.amounts.paper.net,
+                ...(f.amounts.paper.igv !== null && f.amounts.paper.total !== null
+                  ? { igvAmountPen: f.amounts.paper.igv, totalAmountPen: f.amounts.paper.total }
+                  : {}),
+              },
+              reason,
+            );
+          }
+        }
+      },
+      { timeout: 60_000 },
+    );
   }
 
   private async review(
@@ -321,12 +340,18 @@ export class ImportedDocumentsSweepService {
       const source = paper[i];
       if (!source) continue;
       const product = await this.productFinding(line, source, known, doc.scope);
-      const amounts = amountsFinding(line, source);
-      if (product || amounts) {
+      const qtyMismatch =
+        source.qty !== null && !toDecimal(source.qty).equals(toDecimal(line.qty.toString()))
+          ? { paper: source.qty, stored: line.qty.toFixed(3) }
+          : null;
+      // Con la cantidad cambiada, el importe del papel describe otra línea: no se propone.
+      const amounts = qtyMismatch === null ? amountsFinding(line, source) : null;
+      if (product || amounts || qtyMismatch) {
         findings.push({
           lineNumber: line.lineNumber,
           productSku: line.product.sku,
           product,
+          qtyMismatch,
           amounts,
         });
       }

@@ -999,7 +999,17 @@ export class InvoicingService {
               igv: toDecimal(original.igvPen.toString()),
               total: toDecimal(original.totalPen.toString()),
             }
-          : salesTotals([{ qty: line.qty, unitPricePen: original.unitPricePen.toString() }]);
+          : // D-255: la fracción sale del unitario **derivado del importe** (diez decimales), no
+            // del guardado para mostrar: 1920 de 3840 kg por 11 715.254 acreditan la mitad.
+            salesTotals([
+              {
+                qty: line.qty,
+                unitPricePen: derivedUnitValue(
+                  original.qty.toString(),
+                  original.subtotalPen.toString(),
+                ).toFixed(DERIVED_UNIT_VALUE_DECIMALS),
+              },
+            ]);
         return {
           original,
           qty: line.qty,

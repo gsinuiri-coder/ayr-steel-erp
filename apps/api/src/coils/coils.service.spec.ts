@@ -50,6 +50,7 @@ function createFakeTx() {
     },
     businessLine: { findUnique: jest.fn().mockResolvedValue({ id: 'line-trading' }) },
     product: {
+      findUnique: jest.fn().mockResolvedValue(null),
       upsert: jest.fn((args: { where: unknown; create: Record<string, unknown> }) => {
         upserts.push(args);
         return Promise.resolve({ id: 'prod-1' });

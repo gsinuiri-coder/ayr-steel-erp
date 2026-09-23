@@ -6,6 +6,7 @@ import {
   FinishKind,
   InventoryItemType,
   ProductSource,
+  QuotationStatus,
   type Prisma,
 } from '@prisma/client';
 import {
@@ -125,7 +126,8 @@ export async function findCoilSaleProducts(
 export async function knownCoilAttributes(tx: Prisma.TransactionClient): Promise<Set<string>> {
   const colors = await tx.color.findMany({ where: { isActive: true }, select: { code: true } });
   return new Set([
-    ...colors.map((c) => commercialColorToken(c.code)),
+    // Un color cuyo código es solo un RAL no tiene color comercial: no entra como token.
+    ...colors.map((c) => commercialColorToken(c.code)).filter((t) => t !== ''),
     FinishKind.NATURAL,
     FinishKind.GALVANIZADO,
   ]);
@@ -199,8 +201,16 @@ export async function ensureCoilSaleProduct(
 ): Promise<void> {
   const trading = await tx.businessLine.findUnique({ where: { code: BusinessLineCode.TRADING } });
   if (!trading) return;
-  await assertNoBaseCollision(tx, finish);
   const { canonical } = coilSaleSkus({ thicknessMm, finish });
+  const existing = await tx.product.findUnique({
+    where: { businessLineId_sku: { businessLineId: trading.id, sku: canonical } },
+    select: { id: true },
+  });
+  if (existing) return;
+  // El choque de base se mira **al crear** el producto, no en cada alta de bobina: si la base ya
+  // estaba mezclada en producción, trabar la recepción de compras al día siguiente del deploy
+  // sería peor que el problema; esos casos los lista el dry-run de la normalización.
+  await assertNoBaseCollision(tx, finish);
   await tx.product.upsert({
     where: { businessLineId_sku: { businessLineId: trading.id, sku: canonical } },
     create: {
@@ -342,23 +352,40 @@ export async function coilPoolFor(
   const ids = inPool.map((c) => c.id);
   if (ids.length === 0) return { availableKg: '0.000', candidates: [], autoCoilId: null };
 
-  const [balances, reserved, mounted] = await Promise.all([
+  const [balances, reserved, mounted, quoted] = await Promise.all([
     tx.inventoryBalance.findMany({
       where: { itemType: InventoryItemType.COIL, itemId: { in: ids } },
       select: { itemId: true, qty: true },
     }),
     reservedByItem(tx, InventoryItemType.COIL, ids, scope),
     findLiveStripAssignments(tx, ids),
+    // Una cotización no reserva hasta confirmarse, pero una **abierta** que ya vende esa bobina
+    // la tiene tomada para este fin: dos importaciones no pueden elegir sola la misma
+    // (autorrevisión RF-S4b). La propia cotización no se excluye a sí misma.
+    tx.quotationItem.findMany({
+      where: {
+        reserveItemType: InventoryItemType.COIL,
+        reserveItemId: { in: ids },
+        quotation: {
+          status: { in: [QuotationStatus.DRAFT, QuotationStatus.EMITTED] },
+          ...(scope.exceptQuotationIds?.length ? { id: { notIn: scope.exceptQuotationIds } } : {}),
+        },
+      },
+      select: { reserveItemId: true },
+    }),
   ]);
   const balanceById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-  const mountedIds = new Set(mounted.map((m) => m.coilId));
+  const takenIds = new Set([
+    ...mounted.map((m) => m.coilId),
+    ...quoted.map((q) => q.reserveItemId),
+  ]);
   const need = toDecimal(qty);
 
   let available = new Decimal(0);
   const candidates: CoilPoolCandidate[] = [];
   for (const coil of inPool) {
     const balance = balanceById.get(coil.id) ?? new Decimal(0);
-    const free = !mountedIds.has(coil.id) && (reserved.get(coil.id) ?? new Decimal(0)).lte(0);
+    const free = !takenIds.has(coil.id) && (reserved.get(coil.id) ?? new Decimal(0)).lte(0);
     if (!free || balance.lte(0)) continue;
     available = available.plus(balance);
     if (balance.gte(need)) {

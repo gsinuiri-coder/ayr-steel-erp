@@ -52,6 +52,12 @@ describe('D-252 — el SKU canónico se arma desde espesor + color comercial o t
       'BOB045GALVANIZADO',
     );
   });
+
+  it('un color cuyo código es solo un RAL no arma un SKU sin color: corta', () => {
+    expect(() =>
+      canonicalCoilSku({ kind: FinishKind.PREPINTADO, colorCode: 'RAL9010' }, '0.38'),
+    ).toThrow(/no tiene color comercial/);
+  });
 });
 
 describe('D-252 — el normalizador acepta las variantes del origen y devuelve el canónico', () => {
@@ -64,6 +70,8 @@ describe('D-252 — el normalizador acepta las variantes del origen y devuelve e
     [' BOB 38 ROJO ', 'BOB038ROJO'],
     ['BOB045GALVANIZADO', 'BOB045GALVANIZADO'],
     ['BOB45GALV', 'BOB045GALVANIZADO'],
+    // Autorrevisión RF-S4b: el RAL pegado al color no separa ni rompe la lectura.
+    ['BOB38ROJO-3020', 'BOB038ROJO'],
   ])('%s → %s', (code, expected) => {
     expect(normalizeCoilSku({ code }, KNOWN)).toEqual(
       expect.objectContaining({ ok: true, sku: expected }),
@@ -73,6 +81,8 @@ describe('D-252 — el normalizador acepta las variantes del origen y devuelve e
   it.each([
     ['BOBINA ALUZINC ROJO 0.38 X 1220 RAL 3020', 'BOB038ROJO'],
     ['BOBINA ALUZINC AZUL 0.38 X 1200 RAL 5002', 'BOB038AZUL'],
+    // La unidad pegada al espesor, como en las descripciones de coberturas del mismo export.
+    ['BOBINA ALUZINC ROJO 0.40MM X 1200', 'BOB040ROJO'],
   ])('descripción del Excel «%s» → %s', (description, expected) => {
     expect(normalizeCoilSku({ code: 'XYZ', description }, KNOWN)).toEqual(
       expect.objectContaining({ ok: true, sku: expected }),

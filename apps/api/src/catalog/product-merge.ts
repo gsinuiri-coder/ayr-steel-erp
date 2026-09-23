@@ -81,6 +81,13 @@ export async function mergeProductInto(
   if (input.sourceId === input.targetId) {
     throw new BadRequestException('Un producto no se une a sí mismo');
   }
+  // Las dos filas bloqueadas, en orden de id: dos uniones simultáneas (A→B y B→C) leerían las
+  // dos «B sin unir» y armarían la cadena que esta función existe para impedir.
+  await tx.$queryRaw`
+    SELECT "id" FROM "products"
+    WHERE "id" IN (${input.sourceId}::uuid, ${input.targetId}::uuid)
+    ORDER BY "id" FOR UPDATE
+  `;
   const [source, target] = await Promise.all([
     tx.product.findUnique({
       where: { id: input.sourceId },

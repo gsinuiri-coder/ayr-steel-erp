@@ -221,6 +221,13 @@ export class CatalogService {
       include: PRODUCT_RELATIONS,
     });
     if (!before) throw new NotFoundException('Producto no encontrado');
+    // D-253: un producto unido a otro no se reactiva —el CHECK de la base lo rechazaría con un
+    // 500 sin explicación—: su historia sigue acá, pero lo que se vende es el principal.
+    if (input.isActive === true && before.mergedIntoId !== null) {
+      throw new BadRequestException(
+        `${before.sku} está unido a otro producto (D-253): no se reactiva, se vende el principal`,
+      );
+    }
 
     // D-055/D-059: la receta valida al crearse que el producto sea fabricado y se mida en
     // piezas. Dejar cambiar esas dos cosas después esquivaría la validación y la orden de

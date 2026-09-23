@@ -19,6 +19,8 @@ import {
   externalInvoiceOf,
   IMPORT_ROUNDING_TOLERANCE_PEN,
   isImportedQuotation,
+  DERIVED_UNIT_VALUE_DECIMALS,
+  derivedUnitValue,
   keepImportMarker,
   isQuotationExpired,
   quotationValidUntil,
@@ -430,7 +432,14 @@ export class QuotationsService {
       // schema, y mandar solo el unitario perdería el número que el vendedor negoció.
       const valuePerMeterPen =
         i.valuePerMeterPen === null ? undefined : i.valuePerMeterPen.toFixed(4);
-      const unitPricePen = valuePerMeterPen === undefined ? i.unitPricePen.toFixed(4) : undefined;
+      // D-255: el unitario del duplicado es el **derivado del importe** (diez decimales), no el
+      // guardado para mostrar: así la misma cantidad reproduce el mismo importe al céntimo.
+      const unitPricePen =
+        valuePerMeterPen === undefined
+          ? derivedUnitValue(i.qty.toString(), i.subtotalPen.toString()).toFixed(
+              DERIVED_UNIT_VALUE_DECIMALS,
+            )
+          : undefined;
       const price = valuePerMeterPen === undefined ? { unitPricePen } : { valuePerMeterPen };
       const pieces =
         i.pieces.length > 0
@@ -443,7 +452,9 @@ export class QuotationsService {
         return {
           saleCoilId: i.reserveItemId,
           qty: i.qty.toFixed(3),
-          unitPricePen: i.unitPricePen.toFixed(4),
+          unitPricePen: derivedUnitValue(i.qty.toString(), i.subtotalPen.toString()).toFixed(
+            DERIVED_UNIT_VALUE_DECIMALS,
+          ),
         };
       }
       return {

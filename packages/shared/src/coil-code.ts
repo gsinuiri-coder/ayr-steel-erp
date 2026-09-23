@@ -143,7 +143,15 @@ export function coilSkuAttribute(finish: {
     if (finish.colorCode === null) {
       throw new Error('Un acabado prepintado sin color no tiene SKU de bobina (D-203)');
     }
-    return commercialColorToken(finish.colorCode);
+    const token = commercialColorToken(finish.colorCode);
+    // Un código de color que es solo un RAL (`RAL9010`) se queda sin color comercial: el SKU
+    // saldría `BOB038` y juntaría colores distintos. Se corta en vez de adivinar.
+    if (token === '') {
+      throw new Error(
+        `El color ${finish.colorCode} no tiene color comercial en su código: corrígelo en el catálogo de colores (D-252)`,
+      );
+    }
+    return token;
   }
   return finish.kind;
 }
@@ -170,7 +178,8 @@ export type CoilSkuParse =
 
 /** El token del origen, contra lo que el catálogo conoce. `null` si no mapea. */
 function knownAttribute(raw: string, known: ReadonlySet<string>): string | null {
-  const token = skuToken(raw);
+  const token = commercialColorToken(raw);
+  if (token === '') return null;
   const kind = KIND_SYNONYMS[token];
   if (kind !== undefined) return known.has(kind) ? kind : null;
   return known.has(token) ? token : null;
@@ -187,7 +196,9 @@ function thicknessOf(raw: string): string | null {
 
 function fromCode(code: string, known: ReadonlySet<string>): CoilSkuParse {
   const compact = code.replace(/\s+/g, '').toUpperCase();
-  const match = /^BOB(\d\.\d{1,2}|\d+)([A-Z][A-Z0-9]*)$/.exec(compact);
+  // El color puede venir con su RAL pegado (`BOB38ROJO-3020`): se acepta y el RAL se descarta
+  // abajo, igual que en el catálogo (`commercialColorToken`).
+  const match = /^BOB(\d\.\d{1,2}|\d+)([A-Z][A-Z0-9-]*)$/.exec(compact);
   if (!match)
     return { ok: false, reason: `${code.trim()} no tiene la forma BOB + espesor + color` };
   const [, rawThickness = '', rawAttribute = ''] = match;
@@ -217,7 +228,8 @@ function fromDescription(description: string, known: ReadonlySet<string>): CoilS
     return { ok: false, reason: 'La descripción no es de una bobina' };
   }
   // El primer número con decimales es el espesor; el ancho (1220) y el RAL (3020) son enteros.
-  const thickness = /\b(\d[.,]\d{1,2})\b/.exec(text);
+  // Sin `\b` al final: «0.40MM» pega la unidad al número y el límite de palabra no existe ahí.
+  const thickness = /(?<![\d.,])(\d[.,]\d{1,2})(?![\d])/.exec(text);
   const thicknessMm = thickness?.[1] === undefined ? null : thicknessOf(thickness[1]);
   if (thicknessMm === null) {
     return { ok: false, reason: 'La descripción no trae un espesor legible' };

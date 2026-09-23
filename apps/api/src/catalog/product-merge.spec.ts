@@ -21,6 +21,7 @@ function fakeTx(rows: Row[], counts: { movements?: number; reservations?: number
   const updates: { where: { id: string }; data: Record<string, unknown> }[] = [];
   const audits: unknown[] = [];
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
     product: {
       findUnique: jest.fn(({ where }: { where: { id: string } }) => {
         const r = byId.get(where.id);

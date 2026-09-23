@@ -46,6 +46,11 @@ export function runApiCli({ compiled, what, pathFlags = new Set() }) {
   const localUrls = localTestDbUrls(branch);
   const env = {
     ...process.env,
+    // El gate de producción vive también **dentro** de la CLI (autorrevisión RF-S4b): el JS
+    // compilado se niega a `--execute` si no sabe la rama o si es production sin confirmar, así
+    // que correrlo a mano con un DATABASE_URL no se salta este wrapper.
+    AYR_CLI_BRANCH: branch,
+    AYR_CLI_CONFIRMED_PRODUCTION: argv.includes('--confirm-production') ? '1' : '0',
     DATABASE_URL: localUrls
       ? localUrls.databaseUrl
       : neonConnectionString(branch, { pooled: true }),

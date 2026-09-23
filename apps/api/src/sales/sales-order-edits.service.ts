@@ -184,7 +184,14 @@ export class SalesOrderEditsService {
         [{ lineNumber: item.lineNumber, productId: item.productId, ...next }],
         actor.id,
       );
-      if (changed === 0) return;
+      // D-255: el registro de precios compara el unitario de cuatro decimales, y con el importe
+      // como dato un cambio real puede no moverlo (3840 kg de 11 715.25 a 11 715.20 son 3.0508
+      // los dos). Se guarda si cambió el unitario **o** cualquiera de los importes.
+      const amountsChanged =
+        !item.subtotalPen.equals(next.subtotalPen) ||
+        !item.igvPen.equals(next.igvPen) ||
+        !item.totalPen.equals(next.totalPen);
+      if (changed === 0 && !amountsChanged) return;
 
       await tx.salesOrderItem.update({
         where: { id: item.id },
@@ -247,55 +254,69 @@ export class SalesOrderEditsService {
     paper: { netAmountPen: string; igvAmountPen?: string; totalAmountPen?: string },
     reason: string,
   ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const order = await this.lockEditable(tx, orderId, 'restablecer importes');
-      if (!order.imported) {
-        throw new BadRequestException(
-          `${salesOrderCode(order.seq)} no viene del importador: no tiene comprobante de origen`,
-        );
-      }
-      const item = await this.requireItem(tx, orderId, itemId);
-      const amounts = lineAmounts(
-        item.qty.toString(),
-        paper.igvAmountPen !== undefined && paper.totalAmountPen !== undefined
-          ? {
-              netAmountPen: paper.netAmountPen,
-              igvAmountPen: paper.igvAmountPen,
-              totalAmountPen: paper.totalAmountPen,
-            }
-          : { netAmountPen: paper.netAmountPen },
+    await this.prisma.$transaction((tx) =>
+      this.restorePaperAmountsInTx(tx, actor, orderId, itemId, paper, reason),
+    );
+  }
+
+  /** La misma corrección dentro de la transacción del llamador (el barrido corrige el pedido entero). */
+  async restorePaperAmountsInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    itemId: string,
+    paper: { netAmountPen: string; igvAmountPen?: string; totalAmountPen?: string },
+    reason: string,
+  ): Promise<void> {
+    const order = await this.lockEditable(tx, orderId, 'restablecer importes');
+    if (!order.imported) {
+      throw new BadRequestException(
+        `${salesOrderCode(order.seq)} no viene del importador: no tiene comprobante de origen`,
       );
-      const next = {
-        unitPricePen: toFixedString(money(amounts.unitValue), 'MONEY'),
-        valuePerMeterPen: item.valuePerMeterPen?.toFixed(4) ?? null,
-        subtotalPen: toFixedString(amounts.subtotal, 'MONEY'),
-        igvPen: toFixedString(amounts.igv, 'MONEY'),
-        totalPen: toFixedString(amounts.total, 'MONEY'),
-      };
-      await recordPriceChanges(
-        tx,
-        { salesOrderId: orderId },
-        [item],
-        [{ lineNumber: item.lineNumber, productId: item.productId, ...next }],
-        actor.id,
-      );
-      await tx.salesOrderItem.update({ where: { id: item.id }, data: next });
-      const totals = await this.refreshTotals(tx, orderId);
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'sales.order.item-paper-amounts',
-        entity: 'sales_orders',
-        entityId: orderId,
-        before: {
-          code: salesOrderCode(order.seq),
-          lineNumber: item.lineNumber,
-          subtotalPen: item.subtotalPen.toFixed(4),
-          igvPen: item.igvPen.toFixed(4),
-          totalPen: item.totalPen.toFixed(4),
-        },
-        after: { ...next, orderTotalPen: totals.totalPen },
-        reason,
-      });
+    }
+    const item = await this.requireItem(tx, orderId, itemId);
+    const amounts = lineAmounts(
+      item.qty.toString(),
+      paper.igvAmountPen !== undefined && paper.totalAmountPen !== undefined
+        ? {
+            netAmountPen: paper.netAmountPen,
+            igvAmountPen: paper.igvAmountPen,
+            totalAmountPen: paper.totalAmountPen,
+          }
+        : { netAmountPen: paper.netAmountPen },
+    );
+    const next = {
+      unitPricePen: toFixedString(money(amounts.unitValue), 'MONEY'),
+      // El importe del papel manda: un valor por metro guardado ya no lo describiría (D-161
+      // deriva el unitario del metro, y acá el unitario sale del importe).
+      valuePerMeterPen: null,
+      subtotalPen: toFixedString(amounts.subtotal, 'MONEY'),
+      igvPen: toFixedString(amounts.igv, 'MONEY'),
+      totalPen: toFixedString(amounts.total, 'MONEY'),
+    };
+    await recordPriceChanges(
+      tx,
+      { salesOrderId: orderId },
+      [item],
+      [{ lineNumber: item.lineNumber, productId: item.productId, ...next }],
+      actor.id,
+    );
+    await tx.salesOrderItem.update({ where: { id: item.id }, data: next });
+    const totals = await this.refreshTotals(tx, orderId);
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'sales.order.item-paper-amounts',
+      entity: 'sales_orders',
+      entityId: orderId,
+      before: {
+        code: salesOrderCode(order.seq),
+        lineNumber: item.lineNumber,
+        subtotalPen: item.subtotalPen.toFixed(4),
+        igvPen: item.igvPen.toFixed(4),
+        totalPen: item.totalPen.toFixed(4),
+      },
+      after: { ...next, orderTotalPen: totals.totalPen },
+      reason,
     });
   }
 
@@ -319,91 +340,102 @@ export class SalesOrderEditsService {
     input: UpdateSalesOrderItemCoilInput,
   ): Promise<SalesOrderDto> {
     await this.prisma.$transaction(
-      async (tx) => {
-        const order = await this.lockEditable(tx, orderId, 'cambiar la bobina');
-        this.assertOwner(actor, order, 'cambiarle la bobina');
-        const item = await this.requireItem(tx, orderId, itemId);
-        const at = `Línea ${item.lineNumber}`;
-        const dispatched = await tx.dispatchItem.findFirst({
-          where: { salesOrderItemId: item.id, dispatch: { status: DispatchStatus.ISSUED } },
-          select: { id: true },
-        });
-        if (dispatched) {
-          throw new BadRequestException(
-            `${at}: ya tiene despachos, así que su bobina no se cambia`,
-          );
-        }
-        const pool = await lineCoilPool(tx, item);
-        if (pool === null) {
-          throw new BadRequestException(
-            `${at}: ${item.product.sku} no es una venta de bobina, así que no se ata a una bobina`,
-          );
-        }
-        const qty = toFixedString(item.qty.toString(), 'KG');
-        const candidates = await coilPoolFor(tx, pool, qty, { exceptSalesOrderIds: [orderId] });
-        if (!candidates.candidates.some((c) => c.coilId === input.saleCoilId)) {
-          throw new BadRequestException(
-            `${at}: esa bobina no está en el pool de ${pool.sku} con ${qty} kg libres (espesor exacto, mismo color o tipo, sin reserva ni OP)`,
-          );
-        }
-        const coil = await tx.coil.findUniqueOrThrow({
-          where: { id: input.saleCoilId },
-          select: { id: true, code: true, ...COIL_SALE_IDENTITY_SELECT },
-        });
-        const product = (await findCoilSaleProducts(tx, [coil])).get(coilSaleSkus(coil).canonical);
-        if (!product) {
-          throw new NotFoundException(`${coil.code}: no existe el producto de venta de la bobina`);
-        }
-
-        await tx.$queryRaw`
-          SELECT "id" FROM "reservations" WHERE "sales_order_item_id" = ${item.id}::uuid
-          ORDER BY "id" FOR UPDATE
-        `;
-        await tx.reservation.updateMany({
-          where: { salesOrderItemId: item.id, status: ReservationStatus.ACTIVE },
-          data: {
-            qty: '0',
-            status: ReservationStatus.RELEASED,
-            releasedAt: new Date(),
-            releasedById: actor.id,
-          },
-        });
-        const updated = await tx.salesOrderItem.update({
-          where: { id: item.id },
-          data: {
-            productId: product.id,
-            unit: Unit.KGM,
-            reserveItemType: InventoryItemType.COIL,
-            reserveItemId: coil.id,
-            reserveQty: qty,
-            reserveUnit: Unit.KGM,
-          },
-        });
-        await this.orders.createReservations(tx, actor, orderId, [updated]);
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'sales.order.item-coil',
-          entity: 'sales_orders',
-          entityId: orderId,
-          before: {
-            code: salesOrderCode(order.seq),
-            lineNumber: item.lineNumber,
-            productSku: item.product.sku,
-            reserveItemType: item.reserveItemType,
-            reserveItemId: item.reserveItemId,
-          },
-          after: {
-            productSku: product.sku,
-            coilCode: coil.code,
-            reserveQty: qty,
-            reason: input.reason,
-          },
-        });
-      },
+      (tx) => this.updateItemCoilInTx(tx, actor, orderId, itemId, input),
       { timeout: 30_000 },
     );
     return this.orders.findOne(orderId);
+  }
+
+  /**
+   * Lo mismo dentro de la transacción del llamador. La doble promesa de una bobina entre dos
+   * pedidos simultáneos la corta `createReservations`, que bloquea la bobina y comprueba su
+   * disponible: el chequeo del pool de acá es para rechazar temprano con un mensaje claro.
+   */
+  async updateItemCoilInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    itemId: string,
+    input: UpdateSalesOrderItemCoilInput,
+  ): Promise<void> {
+    const order = await this.lockEditable(tx, orderId, 'cambiar la bobina');
+    this.assertOwner(actor, order, 'cambiarle la bobina');
+    const item = await this.requireItem(tx, orderId, itemId);
+    const at = `Línea ${item.lineNumber}`;
+    const dispatched = await tx.dispatchItem.findFirst({
+      where: { salesOrderItemId: item.id, dispatch: { status: DispatchStatus.ISSUED } },
+      select: { id: true },
+    });
+    if (dispatched) {
+      throw new BadRequestException(`${at}: ya tiene despachos, así que su bobina no se cambia`);
+    }
+    const pool = await lineCoilPool(tx, item);
+    if (pool === null) {
+      throw new BadRequestException(
+        `${at}: ${item.product.sku} no es una venta de bobina, así que no se ata a una bobina`,
+      );
+    }
+    const qty = toFixedString(item.qty.toString(), 'KG');
+    const candidates = await coilPoolFor(tx, pool, qty, { exceptSalesOrderIds: [orderId] });
+    if (!candidates.candidates.some((c) => c.coilId === input.saleCoilId)) {
+      throw new BadRequestException(
+        `${at}: esa bobina no está en el pool de ${pool.sku} con ${qty} kg libres (espesor exacto, mismo color o tipo, sin reserva ni OP)`,
+      );
+    }
+    const coil = await tx.coil.findUniqueOrThrow({
+      where: { id: input.saleCoilId },
+      select: { id: true, code: true, ...COIL_SALE_IDENTITY_SELECT },
+    });
+    const product = (await findCoilSaleProducts(tx, [coil])).get(coilSaleSkus(coil).canonical);
+    if (!product) {
+      throw new NotFoundException(`${coil.code}: no existe el producto de venta de la bobina`);
+    }
+
+    await tx.$queryRaw`
+          SELECT "id" FROM "reservations" WHERE "sales_order_item_id" = ${item.id}::uuid
+          ORDER BY "id" FOR UPDATE
+        `;
+    await tx.reservation.updateMany({
+      where: { salesOrderItemId: item.id, status: ReservationStatus.ACTIVE },
+      data: {
+        qty: '0',
+        status: ReservationStatus.RELEASED,
+        releasedAt: new Date(),
+        releasedById: actor.id,
+      },
+    });
+    const updated = await tx.salesOrderItem.update({
+      where: { id: item.id },
+      data: {
+        productId: product.id,
+        unit: Unit.KGM,
+        reserveItemType: InventoryItemType.COIL,
+        reserveItemId: coil.id,
+        reserveQty: qty,
+        reserveUnit: Unit.KGM,
+      },
+    });
+    await this.orders.createReservations(tx, actor, orderId, [updated]);
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'sales.order.item-coil',
+      entity: 'sales_orders',
+      entityId: orderId,
+      before: {
+        code: salesOrderCode(order.seq),
+        lineNumber: item.lineNumber,
+        productSku: item.product.sku,
+        reserveItemType: item.reserveItemType,
+        reserveItemId: item.reserveItemId,
+      },
+      after: {
+        productSku: product.sku,
+        coilCode: coil.code,
+        reserveQty: qty,
+        reason: input.reason,
+      },
+    });
   }
 
   // -------------------------------------------------------------------------

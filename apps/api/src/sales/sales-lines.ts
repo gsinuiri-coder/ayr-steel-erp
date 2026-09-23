@@ -16,6 +16,7 @@ import {
   kgPerMeter,
   lineAmounts,
   money,
+  paperTriplet,
   PIECE_LENGTH_RANGE_LABEL,
   piecesMeters,
   rawMaterialLabel,
@@ -38,6 +39,7 @@ import {
   findCoilSaleProducts,
   isCoilSaleProduct,
 } from './coil-sale-product';
+import { findLiveStripAssignments } from '../production/production-assignments';
 import { assertPriceFloor, type PriceFloorCandidate } from './price-floor';
 import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material';
 import { reservedByItem } from './reserved-ledger';
@@ -206,6 +208,19 @@ export async function resolveSalesLines(
   // manda el formulario (es el SKU `trading` de D-037, uno por `typeKey`) y la cantidad no
   // la decide el vendedor (es el saldo vivo, nunca lo que venga en `item.qty`).
   const saleCoilById = await resolveSaleCoils(tx, items);
+  // D-254: una bobina, una línea. Con la cantidad del papel, dos líneas de la misma bobina
+  // pasaban cada una «cantidad ≤ disponible» y juntas prometían más de lo que el rollo tiene.
+  const seenCoils = new Set<string>();
+  for (const [index, item] of items.entries()) {
+    if (item.saleCoilId === undefined) continue;
+    if (seenCoils.has(item.saleCoilId)) {
+      const sale = saleCoilById.get(item.saleCoilId);
+      throw new BadRequestException(
+        `Línea ${String((options.firstLineNumber ?? 1) + index)}: la bobina ${sale?.coilCode ?? item.saleCoilId} ya la vende otra línea del documento`,
+      );
+    }
+    seenCoils.add(item.saleCoilId);
+  }
 
   // D-163: las líneas a comprobar contra su piso, con la coordenada del costo que le
   // corresponde a cada una. Se juntan durante el `.map` —que es síncrono— y se comprueban
@@ -240,13 +255,31 @@ export async function resolveSalesLines(
       // importado) vende **la cantidad del papel** sobre una bobina con saldo suficiente; el
       // alta a mano sigue vendiendo el saldo completo (D-116).
       const paperQty = options.exactAmounts !== undefined;
-      if (paperQty && toDecimal(item.qty).gt(toDecimal(sale.qty))) {
+      if (paperQty) {
+        // La bobina que eligió el preview puede haber cambiado hasta confirmar: se revalida lo
+        // que el pool exige (D-254) — abierta y sin montar en una OP — además del saldo.
+        if (sale.status !== CoilStatus.OPEN || sale.mounted) {
+          throw new BadRequestException(
+            `${at}: ${sale.coilCode} ya no está libre para venderse (${sale.mounted ? 'montada en una OP' : sale.status}): elige otra bobina del pool`,
+          );
+        }
+        if (toDecimal(item.qty).gt(toDecimal(sale.qty))) {
+          throw new BadRequestException(
+            `${at}: ${sale.coilCode} tiene ${sale.qty} kg disponibles y la línea vende ${toDecimal(item.qty).toFixed(3)}`,
+          );
+        }
+      } else if (
+        (item.netAmountPen !== undefined || item.unitPriceWithIgvPen !== undefined) &&
+        !toDecimal(item.qty).equals(toDecimal(sale.qty))
+      ) {
+        // Fuera del papel la cantidad es el saldo vivo (D-116). Un importe fijo sobre otra
+        // cantidad cambiaría el precio por kg en silencio: se rechaza en vez de reinterpretarlo.
         throw new BadRequestException(
-          `${at}: ${sale.coilCode} tiene ${sale.qty} kg disponibles y la línea vende ${toDecimal(item.qty).toFixed(3)}`,
+          `${at}: el saldo de ${sale.coilCode} cambió (${sale.qty} kg, la línea dice ${toDecimal(item.qty).toFixed(3)}): vuelve a elegir la bobina y el precio`,
         );
       }
       const qty = paperQty ? toFixedString(toDecimal(item.qty), 'KG') : sale.qty;
-      const basis = amountBasisOf(item, item.unitPricePen ?? null);
+      const basis = amountBasisOf(item, item.unitPricePen ?? null, at);
       if (basis === null) {
         throw new BadRequestException(
           `${at}: la venta de una bobina es a precio negociado, escribe el precio por kg`,
@@ -345,7 +378,7 @@ export async function resolveSalesLines(
             'MONEY',
           )
         : (item.unitPricePen ?? listPricePen);
-    const basis = amountBasisOf(item, typedUnitValuePen);
+    const basis = amountBasisOf(item, typedUnitValuePen, at);
     if (basis === null) {
       throw new BadRequestException(
         `${at}: el producto ${product.sku} no tiene valor de lista; escribe el ${byFixedLength ? 'valor por metro' : 'valor unitario'} en la línea`,
@@ -634,15 +667,25 @@ function assertWithinRoundingTolerance(
 function amountBasisOf(
   item: SalesItemInput,
   fallbackUnitValuePen: string | null,
+  at: string,
 ): LineAmountBasis | null {
   if (item.netAmountPen !== undefined) {
-    return item.igvAmountPen !== undefined && item.totalAmountPen !== undefined
-      ? {
-          netAmountPen: item.netAmountPen,
-          igvAmountPen: item.igvAmountPen,
-          totalAmountPen: item.totalAmountPen,
-        }
-      : { netAmountPen: item.netAmountPen };
+    if (item.igvAmountPen !== undefined && item.totalAmountPen !== undefined) {
+      // El trío del papel se acepta **solo si cuadra**: importe + IGV = total, con el IGV a
+      // menos de un céntimo del 18 %. Sin esto, cualquier cliente del API podía guardar una
+      // línea gravada con IGV cero o negativo (autorrevisión RF-S4b, P0).
+      if (!paperTriplet(item.netAmountPen, item.igvAmountPen, item.totalAmountPen)) {
+        throw new BadRequestException(
+          `${at}: el importe (${item.netAmountPen}), el IGV (${item.igvAmountPen}) y el total (${item.totalAmountPen}) no cuadran entre sí`,
+        );
+      }
+      return {
+        netAmountPen: item.netAmountPen,
+        igvAmountPen: item.igvAmountPen,
+        totalAmountPen: item.totalAmountPen,
+      };
+    }
+    return { netAmountPen: item.netAmountPen };
   }
   if (item.unitPriceWithIgvPen !== undefined) {
     return { unitPriceWithIgvPen: item.unitPriceWithIgvPen };
@@ -660,6 +703,9 @@ interface SaleCoilResolution {
   productBusinessLineId: string;
   /** Saldo vivo (físico menos reservado) al momento de resolver la línea, en kg. */
   qty: string;
+  /** D-254: lo que el pool exige de una bobina que vende una línea del papel. */
+  status: CoilStatus;
+  mounted: boolean;
 }
 
 /**
@@ -686,14 +732,16 @@ async function resolveSaleCoils(
   // primero, el SKU viejo de la transición como respaldo— y nunca es un producto inactivo.
   const productBySku = await findCoilSaleProducts(tx, coils);
 
-  const [balances, reservedById] = await Promise.all([
+  const [balances, reservedById, mounted] = await Promise.all([
     tx.inventoryBalance.findMany({
       where: { itemType: InventoryItemType.COIL, itemId: { in: coilIds } },
       select: { itemId: true, qty: true },
     }),
     // D-185: firme más temporal vigente.
     reservedByItem(tx, InventoryItemType.COIL, coilIds),
+    findLiveStripAssignments(tx, coilIds),
   ]);
+  const mountedIds = new Set(mounted.map((m) => m.coilId));
   const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
 
   for (const coilId of coilIds) {
@@ -726,6 +774,8 @@ async function resolveSaleCoils(
       productName: product.name,
       productBusinessLineId: product.businessLineId,
       qty: toFixedString(available, 'KG'),
+      status: coil.status,
+      mounted: mountedIds.has(coilId),
     });
   }
   return result;

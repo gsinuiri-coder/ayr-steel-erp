@@ -19,6 +19,7 @@ import { resolve } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { PrismaClient, Role } from '@prisma/client';
 import { AppModule } from '../src/app.module';
+import { assertExecuteAllowed } from './cli-gate';
 import type { RequestUser } from '../src/auth/auth.types';
 import {
   ImportedDocumentsSweepService,
@@ -51,6 +52,11 @@ function printDocument(doc: SweepDocument): void {
         `      (a) línea ${String(f.lineNumber)} ${f.productSku}: ${f.product.reason} ${fix}`,
       );
     }
+    if (f.qtyMismatch) {
+      console.warn(
+        `      (c) línea ${String(f.lineNumber)}: la cantidad cambió (papel ${f.qtyMismatch.paper}, guardada ${f.qtyMismatch.stored}): el importe del papel no se le aplica`,
+      );
+    }
     if (f.amounts) {
       const p = f.amounts.paper;
       const s = f.amounts.stored;
@@ -63,6 +69,7 @@ function printDocument(doc: SweepDocument): void {
 }
 
 async function main(): Promise<void> {
+  assertExecuteAllowed(execute);
   if (!filePath)
     throw new Error(
       'Uso: sweep-imported-documents-cli.ts --file <export.xlsx> [--execute] [--json]',
@@ -101,7 +108,10 @@ async function main(): Promise<void> {
         (d) =>
           d.open &&
           (d.unmatched !== null ||
-            d.findings.some((f) => f.product !== null && f.product.autoCoilId === null)),
+            d.findings.some(
+              (f) =>
+                f.qtyMismatch !== null || (f.product !== null && f.product.autoCoilId === null),
+            )),
       );
       console.warn(
         `Simulando (dry-run): ${String(report.reviewed)} documento(s) importado(s) revisado(s).\n`,

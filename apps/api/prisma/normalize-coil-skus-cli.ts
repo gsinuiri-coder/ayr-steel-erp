@@ -18,6 +18,7 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { PrismaClient, Role } from '@prisma/client';
 import { AppModule } from '../src/app.module';
+import { assertExecuteAllowed } from './cli-gate';
 import {
   CoilSkuNormalizationService,
   type NormalizationGroup,
@@ -68,6 +69,7 @@ function printPlan(plan: NormalizationPlan): void {
 }
 
 async function main(): Promise<void> {
+  assertExecuteAllowed(execute);
   const prisma = new PrismaClient();
   try {
     await prisma.$queryRaw`SELECT "merged_into_id" FROM "products" LIMIT 0`;
