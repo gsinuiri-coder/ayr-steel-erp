@@ -151,6 +151,79 @@ y tests corridos que M0 (tolerancia simétrica) es correcta, que los tests nuevo
 el fix, y que M0/M2 no tocan kardex fuera de transacción. Sigue debiendo el pase cruzado real por
 un agente distinto del implementador, según AGENTS.md §2.2.
 
+### Cierre QA post-deploy — hotfix D-249/D-250 (2026-09-23)
+
+Verificación de solo lectura contra **producción real**, ya con el hotfix desplegado y con el
+tráfico 100 % en la revisión activa. No sustituye el pase cruzado independiente pendiente
+(§ arriba): es la comprobación de que lo desplegado hace lo que D-249/D-250 dicen que hace.
+
+**Runtime desplegado.** `gcloud run services describe ayr-steel-erp-api` confirma
+`status.traffic = {revisionName: ayr-steel-erp-api-00042-tdb, percent: 100}` y
+`gcloud run revisions describe` de esa revisión trae `git-sha=0e1124b`, el commit en la punta de
+`main` al momento de esta sesión.
+
+**D-250 — filtro por línea de `/reports/coils`, contra producción de verdad.** Con el patrón de
+`scripts/smoke-prod.mjs` (admin efímero `e2e-qa-d249@ayr.test` vía `ALLOW_E2E_ADMIN=1`, login por
+`/api/auth/login`, cookie de sesión reenviada) se corrió un script de un solo uso
+(`scripts/oneoff/20260923-qa-coils-line-filter.mjs`, creado, ejecutado y borrado en esta misma
+sesión) contra `https://ayr-steel-erp-web.vercel.app`:
+
+- Sin filtro: **92 filas**.
+- `businessLine=drywall`: 0 filas. `businessLine=metallic-roofing`: **92 filas**, todas con
+  `businessLine: "metallic-roofing"` poblado. `businessLine=roofing`, `trading` y `services`: 0
+  filas cada una.
+- Suma de las cinco líneas: **92 = 92**, reconstruye el total exacto.
+- Que hoy todo el inventario de bobinas en `production` sea `metallic-roofing` es coherente con
+  `COIL_BUSINESS_LINES` (`packages/shared/src/enums.ts:56-59`), que solo admite `DRYWALL` y
+  `METALLIC_ROOFING` para bobinas: cero filas en `drywall` es el dato real de hoy, no un síntoma
+  de que el filtro siga roto (antes del fix, **todas** las líneas devolvían cero, incluida la que
+  sí tiene datos).
+- Admin efímero de QA **borrado** al terminar (`cleanup-e2e-users.ts` con `ALLOW_E2E_CLEANUP=1`
+  en el `finally`): salida `Usuarios de E2E borrados: 1`.
+
+**D-249 — tolerancia simétrica de `mountedKgForReport`.** Sin escribir en producción (habría
+tocado kardex):
+
+- `pnpm exec jest mounted-kg.spec.ts` en `apps/api`, contra el código ya desplegado: **21/21
+  verdes**, incluidas las 5 pruebas del bloque `tolerancia simétrica (D-249)`.
+- Verificación de caja negra reconstruyendo el paquete (`pnpm --filter @ayr/shared run build`,
+  para no repetir el falso-verde de `dist` desactualizado que documenta
+  `docs/revision/hotfix-d249-autorrevision.md`) e importando `mountedKgForReport` desde
+  `packages/shared/dist/index.js` en un script de una sola vez:
+  - Caso real de la ventana (teórico 4043.952 kg, montado 4010.000 kg, sin declarar; exceso
+    0,84 %): **acepta**, `kg="4010"`, `capped: true`.
+  - Caso absurdo del hallazgo P1-1 (teórico 4043.952 kg, montado 1.000 kg, declarado 0.500 kg):
+    **rechaza**, con el mensaje que manda a revisar piezas/bobina en vez de sugerir declarar.
+- `git status --porcelain` quedó vacío al terminar; `packages/shared/dist/` es el único artefacto
+  tocado y está en `.gitignore`.
+
+**Sin hallazgos nuevos.** No se encontró nada que amerite una decisión `D-nnn` nueva: es
+verificación de lo ya decidido en D-249/D-250, no una decisión distinta. El pase cruzado
+independiente de AGENTS.md §2.2 sigue pendiente.
+
+### Diagnóstico M3 contra producción — cero pedidos atascados, síntoma sin explicar
+
+Query de solo lectura (autorizada por el dueño, D-234, con la consulta corregida por él antes de
+correrla) contra `production`, previa al merge: separa los pedidos con OP no cerradas en los tres
+mecanismos de M3 (`docs/handoff/hotfix-d249.md`), usando `live_ops`/`total_ops`/`closed_ops` en
+vez de `sales_orders.status` (que no sirve de filtro: `deriveOrderReadiness`,
+`order-readiness.ts:17`, decide `LISTO` solo por el estado de las OP, nunca por el estado
+persistido del pedido).
+
+**Resultado: cero filas en los tres casos, y cero en el `ELSE` (posible cuarto mecanismo).**
+Sanity check aparte confirmó por qué: `production_orders` en `production` tiene **28 filas, las
+28 en `CLOSED`** — cero en `DRAFT`, `IN_PROGRESS` o `CANCELLED`. No hay ninguna OP colgada hoy,
+ni por el mecanismo viejo de D-246 ni por uno nuevo. Script de un solo uso creado, corrido y
+borrado en la misma sesión; ninguna escritura contra `production`.
+
+**El síntoma que motivó el PASO 3 queda SIN EXPLICAR.** El dueño reportó el 2026-09-22 un pedido
+que no pasaba a `LISTO` al terminar producción, y ninguno de los tres mecanismos de M3 lo
+reproduce hoy contra datos reales — ni un cuarto mecanismo detectable por estado de OP. Si
+reaparece, **la siguiente sesión no debe volver a mirar el estado de las OP**: ya se descartó acá.
+Conviene revisar la capa de lectura/presentación de `LISTO` (dónde y cuándo la UI pide y cachea
+`deriveOrderReadiness`, si invalida cuando corresponde, y si hay algo de esa capa —no del estado
+de dominio— que pueda mostrar un pedido como no-`LISTO` un rato después de que sus OP ya cerraron.
+
 ## Ventana RF-S4a — reportes de costeo (2026-09-22)
 
 Ventana corta, **sin migración**: los dos reportes son de solo lectura y no tocan ningún
