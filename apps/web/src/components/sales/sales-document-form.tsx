@@ -6,13 +6,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
+  BusinessLine,
+  COIL_SKU_PREFIX,
   Decimal,
   DEFAULT_QUOTATION_VALIDITY_DAYS,
   describePieces,
   fixedLengthMeters,
   fixedLengthUnitValue,
   fixedLengthValuePerMeter,
+  isImportedQuotation,
   isPlausiblePieceLength,
+  lineAmounts,
   MAX_QUOTATION_VALIDITY_DAYS,
   MAX_SALES_ITEMS,
   money,
@@ -21,14 +25,14 @@ import {
   piecesMeters,
   salePriceFromValue,
   saleValueFromPrice,
-  salesLineTotals,
   sellsByFixedLength,
   toDecimal,
   toFixedString,
   Unit,
-  type BusinessLine,
   type BusinessLineDto,
+  type CoilPoolDto,
   type CustomerDto,
+  type LineAmounts,
   type ProductDto,
   type QuotationDto,
   type RoofingPieceDto,
@@ -125,8 +129,13 @@ interface LineDraft {
   qty: string;
   /**
    * D-162: lo que el vendedor tipea es el **precio de venta, CON IGV** — el número que le
-   * promete al cliente. El valor sin IGV, que es lo que se guarda y lo que SUNAT factura, lo
-   * deriva el formulario (`precio ÷ 1.18`) y se muestra debajo del campo.
+   * promete al cliente. El valor sin IGV, que es lo que se guarda y lo que SUNAT factura, se
+   * muestra debajo del campo.
+   *
+   * D-255 (R2): el precio viaja **tal cual** (`unitPriceWithIgvPen`) y el API deriva el resto
+   * desde el total `redondeo(cantidad × precio)`. Antes el formulario lo dividía entre 1.18 a
+   * cuatro decimales y el API volvía a multiplicar: 3.50 × 4 194 kg salía S/ 14 678.99 y no
+   * 14 679.00 (COT-000002).
    *
    * D-161: en una plancha de catálogo este precio es **por metro lineal**, no por plancha: el
    * acero se negocia por metro y la plancha tiene largo fijo, así que el valor unitario sale
@@ -134,11 +143,38 @@ interface LineDraft {
    */
   pricePen: string;
   /**
+   * D-255 (R2): cómo se carga el importe de la línea. `PRICE` es el precio con IGV de arriba;
+   * `AMOUNT` es el **importe de la línea sin IGV** (valor de venta), del que se deriva el
+   * unitario con diez decimales. Una plancha de catálogo se queda en `PRICE` (D-161).
+   */
+  amountMode: 'PRICE' | 'AMOUNT';
+  /** D-255: el importe sin IGV tipeado, cuando `amountMode === 'AMOUNT'`. */
+  netAmountPen: string;
+  /**
+   * D-255: la línea tal como estaba guardada, al editar una cotización. Mientras el vendedor no
+   * le toque el producto, la bobina, la cantidad ni el precio, viaja **su importe guardado**
+   * (valor, IGV y total) y no se recalcula desde el unitario de cuatro decimales, que es solo
+   * para mostrar. `null` en toda línea nueva.
+   */
+  original: StoredLine | null;
+  /**
    * D-083: los largos de una cobertura a medida. La cantidad de la línea deja de tipearse y
    * pasa a ser la suma `Σ cantidad × largo` en metros, que es lo que el API exige que
    * coincida — por eso el campo de cantidad se bloquea en cuanto la línea es compuesta.
    */
   pieces: PieceDraft[];
+}
+
+/** D-255: lo que la línea guardada tenía, para reconocer que nadie la tocó. */
+interface StoredLine {
+  kind: LineDraft['kind'];
+  productId: string;
+  saleCoilId: string;
+  qty: string;
+  pricePen: string;
+  subtotalPen: string;
+  igvPen: string;
+  totalPen: string;
 }
 
 const EMPTY_PIECE = EMPTY_PIECE_ROW;
@@ -152,7 +188,111 @@ function emptyLine(key: number): LineDraft {
     saleCoilId: '',
     qty: '',
     pricePen: '',
+    amountMode: 'PRICE',
+    netAmountPen: '',
+    original: null,
     pieces: [EMPTY_PIECE],
+  };
+}
+
+/**
+ * D-254: ¿es el producto de venta de una bobina? Los de la línea de reventa con prefijo `BOB`,
+ * la misma marca que usa el API (`isCoilSaleProduct`). Uno así no se vende como línea de
+ * catálogo: se vende una bobina concreta de su pool.
+ */
+function isCoilSaleProduct(product: ProductDto | undefined): boolean {
+  return (
+    product?.businessLineCode === BusinessLine.TRADING &&
+    product.sku.toUpperCase().startsWith(COIL_SKU_PREFIX)
+  );
+}
+
+/**
+ * D-255: la cantidad que viaja. En una venta de bobina es el saldo completo (D-116), salvo en
+ * una cotización importada, donde manda la cantidad del papel (D-254).
+ */
+function sentQty(l: LineDraft, coil: SellableCoilDto | undefined, imported: boolean): string {
+  if (l.kind !== 'BOBINA') return l.qty;
+  if (imported && l.qty !== '') return l.qty;
+  return coil?.availableQty ?? l.qty;
+}
+
+/** D-255: ¿la línea sigue siendo la guardada? Ver `LineDraft.original`. */
+function isUntouched(l: LineDraft, product: ProductDto | undefined, qty: string): boolean {
+  const o = l.original;
+  return (
+    o !== null &&
+    l.amountMode === 'PRICE' &&
+    l.kind === o.kind &&
+    l.productId === o.productId &&
+    l.saleCoilId === o.saleCoilId &&
+    l.pricePen === o.pricePen &&
+    isPositiveDecimal(qty) &&
+    toDecimal(qty.trim()).equals(toDecimal(o.qty)) &&
+    // D-161: la plancha de catálogo sigue viajando por su valor por metro, como siempre.
+    !(l.kind === 'PRODUCT' && byFixedLength(product))
+  );
+}
+
+/** D-255: la forma del importe que viaja al API (una sola) y los importes que produce. */
+interface LinePricing {
+  payload: Pick<
+    SalesItemInput,
+    | 'unitPricePen'
+    | 'valuePerMeterPen'
+    | 'unitPriceWithIgvPen'
+    | 'netAmountPen'
+    | 'igvAmountPen'
+    | 'totalAmountPen'
+  >;
+  /** Los mismos importes que va a guardar el API (`lineAmounts` de `@ayr/shared`). */
+  amounts: LineAmounts;
+}
+
+/**
+ * D-255 (R2): los importes de una línea **como los va a guardar el API**, o `null` si todavía
+ * no está completa. Usa `lineAmounts`, la misma función que el API, así que lo que el vendedor
+ * ve mientras tipea es exactamente lo que se guarda:
+ *
+ * - la línea guardada que nadie tocó manda su valor, IGV y total;
+ * - el importe sin IGV tipeado manda `netAmountPen` y el unitario se deriva;
+ * - el precio con IGV manda `unitPriceWithIgvPen`, salvo en una plancha de catálogo, que manda
+ *   el valor por metro como siempre (D-161).
+ */
+function linePricing(
+  l: LineDraft,
+  product: ProductDto | undefined,
+  qty: string,
+): LinePricing | null {
+  if (!isPositiveDecimal(qty)) return null;
+  const q = toFixedString(qty.trim(), 'KG');
+  if (isUntouched(l, product, qty) && l.original !== null) {
+    const payload = {
+      netAmountPen: l.original.subtotalPen,
+      igvAmountPen: l.original.igvPen,
+      totalAmountPen: l.original.totalPen,
+    };
+    return { payload, amounts: lineAmounts(q, payload) };
+  }
+  if (l.amountMode === 'AMOUNT') {
+    if (!isPositiveDecimal(l.netAmountPen)) return null;
+    const netAmountPen = toFixedString(l.netAmountPen.trim(), 'MONEY');
+    if (!toDecimal(netAmountPen).gt(0)) return null;
+    return { payload: { netAmountPen }, amounts: lineAmounts(q, { netAmountPen }) };
+  }
+  if (!isPositiveDecimal(l.pricePen)) return null;
+  const { valuePerMeterPen, unitValuePen } = lineValues(l, product);
+  if (l.kind === 'PRODUCT' && valuePerMeterPen !== null && unitValuePen !== null) {
+    return {
+      payload: { valuePerMeterPen },
+      amounts: lineAmounts(q, { unitValuePen }),
+    };
+  }
+  const unitPriceWithIgvPen = toFixedString(l.pricePen.trim(), 'MONEY');
+  if (!toDecimal(unitPriceWithIgvPen).gt(0)) return null;
+  return {
+    payload: { unitPriceWithIgvPen },
+    amounts: lineAmounts(q, { unitPriceWithIgvPen }),
   };
 }
 
@@ -189,22 +329,6 @@ function lineValues(
 function toPieces(rows: PieceDraft[]): RoofingPieceDto[] | null {
   const parsed = parsePieceRows(rows);
   return parsed.ok ? parsed.pieces : null;
-}
-
-/**
- * Los totales de una línea, o `null` si todavía no está completa.
- *
- * El API normaliza a la escala fija antes de calcular (`decimalStringSchema`), así que la
- * previsualización tiene que hacerlo también: con `1.2345` kg, el importe de pantalla y el
- * guardado diferían en milésimas — el mismo desajuste que se corrigió en el partido (2b).
- */
-function lineTotalsOf(
-  l: Pick<LineDraft, 'qty' | 'pricePen'>,
-  product: ProductDto | undefined,
-): ReturnType<typeof salesLineTotals> | null {
-  const { unitValuePen } = lineValues(l, product);
-  if (unitValuePen === null || !isPositiveDecimal(l.qty)) return null;
-  return salesLineTotals({ qty: toFixedString(l.qty, 'KG'), unitPricePen: unitValuePen });
 }
 
 /**
@@ -254,6 +378,14 @@ function brokenFixedLength(product: ProductDto | undefined): boolean {
 function lineFromItem(item: QuotationDto['items'][number], key: number): LineDraft {
   const value = item.valuePerMeterPen ?? item.unitPricePen;
   const pricePen = toFixedString(money(salePriceFromValue(value)), 'MONEY');
+  // D-255: lo guardado, para mandar el importe tal cual mientras nadie toque la línea.
+  const stored = {
+    qty: item.qty,
+    pricePen,
+    subtotalPen: item.subtotalPen,
+    igvPen: item.igvPen,
+    totalPen: item.totalPen,
+  };
   // D-134: desde la reserva genérica, la única línea que reserva una bobina concreta es la
   // venta del rollo entero (RF-73).
   if (item.reserveItemType === 'COIL') {
@@ -263,6 +395,7 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
       saleCoilId: item.reserveItemId,
       qty: item.qty,
       pricePen,
+      original: { ...stored, kind: 'BOBINA', productId: '', saleCoilId: item.reserveItemId },
     };
   }
   return {
@@ -273,6 +406,9 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
     saleCoilId: '',
     qty: item.qty,
     pricePen,
+    amountMode: 'PRICE',
+    netAmountPen: '',
+    original: { ...stored, kind: 'PRODUCT', productId: item.productId, saleCoilId: '' },
     pieces:
       item.pieces.length > 0
         ? item.pieces.map((p) => ({ lengthM: mmToMeters(p.lengthMm), qty: String(p.qty) }))
@@ -312,6 +448,9 @@ export function SalesDocumentForm({
   // número válido para guardar y ese número no cambiaba nada: parecía un dato que se podía
   // tocar y no lo era.
   const noExpiration = initial?.validUntil === null;
+  // D-163/D-169/D-254: una cotización que trajo el importador está exenta del piso, conserva
+  // sus importes y vende la cantidad del papel también en una línea de bobina.
+  const imported = initial !== undefined && isImportedQuotation(initial.notes);
   // F8-S1/M2: agregar ítems es una creación repetible; el mismo envío no agrega dos veces.
   const submitKey = useIdempotencyKey();
 
@@ -440,6 +579,8 @@ export function SalesDocumentForm({
       // detalle anterior dejaría de significar nada, y la cantidad se recalcula sola.
       pieces: [EMPTY_PIECE],
       qty: '',
+      // D-255/D-161: una plancha de catálogo se carga por metro, nunca por importe.
+      ...(byFixedLength(product) ? { amountMode: 'PRICE' as const } : {}),
     });
   }
 
@@ -462,7 +603,51 @@ export function SalesDocumentForm({
    */
   function chooseSaleCoil(key: number, coilId: string): void {
     const coil = sellableCoils.data?.find((c) => c.coilId === coilId);
-    patchLine(key, { saleCoilId: coilId, qty: coil?.availableQty ?? '' });
+    const current = lines.find((l) => l.key === key);
+    // D-254: en una cotización importada la cantidad es la del papel, no el saldo del rollo.
+    const keepQty = imported && current !== undefined && current.qty !== '';
+    patchLine(key, {
+      saleCoilId: coilId,
+      ...(keepQty ? {} : { qty: coil?.availableQty ?? '' }),
+    });
+  }
+
+  /**
+   * D-254 (R1): una línea importada enganchada al **producto** de venta de una bobina
+   * (COT-000002) pasa a vender una bobina concreta de su pool. La cantidad y el importe no
+   * cambian —los manda el papel (D-255)—: si la línea estaba intacta sigue mandando su valor,
+   * IGV y total guardados; si no, su importe actual queda cargado como importe sin IGV.
+   */
+  function convertToCoil(key: number, coilId: string): void {
+    setFormError(null);
+    setLines((current) =>
+      current.map((l) => {
+        if (l.key !== key) return l;
+        const product = productById.get(l.productId);
+        const pricing = linePricing(l, product, l.qty);
+        const base: LineDraft = {
+          ...l,
+          kind: 'BOBINA',
+          businessLine: '',
+          productId: '',
+          saleCoilId: coilId,
+          pieces: [EMPTY_PIECE],
+        };
+        if (isUntouched(l, product, l.qty) && l.original !== null) {
+          return {
+            ...base,
+            original: { ...l.original, kind: 'BOBINA', productId: '', saleCoilId: coilId },
+          };
+        }
+        return {
+          ...base,
+          amountMode: 'AMOUNT',
+          netAmountPen:
+            pricing === null ? l.netAmountPen : toFixedString(pricing.amounts.subtotal, 'MONEY'),
+          original: null,
+        };
+      }),
+    );
   }
 
   /**
@@ -476,9 +661,19 @@ export function SalesDocumentForm({
     patchLine(key, { pieces, qty: parsed === null ? '' : piecesMeters(parsed).toFixed(3) });
   }
 
+  /** D-255: la forma del importe y los importes de cada línea, como los guardará el API. */
+  function pricingOf(l: LineDraft): LinePricing | null {
+    const coil = sellableCoils.data?.find((c) => c.coilId === l.saleCoilId);
+    return linePricing(
+      l,
+      l.kind === 'BOBINA' ? undefined : productById.get(l.productId),
+      sentQty(l, coil, imported),
+    );
+  }
+
   const totals = lines.flatMap((l) => {
-    const t = lineTotalsOf(l, productById.get(l.productId));
-    return t === null ? [] : [t];
+    const t = pricingOf(l)?.amounts;
+    return t === undefined ? [] : [t];
   });
   const subtotal = totals.reduce((acc, t) => acc.plus(t.subtotal), new Decimal(0));
   const igv = totals.reduce((acc, t) => acc.plus(t.igv), new Decimal(0));
@@ -552,18 +747,28 @@ export function SalesDocumentForm({
           };
         }
         soldCoilIds.add(l.saleCoilId);
-        if (!isPositiveDecimal(l.pricePen)) {
+        const coil = sellableCoils.data?.find((c) => c.coilId === l.saleCoilId);
+        const qty = sentQty(l, coil, imported);
+        const untouched = isUntouched(l, undefined, qty);
+        if (!untouched && l.amountMode === 'PRICE' && !isPositiveDecimal(l.pricePen)) {
           return { error: `${at}: escribe el precio por kg` };
         }
-        const coil = sellableCoils.data?.find((c) => c.coilId === l.saleCoilId);
-        const { unitValuePen } = lineValues(l, undefined);
+        if (!untouched && l.amountMode === 'AMOUNT' && !isPositiveDecimal(l.netAmountPen)) {
+          return { error: `${at}: escribe el importe sin IGV de la línea` };
+        }
+        const pricing = linePricing(l, undefined, qty);
         // Sin el `?? '0.0000'`: mandar un cero cuando el precio no se pudo convertir cambiaba
         // un error local y legible por el 400 genérico del schema.
-        if (unitValuePen === null) return { error: `${at}: el precio no es un número válido` };
+        if (pricing === null) return { error: `${at}: el precio no es un número válido` };
         // D-163: la venta de un rollo entero también tiene piso, y su mínimo viaja por kg en
-        // la propia bobina. Se comprueba contra el **precio** tipeado porque es en esa unidad
-        // que el API lo devuelve.
-        if (coil?.minPricePen && toDecimal(l.pricePen).lt(toDecimal(coil.minPricePen))) {
+        // la propia bobina. Se comprueba contra el **precio con IGV** porque es en esa unidad
+        // que el API lo devuelve: el tipeado, o el que sale del importe. Lo importado está
+        // exento (D-163), igual que en el API.
+        const typedPrice =
+          l.amountMode === 'PRICE' && !untouched
+            ? toDecimal(l.pricePen.trim())
+            : salePriceFromValue(pricing.amounts.unitValue);
+        if (!imported && coil?.minPricePen && typedPrice.lt(toDecimal(coil.minPricePen))) {
           return {
             error:
               `${at}: el precio está por debajo del mínimo. El mínimo de ${coil.code} es ` +
@@ -573,8 +778,8 @@ export function SalesDocumentForm({
         }
         items.push({
           saleCoilId: l.saleCoilId,
-          qty: toFixedString(coil?.availableQty ?? l.qty, 'KG'),
-          unitPricePen: unitValuePen,
+          qty: toFixedString(qty, 'KG'),
+          ...pricing.payload,
         });
         continue;
       }
@@ -598,6 +803,16 @@ export function SalesDocumentForm({
             'Corrígelo en Catálogo — el campo va en milímetros, una plancha de 3 metros son 3000.',
         };
       }
+      // D-254 (R1): el producto de venta de una bobina no se vende suelto; el API lo rechaza.
+      if (isCoilSaleProduct(product)) {
+        return {
+          error:
+            `${at}: ${product.sku} es el producto de venta de una bobina: ` +
+            (imported
+              ? 'conviértela en venta de bobina con «Convertir en venta de bobina» y elige cuál.'
+              : 'elige la bobina que se vende con «Bobina completa (venta directa)».'),
+        };
+      }
       const sellsMeters = sellsByLength(product);
       const pieces = sellsMeters ? toPieces(l.pieces) : null;
       if (sellsMeters) {
@@ -607,23 +822,29 @@ export function SalesDocumentForm({
       if (!isPositiveDecimal(l.qty)) {
         return { error: `${at}: la cantidad debe ser mayor a cero` };
       }
-      if (!isPositiveDecimal(l.pricePen)) {
+      const untouched = isUntouched(l, product, l.qty);
+      if (!untouched && l.amountMode === 'PRICE' && !isPositiveDecimal(l.pricePen)) {
         return {
           error: `${at}: escribe un precio ${byFixedLength(product) ? 'por metro' : 'unitario'} mayor a cero`,
         };
       }
-      const { valuePerMeterPen, unitValuePen } = lineValues(l, product);
-      if (unitValuePen === null) return { error: `${at}: el precio no es un número válido` };
+      if (!untouched && l.amountMode === 'AMOUNT' && !isPositiveDecimal(l.netAmountPen)) {
+        return { error: `${at}: escribe el importe sin IGV de la línea` };
+      }
+      const pricing = linePricing(l, product, l.qty);
+      if (pricing === null) return { error: `${at}: el precio no es un número válido` };
 
       // D-163: el piso duro. La palabra final la tiene el API —el costo se puede mover entre
       // que se pintó el panel y que se guarda— pero decirlo acá evita el viaje de ida y
       // vuelta y, sobre todo, señala **qué línea** es: el 400 llega como un cartel rojo
-      // suelto arriba del formulario.
+      // suelto arriba del formulario. D-255: contra el unitario **derivado**, que es el que
+      // compara el API; lo importado está exento, igual que allá.
       const stock = stockByProductId.get(l.productId);
       if (
+        !imported &&
         stock?.minValuePen &&
         stock.minPricePen &&
-        toDecimal(unitValuePen).lt(toDecimal(stock.minValuePen))
+        pricing.amounts.unitValue.lt(toDecimal(stock.minValuePen))
       ) {
         // El mínimo se nombra en la **misma** unidad que el campo que el vendedor acaba de
         // llenar, y con el mismo número que el renglón de ayuda debajo de ese campo: son el
@@ -646,8 +867,9 @@ export function SalesDocumentForm({
         productId: l.productId,
         qty: toFixedString(l.qty, 'KG'),
         // D-161: en una plancha viaja el valor por metro y el API multiplica por el largo del
-        // SKU; en el resto viaja el valor unitario. Nunca los dos (el schema lo rechaza).
-        ...(valuePerMeterPen === null ? { unitPricePen: unitValuePen } : { valuePerMeterPen }),
+        // SKU. D-255: en el resto, el precio con IGV tal cual, el importe sin IGV tipeado o el
+        // importe guardado. Siempre una sola forma (el schema rechaza dos).
+        ...pricing.payload,
         ...(pieces ? { pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })) } : {}),
       });
     }
@@ -860,6 +1082,9 @@ export function SalesDocumentForm({
                 sellableCoils={sellableCoils.data}
                 sellableCoilsLoaded={sellableCoils.isSuccess}
                 stock={l.productId === '' ? undefined : stockByProductId.get(l.productId)}
+                pricing={pricingOf(l)}
+                imported={imported}
+                quotationId={initial?.id ?? null}
                 canRemove={lines.length > 1}
                 onPatch={(patch) => {
                   patchLine(l.key, patch);
@@ -872,6 +1097,9 @@ export function SalesDocumentForm({
                 }}
                 onChooseSaleCoil={(coilId) => {
                   chooseSaleCoil(l.key, coilId);
+                }}
+                onConvertToCoil={(coilId) => {
+                  convertToCoil(l.key, coilId);
                 }}
                 onPatchPieces={(rows) => {
                   patchPieces(l.key, rows);
@@ -966,11 +1194,15 @@ function LineRow({
   sellableCoils,
   sellableCoilsLoaded,
   stock,
+  pricing,
+  imported,
+  quotationId,
   canRemove,
   onPatch,
   onSetKind,
   onChooseProduct,
   onChooseSaleCoil,
+  onConvertToCoil,
   onPatchPieces,
   onRemove,
 }: {
@@ -984,11 +1216,18 @@ function LineRow({
   sellableCoilsLoaded: boolean;
   /** D-136: disponible del SKU y, en una cobertura a medida, del agregado que va a prometer. */
   stock: ProductStockDto | undefined;
+  /** D-255: los importes de la línea como los guardará el API, o `null` si está incompleta. */
+  pricing: LinePricing | null;
+  /** D-254/D-255: la cotización que se edita viene del importador. */
+  imported: boolean;
+  /** La cotización que se edita, para que su propia reserva no le quite bobinas al pool. */
+  quotationId: string | null;
   canRemove: boolean;
   onPatch: (patch: Partial<LineDraft>) => void;
   onSetKind: (kind: LineDraft['kind']) => void;
   onChooseProduct: (productId: string) => void;
   onChooseSaleCoil: (coilId: string) => void;
+  onConvertToCoil: (coilId: string) => void;
   onPatchPieces: (rows: PieceDraft[]) => void;
   onRemove: () => void;
 }) {
@@ -1000,7 +1239,8 @@ function LineRow({
   // D-188: el modal de elegir producto con stock, uno por fila.
   const [pickerOpen, setPickerOpen] = useState(false);
   const product = productById.get(l.productId);
-  const lineTotal = lineTotalsOf(l, product)?.subtotal ?? null;
+  const lineTotal = pricing?.amounts.subtotal ?? null;
+  const byAmount = l.amountMode === 'AMOUNT';
   const sellsMeters = sellsByLength(product);
   // D-161: una plancha de catálogo cotiza por metro y su cantidad se cuenta en planchas, así
   // que la cantidad la manda su editor de largo fijo igual que en una a medida la manda el
@@ -1145,6 +1385,16 @@ function LineRow({
                   Esta línea no tiene productos activos.
                 </p>
               )}
+              {/* D-254: la línea importada enganchada al producto de una bobina (COT-000002). */}
+              {imported && isCoilSaleProduct(product) && quotationId !== null && (
+                <CoilPoolConvert
+                  productId={l.productId}
+                  qty={l.qty}
+                  quotationId={quotationId}
+                  lineIndex={index}
+                  onConvert={onConvertToCoil}
+                />
+              )}
             </div>
           )}
         </TableCell>
@@ -1173,7 +1423,8 @@ function LineRow({
           */}
           {l.kind === 'BOBINA' ? (
             <span className="mt-1 block text-right text-xs text-muted-foreground">
-              kg (saldo completo)
+              {/* D-254: la importada vende la cantidad del papel, no el rollo entero. */}
+              {imported ? 'kg (del comprobante)' : 'kg (saldo completo)'}
             </span>
           ) : (
             product && (
@@ -1189,38 +1440,98 @@ function LineRow({
           )}
         </TableCell>
         <TableCell className="whitespace-normal">
-          <Input
-            className="text-right tabular-nums"
-            inputMode="decimal"
-            aria-label={
-              fixedLength
-                ? `Precio por metro de la línea ${index + 1}`
-                : `Precio unitario de la línea ${index + 1}`
-            }
-            value={l.pricePen}
-            onChange={(e) => {
-              onPatch({ pricePen: e.target.value });
-            }}
-          />
+          {byAmount ? (
+            <Input
+              className="text-right tabular-nums"
+              inputMode="decimal"
+              aria-label={`Importe sin IGV de la línea ${index + 1}`}
+              value={l.netAmountPen}
+              onChange={(e) => {
+                onPatch({ netAmountPen: e.target.value });
+              }}
+            />
+          ) : (
+            <Input
+              className="text-right tabular-nums"
+              inputMode="decimal"
+              aria-label={
+                fixedLength
+                  ? `Precio por metro de la línea ${index + 1}`
+                  : `Precio unitario de la línea ${index + 1}`
+              }
+              value={l.pricePen}
+              onChange={(e) => {
+                onPatch({ pricePen: e.target.value });
+              }}
+            />
+          )}
           {/*
             D-162: el valor sin IGV va **debajo** del precio y no en su lugar. Es lo que se
             guarda y lo que sale en el comprobante, así que el vendedor lo tiene que ver; y es
             lo que hace evidente que el número de arriba ya lleva el IGV adentro.
             D-161: en una plancha el precio es por metro, así que el renglón dice además a
             cuánto sale la plancha entera — que es lo que el cliente compara.
+            D-255: con cantidad, el valor es el **derivado** del importe (el que guarda el API);
+            sin ella, el precio ÷ 1.18 de referencia.
           */}
           <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
-            {/* S11/F1-03: sin producto elegido no hay unidad que poner, y el sufijo se
-                imprimía como un «por» suelto debajo del campo de precio. */}
-            {fixedLength ? 'por metro' : product ? `por ${unitSymbol(product.unit)}` : ''}
-            {unitValuePen !== null && (
+            {byAmount
+              ? 'importe de la línea, sin IGV'
+              : // S11/F1-03: sin producto elegido no hay unidad que poner, y el sufijo se
+                // imprimía como un «por» suelto debajo del campo de precio.
+                fixedLength
+                ? 'por metro'
+                : product
+                  ? `por ${unitSymbol(product.unit)}`
+                  : l.kind === 'BOBINA'
+                    ? 'por kg'
+                    : ''}
+            {valuePerMeterPen !== null && !byAmount ? (
               <>
                 {' · valor '}
-                {formatMoney(valuePerMeterPen ?? unitValuePen, 'PEN', 4)}
-                {valuePerMeterPen !== null && <> /m</>}
+                {formatMoney(valuePerMeterPen, 'PEN', 4)} /m
               </>
+            ) : pricing !== null ? (
+              <>
+                {byAmount ? ' · unitario ' : ' · valor '}
+                {formatMoney(pricing.amounts.unitValue.toFixed(10), 'PEN', 4)}
+              </>
+            ) : (
+              unitValuePen !== null &&
+              !byAmount && (
+                <>
+                  {' · valor '}
+                  {formatMoney(unitValuePen, 'PEN', 4)}
+                </>
+              )
             )}
           </span>
+          {/*
+            D-255 (R2): cargar el importe de la línea en vez del precio. Una plancha de catálogo
+            se negocia por metro (D-161) y no ofrece el cambio.
+          */}
+          {!fixedLength && (
+            <button
+              type="button"
+              className="mt-1 block w-full text-right text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => {
+                onPatch(
+                  byAmount
+                    ? { amountMode: 'PRICE' }
+                    : {
+                        amountMode: 'AMOUNT',
+                        // Arranca con el importe que la línea ya tenía, para ajustarlo.
+                        netAmountPen:
+                          pricing === null
+                            ? l.netAmountPen
+                            : toFixedString(pricing.amounts.subtotal, 'MONEY'),
+                      },
+                );
+              }}
+            >
+              {byAmount ? 'Cargar precio con IGV' : 'Cargar importe sin IGV'}
+            </button>
+          )}
           {fixedLength && unitValuePen !== null && (
             <span className="mt-0.5 block text-right text-xs text-muted-foreground tabular-nums">
               {formatMoney(unitValuePen, 'PEN', 4)} por plancha
@@ -1230,6 +1541,7 @@ function LineRow({
             line={l}
             product={product}
             stock={stock}
+            pricing={pricing}
             coil={sellableCoils?.find((c) => c.coilId === l.saleCoilId)}
           />
           {product?.listPricePen && (
@@ -1345,11 +1657,13 @@ function PriceFloorHint({
   line: l,
   product,
   stock,
+  pricing,
   coil,
 }: {
   line: LineDraft;
   product: ProductDto | undefined;
   stock: ProductStockDto | undefined;
+  pricing: LinePricing | null;
   /** D-116/D-163: la bobina de una línea `BOBINA`, que trae su propio piso por kg. */
   coil: SellableCoilDto | undefined;
 }): ReactElement | null {
@@ -1365,14 +1679,21 @@ function PriceFloorHint({
   // kg en una bobina— y ya es un precio tipeable de dos decimales (D-163, `minTypeablePrice`).
   // Convertirlo o redondearlo acá otra vez es exactamente lo que hacía que la pantalla mostrara
   // un mínimo que el API después rechazaba.
-  const { unitValuePen } = lineValues(l, l.kind === 'BOBINA' ? undefined : product);
   // En una bobina el piso viaja solo como precio, así que la comparación local se hace contra
-  // el precio tipeado; en el resto, contra el valor, que es lo que el API compara.
+  // el precio (el tipeado, o el que sale del importe); en el resto, contra el valor unitario
+  // derivado del importe (D-255), que es lo que el API compara.
+  // Sin cantidad todavía, el precio ÷ 1.18 de referencia: el aviso no espera a la cantidad.
+  const typed = lineValues(l, l.kind === 'BOBINA' ? undefined : product).unitValuePen;
+  const unitValue =
+    pricing?.amounts.unitValue ??
+    (typed !== null && l.amountMode === 'PRICE' ? toDecimal(typed) : null);
   const below =
-    unitValuePen !== null &&
+    unitValue !== null &&
     (l.kind === 'BOBINA'
-      ? isPositiveDecimal(l.pricePen) && toDecimal(l.pricePen).lt(toDecimal(minPricePen))
-      : toDecimal(unitValuePen).lt(toDecimal(minValuePen)));
+      ? l.amountMode === 'PRICE' && isPositiveDecimal(l.pricePen)
+        ? toDecimal(l.pricePen.trim()).lt(toDecimal(minPricePen))
+        : salePriceFromValue(unitValue).lt(toDecimal(minPricePen))
+      : unitValue.lt(toDecimal(minValuePen)));
   return (
     <span
       className={`mt-1 block text-right text-xs tabular-nums ${below ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
@@ -1381,6 +1702,121 @@ function PriceFloorHint({
       {fixedLength ? ' /m' : l.kind === 'BOBINA' ? ' /kg' : ''}
       {below ? ' — por debajo' : ''}
     </span>
+  );
+}
+
+/**
+ * D-254 (R1): convertir una línea importada enganchada al **producto** de venta de una bobina
+ * en la venta de una bobina concreta de su pool. Las candidatas las calcula el API
+ * (`GET /sales/coil-pool`: espesor exacto, mismo color comercial o tipo, libres y con saldo
+ * para la cantidad); la única que puede elegirse sola llega preseleccionada, y si hay varias
+ * elige el vendedor. Nunca por orden ni al azar.
+ */
+function CoilPoolConvert({
+  productId,
+  qty,
+  quotationId,
+  lineIndex,
+  onConvert,
+}: {
+  productId: string;
+  qty: string;
+  quotationId: string;
+  lineIndex: number;
+  onConvert: (coilId: string) => void;
+}): ReactElement {
+  const [open, setOpen] = useState(false);
+  const [coilId, setCoilId] = useState('');
+  const ready = isPositiveDecimal(qty);
+  const pool = useQuery({
+    queryKey: ['coil-pool', productId, qty, quotationId],
+    queryFn: () =>
+      api<CoilPoolDto>(
+        `/sales/coil-pool?${new URLSearchParams({
+          productId,
+          qty: toFixedString(qty.trim(), 'KG'),
+          exceptQuotationId: quotationId,
+        }).toString()}`,
+      ),
+    enabled: open && ready,
+  });
+  const chosen = coilId !== '' ? coilId : (pool.data?.autoCoilId ?? '');
+
+  if (!open) {
+    return (
+      <Button
+        type="button"
+        variant="link"
+        size="sm"
+        className="h-auto justify-start p-0 text-xs"
+        disabled={!ready}
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        Convertir en venta de bobina
+      </Button>
+    );
+  }
+  return (
+    <div className="grid gap-1.5 rounded-md border p-2 text-xs">
+      {pool.isPending ? (
+        <span className="text-muted-foreground">Buscando bobinas del pool…</span>
+      ) : pool.isError ? (
+        <span className="text-destructive">
+          {pool.error instanceof ApiError ? pool.error.message : 'No se pudo leer el pool'}
+        </span>
+      ) : (
+        <>
+          <span className="text-muted-foreground">
+            {pool.data.sku}: {formatQty(pool.data.availableKg, 'kg')} disponibles en el pool
+          </span>
+          {pool.data.candidates.length === 0 ? (
+            <span className="text-destructive">
+              Ninguna bobina libre del pool alcanza para {formatQty(qty, 'kg')}.
+            </span>
+          ) : (
+            <Select value={chosen} onValueChange={setCoilId}>
+              <SelectTrigger
+                className="h-8 w-full text-xs"
+                aria-label={`Bobina del pool de la línea ${lineIndex + 1}`}
+              >
+                <SelectValue placeholder="Elige la bobina" />
+              </SelectTrigger>
+              <SelectContent>
+                {pool.data.candidates.map((c) => (
+                  <SelectItem key={c.coilId} value={c.coilId}>
+                    {c.code} · {c.widthMm} mm · {formatQty(c.balanceKg, 'kg')}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </>
+      )}
+      <div className="flex justify-end gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setOpen(false);
+          }}
+        >
+          Cancelar
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          disabled={chosen === ''}
+          onClick={() => {
+            onConvert(chosen);
+          }}
+        >
+          Convertir
+        </Button>
+      </div>
+    </div>
   );
 }
 

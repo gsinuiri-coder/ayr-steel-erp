@@ -52,8 +52,10 @@ import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import {
   ChangeCustomerDialog,
+  ChangeLineCoilDialog,
   EditLinePriceDialog,
   EditLineQtyDialog,
+  isCoilSaleLine,
 } from '@/components/sales/order-edit-dialogs';
 import { usePlantSheetActions } from '@/components/sales/plant-sheet-buttons';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
@@ -77,6 +79,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
   // D-187: las ediciones del pedido confirmado, hasta su comprobante.
   const [pricing, setPricing] = useState<SalesItemDto | null>(null);
   const [resizing, setResizing] = useState<SalesItemDto | null>(null);
+  /** D-254: la línea de venta de bobina que se reata a otra bobina de su pool. */
+  const [recoiling, setRecoiling] = useState<SalesItemDto | null>(null);
   const [changingCustomer, setChangingCustomer] = useState(false);
   /** D-124/D-148: día con el que nacen las órdenes que genera el botón. Solo lo ve un admin. */
   const [ordersDate, setOrdersDate] = useState<string | undefined>(undefined);
@@ -462,6 +466,19 @@ export function PedidoDetalleView({ id }: { id: string }) {
                           Cantidad
                         </Button>
                       )}
+                      {/* D-254: atar la línea a una bobina de su pool; cantidad e importe quedan. */}
+                      {canEditAsOwner && isCoilSaleLine(item) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Cambiar bobina de la línea ${String(item.lineNumber)}`}
+                          onClick={() => {
+                            setRecoiling(item);
+                          }}
+                        >
+                          Bobina
+                        </Button>
+                      )}
                     </TableCell>
                   )}
                 </TableRow>
@@ -607,6 +624,13 @@ export function PedidoDetalleView({ id }: { id: string }) {
         item={resizing}
         onOpenChange={(open) => {
           if (!open) setResizing(null);
+        }}
+      />
+      <ChangeLineCoilDialog
+        order={o}
+        item={recoiling}
+        onOpenChange={(open) => {
+          if (!open) setRecoiling(null);
         }}
       />
       <ChangeCustomerDialog order={o} open={changingCustomer} onOpenChange={setChangingCustomer} />
