@@ -168,7 +168,7 @@ test.describe('D-248 — accesorios de cobertura (API)', () => {
 
       const report = order.reports.filter((r) => r.status === 'ACTIVE').at(-1)!;
       // Se persisten **piezas**, no pasadas (D-c): 8 de 4 m.
-      expect(report.piecesDetail).toEqual([{ lengthMm: '4000.00', qty: 8 }]);
+      expect(report.piecesDetail).toEqual([{ lineNumber: 1, lengthMm: '4000.00', qty: 8 }]);
       expect(report.metersM).toBe('32.000');
       // 2 pasadas × 4 m × 1 000 mm de ancho completo = 32.320 kg. Con el ancho efectivo y
       // las 8 piezas sale el mismo número: es la invariante de D-b.
@@ -222,7 +222,7 @@ test.describe('D-248 — accesorios de cobertura (API)', () => {
       const order = await reportPieces(api, opId, { coilId: coil.id, pieces: pieces([4, 1]) });
       const report = order.reports.filter((r) => r.status === 'ACTIVE').at(-1)!;
       // 4 piezas, no 3: el rollo que hay es el que manda.
-      expect(report.piecesDetail).toEqual([{ lengthMm: '4000.00', qty: 4 }]);
+      expect(report.piecesDetail).toEqual([{ lineNumber: 1, lengthMm: '4000.00', qty: 4 }]);
       expect(report.metersM).toBe('16.000');
       // Y el aviso quedó anotado en la fila, no solo en el log (D-154).
       expect(report.rawMaterialWarning).toMatch(/da 4 piezas por pasada/);
