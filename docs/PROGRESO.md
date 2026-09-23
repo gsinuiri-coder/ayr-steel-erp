@@ -147,11 +147,11 @@ Sin E2E local (corre en paralelo con rf-s4a/acc-demo): la juez es la CI.
   `RoofingBatchOrderDto.reportedKg` = suma de `consumedKg` de consumos vivos (reabrir D-193),
   y que web, borrador y API den el mismo veredicto.
 
-## Sesión Inventario inicial UPVC — preparación y dry-run contra demo (2026-09-22)
+## Sesión Inventario inicial UPVC — carga completada en demo (2026-09-22)
 
-Objetivo: preparar el archivo de la segunda tanda de inventario inicial pendiente desde V-4 (ver
-«Pendientes vivos» ítem 4, abajo) y validarlo con `--kind products` contra `demo`. Producción no
-se tocó.
+Objetivo: preparar y cargar la segunda tanda de inventario inicial pendiente desde V-4 (ver
+«Pendientes vivos» ítem 4, abajo) con `--kind products` contra `demo`. **Completada en demo**;
+producción queda para la ventana que el dueño autorice.
 
 - **Catálogo (demo) verificado**: `UPVC36MT`, `UPVC6MT` y `UPVC36MTAZUL` existen, están activos y
   son de la línea `ROOFING` (Coberturas UPVC). **Bloqueo encontrado**: los tres tienen
@@ -165,20 +165,32 @@ se tocó.
   IGV** (cuadra con lo pedido). Las tres filas llevan la referencia de factura y proveedor que
   pidió el dueño como texto libre en `FACTURA DE REFERENCIA` (D-206: solo trazabilidad, no
   genera compra ni proveedor) — dato real, queda solo en el archivo de `local-data/`, no acá.
-- **Dry-run contra demo**: 0 ok / 0 omitida / **3 con error** — las tres rechazadas por «es un
-  producto fabricado (source MANUFACTURED)». No se corrió `--execute` (regla dura 16: ambigüedad
-  de catálogo se detiene y espera decisión del dueño).
+- **Dry-run contra demo (primer intento)**: 0 ok / 0 omitida / **3 con error** — las tres
+  rechazadas por «es un producto fabricado (source MANUFACTURED)». No se corrió `--execute`
+  (regla dura 16: ambigüedad de catálogo se detiene y espera decisión del dueño).
 - **Efecto colateral necesario para poder compilar el CLI**: `packages/shared/dist` y el Prisma
   Client locales estaban desactualizados (de antes de RF-S3c/D-240/D-241, campo `seller_id`), lo
   que rompía el `tsc -p tsconfig.cli.json` del importador con decenas de errores ajenos a esta
   tarea. Se regeneraron con `pnpm --filter @ayr/shared build` y `pnpm --filter @ayr/api
   db:generate` — solo artefactos generados localmente, sin tocar datos ni schema.
-- **Pendiente — decisión del dueño**: ¿el `source` de estos 3 SKU está mal cargado en el
-  catálogo (se corrige a `PURCHASED`) o son SKU equivocados y hay otros que deberían usarse para
-  compra-reventa? El archivo queda listo en `local-data/` para la ventana de producción una vez
-  que el catálogo se corrija y un nuevo dry-run salga limpio.
-- Diagnóstico reusable: `scripts/oneoff/20260922-check-upvc-catalog.mjs` (solo lectura, lista el
-  catálogo `ROOFING` completo contra cualquier rama) — útil para re-verificar tras la corrección.
+- **Corrección de catálogo, con OK del dueño**: el dueño confirmó que el `source` estaba mal
+  cargado (ya lo había corregido en `production`) y pidió corregirlo también en `demo`. Se hizo
+  vía `CatalogService.update` (mismo servicio que `PATCH /catalog/:id`, D-131) desde un contexto
+  de Nest standalone — nunca SQL directo — con el `ADMINISTRADOR` real como actor, auditado en
+  `audit_log`. El script de la corrección era una mutación puntual y se borró al terminar (junto
+  con su entrada temporal en `tsconfig.cli.json`), siguiendo la regla de scripts de un solo uso.
+- **Dry-run contra demo (segundo intento), tras la corrección**: `3 ok, 0 omitida(s), 0 con
+  error`.
+- **Execute contra demo**: `3 línea(s) de producto creada(s)`. Verificado: 3 saldos (970 / 1.061
+  / 58 unidades), 1 movimiento `IMPORT` cada uno, `avgCost` igual al costo del archivo, **total
+  valorizado S/ 123.359,29 sin IGV** — exacto.
+- Diagnóstico reusable: `scripts/oneoff/20260922-check-upvc-catalog.mjs` (catálogo `ROOFING`
+  completo) y `scripts/oneoff/20260922-verify-upvc-balances.mjs` (saldo e inventario valorizado
+  de los tres SKU), ambos solo lectura, contra cualquier rama — útiles para re-verificar antes
+  de la carga en `production`.
+- **Pendiente**: correr la misma carga contra `production` (el dueño ya corrigió el `source`
+  ahí), en la ventana que autorice, con `--confirm-production`. El archivo
+  (`local-data/inventario-inicial-upvc-2026-09-22.csv`) es el mismo, sin cambios.
 
 ## Ventana RF-S3c — alcance comercial de vendedor (2026-09-22)
 
@@ -5934,9 +5946,9 @@ Orden de prioridad. Los dos que dejaban `main` en rojo se cerraron en la sesiÃ�
    `pnpm import:initial-inventory --kind products --branch production --execute --confirm-production`
    (D-207). La herramienta ya estÃ¡ probada y no necesita trabajo.
    **ActualizaciÃ³n 2026-09-22** (ver Â«SesiÃ³n Inventario inicial UPVCÂ» al inicio de este
-   archivo): el archivo ya estÃ¡ armado, pero el dry-run contra `demo` lo rechaza â€” los 3 SKU
-   tienen `source = MANUFACTURED` en catÃ¡logo, no `PURCHASED`. Bloqueado hasta que el dueÃ±o
-   decida cÃ³mo corregir el catÃ¡logo.
+   archivo): archivo armado, `source` corregido y **carga ejecutada en `demo`** (3/3 OK, total
+   valorizado S/ 123.359,29 sin IGV). El dueÃ±o ya corrigiÃ³ el `source` en `production` tambiÃ©n;
+   falta correr la carga real ahÃ­, en la ventana que autorice.
 5. **`pnpm e2e:pse` nunca se validÃ³ contra Nubefact con los correlativos de 8 dÃ­gitos de
    D-202.** Se omitiÃ³ en el modo exprÃ©s de V-4. Es la Ãºnica verificaciÃ³n que queda de que la
    cuenta demo acepta un correlativo de 8 dÃ­gitos como primer nÃºmero de una serie. Necesita
