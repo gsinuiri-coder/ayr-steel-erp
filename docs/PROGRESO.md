@@ -19,6 +19,76 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   la propia regla de revisión que lo documenta; no hay una sesión distinta que lo haya mirado
   con ojos frescos. Motivo: sesión de limpieza de un solo agente, sin segundo revisor
   disponible — el mismo motivo estructural que documenta la regla.
+- **RF-S4b** (2026-09-23, rama `rf-s4b`). Autorrevisión por un subagente que no escribió el
+  cambio, en `docs/revision/rf-s4b-autorrevision.md`. Motivo: esquema de un solo agente, sin
+  segundo revisor disponible. Pieza de riesgo para el pase cruzado: la resolución bobina →
+  producto (D-253/D-254) y la derivación de importes (D-255), que tocan venta, pedido y
+  comprobante.
+
+## RF-S4b — SKU canónico de bobina, pool de venta y el importe que manda (2026-09-23)
+
+Rama `rf-s4b` desde `origin/main` `f60ab6c`. Decisiones D-252..D-257 en `ARQUITECTURA.md` §0.2.
+**Con migración aditiva** (`20260923180000_rf_s4b_products_merged_into`). Sin tocar producción:
+todo lo de prod (normalización, barrido, lecturas) queda para la ventana, con OK del dueño.
+
+### El caso real, y por qué no era lo que parecía (M0)
+
+El brief nombraba FFA1-1355 y una tolerancia de ±0.10; el código mostró que la tolerancia de
+D-169 para 3840 kg es 0.1921 y que **no corre** al editar un pedido ni al emitir. El dueño
+corrigió el caso con capturas: era **FFA1-1350 / COT-000002**. El importador enganchó `BOB38AZUL`
+a un producto de catálogo suelto del mismo código —sin saldo y sin bobinas detrás— y confirmar
+rebotaba con «BOB38AZUL tiene 0.000 KGM disponibles», con la bobina de 4194 kg en el almacén
+(SALDO-ALZ-AZUL-5002-0.38-4194-7). Al editarla con precio con IGV 3.50, el formulario dividía
+entre 1.18 a cuatro decimales (2.9661) y el API volvía a multiplicar: 14 678.99 en vez de
+14 679.00. Dos reglas generales salen de ahí: R1 (D-254) y R2 (D-255).
+
+Hallazgos laterales que quedan escritos:
+
+- La edición de precio de un **pedido** importado no tenía la exención del piso que D-163 ya
+  daba a la cotización (D-256).
+- Una bobina **no le pertenece** a un producto: el saldo vive en su kardex y el `BOB…` se deduce
+  de ella (D-116/D-170). Por eso la unión no escribe kardex (D-253).
+- El origen parte del precio con IGV y su IGV es la resta; recalcularlo al 18 % dejaba colas de
+  diezmilésimas que la cobranza (redondeo al céntimo hacia arriba, D-169) convertía en un
+  céntimo de más. El importador guarda ahora los tres importes del papel cuando cuadran.
+
+### Qué tablas guardan el código como texto (M1.2)
+
+Ninguna tabla de ítems guarda el SKU: `quotation_items`, `sales_order_items`,
+`fiscal_document_items`, `dispatch_items` y `purchase_items` copian solo el **nombre** en
+`description` y apuntan al producto por FK. El SKU aparece solo dentro de JSON: `audit_log`
+(before/after), `import_rows.data` y `fiscal_documents.provider_response`. En vivo por FK lo leen
+el `codigo` del payload de Nubefact y el PDF de orden de planta. Un comprobante ACCEPTED sirve el
+XML/PDF que el PSE devolvió (`pdfKey`/`xmlKey` en R2) y no se reconstruye: renombrar un producto
+no lo toca (decisión 4 del dueño, test `accepted-files-sku-rename.spec.ts`).
+
+### Herramientas nuevas (dry-run por defecto)
+
+- `pnpm normalize:coil-skus [--branch …]` — renombres, uniones, no interpretables, documentos
+  abiertos y cuadre de kilos; `--execute [--ack-open-documents]`, y contra production además
+  `--confirm-production`.
+- `pnpm sweep:imported --file <export> [--branch …]` — (a) líneas que R1 resolvería distinto,
+  (b) importes que no son los del papel, (c) abiertos que no se resuelven solos. `--execute`
+  corrige solo documentos **abiertos**, por servicios de dominio y auditado; lo que el dominio
+  rechaza se reporta por documento.
+
+### Pendientes anotados por el dueño, sin implementar
+
+- Evaluar si una bobina 3020 puede usarse en una OP de cobertura ROJO (D-252).
+- Pool real de kg con despacho multi-bobina (opción 2 de D-254).
+
+### Verificación
+
+- Unitarios: API **788** passed (eran 743 al empezar), web **11** passed. `pnpm lint`,
+  `pnpm typecheck` y `prettier --check` verdes.
+- M0 corrido en rojo antes de tocar código: 25/25 unitarios de R1/R2 fallando.
+- E2E nuevos, corridos aislados en local (`pnpm exec playwright test <spec>`): COT-000002 al
+  importar (1/1), COT-000002 por el barrido (1/1), normalización con reportes RF-S4a iguales al
+  centavo (1/1), D-168 actualizado a D-252 (1/1).
+- Suite E2E completa con builds de producción: ver el handoff `docs/handoff/rf-s4b.md`.
+- M3 (sacrificable): spec del controlador de reportes hecho; el render de la vista de margen
+  **no** —D-011 verifica la UI con Playwright y un render en vitest exigiría sumar jsdom y
+  testing-library, que es decisión del dueño—.
 
 ## Limpieza de residuos y coherencia del repo (2026-09-23)
 
