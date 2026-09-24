@@ -59,7 +59,18 @@ Detalle en `docs/handoff/ventana-rf-s4b.md`; salidas en `local-data/rf-s4b/venta
   Rehechas como COT-000072/073. Revisión del owner; diagnóstico en el handoff.
 - `ADMIN_PASSWORD` de `.env.setup` da 401 contra production (credencial vieja).
 - `smoke:prod --base-url https://v2.mareliac.pe` lo rechaza el guard de dominio.
-- La vista de la cotización no muestra la bobina atada (solo el producto).
+- **La bobina atada no se ve en la pantalla de la cotización** (solo el producto; el código de
+  la bobina está en la API como `reserveItemLabel`), y esa bobina queda fuera del pool de venta
+  (`coilPoolFor`) sin ninguna explicación visible: quien la busque en el selector de otro
+  documento no ve por qué falta ni qué cotización la tiene.
+- **Al cambiar la unidad de negociación (D-161), el precio conserva el número y el total se
+  multiplica sin advertencia.** Es la causa del ×6 de COT-000053/054: «S/ 59.00 → S/ 59.00 /m»
+  sobre planchas de 6 m. En esas dos no hay daño (están anuladas y rehechas), pero en un
+  documento vivo el mismo gesto multiplica el importe sin que nadie lo note.
+- **Después de resetear demo desde production, `scripts/db-reset-dev.mjs` tiene que rotar la
+  contraseña del rol en la rama `demo`.** Hoy demo hereda la credencial de production (la de
+  `neondb_owner` es la misma en las ramas, AGENTS.md §3.1), así que un `.env.demo` expuesto
+  expone production.
 
 ## RF-S4b — correcciones de la revisión cruzada, repaso y ensayo en demo (2026-09-24)
 
