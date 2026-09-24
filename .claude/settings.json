@@ -114,6 +114,8 @@
       "Bash(*tsx *prisma/cleanup-e2e-users*)",
       "Bash(node *scripts/retire-unused-color.mjs*)",
       "Bash(pnpm *retire:unused-color*)",
+      "Bash(node *scripts/dispatch-at-issue-date.mjs*)",
+      "Bash(pnpm *dispatch:at-issue-date*)",
       "Bash(node *scripts/color-comercial-dry-run.mjs*)",
       "Bash(pnpm *check:color-comercial*)"
     ]
