@@ -14,10 +14,19 @@
 // Lo que se pierde: **todo** lo que viva solo en `dev`. Es el punto del guion, y por eso
 // exige `--yes`.
 //
-// Uso: node scripts/db-reset-dev.mjs --yes [--preserve-under-name dev-antes-de-m4]
+// Uso: node scripts/db-reset-dev.mjs --yes [--branch dev|demo] [--preserve-under-name dev-antes-de-m4]
+//
+// RF-S4b: también repone `demo` desde `production` (D-227), que `docs/ENTORNOS.md` pedía hacer
+// «con el CLI de Neon» sin un guion. Solo `dev` y `demo`: las otras ramas no se resetean nunca.
 import { NEON_PROJECT_ID, run } from './lib.mjs';
 
-const BRANCH = 'dev';
+const RESETTABLE = new Set(['dev', 'demo']);
+const branchIdx = process.argv.indexOf('--branch');
+const BRANCH = branchIdx > -1 ? process.argv[branchIdx + 1] : 'dev';
+if (!RESETTABLE.has(BRANCH)) {
+  console.error(`--branch solo acepta dev o demo (recibido: "${String(BRANCH)}").`);
+  process.exit(1);
+}
 const PARENT = 'production';
 
 if (!process.argv.includes('--yes')) {
@@ -69,10 +78,19 @@ console.log(
 );
 
 // `run` de `lib.mjs` ya resuelve el `cmd /c` que Windows necesita (regla dura 7).
-run('neonctl', args);
+// Regla 3.1: en silencio y en JSON, y del JSON no se imprime nada.
+run('neonctl', [...args, '--output', 'json'], { quiet: true });
 
 console.log('');
 console.log(`Rama '${BRANCH}' repuesta desde 'production'. Ahora, en este orden:`);
-console.log('  1. pnpm env:local     # el endpoint no cambió, pero deja el .env al día');
-console.log('  2. pnpm db:deploy     # aplica lo que production todavía no tenga');
-console.log('  3. pnpm db:seed       # el administrador local');
+if (BRANCH === 'demo') {
+  // D-227: el segundo paso no se saltea — purga las sesiones heredadas de usuarios reales.
+  console.log('  1. pnpm env:demo      # la conexión de demo en .env.demo');
+  console.log(
+    '  2. pnpm db:demo       # migraciones + purga de sesiones heredadas + admin de demo',
+  );
+} else {
+  console.log('  1. pnpm env:local     # el endpoint no cambió, pero deja el .env al día');
+  console.log('  2. pnpm db:deploy     # aplica lo que production todavía no tenga');
+  console.log('  3. pnpm db:seed       # el administrador local');
+}
