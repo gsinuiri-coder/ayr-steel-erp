@@ -10,6 +10,7 @@ import {
   EXTERNAL_INVOICE_NOTES_PREFIX,
   externalInvoiceOf,
   fromDateOnly,
+  importRoundingTolerance,
   normalizeCoilSku,
   quotationCode,
   salesOrderCode,
@@ -373,6 +374,15 @@ export class ImportedDocumentsSweepService {
       if (!source) continue;
       const product = await this.productFinding(line, lineKeys[i] ?? '', doc.scope);
       const amounts = amountsFinding(line, source);
+      // Repaso de RF-S4b (P2-1): una diferencia de importe mayor de lo que puede explicar el
+      // redondeo (la cota de D-169) no es el defecto que corrige el barrido: es un precio que
+      // alguien cambió a propósito. No se pisa: queda en (c) para el dueño.
+      const deliberate =
+        amounts !== null &&
+        toDecimal(amounts.stored.net)
+          .minus(toDecimal(amounts.paper.net))
+          .abs()
+          .gt(importRoundingTolerance([line.qty.toString()]));
       if (product || amounts) {
         findings.push({
           lineNumber: line.lineNumber,
@@ -380,7 +390,9 @@ export class ImportedDocumentsSweepService {
           newSku: product?.autoCoilId ? (lineKeys[i] ?? line.product.sku) : line.product.sku,
           paperSku: source.rawSku,
           product,
-          unpaired: null,
+          unpaired: deliberate
+            ? `el importe guardado (${amounts.stored.net}) difiere del papel (${amounts.paper.net}) más de lo que explica el redondeo: parece un precio cambiado a propósito`
+            : null,
           amounts,
         });
       }

@@ -451,6 +451,18 @@ export function externalInvoiceOf(notes: string | null): string | null {
   return key === '' ? null : key;
 }
 
+/**
+ * D-256 (3), repaso de RF-S4b: las observaciones **sin** la marca de procedencia. El duplicado
+ * de una cotización importada es una cotización viva de hoy (D-157), no el comprobante: sin
+ * esto nacía con la marca, quedaba exenta al editarla y el barrido la tomaba como un segundo
+ * documento del mismo comprobante.
+ */
+export function stripImportMarker(notes: string | null): string | null {
+  if (!isImportedQuotation(notes) || notes === null) return notes;
+  const rest = notes.split('\n').slice(1).join('\n').trim();
+  return rest === '' ? null : rest;
+}
+
 /** Tope de `quotations.notes` (`VarChar(500)`). El texto del usuario se recorta, la marca no. */
 const NOTES_MAX = 500;
 

@@ -19,7 +19,7 @@
 // RF-S4b: también repone `demo` desde `production` (D-227), que `docs/ENTORNOS.md` pedía hacer
 // «con el CLI de Neon» sin un guion. Solo `dev` y `demo`: las otras ramas no se resetean nunca.
 import { NEON_PROJECT_ID, run } from './lib.mjs';
-import { resetRefusal } from './reset-guard.mjs';
+import { preserveNameRefusal, resetRefusal } from './reset-guard.mjs';
 
 const RESETTABLE = new Set(['dev', 'demo']);
 const branchIdx = process.argv.indexOf('--branch');
@@ -47,6 +47,12 @@ if (preserveIdx > -1 && (!preserveRaw || preserveRaw.startsWith('-'))) {
   process.exit(1);
 }
 const preserveUnderName = preserveRaw;
+const nameRefusal =
+  preserveUnderName === undefined ? null : preserveNameRefusal(BRANCH, preserveUnderName);
+if (nameRefusal !== null) {
+  console.error(nameRefusal);
+  process.exit(1);
+}
 
 // El guion promete "desde production", así que lo comprueba en vez de confiar en la
 // topología: `--parent` resetea contra el padre **real**, y si algún día `dev` colgara de

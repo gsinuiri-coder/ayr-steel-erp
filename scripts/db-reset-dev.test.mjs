@@ -40,3 +40,21 @@ test('la cerradura rechaza production por id y por nombre, y una rama que no cue
     null,
   );
 });
+
+// Repaso de RF-S4b (P2-5): el nombre del estado viejo no puede ser el de otra rama.
+test('--preserve-under-name exige <rama>-antes-de-<motivo> y rechaza nombres reservados', async () => {
+  const { preserveNameRefusal } = await import('./reset-guard.mjs');
+  for (const name of ['production', 'demo', 'ci', 'respaldo-pre-v4-20260915', 'demo-antes-de-']) {
+    assert.match(preserveNameRefusal('demo', name) ?? '', /tiene que empezar con «demo-antes-de-»/);
+  }
+  assert.equal(preserveNameRefusal('demo', 'demo-antes-de-rf-s4b'), null);
+  const res = spawnSync(
+    'node',
+    [script, '--branch', 'demo', '--yes', '--preserve-under-name', 'production'],
+    {
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /tiene que empezar con/);
+});

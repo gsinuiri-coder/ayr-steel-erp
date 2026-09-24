@@ -39,6 +39,8 @@ import {
   DERIVED_FILTER_FETCH_CAP,
   describePieces,
   fromDateOnly,
+  EXTERNAL_INVOICE_NOTES_PREFIX,
+  isImportedQuotation,
   isQuotationExpired,
   kgPerMeter,
   paginate,
@@ -1046,6 +1048,13 @@ export class SalesOrdersService {
    * de D-065 no significaría nada.
    */
   async createDirect(actor: RequestUser, input: CreateSalesOrderInput): Promise<SalesOrderDto> {
+    // D-256 (3), repaso de RF-S4b: la marca del comprobante externo la pone solo el importador.
+    // Tipeada en un pedido directo, el pedido quedaba «importado» para el barrido y la edición.
+    if (isImportedQuotation(input.notes?.trimStart() ?? null)) {
+      throw new BadRequestException(
+        `Las observaciones no pueden empezar con «${EXTERNAL_INVOICE_NOTES_PREFIX.trim()}»: esa marca la pone el importador de comprobantes`,
+      );
+    }
     const orderId = await this.prisma.$transaction(
       (tx) => this.createDirectInTx(tx, actor, input),
       // Mismo motivo que `confirm`: un lock por línea sobre bobinas y saldos.

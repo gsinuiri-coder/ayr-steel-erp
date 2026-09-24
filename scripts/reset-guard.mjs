@@ -4,6 +4,24 @@
 // lo que se resetea.
 
 /**
+ * Repaso de RF-S4b (P2-5): el nombre con el que `--preserve-under-name` guarda el estado viejo.
+ * Nunca el de una rama que ya existe por convención (`production`, `demo`, `dev`, `ci`, los
+ * respaldos): una segunda rama con ese nombre volvería ambiguos a los guiones que resuelven
+ * por nombre. Tiene que decir de qué rama sale: `dev-antes-de-…` o `demo-antes-de-…`.
+ *
+ * @param {string} branch la rama que se resetea
+ * @param {string} name el nombre pedido
+ * @returns {string | null} el motivo para rechazarlo, o `null` si sirve
+ */
+export function preserveNameRefusal(branch, name) {
+  const prefix = `${branch}-antes-de-`;
+  if (!name.startsWith(prefix) || name.length === prefix.length) {
+    return `--preserve-under-name tiene que empezar con «${prefix}» y decir el motivo (recibido: «${name}»).`;
+  }
+  return null;
+}
+
+/**
  * @param {{ id: string; name: string; parent_id?: string | null }} target la rama a resetear
  * @param {{ id: string; name: string }} parent la rama de la que se copia (production)
  * @returns {string | null} el motivo para abortar, o `null` si se puede resetear

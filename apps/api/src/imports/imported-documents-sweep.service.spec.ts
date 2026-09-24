@@ -505,3 +505,22 @@ describe('ImportedDocumentsSweepService — lo cerrado no compite por la bobina 
     expect(byId.get('q-cancelled')?.reason).toMatch(/documento cerrado: solo se reporta/);
   });
 });
+
+describe('ImportedDocumentsSweepService — un precio cambiado a propósito no se pisa (repaso P2-1)', () => {
+  it('una diferencia mayor que el redondeo va a (c) y el execute no toca el documento', async () => {
+    // El papel dice 12439.8310; alguien la bajó a 11000 a propósito (misma bobina, misma cantidad).
+    const repriced = line(1, {
+      reserve: InventoryItemType.COIL,
+      subtotal: '11000.0000',
+      igv: '1980.0000',
+      total: '12980.0000',
+    });
+    const { service, quotations } = build(fakePrisma({ quotations: [quotationRow([repriced])] }));
+    const { documents } = await service.report([paperLine()]);
+    const [finding] = documents[0]?.findings ?? [];
+    expect(finding?.unpaired).toMatch(/más de lo que explica el redondeo/);
+    expect(finding?.amounts?.paper.net).toBe('12439.8310');
+    await service.execute(ACTOR, [paperLine()]);
+    expect(quotations.update).not.toHaveBeenCalled();
+  });
+});
