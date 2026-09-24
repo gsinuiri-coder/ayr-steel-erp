@@ -143,6 +143,14 @@ interface LineDraft {
    */
   pricePen: string;
   /**
+   * D-263 (P1-1 del delta RF-S4b): la línea guardada es una plancha que se cotizó **por
+   * plancha** (`valuePerMeterPen` nulo: la trajo el importador, D-152). En ella `pricePen` es
+   * el precio **por plancha**, y así se sigue negociando: leerlo como precio por metro
+   * multiplicaba la línea por su largo al guardar (×6 en COT-000053/054). Se apaga al cambiar
+   * de producto, que siembra el precio de nuevo en la unidad del producto nuevo.
+   */
+  pricePerPiece: boolean;
+  /**
    * D-255 (R2): cómo se carga el importe de la línea. `PRICE` es el precio con IGV de arriba;
    * `AMOUNT` es el **importe de la línea sin IGV** (valor de venta), del que se deriva el
    * unitario con diez decimales. Una plancha de catálogo se queda en `PRICE` (D-161).
@@ -188,6 +196,7 @@ function emptyLine(key: number): LineDraft {
     saleCoilId: '',
     qty: '',
     pricePen: '',
+    pricePerPiece: false,
     amountMode: 'PRICE',
     netAmountPen: '',
     original: null,
@@ -229,9 +238,22 @@ function isUntouched(l: LineDraft, product: ProductDto | undefined, qty: string)
     l.pricePen === o.pricePen &&
     isPositiveDecimal(qty) &&
     toDecimal(qty.trim()).equals(toDecimal(o.qty)) &&
-    // D-161: la plancha de catálogo sigue viajando por su valor por metro, como siempre.
-    !(l.kind === 'PRODUCT' && byFixedLength(product))
+    // D-161: la plancha de catálogo sigue viajando por su valor por metro, como siempre. La
+    // cargada por plancha no tiene valor por metro que mandar: viaja su importe (D-263).
+    !pricedPerMeter(l, product)
   );
+}
+
+/**
+ * D-161/D-263: ¿el precio de esta línea se lee **por metro**? Solo en una plancha de catálogo
+ * que no se cotizó por plancha. Es la única pregunta que decide la unidad del campo de precio:
+ * el producto dice cómo se negocia una línea nueva, lo guardado dice cómo se negoció esta.
+ */
+function pricedPerMeter(
+  l: Pick<LineDraft, 'kind' | 'pricePerPiece'>,
+  product: ProductDto | undefined,
+): boolean {
+  return l.kind === 'PRODUCT' && byFixedLength(product) && !l.pricePerPiece;
 }
 
 /** D-255: la forma del importe que viaja al API (una sola) y los importes que produce. */
@@ -311,12 +333,17 @@ function linePricing(
  *   el API, para que el importe de pantalla y el guardado sean el mismo número.
  */
 function lineValues(
-  l: Pick<LineDraft, 'pricePen'>,
+  l: Pick<LineDraft, 'pricePen' | 'pricePerPiece'>,
   product: ProductDto | undefined,
 ): { valuePerMeterPen: string | null; unitValuePen: string | null } {
   if (!isPositiveDecimal(l.pricePen)) return { valuePerMeterPen: null, unitValuePen: null };
   const value = toFixedString(money(saleValueFromPrice(l.pricePen)), 'MONEY');
-  if (product === undefined || !sellsByFixedLength(product) || product.lengthMm === null) {
+  if (
+    product === undefined ||
+    !sellsByFixedLength(product) ||
+    product.lengthMm === null ||
+    l.pricePerPiece
+  ) {
     return { valuePerMeterPen: null, unitValuePen: value };
   }
   return {
@@ -406,6 +433,9 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
     saleCoilId: '',
     qty: item.qty,
     pricePen,
+    // D-263: sin valor por metro guardado, el precio sembrado es por plancha (o por unidad).
+    // En un producto que no es plancha la marca no cambia nada: ahí no hay metro que leer.
+    pricePerPiece: item.valuePerMeterPen === null,
     amountMode: 'PRICE',
     netAmountPen: '',
     original: { ...stored, kind: 'PRODUCT', productId: item.productId, saleCoilId: '' },
@@ -559,9 +589,11 @@ export function SalesDocumentForm({
     // era a lo sumo un rótulo desactualizado; ahora un «7.00 por metro» heredado por un perfil
     // se lee como S/ 7.00 la unidad, y al revés es un factor de 3.6. Se limpia salvo que el
     // producto nuevo traiga su propia sugerencia, que lo pisa igual.
+    const current = lines.find((l) => l.key === key);
     const basisChanged =
-      byFixedLength(productById.get(lines.find((l) => l.key === key)?.productId ?? '')) !==
-      byFixedLength(product);
+      current === undefined ||
+      pricedPerMeter(current, productById.get(current.productId)) !==
+        pricedPerMeter({ kind: current.kind, pricePerPiece: false }, product);
     const perUnitValue =
       listValue && product && sellsByFixedLength(product) && product.lengthMm !== null
         ? fixedLengthValuePerMeter(product.lengthMm, listValue)
@@ -570,6 +602,7 @@ export function SalesDocumentForm({
           : null;
     patchLine(key, {
       productId,
+      pricePerPiece: false,
       ...(perUnitValue === null
         ? basisChanged
           ? { pricePen: '' }
@@ -592,6 +625,7 @@ export function SalesDocumentForm({
       productId: '',
       saleCoilId: '',
       qty: '',
+      pricePerPiece: false,
       pieces: [EMPTY_PIECE],
     });
   }
@@ -825,7 +859,7 @@ export function SalesDocumentForm({
       const untouched = isUntouched(l, product, l.qty);
       if (!untouched && l.amountMode === 'PRICE' && !isPositiveDecimal(l.pricePen)) {
         return {
-          error: `${at}: escribe un precio ${byFixedLength(product) ? 'por metro' : 'unitario'} mayor a cero`,
+          error: `${at}: escribe un precio ${pricedPerMeter(l, product) ? 'por metro' : 'unitario'} mayor a cero`,
         };
       }
       if (!untouched && l.amountMode === 'AMOUNT' && !isPositiveDecimal(l.netAmountPen)) {
@@ -1246,6 +1280,8 @@ function LineRow({
   // que la cantidad la manda su editor de largo fijo igual que en una a medida la manda el
   // detalle de largos. En las dos, el campo de cantidad de la fila es de solo lectura.
   const fixedLength = byFixedLength(product);
+  /** D-263: el campo de precio es por metro (y no por plancha, como se importó). */
+  const perMeter = pricedPerMeter(l, product);
   /** El largo del SKU, ya estrechado: `byFixedLength` garantiza que exista, el tipo no. */
   const fixedLengthMm = product?.lengthMm ?? null;
   /** D-166: el largo está, pero no se puede creer. Ver `brokenFixedLength`. */
@@ -1455,7 +1491,7 @@ function LineRow({
               className="text-right tabular-nums"
               inputMode="decimal"
               aria-label={
-                fixedLength
+                perMeter
                   ? `Precio por metro de la línea ${index + 1}`
                   : `Precio unitario de la línea ${index + 1}`
               }
@@ -1479,13 +1515,15 @@ function LineRow({
               ? 'importe de la línea, sin IGV'
               : // S11/F1-03: sin producto elegido no hay unidad que poner, y el sufijo se
                 // imprimía como un «por» suelto debajo del campo de precio.
-                fixedLength
+                perMeter
                 ? 'por metro'
-                : product
-                  ? `por ${unitSymbol(product.unit)}`
-                  : l.kind === 'BOBINA'
-                    ? 'por kg'
-                    : ''}
+                : fixedLength
+                  ? 'por plancha, como se cotizó'
+                  : product
+                    ? `por ${unitSymbol(product.unit)}`
+                    : l.kind === 'BOBINA'
+                      ? 'por kg'
+                      : ''}
             {valuePerMeterPen !== null && !byAmount ? (
               <>
                 {' · valor '}
@@ -1532,7 +1570,7 @@ function LineRow({
               {byAmount ? 'Cargar precio con IGV' : 'Cargar importe sin IGV'}
             </button>
           )}
-          {fixedLength && unitValuePen !== null && (
+          {perMeter && unitValuePen !== null && (
             <span className="mt-0.5 block text-right text-xs text-muted-foreground tabular-nums">
               {formatMoney(unitValuePen, 'PEN', 4)} por plancha
             </span>
