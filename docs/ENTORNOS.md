@@ -154,13 +154,21 @@ cruzar de un entorno al otro.
 
 ### Rehacer demo desde producción
 
-Cuando demo quede sucia de un ensayo, se reinicia la rama desde su padre con el CLI de Neon
-(nunca borrando tablas a mano) y **acto seguido**:
+Cuando demo quede sucia de un ensayo, se reinicia la rama desde su padre con
+`pnpm db:reset-dev --yes --branch demo` (nunca borrando tablas a mano; acción sensible, con OK
+del dueño) y **acto seguido**:
 
 ```
-pnpm env:demo    # si querés rotar también los secretos de demo, borrá antes .env.demo
+pnpm env:demo    # obligatorio: el reset rotó la contraseña de demo (ver abajo)
 pnpm db:demo     # migraciones + purga de sesiones heredadas + seed del admin de demo
 ```
+
+**La contraseña de la base (P1-3 del delta RF-S4b).** El reset le devuelve a `neondb_owner` la
+contraseña de `production`. El guion la rota por la API de Neon en la misma corrida y verifica
+que cambió, así que necesita `NEON_API_KEY` (entorno o `.env.setup`); sin ella no resetea. Si la
+rotación falla después del reset, el guion lo dice y la rama queda con la contraseña de
+production hasta correr `pnpm db:reset-dev --yes --branch demo --rotate-only`: mientras tanto
+no se genera `.env.demo`.
 
 El segundo paso **no se puede saltear**: sin él, la copia recién hecha conserva las sesiones
 vivas de usuarios reales.

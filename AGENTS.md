@@ -149,15 +149,19 @@ Reglas de convivencia, sin excepción:
   imprimen con frecuencia cuando un comando falla.
 - Todo helper compone errores sin repetir argumentos. `scripts/lib.mjs#run` filtra
   `secret|password|token`; ningún helper local arma errores con `args.join(' ')`.
-- La contraseña de `neondb_owner` es la misma en las cuatro ramas Neon: exponer `dev` o `demo`
-  expone también `production`.
+- Una rama hija nace, y **vuelve con cada reset**, con la contraseña de `neondb_owner` de
+  `production` (Neon, `production` no protegida). Por eso `scripts/db-reset-dev.mjs` rota la
+  contraseña de `demo`/`dev` después del reset y verifica que cambió; sin `NEON_API_KEY` no
+  resetea. Una rama que no pasó por esa rotación comparte la contraseña de `production`:
+  exponerla expone `production`.
 - Todo comando que pueda emitir credenciales aun cuando termina bien —`neonctl`,
   `connection-string`, dumps de configuración o `gcloud ... describe` sobre secretos— se
   invoca mediante `scripts/lib.mjs#run` con `quiet: true` y `--output json`, y solo se leen del
   JSON los campos necesarios. Nunca se ejecuta directo con salida heredada.
 - Ante una fuga, la credencial se rota; no basta con «tener cuidado». Rotar `neondb_owner`
-  implica `neonctl roles reset-password` y actualizar `.env.setup`, Secret Manager y GitHub
-  Actions. Mientras no se rote, producción está comprometida y el incidente se registra en
+  es por la API de Neon (`POST …/branches/{id}/roles/neondb_owner/reset_password`, con
+  `NEON_API_KEY` por entorno; el `neonctl` 4.x no tiene `roles reset-password`) y actualizar
+  `.env.setup`, Secret Manager y GitHub Actions. Mientras no se rote, producción está comprometida y el incidente se registra en
   `docs/PROGRESO.md` con fecha y hora exactas.
 - `migrate deploy`, `migrate diff`, `db:prod` y cualquier comando con credenciales de BD de
   producción son acción sensible (D-251): el agente propone el comando exacto y espera el OK
