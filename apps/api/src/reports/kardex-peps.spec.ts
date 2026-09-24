@@ -50,7 +50,9 @@ describe('valuePeps', () => {
     expect(out?.balanceQty).toBe('30.000');
     expect(out?.balanceTotal).toBe('360.0000');
     expect(out?.balanceUnitCost).toBe('12.0000');
-    expect(result.closing.layers).toEqual([{ qty: '30.000', unitCost: '12.0000' }]);
+    expect(result.closing.layers).toEqual([
+      { qty: '30.000', unitCost: '12.0000', total: '360.0000' },
+    ]);
     expect(result.totals).toEqual({
       inQty: '150.000',
       inTotal: '1600.0000',
@@ -75,10 +77,11 @@ describe('valuePeps', () => {
     );
     expect(result.opening).toEqual({
       qty: '70.000',
+      unitCost: '11.4286',
       total: '800.0000',
       layers: [
-        { qty: '20.000', unitCost: '10.0000' },
-        { qty: '50.000', unitCost: '12.0000' },
+        { qty: '20.000', unitCost: '10.0000', total: '200.0000' },
+        { qty: '50.000', unitCost: '12.0000', total: '600.0000' },
       ],
     });
     expect(result.rows).toHaveLength(1);
@@ -105,7 +108,11 @@ describe('valuePeps', () => {
     expect(back?.balanceQty).toBe('150.000');
     expect(back?.balanceTotal).toBe('1600.0000');
     // La siguiente salida vuelve a salir de la capa más antigua.
-    expect(result.closing.layers[0]).toEqual({ qty: '100.000', unitCost: '10.0000' });
+    expect(result.closing.layers[0]).toEqual({
+      qty: '100.000',
+      unitCost: '10.0000',
+      total: '1000.0000',
+    });
   });
 
   it('la anulación de una entrada saca su propia capa, no la más antigua', () => {
@@ -120,7 +127,9 @@ describe('valuePeps', () => {
       '2026-09-30',
     );
     expect(result.rows[2]?.outTotal).toBe('600.0000');
-    expect(result.closing.layers).toEqual([{ qty: '100.000', unitCost: '10.0000' }]);
+    expect(result.closing.layers).toEqual([
+      { qty: '100.000', unitCost: '10.0000', total: '1000.0000' },
+    ]);
   });
 
   it('un ajuste de costo reparte el monto sobre las capas vivas según sus kilos', () => {
@@ -140,7 +149,9 @@ describe('valuePeps', () => {
     expect(adjust?.inTotal).toBe('200.0000');
     expect(adjust?.balanceTotal).toBe('2400.0000');
     expect(result.rows[3]?.outTotal).toBe('1100.0000');
-    expect(result.closing.layers).toEqual([{ qty: '100.000', unitCost: '13.0000' }]);
+    expect(result.closing.layers).toEqual([
+      { qty: '100.000', unitCost: '13.0000', total: '1300.0000' },
+    ]);
   });
 
   it('una salida sin capas suficientes no inventa costo: se marca y el faltante va al costo registrado', () => {
@@ -167,7 +178,9 @@ describe('valuePeps', () => {
       '2026-09-01',
       '2026-09-30',
     );
-    expect(result.closing.layers).toEqual([{ qty: '15.000', unitCost: '12.0000' }]);
+    expect(result.closing.layers).toEqual([
+      { qty: '15.000', unitCost: '12.0000', total: '180.0000' },
+    ]);
     expect(result.rows[2]?.balanceQty).toBe('15.000');
     expect(result.rows[2]?.balanceTotal).toBe('180.0000');
   });

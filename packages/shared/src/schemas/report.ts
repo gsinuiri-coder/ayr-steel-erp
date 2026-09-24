@@ -318,3 +318,20 @@ export const salesMarginSchema = z.object({
   }),
 });
 export type SalesMarginDto = z.infer<typeof salesMarginSchema>;
+
+/**
+ * D-279 — Kardex PEPS de un producto o una bobina, en el formato 13.1 de SUNAT (registro de
+ * inventario permanente valorizado). Solo ADMINISTRADOR. Es un reporte: la valorización del
+ * sistema sigue en costo promedio (D-028).
+ */
+export const kardexPepsQuerySchema = z
+  .object({
+    itemType: z.enum(['PRODUCT', 'COIL'], {
+      errorMap: () => ({ message: 'El kardex PEPS es de un producto o de una bobina' }),
+    }),
+    itemId: z.string().uuid(),
+    from: operationDateSchema,
+    to: operationDateSchema,
+  })
+  .refine((v) => v.from <= v.to, { message: 'El rango termina antes de empezar' });
+export type KardexPepsQuery = z.infer<typeof kardexPepsQuerySchema>;

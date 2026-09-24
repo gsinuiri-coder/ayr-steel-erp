@@ -42,6 +42,7 @@ export interface PepsMovement {
 export interface PepsLayer {
   qty: string;
   unitCost: string;
+  total: string;
 }
 
 export interface PepsRow {
@@ -61,6 +62,8 @@ export interface PepsRow {
 
 export interface PepsBalance {
   qty: string;
+  /** Valor ÷ cantidad; cero sin saldo. */
+  unitCost: string;
   total: string;
   layers: PepsLayer[];
 }
@@ -148,12 +151,16 @@ class PepsQueue {
   }
 
   snapshot(): PepsBalance {
+    const qty = this.qty();
+    const value = this.value();
     return {
-      qty: toFixedString(this.qty(), 'KG'),
-      total: toFixedString(this.value(), 'MONEY'),
+      qty: toFixedString(qty, 'KG'),
+      unitCost: toFixedString(qty.gt(0) ? value.div(qty) : ZERO, 'MONEY'),
+      total: toFixedString(value, 'MONEY'),
       layers: this.layers.map((l) => ({
         qty: toFixedString(l.qty, 'KG'),
         unitCost: toFixedString(l.unitCost, 'MONEY'),
+        total: toFixedString(l.qty.times(l.unitCost), 'MONEY'),
       })),
     };
   }
@@ -243,9 +250,7 @@ export function valuePeps(movements: PepsMovement[], from: string, to: string): 
       inUnitCost: rowIn?.qty?.gt(0) ? toFixedString(rowIn.total.div(rowIn.qty), 'MONEY') : null,
       inTotal: rowIn ? toFixedString(rowIn.total, 'MONEY') : null,
       outQty: rowOut?.qty ? toFixedString(rowOut.qty, 'KG') : null,
-      outUnitCost: rowOut?.qty?.gt(0)
-        ? toFixedString(rowOut.total.div(rowOut.qty), 'MONEY')
-        : null,
+      outUnitCost: rowOut?.qty?.gt(0) ? toFixedString(rowOut.total.div(rowOut.qty), 'MONEY') : null,
       outTotal: rowOut ? toFixedString(rowOut.total, 'MONEY') : null,
       balanceQty: toFixedString(balanceQty, 'KG'),
       balanceUnitCost: toFixedString(
