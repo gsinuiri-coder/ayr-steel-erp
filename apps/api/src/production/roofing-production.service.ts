@@ -15,6 +15,7 @@ import {
   businessToday,
   compareQueueRank,
   Decimal,
+  finishRal,
   describePieces,
   isOverdue,
   queueSemaphore,
@@ -62,7 +63,7 @@ import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
-import { roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
+import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { DRAFT_INCLUDE, toDraftDto } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
@@ -2474,7 +2475,8 @@ export class RoofingProductionService {
       thicknessMm: true,
       colorId: true,
       color: { select: { name: true, hexColor: true } },
-      finish: { select: { code: true, densityFactor: true } },
+      finishId: true,
+      finish: { select: { code: true, name: true, densityFactor: true } },
     } satisfies Prisma.CoilSelect;
 
     // D-193: abiertas y cerradas en **dos** consultas, cada una con su tope. En una sola, las
@@ -2601,41 +2603,49 @@ export class RoofingProductionService {
       [...reservations].filter(([, qty]) => qty.gt(0)).map(([itemId]) => itemId),
     );
 
-    return coils
+    const mountable = coils
       .filter(
         (c) =>
           !taken.has(c.id) && !promised.has(c.id) && (qtyById.get(c.id) ?? new Decimal(0)).gt(0),
       )
-      .map((c) => {
-        const availableKg = qtyById.get(c.id) ?? new Decimal(0);
-        const geometry: CoilGeometry = {
-          widthMm: c.widthMm.toFixed(2),
-          thicknessMm: c.thicknessMm.toFixed(2),
-          densityFactor: c.finish.densityFactor.toFixed(4),
-        };
-        return {
-          coilId: c.id,
-          code: c.code,
-          typeKey: c.typeKey,
-          finishCode: c.finish.code,
-          widthMm: c.widthMm.toFixed(2),
-          thicknessMm: c.thicknessMm.toFixed(2),
-          colorId: c.colorId,
-          colorName: c.color?.name ?? null,
-          colorHex: c.color?.hexColor ?? null,
-          weightKg: c.weightKg.toFixed(3),
-          status: c.status === CoilStatus.CLOSED ? ('CLOSED' as const) : ('OPEN' as const),
-          closeAdjustment: (() => {
-            const adjustment =
-              c.status === CoilStatus.CLOSED ? adjustmentById.get(c.id) : undefined;
-            return adjustment === undefined
-              ? null
-              : { kind: adjustment.kind, qtyKg: adjustment.qty.toFixed(3) };
-          })(),
-          availableKg: availableKg.toFixed(3),
-          estimatedMeters: toFixedString(metersFromKg(geometry, availableKg.toFixed(3)), 'KG'),
-        };
-      });
+      .map((c) => ({
+        ...c,
+        status: c.status === CoilStatus.CLOSED ? ('CLOSED' as const) : ('OPEN' as const),
+      }));
+    // D-271: primero las del acabado exacto del producto —el RAL que se vendió—, sin sacar
+    // ninguna: cualquier bobina del mismo color comercial se puede montar (D-270).
+    return preferExactFinish(mountable, product.finish.id).map((c) => {
+      const availableKg = qtyById.get(c.id) ?? new Decimal(0);
+      const geometry: CoilGeometry = {
+        widthMm: c.widthMm.toFixed(2),
+        thicknessMm: c.thicknessMm.toFixed(2),
+        densityFactor: c.finish.densityFactor.toFixed(4),
+      };
+      return {
+        coilId: c.id,
+        code: c.code,
+        typeKey: c.typeKey,
+        finishCode: c.finish.code,
+        finishName: c.finish.name,
+        ral: finishRal(c.finish),
+        exactFinish: c.exactFinish,
+        widthMm: c.widthMm.toFixed(2),
+        thicknessMm: c.thicknessMm.toFixed(2),
+        colorId: c.colorId,
+        colorName: c.color?.name ?? null,
+        colorHex: c.color?.hexColor ?? null,
+        weightKg: c.weightKg.toFixed(3),
+        status: c.status,
+        closeAdjustment: (() => {
+          const adjustment = c.status === 'CLOSED' ? adjustmentById.get(c.id) : undefined;
+          return adjustment === undefined
+            ? null
+            : { kind: adjustment.kind, qtyKg: adjustment.qty.toFixed(3) };
+        })(),
+        availableKg: availableKg.toFixed(3),
+        estimatedMeters: toFixedString(metersFromKg(geometry, availableKg.toFixed(3)), 'KG'),
+      };
+    });
   }
 
   /** La tolerancia de D-086, con el override de entorno que documenta esa decisión. */

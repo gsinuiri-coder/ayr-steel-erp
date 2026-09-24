@@ -15,7 +15,35 @@ import type { Env } from '../config/env';
  * El criterio: misma línea de negocio, `OPEN`, **mismo color con igualdad estricta** (null
  * incluido: un producto sin color solo monta bobina sin color) y espesor dentro de la
  * tolerancia. El ancho no filtra: la producción usa el del rollo que se monte.
+ *
+ * D-270: el `colorId` es el **color comercial** (ROJO), no el RAL. El RAL vive en el acabado
+ * (`ALZ-ROJO-3002`, `ALZ-ROJO-3020`), así que igualdad de color ya es igualdad de color
+ * comercial: dos RAL del mismo color son intercambiables en producción, y el candado del
+ * maestro (D-273) impide crear un color que los vuelva a separar.
  */
+/**
+ * D-271: el orden del selector de planta. El filtro empareja por color comercial, así que una
+ * OP de un producto ALZ-ROJO-3020 ve también las bobinas ALZ-ROJO-3002 y las puede montar. Lo
+ * que se vendió es el 3020: esas van primero. Se prefiere lo exacto sin bloquear lo demás.
+ *
+ * Las cerradas siguen al final (D-193: se ven a pedido); dentro de cada grupo se conserva el
+ * orden que traían. No filtra nada: ordenar no puede esconder una bobina montable.
+ */
+export function preferExactFinish<T extends { finishId: string; status: 'OPEN' | 'CLOSED' }>(
+  coils: readonly T[],
+  productFinishId: string | null,
+): (T & { exactFinish: boolean })[] {
+  const rank = (c: T & { exactFinish: boolean }): number =>
+    (c.status === 'CLOSED' ? 2 : 0) + (c.exactFinish ? 0 : 1);
+  return coils
+    .map((c, index) => ({
+      coil: { ...c, exactFinish: productFinishId !== null && c.finishId === productFinishId },
+      index,
+    }))
+    .sort((a, b) => rank(a.coil) - rank(b.coil) || a.index - b.index)
+    .map((entry) => entry.coil);
+}
+
 /**
  * La tolerancia de espesor vigente, en mm (D-086).
  *

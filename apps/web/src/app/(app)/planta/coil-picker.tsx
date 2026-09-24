@@ -8,6 +8,7 @@ import {
 } from '@ayr/shared';
 import { formatQty } from '@/lib/format';
 import { ColorSwatch } from '@/components/colors/color-swatch';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -42,6 +43,7 @@ import {
  *
  * No filtra nada por su cuenta: las bobinas que llegan ya vienen filtradas por el API
  * (`GET /production/roofing/coils`, D-086) y una que no aparezca acá tampoco se puede montar.
+ * Tampoco ordena: el API ya pone primero las del acabado exacto del producto (D-271).
  */
 export function CoilPicker({
   orderCode,
@@ -93,7 +95,7 @@ export function CoilPicker({
     const needle = filter.trim().toLowerCase();
     if (needle === '') return openOptions;
     return openOptions.filter((c) =>
-      `${c.code} ${c.colorName ?? ''} ${c.thicknessMm} ${c.widthMm} ${c.weightKg} ${c.availableKg}`
+      `${c.code} ${c.colorName ?? ''} ${c.finishName} ${c.ral ?? ''} ${c.thicknessMm} ${c.widthMm} ${c.weightKg} ${c.availableKg}`
         .toLowerCase()
         .includes(needle),
     );
@@ -113,7 +115,7 @@ export function CoilPicker({
   if (openOptions.length === 0 && closedOptions.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        No hay bobinas libres del color y el espesor de {productSku} (±
+        No hay bobinas libres del color comercial y el espesor de {productSku} (±
         {ROOFING_THICKNESS_TOLERANCE_MM} mm). Una bobina en corte tercerizado, montada en otra orden
         o prometida a otro pedido tampoco aparece acá.
       </p>
@@ -143,8 +145,9 @@ export function CoilPicker({
           <DialogHeader>
             <DialogTitle>Bobinas para {orderCode}</DialogTitle>
             <DialogDescription>
-              {openOptions.length} bobinas libres del espesor y el color de {productSku}. Monta una
-              con su botón, o elige varias y móntalas juntas.
+              {openOptions.length} bobinas libres del espesor y el color comercial de {productSku}.
+              Arriba van las del mismo acabado (RAL) que el producto; las demás también se pueden
+              montar. Monta una con su botón, o elige varias y móntalas juntas.
             </DialogDescription>
           </DialogHeader>
           {reopening !== null ? (
@@ -170,7 +173,7 @@ export function CoilPicker({
               <Input
                 autoFocus
                 aria-label="Filtrar opciones"
-                placeholder="Filtra por código, color o kilos…"
+                placeholder="Filtra por código, color, RAL o kilos…"
                 value={filter}
                 onChange={(e) => {
                   setFilter(e.target.value);
@@ -190,6 +193,7 @@ export function CoilPicker({
                       <TableHead>Bobina</TableHead>
                       <TableHead>Espesor</TableHead>
                       <TableHead>Color</TableHead>
+                      <TableHead>Acabado (RAL)</TableHead>
                       <TableHead className="text-right">Peso inicial</TableHead>
                       <TableHead className="text-right">kg disponibles</TableHead>
                       <TableHead className="w-28 text-right">Montar</TableHead>
@@ -231,6 +235,9 @@ export function CoilPicker({
                             }
                           />
                         </TableCell>
+                        <TableCell>
+                          <FinishCell coil={c} />
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {formatQty(c.weightKg, 'kg')}
                         </TableCell>
@@ -254,7 +261,7 @@ export function CoilPicker({
                     ))}
                     {matches.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center text-muted-foreground">
+                        <TableCell colSpan={8} className="text-center text-muted-foreground">
                           {openOptions.length === 0
                             ? 'No hay bobinas libres de esta spec: mira las cerradas.'
                             : 'Ninguna bobina coincide con ese texto.'}
@@ -286,6 +293,7 @@ export function CoilPicker({
                         <TableHeader>
                           <TableRow>
                             <TableHead>Bobina cerrada</TableHead>
+                            <TableHead>Acabado (RAL)</TableHead>
                             <TableHead className="text-right">Peso inicial</TableHead>
                             <TableHead className="text-right">Ajuste del cierre</TableHead>
                             <TableHead className="text-right">kg al reabrir</TableHead>
@@ -296,6 +304,9 @@ export function CoilPicker({
                           {closedOptions.map((c) => (
                             <TableRow key={c.coilId}>
                               <TableCell className="font-mono font-medium">{c.code}</TableCell>
+                              <TableCell>
+                                <FinishCell coil={c} />
+                              </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 {formatQty(c.weightKg, 'kg')}
                               </TableCell>
@@ -366,6 +377,22 @@ export function CoilPicker({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * D-271: el acabado de la bobina con su RAL, y si es el mismo acabado que el producto. El
+ * color comercial ya está en su columna; lo que distingue a dos bobinas ROJO es esto.
+ */
+function FinishCell({ coil }: { coil: RoofingCoilOptionDto }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-sm">
+      <span className="font-medium tabular-nums">
+        {coil.ral === null ? 'Sin RAL' : `RAL ${coil.ral}`}
+      </span>
+      {coil.exactFinish && <Badge variant="secondary">Mismo acabado</Badge>}
+      <span className="w-full text-xs text-muted-foreground">{coil.finishName}</span>
+    </div>
   );
 }
 

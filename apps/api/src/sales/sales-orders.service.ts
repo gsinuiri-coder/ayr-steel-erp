@@ -115,6 +115,7 @@ import {
 } from './sales-lines';
 import { coilPoolFor, coilPoolKeyOfProduct } from './coil-sale-product';
 import { buildPlantOrderPdf } from './plant-order-pdf';
+import { plantLineMeasures } from './plant-measures';
 import { findPriceChanges } from './price-changes';
 import {
   liveTemporaryWhere,
@@ -2715,6 +2716,7 @@ export class SalesOrdersService {
                 widthMm: true,
                 lengthMm: true,
                 color: { select: { name: true } },
+                finish: { select: { code: true, name: true } },
               },
             },
           },
@@ -2753,16 +2755,15 @@ export class SalesOrdersService {
                 product.lengthMm === null ? null : product.lengthMm.toFixed(2),
                 item.qty.toString(),
               ).map((p) => ({ lengthMm: p.lengthMm, qty: p.qty }));
-        // Lo que decide qué bobina se monta (D-086): espesor, ancho y color. El largo fijo
-        // solo lo tiene una plancha de catálogo (D-127).
-        const measures = [
-          product.thicknessMm === null ? null : `${product.thicknessMm.toFixed(2)} mm`,
-          product.widthMm === null ? null : `${product.widthMm.toFixed(2)} mm de ancho`,
-          product.lengthMm === null
-            ? null
-            : `largo fijo ${toDecimal(product.lengthMm.toString()).div(1000).toFixed(2)} m`,
-          product.color?.name ?? null,
-        ].filter((v): v is string => v !== null);
+        // Lo que decide qué bobina se monta: espesor, ancho y color comercial (D-270), con el
+        // RAL del acabado del producto como preferencia (D-271).
+        const measures = plantLineMeasures({
+          thicknessMm: product.thicknessMm?.toFixed(2) ?? null,
+          widthMm: product.widthMm?.toFixed(2) ?? null,
+          lengthMm: product.lengthMm?.toFixed(2) ?? null,
+          color: product.color,
+          finish: product.finish,
+        });
         return {
           lineNumber: item.lineNumber,
           productSku: product.sku,
@@ -2770,7 +2771,7 @@ export class SalesOrdersService {
           quantity: toDecimal(item.qty.toString()).toFixed(item.unit === Unit.MTR ? 3 : 0),
           unitLabel: item.unit === Unit.MTR ? 'm' : 'u',
           pieces: pieces.length === 0 ? '—' : describePieces(pieces),
-          measures: measures.length === 0 ? '—' : measures.join(' · '),
+          measures,
         };
       }),
     });
