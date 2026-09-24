@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
   COIL_STATUS_LABELS,
+  coilGroupLabel,
   Role,
   type InventoryValuationCoilGroupDto,
   type InventoryValuationDto,
@@ -30,8 +31,10 @@ import { LINK_CLASSNAME } from '@/lib/utils';
 /**
  * Inventario valorizado a hoy (RF-S4a/M1). **Solo administrador**: cada fila lleva costo.
  *
- * Las bobinas se agrupan por línea / espesor / color, que es como se mira el inventario
- * cuando la pregunta es cuánto vale, y cada grupo se abre a sus bobinas. No es el mismo
+ * Las bobinas se agrupan por línea / espesor / color comercial (D-272; sin color, por tipo de
+ * acabado), que es como se mira el inventario cuando la pregunta es cuánto vale. Debajo del
+ * color va el detalle por acabado —que es donde vive el RAL (D-270)— y cada grupo se abre a
+ * sus bobinas. No es el mismo
  * corte que `/inventario`, que agrupa por `typeKey` (acabado + espesor, sin color) para
  * responder qué hay disponible para vender.
  */
@@ -236,7 +239,20 @@ function CoilGroupRows({
       >
         <TableCell>{BUSINESS_LINE_LABELS[group.businessLine]}</TableCell>
         <TableCell className="text-right">{formatQty(group.thicknessMm, 'mm')}</TableCell>
-        <TableCell>{group.colorName ?? 'Sin color'}</TableCell>
+        <TableCell>
+          <div>{coilGroupLabel(group)}</div>
+          {/* D-272: el RAL como detalle del color, sin abrir el grupo. */}
+          {group.finishes.length > 0 && (
+            <ul className="text-xs text-muted-foreground" aria-label="Detalle por acabado">
+              {group.finishes.map((f) => (
+                <li key={f.finishCode}>
+                  {f.ral === null ? f.finishCode : `RAL ${f.ral} (${f.finishCode})`}:{' '}
+                  {formatQty(f.qtyKg, 'kg')} · {formatMoney(f.totalValuePen)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </TableCell>
         <TableCell className="text-right">{group.coilCount}</TableCell>
         <TableCell className="text-right">{formatQty(group.qtyKg, 'kg')}</TableCell>
         <TableCell className="text-right">{formatMoney(group.avgCostPen)}</TableCell>
@@ -259,6 +275,10 @@ function CoilGroupRows({
                   {coil.code}
                 </Link>
                 <span className="text-muted-foreground">Ancho {formatQty(coil.widthMm, 'mm')}</span>
+                <span className="text-muted-foreground">
+                  {coil.finishCode}
+                  {coil.ral !== null && ` · RAL ${coil.ral}`}
+                </span>
                 <span className="text-muted-foreground">Alta {formatDate(coil.operationDate)}</span>
                 {/*
                   El estado solo se muestra cuando **no** es «Abierta»: una bobina con saldo

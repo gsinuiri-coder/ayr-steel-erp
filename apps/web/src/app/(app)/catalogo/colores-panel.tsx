@@ -6,7 +6,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import type { ColorDto } from '@ayr/shared';
+import { commercialColorIssue, type ColorDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -38,25 +38,43 @@ import {
 import { colorsQueryKey, useColors } from '@/components/colors/color-select';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 
-const formSchema = z.object({
-  code: z
-    .string()
-    .trim()
-    .min(1, 'Obligatorio')
-    .max(20)
-    .regex(/^[A-Za-z0-9-]+$/, 'Solo letras, números y guiones'),
-  name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(80),
-  // D-203: RAL clásico, opcional.
-  ralCode: z
-    .string()
-    .trim()
-    .regex(/^(\d{4})?$/, 'El RAL son cuatro dígitos (ej: 3002)'),
-  hexColor: z
-    .string()
-    .trim()
-    .regex(/^#[0-9a-fA-F]{6}$/, 'Usa el formato #rrggbb'),
-});
-type FormValues = z.infer<typeof formSchema>;
+/**
+ * D-273: el mismo candado que el API, para que el aviso salga en el campo y no en un 400. Se
+ * aplica a lo que se **escribe**: el código al crear (después no se edita) y el nombre cuando
+ * cambia. Un color anterior al candado se sigue pudiendo editar —su muestra, por ejemplo— sin
+ * que un dato que nadie tocó bloquee el guardado.
+ */
+function commercialColorLock(unchanged?: string) {
+  return (value: string, ctx: z.RefinementCtx): void => {
+    if (unchanged !== undefined && value === unchanged) return;
+    const issue = commercialColorIssue(value);
+    if (issue !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue });
+  };
+}
+
+// D-273: sin campo RAL. El RAL va en el acabado (D-270); el color es el color comercial.
+function formSchemaFor(color: ColorDto | null) {
+  return z.object({
+    code: z
+      .string()
+      .trim()
+      .min(1, 'Obligatorio')
+      .max(20)
+      .regex(/^[A-Za-z0-9-]+$/, 'Solo letras, números y guiones')
+      .superRefine(commercialColorLock(color?.code)),
+    name: z
+      .string()
+      .trim()
+      .min(2, 'Mínimo 2 caracteres')
+      .max(80)
+      .superRefine(commercialColorLock(color?.name)),
+    hexColor: z
+      .string()
+      .trim()
+      .regex(/^#[0-9a-fA-F]{6}$/, 'Usa el formato #rrggbb'),
+  });
+}
+type FormValues = z.infer<ReturnType<typeof formSchemaFor>>;
 
 /**
  * RF-54: la paleta (D-085). Vive dentro de `/catalogo` y no como ruta propia porque es un
@@ -86,8 +104,9 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
     <div className="grid gap-4">
       <div className="flex items-start justify-between gap-4">
         <p className="text-sm text-muted-foreground">
-          El color es un dato del maestro, no parte del texto del SKU: el filtro de bobinas de la
-          orden de producción compara colores por id (D-085).
+          Cada color es un <strong>color comercial</strong> (Rojo, Azul), sin RAL: el RAL va en el
+          acabado de cada bobina. La orden de producción monta cualquier bobina del mismo color
+          comercial y espesor, y ofrece primero las del acabado exacto del producto (D-270).
         </p>
         {isAdmin && (
           <Button
@@ -107,7 +126,7 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
             <TableRow>
               <TableHead>Código</TableHead>
               <TableHead>Color</TableHead>
-              <TableHead>RAL</TableHead>
+              <TableHead title="Desde D-273 el RAL va en el acabado">RAL (histórico)</TableHead>
               <TableHead>Hex</TableHead>
               <TableHead>Estado</TableHead>
               {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
@@ -189,11 +208,10 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
   const queryClient = useQueryClient();
   const editing = color !== null;
   const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(formSchemaFor(color)),
     defaultValues: {
       code: color?.code ?? '',
       name: color?.name ?? '',
-      ralCode: color?.ralCode ?? '',
       hexColor: color?.hexColor ?? '#c8102e',
     },
   });
@@ -204,16 +222,13 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
       editing
         ? api<ColorDto>(`/colors/${color.id}`, {
             method: 'PATCH',
+            // D-273: el nombre viaja solo si cambió, así el API no lo vuelve a juzgar.
             body: {
-              name: values.name,
-              ralCode: values.ralCode === '' ? null : values.ralCode,
+              ...(values.name === color.name ? {} : { name: values.name }),
               hexColor: values.hexColor,
             },
           })
-        : api<ColorDto>('/colors', {
-            method: 'POST',
-            body: { ...values, ralCode: values.ralCode === '' ? null : values.ralCode },
-          }),
+        : api<ColorDto>('/colors', { method: 'POST', body: values }),
     onSuccess: () => {
       toast.success(editing ? 'Color actualizado' : 'Color creado');
       void queryClient.invalidateQueries({ queryKey: colorsQueryKey });
@@ -276,19 +291,6 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
                   <FormLabel>Nombre</FormLabel>
                   <FormControl>
                     <Input placeholder="Rojo colonial" autoComplete="off" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="ralCode"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Código RAL (opcional)</FormLabel>
-                  <FormControl>
-                    <Input inputMode="numeric" placeholder="3002" autoComplete="off" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

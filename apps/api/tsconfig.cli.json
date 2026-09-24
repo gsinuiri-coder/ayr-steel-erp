@@ -9,7 +9,8 @@
     "src",
     "prisma/import-initial-inventory-cli.ts",
     "prisma/normalize-coil-skus-cli.ts",
-    "prisma/sweep-imported-documents-cli.ts"
+    "prisma/sweep-imported-documents-cli.ts",
+    "prisma/retire-unused-color-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

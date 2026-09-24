@@ -38,6 +38,42 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   Es otro modelo, no otra persona: sigue pendiente una revisión humana independiente.
 - **Correcciones post-RF-S4b** (2026-09-24, rama `fix/post-s4b`, PR #17). D-267 a D-269.
   Autorrevisión por un subagente nuevo del mismo modelo que escribió. Motivo: el mismo.
+- **Color comercial** (2026-09-24, rama `feat/color-comercial`, PR #18). D-270 a D-274.
+  Autorrevisión por dos subagentes nuevos (API y web), el mismo modelo que escribió
+  (`docs/revision/color-comercial-autorrevision.md`): 0 P0, 0 P1 de código. Motivo: esquema de
+  un solo agente, sin segundo revisor disponible. Pieza de riesgo para el pase cruzado: el
+  retiro de specs de D-274 (borra filas de `raw_material_specs`).
+
+## Color comercial en producción (2026-09-24)
+
+Handoff: `docs/handoff/color-comercial.md`. Runbook: `docs/handoff/ventana-color-comercial.md`
+(**no ejecutado**). UAT: `docs/uat/color-comercial.md`. Rama `feat/color-comercial`, PR #18.
+
+- **Dry-run de solo lectura contra production** (`pnpm check:color-comercial`): el maestro de
+  colores ya es el color comercial (6 colores sin RAL) y el RAL vive en el acabado. 0 reservas
+  vivas de materia prima, 0 OPs de coberturas vivas, 0 de 34 líneas abiertas con el piso
+  movido, 11 grupos del valorizado antes y después (S/ 572 992.1133). Un color `NATURAL` sin
+  uso, con 2 specs huérfanas.
+- **D-270:** sin migración ni ventana de datos; el diseño grande queda descartado
+  (`docs/diseno/color-comercial-produccion.md` §9).
+- **D-271** planta prefiere el acabado exacto y muestra el RAL. **D-272** valorizado por color
+  con el RAL de detalle. **D-273** candado del maestro. **D-274** retiro del NATURAL (se ejecuta
+  en la ventana, con OK).
+- **Verificación local:** unitarios 1073/1073; lint, typecheck (API, CLI y web) y
+  `format:check` limpios; sin migración ni cambio de `schema.prisma`. E2E de los specs tocados
+  (dev, `ayr_local_e2e`): 34 verdes, 2 rojos clasificados. Uno es de infraestructura:
+  `reportes-costeo-rf-s4a` M2, porque el worktree no tiene PSE («Emisión electrónica no
+  habilitada en este entorno»). El otro es de tiempo en modo dev: `multi-montar-f8s3`, pantalla,
+  donde el texto apareció pasados los 10 s; corrido solo, pasa en 1.2 min. La suite completa
+  corre en la CI de la PR #18.
+
+**Pendientes que deja:**
+
+- **Deploy esta noche**, API antes que web (la web nueva rompe el valorizado con la API vieja).
+- **Reglas `ask`**: el dueño corre `node ../ayr-steel-erp-color/scripts/apply-ask-rules.mjs --write`
+  desde el checkout principal (P2-E más `retire:unused-color` y `check:color-comercial`).
+- `finishRal` lee cualquier número de cuatro dígitos al final del código o nombre del acabado
+  (solo presentación); hoy ningún acabado real cae en el caso.
 
 ## Correcciones post-RF-S4b (2026-09-24)
 

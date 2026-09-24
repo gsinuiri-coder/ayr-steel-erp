@@ -7,6 +7,7 @@ import {
   FISCAL_DOCUMENT_STATUSES,
   FISCAL_DOC_TYPES,
 } from '../enums';
+import { FINISH_KIND_LABELS } from './finish';
 import { monthSchema, operationDateSchema } from './operation';
 
 /**
@@ -84,6 +85,9 @@ export const inventoryValuationCoilSchema = z.object({
   typeKey: z.string(),
   kind: z.enum(COIL_KINDS),
   widthMm: z.string(),
+  /** D-272: el acabado de la bobina y su RAL (D-270: el RAL vive en el acabado). */
+  finishCode: z.string(),
+  ral: z.string().nullable(),
   /** Saldo vigente de kardex, en kg. */
   qtyKg: z.string(),
   /** Costo promedio ponderado en soles (D-028, D-042). */
@@ -100,13 +104,34 @@ export const inventoryValuationCoilSchema = z.object({
 });
 export type InventoryValuationCoilDto = z.infer<typeof inventoryValuationCoilSchema>;
 
-/** Grupo de bobinas: línea / espesor / color. El color va en `null` en las galvanizadas. */
+/**
+ * D-272: el detalle de un grupo por acabado. Dentro de un color comercial (ROJO) cada acabado es
+ * un RAL (3002, 3020): cuánto hay de cada uno y cuánto vale, sin cambiar el total del grupo.
+ */
+export const inventoryValuationFinishSchema = z.object({
+  finishCode: z.string(),
+  finishName: z.string(),
+  ral: z.string().nullable(),
+  coilCount: z.number().int(),
+  qtyKg: z.string(),
+  totalValuePen: z.string(),
+});
+export type InventoryValuationFinishDto = z.infer<typeof inventoryValuationFinishSchema>;
+
+/**
+ * Grupo de bobinas: línea / espesor / color comercial (D-272). Sin color, el grupo es el tipo
+ * del acabado —NATURAL o GALVANIZADO, cada uno el suyo— y `colorName` va en `null`.
+ */
 export const inventoryValuationCoilGroupSchema = z.object({
   /** Clave estable del grupo, para el `key` de React y para el detalle plegable. */
   key: z.string(),
   businessLine: z.enum(BUSINESS_LINES),
   thicknessMm: z.string(),
   colorName: z.string().nullable(),
+  /** D-272: el tipo del acabado cuando el grupo no tiene color; `null` si lo tiene. */
+  finishKind: z.enum(['NATURAL', 'GALVANIZADO']).nullable(),
+  /** D-272: el detalle por acabado (RAL), en orden de código. */
+  finishes: z.array(inventoryValuationFinishSchema),
   coilCount: z.number().int(),
   qtyKg: z.string(),
   /**
@@ -118,6 +143,18 @@ export const inventoryValuationCoilGroupSchema = z.object({
   coils: z.array(inventoryValuationCoilSchema),
 });
 export type InventoryValuationCoilGroupDto = z.infer<typeof inventoryValuationCoilGroupSchema>;
+
+/**
+ * D-272: cómo se nombra un grupo de bobinas. Con color, el color comercial; sin color, el tipo
+ * del acabado (Natural, Galvanizado). La pantalla y el Excel lo dicen igual.
+ */
+export function coilGroupLabel(group: {
+  colorName: string | null;
+  finishKind: InventoryValuationCoilGroupDto['finishKind'];
+}): string {
+  if (group.colorName !== null) return group.colorName;
+  return group.finishKind === null ? 'Sin color' : FINISH_KIND_LABELS[group.finishKind];
+}
 
 /** Producto de catálogo con stock. Una fila por SKU. */
 export const inventoryValuationProductSchema = z.object({

@@ -9,6 +9,11 @@ import type { ColorDto, CreateColorInput, UpdateColorInput } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  executeColorRetirement,
+  planColorRetirement,
+  type ColorRetirementPlan,
+} from './color-retirement';
 
 /**
  * Maestro de colores (RF-54, D-085). Mutaciones solo ADMINISTRADOR (guard en el controller).
@@ -119,6 +124,19 @@ export class ColorsService {
     return toDto(after);
   }
 
+  /** D-274: qué haría el retiro de un color sin uso, sin escribir nada. */
+  planRetirement(code: string): Promise<ColorRetirementPlan> {
+    return this.prisma.$transaction((tx) => planColorRetirement(tx, code), RETIREMENT_TX);
+  }
+
+  /** D-274: retira un color sin uso y sus specs sobrantes. Se niega con una sola referencia. */
+  retire(actor: Pick<RequestUser, 'id'>, code: string): Promise<ColorRetirementPlan> {
+    return this.prisma.$transaction(
+      (tx) => executeColorRetirement(tx, this.audit, actor.id, code),
+      RETIREMENT_TX,
+    );
+  }
+
   /**
    * Color válido para asignar a un producto o a una bobina. Devuelve `null` cuando el
    * llamador no manda ninguno, que es el caso normal fuera de coberturas prepintadas.
@@ -134,6 +152,13 @@ export class ColorsService {
     return color.id;
   }
 }
+
+/**
+ * D-274: el retiro corre desde la CLI contra Neon, con una docena de consultas en serie dentro
+ * de la transacción. Los 5 s por defecto de Prisma no alcanzan desde afuera de la región (el
+ * mismo «timeout 5 s» que apareció en el ensayo de RF-S4b).
+ */
+const RETIREMENT_TX = { timeout: 60_000, maxWait: 20_000 } as const;
 
 export function toDto(c: Color): ColorDto {
   return {

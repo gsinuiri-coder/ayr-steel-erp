@@ -23,7 +23,7 @@ export interface PlantOrderPdfLine {
   unitLabel: string;
   /** `10 × 4.20 m`, vacío cuando la línea no lleva subítems de largo. */
   pieces: string;
-  /** `0.50 mm · 1 000 mm · Rojo teja`, lo que decide qué bobina se monta (D-086). */
+  /** `0.50 mm · 1000.00 mm de ancho · ROJO, de preferencia RAL 3020`: ver `plantLineMeasures`. */
   measures: string;
 }
 

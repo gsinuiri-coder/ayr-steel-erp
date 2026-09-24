@@ -232,7 +232,7 @@ export function CoilEditDialog({
               )}
               .{' '}
               {coil.status === 'OPEN'
-                ? 'El color sale del acabado: para corregirlo, elige el acabado correcto. La orden de coberturas solo ofrece bobinas del mismo color que el producto (D-086).'
+                ? 'El color sale del acabado: para corregirlo, elige el acabado correcto. La orden de coberturas ofrece las bobinas del mismo color comercial que el producto, primero las de su mismo acabado (RAL) (D-270, D-271).'
                 : 'El acabado solo se edita con la bobina abierta.'}
             </p>
           </div>

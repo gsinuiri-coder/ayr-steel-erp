@@ -858,6 +858,15 @@ export const roofingCoilOptionSchema = z.object({
   code: z.string(),
   typeKey: z.string(),
   finishCode: z.string(),
+  /** D-271: el acabado de la bobina, que es donde vive su RAL (D-270). */
+  finishName: z.string(),
+  /** D-271: el RAL del acabado (`3020`), o `null` si el acabado no lo dice. */
+  ral: z.string().nullable(),
+  /**
+   * D-271: la bobina es del acabado exacto del producto. El API las ordena primero; las demás
+   * son del mismo color comercial y también se pueden montar.
+   */
+  exactFinish: z.boolean(),
   widthMm: z.string(),
   thicknessMm: z.string(),
   colorId: z.string().uuid().nullable(),

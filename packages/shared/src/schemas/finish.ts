@@ -24,6 +24,21 @@ export function finishKindHasColor(kind: FinishKind): boolean {
   return kind === FinishKind.PREPINTADO;
 }
 
+/**
+ * D-271: el RAL de un acabado. Desde D-270 el maestro de colores es el **color comercial**
+ * (ROJO) y el RAL (3002, 3020) vive en el acabado, escrito al final de su código
+ * (`ALZ-ROJO-3020`) o de su nombre. Son cuatro dígitos exactos al final, precedidos por algo
+ * que no sea un dígito: `EDBO089957` no es un RAL. Solo presentación y orden del selector de
+ * planta; ninguna regla de montaje lo lee.
+ */
+export function finishRal(finish: { code: string; name: string }): string | null {
+  for (const value of [finish.code, finish.name]) {
+    const match = /(?:^|\D)(\d{4})$/.exec(value.trim());
+    if (match?.[1] !== undefined) return match[1];
+  }
+  return null;
+}
+
 const finishKindSchema = z.enum(
   [FinishKind.NATURAL, FinishKind.PREPINTADO, FinishKind.GALVANIZADO],
   {

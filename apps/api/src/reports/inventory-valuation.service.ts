@@ -2,12 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   Decimal,
+  finishRal,
   businessToday,
   toDecimal,
   toFixedString,
   type InventoryValuationCoilDto,
   type InventoryValuationCoilGroupDto,
   type InventoryValuationDto,
+  type InventoryValuationFinishDto,
   type InventoryValuationLineTotalDto,
   type InventoryValuationProductDto,
 } from '@ayr/shared';
@@ -26,6 +28,9 @@ interface CoilBalanceRow {
   width_mm: Prisma.Decimal;
   thickness_mm: Prisma.Decimal;
   color_name: string | null;
+  finish_code: string;
+  finish_name: string;
+  finish_kind: string;
   status: string;
   operation_date: Date;
 }
@@ -46,9 +51,21 @@ interface MutableCoilGroup {
   businessLine: InventoryValuationCoilGroupDto['businessLine'];
   thicknessMm: string;
   colorName: string | null;
+  finishKind: InventoryValuationCoilGroupDto['finishKind'];
   qty: Decimal;
   value: Decimal;
   coils: InventoryValuationCoilDto[];
+  /** D-272: el detalle por acabado, acumulado sin redondear como el grupo. */
+  finishes: Map<string, MutableFinish>;
+}
+
+interface MutableFinish {
+  finishCode: string;
+  finishName: string;
+  ral: string | null;
+  coilCount: number;
+  qty: Decimal;
+  value: Decimal;
 }
 
 /**
@@ -84,11 +101,15 @@ export class InventoryValuationService {
         c."width_mm",
         c."thickness_mm",
         col."name"       AS "color_name",
+        f."code"         AS "finish_code",
+        f."name"         AS "finish_name",
+        f."kind"::text   AS "finish_kind",
         c."status"::text AS "status",
         c."operation_date"
       FROM "inventory_balances" b
       JOIN "coils" c ON c."id" = b."item_id"
       JOIN "business_lines" bl ON bl."id" = c."business_line_id"
+      JOIN "finishes" f ON f."id" = c."finish_id"
       LEFT JOIN "colors" col ON col."id" = c."color_id"
       WHERE b."item_type" = 'COIL' AND b."qty" <> 0
       ORDER BY bl."code" ASC, c."thickness_mm" ASC, col."name" ASC NULLS FIRST, c."code" ASC
@@ -120,7 +141,15 @@ export class InventoryValuationService {
       const value = qty.times(avgCost);
       const businessLine = fromDbLineCode(r.business_line_code);
       const thicknessMm = r.thickness_mm.toFixed(2);
-      const key = `${businessLine}|${thicknessMm}|${r.color_name ?? ''}`;
+      // D-272: el grupo es el color comercial (el maestro de colores, D-270); sin color, el
+      // tipo del acabado, así NATURAL y GALVANIZADO no se suman en un «Sin color». Los prefijos
+      // `C:`/`K:` impiden que un color y un tipo con el mismo nombre compartan clave.
+      const finishKind: MutableCoilGroup['finishKind'] =
+        r.color_name === null && (r.finish_kind === 'NATURAL' || r.finish_kind === 'GALVANIZADO')
+          ? r.finish_kind
+          : null;
+      const key = `${businessLine}|${thicknessMm}|${r.color_name === null ? `K:${r.finish_kind}` : `C:${r.color_name}`}`;
+      const ral = finishRal({ code: r.finish_code, name: r.finish_name });
 
       const coil: InventoryValuationCoilDto = {
         id: r.item_id,
@@ -128,6 +157,8 @@ export class InventoryValuationService {
         typeKey: r.type_key,
         kind: r.kind as InventoryValuationCoilDto['kind'],
         widthMm: r.width_mm.toFixed(2),
+        finishCode: r.finish_code,
+        ral,
         qtyKg: qty.toFixed(3),
         avgCostPen: avgCost.toFixed(4),
         totalValuePen: toFixedString(value, 'MONEY'),
@@ -135,22 +166,36 @@ export class InventoryValuationService {
         operationDate: r.operation_date.toISOString().slice(0, 10),
       };
 
-      const current = groups.get(key);
-      if (current) {
-        current.qty = current.qty.plus(qty);
-        current.value = current.value.plus(value);
-        current.coils.push(coil);
-      } else {
-        groups.set(key, {
+      let group = groups.get(key);
+      if (!group) {
+        group = {
           key,
           businessLine,
           thicknessMm,
           colorName: r.color_name,
-          qty,
-          value,
-          coils: [coil],
-        });
+          finishKind,
+          qty: new Decimal(0),
+          value: new Decimal(0),
+          coils: [],
+          finishes: new Map(),
+        };
+        groups.set(key, group);
       }
+      group.qty = group.qty.plus(qty);
+      group.value = group.value.plus(value);
+      group.coils.push(coil);
+      const finish = group.finishes.get(r.finish_code) ?? {
+        finishCode: r.finish_code,
+        finishName: r.finish_name,
+        ral,
+        coilCount: 0,
+        qty: new Decimal(0),
+        value: new Decimal(0),
+      };
+      finish.coilCount += 1;
+      finish.qty = finish.qty.plus(qty);
+      finish.value = finish.value.plus(value);
+      group.finishes.set(r.finish_code, finish);
     }
 
     const coilGroups: InventoryValuationCoilGroupDto[] = [...groups.values()].map((g) => ({
@@ -158,6 +203,17 @@ export class InventoryValuationService {
       businessLine: g.businessLine,
       thicknessMm: g.thicknessMm,
       colorName: g.colorName,
+      finishKind: g.finishKind,
+      finishes: [...g.finishes.values()]
+        .sort((a, b) => a.finishCode.localeCompare(b.finishCode))
+        .map((f): InventoryValuationFinishDto => ({
+          finishCode: f.finishCode,
+          finishName: f.finishName,
+          ral: f.ral,
+          coilCount: f.coilCount,
+          qtyKg: f.qty.toFixed(3),
+          totalValuePen: toFixedString(f.value, 'MONEY'),
+        })),
       coilCount: g.coils.length,
       qtyKg: g.qty.toFixed(3),
       // Valor total / cantidad total, y no promedio de promedios: dos bobinas del mismo
