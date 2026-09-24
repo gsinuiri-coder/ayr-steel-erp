@@ -815,6 +815,18 @@ async function assertPaperCoilsInPool(
         `${at}: la línea del comprobante que vende una bobina tiene que decir de qué producto de bobina es`,
       );
     }
+    // Los motivos concretos primero —el preview pudo quedar viejo hasta confirmar—, y el de
+    // candidata después, que cubre el resto (reservas de otros, otra cotización abierta).
+    if (sale.status !== CoilStatus.OPEN || sale.mounted) {
+      throw new BadRequestException(
+        `${at}: ${sale.coilCode} ya no está libre para venderse (${sale.mounted ? 'montada en una OP' : sale.status}): elige otra bobina del pool`,
+      );
+    }
+    if (toDecimal(item.qty).gt(toDecimal(sale.qty))) {
+      throw new BadRequestException(
+        `${at}: ${sale.coilCode} tiene ${sale.qty} kg disponibles y la línea vende ${toDecimal(item.qty).toFixed(3)}`,
+      );
+    }
     if (options.coilPool?.preexistingCoilIds?.has(sale.coilId)) continue;
     const qty = toFixedString(toDecimal(item.qty), 'KG');
     const pool = await coilPoolFor(tx, sale.pool, qty, options.coilPool?.scope ?? {});

@@ -97,6 +97,8 @@ beforeEach(() => mockMounted.mockResolvedValue([]));
 describe('venta de bobina con la cantidad del papel (importador)', () => {
   const item = {
     saleCoilId: COIL_ID,
+    // El importador manda el producto de bobina de la fila: la bobina tiene que ser de su pool.
+    productId: '22222222-2222-4222-8222-222222222222',
     qty: '4000.000',
     netAmountPen: '12000.0000',
     igvAmountPen: '2160.0000',
@@ -209,5 +211,128 @@ describe('un producto BOB… no se vende como línea de catálogo', () => {
       { productId: '22222222-2222-4222-8222-222222222222', qty: '10.000', unitPricePen: '3.0000' },
     ]);
     expect(line?.subtotalPen).toBe('30.0000');
+  });
+});
+
+describe('D-254 en el servidor: la bobina de una línea del papel es candidata de su pool (P2-1)', () => {
+  const paperItem = (over: Record<string, unknown> = {}) => ({
+    saleCoilId: COIL_ID,
+    productId: '22222222-2222-4222-8222-222222222222',
+    qty: '1000.000',
+    netAmountPen: '3000.0000',
+    ...over,
+  });
+
+  it('importador: una bobina de otro espesor o color que el producto de la fila se rechaza', async () => {
+    await expect(
+      resolveSalesLines(txWith({ catalogSku: 'BOB45ROJO' }), [paperItem()], {
+        exactAmounts: PAPER,
+      }),
+    ).rejects.toThrow(/es del pool BOB038AZUL y la línea es de BOB045ROJO/);
+  });
+
+  it('importador: una bobina que ya vende otra cotización abierta no es candidata', async () => {
+    await expect(
+      resolveSalesLines(txWith({ quoted: true }), [paperItem()], { exactAmounts: PAPER }),
+    ).rejects.toThrow(/no es candidata del pool BOB038AZUL/);
+  });
+
+  it('importador: una bobina montada en una OP no es candidata', async () => {
+    mockMounted.mockResolvedValue([{ coilId: COIL_ID }]);
+    await expect(
+      resolveSalesLines(txWith(), [paperItem()], { exactAmounts: PAPER }),
+    ).rejects.toThrow(/montada en una OP|no es candidata/);
+  });
+
+  it('importador: una bobina libre del pool, con saldo, pasa', async () => {
+    const [line] = await resolveSalesLines(txWith(), [paperItem()], { exactAmounts: PAPER });
+    expect(line).toMatchObject({ qty: '1000.000', reserveItemId: COIL_ID });
+  });
+
+  it('edición de cotización: sin producto en la línea, la bobina tiene que ser de un pool del documento', async () => {
+    const { productId: _p, ...noProduct } = paperItem();
+    await expect(
+      resolveSalesLines(txWith(), [noProduct], {
+        exactAmounts: PAPER,
+        coilPool: { allowedPools: new Set(['BOB045ROJO']) },
+      }),
+    ).rejects.toThrow(/que no es el de ninguna línea de este documento \(BOB045ROJO\)/);
+    const [line] = await resolveSalesLines(txWith(), [noProduct], {
+      exactAmounts: PAPER,
+      coilPool: { allowedPools: new Set(['BOB038AZUL']) },
+    });
+    expect(line?.reserveItemId).toBe(COIL_ID);
+  });
+
+  it('edición de cotización: una bobina que ya vende otra cotización abierta no es candidata', async () => {
+    const { productId: _p, ...noProduct } = paperItem();
+    await expect(
+      resolveSalesLines(txWith({ quoted: true }), [noProduct], {
+        exactAmounts: PAPER,
+        coilPool: { allowedPools: new Set(['BOB038AZUL']), scope: { exceptQuotationIds: ['q-1'] } },
+      }),
+    ).rejects.toThrow(/no es candidata del pool BOB038AZUL/);
+  });
+
+  it('edición de cotización: la bobina que el documento ya vendía no compite consigo misma', async () => {
+    const { productId: _p, ...noProduct } = paperItem();
+    const [line] = await resolveSalesLines(txWith({ quoted: true }), [noProduct], {
+      exactAmounts: PAPER,
+      coilPool: {
+        allowedPools: new Set(['BOB038AZUL']),
+        preexistingCoilIds: new Set([COIL_ID]),
+      },
+    });
+    expect(line?.reserveItemId).toBe(COIL_ID);
+  });
+
+  it('sin producto ni pools del documento, una línea del papel no sabe de qué pool es y se rechaza', async () => {
+    const { productId: _p, ...noProduct } = paperItem();
+    await expect(resolveSalesLines(txWith(), [noProduct], { exactAmounts: PAPER })).rejects.toThrow(
+      /tiene que decir de qué producto de bobina es/,
+    );
+  });
+});
+
+describe('D-256 (aclaración): solo las líneas que representan al comprobante conservan el papel', () => {
+  beforeEach(() => mockFloor.mockClear());
+  const partial = {
+    saleCoilId: COIL_ID,
+    productId: '22222222-2222-4222-8222-222222222222',
+    qty: '1000.000',
+    netAmountPen: '3000.0000',
+  };
+
+  it('una línea que no representa al comprobante no vende una parte de la bobina', async () => {
+    await expect(
+      resolveSalesLines(txWith(), [partial], {
+        exactAmounts: PAPER,
+        paperLines: new Set<number>(),
+        priceFloor: { toleranceMm: '1' },
+      }),
+    ).rejects.toThrow(/el saldo de SALDO-AZUL-4194 cambió/);
+  });
+
+  it('la línea del papel no pasa por el piso y la que cambió sí, en el mismo documento', async () => {
+    await resolveSalesLines(
+      txWith(),
+      [
+        partial,
+        { saleCoilId: COIL_ID.replace('1111', '3333'), qty: '1.000', unitPricePen: '1.0000' },
+      ],
+      {
+        exactAmounts: PAPER,
+        paperLines: new Set([0]),
+        priceFloor: { toleranceMm: '1' },
+      },
+    ).catch(() => undefined);
+    const calls = mockFloor.mock.calls as unknown[][];
+    const candidates = (calls[0]?.[1] ?? []) as { at: string }[];
+    expect(candidates.map((c) => c.at)).not.toContain('Línea 1');
+  });
+
+  it('sin paperLines (ADMINISTRADOR o importador), todas las líneas conservan el papel', async () => {
+    const [line] = await resolveSalesLines(txWith(), [partial], { exactAmounts: PAPER });
+    expect(line?.qty).toBe('1000.000');
   });
 });

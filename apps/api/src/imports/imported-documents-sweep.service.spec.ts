@@ -397,7 +397,7 @@ describe('ImportedDocumentsSweepService — emparejamiento con el papel (P1-1)',
   it('el execute de una cotización lleva el motivo del barrido a la auditoría', async () => {
     const { service, quotations } = build(fakePrisma({ quotations: [quotationRow([line(1)])] }));
     await service.execute(ACTOR, [paperLine()]);
-    expect(quotations.update.mock.calls[0]?.[3]).toEqual({
+    expect((quotations.update.mock.calls as unknown[][])[0]?.[3]).toEqual({
       auditReason: expect.stringMatching(/Barrido de lo importado/),
     });
   });

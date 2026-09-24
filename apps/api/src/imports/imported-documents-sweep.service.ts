@@ -357,7 +357,7 @@ export class ImportedDocumentsSweepService {
     const findings: SweepLineFinding[] = [];
     for (const [i, line] of doc.items.entries()) {
       const pair = pairing[i];
-      if (!pair || pair.paperIndex === null) {
+      if (pair?.paperIndex === undefined || pair.paperIndex === null) {
         findings.push({
           lineNumber: line.lineNumber,
           productSku: line.product.sku,
@@ -447,7 +447,11 @@ export class ImportedDocumentsSweepService {
    * Rehace las líneas de una cotización abierta con la bobina y los importes del papel. Cada
    * línea toma **su** hallazgo —el papel con el que se emparejó—, nunca la fila de su posición.
    */
-  private async fixQuotation(actor: RequestUser, doc: SweepDocument, reason: string): Promise<void> {
+  private async fixQuotation(
+    actor: RequestUser,
+    doc: SweepDocument,
+    reason: string,
+  ): Promise<void> {
     const q = await this.prisma.quotation.findUniqueOrThrow({
       where: { id: doc.id },
       select: {

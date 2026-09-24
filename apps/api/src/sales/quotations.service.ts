@@ -410,7 +410,9 @@ export class QuotationsService {
         return row.valuePerMeterPen !== null && eq(row.valuePerMeterPen, item.valuePerMeterPen);
       }
       if (item.unitPriceWithIgvPen !== undefined) {
-        const { subtotal } = lineAmounts(item.qty, { unitPriceWithIgvPen: item.unitPriceWithIgvPen });
+        const { subtotal } = lineAmounts(item.qty, {
+          unitPriceWithIgvPen: item.unitPriceWithIgvPen,
+        });
         return subtotal.equals(toDecimal(row.subtotalPen.toString()));
       }
       return false;
@@ -420,10 +422,7 @@ export class QuotationsService {
     const out = items.map((item, index) => {
       const match = available.find(
         (c) =>
-          !c.taken &&
-          sameProduct(item, c.row) &&
-          eq(c.row.qty, item.qty) &&
-          samePrice(item, c.row),
+          !c.taken && sameProduct(item, c.row) && eq(c.row.qty, item.qty) && samePrice(item, c.row),
       );
       if (!match) return item;
       match.taken = true;

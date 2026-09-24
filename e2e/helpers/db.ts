@@ -181,3 +181,25 @@ export async function deleteAuditLogRow(id: string): Promise<void> {
     await db.$disconnect();
   }
 }
+
+/**
+ * D-256 (aclaración, revisión cruzada RF-S4b): deja una cotización a cargo de otro usuario.
+ * El importador la crea con el ADMINISTRADOR que importó como vendedor, y para probar que un
+ * VENDEDOR que edita un documento importado queda sujeto al piso hace falta que ese vendedor
+ * pueda abrirla (D-238). Ninguna ruta del API reasigna una cotización: por eso va por acá.
+ */
+export async function setQuotationSellerForTest(
+  quotationId: string,
+  userId: string,
+): Promise<void> {
+  const db = testDatabaseClient();
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE "quotations" SET "seller_id" = $1::uuid WHERE "id" = $2::uuid`,
+      userId,
+      quotationId,
+    );
+  } finally {
+    await db.$disconnect();
+  }
+}

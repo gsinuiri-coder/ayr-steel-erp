@@ -349,3 +349,44 @@ describe('SalesOrderEditsService.updateItemCoil — D-254', () => {
     expect(tx.reservation.updateMany).not.toHaveBeenCalled();
   });
 });
+
+describe('D-256 (aclaración): cambiar la cantidad de un pedido importado', () => {
+  const VENDEDOR = { id: 'u-2', role: Role.VENDEDOR } as never;
+  const optionsOf = async (actor: never, notes: string | null) => {
+    const { service, tx } = build({ notes, item: item({ sku: 'COB-1' }) });
+    Object.assign(tx, {
+      reservation: { findMany: jest.fn().mockResolvedValue([]) },
+      // El pedido es del vendedor que lo edita (D-238).
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          id: 'o-1',
+          seq: 7,
+          status: 'CONFIRMED',
+          created_by_id: 'u-2',
+          seller_id: 'u-2',
+          notes,
+        },
+      ]),
+    });
+    const resolve = resolveSalesLines as jest.Mock;
+    resolve.mockReset();
+    // Se corta apenas se recalcula la línea: lo que importa es con qué opciones.
+    resolve.mockRejectedValueOnce(new BadRequestException('corte del test'));
+    await expect(service.updateItemQty(actor, 'o-1', 'i-1', { qty: '100.000' })).rejects.toThrow(
+      'corte del test',
+    );
+    return (resolve.mock.calls as unknown[][])[0]?.[2] as Record<string, unknown>;
+  };
+
+  it('un VENDEDOR pasa por el piso: la línea deja de representar al comprobante', async () => {
+    expect(await optionsOf(VENDEDOR, IMPORTED)).toHaveProperty('priceFloor');
+  });
+
+  it('un ADMINISTRADOR sigue exento', async () => {
+    expect(await optionsOf(ADMIN, IMPORTED)).not.toHaveProperty('priceFloor');
+  });
+
+  it('en un pedido no importado, cambiar la cantidad sigue sin piso (el precio ya lo pasó)', async () => {
+    expect(await optionsOf(VENDEDOR, null)).not.toHaveProperty('priceFloor');
+  });
+});

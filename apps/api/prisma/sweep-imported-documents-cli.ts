@@ -115,8 +115,7 @@ async function main(): Promise<void> {
           d.open &&
           (d.unmatched !== null ||
             d.findings.some(
-              (f) =>
-                f.unpaired !== null || (f.product !== null && f.product.autoCoilId === null),
+              (f) => f.unpaired !== null || (f.product !== null && f.product.autoCoilId === null),
             )),
       );
       console.warn(

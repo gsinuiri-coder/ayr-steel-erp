@@ -20,6 +20,7 @@ import {
   MAX_SALES_ITEMS,
   money,
   productionOrderCode,
+  Role,
   salesOrderCode,
   STANDING_DOCUMENT_STATUSES,
   toDecimal,
@@ -708,7 +709,15 @@ export class SalesOrderEditsService {
           [this.lineInput(item, { qty: input.qty, pieces: input.pieces })],
           // Sin piso: el precio no cambia y ya pasó el piso cuando se fijó. Cambiar una
           // cantidad no es la ocasión de rechazar un precio que nadie tocó.
-          { firstLineNumber: item.lineNumber },
+          // D-256 (aclaración): salvo en un pedido **importado**, cuyo precio nunca pasó por el
+          // piso. Cambiarle la cantidad deja de representar al comprobante, y fuera del
+          // ADMINISTRADOR eso pasa por el piso como cualquier línea.
+          {
+            firstLineNumber: item.lineNumber,
+            ...(order.imported && actor.role !== Role.ADMINISTRADOR
+              ? { priceFloor: { toleranceMm: roofingToleranceMm(this.env) } }
+              : {}),
+          },
         );
         if (!line) throw new NotFoundException(`${at}: no se pudo recalcular`);
 
