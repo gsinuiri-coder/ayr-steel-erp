@@ -618,8 +618,18 @@ function amountsFinding(line: DocLine, source: PaperLine): SweepLineFinding['amo
  * repite queda para el dueño (misma regla que el importador).
  */
 function dropSharedAutoCoils(documents: SweepDocument[]): void {
+  // Un documento cerrado o anulado solo se reporta: nunca se ata a una bobina, así que no
+  // compite por ella. Sin esto, en el ensayo en demo COT-000074 (anulada) le quitaba la bobina
+  // exacta a COT-000002 (abierta) y la mandaba a «elige a mano».
+  for (const f of documents.filter((d) => !d.open).flatMap((d) => d.findings)) {
+    if (f.product?.autoCoilId) {
+      f.product.autoCoilId = null;
+      f.product.autoCoilCode = null;
+      f.product.reason += ' (documento cerrado: solo se reporta)';
+    }
+  }
   const count = new Map<string, number>();
-  for (const f of documents.flatMap((d) => d.findings)) {
+  for (const f of documents.filter((d) => d.open).flatMap((d) => d.findings)) {
     const id = f.product?.autoCoilId;
     if (id) count.set(id, (count.get(id) ?? 0) + 1);
   }

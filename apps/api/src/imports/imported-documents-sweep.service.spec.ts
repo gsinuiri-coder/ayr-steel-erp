@@ -487,3 +487,21 @@ describe('ImportedDocumentsSweepService.execute', () => {
     await expect(service.execute(ACTOR, [paperLine()])).rejects.toThrow('deadlock');
   });
 });
+
+describe('ImportedDocumentsSweepService — lo cerrado no compite por la bobina (ensayo en demo)', () => {
+  it('una cotización anulada del mismo comprobante no le quita la bobina única a la abierta', async () => {
+    const { service } = build(
+      fakePrisma({
+        quotations: [
+          quotationRow([line(1)], { id: 'q-open' }),
+          quotationRow([line(1)], { id: 'q-cancelled', seq: 74, status: 'CANCELLED' }),
+        ],
+      }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    const byId = new Map(documents.map((d) => [d.id, d.findings[0]?.product]));
+    expect(byId.get('q-open')).toMatchObject({ autoCoilId: 'c-1' });
+    expect(byId.get('q-cancelled')?.autoCoilId).toBeNull();
+    expect(byId.get('q-cancelled')?.reason).toMatch(/documento cerrado: solo se reporta/);
+  });
+});
