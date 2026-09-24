@@ -77,6 +77,8 @@ function printDocument(doc: SweepDocument): void {
 
 async function main(): Promise<void> {
   assertExecuteAllowed(execute);
+  // Revisión cruzada RF-S4b: el destino, a la vista antes de cualquier cosa.
+  console.error(`Destino: ${process.env.AYR_CLI_BRANCH ?? '(sin declarar)'}`);
   // Revisión cruzada RF-S4b (P1-2): antes de levantar Nest, que arrancaría cola, PSE y R2.
   assertExternalOutputsOff(process.env, (line) => {
     console.error(line);
