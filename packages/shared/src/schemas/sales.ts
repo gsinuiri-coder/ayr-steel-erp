@@ -57,6 +57,14 @@ export const MAX_QUOTATION_VALIDITY_DAYS = 365;
 export const MAX_SALES_ITEMS = 50;
 
 /**
+ * D-283: el largo máximo de la descripción de una línea. Es el de la columna
+ * (`VARCHAR(240)` en cotización, pedido y comprobante) y queda por debajo del de Nubefact
+ * (`items[].descripcion`: texto de 1 a 250 caracteres, manual de integración JSON), así que lo
+ * que se guarda siempre se puede enviar al PSE tal cual.
+ */
+export const MAX_LINE_DESCRIPTION = 240;
+
+/**
  * Días desde los que una reserva `ACTIVA` se considera vieja y la lista la marca (D-054:
  * sin vencimiento automático, alerta + liberación manual con permiso de ADMINISTRADOR).
  */
@@ -457,7 +465,7 @@ export const salesItemInputSchema = z.object({
    * entre 1.18 en el navegador y mandar cuatro decimales perdía céntimos en líneas grandes.
    */
   unitPriceWithIgvPen: priceSchema.optional(),
-  description: z.string().trim().max(240).optional(),
+  description: z.string().trim().max(MAX_LINE_DESCRIPTION).optional(),
   /**
    * D-116 (Fase 7e): venta de una bobina completa (RF-73), virgen o con saldo parcial. El
    * producto (el SKU `trading` de D-037), la cantidad y la reserva se resuelven en el API a
@@ -1414,6 +1422,25 @@ export const sellableCoilSchema = z.object({
   avgCostPen: z.string().nullable().optional(),
 });
 export type SellableCoilDto = z.infer<typeof sellableCoilSchema>;
+
+/**
+ * D-282: una bobina con saldo que **no** se ofrece para venderla entera, y por qué («montada en
+ * una OP», «reservada por PED-…», «atada a COT-… (reserva temporal)»). A un VENDEDOR no se le
+ * nombra el documento de otro vendedor (D-267/D-275). Sin costos, igual que `sellable-coils`.
+ */
+export const unavailableSellableCoilSchema = z.object({
+  coilId: z.string().uuid(),
+  code: z.string(),
+  businessLine: z.enum(BUSINESS_LINES),
+  finishCode: z.string(),
+  finishName: z.string(),
+  colorName: z.string().nullable(),
+  widthMm: z.string(),
+  thicknessMm: z.string(),
+  balanceKg: z.string(),
+  reason: z.string(),
+});
+export type UnavailableSellableCoilDto = z.infer<typeof unavailableSellableCoilSchema>;
 
 export const sellableCoilQuerySchema = z.object({
   /** Sin filtro trae bobinas de Drywall y Metallic Roofing, las únicas líneas con bobina. */

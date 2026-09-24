@@ -42,7 +42,7 @@ export interface HolderViewer {
 }
 
 /** Quien lee no es VENDEDOR, o el documento es suyo: ve el código (D-267/D-275). */
-function isForeign(sellerId: string | null, viewer?: HolderViewer): boolean {
+export function isForeign(sellerId: string | null, viewer?: HolderViewer): boolean {
   return viewer?.role === Role.VENDEDOR && sellerId !== viewer.id;
 }
 
