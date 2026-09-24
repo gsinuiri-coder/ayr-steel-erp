@@ -64,18 +64,6 @@ describe('AuthService', () => {
     };
   }, 30_000);
 
-  it('el hash del usuario de prueba es barato (el beforeAll no depende del costo de producción)', () => {
-    // `$argon2id$v=19$m=…,p=…,t=…$sal$hash`: el orden de los parámetros depende de la versión.
-    const params = new Map(
-      (user.passwordHash.split('$')[3] ?? '').split(',').map((kv) => {
-        const [key, value] = kv.split('=');
-        return [key, Number(value)] as const;
-      }),
-    );
-    expect(params.get('m')).toBeLessThanOrEqual(4096);
-    expect(params.get('t')).toBeLessThanOrEqual(2);
-  });
-
   beforeEach(async () => {
     prisma = makePrismaMock();
     const moduleRef = await Test.createTestingModule({
@@ -92,6 +80,18 @@ describe('AuthService', () => {
     }).compile();
     service = moduleRef.get(AuthService);
     jwt = moduleRef.get(JwtService);
+  });
+
+  it('el hash del usuario de prueba es barato (el beforeAll no depende del costo de producción)', () => {
+    // `$argon2id$v=19$m=…,p=…,t=…$sal$hash`: el orden de los parámetros depende de la versión.
+    const params = new Map(
+      (user.passwordHash.split('$')[3] ?? '').split(',').map((kv) => {
+        const [key, value] = kv.split('=');
+        return [key, Number(value)] as const;
+      }),
+    );
+    expect(params.get('m')).toBeLessThanOrEqual(4096);
+    expect(params.get('t')).toBeLessThanOrEqual(2);
   });
 
   describe('login', () => {
