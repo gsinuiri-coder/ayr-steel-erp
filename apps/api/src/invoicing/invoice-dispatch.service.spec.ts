@@ -81,14 +81,12 @@ function fakeTx(f: Fixture) {
     },
     fiscalDocumentItem: {
       findMany: jest.fn().mockResolvedValue(invoiceItems),
-      groupBy: jest
-        .fn()
-        .mockResolvedValue(
-          (f.credited ?? []).map((c) => ({
-            affectedItemId: c.invoiceItemId,
-            _sum: { qty: D(c.qty) },
-          })),
-        ),
+      groupBy: jest.fn().mockResolvedValue(
+        (f.credited ?? []).map((c) => ({
+          affectedItemId: c.invoiceItemId,
+          _sum: { qty: D(c.qty) },
+        })),
+      ),
     },
     salesOrderItem: {
       findMany: jest.fn().mockResolvedValue(
@@ -106,14 +104,12 @@ function fakeTx(f: Fixture) {
       ),
     },
     dispatchItem: {
-      groupBy: jest
-        .fn()
-        .mockResolvedValue(
-          (f.dispatched ?? []).map((d) => ({
-            salesOrderItemId: d.orderItemId,
-            _sum: { qty: D(d.qty) },
-          })),
-        ),
+      groupBy: jest.fn().mockResolvedValue(
+        (f.dispatched ?? []).map((d) => ({
+          salesOrderItemId: d.orderItemId,
+          _sum: { qty: D(d.qty) },
+        })),
+      ),
     },
     inventoryMovement: {
       findMany: jest.fn().mockResolvedValue(
