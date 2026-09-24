@@ -186,8 +186,8 @@ anotarlo. Si 5b se saltó, el smoke final es el del paso 4.
 ## 5c. Correcciones 02: `fix/correcciones-02` (PR #20) — solo si su CI está verde
 
 Va **después** del 5b, con #18 y #19 ya en `main`. La rama se apiló sobre `fix/deudas-post-s4b`,
-así que después de los dos merges su PR muestra solo sus propios commits. **Tiene migración**
-(M7, descripción por línea, aditiva). Handoff: `docs/handoff/correcciones-02.md`.
+así que después de los dos merges su PR muestra solo sus propios commits. **Sin migración**: la columna
+`description` de M7 ya existía en las tres tablas de líneas (D-283). Handoff: `docs/handoff/correcciones-02.md`.
 
 Contenido: D-277 (estado «Listo»), D-278 (despacho a la fecha del comprobante, botón y CLI),
 D-279 (kardex PEPS SUNAT 13.1), D-280 (disponible por lote), D-281 (metro lineal teórico),
@@ -202,27 +202,18 @@ git rev-parse origin/fix/correcciones-02          # = <SHA_C>, el que se desplie
 git merge-base --is-ancestor origin/fix/deudas-post-s4b origin/fix/correcciones-02   # exit 0
 git log --oneline origin/main..origin/fix/correcciones-02   # solo los commits de la PR
 git diff --name-only origin/main origin/fix/correcciones-02 -- apps/api/prisma/migrations apps/api/prisma/schema.prisma
-                           # SOLO la migración de M7 y su schema; cualquier otra cosa, se para
-node scripts/migrations-status.mjs --branch production   # pendiente: solo la de M7
+                           # vacío: si aparece algo, se para
+node scripts/migrations-status.mjs --branch production   # sin pendientes
 ```
 
 ### 5c.1 Respaldo Neon [OK]
 
+No lo pide una migración (no hay) sino el arreglo de datos del 5c.4, que escribe en production.
+
 Rama `respaldo-pre-correcciones-02-20260924`, padre `production`, por el patrón de
 `docs/ENTORNOS.md` (`lib.mjs#run`, `quiet`, `--output json`); verificar `ready`.
 
-### 5c.2 Migración [OK]
-
-```sh
-pnpm db:prod                           # solo `prisma migrate deploy` (D-262)
-node scripts/migrations-status.mjs --branch production   # sin pendientes
-node scripts/migrations-diff.mjs --branch production     # = drift conocido de PROGRESO, exacto
-```
-
-La migración es aditiva (columna nueva): la API vieja la ignora, así que el orden migración → API
-no deja ninguna ventana rota.
-
-### 5c.3 Deploy de la API [OK] y verificación [agente]
+### 5c.2 Deploy de la API [OK] y verificación [agente]
 
 ```sh
 git checkout --detach <SHA_C>
@@ -234,7 +225,7 @@ cmd /c gcloud run services describe ayr-steel-erp-api --project ayr-steel-erp --
 `git-sha` = `<SHA_C>` corto, revisión nueva al 100 %, `/health` 200. **Si falla:** API a la
 revisión del 5b y parar; la migración aditiva puede quedarse.
 
-### 5c.4 Merge a `main` [OK] y smoke [agente]
+### 5c.3 Merge a `main` [OK] y smoke [agente]
 
 ```sh
 gh pr merge 20 --merge
@@ -243,7 +234,7 @@ git diff --quiet <SHA_C> origin/main -- apps packages Dockerfile .gcloudignore p
 pnpm smoke:prod --base-url https://v2.mareliac.pe   # desde un worktree en <SHA_C>
 ```
 
-### 5c.5 Arreglo de datos [OK por cada comando]
+### 5c.4 Arreglo de datos [OK por cada comando]
 
 **M1 no tiene arreglo de datos** (D-277): el estado persistido no está mal, faltaba mostrar
 «Listo». Después del deploy, PED-000001..017 y 019..021 tienen que verse «Listo».
@@ -267,7 +258,7 @@ pnpm dispatch:at-issue-date --branch production --confirm-production
 
 Si el dry-run de la ventana no coincide con el del día, **se para** y se reporta la diferencia.
 
-### 5c.6 Foto comparada [agente]
+### 5c.5 Foto comparada [agente]
 
 `node scripts/snapshot-reports.mjs snapshot post-correcciones-02 …` y `compare` contra la foto
 base del paso 0. Esperado, y nada más:
@@ -305,3 +296,8 @@ Cualquier otra diferencia: se para.
   Catálogo → Colores. Las specs se recrean solas al cotizar (D-134) y sus filas quedan enteras
   en el `before` de la auditoría. El respaldo del paso 5 cubre cualquier otro caso por PITR a la
   rama `respaldo-pre-color-comercial-20260924`.
+- **Correcciones 02 (paso 5c):** API a la revisión del 5b con el mismo `update-traffic`; si ya
+  se mergeó, revertir primero el merge en `main`. No hay migración. Los despachos del 5c.4 se
+  deshacen por dominio, uno por uno (`POST /dispatches/:id/reverse`, ADMINISTRADOR, con motivo:
+  devuelve el kardex, restaura la reserva y reabre la bobina que cerró, D-170); para todo lo
+  demás, PITR a `respaldo-pre-correcciones-02-20260924`.
