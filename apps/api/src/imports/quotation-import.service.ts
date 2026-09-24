@@ -9,7 +9,7 @@ import {
   MAX_PADRON_LOOKUPS,
   money,
   normalizeCoilSku,
-  paperTriplet,
+  paperAmounts,
   Unit,
   type CoilPoolCandidateDto,
   MAX_QUOTATION_IMPORT_ROWS,
@@ -277,13 +277,14 @@ export class QuotationImportService {
     // el valor de venta con el IGV calculado, como hasta ahora.
     const paperIgv = parseAmount(field(raw, 'igv'));
     const paperTotal = parseAmount(field(raw, 'totalAmount'));
+    // D-255 (decisión del dueño): el trío normalizado a dos decimales, con el total del papel
+    // mandando y el IGV como la resta (`paperAmounts`).
     const triplet =
       netAmountPen !== null &&
       !/d[óo]lar/i.test(currency) &&
       paperIgv !== null &&
-      paperTotal !== null &&
-      paperTriplet(netAmountPen, paperIgv, paperTotal)
-        ? { igv: money(paperIgv), total: money(paperTotal) }
+      paperTotal !== null
+        ? paperAmounts(netAmountPen, paperIgv, paperTotal)
         : null;
 
     // **La unidad, no el subtipo.** Quien exige los largos es `sellsByLength` de
@@ -332,7 +333,13 @@ export class QuotationImportService {
       qty: roundedQty === null ? '' : toFixedString(roundedQty, 'KG'),
       unitPricePen: unitPricePen === null ? '' : toFixedString(unitPricePen, 'MONEY'),
       // D-169: el importe del papel, en soles y sin IGV. Es lo que se persiste como subtotal.
-      netAmountPen: netAmountPen === null ? '' : toFixedString(netAmountPen, 'MONEY'),
+      // Con trío, el valor es el del trío (redondeado a dos decimales, D-255).
+      netAmountPen:
+        triplet !== null
+          ? toFixedString(triplet.net, 'MONEY')
+          : netAmountPen === null
+            ? ''
+            : toFixedString(netAmountPen, 'MONEY'),
       igvAmountPen: triplet === null ? '' : toFixedString(triplet.igv, 'MONEY'),
       totalAmountPen: triplet === null ? '' : toFixedString(triplet.total, 'MONEY'),
       coilLine: coil !== undefined,
@@ -804,20 +811,23 @@ export function readPaperLines(buffer: Buffer): PaperLine[] {
     const igv = parseAmount(field(r, 'igv'));
     const total = parseAmount(field(r, 'totalAmount'));
     const triplet =
-      netPen !== null &&
-      !isForeign &&
-      igv !== null &&
-      total !== null &&
-      paperTriplet(netPen, igv, total);
+      netPen !== null && !isForeign && igv !== null && total !== null
+        ? paperAmounts(net ?? netPen, igv, total)
+        : null;
     return {
       rowNumber: i + 1,
       documentKey: field(r, 'documentKey'),
       rawSku: field(r, 'sku'),
       productName: field(r, 'productName'),
       qty: qty === null ? null : toFixedString(qty, 'KG'),
-      netAmountPen: netPen === null ? null : toFixedString(netPen, 'MONEY'),
-      igvAmountPen: triplet && igv ? toFixedString(money(igv), 'MONEY') : null,
-      totalAmountPen: triplet && total ? toFixedString(money(total), 'MONEY') : null,
+      netAmountPen:
+        triplet !== null
+          ? toFixedString(triplet.net, 'MONEY')
+          : netPen === null
+            ? null
+            : toFixedString(netPen, 'MONEY'),
+      igvAmountPen: triplet === null ? null : toFixedString(triplet.igv, 'MONEY'),
+      totalAmountPen: triplet === null ? null : toFixedString(triplet.total, 'MONEY'),
       excluded: /nota/i.test(docType) || field(r, 'adjustedDocument') !== '',
     };
   });

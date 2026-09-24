@@ -216,11 +216,29 @@ describe('QuotationImportService.preview — importes del papel (R2)', () => {
   it('guarda valor, IGV y precio de venta del papel cuando cuadran', async () => {
     const { service } = build();
     const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
+    // D-255 (decisión del dueño): el trío normalizado a dos decimales, IGV como la resta.
     expect(row).toMatchObject({
-      netAmountPen: '12439.8310',
-      igvAmountPen: '2239.1690',
+      netAmountPen: '12439.8300',
+      igvAmountPen: '2239.1700',
       totalAmountPen: '14679.0000',
     });
+  });
+
+  it('FFA1-1350 real: IGV con cinco decimales que no suma exacto → 12439.83 / 2239.17 / 14679.00', async () => {
+    const { service } = build();
+    const [row] = (await service.preview('v.csv', csv([{ ...BOB_AZUL, igv: '2239.16958' }]))).rows;
+    expect(row).toMatchObject({
+      netAmountPen: '12439.8300',
+      igvAmountPen: '2239.1700',
+      totalAmountPen: '14679.0000',
+    });
+  });
+
+  it('una suma que se separa del total en 0.02 descarta el trío', async () => {
+    const { service } = build();
+    const [row] = (await service.preview('v.csv', csv([{ ...BOB_AZUL, igv: '2239.189' }]))).rows;
+    expect(row?.netAmountPen).toBe('12439.8310');
+    expect(row?.igvAmountPen).toBe('');
   });
 
   it('si el trío no cuadra, viaja solo el valor de venta', async () => {
@@ -334,8 +352,8 @@ describe('readPaperLines', () => {
       documentKey: 'FFA1-1350',
       rawSku: 'BOB38AZUL',
       qty: '4194.000',
-      netAmountPen: '12439.8310',
-      igvAmountPen: '2239.1690',
+      netAmountPen: '12439.8300',
+      igvAmountPen: '2239.1700',
       totalAmountPen: '14679.0000',
       excluded: false,
     });

@@ -131,7 +131,12 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
      **revisar que el SKU del papel sea el de la línea** en cada (a) y (b). **Parar si falla
      cualquiera de estas dos verificaciones:** que cada (b) de un documento abierto difiera
      solo en céntimos (lo que no, o lo que tiene una edición de precio registrada, ya va solo a
-     (c)), y que ningún comprobante aparezca en dos documentos abiertos (repaso P2-2). En demo, con la copia de producción del
+     (c)), y que ningún comprobante aparezca en dos documentos abiertos (repaso P2-2).
+     **Tamaño esperado con el trío de D-255 normalizado (opción A del dueño):** en demo, copia
+     de production del 2026-09-24, (b) tiene 108 documentos, porque casi todo el export trae el
+     valor con 3 decimales. El execute corrige solo los **36 abiertos** (27 cotizaciones y 9
+     pedidos, 92 líneas); la diferencia máxima es S/ 0.005 en el valor y S/ 0.003 en el total.
+     Un número muy distinto de 36 contra production es motivo para parar y mirar. En demo, con la copia de producción del
      2026-09-24: (a) 3, (b) 2 (las dos anuladas), (c) 0, sobre 113 documentos importados.
    - **Anotar los totales** de Inventario valorizado y Ventas y margen (agosto) antes del execute.
 7. **[Agente, con OK explícito por cada uno] Execute — PUNTO CRÍTICO:**

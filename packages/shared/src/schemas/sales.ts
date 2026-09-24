@@ -166,6 +166,31 @@ export function lineAmounts(qty: DecimalInput, basis: LineAmountBasis): LineAmou
 }
 
 /**
+ * D-255 (decisión del dueño, 2026-09-24): el trío **tal como lo trae el papel**, normalizado a
+ * dos decimales. El sistema de origen puede mandar el IGV con más decimales que el total (en
+ * FFA1-1350: 12 439.831 + 2 239.16958 = 14 679.00058, y el total dice 14 679.000). Si la suma se
+ * separa del total en **un céntimo o menos**, manda el total del papel: se guarda el total, el
+ * valor redondeado a dos decimales y el IGV como la resta (12 439.83 / 2 239.17 / 14 679.00).
+ * Ese IGV tiene que quedar a un céntimo o menos del 18 % del valor; si no —o si la suma se separa
+ * más de un céntimo—, el trío no sirve y la línea sigue con el valor de venta y el IGV calculado.
+ */
+export function paperAmounts(
+  netPen: DecimalInput,
+  igvPen: DecimalInput,
+  totalPen: DecimalInput,
+): { net: Decimal; igv: Decimal; total: Decimal } | null {
+  const rawNet = toDecimal(netPen);
+  const rawTotal = toDecimal(totalPen);
+  if (rawNet.plus(toDecimal(igvPen)).minus(rawTotal).abs().gt('0.01')) return null;
+  const net = rawNet.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  const total = rawTotal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  const igv = total.minus(net);
+  const expected = net.times(toDecimal(IGV_RATE_PCT)).div(100);
+  if (igv.minus(expected).abs().gt('0.01')) return null;
+  return { net, igv, total };
+}
+
+/**
  * D-255: ¿los tres importes del papel cuadran entre sí? El IGV tiene que ser la resta exacta y
  * estar a menos de un céntimo del 18 % del subtotal (el papel redondea a tres decimales). Si no
  * cuadran, el importador se queda con el valor de venta y deriva el resto.

@@ -25,7 +25,7 @@ import {
  * **RF-S4b — centinela de COT-000002 (FFA1-1350), con números sintéticos idénticos a los reales.**
  *
  * Lo que pasó en producción: el archivo de agosto trae `BOB38AZUL`, 4194 kg, valor 12439.831,
- * IGV 2239.169, precio 14679.000. El catálogo tenía un producto `BOB38AZUL` cargado a mano —sin
+ * IGV 2239.16958, precio 14679.000 (el IGV con cinco decimales, como el export real: D-255 lo normaliza a 12439.83 / 2239.17 / 14679.00). El catálogo tenía un producto `BOB38AZUL` cargado a mano —sin
  * saldo y sin ninguna bobina detrás— y el importador enganchó la línea ahí, así que confirmar
  * rebotaba con «BOB38AZUL tiene 0.000 KGM disponibles». La bobina de 4194 kg existía.
  *
@@ -80,7 +80,7 @@ test.describe('RF-S4b — un código de bobina del origen resuelve al pool, no a
         unit: 'KILOGRAMO',
         qty: '4194.0000000000',
         netAmount: '12439.831',
-        igv: '2239.169',
+        igv: '2239.16958',
         totalAmount: '14679.000',
       };
       const parsed = await previewImport(api, [row]);
@@ -103,8 +103,8 @@ test.describe('RF-S4b — un código de bobina del origen resuelve al pool, no a
       expect(quotation.items[0]!.reserveItemId).toBe(coil.id);
       expect(quotation.items[0]!.qty).toBe(QTY);
       // R2: los tres importes del papel, tal cual.
-      expect(quotation.items[0]!.subtotalPen).toBe('12439.8310');
-      expect(quotation.items[0]!.igvPen).toBe('2239.1690');
+      expect(quotation.items[0]!.subtotalPen).toBe('12439.8300');
+      expect(quotation.items[0]!.igvPen).toBe('2239.1700');
       expect(quotation.totalPen).toBe('14679.0000');
 
       // Confirmar ya no rebota por «0.000 KGM disponibles»: reserva la bobina del pool.
@@ -185,7 +185,7 @@ test.describe('RF-S4b — un código de bobina del origen resuelve al pool, no a
         unit: 'KILOGRAMO',
         qty: '4194.0000000000',
         netAmount: '12439.831',
-        igv: '2239.169',
+        igv: '2239.16958',
         totalAmount: '14679.000',
       };
       const parsed = await previewImport(api, [row]);
@@ -217,8 +217,8 @@ test.describe('RF-S4b — un código de bobina del origen resuelve al pool, no a
       expect(doc?.open).toBe(true);
       expect(doc?.findings[0]?.product?.autoCoilId).toBe(coil.id);
       expect(doc?.findings[0]?.amounts?.paper).toEqual({
-        net: '12439.8310',
-        igv: '2239.1690',
+        net: '12439.8300',
+        igv: '2239.1700',
         total: '14679.0000',
       });
 
