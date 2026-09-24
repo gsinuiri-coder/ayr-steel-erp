@@ -23,7 +23,69 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   cambio, en `docs/revision/rf-s4b-autorrevision.md`. Motivo: esquema de un solo agente, sin
   segundo revisor disponible. Pieza de riesgo para el pase cruzado: la resolución bobina →
   producto (D-253/D-254) y la derivación de importes (D-255), que tocan venta, pedido y
-  comprobante.
+  comprobante. **2026-09-24:** hubo pase cruzado (`rf-s4b-cruzada.md`) y repaso del delta
+  (`rf-s4b-repaso.md`), los dos en sesiones distintas de Claude Code, **el mismo modelo** que
+  escribió la rama. Los commits posteriores al repaso (`eeac84b` y los del ensayo: `c8648f6`,
+  `3d15ad8`, el timeout de la edición de cotizaciones) no tuvieron ningún pase. Sigue pendiente
+  hasta que haya un revisor de otro modelo o persona.
+
+## RF-S4b — correcciones de la revisión cruzada, repaso y ensayo en demo (2026-09-24)
+
+Rama `rf-s4b`, sobre `2455291`. Decisiones: aclaración de D-256, D-258, D-259 y D-260.
+
+### Revisiones
+
+- **Revisión cruzada** (`docs/revision/rf-s4b-cruzada.md`): 4 P1 y 12 P2, veredicto «go con
+  condiciones». La hizo una sesión de Claude Code que no había escrito la rama, y **esa misma
+  sesión corrigió después sus hallazgos**. Cada P1 tiene un test que falla contra el código
+  anterior y pasa con el nuevo.
+- **Repaso del delta** (`docs/revision/rf-s4b-repaso.md`, cherry-pick de `d29a342` de la rama
+  `rf-s4b-repaso`): una sesión nueva, sin P0 y con 2 P1 de proceso.
+  - **P1-A (gate de Sonar en 79.3 %):** se agregaron unitarios. El código nuevo del PR en API +
+    shared queda en 94.4 %. Falta ver el gate en la CI.
+  - **P1-B (el `ask` no cubría las CLI de producción):** **pendiente del dueño.** El clasificador
+    de permisos no deja que el agente modifique `permissions.ask` («Self-Modification»). Las
+    líneas a agregar están en el handoff.
+  - **P2 corregidos:** 1, 2 y 5, más el `deny` de lecturas de `.env` por `grep`, `sed`, `cat`,
+    `head` y `tail` (P2-6), sin commitear hasta que el dueño vea el diff.
+  - **P2 anotados:** el 3 (límites de `--revert`), el 4 (pool por documento) y el 7
+    (`import:initial-inventory`).
+
+### Ensayo en demo (M8)
+
+Demo se repuso desde production con `node scripts/db-reset-dev.mjs --branch demo --yes`, después
+`pnpm env:demo` y `pnpm db:demo`. **La migración de RF-S4b y el seed tardaron 48 s en total.** La
+de RF-S3c ya estaba aplicada. Las listas y fotos quedaron en `local-data/rf-s4b/ensayo-demo/`,
+que no se commitea.
+
+| Paso                     | Resultado                                                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Línea base               | Inventario S/ 1 108 105.2721; margen agosto S/ 304 394.4022 (año S/ 308 419.8262); `BOB…` 14 activos / 0 inactivos                     |
+| normalize dry-run        | 9 renombres, 2 uniones (3 productos a unir), 0 no interpretables, 2 abiertos (COT-000002, COT-000011), 63 bobinas con saldo, 0 paradas |
+| normalize execute (54 s) | Reportes idénticos al centavo; `BOB…` 11 / 3                                                                                           |
+| sweep dry-run            | 113 documentos importados revisados; (a) 3, (b) 2 (las dos anuladas), (c) 0, sin comparar 0                                            |
+| sweep execute (71 s)     | 2 documentos corregidos (COT-000002, COT-000011), 0 rechazados, 0 pendientes; reportes idénticos                                       |
+| COT-000002               | Se ata a `SALDO-ALZ-AZUL-5002-0.38-4194-7`; al confirmarla genera PED-000042 y reserva la bobina. **Total 14 679.0006, no 14 679.00**  |
+| `--revert` (44 s)        | 14 pasos, 0 paradas; reportes idénticos y **SKU `BOB…` activos idénticos a la línea base** (14 / 0)                                    |
+| re-normalizar (53 s)     | Mismo plan (9 + 2, 0 abiertos); estado idéntico al de la primera normalización (11 / 3), reportes idénticos                            |
+
+**Defectos que encontró el ensayo, todos corregidos con test en esta sesión:**
+
+1. **Las CLI no arrancaban contra Neon:** `JWT_SECRET Required`. Y morían **sin mensaje**, por
+   `abortOnError` con el logger apagado. Habría cortado la ventana (D-259).
+2. **Un documento anulado le quitaba la bobina a uno abierto** en el barrido: COT-000074 contra
+   COT-000002 (aclaración de D-258).
+3. **La edición de cotización vencía la transacción de 5 s** contra Neon, por la validación del
+   pool en el servidor. Ahora tiene 30 s, como la de pedidos.
+4. **Falta `.env.setup` en un worktree nuevo:** se agregó como paso 0 del runbook.
+
+**Pendiente de decisión del dueño (bloquea el paso de COT-000002 de la ventana):**
+
+- El Excel real trae el IGV de FFA1-1350 con **5 decimales** (2239.16958, el 18 % exacto).
+- Valor más IGV da 14 679.00058, que **no** es el total del papel (14 679.000).
+- `paperTriplet` exige que la suma cuadre exacta, así que descarta el trío y la línea queda en
+  14 679.0006. D-255 suponía que el IGV del papel era la resta (2239.169).
+- La recomendación está en el handoff.
 
 ## RF-S4b — SKU canónico de bobina, pool de venta y el importe que manda (2026-09-23)
 

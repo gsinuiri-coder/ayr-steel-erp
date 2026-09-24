@@ -8,7 +8,7 @@ con OK del dueño comando por comando (D-251).
 
 |                 |                                                                                                  |
 | --------------- | ------------------------------------------------------------------------------------------------ |
-| Decisiones      | D-252 (SKU canónico), D-253 (unión), D-254 (R1, pool), D-255 (R2, importe), D-256 (D-163), D-257 |
+| Decisiones      | D-252..D-257; después de la revisión, la aclaración de D-256 (por rol) y D-258..D-260            |
 | Migración       | `20260923180000_rf_s4b_products_merged_into` — columna nullable, índice, FK RESTRICT y un CHECK  |
 | Herramientas    | `pnpm normalize:coil-skus`, `pnpm sweep:imported --file …` (dry-run por defecto las dos)         |
 | Rutas nuevas    | `PATCH /sales/orders/:id/items/:itemId/coil`, `GET /sales/coil-pool`                             |
@@ -19,44 +19,55 @@ con OK del dueño comando por comando (D-251).
 | Guion UAT       | `docs/uat/rf-s4b.md`                                                                             |
 | Autorrevisión   | `docs/revision/rf-s4b-autorrevision.md` — **no** vale como pase cruzado                          |
 
-## Estado y calendario
+## Estado y calendario (actualizado 2026-09-24)
 
 - **PR:** [#14](https://github.com/gsinuiri-coder/ayr-steel-erp/pull/14), abierto hacia `main`,
   **sin mergear**.
-- **CI:** verde, job por job y con el gate de Sonar (80.6 %); ver «CI del PR #14» más abajo.
-- **Revisión independiente:** mañana (jueves 2026-09-24). Es el pase cruzado de AGENTS.md §2.2:
-  lo que revisa el segundo revisor es esta rama entera, con foco en lo que ya señala
-  `docs/revision/rf-s4b-autorrevision.md` (los P2 pendientes) y en la resolución bobina → producto
-  y la derivación de importes. Sin ese pase la pieza sigue **PENDIENTE DE REVISIÓN INDEPENDIENTE**
-  en `docs/PROGRESO.md`.
-- **Ventana:** jueves 2026-09-24 por la noche, antes de la revisión del viernes. Necesita, en este
-  orden: (1) CI verde incluido el gate de Sonar, (2) el pase cruzado sin P0/P1 abiertos, (3) tu OK
-  a cada comando de producción (D-251).
+- **Revisiones:**
+  - Pase cruzado: `docs/revision/rf-s4b-cruzada.md`. Tenía 4 P1; los cuatro están corregidos,
+    con tests que fallan contra el código anterior.
+  - Repaso del delta: `docs/revision/rf-s4b-repaso.md`. P1-A (cobertura) corregido; **P1-B queda
+    para el dueño** (ver abajo).
+  - Todas las sesiones fueron de Claude Code: sigue **PENDIENTE DE REVISIÓN INDEPENDIENTE** en
+    `PROGRESO.md`.
+- **Ensayo en demo:** completo. Resultados y defectos encontrados en `PROGRESO.md` («correcciones
+  de la revisión cruzada, repaso y ensayo en demo»); listas en `local-data/rf-s4b/ensayo-demo/`.
+- **Ventana: esta noche (jueves 2026-09-24).** Antes del paso 0 del runbook tienen que cumplirse
+  estas cuatro condiciones:
+  1. **CI verde job por job**, incluido el gate de Sonar, sobre el SHA final.
+  2. **P1-B del repaso, a cargo del dueño:** agregar a `permissions.ask` de
+     `.claude/settings.json` las líneas de abajo. El agente no puede hacerlo: el clasificador
+     rechaza la auto-modificación de sus permisos.
+     ```
+     "Bash(pnpm normalize:*)", "Bash(pnpm sweep:*)", "Bash(pnpm import:*)",
+     "Bash(pnpm db:reset-dev*)", "Bash(node scripts/normalize-coil-skus.mjs*)",
+     "Bash(node scripts/sweep-imported-documents.mjs*)", "Bash(node scripts/db-reset-dev.mjs*)",
+     "Bash(node scripts/import-initial-inventory.mjs*)", "Bash(node scripts/run-api-cli.mjs*)"
+     ```
+  3. **Decisión del dueño sobre el trío del papel** (ver «Pendiente de decisión»). Sin ella,
+     COT-000002 se corrige de bobina pero queda en 14 679.0006, y el paso 10 no se cumple.
+  4. OK del dueño a cada comando de producción (D-251).
+
+### Pendiente de decisión: el IGV del papel con más decimales que el total
+
+El export trae, para FFA1-1350: valor 12 439.831, IGV **2 239.16958** y precio de venta
+14 679.000. Valor más IGV da 14 679.00058, que no es el total, así que `paperTriplet` (que exige
+que la suma cuadre exacta) descarta el trío y la línea recalcula el IGV al 18 %: 2 239.1696, total
+14 679.0006. La cobranza redondea al céntimo hacia arriba (D-169), así que cobraría 14 679.01.
+
+- **Recomendación (A):** aceptar el trío cuando valor + IGV − total esté a ≤ S/ 0.01, y guardar
+  **el total del papel y el IGV como la resta** (14 679.000 − 12 439.831 = 2 239.169). Es lo que
+  D-255 ya dice («el IGV es la resta») y lo que el cliente pagó. El importador y el barrido lo
+  aplicarían igual; COT-000002 quedaría en 14 679.00.
+- **(B)** Dejarlo como está: el total queda con diezmilésimas y el céntimo se absorbe en la
+  cobranza.
 
 ## CI del PR #14
 
-Última corrida, sobre `dd5ebd4` (todo verde):
-
-| Job                                      | Resultado | Duración |
-| ---------------------------------------- | --------- | -------- |
-| Lint, typecheck y unit                   | pass      | 1m29s    |
-| E2E Playwright (Postgres del runner)     | pass      | 15m22s   |
-| Smoke E2E y migraciones (Neon `ci`)      | pass      | 25m53s   |
-| Análisis estático (SonarCloud o Semgrep) | pass      | 1m14s    |
-| SonarCloud Code Analysis (quality gate)  | pass      | 55s      |
-| Vercel / Vercel Preview Comments         | pass      | —        |
-
-- **Historia de la corrida.** La primera dio todo verde salvo el quality gate de Sonar (12.6 % de
-  cobertura en código nuevo, exige ≥ 80 %), que **no era de infraestructura**. Se arregló en tres
-  empujes: tests unitarios de los servicios sin cobertura (API 97.9 %), luego el mapeo de
-  `@ayr/shared` a su fuente en jest, y por último la reescritura de rutas del lcov que el scanner
-  no resolvía. Gate final: **80.6 %**. El E2E del runner pasó las tres veces.
-- **Smoke con migración:** el job «Smoke E2E y migraciones (Neon `ci`)» aplica
-  `20260923180000_rf_s4b_products_merged_into` sobre Neon `ci`. Es la primera prueba de la
-  migración fuera de Docker local, y pasó.
-- **Margen del gate: 0.6 puntos.** Cualquier cambio que agregue código sin cobertura antes de la
-  ventana puede volver a ponerlo en rojo; conviene no tocar código de la rama salvo por hallazgos
-  del pase cruzado, y correr `pnpm --filter @ayr/api test:cov` antes de cada empuje.
+Se completa al empujar el SHA final; ver PROGRESO y el PR. Antes: `dd5ebd4` todo verde con el
+gate al 80.6 %; `6f82c31` y `73510e3` con el gate en **79.3 %** (repaso P1-A). Después de las
+pruebas agregadas, el código nuevo del PR en API + shared cubre el **94.4 %** de sus líneas,
+medido en local cruzando el lcov con `git diff origin/main`.
 
 ## Lo que el siguiente tiene que saber antes de tocar esto
 
@@ -70,17 +81,20 @@ con OK del dueño comando por comando (D-251).
    FFA1-1355 (3.0508 × 3840 ≠ 11 715.254).
 3. **Una línea del papel vende la cantidad del papel** sobre una bobina con saldo suficiente; el
    alta a mano sigue vendiendo el rollo entero (D-116). Lo decide `exactAmounts` (documento
-   importado), no el formulario.
-4. **Transición de SKU.** Hasta que corra la normalización en producción, la resolución acepta
+   importado), no el formulario, y desde la aclaración de D-256 **solo** para el ADMINISTRADOR o
+   para la línea que sigue intacta (`paperLines`).
+4. **Las CLI de dominio** corren con cola, PSE, R2 y Nubefact apagados y un `JWT_SECRET` al azar
+   (D-259). Imprimen el destino y las banderas; si falla el arranque, ahora lo dicen.
+5. **Transición de SKU.** Hasta que corra la normalización en producción, la resolución acepta
    el canónico y el viejo. Después del execute, el viejo ya no existe en productos activos y la
    rama de respaldo solo sirve para lo heredado raro.
-5. **El choque de base** solo se mira entre **prepintados** del mismo color comercial, por
+6. **El choque de base** solo se mira entre **prepintados** del mismo color comercial, por
    densidad. La línea de negocio no cuenta a propósito (`finishForCoil`).
-6. **E2E y CLI.** Los specs de normalización y barrido corren la CLI real contra `local-e2e`;
+7. **E2E y CLI.** Los specs de normalización y barrido corren la CLI real contra `local-e2e`;
    después de la CLI se abre un contexto HTTP nuevo, porque el viejo quedó ocioso ~2 min y su
    socket keep-alive moría con ECONNRESET (tres corridas seguidas, diagnóstico en el spec).
 
-## Plan de la ventana (antes del viernes a la noche)
+## Plan de la ventana (jueves 2026-09-24 por la noche)
 
 Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3 regla 11.
 
@@ -91,7 +105,7 @@ Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3
 1. **[Dueño] Respaldo Neon** de `production`: rama `respaldo-pre-rf-s4b-AAAAMMDD` (patrón de
    `docs/ENTORNOS.md`, vía `scripts/lib.mjs#run` con `quiet: true` y `--output json`).
 2. **[Agente] PR + CI verde** (PR #14; CI verde job por job sobre el SHA a desplegar).
-3. **[Agente, con OK] Migración:** `node scripts/migrations-status.mjs --branch production`
+3. **[Agente, con OK] Migración** (en demo, con el seed, tardó 48 s): `node scripts/migrations-status.mjs --branch production`
    (tiene que listar solo `20260923180000_rf_s4b_products_merged_into`), `migrate diff` contra
    el drift conocido, y `pnpm db:prod`.
 4. **[Agente, con OK] Deploy API** desde el worktree en el SHA a desplegar:
@@ -111,7 +125,10 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
      unir con saldo propio», que ahora se ve acá y no recién en el execute).
    - `pnpm sweep:imported --file local-data/ventas-agosto-2026.xlsx --branch production` →
      listas (a), (b) y (c). Cada hallazgo muestra `SKU actual → SKU nuevo (papel: …)` (D-258):
-     **revisar que el SKU del papel sea el de la línea** en cada (a) y (b).
+     **revisar que el SKU del papel sea el de la línea** en cada (a) y (b), que cada (b)
+     difiera en céntimos (lo que no, ya va a (c) solo: repaso P2-1), y que ningún comprobante
+     aparezca en dos documentos abiertos (repaso P2-2). En demo, con la copia de producción del
+     2026-09-24: (a) 3, (b) 2 (las dos anuladas), (c) 0, sobre 113 documentos importados.
    - **Anotar los totales** de Inventario valorizado y Ventas y margen (agosto) antes del execute.
 7. **[Agente, con OK explícito por cada uno] Execute — PUNTO CRÍTICO:**
    - `pnpm normalize:coil-skus --branch production --execute --confirm-production` (más
@@ -121,15 +138,21 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
    - Comprobar los totales de los dos reportes contra lo anotado. **Plan B** si no cuadran o algo
      falla: `pnpm normalize:coil-skus --branch production --revert` (dry-run: lista los pasos en
      orden inverso y las paradas), y con OK `… --revert --execute --confirm-production` (D-260).
+     **Solo es exacto dentro de la ventana**, antes de que alguien opere (repaso P2-3). En demo
+     tardó 44 s y dejó el catálogo `BOB…` idéntico a la línea base.
    - `pnpm sweep:imported --file local-data/ventas-agosto-2026.xlsx --branch production
 --execute --confirm-production`. Dry-run y execute uno detrás del otro, sin nadie usando
      el sistema: el execute recalcula el plan (P2-4 de la revisión, no corregido).
    - Comprobar que los totales de los dos reportes siguen siendo los anotados.
+   - Tiempos en demo, como referencia: normalize execute 54 s y sweep execute 71 s. Contra
+     production se espera algo parecido: el volumen es el mismo, porque demo es su copia.
 8. **[Dueño] Merge a `main`** (D-232, `AYR_OWNER_PUSH=1`) → Vercel publica el web.
 9. **[Agente] `pnpm smoke:prod`** desde un worktree en el SHA desplegado.
 10. **[Dueño] COT-000002**: confirmarla; tiene que reservar SALDO-ALZ-AZUL-5002-0.38-4194-7 y
-    cuadrar 14 679.00. Y el pedido de FFA1-1355, si sigue abierto, facturable con el importe del
-    papel.
+    cuadrar 14 679.00. **Depende de la decisión sobre el trío del papel** (ver «Pendiente de
+    decisión»): sin ella, reserva la bobina correcta pero queda en 14 679.0006. En demo se
+    confirmó (PED-000042) y reservó la bobina. COT-000011 (FFA1-1355) se ata sola a
+    SALDO-ALZ-ROJO-3020-0.38-3840-12.
 
 **Rollback.**
 
@@ -143,6 +166,13 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
 
 ## Verificación
 
+**Correcciones del 2026-09-24:** API 976/976, web 11/11, scripts 8/8, y lint, typecheck y
+formato en verde. Código nuevo del PR (API + shared) al 94.4 %. E2E de los caminos tocados: 20
+pasaron y 1 se omitió (PSE, infraestructura); aparte, D-256 3/3 y la normalización con ida y vuelta
+1/1. Ensayo completo en demo (ver PROGRESO).
+
+**Primera entrega (2026-09-23):**
+
 - Unitarios: API 929/929, web 11/11. `pnpm lint`, `pnpm typecheck`, `prettier --check` verdes.
 - **SonarCloud:** el gate falló en el primer push (12.6 % de cobertura en código nuevo, exige
   ≥ 80 %). Se cubrió la API con unitarios (97.9 %), y luego se descubrió que Sonar no resolvía las
@@ -155,7 +185,14 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
 
 ## Lo que queda pendiente
 
-- **Pase cruzado independiente** (AGENTS.md §2.2) — registrado en `PROGRESO.md`.
+- **Revisión por un revisor que no sea Claude Code** (AGENTS.md §2.2): registrada en
+  `PROGRESO.md`, junto con los commits posteriores al repaso, que ningún pase miró.
+- **Decisión del dueño:** el trío del papel con el IGV a más decimales que el total.
+- **P1-B del repaso**, a cargo del dueño: las líneas de `ask` de «Estado y calendario».
+- `.claude/settings.json`: `deny` de lecturas de `.env` por `grep`, `sed`, `cat`, `head` y
+  `tail` (repaso P2-6), sin commitear hasta que el dueño vea el diff.
+- Repaso P2-4 (pool por documento, no por línea) y P2-7 (`import:initial-inventory` sin el
+  apagado de salidas): anotados, no corregidos.
 - Pendientes del dueño sin implementar: bobina 3020 en OP ROJO (D-252); pool real de kg con
   despacho multi-bobina (D-254).
 - M3: el render de la vista de margen — **requiere decidir D-011** (el dueño pidió no agregar
@@ -170,3 +207,10 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
 `0338d47` test M0 → `a4abe3c` feat R1/R2 base → `1411c11` feat unión, normalización y barrido →
 `ab9eae7`/`987c0e2`/`e9cafe4` web → `cedcdff` test E2E → `f0f6d58` merge web → `1268c39` estilo
 → `5084f80` M3 → docs.
+
+Correcciones del 2026-09-24: `2455291` informe cruzado → `f111e3b` permisos de lectura →
+`d2e2fde` WIP → `a719f8e` D-256 por rol, pool en el servidor y barrido sin posición → `5f5b320`
+CLI sin salidas externas → `c09984a` `--revert` → `59ef1d5` P2 baratos → `242bc34` docs →
+`6f82c31`/`73510e3` reset de demo con guard → `c8648f6` CLI contra Neon → `3d15ad8` lo cerrado no
+compite → timeout de la edición de cotizaciones → `0aba633` quita el script de un solo uso →
+cherry-pick del repaso → `eeac84b` hallazgos del repaso → docs.
