@@ -1,10 +1,11 @@
 import {
   ReservationStatus,
+  Role,
   TemporaryReservationStatus,
   type InventoryItemType,
   type Prisma,
 } from '@prisma/client';
-import { Decimal, toDecimal } from '@ayr/shared';
+import { Decimal, quotationCode, toDecimal } from '@ayr/shared';
 
 /**
  * La suma de "reservado" del sistema: firme (`reservations`) más temporal vigente
@@ -22,6 +23,26 @@ import { Decimal, toDecimal } from '@ayr/shared';
  */
 export function liveTemporaryWhere(now: Date = new Date()): Prisma.QuotationReservationWhereInput {
   return { status: TemporaryReservationStatus.ACTIVE, expiresAt: { gt: now } };
+}
+
+/** Quién va a leer el mensaje que nombra a los titulares de una reserva. */
+export interface HolderViewer {
+  id: string;
+  role: Role;
+}
+
+/**
+ * D-275 (criterio de D-267): cómo se nombra una reserva temporal en un mensaje. A un VENDEDOR no
+ * se le nombra la cotización de otro vendedor (o sin vendedor): lee «cotización no disponible».
+ * La suya y todo rol no VENDEDOR ven el código. Sin `viewer` (herramientas de ADMINISTRADOR,
+ * producción) no se oculta.
+ */
+export function temporaryHolderCode(
+  quotation: { seq: number; sellerId: string | null },
+  viewer?: HolderViewer,
+): string {
+  const foreign = viewer?.role === Role.VENDEDOR && quotation.sellerId !== viewer.id;
+  return `${foreign ? 'cotización no disponible' : quotationCode(quotation.seq)} (reserva temporal)`;
 }
 
 /**

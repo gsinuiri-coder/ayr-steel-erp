@@ -2,7 +2,6 @@ import { BadRequestException } from '@nestjs/common';
 import { InventoryItemType, ReservationStatus, type Prisma } from '@prisma/client';
 import {
   Decimal,
-  quotationCode,
   rawMaterialLabel,
   salesOrderCode,
   toDecimal,
@@ -11,7 +10,13 @@ import {
 } from '@ayr/shared';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
-import { liveTemporaryWhere, reservedByItem, type ReservedScope } from './reserved-ledger';
+import {
+  liveTemporaryWhere,
+  reservedByItem,
+  temporaryHolderCode,
+  type HolderViewer,
+  type ReservedScope,
+} from './reserved-ledger';
 
 /**
  * La reserva **genérica** de materia prima (D-134).
@@ -374,7 +379,7 @@ export async function assertRawMaterialInvariant(
   tx: Prisma.TransactionClient,
   coilIds: string[],
   toleranceMm: string,
-  options: RawMaterialScope & { alsoAffecting?: CoilAttributes[] } = {},
+  options: RawMaterialScope & { alsoAffecting?: CoilAttributes[]; viewer?: HolderViewer } = {},
 ): Promise<void> {
   // `firstOnly`: el camino que lanza no necesita el resto. Sin esto, una operación que rompe
   // tres agregados bloqueaba con `FOR UPDATE` las bobinas de los tres para después descartar
@@ -431,6 +436,8 @@ export interface RawMaterialShortfall extends RawMaterialWarningDto {
 interface ShortfallOptions extends RawMaterialScope {
   /** Devolver el primer agregado corto y parar. Lo usan los `assert*`. */
   firstOnly?: boolean;
+  /** D-275: quién lee el mensaje; a un VENDEDOR no se le nombra la cotización de otro. */
+  viewer?: HolderViewer;
 }
 
 /**
@@ -528,7 +535,7 @@ export async function findRawMaterialShortfallsFor(
             ? {}
             : { quotationId: { notIn: options.exceptQuotationIds } }),
         },
-        select: { qty: true, quotation: { select: { seq: true } } },
+        select: { qty: true, quotation: { select: { seq: true, sellerId: true } } },
         orderBy: { createdAt: 'asc' },
       }),
     ]);
@@ -539,7 +546,7 @@ export async function findRawMaterialShortfallsFor(
         qtyKg: h.qty.toFixed(3),
       })),
       ...temporaryHolders.map((h) => ({
-        code: `${quotationCode(h.quotation.seq)} (reserva temporal)`,
+        code: temporaryHolderCode(h.quotation, options.viewer),
         qtyKg: h.qty.toFixed(3),
       })),
     ];

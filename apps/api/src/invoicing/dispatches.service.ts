@@ -355,6 +355,7 @@ export class DispatchesService {
         refId: dispatch.id,
         notes: `Despacho ${dispatchCode(dispatch.seq)} de ${salesOrderCode(order.seq)}`,
         actorId: actor.id,
+        viewer: actor,
         confirmBackdate: input.confirmBackdate,
         // D-124: la salida de kardex se fecha con la **fecha del despacho**, no con hoy.
         // `dispatchDate` ya era la fecha de negocio de esta operación desde Fase 5b; lo
