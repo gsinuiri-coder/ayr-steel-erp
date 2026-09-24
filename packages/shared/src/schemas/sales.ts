@@ -1197,6 +1197,8 @@ export const coilPoolSchema = z.object({
     }),
   ),
   autoCoilId: z.string().uuid().nullable(),
+  /** Las del pool con saldo que no se ofrecen, y por qué («atada a COT-000002»). */
+  taken: z.array(z.object({ code: z.string(), by: z.string() })),
 });
 export type CoilPoolDto = z.infer<typeof coilPoolSchema>;
 

@@ -546,6 +546,11 @@ export function ChangeLineCoilDialog({
         <div className="grid gap-3">
           <div className="grid gap-2">
             <Label htmlFor="line-coil">Bobina del pool</Label>
+            {pool.data !== undefined && pool.data.taken.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                No se ofrecen: {pool.data.taken.map((t) => `${t.code} (${t.by})`).join(', ')}
+              </p>
+            )}
             {pool.isPending ? (
               <p className="text-xs text-muted-foreground">Buscando bobinas del pool…</p>
             ) : pool.isError ? (

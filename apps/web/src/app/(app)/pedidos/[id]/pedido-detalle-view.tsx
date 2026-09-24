@@ -424,6 +424,11 @@ export function PedidoDetalleView({ id }: { id: string }) {
                   <TableCell>{item.lineNumber}</TableCell>
                   <TableCell>
                     <div className="font-medium">{item.productSku}</div>
+                    {item.reserveItemType === 'COIL' && (
+                      <div className="text-xs text-muted-foreground">
+                        Bobina {item.reserveItemLabel}
+                      </div>
+                    )}
                     <div className="text-xs text-muted-foreground">{item.description}</div>
                   </TableCell>
                   <TableCell className="text-right">

@@ -48,7 +48,9 @@ function txWith(o: Opts = {}) {
   return {
     color: { findMany: jest.fn().mockResolvedValue([{ code: 'AZUL' }, { code: 'ROJO' }]) },
     quotationItem: {
-      findMany: jest.fn().mockResolvedValue(o.quoted ? [{ reserveItemId: COIL_ID }] : []),
+      findMany: jest
+        .fn()
+        .mockResolvedValue(o.quoted ? [{ reserveItemId: COIL_ID, quotation: { seq: 2 } }] : []),
     },
     coil: { findMany: jest.fn().mockResolvedValue(o.hasCoil === false ? [] : [coil]) },
     businessLine: { findUnique: jest.fn().mockResolvedValue({ id: 'bl-t' }) },

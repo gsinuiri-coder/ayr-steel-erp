@@ -280,7 +280,11 @@ describe('coilPoolFor', () => {
         ),
       },
       quotationItem: {
-        findMany: jest.fn().mockResolvedValue(quoted.map((reserveItemId) => ({ reserveItemId }))),
+        findMany: jest
+          .fn()
+          .mockResolvedValue(
+            quoted.map((reserveItemId) => ({ reserveItemId, quotation: { seq: 2 } })),
+          ),
       },
     }) as unknown as Prisma.TransactionClient;
   const pool = { thicknessMm: '0.38', attribute: 'ROJO' };
@@ -357,9 +361,11 @@ describe('coilPoolFor', () => {
     expect(r.candidates).toEqual([]);
   });
 
-  it('una bobina atada a otra cotización abierta no está libre', async () => {
+  it('una bobina atada a otra cotización abierta no está libre, y dice a cuál', async () => {
     const r = await coilPoolFor(txWith([coil('1', 'ROJO')], { '1': '4194' }, ['1']), pool, '4194');
     expect(r.candidates).toEqual([]);
+    // Pendiente de UI de la ventana RF-S4b: el selector explica por qué no la ofrece.
+    expect(r.taken).toEqual([{ code: expect.any(String), by: 'atada a COT-000002' }]);
   });
 
   it('la propia cotización se excluye de la búsqueda de cotizaciones tomadas', async () => {
@@ -373,7 +379,7 @@ describe('coilPoolFor', () => {
 
   it('sin bobinas en el pool devuelve vacío', async () => {
     const r = await coilPoolFor(txWith([coil('9', 'AZUL')], { '9': '10' }), pool, '4194');
-    expect(r).toEqual({ availableKg: '0.000', candidates: [], autoCoilId: null });
+    expect(r).toEqual({ availableKg: '0.000', candidates: [], autoCoilId: null, taken: [] });
   });
 
   it('pide solo bobinas abiertas del espesor exacto', async () => {

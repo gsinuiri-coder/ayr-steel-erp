@@ -327,6 +327,11 @@ export function CotizacionDetalleView({ id }: { id: string }) {
                   */}
                   <TableCell className="max-w-xs whitespace-normal">
                     <div className="font-medium">{item.productSku}</div>
+                    {item.reserveItemType === 'COIL' && (
+                      <div className="text-xs text-muted-foreground">
+                        Bobina {item.reserveItemLabel}
+                      </div>
+                    )}
                     <div className="text-xs text-muted-foreground">{item.description}</div>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">

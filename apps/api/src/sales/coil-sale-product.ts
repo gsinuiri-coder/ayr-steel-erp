@@ -17,6 +17,7 @@ import {
   COIL_SKU_PREFIX,
   Decimal,
   normalizeCoilSku,
+  quotationCode,
   toDecimal,
   toFixedString,
   Unit,
@@ -357,6 +358,12 @@ export interface CoilPool {
   candidates: CoilPoolCandidate[];
   /** La elegida sin intervención (D-254), o `null` si hay que elegir a mano. */
   autoCoilId: string | null;
+  /**
+   * Pendiente de UI de la ventana RF-S4b: las bobinas del pool con saldo que **no** se ofrecen y
+   * por qué (atada a una cotización abierta, montada en una OP o reservada). Sin esto el
+   * selector las descartaba en silencio y nadie sabía dónde había quedado un rollo.
+   */
+  taken: { code: string; by: string }[];
 }
 
 /**
@@ -393,7 +400,9 @@ export async function coilPoolFor(
   });
   const inPool = coils.filter((c) => attributeOf(c.finish) === pool.attribute);
   const ids = inPool.map((c) => c.id);
-  if (ids.length === 0) return { availableKg: '0.000', candidates: [], autoCoilId: null };
+  if (ids.length === 0) {
+    return { availableKg: '0.000', candidates: [], autoCoilId: null, taken: [] };
+  }
 
   const [balances, reserved, mounted, quoted] = await Promise.all([
     tx.inventoryBalance.findMany({
@@ -414,7 +423,7 @@ export async function coilPoolFor(
           ...(scope.exceptQuotationIds?.length ? { id: { notIn: scope.exceptQuotationIds } } : {}),
         },
       },
-      select: { reserveItemId: true },
+      select: { reserveItemId: true, quotation: { select: { seq: true } } },
     }),
   ]);
   const balanceById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
@@ -423,12 +432,21 @@ export async function coilPoolFor(
     ...quoted.map((q) => q.reserveItemId),
   ]);
   const need = toDecimal(qty);
+  // Por qué no se ofrece cada una: la cotización que la ata primero, que es lo que se busca.
+  const takenBy = new Map<string, string>();
+  for (const q of quoted) takenBy.set(q.reserveItemId, `atada a ${quotationCode(q.quotation.seq)}`);
+  for (const m of mounted) if (!takenBy.has(m.coilId)) takenBy.set(m.coilId, 'montada en una OP');
 
   let available = new Decimal(0);
   const candidates: CoilPoolCandidate[] = [];
+  const taken: { code: string; by: string }[] = [];
   for (const coil of inPool) {
     const balance = balanceById.get(coil.id) ?? new Decimal(0);
-    const free = !takenIds.has(coil.id) && (reserved.get(coil.id) ?? new Decimal(0)).lte(0);
+    const reservedKg = reserved.get(coil.id) ?? new Decimal(0);
+    const free = !takenIds.has(coil.id) && reservedKg.lte(0);
+    if (!free && balance.gt(0)) {
+      taken.push({ code: coil.code, by: takenBy.get(coil.id) ?? 'reservada por un pedido' });
+    }
     if (!free || balance.lte(0)) continue;
     available = available.plus(balance);
     if (balance.gte(need)) {
@@ -446,5 +464,6 @@ export async function coilPoolFor(
     availableKg: toFixedString(available, 'KG'),
     candidates,
     autoCoilId: auto?.coilId ?? null,
+    taken,
   };
 }

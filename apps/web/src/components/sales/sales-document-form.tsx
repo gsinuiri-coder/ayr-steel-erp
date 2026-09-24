@@ -1809,6 +1809,11 @@ function CoilPoolConvert({
           <span className="text-muted-foreground">
             {pool.data.sku}: {formatQty(pool.data.availableKg, 'kg')} disponibles en el pool
           </span>
+          {pool.data.taken.length > 0 && (
+            <span className="text-muted-foreground">
+              No se ofrecen: {pool.data.taken.map((t) => `${t.code} (${t.by})`).join(', ')}
+            </span>
+          )}
           {pool.data.candidates.length === 0 ? (
             <span className="text-destructive">
               Ninguna bobina libre del pool alcanza para {formatQty(qty, 'kg')}.
