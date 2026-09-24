@@ -213,124 +213,130 @@ export class QuotationsService {
     /** El motivo que queda en la auditoría, cuando la edición la hace una herramienta (barrido). */
     options: { auditReason?: string } = {},
   ): Promise<QuotationDto> {
-    await this.prisma.$transaction(async (tx) => {
-      const current = await this.lockQuotation(tx, id);
-      assertSellerAccess(actor, current.sellerId, 'Cotización');
-      assertNoTypedImportMarker(current.notes, input.notes);
-      if (current.status === QuotationStatus.CONFIRMED) {
-        throw new BadRequestException(
-          'La cotización ya está confirmada: lo que se edita desde ahora es el pedido.',
+    await this.prisma.$transaction(
+      async (tx) => {
+        const current = await this.lockQuotation(tx, id);
+        assertSellerAccess(actor, current.sellerId, 'Cotización');
+        assertNoTypedImportMarker(current.notes, input.notes);
+        if (current.status === QuotationStatus.CONFIRMED) {
+          throw new BadRequestException(
+            'La cotización ya está confirmada: lo que se edita desde ahora es el pedido.',
+          );
+        }
+        if (current.status === QuotationStatus.CANCELLED) {
+          throw new BadRequestException(
+            'La cotización está anulada: duplícala para cotizar de nuevo.',
+          );
+        }
+        const customer = await this.requireActiveCustomer(tx, input.customerId);
+        // D-163: una cotización que trajo el importador (D-152) **nace exenta del piso**, y
+        // editarla tiene que seguir estando exenta. Sin esto, corregir el producto de una línea
+        // en una de las 71 de agosto rebotaba con "el precio mínimo es S/ X" sobre una línea que
+        // nadie tocó y cuyo precio es un hecho consumado: la única salida habría sido falsear el
+        // precio histórico o mover el margen mínimo de toda la línea de negocio.
+        const imported = isImportedQuotation(current.notes);
+        // D-169: y por el mismo motivo, sus **importes** también sobreviven a la edición. La
+        // exención del piso ya estaba; a los importes les faltaba. Sin esto, corregir el
+        // producto mal mapeado de una línea recalculaba las diez y el documento volvía a
+        // separarse del comprobante — en silencio, y sin que nadie hubiera tocado los números.
+        const { items, unchanged } = imported
+          ? await this.withImportedAmounts(tx, id, input.items)
+          : { items: input.items, unchanged: new Set<number>() };
+        // D-256 (aclaración, revisión cruzada RF-S4b): la exención del piso y la venta parcial de
+        // bobina son del **ADMINISTRADOR**. Para cualquier otro rol, solo la línea que sigue
+        // representando al comprobante —mismo producto, cantidad y precio— conserva el papel;
+        // la que cambió se recalcula y pasa por el piso y por las reglas normales de bobina. El
+        // texto de las observaciones nunca otorga permisos.
+        const admin = actor.role === Role.ADMINISTRADOR;
+        const lines = await resolveSalesLines(tx, items, {
+          ...(imported && admin ? {} : { priceFloor: this.priceFloor() }),
+          ...(imported
+            ? {
+                exactAmounts: {
+                  tolerancePen: IMPORT_ROUNDING_TOLERANCE_PEN,
+                  documentLabel: externalInvoiceOf(current.notes) ?? 'El comprobante importado',
+                },
+                ...(admin ? {} : { paperLines: unchanged }),
+                coilPool: {
+                  scope: { exceptQuotationIds: [id] },
+                  allowedPools: await this.storedCoilPools(tx, id),
+                  preexistingCoilIds: await this.storedCoilIds(tx, id),
+                },
+              }
+            : {}),
+        });
+        const totals = documentTotals(lines);
+        // D-157: una cotización **sin vencimiento** (la trajo el importador) lo sigue siendo al
+        // editarla. El cuerpo HTTP no puede expresar `null`, y sin este corte la primera edición
+        // le inventaba una fecha a un comprobante ya vendido.
+        const validUntil =
+          current.validUntil === null
+            ? null
+            : quotationValidUntil(input.issueDate, input.validityDays);
+
+        const status =
+          validUntil !== null && isQuotationExpired(validUntil, businessToday())
+            ? QuotationStatus.EXPIRED
+            : QuotationStatus.EMITTED;
+
+        // D-187: lo cotizado antes de reescribir las líneas, para registrar qué precio se movió.
+        const previousLines = await tx.quotationItem.findMany({
+          where: { quotationId: id },
+          select: { lineNumber: true, productId: true, unitPricePen: true, valuePerMeterPen: true },
+        });
+        await tx.quotationItem.deleteMany({ where: { quotationId: id } });
+        await tx.quotation.update({
+          where: { id },
+          data: {
+            customerId: customer.id,
+            status,
+            ...(status === QuotationStatus.EMITTED ? { expiredAt: null } : {}),
+            issueDate: toDateOnly(input.issueDate),
+            validUntil: validUntil === null ? null : toDateOnly(validUntil),
+            subtotalPen: totals.subtotalPen,
+            igvPen: totals.igvPen,
+            totalPen: totals.totalPen,
+            // D-152/D-163: la marca del comprobante externo sobrevive a la edición. Es
+            // procedencia, no una observación que alguien escribió, y de ella dependen el aviso
+            // de reimportación y la exención del piso de precio: borrarla dejaba el documento
+            // inválido a partir del **segundo** guardado, con el mismo precio histórico.
+            notes: keepImportMarker(current.notes, input.notes ?? null),
+            items: { create: lines.map(toItemCreate) },
+          },
+        });
+
+        const priceChanges = await recordPriceChanges(
+          tx,
+          { quotationId: id },
+          previousLines,
+          lines,
+          actor.id,
         );
-      }
-      if (current.status === QuotationStatus.CANCELLED) {
-        throw new BadRequestException(
-          'La cotización está anulada: duplícala para cotizar de nuevo.',
-        );
-      }
-      const customer = await this.requireActiveCustomer(tx, input.customerId);
-      // D-163: una cotización que trajo el importador (D-152) **nace exenta del piso**, y
-      // editarla tiene que seguir estando exenta. Sin esto, corregir el producto de una línea
-      // en una de las 71 de agosto rebotaba con "el precio mínimo es S/ X" sobre una línea que
-      // nadie tocó y cuyo precio es un hecho consumado: la única salida habría sido falsear el
-      // precio histórico o mover el margen mínimo de toda la línea de negocio.
-      const imported = isImportedQuotation(current.notes);
-      // D-169: y por el mismo motivo, sus **importes** también sobreviven a la edición. La
-      // exención del piso ya estaba; a los importes les faltaba. Sin esto, corregir el
-      // producto mal mapeado de una línea recalculaba las diez y el documento volvía a
-      // separarse del comprobante — en silencio, y sin que nadie hubiera tocado los números.
-      const { items, unchanged } = imported
-        ? await this.withImportedAmounts(tx, id, input.items)
-        : { items: input.items, unchanged: new Set<number>() };
-      // D-256 (aclaración, revisión cruzada RF-S4b): la exención del piso y la venta parcial de
-      // bobina son del **ADMINISTRADOR**. Para cualquier otro rol, solo la línea que sigue
-      // representando al comprobante —mismo producto, cantidad y precio— conserva el papel;
-      // la que cambió se recalcula y pasa por el piso y por las reglas normales de bobina. El
-      // texto de las observaciones nunca otorga permisos.
-      const admin = actor.role === Role.ADMINISTRADOR;
-      const lines = await resolveSalesLines(tx, items, {
-        ...(imported && admin ? {} : { priceFloor: this.priceFloor() }),
-        ...(imported
-          ? {
-              exactAmounts: {
-                tolerancePen: IMPORT_ROUNDING_TOLERANCE_PEN,
-                documentLabel: externalInvoiceOf(current.notes) ?? 'El comprobante importado',
-              },
-              ...(admin ? {} : { paperLines: unchanged }),
-              coilPool: {
-                scope: { exceptQuotationIds: [id] },
-                allowedPools: await this.storedCoilPools(tx, id),
-                preexistingCoilIds: await this.storedCoilIds(tx, id),
-              },
-            }
-          : {}),
-      });
-      const totals = documentTotals(lines);
-      // D-157: una cotización **sin vencimiento** (la trajo el importador) lo sigue siendo al
-      // editarla. El cuerpo HTTP no puede expresar `null`, y sin este corte la primera edición
-      // le inventaba una fecha a un comprobante ya vendido.
-      const validUntil =
-        current.validUntil === null
-          ? null
-          : quotationValidUntil(input.issueDate, input.validityDays);
 
-      const status =
-        validUntil !== null && isQuotationExpired(validUntil, businessToday())
-          ? QuotationStatus.EXPIRED
-          : QuotationStatus.EMITTED;
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'sales.quotation.update',
+          entity: 'quotations',
+          entityId: id,
+          after: {
+            customerId: customer.id,
+            totalPen: totals.totalPen,
+            items: lines.length,
+            status,
+            priceChanges,
+          },
+          ...(options.auditReason ? { reason: options.auditReason } : {}),
+        });
 
-      // D-187: lo cotizado antes de reescribir las líneas, para registrar qué precio se movió.
-      const previousLines = await tx.quotationItem.findMany({
-        where: { quotationId: id },
-        select: { lineNumber: true, productId: true, unitPricePen: true, valuePerMeterPen: true },
-      });
-      await tx.quotationItem.deleteMany({ where: { quotationId: id } });
-      await tx.quotation.update({
-        where: { id },
-        data: {
-          customerId: customer.id,
-          status,
-          ...(status === QuotationStatus.EMITTED ? { expiredAt: null } : {}),
-          issueDate: toDateOnly(input.issueDate),
-          validUntil: validUntil === null ? null : toDateOnly(validUntil),
-          subtotalPen: totals.subtotalPen,
-          igvPen: totals.igvPen,
-          totalPen: totals.totalPen,
-          // D-152/D-163: la marca del comprobante externo sobrevive a la edición. Es
-          // procedencia, no una observación que alguien escribió, y de ella dependen el aviso
-          // de reimportación y la exención del piso de precio: borrarla dejaba el documento
-          // inválido a partir del **segundo** guardado, con el mismo precio histórico.
-          notes: keepImportMarker(current.notes, input.notes ?? null),
-          items: { create: lines.map(toItemCreate) },
-        },
-      });
-
-      const priceChanges = await recordPriceChanges(
-        tx,
-        { quotationId: id },
-        previousLines,
-        lines,
-        actor.id,
-      );
-
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'sales.quotation.update',
-        entity: 'quotations',
-        entityId: id,
-        after: {
-          customerId: customer.id,
-          totalPen: totals.totalPen,
-          items: lines.length,
-          status,
-          priceChanges,
-        },
-        ...(options.auditReason ? { reason: options.auditReason } : {}),
-      });
-
-      // D-185: con reserva temporal vigente, lo reservado sigue a las líneas nuevas — o la
-      // edición entera se deshace si ya no alcanza.
-      await this.orders.recalculateTemporaryInTx(tx, actor, id);
-    });
+        // D-185: con reserva temporal vigente, lo reservado sigue a las líneas nuevas — o la
+        // edición entera se deshace si ya no alcanza.
+        await this.orders.recalculateTemporaryInTx(tx, actor, id);
+      },
+      // La validación del pool en el servidor (D-254) suma consultas por línea de bobina. Con
+      // los 5 s por defecto de Prisma, el barrido contra Neon vencía la transacción a mitad
+      // (lo mostró el ensayo en demo); mismo margen que `updateItemCoil`.
+      { timeout: 30_000, maxWait: 10_000 },
+    );
 
     await this.generatePdf(id);
     return this.findOne(id);
