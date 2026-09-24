@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import {
   BUSINESS_LINE_LABELS,
   COIL_STATUS_LABELS,
+  coilGroupLabel,
   FISCAL_DOC_TYPE_LABELS,
   type InventoryValuationDto,
   type SalesMarginDto,
@@ -65,7 +66,7 @@ export function inventoryValuationXlsx(report: InventoryValuationDto): {
     rows: report.coilGroups.map((g) => [
       BUSINESS_LINE_LABELS[g.businessLine],
       num(g.thicknessMm),
-      g.colorName ?? 'Sin color',
+      coilGroupLabel(g),
       g.coilCount,
       num(g.qtyKg),
       num(g.avgCostPen),
@@ -80,6 +81,8 @@ export function inventoryValuationXlsx(report: InventoryValuationDto): {
       'Línea',
       'Espesor (mm)',
       'Color',
+      'Acabado',
+      'RAL',
       'Tipo',
       'Ancho (mm)',
       'Saldo (kg)',
@@ -88,13 +91,16 @@ export function inventoryValuationXlsx(report: InventoryValuationDto): {
       'Estado',
       'Fecha de alta',
     ],
-    widths: [16, 22, 13, 18, 16, 11, 13, 11, 14, 12, 14],
+    widths: [16, 22, 13, 18, 18, 7, 16, 11, 13, 11, 14, 12, 14],
     rows: report.coilGroups.flatMap((g) =>
       g.coils.map((c) => [
         c.code,
         BUSINESS_LINE_LABELS[g.businessLine],
         num(g.thicknessMm),
-        g.colorName ?? 'Sin color',
+        coilGroupLabel(g),
+        // D-272: el acabado es donde vive el RAL (D-270).
+        c.finishCode,
+        c.ral ?? '',
         c.typeKey,
         num(c.widthMm),
         num(c.qtyKg),

@@ -30,6 +30,10 @@ interface CoilSeed {
   line: string;
   thickness: string;
   color: string | null;
+  /** D-272: el acabado, que es donde vive el RAL. Por defecto uno sin RAL del tipo que toca. */
+  finishCode?: string;
+  finishName?: string;
+  finishKind?: 'NATURAL' | 'PREPINTADO' | 'GALVANIZADO';
   qty: string;
   avgCost: string;
 }
@@ -54,6 +58,9 @@ function coilRow(seed: CoilSeed): Record<string, unknown> {
     width_mm: decimal('1200'),
     thickness_mm: decimal(seed.thickness),
     color_name: seed.color,
+    finish_code: seed.finishCode ?? (seed.color === null ? 'ALZ-NATURAL' : 'ALZ-COLOR'),
+    finish_name: seed.finishName ?? 'Acabado de prueba',
+    finish_kind: seed.finishKind ?? (seed.color === null ? 'NATURAL' : 'PREPINTADO'),
     status: 'OPEN',
     operation_date: new Date('2026-09-01T00:00:00.000Z'),
   };
@@ -253,6 +260,108 @@ describe('InventoryValuationService', () => {
     // promedios (5.5000), que es el error que este caso está puesto a detectar.
     expect(first.totalValuePen).toBe('800.0000');
     expect(first.avgCostPen).toBe('5.3333');
+  });
+
+  it('D-272: un color comercial es un grupo, con cada acabado (RAL) como detalle, y los totales no cambian', async () => {
+    const coils: CoilSeed[] = [
+      {
+        id: 'r1',
+        code: 'BOB-R1',
+        line: 'metallic-roofing',
+        thickness: '0.40',
+        color: 'ROJO',
+        finishCode: 'ALZ-ROJO-3002',
+        finishName: 'ALUZINC ROJO 3002',
+        qty: '100.000',
+        avgCost: '5.0000',
+      },
+      {
+        id: 'r2',
+        code: 'BOB-R2',
+        line: 'metallic-roofing',
+        thickness: '0.40',
+        color: 'ROJO',
+        finishCode: 'ALZ-ROJO-3020',
+        finishName: 'ALUZINC ROJO 3020',
+        qty: '300.000',
+        avgCost: '4.0000',
+      },
+      {
+        id: 'r3',
+        code: 'BOB-R3',
+        line: 'metallic-roofing',
+        thickness: '0.40',
+        color: 'ROJO',
+        finishCode: 'ALZ-ROJO-3020',
+        finishName: 'ALUZINC ROJO 3020',
+        qty: '50.000',
+        avgCost: '4.0000',
+      },
+      // Sin color: NATURAL y GALVANIZADO son dos grupos aunque compartan línea y espesor.
+      {
+        id: 'n1',
+        code: 'BOB-N1',
+        line: 'metallic-roofing',
+        thickness: '0.40',
+        color: null,
+        finishCode: 'ALZ-NATURAL',
+        finishKind: 'NATURAL',
+        qty: '10.000',
+        avgCost: '3.0000',
+      },
+      {
+        id: 'g1',
+        code: 'BOB-G1',
+        line: 'metallic-roofing',
+        thickness: '0.40',
+        color: null,
+        finishCode: 'GALV',
+        finishKind: 'GALVANIZADO',
+        qty: '20.000',
+        avgCost: '3.0000',
+      },
+    ];
+
+    const { service } = await buildService({ coils });
+    const report = await service.valuation();
+
+    expect(report.coilGroups).toHaveLength(3);
+    const rojo = report.coilGroups.find((g) => g.colorName === 'ROJO');
+    expect(rojo).toMatchObject({
+      coilCount: 3,
+      qtyKg: '450.000',
+      totalValuePen: '1900.0000',
+      finishKind: null,
+    });
+    expect(rojo?.finishes).toEqual([
+      {
+        finishCode: 'ALZ-ROJO-3002',
+        finishName: 'ALUZINC ROJO 3002',
+        ral: '3002',
+        coilCount: 1,
+        qtyKg: '100.000',
+        totalValuePen: '500.0000',
+      },
+      {
+        finishCode: 'ALZ-ROJO-3020',
+        finishName: 'ALUZINC ROJO 3020',
+        ral: '3020',
+        coilCount: 2,
+        qtyKg: '350.000',
+        totalValuePen: '1400.0000',
+      },
+    ]);
+    expect(rojo?.coils.map((c) => [c.code, c.finishCode, c.ral])).toEqual([
+      ['BOB-R1', 'ALZ-ROJO-3002', '3002'],
+      ['BOB-R2', 'ALZ-ROJO-3020', '3020'],
+      ['BOB-R3', 'ALZ-ROJO-3020', '3020'],
+    ]);
+    expect(report.coilGroups.filter((g) => g.colorName === null).map((g) => g.finishKind)).toEqual([
+      'NATURAL',
+      'GALVANIZADO',
+    ]);
+    // Mismos totales: 1 900 + 30 + 60.
+    expect(report.totals.coilValuePen).toBe('1990.0000');
   });
 
   it('los totales por línea suman el total general', async () => {

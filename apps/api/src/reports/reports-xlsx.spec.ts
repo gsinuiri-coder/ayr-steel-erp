@@ -30,6 +30,17 @@ const valuation: InventoryValuationDto = {
       businessLine: 'drywall',
       thicknessMm: '0.50',
       colorName: null,
+      finishKind: 'GALVANIZADO',
+      finishes: [
+        {
+          finishCode: 'GALV',
+          finishName: 'GALVANIZADO',
+          ral: null,
+          coilCount: 1,
+          qtyKg: '800.000',
+          totalValuePen: '4000.0000',
+        },
+      ],
       coilCount: 1,
       qtyKg: '800.000',
       avgCostPen: '5.0000',
@@ -41,6 +52,8 @@ const valuation: InventoryValuationDto = {
           typeKey: 'GALV-0.50',
           kind: 'COIL',
           widthMm: '1200.00',
+          finishCode: 'GALV',
+          ral: null,
           qtyKg: '800.000',
           avgCostPen: '5.0000',
           totalValuePen: '4000.0000',
@@ -185,8 +198,14 @@ describe('reports-xlsx', () => {
       const { buffer } = inventoryValuationXlsx(valuation);
       const sheet = sheetOf(buffer, 'Bobinas');
 
-      expect(cell(sheet, 'J2')?.v).not.toBe('OPEN');
-      expect(cell(sheet, 'D2')?.v).toBe('Sin color');
+      expect(cell(sheet, 'L2')?.v).not.toBe('OPEN');
+      // D-272: sin color, el grupo es el tipo del acabado, y el acabado y su RAL van al lado.
+      expect(cell(sheet, 'D2')?.v).toBe('Galvanizado');
+      expect(cell(sheet, 'E1')?.v).toBe('Acabado');
+      expect(cell(sheet, 'E2')?.v).toBe('GALV');
+      expect(cell(sheet, 'F1')?.v).toBe('RAL');
+      expect(cell(sheet, 'F2')?.v).toBe('');
+      expect(cell(sheetOf(buffer, 'Bobinas por grupo'), 'C2')?.v).toBe('Galvanizado');
     });
   });
 
