@@ -30,6 +30,41 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   hasta que haya un revisor de otro modelo o persona. **2026-09-24, ventana:** desplegado en
   production sin cambios de runtime; se suma `57b10c9` (D-262, `db:prod` sin seed), escrito y
   mergeado en la misma ventana sin pase de revisión.
+- **Correcciones del delta RF-S4b** (2026-09-24, PR #15 y `fix/rf-s4b-delta-2`). D-263 a
+  D-266, M2 a M6. Autorrevisión por subagentes nuevos (sin P0/P1), el mismo modelo que escribió.
+  Motivo: esquema de un solo agente, sin segundo revisor disponible.
+
+## Correcciones del delta RF-S4b (2026-09-24)
+
+Informe: `docs/revision/rf-s4b-delta.md`. Handoff: `docs/handoff/fix-rf-s4b-delta.md`.
+
+- **M1 (P1-1, D-263), en production:** guardar una cotización importada con planchas ya no
+  multiplica la línea por su largo. PR #15, `main` = `6492b4d`, Vercel production `success`,
+  `smoke:prod` verde. Solo web.
+- **Verificación en production (solo lectura, dry-run del barrido, 2026-09-24):** 113 revisados;
+  40 abiertos (30 cotizaciones, 10 pedidos) con **0 hallazgos** —(a) 0, (b) 0, (c) 0—. Las 12
+  líneas de plancha con diferencia contra el papel están en documentos cerrados: 10 por
+  diezmilésimas y COT-000053/054 (anuladas, el ×6 conocido).
+- **Segundo PR (rama `fix/rf-s4b-delta-2`):** M2 `snapshot-reports` ligado a la rama de
+  `--base-url`; M3 rotación de la contraseña del rol en `db-reset-dev.mjs` (**no se ejecutó
+  contra Neon**); M4 `ask` completo; M5 trío del papel único (P2-1), «editada a propósito» por
+  contenido (D-264) y parte que cierra con el resto (D-265); M6 bobina atada visible; D-266
+  (Sonar).
+
+**Pendientes que deja:**
+
+- **Volver a cotizar «por metro» una plancha importada por plancha** (autorrevisión de D-263):
+  hoy solo se logra cambiando el producto. No se implementa; decidir si hace falta un gesto.
+- **Clave de línea estable** (D-264, opción 2 descartada por ahora): columna `line_key` en
+  `quotation_items`/`sales_order_items`, conservada entre ediciones, y en `sales_price_changes`.
+  Cerraría el criterio de «editada a propósito» sin heurística. Lleva migración.
+- **La rotación de M3 no se ejecutó.** El próximo `pnpm db:reset-dev --yes --branch demo` la
+  corre por primera vez, con `NEON_API_KEY` en el entorno o en `.env.setup`. Los `.env.demo`
+  generados desde un reset anterior tienen la contraseña de production: si alguno salió de la
+  máquina del dueño, corresponde rotar `neondb_owner` en production (AGENTS.md §3.1).
+- **E2E local bloqueado en esta sesión:** un `nuxt dev` de otro proyecto del dueño escucha en
+  `[::1]:3000` y Playwright lo reusa. No se mató (no es de este repo). El E2E de D-265 y el
+  resto de la suite corrieron en CI.
 
 ## Ventana de producción RF-S4b (2026-09-24, 00:06–01:05 Lima)
 
