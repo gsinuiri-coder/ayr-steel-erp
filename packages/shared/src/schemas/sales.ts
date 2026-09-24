@@ -21,6 +21,7 @@ import {
   RESERVATION_STATUSES,
   SALES_ORDER_ORIGINS,
   SALES_ORDER_STATUSES,
+  ORDER_STAGES,
 } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyKeySchema } from './idempotency';
@@ -1089,6 +1090,8 @@ export const salesOrderSchema = z.object({
   /** D-187: no anulado y sin comprobante (factura o boleta, en borrador o viva). */
   isEditable: z.boolean(),
   readiness: orderReadinessSchema,
+  /** D-277: estado que se muestra (el persistido más «Listo»). */
+  stage: z.enum(ORDER_STAGES),
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 
@@ -1247,6 +1250,8 @@ export type ChangeSalesOrderCustomerInput = z.infer<typeof changeSalesOrderCusto
 
 export const salesOrderQuerySchema = paginationQuerySchema.extend({
   status: z.enum(SALES_ORDER_STATUSES).optional(),
+  /** D-277: filtro por el estado que se muestra; manda sobre `status` si vienen los dos. */
+  stage: z.enum(ORDER_STAGES).optional(),
   customerId: z.string().uuid().optional(),
   /** D-119: al menos una línea del documento es de esta línea de negocio. */
   businessLine: z.enum(BUSINESS_LINES).optional(),

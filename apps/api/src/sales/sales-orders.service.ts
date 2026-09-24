@@ -79,7 +79,7 @@ import {
   type SellableCoilQuery,
   type OrderReadinessDto,
 } from '@ayr/shared';
-import { deriveOrderReadiness } from './order-readiness';
+import { deriveOrderReadiness, deriveOrderStage, orderStageWhere } from './order-readiness';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
@@ -2525,7 +2525,10 @@ export class SalesOrdersService {
     const readinessOrders = ops.map((op) => {
       const orderedMl = op.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000';
       const reportedMl = op.reports
-        .reduce((sum, r) => sum + (r.metersM ? Number(r.metersM) : 0), 0)
+        .reduce(
+          (sum, r) => (r.metersM ? sum.plus(toDecimal(r.metersM.toString())) : sum),
+          new Decimal(0),
+        )
         .toFixed(3);
 
       return {
@@ -2554,7 +2557,8 @@ export class SalesOrdersService {
     const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
     const where: Prisma.SalesOrderWhereInput = {
       ...sellerWhere(actor),
-      status: query.status,
+      // D-277: `stage` filtra por el estado que se muestra («Listo» incluido).
+      ...(query.stage ? orderStageWhere(query.stage) : { status: query.status }),
       customerId: query.customerId,
       // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
       // línea" — un pedido mixto aparece en el filtro de cualquiera de sus líneas.
@@ -2634,7 +2638,10 @@ export class SalesOrdersService {
       const readinessOrders = orderOps.map((op) => {
         const orderedMl = op.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000';
         const reportedMl = op.reports
-          .reduce((sum, r) => sum + (r.metersM ? Number(r.metersM) : 0), 0)
+          .reduce(
+            (sum, r) => (r.metersM ? sum.plus(toDecimal(r.metersM.toString())) : sum),
+            new Decimal(0),
+          )
           .toFixed(3);
         return { status: op.status, orderedMl, reportedMl };
       });
@@ -3436,6 +3443,12 @@ export class SalesOrdersService {
     actors: Map<string, string>,
     context?: { queueStatus: QueueStatus | null; readiness: OrderReadinessDto },
   ): SalesOrderDto {
+    const readiness = context?.readiness ?? {
+      status: 'SIN_PRODUCCION' as const,
+      orderedMl: '0.000',
+      reportedMl: '0.000',
+      missingMl: '0.000',
+    };
     return {
       id: row.id,
       code: salesOrderCode(row.seq),
@@ -3472,12 +3485,8 @@ export class SalesOrdersService {
       queueStatus: context?.queueStatus ?? null,
       priceChanges: [],
       isEditable: false,
-      readiness: context?.readiness ?? {
-        status: 'SIN_PRODUCCION',
-        orderedMl: '0.000',
-        reportedMl: '0.000',
-        missingMl: '0.000',
-      },
+      readiness,
+      stage: deriveOrderStage(row.status, readiness.status),
     };
   }
 }

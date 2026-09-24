@@ -675,6 +675,26 @@ export const SALES_ORDER_STATUS_LABELS: Record<SalesOrderStatus, string> = {
 };
 
 /**
+ * D-277: el estado del pedido que se muestra y se filtra. Es el persistido más `READY`
+ * («Listo»): todas las órdenes de producción vivas cerradas y nada despachado todavía. No se
+ * guarda; lo deriva el API (`deriveOrderStage`). Flujo: Confirmado → En producción → Listo →
+ * Atendido en parte / Atendido (despachado). El comprobante no mueve el estado.
+ */
+export const ORDER_STAGES = [
+  'CONFIRMED',
+  'IN_PRODUCTION',
+  'READY',
+  'PARTIALLY_FULFILLED',
+  'FULFILLED',
+  'CANCELLED',
+] as const;
+export type OrderStage = (typeof ORDER_STAGES)[number];
+export const ORDER_STAGE_LABELS: Record<OrderStage, string> = {
+  ...SALES_ORDER_STATUS_LABELS,
+  READY: 'Listo',
+};
+
+/**
  * Quién creó el pedido (D-141). Es el mismo corte que `FiscalDocumentOrigin` hace con el
  * comprobante (D-105) y por el mismo motivo: **estado y origen responden preguntas
  * distintas**. El estado dice en qué punto del ciclo está el pedido; el origen, si el ciclo
