@@ -379,7 +379,7 @@ describe('closingPartTotals — la parte que cierra una línea con trío del pap
 
   /** Como lo hace el servicio: cada parte desde el unitario, la última con el resto. */
   function inParts(qtys: string[]) {
-    let already = { subtotal: toDecimal(0), igv: toDecimal(0), total: toDecimal(0) };
+    let already = { subtotal: toDecimal('0'), igv: toDecimal('0'), total: toDecimal('0') };
     const parts = qtys.map((qty, i) => {
       const t = i === qtys.length - 1 ? closingPartTotals(stored, already, part(qty)) : part(qty);
       already = {
