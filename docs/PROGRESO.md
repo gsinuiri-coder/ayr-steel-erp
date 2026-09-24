@@ -47,6 +47,39 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   por un subagente nuevo del mismo modelo que escribió
   (`docs/revision/deudas-post-s4b-autorrevision.md`): 0 P0, 1 P1 (corregido en la rama). Motivo:
   esquema de un solo agente, sin segundo revisor disponible.
+- **Correcciones 02** (2026-09-24, rama `fix/correcciones-02`, PR #20). D-277 a D-284.
+  Autorrevisión por dos subagentes nuevos del mismo modelo que escribió: 0 P0, P1 corregidos en
+  la rama. Motivo: esquema de un solo agente, sin segundo revisor disponible. Pieza de riesgo
+  para el pase cruzado: el arreglo de datos de D-278 (salidas retroactivas de kardex).
+
+## Correcciones 02 del cliente (2026-09-24)
+
+Handoff: `docs/handoff/correcciones-02.md`. Rama `fix/correcciones-02` (apilada sobre #19 y #18),
+PR #20 sin mergear hasta la ventana (runbook `docs/handoff/ventana-color-comercial.md` §5c). Sin
+migraciones. D-277..D-284.
+
+- **M1 → D-277:** la causa del «no pasa a LISTO» que quedó sin explicar en HOTFIX D-249 era la capa
+  de presentación: la API calculaba `readiness`, la web mostraba el persistido `IN_PRODUCTION`.
+  Lectura de production: PED-000001..021 (salvo el 018) con todas las OP cerradas y nada
+  despachado. Sin arreglo de datos.
+- **M2 → D-278:** despacho a la fecha del comprobante. Dry-run de production (solo lectura): 28
+  comprobantes, 6 salidas (S/ 84 676.41, bobinas de PED-000018), 23 líneas en la excepción (UPVC),
+  15 a revisión. Se ejecuta en la ventana con `--expect`.
+- **M3 → D-279**, **M4 → D-280** (165 → 13 consultas), **M5 → D-281**, **M6 → D-282**,
+  **M7 → D-283** (sin migración), **M8 → D-284** (capturas en `local-data/capturas-corr02/`).
+- **Verificación local:** lint, typecheck, `format:check`, unitarios (API 1128, web 22) limpios.
+  **Suite E2E completa** (worktree, builds de producción, `CI=true`, `ayr_local_e2e`):
+  **393 passed, 11 failed, 1 flaky, 2 skipped** (34.1 min). Rojos: 8 de infraestructura sin
+  PSE («Emisión electrónica no habilitada»: `comprobante-manual` ×2, `fase5b-bordes` ×3,
+  `fase7e`, `idempotencia-f8s1-m2`, `reportes-costeo-rf-s4a` M2), `fase5a` M1 sin R2 y `fase2a`
+  RF-11 (rojo local conocido, verde en CI): infraestructura; `bobinas-metro-lineal-d281`: de
+  **prueba** (tomaba el peso inicial en vez del disponible), corregido. El flaky
+  (`selector-cliente-f8s3c`) es el mismo de la sesión anterior. Después de los arreglos de la
+  autorrevisión, con build nuevo: D-278, D-281, D-282, D-283, D-284 y `selector-cliente` 8/8.
+- **Autorrevisión** (dos subagentes nuevos, mismo modelo): 0 P0; los P1 corregidos (ver handoff).
+
+**Pendientes que deja:** RUC y razón social del PEPS (decisión del dueño); las 15 líneas a
+revisión de M2; P2 abiertos del handoff.
 
 ## Deudas post-RF-S4b (2026-09-24)
 
