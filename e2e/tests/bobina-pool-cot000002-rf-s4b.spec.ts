@@ -143,7 +143,7 @@ test.describe('RF-S4b — un código de bobina del origen resuelve al pool, no a
 
     const refused = await api.patch(`/api/catalog/${product!.id}`, { data: { isActive: false } });
     expect(refused.status()).toBe(400);
-    expect(await refused.text()).toContain('bobina(s) abierta(s) con saldo');
+    expect(await refused.text()).toContain('bobina(s) con saldo');
 
     // Sin bobinas abiertas en el pool, se puede: la anulación de la bobina la saca del pool.
     await postJson(api, `/api/coils/${coil.id}/cancel`, { reason: 'Limpieza de prueba E2E' });

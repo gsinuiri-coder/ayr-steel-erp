@@ -21,15 +21,21 @@
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
-import { coilSkuFromTypeKey } from '@ayr/shared';
+import { COIL_SALE_IDENTITY_SELECT, coilSaleSkus } from '../src/sales/coil-sale-product';
 
 const prisma = new PrismaClient();
 
+/**
+ * Revisión cruzada RF-S4b (P2-10): el SKU de venta de cada bobina sale de **la misma** función
+ * que usa la venta (`coilSaleSkus`, D-252): el canónico y, durante la transición, el viejo. Con la
+ * cuenta de antes (`coilSkuFromTypeKey`), después de la normalización este guion reportaba cada
+ * tipo como «sin producto» —el caso de D-168: dos cuentas del mismo SKU que no coinciden—.
+ */
 async function main(): Promise<void> {
   const label = process.env.AYR_BRANCH_LABEL ?? 'la rama configurada';
 
   const [coils, tradingProducts] = await Promise.all([
-    prisma.coil.groupBy({ by: ['typeKey'], _count: { _all: true } }),
+    prisma.coil.findMany({ select: { code: true, ...COIL_SALE_IDENTITY_SELECT } }),
     prisma.product.findMany({
       where: { businessLine: { code: 'TRADING' }, sku: { startsWith: 'BOB' } },
       select: { sku: true, name: true, isActive: true },
@@ -37,48 +43,52 @@ async function main(): Promise<void> {
     }),
   ]);
 
-  const bySku = new Map(tradingProducts.map((p) => [p.sku, p]));
-  const expected = coils.map((c) => ({
-    typeKey: c.typeKey,
-    coils: c._count._all,
-    sku: coilSkuFromTypeKey(c.typeKey),
-  }));
-  const expectedSkus = new Set(expected.map((e) => e.sku));
+  const activeSkus = new Set(tradingProducts.filter((p) => p.isActive).map((p) => p.sku));
+  // Un pool por SKU canónico: cuántas bobinas tiene y si alguna forma de su SKU está activa.
+  const pools = new Map<string, { legacy: Set<string>; coils: number }>();
+  for (const coil of coils) {
+    const { canonical, legacy } = coilSaleSkus(coil);
+    const pool = pools.get(canonical) ?? { legacy: new Set<string>(), coils: 0 };
+    pool.legacy.add(legacy);
+    pool.coils += 1;
+    pools.set(canonical, pool);
+  }
+  const named = new Set([...pools].flatMap(([canonical, p]) => [canonical, ...p.legacy]));
 
   console.log(
-    `Bobinas en ${label}: ${coils.length} tipo(s) distinto(s); productos BOB… en trading: ${tradingProducts.length}.`,
+    `Bobinas en ${label}: ${String(coils.length)}, en ${String(pools.size)} pool(s) de venta; productos BOB… en trading: ${String(tradingProducts.length)}.`,
   );
 
-  const sinProducto = expected.filter((e) => !bySku.has(e.sku));
+  const sinProducto = [...pools].filter(
+    ([canonical, p]) => !activeSkus.has(canonical) && ![...p.legacy].some((s) => activeSkus.has(s)),
+  );
   if (sinProducto.length === 0) {
-    console.log('  ok  Todo typeKey de bobina tiene su producto de venta directa.');
+    console.log('  ok  Todo pool de bobinas tiene su producto de venta directa activo.');
   } else {
-    console.log(`  !!  ${sinProducto.length} tipo(s) de bobina SIN producto de venta directa:`);
-    for (const row of sinProducto) {
-      console.log(`      ${row.typeKey} (${row.coils} bobina[s]) → falta el SKU ${row.sku}`);
+    console.log(`  !!  ${String(sinProducto.length)} pool(s) SIN producto de venta activo:`);
+    for (const [canonical, p] of sinProducto) {
+      console.log(`      ${canonical} (${String(p.coils)} bobina[s])`);
     }
     console.log(
-      '      Se crean solos al dar de alta la próxima bobina de ese tipo; para venderlas ya, ' +
-        'créalos en el catálogo de Trading con ese SKU exacto.',
+      '      Se crea solo al dar de alta la próxima bobina de ese pool (D-252); el catálogo no ' +
+        'deja crearlo a mano (D-257).',
     );
   }
 
-  const huerfanos = tradingProducts.filter((p) => !expectedSkus.has(p.sku));
+  const huerfanos = tradingProducts.filter((p) => p.isActive && !named.has(p.sku));
   if (huerfanos.length === 0) {
-    console.log('  ok  Ningún producto BOB… quedó sin bobinas que lo nombren.');
+    console.log('  ok  Ningún producto BOB… activo quedó sin bobinas que lo nombren.');
   } else {
-    console.log(`  ??  ${huerfanos.length} producto(s) BOB… que ninguna bobina nombra:`);
-    for (const p of huerfanos) {
-      console.log(`      ${p.sku}${p.isActive ? '' : ' (inactivo)'} — ${p.name}`);
-    }
     console.log(
-      '      Puede ser un tipo de bobina que se agotó y se anuló, un SKU creado a mano, o un ' +
-        'resto de la forma vieja del SKU (D-168). NO se migran ni se borran desde acá: primero ' +
-        'hay que ver si alguno está cotizado o vendido.',
+      `  ??  ${String(huerfanos.length)} producto(s) BOB… activos que ninguna bobina nombra:`,
+    );
+    for (const p of huerfanos) console.log(`      ${p.sku} — ${p.name}`);
+    console.log(
+      '      Un suelto cargado a mano (como BOB38AZUL de COT-000002) o un pool que se agotó. ' +
+        'La normalización (pnpm normalize:coil-skus) los lista y los une; desde acá no se toca nada.',
     );
   }
 }
-
 main()
   .catch((err: unknown) => {
     console.error(err);

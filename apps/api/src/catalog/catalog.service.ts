@@ -238,7 +238,7 @@ export class CatalogService {
       if (open.length > 0) {
         const shown = open.slice(0, 3).join(', ');
         throw new BadRequestException(
-          `${before.sku} es el producto de venta de ${String(open.length)} bobina(s) abierta(s) con saldo (${shown}${open.length > 3 ? '…' : ''}): ciérralas o véndelas antes de desactivarlo`,
+          `${before.sku} es el producto de venta de ${String(open.length)} bobina(s) con saldo (${shown}${open.length > 3 ? '…' : ''}): ciérralas o véndelas antes de desactivarlo`,
         );
       }
     }

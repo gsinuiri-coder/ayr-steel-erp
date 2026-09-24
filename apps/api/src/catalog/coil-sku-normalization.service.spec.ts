@@ -48,6 +48,8 @@ interface Fake {
   finishDensity?: Record<string, string>;
   openQuotations?: { productId: string; seq: number }[];
   openOrders?: { productId: string; seq: number }[];
+  /** Productos con kardex propio (revisión cruzada P2-3). */
+  ownMovements?: { productId: string; count: number }[];
 }
 
 function fakeTx(f: Fake) {
@@ -96,6 +98,14 @@ function fakeTx(f: Fake) {
         .mockResolvedValue((f.colors ?? ['ROJO', 'ROJO-3020', 'AZUL']).map((code) => ({ code }))),
     },
     coil: { findMany: jest.fn().mockResolvedValue(coils) },
+    inventoryMovement: {
+      groupBy: jest
+        .fn()
+        .mockResolvedValue(
+          (f.ownMovements ?? []).map((m) => ({ itemId: m.productId, _count: { _all: m.count } })),
+        ),
+    },
+    reservation: { groupBy: jest.fn().mockResolvedValue([]) },
     inventoryBalance: {
       findMany: jest
         .fn()
@@ -196,6 +206,22 @@ describe('buildPlan', () => {
     );
     expect(plan.merges[0]?.principal.id).toBe('canon');
     expect(plan.merges[0]?.renamePrincipal).toBe(false);
+  });
+
+  it('un producto a unir con kardex propio es una parada ya en el dry-run (P2-3)', async () => {
+    const plan = await buildPlan(
+      asTx(
+        fakeTx({
+          products: [
+            { id: 'a', sku: 'BOB38ROJO', uses: 5 },
+            { id: 'b', sku: 'BOB0.38ROJO', uses: 1 },
+          ],
+          coils: [{ id: 'c1', code: 'B-1', colorCode: 'ROJO', kg: '100' }],
+          ownMovements: [{ productId: 'b', count: 2 }],
+        }),
+      ),
+    );
+    expect(plan.stops.join(' ')).toMatch(/BOB0\.38ROJO tiene saldo propio \(2 movimientos/);
   });
 
   it('un empate al elegir el principal es una parada', async () => {

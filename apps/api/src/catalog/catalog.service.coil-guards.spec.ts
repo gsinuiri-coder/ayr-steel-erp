@@ -90,7 +90,7 @@ describe('CatalogService — guards de los productos de venta de bobina', () => 
     prisma.product.findUnique.mockResolvedValue(product());
     (openCoilCodesInPool as jest.Mock).mockResolvedValue(['B-1', 'B-2', 'B-3', 'B-4']);
     await expect(service.update(ACTOR, 'p-1', { isActive: false })).rejects.toThrow(
-      /4 bobina\(s\) abierta\(s\) con saldo \(B-1, B-2, B-3…\)/,
+      /4 bobina\(s\) con saldo \(B-1, B-2, B-3…\)/,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -99,7 +99,7 @@ describe('CatalogService — guards de los productos de venta de bobina', () => 
     prisma.product.findUnique.mockResolvedValue(product());
     (openCoilCodesInPool as jest.Mock).mockResolvedValue(['B-1']);
     await expect(service.update(ACTOR, 'p-1', { isActive: false })).rejects.toThrow(
-      /1 bobina\(s\) abierta\(s\) con saldo \(B-1\):/,
+      /1 bobina\(s\) con saldo \(B-1\):/,
     );
   });
 

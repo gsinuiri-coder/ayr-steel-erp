@@ -5,6 +5,7 @@ import {
   FinishKind,
   InventoryItemType,
   QuotationStatus,
+  ReservationStatus,
   SalesOrderStatus,
   type Prisma,
 } from '@prisma/client';
@@ -522,6 +523,40 @@ export async function buildPlan(tx: Prisma.TransactionClient): Promise<Normaliza
   // Documentos abiertos de los productos que se van a unir (parada del dueño: se listan).
   const mergedIds = merges.flatMap((g) => g.merged.map((m) => m.id));
   const skuById = new Map(merges.flatMap((g) => g.merged.map((m) => [m.id, m.sku] as const)));
+
+  // Revisión cruzada RF-S4b (P2-3): la parada de `mergeProductInto` —un producto a unir con
+  // kardex o reservas propias— se ve ya en el dry-run, no recién cuando el execute se cae.
+  if (mergedIds.length > 0) {
+    const [ownMovements, ownReservations] = await Promise.all([
+      tx.inventoryMovement.groupBy({
+        by: ['itemId'],
+        where: { itemType: InventoryItemType.PRODUCT, itemId: { in: mergedIds } },
+        _count: { _all: true },
+      }),
+      tx.reservation.groupBy({
+        by: ['itemId'],
+        where: {
+          itemType: InventoryItemType.PRODUCT,
+          itemId: { in: mergedIds },
+          status: ReservationStatus.ACTIVE,
+        },
+        _count: { _all: true },
+      }),
+    ]);
+    const counts = new Map<string, { movements: number; reservations: number }>();
+    for (const m of ownMovements) {
+      counts.set(m.itemId, { movements: m._count._all, reservations: 0 });
+    }
+    for (const r of ownReservations) {
+      const c = counts.get(r.itemId) ?? { movements: 0, reservations: 0 };
+      counts.set(r.itemId, { ...c, reservations: r._count._all });
+    }
+    for (const [id, c] of counts) {
+      stops.push(
+        `${skuById.get(id) ?? id} tiene saldo propio (${String(c.movements)} movimientos de kardex, ${String(c.reservations)} reservas vivas): la unión la decide el dueño`,
+      );
+    }
+  }
   const openDocuments: NormalizationOpenDocument[] = [];
   if (mergedIds.length > 0) {
     const [quotations, orders] = await Promise.all([

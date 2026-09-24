@@ -281,7 +281,12 @@ const isoDateSchema = z
 
 const qtySchema = decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG });
 const priceSchema = decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY });
-/** D-255: un importe que puede ser cero (el IGV del papel de una línea inafecta). */
+/**
+ * D-255: un importe no negativo, para el IGV del papel. El **cero** pasa el schema pero no
+ * `paperTriplet`, que exige el 18 % a menos de un céntimo: una línea inafecta no trae su trío y
+ * el IGV se calcula (revisión cruzada RF-S4b, P2-9). La misma tolerancia de un céntimo es la
+ * máxima diferencia de IGV por línea que un cliente del API puede mandar.
+ */
 const moneyAmountSchema = decimalStringSchema('MONEY', { max: MAX_VALUE.MONEY });
 
 /**

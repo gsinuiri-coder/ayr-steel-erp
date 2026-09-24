@@ -299,8 +299,9 @@ export async function lineCoilPool(
 }
 
 /**
- * D-257 (aclaración): las bobinas **abiertas con saldo** del pool de un producto de venta de
- * bobina, sin mirar reservas ni OP. Es lo que impide desactivarlo: apagar el `BOB…` canónico
+ * D-257 (aclaración): las bobinas **abiertas o cerradas con saldo** del pool de un producto de
+ * venta de bobina, sin mirar reservas ni OP. Las cerradas cuentan porque D-116 también las vende
+ * (revisión cruzada RF-S4b, P2-7): apagar el producto las dejaría sin producto de venta igual. Es lo que impide desactivarlo: apagar el `BOB…` canónico
  * deja sin producto de venta a todas esas bobinas («no existe el producto de venta directa»).
  * Devuelve los códigos, para nombrarlos en el rechazo.
  */
@@ -313,7 +314,7 @@ export async function openCoilCodesInPool(
   const coils = await tx.coil.findMany({
     where: {
       kind: CoilKind.COIL,
-      status: CoilStatus.OPEN,
+      status: { in: [CoilStatus.OPEN, CoilStatus.CLOSED] },
       thicknessMm: toFixedString(key.thicknessMm, 'MM'),
     },
     select: {
