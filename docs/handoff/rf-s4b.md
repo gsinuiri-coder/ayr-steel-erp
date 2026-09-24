@@ -167,6 +167,14 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
 
 **Rollback.**
 
+- **Registro de la ventana (2026-09-24), ya vencido:** la API anterior era
+  `ayr-steel-erp-api-00042-tdb` (`git-sha=0e1124b`). Antes del execute de normalize, el rollback
+  exacto era `cmd /c gcloud run services update-traffic ayr-steel-erp-api --project
+ayr-steel-erp --region us-central1 --to-revisions ayr-steel-erp-api-00042-tdb=100`. El
+  execute terminó a las 00:37 Lima; desde ahí ese comando solo vale después de `--revert`, y
+  después de reabrir el sistema ya no vale (D-261). Resultado de la ventana en
+  `docs/handoff/ventana-rf-s4b.md`.
+
 - Antes del execute de la normalización: la migración es aditiva, así que alcanza con volver la
   API al SHA anterior; no hace falta revertir la migración.
 - Después del execute y **antes de reabrir el sistema**: primero `normalize:coil-skus --revert`

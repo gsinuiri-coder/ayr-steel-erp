@@ -27,7 +27,39 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   (`rf-s4b-repaso.md`), los dos en sesiones distintas de Claude Code, **el mismo modelo** que
   escribió la rama. Los commits posteriores al repaso (`eeac84b` y los del ensayo: `c8648f6`,
   `3d15ad8`, el timeout de la edición de cotizaciones) no tuvieron ningún pase. Sigue pendiente
-  hasta que haya un revisor de otro modelo o persona.
+  hasta que haya un revisor de otro modelo o persona. **2026-09-24, ventana:** desplegado en
+  production sin cambios de runtime; se suma `57b10c9` (D-262, `db:prod` sin seed), escrito y
+  mergeado en la misma ventana sin pase de revisión.
+
+## Ventana de producción RF-S4b (2026-09-24, 00:06–01:05 Lima)
+
+Detalle en `docs/handoff/ventana-rf-s4b.md`; salidas en `local-data/rf-s4b/ventana/`.
+
+- **Respaldo** `respaldo-pre-rf-s4b-20260924` (`br-twilight-bar-aed9b0m7`).
+- **Migración** `20260923180000_rf_s4b_products_merged_into` en 20 s, **sin seed** (D-262: el
+  script sembraba y no estaba en el runbook; se vio al leerlo antes de correrlo). `migrate diff`
+  = drift conocido exacto + la migración.
+- **API** `ayr-steel-erp-api-00043-gr7`, `git-sha=e247f40`, 100 %. **Web** `main` = `57b10c9`
+  (PR #14 mergeado, CI verde run 35959589794), Vercel `success`.
+- **Normalize** 9 renombres + 2 uniones, 0 paradas; reportes iguales al centavo, `BOB…` 11/3.
+- **Sweep** 36 abiertos corregidos (28 cotizaciones, 8 pedidos, 92 líneas), máx. S/ 0.0055;
+  reportes iguales. Contra demo, única diferencia COT-000002 ↔ PED-000042 (confirmada en el
+  ensayo).
+- **Smokes** verdes antes y después del merge. COT-000002 en 14 679.00 atada a
+  SALDO-ALZ-AZUL-5002-0.38-4194-7 y COT-000011 en 13 824.00 atada a
+  SALDO-ALZ-ROJO-3020-0.38-3840-12, las dos con Confirmar habilitado. **No se confirmó nada**:
+  confirmar (pedido y reserva) es del owner.
+- **Herramienta nueva:** `scripts/snapshot-reports.mjs` (`snapshot`, `quotation`, `compare`;
+  `--ephemeral-admin`), solo GET salvo el login.
+
+**Pendientes que deja la ventana:**
+
+- COT-000053 y COT-000054 (anuladas) en (c) «editadas a propósito»: importes ×6 del papel por un
+  cambio de precio del 22/09 que pasó el precio por plancha a precio por metro (planchas de 6 m).
+  Rehechas como COT-000072/073. Revisión del owner; diagnóstico en el handoff.
+- `ADMIN_PASSWORD` de `.env.setup` da 401 contra production (credencial vieja).
+- `smoke:prod --base-url https://v2.mareliac.pe` lo rechaza el guard de dominio.
+- La vista de la cotización no muestra la bobina atada (solo el producto).
 
 ## RF-S4b — correcciones de la revisión cruzada, repaso y ensayo en demo (2026-09-24)
 

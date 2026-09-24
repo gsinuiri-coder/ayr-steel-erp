@@ -17,6 +17,11 @@ Cuatro ramas de Neon, cuatro propósitos que no se mezclan. **Ninguna se borra n
   corre únicamente con `pnpm db:prod --with-seed` (D-262). Los runbooks de ventanas anteriores
   que dicen «`pnpm db:prod`» son registro histórico: en esas ventanas también sembraba.
 - **Verificación post-deploy: `pnpm smoke:prod`** — solo lectura. Ver abajo.
+- **Foto de reportes de ventana: `node scripts/snapshot-reports.mjs`** — solo GET (más el
+  login). `snapshot <etiqueta> --out <dir>` guarda Inventario valorizado, Ventas y margen
+  (agosto y año) y el catálogo `BOB…`; `compare a.json b.json` sale con 1 si algo difiere;
+  `quotation <COT-…>` lee una cotización sin tocarla. Con `--ephemeral-admin` usa el admin
+  efímero de `smoke:prod` (se crea y se borra en la misma corrida).
 - **Diagnóstico de precios: `pnpm check:price-floor --branch production`** — solo lectura
   (D-163/D-164). Lista los SKU activos cuyo precio de lista quedó por debajo del piso duro.
   Es el insumo para decidir el aviso de mínimo en el mostrador; no escribe nada. Con
