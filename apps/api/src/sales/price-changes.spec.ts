@@ -15,14 +15,17 @@ const priced = (lineNumber: number, productId: string, unit: string): PricedLine
 });
 
 function fakeTx() {
-  const createMany = jest.fn().mockResolvedValue({ count: 0 });
+  const createMany = jest
+    .fn<Promise<{ count: number }>, [{ data: Record<string, unknown>[] }]>()
+    .mockResolvedValue({ count: 0 });
   return {
     tx: { salesPriceChange: { createMany } } as unknown as Prisma.TransactionClient,
     createMany,
   };
 }
-const rows = (createMany: jest.Mock) =>
-  (createMany.mock.calls[0]?.[0] as { data: Record<string, unknown>[] } | undefined)?.data ?? [];
+const rows = (
+  createMany: jest.Mock<Promise<{ count: number }>, [{ data: Record<string, unknown>[] }]>,
+) => createMany.mock.calls[0]?.[0].data ?? [];
 
 describe('recordPriceChanges', () => {
   it('registra el precio que cambió en el mismo producto', async () => {

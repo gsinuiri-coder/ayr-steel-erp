@@ -1,4 +1,10 @@
-import { Decimal, toDecimal, type DecimalInput } from '@ayr/shared';
+import {
+  closingPartTotals,
+  Decimal,
+  toDecimal,
+  type DecimalInput,
+  type SalesLineTotals,
+} from '@ayr/shared';
 
 /**
  * Aritmética y reglas de calendario del módulo (D-072..D-075).
@@ -97,4 +103,76 @@ export function proratedQty(
   const ordered = toDecimal(orderedQty);
   if (ordered.lte(0)) return new Decimal(0);
   return toDecimal(reserveQty).times(toDecimal(dispatchQty)).div(ordered);
+}
+
+/** D-265: cómo se calcula una parte de una línea facturada o acreditada. */
+export type PartKind = 'FULL' | 'CLOSING' | 'PART';
+
+/**
+ * D-169/D-265: la línea **entera** a su propio precio copia lo guardado; la parte que **agota lo
+ * pendiente** a su propio precio toma el resto; cualquier otra (o con precio editado) se
+ * recalcula desde el unitario.
+ */
+export function partKind(input: {
+  qty: DecimalInput;
+  lineQty: DecimalInput;
+  pending: DecimalInput;
+  priceEdited: boolean;
+}): PartKind {
+  if (input.priceEdited) return 'PART';
+  const qty = toDecimal(input.qty);
+  if (qty.equals(toDecimal(input.lineQty))) return 'FULL';
+  return qty.equals(toDecimal(input.pending)) ? 'CLOSING' : 'PART';
+}
+
+type Amount = { toString(): string } | null;
+interface PartAmounts {
+  subtotal: Decimal;
+  igv: Decimal;
+  total: Decimal;
+}
+const amountsOf = (a: { subtotalPen: Amount; igvPen: Amount; totalPen: Amount }): PartAmounts => ({
+  subtotal: toDecimal((a.subtotalPen ?? 0).toString()),
+  igv: toDecimal((a.igvPen ?? 0).toString()),
+  total: toDecimal((a.totalPen ?? 0).toString()),
+});
+
+/**
+ * D-265: lo ya facturado (o acreditado) de cada línea —lo de otros documentos y lo de las líneas
+ * anteriores de este mismo— y los importes de la parte siguiente.
+ */
+export class PartLedger {
+  private readonly done = new Map<string, PartAmounts>();
+
+  constructor(
+    previous: readonly (readonly [
+      string,
+      { subtotalPen: Amount; igvPen: Amount; totalPen: Amount },
+    ])[],
+  ) {
+    for (const [key, sum] of previous) this.done.set(key, amountsOf(sum));
+  }
+
+  /** Los importes de una parte de la línea `key`, y la anota como hecha. */
+  part(
+    key: string,
+    line: { subtotalPen: Amount; igvPen: Amount; totalPen: Amount },
+    kind: PartKind,
+    recompute: () => SalesLineTotals,
+  ): SalesLineTotals {
+    const stored = amountsOf(line);
+    const already = this.done.get(key) ?? amountsOf({ subtotalPen: 0, igvPen: 0, totalPen: 0 });
+    const totals =
+      kind === 'FULL'
+        ? stored
+        : kind === 'CLOSING'
+          ? closingPartTotals(stored, already, recompute())
+          : recompute();
+    this.done.set(key, {
+      subtotal: already.subtotal.plus(totals.subtotal),
+      igv: already.igv.plus(totals.igv),
+      total: already.total.plus(totals.total),
+    });
+    return totals;
+  }
 }

@@ -1,5 +1,6 @@
 import {
   closingPartTotals,
+  type Decimal,
   DERIVED_UNIT_VALUE_DECIMALS,
   derivedUnitValue,
   documentBalance,
@@ -17,6 +18,8 @@ import {
   dueDateFor,
   exceedsOrderTotal,
   isStalled,
+  PartLedger,
+  partKind,
   pendingQty,
   proratedQty,
 } from './invoicing-math';
@@ -370,48 +373,79 @@ describe('sumLineTotals (D-169)', () => {
   });
 });
 
-describe('closingPartTotals — la parte que cierra una línea con trío del papel (D-265)', () => {
+describe('PartLedger y partKind — facturar o acreditar en partes una línea con trío (D-265)', () => {
   // FFA1-1350: 4 194 kg por 12 439.83 / 2 239.17 / 14 679.00 (IGV como resta, D-255).
   const QTY = '4194';
-  const stored = { subtotal: '12439.83', igv: '2239.17', total: '14679.00' };
-  const unit = derivedUnitValue(QTY, stored.subtotal).toFixed(DERIVED_UNIT_VALUE_DECIMALS);
-  const part = (qty: string) => salesTotals([{ qty, unitPricePen: unit }]);
+  const line = { subtotalPen: '12439.8300', igvPen: '2239.1700', totalPen: '14679.0000' };
+  const unit = derivedUnitValue(QTY, line.subtotalPen).toFixed(DERIVED_UNIT_VALUE_DECIMALS);
+  const recompute = (qty: string) => () => salesTotals([{ qty, unitPricePen: unit }]);
 
-  /** Como lo hace el servicio: cada parte desde el unitario, la última con el resto. */
-  function inParts(qtys: string[]) {
-    let already = { subtotal: toDecimal('0'), igv: toDecimal('0'), total: toDecimal('0') };
-    const parts = qtys.map((qty, i) => {
-      const t = i === qtys.length - 1 ? closingPartTotals(stored, already, part(qty)) : part(qty);
-      already = {
-        subtotal: already.subtotal.plus(t.subtotal),
-        igv: already.igv.plus(t.igv),
-        total: already.total.plus(t.total),
-      };
-      return t;
+  /** Como el servicio: cada parte con su tipo, sobre el mismo libro. */
+  function inParts(qtys: string[], ledger = new PartLedger([])) {
+    let done = toDecimal('0');
+    return qtys.map((qty) => {
+      const pending = toDecimal(QTY).minus(done);
+      done = done.plus(qty);
+      const kind = partKind({ qty, lineQty: QTY, pending, priceEdited: false });
+      return ledger.part('l-1', line, kind, recompute(qty));
     });
-    return { parts, sum: already };
   }
+  const sum = (parts: { subtotal: Decimal; igv: Decimal; total: Decimal }[]) =>
+    parts.reduce(
+      (a, p) => ({
+        subtotal: a.subtotal.plus(p.subtotal),
+        igv: a.igv.plus(p.igv),
+        total: a.total.plus(p.total),
+      }),
+      { subtotal: toDecimal('0'), igv: toDecimal('0'), total: toDecimal('0') },
+    );
 
   it.each([[['2097', '2097']], [['1', '4193']], [['1000', '1000', '2194']]])(
     'en partes %j la suma es exactamente el papel',
     (qtys) => {
-      const { sum } = inParts(qtys);
-      expect(sum.subtotal.toFixed(4)).toBe('12439.8300');
-      expect(sum.igv.toFixed(4)).toBe('2239.1700');
-      expect(sum.total.toFixed(4)).toBe('14679.0000');
+      const total = sum(inParts(qtys));
+      expect(total.subtotal.toFixed(4)).toBe('12439.8300');
+      expect(total.igv.toFixed(4)).toBe('2239.1700');
+      expect(total.total.toFixed(4)).toBe('14679.0000');
     },
   );
 
   it('sin el resto, dos mitades dejaban 0.0006 sin cubrir (el defecto)', () => {
-    const a = part('2097');
-    const b = part('2097');
+    const a = recompute('2097')();
+    const b = recompute('2097')();
     expect(a.igv.plus(b.igv).toFixed(4)).toBe('2239.1694');
     expect(a.total.plus(b.total).toFixed(4)).toBe('14678.9994');
   });
 
+  it('lo facturado en otros documentos cuenta: la segunda mitad, en otra factura, cierra igual', () => {
+    const [first] = inParts(['2097']);
+    const ledger = new PartLedger([
+      ['l-1', { subtotalPen: first!.subtotal, igvPen: first!.igv, totalPen: first!.total }],
+    ]);
+    const second = ledger.part('l-1', line, 'CLOSING', recompute('2097'));
+    const total = sum([first!, second]);
+    expect(total.igv.toFixed(4)).toBe('2239.1700');
+    expect(total.total.toFixed(4)).toBe('14679.0000');
+  });
+
+  it('la línea entera copia lo guardado', () => {
+    const [whole] = inParts([QTY]);
+    expect(whole!.total.toFixed(4)).toBe('14679.0000');
+  });
+
+  it('partKind: entera, la que cierra, una parte, y el precio editado siempre recalcula', () => {
+    expect(partKind({ qty: '4194', lineQty: QTY, pending: QTY, priceEdited: false })).toBe('FULL');
+    expect(partKind({ qty: '2097', lineQty: QTY, pending: '2097', priceEdited: false })).toBe(
+      'CLOSING',
+    );
+    expect(partKind({ qty: '1000', lineQty: QTY, pending: QTY, priceEdited: false })).toBe('PART');
+    expect(partKind({ qty: '4194', lineQty: QTY, pending: QTY, priceEdited: true })).toBe('PART');
+  });
+
   it('si una parte anterior se facturó a otro precio, el resto no se usa: vuelve el recálculo', () => {
     const otherPrice = salesTotals([{ qty: '2097', unitPricePen: '2.5000' }]);
-    const recomputed = part('2097');
+    const recomputed = recompute('2097')();
+    const stored = { subtotal: line.subtotalPen, igv: line.igvPen, total: line.totalPen };
     expect(closingPartTotals(stored, otherPrice, recomputed)).toBe(recomputed);
   });
 });
