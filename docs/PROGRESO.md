@@ -79,13 +79,31 @@ que no se commitea.
    pool en el servidor. Ahora tiene 30 s, como la de pedidos.
 4. **Falta `.env.setup` en un worktree nuevo:** se agregó como paso 0 del runbook.
 
-**Pendiente de decisión del dueño (bloquea el paso de COT-000002 de la ventana):**
+**El trío del papel (decidido por el dueño, opción A, registrada en D-255):**
 
-- El Excel real trae el IGV de FFA1-1350 con **5 decimales** (2239.16958, el 18 % exacto).
-- Valor más IGV da 14 679.00058, que **no** es el total del papel (14 679.000).
-- `paperTriplet` exige que la suma cuadre exacta, así que descarta el trío y la línea queda en
-  14 679.0006. D-255 suponía que el IGV del papel era la resta (2239.169).
-- La recomendación está en el handoff.
+- Si valor + IGV − total está a S/ 0.01 o menos, se guardan el total del papel, el valor
+  redondeado a dos decimales y el IGV como la resta. Ese IGV tiene que quedar a S/ 0.01 o menos
+  del 18 %.
+- FFA1-1350 queda en 12 439.83 / 2 239.17 / 14 679.00.
+- Con esta regla, el dry-run del barrido en demo corrige **36 documentos abiertos** (27
+  cotizaciones y 9 pedidos, 92 líneas), no solo COT-000002. La diferencia máxima es S/ 0.005 en
+  el valor y S/ 0.003 en el total, y ningún comprobante aparece en dos documentos. Ese es el
+  criterio exacto del runbook para production.
+
+**Hallazgos del repaso atendidos después del cierre del informe:**
+
+- P1-B, con dos candados:
+  - `ask` de `.claude/settings.json` para las CLI que escriben datos reales.
+  - Las CLI no corren contra production sin `--confirm-production`, ni siquiera en dry-run
+    (D-261).
+- La línea «editada a propósito» (con una edición de precio registrada) va a (c).
+- La marca del importador tampoco entra por el pedido directo ni por el duplicado.
+- `--revert` solo dentro de la ventana (D-261).
+- El spec de D-153 (`comprobante-manual-ui`) arma su pedido importado por el flujo real
+  (importar y confirmar). La primera CI sobre `9b723cd` lo había mostrado en rojo: tipeaba la
+  marca que D-256.3 prohíbe.
+
+**SHA de runtime para la ventana: `e247f40`.** Los commits posteriores son solo documentación.
 
 ## RF-S4b — SKU canónico de bobina, pool de venta y el importe que manda (2026-09-23)
 

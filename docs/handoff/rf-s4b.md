@@ -22,52 +22,48 @@ con OK del dueño comando por comando (D-251).
 ## Estado y calendario (actualizado 2026-09-24)
 
 - **PR:** [#14](https://github.com/gsinuiri-coder/ayr-steel-erp/pull/14), abierto hacia `main`,
-  **sin mergear**.
+  **sin mergear**. **SHA de runtime a desplegar: `e247f40`.** Lo que venga después es solo
+  documentación.
 - **Revisiones:**
   - Pase cruzado: `docs/revision/rf-s4b-cruzada.md`. Tenía 4 P1; los cuatro están corregidos,
     con tests que fallan contra el código anterior.
-  - Repaso del delta: `docs/revision/rf-s4b-repaso.md`. P1-A (cobertura) corregido; **P1-B queda
-    para el dueño** (ver abajo).
+  - Repaso del delta: `docs/revision/rf-s4b-repaso.md`. P1-A (cobertura: el gate pasa) y P1-B
+    (`ask` y `--confirm-production`, D-261) corregidos.
   - Todas las sesiones fueron de Claude Code: sigue **PENDIENTE DE REVISIÓN INDEPENDIENTE** en
     `PROGRESO.md`.
-- **Ensayo en demo:** completo. Resultados y defectos encontrados en `PROGRESO.md` («correcciones
-  de la revisión cruzada, repaso y ensayo en demo»); listas en `local-data/rf-s4b/ensayo-demo/`.
-- **Ventana: esta noche (jueves 2026-09-24).** Antes del paso 0 del runbook tienen que cumplirse
-  estas cuatro condiciones:
-  1. **CI verde job por job**, incluido el gate de Sonar, sobre el SHA final.
-  2. **P1-B del repaso, a cargo del dueño:** agregar a `permissions.ask` de
-     `.claude/settings.json` las líneas de abajo. El agente no puede hacerlo: el clasificador
-     rechaza la auto-modificación de sus permisos.
-     ```
-     "Bash(pnpm normalize:*)", "Bash(pnpm sweep:*)", "Bash(pnpm import:*)",
-     "Bash(pnpm db:reset-dev*)", "Bash(node scripts/normalize-coil-skus.mjs*)",
-     "Bash(node scripts/sweep-imported-documents.mjs*)", "Bash(node scripts/db-reset-dev.mjs*)",
-     "Bash(node scripts/import-initial-inventory.mjs*)", "Bash(node scripts/run-api-cli.mjs*)"
-     ```
-  3. **Decisión del dueño sobre el trío del papel** (ver «Pendiente de decisión»). Sin ella,
-     COT-000002 se corrige de bobina pero queda en 14 679.0006, y el paso 10 no se cumple.
-  4. OK del dueño a cada comando de producción (D-251).
+- **Ensayo en demo:** completo. Resultados y defectos encontrados en `PROGRESO.md`; listas en
+  `local-data/rf-s4b/ensayo-demo/`.
+- **Ventana: esta noche (jueves 2026-09-24), en una sesión nueva.** Condiciones:
+  1. CI verde job por job sobre `e247f40`, incluidos el E2E, el smoke de Neon `ci` y el gate de
+     Sonar (ver «CI del PR #14»).
+  2. OK del dueño a cada comando de producción (D-251). Los comandos de las CLI de dominio están
+     en el `ask` de `.claude/settings.json`.
 
-### Pendiente de decisión: el IGV del papel con más decimales que el total
+### Decidido: el IGV del papel con más decimales que el total (D-255, opción A)
 
-El export trae, para FFA1-1350: valor 12 439.831, IGV **2 239.16958** y precio de venta
-14 679.000. Valor más IGV da 14 679.00058, que no es el total, así que `paperTriplet` (que exige
-que la suma cuadre exacta) descarta el trío y la línea recalcula el IGV al 18 %: 2 239.1696, total
-14 679.0006. La cobranza redondea al céntimo hacia arriba (D-169), así que cobraría 14 679.01.
-
-- **Recomendación (A):** aceptar el trío cuando valor + IGV − total esté a ≤ S/ 0.01, y guardar
-  **el total del papel y el IGV como la resta** (14 679.000 − 12 439.831 = 2 239.169). Es lo que
-  D-255 ya dice («el IGV es la resta») y lo que el cliente pagó. El importador y el barrido lo
-  aplicarían igual; COT-000002 quedaría en 14 679.00.
-- **(B)** Dejarlo como está: el total queda con diezmilésimas y el céntimo se absorbe en la
-  cobranza.
+El export trae, para FFA1-1350: valor 12 439.831, IGV 2 239.16958 y precio de venta 14 679.000.
+Si valor + IGV − total está a S/ 0.01 o menos, se guardan el total del papel, el valor
+redondeado a dos decimales y el IGV como la resta, siempre que ese IGV quede a S/ 0.01 o menos
+del 18 %. FFA1-1350 → **12 439.83 / 2 239.17 / 14 679.00**.
 
 ## CI del PR #14
 
-Se completa al empujar el SHA final; ver PROGRESO y el PR. Antes: `dd5ebd4` todo verde con el
-gate al 80.6 %; `6f82c31` y `73510e3` con el gate en **79.3 %** (repaso P1-A). Después de las
-pruebas agregadas, el código nuevo del PR en API + shared cubre el **94.4 %** de sus líneas,
-medido en local cruzando el lcov con `git diff origin/main`.
+Sobre `e247f40` (run 35955313518), **todo verde**:
+
+| Job                                      | Resultado | Duración | Detalle                              |
+| ---------------------------------------- | --------- | -------- | ------------------------------------ |
+| Lint, typecheck y unit                   | pass      | 1m48s    |                                      |
+| E2E Playwright (Postgres del runner)     | pass      | 15m01s   | 390 passed, 3 skipped, 0 flaky       |
+| Smoke E2E y migraciones (Neon `ci`)      | pass      | 25m25s   | aplica la migración de RF-S4b        |
+| Análisis estático (SonarCloud o Semgrep) | pass      | 1m20s    |                                      |
+| SonarCloud Code Analysis (quality gate)  | pass      | —        | gate de cobertura en código nuevo ok |
+| Vercel / Vercel Preview Comments         | pass      | —        |                                      |
+
+- Historia: `dd5ebd4` todo verde con el gate al 80.6 %; `6f82c31` y `73510e3` con el gate en
+  79.3 % (repaso P1-A).
+- `9b723cd`: gate de Sonar en **verde**, pero un rojo de producto en el E2E (el spec de D-153
+  tipeaba la marca que D-256.3 prohíbe, corregido en `e247f40`) y un flaky de `ECONNRESET`.
+- Código nuevo del PR en API + shared: **96.1 %** de líneas, medido en local.
 
 ## Lo que el siguiente tiene que saber antes de tocar esto
 
@@ -110,6 +106,7 @@ Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3
    el drift conocido, y `pnpm db:prod`.
 4. **[Agente, con OK] Deploy API** desde el worktree en el SHA a desplegar:
    `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+   desde el SHA `e247f40`
    con `--update-labels git-sha=<sha>`; verificar `/health` y el label. La API nueva es
    compatible con el web viejo (el formulario viejo sigue mandando `unitPricePen`; una fila de
    bobina del importador viejo queda bloqueada en el preview, que es lo correcto).
@@ -201,10 +198,6 @@ pasaron y 1 se omitió (PSE, infraestructura); aparte, D-256 3/3 y la normalizac
 
 - **Revisión por un revisor que no sea Claude Code** (AGENTS.md §2.2): registrada en
   `PROGRESO.md`, junto con los commits posteriores al repaso, que ningún pase miró.
-- **Decisión del dueño:** el trío del papel con el IGV a más decimales que el total.
-- **P1-B del repaso**, a cargo del dueño: las líneas de `ask` de «Estado y calendario».
-- `.claude/settings.json`: `deny` de lecturas de `.env` por `grep`, `sed`, `cat`, `head` y
-  `tail` (repaso P2-6), sin commitear hasta que el dueño vea el diff.
 - Repaso P2-4 (pool por documento, no por línea) y P2-7 (`import:initial-inventory` sin el
   apagado de salidas): anotados, no corregidos.
 - Pendientes del dueño sin implementar: bobina 3020 en OP ROJO (D-252); pool real de kg con
