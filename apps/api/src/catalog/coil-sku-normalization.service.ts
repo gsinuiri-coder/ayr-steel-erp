@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   BusinessLineCode,
@@ -124,7 +125,10 @@ export class CoilSkuNormalizationService {
   async execute(
     actor: MergeActor,
     options: { acknowledgeOpenDocuments: boolean },
-  ): Promise<{ before: NormalizationPlan; after: NormalizationPlan }> {
+  ): Promise<{ before: NormalizationPlan; after: NormalizationPlan; runId: string }> {
+    // Revisión cruzada RF-S4b (P1-4): cada corrida lleva un id propio, que viaja como
+    // `requestId` de cada evento de auditoría. Es lo que `--revert` usa para saber qué deshacer.
+    const runId = randomUUID();
     return this.prisma.$transaction(
       async (tx) => {
         const before = await buildPlan(tx);
@@ -145,6 +149,7 @@ export class CoilSkuNormalizationService {
               sourceId: source.id,
               targetId: group.principal.id,
               reason,
+              requestId: runId,
             });
           }
         }
@@ -154,6 +159,7 @@ export class CoilSkuNormalizationService {
               productId: group.principal.id,
               newSku: group.canonicalSku,
               reason,
+              requestId: runId,
             });
           }
         }
@@ -170,13 +176,200 @@ export class CoilSkuNormalizationService {
             'La normalización no dejó el catálogo como debía (quedan cambios, paradas o un descuadre de kilos): no se aplicó nada.',
           );
         }
-        return { before, after };
+        // La marca de la corrida: `--revert` busca la última que no se deshizo.
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: NORMALIZATION_RUN_ACTION,
+          entity: 'products',
+          after: { renames: before.renames.length, merges: before.merges.length },
+          reason,
+          requestId: runId,
+        });
+        return { before, after, runId };
+      },
+      { timeout: 300_000, maxWait: 20_000 },
+    );
+  }
+
+  /**
+   * **Plan B de la ventana (revisión cruzada RF-S4b, P1-4): deshacer la última normalización.**
+   * Dry-run: los pasos, en orden inverso al que se aplicaron, y las paradas. Lee **solo** la
+   * auditoría de esa corrida —no reconstruye nada por heurística—, así que deshace exactamente
+   * lo que se hizo.
+   */
+  planRevert(): Promise<RevertPlan> {
+    return this.prisma.$transaction((tx) => buildRevertPlan(tx), { timeout: 120_000 });
+  }
+
+  /**
+   * Aplica la reversa en una transacción: cada renombre vuelve a su SKU anterior y cada unido
+   * vuelve a quedar activo y sin `mergedIntoId`, auditado. Se niega si hay paradas, y al final
+   * comprueba que cada producto quedó exactamente como estaba antes de la corrida.
+   */
+  async executeRevert(actor: MergeActor): Promise<RevertPlan> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const plan = await buildRevertPlan(tx);
+        if (plan.runId === null) {
+          throw new BadRequestException('No hay ninguna normalización sin deshacer.');
+        }
+        if (plan.stops.length > 0) {
+          throw new BadRequestException(`La reversa se detiene:\n- ${plan.stops.join('\n- ')}`);
+        }
+        const reason = `Reversa de la normalización de SKU de bobina ${plan.runId}`;
+        for (const step of plan.steps) {
+          if (step.kind === 'RENAME') {
+            await tx.product.update({ where: { id: step.productId }, data: { sku: step.toSku } });
+            await this.audit.write(tx, {
+              actorId: actor.id,
+              action: 'catalog.product-rename-sku',
+              entity: 'products',
+              entityId: step.productId,
+              before: { sku: step.fromSku },
+              after: { sku: step.toSku },
+              reason,
+            });
+          } else {
+            await tx.product.update({
+              where: { id: step.productId },
+              data: { isActive: true, mergedIntoId: null },
+            });
+            await this.audit.write(tx, {
+              actorId: actor.id,
+              action: 'catalog.product-merge-revert',
+              entity: 'products',
+              entityId: step.productId,
+              before: { isActive: false, mergedIntoId: step.mergedIntoId },
+              after: { isActive: true, mergedIntoId: null },
+              reason,
+            });
+          }
+        }
+        // Cada producto tiene que quedar como estaba antes de la corrida.
+        for (const step of plan.steps) {
+          const now = await tx.product.findUniqueOrThrow({
+            where: { id: step.productId },
+            select: { sku: true, isActive: true, mergedIntoId: true },
+          });
+          const ok =
+            step.kind === 'RENAME'
+              ? now.sku === step.toSku
+              : now.isActive && now.mergedIntoId === null;
+          if (!ok) {
+            throw new BadRequestException(
+              `La reversa no dejó ${now.sku} como estaba: no se aplicó nada.`,
+            );
+          }
+        }
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: NORMALIZATION_REVERT_ACTION,
+          entity: 'products',
+          after: { runId: plan.runId, steps: plan.steps.length },
+          reason,
+        });
+        return plan;
       },
       { timeout: 300_000, maxWait: 20_000 },
     );
   }
 }
 
+/** La marca de una corrida de la normalización y la de su reversa, en `audit_log`. */
+export const NORMALIZATION_RUN_ACTION = 'catalog.coil-sku-normalization';
+export const NORMALIZATION_REVERT_ACTION = 'catalog.coil-sku-normalization-revert';
+
+export type RevertStep =
+  | { kind: 'RENAME'; productId: string; fromSku: string; toSku: string }
+  | { kind: 'UNMERGE'; productId: string; sku: string; mergedIntoId: string };
+
+export interface RevertPlan {
+  /** La corrida que se deshace, o `null` si no queda ninguna sin deshacer. */
+  runId: string | null;
+  at: string | null;
+  /** En el orden en que se aplican: el inverso al de la corrida. */
+  steps: RevertStep[];
+  /** Lo que cambió desde la corrida y hace que deshacerla ya no sea exacto. */
+  stops: string[];
+}
+
+/** El plan de la reversa de la última corrida sin deshacer, leído de la auditoría. */
+export async function buildRevertPlan(tx: Prisma.TransactionClient): Promise<RevertPlan> {
+  const [runs, reverts] = await Promise.all([
+    tx.auditLog.findMany({
+      where: { action: NORMALIZATION_RUN_ACTION },
+      select: { requestId: true, at: true },
+      orderBy: { id: 'desc' },
+    }),
+    tx.auditLog.findMany({
+      where: { action: NORMALIZATION_REVERT_ACTION },
+      select: { after: true },
+    }),
+  ]);
+  const reverted = new Set(
+    reverts.flatMap((r) => {
+      const after = r.after as { runId?: unknown } | null;
+      return typeof after?.runId === 'string' ? [after.runId] : [];
+    }),
+  );
+  const run = runs.find((r) => r.requestId !== null && !reverted.has(r.requestId));
+  if (!run?.requestId) return { runId: null, at: null, steps: [], stops: [] };
+
+  const events = await tx.auditLog.findMany({
+    where: {
+      requestId: run.requestId,
+      action: { in: ['catalog.product-rename-sku', 'catalog.product-merge'] },
+    },
+    select: { action: true, entityId: true, before: true, after: true },
+    orderBy: { id: 'desc' },
+  });
+  const steps: RevertStep[] = [];
+  const stops: string[] = [];
+  for (const event of events) {
+    const productId = event.entityId ?? '';
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { sku: true, isActive: true, mergedIntoId: true, businessLineId: true },
+    });
+    if (!product) {
+      stops.push(`El producto ${productId} de la corrida ya no existe`);
+      continue;
+    }
+    if (event.action === 'catalog.product-rename-sku') {
+      const before = event.before as { sku?: string } | null;
+      const after = event.after as { sku?: string } | null;
+      const toSku = before?.sku ?? '';
+      if (product.sku !== after?.sku) {
+        stops.push(
+          `${product.sku}: la corrida lo dejó como ${after?.sku ?? '?'} y hoy es otro SKU`,
+        );
+        continue;
+      }
+      const taken = await tx.product.findFirst({
+        where: { businessLineId: product.businessLineId, sku: toSku, id: { not: productId } },
+        select: { sku: true },
+      });
+      if (taken) {
+        stops.push(`${product.sku} → ${toSku}: ese SKU ya lo tiene otro producto`);
+        continue;
+      }
+      steps.push({ kind: 'RENAME', productId, fromSku: product.sku, toSku });
+    } else {
+      const after = event.after as { mergedIntoId?: string } | null;
+      if (product.isActive || product.mergedIntoId !== after?.mergedIntoId) {
+        stops.push(`${product.sku}: ya no está unido como lo dejó la corrida`);
+        continue;
+      }
+      steps.push({
+        kind: 'UNMERGE',
+        productId,
+        sku: product.sku,
+        mergedIntoId: product.mergedIntoId ?? '',
+      });
+    }
+  }
+  return { runId: run.requestId, at: run.at.toISOString(), steps, stops };
+}
 /** El plan, calculado dentro de la transacción que se le pase. */
 export async function buildPlan(tx: Prisma.TransactionClient): Promise<NormalizationPlan> {
   const stops: string[] = [];

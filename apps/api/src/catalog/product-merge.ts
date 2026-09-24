@@ -33,7 +33,8 @@ export async function renameProductSku(
   tx: Prisma.TransactionClient,
   audit: Pick<AuditService, 'write'>,
   actor: MergeActor,
-  input: { productId: string; newSku: string; reason: string },
+  /** `requestId` agrupa los eventos de una corrida de la normalización (su reversa lo usa). */
+  input: { productId: string; newSku: string; reason: string; requestId?: string },
 ): Promise<void> {
   const product = await tx.product.findUnique({
     where: { id: input.productId },
@@ -62,6 +63,7 @@ export async function renameProductSku(
     before: { sku: product.sku },
     after: { sku: input.newSku },
     reason: input.reason,
+    ...(input.requestId ? { requestId: input.requestId } : {}),
   });
 }
 
@@ -76,7 +78,7 @@ export async function mergeProductInto(
   tx: Prisma.TransactionClient,
   audit: Pick<AuditService, 'write'>,
   actor: MergeActor,
-  input: { sourceId: string; targetId: string; reason: string },
+  input: { sourceId: string; targetId: string; reason: string; requestId?: string },
 ): Promise<void> {
   if (input.sourceId === input.targetId) {
     throw new BadRequestException('Un producto no se une a sí mismo');
@@ -153,5 +155,6 @@ export async function mergeProductInto(
     before: { sku: source.sku, isActive: source.isActive, mergedIntoId: null },
     after: { isActive: false, mergedIntoId: target.id, mergedIntoSku: target.sku },
     reason: input.reason,
+    ...(input.requestId ? { requestId: input.requestId } : {}),
   });
 }

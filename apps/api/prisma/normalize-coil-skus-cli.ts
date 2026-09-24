@@ -10,6 +10,7 @@
  *   pnpm normalize:coil-skus [--branch local|local-e2e|dev|demo|production]
  *   pnpm normalize:coil-skus --execute [--ack-open-documents] [--branch …]
  *   pnpm normalize:coil-skus --json [--branch …]          (el plan en JSON, para el E2E)
+ *   pnpm normalize:coil-skus --revert [--execute] [--branch …]  (deshace la última corrida)
  *
  * Entorno: `DATABASE_URL`/`DIRECT_URL` y `ADMIN_EMAIL` los pone el wrapper
  * `scripts/normalize-coil-skus.mjs` en el entorno del hijo (regla dura 5).
@@ -24,11 +25,32 @@ import {
   CoilSkuNormalizationService,
   type NormalizationGroup,
   type NormalizationPlan,
+  type RevertPlan,
 } from '../src/catalog/coil-sku-normalization.service';
 
 const execute = process.argv.includes('--execute');
 const acknowledgeOpenDocuments = process.argv.includes('--ack-open-documents');
 const asJson = process.argv.includes('--json');
+// Revisión cruzada RF-S4b (P1-4): el plan B de la ventana. Dry-run por defecto, como todo.
+const revert = process.argv.includes('--revert');
+
+function printRevert(plan: RevertPlan): void {
+  if (plan.runId === null) {
+    console.warn('No hay ninguna normalización sin deshacer.');
+    return;
+  }
+  console.warn(`Corrida a deshacer: ${plan.runId} (${plan.at ?? '?'})`);
+  console.warn(`Pasos (${String(plan.steps.length)}), en este orden:`);
+  for (const step of plan.steps) {
+    console.warn(
+      step.kind === 'RENAME'
+        ? `  renombre ${step.fromSku} → ${step.toSku}`
+        : `  ${step.sku} vuelve a estar activo y deja de estar unido`,
+    );
+  }
+  console.warn(`\nParadas (${String(plan.stops.length)}):`);
+  for (const s of plan.stops) console.error(`  - ${s}`);
+}
 
 function printGroup(group: NormalizationGroup): void {
   const target = group.renamePrincipal
@@ -95,6 +117,21 @@ async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
   try {
     const service = app.get(CoilSkuNormalizationService);
+    if (revert) {
+      const plan = execute
+        ? await service.executeRevert({ id: actorUser.id })
+        : await service.planRevert();
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify(plan)}\n`);
+        return;
+      }
+      console.warn(
+        execute ? 'Reversa aplicada.\n' : 'Simulando la reversa (dry-run): no se escribe nada.\n',
+      );
+      printRevert(plan);
+      if (!execute && plan.stops.length > 0) process.exitCode = 1;
+      return;
+    }
     if (!execute) {
       const plan = await service.plan();
       if (asJson) {

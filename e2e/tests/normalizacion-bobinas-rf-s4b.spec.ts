@@ -51,6 +51,15 @@ interface NormalizationPlanDto {
   kg: { total: string; after: string };
 }
 
+interface RevertPlanDto {
+  runId: string | null;
+  steps: (
+    | { kind: 'RENAME'; productId: string; fromSku: string; toSku: string }
+    | { kind: 'UNMERGE'; productId: string; sku: string; mergedIntoId: string }
+  )[];
+  stops: string[];
+}
+
 function normalize(args: string[]): unknown {
   const res = spawnSync(
     'node',
@@ -185,5 +194,53 @@ test.describe('RF-S4b — normalización de SKU de bobina', () => {
     const again = normalize([]) as NormalizationPlanDto;
     expect(again.merges.find((g) => g.canonicalSku === canonical)).toBeUndefined();
     expect(again.renames.find((g) => g.canonicalSku === canonical)).toBeUndefined();
+
+    // --- Revisión cruzada RF-S4b (P1-4): la vuelta atrás, desde la auditoría ---
+    // Dry-run: la reversa nombra exactamente lo que la corrida hizo con este grupo.
+    const revertPlan = normalize(['--revert']) as RevertPlanDto;
+    expect(revertPlan.stops).toEqual([]);
+    expect(revertPlan.steps).toEqual(
+      expect.arrayContaining([
+        { kind: 'RENAME', productId: product!.id, fromSku: canonical, toSku: legacySku },
+        {
+          kind: 'UNMERGE',
+          productId: looseId,
+          sku: `BOB38${color.code}`,
+          mergedIntoId: product!.id,
+        },
+      ]),
+    );
+    normalize(['--revert', '--execute']);
+    await api.dispose();
+    api = await adminApi(baseURL!);
+
+    // El estado final es el inicial: el SKU viejo en el vendido y el suelto activo otra vez.
+    const principalBack = await getJson<ProductDto & { isActive: boolean }>(
+      api,
+      `/api/catalog/${product!.id}`,
+    );
+    expect(principalBack.sku).toBe(legacySku);
+    expect(principalBack.isActive).toBe(true);
+    const looseBack = await getJson<ProductDto & { isActive: boolean }>(
+      api,
+      `/api/catalog/${looseId}`,
+    );
+    expect(looseBack.sku).toBe(`BOB38${color.code}`);
+    expect(looseBack.isActive).toBe(true);
+    // Los reportes de RF-S4a, iguales otra vez.
+    expect((await getJson<ValuationDto>(api, '/api/reports/inventory-valuation')).totals).toEqual(
+      valuationBefore.totals,
+    );
+    expect(
+      (await getJson<MarginDto>(api, `/api/reports/sales-margin?from=${day}&to=${day}`)).totals,
+    ).toEqual(marginBefore.totals);
+    // Deshecha, no queda nada por deshacer de esa corrida; y la normalización se puede repetir.
+    const replan = normalize([]) as NormalizationPlanDto;
+    expect(replan.merges.find((g) => g.canonicalSku === canonical)).toBeDefined();
+    normalize(['--execute', '--ack-open-documents']);
+    await api.dispose();
+    api = await adminApi(baseURL!);
+    const principalAgain = await getJson<ProductDto>(api, `/api/catalog/${product!.id}`);
+    expect(principalAgain.sku).toBe(canonical);
   });
 });
