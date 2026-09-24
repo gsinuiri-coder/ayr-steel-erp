@@ -1,6 +1,16 @@
 {
   "permissions": {
-    "deny": ["Bash(gh repo sync*)"],
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(grep *)",
+      "Bash(sed -n *)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)"
+    ],
+    "deny": ["Bash(gh repo sync*)", "Read(**/.env*)"],
     "ask": [
       "Bash(git push *)",
       "Bash(git merge *)",
