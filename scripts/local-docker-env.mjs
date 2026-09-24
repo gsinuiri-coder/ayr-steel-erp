@@ -22,6 +22,30 @@ export const DB_NAME_E2E = 'ayr_local_e2e';
 // reconocerla para no pisarla con la de Docker cuando la suite corre en CI.
 export const DB_NAME_CI_E2E = 'ayr_ci_e2e';
 
+/**
+ * Puerto del API que levanta la suite E2E local (`playwright.config.ts`). Por defecto 3000;
+ * `E2E_API_PORT` lo mueve cuando otro proceso ya escucha ahí — un `nuxt dev` de otro proyecto
+ * en `[::1]:3000` contestaba el health check, Playwright lo reusaba creyendo que era el API y la
+ * suite fallaba lejos de la causa. El web sigue en 3001 y le habla al API por este puerto.
+ *
+ * Nunca 4000/4001 (`dev:preview` del dueño, AGENTS.md §3.5) ni los que ya usa la suite: 3001
+ * (web) y 3002 (stub del padrón).
+ */
+export function e2eApiPort(env = process.env) {
+  const raw = (env.E2E_API_PORT ?? '').trim();
+  if (raw === '') return 3000;
+  const port = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    throw new Error(`E2E_API_PORT=${raw} no es un puerto válido (1024–65535).`);
+  }
+  if ([4000, 4001, 3001, 3002].includes(port)) {
+    throw new Error(
+      `E2E_API_PORT=${raw} está reservado: 4000/4001 son del dueño, 3001 del web y 3002 del stub del padrón.`,
+    );
+  }
+  return port;
+}
+
 export function dbUrl(name) {
   return `postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${name}?schema=public`;
 }
