@@ -59,6 +59,18 @@ Handoff: `docs/handoff/fix-post-s4b.md`. UAT: `docs/uat/fix-post-s4b.md`. Rama `
   reglas propuestas están en el handoff.
 - **E2E local bloqueado otra vez:** el `nuxt dev` de otro proyecto del dueño sigue en
   `[::1]:3000`. La suite corrió en CI.
+- **P2 de la autorrevisión de `fix/post-s4b`** (`docs/revision/fix-post-s4b-autorrevision.md`,
+  sin P0/P1). Corregidos en la rama: el orden de `taken` (la cotización propia gana y el orden es
+  fijo) y el texto de la cota de `paperAmounts`. Quedan:
+  - P2-A sin test a nivel servicio (el `groupBy` de borradores); cubierto solo en `invoicing-math`.
+  - D-269 (c) toma el precio de origen **por producto**: con dos líneas del mismo producto a
+    precios distintos, una edición hacia el precio importado de la otra no cuenta. Acotado por
+    el control de «diferencia mayor que el redondeo». Lo cierra la clave de línea estable.
+  - D-269 (b): una corrección producto + precio que además cambia de unidad ya no deja registro.
+  - D-268: el precio por metro sale del precio con IGV ya redondeado; puede diferir 0.0001 del
+    equivalente directo (el total mostrado es el guardado).
+  - Fuera de este flujo: `reservation-guard.ts:108` y `raw-material.ts:542` nombran
+    «COT-… (reserva temporal)» en mensajes de error; falta verificar si un VENDEDOR llega a ellos.
 
 ## Correcciones del delta RF-S4b (2026-09-24)
 

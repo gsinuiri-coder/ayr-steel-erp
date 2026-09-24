@@ -174,10 +174,11 @@ export function lineAmounts(qty: DecimalInput, basis: LineAmountBasis): LineAmou
  * Ese IGV tiene que quedar a un céntimo o menos del 18 % del valor; si no —o si la suma se separa
  * más de un céntimo—, el trío no sirve y la línea sigue con el valor de venta y el IGV calculado.
  *
- * Cota, a propósito (D-255; SM-P2-1 del segundo modelo): las dos tolerancias de un céntimo se
- * encadenan —la de la suma cruda y la del IGV contra el 18 %— y el valor y el total se redondean
- * cada uno por su lado, así que el trío guardado puede quedar hasta unos **S/ 0.02** del papel
- * crudo en el peor caso teórico. Es la política del dueño, no un límite que haya que ajustar.
+ * Cota, a propósito (D-255; SM-P2-1 del segundo modelo): la suma cruda puede separarse del total
+ * hasta un céntimo, y el valor y el total se redondean cada uno por su lado (medio céntimo cada
+ * uno), así que el IGV guardado —la resta— puede quedar hasta unos **S/ 0.02** del IGV crudo del
+ * papel en el peor caso teórico. El chequeo contra el 18 % solo descarta tríos; no agrega
+ * distancia. Es la política del dueño, no un límite que haya que ajustar.
  */
 export function paperAmounts(
   netPen: DecimalInput,

@@ -438,15 +438,20 @@ export async function coilPoolFor(
     ...quoted.map((q) => q.reserveItemId),
   ]);
   const need = toDecimal(qty);
-  // Por qué no se ofrece cada una: la cotización que la ata primero, que es lo que se busca.
+  // Por qué no se ofrece cada una: la primera cotización (por número) que la ata y que quien
+  // lee puede ver; si ninguna, «no disponible» (D-267).
   const takenBy = new Map<string, string>();
   const foreign = (sellerId: string | null) =>
     viewer?.role === Role.VENDEDOR && sellerId !== viewer.id;
-  for (const q of quoted) {
-    const by = foreign(q.quotation.sellerId)
-      ? 'no disponible'
-      : `atada a ${quotationCode(q.quotation.seq)}`;
-    takenBy.set(q.reserveItemId, by);
+  for (const q of [...quoted].sort((a, b) => a.quotation.seq - b.quotation.seq)) {
+    if (foreign(q.quotation.sellerId)) {
+      if (!takenBy.has(q.reserveItemId)) takenBy.set(q.reserveItemId, 'no disponible');
+      continue;
+    }
+    const current = takenBy.get(q.reserveItemId);
+    if (current === undefined || current === 'no disponible') {
+      takenBy.set(q.reserveItemId, `atada a ${quotationCode(q.quotation.seq)}`);
+    }
   }
   for (const m of mounted) if (!takenBy.has(m.coilId)) takenBy.set(m.coilId, 'montada en una OP');
 

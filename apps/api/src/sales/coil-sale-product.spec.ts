@@ -389,6 +389,19 @@ describe('coilPoolFor', () => {
     expect(r.taken).toEqual([{ code: 'B-1', by }]);
   });
 
+  it('atada a una propia y a una ajena: el VENDEDOR ve la suya, en cualquier orden', async () => {
+    const tx = txWith([coil('1', 'ROJO')], { '1': '4194' });
+    const rows = [
+      { reserveItemId: '1', quotation: { seq: 3, sellerId: 'v-1' } },
+      { reserveItemId: '1', quotation: { seq: 2, sellerId: 'v-2' } },
+    ];
+    for (const order of [rows, [...rows].reverse()]) {
+      (tx.quotationItem.findMany as jest.Mock).mockResolvedValue(order);
+      const r = await coilPoolFor(tx, pool, '4194', {}, { id: 'v-1', role: Role.VENDEDOR });
+      expect(r.taken).toEqual([{ code: 'B-1', by: 'atada a COT-000003' }]);
+    }
+  });
+
   it('la propia cotización se excluye de la búsqueda de cotizaciones tomadas', async () => {
     const tx = txWith([coil('1', 'ROJO')], { '1': '4194' });
     await coilPoolFor(tx, pool, '4194', { exceptQuotationIds: ['q-1'] });
