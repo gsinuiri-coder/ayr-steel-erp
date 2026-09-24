@@ -84,7 +84,11 @@ interface FakeOpts {
     salesOrderId?: string;
     productId?: string;
     after: string;
+    /** Hora del cambio; por defecto, fija. */
+    at?: string;
   }[];
+  /** Auditorías del barrido (D-264): documento y hora. */
+  sweepAudits?: { entityId: string; at: string }[];
 }
 function fakePrisma(o: FakeOpts = {}) {
   const coils = o.coils ?? [{ id: 'c-1', code: 'SALDO-AZUL-4194', balance: '4194' }];
@@ -107,8 +111,16 @@ function fakePrisma(o: FakeOpts = {}) {
           salesOrderId: e.salesOrderId ?? null,
           productId: e.productId ?? 'p-loose',
           afterUnitValuePen: D(e.after),
+          changedAt: new Date(e.at ?? '2026-09-24T05:46:00.000Z'),
         })),
       ),
+    },
+    auditLog: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(
+          (o.sweepAudits ?? []).map((a) => ({ entityId: a.entityId, at: new Date(a.at) })),
+        ),
     },
     salesOrderItem: { findFirstOrThrow: jest.fn().mockResolvedValue({ id: 'oi-1' }) },
     coil: {
@@ -610,6 +622,31 @@ describe('ImportedDocumentsSweepService — editada a propósito, por contenido 
     );
     // Todo el producto p-1 (sus dos líneas) y nada de p-2.
     expect([...edited]).toEqual(['p-1']);
+  });
+
+  it('un cambio que dejó el execute de un barrido anterior no cuenta como edición', async () => {
+    // El de la ventana de RF-S4b: misma transacción que su auditoría del barrido.
+    const { service } = build(
+      fakePrisma({
+        quotations: [quotationRow([coilLine(1)])],
+        priceEdits: [{ quotationId: 'q-1', after: '2.9661', at: '2026-09-24T05:46:00.120Z' }],
+        sweepAudits: [{ entityId: 'q-1', at: '2026-09-24T05:46:00.118Z' }],
+      }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    expect(documents[0]?.findings[0]?.unpaired).toBeNull();
+  });
+
+  it('una edición humana horas después de la auditoría del barrido sí cuenta', async () => {
+    const { service } = build(
+      fakePrisma({
+        quotations: [quotationRow([coilLine(1)])],
+        priceEdits: [{ quotationId: 'q-1', after: '2.9661', at: '2026-09-24T15:00:00.000Z' }],
+        sweepAudits: [{ entityId: 'q-1', at: '2026-09-24T05:46:00.118Z' }],
+      }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    expect(documents[0]?.findings[0]?.unpaired).toMatch(/editada a propósito/);
   });
 
   it('un pedido hereda la edición hecha en su cotización antes de confirmarla', async () => {

@@ -144,6 +144,30 @@ const LINE_SELECT = {
 
 type DocLine = Prisma.QuotationItemGetPayload<{ select: typeof LINE_SELECT }>;
 
+/** El motivo con el que el barrido firma sus correcciones en `audit_log`. */
+export const SWEEP_AUDIT_REASON = 'Barrido de lo importado (RF-S4b): comprobante de origen';
+
+/** Margen entre la fila de precio y la de auditoría de una misma transacción del barrido. */
+const SWEEP_AUDIT_WINDOW_MS = 5_000;
+
+/**
+ * D-264: ¿este cambio de precio lo dejó el propio barrido? Hasta D-264 el execute registraba
+ * sus correcciones en `sales_price_changes` a nombre del ADMINISTRADOR (el de la ventana de
+ * RF-S4b, 36 documentos). Se reconocen por su auditoría: una fila del barrido sobre el mismo
+ * documento, escrita en la misma transacción (segundos de diferencia como mucho).
+ */
+export function isSweepPriceChange(
+  change: { quotationId: string | null; salesOrderId: string | null; changedAt: Date },
+  sweepAudits: readonly { entityId: string | null; at: Date }[],
+): boolean {
+  const docId = change.quotationId ?? change.salesOrderId;
+  return sweepAudits.some(
+    (a) =>
+      a.entityId === docId &&
+      Math.abs(a.at.getTime() - change.changedAt.getTime()) <= SWEEP_AUDIT_WINDOW_MS,
+  );
+}
+
 /** Un cambio de precio registrado (D-187), lo que el criterio de D-264 necesita de él. */
 export interface RecordedPriceChange {
   productId: string;
@@ -235,11 +259,27 @@ export class ImportedDocumentsSweepService {
           { salesOrderId: { in: orders.map((o) => o.id) } },
         ],
       },
-      select: { quotationId: true, salesOrderId: true, productId: true, afterUnitValuePen: true },
+      select: {
+        quotationId: true,
+        salesOrderId: true,
+        productId: true,
+        afterUnitValuePen: true,
+        changedAt: true,
+      },
     });
+    // D-264: los que dejó el execute de un barrido anterior no son ediciones de una persona.
+    const sweepAudits = await this.prisma.auditLog.findMany({
+      where: {
+        reason: SWEEP_AUDIT_REASON,
+        entity: { in: ['quotations', 'sales_orders'] },
+        entityId: { in: [...new Set(edits.map((e) => e.quotationId ?? e.salesOrderId ?? ''))] },
+      },
+      select: { entityId: true, at: true },
+    });
+    const humanEdits = edits.filter((e) => !isSweepPriceChange(e, sweepAudits));
     const editedProducts = (ids: (string | null)[], items: readonly DocLine[]): Set<string> =>
       deliberatelyEditedProducts(
-        edits.filter((e) =>
+        humanEdits.filter((e) =>
           ids.some((id) => id !== null && (e.quotationId === id || e.salesOrderId === id)),
         ),
         items,
@@ -297,7 +337,7 @@ export class ImportedDocumentsSweepService {
     const report = await this.report(paper);
     const fixed: SweepExecution['fixed'] = [];
     const failed: SweepExecution['failed'] = [];
-    const reason = 'Barrido de lo importado (RF-S4b): comprobante de origen';
+    const reason = SWEEP_AUDIT_REASON;
     for (const doc of report.documents) {
       if (!doc.open || doc.unmatched !== null || doc.findings.length === 0) continue;
       if (
