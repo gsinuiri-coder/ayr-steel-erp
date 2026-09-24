@@ -136,7 +136,11 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
      de production del 2026-09-24, (b) tiene 108 documentos, porque casi todo el export trae el
      valor con 3 decimales. El execute corrige solo los **36 abiertos** (27 cotizaciones y 9
      pedidos, 92 líneas); la diferencia máxima es S/ 0.005 en el valor y S/ 0.003 en el total.
-     Un número muy distinto de 36 contra production es motivo para parar y mirar. En demo, con la copia de producción del
+     **Criterio exacto:** el dry-run de production tiene que dar lo mismo que demo: **36
+     documentos abiertos en (b) (27 cotizaciones y 9 pedidos, 92 líneas), ninguna diferencia
+     mayor a S/ 0.01 y ningún comprobante en dos documentos**. Cualquier diferencia con esos
+     números se explica documento por documento antes del execute; si no se puede explicar,
+     **se para**. En demo, con la copia de producción del
      2026-09-24: (a) 3, (b) 2 (las dos anuladas), (c) 0, sobre 113 documentos importados.
    - **Anotar los totales** de Inventario valorizado y Ventas y margen (agosto) antes del execute.
 7. **[Agente, con OK explícito por cada uno] Execute — PUNTO CRÍTICO:**

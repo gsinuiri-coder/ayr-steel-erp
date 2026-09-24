@@ -203,21 +203,3 @@ export async function setQuotationSellerForTest(
     await db.$disconnect();
   }
 }
-
-/**
- * D-256 (3): la marca `Factura externa:` la pone solo el importador (al confirmar, pasa de la
- * cotización al pedido), y el API ya no la acepta tipeada. Un spec que necesita un pedido con
- * esa marca sin recorrer el importador entero la escribe acá, contra la base de pruebas.
- */
-export async function setSalesOrderNotesForTest(orderId: string, notes: string): Promise<void> {
-  const db = testDatabaseClient();
-  try {
-    await db.$executeRawUnsafe(
-      `UPDATE "sales_orders" SET "notes" = $1 WHERE "id" = $2::uuid`,
-      notes,
-      orderId,
-    );
-  } finally {
-    await db.$disconnect();
-  }
-}

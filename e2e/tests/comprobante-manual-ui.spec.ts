@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
-import { adminApi, adminCredentials, postJson } from '../helpers/api';
-import { setSalesOrderNotesForTest } from '../helpers/db';
-import { today } from '../helpers/production';
-import { setupCoilStock, type SalesOrderDto } from '../helpers/sales';
+import { adminApi, adminCredentials, createSupplier, getJson, postJson } from '../helpers/api';
+import { commitImport, customerCell, previewImport, toInput } from '../helpers/quotation-import';
+import { today, uniqueDocumentNumber } from '../helpers/production';
+import { createSellableProduct, type SalesOrderDto } from '../helpers/sales';
 import {
   DISPATCH_LINE,
   createInvoice,
@@ -209,17 +209,58 @@ test.describe('D-153 — la pantalla del comprobante manual', () => {
   }) => {
     const api = await adminApi(baseURL!);
     const customer = await createInvoiceableCustomer(api);
-    const stock = await setupCoilStock(api, { lineCode: DISPATCH_LINE, weightKg: '1000' });
-    // El mismo texto que deja el importador, con el correlativo **con ceros a la izquierda**:
-    // así se comprueba que el campo recibe `1349` y no `0001349`.
-    const order = await postJson<SalesOrderDto>(api, '/api/sales/orders', {
-      customerId: customer.id,
-      issueDate: today(),
-      items: [{ saleCoilId: stock.coil.id, qty: stock.coil.availableKg, unitPricePen: '8.0000' }],
+    // D-256 (3): la marca la pone solo el importador, así que el pedido se arma por el flujo
+    // real —importar el comprobante y confirmar la cotización— y no tipeándola. El correlativo
+    // va **con ceros a la izquierda** (así se comprueba que el campo recibe `1349…` y no
+    // `01349…`) y al azar: la base de E2E acumula corridas y el importador avisa de una
+    // reimportación del mismo número.
+    const correlative = String(Math.floor(Math.random() * 900_000) + 100_000);
+    const supplier = await createSupplier(api, { name: 'E2E Proveedor D-153' });
+    const product = await createSellableProduct(api, {
+      lineCode: DISPATCH_LINE,
+      listPricePen: '10.0000',
     });
-    // D-256 (3): el API ya no acepta la marca tipeada; la escribe el helper, como la dejaría
-    // confirmar una cotización importada.
-    await setSalesOrderNotesForTest(order.id, `Factura externa: ${MANUAL_SERIES}-0001349`);
+    const purchase = await postJson<{ id: string }>(api, '/api/purchases', {
+      supplierId: supplier.id,
+      businessLine: DISPATCH_LINE,
+      type: 'FINISHED_GOOD',
+      docType: 'FACTURA',
+      series: 'F001',
+      number: uniqueDocumentNumber(),
+      issueDate: today(),
+      currency: 'PEN',
+      igvRate: '18',
+      paymentTerms: 'CONTADO',
+      items: [
+        { productId: product.id, description: 'D-153', qty: '20', unit: 'NIU', unitPrice: '1' },
+      ],
+    });
+    await postJson(api, `/api/purchases/${purchase.id}/receive`);
+    const parsed = await previewImport(api, [
+      {
+        issueDate: '05/08/2026',
+        docType: 'Factura',
+        documentKey: `${MANUAL_SERIES}-0${correlative}`,
+        customer: customerCell(customer),
+        sku: product.sku,
+        productName: 'Material D-153',
+        unit: 'UNIDAD',
+        qty: '4',
+        netAmount: '40.00',
+      },
+    ]);
+    const imported = await commitImport(api, [toInput(parsed.rows[0]!)]);
+    const quotation = (
+      await getJson<{ items: { id: string; code: string }[] }>(
+        api,
+        '/api/sales/quotations?pageSize=200',
+      )
+    ).items.find((q) => q.code === imported.codes[0])!;
+    const order = await postJson<SalesOrderDto>(
+      api,
+      `/api/sales/quotations/${quotation.id}/confirm`,
+      {},
+    );
     const trail: string[] = [];
 
     try {
@@ -240,17 +281,18 @@ test.describe('D-153 — la pantalla del comprobante manual', () => {
       await page.getByRole('button', { name: 'Registrar manual' }).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByLabel('Serie')).toHaveValue(MANUAL_SERIES);
-      await expect(dialog.getByLabel('Correlativo')).toHaveValue('1349');
+      await expect(dialog.getByLabel('Correlativo')).toHaveValue(correlative);
       // Y con los dos campos puestos, el número previsto es el del papel.
-      await expect(dialog.getByText(`${MANUAL_SERIES}-00001349`)).toBeVisible();
+      await expect(
+        dialog.getByText(`${MANUAL_SERIES}-${correlative.padStart(8, '0')}`),
+      ).toBeVisible();
     } finally {
       await purgeInvoicingTrail(api, {
         documentIds: trail,
         orderIds: [order.id],
-        coilIds: [stock.coil.id],
-        purchaseId: stock.purchaseId,
-        supplierId: stock.supplier.id,
-        finish: stock.finish,
+        purchaseId: purchase.id,
+        supplierId: supplier.id,
+        productIds: [product.id],
       });
       await api.dispose();
     }
