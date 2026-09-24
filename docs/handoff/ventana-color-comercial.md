@@ -183,6 +183,104 @@ Es el primer smoke contra el dominio propio (antes lo rechazaba el guard). Si da
 dominio y no por la app, repetir sin `--base-url` (contra `ayr-steel-erp-web.vercel.app`) y
 anotarlo. Si 5b se saltó, el smoke final es el del paso 4.
 
+## 5c. Correcciones 02: `fix/correcciones-02` (PR #20) — solo si su CI está verde
+
+Va **después** del 5b, con #18 y #19 ya en `main`. La rama se apiló sobre `fix/deudas-post-s4b`,
+así que después de los dos merges su PR muestra solo sus propios commits. **Tiene migración**
+(M7, descripción por línea, aditiva). Handoff: `docs/handoff/correcciones-02.md`.
+
+Contenido: D-277 (estado «Listo»), D-278 (despacho a la fecha del comprobante, botón y CLI),
+D-279 (kardex PEPS SUNAT 13.1), D-280 (disponible por lote), D-281 (metro lineal teórico),
+D-282..D-284 (modal de bobina, descripción por línea, formularios).
+
+### 5c.0 Condiciones [agente] — si alguna falla, se salta el 5c entero
+
+```sh
+git fetch
+gh pr checks 20            # todo verde, Sonar incluido
+git rev-parse origin/fix/correcciones-02          # = <SHA_C>, el que se despliega
+git merge-base --is-ancestor origin/fix/deudas-post-s4b origin/fix/correcciones-02   # exit 0
+git log --oneline origin/main..origin/fix/correcciones-02   # solo los commits de la PR
+git diff --name-only origin/main origin/fix/correcciones-02 -- apps/api/prisma/migrations apps/api/prisma/schema.prisma
+                           # SOLO la migración de M7 y su schema; cualquier otra cosa, se para
+node scripts/migrations-status.mjs --branch production   # pendiente: solo la de M7
+```
+
+### 5c.1 Respaldo Neon [OK]
+
+Rama `respaldo-pre-correcciones-02-20260924`, padre `production`, por el patrón de
+`docs/ENTORNOS.md` (`lib.mjs#run`, `quiet`, `--output json`); verificar `ready`.
+
+### 5c.2 Migración [OK]
+
+```sh
+pnpm db:prod                           # solo `prisma migrate deploy` (D-262)
+node scripts/migrations-status.mjs --branch production   # sin pendientes
+node scripts/migrations-diff.mjs --branch production     # = drift conocido de PROGRESO, exacto
+```
+
+La migración es aditiva (columna nueva): la API vieja la ignora, así que el orden migración → API
+no deja ninguna ventana rota.
+
+### 5c.3 Deploy de la API [OK] y verificación [agente]
+
+```sh
+git checkout --detach <SHA_C>
+pnpm deploy:api
+git checkout main
+cmd /c gcloud run services describe ayr-steel-erp-api --project ayr-steel-erp --region us-central1 --format "value(metadata.labels.git-sha,status.latestReadyRevisionName,status.traffic[0].percent)"
+```
+
+`git-sha` = `<SHA_C>` corto, revisión nueva al 100 %, `/health` 200. **Si falla:** API a la
+revisión del 5b y parar; la migración aditiva puede quedarse.
+
+### 5c.4 Merge a `main` [OK] y smoke [agente]
+
+```sh
+gh pr merge 20 --merge
+git fetch
+git diff --quiet <SHA_C> origin/main -- apps packages Dockerfile .gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml
+pnpm smoke:prod --base-url https://v2.mareliac.pe   # desde un worktree en <SHA_C>
+```
+
+### 5c.5 Arreglo de datos [OK por cada comando]
+
+**M1 no tiene arreglo de datos** (D-277): el estado persistido no está mal, faltaba mostrar
+«Listo». Después del deploy, PED-000001..017 y 019..021 tienen que verse «Listo».
+
+**M2** (D-278), desde un worktree en `<SHA_C>` con `AYR_ENV_SETUP` apuntando al `.env.setup`
+del checkout principal:
+
+```sh
+# [OK] dry-run: tiene que dar los mismos números que el del día (local-data/corr02/
+#      dispatch-at-issue-date-production-2026-09-24T20-35-34-751Z.json):
+#      28 comprobantes, 6 salidas (S/ 84 676.4100), 23 en la excepción, 15 a revisión.
+pnpm dispatch:at-issue-date --branch production --confirm-production
+
+# [OK] solo si el dry-run coincide. --expect compara el plan entero, comprobante por
+#      comprobante, antes de escribir la primera fila:
+pnpm dispatch:at-issue-date --execute --expect <json del dry-run de la ventana> --branch production --confirm-production
+
+# después: otro dry-run tiene que dar 0 salidas, 0 excepciones y los mismos 15 a revisión.
+pnpm dispatch:at-issue-date --branch production --confirm-production
+```
+
+Si el dry-run de la ventana no coincide con el del día, **se para** y se reporta la diferencia.
+
+### 5c.6 Foto comparada [agente]
+
+`node scripts/snapshot-reports.mjs snapshot post-correcciones-02 …` y `compare` contra la foto
+base del paso 0. Esperado, y nada más:
+
+- **Inventario valorizado:** baja exactamente **S/ 84 676.41**, el costo de las 6 salidas (las
+  6 bobinas IMPO-ALZ-ROJO-3020 de PED-000018 quedan en cero y cerradas).
+- **Ventas y margen (agosto y año):** el costo de FFA1-00001321 sube exactamente
+  **S/ 84 676.41** (el reporte toma el costo de las salidas `SALE` de los despachos,
+  `sales-margin.service.ts`). Las ventas no cambian.
+- Catálogo `BOB…`: sin cambios.
+
+Cualquier otra diferencia: se para.
+
 ## 6. Cierre [agente]
 
 - Borrar la rama remota `docs/diseno-color-comercial`: su contenido ya está en `main`.
