@@ -19,6 +19,7 @@
 // RF-S4b: también repone `demo` desde `production` (D-227), que `docs/ENTORNOS.md` pedía hacer
 // «con el CLI de Neon» sin un guion. Solo `dev` y `demo`: las otras ramas no se resetean nunca.
 import { NEON_PROJECT_ID, run } from './lib.mjs';
+import { resetRefusal } from './reset-guard.mjs';
 
 const RESETTABLE = new Set(['dev', 'demo']);
 const branchIdx = process.argv.indexOf('--branch');
@@ -60,15 +61,14 @@ const target = JSON.parse(
     quiet: true,
   }),
 );
-if (target.parent_id !== parent.id) {
-  console.error(
-    `La rama '${BRANCH}' no cuelga de '${PARENT}' (su padre es ${target.parent_id ?? 'ninguno'}).\n` +
-      'Revisa la topología en Neon antes de resetear: este guion solo sabe reponer desde el padre.',
-  );
+const refusal = resetRefusal(target, parent);
+if (refusal !== null) {
+  console.error(refusal);
   process.exit(1);
 }
 
-const args = ['branches', 'reset', BRANCH, '--project-id', NEON_PROJECT_ID, '--parent'];
+// Por **id**, el mismo que acaba de pasar la cerradura: lo comprobado es lo que se resetea.
+const args = ['branches', 'reset', target.id, '--project-id', NEON_PROJECT_ID, '--parent'];
 if (preserveUnderName) args.push('--preserve-under-name', preserveUnderName);
 
 console.log(
