@@ -11,7 +11,9 @@ merge M1 → verificación → segundo PR → merge → deploy de API si cambia 
   (run 35968709566), Vercel production `success`, `pnpm smoke:prod` verde desde `6492b4d`.
 - **Verificación en production (solo lectura):** dry-run del barrido → 40 documentos abiertos con
   0 hallazgos; ninguna línea de plancha abierta difiere del papel.
-- **Segundo PR:** M2–M6 + D-264/D-265/D-266. Estado de CI, merge y deploy: ver §5.
+- **Segundo PR en production.** PR #16 (`fix/rf-s4b-delta-2`, M2–M6 + D-264/D-265/D-266)
+  mergeado el 2026-09-24 08:50 UTC → `main` = `e27570a`. API desplegada como
+  `ayr-steel-erp-api-00044-bqz` (100 % del tráfico, `git-sha=e27570a`). Detalle en §5.
 
 ## 2. Hecho
 
@@ -50,7 +52,16 @@ merge M1 → verificación → segundo PR → merge → deploy de API si cambia 
   `pnpm exec playwright test e2e/tests/plancha-importada-d263.spec.ts` y
   `--grep D-265` sobre `importe-importado-d169.spec.ts`.
 - Cobertura de código nuevo medida local contra `main`: 76/81 líneas instrumentadas (93.8 %).
-- Merge del segundo PR, deploy de API y `git-sha`: se completan abajo al cerrar.
+- **Cierre verificado (2026-09-24, sesión post-RF-S4b):**
+  - PR #16 mergeado → `main` = `e27570a`; CI de `main` verde (run 35977583115).
+  - Cloud Run: revisión activa `ayr-steel-erp-api-00044-bqz`, 100 % del tráfico, label
+    `git-sha=e27570a` (creada 08:46 UTC). `/health` → 200 `{"status":"ok","db":"ok"}`.
+  - Vercel: estado `success` sobre `e27570a`.
+  - `pnpm smoke:prod` desde el checkout en `e27570a`: verde (health, login, líneas de negocio,
+    catálogo 176, inventario valorizado 109, bobinas 5, reporte mensual 92, emisión electrónica
+    apagada); el admin efímero se borró al terminar.
+  - Ramas remotas `fix/rf-s4b-delta` y `fix/rf-s4b-delta-2` borradas tras verificar que no tenían
+    commits fuera de `main`.
 
 ## 6. Siguiente sesión
 
