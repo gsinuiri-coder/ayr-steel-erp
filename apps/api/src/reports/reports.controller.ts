@@ -2,11 +2,13 @@ import { Controller, Get, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   coilMonthReportQuerySchema,
+  kardexPepsQuerySchema,
   salesMarginQuerySchema,
   Role,
   type CoilMonthReportDto,
   type CoilMonthReportQuery,
   type InventoryValuationDto,
+  type KardexPepsQuery,
   type SalesMarginDto,
   type SalesMarginQuery,
 } from '@ayr/shared';
@@ -14,6 +16,8 @@ import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { InventoryValuationService } from './inventory-valuation.service';
+import { kardexPepsXlsx } from './kardex-peps-xlsx';
+import { KardexPepsService } from './kardex-peps.service';
 import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
 import { ReportsService } from './reports.service';
 import { SalesMarginService } from './sales-margin.service';
@@ -31,6 +35,7 @@ export class ReportsController {
     private readonly reports: ReportsService,
     private readonly inventoryValuation: InventoryValuationService,
     private readonly salesMargin: SalesMarginService,
+    private readonly kardexPeps: KardexPepsService,
   ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
@@ -86,6 +91,20 @@ export class ReportsController {
   ): Promise<void> {
     const report = await this.salesMargin.salesMargin(query);
     sendXlsx(res, salesMarginXlsx(report));
+  }
+
+  /**
+   * D-279. Kardex PEPS de un producto o una bobina en el formato 13.1 de SUNAT. Solo
+   * ADMINISTRADOR: es un reporte de costos. No cambia la valorización del sistema (D-028).
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('kardex-peps/xlsx')
+  async kardexPepsXlsxFile(
+    @Query(new ZodValidationPipe(kardexPepsQuerySchema)) query: KardexPepsQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const report = await this.kardexPeps.report(query);
+    sendXlsx(res, kardexPepsXlsx(report));
   }
 }
 
