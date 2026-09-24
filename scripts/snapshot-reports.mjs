@@ -123,7 +123,7 @@ async function quotation(code, { baseUrl, out, creds }) {
   const list = await get(
     baseUrl,
     cookie,
-    `/sales/quotations?pageSize=200&q=${encodeURIComponent(code)}`,
+    `/sales/quotations?pageSize=50&search=${encodeURIComponent(code)}`,
   );
   const hit = (list.items ?? []).find((q) => q.code === code);
   if (!hit) throw new Error(`${code} no está`);

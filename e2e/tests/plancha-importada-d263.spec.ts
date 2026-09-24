@@ -46,11 +46,23 @@ interface Scenario {
   threeSixty: ProductDto;
 }
 
-async function setup(api: APIRequestContext): Promise<Scenario> {
+/**
+ * Lo que el caso fue creando, para limpiarlo aunque falle a mitad: cada id entra apenas existe
+ * (autorrevisión de D-263: con el armado fuera del `try`, un fallo intermedio dejaba vivo lo
+ * creado hasta ahí).
+ */
+interface Trail {
+  supplierId?: string;
+  productIds: string[];
+  quotationIds: string[];
+}
+
+async function setup(api: APIRequestContext, trail: Trail): Promise<Scenario> {
   const supplier = await createSupplier(api, { name: 'E2E Proveedor planchas D-263' });
+  trail.supplierId = supplier.id;
   const finish = await createFinish(api, { businessLine: ROOFING_LINE });
-  const plancha = (lengthMm: string, name: string): Promise<ProductDto> =>
-    createCatalogProduct(api, {
+  const plancha = async (lengthMm: string, name: string): Promise<ProductDto> => {
+    const product = await createCatalogProduct(api, {
       lineCode: ROOFING_LINE,
       unit: 'NIU',
       source: 'PURCHASED',
@@ -59,6 +71,9 @@ async function setup(api: APIRequestContext): Promise<Scenario> {
       finishId: finish.id,
       name,
     });
+    trail.productIds.push(product.id);
+    return product;
+  };
   return {
     customer: await createCustomer(api),
     supplierId: supplier.id,
@@ -71,7 +86,11 @@ async function setup(api: APIRequestContext): Promise<Scenario> {
  * Una factura de dos líneas, las dos a S/ 50.00 la plancha sin IGV (59.00 con IGV): 10 de 6 m
  * y 5 de 3.60 m. Con el defecto, la primera salía S/ 3 000 y la segunda S/ 900.
  */
-async function importInvoice(api: APIRequestContext, s: Scenario): Promise<QuotationDto> {
+async function importInvoice(
+  api: APIRequestContext,
+  s: Scenario,
+  trail: Trail,
+): Promise<QuotationDto> {
   const key = documentKey();
   const row = (product: ProductDto, qty: string, netAmount: string) => ({
     issueDate: '03/08/2026',
@@ -92,12 +111,16 @@ async function importInvoice(api: APIRequestContext, s: Scenario): Promise<Quota
     expect(r.issues.filter((i) => i.severity === 'error')).toEqual([]);
   }
   const result = await commitImport(api, parsed.rows.map(toInput));
+  // Por su código, no en la primera página del listado: en una base de E2E acumulada la
+  // cotización nueva puede no estar entre las 200 primeras.
+  const code = result.codes[0]!;
   const listed = await getJson<{ items: { id: string; code: string }[] }>(
     api,
-    '/api/sales/quotations?pageSize=200',
+    `/api/sales/quotations?pageSize=50&search=${encodeURIComponent(code)}`,
   );
-  const mine = listed.items.find((q) => q.code === result.codes[0]);
-  expect(mine, 'la cotización importada no aparece en el listado').toBeDefined();
+  const mine = listed.items.find((q) => q.code === code);
+  expect(mine, `${code} no aparece al buscarla`).toBeDefined();
+  trail.quotationIds.push(mine!.id);
   const quotation = await getJson<QuotationDto>(api, `/api/sales/quotations/${mine!.id}`);
   // El punto de partida: por plancha, sin valor por metro (D-152).
   expect(quotation.items.map((i) => [i.unitPricePen, i.valuePerMeterPen])).toEqual([
@@ -105,6 +128,14 @@ async function importInvoice(api: APIRequestContext, s: Scenario): Promise<Quota
     ['50.0000', null],
   ]);
   return quotation;
+}
+
+async function cleanup(api: APIRequestContext, trail: Trail): Promise<void> {
+  await purgeSalesTrail(api, { quotationIds: trail.quotationIds });
+  await deactivateTrail(api, {
+    ...(trail.supplierId ? { supplierId: trail.supplierId } : {}),
+    productIds: trail.productIds,
+  });
 }
 
 async function loginAsAdmin(page: Page): Promise<void> {
@@ -150,11 +181,10 @@ test.describe('D-263 — la plancha importada por plancha', () => {
   test('cambiar solo las observaciones no mueve el importe de las planchas de 6 m ni de 3.60 m', async ({
     page,
   }) => {
-    const s = await setup(api);
-    const quotationIds: string[] = [];
+    const trail: Trail = { productIds: [], quotationIds: [] };
     try {
-      const before = await importInvoice(api, s);
-      quotationIds.push(before.id);
+      const s = await setup(api, trail);
+      const before = await importInvoice(api, s, trail);
 
       await loginAsAdmin(page);
       await page.goto(`/cotizaciones/${before.id}/editar`);
@@ -176,22 +206,17 @@ test.describe('D-263 — la plancha importada por plancha', () => {
       expect(after.totalPen).toBe(before.totalPen);
       expect(after.notes).toContain('Llamar antes de despachar');
     } finally {
-      await purgeSalesTrail(api, { quotationIds });
-      await deactivateTrail(api, {
-        supplierId: s.supplierId,
-        productIds: [s.six.id, s.threeSixty.id],
-      });
+      await cleanup(api, trail);
     }
   });
 
   test('tocar la cantidad de la plancha de 3.60 m la recalcula por plancha, nunca por metro', async ({
     page,
   }) => {
-    const s = await setup(api);
-    const quotationIds: string[] = [];
+    const trail: Trail = { productIds: [], quotationIds: [] };
     try {
-      const before = await importInvoice(api, s);
-      quotationIds.push(before.id);
+      const s = await setup(api, trail);
+      const before = await importInvoice(api, s, trail);
 
       await loginAsAdmin(page);
       await page.goto(`/cotizaciones/${before.id}/editar`);
@@ -214,11 +239,7 @@ test.describe('D-263 — la plancha importada por plancha', () => {
       expect(after.items[1]!.totalPen).toBe('354.0000');
       expect(after.items[1]!.valuePerMeterPen).toBeNull();
     } finally {
-      await purgeSalesTrail(api, { quotationIds });
-      await deactivateTrail(api, {
-        supplierId: s.supplierId,
-        productIds: [s.six.id, s.threeSixty.id],
-      });
+      await cleanup(api, trail);
     }
   });
 });
