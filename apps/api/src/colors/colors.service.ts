@@ -9,6 +9,11 @@ import type { ColorDto, CreateColorInput, UpdateColorInput } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  executeColorRetirement,
+  planColorRetirement,
+  type ColorRetirementPlan,
+} from './color-retirement';
 
 /**
  * Maestro de colores (RF-54, D-085). Mutaciones solo ADMINISTRADOR (guard en el controller).
@@ -117,6 +122,16 @@ export class ColorsService {
         throw err;
       });
     return toDto(after);
+  }
+
+  /** D-274: qué haría el retiro de un color sin uso, sin escribir nada. */
+  planRetirement(code: string): Promise<ColorRetirementPlan> {
+    return this.prisma.$transaction((tx) => planColorRetirement(tx, code));
+  }
+
+  /** D-274: retira un color sin uso y sus specs sobrantes. Se niega con una sola referencia. */
+  retire(actor: Pick<RequestUser, 'id'>, code: string): Promise<ColorRetirementPlan> {
+    return this.prisma.$transaction((tx) => executeColorRetirement(tx, this.audit, actor.id, code));
   }
 
   /**

@@ -37,6 +37,9 @@ wanted.push(
   'Bash(npx *cleanup-e2e-users*)',
   'Bash(*tsx *prisma/e2e-admin*)',
   'Bash(*tsx *prisma/cleanup-e2e-users*)',
+  // D-274: el retiro de un color escribe en la rama que se le pase.
+  'Bash(node *scripts/retire-unused-color.mjs*)',
+  'Bash(pnpm *retire:unused-color*)',
 );
 
 const added = wanted.filter((r) => !ask.includes(r));
