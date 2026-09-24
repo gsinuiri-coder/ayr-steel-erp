@@ -7,7 +7,10 @@ import {
   toFixedString,
   type RawMaterialWarningDto,
 } from '@ayr/shared';
-import { findLiveStripAssignments } from '../production/production-assignments';
+import {
+  findLiveStripAssignments,
+  type StripAssignment,
+} from '../production/production-assignments';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
 import {
   byCodeUnit,
@@ -286,7 +289,40 @@ export async function rawMaterialAvailability(
     ids.length === 0 ? [] : findLiveStripAssignments(tx, ids),
     reservedByItem(tx, InventoryItemType.RAW_MATERIAL, [spec.id], options),
   ]);
-  const onCoils = [...onCoilsById].map(([itemId, qty]) => ({ itemId, qty }));
+  return summarizeAvailability(spec, ids, {
+    balanceByCoilId: new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())])),
+    onCoilsById,
+    mounted,
+    genericById,
+  });
+}
+
+/**
+ * La cuenta del disponible de un agregado, sin consultar nada. La comparten
+ * {@link rawMaterialAvailability} (un agregado, con lock opcional) y
+ * {@link rawMaterialAvailabilities} (varios a la vez, para las lecturas): que sea **la misma
+ * función** es lo que garantiza que el panel por lote y el gate de confirmación den el mismo
+ * número (D-280).
+ *
+ * Los mapas pueden traer bobinas de otros agregados (la lectura por lote las trae todas
+ * juntas): solo cuentan las de `ids`.
+ */
+function summarizeAvailability(
+  spec: RawMaterialSpecRef,
+  ids: readonly string[],
+  data: {
+    balanceByCoilId: Map<string, Decimal>;
+    onCoilsById: Map<string, Decimal>;
+    mounted: StripAssignment[];
+    genericById: Map<string, Decimal>;
+  },
+): RawMaterialAvailability {
+  const idSet = new Set(ids);
+  const mounted = data.mounted.filter((m) => idSet.has(m.coilId));
+  const onCoils = [...data.onCoilsById]
+    .filter(([itemId]) => idSet.has(itemId))
+    .map(([itemId, qty]) => ({ itemId, qty }));
+  const balanceByCoilId = data.balanceByCoilId;
 
   // D-154: lo que una OP retiene de cada rollo, que **no** es el rollo entero. Una bobina
   // puede aparecer en una sola asignación viva (`mountCoil` lo garantiza), pero se suma por
@@ -295,7 +331,6 @@ export async function rawMaterialAvailability(
   for (const m of mounted) {
     heldByCoilId.set(m.coilId, (heldByCoilId.get(m.coilId) ?? new Decimal(0)).plus(m.heldKg));
   }
-  const balanceByCoilId = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
 
   // El disponible del agregado es, rollo por rollo, su saldo menos lo que una OP retiene.
   // Nunca negativo: un consumo ya emitido baja el saldo antes de bajar `consumedKg`, y esa
@@ -320,7 +355,7 @@ export async function rawMaterialAvailability(
     (acc, r) => ((freeByCoilId.get(r.itemId) ?? new Decimal(0)).lte(0) ? acc : acc.plus(r.qty)),
     new Decimal(0),
   );
-  const reservedGeneric = genericById.get(spec.id) ?? new Decimal(0);
+  const reservedGeneric = data.genericById.get(spec.id) ?? new Decimal(0);
 
   const mountedKg = [...heldByCoilId.values()].reduce((acc, kg) => acc.plus(kg), new Decimal(0));
   const mountedOrderCodes = [...new Set(mounted.map((m) => m.orderCode))];
@@ -334,6 +369,173 @@ export async function rawMaterialAvailability(
     mountedKg,
     mountedOrderCodes,
   };
+}
+
+/** La combinación que define un agregado, sin su id: vale igual para la spec virtual. */
+function comboKey(input: {
+  businessLineId: string;
+  colorId: string | null;
+  thicknessMm: string;
+}): string {
+  return `${input.businessLineId}|${input.colorId ?? '-'}|${toFixedString(toDecimal(input.thicknessMm), 'MM')}`;
+}
+
+/**
+ * {@link findRawMaterialSpec} para varias combinaciones en **una** consulta (D-280). Devuelve
+ * una spec por entrada, en el mismo orden; la que no tiene fila vuelve **virtual** (id vacío),
+ * igual que la versión de a una.
+ */
+export async function findRawMaterialSpecsByCombo(
+  tx: Prisma.TransactionClient,
+  inputs: readonly { businessLineId: string; colorId: string | null; thicknessMm: string }[],
+): Promise<RawMaterialSpecRef[]> {
+  if (inputs.length === 0) return [];
+  const combos = new Map<
+    string,
+    { businessLineId: string; colorId: string | null; thicknessMm: string }
+  >();
+  for (const input of inputs) {
+    combos.set(comboKey(input), {
+      businessLineId: input.businessLineId,
+      colorId: input.colorId,
+      thicknessMm: toFixedString(toDecimal(input.thicknessMm), 'MM'),
+    });
+  }
+  const rows = await tx.rawMaterialSpec.findMany({
+    where: { OR: [...combos.values()] },
+    select: SPEC_SELECT,
+  });
+  const byCombo = new Map(rows.map((r) => [comboKey(toSpecRef(r)), toSpecRef(r)]));
+  return inputs.map((input) => {
+    const key = comboKey(input);
+    const combo = combos.get(key);
+    if (combo === undefined) throw new Error(`Combinación sin resolver: ${key}`);
+    return byCombo.get(key) ?? { id: '', ...combo };
+  });
+}
+
+/**
+ * ¿Esta bobina cumple el agregado? Es `roofingCoilWhere` evaluado en memoria (misma línea,
+ * mismo color —null incluido— y espesor entre los mismos límites redondeados a mm); el estado
+ * y el tipo ya los filtró la consulta. Lo usa la lectura por lote, que trae de una vez las
+ * bobinas de varios agregados y las reparte acá.
+ */
+function coilMatchesSpec(
+  coil: { businessLineId: string; colorId: string | null; thicknessMm: string },
+  spec: RawMaterialSpecRef,
+  toleranceMm: string,
+): boolean {
+  const where = roofingCoilWhere({
+    businessLineId: spec.businessLineId,
+    colorId: spec.colorId,
+    inputThicknessMm: toDecimal(spec.thicknessMm),
+    toleranceMm,
+  });
+  const bounds = where.thicknessMm as { gte: string; lte: string };
+  const thickness = toDecimal(coil.thicknessMm);
+  return (
+    coil.businessLineId === spec.businessLineId &&
+    coil.colorId === spec.colorId &&
+    thickness.gte(toDecimal(bounds.gte)) &&
+    thickness.lte(toDecimal(bounds.lte))
+  );
+}
+
+/**
+ * {@link rawMaterialCoilIds} para varios agregados en **una** consulta (D-280), indexado por
+ * {@link rawMaterialCoilKey}. Los ids salen en orden de id, como en la versión de a uno.
+ */
+export async function rawMaterialCoilIdsBySpec(
+  tx: Prisma.TransactionClient,
+  specs: readonly RawMaterialSpecRef[],
+  toleranceMm: string,
+): Promise<Map<string, string[]>> {
+  const distinct = new Map(specs.map((s) => [comboKey(s), s]));
+  const out = new Map<string, string[]>();
+  if (distinct.size === 0) return out;
+  const coils = await tx.coil.findMany({
+    where: {
+      OR: [...distinct.values()].map((spec) =>
+        roofingCoilWhere({
+          businessLineId: spec.businessLineId,
+          colorId: spec.colorId,
+          inputThicknessMm: toDecimal(spec.thicknessMm),
+          toleranceMm,
+        }),
+      ),
+    },
+    select: { id: true, businessLineId: true, colorId: true, thicknessMm: true },
+    orderBy: { id: 'asc' },
+  });
+  for (const [key, spec] of distinct) {
+    out.set(
+      key,
+      coils
+        .filter((c) =>
+          coilMatchesSpec(
+            {
+              businessLineId: c.businessLineId,
+              colorId: c.colorId,
+              thicknessMm: c.thicknessMm.toString(),
+            },
+            spec,
+            toleranceMm,
+          ),
+        )
+        .map((c) => c.id),
+    );
+  }
+  return out;
+}
+
+/** La clave con la que {@link rawMaterialCoilIdsBySpec} indexa las bobinas de un agregado. */
+export function rawMaterialCoilKey(spec: RawMaterialSpecRef): string {
+  return comboKey(spec);
+}
+
+/**
+ * {@link rawMaterialAvailability} para varios agregados a la vez, **sin lock** (D-280): la
+ * lectura del panel de stock y del modal «Elegir producto». Un número fijo de consultas —la
+ * de bobinas, la de saldos, las de reservas por ítem y genéricas y la de montajes—, sea uno
+ * o veinte agregados. Devuelve uno por spec, en el mismo orden.
+ *
+ * La cuenta es {@link summarizeAvailability}, la misma de la versión de a uno: el lote cambia
+ * cómo se lee, no qué se calcula.
+ */
+export async function rawMaterialAvailabilities(
+  tx: Prisma.TransactionClient,
+  specs: readonly RawMaterialSpecRef[],
+  toleranceMm: string,
+  options: RawMaterialScope = {},
+): Promise<RawMaterialAvailability[]> {
+  if (specs.length === 0) return [];
+  const idsBySpec = await rawMaterialCoilIdsBySpec(tx, specs, toleranceMm);
+  const allIds = [...new Set([...idsBySpec.values()].flat())].sort(byCodeUnit);
+  const [balances, onCoilsById, mounted, genericById] = await Promise.all([
+    allIds.length === 0
+      ? []
+      : tx.inventoryBalance.findMany({
+          where: { itemType: InventoryItemType.COIL, itemId: { in: allIds } },
+          select: { itemId: true, qty: true },
+        }),
+    reservedByItem(tx, InventoryItemType.COIL, allIds, options),
+    allIds.length === 0 ? [] : findLiveStripAssignments(tx, allIds),
+    reservedByItem(
+      tx,
+      InventoryItemType.RAW_MATERIAL,
+      specs.map((s) => s.id),
+      options,
+    ),
+  ]);
+  const balanceByCoilId = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+  return specs.map((spec) =>
+    summarizeAvailability(spec, idsBySpec.get(comboKey(spec)) ?? [], {
+      balanceByCoilId,
+      onCoilsById,
+      mounted,
+      genericById,
+    }),
+  );
 }
 
 /**

@@ -3,6 +3,7 @@ import { Prisma, Role, type Prisma as PrismaTypes } from '@prisma/client';
 import {
   assertRawMaterialInvariant,
   findRawMaterialShortfalls,
+  rawMaterialAvailabilities,
   rawMaterialAvailability,
 } from './raw-material';
 
@@ -461,6 +462,60 @@ describe('Invariante del agregado de materia prima (D-134)', () => {
         exceptReservationIds: ['r-propia'],
       });
       expect(without.available.toFixed(3)).toBe('500.000');
+    });
+  });
+
+  describe('rawMaterialAvailabilities — la lectura por lote (D-280)', () => {
+    const AZUL_VIRTUAL = { id: '', businessLineId: LINE, colorId: 'azul', thicknessMm: '0.45' };
+    const STATE: FakeState = {
+      ...EMPTY,
+      coils: [
+        { id: 'a', businessLineId: LINE, colorId: 'rojo', thicknessMm: '0.45' },
+        { id: 'b', businessLineId: LINE, colorId: 'rojo', thicknessMm: '0.46' },
+        // Fuera de tolerancia para SPEC (0.43–0.47): no cuenta en ninguno de los dos.
+        { id: 'y', businessLineId: LINE, colorId: 'rojo', thicknessMm: '0.60' },
+        { id: 'z', businessLineId: LINE, colorId: 'azul', thicknessMm: '0.45' },
+      ],
+      balances: [
+        { itemId: 'a', qty: '1000' },
+        { itemId: 'b', qty: '500' },
+        { itemId: 'y', qty: '300' },
+        { itemId: 'z', qty: '700' },
+      ],
+      onCoils: [{ id: 'r-coil', itemId: 'a', qty: '100' }],
+      generic: [{ id: 'r-gen', qty: '150', orderSeq: 7 }],
+      // Una corrida a stock retiene 200 kg de `b`.
+      mounted: [{ coilId: 'b', assignedKg: '200' }],
+    };
+
+    it('reparte las bobinas entre los agregados y cada uno da su propio disponible', async () => {
+      const [rojo, azul] = await rawMaterialAvailabilities(
+        createFakeTx(STATE),
+        [SPEC, AZUL_VIRTUAL],
+        TOLERANCE,
+      );
+      expect(rojo?.physical.toFixed(3)).toBe('1300.000');
+      expect(rojo?.reservedOnCoils.toFixed(3)).toBe('100.000');
+      expect(rojo?.reservedGeneric.toFixed(3)).toBe('150.000');
+      expect(rojo?.available.toFixed(3)).toBe('1050.000');
+      expect(rojo?.mountedKg.toFixed(3)).toBe('200.000');
+      // La spec virtual no tiene promesas: su disponible es el físico de su color.
+      expect(azul?.available.toFixed(3)).toBe('700.000');
+      expect(azul?.mountedKg.toFixed(3)).toBe('0.000');
+    });
+
+    it('da lo mismo que la lectura de a uno para el mismo agregado', async () => {
+      const onlyRojo: FakeState = {
+        ...STATE,
+        coils: STATE.coils.filter((c) => c.id === 'a' || c.id === 'b'),
+      };
+      const single = await rawMaterialAvailability(createFakeTx(onlyRojo), SPEC, TOLERANCE);
+      const [batch] = await rawMaterialAvailabilities(createFakeTx(STATE), [SPEC], TOLERANCE);
+      expect(batch?.available.toFixed(3)).toBe(single.available.toFixed(3));
+      expect(batch?.physical.toFixed(3)).toBe(single.physical.toFixed(3));
+      expect(batch?.reservedOnCoils.toFixed(3)).toBe(single.reservedOnCoils.toFixed(3));
+      expect(batch?.reservedGeneric.toFixed(3)).toBe(single.reservedGeneric.toFixed(3));
+      expect(batch?.mountedOrderCodes).toEqual(single.mountedOrderCodes);
     });
   });
 

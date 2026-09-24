@@ -131,6 +131,8 @@ import {
   resolveRawMaterialSpec,
   findRawMaterialSpec,
   findRawMaterialSpecs,
+  findRawMaterialSpecsByCombo,
+  rawMaterialAvailabilities,
   rawMaterialCoilIds,
   type RawMaterialSpecRef,
 } from './raw-material';
@@ -2969,6 +2971,32 @@ export class SalesOrdersService {
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
 
+    // D-280: el agregado de cada cobertura (y plancha contra pedido), **todos de una vez**.
+    // Resolverlos dentro del bucle costaba unas ocho consultas en serie por fila, y el modal
+    // «Elegir producto» pide veinte. D-136: el panel es una **lectura**, así que las specs se
+    // buscan sin crearlas; el disponible de un agregado que nadie prometió todavía es el mismo.
+    const madeToOrder = products.flatMap((product) =>
+      isMadeToOrder(product) && product.thicknessMm !== null && product.finish !== null
+        ? [
+            {
+              productId: product.id,
+              businessLineId: product.businessLineId,
+              colorId: product.colorId,
+              thicknessMm: product.thicknessMm.toFixed(2),
+            },
+          ]
+        : [],
+    );
+    const specs = await findRawMaterialSpecsByCombo(this.prisma, madeToOrder);
+    const availabilities = await rawMaterialAvailabilities(
+      this.prisma,
+      specs,
+      roofingToleranceMm(this.env),
+    );
+    const rawByProductId = new Map(
+      madeToOrder.map((m, i) => [m.productId, { spec: specs[i], availability: availabilities[i] }]),
+    );
+
     // D-163: el piso de precio de cada SKU, con la **misma** función que lo va a exigir al
     // guardar. Los candidatos se arman **dentro** del bucle de abajo y no en uno propio, para
     // reusar el agregado que ese bucle ya resuelve: en una cobertura a medida el costo por
@@ -3003,19 +3031,14 @@ export class SalesOrdersService {
       // decide si puede prometer. **D-171: y la plancha de catálogo tampoco**, desde que se
       // produce contra el pedido; ese cero era literalmente el mensaje de la captura del
       // dueño («0.000 NIU disponibles… necesita 10»).
-      if (isMadeToOrder(product) && product.thicknessMm !== null && product.finish !== null) {
-        // D-136: el panel es una **lectura**. `findRawMaterialSpec` no crea la fila si no
-        // existe: el disponible de un agregado que nadie prometió todavía es el mismo.
-        const spec = await findRawMaterialSpec(this.prisma, {
-          businessLineId: product.businessLineId,
-          colorId: product.colorId,
-          thicknessMm: product.thicknessMm.toFixed(2),
-        });
-        const availability = await rawMaterialAvailability(
-          this.prisma,
-          spec,
-          roofingToleranceMm(this.env),
-        );
+      const raw = rawByProductId.get(product.id);
+      if (
+        raw?.spec &&
+        raw.availability &&
+        product.thicknessMm !== null &&
+        product.finish !== null
+      ) {
+        const { spec, availability } = raw;
         rawMaterialAvailableKg = Decimal.max(availability.available, new Decimal(0)).toFixed(3);
         // La etiqueta se arma con el propio producto y no consultando el agregado: así vale
         // igual exista o no todavía su fila —el caso de un SKU nuevo que nadie cotizó— y de
