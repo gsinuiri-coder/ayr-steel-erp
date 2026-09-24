@@ -51,6 +51,14 @@ import {
 } from '@/components/sales/product-stock-picker';
 import { CoilSalePickerDialog } from '@/components/sales/coil-sale-picker';
 import {
+  DocumentActions,
+  DocumentFormHeader,
+  DocumentLinesFooter,
+  DocumentSection,
+  DocumentTotals,
+  FormField,
+} from '@/components/document-form-layout';
+import {
   descriptionFromStored,
   descriptionToSend,
   MAX_LINE_DESCRIPTION,
@@ -981,26 +989,25 @@ export function SalesDocumentForm({
 
   return (
     <>
-      <div>
-        <h1 className="text-lg font-semibold">
-          {addTo
+      <DocumentFormHeader
+        title={
+          addTo
             ? `Agregar ítems a ${addTo.code}`
             : initial
               ? `Editar ${initial.code}`
               : isQuotation
                 ? 'Nueva cotización'
-                : 'Nuevo pedido directo'}
-        </h1>
-        <p className="text-xs text-muted-foreground">
-          {addTo
-            ? `${addTo.customerName} · Cada ítem reserva su material al guardar y, si se fabrica, nace con su orden de producción.`
-            : initial
-              ? 'Guardar reemplaza las líneas y regenera el PDF: la última versión es la que vale.'
-              : isQuotation
-                ? 'Nace emitida, con su PDF. No reserva stock: la reserva nace al reservar o al confirmar.'
-                : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
-        </p>
-      </div>
+                : 'Nuevo pedido directo'
+        }
+      >
+        {addTo
+          ? `${addTo.customerName} · Cada ítem reserva su material al guardar y, si se fabrica, nace con su orden de producción.`
+          : initial
+            ? 'Guardar reemplaza las líneas y regenera el PDF: la última versión es la que vale.'
+            : isQuotation
+              ? 'Nace emitida, con su PDF. No reserva stock: la reserva nace al reservar o al confirmar.'
+              : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
+      </DocumentFormHeader>
 
       {(selectedCustomer.isError || businessLines.isError) && (
         <Alert variant="destructive">
@@ -1011,8 +1018,8 @@ export function SalesDocumentForm({
       )}
 
       {!adding && (
-        <div className="grid gap-x-4 gap-y-3 rounded-lg border p-3 md:grid-cols-4">
-          <div className="grid gap-2 md:col-span-2">
+        <DocumentSection title={isQuotation ? 'Datos de la cotización' : 'Datos del pedido'}>
+          <FormField span={2}>
             <Label htmlFor="customer">Cliente</Label>
             {/*
             RF-S3/M1: busca en el servidor (`GET /customers/search`) en vez de traer el
@@ -1054,8 +1061,8 @@ export function SalesDocumentForm({
                 />
               )}
             />
-          </div>
-          <div className="grid gap-2">
+          </FormField>
+          <FormField>
             <Label htmlFor="issue-date">Fecha de emisión</Label>
             <Input
               id="issue-date"
@@ -1065,17 +1072,17 @@ export function SalesDocumentForm({
                 setIssueDate(e.target.value);
               }}
             />
-          </div>
+          </FormField>
           {isQuotation && noExpiration && (
-            <div className="grid gap-2">
+            <FormField>
               <Label>Vigencia</Label>
               <p className="text-xs text-muted-foreground">
                 Sin vencimiento: viene de un comprobante importado (D-157) y esto no se cambia acá.
               </p>
-            </div>
+            </FormField>
           )}
           {isQuotation && !noExpiration && (
-            <div className="grid gap-2">
+            <FormField>
               <Label htmlFor="validity">Vigencia (días)</Label>
               <Input
                 id="validity"
@@ -1087,9 +1094,9 @@ export function SalesDocumentForm({
                   setValidityDays(e.target.value);
                 }}
               />
-            </div>
+            </FormField>
           )}
-          <div className="grid gap-2 md:col-span-3">
+          <FormField span={4}>
             <Label htmlFor="notes">Observaciones</Label>
             <Input
               id="notes"
@@ -1099,15 +1106,17 @@ export function SalesDocumentForm({
                 setNotes(e.target.value);
               }}
             />
-          </div>
-        </div>
+          </FormField>
+        </DocumentSection>
       )}
 
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          Líneas del documento. El material a medida se compromete por kilos; la bobina la elige
-          planta.
-        </p>
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-medium">Líneas</h2>
+          <p className="text-xs text-muted-foreground">
+            El material a medida se compromete por kilos; la bobina la elige planta.
+          </p>
+        </div>
         <StockPanelSheet
           data={stockPanel.data}
           loading={stockPanel.isPending}
@@ -1188,7 +1197,7 @@ export function SalesDocumentForm({
         </Table>
       </div>
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <DocumentLinesFooter>
         <Button
           variant="outline"
           disabled={lines.length >= MAX_SALES_ITEMS}
@@ -1199,24 +1208,13 @@ export function SalesDocumentForm({
         >
           Agregar línea
         </Button>
-        {/*
-          Los tres importes en una rejilla de dos columnas y no en tres `flex` sueltos: así
-          los números comparten una misma columna derecha y con `tabular-nums` los dígitos
-          quedan uno debajo del otro, que es lo que hace legible una columna de plata.
-        */}
-        <div className="grid min-w-64 grid-cols-[1fr_auto] gap-x-8 gap-y-1 text-sm">
-          {/* D-162: el mismo vocabulario que el PDF y los detalles. Era la única pantalla
-              que seguía diciendo «Subtotal»/«Total», y es la pantalla donde se tipea. */}
-          <span className="text-muted-foreground">Valor de venta</span>
-          <span className="text-right tabular-nums">{formatMoney(subtotal.toFixed(4))}</span>
-          <span className="text-muted-foreground">IGV (18%)</span>
-          <span className="text-right tabular-nums">{formatMoney(igv.toFixed(4))}</span>
-          <span className="border-t pt-1 font-medium">Precio de venta</span>
-          <span className="border-t pt-1 text-right text-base font-semibold tabular-nums">
-            {formatMoney(subtotal.plus(igv).toFixed(4))}
-          </span>
-        </div>
-      </div>
+        {/* D-162: el mismo vocabulario que el PDF y los detalles (D-284: bloque compartido). */}
+        <DocumentTotals
+          subtotal={subtotal.toFixed(4)}
+          igv={igv.toFixed(4)}
+          total={subtotal.plus(igv).toFixed(4)}
+        />
+      </DocumentLinesFooter>
 
       {formError && (
         <Alert variant="destructive">
@@ -1224,7 +1222,7 @@ export function SalesDocumentForm({
         </Alert>
       )}
 
-      <div className="flex justify-end gap-2">
+      <DocumentActions>
         <Button
           variant="outline"
           onClick={() => {
@@ -1249,7 +1247,7 @@ export function SalesDocumentForm({
                 ? 'Crear cotización'
                 : 'Crear pedido'}
         </Button>
-      </div>
+      </DocumentActions>
     </>
   );
 }
