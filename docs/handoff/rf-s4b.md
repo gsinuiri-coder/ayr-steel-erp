@@ -86,8 +86,7 @@ Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3
 
 1. **[Dueño] Respaldo Neon** de `production`: rama `respaldo-pre-rf-s4b-AAAAMMDD` (patrón de
    `docs/ENTORNOS.md`, vía `scripts/lib.mjs#run` con `quiet: true` y `--output json`).
-2. **[Agente] PR + CI verde** (la rama `rf-s4b` todavía no está en el remoto: el push lo rechazó
-   el clasificador de permisos en esta sesión; lo hace el dueño o lo aprueba).
+2. **[Agente] PR + CI verde** (PR #14; CI verde job por job sobre el SHA a desplegar).
 3. **[Agente, con OK] Migración:** `node scripts/migrations-status.mjs --branch production`
    (tiene que listar solo `20260923180000_rf_s4b_products_merged_into`), `migrate diff` contra
    el drift conocido, y `pnpm db:prod`.
@@ -96,27 +95,47 @@ Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3
    con `--update-labels git-sha=<sha>`; verificar `/health` y el label. La API nueva es
    compatible con el web viejo (el formulario viejo sigue mandando `unitPricePen`; una fila de
    bobina del importador viejo queda bloqueada en el preview, que es lo correcto).
-5. **[Agente] Dry-runs contra production, solo lectura, con OK:**
+5. **[Agente, con OK] Smoke de solo lectura de la API nueva, ANTES de cualquier execute**
+   (revisión cruzada P1-4): `pnpm smoke:prod`, desde el worktree en el SHA desplegado. Pasa por
+   el web viejo, que llama a la API nueva, y solo hace GET. Si falla, se vuelve la API al SHA
+   anterior **ahora**: todavía no hay nada que deshacer.
+6. **[Agente] Dry-runs contra production, solo lectura, con OK:**
+   - Las dos CLI imprimen al arrancar `Salidas externas: cola … apagado · PSE … apagado · R2
+apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
    - `pnpm normalize:coil-skus --branch production` → el dueño ve renombres, uniones, no
-     interpretables, documentos abiertos, kilos antes/después y paradas.
+     interpretables, documentos abiertos, kilos antes/después y paradas (incluida «producto a
+     unir con saldo propio», que ahora se ve acá y no recién en el execute).
    - `pnpm sweep:imported --file local-data/ventas-agosto-2026.xlsx --branch production` →
-     listas (a), (b) y (c).
+     listas (a), (b) y (c). Cada hallazgo muestra `SKU actual → SKU nuevo (papel: …)` (D-258):
+     **revisar que el SKU del papel sea el de la línea** en cada (a) y (b).
    - **Anotar los totales** de Inventario valorizado y Ventas y margen (agosto) antes del execute.
-6. **[Agente, con OK explícito por cada uno] Execute:**
+7. **[Agente, con OK explícito por cada uno] Execute — PUNTO CRÍTICO:**
    - `pnpm normalize:coil-skus --branch production --execute --confirm-production` (más
-     `--ack-open-documents` solo si el dueño aprobó la lista de abiertos).
+     `--ack-open-documents` solo si el dueño aprobó la lista de abiertos). **Desde acá, volver la
+     API al SHA anterior no es seguro sin deshacer antes la normalización**: la API vieja busca
+     el SKU viejo, y toda venta de bobina rebotaría.
+   - Comprobar los totales de los dos reportes contra lo anotado. **Plan B** si no cuadran o algo
+     falla: `pnpm normalize:coil-skus --branch production --revert` (dry-run: lista los pasos en
+     orden inverso y las paradas), y con OK `… --revert --execute --confirm-production` (D-260).
    - `pnpm sweep:imported --file local-data/ventas-agosto-2026.xlsx --branch production
---execute --confirm-production`.
-   - Comprobar que los totales de los dos reportes son los anotados en el paso 5.
-7. **[Dueño] Merge a `main`** (D-232, `AYR_OWNER_PUSH=1`) → Vercel publica el web.
-8. **[Agente] `pnpm smoke:prod`** desde un worktree en el SHA desplegado.
-9. **[Dueño] COT-000002**: confirmarla; tiene que reservar SALDO-ALZ-AZUL-5002-0.38-4194-7 y
-   cuadrar 14 679.00. Y el pedido de FFA1-1355, si sigue abierto, facturable con el importe del
-   papel.
+--execute --confirm-production`. Dry-run y execute uno detrás del otro, sin nadie usando
+     el sistema: el execute recalcula el plan (P2-4 de la revisión, no corregido).
+   - Comprobar que los totales de los dos reportes siguen siendo los anotados.
+8. **[Dueño] Merge a `main`** (D-232, `AYR_OWNER_PUSH=1`) → Vercel publica el web.
+9. **[Agente] `pnpm smoke:prod`** desde un worktree en el SHA desplegado.
+10. **[Dueño] COT-000002**: confirmarla; tiene que reservar SALDO-ALZ-AZUL-5002-0.38-4194-7 y
+    cuadrar 14 679.00. Y el pedido de FFA1-1355, si sigue abierto, facturable con el importe del
+    papel.
 
-**Rollback.** La migración es aditiva: volver la API al SHA anterior no necesita revertirla. La
-normalización se deshace desde la auditoría (`catalog.product-rename-sku`,
-`catalog.product-merge`) o restaurando la rama de respaldo si hiciera falta.
+**Rollback.**
+
+- Antes del execute de la normalización: la migración es aditiva, así que alcanza con volver la
+  API al SHA anterior; no hace falta revertir la migración.
+- Después del execute: primero `normalize:coil-skus --revert` (D-260), y recién entonces se
+  vuelve la API al SHA anterior. La rama de respaldo queda como último recurso, porque restaurarla
+  pierde todo lo cargado después.
+- Lo que corrigió el barrido no se revierte con una herramienta: son ediciones de documentos
+  abiertos, auditadas con su motivo, y se deshacen desde la pantalla, documento por documento.
 
 ## Verificación
 
