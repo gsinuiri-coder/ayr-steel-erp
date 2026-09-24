@@ -42,7 +42,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
-import { reservedByItem } from '../sales/reserved-ledger';
+import { byCodeUnit, reservedByItem } from '../sales/reserved-ledger';
 import { pendingQty, proratedQty } from './invoicing-math';
 
 /**
@@ -318,7 +318,7 @@ export class DispatchesService {
           .filter((l) => l.target.itemType === ('COIL' as InventoryItemType))
           .map((l) => l.target.itemId),
       ),
-    ].sort();
+    ].sort(byCodeUnit);
     if (coilIds.length > 0) {
       await tx.$queryRaw`
         SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
@@ -569,7 +569,7 @@ export class DispatchesService {
         // pisado por el cambio de estado de D-170.
         const lockedCoilIds = [
           ...new Set(dispatch.items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
-        ].sort();
+        ].sort(byCodeUnit);
         if (lockedCoilIds.length > 0) {
           await tx.$queryRaw`
             SELECT "id" FROM "coils" WHERE "id" = ANY(${lockedCoilIds}::uuid[]) ORDER BY "id" FOR UPDATE

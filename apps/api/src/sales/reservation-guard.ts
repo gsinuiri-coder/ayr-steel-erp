@@ -8,6 +8,7 @@ import {
 import { Decimal, toDecimal } from '@ayr/shared';
 import { assertRawMaterialInvariantFor, findRawMaterialSpecs } from './raw-material';
 import {
+  byCodeUnit,
   firmHolderCode,
   liveTemporaryWhere,
   reservedByItem,
@@ -433,7 +434,7 @@ export async function assertCoilsNotReserved(
   exceptReservationIds: string[] = [],
 ): Promise<void> {
   if (coilIds.length === 0) return;
-  const sorted = [...new Set(coilIds)].sort();
+  const sorted = [...new Set(coilIds)].sort(byCodeUnit);
   // Mismo lock, mismo orden y mismo motivo que `assertStripsNotAssigned` (D-060): sin él
   // queda una ventana en la que el chequeo ve el ledger vacío, una confirmación de pedido
   // commitea, y la operación sigue adelante sobre material ya prometido.

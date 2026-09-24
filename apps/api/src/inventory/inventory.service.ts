@@ -1016,7 +1016,7 @@ export class InventoryService {
     // conserva su contrato de página reciente y su orden descendente: no es el historial
     // de una bobina o producto y, al paginar, la primera página tiene que seguir siendo la
     // relevante para el usuario.
-    const items = singleItem ? dtos : dtos.reverse();
+    const items = singleItem ? dtos : [...dtos].reverse();
     // El de un ítem concreto no pagina: es "todo lo que hay", una sola página que lo
     // contiene entero. Decirlo así (en vez de fingir page/pageSize del pedido) es lo que
     // hace que `PaginatedResult` no mienta sobre cuántas páginas hay.

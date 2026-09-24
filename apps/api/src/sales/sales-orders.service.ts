@@ -3025,7 +3025,7 @@ export class SalesOrdersService {
           thicknessMm: product.thicknessMm.toFixed(2),
           colorName: product.color?.name ?? null,
         });
-        if (product.widthMm !== null && product.thicknessMm !== null) {
+        if (product.widthMm !== null) {
           perMeter = kgPerMeter({
             widthMm: product.widthMm.toFixed(2),
             thicknessMm: product.thicknessMm.toFixed(2),

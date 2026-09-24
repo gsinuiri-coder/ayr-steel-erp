@@ -25,6 +25,16 @@ export function liveTemporaryWhere(now: Date = new Date()): Prisma.QuotationRese
   return { status: TemporaryReservationStatus.ACTIVE, expiresAt: { gt: now } };
 }
 
+/**
+ * Orden por unidad de código, el mismo del `.sort()` sin argumento: el que usan todos los locks de
+ * bobinas por id. No `localeCompare`, que puede ordenar distinto los guiones de un UUID y cruzar
+ * el orden de bloqueo con el resto del sistema (mismo criterio que `byCodeUnit` de `mountCoil`).
+ */
+export function byCodeUnit(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 /** Quién va a leer el mensaje que nombra a los titulares de una reserva. */
 export interface HolderViewer {
   id: string;

@@ -10,6 +10,7 @@ import {
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
 import {
+  byCodeUnit,
   firmHolderCode,
   liveTemporaryWhere,
   reservedByItem,
@@ -648,7 +649,7 @@ export async function lockRawMaterialCoils(
   for (const spec of specs) {
     for (const id of await rawMaterialCoilIds(tx, spec, toleranceMm)) all.add(id);
   }
-  const sorted = [...all].sort();
+  const sorted = [...all].sort(byCodeUnit);
   await tx.$queryRaw`
     SELECT "id" FROM "coils" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR UPDATE
   `;
