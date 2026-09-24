@@ -6,34 +6,29 @@
 //   node scripts/snapshot-reports.mjs snapshot <etiqueta> --out <dir> [opciones]
 //   node scripts/snapshot-reports.mjs quotation <COT-nnnnnn> --out <dir> [opciones]
 //   node scripts/snapshot-reports.mjs compare <a.json> <b.json>
-// Opciones: --base-url URL (por defecto v2.mareliac.pe/api), --env-file F, --ephemeral-admin.
+// Opciones: --base-url URL (obligatoria, sin default), --env-file F,
+//           --ephemeral-admin --branch production|demo|dev.
 //
 // Solo hace GET, salvo el POST de login. Entra con ADMIN_EMAIL / ADMIN_PASSWORD del archivo de
 // entorno (por defecto `.env.setup`), o con `--ephemeral-admin` usa el mismo patrón que
-// `smoke:prod` (D-024): crea un ADMINISTRADOR `e2e-...@ayr.test` con contraseña al azar en
-// production y lo borra al terminar, pase lo que pase. Nunca imprime contraseñas ni cookies.
+// `smoke:prod` (D-024): crea un ADMINISTRADOR `e2e-snapshot-<azar>@ayr.test` con contraseña al
+// azar **en la rama de `--branch`**, que tiene que ser la que sirve `--base-url`, y al terminar
+// borra ese usuario y solo ese, pase lo que pase. Nunca imprime contraseñas ni cookies.
+// Las reglas de los argumentos viven en `snapshot-reports-plan.mjs` (P1-2 del delta RF-S4b).
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
+import { snapshotPlan } from './snapshot-reports-plan.mjs';
 
-const DEFAULT_BASE_URL = 'https://v2.mareliac.pe/api';
-
-function option(args, name, fallback) {
-  const i = args.indexOf(name);
-  return i > -1 && args[i + 1] ? args[i + 1] : fallback;
-}
-
-const EPHEMERAL_EMAIL = 'e2e-snapshot@ayr.test';
-
-function runInApi(args, extraEnv) {
+function runInApi(branch, args, extraEnv) {
   const res = spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', args, {
     cwd: resolve(ROOT, 'apps/api'),
     env: {
       ...process.env,
-      DATABASE_URL: neonConnectionString('production', { pooled: true }),
-      DIRECT_URL: neonConnectionString('production', { pooled: false }),
+      DATABASE_URL: neonConnectionString(branch, { pooled: true }),
+      DIRECT_URL: neonConnectionString(branch, { pooled: false }),
       ...extraEnv,
     },
     stdio: 'inherit',
@@ -46,13 +41,13 @@ function runInApi(args, extraEnv) {
 function credentials({ envFile, ephemeral }) {
   if (ephemeral) {
     const password = `E2e-${randomBytes(12).toString('base64url')}`;
-    const created = runInApi(['exec', 'tsx', 'prisma/e2e-admin.ts'], {
+    const created = runInApi(ephemeral.branch, ['exec', 'tsx', 'prisma/e2e-admin.ts'], {
       ALLOW_E2E_ADMIN: '1',
-      E2E_ADMIN_EMAIL: EPHEMERAL_EMAIL,
+      E2E_ADMIN_EMAIL: ephemeral.email,
       E2E_ADMIN_PASSWORD: password,
     });
     if (created !== 0) throw new Error('No se pudo crear el admin efímero');
-    return { email: EPHEMERAL_EMAIL, password };
+    return { email: ephemeral.email, password };
   }
   const env = readEnvFile(envFile ? resolve(ROOT, envFile) : undefined);
   if (!env.ADMIN_EMAIL || !env.ADMIN_PASSWORD) {
@@ -61,8 +56,12 @@ function credentials({ envFile, ephemeral }) {
   return { email: env.ADMIN_EMAIL, password: env.ADMIN_PASSWORD };
 }
 
-const cleanupEphemeral = () =>
-  runInApi(['exec', 'tsx', 'prisma/cleanup-e2e-users.ts'], { ALLOW_E2E_CLEANUP: '1' });
+/** Borra **solo** el usuario que esta corrida creó, en la rama donde lo creó. */
+const cleanupEphemeral = (ephemeral) =>
+  runInApi(ephemeral.branch, ['exec', 'tsx', 'prisma/cleanup-e2e-users.ts'], {
+    ALLOW_E2E_CLEANUP: '1',
+    E2E_CLEANUP_ONLY_EMAIL: ephemeral.email,
+  });
 
 async function login(baseUrl, creds) {
   const res = await fetch(`${baseUrl}/auth/login`, {
@@ -181,41 +180,33 @@ function compare(a, b) {
   return 1;
 }
 
-const [mode, arg, arg2] = process.argv.slice(2);
-const args = process.argv.slice(2);
-const opts = {
-  baseUrl: option(args, '--base-url', DEFAULT_BASE_URL).replace(/\/$/, ''),
-  out: option(args, '--out'),
-  envFile: option(args, '--env-file'),
-  ephemeral: args.includes('--ephemeral-admin'),
-};
 try {
-  if (mode === 'compare' && arg && arg2) {
-    process.exitCode = compare(arg, arg2);
-  } else if ((mode === 'snapshot' || mode === 'quotation') && arg && opts.out) {
+  // Los argumentos se validan antes de leer credenciales o tocar Neon.
+  const plan = snapshotPlan(process.argv.slice(2));
+  if (plan.mode === 'compare') {
+    process.exitCode = compare(plan.files[0], plan.files[1]);
+  } else {
+    const { ephemeral } = plan;
     // El Ctrl+C no pasa por el `finally`: sin esto, el admin efímero quedaría vivo.
-    if (opts.ephemeral) {
+    if (ephemeral) {
       for (const signal of ['SIGINT', 'SIGTERM']) {
         process.on(signal, () => {
-          cleanupEphemeral();
+          cleanupEphemeral(ephemeral);
           process.exit(130);
         });
       }
     }
     try {
-      opts.creds = credentials(opts);
-      await (mode === 'snapshot' ? snapshot(arg, opts) : quotation(arg, opts));
+      const opts = { ...plan, creds: credentials(plan) };
+      await (plan.mode === 'snapshot' ? snapshot(plan.target, opts) : quotation(plan.target, opts));
     } finally {
-      if (opts.ephemeral && cleanupEphemeral() !== 0) {
-        console.error('No se pudo borrar el admin efímero: revisá /usuarios en producción.');
+      if (ephemeral && cleanupEphemeral(ephemeral) !== 0) {
+        console.error(
+          `No se pudo borrar el admin efímero: revisá /usuarios en ${ephemeral.branch}.`,
+        );
         process.exitCode = 1;
       }
     }
-  } else {
-    console.error(
-      'Uso: snapshot <etiqueta> --out <dir> | quotation <COT-nnnnnn> --out <dir> | compare <a.json> <b.json>',
-    );
-    process.exitCode = 1;
   }
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));

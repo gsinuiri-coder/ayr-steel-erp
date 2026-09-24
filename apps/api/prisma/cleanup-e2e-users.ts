@@ -11,6 +11,10 @@
  *
  * Requiere `ALLOW_E2E_CLEANUP=1`.
  * Uso: ALLOW_E2E_CLEANUP=1 tsx prisma/cleanup-e2e-users.ts
+ *
+ * Con `E2E_CLEANUP_ONLY_EMAIL` borra **solo** ese correo (que también tiene que ser de E2E). Lo
+ * usa el admin efímero de `scripts/snapshot-reports.mjs`: una foto no puede llevarse puesto el
+ * admin de un `smoke:prod` que esté corriendo al mismo tiempo (P1-2 del delta RF-S4b).
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
@@ -23,8 +27,15 @@ async function main(): Promise<void> {
     throw new Error('Bloqueado: define ALLOW_E2E_CLEANUP=1 para borrar los usuarios de E2E');
   }
 
+  const only = process.env.E2E_CLEANUP_ONLY_EMAIL?.trim().toLowerCase();
+  if (only !== undefined && only !== '' && !isE2EUserEmail(only)) {
+    throw new Error('E2E_CLEANUP_ONLY_EMAIL no es un correo de E2E: no se borra');
+  }
   const candidates = await prisma.user.findMany({
-    where: { email: { startsWith: E2E_EMAIL_PREFIX, endsWith: E2E_EMAIL_SUFFIX } },
+    where: {
+      email: { startsWith: E2E_EMAIL_PREFIX, endsWith: E2E_EMAIL_SUFFIX },
+      ...(only ? { AND: [{ email: only }] } : {}),
+    },
     select: { id: true, email: true },
   });
 
