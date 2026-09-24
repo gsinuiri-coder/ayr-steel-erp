@@ -18,7 +18,7 @@ entera, con parada ante un P0/P1 del segundo modelo (hubo uno, se mostró y el d
   - SM-P1-1: el selector de bobina le mostraba a un VENDEDOR el código de una cotización ajena.
   - El dueño aclaró RF-S3c: «no disponible» solo si la cotización es de otro vendedor.
 - **`fix/post-s4b`:** SM-P1-1 (D-267), P2-A/B/C (D-269), SM-P2-1/2 y «Cotizar por metro»
-  (D-268). Estado de la CI, el merge y el deploy: §5.
+  (D-268). **En production:** `main` = `cdebf9c`, API `00045-plw`, smoke verde (§5).
 - **Diseño del color comercial:** `docs/diseno/color-comercial-produccion.md`, en la rama
   `docs/diseno-color-comercial`, empujada y sin mergear.
 
@@ -67,7 +67,26 @@ No hay migraciones.
   - `pnpm --filter @ayr/api test`: 1024, más los agregados después.
   - `pnpm exec playwright test e2e/tests/coil-pool-alcance-vendedor-sm-p1-1.spec.ts` y
     `e2e/tests/plancha-importada-d263.spec.ts`.
-- **CI, merge y deploy:** se completan abajo al cerrar.
+- **Cierre verificado (2026-09-24):**
+  - **CI de PR #17 sobre `cdebf9c`, verde job por job:**
+    - E2E en el Postgres del runner: 395 pasaron, 0 fallaron, 3 se saltaron.
+    - Lint, typecheck y unit, más el smoke E2E y las migraciones en Neon ci.
+    - SonarCloud: Quality Gate aprobado.
+  - **Las corridas anteriores de la CI tuvieron tres rojos, todos de esta sesión:**
+    - un rojo de E2E, de **test**: el POST de la cotización salía sin `issueDate`;
+    - el gate de Sonar en 62.5 %, por el `groupBy` de borradores sin cubrir; se resolvió con
+      `invoicing-parts-drafts.spec.ts`;
+    - un lint del spec nuevo.
+  - **Merge:** `main` pasó de `249186b` a `cdebf9c` en fast-forward; PR #17 `MERGED`. Sin
+    migraciones.
+  - **API:**
+    - revisión `ayr-steel-erp-api-00045-plw`, 100 % del tráfico, `git-sha=cdebf9c`;
+    - `/health` → `{"status":"ok","db":"ok"}`;
+    - preflight CORS desde `https://v2.mareliac.pe` → 204.
+    - Comando: `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`,
+      desde el checkout principal en `cdebf9c`.
+  - **Vercel:** `success` sobre `cdebf9c`.
+  - **`pnpm smoke:prod`** desde `cdebf9c`: verde.
 
 ## 6. Siguiente sesión
 
