@@ -51,6 +51,11 @@ import {
 } from '@/components/sales/product-stock-picker';
 import { CoilSalePickerDialog } from '@/components/sales/coil-sale-picker';
 import {
+  descriptionFromStored,
+  descriptionToSend,
+  MAX_LINE_DESCRIPTION,
+} from '@/lib/line-description';
+import {
   customerLabel,
   formatMoney,
   formatQty,
@@ -172,6 +177,12 @@ interface LineDraft {
    * coincida — por eso el campo de cantidad se bloquea en cuanto la línea es compuesta.
    */
   pieces: PieceDraft[];
+  /**
+   * D-283: la descripción que lee el cliente (PDF, pedido, comprobante). Arranca con el nombre
+   * del producto; solo viaja si `descriptionEdited` (ver `descriptionToSend`).
+   */
+  description: string;
+  descriptionEdited: boolean;
 }
 
 /** D-255: lo que la línea guardada tenía, para reconocer que nadie la tocó. */
@@ -204,6 +215,8 @@ function emptyLine(key: number): LineDraft {
     netAmountPen: '',
     original: null,
     pieces: [EMPTY_PIECE],
+    description: '',
+    descriptionEdited: false,
   };
 }
 
@@ -427,6 +440,7 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
       qty: item.qty,
       pricePen,
       original: { ...stored, kind: 'BOBINA', productId: '', saleCoilId: item.reserveItemId },
+      ...descriptionFromStored(item.description, item.productName, ''),
     };
   }
   return {
@@ -447,6 +461,12 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
       item.pieces.length > 0
         ? item.pieces.map((p) => ({ lengthM: mmToMeters(p.lengthMm), qty: String(p.qty) }))
         : [EMPTY_PIECE],
+    // D-283: lo guardado sin los largos que agregó el API; si difiere del nombre, se editó.
+    ...descriptionFromStored(
+      item.description,
+      item.productName,
+      item.pieces.length > 0 ? describePieces(item.pieces) : '',
+    ),
   };
 }
 
@@ -606,6 +626,9 @@ export function SalesDocumentForm({
           : null;
     patchLine(key, {
       productId,
+      // D-283: la descripción se autocompleta con el nombre del producto nuevo.
+      description: product?.name ?? '',
+      descriptionEdited: false,
       pricePerPiece: false,
       ...(perUnitValue === null
         ? basisChanged
@@ -631,6 +654,8 @@ export function SalesDocumentForm({
       qty: '',
       pricePerPiece: false,
       pieces: [EMPTY_PIECE],
+      description: '',
+      descriptionEdited: false,
     });
   }
 
@@ -814,10 +839,13 @@ export function SalesDocumentForm({
               'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes, tipo de cambio y reservas.',
           };
         }
+        const coilDescription = descriptionToSend(l, null, '');
+        if (!coilDescription.ok) return { error: `${at}: ${coilDescription.reason}` };
         items.push({
           saleCoilId: l.saleCoilId,
           qty: toFixedString(qty, 'KG'),
           ...pricing.payload,
+          ...(coilDescription.value === undefined ? {} : { description: coilDescription.value }),
         });
         continue;
       }
@@ -898,6 +926,14 @@ export function SalesDocumentForm({
         };
       }
 
+      // D-283: la descripción editada viaja con sus largos; sin editar, la arma el API.
+      const description = descriptionToSend(
+        l,
+        product.name,
+        pieces && pieces.length > 0 ? describePieces(pieces) : '',
+      );
+      if (!description.ok) return { error: `${at}: ${description.reason}` };
+
       // D-134: la línea ya no dice qué reservar. Una cobertura a medida promete kilos del
       // agregado compatible y el API los calcula; el aviso de que no alcanzan sale del panel
       // de stock, y la palabra final la tiene el API bajo el lock, que es donde importa.
@@ -909,6 +945,7 @@ export function SalesDocumentForm({
         // importe guardado. Siempre una sola forma (el schema rechaza dos).
         ...pricing.payload,
         ...(pieces ? { pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })) } : {}),
+        ...(description.value === undefined ? {} : { description: description.value }),
       });
     }
     return { items };
@@ -1331,6 +1368,8 @@ function LineRow({
                 productId: '',
                 pieces: [EMPTY_PIECE],
                 qty: '',
+                description: '',
+                descriptionEdited: false,
               });
             }}
           >
@@ -1452,6 +1491,23 @@ function LineRow({
                 />
               )}
             </div>
+          )}
+          {/* D-283: la descripción que lee el cliente; arranca con el nombre del producto. */}
+          {(l.kind === 'BOBINA' ? l.saleCoilId !== '' : l.productId !== '') && (
+            <Input
+              className="mt-1 h-8 text-xs"
+              aria-label={`Descripción de la línea ${index + 1}`}
+              placeholder={
+                l.kind === 'BOBINA'
+                  ? 'Descripción (vacía: el nombre del producto)'
+                  : (product?.name ?? 'Descripción')
+              }
+              maxLength={MAX_LINE_DESCRIPTION}
+              value={l.description}
+              onChange={(e) => {
+                onPatch({ description: e.target.value, descriptionEdited: true });
+              }}
+            />
           )}
         </TableCell>
         <TableCell className="whitespace-normal">
