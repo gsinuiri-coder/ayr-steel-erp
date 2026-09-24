@@ -43,6 +43,48 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   (`docs/revision/color-comercial-autorrevision.md`): 0 P0, 0 P1 de código. Motivo: esquema de
   un solo agente, sin segundo revisor disponible. Pieza de riesgo para el pase cruzado: el
   retiro de specs de D-274 (borra filas de `raw_material_specs`).
+- **Deudas post-RF-S4b** (2026-09-24, rama `fix/deudas-post-s4b`). D-275 y D-276. Autorrevisión
+  por un subagente nuevo del mismo modelo que escribió
+  (`docs/revision/deudas-post-s4b-autorrevision.md`): 0 P0, 1 P1 (corregido en la rama). Motivo:
+  esquema de un solo agente, sin segundo revisor disponible.
+
+## Deudas post-RF-S4b (2026-09-24)
+
+Handoff: `docs/handoff/deudas-post-s4b.md`. UAT: `docs/uat/deudas-post-s4b.md`. Autorrevisión:
+`docs/revision/deudas-post-s4b-autorrevision.md`. Rama `fix/deudas-post-s4b`, construida sobre
+`feat/color-comercial` (PR #18), PR #19 sin mergear. Se despliega en la ventana de esta
+noche (runbook `docs/handoff/ventana-color-comercial.md`, paso 5b), solo con CI verde.
+
+- **(a) → D-275:** un VENDEDOR **sí** llegaba a «COT-… (reserva temporal)» de otro vendedor: en
+  la invariante del agregado, al reservar o confirmar la venta de una bobina entera; y en la de
+  `disponible ≥ reservado`, al despachar una línea cuya reserva liberó un administrador. Ahora
+  lee «cotización no disponible» y, por el P1-1 de la autorrevisión, «pedido no disponible» para
+  los pedidos de otro vendedor. Unitarios + E2E de dos vendedores; los tres fallaban antes.
+- **(b) → D-276:** revierte D-269 (b); el cambio producto + precio con cambio de unidad deja su
+  fila en `sales_price_changes`.
+- **(c)** `smoke:prod` acepta `v2.mareliac.pe`; la lista de hosts pasó a ser exacta (antes valía
+  cualquier `*.vercel.app` o host con «ayr»).
+- **(d)** `E2E_API_PORT` mueve el puerto del API de la suite local (por defecto 3000).
+- **(e)** `auth.service.spec.ts`: el `beforeAll` arma el hash con el costo mínimo de argon2id.
+- **Guía del cliente** para la revisión del 25-09: `docs/cliente/revision-2026-09-25.md`.
+- **Verificación local:** lint, typecheck, `format:check`, `test:scripts` (38) y unitarios de la
+  API (1079/1079) limpios. **Suite E2E completa** (worktree, builds de producción, `CI=true`,
+  `ayr_local_e2e`, antes del arreglo del P1-1): **388 passed, 10 failed, 1 flaky, 2 skipped**.
+  Los 10 rojos se clasificaron como infraestructura: 8 por falta de emisión electrónica en este
+  entorno («Emisión electrónica no habilitada»), `fase5a` M1 por falta de R2 (`pdfKey` nulo) y
+  `fase2a` RF-11 (el XML del proveedor no prellena la compra; el diff no toca compras ni el web, y
+  la CI de #18 lo pasa con la misma base). El flaky (`selector-cliente-f8s3c`) pasó solo.
+  Después del P1-1: D-275, SM-P1-1, `flujo-comercial-f8s2` y `selector-cliente-f8s3c` verdes
+  (12/12 más `fase2a`, que sigue en rojo local).
+
+**Pendientes que deja:**
+
+- P2 de la autorrevisión: test de servicio de que el despacho pasa el `viewer`;
+  `DUMMY_HASH_PROMISE` con costo de producción en `auth.service.ts`; el E2E de D-275 no purga
+  cliente ni usuarios; `scripts/e2e-latency.mjs` con 3000 fijo.
+- `fase2a` RF-11 en rojo en local: **en la CI pasó**, era del entorno local.
+- SonarCloud: el primer análisis dio Reliability D sin poder enumerar el issue (proyecto
+  privado); se corrigieron los bugs de SonarJS de los archivos tocados y el gate pasó.
 
 ## Color comercial en producción (2026-09-24)
 
@@ -103,10 +145,12 @@ Handoff: `docs/handoff/fix-post-s4b.md`. UAT: `docs/uat/fix-post-s4b.md`. Rama `
     precios distintos, una edición hacia el precio importado de la otra no cuenta. Acotado por
     el control de «diferencia mayor que el redondeo». Lo cierra la clave de línea estable.
   - D-269 (b): una corrección producto + precio que además cambia de unidad ya no deja registro.
+    **Cerrado por D-276** (deudas post-RF-S4b).
   - D-268: el precio por metro sale del precio con IGV ya redondeado; puede diferir 0.0001 del
     equivalente directo (el total mostrado es el guardado).
   - Fuera de este flujo: `reservation-guard.ts:108` y `raw-material.ts:542` nombran
     «COT-… (reserva temporal)» en mensajes de error; falta verificar si un VENDEDOR llega a ellos.
+    **Verificado: llega a los dos. Cerrado por D-275.**
 
 ## Correcciones del delta RF-S4b (2026-09-24)
 

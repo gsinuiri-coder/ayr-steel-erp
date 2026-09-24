@@ -76,27 +76,27 @@ describe('recordPriceChanges', () => {
     });
   });
 
-  it('P2-B: por posición solo se empareja la misma unidad', async () => {
+  it('D-276: producto, precio y unidad cambiados en la misma posición también se registran', async () => {
+    // Revierte P2-B (D-269 b): corregir un producto mal mapeado por otro de unidad distinta, con
+    // su precio, es la misma línea corregida; sin registro, el barrido pisaría ese precio.
+    // Las líneas reales traen su unidad (la de la columna `unit`); la del kg y la del metro.
+    const perKg = { ...priced(1, 'p-kg', '10.0000'), unit: 'KGM' };
+    const perMeter = { ...priced(1, 'p-m', '25.0000'), unit: 'MTR' };
     const { tx, createMany } = fakeTx();
     const n = await recordPriceChanges(
       tx,
       { quotationId: 'q-1' },
-      [{ ...priced(1, 'p-kg', '10.0000'), unit: 'KGM' }],
-      [{ ...priced(1, 'p-m', '25.0000'), unit: 'MTR' }],
+      [perKg, priced(2, 'p-2', '5.0000')],
+      [perMeter, priced(2, 'p-2', '5.0000')],
       'u-1',
     );
-    expect(n).toBe(0);
-    expect(createMany).not.toHaveBeenCalled();
-
-    const same = fakeTx();
-    await recordPriceChanges(
-      same.tx,
-      { quotationId: 'q-1' },
-      [{ ...priced(1, 'p-a', '10.0000'), unit: 'KGM' }],
-      [{ ...priced(1, 'p-b', '12.0000'), unit: 'KGM' }],
-      'u-1',
-    );
-    expect(rows(same.createMany)[0]).toMatchObject({ productId: 'p-b', afterUnitValuePen: '12' });
+    expect(n).toBe(1);
+    expect(rows(createMany)[0]).toMatchObject({
+      lineNumber: 1,
+      productId: 'p-m',
+      beforeUnitValuePen: '10',
+      afterUnitValuePen: '25',
+    });
   });
 
   it('cambiar solo el producto, al mismo precio, no es un cambio de precio', async () => {

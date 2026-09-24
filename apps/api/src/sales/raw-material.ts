@@ -2,16 +2,22 @@ import { BadRequestException } from '@nestjs/common';
 import { InventoryItemType, ReservationStatus, type Prisma } from '@prisma/client';
 import {
   Decimal,
-  quotationCode,
   rawMaterialLabel,
-  salesOrderCode,
   toDecimal,
   toFixedString,
   type RawMaterialWarningDto,
 } from '@ayr/shared';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
-import { liveTemporaryWhere, reservedByItem, type ReservedScope } from './reserved-ledger';
+import {
+  byCodeUnit,
+  firmHolderCode,
+  liveTemporaryWhere,
+  reservedByItem,
+  temporaryHolderCode,
+  type HolderViewer,
+  type ReservedScope,
+} from './reserved-ledger';
 
 /**
  * La reserva **genérica** de materia prima (D-134).
@@ -374,7 +380,7 @@ export async function assertRawMaterialInvariant(
   tx: Prisma.TransactionClient,
   coilIds: string[],
   toleranceMm: string,
-  options: RawMaterialScope & { alsoAffecting?: CoilAttributes[] } = {},
+  options: RawMaterialScope & { alsoAffecting?: CoilAttributes[]; viewer?: HolderViewer } = {},
 ): Promise<void> {
   // `firstOnly`: el camino que lanza no necesita el resto. Sin esto, una operación que rompe
   // tres agregados bloqueaba con `FOR UPDATE` las bobinas de los tres para después descartar
@@ -431,6 +437,8 @@ export interface RawMaterialShortfall extends RawMaterialWarningDto {
 interface ShortfallOptions extends RawMaterialScope {
   /** Devolver el primer agregado corto y parar. Lo usan los `assert*`. */
   firstOnly?: boolean;
+  /** D-275: quién lee el mensaje; a un VENDEDOR no se le nombra el documento de otro. */
+  viewer?: HolderViewer;
 }
 
 /**
@@ -516,7 +524,7 @@ export async function findRawMaterialShortfallsFor(
           itemId: spec.id,
           ...reservationScopeWhere(options),
         },
-        select: { qty: true, salesOrder: { select: { seq: true } } },
+        select: { qty: true, salesOrder: { select: { seq: true, sellerId: true } } },
         orderBy: { createdAt: 'asc' },
       }),
       tx.quotationReservation.findMany({
@@ -528,18 +536,18 @@ export async function findRawMaterialShortfallsFor(
             ? {}
             : { quotationId: { notIn: options.exceptQuotationIds } }),
         },
-        select: { qty: true, quotation: { select: { seq: true } } },
+        select: { qty: true, quotation: { select: { seq: true, sellerId: true } } },
         orderBy: { createdAt: 'asc' },
       }),
     ]);
     const label = (await rawMaterialSpecLabels(tx, [spec.id])).get(spec.id) ?? 'materia prima';
     const orders = [
       ...holders.map((h) => ({
-        code: salesOrderCode(h.salesOrder.seq),
+        code: firmHolderCode(h.salesOrder, options.viewer),
         qtyKg: h.qty.toFixed(3),
       })),
       ...temporaryHolders.map((h) => ({
-        code: `${quotationCode(h.quotation.seq)} (reserva temporal)`,
+        code: temporaryHolderCode(h.quotation, options.viewer),
         qtyKg: h.qty.toFixed(3),
       })),
     ];
@@ -641,7 +649,7 @@ export async function lockRawMaterialCoils(
   for (const spec of specs) {
     for (const id of await rawMaterialCoilIds(tx, spec, toleranceMm)) all.add(id);
   }
-  const sorted = [...all].sort();
+  const sorted = [...all].sort(byCodeUnit);
   await tx.$queryRaw`
     SELECT "id" FROM "coils" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR UPDATE
   `;

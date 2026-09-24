@@ -5,9 +5,16 @@ import {
   SalesOrderStatus,
   type Prisma,
 } from '@prisma/client';
-import { Decimal, quotationCode, salesOrderCode, toDecimal } from '@ayr/shared';
+import { Decimal, toDecimal } from '@ayr/shared';
 import { assertRawMaterialInvariantFor, findRawMaterialSpecs } from './raw-material';
-import { liveTemporaryWhere, reservedByItem } from './reserved-ledger';
+import {
+  byCodeUnit,
+  firmHolderCode,
+  liveTemporaryWhere,
+  reservedByItem,
+  temporaryHolderCode,
+  type HolderViewer,
+} from './reserved-ledger';
 
 /**
  * Guardrail transversal de Fase 5a (D-054, D-066): la invariante `disponible ≥ reservado`.
@@ -57,6 +64,8 @@ export interface ActiveReservation {
 export async function findActiveReservations(
   tx: Prisma.TransactionClient,
   items: ReservedItemRef[],
+  /** D-275: quién lee `orderCode`; a un VENDEDOR no se le nombra el documento de otro. */
+  viewer?: HolderViewer,
 ): Promise<ActiveReservation[]> {
   if (items.length === 0) return [];
   const itemFilter = items.map((i) => ({ itemType: i.itemType, itemId: i.itemId }));
@@ -69,7 +78,7 @@ export async function findActiveReservations(
         itemId: true,
         qty: true,
         unit: true,
-        salesOrder: { select: { id: true, seq: true } },
+        salesOrder: { select: { id: true, seq: true, sellerId: true } },
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -83,7 +92,7 @@ export async function findActiveReservations(
         itemId: true,
         qty: true,
         unit: true,
-        quotation: { select: { id: true, seq: true } },
+        quotation: { select: { id: true, seq: true, sellerId: true } },
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -96,7 +105,7 @@ export async function findActiveReservations(
       qty: toDecimal(r.qty.toString()),
       unit: r.unit,
       orderId: r.salesOrder.id,
-      orderCode: salesOrderCode(r.salesOrder.seq),
+      orderCode: firmHolderCode(r.salesOrder, viewer),
     })),
     ...temporary.map((r) => ({
       reservationId: r.id,
@@ -105,7 +114,7 @@ export async function findActiveReservations(
       qty: toDecimal(r.qty.toString()),
       unit: r.unit,
       orderId: r.quotation.id,
-      orderCode: `${quotationCode(r.quotation.seq)} (reserva temporal)`,
+      orderCode: temporaryHolderCode(r.quotation, viewer),
     })),
   ];
 }
@@ -139,12 +148,13 @@ export async function assertReservationInvariant(
   item: ReservedItemRef,
   newQty: Decimal,
   previousQty: Decimal,
+  viewer?: HolderViewer,
 ): Promise<void> {
   if (newQty.gte(previousQty)) return;
   const reserved = await reservedQty(tx, item);
   if (reserved.isZero() || newQty.gte(reserved)) return;
 
-  const holders = await findActiveReservations(tx, [item]);
+  const holders = await findActiveReservations(tx, [item], viewer);
   // `holders` puede nombrar varios pedidos a la vez para un PRODUCT (varias órdenes de
   // catálogo esperando el mismo SKU) o un RAW_MATERIAL (varias cotizaciones sobre el mismo
   // agregado, D-134): ahí sigue siendo el caso normal. Para un **COIL** que sale por un
@@ -424,7 +434,7 @@ export async function assertCoilsNotReserved(
   exceptReservationIds: string[] = [],
 ): Promise<void> {
   if (coilIds.length === 0) return;
-  const sorted = [...new Set(coilIds)].sort();
+  const sorted = [...new Set(coilIds)].sort(byCodeUnit);
   // Mismo lock, mismo orden y mismo motivo que `assertStripsNotAssigned` (D-060): sin él
   // queda una ventana en la que el chequeo ve el ledger vacío, una confirmación de pedido
   // commitea, y la operación sigue adelante sobre material ya prometido.

@@ -5,10 +5,11 @@ import {
   LOCAL_ADMIN_PASSWORD,
   LOCAL_JWT_SECRET,
   dbUrl,
+  e2eApiPort,
 } from './scripts/local-docker-env.mjs';
 
 /**
- * E2E contra api (:3000) + web (:3001) locales y la DB que indique DATABASE_URL
+ * E2E contra api (:3000, o `E2E_API_PORT`) + web (:3001) locales y la DB que indique DATABASE_URL
  * (en CI: Neon rama `ci`, reseteada en global-setup). Con E2E_BASE_URL apunta a
  * una URL externa (producción) y no levanta servidores ni resetea nada.
  */
@@ -36,6 +37,16 @@ const isCI = !!process.env.CI;
  * La corrida por defecto tiene que poder dar **verde pleno** sin depender de nada externo.
  */
 const runsPse = process.env.E2E_PSE === '1';
+
+/**
+ * Puerto del API local. `E2E_API_PORT` lo mueve si otro proceso ya escucha en 3000 (un
+ * `nuxt dev` en `[::1]:3000` contestaba el health check y Playwright lo reusaba). El web se
+ * queda en 3001 y le habla al API por `API_URL`: si ya hay un web corriendo en 3001 apuntando a
+ * otro puerto, Playwright lo reusaría; por eso, con `E2E_API_PORT` puesto, el web no se reusa y
+ * la suite falla al instante si 3001 está ocupado.
+ */
+const API_PORT = String(e2eApiPort());
+const API_ORIGIN = `http://localhost:${API_PORT}`;
 
 /** Puerto del stub del padrón (`e2e/padron-stub.mjs`). Ver el `webServer` de más abajo. */
 const PADRON_STUB_PORT = '3002';
@@ -83,11 +94,11 @@ export default defineConfig({
     : [
         {
           command: isCI ? 'pnpm --filter @ayr/api start' : 'pnpm --filter @ayr/api exec nest start',
-          url: 'http://localhost:3000/health',
+          url: `${API_ORIGIN}/health`,
           reuseExistingServer: !isCI,
           timeout: 180_000,
           env: {
-            PORT: '3000',
+            PORT: API_PORT,
             WEB_ORIGIN: 'http://localhost:3001',
             JOBS_ENABLED: 'false',
             THROTTLE_DISABLED: 'true',
@@ -113,9 +124,9 @@ export default defineConfig({
         {
           command: isCI ? 'pnpm --filter @ayr/web start' : 'pnpm --filter @ayr/web dev',
           url: 'http://localhost:3001/login',
-          reuseExistingServer: !isCI,
+          reuseExistingServer: !isCI && !process.env.E2E_API_PORT,
           timeout: 180_000,
-          env: { API_URL: 'http://localhost:3000' },
+          env: { API_URL: API_ORIGIN },
         },
       ],
 });

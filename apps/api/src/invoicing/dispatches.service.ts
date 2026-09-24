@@ -42,7 +42,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
-import { reservedByItem } from '../sales/reserved-ledger';
+import { byCodeUnit, reservedByItem } from '../sales/reserved-ledger';
 import { pendingQty, proratedQty } from './invoicing-math';
 
 /**
@@ -318,7 +318,7 @@ export class DispatchesService {
           .filter((l) => l.target.itemType === ('COIL' as InventoryItemType))
           .map((l) => l.target.itemId),
       ),
-    ].sort();
+    ].sort(byCodeUnit);
     if (coilIds.length > 0) {
       await tx.$queryRaw`
         SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
@@ -355,6 +355,7 @@ export class DispatchesService {
         refId: dispatch.id,
         notes: `Despacho ${dispatchCode(dispatch.seq)} de ${salesOrderCode(order.seq)}`,
         actorId: actor.id,
+        viewer: actor,
         confirmBackdate: input.confirmBackdate,
         // D-124: la salida de kardex se fecha con la **fecha del despacho**, no con hoy.
         // `dispatchDate` ya era la fecha de negocio de esta operación desde Fase 5b; lo
@@ -568,7 +569,7 @@ export class DispatchesService {
         // pisado por el cambio de estado de D-170.
         const lockedCoilIds = [
           ...new Set(dispatch.items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
-        ].sort();
+        ].sort(byCodeUnit);
         if (lockedCoilIds.length > 0) {
           await tx.$queryRaw`
             SELECT "id" FROM "coils" WHERE "id" = ANY(${lockedCoilIds}::uuid[]) ORDER BY "id" FOR UPDATE

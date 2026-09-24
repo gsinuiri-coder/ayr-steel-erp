@@ -17,6 +17,14 @@ const env = loadEnv({
   JOBS_ENABLED: 'false',
 });
 
+/** Costo mínimo de argon2id para el fixture: ver el `beforeAll`. */
+const FIXTURE_HASH_OPTIONS = {
+  type: argon2.argon2id,
+  memoryCost: 1024,
+  timeCost: 2,
+  parallelism: 1,
+} as const;
+
 function makePrismaMock() {
   return {
     user: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), update: jest.fn() },
@@ -38,19 +46,23 @@ describe('AuthService', () => {
   let user: User;
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
 
+  // El hash del usuario de prueba se arma con el costo mínimo de argon2id: con el de producción
+  // (64 MiB, t=3) este hook pasaba los 5 s por defecto de jest con la máquina cargada. `verify` lee
+  // los parámetros del propio hash, así que el login se prueba igual. El tope de 30 s queda de
+  // respaldo, no como el caso normal.
   beforeAll(async () => {
     user = {
       id: '11111111-1111-4111-8111-111111111111',
       email: 'admin@ayr.test',
       name: 'Admin',
-      passwordHash: await argon2.hash('Secreta123', { type: argon2.argon2id }),
+      passwordHash: await argon2.hash('Secreta123', FIXTURE_HASH_OPTIONS),
       role: Role.ADMINISTRADOR,
       active: true,
       mustChangePassword: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-  });
+  }, 30_000);
 
   beforeEach(async () => {
     prisma = makePrismaMock();
@@ -68,6 +80,18 @@ describe('AuthService', () => {
     }).compile();
     service = moduleRef.get(AuthService);
     jwt = moduleRef.get(JwtService);
+  });
+
+  it('el hash del usuario de prueba es barato (el beforeAll no depende del costo de producción)', () => {
+    // `$argon2id$v=19$m=…,p=…,t=…$sal$hash`: el orden de los parámetros depende de la versión.
+    const params = new Map(
+      (user.passwordHash.split('$')[3] ?? '').split(',').map((kv) => {
+        const [key, value] = kv.split('=');
+        return [key, Number(value)] as const;
+      }),
+    );
+    expect(params.get('m')).toBeLessThanOrEqual(4096);
+    expect(params.get('t')).toBeLessThanOrEqual(2);
   });
 
   describe('login', () => {

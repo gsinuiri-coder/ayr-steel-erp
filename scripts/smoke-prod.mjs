@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { ROOT, neonConnectionString } from './lib.mjs';
+import { isAllowedSmokeBaseUrl } from './smoke-prod-guard.mjs';
 
 const DEFAULT_BASE_URL = 'https://ayr-steel-erp-web.vercel.app';
 const E2E_ADMIN_EMAIL = 'e2e-smoke@ayr.test';
@@ -24,17 +25,9 @@ const baseUrl = (
   argv.includes('--base-url') ? argv[argv.indexOf('--base-url') + 1] : DEFAULT_BASE_URL
 ).replace(/\/+$/, '');
 
-// A esta URL se le manda el usuario y la contraseña del admin efímero de **producción**. Un
-// argumento copiado de un chat o un dedo que resbala no puede terminar en un host cualquiera.
-const allowed = (() => {
-  try {
-    const url = new URL(baseUrl);
-    return url.protocol === 'https:' && /(^|\.)vercel\.app$|(^|\.)ayr\b/.test(url.hostname);
-  } catch {
-    return false;
-  }
-})();
-if (!allowed) {
+// A esta URL se le manda el usuario y la contraseña del admin efímero de **producción**: ver
+// `smoke-prod-guard.mjs`.
+if (!isAllowedSmokeBaseUrl(baseUrl)) {
   throw new Error(
     `--base-url tiene que ser https y del dominio del proyecto (recibido: ${baseUrl})`,
   );

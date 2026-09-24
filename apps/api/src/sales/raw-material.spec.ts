@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { Prisma, type Prisma as PrismaTypes } from '@prisma/client';
+import { Prisma, Role, type Prisma as PrismaTypes } from '@prisma/client';
 import {
   assertRawMaterialInvariant,
   findRawMaterialShortfalls,
@@ -27,7 +27,14 @@ interface FakeState {
   /** Reservas por ítem (venta de bobina entera). */
   onCoils: { id: string; itemId: string; qty: string }[];
   /** Reservas genéricas contra la spec. */
-  generic: { id: string; qty: string; orderSeq: number; salesOrderId?: string }[];
+  generic: {
+    id: string;
+    qty: string;
+    orderSeq: number;
+    salesOrderId?: string;
+    /** D-275: el vendedor del pedido; ausente = sin vendedor. */
+    sellerId?: string;
+  }[];
   /**
    * Bobinas montadas en una OP viva (D-154). `reservationId` es lo que decide cuánto retiene
    * el agregado: una corrida que nace de un pedido aporta **cero** —su compromiso ya está
@@ -48,6 +55,8 @@ interface FakeState {
     qty: string;
     expiresAt: string;
     quotationSeq: number;
+    /** D-275: el vendedor de la cotización; `null` o ausente = sin vendedor. */
+    sellerId?: string | null;
   }[];
 }
 
@@ -146,9 +155,10 @@ function createFakeTx(state: FakeState) {
           );
         }
         return Promise.resolve(
-          state.generic
-            .filter(keep)
-            .map((r) => ({ qty: dec(r.qty), salesOrder: { seq: r.orderSeq } })),
+          state.generic.filter(keep).map((r) => ({
+            qty: dec(r.qty),
+            salesOrder: { seq: r.orderSeq, sellerId: r.sellerId ?? null },
+          })),
         );
       }),
       // `reservedByItem` (D-185): la suma por ítem, con el mismo alcance que el resto.
@@ -176,7 +186,7 @@ function createFakeTx(state: FakeState) {
         Promise.resolve(
           liveTemporary(state, where).map((r) => ({
             qty: dec(r.qty),
-            quotation: { seq: r.quotationSeq },
+            quotation: { seq: r.quotationSeq, sellerId: r.sellerId ?? null },
           })),
         ),
       ),
@@ -282,6 +292,89 @@ describe('Invariante del agregado de materia prima (D-134)', () => {
       expect(shortfalls[0]?.orders).toEqual([
         { code: 'COT-000012 (reserva temporal)', qtyKg: '300.000' },
       ]);
+    });
+
+    it('D-275: a un VENDEDOR no se le nombra la reserva temporal de la cotización de otro', async () => {
+      const future = new Date(Date.now() + 86_400_000).toISOString();
+      const tx = createFakeTx({
+        ...EMPTY,
+        coils: [{ id: 'a', businessLineId: LINE, colorId: 'rojo', thicknessMm: '0.45' }],
+        balances: [{ itemId: 'a', qty: '100' }],
+        temporary: [
+          {
+            itemType: 'RAW_MATERIAL',
+            itemId: SPEC.id,
+            qty: '200',
+            expiresAt: future,
+            quotationSeq: 12,
+            sellerId: 'vendedor-a',
+          },
+          {
+            itemType: 'RAW_MATERIAL',
+            itemId: SPEC.id,
+            qty: '100',
+            expiresAt: future,
+            quotationSeq: 13,
+            sellerId: 'vendedor-b',
+          },
+          {
+            itemType: 'RAW_MATERIAL',
+            itemId: SPEC.id,
+            qty: '50',
+            expiresAt: future,
+            quotationSeq: 14,
+          },
+        ],
+      });
+      const asSellerA = await findRawMaterialShortfalls(tx, ['a'], TOLERANCE, {
+        viewer: { id: 'vendedor-a', role: Role.VENDEDOR },
+      });
+      expect(asSellerA[0]?.orders).toEqual([
+        { code: 'COT-000012 (reserva temporal)', qtyKg: '200.000' },
+        { code: 'cotización no disponible (reserva temporal)', qtyKg: '100.000' },
+        { code: 'cotización no disponible (reserva temporal)', qtyKg: '50.000' },
+      ]);
+      await expect(
+        assertRawMaterialInvariant(tx, ['a'], TOLERANCE, {
+          viewer: { id: 'vendedor-b', role: Role.VENDEDOR },
+        }),
+      ).rejects.toThrow(
+        'prometidos a cotización no disponible (reserva temporal) (200.000 kg), COT-000013 (reserva temporal)',
+      );
+      // Cualquier otro rol, y sin lector, ve los códigos.
+      const asAdmin = await findRawMaterialShortfalls(tx, ['a'], TOLERANCE, {
+        viewer: { id: 'admin', role: Role.ADMINISTRADOR },
+      });
+      expect(asAdmin[0]?.orders.map((o) => o.code)).toEqual([
+        'COT-000012 (reserva temporal)',
+        'COT-000013 (reserva temporal)',
+        'COT-000014 (reserva temporal)',
+      ]);
+      const unnamed = await findRawMaterialShortfalls(tx, ['a'], TOLERANCE);
+      expect(unnamed[0]?.orders.map((o) => o.code)).toEqual(asAdmin[0]?.orders.map((o) => o.code));
+    });
+
+    it('D-275: a un VENDEDOR no se le nombra el pedido de otro vendedor', async () => {
+      const tx = createFakeTx({
+        ...EMPTY,
+        coils: [{ id: 'a', businessLineId: LINE, colorId: 'rojo', thicknessMm: '0.45' }],
+        balances: [{ itemId: 'a', qty: '100' }],
+        generic: [
+          { id: 'r-a', qty: '150', orderSeq: 7, sellerId: 'vendedor-a' },
+          { id: 'r-b', qty: '50', orderSeq: 8, sellerId: 'vendedor-b' },
+        ],
+      });
+      const asSellerA = await findRawMaterialShortfalls(tx, ['a'], TOLERANCE, {
+        viewer: { id: 'vendedor-a', role: Role.VENDEDOR },
+      });
+      expect(asSellerA[0]?.orders.map((o) => o.code)).toEqual([
+        'PED-000007',
+        'pedido no disponible',
+      ]);
+      const asAdmin = await findRawMaterialShortfalls(tx, ['a'], TOLERANCE, {
+        viewer: { id: 'admin', role: Role.ADMINISTRADOR },
+      });
+      expect(asAdmin[0]?.orders.map((o) => o.code)).toEqual(['PED-000007', 'PED-000008']);
     });
 
     it('no cuenta los kilos que una corrida A STOCK retiene (D-060)', async () => {

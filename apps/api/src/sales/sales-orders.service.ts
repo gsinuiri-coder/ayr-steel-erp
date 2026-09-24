@@ -121,6 +121,7 @@ import {
   liveTemporaryWhere,
   reservedByItem,
   sweepExpiredTemporaryReservations,
+  type HolderViewer,
 } from './reserved-ledger';
 import { computePriceFloors, type PriceFloorCandidate } from './price-floor';
 import {
@@ -1315,39 +1316,45 @@ export class SalesOrdersService {
     orderId: string,
     items: (ReservableLine & { id: string })[],
   ): Promise<void> {
-    await this.reserveLines(tx, items, 'el pedido', async (item) => {
-      // `upsert` y no `create` desde D-187: cambiar la cantidad de una línea confirmada libera
-      // su reserva y vuelve a reservar la misma línea sobre el mismo ítem, y la tabla admite una
-      // sola fila por (línea, ítem). La fila liberada **revive** con la cantidad nueva —y con
-      // ella la OP que ya colgaba de su id—; el rastro de la liberación queda en `audit_log`.
-      // En confirmar y agregar ítems la línea es nueva y siempre cae en `create`.
-      await tx.reservation.upsert({
-        where: {
-          salesOrderItemId_itemType_itemId: {
+    await this.reserveLines(
+      tx,
+      items,
+      'el pedido',
+      async (item) => {
+        // `upsert` y no `create` desde D-187: cambiar la cantidad de una línea confirmada libera
+        // su reserva y vuelve a reservar la misma línea sobre el mismo ítem, y la tabla admite una
+        // sola fila por (línea, ítem). La fila liberada **revive** con la cantidad nueva —y con
+        // ella la OP que ya colgaba de su id—; el rastro de la liberación queda en `audit_log`.
+        // En confirmar y agregar ítems la línea es nueva y siempre cae en `create`.
+        await tx.reservation.upsert({
+          where: {
+            salesOrderItemId_itemType_itemId: {
+              salesOrderItemId: item.id,
+              itemType: item.reserveItemType,
+              itemId: item.reserveItemId,
+            },
+          },
+          create: {
+            salesOrderId: orderId,
             salesOrderItemId: item.id,
             itemType: item.reserveItemType,
             itemId: item.reserveItemId,
+            qty: item.reserveQty,
+            unit: item.reserveUnit,
+            status: ReservationStatus.ACTIVE,
+            createdById: actor.id,
           },
-        },
-        create: {
-          salesOrderId: orderId,
-          salesOrderItemId: item.id,
-          itemType: item.reserveItemType,
-          itemId: item.reserveItemId,
-          qty: item.reserveQty,
-          unit: item.reserveUnit,
-          status: ReservationStatus.ACTIVE,
-          createdById: actor.id,
-        },
-        update: {
-          qty: item.reserveQty,
-          unit: item.reserveUnit,
-          status: ReservationStatus.ACTIVE,
-          releasedAt: null,
-          releasedById: null,
-        },
-      });
-    });
+          update: {
+            qty: item.reserveQty,
+            unit: item.reserveUnit,
+            status: ReservationStatus.ACTIVE,
+            releasedAt: null,
+            releasedById: null,
+          },
+        });
+      },
+      actor,
+    );
   }
 
   /**
@@ -1366,6 +1373,8 @@ export class SalesOrdersService {
     /** Quién necesita el material, para el mensaje: «el pedido», «la reserva». */
     holder: string,
     write: (item: T) => Promise<void>,
+    /** D-275: quien lee el rechazo; a un VENDEDOR no se le nombra la cotización de otro. */
+    viewer?: HolderViewer,
   ): Promise<number> {
     let written = 0;
     const sorted = [...items].sort((a, b) =>
@@ -1562,7 +1571,7 @@ export class SalesOrdersService {
     // comprobación, ese pedido pasaría y el que ya tenía prometidos esos kilos se quedaría
     // sin material, descubriéndolo recién al montar la OP.
     if (coilIds.length > 0) {
-      await assertRawMaterialInvariant(tx, coilIds, roofingToleranceMm(this.env));
+      await assertRawMaterialInvariant(tx, coilIds, roofingToleranceMm(this.env), { viewer });
     }
     return written;
   }
@@ -1734,20 +1743,26 @@ export class SalesOrdersService {
         // confirmar, y seguir apartando material para algo que no se puede confirmar es
         // quitárselo a otro sin motivo. `null` es sin vencimiento (D-157) y no recorta nada.
         const expiresAt = capToQuotationValidity(temporaryReservationExpiry(days), head.validUntil);
-        const written = await this.reserveLines(tx, lines, 'la reserva', async (line) => {
-          await tx.quotationReservation.create({
-            data: {
-              quotationId,
-              lineNumber: line.lineNumber,
-              itemType: line.reserveItemType,
-              itemId: line.reserveItemId,
-              qty: line.reserveQty,
-              unit: line.reserveUnit,
-              expiresAt,
-              createdById: actor.id,
-            },
-          });
-        });
+        const written = await this.reserveLines(
+          tx,
+          lines,
+          'la reserva',
+          async (line) => {
+            await tx.quotationReservation.create({
+              data: {
+                quotationId,
+                lineNumber: line.lineNumber,
+                itemType: line.reserveItemType,
+                itemId: line.reserveItemId,
+                qty: line.reserveQty,
+                unit: line.reserveUnit,
+                expiresAt,
+                createdById: actor.id,
+              },
+            });
+          },
+          actor,
+        );
         if (written === 0) {
           throw new BadRequestException(
             'La cotización no tiene ninguna línea con material que apartar: sus líneas no llevan inventario',
@@ -1934,21 +1949,27 @@ export class SalesOrdersService {
       reason: 'Edición de la cotización: se recalculó la reserva',
     });
     let created = 0;
-    await this.reserveLines(tx, lines, 'la reserva', async (line) => {
-      created += 1;
-      await tx.quotationReservation.create({
-        data: {
-          quotationId,
-          lineNumber: line.lineNumber,
-          itemType: line.reserveItemType,
-          itemId: line.reserveItemId,
-          qty: line.reserveQty,
-          unit: line.reserveUnit,
-          expiresAt,
-          createdById: actor.id,
-        },
-      });
-    });
+    await this.reserveLines(
+      tx,
+      lines,
+      'la reserva',
+      async (line) => {
+        created += 1;
+        await tx.quotationReservation.create({
+          data: {
+            quotationId,
+            lineNumber: line.lineNumber,
+            itemType: line.reserveItemType,
+            itemId: line.reserveItemId,
+            qty: line.reserveQty,
+            unit: line.reserveUnit,
+            expiresAt,
+            createdById: actor.id,
+          },
+        });
+      },
+      actor,
+    );
     await this.audit.write(tx, {
       actorId: actor.id,
       action: 'sales.quotation.recalculate-temporary',
@@ -3004,7 +3025,7 @@ export class SalesOrdersService {
           thicknessMm: product.thicknessMm.toFixed(2),
           colorName: product.color?.name ?? null,
         });
-        if (product.widthMm !== null && product.thicknessMm !== null) {
+        if (product.widthMm !== null) {
           perMeter = kgPerMeter({
             widthMm: product.widthMm.toFixed(2),
             thicknessMm: product.thicknessMm.toFixed(2),

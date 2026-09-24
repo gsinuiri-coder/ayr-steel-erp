@@ -295,7 +295,6 @@ export class QuotationsService {
             productId: true,
             unitPricePen: true,
             valuePerMeterPen: true,
-            unit: true,
           },
         });
         await tx.quotationItem.deleteMany({ where: { quotationId: id } });

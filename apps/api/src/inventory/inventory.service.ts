@@ -44,7 +44,7 @@ import {
   type RawMaterialShortfall,
 } from '../sales/raw-material';
 import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
-import { reservedByItem as sumReservedByItem } from '../sales/reserved-ledger';
+import { reservedByItem as sumReservedByItem, type HolderViewer } from '../sales/reserved-ledger';
 
 /**
  * D-134: los movimientos de un **partido**, que no se comprueban contra el agregado uno por
@@ -96,6 +96,11 @@ export interface RecordMovementInput {
    * rolado quedara sin registrar. El resto del sistema no lo pasa y sigue recibiendo un 400.
    */
   rawMaterialWarnings?: RawMaterialShortfall[];
+  /**
+   * D-275: quién va a leer el rechazo. A un VENDEDOR (un despacho) no se le nombra la reserva
+   * temporal de la cotización de otro vendedor. Sin él, los mensajes nombran todo.
+   */
+  viewer?: HolderViewer;
   businessLineId: string;
   itemType: InventoryItemType;
   itemId: string;
@@ -249,6 +254,7 @@ export class InventoryService {
       { itemType: input.itemType, itemId: input.itemId },
       newQty,
       balance.qty,
+      input.viewer,
     );
 
     await tx.inventoryBalance.update({
@@ -280,7 +286,10 @@ export class InventoryService {
           ...(await findRawMaterialShortfalls(tx, [input.itemId], tolerance, scope)),
         );
       } else {
-        await assertRawMaterialInvariant(tx, [input.itemId], tolerance, scope);
+        await assertRawMaterialInvariant(tx, [input.itemId], tolerance, {
+          ...scope,
+          viewer: input.viewer,
+        });
       }
     }
 
@@ -1007,7 +1016,7 @@ export class InventoryService {
     // conserva su contrato de página reciente y su orden descendente: no es el historial
     // de una bobina o producto y, al paginar, la primera página tiene que seguir siendo la
     // relevante para el usuario.
-    const items = singleItem ? dtos : dtos.reverse();
+    const items = singleItem ? dtos : [...dtos].reverse();
     // El de un ítem concreto no pagina: es "todo lo que hay", una sola página que lo
     // contiene entero. Decirlo así (en vez de fingir page/pageSize del pedido) es lo que
     // hace que `PaginatedResult` no mienta sobre cuántas páginas hay.

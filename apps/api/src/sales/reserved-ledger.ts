@@ -1,10 +1,11 @@
 import {
   ReservationStatus,
+  Role,
   TemporaryReservationStatus,
   type InventoryItemType,
   type Prisma,
 } from '@prisma/client';
-import { Decimal, toDecimal } from '@ayr/shared';
+import { Decimal, quotationCode, salesOrderCode, toDecimal } from '@ayr/shared';
 
 /**
  * La suma de "reservado" del sistema: firme (`reservations`) más temporal vigente
@@ -22,6 +23,54 @@ import { Decimal, toDecimal } from '@ayr/shared';
  */
 export function liveTemporaryWhere(now: Date = new Date()): Prisma.QuotationReservationWhereInput {
   return { status: TemporaryReservationStatus.ACTIVE, expiresAt: { gt: now } };
+}
+
+/**
+ * Orden por unidad de código, el mismo del `.sort()` sin argumento: el que usan todos los locks de
+ * bobinas por id. No `localeCompare`, que puede ordenar distinto los guiones de un UUID y cruzar
+ * el orden de bloqueo con el resto del sistema (mismo criterio que `byCodeUnit` de `mountCoil`).
+ */
+export function byCodeUnit(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/** Quién va a leer el mensaje que nombra a los titulares de una reserva. */
+export interface HolderViewer {
+  id: string;
+  role: Role;
+}
+
+/** Quien lee no es VENDEDOR, o el documento es suyo: ve el código (D-267/D-275). */
+function isForeign(sellerId: string | null, viewer?: HolderViewer): boolean {
+  return viewer?.role === Role.VENDEDOR && sellerId !== viewer.id;
+}
+
+/**
+ * D-275 (criterio de D-238/D-267): cómo se nombra una reserva firme en un mensaje. A un VENDEDOR
+ * no se le nombra el pedido de otro vendedor (o sin vendedor): lee «pedido no disponible».
+ */
+export function firmHolderCode(
+  order: { seq: number; sellerId: string | null },
+  viewer?: HolderViewer,
+): string {
+  return isForeign(order.sellerId, viewer) ? 'pedido no disponible' : salesOrderCode(order.seq);
+}
+
+/**
+ * D-275 (criterio de D-267): cómo se nombra una reserva temporal en un mensaje. A un VENDEDOR no
+ * se le nombra la cotización de otro vendedor (o sin vendedor): lee «cotización no disponible».
+ * La suya y todo rol no VENDEDOR ven el código. Sin `viewer` (herramientas de ADMINISTRADOR,
+ * producción) no se oculta.
+ */
+export function temporaryHolderCode(
+  quotation: { seq: number; sellerId: string | null },
+  viewer?: HolderViewer,
+): string {
+  const code = isForeign(quotation.sellerId, viewer)
+    ? 'cotización no disponible'
+    : quotationCode(quotation.seq);
+  return `${code} (reserva temporal)`;
 }
 
 /**
