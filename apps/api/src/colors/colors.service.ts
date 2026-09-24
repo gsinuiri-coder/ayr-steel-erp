@@ -126,12 +126,15 @@ export class ColorsService {
 
   /** D-274: qué haría el retiro de un color sin uso, sin escribir nada. */
   planRetirement(code: string): Promise<ColorRetirementPlan> {
-    return this.prisma.$transaction((tx) => planColorRetirement(tx, code));
+    return this.prisma.$transaction((tx) => planColorRetirement(tx, code), RETIREMENT_TX);
   }
 
   /** D-274: retira un color sin uso y sus specs sobrantes. Se niega con una sola referencia. */
   retire(actor: Pick<RequestUser, 'id'>, code: string): Promise<ColorRetirementPlan> {
-    return this.prisma.$transaction((tx) => executeColorRetirement(tx, this.audit, actor.id, code));
+    return this.prisma.$transaction(
+      (tx) => executeColorRetirement(tx, this.audit, actor.id, code),
+      RETIREMENT_TX,
+    );
   }
 
   /**
@@ -149,6 +152,13 @@ export class ColorsService {
     return color.id;
   }
 }
+
+/**
+ * D-274: el retiro corre desde la CLI contra Neon, con una docena de consultas en serie dentro
+ * de la transacción. Los 5 s por defecto de Prisma no alcanzan desde afuera de la región (el
+ * mismo «timeout 5 s» que apareció en el ensayo de RF-S4b).
+ */
+const RETIREMENT_TX = { timeout: 60_000, maxWait: 20_000 } as const;
 
 export function toDto(c: Color): ColorDto {
   return {

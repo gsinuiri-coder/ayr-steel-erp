@@ -25,7 +25,7 @@ import type { AuditService } from '../audit/audit.service';
 
 export interface ColorRetirementPlan {
   color: { id: string; code: string; name: string; isActive: boolean } | null;
-  specs: { id: string; businessLineId: string; thicknessMm: string }[];
+  specs: { id: string; businessLineId: string; thicknessMm: string; createdAt: string }[];
   references: {
     products: number;
     coils: number;
@@ -75,7 +75,7 @@ export async function planColorRetirement(
 
   const specRows = await tx.rawMaterialSpec.findMany({
     where: { colorId: color.id },
-    select: { id: true, businessLineId: true, thicknessMm: true },
+    select: { id: true, businessLineId: true, thicknessMm: true, createdAt: true },
     orderBy: { thicknessMm: 'asc' },
   });
   const specIds = specRows.map((s) => s.id);
@@ -128,6 +128,7 @@ export async function planColorRetirement(
       id: s.id,
       businessLineId: s.businessLineId,
       thicknessMm: s.thicknessMm.toFixed(2),
+      createdAt: s.createdAt.toISOString(),
     })),
     references,
     stops,

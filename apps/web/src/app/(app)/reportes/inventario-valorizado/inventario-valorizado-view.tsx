@@ -246,8 +246,8 @@ function CoilGroupRows({
             <ul className="text-xs text-muted-foreground" aria-label="Detalle por acabado">
               {group.finishes.map((f) => (
                 <li key={f.finishCode}>
-                  {f.ral === null ? f.finishCode : `RAL ${f.ral}`}: {formatQty(f.qtyKg, 'kg')} ·{' '}
-                  {formatMoney(f.totalValuePen)}
+                  {f.ral === null ? f.finishCode : `RAL ${f.ral} (${f.finishCode})`}:{' '}
+                  {formatQty(f.qtyKg, 'kg')} · {formatMoney(f.totalValuePen)}
                 </li>
               ))}
             </ul>

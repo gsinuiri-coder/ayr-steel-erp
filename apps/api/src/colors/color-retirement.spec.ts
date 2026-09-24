@@ -24,8 +24,18 @@ interface Counts {
 
 const COLOR = { id: 'color-natural', code: 'NATURAL', name: 'NATURAL', isActive: true };
 const SPECS = [
-  { id: 'spec-030', businessLineId: 'roof', thicknessMm: new Prisma.Decimal('0.30') },
-  { id: 'spec-040', businessLineId: 'roof', thicknessMm: new Prisma.Decimal('0.40') },
+  {
+    id: 'spec-030',
+    businessLineId: 'roof',
+    thicknessMm: new Prisma.Decimal('0.30'),
+    createdAt: new Date('2026-09-10T12:00:00Z'),
+  },
+  {
+    id: 'spec-040',
+    businessLineId: 'roof',
+    thicknessMm: new Prisma.Decimal('0.40'),
+    createdAt: new Date('2026-09-11T12:00:00Z'),
+  },
 ];
 
 function fakeTx(counts: Counts = {}, color: typeof COLOR | null = COLOR) {

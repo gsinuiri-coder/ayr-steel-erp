@@ -145,9 +145,11 @@ export function CoilPicker({
           <DialogHeader>
             <DialogTitle>Bobinas para {orderCode}</DialogTitle>
             <DialogDescription>
-              {openOptions.length} bobinas libres del espesor y el color comercial de {productSku}.
-              Arriba van las del mismo acabado (RAL) que el producto; las demás también se pueden
-              montar. Monta una con su botón, o elige varias y móntalas juntas.
+              {openOptions.length} bobinas libres del espesor y el color comercial de {productSku}.{' '}
+              {openOptions.some((c) => c.exactFinish)
+                ? 'Arriba van las del mismo acabado (RAL) que el producto; las demás también se pueden montar. '
+                : 'Ninguna es del mismo acabado (RAL) que el producto; todas se pueden montar. '}
+              Monta una con su botón, o elige varias y móntalas juntas.
             </DialogDescription>
           </DialogHeader>
           {reopening !== null ? (

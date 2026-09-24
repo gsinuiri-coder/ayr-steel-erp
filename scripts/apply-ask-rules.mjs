@@ -40,6 +40,9 @@ wanted.push(
   // D-274: el retiro de un color escribe en la rama que se le pase.
   'Bash(node *scripts/retire-unused-color.mjs*)',
   'Bash(pnpm *retire:unused-color*)',
+  // D-270: el diagnóstico del color comercial lee production.
+  'Bash(node *scripts/color-comercial-dry-run.mjs*)',
+  'Bash(pnpm *check:color-comercial*)',
 );
 
 const added = wanted.filter((r) => !ask.includes(r));

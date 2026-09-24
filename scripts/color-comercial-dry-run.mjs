@@ -2,7 +2,8 @@
 // (docs/diseno/color-comercial-produccion.md §4). No escribe nada: la lectura corre en una
 // transacción READ ONLY. La salida completa queda en local-data/color-comercial/.
 //
-// Uso: node scripts/color-comercial-dry-run.mjs --branch production|demo|dev|local|local-e2e
+// Uso: node scripts/color-comercial-dry-run.mjs --branch demo|dev|local|local-e2e
+//      node scripts/color-comercial-dry-run.mjs --branch production --confirm-production
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, neonConnectionString } from './lib.mjs';
@@ -15,6 +16,12 @@ const branch = argv.includes('--branch') ? argv[argv.indexOf('--branch') + 1] : 
 // Sin default: un dry-run contra production tiene que pedirse con nombre.
 if (!BRANCHES.includes(branch)) {
   console.error(`--branch es obligatorio y tiene que ser una de: ${BRANCHES.join(', ')}`);
+  process.exit(1);
+}
+// Igual que las CLI de `run-api-cli.mjs` (repaso RF-S4b, P1-B): contra production no corre ni
+// la lectura sin confirmarlo, así ninguna corrida sale por un `--branch` tipeado de más.
+if (branch === 'production' && !argv.includes('--confirm-production')) {
+  console.error('Contra production no corre sin --confirm-production, tampoco en solo lectura.');
   process.exit(1);
 }
 
