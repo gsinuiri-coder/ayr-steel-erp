@@ -6,7 +6,7 @@
  * alguien le agregue una escritura por descuido — Postgres la rechaza.
  *
  * Las ocho salidas del diseño:
- *   1. colores y su color comercial (SQL de la migración contra `commercialColorToken`);
+ *   1. colores y su color comercial (`COMMERCIAL_COLOR_SQL` contra `commercialColorToken`);
  *   2. specs que se funden;
  *   3. specs sin color que se parten en NATURAL y GALVANIZADO;
  *   4. agregado antes y después, en kg;

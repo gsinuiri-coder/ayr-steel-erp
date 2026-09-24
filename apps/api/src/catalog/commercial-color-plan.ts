@@ -1,25 +1,29 @@
 import { commercialColorToken, Decimal, toDecimal } from '@ayr/shared';
 
 /**
- * El plan del paso de `colorId` exacto a **color comercial** en producción y reservas
- * (diseño `docs/diseno/color-comercial-produccion.md`, D-270 en adelante).
+ * El diagnóstico del color comercial en producción y reservas (diseño
+ * `docs/diseno/color-comercial-produccion.md`).
  *
  * Aritmética pura, sin base: el dry-run (`prisma/color-comercial-dry-run.ts`) lee los datos y
- * esto decide qué specs se funden, cuáles se parten, qué agregado queda corto, qué OP deja de
- * coincidir y cuánto se mueve el piso de precio. Vive en `src` y no junto al guion para que
- * jest lo cubra: una cuenta equivocada acá es una ventana que se corre con números falsos.
+ * esto calcula qué cambiaría si la llave de producción pasara del `colorId` al color comercial
+ * derivado del código: qué specs se funden, cuáles se parten, qué agregado queda corto, qué OP
+ * deja de coincidir y cuánto se mueve el piso de precio. Vive en `src` para que jest lo cubra.
+ *
+ * D-270: la primera corrida contra production mostró que el maestro de colores **ya es** el
+ * color comercial, y el cambio de llave se descartó. El diagnóstico queda como control: con el
+ * candado de D-273 vigente, en production tiene que seguir sin fundir ni partir nada.
  */
 
 /** Tipo de acabado, con los mismos literales que el enum `FinishKind` de Prisma. */
 export type PlanFinishKind = 'NATURAL' | 'PREPINTADO' | 'GALVANIZADO';
 
 /**
- * La misma regla que `commercialColorToken`, en SQL, sobre la columna `code`. Es la que siembra
- * `colors.commercial_color` en la migración; el dry-run la corre contra cada color y la compara
- * fila por fila con la función de TS (riesgo 3 del diseño). Un centinela verifica que la
- * migración la contenga **textual**.
+ * La misma regla que `commercialColorToken`, en SQL, sobre la columna `code`. Era la que iba a
+ * sembrar `colors.commercial_color` en la migración del diseño descartado (D-270); el dry-run
+ * la sigue comparando fila por fila con la función de TS, que es lo que usa la venta de
+ * bobinas (D-252).
  *
- * `translate` y no `unaccent`: la extensión no está instalada y la migración no la crea. Cubre
+ * `translate` y no `unaccent`: la extensión no está instalada. Cubre
  * las vocales con tilde o diéresis y la eñe; cualquier otro signo lo quita el último
  * `regexp_replace`, igual que la función de TS.
  */
@@ -36,14 +40,14 @@ export interface PlanColor {
   code: string;
   name: string;
   ralCode: string | null;
-  /** Lo que da la expresión SQL de la migración sobre este código. */
+  /** Lo que da `COMMERCIAL_COLOR_SQL` sobre este código. */
   sqlCommercialColor: string;
 }
 
 export interface PlanColorRow extends PlanColor {
   /** Lo que da `commercialColorToken` (TS). */
   commercialColor: string;
-  /** SQL y TS difieren: la migración no puede sembrarse. */
+  /** SQL y TS difieren. */
   mismatch: boolean;
   /** Queda vacío: el código es solo un RAL y no dice el color comercial. */
   empty: boolean;
@@ -191,7 +195,7 @@ export interface PlanAnomaly {
 
 export interface PlanResult {
   groups: PlanGroup[];
-  /** Grupos con más de una spec de origen: la migración las funde. */
+  /** Grupos con más de una spec de origen: la llave nueva las fundiría. */
   merges: PlanGroup[];
   /** Specs sin color nombradas por productos de los dos tipos. */
   splits: SpecSplit[];

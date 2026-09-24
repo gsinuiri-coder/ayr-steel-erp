@@ -1,7 +1,9 @@
 # Diseño — El color comercial manda en producción y reservas
 
-Estado: **diseño, sin código ni migraciones.** 2026-09-24. Autor: Claude Code, a pedido del
-dueño. Las decisiones que abre se numeran al aprobarse (D-270 en adelante).
+Estado: **cerrado el 2026-09-24. El diseño grande (§2 a §7) quedó DESCARTADO** después del
+dry-run de production: ver §9, que es lo que se implementó (D-270..D-274, sin migración). Las
+secciones 1 a 8 se conservan como registro del análisis y de la alternativa descartada.
+Autor: Claude Code, a pedido del dueño.
 
 ## 0. La decisión del dueño, y cómo la leo
 
@@ -376,3 +378,59 @@ Sigue el runbook de `ayr-ventana`:
    que solo difieren en el RAL (por ejemplo, una plancha ROJO y una ROJO-3020), como D-252 hizo
    con las bobinas de venta? Recomiendo **no** hacerlo en este cambio: es otra migración y otra
    ventana, y producción ya funciona sin eso.
+
+## 9. Lo que mostró el dry-run y lo que se decidió (2026-09-24)
+
+### 9.1 El hallazgo
+
+El dry-run de solo lectura (`pnpm check:color-comercial --branch production`, transacción
+`READ ONLY`) contradijo la premisa del diseño. Este suponía **un color por RAL** en el maestro
+(ROJO y ROJO-3020 como dos colores). Production no está así:
+
+| Dato                                | Production                                                           |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| Colores del maestro                 | 6: AZUL, BLANCO, GRIS, NATURAL, ROJO, VERDE. Ninguno con RAL         |
+| Dónde vive el RAL                   | En el **acabado**: ALZ-ROJO-3002 y ALZ-ROJO-3020 comparten el ROJO   |
+| Colores comerciales con dos colores | 0                                                                    |
+| Specs que se funden                 | 2, las dos por el color `NATURAL` sin uso (0 líneas, 0 reservas)     |
+| NATURAL / GALVANIZADO a separar     | Nada: el único GALVANIZADO es de drywall, sin bobinas                |
+| Reservas vivas de materia prima     | 0; ninguna queda en falta                                            |
+| OPs de coberturas vivas             | 0                                                                    |
+| Faltantes de cotizaciones emitidas  | 4 cotizaciones con materia prima; ninguna cambia                     |
+| Piso de precio (pregunta 7)         | 34 líneas abiertas de materia prima; **0 se mueven**                 |
+| Inventario valorizado de bobinas    | 11 grupos antes y después; S/ 572 992.1133 en los dos                |
+| Hipótesis del dueño (solo el tono)  | Verificada: prepintados con densidad 8.0000, misma línea, sin brillo |
+
+Como el `colorId` ya es el color comercial, **la regla que el dueño pedía ya es la que aplica
+el sistema**: una OP ROJO monta una bobina 3002 o 3020 porque las dos tienen `colorId` ROJO.
+
+Un segundo hallazgo: existe un color llamado `NATURAL`, sin uso, cuyo nombre choca con el
+tipo de acabado NATURAL. Con la llave de §2 se habría fundido con las bobinas sin color.
+
+### 9.2 La decisión (D-270..D-274)
+
+- **D-270.** El maestro de colores ES el color comercial y el acabado lleva el RAL. Sin
+  migración ni ventana de datos. Se descarta el diseño grande.
+- **D-271.** Planta ofrece primero las bobinas del acabado exacto del producto y muestra el
+  RAL de cada una (pregunta 8). La hoja de planta dice «ROJO, de preferencia RAL 3020».
+- **D-272.** El inventario valorizado agrupa por color, con el acabado/RAL como detalle; sin
+  color, por tipo de acabado (preguntas 1 y 6). Mismos totales.
+- **D-273.** El candado del maestro: no se crea ni se renombra un color con RAL o con nombre
+  de tipo. Ocupa el lugar del campo `commercial_color` (pregunta 4).
+- **D-274.** Retiro del color `NATURAL` y sus 2 specs sobrantes, por servicio de dominio con
+  dry-run, solo si siguen en 0 referencias.
+
+Las 9 preguntas de §8 con su sentido nuevo están en la fila D-270 de `ARQUITECTURA.md` §0.2.
+
+### 9.3 Por qué se descarta el diseño grande
+
+1. **No cambia nada hoy.** Con los datos reales, la migración de §3.1 solo fundía dos specs
+   huérfanas. Una ventana con respaldo y PITR para eso es riesgo sin beneficio.
+2. **Lo que protege es el candado, no el campo.** El diseño agregaba `commercial_color` para
+   que la agrupación fuera un dato editable. Si el maestro no puede tener un color con RAL
+   (D-273), el color ya es el grupo, y no hay un segundo dato que mantener en sincronía.
+3. **Introducía un choque.** La llave `material_key` mezclaba colores y tipos en un mismo
+   espacio de nombres, y el color `NATURAL` lo demostró con datos reales.
+4. **Queda como alternativa.** Si algún día el maestro tuviera que distinguir RAL (por
+   ejemplo, para importar el catálogo de un proveedor que los trae separados), §2–§7 sigue
+   siendo el camino: campo explícito, spec por atributo y reapuntado de reservas.
