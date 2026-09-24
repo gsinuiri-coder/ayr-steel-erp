@@ -7,6 +7,7 @@ import {
   InventoryItemType,
   ProductSource,
   QuotationStatus,
+  Role,
   type Prisma,
 } from '@prisma/client';
 import {
@@ -377,12 +378,17 @@ export interface CoilPool {
  *
  * `scope` excluye la reserva del propio documento, para que reatar una línea no se bloquee a sí
  * misma.
+ *
+ * `viewer` es quien va a leer `taken` (aclaración de RF-S3c, SM-P1-1): a un VENDEDOR no se le
+ * nombra la cotización de otro vendedor — ve «no disponible»; la suya y todo rol no VENDEDOR sí
+ * ven el código. Sin `viewer` (importador, barrido: herramientas de ADMINISTRADOR) no se oculta.
  */
 export async function coilPoolFor(
   tx: Prisma.TransactionClient,
   pool: { thicknessMm: string; attribute: string },
   qty: string,
   scope: ReservedScope = {},
+  viewer?: { id: string; role: Role },
 ): Promise<CoilPool> {
   const coils = await tx.coil.findMany({
     where: {
@@ -423,7 +429,7 @@ export async function coilPoolFor(
           ...(scope.exceptQuotationIds?.length ? { id: { notIn: scope.exceptQuotationIds } } : {}),
         },
       },
-      select: { reserveItemId: true, quotation: { select: { seq: true } } },
+      select: { reserveItemId: true, quotation: { select: { seq: true, sellerId: true } } },
     }),
   ]);
   const balanceById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
@@ -434,7 +440,14 @@ export async function coilPoolFor(
   const need = toDecimal(qty);
   // Por qué no se ofrece cada una: la cotización que la ata primero, que es lo que se busca.
   const takenBy = new Map<string, string>();
-  for (const q of quoted) takenBy.set(q.reserveItemId, `atada a ${quotationCode(q.quotation.seq)}`);
+  const foreign = (sellerId: string | null) =>
+    viewer?.role === Role.VENDEDOR && sellerId !== viewer.id;
+  for (const q of quoted) {
+    const by = foreign(q.quotation.sellerId)
+      ? 'no disponible'
+      : `atada a ${quotationCode(q.quotation.seq)}`;
+    takenBy.set(q.reserveItemId, by);
+  }
   for (const m of mounted) if (!takenBy.has(m.coilId)) takenBy.set(m.coilId, 'montada en una OP');
 
   let available = new Decimal(0);

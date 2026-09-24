@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { BusinessLineCode, Prisma } from '@prisma/client';
+import { BusinessLineCode, Prisma, Role } from '@prisma/client';
+import type { RequestUser } from '../auth/auth.types';
 import { QuotationsService } from './quotations.service';
 import { SalesController } from './sales.controller';
 import type { SalesOrderEditsService } from './sales-order-edits.service';
@@ -183,6 +184,7 @@ describe('SalesOrdersService.coilPool — GET /sales/coil-pool', () => {
   };
   const query = { productId: '11111111-1111-4111-8111-111111111111', qty: '4194.000' };
   const prod = { sku: 'BOB38AZUL', name: 'x', businessLine: { code: BusinessLineCode.TRADING } };
+  const seller = { id: 'u-1', role: Role.VENDEDOR } as RequestUser;
 
   beforeEach(() => jest.clearAllMocks());
 
@@ -197,7 +199,7 @@ describe('SalesOrdersService.coilPool — GET /sales/coil-pool', () => {
       candidates: [],
       autoCoilId: null,
     });
-    const pool = await build(prod).coilPool({
+    const pool = await build(prod).coilPool(seller, {
       ...query,
       exceptSalesOrderId: 'o-1',
       exceptQuotationId: 'q-1',
@@ -214,15 +216,17 @@ describe('SalesOrdersService.coilPool — GET /sales/coil-pool', () => {
       exceptSalesOrderIds: ['o-1'],
       exceptQuotationIds: ['q-1'],
     });
+    // SM-P1-1: el pool sabe quién va a leer `taken`.
+    expect(poolCalls[0]?.[4]).toBe(seller);
   });
 
   it('un producto que no existe es un 404', async () => {
-    await expect(build(null).coilPool(query)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(build(null).coilPool(seller, query)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('un producto que no es de venta de bobina es un 400', async () => {
     (coilPoolKeyOfProduct as jest.Mock).mockResolvedValue(null);
-    await expect(build(prod).coilPool(query)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(build(prod).coilPool(seller, query)).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
@@ -244,9 +248,10 @@ describe('SalesController — rutas de RF-S4b', () => {
     expect(edits.updateItemCoil).toHaveBeenCalledWith(actor, 'o-1', 'i-1', body);
   });
 
-  it('GET coil-pool delega en el servicio de pedidos', async () => {
+  it('GET coil-pool delega en el servicio de pedidos con quien pregunta (SM-P1-1)', async () => {
+    const actor = { id: 'u-1', role: 'VENDEDOR' } as never;
     const query = { productId: 'p-1', qty: '1.000' };
-    await controller.coilPool(query);
-    expect(orders.coilPool).toHaveBeenCalledWith(query);
+    await controller.coilPool(actor, query);
+    expect(orders.coilPool).toHaveBeenCalledWith(actor, query);
   });
 });

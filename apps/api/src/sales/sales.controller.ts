@@ -415,9 +415,10 @@ export class SalesController {
    */
   @Get('coil-pool')
   coilPool(
+    @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(coilPoolQuerySchema)) query: CoilPoolQuery,
   ): Promise<CoilPoolDto> {
-    return this.orders.coilPool(query);
+    return this.orders.coilPool(actor, query);
   }
 
   /** Agregar ítems (reserva + OP), aun con despacho parcial: dueño o ADMINISTRADOR. */

@@ -4,6 +4,7 @@ import {
   FinishKind,
   InventoryItemType,
   Prisma,
+  Role,
 } from '@prisma/client';
 import {
   assertNoBaseCollision,
@@ -268,6 +269,7 @@ describe('coilPoolFor', () => {
     coils: ReturnType<typeof coil>[],
     balances: Record<string, string>,
     quoted: string[] = [],
+    quotedSellerId: string | null = 'v-1',
   ) =>
     ({
       coil: { findMany: jest.fn().mockResolvedValue(coils) },
@@ -280,11 +282,12 @@ describe('coilPoolFor', () => {
         ),
       },
       quotationItem: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue(
-            quoted.map((reserveItemId) => ({ reserveItemId, quotation: { seq: 2 } })),
-          ),
+        findMany: jest.fn().mockResolvedValue(
+          quoted.map((reserveItemId) => ({
+            reserveItemId,
+            quotation: { seq: 2, sellerId: quotedSellerId },
+          })),
+        ),
       },
     }) as unknown as Prisma.TransactionClient;
   const pool = { thicknessMm: '0.38', attribute: 'ROJO' };
@@ -366,6 +369,24 @@ describe('coilPoolFor', () => {
     expect(r.candidates).toEqual([]);
     // Pendiente de UI de la ventana RF-S4b: el selector explica por qué no la ofrece.
     expect(r.taken).toEqual([{ code: expect.any(String), by: 'atada a COT-000002' }]);
+  });
+
+  // SM-P1-1 (aclaración de RF-S3c): a un VENDEDOR no se le nombra la cotización de otro vendedor.
+  it.each([
+    ['otro vendedor', { id: 'v-2', role: Role.VENDEDOR }, 'v-1', 'no disponible'],
+    ['cotización sin dueño', { id: 'v-2', role: Role.VENDEDOR }, null, 'no disponible'],
+    ['la suya', { id: 'v-1', role: Role.VENDEDOR }, 'v-1', 'atada a COT-000002'],
+    ['ADMINISTRADOR', { id: 'a-1', role: Role.ADMINISTRADOR }, 'v-1', 'atada a COT-000002'],
+    ['sin lector (herramienta)', undefined, 'v-1', 'atada a COT-000002'],
+  ])('atada a una cotización, leída por %s', async (_label, viewer, sellerId, by) => {
+    const r = await coilPoolFor(
+      txWith([coil('1', 'ROJO')], { '1': '4194' }, ['1'], sellerId),
+      pool,
+      '4194',
+      {},
+      viewer,
+    );
+    expect(r.taken).toEqual([{ code: 'B-1', by }]);
   });
 
   it('la propia cotización se excluye de la búsqueda de cotizaciones tomadas', async () => {

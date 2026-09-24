@@ -3071,9 +3071,10 @@ export class SalesOrdersService {
   /**
    * D-254: las candidatas del pool de un producto de venta de bobina para una cantidad. Es lo
    * que muestran los selectores de bobina de la edición de cotizaciones y pedidos; la regla es la
-   * misma que aplica el importador (`coilPoolFor`).
+   * misma que aplica el importador (`coilPoolFor`). A un VENDEDOR no se le nombra la cotización de
+   * otro vendedor que ata una bobina (aclaración de RF-S3c, SM-P1-1).
    */
-  async coilPool(query: CoilPoolQuery): Promise<CoilPoolDto> {
+  async coilPool(actor: RequestUser, query: CoilPoolQuery): Promise<CoilPoolDto> {
     const product = await this.prisma.product.findUnique({
       where: { id: query.productId },
       select: { sku: true, name: true, businessLine: { select: { code: true } } },
@@ -3083,10 +3084,16 @@ export class SalesOrdersService {
     if (key === null) {
       throw new BadRequestException(`${product.sku} no es un producto de venta de bobina`);
     }
-    const pool = await coilPoolFor(this.prisma, key, query.qty, {
-      ...(query.exceptSalesOrderId ? { exceptSalesOrderIds: [query.exceptSalesOrderId] } : {}),
-      ...(query.exceptQuotationId ? { exceptQuotationIds: [query.exceptQuotationId] } : {}),
-    });
+    const pool = await coilPoolFor(
+      this.prisma,
+      key,
+      query.qty,
+      {
+        ...(query.exceptSalesOrderId ? { exceptSalesOrderIds: [query.exceptSalesOrderId] } : {}),
+        ...(query.exceptQuotationId ? { exceptQuotationIds: [query.exceptQuotationId] } : {}),
+      },
+      actor,
+    );
     return { sku: key.sku, ...pool };
   }
 
