@@ -234,6 +234,23 @@ describe('QuotationImportService.preview — importes del papel (R2)', () => {
     });
   });
 
+  it('P2-1: el importador y el barrido leen igual un valor de cinco decimales (10 000.00495)', async () => {
+    // Antes el importador redondeaba el valor a cuatro decimales (10 000.0050) antes de
+    // `paperAmounts`, que lo volvía a redondear a dos (10 000.01): el IGV de la resta quedaba a
+    // 0.0118 del 18 % y el trío se descartaba, mientras el barrido lo aceptaba con 10 000.00.
+    const { service } = build();
+    const odd = { ...BOB_AZUL, net: '10000.00495', igv: '1800.00', total: '11800.00' };
+    const [row] = (await service.preview('v.csv', csv([odd]))).rows;
+    const [line] = readPaperLines(csv([odd]));
+    const trio = {
+      netAmountPen: '10000.0000',
+      igvAmountPen: '1800.0000',
+      totalAmountPen: '11800.0000',
+    };
+    expect(row).toMatchObject(trio);
+    expect(line).toMatchObject(trio);
+  });
+
   it('una suma que se separa del total en 0.02 descarta el trío', async () => {
     const { service } = build();
     const [row] = (await service.preview('v.csv', csv([{ ...BOB_AZUL, igv: '2239.189' }]))).rows;

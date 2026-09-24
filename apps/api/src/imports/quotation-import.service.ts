@@ -272,20 +272,8 @@ export class QuotationImportService {
       }
     }
 
-    // D-255: el IGV y el importe con IGV del papel, solo en soles y solo si cuadran con el valor
-    // de venta. En dólares no: convertir los tres por separado ya no suma exacto, y ahí manda
-    // el valor de venta con el IGV calculado, como hasta ahora.
-    const paperIgv = parseAmount(field(raw, 'igv'));
-    const paperTotal = parseAmount(field(raw, 'totalAmount'));
-    // D-255 (decisión del dueño): el trío normalizado a dos decimales, con el total del papel
-    // mandando y el IGV como la resta (`paperAmounts`).
-    const triplet =
-      netAmountPen !== null &&
-      !/d[óo]lar/i.test(currency) &&
-      paperIgv !== null &&
-      paperTotal !== null
-        ? paperAmounts(netAmountPen, paperIgv, paperTotal)
-        : null;
+    // D-255: el trío del papel, con la **misma** lectura que el barrido (`paperRowTriplet`).
+    const triplet = netAmountPen !== null ? paperRowTriplet(raw) : null;
 
     // **La unidad, no el subtipo.** Quien exige los largos es `sellsByLength` de
     // `sales-lines.ts` (`unit === 'MTR'`), y es la distinción exacta de D-131: preguntar por el
@@ -790,6 +778,28 @@ export interface PaperLine {
 }
 
 /**
+ * D-255 (P2-1 del delta RF-S4b): **la única lectura del trío del papel** de una fila del export.
+ * La usan el importador (`preview`) y el barrido (`readPaperLines`); antes cada uno la armaba a
+ * su manera y el importador le pasaba a `paperAmounts` el valor ya redondeado a cuatro
+ * decimales. Con 10 000.00495 / 1 800.00 / 11 800.00 eso eran dos redondeos: el importador
+ * descartaba el trío (10 000.01 deja el IGV a 0.0118 del 18 %) y el barrido lo aceptaba.
+ *
+ * Sobre el valor de venta **crudo** del archivo, un solo redondeo (el de `paperAmounts`). Solo en
+ * soles: en dólares convertir los tres por separado ya no suma exacto, y ahí manda el valor de
+ * venta con el IGV calculado. `null` si falta alguno de los tres o no cuadran.
+ */
+export function paperRowTriplet(
+  raw: Record<string, unknown>,
+): { net: Decimal; igv: Decimal; total: Decimal } | null {
+  if (/d[óo]lar/i.test(field(raw, 'currency'))) return null;
+  const net = parseAmount(field(raw, 'netAmount'));
+  const igv = parseAmount(field(raw, 'igv'));
+  const total = parseAmount(field(raw, 'totalAmount'));
+  if (net === null || igv === null || total === null) return null;
+  return paperAmounts(net, igv, total);
+}
+
+/**
  * Las líneas del export de ventas detalladas, con la misma lectura que `preview`: mismo
  * redondeo de la cantidad, misma conversión de moneda y la misma regla del trío del papel. El
  * barrido compara contra esto, así que no puede leer el archivo de otra forma.
@@ -808,12 +818,7 @@ export function readPaperLines(buffer: Buffer): PaperLine[] {
       net === null || (isForeign && rate === null)
         ? null
         : money(isForeign && rate ? net.times(rate) : net);
-    const igv = parseAmount(field(r, 'igv'));
-    const total = parseAmount(field(r, 'totalAmount'));
-    const triplet =
-      netPen !== null && !isForeign && igv !== null && total !== null
-        ? paperAmounts(net ?? netPen, igv, total)
-        : null;
+    const triplet = netPen !== null ? paperRowTriplet(r) : null;
     return {
       rowNumber: i + 1,
       documentKey: field(r, 'documentKey'),
