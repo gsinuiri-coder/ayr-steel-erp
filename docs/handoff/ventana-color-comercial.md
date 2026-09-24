@@ -4,7 +4,7 @@
 **[OK]** espera el OK explícito del dueño en la sesión (D-251/D-232).
 
 - PR: https://github.com/gsinuiri-coder/ayr-steel-erp/pull/18, rama `feat/color-comercial`.
-- Después del retiro de NATURAL (paso 5), y solo si su CI está verde: la PR #**PR_DEUDAS** de
+- Después del retiro de NATURAL (paso 5), y solo si su CI está verde: la PR #19 de
   `fix/deudas-post-s4b` (paso 5b), con deploy de API solo si cambia el runtime.
 - **Sin migración.** No hay `db:prod`, ni `migrate diff`, ni respaldo por migración.
 - API vigente para volver atrás: revisión `ayr-steel-erp-api-00045-plw`, `git-sha=cdebf9c`.
@@ -104,7 +104,7 @@ Esperado después: `[2] Specs que se funden: ninguna`, color NATURAL fuera del g
 «Sin condiciones de parada». La auditoría queda con dos `raw_material_specs.delete` y un
 `colors.retire`.
 
-## 5b. Deudas post-RF-S4b: `fix/deudas-post-s4b` (PR #**PR_DEUDAS**) — solo si su CI está verde
+## 5b. Deudas post-RF-S4b: `fix/deudas-post-s4b` (PR #19) — solo si su CI está verde
 
 Va **después** del paso 5 y con la PR #18 ya en `main`. La rama se construyó encima de
 `feat/color-comercial`, así que después del merge de #18 su PR muestra solo sus propios commits.
@@ -117,7 +117,7 @@ acepta `v2.mareliac.pe`, puerto de E2E configurable y un timeout de test. Handof
 
 ```sh
 git fetch
-gh pr checks __PR_DEUDAS__            # todo verde, Sonar incluido; si algo no está verde, NO se sigue
+gh pr checks 19            # todo verde, Sonar incluido; si algo no está verde, NO se sigue
 git rev-parse origin/fix/deudas-post-s4b          # = <SHA_D>, el que se despliega
 git merge-base --is-ancestor origin/feat/color-comercial origin/fix/deudas-post-s4b   # exit 0
 git log --oneline origin/main..origin/fix/deudas-post-s4b   # solo los commits de la PR (#18 ya está en main)
@@ -164,7 +164,7 @@ Resumen D-232: los commits de la PR, sin migración, D-275 y D-276, autorrevisi�
 verde.
 
 ```sh
-gh pr merge __PR_DEUDAS__ --merge     # merge commit, no squash
+gh pr merge 19 --merge     # merge commit, no squash
 git fetch
 git diff --quiet <SHA_D> origin/main -- apps packages Dockerfile .gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml
                                       # exit 0: la API desplegada coincide con main

@@ -2,7 +2,7 @@
 
 Agente: Claude Code. Worktree `ayr-steel-erp-deudas`, rama `fix/deudas-post-s4b`, construida
 sobre `feat/color-comercial` (PR #18) porque comparte `sales-orders.service.ts`, PROGRESO,
-ARQUITECTURA y el runbook de la ventana. PR **PR_DEUDAS** hacia `main`, **sin mergear**. El dueño
+ARQUITECTURA y el runbook de la ventana. PR #19 hacia `main`, **sin mergear**. El dueño
 autorizó la secuencia entera, sin production, sin Neon, sin merge ni deploy.
 
 ## 1. Resumen
@@ -46,10 +46,10 @@ CI de la PR: ver §6.
 ## 5. Pendientes
 
 - P2 de la autorrevisión (lista en PROGRESO).
-- `fase2a` RF-11 en rojo local: lo decide la CI.
+- `fase2a` RF-11: rojo local, verde en CI (entorno).
 - **Revisión:** lo de esta sesión queda **PENDIENTE DE REVISIÓN INDEPENDIENTE**.
 
 ## 6. Commits y CI
 
 Secuencia sobre `be6ecb6` (`feat/color-comercial`): D-275, D-276, smoke, puerto E2E, auth spec,
-guía del cliente, hallazgos de la autorrevisión y docs de cierre. CI de la PR: **CI_DEUDAS**.
+guía del cliente, hallazgos de la autorrevisión y docs de cierre. CI de la PR: primera corrida con todo verde salvo SonarCloud (Reliability D en código nuevo; el proyecto es privado y no se pudo enumerar el issue). Se corrigieron los bugs de SonarJS de los archivos tocados (`sort()` sin comparador en locks de ids → `byCodeUnit`, `reverse()` que mutaba, una comparación siempre verdadera, un `it` entre hooks) sin cambiar comportamiento, y el gate pasó: 0 issues nuevos. La E2E de la CI pasó entera, incluido `fase2a` RF-11 (el rojo local era del entorno)..

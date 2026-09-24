@@ -52,7 +52,7 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
 
 Handoff: `docs/handoff/deudas-post-s4b.md`. UAT: `docs/uat/deudas-post-s4b.md`. Autorrevisión:
 `docs/revision/deudas-post-s4b-autorrevision.md`. Rama `fix/deudas-post-s4b`, construida sobre
-`feat/color-comercial` (PR #18), PR **PR_DEUDAS** sin mergear. Se despliega en la ventana de esta
+`feat/color-comercial` (PR #18), PR #19 sin mergear. Se despliega en la ventana de esta
 noche (runbook `docs/handoff/ventana-color-comercial.md`, paso 5b), solo con CI verde.
 
 - **(a) → D-275:** un VENDEDOR **sí** llegaba a «COT-… (reserva temporal)» de otro vendedor: en
@@ -82,8 +82,9 @@ noche (runbook `docs/handoff/ventana-color-comercial.md`, paso 5b), solo con CI 
 - P2 de la autorrevisión: test de servicio de que el despacho pasa el `viewer`;
   `DUMMY_HASH_PROMISE` con costo de producción en `auth.service.ts`; el E2E de D-275 no purga
   cliente ni usuarios; `scripts/e2e-latency.mjs` con 3000 fijo.
-- `fase2a` RF-11 en rojo en local: confirmar con la CI de la PR; si también falla ahí, es
-  producto y bloquea el 5b.
+- `fase2a` RF-11 en rojo en local: **en la CI pasó**, era del entorno local.
+- SonarCloud: el primer análisis dio Reliability D sin poder enumerar el issue (proyecto
+  privado); se corrigieron los bugs de SonarJS de los archivos tocados y el gate pasó.
 
 ## Color comercial en producción (2026-09-24)
 
