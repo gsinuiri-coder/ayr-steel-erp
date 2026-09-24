@@ -10,7 +10,15 @@
       "Bash(git log*)",
       "Bash(git show*)"
     ],
-    "deny": ["Bash(gh repo sync*)", "Read(**/.env*)"],
+    "deny": [
+      "Bash(gh repo sync*)",
+      "Read(**/.env*)",
+      "Bash(grep *.env*)",
+      "Bash(sed *.env*)",
+      "Bash(cat *.env*)",
+      "Bash(head *.env*)",
+      "Bash(tail *.env*)"
+    ],
     "ask": [
       "Bash(git push *)",
       "Bash(git merge *)",
@@ -24,6 +32,10 @@
       "Bash(neonctl *)",
       "Bash(pnpm db:prod*)",
       "Bash(pnpm prod:*)",
+      "Bash(pnpm normalize:coil-skus*)",
+      "Bash(pnpm sweep:imported*)",
+      "Bash(node scripts/db-reset-dev.mjs*)",
+      "Bash(pnpm import:initial-inventory*)",
       "Bash(node scripts/db-prod.mjs*)",
       "Bash(node scripts/production-cleanup-v4.mjs*)",
       "Bash(node scripts/prod-reset-go-live.mjs*)",
