@@ -76,6 +76,29 @@ describe('recordPriceChanges', () => {
     });
   });
 
+  it('P2-B: por posición solo se empareja la misma unidad', async () => {
+    const { tx, createMany } = fakeTx();
+    const n = await recordPriceChanges(
+      tx,
+      { quotationId: 'q-1' },
+      [{ ...priced(1, 'p-kg', '10.0000'), unit: 'KGM' }],
+      [{ ...priced(1, 'p-m', '25.0000'), unit: 'MTR' }],
+      'u-1',
+    );
+    expect(n).toBe(0);
+    expect(createMany).not.toHaveBeenCalled();
+
+    const same = fakeTx();
+    await recordPriceChanges(
+      same.tx,
+      { quotationId: 'q-1' },
+      [{ ...priced(1, 'p-a', '10.0000'), unit: 'KGM' }],
+      [{ ...priced(1, 'p-b', '12.0000'), unit: 'KGM' }],
+      'u-1',
+    );
+    expect(rows(same.createMany)[0]).toMatchObject({ productId: 'p-b', afterUnitValuePen: '12' });
+  });
+
   it('cambiar solo el producto, al mismo precio, no es un cambio de precio', async () => {
     const { tx, createMany } = fakeTx();
     const n = await recordPriceChanges(

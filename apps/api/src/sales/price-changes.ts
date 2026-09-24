@@ -18,6 +18,8 @@ export interface PricedLine {
   productId: string;
   unitPricePen: Prisma.Decimal | string;
   valuePerMeterPen: Prisma.Decimal | string | null;
+  /** Unidad de venta. Si se pasa, el emparejamiento por posición exige la misma (P2-B). */
+  unit?: string;
 }
 
 export type PriceChangeHolder = { quotationId: string } | { salesOrderId: string };
@@ -36,6 +38,10 @@ export type PriceChangeHolder = { quotationId: string } | { salesOrderId: string
  * la misma línea con otro producto y otro precio —corregir el producto mal mapeado y su precio
  * en la misma edición— y se registra con el producto nuevo. Sin esto no quedaba ningún
  * registro, y el barrido pisaba ese precio creyéndolo un redondeo.
+ *
+ * P2-B (autorrevisión del PR #16): y solo si la unidad es la misma. Una línea quitada y otra
+ * agregada en la misma posición, de productos de unidad distinta (un kg y un metro), no son la
+ * misma línea corregida: registrarlas era ruido en el historial.
  */
 export async function recordPriceChanges(
   tx: Prisma.TransactionClient,
@@ -65,7 +71,12 @@ export async function recordPriceChanges(
   }
   // D-264: producto y precio cambiados a la vez, en la misma posición.
   for (const next of unpaired) {
-    const match = pool.find((p) => !p.taken && p.line.lineNumber === next.lineNumber);
+    const match = pool.find(
+      (p) =>
+        !p.taken &&
+        p.line.lineNumber === next.lineNumber &&
+        (p.line.unit ?? null) === (next.unit ?? null),
+    );
     if (!match) continue;
     match.taken = true;
     pairs.push({ prev: match.line, next });

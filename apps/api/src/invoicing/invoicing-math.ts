@@ -125,12 +125,38 @@ export function partKind(input: {
   return qty.equals(toDecimal(input.pending)) ? 'CLOSING' : 'PART';
 }
 
+/**
+ * P2-A (autorrevisión del PR #16): **lo pendiente para decidir la parte que cierra**, contando
+ * también los borradores de la línea.
+ *
+ * Un borrador no consume línea (D-073): el tope de cantidad se sigue comprobando solo contra lo
+ * emitido, y se revalida al emitir. Pero para el **importe**, dos borradores por mitades se
+ * recalculaban los dos y la suma quedaba unos diezmilésimos lejos del papel. Si los borradores
+ * más esta parte caben en la línea, esta parte cierra contra `pending` con borradores y el libro
+ * suma sus importes; si se pisan (uno de los dos va a rebotar al emitir), se decide como antes.
+ * El resto nunca se aleja más de un céntimo del recálculo (`closingPartTotals`), así que si un
+ * borrador se descarta después, esta parte sigue siendo defendible.
+ */
+export function pendingWithDrafts(input: {
+  qty: DecimalInput;
+  pending: DecimalInput;
+  drafts: DecimalInput;
+}): { pending: Decimal; countDrafts: boolean } {
+  const drafts = toDecimal(input.drafts);
+  const pending = toDecimal(input.pending);
+  const withDrafts = pending.minus(drafts);
+  return drafts.gt(0) && toDecimal(input.qty).lte(withDrafts)
+    ? { pending: withDrafts, countDrafts: true }
+    : { pending, countDrafts: false };
+}
+
 type Amount = { toString(): string } | null;
 interface PartAmounts {
   subtotal: Decimal;
   igv: Decimal;
   total: Decimal;
 }
+type LedgerRow = readonly [string, { subtotalPen: Amount; igvPen: Amount; totalPen: Amount }];
 const amountsOf = (a: { subtotalPen: Amount; igvPen: Amount; totalPen: Amount }): PartAmounts => ({
   subtotal: toDecimal((a.subtotalPen ?? 0).toString()),
   igv: toDecimal((a.igvPen ?? 0).toString()),
@@ -143,14 +169,12 @@ const amountsOf = (a: { subtotalPen: Amount; igvPen: Amount; totalPen: Amount })
  */
 export class PartLedger {
   private readonly done = new Map<string, PartAmounts>();
+  private readonly drafts = new Map<string, PartAmounts>();
 
-  constructor(
-    previous: readonly (readonly [
-      string,
-      { subtotalPen: Amount; igvPen: Amount; totalPen: Amount },
-    ])[],
-  ) {
+  /** `drafts`: lo de otros borradores de cada línea, que suma solo si la parte lo pide (P2-A). */
+  constructor(previous: readonly LedgerRow[], drafts: readonly LedgerRow[] = []) {
     for (const [key, sum] of previous) this.done.set(key, amountsOf(sum));
+    for (const [key, sum] of drafts) this.drafts.set(key, amountsOf(sum));
   }
 
   /** Los importes de una parte de la línea `key`, y la anota como hecha. */
@@ -159,14 +183,25 @@ export class PartLedger {
     line: { subtotalPen: Amount; igvPen: Amount; totalPen: Amount },
     kind: PartKind,
     recompute: () => SalesLineTotals,
+    countDrafts = false,
   ): SalesLineTotals {
     const stored = amountsOf(line);
-    const already = this.done.get(key) ?? amountsOf({ subtotalPen: 0, igvPen: 0, totalPen: 0 });
+    const zero = amountsOf({ subtotalPen: 0, igvPen: 0, totalPen: 0 });
+    const already = this.done.get(key) ?? zero;
+    const drafts = countDrafts ? (this.drafts.get(key) ?? zero) : zero;
     const totals =
       kind === 'FULL'
         ? stored
         : kind === 'CLOSING'
-          ? closingPartTotals(stored, already, recompute())
+          ? closingPartTotals(
+              stored,
+              {
+                subtotal: already.subtotal.plus(drafts.subtotal),
+                igv: already.igv.plus(drafts.igv),
+                total: already.total.plus(drafts.total),
+              },
+              recompute(),
+            )
           : recompute();
     this.done.set(key, {
       subtotal: already.subtotal.plus(totals.subtotal),

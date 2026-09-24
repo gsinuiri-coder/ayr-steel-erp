@@ -20,6 +20,7 @@ import {
   isStalled,
   PartLedger,
   partKind,
+  pendingWithDrafts,
   pendingQty,
   proratedQty,
 } from './invoicing-math';
@@ -440,6 +441,81 @@ describe('PartLedger y partKind — facturar o acreditar en partes una línea co
     );
     expect(partKind({ qty: '1000', lineQty: QTY, pending: QTY, priceEdited: false })).toBe('PART');
     expect(partKind({ qty: '4194', lineQty: QTY, pending: QTY, priceEdited: true })).toBe('PART');
+  });
+
+  // SM-P2-2 (segundo modelo): tres partes con el precio editado en la del medio.
+  it('tres partes con la del medio a otro precio: la última no toma un resto que no le corresponde', () => {
+    const ledger = new PartLedger([]);
+    const first = ledger.part(
+      'l-1',
+      line,
+      partKind({ qty: '1000', lineQty: QTY, pending: QTY, priceEdited: false }),
+      recompute('1000'),
+    );
+    const edited = () => salesTotals([{ qty: '1000', unitPricePen: '2.5000' }]);
+    const middle = ledger.part(
+      'l-1',
+      line,
+      partKind({ qty: '1000', lineQty: QTY, pending: '3194', priceEdited: true }),
+      edited,
+    );
+    expect(middle.subtotal.toFixed(4)).toBe(edited().subtotal.toFixed(4));
+    const kind = partKind({ qty: '2194', lineQty: QTY, pending: '2194', priceEdited: false });
+    expect(kind).toBe('CLOSING');
+    const last = ledger.part('l-1', line, kind, recompute('2194'));
+    // El resto describiría la parte del medio a su precio original: se recalcula.
+    expect(last.total.toFixed(4)).toBe(recompute('2194')().total.toFixed(4));
+    expect(sum([first, middle, last]).total.toFixed(4)).not.toBe(line.totalPen);
+  });
+
+  describe('pendingWithDrafts — la parte que cierra con las otras en borrador (P2-A)', () => {
+    it('sin borradores, lo pendiente de siempre', () => {
+      expect(pendingWithDrafts({ qty: '2097', pending: QTY, drafts: '0' })).toEqual({
+        pending: toDecimal(QTY),
+        countDrafts: false,
+      });
+    });
+
+    it('dos borradores por mitades: el segundo cierra y la suma es exactamente el papel', () => {
+      const first = new PartLedger([]).part(
+        'l-1',
+        line,
+        partKind({ qty: '2097', lineQty: QTY, pending: QTY, priceEdited: false }),
+        recompute('2097'),
+      );
+      const draftRow = [
+        'l-1',
+        { subtotalPen: first.subtotal, igvPen: first.igv, totalPen: first.total },
+      ] as const;
+      const closing = pendingWithDrafts({ qty: '2097', pending: QTY, drafts: '2097' });
+      expect(closing).toEqual({ pending: toDecimal('2097'), countDrafts: true });
+      const second = new PartLedger([], [draftRow]).part(
+        'l-1',
+        line,
+        partKind({ qty: '2097', lineQty: QTY, pending: closing.pending, priceEdited: false }),
+        recompute('2097'),
+        closing.countDrafts,
+      );
+      const total = sum([first, second]);
+      expect(total.igv.toFixed(4)).toBe('2239.1700');
+      expect(total.total.toFixed(4)).toBe('14679.0000');
+    });
+
+    it('borradores que se pisan con esta parte: se decide sin ellos (uno va a rebotar al emitir)', () => {
+      expect(pendingWithDrafts({ qty: '3000', pending: QTY, drafts: '2097' })).toEqual({
+        pending: toDecimal(QTY),
+        countDrafts: false,
+      });
+    });
+
+    it('un libro sin countDrafts ignora los borradores', () => {
+      const ledger = new PartLedger(
+        [],
+        [['l-1', { subtotalPen: '1', igvPen: '1', totalPen: '1' }]],
+      );
+      const part = ledger.part('l-1', line, 'CLOSING', recompute('2097'));
+      expect(part.total.toFixed(4)).toBe(recompute('2097')().total.toFixed(4));
+    });
   });
 
   it('si una parte anterior se facturó a otro precio, el resto no se usa: vuelve el recálculo', () => {

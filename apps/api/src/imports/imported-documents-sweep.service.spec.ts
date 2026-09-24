@@ -83,6 +83,8 @@ interface FakeOpts {
     quotationId?: string;
     salesOrderId?: string;
     productId?: string;
+    /** Precio antes del cambio; por defecto, uno que no coincide con nada. */
+    before?: string;
     after: string;
     /** Hora del cambio; por defecto, fija. */
     at?: string;
@@ -110,6 +112,7 @@ function fakePrisma(o: FakeOpts = {}) {
           quotationId: e.quotationId ?? null,
           salesOrderId: e.salesOrderId ?? null,
           productId: e.productId ?? 'p-loose',
+          beforeUnitValuePen: D(e.before ?? '1.0000'),
           afterUnitValuePen: D(e.after),
           changedAt: new Date(e.at ?? '2026-09-24T05:46:00.000Z'),
         })),
@@ -613,7 +616,14 @@ describe('ImportedDocumentsSweepService — editada a propósito, por contenido 
 
   it('dos líneas del mismo producto y solo una coincide: las dos cuentan como editadas', () => {
     const edited = deliberatelyEditedProducts(
-      [{ productId: 'p-1', afterUnitValuePen: D('10.0000') }],
+      [
+        {
+          productId: 'p-1',
+          beforeUnitValuePen: D('9.0000'),
+          afterUnitValuePen: D('10.0000'),
+          changedAt: new Date(),
+        },
+      ],
       [
         { productId: 'p-1', unitPricePen: D('10.0000') },
         { productId: 'p-1', unitPricePen: D('12.5000') },
@@ -622,6 +632,29 @@ describe('ImportedDocumentsSweepService — editada a propósito, por contenido 
     );
     // Todo el producto p-1 (sus dos líneas) y nada de p-2.
     expect([...edited]).toEqual(['p-1']);
+  });
+
+  // P2-C (autorrevisión del PR #16): Y → X → Y no es una edición vigente.
+  it('volver al precio con que se importó no cuenta como edición', () => {
+    const change = (before: string, after: string, at: string) => ({
+      productId: 'p-1',
+      beforeUnitValuePen: D(before),
+      afterUnitValuePen: D(after),
+      changedAt: new Date(at),
+    });
+    const roundTrip = [
+      change('2.9661', '3.1000', '2026-09-24T10:00:00Z'),
+      change('3.1000', '2.9661', '2026-09-24T11:00:00Z'),
+    ];
+    const back = [{ productId: 'p-1', unitPricePen: D('2.9661') }];
+    expect([...deliberatelyEditedProducts(roundTrip, back)]).toEqual([]);
+    // El orden de llegada no importa: el origen es el «antes» del primer cambio.
+    expect([...deliberatelyEditedProducts([...roundTrip].reverse(), back)]).toEqual([]);
+    // Y → X → Z sí es una edición vigente.
+    const further = [...roundTrip, change('2.9661', '3.5000', '2026-09-24T12:00:00Z')];
+    expect([
+      ...deliberatelyEditedProducts(further, [{ productId: 'p-1', unitPricePen: D('3.5000') }]),
+    ]).toEqual(['p-1']);
   });
 
   it('un cambio que dejó el execute de un barrido anterior no cuenta como edición', async () => {

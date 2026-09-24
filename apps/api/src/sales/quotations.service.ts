@@ -290,7 +290,13 @@ export class QuotationsService {
         // D-187: lo cotizado antes de reescribir las líneas, para registrar qué precio se movió.
         const previousLines = await tx.quotationItem.findMany({
           where: { quotationId: id },
-          select: { lineNumber: true, productId: true, unitPricePen: true, valuePerMeterPen: true },
+          select: {
+            lineNumber: true,
+            productId: true,
+            unitPricePen: true,
+            valuePerMeterPen: true,
+            unit: true,
+          },
         });
         await tx.quotationItem.deleteMany({ where: { quotationId: id } });
         await tx.quotation.update({

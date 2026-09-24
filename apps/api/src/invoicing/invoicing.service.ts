@@ -77,6 +77,7 @@ import {
   pendingQty,
   PartLedger,
   partKind,
+  pendingWithDrafts,
 } from './invoicing-math';
 import {
   ELECTRONIC_INVOICING_PROVIDER,
@@ -773,8 +774,28 @@ export class InvoicingService {
         toDecimal((row._sum.qty ?? new Prisma.Decimal(0)).toString()),
       ]),
     );
+    // P2-A: los borradores de las mismas líneas no consumen cantidad (D-073), pero cuentan para
+    // que la parte que cierra tome el resto (`pendingWithDrafts`).
+    const drafted = await tx.fiscalDocumentItem.groupBy({
+      by: ['salesOrderItemId'],
+      where: {
+        salesOrderItemId: { in: orderItemIds },
+        document: {
+          status: FiscalDocumentStatus.DRAFT,
+          docType: { not: FiscalDocType.NOTA_CREDITO },
+          archivedAt: null,
+        },
+      },
+      _sum: { qty: true, subtotalPen: true, igvPen: true, totalPen: true },
+    });
+    const draftedByItem = new Map(
+      drafted.map((row) => [row.salesOrderItemId ?? '', (row._sum.qty ?? 0).toString()]),
+    );
     // D-265: y sus importes, para que la parte que cierra la línea tome el resto.
-    const parts = new PartLedger(invoiced.map((row) => [row.salesOrderItemId ?? '', row._sum]));
+    const parts = new PartLedger(
+      invoiced.map((row) => [row.salesOrderItemId ?? '', row._sum]),
+      drafted.map((row) => [row.salesOrderItemId ?? '', row._sum]),
+    );
 
     // Lo que este mismo comprobante ya comprometió en líneas anteriores. Sin esto, dos
     // líneas del mismo documento apuntando a la misma línea de pedido se comparaban cada
@@ -826,16 +847,22 @@ export class InvoicingService {
         // él hay que calcularla: ahí el recálculo desde el unitario es lo único defendible.
         //
         // D-265 (P2-8): y la parte que agota lo pendiente, a su propio precio, toma el resto.
+        const closing = pendingWithDrafts({
+          qty,
+          pending,
+          drafts: draftedByItem.get(orderItem.id) ?? '0',
+        });
         const totals = parts.part(
           orderItem.id,
           orderItem,
           partKind({
             qty,
             lineQty: orderItem.qty.toString(),
-            pending,
+            pending: closing.pending,
             priceEdited: item.unitPricePen !== undefined,
           }),
           () => salesTotals([{ qty: item.qty, unitPricePen: price }]),
+          closing.countDrafts,
         );
         const s = serializeSalesTotals(totals);
         return {
@@ -955,8 +982,23 @@ export class InvoicingService {
           toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString()),
         ]),
       );
+      // P2-A: las notas en borrador sobre las mismas líneas, igual que en `resolveLines`.
+      const drafted = await tx.fiscalDocumentItem.groupBy({
+        by: ['affectedItemId'],
+        where: {
+          affectedItemId: { in: affected.items.map((i) => i.id) },
+          document: { status: FiscalDocumentStatus.DRAFT, archivedAt: null },
+        },
+        _sum: { qty: true, subtotalPen: true, igvPen: true, totalPen: true },
+      });
+      const draftedByItem = new Map(
+        drafted.map((r) => [r.affectedItemId ?? '', (r._sum.qty ?? 0).toString()]),
+      );
       // D-265: y sus importes, para que la parte que cierra la línea tome el resto.
-      const parts = new PartLedger(credited.map((r) => [r.affectedItemId ?? '', r._sum]));
+      const parts = new PartLedger(
+        credited.map((r) => [r.affectedItemId ?? '', r._sum]),
+        drafted.map((r) => [r.affectedItemId ?? '', r._sum]),
+      );
 
       const requested =
         input.items && input.items.length > 0
@@ -1012,10 +1054,20 @@ export class InvoicingService {
         // D-255: la fracción sale del unitario **derivado del importe** (diez decimales), no
         // del guardado para mostrar: 1920 de 3840 kg por 11 715.254 acreditan la mitad.
         // D-265 (P2-8): la parte que agota lo que queda por acreditar toma el resto.
+        const closing = pendingWithDrafts({
+          qty,
+          pending,
+          drafts: draftedByItem.get(original.id) ?? '0',
+        });
         const totals = parts.part(
           original.id,
           original,
-          partKind({ qty, lineQty: original.qty.toString(), pending, priceEdited: false }),
+          partKind({
+            qty,
+            lineQty: original.qty.toString(),
+            pending: closing.pending,
+            priceEdited: false,
+          }),
           () =>
             salesTotals([
               {
@@ -1026,6 +1078,7 @@ export class InvoicingService {
                 ).toFixed(DERIVED_UNIT_VALUE_DECIMALS),
               },
             ]),
+          closing.countDrafts,
         );
         return {
           original,

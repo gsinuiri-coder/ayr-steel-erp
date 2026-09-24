@@ -171,7 +171,9 @@ export function isSweepPriceChange(
 /** Un cambio de precio registrado (D-187), lo que el criterio de D-264 necesita de él. */
 export interface RecordedPriceChange {
   productId: string;
+  beforeUnitValuePen: { toString(): string };
   afterUnitValuePen: { toString(): string };
+  changedAt: Date;
 }
 
 /**
@@ -184,16 +186,31 @@ export interface RecordedPriceChange {
  *
  * Si el documento tiene dos líneas del mismo producto y solo una coincide, **las dos** cuentan:
  * no hay forma de saber cuál se editó, y el barrido nunca pisa un precio que alguien cambió.
+ *
+ * P2-C (autorrevisión del PR #16): una línea que **volvió** al precio con que se importó
+ * (Y → X → Y) no está editada: su precio es el del papel y su redondeo lo corrige el barrido. El
+ * precio de origen es el «antes» del primer cambio registrado de ese producto.
  */
 export function deliberatelyEditedProducts(
   changes: readonly RecordedPriceChange[],
   lines: readonly { productId: string; unitPricePen: { toString(): string } }[],
 ): Set<string> {
+  const origin = new Map<string, RecordedPriceChange>();
+  for (const change of changes) {
+    const first = origin.get(change.productId);
+    if (!first || change.changedAt < first.changedAt) origin.set(change.productId, change);
+  }
   const edited = new Set<string>();
   for (const change of changes) {
     const after = toDecimal(change.afterUnitValuePen.toString());
+    const imported = toDecimal(
+      (origin.get(change.productId) ?? change).beforeUnitValuePen.toString(),
+    );
     const stillInForce = lines.some(
-      (l) => l.productId === change.productId && toDecimal(l.unitPricePen.toString()).equals(after),
+      (l) =>
+        l.productId === change.productId &&
+        toDecimal(l.unitPricePen.toString()).equals(after) &&
+        !after.equals(imported),
     );
     if (stillInForce) edited.add(change.productId);
   }
@@ -263,6 +280,7 @@ export class ImportedDocumentsSweepService {
         quotationId: true,
         salesOrderId: true,
         productId: true,
+        beforeUnitValuePen: true,
         afterUnitValuePen: true,
         changedAt: true,
       },
