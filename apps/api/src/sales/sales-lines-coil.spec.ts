@@ -16,6 +16,10 @@ jest.mock('../production/production-assignments', () => ({
 jest.mock('./reserved-ledger', () => ({
   reservedByItem: jest.fn().mockResolvedValue(new Map()),
 }));
+const mockFloor = jest.fn().mockResolvedValue(undefined);
+jest.mock('./price-floor', () => ({
+  assertPriceFloor: (...a: unknown[]) => mockFloor(...a) as unknown,
+}));
 
 const D = (v: string) => new Prisma.Decimal(v);
 const COIL_ID = '11111111-1111-4111-8111-111111111111';
@@ -28,6 +32,8 @@ interface Opts {
   hasCoil?: boolean;
   hasProduct?: boolean;
   catalogSku?: string;
+  /** D-254: la bobina ya la vende otra cotización abierta. */
+  quoted?: boolean;
 }
 function txWith(o: Opts = {}) {
   const coil = {
@@ -36,9 +42,14 @@ function txWith(o: Opts = {}) {
     kind: o.kind ?? CoilKind.COIL,
     status: o.status ?? CoilStatus.OPEN,
     thicknessMm: D('0.38'),
+    widthMm: D('1200'),
     finish: { code: 'ALZ-AZUL-5002', kind: FinishKind.PREPINTADO, color: { code: 'AZUL' } },
   };
   return {
+    color: { findMany: jest.fn().mockResolvedValue([{ code: 'AZUL' }, { code: 'ROJO' }]) },
+    quotationItem: {
+      findMany: jest.fn().mockResolvedValue(o.quoted ? [{ reserveItemId: COIL_ID }] : []),
+    },
     coil: { findMany: jest.fn().mockResolvedValue(o.hasCoil === false ? [] : [coil]) },
     businessLine: { findUnique: jest.fn().mockResolvedValue({ id: 'bl-t' }) },
     product: {

@@ -19,7 +19,12 @@ import {
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
-import { coilPoolFor, isCoilSaleProduct, knownCoilAttributes } from '../sales/coil-sale-product';
+import {
+  coilPoolFor,
+  isCoilSaleProduct,
+  knownCoilAttributes,
+  lineCoilPool,
+} from '../sales/coil-sale-product';
 import { QuotationsService } from '../sales/quotations.service';
 import { SalesOrderEditsService } from '../sales/sales-order-edits.service';
 import type { PaperLine } from './quotation-import.service';
@@ -46,7 +51,15 @@ export type SweepDocKind = 'COTIZACION' | 'PEDIDO';
 
 export interface SweepLineFinding {
   lineNumber: number;
+  /** El SKU que la línea tiene hoy. */
   productSku: string;
+  /**
+   * El SKU que la línea tendría después del execute: el canónico del pool si (a) la ata a una
+   * bobina, el mismo en cualquier otro caso. El dry-run lo muestra como «actual → nuevo».
+   */
+  newSku: string;
+  /** El código de la fila del papel con la que se emparejó, o `null` si no hay una única. */
+  paperSku: string | null;
   /** (a): la línea no vende la bobina del pool, o su producto está unido a otro. */
   product: {
     reason: string;
@@ -56,10 +69,11 @@ export interface SweepLineFinding {
     candidates: number;
   } | null;
   /**
-   * La cantidad de la línea no es la del papel (alguien la editó a propósito). El importe del
-   * papel no se le puede pegar —describe otra cantidad—, así que la línea queda para el dueño.
+   * (c) La línea no tiene **una única** fila del papel con su mismo producto normalizado y su
+   * misma cantidad (y, si hay varias, su mismo importe). Nunca se empareja por posición: una
+   * línea sin pareja única no se toca y queda para el dueño con el motivo.
    */
-  qtyMismatch: { paper: string; stored: string } | null;
+  unpaired: string | null;
   /** (b): el importe guardado no es el del papel. */
   amounts: {
     stored: { net: string; igv: string; total: string };
@@ -75,9 +89,11 @@ export interface SweepDocument {
   externalKey: string;
   /** Abierto = cotización sin confirmar, o pedido vivo sin comprobante. */
   open: boolean;
-  /** Algo que impide comparar el documento contra el papel (no está, o no coinciden las líneas). */
+  /** Algo que impide comparar el documento contra el papel (su comprobante no está en el archivo). */
   unmatched: string | null;
   findings: SweepLineFinding[];
+  /** Filas del papel de este comprobante que no quedaron emparejadas con ninguna línea. */
+  unpairedPaperRows: number[];
 }
 
 export interface SweepReport {
@@ -229,13 +245,13 @@ export class ImportedDocumentsSweepService {
       if (!doc.open || doc.unmatched !== null || doc.findings.length === 0) continue;
       if (
         doc.findings.some(
-          (f) => f.qtyMismatch !== null || (f.product !== null && f.product.autoCoilId === null),
+          (f) => f.unpaired !== null || (f.product !== null && f.product.autoCoilId === null),
         )
       ) {
         continue;
       }
       try {
-        await this.fixDocument(actor, doc, paper, reason);
+        await this.fixDocument(actor, doc, reason);
         fixed.push({
           kind: doc.kind,
           code: doc.code,
@@ -256,14 +272,9 @@ export class ImportedDocumentsSweepService {
     };
   }
 
-  private async fixDocument(
-    actor: RequestUser,
-    doc: SweepDocument,
-    paper: readonly PaperLine[],
-    reason: string,
-  ): Promise<void> {
+  private async fixDocument(actor: RequestUser, doc: SweepDocument, reason: string): Promise<void> {
     if (doc.kind === 'COTIZACION') {
-      await this.fixQuotation(actor, doc, paper);
+      await this.fixQuotation(actor, doc, reason);
       return;
     }
     // Un pedido se corrige **entero o nada**: una sola transacción para todas sus líneas, así
@@ -326,64 +337,96 @@ export class ImportedDocumentsSweepService {
       open: doc.open,
     };
     const paper = byKey.get(externalKey);
-    if (!paper) return { ...base, unmatched: `${externalKey} no está en el archivo`, findings: [] };
-    if (paper.length !== doc.items.length) {
+    if (!paper) {
       return {
         ...base,
-        unmatched: `El archivo tiene ${String(paper.length)} línea(s) de ${externalKey} y el documento ${String(doc.items.length)}`,
+        unmatched: `${externalKey} no está en el archivo`,
         findings: [],
+        unpairedPaperRows: [],
       };
     }
 
+    // Revisión cruzada RF-S4b (P1-1): la línea se empareja con la fila del papel por **producto
+    // normalizado y cantidad** —y el importe desempata—, nunca por posición. Por posición, dos
+    // líneas con la misma cantidad en otro orden recibían el importe de la otra, y una línea
+    // común caída frente a un `BOB…` del papel se convertía en venta de bobina.
+    const paperKeys = paper.map((p) => paperProductKey(p, known));
+    const lineKeys = await Promise.all(doc.items.map((l) => this.lineProductKey(l)));
+    const pairing = pairLines(doc.items, lineKeys, paper, paperKeys);
+
     const findings: SweepLineFinding[] = [];
     for (const [i, line] of doc.items.entries()) {
-      const source = paper[i];
-      if (!source) continue;
-      const product = await this.productFinding(line, source, known, doc.scope);
-      const qtyMismatch =
-        source.qty !== null && !toDecimal(source.qty).equals(toDecimal(line.qty.toString()))
-          ? { paper: source.qty, stored: line.qty.toFixed(3) }
-          : null;
-      // Con la cantidad cambiada, el importe del papel describe otra línea: no se propone.
-      const amounts = qtyMismatch === null ? amountsFinding(line, source) : null;
-      if (product || amounts || qtyMismatch) {
+      const pair = pairing[i];
+      if (!pair || pair.paperIndex === null) {
         findings.push({
           lineNumber: line.lineNumber,
           productSku: line.product.sku,
+          newSku: line.product.sku,
+          paperSku: null,
+          product: null,
+          unpaired: pair?.reason ?? 'sin pareja en el papel',
+          amounts: null,
+        });
+        continue;
+      }
+      const source = paper[pair.paperIndex];
+      if (!source) continue;
+      const product = await this.productFinding(line, lineKeys[i] ?? '', doc.scope);
+      const amounts = amountsFinding(line, source);
+      if (product || amounts) {
+        findings.push({
+          lineNumber: line.lineNumber,
+          productSku: line.product.sku,
+          newSku: product?.autoCoilId ? (lineKeys[i] ?? line.product.sku) : line.product.sku,
+          paperSku: source.rawSku,
           product,
-          qtyMismatch,
+          unpaired: null,
           amounts,
         });
       }
     }
-    return { ...base, unmatched: null, findings };
+    const paired = new Set(pairing.flatMap((p) => (p.paperIndex === null ? [] : [p.paperIndex])));
+    const unpairedPaperRows = paper.flatMap((p, i) => (paired.has(i) ? [] : [p.rowNumber]));
+    return { ...base, unmatched: null, findings, unpairedPaperRows };
   }
 
-  /** (a) La línea que R1 resolvería distinto, con la bobina a la que se ataría. */
+  /**
+   * El producto **normalizado** de una línea del documento, para emparejarla con el papel. Una
+   * línea que vende una bobina, o que está enganchada a un producto de venta de bobina, se
+   * compara por el SKU canónico de su pool (D-252); cualquier otra, por su SKU.
+   */
+  private async lineProductKey(line: DocLine): Promise<string> {
+    if (line.reserveItemType === InventoryItemType.COIL || isCoilSaleProduct(line.product)) {
+      const pool = await lineCoilPool(this.prisma, line);
+      if (pool !== null) return pool.sku;
+    }
+    return normalizedSku(line.product.sku);
+  }
+
+  /**
+   * (a) La línea que R1 resolvería distinto, con la bobina a la que se ataría. Solo una línea
+   * enganchada a un **producto de venta de bobina** se ata a una bobina: una línea común nunca
+   * se convierte en venta de bobina (revisión cruzada RF-S4b, P1-1).
+   */
   private async productFinding(
     line: DocLine,
-    source: PaperLine,
-    known: ReadonlySet<string>,
+    lineKey: string,
     scope: { exceptQuotationIds?: string[]; exceptSalesOrderIds?: string[] },
   ): Promise<SweepLineFinding['product']> {
-    const parsed = normalizeCoilSku(
-      { code: source.rawSku, description: source.productName },
-      known,
-    );
-    const coilish = parsed.ok || /^\s*BOB/i.test(source.rawSku) || isCoilSaleProduct(line.product);
-    if (coilish && line.reserveItemType !== InventoryItemType.COIL) {
-      if (!parsed.ok) {
-        return { reason: parsed.reason, autoCoilId: null, autoCoilCode: null, candidates: 0 };
+    if (line.reserveItemType !== InventoryItemType.COIL && isCoilSaleProduct(line.product)) {
+      const key = await lineCoilPool(this.prisma, line);
+      if (key === null) {
+        return {
+          reason: `${line.product.sku}: su color o tipo no se interpreta`,
+          autoCoilId: null,
+          autoCoilCode: null,
+          candidates: 0,
+        };
       }
-      const pool = await coilPoolFor(
-        this.prisma,
-        { thicknessMm: parsed.thicknessMm, attribute: parsed.attribute },
-        line.qty.toString(),
-        scope,
-      );
+      const pool = await coilPoolFor(this.prisma, key, line.qty.toString(), scope);
       const auto = pool.candidates.find((c) => c.coilId === pool.autoCoilId) ?? null;
       return {
-        reason: `${line.product.sku} no vende una bobina del pool ${parsed.sku}`,
+        reason: `${line.product.sku} no vende una bobina del pool ${lineKey}`,
         autoCoilId: auto?.coilId ?? null,
         autoCoilCode: auto?.code ?? null,
         candidates: pool.candidates.length,
@@ -400,12 +443,11 @@ export class ImportedDocumentsSweepService {
     return null;
   }
 
-  /** Rehace las líneas de una cotización abierta con la bobina y los importes del papel. */
-  private async fixQuotation(
-    actor: RequestUser,
-    doc: SweepDocument,
-    paper: readonly PaperLine[],
-  ): Promise<void> {
+  /**
+   * Rehace las líneas de una cotización abierta con la bobina y los importes del papel. Cada
+   * línea toma **su** hallazgo —el papel con el que se emparejó—, nunca la fila de su posición.
+   */
+  private async fixQuotation(actor: RequestUser, doc: SweepDocument, reason: string): Promise<void> {
     const q = await this.prisma.quotation.findUniqueOrThrow({
       where: { id: doc.id },
       select: {
@@ -415,26 +457,24 @@ export class ImportedDocumentsSweepService {
         items: { select: LINE_SELECT, orderBy: { lineNumber: 'asc' } },
       },
     });
-    const source = paper.filter((p) => !p.excluded && p.documentKey === doc.externalKey);
     const byLine = new Map(doc.findings.map((f) => [f.lineNumber, f]));
-    const items: SalesItemInput[] = q.items.map((line, i) => {
+    const items: SalesItemInput[] = q.items.map((line) => {
       const finding = byLine.get(line.lineNumber);
-      const src = source[i];
-      const paperAmounts =
-        finding?.amounts && src?.netAmountPen
-          ? {
-              netAmountPen: src.netAmountPen,
-              ...(src.igvAmountPen && src.totalAmountPen
-                ? { igvAmountPen: src.igvAmountPen, totalAmountPen: src.totalAmountPen }
-                : {}),
-            }
-          : {
-              netAmountPen: line.subtotalPen.toFixed(4),
-              igvAmountPen: line.igvPen.toFixed(4),
-              totalAmountPen: line.totalPen.toFixed(4),
-            };
+      const paper = finding?.amounts?.paper;
+      const paperAmounts = paper
+        ? {
+            netAmountPen: paper.net,
+            ...(paper.igv !== null && paper.total !== null
+              ? { igvAmountPen: paper.igv, totalAmountPen: paper.total }
+              : {}),
+          }
+        : {
+            netAmountPen: line.subtotalPen.toFixed(4),
+            igvAmountPen: line.igvPen.toFixed(4),
+            totalAmountPen: line.totalPen.toFixed(4),
+          };
       const qty = line.qty.toString();
-      if (finding?.product?.autoCoilId) {
+      if (finding?.product?.autoCoilId && isCoilSaleProduct(line.product)) {
         return {
           saleCoilId: finding.product.autoCoilId,
           qty,
@@ -460,15 +500,92 @@ export class ImportedDocumentsSweepService {
           : {}),
       };
     });
-    await this.quotations.update(actor, doc.id, {
-      customerId: q.customerId,
-      issueDate: fromDateOnly(q.issueDate),
-      // Sin efecto en una importada: su vencimiento es `null` y la edición lo conserva (D-157).
-      validityDays: 7,
-      ...(q.notes ? { notes: q.notes } : {}),
-      items,
-    });
+    await this.quotations.update(
+      actor,
+      doc.id,
+      {
+        customerId: q.customerId,
+        issueDate: fromDateOnly(q.issueDate),
+        // Sin efecto en una importada: su vencimiento es `null` y la edición lo conserva (D-157).
+        validityDays: 7,
+        ...(q.notes ? { notes: q.notes } : {}),
+        items,
+      },
+      { auditReason: reason },
+    );
   }
+}
+
+/** El SKU tal como se compara: sin espacios a los costados y en mayúsculas. */
+function normalizedSku(sku: string): string {
+  return sku.trim().toUpperCase();
+}
+
+/**
+ * El producto normalizado de una fila del papel, con la misma regla que el importador: un
+ * código de bobina (`BOB…`, o una descripción de bobina) que el normalizador interpreta es su
+ * SKU canónico; cualquier otro código se compara tal cual.
+ */
+function paperProductKey(line: PaperLine, known: ReadonlySet<string>): string {
+  if (/^\s*BOB/i.test(line.rawSku) || /\bBOBINA\b/i.test(line.productName)) {
+    const parsed = normalizeCoilSku({ code: line.rawSku, description: line.productName }, known);
+    if (parsed.ok) return parsed.sku;
+  }
+  return normalizedSku(line.rawSku);
+}
+
+interface LinePairing {
+  /** Índice de la fila del papel, o `null` si no hay una única. */
+  paperIndex: number | null;
+  reason: string | null;
+}
+
+/**
+ * Empareja cada línea del documento con **una única** fila del papel: mismo producto
+ * normalizado y misma cantidad; si hay varias, la del mismo importe. Si aun así no es única, o
+ * si dos líneas eligen la misma fila, ninguna de las dos se empareja: la posición nunca decide.
+ */
+function pairLines(
+  items: readonly DocLine[],
+  lineKeys: readonly string[],
+  paper: readonly PaperLine[],
+  paperKeys: readonly string[],
+): LinePairing[] {
+  const choice = items.map((line, i): LinePairing => {
+    const qty = toDecimal(line.qty.toString());
+    const candidates = paper.flatMap((p, j) =>
+      paperKeys[j] === lineKeys[i] && p.qty !== null && toDecimal(p.qty).equals(qty) ? [j] : [],
+    );
+    if (candidates.length === 0) {
+      return {
+        paperIndex: null,
+        reason: `ninguna línea del papel tiene su producto (${lineKeys[i] ?? ''}) y su cantidad (${line.qty.toFixed(3)})`,
+      };
+    }
+    if (candidates.length === 1) return { paperIndex: candidates[0] ?? null, reason: null };
+    const stored = toDecimal(line.subtotalPen.toString());
+    const byAmount = candidates.filter((j) => {
+      const net = paper[j]?.netAmountPen;
+      return net !== null && net !== undefined && toDecimal(net).equals(stored);
+    });
+    if (byAmount.length === 1) return { paperIndex: byAmount[0] ?? null, reason: null };
+    return {
+      paperIndex: null,
+      reason: `${String(candidates.length)} líneas del papel tienen su producto y su cantidad, y el importe no las distingue: no se elige por posición`,
+    };
+  });
+  const claims = new Map<number, number>();
+  for (const c of choice) {
+    if (c.paperIndex !== null) claims.set(c.paperIndex, (claims.get(c.paperIndex) ?? 0) + 1);
+  }
+  return choice.map((c) =>
+    c.paperIndex !== null && (claims.get(c.paperIndex) ?? 0) > 1
+      ? {
+          paperIndex: null,
+          reason: 'otra línea del documento se empareja con la misma línea del papel',
+        }
+      : c,
+  );
 }
 
 /** (b) El importe guardado contra el del papel. */

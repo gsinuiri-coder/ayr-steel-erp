@@ -35,14 +35,18 @@ import {
 import { toSharedLineCode } from '../common/business-line-code';
 import {
   COIL_SALE_IDENTITY_SELECT,
+  coilPoolFor,
+  coilPoolKeyOf,
+  coilPoolKeyOfProduct,
   coilSaleSkus,
   findCoilSaleProducts,
   isCoilSaleProduct,
+  type CoilPoolKey,
 } from './coil-sale-product';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { assertPriceFloor, type PriceFloorCandidate } from './price-floor';
 import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material';
-import { reservedByItem } from './reserved-ledger';
+import { reservedByItem, type ReservedScope } from './reserved-ledger';
 
 /**
  * Resolución de las líneas de una cotización o de un pedido (D-065, D-068).
@@ -147,6 +151,25 @@ export interface ResolveSalesLinesOptions {
    */
   exactAmounts?: { tolerancePen: string; documentLabel: string };
   /**
+   * D-256 (aclaración, revisión cruzada RF-S4b): **qué líneas** siguen representando al
+   * comprobante, por índice. Solo esas conservan lo del papel —cantidad del papel en una venta
+   * de bobina, sin piso, con la tolerancia de D-169—; el resto es una línea común. `undefined`
+   * con `exactAmounts` puesto es «todas» (el importador y la edición de un ADMINISTRADOR).
+   */
+  paperLines?: ReadonlySet<number>;
+  /**
+   * D-254 (revisión cruzada RF-S4b, P2-1): cómo validar en el servidor la bobina de una línea
+   * del papel contra su pool. `scope` excluye al propio documento; `allowedPools` son los SKU
+   * canónicos entre los que puede estar la bobina cuando la línea no nombra su producto;
+   * `preexistingCoilIds` son las bobinas que el documento ya vendía, que no compiten consigo
+   * mismas.
+   */
+  coilPool?: {
+    scope?: ReservedScope;
+    allowedPools?: ReadonlySet<string>;
+    preexistingCoilIds?: ReadonlySet<string>;
+  };
+  /**
    * D-187: el número de la primera línea. Por defecto 1, que es un documento que se arma
    * entero; agregar ítems a un pedido confirmado —o recalcular una de sus líneas— numera a
    * continuación de lo que ya existe, y los rechazos tienen que nombrar esa línea y no «Línea 1».
@@ -222,6 +245,17 @@ export async function resolveSalesLines(
     seenCoils.add(item.saleCoilId);
   }
 
+  // D-256 (aclaración): la línea que representa al comprobante. Sin `exactAmounts` no hay
+  // ninguna; con él, todas salvo que el llamador diga cuáles (`paperLines`).
+  const isPaperLine = (index: number): boolean =>
+    options.exactAmounts !== undefined &&
+    (options.paperLines === undefined || options.paperLines.has(index));
+
+  // D-254 (revisión cruzada RF-S4b, P2-1): la bobina de una línea del papel se valida contra
+  // su pool **en el servidor**, en todo camino —importador y edición de cotización, no solo el
+  // pedido—. Asíncrono, así que va antes del `.map` que arma las líneas.
+  await assertPaperCoilsInPool(tx, items, saleCoilById, productById, isPaperLine, options);
+
   // D-163: las líneas a comprobar contra su piso, con la coordenada del costo que le
   // corresponde a cada una. Se juntan durante el `.map` —que es síncrono— y se comprueban
   // todas juntas después, en tres consultas, en vez de una por línea.
@@ -254,7 +288,7 @@ export async function resolveSalesLines(
       // D-254: una línea que viene del papel (importador, o la edición de un documento
       // importado) vende **la cantidad del papel** sobre una bobina con saldo suficiente; el
       // alta a mano sigue vendiendo el saldo completo (D-116).
-      const paperQty = options.exactAmounts !== undefined;
+      const paperQty = isPaperLine(index);
       if (paperQty) {
         // La bobina que eligió el preview puede haber cambiado hasta confirmar: se revalida lo
         // que el pool exige (D-254) — abierta y sin montar en una OP — además del saldo.
@@ -288,14 +322,17 @@ export async function resolveSalesLines(
       const amounts = lineAmounts(qty, basis);
       const unitPricePen = toFixedString(money(amounts.unitValue), 'MONEY');
       const description = item.description ?? `Bobina ${sale.coilCode} × ${qty} kg`;
-      floorCandidates.push({
-        at,
-        sku: sale.coilCode,
-        businessLineId: sale.productBusinessLineId,
-        basis: { kind: 'UNIT', unitLabel: 'kg' },
-        unitValuePen: unitPricePen,
-        cost: { kind: 'COIL', coilId: sale.coilId },
-      });
+      // D-256: la línea que representa al comprobante no pasa por el piso.
+      if (!paperQty) {
+        floorCandidates.push({
+          at,
+          sku: sale.coilCode,
+          businessLineId: sale.productBusinessLineId,
+          basis: { kind: 'UNIT', unitLabel: 'kg' },
+          unitValuePen: unitPricePen,
+          cost: { kind: 'COIL', coilId: sale.coilId },
+        });
+      }
       return {
         lineNumber,
         productId: sale.productId,
@@ -447,7 +484,7 @@ export async function resolveSalesLines(
       qty: item.qty,
       unitPricePen: item.unitPricePen ?? unitPricePen,
     });
-    if (item.netAmountPen !== undefined && options.exactAmounts !== undefined) {
+    if (item.netAmountPen !== undefined && isPaperLine(index)) {
       adjustments.push({
         at,
         sku: product.sku,
@@ -594,7 +631,18 @@ export async function resolveSalesLines(
   // documento entero ya validado — un 400 por precio sobre una línea que además tenía el
   // producto desactivado lo mandaría a corregir dos veces.
   if (options.priceFloor) {
-    await assertPriceFloor(tx, floorCandidates, options.priceFloor.toleranceMm);
+    // D-256 (aclaración): las líneas que representan al comprobante no pasan por el piso; las
+    // demás del mismo documento, sí.
+    const paperAt = new Set(
+      items.flatMap((_, index) =>
+        isPaperLine(index) ? [`Línea ${String((options.firstLineNumber ?? 1) + index)}`] : [],
+      ),
+    );
+    await assertPriceFloor(
+      tx,
+      floorCandidates.filter((c) => !paperAt.has(c.at)),
+      options.priceFloor.toleranceMm,
+    );
   }
   if (options.exactAmounts !== undefined) {
     assertWithinRoundingTolerance(adjustments, options.exactAmounts);
@@ -706,6 +754,76 @@ interface SaleCoilResolution {
   /** D-254: lo que el pool exige de una bobina que vende una línea del papel. */
   status: CoilStatus;
   mounted: boolean;
+  /** D-254: el pool de la bobina (espesor + color comercial o tipo), o `null` si no tiene. */
+  pool: CoilPoolKey | null;
+}
+
+/**
+ * D-254 (revisión cruzada RF-S4b, P2-1): la bobina de cada línea **del papel** tiene que ser
+ * una candidata de su pool, igual que en la edición del pedido (`updateItemCoilInTx`):
+ *
+ * - del mismo pool que el producto de la línea (el importador lo manda), o que alguna línea
+ *   del documento que se edita (`allowedPools`): nunca de otro espesor o color;
+ * - libre y con saldo ≥ la cantidad (`coilPoolFor`): sin reserva viva de otro documento, sin
+ *   estar montada en una OP y sin estar atada a otra cotización abierta. La bobina que el
+ *   documento ya vendía no compite consigo misma (`preexistingCoilIds`).
+ *
+ * Hasta acá el servidor solo miraba «abierta, sin montar y con disponible»; el resto lo
+ * aplicaba el selector del web.
+ */
+async function assertPaperCoilsInPool(
+  tx: Prisma.TransactionClient,
+  items: readonly SalesItemInput[],
+  saleCoilById: ReadonlyMap<string, SaleCoilResolution>,
+  productById: ReadonlyMap<
+    string,
+    { sku: string; name: string; businessLine: { code: BusinessLineCode } }
+  >,
+  isPaperLine: (index: number) => boolean,
+  options: ResolveSalesLinesOptions,
+): Promise<void> {
+  for (const [index, item] of items.entries()) {
+    if (item.saleCoilId === undefined || !isPaperLine(index)) continue;
+    const sale = saleCoilById.get(item.saleCoilId);
+    if (!sale) continue; // El `.map` principal lo reporta como "no encontrada".
+    const at = `Línea ${String((options.firstLineNumber ?? 1) + index)}`;
+    if (sale.pool === null) {
+      throw new BadRequestException(
+        `${at}: ${sale.coilCode} no tiene color comercial ni tipo, así que no es de ningún pool de venta`,
+      );
+    }
+    const product = item.productId === undefined ? undefined : productById.get(item.productId);
+    const allowed = options.coilPool?.allowedPools;
+    if (product !== undefined) {
+      const key = await coilPoolKeyOfProduct(tx, product, item.description);
+      if (key === null) {
+        throw new BadRequestException(`${at}: ${product.sku} no es un producto de venta de bobina`);
+      }
+      if (key.sku !== sale.pool.sku) {
+        throw new BadRequestException(
+          `${at}: ${sale.coilCode} es del pool ${sale.pool.sku} y la línea es de ${key.sku}: elige una bobina de su pool`,
+        );
+      }
+    } else if (allowed !== undefined) {
+      if (!allowed.has(sale.pool.sku)) {
+        throw new BadRequestException(
+          `${at}: ${sale.coilCode} es del pool ${sale.pool.sku}, que no es el de ninguna línea de este documento (${[...allowed].join(', ') || 'ninguna de bobina'})`,
+        );
+      }
+    } else {
+      throw new BadRequestException(
+        `${at}: la línea del comprobante que vende una bobina tiene que decir de qué producto de bobina es`,
+      );
+    }
+    if (options.coilPool?.preexistingCoilIds?.has(sale.coilId)) continue;
+    const qty = toFixedString(toDecimal(item.qty), 'KG');
+    const pool = await coilPoolFor(tx, sale.pool, qty, options.coilPool?.scope ?? {});
+    if (!pool.candidates.some((c) => c.coilId === sale.coilId)) {
+      throw new BadRequestException(
+        `${at}: ${sale.coilCode} no es candidata del pool ${sale.pool.sku} para ${qty} kg: tiene que estar libre —sin reserva de otro documento, sin OP y sin otra cotización abierta— y con saldo suficiente`,
+      );
+    }
+  }
 }
 
 /**
@@ -776,6 +894,7 @@ async function resolveSaleCoils(
       qty: toFixedString(available, 'KG'),
       status: coil.status,
       mounted: mountedIds.has(coilId),
+      pool: coilPoolKeyOf(coil),
     });
   }
   return result;

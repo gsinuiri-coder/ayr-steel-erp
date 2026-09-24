@@ -11,17 +11,20 @@ import {
   QuotationStatus,
   SalesOrderStatus,
   TemporaryReservationStatus,
-  type InventoryItemType,
+  InventoryItemType,
 } from '@prisma/client';
 import {
   businessToday,
   defaultValidUntil,
+  EXTERNAL_INVOICE_NOTES_PREFIX,
   externalInvoiceOf,
   IMPORT_ROUNDING_TOLERANCE_PEN,
   isImportedQuotation,
   DERIVED_UNIT_VALUE_DECIMALS,
   derivedUnitValue,
   keepImportMarker,
+  lineAmounts,
+  Role,
   isQuotationExpired,
   quotationValidUntil,
   paginate,
@@ -50,6 +53,7 @@ import { findPriceChanges, recordPriceChanges } from './price-changes';
 import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
 import { SalesOrdersService } from './sales-orders.service';
+import { lineCoilPool } from './coil-sale-product';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 
 function toDateOnly(value: string): Date {
@@ -116,6 +120,7 @@ export class QuotationsService {
   // -------------------------------------------------------------------------
 
   async create(actor: RequestUser, input: CreateQuotationInput): Promise<QuotationDto> {
+    assertNoTypedImportMarker(null, input.notes);
     const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input));
     await this.generatePdf(id);
     return this.findOne(id, actor);
@@ -201,10 +206,17 @@ export class QuotationsService {
    * a dejar vigente, vuelve a `EMITIDA`. Una confirmada no, porque su precio ya es el del
    * pedido; una anulada tampoco, porque anular es terminal.
    */
-  async update(actor: RequestUser, id: string, input: UpdateQuotationInput): Promise<QuotationDto> {
+  async update(
+    actor: RequestUser,
+    id: string,
+    input: UpdateQuotationInput,
+    /** El motivo que queda en la auditoría, cuando la edición la hace una herramienta (barrido). */
+    options: { auditReason?: string } = {},
+  ): Promise<QuotationDto> {
     await this.prisma.$transaction(async (tx) => {
       const current = await this.lockQuotation(tx, id);
       assertSellerAccess(actor, current.sellerId, 'Cotización');
+      assertNoTypedImportMarker(current.notes, input.notes);
       if (current.status === QuotationStatus.CONFIRMED) {
         throw new BadRequestException(
           'La cotización ya está confirmada: lo que se edita desde ahora es el pedido.',
@@ -226,14 +238,28 @@ export class QuotationsService {
       // exención del piso ya estaba; a los importes les faltaba. Sin esto, corregir el
       // producto mal mapeado de una línea recalculaba las diez y el documento volvía a
       // separarse del comprobante — en silencio, y sin que nadie hubiera tocado los números.
-      const items = imported ? await this.withImportedAmounts(tx, id, input.items) : input.items;
+      const { items, unchanged } = imported
+        ? await this.withImportedAmounts(tx, id, input.items)
+        : { items: input.items, unchanged: new Set<number>() };
+      // D-256 (aclaración, revisión cruzada RF-S4b): la exención del piso y la venta parcial de
+      // bobina son del **ADMINISTRADOR**. Para cualquier otro rol, solo la línea que sigue
+      // representando al comprobante —mismo producto, cantidad y precio— conserva el papel;
+      // la que cambió se recalcula y pasa por el piso y por las reglas normales de bobina. El
+      // texto de las observaciones nunca otorga permisos.
+      const admin = actor.role === Role.ADMINISTRADOR;
       const lines = await resolveSalesLines(tx, items, {
-        ...(imported ? {} : { priceFloor: this.priceFloor() }),
+        ...(imported && admin ? {} : { priceFloor: this.priceFloor() }),
         ...(imported
           ? {
               exactAmounts: {
                 tolerancePen: IMPORT_ROUNDING_TOLERANCE_PEN,
                 documentLabel: externalInvoiceOf(current.notes) ?? 'El comprobante importado',
+              },
+              ...(admin ? {} : { paperLines: unchanged }),
+              coilPool: {
+                scope: { exceptQuotationIds: [id] },
+                allowedPools: await this.storedCoilPools(tx, id),
+                preexistingCoilIds: await this.storedCoilIds(tx, id),
               },
             }
           : {}),
@@ -298,6 +324,7 @@ export class QuotationsService {
           status,
           priceChanges,
         },
+        ...(options.auditReason ? { reason: options.auditReason } : {}),
       });
 
       // D-185: con reserva temporal vigente, lo reservado sigue a las líneas nuevas — o la
@@ -331,60 +358,118 @@ export class QuotationsService {
     tx: Prisma.TransactionClient,
     quotationId: string,
     items: SalesItemInput[],
-  ): Promise<SalesItemInput[]> {
+  ): Promise<{ items: SalesItemInput[]; unchanged: Set<number> }> {
     const stored = await tx.quotationItem.findMany({
       where: { quotationId },
       select: {
         productId: true,
         qty: true,
         unitPricePen: true,
+        valuePerMeterPen: true,
         subtotalPen: true,
         igvPen: true,
         totalPen: true,
+        reserveItemType: true,
+        reserveItemId: true,
       },
       orderBy: { lineNumber: 'asc' },
     });
+    type Row = (typeof stored)[number];
     const available = stored.map((row) => ({ row, taken: false }));
     // D-255: con el importe de la línea sigue viajando el IGV y el total **del papel** que la
     // línea tenía guardados, para que editar un documento importado no le recalcule el IGV al
     // 18 % y lo separe del comprobante en diezmilésimas.
-    const withPaper = (item: SalesItemInput, row: (typeof stored)[number]): SalesItemInput => ({
-      ...item,
-      netAmountPen: row.subtotalPen.toFixed(4),
-      igvAmountPen: row.igvPen.toFixed(4),
-      totalAmountPen: row.totalPen.toFixed(4),
-    });
-
-    return items.map((item) => {
-      const sameQty = (row: (typeof stored)[number]): boolean =>
-        toDecimal(row.qty.toString()).equals(toDecimal(item.qty));
-      // D-255 (R2): la línea que ya trae su importe manda el suyo. Si es el que tenía guardado
-      // (la edición cambió el producto o la bobina, no el importe), se le devuelve el papel entero.
+    const withPaper = (item: SalesItemInput, row: Row): SalesItemInput => {
+      const { unitPricePen: _u, valuePerMeterPen: _v, unitPriceWithIgvPen: _w, ...rest } = item;
+      return {
+        ...rest,
+        netAmountPen: row.subtotalPen.toFixed(4),
+        igvAmountPen: row.igvPen.toFixed(4),
+        totalAmountPen: row.totalPen.toFixed(4),
+      };
+    };
+    const eq = (a: { toString(): string }, b: string): boolean =>
+      toDecimal(a.toString()).equals(toDecimal(b));
+    // D-256 (aclaración): el **mismo producto** —o la misma bobina, en una venta de bobina—.
+    const sameProduct = (item: SalesItemInput, row: Row): boolean =>
+      item.saleCoilId !== undefined
+        ? row.reserveItemType === InventoryItemType.COIL && row.reserveItemId === item.saleCoilId
+        : item.productId !== undefined && row.productId === item.productId;
+    // Y el **mismo precio**, en la forma en que haya llegado.
+    const samePrice = (item: SalesItemInput, row: Row): boolean => {
       if (item.netAmountPen !== undefined) {
-        const same = available.find(
-          (c) =>
-            !c.taken &&
-            sameQty(c.row) &&
-            toDecimal(c.row.subtotalPen.toString()).equals(toDecimal(item.netAmountPen ?? '0')),
-        );
-        if (!same || item.igvAmountPen !== undefined) return item;
-        same.taken = true;
-        return withPaper(item, same.row);
+        if (!eq(row.subtotalPen, item.netAmountPen)) return false;
+        if (item.igvAmountPen !== undefined && !eq(row.igvPen, item.igvAmountPen)) return false;
+        if (item.totalAmountPen !== undefined && !eq(row.totalPen, item.totalAmountPen)) {
+          return false;
+        }
+        return true;
       }
-      const { productId, unitPricePen } = item;
-      if (unitPricePen === undefined || productId === undefined) return item;
+      if (item.unitPricePen !== undefined) return eq(row.unitPricePen, item.unitPricePen);
+      if (item.valuePerMeterPen !== undefined) {
+        return row.valuePerMeterPen !== null && eq(row.valuePerMeterPen, item.valuePerMeterPen);
+      }
+      if (item.unitPriceWithIgvPen !== undefined) {
+        const { subtotal } = lineAmounts(item.qty, { unitPriceWithIgvPen: item.unitPriceWithIgvPen });
+        return subtotal.equals(toDecimal(row.subtotalPen.toString()));
+      }
+      return false;
+    };
+
+    const unchanged = new Set<number>();
+    const out = items.map((item, index) => {
       const match = available.find(
-        (candidate) =>
-          !candidate.taken &&
-          candidate.row.productId === productId &&
-          sameQty(candidate.row) &&
-          toDecimal(candidate.row.unitPricePen.toString()).equals(toDecimal(unitPricePen)),
+        (c) =>
+          !c.taken &&
+          sameProduct(item, c.row) &&
+          eq(c.row.qty, item.qty) &&
+          samePrice(item, c.row),
       );
       if (!match) return item;
       match.taken = true;
-      const { unitPricePen: _typed, ...rest } = item;
-      return withPaper(rest, match.row);
+      unchanged.add(index);
+      return withPaper(item, match.row);
     });
+    return { items: out, unchanged };
+  }
+
+  /**
+   * D-254 (revisión cruzada RF-S4b, P2-1): los pools de bobina que la cotización ya tiene —el
+   * de cada línea que vende una bobina o que está enganchada a un producto de venta de
+   * bobina—. Una línea del papel de esta cotización solo puede atarse a una bobina de uno de
+   * ellos: nunca a una de otro espesor o color.
+   */
+  private async storedCoilPools(
+    tx: Prisma.TransactionClient,
+    quotationId: string,
+  ): Promise<Set<string>> {
+    const rows = await tx.quotationItem.findMany({
+      where: { quotationId },
+      select: {
+        description: true,
+        reserveItemType: true,
+        reserveItemId: true,
+        product: { select: { sku: true, name: true, businessLine: { select: { code: true } } } },
+      },
+    });
+    const pools = new Set<string>();
+    for (const row of rows) {
+      const key = await lineCoilPool(tx, row);
+      if (key !== null) pools.add(key.sku);
+    }
+    return pools;
+  }
+
+  /** Las bobinas que la cotización ya vende: su propia línea no compite consigo misma. */
+  private async storedCoilIds(
+    tx: Prisma.TransactionClient,
+    quotationId: string,
+  ): Promise<Set<string>> {
+    const rows = await tx.quotationItem.findMany({
+      where: { quotationId, reserveItemType: InventoryItemType.COIL },
+      select: { reserveItemId: true },
+    });
+    return new Set(rows.map((r) => r.reserveItemId));
   }
 
   /**
@@ -1044,4 +1129,18 @@ function toItemCreate(
         }
       : {}),
   };
+}
+
+/**
+ * D-256 (aclaración, revisión cruzada RF-S4b): la marca del comprobante externo (D-152) la
+ * escribe **solo** el importador. Tipearla en las observaciones de una cotización que no la
+ * tiene se rechaza: el texto de las observaciones nunca otorga permisos.
+ */
+function assertNoTypedImportMarker(currentNotes: string | null, newNotes?: string | null): void {
+  if (isImportedQuotation(currentNotes)) return;
+  if (isImportedQuotation(newNotes?.trimStart() ?? null)) {
+    throw new BadRequestException(
+      `Las observaciones no pueden empezar con «${EXTERNAL_INVOICE_NOTES_PREFIX.trim()}»: esa marca la pone el importador de comprobantes`,
+    );
+  }
 }

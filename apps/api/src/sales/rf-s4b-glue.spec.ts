@@ -20,73 +20,109 @@ jest.mock('./coil-sale-product', () => ({
 const D = (v: string) => new Prisma.Decimal(v);
 
 describe('QuotationsService.withImportedAmounts (edición de una cotización importada)', () => {
-  const stored = (over: Partial<Record<string, Prisma.Decimal | string>> = {}) => ({
+  const stored = (over: Partial<Record<string, Prisma.Decimal | string | null>> = {}) => ({
     productId: 'p-1',
     qty: D('3840'),
     unitPricePen: D('3.0508'),
+    valuePerMeterPen: null,
     subtotalPen: D('11715.2540'),
     igvPen: D('2108.7457'),
     totalPen: D('13824.0000'),
+    reserveItemType: 'PRODUCT',
+    reserveItemId: 'p-1',
     ...over,
   });
-  const run = (
+  const coilRow = (over: Partial<Record<string, Prisma.Decimal | string | null>> = {}) =>
+    stored({ productId: 'p-bob', reserveItemType: 'COIL', reserveItemId: 'c-1', ...over });
+  const run = async (
     rows: ReturnType<typeof stored>[],
     items: Record<string, unknown>[],
-  ): Promise<Record<string, unknown>[]> => {
+  ): Promise<{ items: Record<string, unknown>[]; unchanged: Set<number> }> => {
     const service = Object.create(QuotationsService.prototype) as {
       withImportedAmounts: (
         tx: unknown,
         id: string,
         items: unknown[],
-      ) => Promise<Record<string, unknown>[]>;
+      ) => Promise<{ items: Record<string, unknown>[]; unchanged: Set<number> }>;
     };
     const tx = { quotationItem: { findMany: jest.fn().mockResolvedValue(rows) } };
     return service.withImportedAmounts(tx, 'q-1', items);
   };
 
   it('una línea que no se tocó recupera los tres importes del papel y pierde el unitario tipeado', async () => {
-    const [line] = await run(
+    const { items, unchanged } = await run(
       [stored()],
       [{ productId: 'p-1', qty: '3840.000', unitPricePen: '3.0508' }],
     );
-    expect(line).toMatchObject({
+    expect(items[0]).toMatchObject({
       netAmountPen: '11715.2540',
       igvAmountPen: '2108.7457',
       totalAmountPen: '13824.0000',
     });
-    expect(line).not.toHaveProperty('unitPricePen');
+    expect(items[0]).not.toHaveProperty('unitPricePen');
+    expect([...unchanged]).toEqual([0]);
   });
 
   it('si cambió el precio, la línea se recalcula: no se le pega el importe viejo', async () => {
-    const [line] = await run(
+    const { items, unchanged } = await run(
       [stored()],
       [{ productId: 'p-1', qty: '3840.000', unitPricePen: '4.0000' }],
     );
-    expect(line).not.toHaveProperty('netAmountPen');
-    expect(line).toMatchObject({ unitPricePen: '4.0000' });
+    expect(items[0]).not.toHaveProperty('netAmountPen');
+    expect(items[0]).toMatchObject({ unitPricePen: '4.0000' });
+    expect(unchanged.size).toBe(0);
   });
 
   it('si cambió la cantidad, tampoco', async () => {
-    const [line] = await run(
+    const { items, unchanged } = await run(
       [stored()],
       [{ productId: 'p-1', qty: '100.000', unitPricePen: '3.0508' }],
     );
-    expect(line).not.toHaveProperty('netAmountPen');
+    expect(items[0]).not.toHaveProperty('netAmountPen');
+    expect(unchanged.size).toBe(0);
   });
 
-  it('una línea de bobina con el importe guardado recupera el IGV y el total del papel', async () => {
-    const [line] = await run(
-      [stored()],
+  it('D-256: si cambió el producto, tampoco — aunque el importe sea el mismo', async () => {
+    const own = { productId: 'p-2', qty: '3840.000', netAmountPen: '11715.2540' };
+    const { items, unchanged } = await run([stored()], [own]);
+    expect(items[0]).toEqual(own);
+    expect(unchanged.size).toBe(0);
+  });
+
+  it('una venta de la misma bobina con el importe guardado recupera el IGV y el total del papel', async () => {
+    const { items, unchanged } = await run(
+      [coilRow()],
       [{ saleCoilId: 'c-1', qty: '3840.000', netAmountPen: '11715.2540' }],
     );
-    expect(line).toMatchObject({
+    expect(items[0]).toMatchObject({
       saleCoilId: 'c-1',
       igvAmountPen: '2108.7457',
       totalAmountPen: '13824.0000',
     });
+    expect([...unchanged]).toEqual([0]);
   });
 
-  it('una línea que ya trae el trío no se toca', async () => {
+  it('D-256: otra bobina es otro producto: la línea deja de representar al comprobante', async () => {
+    const own = { saleCoilId: 'c-2', qty: '3840.000', netAmountPen: '11715.2540' };
+    const { items, unchanged } = await run([coilRow()], [own]);
+    expect(items[0]).toEqual(own);
+    expect(unchanged.size).toBe(0);
+  });
+
+  it('una línea que reenvía su trío guardado sigue intacta', async () => {
+    const own = {
+      saleCoilId: 'c-1',
+      qty: '3840.000',
+      netAmountPen: '11715.2540',
+      igvAmountPen: '2108.7457',
+      totalAmountPen: '13824.0000',
+    };
+    const { items, unchanged } = await run([coilRow()], [own]);
+    expect(items[0]).toEqual(own);
+    expect([...unchanged]).toEqual([0]);
+  });
+
+  it('un trío distinto al guardado se deja como viene y no cuenta como intacto', async () => {
     const own = {
       saleCoilId: 'c-1',
       qty: '3840.000',
@@ -94,14 +130,30 @@ describe('QuotationsService.withImportedAmounts (edición de una cotización imp
       igvAmountPen: '1.0000',
       totalAmountPen: '11716.2540',
     };
-    const [line] = await run([stored()], [own]);
-    expect(line).toEqual(own);
+    const { items, unchanged } = await run([coilRow()], [own]);
+    expect(items[0]).toEqual(own);
+    expect(unchanged.size).toBe(0);
   });
 
   it('un importe distinto al guardado se deja como viene', async () => {
     const own = { saleCoilId: 'c-1', qty: '3840.000', netAmountPen: '999.0000' };
-    const [line] = await run([stored()], [own]);
-    expect(line).toEqual(own);
+    const { items } = await run([coilRow()], [own]);
+    expect(items[0]).toEqual(own);
+  });
+
+  it('el mismo precio con IGV que reproduce el importe guardado cuenta como intacto', async () => {
+    const row = stored({
+      qty: D('4194'),
+      unitPricePen: D('2.9661'),
+      subtotalPen: D('12439.8305'),
+      igvPen: D('2239.1695'),
+      totalPen: D('14679.0000'),
+    });
+    const { unchanged } = await run(
+      [row],
+      [{ productId: 'p-1', qty: '4194.000', unitPriceWithIgvPen: '3.5000' }],
+    );
+    expect([...unchanged]).toEqual([0]);
   });
 
   it('dos líneas idénticas reciben cada una su propio importe, no dos veces el primero', async () => {
@@ -110,14 +162,14 @@ describe('QuotationsService.withImportedAmounts (edición de una cotización imp
       stored({ subtotalPen: D('11715.2000'), igvPen: D('2108.7360'), totalPen: D('13823.9360') }),
     ];
     const item = { productId: 'p-1', qty: '3840.000', unitPricePen: '3.0508' };
-    const lines = await run(rows, [item, item]);
-    expect(lines.map((l) => l.netAmountPen)).toEqual(['11715.2540', '11715.2000']);
+    const { items } = await run(rows, [item, item]);
+    expect(items.map((l) => l.netAmountPen)).toEqual(['11715.2540', '11715.2000']);
   });
 
   it('una línea sin producto ni precio se deja como viene', async () => {
     const own = { qty: '1.000' };
-    const [line] = await run([stored()], [own]);
-    expect(line).toEqual(own);
+    const { items } = await run([stored()], [own]);
+    expect(items[0]).toEqual(own);
   });
 });
 

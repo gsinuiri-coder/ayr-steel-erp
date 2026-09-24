@@ -44,27 +44,33 @@ function printDocument(doc: SweepDocument): void {
   }
   console.warn(head);
   for (const f of doc.findings) {
+    // Revisión cruzada RF-S4b (P1-1): cada hallazgo dice qué SKU tiene la línea, cuál tendría
+    // después y con qué fila del papel se emparejó, para que un cruce se vea antes del execute.
+    const skus = `${f.productSku} → ${f.newSku} (papel: ${f.paperSku ?? 'sin pareja'})`;
     if (f.product) {
       const fix = f.product.autoCoilCode
         ? `→ se ata a ${f.product.autoCoilCode}`
         : `→ ${String(f.product.candidates)} candidata(s): elige a mano`;
-      console.warn(
-        `      (a) línea ${String(f.lineNumber)} ${f.productSku}: ${f.product.reason} ${fix}`,
-      );
+      console.warn(`      (a) línea ${String(f.lineNumber)} ${skus}: ${f.product.reason} ${fix}`);
     }
-    if (f.qtyMismatch) {
+    if (f.unpaired) {
       console.warn(
-        `      (c) línea ${String(f.lineNumber)}: la cantidad cambió (papel ${f.qtyMismatch.paper}, guardada ${f.qtyMismatch.stored}): el importe del papel no se le aplica`,
+        `      (c) línea ${String(f.lineNumber)} ${f.productSku}: ${f.unpaired}; no se toca`,
       );
     }
     if (f.amounts) {
       const p = f.amounts.paper;
       const s = f.amounts.stored;
       console.warn(
-        `      (b) línea ${String(f.lineNumber)}: guardado ${s.net} / ${s.igv} / ${s.total} · ` +
+        `      (b) línea ${String(f.lineNumber)} ${skus}: guardado ${s.net} / ${s.igv} / ${s.total} · ` +
           `papel ${p.net} / ${p.igv ?? '(IGV calculado)'} / ${p.total ?? '(total calculado)'}`,
       );
     }
+  }
+  if (doc.unpairedPaperRows.length > 0) {
+    console.warn(
+      `      filas del papel sin línea en el documento: ${doc.unpairedPaperRows.join(', ')}`,
+    );
   }
 }
 
@@ -110,7 +116,7 @@ async function main(): Promise<void> {
           (d.unmatched !== null ||
             d.findings.some(
               (f) =>
-                f.qtyMismatch !== null || (f.product !== null && f.product.autoCoilId === null),
+                f.unpaired !== null || (f.product !== null && f.product.autoCoilId === null),
             )),
       );
       console.warn(

@@ -88,6 +88,15 @@ function fakePrisma(o: FakeOpts = {}) {
     salesOrder: { findMany: jest.fn().mockResolvedValue(o.orders ?? []) },
     salesOrderItem: { findFirstOrThrow: jest.fn().mockResolvedValue({ id: 'oi-1' }) },
     coil: {
+      // La identidad de la bobina que ya vende una línea: de ella sale su pool (D-254).
+      findUnique: jest.fn().mockResolvedValue({
+        thicknessMm: D('0.38'),
+        finish: {
+          code: 'ALZ-AZUL-5002',
+          kind: FinishKind.PREPINTADO,
+          color: { code: 'AZUL' },
+        },
+      }),
       findMany: jest.fn().mockResolvedValue(
         coils.map((c) => ({
           id: c.id,
@@ -165,7 +174,13 @@ describe('ImportedDocumentsSweepService.report', () => {
       igv: '2239.1690',
       total: '14679.0000',
     });
-    expect(finding?.qtyMismatch).toBeNull();
+    expect(finding?.unpaired).toBeNull();
+    // El dry-run dice qué SKU tiene la línea, cuál tendría y con qué fila del papel se emparejó.
+    expect(finding).toMatchObject({
+      productSku: 'BOB38AZUL',
+      newSku: 'BOB038AZUL',
+      paperSku: 'BOB38AZUL',
+    });
   });
 
   it('una línea que ya vende su bobina con los importes del papel no tiene hallazgos', async () => {
@@ -185,8 +200,9 @@ describe('ImportedDocumentsSweepService.report', () => {
     const { service } = build(fakePrisma({ quotations: [quotationRow([edited])] }));
     const { documents } = await service.report([paperLine()]);
     const [finding] = documents[0]?.findings ?? [];
-    expect(finding?.qtyMismatch).toEqual({ paper: '4194.000', stored: '50.000' });
+    expect(finding?.unpaired).toMatch(/ninguna línea del papel tiene su producto .* y su cantidad/);
     expect(finding?.amounts).toBeNull();
+    expect(documents[0]?.unpairedPaperRows).toEqual([1]);
   });
 
   it('sin candidatas en el pool no hay bobina a la que atarla', async () => {
@@ -195,12 +211,14 @@ describe('ImportedDocumentsSweepService.report', () => {
     expect(documents[0]?.findings[0]?.product).toMatchObject({ autoCoilId: null, candidates: 0 });
   });
 
-  it('un código de bobina que no se interpreta queda sin bobina', async () => {
+  it('un código del papel que no se interpreta no se empareja con la bobina: queda sin tocar', async () => {
     const { service } = build(fakePrisma({ quotations: [quotationRow([line(1)])] }));
     const { documents } = await service.report([
       paperLine({ rawSku: 'BOB38MORADO', productName: '' }),
     ]);
-    expect(documents[0]?.findings[0]?.product).toMatchObject({ autoCoilId: null, candidates: 0 });
+    const [finding] = documents[0]?.findings ?? [];
+    expect(finding?.unpaired).toMatch(/ninguna línea del papel/);
+    expect(finding?.product).toBeNull();
   });
 
   it('un producto unido a otro se marca aunque no sea de bobina', async () => {
@@ -217,7 +235,7 @@ describe('ImportedDocumentsSweepService.report', () => {
     expect(documents[0]?.findings[0]?.product?.reason).toMatch(/unido a otro producto/);
   });
 
-  it('un documento que no está en el archivo, o con otra cantidad de líneas, no se compara', async () => {
+  it('un documento que no está en el archivo no se compara; dos líneas para una fila no se emparejan', async () => {
     const { service } = build(
       fakePrisma({
         quotations: [
@@ -228,7 +246,11 @@ describe('ImportedDocumentsSweepService.report', () => {
     );
     const { documents } = await service.report([paperLine()]);
     expect(documents[0]?.unmatched).toMatch(/no está en el archivo/);
-    expect(documents[1]?.unmatched).toMatch(/2/);
+    expect(documents[1]?.unmatched).toBeNull();
+    expect(documents[1]?.findings.map((f) => f.unpaired)).toEqual([
+      expect.stringMatching(/misma línea del papel/),
+      expect.stringMatching(/misma línea del papel/),
+    ]);
   });
 
   it('las filas excluidas del archivo (notas de crédito) no cuentan', async () => {
@@ -264,6 +286,120 @@ describe('ImportedDocumentsSweepService.report', () => {
     const products = documents.flatMap((d) => d.findings.map((f) => f.product));
     expect(products.map((p) => p?.autoCoilId)).toEqual([null, null]);
     expect(products[0]?.reason).toMatch(/elige a mano/);
+  });
+});
+
+/**
+ * Revisión cruzada RF-S4b, P1-1: el papel se empareja con la línea por producto normalizado y
+ * cantidad —el importe desempata—, **nunca por posición**. Los dos escenarios del informe.
+ */
+const common = (n: number, sku: string, subtotal: string) => ({
+  ...line(n, {
+    qty: '100',
+    sku,
+    subtotal,
+    igv: D(subtotal).times('0.18').toFixed(4),
+    total: D(subtotal).times('1.18').toFixed(4),
+  }),
+  productId: `p-${sku}`,
+  description: `Producto ${sku}`,
+  product: {
+    sku,
+    name: `Producto ${sku}`,
+    isActive: true,
+    mergedIntoId: null,
+    businessLine: { code: 'ROOFING' },
+  },
+});
+const commonPaper = (sku: string, net: string, rowNumber: number) =>
+  paperLine({
+    rowNumber,
+    rawSku: sku,
+    productName: `PLANCHA ${sku}`,
+    qty: '100.000',
+    netAmountPen: net,
+    igvAmountPen: null,
+    totalAmountPen: null,
+  });
+
+describe('ImportedDocumentsSweepService — emparejamiento con el papel (P1-1)', () => {
+  it('dos líneas con la misma cantidad en otro orden reciben cada una el importe de su producto', async () => {
+    const order = orderRow([common(1, 'PLA-X', '4999.9900'), common(2, 'PLA-Y', '299.9900')]);
+    const prisma = fakePrisma({ orders: [order] });
+    prisma.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        salesOrderItem: {
+          findFirstOrThrow: jest.fn(({ where }: { where: { lineNumber: number } }) =>
+            Promise.resolve({ id: `oi-${String(where.lineNumber)}` }),
+          ),
+        },
+      }),
+    );
+    const { service, edits } = build(prisma);
+    // El papel trae el mismo comprobante con las filas en el orden inverso.
+    const paper = [commonPaper('PLA-Y', '300.0000', 1), commonPaper('PLA-X', '5000.0000', 2)];
+
+    const { documents } = await service.report(paper);
+    expect(
+      documents[0]?.findings.map((f) => [f.productSku, f.paperSku, f.amounts?.paper.net]),
+    ).toEqual([
+      ['PLA-X', 'PLA-X', '5000.0000'],
+      ['PLA-Y', 'PLA-Y', '300.0000'],
+    ]);
+
+    await service.execute(ACTOR, paper);
+    const calls = edits.restorePaperAmountsInTx.mock.calls as unknown[][];
+    expect(calls.map((c) => [c[3], (c[4] as { netAmountPen: string }).netAmountPen])).toEqual([
+      ['oi-1', '5000.0000'],
+      ['oi-2', '300.0000'],
+    ]);
+  });
+
+  it('una línea común frente a un BOB… del papel nunca se convierte en venta de bobina', async () => {
+    const q = quotationRow([common(1, 'PLA-X', '5000.0000')]);
+    const prisma = fakePrisma({ quotations: [q] });
+    const { service, quotations } = build(prisma);
+    const paper = [paperLine({ qty: '100.000', netAmountPen: '5000.0000' })];
+
+    const { documents } = await service.report(paper);
+    const [finding] = documents[0]?.findings ?? [];
+    expect(finding?.product).toBeNull();
+    expect(finding?.unpaired).toMatch(/ninguna línea del papel tiene su producto \(PLA-X\)/);
+
+    const result = await service.execute(ACTOR, paper);
+    expect(quotations.update).not.toHaveBeenCalled();
+    expect(result.fixed).toEqual([]);
+    expect(result.pending.map((d) => d.id)).toEqual(['q-1']);
+  });
+
+  it('con dos filas del mismo producto y cantidad, el importe desempata', async () => {
+    const q = quotationRow([common(1, 'PLA-X', '300.0000')]);
+    const { service } = build(fakePrisma({ quotations: [q] }));
+    const { documents } = await service.report([
+      commonPaper('PLA-X', '5000.0000', 1),
+      commonPaper('PLA-X', '300.0000', 2),
+    ]);
+    // Emparejada con la fila 2 (mismo importe): no hay nada que corregir y la 1 queda sin línea.
+    expect(documents[0]?.findings).toEqual([]);
+    expect(documents[0]?.unpairedPaperRows).toEqual([1]);
+  });
+
+  it('si el importe tampoco distingue, la línea queda en (c) y el execute no la toca', async () => {
+    const q = quotationRow([common(1, 'PLA-X', '299.0000')]);
+    const { service, quotations } = build(fakePrisma({ quotations: [q] }));
+    const paper = [commonPaper('PLA-X', '5000.0000', 1), commonPaper('PLA-X', '300.0000', 2)];
+    const { documents } = await service.report(paper);
+    expect(documents[0]?.findings[0]?.unpaired).toMatch(/no se elige por posición/);
+    await service.execute(ACTOR, paper);
+    expect(quotations.update).not.toHaveBeenCalled();
+  });
+
+  it('el execute de una cotización lleva el motivo del barrido a la auditoría', async () => {
+    const { service, quotations } = build(fakePrisma({ quotations: [quotationRow([line(1)])] }));
+    await service.execute(ACTOR, [paperLine()]);
+    expect(quotations.update.mock.calls[0]?.[3]).toEqual({
+      auditReason: expect.stringMatching(/Barrido de lo importado/),
+    });
   });
 });
 
