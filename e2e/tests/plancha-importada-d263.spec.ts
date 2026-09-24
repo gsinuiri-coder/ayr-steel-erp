@@ -242,4 +242,53 @@ test.describe('D-263 — la plancha importada por plancha', () => {
       await cleanup(api, trail);
     }
   });
+
+  /**
+   * D-268: el gesto explícito para volver a cotizar por metro. Propone el equivalente (precio ÷
+   * largo), no el mismo número, y muestra el total nuevo antes de aplicarlo. En la de 6 m el
+   * valor por metro a cuatro decimales mueve dos milésimas: 10 × 6 × 8.3333 = 499.998.
+   */
+  test('«Cotizar por metro» propone el equivalente, muestra el total nuevo y se puede deshacer', async ({
+    page,
+  }) => {
+    const trail: Trail = { productIds: [], quotationIds: [] };
+    try {
+      const s = await setup(api, trail);
+      const before = await importInvoice(api, s, trail);
+
+      await loginAsAdmin(page);
+      await page.goto(`/cotizaciones/${before.id}/editar`);
+      await waitForPlanchas(page);
+
+      // La de 3.60 m: se pasa y se deshace; vuelve a por plancha con su precio.
+      await page.getByRole('button', { name: 'Cotizar por metro la línea 2' }).click();
+      await page.getByRole('button', { name: 'Pasar a por metro' }).click();
+      await expect(page.getByLabel('Precio por metro de la línea 2')).toHaveValue('16.3889');
+      await page.getByRole('button', { name: 'Deshacer: volver a por plancha' }).click();
+      await expect(page.getByLabel('Precio unitario de la línea 2')).toHaveValue('59.0000');
+
+      // La de 6 m: el aviso muestra antes y después, y cancelar no cambia nada.
+      await page.getByRole('button', { name: 'Cotizar por metro la línea 1' }).click();
+      const preview = page.getByRole('group', { name: 'Cotizar por metro la línea 1' });
+      await expect(preview).toContainText('por metro (equivalente a');
+      await expect(preview).toContainText('500.0000');
+      await expect(preview).toContainText('499.9980');
+      await preview.getByRole('button', { name: 'Cancelar' }).click();
+      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('59.0000');
+
+      await page.getByRole('button', { name: 'Cotizar por metro la línea 1' }).click();
+      await page.getByRole('button', { name: 'Pasar a por metro' }).click();
+      await expect(page.getByLabel('Precio por metro de la línea 1')).toHaveValue('9.8333');
+      const after = await saveForm(page, before.id);
+
+      expect(after.items[0]!.valuePerMeterPen).toBe('8.3333');
+      expect(after.items[0]!.unitPricePen).toBe('49.9998');
+      expect(after.items[0]!.subtotalPen).toBe('499.9980');
+      // La de 3.60 m quedó como se importó: su importe guardado, por plancha.
+      expect(after.items[1]!.valuePerMeterPen).toBeNull();
+      expect(after.items[1]!.subtotalPen).toBe(before.items[1]!.subtotalPen);
+    } finally {
+      await cleanup(api, trail);
+    }
+  });
 });

@@ -180,6 +180,8 @@ interface StoredLine {
   saleCoilId: string;
   qty: string;
   pricePen: string;
+  /** D-263: se guardó por plancha (sin valor por metro). Ver `PricingUnitSwitch`. */
+  pricePerPiece: boolean;
   subtotalPen: string;
   igvPen: string;
   totalPen: string;
@@ -409,6 +411,7 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
   const stored = {
     qty: item.qty,
     pricePen,
+    pricePerPiece: item.valuePerMeterPen === null,
     subtotalPen: item.subtotalPen,
     igvPen: item.igvPen,
     totalPen: item.totalPen,
@@ -1575,6 +1578,16 @@ function LineRow({
               {formatMoney(unitValuePen, 'PEN', 4)} por plancha
             </span>
           )}
+          {fixedLength && !brokenLength && fixedLengthMm !== null && !byAmount && (
+            <PricingUnitSwitch
+              line={l}
+              product={product}
+              lengthMm={fixedLengthMm}
+              pricing={pricing}
+              lineIndex={index}
+              onPatch={onPatch}
+            />
+          )}
           <PriceFloorHint
             line={l}
             product={product}
@@ -1681,6 +1694,121 @@ function LineRow({
         </TableRow>
       )}
     </>
+  );
+}
+
+/**
+ * D-263 → D-268: **volver a cotizar por metro una plancha importada por plancha**, con un gesto
+ * explícito. Hasta acá solo se lograba cambiando el producto.
+ *
+ * El precio por metro que propone es el **equivalente** al de la plancha (precio ÷ largo), no el
+ * mismo número: conservar el número es el ×6 de COT-000053/054 (D-161). Antes de aplicar muestra
+ * el total de la línea de antes y el nuevo, porque el redondeo a cuatro decimales del valor por
+ * metro puede mover algún céntimo. Mientras no se guarde, se deshace volviendo al precio por
+ * plancha con que se cargó.
+ */
+function PricingUnitSwitch({
+  line: l,
+  product,
+  lengthMm,
+  pricing,
+  lineIndex,
+  onPatch,
+}: {
+  line: LineDraft;
+  product: ProductDto | undefined;
+  lengthMm: string;
+  pricing: LinePricing | null;
+  lineIndex: number;
+  onPatch: (patch: Partial<LineDraft>) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const linkClass =
+    'mt-1 block w-full text-right text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground';
+
+  // Ya por metro: si la línea se cargó por plancha, se puede volver a como estaba.
+  if (!l.pricePerPiece) {
+    const original = l.original;
+    if (original?.kind !== 'PRODUCT' || original.productId !== l.productId) return null;
+    if (l.pricePen === original.pricePen) return null;
+    return original.pricePerPiece ? (
+      <button
+        type="button"
+        className={linkClass}
+        onClick={() => {
+          onPatch({ pricePerPiece: true, pricePen: original.pricePen });
+        }}
+      >
+        Deshacer: volver a por plancha
+      </button>
+    ) : null;
+  }
+
+  if (!isPositiveDecimal(l.pricePen)) return null;
+  const perMeterPrice = toFixedString(
+    money(toDecimal(l.pricePen.trim()).times(1000).div(toDecimal(lengthMm))),
+    'MONEY',
+  );
+  const next: LineDraft = { ...l, pricePerPiece: false, pricePen: perMeterPrice };
+  const nextPricing = linePricing(next, product, l.qty);
+
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        className={linkClass}
+        aria-label={`Cotizar por metro la línea ${lineIndex + 1}`}
+        onClick={() => {
+          setConfirming(true);
+        }}
+      >
+        Cotizar por metro
+      </button>
+    );
+  }
+  return (
+    <div
+      className="mt-1 grid gap-1 rounded-md border bg-muted/40 p-2 text-right text-xs tabular-nums"
+      role="group"
+      aria-label={`Cotizar por metro la línea ${lineIndex + 1}`}
+    >
+      <span>
+        {formatMoney(perMeterPrice, 'PEN', 4)} por metro (equivalente a{' '}
+        {formatMoney(l.pricePen.trim(), 'PEN', 4)} por plancha)
+      </span>
+      <span>
+        Total de la línea sin IGV:{' '}
+        {pricing === null ? '—' : formatMoney(pricing.amounts.subtotal.toFixed(4), 'PEN', 4)} →{' '}
+        <strong>
+          {nextPricing === null
+            ? '—'
+            : formatMoney(nextPricing.amounts.subtotal.toFixed(4), 'PEN', 4)}
+        </strong>
+      </span>
+      <div className="flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setConfirming(false);
+          }}
+        >
+          Cancelar
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          disabled={nextPricing === null}
+          onClick={() => {
+            onPatch({ pricePerPiece: false, pricePen: perMeterPrice });
+            setConfirming(false);
+          }}
+        >
+          Pasar a por metro
+        </Button>
+      </div>
+    </div>
   );
 }
 
