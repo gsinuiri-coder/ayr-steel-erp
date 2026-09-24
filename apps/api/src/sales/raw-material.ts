@@ -3,7 +3,6 @@ import { InventoryItemType, ReservationStatus, type Prisma } from '@prisma/clien
 import {
   Decimal,
   rawMaterialLabel,
-  salesOrderCode,
   toDecimal,
   toFixedString,
   type RawMaterialWarningDto,
@@ -11,6 +10,7 @@ import {
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
 import {
+  firmHolderCode,
   liveTemporaryWhere,
   reservedByItem,
   temporaryHolderCode,
@@ -436,7 +436,7 @@ export interface RawMaterialShortfall extends RawMaterialWarningDto {
 interface ShortfallOptions extends RawMaterialScope {
   /** Devolver el primer agregado corto y parar. Lo usan los `assert*`. */
   firstOnly?: boolean;
-  /** D-275: quién lee el mensaje; a un VENDEDOR no se le nombra la cotización de otro. */
+  /** D-275: quién lee el mensaje; a un VENDEDOR no se le nombra el documento de otro. */
   viewer?: HolderViewer;
 }
 
@@ -523,7 +523,7 @@ export async function findRawMaterialShortfallsFor(
           itemId: spec.id,
           ...reservationScopeWhere(options),
         },
-        select: { qty: true, salesOrder: { select: { seq: true } } },
+        select: { qty: true, salesOrder: { select: { seq: true, sellerId: true } } },
         orderBy: { createdAt: 'asc' },
       }),
       tx.quotationReservation.findMany({
@@ -542,7 +542,7 @@ export async function findRawMaterialShortfallsFor(
     const label = (await rawMaterialSpecLabels(tx, [spec.id])).get(spec.id) ?? 'materia prima';
     const orders = [
       ...holders.map((h) => ({
-        code: salesOrderCode(h.salesOrder.seq),
+        code: firmHolderCode(h.salesOrder, options.viewer),
         qtyKg: h.qty.toFixed(3),
       })),
       ...temporaryHolders.map((h) => ({

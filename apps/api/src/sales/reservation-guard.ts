@@ -5,9 +5,10 @@ import {
   SalesOrderStatus,
   type Prisma,
 } from '@prisma/client';
-import { Decimal, salesOrderCode, toDecimal } from '@ayr/shared';
+import { Decimal, toDecimal } from '@ayr/shared';
 import { assertRawMaterialInvariantFor, findRawMaterialSpecs } from './raw-material';
 import {
+  firmHolderCode,
   liveTemporaryWhere,
   reservedByItem,
   temporaryHolderCode,
@@ -62,7 +63,7 @@ export interface ActiveReservation {
 export async function findActiveReservations(
   tx: Prisma.TransactionClient,
   items: ReservedItemRef[],
-  /** D-275: quién lee `orderCode`; a un VENDEDOR no se le nombra la cotización de otro. */
+  /** D-275: quién lee `orderCode`; a un VENDEDOR no se le nombra el documento de otro. */
   viewer?: HolderViewer,
 ): Promise<ActiveReservation[]> {
   if (items.length === 0) return [];
@@ -76,7 +77,7 @@ export async function findActiveReservations(
         itemId: true,
         qty: true,
         unit: true,
-        salesOrder: { select: { id: true, seq: true } },
+        salesOrder: { select: { id: true, seq: true, sellerId: true } },
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -103,7 +104,7 @@ export async function findActiveReservations(
       qty: toDecimal(r.qty.toString()),
       unit: r.unit,
       orderId: r.salesOrder.id,
-      orderCode: salesOrderCode(r.salesOrder.seq),
+      orderCode: firmHolderCode(r.salesOrder, viewer),
     })),
     ...temporary.map((r) => ({
       reservationId: r.id,

@@ -3,17 +3,17 @@
 // terminar en un host cualquiera. Vive aparte para poder probarlo: `smoke-prod.mjs` corre al
 // importarse.
 
-/** El dominio propio del web de production (AGENTS.md §1). Se compara exacto, no por sufijo. */
-export const PRODUCTION_WEB_HOSTS = ['v2.mareliac.pe'];
+/**
+ * Los hosts del web de production: el dominio propio (AGENTS.md §1) y el de Vercel. Se comparan
+ * exactos: antes valía cualquier `*.vercel.app` —que cualquiera puede desplegar— y cualquier
+ * host con la palabra `ayr`.
+ */
+export const PRODUCTION_WEB_HOSTS = ['v2.mareliac.pe', 'ayr-steel-erp-web.vercel.app'];
 
 export function isAllowedSmokeBaseUrl(baseUrl) {
   try {
     const url = new URL(baseUrl);
-    if (url.protocol !== 'https:') return false;
-    return (
-      PRODUCTION_WEB_HOSTS.includes(url.hostname) ||
-      /(^|\.)vercel\.app$|(^|\.)ayr\b/.test(url.hostname)
-    );
+    return url.protocol === 'https:' && PRODUCTION_WEB_HOSTS.includes(url.hostname);
   } catch {
     return false;
   }

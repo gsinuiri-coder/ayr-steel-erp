@@ -42,7 +42,8 @@ const runsPse = process.env.E2E_PSE === '1';
  * Puerto del API local. `E2E_API_PORT` lo mueve si otro proceso ya escucha en 3000 (un
  * `nuxt dev` en `[::1]:3000` contestaba el health check y Playwright lo reusaba). El web se
  * queda en 3001 y le habla al API por `API_URL`: si ya hay un web corriendo en 3001 apuntando a
- * otro puerto, Playwright lo reusa igual — hay que bajarlo antes de cambiar el puerto.
+ * otro puerto, Playwright lo reusaría; por eso, con `E2E_API_PORT` puesto, el web no se reusa y
+ * la suite falla al instante si 3001 está ocupado.
  */
 const API_PORT = String(e2eApiPort());
 const API_ORIGIN = `http://localhost:${API_PORT}`;
@@ -123,7 +124,7 @@ export default defineConfig({
         {
           command: isCI ? 'pnpm --filter @ayr/web start' : 'pnpm --filter @ayr/web dev',
           url: 'http://localhost:3001/login',
-          reuseExistingServer: !isCI,
+          reuseExistingServer: !isCI && !process.env.E2E_API_PORT,
           timeout: 180_000,
           env: { API_URL: API_ORIGIN },
         },

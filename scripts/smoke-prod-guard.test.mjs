@@ -14,6 +14,9 @@ test('rechaza http, hosts ajenos y parecidos al propio', () => {
     'https://v2.mareliac.pe.evil.com',
     'https://evilmareliac.pe',
     'https://ejemplo.com',
+    'https://otro-proyecto.vercel.app',
+    'https://ayr-steel-erp-web.vercel.app.evil.com',
+    'https://ayr.evil.com',
     'no-es-una-url',
   ]) {
     assert.equal(isAllowedSmokeBaseUrl(url), false, url);

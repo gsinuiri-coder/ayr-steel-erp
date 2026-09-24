@@ -5,7 +5,7 @@ import {
   type InventoryItemType,
   type Prisma,
 } from '@prisma/client';
-import { Decimal, quotationCode, toDecimal } from '@ayr/shared';
+import { Decimal, quotationCode, salesOrderCode, toDecimal } from '@ayr/shared';
 
 /**
  * La suma de "reservado" del sistema: firme (`reservations`) más temporal vigente
@@ -31,6 +31,22 @@ export interface HolderViewer {
   role: Role;
 }
 
+/** Quien lee no es VENDEDOR, o el documento es suyo: ve el código (D-267/D-275). */
+function isForeign(sellerId: string | null, viewer?: HolderViewer): boolean {
+  return viewer?.role === Role.VENDEDOR && sellerId !== viewer.id;
+}
+
+/**
+ * D-275 (criterio de D-238/D-267): cómo se nombra una reserva firme en un mensaje. A un VENDEDOR
+ * no se le nombra el pedido de otro vendedor (o sin vendedor): lee «pedido no disponible».
+ */
+export function firmHolderCode(
+  order: { seq: number; sellerId: string | null },
+  viewer?: HolderViewer,
+): string {
+  return isForeign(order.sellerId, viewer) ? 'pedido no disponible' : salesOrderCode(order.seq);
+}
+
 /**
  * D-275 (criterio de D-267): cómo se nombra una reserva temporal en un mensaje. A un VENDEDOR no
  * se le nombra la cotización de otro vendedor (o sin vendedor): lee «cotización no disponible».
@@ -41,8 +57,10 @@ export function temporaryHolderCode(
   quotation: { seq: number; sellerId: string | null },
   viewer?: HolderViewer,
 ): string {
-  const foreign = viewer?.role === Role.VENDEDOR && quotation.sellerId !== viewer.id;
-  return `${foreign ? 'cotización no disponible' : quotationCode(quotation.seq)} (reserva temporal)`;
+  const code = isForeign(quotation.sellerId, viewer)
+    ? 'cotización no disponible'
+    : quotationCode(quotation.seq);
+  return `${code} (reserva temporal)`;
 }
 
 /**

@@ -23,11 +23,19 @@ function fakeTx() {
             itemId: ITEM.itemId,
             qty: dec('2'),
             unit: 'UND',
-            salesOrder: { id: 'pedido-1', seq: 7 },
+            salesOrder: { id: 'pedido-1', seq: 7, sellerId: 'vendedor-a' },
+          },
+          {
+            id: 'firme-2',
+            itemType: ITEM.itemType,
+            itemId: ITEM.itemId,
+            qty: dec('1'),
+            unit: 'UND',
+            salesOrder: { id: 'pedido-2', seq: 8, sellerId: 'vendedor-b' },
           },
         ]),
       ),
-      groupBy: jest.fn(() => Promise.resolve([{ itemId: ITEM.itemId, _sum: { qty: dec('2') } }])),
+      groupBy: jest.fn(() => Promise.resolve([{ itemId: ITEM.itemId, _sum: { qty: dec('3') } }])),
     },
     quotationReservation: {
       findMany: jest.fn(() =>
@@ -65,13 +73,14 @@ function fakeTx() {
 }
 
 describe('reservation-guard — titulares por lector (D-275)', () => {
-  it('a un VENDEDOR le nombra su cotización y no la de otro ni la sin vendedor', async () => {
+  it('a un VENDEDOR le nombra su pedido y su cotización, no los de otro ni los sin vendedor', async () => {
     const holders = await findActiveReservations(fakeTx(), [ITEM], {
       id: 'vendedor-a',
       role: Role.VENDEDOR,
     });
     expect(holders.map((h) => h.orderCode)).toEqual([
       'PED-000007',
+      'pedido no disponible',
       'COT-000021 (reserva temporal)',
       'cotización no disponible (reserva temporal)',
       'cotización no disponible (reserva temporal)',
@@ -81,6 +90,7 @@ describe('reservation-guard — titulares por lector (D-275)', () => {
   it('otro rol, o sin lector, ve todos los códigos', async () => {
     const expected = [
       'PED-000007',
+      'PED-000008',
       'COT-000021 (reserva temporal)',
       'COT-000022 (reserva temporal)',
       'COT-000023 (reserva temporal)',
@@ -105,5 +115,8 @@ describe('reservation-guard — titulares por lector (D-275)', () => {
     expect(message).toContain('cotización no disponible (reserva temporal) (5.000 UND)');
     expect(message).not.toContain('COT-000021');
     expect(message).not.toContain('COT-000023');
+    expect(message).toContain('PED-000008');
+    expect(message).toContain('pedido no disponible');
+    expect(message).not.toContain('PED-000007');
   });
 });
