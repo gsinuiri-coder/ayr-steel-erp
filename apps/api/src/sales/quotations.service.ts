@@ -678,6 +678,15 @@ export class QuotationsService {
       await this.prisma.quotation.update({ where: { id }, data: { pdfKey: key } });
     } catch (err) {
       this.logger.warn(`No se pudo generar el PDF de la cotización ${id}: ${String(err)}`);
+      // Revisión cruzada RF-S4b (decisión 1 del dueño): el archivo guardado describe la
+      // cotización **de antes** de este cambio. Se suelta la clave —el objeto viejo queda en R2,
+      // no se borra— y la descarga lo arma al vuelo con los datos vigentes: nunca sirve los
+      // importes viejos. Pasa, por ejemplo, con el barrido, que corre sin R2.
+      await this.prisma.quotation
+        .update({ where: { id }, data: { pdfKey: null } })
+        .catch((clearErr: unknown) => {
+          this.logger.warn(`No se pudo soltar el PDF viejo de ${id}: ${String(clearErr)}`);
+        });
     }
   }
 

@@ -19,6 +19,7 @@ import { NestFactory } from '@nestjs/core';
 import { PrismaClient, Role } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { assertExecuteAllowed } from './cli-gate';
+import { assertExternalOutputsOff } from '../src/common/external-outputs';
 import {
   CoilSkuNormalizationService,
   type NormalizationGroup,
@@ -70,6 +71,10 @@ function printPlan(plan: NormalizationPlan): void {
 
 async function main(): Promise<void> {
   assertExecuteAllowed(execute);
+  // Revisión cruzada RF-S4b (P1-2): antes de levantar Nest, que arrancaría cola, PSE y R2.
+  assertExternalOutputsOff(process.env, (line) => {
+    console.error(line);
+  });
   const prisma = new PrismaClient();
   try {
     await prisma.$queryRaw`SELECT "merged_into_id" FROM "products" LIMIT 0`;

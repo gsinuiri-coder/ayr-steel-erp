@@ -9,6 +9,27 @@ import { spawnSync } from 'node:child_process';
 import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
 import { localTestDbUrls, LOCAL_ADMIN_EMAIL } from './local-docker-env.mjs';
 
+/**
+ * Revisión cruzada RF-S4b (P1-2): la CLI levanta la aplicación entera (`AppModule`), y con ella
+ * todo lo que arranca solo: la cola (pg-boss), el reintento de envíos al PSE —que al arrancar
+ * barre los pendientes— y el cliente de R2. Heredados de `apps/api/.env`, que puede traer la
+ * configuración de otra rama, eso actuaba sobre la base de la CLI sin que nadie lo pidiera.
+ * Van **después** de `process.env`, así ninguna variable del entorno los vuelve a encender, y
+ * vacías (no ausentes) para que `dotenv` no las complete desde el archivo.
+ *
+ * Sin R2, la cotización que el barrido corrige no puede regenerar su PDF: queda sin `pdfKey` y
+ * la descarga lo arma al vuelo con los datos vigentes (decisión 1 del dueño).
+ */
+export const EXTERNAL_OUTPUTS_OFF = Object.freeze({
+  JOBS_ENABLED: 'false',
+  PSE_ENABLED: 'false',
+  R2_ACCOUNT_ID: '',
+  R2_ACCESS_KEY_ID: '',
+  R2_SECRET_ACCESS_KEY: '',
+  R2_BUCKET: '',
+  R2_ENDPOINT: '',
+});
+
 const NEON_BRANCHES = new Set(['dev', 'demo', 'production']);
 const LOCAL_BRANCHES = new Set(['local', 'local-e2e']);
 
@@ -58,6 +79,7 @@ export function runApiCli({ compiled, what, pathFlags = new Set() }) {
     ADMIN_EMAIL: localUrls
       ? (process.env.ADMIN_EMAIL ?? LOCAL_ADMIN_EMAIL)
       : readEnvFile().ADMIN_EMAIL,
+    ...EXTERNAL_OUTPUTS_OFF,
   };
   if (localUrls) console.error(`Base de pruebas: ${branch} (desde el ${localUrls.source})`);
 
