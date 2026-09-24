@@ -124,6 +124,7 @@ const LINE_SELECT = {
   productId: true,
   description: true,
   qty: true,
+  unitPricePen: true,
   subtotalPen: true,
   igvPen: true,
   totalPen: true,
@@ -142,6 +143,38 @@ const LINE_SELECT = {
 } satisfies Prisma.QuotationItemSelect;
 
 type DocLine = Prisma.QuotationItemGetPayload<{ select: typeof LINE_SELECT }>;
+
+/** Un cambio de precio registrado (D-187), lo que el criterio de D-264 necesita de él. */
+export interface RecordedPriceChange {
+  productId: string;
+  afterUnitValuePen: { toString(): string };
+}
+
+/**
+ * D-264 (P2-2 del delta RF-S4b): **los productos que alguien editó a propósito** en un documento.
+ *
+ * Por contenido, no por número de línea: la cotización recrea sus líneas en cada guardado, así
+ * que el número (y el id) de la línea editada envejece con la siguiente edición. Un producto
+ * cuenta como editado si algún cambio registrado de ese producto dejó como precio el que alguna
+ * de sus líneas tiene **hoy** — la edición sigue vigente.
+ *
+ * Si el documento tiene dos líneas del mismo producto y solo una coincide, **las dos** cuentan:
+ * no hay forma de saber cuál se editó, y el barrido nunca pisa un precio que alguien cambió.
+ */
+export function deliberatelyEditedProducts(
+  changes: readonly RecordedPriceChange[],
+  lines: readonly { productId: string; unitPricePen: { toString(): string } }[],
+): Set<string> {
+  const edited = new Set<string>();
+  for (const change of changes) {
+    const after = toDecimal(change.afterUnitValuePen.toString());
+    const stillInForce = lines.some(
+      (l) => l.productId === change.productId && toDecimal(l.unitPricePen.toString()).equals(after),
+    );
+    if (stillInForce) edited.add(change.productId);
+  }
+  return edited;
+}
 
 @Injectable()
 export class ImportedDocumentsSweepService {
@@ -202,15 +235,14 @@ export class ImportedDocumentsSweepService {
           { salesOrderId: { in: orders.map((o) => o.id) } },
         ],
       },
-      select: { quotationId: true, salesOrderId: true, lineNumber: true },
+      select: { quotationId: true, salesOrderId: true, productId: true, afterUnitValuePen: true },
     });
-    const editedLines = (ids: (string | null)[]): Set<number> =>
-      new Set(
-        edits
-          .filter((e) =>
-            ids.some((id) => id !== null && (e.quotationId === id || e.salesOrderId === id)),
-          )
-          .map((e) => e.lineNumber),
+    const editedProducts = (ids: (string | null)[], items: readonly DocLine[]): Set<string> =>
+      deliberatelyEditedProducts(
+        edits.filter((e) =>
+          ids.some((id) => id !== null && (e.quotationId === id || e.salesOrderId === id)),
+        ),
+        items,
       );
 
     const documents: SweepDocument[] = [];
@@ -226,7 +258,7 @@ export class ImportedDocumentsSweepService {
             open: OPEN_QUOTATION.has(q.status),
             items: q.items,
             scope: { exceptQuotationIds: [q.id] },
-            editedLines: editedLines([q.id]),
+            editedProducts: editedProducts([q.id], q.items),
           },
           byKey,
           known,
@@ -245,7 +277,7 @@ export class ImportedDocumentsSweepService {
             open: OPEN_ORDER.has(o.status) && o.fiscalDocuments.length === 0,
             items: o.items,
             scope: { exceptSalesOrderIds: [o.id] },
-            editedLines: editedLines([o.id, o.quotationId]),
+            editedProducts: editedProducts([o.id, o.quotationId], o.items),
           },
           byKey,
           known,
@@ -330,6 +362,8 @@ export class ImportedDocumentsSweepService {
                   : {}),
               },
               reason,
+              // D-264 (P2-3): solo en `audit_log`, nunca como cambio de precio de una persona.
+              { recordPriceChange: false },
             );
           }
         }
@@ -348,8 +382,8 @@ export class ImportedDocumentsSweepService {
       open: boolean;
       items: DocLine[];
       scope: { exceptQuotationIds?: string[]; exceptSalesOrderIds?: string[] };
-      /** Líneas con una edición de precio registrada después de la importación. */
-      editedLines: ReadonlySet<number>;
+      /** D-264: productos con una edición de precio registrada que sigue vigente. */
+      editedProducts: ReadonlySet<string>;
     },
     byKey: ReadonlyMap<string, PaperLine[]>,
     known: ReadonlySet<string>,
@@ -417,7 +451,7 @@ export class ImportedDocumentsSweepService {
           paperSku: source.rawSku,
           product,
           unpaired:
-            amounts !== null && doc.editedLines.has(line.lineNumber)
+            amounts !== null && doc.editedProducts.has(line.productId)
               ? 'editada a propósito: tiene una edición de precio registrada después de la importación'
               : deliberate
                 ? `el importe guardado (${amounts.stored.net}) difiere del papel (${amounts.paper.net}) más de lo que explica el redondeo: parece un precio cambiado a propósito`
@@ -556,7 +590,9 @@ export class ImportedDocumentsSweepService {
         ...(q.notes ? { notes: q.notes } : {}),
         items,
       },
-      { auditReason: reason },
+      // D-264 (P2-3): la corrección del barrido queda en `audit_log` con su motivo, no como un
+      // cambio de precio del ADMINISTRADOR: si no, la próxima corrida la leería como edición.
+      { auditReason: reason, recordPriceChanges: false },
     );
   }
 }

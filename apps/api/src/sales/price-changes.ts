@@ -31,6 +31,11 @@ export type PriceChangeHolder = { quotationId: string } | { salesOrderId: string
  * de después registraría como «cambio de precio» lo que fue quitar una línea. Dos líneas del
  * mismo SKU se emparejan en orden, cada una con la suya. Una línea nueva o una quitada no es
  * un cambio de precio: no se registra.
+ *
+ * D-264: lo que quedó sin pareja por producto se empareja después **por número de línea**. Es
+ * la misma línea con otro producto y otro precio —corregir el producto mal mapeado y su precio
+ * en la misma edición— y se registra con el producto nuevo. Sin esto no quedaba ningún
+ * registro, y el barrido pisaba ese precio creyéndolo un redondeo.
  */
 export async function recordPriceChanges(
   tx: Prisma.TransactionClient,
@@ -46,11 +51,26 @@ export async function recordPriceChanges(
       taken: false,
     }));
   const rows: Prisma.SalesPriceChangeCreateManyInput[] = [];
-  for (const next of [...after].sort((a, b) => a.lineNumber - b.lineNumber)) {
+  const sorted = [...after].sort((a, b) => a.lineNumber - b.lineNumber);
+  const pairs: { prev: PricedLine; next: PricedLine }[] = [];
+  const unpaired: PricedLine[] = [];
+  for (const next of sorted) {
     const match = pool.find((p) => !p.taken && p.line.productId === next.productId);
+    if (!match) {
+      unpaired.push(next);
+      continue;
+    }
+    match.taken = true;
+    pairs.push({ prev: match.line, next });
+  }
+  // D-264: producto y precio cambiados a la vez, en la misma posición.
+  for (const next of unpaired) {
+    const match = pool.find((p) => !p.taken && p.line.lineNumber === next.lineNumber);
     if (!match) continue;
     match.taken = true;
-    const prev = match.line;
+    pairs.push({ prev: match.line, next });
+  }
+  for (const { prev, next } of pairs.sort((a, b) => a.next.lineNumber - b.next.lineNumber)) {
     const sameUnit = toDecimal(prev.unitPricePen.toString()).equals(
       toDecimal(next.unitPricePen.toString()),
     );

@@ -3,7 +3,10 @@ import { FinishKind, InventoryItemType, Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { QuotationsService } from '../sales/quotations.service';
 import type { SalesOrderEditsService } from '../sales/sales-order-edits.service';
-import { ImportedDocumentsSweepService } from './imported-documents-sweep.service';
+import {
+  deliberatelyEditedProducts,
+  ImportedDocumentsSweepService,
+} from './imported-documents-sweep.service';
 import type { PaperLine } from './quotation-import.service';
 
 /**
@@ -32,13 +35,17 @@ interface LineOpts {
   total?: string;
   mergedIntoId?: string | null;
   isActive?: boolean;
+  /** Valor unitario vigente de la línea (D-264 lo compara con el cambio registrado). */
+  price?: string;
+  productId?: string;
 }
 const line = (n: number, o: LineOpts = {}) => ({
   id: `l-${String(n)}`,
   lineNumber: n,
-  productId: 'p-loose',
+  productId: o.productId ?? 'p-loose',
   description: 'BOBINA ALUZINC AZUL 0.38 X 1200 RAL 5002',
   qty: D(o.qty ?? '4194'),
+  unitPricePen: D(o.price ?? '2.9661'),
   subtotalPen: D(o.subtotal ?? '12439.8234'),
   igvPen: D(o.igv ?? '2239.1682'),
   totalPen: D(o.total ?? '14678.9916'),
@@ -71,8 +78,13 @@ interface FakeOpts {
   quotations?: unknown[];
   orders?: unknown[];
   coils?: { id: string; code: string; balance: string }[];
-  /** Ediciones de precio registradas (D-187). */
-  priceEdits?: { quotationId?: string; salesOrderId?: string; lineNumber: number }[];
+  /** Ediciones de precio registradas (D-187): producto y valor unitario que dejaron. */
+  priceEdits?: {
+    quotationId?: string;
+    salesOrderId?: string;
+    productId?: string;
+    after: string;
+  }[];
 }
 function fakePrisma(o: FakeOpts = {}) {
   const coils = o.coils ?? [{ id: 'c-1', code: 'SALDO-AZUL-4194', balance: '4194' }];
@@ -93,7 +105,8 @@ function fakePrisma(o: FakeOpts = {}) {
         (o.priceEdits ?? []).map((e) => ({
           quotationId: e.quotationId ?? null,
           salesOrderId: e.salesOrderId ?? null,
-          lineNumber: e.lineNumber,
+          productId: e.productId ?? 'p-loose',
+          afterUnitValuePen: D(e.after),
         })),
       ),
     },
@@ -364,6 +377,11 @@ describe('ImportedDocumentsSweepService — emparejamiento con el papel (P1-1)',
       ['oi-1', '5000.0000'],
       ['oi-2', '300.0000'],
     ]);
+    // D-264 (P2-3): la corrección del pedido tampoco queda como cambio de precio.
+    expect(calls.map((c) => c[6])).toEqual([
+      { recordPriceChange: false },
+      { recordPriceChange: false },
+    ]);
   });
 
   it('una línea común frente a un BOB… del papel nunca se convierte en venta de bobina', async () => {
@@ -410,6 +428,8 @@ describe('ImportedDocumentsSweepService — emparejamiento con el papel (P1-1)',
     await service.execute(ACTOR, [paperLine()]);
     expect((quotations.update.mock.calls as unknown[][])[0]?.[3]).toEqual({
       auditReason: expect.stringMatching(/Barrido de lo importado/),
+      // D-264 (P2-3): la corrección no queda como cambio de precio del ADMINISTRADOR.
+      recordPriceChanges: false,
     });
   });
 });
@@ -536,12 +556,15 @@ describe('ImportedDocumentsSweepService — un precio cambiado a propósito no s
   });
 });
 
-describe('ImportedDocumentsSweepService — línea editada a propósito (repaso)', () => {
-  it('una cotización con una edición de precio registrada en esa línea va a (c) y no se toca', async () => {
+describe('ImportedDocumentsSweepService — editada a propósito, por contenido (D-264)', () => {
+  const coilLine = (n: number, o: LineOpts = {}) =>
+    line(n, { reserve: InventoryItemType.COIL, ...o });
+
+  it('línea editada: un cambio registrado cuyo precio sigue vigente la manda a (c), sin tocarla', async () => {
     const { service, quotations } = build(
       fakePrisma({
-        quotations: [quotationRow([line(1, { reserve: InventoryItemType.COIL })])],
-        priceEdits: [{ quotationId: 'q-1', lineNumber: 1 }],
+        quotations: [quotationRow([coilLine(1)])],
+        priceEdits: [{ quotationId: 'q-1', after: '2.9661' }],
       }),
     );
     const { documents } = await service.report([paperLine()]);
@@ -550,29 +573,55 @@ describe('ImportedDocumentsSweepService — línea editada a propósito (repaso)
     expect(quotations.update).not.toHaveBeenCalled();
   });
 
+  it('el número de línea no importa: la edición se reconoce aunque la línea se haya movido', async () => {
+    // El registro se hizo cuando era la línea 3; después se quitaron dos líneas de arriba.
+    const { service } = build(
+      fakePrisma({
+        quotations: [quotationRow([coilLine(1)])],
+        priceEdits: [{ quotationId: 'q-1', after: '2.9661' }],
+      }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    expect(documents[0]?.findings[0]?.unpaired).toMatch(/editada a propósito/);
+  });
+
+  it('línea sin editar: un cambio que ya no está vigente, o de otro producto, no la marca', async () => {
+    const { service } = build(
+      fakePrisma({
+        quotations: [quotationRow([coilLine(1)])],
+        priceEdits: [
+          { quotationId: 'q-1', after: '3.1000' },
+          { quotationId: 'q-1', productId: 'p-otro', after: '2.9661' },
+        ],
+      }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    expect(documents[0]?.findings[0]?.unpaired).toBeNull();
+  });
+
+  it('dos líneas del mismo producto y solo una coincide: las dos cuentan como editadas', () => {
+    const edited = deliberatelyEditedProducts(
+      [{ productId: 'p-1', afterUnitValuePen: D('10.0000') }],
+      [
+        { productId: 'p-1', unitPricePen: D('10.0000') },
+        { productId: 'p-1', unitPricePen: D('12.5000') },
+        { productId: 'p-2', unitPricePen: D('10.0000') },
+      ],
+    );
+    // Todo el producto p-1 (sus dos líneas) y nada de p-2.
+    expect([...edited]).toEqual(['p-1']);
+  });
+
   it('un pedido hereda la edición hecha en su cotización antes de confirmarla', async () => {
     const { service, edits } = build(
       fakePrisma({
-        orders: [
-          orderRow([line(1, { reserve: InventoryItemType.COIL })], { quotationId: 'q-src' }),
-        ],
-        priceEdits: [{ quotationId: 'q-src', lineNumber: 1 }],
+        orders: [orderRow([coilLine(1)], { quotationId: 'q-src' })],
+        priceEdits: [{ quotationId: 'q-src', after: '2.9661' }],
       }),
     );
     const { documents } = await service.report([paperLine()]);
     expect(documents[0]?.findings[0]?.unpaired).toMatch(/editada a propósito/);
     await service.execute(ACTOR, [paperLine()]);
     expect(edits.restorePaperAmountsInTx).not.toHaveBeenCalled();
-  });
-
-  it('una edición en otra línea no la marca', async () => {
-    const { service } = build(
-      fakePrisma({
-        quotations: [quotationRow([line(1, { reserve: InventoryItemType.COIL })])],
-        priceEdits: [{ quotationId: 'q-1', lineNumber: 2 }],
-      }),
-    );
-    const { documents } = await service.report([paperLine()]);
-    expect(documents[0]?.findings[0]?.unpaired).toBeNull();
   });
 });

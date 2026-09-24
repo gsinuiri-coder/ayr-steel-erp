@@ -260,7 +260,10 @@ export class SalesOrderEditsService {
     );
   }
 
-  /** La misma corrección dentro de la transacción del llamador (el barrido corrige el pedido entero). */
+  /**
+   * La misma corrección dentro de la transacción del llamador (el barrido corrige el pedido
+   * entero). D-264: `recordPriceChange: false` desde el barrido, que queda solo en `audit_log`.
+   */
   async restorePaperAmountsInTx(
     tx: Prisma.TransactionClient,
     actor: RequestUser,
@@ -268,6 +271,7 @@ export class SalesOrderEditsService {
     itemId: string,
     paper: { netAmountPen: string; igvAmountPen?: string; totalAmountPen?: string },
     reason: string,
+    options: { recordPriceChange?: boolean } = {},
   ): Promise<void> {
     const order = await this.lockEditable(tx, orderId, 'restablecer importes');
     if (!order.imported) {
@@ -295,13 +299,15 @@ export class SalesOrderEditsService {
       igvPen: toFixedString(amounts.igv, 'MONEY'),
       totalPen: toFixedString(amounts.total, 'MONEY'),
     };
-    await recordPriceChanges(
-      tx,
-      { salesOrderId: orderId },
-      [item],
-      [{ lineNumber: item.lineNumber, productId: item.productId, ...next }],
-      actor.id,
-    );
+    if (options.recordPriceChange !== false) {
+      await recordPriceChanges(
+        tx,
+        { salesOrderId: orderId },
+        [item],
+        [{ lineNumber: item.lineNumber, productId: item.productId, ...next }],
+        actor.id,
+      );
+    }
     await tx.salesOrderItem.update({ where: { id: item.id }, data: next });
     const totals = await this.refreshTotals(tx, orderId);
     await this.audit.write(tx, {

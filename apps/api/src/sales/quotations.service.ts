@@ -212,7 +212,14 @@ export class QuotationsService {
     id: string,
     input: UpdateQuotationInput,
     /** El motivo que queda en la auditoría, cuando la edición la hace una herramienta (barrido). */
-    options: { auditReason?: string } = {},
+    options: {
+      auditReason?: string;
+      /**
+       * D-264: `false` cuando la edición no es de una persona (el barrido): no se registra en
+       * `sales_price_changes`, que es lo que el barrido lee como «editada a propósito».
+       */
+      recordPriceChanges?: boolean;
+    } = {},
   ): Promise<QuotationDto> {
     await this.prisma.$transaction(
       async (tx) => {
@@ -306,13 +313,10 @@ export class QuotationsService {
           },
         });
 
-        const priceChanges = await recordPriceChanges(
-          tx,
-          { quotationId: id },
-          previousLines,
-          lines,
-          actor.id,
-        );
+        const priceChanges =
+          options.recordPriceChanges === false
+            ? 0
+            : await recordPriceChanges(tx, { quotationId: id }, previousLines, lines, actor.id);
 
         await this.audit.write(tx, {
           actorId: actor.id,
