@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, postJson } from '../helpers/api';
+import { setSalesOrderNotesForTest } from '../helpers/db';
 import { today } from '../helpers/production';
 import { setupCoilStock, type SalesOrderDto } from '../helpers/sales';
 import {
@@ -214,9 +215,11 @@ test.describe('D-153 — la pantalla del comprobante manual', () => {
     const order = await postJson<SalesOrderDto>(api, '/api/sales/orders', {
       customerId: customer.id,
       issueDate: today(),
-      notes: `Factura externa: ${MANUAL_SERIES}-0001349`,
       items: [{ saleCoilId: stock.coil.id, qty: stock.coil.availableKg, unitPricePen: '8.0000' }],
     });
+    // D-256 (3): el API ya no acepta la marca tipeada; la escribe el helper, como la dejaría
+    // confirmar una cotización importada.
+    await setSalesOrderNotesForTest(order.id, `Factura externa: ${MANUAL_SERIES}-0001349`);
     const trail: string[] = [];
 
     try {
