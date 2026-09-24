@@ -125,6 +125,16 @@ import {
  * delega todas las consultas: el listado de `/produccion` y el detalle son los mismos para
  * las dos clases de orden.
  */
+/**
+ * Orden por unidad de código: el mismo que el `.sort()` sin argumento que usan los demás locks
+ * de bobinas. No `localeCompare`, que puede ordenar distinto los guiones de un UUID y cruzar el
+ * orden de bloqueo con el resto del sistema.
+ */
+function byCodeUnit(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 @Injectable()
 export class RoofingProductionService {
   constructor(
@@ -527,9 +537,9 @@ export class RoofingProductionService {
     // bloquea después las bobinas compatibles, y un montaje concurrente de otra bobina de la
     // misma spec puede tomarlas al revés — Postgres aborta una y el usuario reintenta, igual
     // que ya pasaba con una sola bobina.
-    const coilIds = [
-      ...(input.coilIds ?? (input.coilId === undefined ? [] : [input.coilId])),
-    ].sort();
+    const coilIds = [...(input.coilIds ?? (input.coilId === undefined ? [] : [input.coilId]))].sort(
+      byCodeUnit,
+    );
     // D-193: las cerradas que planta confirmó reabrir. El asiento compensatorio se fecha hoy: es
     // un hecho de hoy (se reabre para montarla ahora), no una corrección del cierre original.
     const reopenIds = new Set(input.reopenCoilIds ?? []);

@@ -264,7 +264,7 @@ async function finishesByCommercialColor(tx: Tx, commercialById: Map<string, str
     const colors = new Set(finishes.flatMap((f) => (f.color_code === null ? [] : [f.color_code])));
     return {
       commercial,
-      colors: [...colors].sort(),
+      colors: [...colors].sort((a, b) => a.localeCompare(b)),
       finishes: finishes.map((f) => ({
         code: f.code,
         name: f.name,

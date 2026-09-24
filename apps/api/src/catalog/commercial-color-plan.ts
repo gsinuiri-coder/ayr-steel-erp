@@ -151,7 +151,7 @@ function availabilityOf(coils: PlanCoil[], genericKg: Decimal): Availability {
     if (free.gt(0)) onCoils = onCoils.plus(toDecimal(c.reservedOnCoilKg));
   }
   return {
-    coilCodes: coils.map((c) => c.code).sort(),
+    coilCodes: coils.map((c) => c.code).sort((a, b) => a.localeCompare(b)),
     physicalKg: physical,
     reservedOnCoilsKg: onCoils,
     reservedGenericKg: genericKg,
@@ -253,7 +253,7 @@ export function buildPlan(input: PlanInput): PlanResult {
         kinds.add(r.productKind);
       }
     }
-    const sorted = [...kinds].sort();
+    const sorted = [...kinds].sort((a, b) => a.localeCompare(b));
     if (sorted.length === 0) {
       anomalies.push({
         kind: 'SPEC_KIND_UNKNOWN',
@@ -336,7 +336,7 @@ export function buildPlan(input: PlanInput): PlanResult {
       businessLineId: meta.businessLineId,
       materialKey: meta.materialKey,
       thicknessMm: meta.thicknessMm,
-      sourceSpecIds: [...meta.specs].sort(),
+      sourceSpecIds: [...meta.specs].sort((a, b) => a.localeCompare(b)),
       reservations,
       before,
       after: availabilityOf(coils, sumKg(reservations)),
