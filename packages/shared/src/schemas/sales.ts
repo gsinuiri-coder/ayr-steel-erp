@@ -1410,6 +1410,25 @@ export const sellableCoilSchema = z.object({
 });
 export type SellableCoilDto = z.infer<typeof sellableCoilSchema>;
 
+/**
+ * D-282: una bobina con saldo que **no** se ofrece para venderla entera, y por qué («montada en
+ * una OP», «reservada por PED-…», «atada a COT-… (reserva temporal)»). A un VENDEDOR no se le
+ * nombra el documento de otro vendedor (D-267/D-275). Sin costos, igual que `sellable-coils`.
+ */
+export const unavailableSellableCoilSchema = z.object({
+  coilId: z.string().uuid(),
+  code: z.string(),
+  businessLine: z.enum(BUSINESS_LINES),
+  finishCode: z.string(),
+  finishName: z.string(),
+  colorName: z.string().nullable(),
+  widthMm: z.string(),
+  thicknessMm: z.string(),
+  balanceKg: z.string(),
+  reason: z.string(),
+});
+export type UnavailableSellableCoilDto = z.infer<typeof unavailableSellableCoilSchema>;
+
 export const sellableCoilQuerySchema = z.object({
   /** Sin filtro trae bobinas de Drywall y Metallic Roofing, las únicas líneas con bobina. */
   businessLine: z.enum(BUSINESS_LINES).optional(),

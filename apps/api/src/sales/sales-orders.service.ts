@@ -74,6 +74,7 @@ import {
   type RawMaterialStockDto,
   sellsByFixedLength,
   type SellableCoilDto,
+  type UnavailableSellableCoilDto,
   type StockPanelDto,
   type StockPanelQuery,
   type SellableCoilQuery,
@@ -121,8 +122,10 @@ import {
   liveTemporaryWhere,
   reservedByItem,
   sweepExpiredTemporaryReservations,
+  temporaryScopeWhere,
   type HolderViewer,
 } from './reserved-ledger';
+import { unavailableCoilReason } from './coil-sale-unavailable';
 import { computePriceFloors, type PriceFloorCandidate } from './price-floor';
 import {
   assertRawMaterialInvariant,
@@ -3128,16 +3131,8 @@ export class SalesOrdersService {
     actor: RequestUser,
     query: SellableCoilQuery,
   ): Promise<SellableCoilDto[]> {
-    const lines = query.businessLine ? [query.businessLine] : [...COIL_BUSINESS_LINES];
     const coils = await this.prisma.coil.findMany({
-      where: {
-        kind: CoilKind.COIL,
-        status: { in: [CoilStatus.OPEN, CoilStatus.CLOSED] },
-        businessLine: { code: { in: lines.map(toPrismaLineCode) } },
-        ...(query.search
-          ? { code: { contains: query.search, mode: Prisma.QueryMode.insensitive } }
-          : {}),
-      },
+      where: sellableCoilWhere(query),
       select: {
         id: true,
         code: true,
@@ -3229,6 +3224,109 @@ export class SalesOrdersService {
         };
       })
       .filter((c) => toDecimal(c.availableQty).gt(0));
+  }
+
+  /**
+   * D-282: las bobinas del mismo filtro que `findSellableCoils` que **tienen saldo pero no se
+   * ofrecen** —montadas en una OP viva o con todo el saldo reservado—, cada una con su motivo.
+   * Es el «no se ofrecen» del modal de venta de bobina: sin él, una bobina que el vendedor ve en
+   * planta simplemente no aparecía y no había forma de saber por qué. Mismo alcance de la
+   * reserva propia (`excludeQuotationId`) que la lista de vendibles.
+   */
+  async findUnavailableSellableCoils(
+    actor: RequestUser,
+    query: SellableCoilQuery,
+  ): Promise<UnavailableSellableCoilDto[]> {
+    const coils = await this.prisma.coil.findMany({
+      where: sellableCoilWhere(query),
+      select: {
+        id: true,
+        code: true,
+        widthMm: true,
+        thicknessMm: true,
+        businessLine: { select: { code: true } },
+        finish: { select: { code: true, name: true } },
+        color: { select: { name: true } },
+      },
+      orderBy: { code: 'asc' },
+      take: 500,
+    });
+    if (coils.length === 0) return [];
+
+    const ids = coils.map((c) => c.id);
+    const exceptQuotationIds = query.excludeQuotationId ? [query.excludeQuotationId] : [];
+    const [balances, reservedById, assigned, firm, temporary] = await Promise.all([
+      this.prisma.inventoryBalance.findMany({
+        where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
+        select: { itemId: true, qty: true },
+      }),
+      reservedByItem(this.prisma, InventoryItemTypeEnum.COIL, ids, { exceptQuotationIds }),
+      this.prisma.productionOrderConsumption.findMany({
+        where: {
+          coilId: { in: ids },
+          releasedAt: null,
+          productionOrder: {
+            status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+          },
+        },
+        select: { coilId: true },
+      }),
+      this.prisma.reservation.findMany({
+        where: {
+          status: ReservationStatus.ACTIVE,
+          itemType: InventoryItemTypeEnum.COIL,
+          itemId: { in: ids },
+        },
+        select: { itemId: true, salesOrder: { select: { seq: true, sellerId: true } } },
+      }),
+      this.prisma.quotationReservation.findMany({
+        where: {
+          ...liveTemporaryWhere(),
+          itemType: InventoryItemTypeEnum.COIL,
+          itemId: { in: ids },
+          ...temporaryScopeWhere({ exceptQuotationIds }),
+        },
+        select: { itemId: true, quotation: { select: { seq: true, sellerId: true } } },
+      }),
+    ]);
+    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    const mountedIds = new Set(assigned.map((a) => a.coilId));
+    const holdersOf = <T extends { itemId: string }, H>(rows: T[], pick: (row: T) => H) => {
+      const out = new Map<string, H[]>();
+      for (const row of rows) out.set(row.itemId, [...(out.get(row.itemId) ?? []), pick(row)]);
+      return out;
+    };
+    const firmById = holdersOf(firm, (r) => r.salesOrder);
+    const temporaryById = holdersOf(temporary, (r) => r.quotation);
+
+    return coils.flatMap((c) => {
+      const balance = qtyById.get(c.id) ?? toDecimal('0');
+      if (balance.lte(0)) return [];
+      const mounted = mountedIds.has(c.id);
+      const free = balance.minus(reservedById.get(c.id) ?? toDecimal('0'));
+      if (!mounted && free.gt(0)) return [];
+      return [
+        {
+          coilId: c.id,
+          code: c.code,
+          businessLine: toSharedLineCode(c.businessLine.code),
+          finishCode: c.finish.code,
+          finishName: c.finish.name,
+          colorName: c.color?.name ?? null,
+          widthMm: c.widthMm.toFixed(2),
+          thicknessMm: c.thicknessMm.toFixed(2),
+          balanceKg: balance.toFixed(3),
+          reason: unavailableCoilReason(
+            {
+              mounted,
+              firm: firmById.get(c.id) ?? [],
+              temporary: temporaryById.get(c.id) ?? [],
+            },
+            actor,
+          ),
+        },
+      ];
+    });
   }
 
   async findReservations(actor: RequestUser, query: ReservationQuery): Promise<ReservationDto[]> {
@@ -3457,6 +3555,23 @@ export class SalesOrdersService {
       },
     };
   }
+}
+
+/**
+ * El filtro de las bobinas que se venden enteras (D-116): `OPEN` o `CLOSED` (nunca en corte ni
+ * anulada/vendida), de kind `COIL` y de una línea con bobina. Lo comparten la lista de vendibles
+ * y la de las que no se ofrecen (D-282), para que las dos hablen del mismo universo.
+ */
+function sellableCoilWhere(query: SellableCoilQuery): Prisma.CoilWhereInput {
+  const lines = query.businessLine ? [query.businessLine] : [...COIL_BUSINESS_LINES];
+  return {
+    kind: CoilKind.COIL,
+    status: { in: [CoilStatus.OPEN, CoilStatus.CLOSED] },
+    businessLine: { code: { in: lines.map(toPrismaLineCode) } },
+    ...(query.search
+      ? { code: { contains: query.search, mode: Prisma.QueryMode.insensitive } }
+      : {}),
+  };
 }
 
 /**

@@ -49,6 +49,7 @@ import {
   ProductStockPickerDialog,
   RawMaterialPoolList,
 } from '@/components/sales/product-stock-picker';
+import { CoilSalePickerDialog } from '@/components/sales/coil-sale-picker';
 import {
   customerLabel,
   formatMoney,
@@ -1275,6 +1276,9 @@ function LineRow({
   );
   // D-188: el modal de elegir producto con stock, uno por fila.
   const [pickerOpen, setPickerOpen] = useState(false);
+  // D-282: el mismo patrón para la bobina de una venta directa.
+  const [coilPickerOpen, setCoilPickerOpen] = useState(false);
+  const saleCoil = sellableCoils?.find((c) => c.coilId === l.saleCoilId);
   const product = productById.get(l.productId);
   const lineTotal = pricing?.amounts.subtotal ?? null;
   const byAmount = l.amountMode === 'AMOUNT';
@@ -1316,6 +1320,9 @@ function LineRow({
             onValueChange={(v) => {
               if (v === '__BOBINA__') {
                 onSetKind('BOBINA');
+                // D-282: elegir la venta directa abre el modal de bobinas en el acto, como
+                // elegir producto en las otras líneas.
+                setCoilPickerOpen(true);
                 return;
               }
               if (l.kind === 'BOBINA') onSetKind('PRODUCT');
@@ -1368,26 +1375,36 @@ function LineRow({
         </TableCell>
         <TableCell>
           {l.kind === 'BOBINA' ? (
-            <Select value={l.saleCoilId} onValueChange={onChooseSaleCoil}>
-              <SelectTrigger
-                className="w-full"
+            <div className="grid gap-1">
+              {/* D-282: el botón conserva el `aria-label` del desplegable que reemplaza. */}
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 w-full justify-start truncate text-xs font-normal"
                 aria-label={`Bobina a vender de la línea ${index + 1}`}
+                onClick={() => {
+                  setCoilPickerOpen(true);
+                }}
               >
-                <SelectValue placeholder="Bobina" />
-              </SelectTrigger>
-              <SelectContent>
-                {sellableCoils?.map((c) => (
-                  <SelectItem key={c.coilId} value={c.coilId}>
-                    {c.code} — {formatQty(c.availableQty, 'kg')}
-                  </SelectItem>
-                ))}
-                {sellableCoilsLoaded && sellableCoils?.length === 0 && (
-                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                    No hay bobinas disponibles para vender.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
+                {saleCoil
+                  ? `${saleCoil.code} — ${formatQty(saleCoil.availableQty, 'kg')}`
+                  : 'Elegir bobina'}
+              </Button>
+              {saleCoil && (
+                <span className="text-xs text-muted-foreground">
+                  {saleCoil.thicknessMm} mm · {saleCoil.finishName}
+                </span>
+              )}
+              <CoilSalePickerDialog
+                open={coilPickerOpen}
+                onOpenChange={setCoilPickerOpen}
+                coils={sellableCoils}
+                loading={!sellableCoilsLoaded}
+                quotationId={quotationId}
+                selectedCoilId={l.saleCoilId}
+                onSelect={onChooseSaleCoil}
+              />
+            </div>
           ) : (
             <div className="grid gap-1">
               {/*
