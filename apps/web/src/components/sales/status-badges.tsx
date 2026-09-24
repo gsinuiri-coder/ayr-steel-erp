@@ -1,10 +1,10 @@
 import {
+  ORDER_STAGE_LABELS,
   QUOTATION_STATUS_LABELS,
-  SALES_ORDER_STATUS_LABELS,
+  type OrderStage,
   type QuotationStatus,
-  type SalesOrderStatus,
 } from '@ayr/shared';
-import { QUOTATION_TONE, SALES_ORDER_TONE } from '@/components/status-tone';
+import { ORDER_STAGE_TONE, QUOTATION_TONE } from '@/components/status-tone';
 import { Badge } from '@/components/ui/badge';
 
 /**
@@ -30,6 +30,7 @@ export function QuotationStatusBadge({
   return <Badge variant={expired ? 'warning' : QUOTATION_TONE[status]}>{label}</Badge>;
 }
 
-export function SalesOrderStatusBadge({ status }: { status: SalesOrderStatus }) {
-  return <Badge variant={SALES_ORDER_TONE[status]}>{SALES_ORDER_STATUS_LABELS[status]}</Badge>;
+/** D-277: el estado que se muestra (el persistido más «Listo»). */
+export function OrderStageBadge({ stage }: { stage: OrderStage }) {
+  return <Badge variant={ORDER_STAGE_TONE[stage]}>{ORDER_STAGE_LABELS[stage]}</Badge>;
 }

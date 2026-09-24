@@ -49,6 +49,20 @@ import {
   ProductStockPickerDialog,
   RawMaterialPoolList,
 } from '@/components/sales/product-stock-picker';
+import { CoilSalePickerDialog } from '@/components/sales/coil-sale-picker';
+import {
+  DocumentActions,
+  DocumentFormHeader,
+  DocumentLinesFooter,
+  DocumentSection,
+  DocumentTotals,
+  FormField,
+} from '@/components/document-form-layout';
+import {
+  descriptionFromStored,
+  descriptionToSend,
+  MAX_LINE_DESCRIPTION,
+} from '@/lib/line-description';
 import {
   customerLabel,
   formatMoney,
@@ -171,6 +185,14 @@ interface LineDraft {
    * coincida — por eso el campo de cantidad se bloquea en cuanto la línea es compuesta.
    */
   pieces: PieceDraft[];
+  /**
+   * D-283: la descripción que lee el cliente (PDF, pedido, comprobante). Arranca con el nombre
+   * del producto; solo viaja si `descriptionEdited` (ver `descriptionToSend`).
+   */
+  description: string;
+  descriptionEdited: boolean;
+  /** Texto guardado sin sufijo de largos (papel importado): se reenvía tal cual si no se toca. */
+  descriptionVerbatim?: boolean;
 }
 
 /** D-255: lo que la línea guardada tenía, para reconocer que nadie la tocó. */
@@ -203,6 +225,8 @@ function emptyLine(key: number): LineDraft {
     netAmountPen: '',
     original: null,
     pieces: [EMPTY_PIECE],
+    description: '',
+    descriptionEdited: false,
   };
 }
 
@@ -426,6 +450,7 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
       qty: item.qty,
       pricePen,
       original: { ...stored, kind: 'BOBINA', productId: '', saleCoilId: item.reserveItemId },
+      ...descriptionFromStored(item.description, item.productName, ''),
     };
   }
   return {
@@ -446,6 +471,12 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
       item.pieces.length > 0
         ? item.pieces.map((p) => ({ lengthM: mmToMeters(p.lengthMm), qty: String(p.qty) }))
         : [EMPTY_PIECE],
+    // D-283: lo guardado sin los largos que agregó el API; si difiere del nombre, se editó.
+    ...descriptionFromStored(
+      item.description,
+      item.productName,
+      item.pieces.length > 0 ? describePieces(item.pieces) : '',
+    ),
   };
 }
 
@@ -605,6 +636,9 @@ export function SalesDocumentForm({
           : null;
     patchLine(key, {
       productId,
+      // D-283: la descripción se autocompleta con el nombre del producto nuevo.
+      description: product?.name ?? '',
+      descriptionEdited: false,
       pricePerPiece: false,
       ...(perUnitValue === null
         ? basisChanged
@@ -630,6 +664,8 @@ export function SalesDocumentForm({
       qty: '',
       pricePerPiece: false,
       pieces: [EMPTY_PIECE],
+      description: '',
+      descriptionEdited: false,
     });
   }
 
@@ -813,6 +849,9 @@ export function SalesDocumentForm({
               'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes, tipo de cambio y reservas.',
           };
         }
+        // Autorrevisión de D-283 (P1-1): la venta de bobina no manda descripción. La arma el API
+        // con el código y los kilos vigentes («Bobina X × kg»); una guardada nombraría la bobina
+        // o el saldo de antes.
         items.push({
           saleCoilId: l.saleCoilId,
           qty: toFixedString(qty, 'KG'),
@@ -897,6 +936,18 @@ export function SalesDocumentForm({
         };
       }
 
+      // D-283: la descripción editada viaja con sus largos; sin editar, la arma el API.
+      // El producto de una bobina no manda descripción: su pool se deduce de ella (D-254) y no
+      // se ofrece editarla, igual que antes de D-283.
+      const description = isCoilSaleProduct(product)
+        ? ({ ok: true, value: undefined } as const)
+        : descriptionToSend(
+            l,
+            product.name,
+            pieces && pieces.length > 0 ? describePieces(pieces) : '',
+          );
+      if (!description.ok) return { error: `${at}: ${description.reason}` };
+
       // D-134: la línea ya no dice qué reservar. Una cobertura a medida promete kilos del
       // agregado compatible y el API los calcula; el aviso de que no alcanzan sale del panel
       // de stock, y la palabra final la tiene el API bajo el lock, que es donde importa.
@@ -908,6 +959,7 @@ export function SalesDocumentForm({
         // importe guardado. Siempre una sola forma (el schema rechaza dos).
         ...pricing.payload,
         ...(pieces ? { pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })) } : {}),
+        ...(description.value === undefined ? {} : { description: description.value }),
       });
     }
     return { items };
@@ -943,26 +995,25 @@ export function SalesDocumentForm({
 
   return (
     <>
-      <div>
-        <h1 className="text-lg font-semibold">
-          {addTo
+      <DocumentFormHeader
+        title={
+          addTo
             ? `Agregar ítems a ${addTo.code}`
             : initial
               ? `Editar ${initial.code}`
               : isQuotation
                 ? 'Nueva cotización'
-                : 'Nuevo pedido directo'}
-        </h1>
-        <p className="text-xs text-muted-foreground">
-          {addTo
-            ? `${addTo.customerName} · Cada ítem reserva su material al guardar y, si se fabrica, nace con su orden de producción.`
-            : initial
-              ? 'Guardar reemplaza las líneas y regenera el PDF: la última versión es la que vale.'
-              : isQuotation
-                ? 'Nace emitida, con su PDF. No reserva stock: la reserva nace al reservar o al confirmar.'
-                : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
-        </p>
-      </div>
+                : 'Nuevo pedido directo'
+        }
+      >
+        {addTo
+          ? `${addTo.customerName} · Cada ítem reserva su material al guardar y, si se fabrica, nace con su orden de producción.`
+          : initial
+            ? 'Guardar reemplaza las líneas y regenera el PDF: la última versión es la que vale.'
+            : isQuotation
+              ? 'Nace emitida, con su PDF. No reserva stock: la reserva nace al reservar o al confirmar.'
+              : 'Crea el pedido y reserva el material en el acto. Solo en líneas que no exigen cotización.'}
+      </DocumentFormHeader>
 
       {(selectedCustomer.isError || businessLines.isError) && (
         <Alert variant="destructive">
@@ -973,8 +1024,8 @@ export function SalesDocumentForm({
       )}
 
       {!adding && (
-        <div className="grid gap-x-4 gap-y-3 rounded-lg border p-3 md:grid-cols-4">
-          <div className="grid gap-2 md:col-span-2">
+        <DocumentSection title={isQuotation ? 'Datos de la cotización' : 'Datos del pedido'}>
+          <FormField span={2}>
             <Label htmlFor="customer">Cliente</Label>
             {/*
             RF-S3/M1: busca en el servidor (`GET /customers/search`) en vez de traer el
@@ -1016,8 +1067,8 @@ export function SalesDocumentForm({
                 />
               )}
             />
-          </div>
-          <div className="grid gap-2">
+          </FormField>
+          <FormField>
             <Label htmlFor="issue-date">Fecha de emisión</Label>
             <Input
               id="issue-date"
@@ -1027,17 +1078,17 @@ export function SalesDocumentForm({
                 setIssueDate(e.target.value);
               }}
             />
-          </div>
+          </FormField>
           {isQuotation && noExpiration && (
-            <div className="grid gap-2">
+            <FormField>
               <Label>Vigencia</Label>
               <p className="text-xs text-muted-foreground">
                 Sin vencimiento: viene de un comprobante importado (D-157) y esto no se cambia acá.
               </p>
-            </div>
+            </FormField>
           )}
           {isQuotation && !noExpiration && (
-            <div className="grid gap-2">
+            <FormField>
               <Label htmlFor="validity">Vigencia (días)</Label>
               <Input
                 id="validity"
@@ -1049,9 +1100,9 @@ export function SalesDocumentForm({
                   setValidityDays(e.target.value);
                 }}
               />
-            </div>
+            </FormField>
           )}
-          <div className="grid gap-2 md:col-span-3">
+          <FormField span={4}>
             <Label htmlFor="notes">Observaciones</Label>
             <Input
               id="notes"
@@ -1061,15 +1112,17 @@ export function SalesDocumentForm({
                 setNotes(e.target.value);
               }}
             />
-          </div>
-        </div>
+          </FormField>
+        </DocumentSection>
       )}
 
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          Líneas del documento. El material a medida se compromete por kilos; la bobina la elige
-          planta.
-        </p>
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-medium">Líneas</h2>
+          <p className="text-xs text-muted-foreground">
+            El material a medida se compromete por kilos; la bobina la elige planta.
+          </p>
+        </div>
         <StockPanelSheet
           data={stockPanel.data}
           loading={stockPanel.isPending}
@@ -1150,7 +1203,7 @@ export function SalesDocumentForm({
         </Table>
       </div>
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <DocumentLinesFooter>
         <Button
           variant="outline"
           disabled={lines.length >= MAX_SALES_ITEMS}
@@ -1161,24 +1214,13 @@ export function SalesDocumentForm({
         >
           Agregar línea
         </Button>
-        {/*
-          Los tres importes en una rejilla de dos columnas y no en tres `flex` sueltos: así
-          los números comparten una misma columna derecha y con `tabular-nums` los dígitos
-          quedan uno debajo del otro, que es lo que hace legible una columna de plata.
-        */}
-        <div className="grid min-w-64 grid-cols-[1fr_auto] gap-x-8 gap-y-1 text-sm">
-          {/* D-162: el mismo vocabulario que el PDF y los detalles. Era la única pantalla
-              que seguía diciendo «Subtotal»/«Total», y es la pantalla donde se tipea. */}
-          <span className="text-muted-foreground">Valor de venta</span>
-          <span className="text-right tabular-nums">{formatMoney(subtotal.toFixed(4))}</span>
-          <span className="text-muted-foreground">IGV (18%)</span>
-          <span className="text-right tabular-nums">{formatMoney(igv.toFixed(4))}</span>
-          <span className="border-t pt-1 font-medium">Precio de venta</span>
-          <span className="border-t pt-1 text-right text-base font-semibold tabular-nums">
-            {formatMoney(subtotal.plus(igv).toFixed(4))}
-          </span>
-        </div>
-      </div>
+        {/* D-162: el mismo vocabulario que el PDF y los detalles (D-284: bloque compartido). */}
+        <DocumentTotals
+          subtotal={subtotal.toFixed(4)}
+          igv={igv.toFixed(4)}
+          total={subtotal.plus(igv).toFixed(4)}
+        />
+      </DocumentLinesFooter>
 
       {formError && (
         <Alert variant="destructive">
@@ -1186,7 +1228,7 @@ export function SalesDocumentForm({
         </Alert>
       )}
 
-      <div className="flex justify-end gap-2">
+      <DocumentActions>
         <Button
           variant="outline"
           onClick={() => {
@@ -1211,7 +1253,7 @@ export function SalesDocumentForm({
                 ? 'Crear cotización'
                 : 'Crear pedido'}
         </Button>
-      </div>
+      </DocumentActions>
     </>
   );
 }
@@ -1275,6 +1317,9 @@ function LineRow({
   );
   // D-188: el modal de elegir producto con stock, uno por fila.
   const [pickerOpen, setPickerOpen] = useState(false);
+  // D-282: el mismo patrón para la bobina de una venta directa.
+  const [coilPickerOpen, setCoilPickerOpen] = useState(false);
+  const saleCoil = sellableCoils?.find((c) => c.coilId === l.saleCoilId);
   const product = productById.get(l.productId);
   const lineTotal = pricing?.amounts.subtotal ?? null;
   const byAmount = l.amountMode === 'AMOUNT';
@@ -1316,6 +1361,9 @@ function LineRow({
             onValueChange={(v) => {
               if (v === '__BOBINA__') {
                 onSetKind('BOBINA');
+                // D-282: elegir la venta directa abre el modal de bobinas en el acto, como
+                // elegir producto en las otras líneas.
+                setCoilPickerOpen(true);
                 return;
               }
               if (l.kind === 'BOBINA') onSetKind('PRODUCT');
@@ -1324,6 +1372,8 @@ function LineRow({
                 productId: '',
                 pieces: [EMPTY_PIECE],
                 qty: '',
+                description: '',
+                descriptionEdited: false,
               });
             }}
           >
@@ -1368,26 +1418,36 @@ function LineRow({
         </TableCell>
         <TableCell>
           {l.kind === 'BOBINA' ? (
-            <Select value={l.saleCoilId} onValueChange={onChooseSaleCoil}>
-              <SelectTrigger
-                className="w-full"
+            <div className="grid gap-1">
+              {/* D-282: el botón conserva el `aria-label` del desplegable que reemplaza. */}
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 w-full justify-start truncate text-xs font-normal"
                 aria-label={`Bobina a vender de la línea ${index + 1}`}
+                onClick={() => {
+                  setCoilPickerOpen(true);
+                }}
               >
-                <SelectValue placeholder="Bobina" />
-              </SelectTrigger>
-              <SelectContent>
-                {sellableCoils?.map((c) => (
-                  <SelectItem key={c.coilId} value={c.coilId}>
-                    {c.code} — {formatQty(c.availableQty, 'kg')}
-                  </SelectItem>
-                ))}
-                {sellableCoilsLoaded && sellableCoils?.length === 0 && (
-                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                    No hay bobinas disponibles para vender.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
+                {saleCoil
+                  ? `${saleCoil.code} — ${formatQty(saleCoil.availableQty, 'kg')}`
+                  : 'Elegir bobina'}
+              </Button>
+              {saleCoil && (
+                <span className="text-xs text-muted-foreground">
+                  {saleCoil.thicknessMm} mm · {saleCoil.finishName}
+                </span>
+              )}
+              <CoilSalePickerDialog
+                open={coilPickerOpen}
+                onOpenChange={setCoilPickerOpen}
+                coils={sellableCoils}
+                loading={!sellableCoilsLoaded}
+                quotationId={quotationId}
+                selectedCoilId={l.saleCoilId}
+                onSelect={onChooseSaleCoil}
+              />
+            </div>
           ) : (
             <div className="grid gap-1">
               {/*
@@ -1435,6 +1495,25 @@ function LineRow({
                 />
               )}
             </div>
+          )}
+          {/* D-283: la descripción que lee el cliente; arranca con el nombre del producto. */}
+          {/* Sin descripción editable en la venta de bobina (la arma el API con código y kilos)
+              ni en el producto de una bobina, cuyo pool se deduce de la descripción (D-254). */}
+          {l.kind === 'PRODUCT' && l.productId !== '' && !isCoilSaleProduct(product) && (
+            <Input
+              className="mt-1 h-8 text-xs"
+              aria-label={`Descripción de la línea ${index + 1}`}
+              placeholder={product?.name ?? 'Descripción'}
+              maxLength={MAX_LINE_DESCRIPTION}
+              value={l.description}
+              onChange={(e) => {
+                onPatch({
+                  description: e.target.value,
+                  descriptionEdited: true,
+                  descriptionVerbatim: false,
+                });
+              }}
+            />
           )}
         </TableCell>
         <TableCell className="whitespace-normal">

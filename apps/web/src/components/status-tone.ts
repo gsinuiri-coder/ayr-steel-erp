@@ -1,5 +1,6 @@
 import type {
   CoilSplitStatus,
+  OrderStage,
   CoilStatus,
   CuttingOrderCoilStatus,
   CuttingOrderStatus,
@@ -133,4 +134,13 @@ export const COIL_SPLIT_TONE: Record<CoilSplitStatus, StatusTone> = {
 export const PRODUCTION_REPORT_TONE: Record<ProductionReportStatus, StatusTone> = {
   ACTIVE: 'done',
   REVERTED: 'outline',
+};
+
+/**
+ * D-277: el estado que se muestra del pedido. «Listo» pide una acción —despacharlo—, así que
+ * va con el tono de «hace falta mirarlo», no con el de «en curso».
+ */
+export const ORDER_STAGE_TONE: Record<OrderStage, StatusTone> = {
+  ...SALES_ORDER_TONE,
+  READY: 'warning',
 };

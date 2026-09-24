@@ -13,7 +13,11 @@ import {
   toDecimal,
 } from '@ayr/shared';
 import { toSharedLineCode } from '../common/business-line-code';
-import { rawMaterialCoilIds, type RawMaterialSpecRef } from './raw-material';
+import {
+  rawMaterialCoilIdsBySpec,
+  rawMaterialCoilKey,
+  type RawMaterialSpecRef,
+} from './raw-material';
 
 /**
  * El **piso duro de precio** de una línea de venta (D-163).
@@ -271,28 +275,43 @@ async function unitCosts(
   // El agregado: costo por kg **ponderado por los kilos que hay**, no el promedio simple de
   // los rollos. Dos bobinas de 5 000 y 100 kg a costos distintos no pesan lo mismo en lo que
   // esta cotización va a consumir, y el promedio simple corría el piso hacia el rollo chico.
-  for (const candidate of candidates) {
-    if (candidate.cost.kind !== 'RAW_MATERIAL') continue;
-    const key = costKey(candidate.cost);
-    if (out.has(key)) continue;
-    const ids = await rawMaterialCoilIds(tx, candidate.cost.spec, toleranceMm);
-    if (ids.length === 0) {
-      out.set(key, new Decimal(0));
-      continue;
-    }
-    const balances = await tx.inventoryBalance.findMany({
-      where: { itemType: InventoryItemType.COIL, itemId: { in: ids } },
-      select: { qty: true, avgCost: true },
-    });
-    let kilos = new Decimal(0);
-    let value = new Decimal(0);
+  // D-280: las bobinas de todos los agregados y sus saldos, en dos consultas y no dos por
+  // agregado — el panel de stock pide el piso de veinte coberturas a la vez.
+  const rawCandidates = candidates.flatMap((c) =>
+    c.cost.kind === 'RAW_MATERIAL' ? [{ key: costKey(c.cost), cost: c.cost }] : [],
+  );
+  if (rawCandidates.length > 0) {
+    const idsBySpec = await rawMaterialCoilIdsBySpec(
+      tx,
+      rawCandidates.map((c) => c.cost.spec),
+      toleranceMm,
+    );
+    const allIds = [...new Set([...idsBySpec.values()].flat())];
+    const balances =
+      allIds.length === 0
+        ? []
+        : await tx.inventoryBalance.findMany({
+            where: { itemType: InventoryItemType.COIL, itemId: { in: allIds } },
+            select: { itemId: true, qty: true, avgCost: true },
+          });
+    const balancesById = new Map<string, typeof balances>();
     for (const balance of balances) {
-      const qty = toDecimal(balance.qty.toString());
-      if (qty.lte(0)) continue;
-      kilos = kilos.plus(qty);
-      value = value.plus(qty.times(toDecimal(balance.avgCost.toString())));
+      balancesById.set(balance.itemId, [...(balancesById.get(balance.itemId) ?? []), balance]);
     }
-    out.set(key, kilos.lte(0) ? new Decimal(0) : value.div(kilos).times(candidate.cost.kgPerUnit));
+    for (const { key, cost } of rawCandidates) {
+      if (out.has(key)) continue;
+      let kilos = new Decimal(0);
+      let value = new Decimal(0);
+      for (const id of idsBySpec.get(rawMaterialCoilKey(cost.spec)) ?? []) {
+        for (const balance of balancesById.get(id) ?? []) {
+          const qty = toDecimal(balance.qty.toString());
+          if (qty.lte(0)) continue;
+          kilos = kilos.plus(qty);
+          value = value.plus(qty.times(toDecimal(balance.avgCost.toString())));
+        }
+      }
+      out.set(key, kilos.lte(0) ? new Decimal(0) : value.div(kilos).times(cost.kgPerUnit));
+    }
   }
 
   return out;

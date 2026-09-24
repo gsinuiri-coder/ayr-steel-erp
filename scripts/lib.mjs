@@ -9,8 +9,13 @@ export const NEON_PROJECT_ID = 'frosty-cherry-97873994';
 export const GCP_REGION = 'us-central1';
 export const API_SERVICE = 'ayr-steel-erp-api';
 
-/** Lee .env.setup (o el archivo indicado) a un objeto. NUNCA imprime valores. */
-export function readEnvFile(path = resolve(ROOT, '.env.setup')) {
+/**
+ * Lee .env.setup (o el archivo indicado) a un objeto. NUNCA imprime valores.
+ *
+ * `.env.setup` vive solo en el checkout principal; desde un worktree, `AYR_ENV_SETUP` apunta a
+ * ese archivo (la ruta, nunca su contenido, viaja por el entorno).
+ */
+export function readEnvFile(path = process.env.AYR_ENV_SETUP ?? resolve(ROOT, '.env.setup')) {
   if (!existsSync(path)) throw new Error(`No existe ${path}`);
   const env = {};
   for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {

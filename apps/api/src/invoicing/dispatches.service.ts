@@ -105,6 +105,25 @@ type DispatchRow = Prisma.DispatchGetPayload<{ include: typeof dispatchInclude }
  */
 const DECLARED_STATUSES: FiscalDocumentStatus[] = [...SHARED_LIVE_DOCUMENT_STATUSES];
 
+/**
+ * Opciones internas de `createInTx`, que no viajan por HTTP: las usa el despacho a la fecha
+ * del comprobante (D-278).
+ */
+export interface DispatchCreateOptions {
+  /** Líneas (id de línea de pedido) entregadas antes del inventario inicial: sin salida. */
+  deliveredBeforeOpening?: ReadonlySet<string>;
+  /** Se agrega a la nota de cada salida de kardex. */
+  movementNote?: string;
+  /** Motivo que queda en la auditoría del despacho. */
+  auditReason?: string;
+}
+
+/**
+ * Sede por defecto de un recojo cuando todavía no hubo ningún despacho con guía (D-103).
+ * Lima cercado: es la sede, y este dato no llega a ningún documento fiscal.
+ */
+const DEFAULT_PICKUP = { address: 'Mostrador — recojo en tienda', ubigeo: '150101' };
+
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
@@ -157,6 +176,7 @@ export class DispatchesService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     input: CreateDispatchInput,
+    options: DispatchCreateOptions = {},
   ): Promise<string> {
     // D-124: `dispatchDate` es la fecha de operación del despacho. Pasa por el control de
     // retrofecha (solo administrador, no futura, no antes del piso histórico) y de ahí sale
@@ -337,31 +357,43 @@ export class DispatchesService {
         await consumeReservationQty(tx, target.reservationId, reserveQty);
       }
 
+      // D-278: lo entregado antes del inventario inicial ya estaba fuera del conteo. La
+      // línea se entrega y su reserva se descuenta, pero no hay salida que registrar: el
+      // kardex nunca tuvo esa mercadería.
+      const withoutMovement = options.deliveredBeforeOpening?.has(orderItem.id) === true;
       // D-119: la línea del movimiento es la del ítem que de verdad sale del almacén
       // (producto o bobina), no la del pedido — un pedido mixto o una venta de bobina
       // completa (D-116) pueden no coincidir.
-      const movement = await this.inventory.record(tx, {
-        businessLineId: await this.inventory.resolveItemBusinessLineId(
-          tx,
-          target.itemType,
-          target.itemId,
-        ),
-        itemType: target.itemType,
-        itemId: target.itemId,
-        type: 'OUT',
-        qty: toFixedString(reserveQty, 'KG'),
-        unit: target.unit,
-        refType: 'SALE',
-        refId: dispatch.id,
-        notes: `Despacho ${dispatchCode(dispatch.seq)} de ${salesOrderCode(order.seq)}`,
-        actorId: actor.id,
-        viewer: actor,
-        confirmBackdate: input.confirmBackdate,
-        // D-124: la salida de kardex se fecha con la **fecha del despacho**, no con hoy.
-        // `dispatchDate` ya era la fecha de negocio de esta operación desde Fase 5b; lo
-        // que faltaba era que el kardex la usara en vez de fecharse por su cuenta.
-        operationDate: dispatchDate,
-      });
+      const movement = withoutMovement
+        ? null
+        : await this.inventory.record(tx, {
+            businessLineId: await this.inventory.resolveItemBusinessLineId(
+              tx,
+              target.itemType,
+              target.itemId,
+            ),
+            itemType: target.itemType,
+            itemId: target.itemId,
+            type: 'OUT',
+            qty: toFixedString(reserveQty, 'KG'),
+            unit: target.unit,
+            refType: 'SALE',
+            refId: dispatch.id,
+            notes: [
+              `Despacho ${dispatchCode(dispatch.seq)} de ${salesOrderCode(order.seq)}`,
+              options.movementNote,
+            ]
+              .filter(Boolean)
+              .join(': ')
+              .slice(0, 240),
+            actorId: actor.id,
+            viewer: actor,
+            confirmBackdate: input.confirmBackdate,
+            // D-124: la salida de kardex se fecha con la **fecha del despacho**, no con hoy.
+            // `dispatchDate` ya era la fecha de negocio de esta operación desde Fase 5b; lo
+            // que faltaba era que el kardex la usara en vez de fecharse por su cuenta.
+            operationDate: dispatchDate,
+          });
 
       await tx.dispatchItem.create({
         data: {
@@ -412,9 +444,34 @@ export class DispatchesService {
         // D-170: qué rollos quedó cerrando esta salida, en la auditoría del hecho que los
         // cerró. Vacío en todo despacho que no vendió una bobina entera.
         closedCoils,
+        // D-278: el motivo de un despacho que no nació de la pantalla de despacho, y qué
+        // líneas se entregaron sin salida de kardex.
+        ...(options.auditReason === undefined ? {} : { reason: options.auditReason }),
+        ...(options.deliveredBeforeOpening === undefined
+          ? {}
+          : { withoutMovement: [...options.deliveredBeforeOpening] }),
       },
     });
     return dispatch.id;
+  }
+
+  /**
+   * Dónde se "recoge" un despacho sin guía (D-103): el último punto de partida real de un
+   * despacho, o la sede por defecto. Ningún documento fiscal lo lee; deja el registro
+   * interno legible. Mismo criterio que `PosService.pickupLocation` (D-099); lo usa el
+   * despacho a la fecha del comprobante (D-278).
+   */
+  async pickupLocationInTx(
+    tx: Prisma.TransactionClient,
+  ): Promise<{ address: string; ubigeo: string }> {
+    const last = await tx.dispatch.findFirst({
+      where: { transferMode: { not: TransferMode.PICKUP } },
+      orderBy: { createdAt: 'desc' },
+      select: { originAddress: true, originUbigeo: true },
+    });
+    return last === null
+      ? DEFAULT_PICKUP
+      : { address: last.originAddress, ubigeo: last.originUbigeo };
   }
 
   // -------------------------------------------------------------------------

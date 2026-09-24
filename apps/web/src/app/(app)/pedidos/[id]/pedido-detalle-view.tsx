@@ -59,7 +59,7 @@ import {
 } from '@/components/sales/order-edit-dialogs';
 import { usePlantSheetActions } from '@/components/sales/plant-sheet-buttons';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
-import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
+import { OrderStageBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 
 function reservationBadge(r: ReservationDto) {
@@ -207,7 +207,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
         <div>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-lg font-semibold">{o.code}</h1>
-            <SalesOrderStatusBadge status={o.status} />
+            <OrderStageBadge stage={o.stage} />
             {/* RF-37 (D-093): "en cola" no es un estado del pedido, es una vista derivada. */}
             {o.queueStatus === 'EN_COLA' && <Badge variant="outline">En cola de producción</Badge>}
             {o.queueStatus === 'EN_PRODUCCION' && <Badge variant="progress">En producción</Badge>}

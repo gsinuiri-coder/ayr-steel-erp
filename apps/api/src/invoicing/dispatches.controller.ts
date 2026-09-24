@@ -9,6 +9,8 @@ import {
   type DispatchListItemDto,
   type DispatchQuery,
   type FiscalDocumentDto,
+  type InvoiceDispatchPlanDto,
+  type InvoiceDispatchResultDto,
   type PaginatedResult,
   type ReverseDispatchInput,
   type TransportSuggestionsDto,
@@ -18,6 +20,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { DispatchesService } from './dispatches.service';
+import { InvoiceDispatchService } from './invoice-dispatch.service';
 import { InvoicingService } from './invoicing.service';
 
 /**
@@ -36,6 +39,7 @@ export class DispatchesController {
   constructor(
     private readonly dispatches: DispatchesService,
     private readonly invoicing: InvoicingService,
+    private readonly invoiceDispatch: InvoiceDispatchService,
   ) {}
 
   /**
@@ -45,6 +49,32 @@ export class DispatchesController {
   @Get('transport-suggestions')
   transportSuggestions(): Promise<TransportSuggestionsDto> {
     return this.dispatches.transportSuggestions();
+  }
+
+  /**
+   * D-278: qué haría «Despachar a la fecha del comprobante». Solo lectura. Rutas fijas antes
+   * de `:id`, por el mismo motivo que `transport-suggestions`.
+   */
+  @Get('at-issue-date/:invoiceId')
+  previewAtIssueDate(
+    @CurrentUser() actor: RequestUser,
+    @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
+  ): Promise<InvoiceDispatchPlanDto> {
+    return this.invoiceDispatch.preview(actor, invoiceId);
+  }
+
+  /**
+   * D-278: despacha lo facturado y no despachado con fecha de operación = fecha de emisión.
+   * Retrofechar sigue siendo privilegio de ADMINISTRADOR (D-124): `OperationDateService`
+   * rechaza a cualquier otro rol cuando la emisión no es de hoy.
+   */
+  @Post('at-issue-date/:invoiceId')
+  @Roles(Role.ADMINISTRADOR)
+  executeAtIssueDate(
+    @CurrentUser() actor: RequestUser,
+    @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
+  ): Promise<InvoiceDispatchResultDto> {
+    return this.invoiceDispatch.executeForInvoice(actor, invoiceId);
   }
 
   @Get()

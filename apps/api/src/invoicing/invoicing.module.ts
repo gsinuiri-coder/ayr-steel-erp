@@ -6,6 +6,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { JobsModule } from '../jobs/jobs.module';
 import { DispatchesController } from './dispatches.controller';
 import { DispatchesService } from './dispatches.service';
+import { InvoiceDispatchService } from './invoice-dispatch.service';
 import { FiscalImportService } from './fiscal-import.service';
 import { ReceivablesService } from './receivables.service';
 import { InvoicingController } from './invoicing.controller';
@@ -37,6 +38,7 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
   providers: [
     InvoicingService,
     DispatchesService,
+    InvoiceDispatchService,
     ReceivablesService,
     FiscalImportService,
     InvoicingSendJob,
@@ -55,6 +57,6 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
   // D-150: `FiscalImportService` ya no se exporta — el adaptador de planilla que lo inyectaba
   // desde fuera se fue con el módulo de importaciones, y lo que queda del servicio (la
   // anulación de un importado) lo usa el controller de este mismo módulo.
-  exports: [InvoicingService, DispatchesService, ReceivablesService],
+  exports: [InvoicingService, DispatchesService, ReceivablesService, InvoiceDispatchService],
 })
 export class InvoicingModule {}

@@ -67,7 +67,16 @@ function fakeTx(options: {
       }),
     },
     coil: {
-      findMany: jest.fn().mockResolvedValue((options.coils ?? []).map((c) => ({ id: c.id }))),
+      // D-280: la consulta por lote trae los atributos para repartir las bobinas entre los
+      // agregados; las del ejemplo cumplen todas la spec.
+      findMany: jest.fn().mockResolvedValue(
+        (options.coils ?? []).map((c) => ({
+          id: c.id,
+          businessLineId: SPEC.businessLineId,
+          colorId: SPEC.colorId,
+          thicknessMm: new Prisma.Decimal(SPEC.thicknessMm),
+        })),
+      ),
     },
   } as unknown as Prisma.TransactionClient;
 }

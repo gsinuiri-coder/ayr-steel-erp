@@ -276,7 +276,6 @@ export function BobinasView() {
               <TableHead className="hidden md:table-cell">Línea</TableHead>
               <TableHead className="hidden lg:table-cell">Proveedor</TableHead>
               <TableHead>Color</TableHead>
-              <TableHead className="text-right">Ancho</TableHead>
               <TableHead className="hidden text-right sm:table-cell">Peso</TableHead>
               <SortableTableHead
                 active={sort.key === 'availableKg'}
@@ -289,6 +288,9 @@ export function BobinasView() {
               >
                 Disponible
               </SortableTableHead>
+              {/* D-281: el ancho sale de la tabla (sigue en el detalle y en el PDF); en su
+                  lugar, cuántos metros de plancha da lo disponible — la pregunta de planta. */}
+              <TableHead className="text-right">Metro lineal teórico</TableHead>
               <TableHead className="hidden text-right lg:table-cell">Costo/kg</TableHead>
               <SortableTableHead
                 active={sort.key === 'status'}
@@ -336,12 +338,16 @@ export function BobinasView() {
                     }
                   />
                 </TableCell>
-                <TableCell className="text-right">{c.widthMm} mm</TableCell>
                 <TableCell className="hidden text-right sm:table-cell">
                   {formatQty(c.weightKg, 'kg')}
                 </TableCell>
                 <TableCell className="text-right font-medium">
                   {formatQty(c.availableKg, 'kg')}
+                </TableCell>
+                {/* El API lo calcula con `equivalentMeters` (@ayr/shared, D-116/D-165): kg
+                    disponibles ÷ (ancho × espesor × densidad estándar del acabado). */}
+                <TableCell className="text-right">
+                  {c.equivalentMeters === null ? '—' : formatQty(c.equivalentMeters, 'm')}
                 </TableCell>
                 <TableCell className="hidden text-right lg:table-cell">
                   {formatMoneyOrDash(c.unitCostPerKg, c.currency ?? 'PEN', 4)}

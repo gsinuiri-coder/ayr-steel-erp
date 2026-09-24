@@ -812,6 +812,33 @@ export const createDispatchSchema = z
   });
 export type CreateDispatchInput = z.infer<typeof createDispatchSchema>;
 
+/**
+ * D-278: qué haría «Despachar a la fecha del comprobante» con cada línea facturada y no
+ * despachada. `DISPATCH` sale del kardex el día de emisión; `BEFORE_OPENING` se entrega sin
+ * salida (el comprobante es anterior al inventario inicial del ítem); `REVIEW` no se toca.
+ */
+export const INVOICE_DISPATCH_ACTIONS = ['DISPATCH', 'BEFORE_OPENING', 'REVIEW'] as const;
+export const invoiceDispatchPlanSchema = z.object({
+  invoiceId: z.string().uuid(),
+  lines: z.array(
+    z.object({
+      lineNumber: z.number().int(),
+      sku: z.string(),
+      qty: z.string(),
+      itemLabel: z.string().nullable(),
+      action: z.enum(INVOICE_DISPATCH_ACTIONS),
+      operationDate: z.string(),
+      reason: z.string().nullable(),
+    }),
+  ),
+});
+export type InvoiceDispatchPlanDto = z.infer<typeof invoiceDispatchPlanSchema>;
+export const invoiceDispatchResultSchema = invoiceDispatchPlanSchema.extend({
+  dispatchIds: z.array(z.string().uuid()),
+  orderStatus: z.string(),
+});
+export type InvoiceDispatchResultDto = z.infer<typeof invoiceDispatchResultSchema>;
+
 /** Revertir un despacho (RF-79): devuelve stock y estado del pedido. Siempre con motivo. */
 export const reverseDispatchSchema = z.object({
   ...backdatableFields,

@@ -75,6 +75,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Stat, StatStrip } from '@/components/stat-strip';
+import { DispatchAtIssueDate } from './dispatch-at-issue-date';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -762,6 +763,12 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </AlertDescription>
         </Alert>
       )}
+      {/* D-278: solo ADMINISTRADOR. Retrofechar ya es suyo (D-124), y el despacho que crea es de
+          recojo, sin guía: quien entrega con guía despacha por la pantalla de despacho. */}
+      {d.salesOrderId &&
+        (d.docType === 'FACTURA' || d.docType === 'BOLETA') &&
+        LIVE_DOCUMENT_STATUSES.includes(d.status) &&
+        isAdmin && <DispatchAtIssueDate documentId={d.id} salesOrderId={d.salesOrderId} />}
       {/*
         Lo que un comprobante importado sí y no admite, dicho una vez y arriba, en vez de
         dejar que el usuario lo descubra botón por botón. D-150: la importación ya no existe,

@@ -12,6 +12,7 @@ import {
   INVENTORY_REF_TYPE_LABELS,
   REF_TARGET_ROUTES,
   Role,
+  businessToday,
   type InventoryItemType,
   type InventoryMovementDto,
   type PaginatedResult,
@@ -27,6 +28,7 @@ import {
 import { INVOICE_LINK_ROLES, REF_TARGET_ROLES } from '@/lib/nav';
 import { useSession } from '@/lib/session';
 import { usePagination } from '@/lib/use-pagination';
+import { HeaderActions } from '@/components/header-actions';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
@@ -84,6 +86,16 @@ export function KardexView() {
   });
   const rows = movements.data?.items ?? [];
 
+  // D-279: el kardex PEPS (formato 13.1) es de un producto o una bobina y solo lo baja el
+  // administrador. Sin fechas elegidas, el rango es el mes en curso: el formato siempre
+  // declara un período.
+  const pepsFrom = /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : `${businessToday().slice(0, 7)}-01`;
+  const pepsTo = /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : businessToday();
+  const canDownloadPeps =
+    singleItem &&
+    user.role === Role.ADMINISTRADOR &&
+    (itemType === 'PRODUCT' || itemType === 'COIL');
+
   // 8 columnas base; con un ítem concreto se suman saldo y costo promedio.
   const columnCount = singleItem ? 9 : 8;
   const header = rows[0];
@@ -122,6 +134,21 @@ export function KardexView() {
               }}
             />
           </label>
+          {canDownloadPeps && (
+            <HeaderActions
+              primary={['peps']}
+              actions={[
+                {
+                  key: 'peps',
+                  label: 'Descargar PEPS (SUNAT 13.1)',
+                  download: `/api/reports/kardex-peps/xlsx?itemType=${itemType}&itemId=${itemId}&from=${pepsFrom}&to=${pepsTo}`,
+                  // Una descarga principal es un enlace y no se deshabilita: con el rango al
+                  // revés el API respondería 400, así que el botón no se ofrece.
+                  show: pepsFrom <= pepsTo,
+                },
+              ]}
+            />
+          )}
         </div>
       </div>
 

@@ -193,25 +193,46 @@ export function buildCoilsReportPdf(input: CoilsReportPdfInput): Promise<Buffer>
     y = doc.y + 10;
   }
 
+  const columns = coilsReportTable(input.rows);
   table(
     doc,
     y,
     null,
-    ['Código', 'Línea', 'Color', 'Ancho', 'Disponible (kg)', 'Estado'],
-    [165, 80, 60, 55, 80, 55],
-    input.rows.map((c) => [
-      c.code,
-      BUSINESS_LINE_LABELS[c.businessLine],
-      c.colorName ?? '—',
-      `${c.widthMm} mm`,
-      c.availableKg,
-      COIL_STATUS_LABELS[c.status],
-    ]),
+    columns.headers,
+    columns.widths,
+    columns.rows,
     'No hay bobinas que coincidan con los filtros.',
   );
 
   doc.end();
   return result;
+}
+
+/**
+ * Las columnas del PDF de la lista de bobinas. D-281: la tabla de la pantalla cambió «Ancho»
+ * por «Metro lineal teórico»; el PDF es el archivo de la misma lista, así que **suma** la
+ * columna nueva después del disponible y conserva el ancho — en papel no hay detalle al que ir
+ * a buscarlo. El metro lineal es el `equivalentMeters` del DTO, la cuenta del dominio.
+ */
+export function coilsReportTable(rows: CoilDto[]): {
+  headers: string[];
+  widths: number[];
+  rows: string[][];
+} {
+  return {
+    headers: ['Código', 'Línea', 'Color', 'Ancho', 'Disponible (kg)', 'ML teórico (m)', 'Estado'],
+    // Suman 495: entran en el ancho útil de un A4 con los márgenes del documento.
+    widths: [140, 70, 55, 50, 70, 60, 50],
+    rows: rows.map((c) => [
+      c.code,
+      BUSINESS_LINE_LABELS[c.businessLine],
+      c.colorName ?? '—',
+      `${c.widthMm} mm`,
+      c.availableKg,
+      c.equivalentMeters ?? '—',
+      COIL_STATUS_LABELS[c.status],
+    ]),
+  };
 }
 
 /** Tabla simple de ancho fijo por columna, con salto de página. Devuelve el `y` final. */

@@ -37,6 +37,13 @@ const envSchema = z.object({
   /** Tipo de cambio SUNAT (D-029). Vacío = solo fallback manual (bloqueo B-02, ver PROGRESO.md). */
   APIS_NET_PE_TOKEN: z.string().default(''),
   /**
+   * D-279: RUC y razón social del contribuyente para la cabecera del kardex PEPS (formato 13.1).
+   * El sistema no los guarda en otro lado (el PSE los saca de su propia cuenta). Vacíos, la
+   * cabecera lo dice en vez de inventarlos.
+   */
+  COMPANY_RUC: z.string().default(''),
+  COMPANY_LEGAL_NAME: z.string().default(''),
+  /**
    * Base de apis.net.pe — el mismo proveedor para el padrón de RUC/DNI (D-067) y el tipo de
    * cambio SUNAT (D-029).
    *

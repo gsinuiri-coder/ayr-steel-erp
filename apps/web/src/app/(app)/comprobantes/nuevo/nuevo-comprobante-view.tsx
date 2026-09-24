@@ -34,7 +34,14 @@ import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DocumentActions,
+  DocumentFormHeader,
+  DocumentLinesFooter,
+  DocumentSection,
+  DocumentTotals,
+  FormField,
+} from '@/components/document-form-layout';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -291,171 +298,167 @@ export function NuevoComprobanteView() {
 
   return (
     <RoleGate allow={SALES_ROLES}>
-      <div>
-        <h1 className="text-lg font-semibold">Nuevo comprobante</h1>
-        <p className="text-xs text-muted-foreground">
-          Se crea como borrador. El correlativo se toma recién al emitirlo, así que un borrador
-          abandonado no deja hueco en la numeración.
-        </p>
-      </div>
+      <DocumentFormHeader title="Nuevo comprobante">
+        Se crea como borrador. El correlativo se toma recién al emitirlo, así que un borrador
+        abandonado no deja hueco en la numeración.
+      </DocumentFormHeader>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Datos del comprobante</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
-          <div className="space-y-1">
-            <Label>Tipo</Label>
-            <Select
-              value={docType}
-              onValueChange={(v) => {
-                setDocType(v as FiscalDocType);
-              }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {INVOICE_DOC_TYPES.filter((t) => t !== 'NOTA_CREDITO').map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {FISCAL_DOC_TYPE_LABELS[t]}
+      {/*
+        D-284: la misma grilla de cuatro columnas que cotización y pedido. Primera fila: qué
+        documento es y a quién (Tipo, Pedido, Cliente en dos columnas); segunda: fechas y
+        condición; observaciones a lo ancho al final.
+      */}
+      <DocumentSection title="Datos del comprobante">
+        <FormField>
+          <Label htmlFor="invoice-doc-type">Tipo</Label>
+          <Select
+            value={docType}
+            onValueChange={(v) => {
+              setDocType(v as FiscalDocType);
+            }}
+          >
+            <SelectTrigger id="invoice-doc-type" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {INVOICE_DOC_TYPES.filter((t) => t !== 'NOTA_CREDITO').map((t) => (
+                <SelectItem key={t} value={t}>
+                  {FISCAL_DOC_TYPE_LABELS[t]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
+
+        <FormField>
+          <Label htmlFor="invoice-order">Pedido</Label>
+          <Select value={salesOrderId} onValueChange={setSalesOrderId}>
+            <SelectTrigger id="invoice-order" className="w-full">
+              <SelectValue placeholder="Venta directa" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE}>Venta directa (sin pedido)</SelectItem>
+              {(orders.data ?? [])
+                .filter((o) => o.status !== 'CANCELLED')
+                .map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.code} · {o.customerName}
                   </SelectItem>
                 ))}
-              </SelectContent>
-            </Select>
-          </div>
+            </SelectContent>
+          </Select>
+        </FormField>
 
-          <div className="space-y-1">
-            <Label>Pedido</Label>
-            <Select value={salesOrderId} onValueChange={setSalesOrderId}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Venta directa" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>Venta directa (sin pedido)</SelectItem>
-                {(orders.data ?? [])
-                  .filter((o) => o.status !== 'CANCELLED')
-                  .map((o) => (
-                    <SelectItem key={o.id} value={o.id}>
-                      {o.code} · {o.customerName}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <FormField span={2}>
+          <Label htmlFor="invoice-customer">Cliente</Label>
+          <Select value={customerId} onValueChange={setCustomerId} disabled={salesOrderId !== NONE}>
+            <SelectTrigger id="invoice-customer" className="w-full">
+              <SelectValue placeholder="Elige un cliente" />
+            </SelectTrigger>
+            <SelectContent>
+              {activeCustomers.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name} · {c.docNumber}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
 
-          {salesOrderId !== NONE && linkableDispatches.length > 0 && (
-            <div className="space-y-1">
-              <Label>Despacho que factura</Label>
-              <Select
-                value={dispatchId}
-                onValueChange={(value) => {
-                  dispatchTouched.current = true;
-                  setDispatchId(value);
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Sin declarar" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>Sin declarar</SelectItem>
-                  {linkableDispatches.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.code} · {formatDate(d.dispatchDate)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Enlaza el comprobante con la salida de mercadería que cubre. Queda en el kardex del
-                despacho; si no corresponde a ninguno en particular, dejalo sin declarar.
-              </p>
-            </div>
+        <FormField>
+          <Label htmlFor="invoice-issue-date">Fecha de emisión</Label>
+          <Input
+            id="invoice-issue-date"
+            type="date"
+            value={issueDate}
+            onChange={(e) => {
+              setIssueDate(e.target.value);
+            }}
+          />
+        </FormField>
+
+        <FormField>
+          <Label htmlFor="invoice-payment-terms">Condición de pago</Label>
+          <Select
+            value={paymentTerms}
+            onValueChange={(v) => {
+              setPaymentTerms(v as PaymentTerms);
+              if (v === 'CONTADO') setDueDate('');
+            }}
+          >
+            <SelectTrigger id="invoice-payment-terms" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAYMENT_TERMS.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {PAYMENT_TERMS_LABELS[t]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
+
+        <FormField>
+          <Label htmlFor="invoice-due-date">Vencimiento</Label>
+          <Input
+            id="invoice-due-date"
+            type="date"
+            value={dueDate}
+            disabled={paymentTerms === 'CONTADO'}
+            onChange={(e) => {
+              setDueDate(e.target.value);
+            }}
+          />
+          {paymentTerms === 'CREDITO' && !dueDate && (
+            <p className="text-xs text-muted-foreground">
+              Sin fecha, se calcula con los días de crédito del cliente
+              {customer ? ` (${customer.creditDays})` : ''}.
+            </p>
           )}
+        </FormField>
 
-          <div className="space-y-1">
-            <Label>Cliente</Label>
+        {salesOrderId !== NONE && linkableDispatches.length > 0 && (
+          <FormField>
+            <Label htmlFor="invoice-dispatch">Despacho que factura</Label>
             <Select
-              value={customerId}
-              onValueChange={setCustomerId}
-              disabled={salesOrderId !== NONE}
+              value={dispatchId}
+              onValueChange={(value) => {
+                dispatchTouched.current = true;
+                setDispatchId(value);
+              }}
             >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Elige un cliente" />
+              <SelectTrigger id="invoice-dispatch" className="w-full">
+                <SelectValue placeholder="Sin declarar" />
               </SelectTrigger>
               <SelectContent>
-                {activeCustomers.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name} · {c.docNumber}
+                <SelectItem value={NONE}>Sin declarar</SelectItem>
+                {linkableDispatches.map((d) => (
+                  <SelectItem key={d.id} value={d.id}>
+                    {d.code} · {formatDate(d.dispatchDate)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
+            <p className="text-xs text-muted-foreground">
+              Enlaza el comprobante con la salida de mercadería que cubre. Queda en el kardex del
+              despacho; si no corresponde a ninguno en particular, dejalo sin declarar.
+            </p>
+          </FormField>
+        )}
 
-          <div className="space-y-1">
-            <Label>Fecha de emisión</Label>
-            <Input
-              type="date"
-              value={issueDate}
-              onChange={(e) => {
-                setIssueDate(e.target.value);
-              }}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label>Condición de pago</Label>
-            <Select
-              value={paymentTerms}
-              onValueChange={(v) => {
-                setPaymentTerms(v as PaymentTerms);
-                if (v === 'CONTADO') setDueDate('');
-              }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PAYMENT_TERMS.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {PAYMENT_TERMS_LABELS[t]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Vencimiento</Label>
-            <Input
-              type="date"
-              value={dueDate}
-              disabled={paymentTerms === 'CONTADO'}
-              onChange={(e) => {
-                setDueDate(e.target.value);
-              }}
-            />
-            {paymentTerms === 'CREDITO' && !dueDate && (
-              <p className="text-xs text-muted-foreground">
-                Sin fecha, se calcula con los días de crédito del cliente
-                {customer ? ` (${customer.creditDays})` : ''}.
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2 md:col-span-3">
-            <Label>Observaciones</Label>
-            <Input
-              value={notes}
-              maxLength={500}
-              onChange={(e) => {
-                setNotes(e.target.value);
-              }}
-            />
-          </div>
-        </CardContent>
-      </Card>
+        <FormField span={4}>
+          <Label htmlFor="invoice-notes">Observaciones</Label>
+          <Input
+            id="invoice-notes"
+            value={notes}
+            maxLength={500}
+            onChange={(e) => {
+              setNotes(e.target.value);
+            }}
+          />
+        </FormField>
+      </DocumentSection>
 
       {/* D-077: el tope de la boleta genérica, dicho antes de mandar y no como error del API. */}
       {factureNeedsRuc && !isGenericCustomer && (
@@ -509,42 +512,45 @@ export function NuevoComprobanteView() {
 
       {salesOrderId !== NONE ? (
         <section className="space-y-2">
-          <h2 className="text-sm font-medium">Líneas del pedido</h2>
-          <p className="text-sm text-muted-foreground">
-            Se propone facturar todo lo pendiente. Baja la cantidad para facturar en partes; deja
-            una línea en blanco para no incluirla.
-          </p>
+          <div>
+            <h2 className="text-sm font-medium">Líneas del pedido</h2>
+            <p className="text-xs text-muted-foreground">
+              Se propone facturar todo lo pendiente. Baja la cantidad para facturar en partes; deja
+              una línea en blanco para no incluirla.
+            </p>
+          </div>
           <div className="rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Producto</TableHead>
-                  <TableHead className="text-right">Pedido</TableHead>
-                  <TableHead className="text-right">Ya facturado</TableHead>
-                  <TableHead className="text-right">Pendiente</TableHead>
-                  <TableHead className="text-right">Valor unitario</TableHead>
-                  <TableHead className="w-36 text-right">A facturar</TableHead>
+                  <TableHead className="w-[12%] text-right">Pedido</TableHead>
+                  <TableHead className="w-[12%] text-right">Ya facturado</TableHead>
+                  <TableHead className="w-[12%] text-right">Pendiente</TableHead>
+                  <TableHead className="w-[14%] text-right">Valor unitario</TableHead>
+                  <TableHead className="w-[14%] text-right">A facturar</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {(progress.data?.lines ?? []).map((l) => (
                   <TableRow key={l.salesOrderItemId}>
-                    <TableCell>
+                    <TableCell className="whitespace-normal">
                       <div className="font-medium">{l.productSku}</div>
                       <div className="text-xs text-muted-foreground">{l.description}</div>
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right tabular-nums">
                       {l.qty} {unitSymbol(l.unit)}
                     </TableCell>
-                    <TableCell className="text-right">{l.invoicedQty}</TableCell>
-                    <TableCell className="text-right">{l.pendingInvoiceQty}</TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right tabular-nums">{l.invoicedQty}</TableCell>
+                    <TableCell className="text-right tabular-nums">{l.pendingInvoiceQty}</TableCell>
+                    <TableCell className="text-right tabular-nums">
                       {formatMoney(l.unitPricePen, 'PEN', 4)}
                     </TableCell>
                     <TableCell>
                       <Input
                         inputMode="decimal"
-                        className="text-right"
+                        className="text-right tabular-nums"
+                        aria-label={`A facturar de ${l.productSku}`}
                         disabled={Number(l.pendingInvoiceQty) <= 0}
                         value={qtyByLine[l.salesOrderItemId] ?? ''}
                         onChange={(e) => {
@@ -571,88 +577,121 @@ export function NuevoComprobanteView() {
       ) : (
         <section className="space-y-2">
           <h2 className="text-sm font-medium">Líneas</h2>
-          <div className="space-y-2">
-            {freeLines.map((line, i) => (
-              // Clave estable y no el índice: al borrar una línea del medio, con `key={i}`
-              // los inputs de abajo perdían el foco y el estado del DOM.
-              <div key={line.key} className="flex flex-wrap items-end gap-2">
-                <div className="min-w-64 flex-1 space-y-1">
-                  <Label className="text-xs">Descripción</Label>
-                  <Input
-                    value={line.description}
-                    maxLength={240}
-                    onChange={(e) => {
-                      setFreeLines((prev) =>
-                        prev.map((l, j) => (j === i ? { ...l, description: e.target.value } : l)),
-                      );
-                    }}
-                  />
-                </div>
-                <div className="w-28 space-y-1">
-                  <Label className="text-xs">Cantidad</Label>
-                  <Input
-                    inputMode="decimal"
-                    value={line.qty}
-                    onChange={(e) => {
-                      setFreeLines((prev) =>
-                        prev.map((l, j) => (j === i ? { ...l, qty: e.target.value } : l)),
-                      );
-                    }}
-                  />
-                </div>
-                <div className="w-36 space-y-1">
-                  <Label className="text-xs">Unidad</Label>
-                  {/*
-                    Del catálogo 03 de SUNAT y no texto libre: la unidad viaja tal cual al
-                    PSE, y un "und" escrito a mano vuelve rechazado con el correlativo ya
-                    gastado (D-072).
-                  */}
-                  <Select
-                    value={line.unit}
-                    onValueChange={(v) => {
-                      setFreeLines((prev) => prev.map((l, j) => (j === i ? { ...l, unit: v } : l)));
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {UNITS.map((u) => (
-                        <SelectItem key={u} value={u}>
-                          {UNIT_LABELS[u]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="w-36 space-y-1">
-                  <Label className="text-xs">Valor unitario (sin IGV)</Label>
-                  <Input
-                    inputMode="decimal"
-                    value={line.unitPricePen}
-                    onChange={(e) => {
-                      setFreeLines((prev) =>
-                        prev.map((l, j) => (j === i ? { ...l, unitPricePen: e.target.value } : l)),
-                      );
-                    }}
-                  />
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={freeLines.length === 1}
-                  onClick={() => {
-                    setFreeLines((prev) => prev.filter((_, j) => j !== i));
-                  }}
-                >
-                  Quitar
-                </Button>
-              </div>
-            ))}
+          {/*
+            D-284: una tabla con una etiqueta por columna, como las líneas de cotización y
+            pedido, en vez de filas sueltas que repetían los rótulos en cada renglón.
+          */}
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Descripción</TableHead>
+                  <TableHead className="w-[12%] text-right">Cantidad</TableHead>
+                  <TableHead className="w-[16%]">Unidad</TableHead>
+                  <TableHead className="w-[16%] text-right">Valor unitario (sin IGV)</TableHead>
+                  <TableHead className="w-[7%]" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {freeLines.map((line, i) => (
+                  // Clave estable y no el índice: al borrar una línea del medio, con `key={i}`
+                  // los inputs de abajo perdían el foco y el estado del DOM.
+                  <TableRow key={line.key} className="align-top">
+                    <TableCell>
+                      <Input
+                        aria-label={`Descripción de la línea ${i + 1}`}
+                        value={line.description}
+                        maxLength={240}
+                        onChange={(e) => {
+                          setFreeLines((prev) =>
+                            prev.map((l, j) =>
+                              j === i ? { ...l, description: e.target.value } : l,
+                            ),
+                          );
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        inputMode="decimal"
+                        className="text-right tabular-nums"
+                        aria-label={`Cantidad de la línea ${i + 1}`}
+                        value={line.qty}
+                        onChange={(e) => {
+                          setFreeLines((prev) =>
+                            prev.map((l, j) => (j === i ? { ...l, qty: e.target.value } : l)),
+                          );
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {/*
+                        Del catálogo 03 de SUNAT y no texto libre: la unidad viaja tal cual al
+                        PSE, y un "und" escrito a mano vuelve rechazado con el correlativo ya
+                        gastado (D-072).
+                      */}
+                      <Select
+                        value={line.unit}
+                        onValueChange={(v) => {
+                          setFreeLines((prev) =>
+                            prev.map((l, j) => (j === i ? { ...l, unit: v } : l)),
+                          );
+                        }}
+                      >
+                        <SelectTrigger
+                          className="w-full"
+                          aria-label={`Unidad de la línea ${i + 1}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {UNITS.map((u) => (
+                            <SelectItem key={u} value={u}>
+                              {UNIT_LABELS[u]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        inputMode="decimal"
+                        className="text-right tabular-nums"
+                        aria-label={`Valor unitario de la línea ${i + 1}`}
+                        value={line.unitPricePen}
+                        onChange={(e) => {
+                          setFreeLines((prev) =>
+                            prev.map((l, j) =>
+                              j === i ? { ...l, unitPricePen: e.target.value } : l,
+                            ),
+                          );
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={freeLines.length === 1}
+                        onClick={() => {
+                          setFreeLines((prev) => prev.filter((_, j) => j !== i));
+                        }}
+                      >
+                        Quitar
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
+        </section>
+      )}
+
+      <DocumentLinesFooter>
+        {salesOrderId === NONE && (
           <Button
             variant="outline"
-            size="sm"
             onClick={() => {
               setFreeLines((prev) => [
                 ...prev,
@@ -668,18 +707,18 @@ export function NuevoComprobanteView() {
           >
             Agregar línea
           </Button>
-        </section>
-      )}
+        )}
+        {totals && (
+          <DocumentTotals
+            subtotal={totals.subtotal.toFixed(4)}
+            igv={totals.igv.toFixed(4)}
+            total={totals.total.toFixed(4)}
+            igvLabel="IGV"
+          />
+        )}
+      </DocumentLinesFooter>
 
-      {totals && (
-        <div className="flex justify-end gap-6 text-sm">
-          <span>Subtotal {formatMoney(totals.subtotal.toFixed(4))}</span>
-          <span>IGV {formatMoney(totals.igv.toFixed(4))}</span>
-          <span className="font-semibold">Total {formatMoney(totals.total.toFixed(4))}</span>
-        </div>
-      )}
-
-      <div className="flex justify-end gap-2">
+      <DocumentActions>
         <Button
           variant="outline"
           onClick={() => {
@@ -699,7 +738,7 @@ export function NuevoComprobanteView() {
         >
           Crear borrador
         </Button>
-      </div>
+      </DocumentActions>
     </RoleGate>
   );
 }

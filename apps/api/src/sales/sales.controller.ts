@@ -66,6 +66,7 @@ import {
   type SalesOrderListItemDto,
   type SalesOrderQuery,
   type SellableCoilDto,
+  type UnavailableSellableCoilDto,
   type StockPanelDto,
   type StockPanelQuery,
   type SellableCoilQuery,
@@ -479,6 +480,18 @@ export class SalesController {
     @Query(new ZodValidationPipe(sellableCoilQuerySchema)) query: SellableCoilQuery,
   ): Promise<SellableCoilDto[]> {
     return this.orders.findSellableCoils(actor, query);
+  }
+
+  /**
+   * D-282: las bobinas con saldo que no se venden enteras (montadas o reservadas), con el
+   * motivo. Mismo filtro y mismo rol que `sellable-coils`; sin costos.
+   */
+  @Get('sellable-coils/unavailable')
+  findUnavailableSellableCoils(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(sellableCoilQuerySchema)) query: SellableCoilQuery,
+  ): Promise<UnavailableSellableCoilDto[]> {
+    return this.orders.findUnavailableSellableCoils(actor, query);
   }
 
   /**

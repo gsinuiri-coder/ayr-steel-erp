@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
-  SALES_ORDER_STATUS_LABELS,
-  SALES_ORDER_STATUSES,
+  ORDER_STAGE_LABELS,
+  ORDER_STAGES,
   Role,
   type PaginatedResult,
   type SalesOrderListItemDto,
@@ -13,7 +13,7 @@ import {
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
-import { SalesOrderStatusBadge } from '@/components/sales/status-badges';
+import { OrderStageBadge } from '@/components/sales/status-badges';
 import { useDebounced } from '@/lib/use-debounced';
 import { usePagination } from '@/lib/use-pagination';
 import { Button } from '@/components/ui/button';
@@ -63,7 +63,7 @@ export function PedidosView() {
   }, [status, debouncedSearch, resetPage]);
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (status !== ALL) params.set('status', status);
+  if (status !== ALL) params.set('stage', status);
   if (debouncedSearch) params.set('search', debouncedSearch);
 
   const orders = useQuery({
@@ -94,7 +94,7 @@ export function PedidosView() {
             case 'total':
               return compareDecimalBy(sort.dir, a.totalPen, b.totalPen);
             case 'status':
-              return compareBy(sort.dir, a.status, b.status);
+              return compareBy(sort.dir, a.stage, b.stage);
             default:
               return 0;
           }
@@ -129,9 +129,9 @@ export function PedidosView() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>Todos los estados</SelectItem>
-            {SALES_ORDER_STATUSES.map((s) => (
+            {ORDER_STAGES.map((s) => (
               <SelectItem key={s} value={s}>
-                {SALES_ORDER_STATUS_LABELS[s]}
+                {ORDER_STAGE_LABELS[s]}
               </SelectItem>
             ))}
           </SelectContent>
@@ -242,7 +242,7 @@ export function PedidosView() {
                   {o.activeReservations}
                 </TableCell>
                 <TableCell>
-                  <SalesOrderStatusBadge status={o.status} />
+                  <OrderStageBadge stage={o.stage} />
                 </TableCell>
               </TableRow>
             ))}

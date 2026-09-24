@@ -4,6 +4,7 @@ import { Role } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import type { InventoryValuationService } from './inventory-valuation.service';
+import type { KardexPepsService } from './kardex-peps.service';
 import { ReportsController } from './reports.controller';
 import type { ReportsService } from './reports.service';
 import type { SalesMarginService } from './sales-margin.service';
@@ -64,16 +65,38 @@ const MARGIN = {
   },
 };
 
+const EMPTY_BALANCE = { qty: '0.000', unitCost: '0.0000', total: '0.0000', layers: [] };
+const PEPS = {
+  from: '2026-09-01',
+  to: '2026-09-30',
+  companyRuc: '',
+  companyName: '',
+  itemCode: 'BOB-001',
+  itemDescription: 'Bobina GALV-0.50',
+  existenceType: '03 - MATERIAS PRIMAS',
+  unitCode: '01 - KILOGRAMOS',
+  peps: {
+    opening: EMPTY_BALANCE,
+    rows: [],
+    closing: EMPTY_BALANCE,
+    totals: { inQty: '0.000', inTotal: '0.0000', outQty: '0.000', outTotal: '0.0000' },
+    warnings: [],
+  },
+  documents: new Map(),
+};
+
 function build() {
   const reports = { coilsByMonth: jest.fn().mockResolvedValue({ rows: [] }) };
   const inventoryValuation = { valuation: jest.fn().mockResolvedValue(VALUATION) };
   const salesMargin = { salesMargin: jest.fn().mockResolvedValue(MARGIN) };
+  const kardexPeps = { report: jest.fn().mockResolvedValue(PEPS) };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
     salesMargin as unknown as SalesMarginService,
+    kardexPeps as unknown as KardexPepsService,
   );
-  return { controller, reports, inventoryValuation, salesMargin };
+  return { controller, reports, inventoryValuation, salesMargin, kardexPeps };
 }
 
 describe('ReportsController', () => {
@@ -86,6 +109,7 @@ describe('ReportsController', () => {
     expect(rolesOf('salesMarginReport')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('inventoryValuationXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('salesMarginXlsxFile')).toEqual([Role.ADMINISTRADOR]);
+    expect(rolesOf('kardexPepsXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
   });
 
@@ -130,5 +154,21 @@ describe('ReportsController', () => {
     expect(salesMargin.salesMargin).toHaveBeenCalledTimes(1);
     expect(salesMargin.salesMargin).toHaveBeenCalledWith(query);
     expect(res.headers['Content-Disposition']).toMatch(/^attachment; filename=".+\.xlsx"$/);
+  });
+
+  it('el xlsx del kardex PEPS pide el ítem y el rango y viaja como adjunto (D-279)', async () => {
+    const { controller, kardexPeps } = build();
+    const res = fakeResponse();
+    const query = {
+      itemType: 'COIL' as const,
+      itemId: '11111111-1111-1111-1111-111111111111',
+      from: '2026-09-01',
+      to: '2026-09-30',
+    };
+    await controller.kardexPepsXlsxFile(query, res);
+    expect(kardexPeps.report).toHaveBeenCalledWith(query);
+    expect(res.headers['Content-Disposition']).toBe(
+      'attachment; filename="kardex-peps-BOB-001-2026-09-01-2026-09-30.xlsx"',
+    );
   });
 });
