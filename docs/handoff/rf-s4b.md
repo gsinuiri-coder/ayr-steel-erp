@@ -84,6 +84,10 @@ con OK del dueño comando por comando (D-251).
 
 Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3 regla 11.
 
+0. **[Agente] Antes del primer comando: `.env.setup` en el worktree** desde el que se corre la
+   ventana, **sin mostrar su contenido**: `git check-ignore -q .env.setup && test -f .env.setup
+&& echo presente`. Las CLI toman de ahí `ADMIN_EMAIL` y la conexión de Neon; un worktree
+   nuevo no lo trae (el ensayo en demo se cortó por eso). Si falta, lo copia el dueño.
 1. **[Dueño] Respaldo Neon** de `production`: rama `respaldo-pre-rf-s4b-AAAAMMDD` (patrón de
    `docs/ENTORNOS.md`, vía `scripts/lib.mjs#run` con `quiet: true` y `--output json`).
 2. **[Agente] PR + CI verde** (PR #14; CI verde job por job sobre el SHA a desplegar).

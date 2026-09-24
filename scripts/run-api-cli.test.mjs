@@ -17,6 +17,8 @@ test('run-api-cli apaga la cola, el PSE y R2 del proceso hijo', () => {
       R2_SECRET_ACCESS_KEY: '',
       R2_BUCKET: '',
       R2_ENDPOINT: '',
+      NUBEFACT_URL: '',
+      NUBEFACT_TOKEN: '',
     },
   );
 });
@@ -26,4 +28,10 @@ test('las salidas apagadas pisan al entorno heredado, no al revés', () => {
   const off = source.indexOf('...EXTERNAL_OUTPUTS_OFF,');
   assert.ok(inherited > -1 && off > -1, 'el entorno del hijo tiene que armarse con los dos');
   assert.ok(off > inherited, 'EXTERNAL_OUTPUTS_OFF tiene que ir después de process.env');
+});
+
+// La CLI levanta AppModule, que exige JWT_SECRET: uno al azar por corrida, nunca el heredado.
+test('el hijo recibe un JWT_SECRET propio, al azar, después del entorno heredado', () => {
+  assert.ok(source.includes("JWT_SECRET: randomBytes(32).toString('hex')"));
+  assert.ok(source.indexOf('JWT_SECRET: randomBytes') > source.indexOf('...process.env,'));
 });

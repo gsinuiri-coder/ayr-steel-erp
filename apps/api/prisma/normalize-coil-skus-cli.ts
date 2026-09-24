@@ -116,7 +116,11 @@ async function main(): Promise<void> {
   }
   await prisma.$disconnect();
 
-  const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
+  const app = await NestFactory.createApplicationContext(AppModule, {
+    logger: false,
+    // Sin esto, un módulo que falla al iniciar cierra el proceso **sin mensaje** (logger apagado).
+    abortOnError: false,
+  });
   try {
     const service = app.get(CoilSkuNormalizationService);
     if (revert) {

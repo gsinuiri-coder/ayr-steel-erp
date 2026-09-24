@@ -6,6 +6,7 @@
 // Nest entero y esbuild no emite bien `emitDecoratorMetadata`.
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
 import { localTestDbUrls, LOCAL_ADMIN_EMAIL } from './local-docker-env.mjs';
 
@@ -28,6 +29,9 @@ export const EXTERNAL_OUTPUTS_OFF = Object.freeze({
   R2_SECRET_ACCESS_KEY: '',
   R2_BUCKET: '',
   R2_ENDPOINT: '',
+  // Cerradura extra sobre el PSE: sin credenciales, aunque algo lo llamara no tendría a quién.
+  NUBEFACT_URL: '',
+  NUBEFACT_TOKEN: '',
 });
 
 const NEON_BRANCHES = new Set(['dev', 'demo', 'production']);
@@ -80,6 +84,10 @@ export function runApiCli({ compiled, what, pathFlags = new Set() }) {
       ? (process.env.ADMIN_EMAIL ?? LOCAL_ADMIN_EMAIL)
       : readEnvFile().ADMIN_EMAIL,
     ...EXTERNAL_OUTPUTS_OFF,
+    // `AppModule` valida el entorno y exige `JWT_SECRET`, pero la CLI no emite ni verifica
+    // tokens: uno al azar por corrida, nunca el de la rama. Sin esto, contra Neon la CLI moría
+    // en silencio al arrancar (lo mostró el ensayo en demo de RF-S4b).
+    JWT_SECRET: randomBytes(32).toString('hex'),
   };
   if (localUrls) console.error(`Base de pruebas: ${branch} (desde el ${localUrls.source})`);
 
