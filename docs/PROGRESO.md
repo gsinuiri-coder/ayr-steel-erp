@@ -32,7 +32,33 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   mergeado en la misma ventana sin pase de revisión.
 - **Correcciones del delta RF-S4b** (2026-09-24, PR #15 y `fix/rf-s4b-delta-2`). D-263 a
   D-266, M2 a M6. Autorrevisión por subagentes nuevos (sin P0/P1), el mismo modelo que escribió.
-  Motivo: esquema de un solo agente, sin segundo revisor disponible.
+  Motivo: esquema de un solo agente, sin segundo revisor disponible. **2026-09-24, post-S4b:**
+  revisión por un **segundo modelo** (Sonnet, contexto limpio) sobre `f60ab6c..e27570a`
+  (`docs/revision/rf-s4b-segundo-modelo.md`): 0 P0, 1 P1 (SM-P1-1, corregido en D-267), 4 P2.
+  Es otro modelo, no otra persona: sigue pendiente una revisión humana independiente.
+- **Correcciones post-RF-S4b** (2026-09-24, rama `fix/post-s4b`, PR #17). D-267 a D-269.
+  Autorrevisión por un subagente nuevo del mismo modelo que escribió. Motivo: el mismo.
+
+## Correcciones post-RF-S4b (2026-09-24)
+
+Handoff: `docs/handoff/fix-post-s4b.md`. UAT: `docs/uat/fix-post-s4b.md`. Rama `fix/post-s4b`.
+
+- **SM-P1-1 → D-267:** el selector de bobina no nombra la cotización de otro vendedor a un
+  VENDEDOR. Unitarios + E2E con dos vendedores (`coil-pool-alcance-vendedor-sm-p1-1.spec.ts`).
+- **P2-A/B/C → D-269:** la parte que cierra también con las otras en borrador; emparejamiento
+  por posición solo con la misma unidad; Y → X → Y no cuenta como editada a propósito.
+- **SM-P2-1** (cota de ~S/ 0.02 de `paperAmounts`, comentada) y **SM-P2-2** (test de tres partes
+  con la del medio a otro precio).
+- **D-268:** «Cotizar por metro» en la plancha importada por plancha, con el total de antes y el
+  de después, y un deshacer.
+
+**Pendientes que deja:**
+
+- **P2-E (`ask` incompleto) no se aplicó.** Editar `.claude/settings.json` lo bloqueó el
+  clasificador de permisos del agente (automodificación). Lo tiene que aplicar el dueño; las
+  reglas propuestas están en el handoff.
+- **E2E local bloqueado otra vez:** el `nuxt dev` de otro proyecto del dueño sigue en
+  `[::1]:3000`. La suite corrió en CI.
 
 ## Correcciones del delta RF-S4b (2026-09-24)
 
@@ -66,7 +92,8 @@ Informe: `docs/revision/rf-s4b-delta.md`. Handoff: `docs/handoff/fix-rf-s4b-delt
   `[::1]:3000` y Playwright lo reusa. No se mató (no es de este repo). El E2E de D-265 y el
   resto de la suite corrieron en CI.
 - **P2 de la autorrevisión del PR #16** (sin P0/P1; P2-D, la fuga teórica por un JSON roto en
-  la rotación, se corrigió en el PR):
+  la rotación, se corrigió en el PR). **A, B, C y F se corrigieron en `fix/post-s4b` (D-267,
+  D-269); E sigue pendiente (ver «Correcciones post-RF-S4b»).** «Volver a por metro»: D-268.
   - **A.** D-265 solo cierra con el resto si las partes anteriores ya están **emitidas**: dos
     borradores por mitades se recalculan los dos (los borradores no consumen línea, D-073).
   - **B.** El segundo pase de `recordPriceChanges` (D-264) puede emparejar una línea quitada con
