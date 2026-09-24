@@ -51,7 +51,13 @@ async function call(fetchImpl, sleep, { method, url, apiKey, what, attempts, del
       continue;
     }
     if (!res.ok) throw new Error(`${what}: la API de Neon respondió HTTP ${res.status}.`);
-    return res.json();
+    // El error de un JSON roto cita un fragmento del cuerpo, y el cuerpo trae la contraseña:
+    // se reemplaza por un mensaje fijo (autorrevisión del PR #16, P2-D).
+    try {
+      return await res.json();
+    } catch {
+      throw new Error(`${what}: la API de Neon devolvió una respuesta ilegible.`);
+    }
   }
 }
 

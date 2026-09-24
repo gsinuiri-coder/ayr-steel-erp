@@ -65,6 +65,20 @@ Informe: `docs/revision/rf-s4b-delta.md`. Handoff: `docs/handoff/fix-rf-s4b-delt
 - **E2E local bloqueado en esta sesión:** un `nuxt dev` de otro proyecto del dueño escucha en
   `[::1]:3000` y Playwright lo reusa. No se mató (no es de este repo). El E2E de D-265 y el
   resto de la suite corrieron en CI.
+- **P2 de la autorrevisión del PR #16** (sin P0/P1; P2-D, la fuga teórica por un JSON roto en
+  la rotación, se corrigió en el PR):
+  - **A.** D-265 solo cierra con el resto si las partes anteriores ya están **emitidas**: dos
+    borradores por mitades se recalculan los dos (los borradores no consumen línea, D-073).
+  - **B.** El segundo pase de `recordPriceChanges` (D-264) puede emparejar una línea quitada con
+    otra agregada en la misma posición y registrar un «cambio de precio» entre productos
+    distintos. Seguro para el barrido (lo deja en (c)); ruido en el historial. Idea: exigir la
+    misma unidad.
+  - **C.** Volver al precio original (Y → X → Y) deja el producto como «editado a propósito» y el
+    barrido no corrige su redondeo. Seguro, conservador.
+  - **E.** El `ask` no cubre `node ./scripts/…`, rutas absolutas ni
+    `pnpm --filter @ayr/api exec tsx prisma/e2e-admin.ts`/`cleanup-e2e-users.ts`.
+  - **F.** El selector del pool muestra «atada a COT-…» también a un VENDEDOR con alcance, aunque
+    la cotización sea de otro vendedor (solo el código).
 
 ## Ventana de producción RF-S4b (2026-09-24, 00:06–01:05 Lima)
 

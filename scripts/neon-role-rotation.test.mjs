@@ -124,3 +124,18 @@ test('423 sin fin se rinde después de los intentos pedidos', async () => {
   );
   assert.equal(neon.calls.length, 4);
 });
+
+test('un cuerpo ilegible no filtra la contraseña en el error', async () => {
+  const fetchImpl = async () => ({
+    status: 200,
+    ok: true,
+    json: async () => {
+      throw new SyntaxError('Unexpected token in JSON: {"password":"la-de-production"');
+    },
+  });
+  await assert.rejects(rotateRolePassword({ ...base, fetchImpl }), (err) => {
+    assert.match(err.message, /respuesta ilegible/);
+    assert.doesNotMatch(err.message, /la-de-production/);
+    return true;
+  });
+});
