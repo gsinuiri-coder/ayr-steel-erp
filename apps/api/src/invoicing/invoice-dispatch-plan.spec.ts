@@ -143,3 +143,14 @@ describe('allocateUndispatched (D-278)', () => {
     ]);
   });
 });
+
+describe('planInvoiceDispatches — bobinas (autorrevisión P2-3)', () => {
+  it('una bobina de la carga inicial no se entrega sin salida: va a revisión', () => {
+    const plan = planInvoiceDispatches(
+      [invoice('F1', '2026-08-11', [{ itemKey: 'COIL:b1', qty: '1', reserveQty: '3000' }])],
+      new Map([['COIL:b1', kardex('2026-09-22', [['2026-09-22', 3000]])]]),
+    );
+    expect(plan[0]?.lines[0]).toMatchObject({ action: 'REVIEW' });
+    expect(plan[0]?.lines[0]?.reason).toContain('inventario inicial');
+  });
+});

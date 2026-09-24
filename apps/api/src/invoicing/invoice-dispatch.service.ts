@@ -116,9 +116,18 @@ export class InvoiceDispatchService {
   ): Promise<InvoiceDispatchResultDto> {
     const exists = await tx.fiscalDocument.findUnique({
       where: { id: invoiceId },
-      select: { id: true },
+      select: { id: true, salesOrderId: true },
     });
     if (exists === null) throw new NotFoundException('Comprobante no encontrado');
+    // Lock del pedido **antes** de planificar (autorrevisión P1-1): dos ejecuciones a la vez
+    // planificaban lo mismo y la segunda, al pasar el lock de `createInTx`, solo veía el
+    // pendiente del pedido y despachaba otra vez lo ya despachado. Mismo lock y mismo orden que
+    // `createInTx`, que lo vuelve a tomar sin costo.
+    if (exists.salesOrderId !== null) {
+      await tx.$queryRaw`
+        SELECT "id" FROM "sales_orders" WHERE "id" = ${exists.salesOrderId}::uuid FOR UPDATE
+      `;
+    }
     const plan = await this.buildPlan(tx, { id: invoiceId });
     const invoice = plan.invoices[0];
     if (invoice === undefined) {
@@ -253,6 +262,8 @@ export class InvoiceDispatchService {
         ...where,
         docType: { in: SALE_DOCS },
         status: { in: LIVE },
+        // Una versión archivada por reimportación no factura nada (como en invoicing.service).
+        archivedAt: null,
         salesOrder: { status: { not: SalesOrderStatus.CANCELLED } },
       },
       select: {
@@ -292,7 +303,7 @@ export class InvoiceDispatchService {
       tx.fiscalDocumentItem.findMany({
         where: {
           salesOrderItemId: { in: orderItemIds },
-          document: { docType: { in: SALE_DOCS }, status: { in: LIVE } },
+          document: { docType: { in: SALE_DOCS }, status: { in: LIVE }, archivedAt: null },
         },
         select: {
           id: true,
@@ -389,6 +400,17 @@ export class InvoiceDispatchService {
     }
 
     const planInputs: PlanInvoice[] = [];
+    // Lo fabricado y reservado de una línea se reparte entre sus comprobantes en orden de
+    // emisión (autorrevisión P2-2): sin acumular, el dry-run prometía dos salidas que el
+    // `--execute` después no podía hacer.
+    const heldUsed = new Map<string, Decimal>();
+    invoices.sort((a, b) =>
+      day(a.issueDate) === day(b.issueDate)
+        ? (a.number ?? '').localeCompare(b.number ?? '')
+        : day(a.issueDate) < day(b.issueDate)
+          ? -1
+          : 1,
+    );
     const meta = new Map<string, { orderCode: string; sellerId: string | null }>();
     for (const inv of invoices) {
       if (inv.salesOrderId === null || inv.salesOrder === null) continue;
@@ -422,13 +444,17 @@ export class InvoiceDispatchService {
             const reserveQty = t.fromProduction
               ? qty
               : proratedQty(qty, item.qty.toString(), item.reserveQty.toString());
-            target =
-              t.held !== null && reserveQty.gt(t.held)
-                ? {
-                    ok: false,
-                    reason: `Hay ${t.held.toFixed(3)} ${t.unit} fabricados y reservados para la línea y se facturaron ${reserveQty.toFixed(3)}: falta producir`,
-                  }
-                : { ok: true, itemKey: `${t.itemType}:${t.itemId}`, reserveQty };
+            const used = heldUsed.get(orderItemId) ?? new Decimal(0);
+            const left = t.held === null ? null : Decimal.max(new Decimal(0), t.held.minus(used));
+            if (left !== null && reserveQty.gt(left)) {
+              target = {
+                ok: false,
+                reason: `Hay ${left.toFixed(3)} ${t.unit} fabricados y reservados para la línea y se facturaron ${reserveQty.toFixed(3)}: falta producir`,
+              };
+            } else {
+              if (left !== null) heldUsed.set(orderItemId, used.plus(reserveQty));
+              target = { ok: true, itemKey: `${t.itemType}:${t.itemId}`, reserveQty };
+            }
           }
           return {
             orderItemId,
@@ -455,7 +481,8 @@ export class InvoiceDispatchService {
     const [movements, balances, products, coils] = await Promise.all([
       tx.inventoryMovement.findMany({
         where: { itemId: { in: ids } },
-        orderBy: [{ operationDate: 'asc' }, { id: 'asc' }],
+        // El mismo orden que el kardex: fecha de operación, grabación, id.
+        orderBy: [{ operationDate: 'asc' }, { at: 'asc' }, { id: 'asc' }],
         select: {
           itemType: true,
           itemId: true,

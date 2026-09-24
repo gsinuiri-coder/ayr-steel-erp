@@ -141,6 +141,21 @@ export function planInvoiceDispatches(
       }
       const { itemKey, reserveQty } = line.target;
       const kardex = kardexByItem.get(itemKey) ?? { openingDate: null, movements: [] };
+      // Una bobina tiene identidad: si estaba en la carga inicial, estaba en el almacén cuando
+      // se contó y no pudo salir antes. Entregarla sin salida la dejaría vendible otra vez.
+      if (
+        kardex.openingDate !== null &&
+        inv.issueDate < kardex.openingDate &&
+        itemKey.startsWith('COIL:')
+      ) {
+        return {
+          ...base,
+          reserveQty,
+          itemKey,
+          action: 'REVIEW',
+          reason: `La bobina está en el inventario inicial (${kardex.openingDate}) y el comprobante es anterior`,
+        };
+      }
       if (kardex.openingDate !== null && inv.issueDate < kardex.openingDate) {
         return {
           ...base,

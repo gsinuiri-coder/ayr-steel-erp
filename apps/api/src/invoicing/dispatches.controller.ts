@@ -69,6 +69,7 @@ export class DispatchesController {
    * rechaza a cualquier otro rol cuando la emisión no es de hoy.
    */
   @Post('at-issue-date/:invoiceId')
+  @Roles(Role.ADMINISTRADOR)
   executeAtIssueDate(
     @CurrentUser() actor: RequestUser,
     @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
