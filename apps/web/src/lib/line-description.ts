@@ -11,6 +11,11 @@ export { MAX_LINE_DESCRIPTION };
 export interface DescriptionDraft {
   description: string;
   descriptionEdited: boolean;
+  /**
+   * Lo guardado no trae el sufijo de largos que arma el API (el texto del papel importado,
+   * D-152): mientras nadie lo toque se reenvía tal cual, sin agregarle largos. Editarlo lo apaga.
+   */
+  descriptionVerbatim?: boolean;
 }
 
 function piecesSuffix(piecesText: string): string {
@@ -24,8 +29,14 @@ export function descriptionFromStored(
   piecesText: string,
 ): DescriptionDraft {
   const suffix = piecesSuffix(piecesText);
-  const base = suffix !== '' && stored.endsWith(suffix) ? stored.slice(0, -suffix.length) : stored;
-  return { description: base, descriptionEdited: base !== productName };
+  const hasSuffix = suffix !== '' && stored.endsWith(suffix);
+  const base = hasSuffix ? stored.slice(0, -suffix.length) : stored;
+  if (base === productName) return { description: base, descriptionEdited: false };
+  // Con largos y sin su sufijo: no lo escribió este formulario. Se conserva tal cual.
+  if (suffix !== '' && !hasSuffix) {
+    return { description: stored, descriptionEdited: true, descriptionVerbatim: true };
+  }
+  return { description: base, descriptionEdited: true };
 }
 
 /**
@@ -38,6 +49,9 @@ export function descriptionToSend(
   piecesText: string,
 ): { ok: true; value: string | undefined } | { ok: false; reason: string } {
   const base = draft.description.trim();
+  if (draft.descriptionVerbatim === true && base !== '') {
+    return { ok: true, value: base.slice(0, MAX_LINE_DESCRIPTION) };
+  }
   if (!draft.descriptionEdited || base === '' || base === productName) {
     return { ok: true, value: undefined };
   }

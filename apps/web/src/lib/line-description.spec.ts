@@ -61,3 +61,40 @@ describe('line-description', () => {
     expect(MAX_LINE_DESCRIPTION).toBe(240);
   });
 });
+
+/**
+ * Autorrevisión de D-283 (P1-2): el importador guarda el texto del papel sin el sufijo de
+ * largos. Mientras nadie lo toque, se reenvía tal cual: guardar la cotización no le agrega
+ * largos y nunca puede bloquear el guardado por una línea que nadie editó.
+ */
+describe('line-description — texto guardado sin sufijo de largos', () => {
+  const paper = 'P'.repeat(MAX_LINE_DESCRIPTION);
+
+  it('se reconoce como texto a conservar, no como edición', () => {
+    expect(descriptionFromStored(paper, 'Teja roja', '2 × 4.20 m')).toEqual({
+      description: paper,
+      descriptionEdited: true,
+      descriptionVerbatim: true,
+    });
+  });
+
+  it('sin tocar viaja tal cual, sin largos ni error de tope', () => {
+    expect(
+      descriptionToSend(
+        descriptionFromStored(paper, 'Teja roja', '2 × 4.20 m'),
+        'Teja roja',
+        '2 × 4.20 m',
+      ),
+    ).toEqual({ ok: true, value: paper });
+  });
+
+  it('en cuanto se edita, vuelve a la regla normal (largos al final)', () => {
+    expect(
+      descriptionToSend(
+        { description: 'Techo', descriptionEdited: true, descriptionVerbatim: false },
+        'Teja roja',
+        '2 × 4.20 m',
+      ),
+    ).toEqual({ ok: true, value: 'Techo (2 × 4.20 m)' });
+  });
+});

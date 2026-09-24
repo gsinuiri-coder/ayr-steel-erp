@@ -191,6 +191,8 @@ interface LineDraft {
    */
   description: string;
   descriptionEdited: boolean;
+  /** Texto guardado sin sufijo de largos (papel importado): se reenvía tal cual si no se toca. */
+  descriptionVerbatim?: boolean;
 }
 
 /** D-255: lo que la línea guardada tenía, para reconocer que nadie la tocó. */
@@ -847,13 +849,13 @@ export function SalesDocumentForm({
               'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes, tipo de cambio y reservas.',
           };
         }
-        const coilDescription = descriptionToSend(l, null, '');
-        if (!coilDescription.ok) return { error: `${at}: ${coilDescription.reason}` };
+        // Autorrevisión de D-283 (P1-1): la venta de bobina no manda descripción. La arma el API
+        // con el código y los kilos vigentes («Bobina X × kg»); una guardada nombraría la bobina
+        // o el saldo de antes.
         items.push({
           saleCoilId: l.saleCoilId,
           qty: toFixedString(qty, 'KG'),
           ...pricing.payload,
-          ...(coilDescription.value === undefined ? {} : { description: coilDescription.value }),
         });
         continue;
       }
@@ -935,11 +937,15 @@ export function SalesDocumentForm({
       }
 
       // D-283: la descripción editada viaja con sus largos; sin editar, la arma el API.
-      const description = descriptionToSend(
-        l,
-        product.name,
-        pieces && pieces.length > 0 ? describePieces(pieces) : '',
-      );
+      // El producto de una bobina no manda descripción: su pool se deduce de ella (D-254) y no
+      // se ofrece editarla, igual que antes de D-283.
+      const description = isCoilSaleProduct(product)
+        ? ({ ok: true, value: undefined } as const)
+        : descriptionToSend(
+            l,
+            product.name,
+            pieces && pieces.length > 0 ? describePieces(pieces) : '',
+          );
       if (!description.ok) return { error: `${at}: ${description.reason}` };
 
       // D-134: la línea ya no dice qué reservar. Una cobertura a medida promete kilos del
@@ -1491,19 +1497,21 @@ function LineRow({
             </div>
           )}
           {/* D-283: la descripción que lee el cliente; arranca con el nombre del producto. */}
-          {(l.kind === 'BOBINA' ? l.saleCoilId !== '' : l.productId !== '') && (
+          {/* Sin descripción editable en la venta de bobina (la arma el API con código y kilos)
+              ni en el producto de una bobina, cuyo pool se deduce de la descripción (D-254). */}
+          {l.kind === 'PRODUCT' && l.productId !== '' && !isCoilSaleProduct(product) && (
             <Input
               className="mt-1 h-8 text-xs"
               aria-label={`Descripción de la línea ${index + 1}`}
-              placeholder={
-                l.kind === 'BOBINA'
-                  ? 'Descripción (vacía: el nombre del producto)'
-                  : (product?.name ?? 'Descripción')
-              }
+              placeholder={product?.name ?? 'Descripción'}
               maxLength={MAX_LINE_DESCRIPTION}
               value={l.description}
               onChange={(e) => {
-                onPatch({ description: e.target.value, descriptionEdited: true });
+                onPatch({
+                  description: e.target.value,
+                  descriptionEdited: true,
+                  descriptionVerbatim: false,
+                });
               }}
             />
           )}
