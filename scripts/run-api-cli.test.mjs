@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { EXTERNAL_OUTPUTS_OFF } from './run-api-cli.mjs';
 
@@ -34,4 +35,18 @@ test('las salidas apagadas pisan al entorno heredado, no al revés', () => {
 test('el hijo recibe un JWT_SECRET propio, al azar, después del entorno heredado', () => {
   assert.ok(source.includes("JWT_SECRET: randomBytes(32).toString('hex')"));
   assert.ok(source.indexOf('JWT_SECRET: randomBytes') > source.indexOf('...process.env,'));
+});
+
+// Repaso de RF-S4b (P1-B): contra production, ni el dry-run corre sin --confirm-production.
+test('contra production el wrapper corta cualquier corrida sin --confirm-production', () => {
+  for (const script of ['normalize-coil-skus.mjs', 'sweep-imported-documents.mjs']) {
+    const path = new URL(`./${script}`, import.meta.url).pathname.replace(/^\/(\w:)/, '$1');
+    for (const extra of [[], ['--execute']]) {
+      const res = spawnSync('node', [path, '--branch', 'production', ...extra], {
+        encoding: 'utf8',
+      });
+      assert.notEqual(res.status, 0);
+      assert.match(res.stderr, /--confirm-production/);
+    }
+  }
 });

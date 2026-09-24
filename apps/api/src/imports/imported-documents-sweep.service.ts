@@ -178,6 +178,7 @@ export class ImportedDocumentsSweepService {
         seq: true,
         status: true,
         notes: true,
+        quotationId: true,
         items: { select: LINE_SELECT, orderBy: { lineNumber: 'asc' } },
         fiscalDocuments: {
           where: {
@@ -190,6 +191,27 @@ export class ImportedDocumentsSweepService {
       },
       orderBy: { seq: 'asc' },
     });
+
+    // Repaso de RF-S4b: las líneas con una edición de precio registrada (D-187) después de la
+    // importación. Un pedido hereda las de la cotización de la que salió.
+    const edits = await this.prisma.salesPriceChange.findMany({
+      where: {
+        OR: [
+          { quotationId: { in: quotations.map((q) => q.id) } },
+          { quotationId: { in: orders.flatMap((o) => (o.quotationId ? [o.quotationId] : [])) } },
+          { salesOrderId: { in: orders.map((o) => o.id) } },
+        ],
+      },
+      select: { quotationId: true, salesOrderId: true, lineNumber: true },
+    });
+    const editedLines = (ids: (string | null)[]): Set<number> =>
+      new Set(
+        edits
+          .filter((e) =>
+            ids.some((id) => id !== null && (e.quotationId === id || e.salesOrderId === id)),
+          )
+          .map((e) => e.lineNumber),
+      );
 
     const documents: SweepDocument[] = [];
     for (const q of quotations) {
@@ -204,6 +226,7 @@ export class ImportedDocumentsSweepService {
             open: OPEN_QUOTATION.has(q.status),
             items: q.items,
             scope: { exceptQuotationIds: [q.id] },
+            editedLines: editedLines([q.id]),
           },
           byKey,
           known,
@@ -222,6 +245,7 @@ export class ImportedDocumentsSweepService {
             open: OPEN_ORDER.has(o.status) && o.fiscalDocuments.length === 0,
             items: o.items,
             scope: { exceptSalesOrderIds: [o.id] },
+            editedLines: editedLines([o.id, o.quotationId]),
           },
           byKey,
           known,
@@ -324,6 +348,8 @@ export class ImportedDocumentsSweepService {
       open: boolean;
       items: DocLine[];
       scope: { exceptQuotationIds?: string[]; exceptSalesOrderIds?: string[] };
+      /** Líneas con una edición de precio registrada después de la importación. */
+      editedLines: ReadonlySet<number>;
     },
     byKey: ReadonlyMap<string, PaperLine[]>,
     known: ReadonlySet<string>,
@@ -390,9 +416,12 @@ export class ImportedDocumentsSweepService {
           newSku: product?.autoCoilId ? (lineKeys[i] ?? line.product.sku) : line.product.sku,
           paperSku: source.rawSku,
           product,
-          unpaired: deliberate
-            ? `el importe guardado (${amounts.stored.net}) difiere del papel (${amounts.paper.net}) más de lo que explica el redondeo: parece un precio cambiado a propósito`
-            : null,
+          unpaired:
+            amounts !== null && doc.editedLines.has(line.lineNumber)
+              ? 'editada a propósito: tiene una edición de precio registrada después de la importación'
+              : deliberate
+                ? `el importe guardado (${amounts.stored.net}) difiere del papel (${amounts.paper.net}) más de lo que explica el redondeo: parece un precio cambiado a propósito`
+                : null,
           amounts,
         });
       }

@@ -71,6 +71,8 @@ interface FakeOpts {
   quotations?: unknown[];
   orders?: unknown[];
   coils?: { id: string; code: string; balance: string }[];
+  /** Ediciones de precio registradas (D-187). */
+  priceEdits?: { quotationId?: string; salesOrderId?: string; lineNumber: number }[];
 }
 function fakePrisma(o: FakeOpts = {}) {
   const coils = o.coils ?? [{ id: 'c-1', code: 'SALDO-AZUL-4194', balance: '4194' }];
@@ -86,6 +88,15 @@ function fakePrisma(o: FakeOpts = {}) {
       }),
     },
     salesOrder: { findMany: jest.fn().mockResolvedValue(o.orders ?? []) },
+    salesPriceChange: {
+      findMany: jest.fn().mockResolvedValue(
+        (o.priceEdits ?? []).map((e) => ({
+          quotationId: e.quotationId ?? null,
+          salesOrderId: e.salesOrderId ?? null,
+          lineNumber: e.lineNumber,
+        })),
+      ),
+    },
     salesOrderItem: { findFirstOrThrow: jest.fn().mockResolvedValue({ id: 'oi-1' }) },
     coil: {
       // La identidad de la bobina que ya vende una línea: de ella sale su pool (D-254).
@@ -522,5 +533,46 @@ describe('ImportedDocumentsSweepService — un precio cambiado a propósito no s
     expect(finding?.amounts?.paper.net).toBe('12439.8310');
     await service.execute(ACTOR, [paperLine()]);
     expect(quotations.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('ImportedDocumentsSweepService — línea editada a propósito (repaso)', () => {
+  it('una cotización con una edición de precio registrada en esa línea va a (c) y no se toca', async () => {
+    const { service, quotations } = build(
+      fakePrisma({
+        quotations: [quotationRow([line(1, { reserve: InventoryItemType.COIL })])],
+        priceEdits: [{ quotationId: 'q-1', lineNumber: 1 }],
+      }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    expect(documents[0]?.findings[0]?.unpaired).toMatch(/editada a propósito/);
+    await service.execute(ACTOR, [paperLine()]);
+    expect(quotations.update).not.toHaveBeenCalled();
+  });
+
+  it('un pedido hereda la edición hecha en su cotización antes de confirmarla', async () => {
+    const { service, edits } = build(
+      fakePrisma({
+        orders: [
+          orderRow([line(1, { reserve: InventoryItemType.COIL })], { quotationId: 'q-src' }),
+        ],
+        priceEdits: [{ quotationId: 'q-src', lineNumber: 1 }],
+      }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    expect(documents[0]?.findings[0]?.unpaired).toMatch(/editada a propósito/);
+    await service.execute(ACTOR, [paperLine()]);
+    expect(edits.restorePaperAmountsInTx).not.toHaveBeenCalled();
+  });
+
+  it('una edición en otra línea no la marca', async () => {
+    const { service } = build(
+      fakePrisma({
+        quotations: [quotationRow([line(1, { reserve: InventoryItemType.COIL })])],
+        priceEdits: [{ quotationId: 'q-1', lineNumber: 2 }],
+      }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    expect(documents[0]?.findings[0]?.unpaired).toBeNull();
   });
 });

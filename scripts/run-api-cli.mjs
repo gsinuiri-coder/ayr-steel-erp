@@ -51,13 +51,13 @@ export function runApiCli({ compiled, what, pathFlags = new Set() }) {
       `--branch tiene que ser "dev", "demo", "production", "local" o "local-e2e" (recibido: "${branch}").`,
     );
   }
-  if (
-    branch === 'production' &&
-    argv.includes('--execute') &&
-    !argv.includes('--confirm-production')
-  ) {
+  // Repaso de RF-S4b (P1-B): contra production no corre nada sin la confirmación, ni el
+  // dry-run. La CLI lo vuelve a comprobar por dentro (`src/common/cli-branch-gate.ts`).
+  if (branch === 'production' && !argv.includes('--confirm-production')) {
     throw new Error(
-      `--execute contra production ${what} — agregá --confirm-production si es justo lo que querés hacer. Sin ese flag, no se ejecuta.`,
+      argv.includes('--execute')
+        ? `--execute contra production ${what} — agregá --confirm-production si es justo lo que querés hacer. Sin ese flag, no se ejecuta.`
+        : 'Contra production la CLI no corre sin --confirm-production, tampoco en dry-run.',
     );
   }
 

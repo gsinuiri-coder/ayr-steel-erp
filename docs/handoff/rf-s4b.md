@@ -120,14 +120,18 @@ Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3
 6. **[Agente] Dry-runs contra production, solo lectura, con OK:**
    - Las dos CLI imprimen al arrancar `Salidas externas: cola … apagado · PSE … apagado · R2
 apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
-   - `pnpm normalize:coil-skus --branch production` → el dueño ve renombres, uniones, no
+   - **Todas** las corridas contra production llevan `--confirm-production`, también los dry-runs
+     (D-261): sin la bandera, el wrapper y la CLI se niegan.
+   - `pnpm normalize:coil-skus --branch production --confirm-production` → el dueño ve renombres, uniones, no
      interpretables, documentos abiertos, kilos antes/después y paradas (incluida «producto a
      unir con saldo propio», que ahora se ve acá y no recién en el execute).
-   - `pnpm sweep:imported --file local-data/ventas-agosto-2026.xlsx --branch production` →
+   - `pnpm sweep:imported --file local-data/ventas-agosto-2026.xlsx --branch production
+--confirm-production` →
      listas (a), (b) y (c). Cada hallazgo muestra `SKU actual → SKU nuevo (papel: …)` (D-258):
-     **revisar que el SKU del papel sea el de la línea** en cada (a) y (b), que cada (b)
-     difiera en céntimos (lo que no, ya va a (c) solo: repaso P2-1), y que ningún comprobante
-     aparezca en dos documentos abiertos (repaso P2-2). En demo, con la copia de producción del
+     **revisar que el SKU del papel sea el de la línea** en cada (a) y (b). **Parar si falla
+     cualquiera de estas dos verificaciones:** que cada (b) de un documento abierto difiera
+     solo en céntimos (lo que no, o lo que tiene una edición de precio registrada, ya va solo a
+     (c)), y que ningún comprobante aparezca en dos documentos abiertos (repaso P2-2). En demo, con la copia de producción del
      2026-09-24: (a) 3, (b) 2 (las dos anuladas), (c) 0, sobre 113 documentos importados.
    - **Anotar los totales** de Inventario valorizado y Ventas y margen (agosto) antes del execute.
 7. **[Agente, con OK explícito por cada uno] Execute — PUNTO CRÍTICO:**
@@ -138,8 +142,8 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
    - Comprobar los totales de los dos reportes contra lo anotado. **Plan B** si no cuadran o algo
      falla: `pnpm normalize:coil-skus --branch production --revert` (dry-run: lista los pasos en
      orden inverso y las paradas), y con OK `… --revert --execute --confirm-production` (D-260).
-     **Solo es exacto dentro de la ventana**, antes de que alguien opere (repaso P2-3). En demo
-     tardó 44 s y dejó el catálogo `BOB…` idéntico a la línea base.
+     **Solo dentro de la ventana, antes de reabrir el sistema (D-261).** Después, la corrección
+     es hacia adelante. En demo tardó 44 s y dejó el catálogo `BOB…` idéntico a la línea base.
    - `pnpm sweep:imported --file local-data/ventas-agosto-2026.xlsx --branch production
 --execute --confirm-production`. Dry-run y execute uno detrás del otro, sin nadie usando
      el sistema: el execute recalcula el plan (P2-4 de la revisión, no corregido).
@@ -158,8 +162,9 @@ apagado` (D-259). Si alguna dice ENCENDIDO, abortan solas.
 
 - Antes del execute de la normalización: la migración es aditiva, así que alcanza con volver la
   API al SHA anterior; no hace falta revertir la migración.
-- Después del execute: primero `normalize:coil-skus --revert` (D-260), y recién entonces se
-  vuelve la API al SHA anterior. La rama de respaldo queda como último recurso, porque restaurarla
+- Después del execute y **antes de reabrir el sistema**: primero `normalize:coil-skus --revert`
+  (D-260), y recién entonces se vuelve la API al SHA anterior. Después de reabrir, la corrección
+  es hacia adelante (D-261). La rama de respaldo queda como último recurso, porque restaurarla
   pierde todo lo cargado después.
 - Lo que corrigió el barrido no se revierte con una herramienta: son ediciones de documentos
   abiertos, auditadas con su motivo, y se deshacen desde la pantalla, documento por documento.
