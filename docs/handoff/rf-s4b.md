@@ -103,7 +103,8 @@ Cada paso con comando a la vista y OK del dueño (D-251). Orden de AGENTS.md §3
 2. **[Agente] PR + CI verde** (PR #14; CI verde job por job sobre el SHA a desplegar).
 3. **[Agente, con OK] Migración** (en demo, con el seed, tardó 48 s): `node scripts/migrations-status.mjs --branch production`
    (tiene que listar solo `20260923180000_rf_s4b_products_merged_into`), `migrate diff` contra
-   el drift conocido, y `pnpm db:prod`.
+   el drift conocido, y `pnpm db:prod` (desde D-262, solo `migrate deploy`; el seed exige
+   `--with-seed` y en esta ventana no se corre).
 4. **[Agente, con OK] Deploy API** desde el worktree en el SHA a desplegar:
    `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
    desde el SHA `e247f40`
