@@ -1457,6 +1457,36 @@ export function sumLineTotals(
   return { subtotal, igv, total: subtotal.plus(igv) };
 }
 
+/**
+ * D-265 (P2-8 del delta RF-S4b): los importes de la **parte que cierra** una línea facturada o
+ * acreditada en partes.
+ *
+ * Cada parte se calcula desde el unitario, y la del papel es un trío con el IGV como resta
+ * (D-255): dos mitades de FFA1-1350 sumaban 2 239.1694 de IGV contra 2 239.17 del papel. La
+ * parte que agota lo pendiente toma el **resto** —lo guardado menos lo ya facturado o
+ * acreditado—, así la suma de las partes es exactamente la línea.
+ *
+ * Solo si el resto queda a un céntimo o menos del recálculo en cada cifra: si una parte anterior
+ * se facturó a otro precio, el resto ya no describe esta parte y se devuelve el recálculo.
+ */
+export function closingPartTotals(
+  stored: { subtotal: DecimalInput; igv: DecimalInput; total: DecimalInput },
+  already: { subtotal: DecimalInput; igv: DecimalInput; total: DecimalInput },
+  recomputed: SalesLineTotals,
+): SalesLineTotals {
+  const rest = {
+    subtotal: toDecimal(stored.subtotal).minus(toDecimal(already.subtotal)),
+    igv: toDecimal(stored.igv).minus(toDecimal(already.igv)),
+    total: toDecimal(stored.total).minus(toDecimal(already.total)),
+  };
+  const close = (a: Decimal, b: Decimal) => a.minus(b).abs().lte('0.01');
+  return close(rest.subtotal, recomputed.subtotal) &&
+    close(rest.igv, recomputed.igv) &&
+    close(rest.total, recomputed.total)
+    ? rest
+    : recomputed;
+}
+
 export function serializeSalesTotals(totals: SalesLineTotals): {
   subtotalPen: string;
   igvPen: string;

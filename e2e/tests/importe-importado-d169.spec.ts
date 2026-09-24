@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, createSupplier, getJson, postJson } from '../helpers/api';
 import {
   addPayment,
+  createCreditNote,
   createInvoice,
   freeLine,
   purgeInvoicingTrail,
@@ -552,6 +553,97 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
         supplierId: scenario.supplierId,
         productIds: [scenario.product.id],
       });
+    }
+  });
+  test('D-265: facturar y acreditar FFA1-1350 en partes suma exactamente el papel', async () => {
+    /**
+     * P2-8 del delta RF-S4b. La línea del papel es un trío con el IGV como resta (D-255), y cada
+     * parte se calcula desde el unitario: dos mitades sumaban 2 239.1694 de IGV y 14 678.9994 de
+     * total, y el cobro redondeado al céntimo (D-169) dejaba el céntimo que D-169 vino a cerrar.
+     * La parte que agota lo pendiente toma el **resto**.
+     *
+     * Cada parte se registra a mano (D-153) antes de la siguiente: un borrador no consume
+     * pedido ni comprobante, así que sin registrar la segunda parte no sería la que cierra.
+     */
+    const scenario = await setupScenario(api);
+    const trail: Parameters<typeof purgeInvoicingTrail>[1] = {
+      documentIds: [],
+      orderIds: [],
+      purchaseId: scenario.purchaseId,
+      supplierId: scenario.supplierId,
+      productIds: [scenario.product.id],
+    };
+    const quotationIds: string[] = [];
+    const register = (id: string) =>
+      postJson<FiscalDocumentDto>(api, `/api/invoicing/documents/${id}/register-manual`, {
+        series: `F9${String(Math.floor(Math.random() * 90) + 10)}`,
+        correlative: Math.floor(Math.random() * 90_000_000) + 1_000,
+      });
+    const sum = (docs: FiscalDocumentDto[], key: 'subtotalPen' | 'igvPen' | 'totalPen') =>
+      docs.reduce((acc, d) => acc + Math.round(Number(d.items[0]![key]) * 10_000), 0) / 10_000;
+
+    try {
+      const parsed = await previewImport(api, [
+        rowFor(scenario, {
+          qty: '4194.000',
+          netAmount: '12439.831',
+          igv: '2239.16958',
+          totalAmount: '14679.000',
+        }),
+      ]);
+      expect(parsed.rows[0]!).toMatchObject({
+        netAmountPen: '12439.8300',
+        igvAmountPen: '2239.1700',
+        totalAmountPen: '14679.0000',
+      });
+      const result = await commitImport(api, [toInput(parsed.rows[0]!)]);
+      const listed = await getJson<{ items: { id: string; code: string }[] }>(
+        api,
+        '/api/sales/quotations?pageSize=200',
+      );
+      const mine = listed.items.find((q) => q.code === result.codes[0])!;
+      quotationIds.push(mine.id);
+      const order = await postJson<SalesOrderDto>(
+        api,
+        `/api/sales/quotations/${mine.id}/confirm`,
+        {},
+      );
+      trail.orderIds = [order.id];
+      const orderLine = order.items[0]!;
+
+      // --- Facturar en dos mitades ---
+      const invoices: FiscalDocumentDto[] = [];
+      for (const qty of ['2097', '2097']) {
+        const draft = await createInvoice(api, {
+          docType: 'FACTURA',
+          customerId: scenario.customer.id,
+          salesOrderId: order.id,
+          items: [{ salesOrderItemId: orderLine.id, qty }],
+        });
+        trail.documentIds!.unshift(draft.id);
+        invoices.push(await register(draft.id));
+      }
+      expect(sum(invoices, 'subtotalPen')).toBe(12439.83);
+      expect(sum(invoices, 'igvPen')).toBe(2239.17);
+      expect(sum(invoices, 'totalPen')).toBe(14679);
+
+      // --- Acreditar en dos partes la primera mitad ---
+      const first = invoices[0]!;
+      const notes: FiscalDocumentDto[] = [];
+      for (const qty of ['1000', '1097']) {
+        const note = await createCreditNote(api, first.id, {
+          reason: 'DEVOLUCION_ITEM',
+          items: [{ affectedItemId: first.items[0]!.id, qty }],
+        });
+        trail.documentIds!.unshift(note.id);
+        notes.push(await register(note.id));
+      }
+      for (const key of ['subtotalPen', 'igvPen', 'totalPen'] as const) {
+        expect(sum(notes, key), key).toBe(Number(first.items[0]![key]));
+      }
+    } finally {
+      await purgeInvoicingTrail(api, trail);
+      await purgeSalesTrail(api, { quotationIds });
     }
   });
 });

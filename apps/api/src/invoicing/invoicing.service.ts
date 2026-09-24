@@ -28,6 +28,7 @@ import {
   TransferMode,
   IGV_RATE_PCT,
   DERIVED_UNIT_VALUE_DECIMALS,
+  closingPartTotals,
   derivedUnitValue,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginate,
@@ -758,7 +759,7 @@ export class InvoicingService {
           archivedAt: null,
         },
       },
-      _sum: { qty: true },
+      _sum: { qty: true, subtotalPen: true, igvPen: true, totalPen: true },
     });
     const invoicedByItem = new Map(
       invoiced.map((row) => [
@@ -766,6 +767,11 @@ export class InvoicingService {
         toDecimal((row._sum.qty ?? new Prisma.Decimal(0)).toString()),
       ]),
     );
+    // D-265: y sus importes, para que la parte que cierra la línea tome el resto.
+    const invoicedAmounts = new Map(
+      invoiced.map((row) => [row.salesOrderItemId ?? '', amountsOf(row._sum)]),
+    );
+    const usedAmountsHere = new Map<string, PartAmounts>();
 
     // Lo que este mismo comprobante ya comprometió en líneas anteriores. Sin esto, dos
     // líneas del mismo documento apuntando a la misma línea de pedido se comparaban cada
@@ -817,13 +823,29 @@ export class InvoicingService {
         // él hay que calcularla: ahí el recálculo desde el unitario es lo único defendible.
         const fullLine =
           item.unitPricePen === undefined && qty.equals(toDecimal(orderItem.qty.toString()));
+        const stored = {
+          subtotal: toDecimal(orderItem.subtotalPen.toString()),
+          igv: toDecimal(orderItem.igvPen.toString()),
+          total: toDecimal(orderItem.totalPen.toString()),
+        };
+        const alreadyAmounts = addAmounts(
+          invoicedAmounts.get(orderItem.id) ?? ZERO_AMOUNTS,
+          usedAmountsHere.get(orderItem.id) ?? ZERO_AMOUNTS,
+        );
+        // D-265 (P2-8): la parte que agota lo pendiente, a su propio precio, toma el resto.
         const totals = fullLine
-          ? {
-              subtotal: toDecimal(orderItem.subtotalPen.toString()),
-              igv: toDecimal(orderItem.igvPen.toString()),
-              total: toDecimal(orderItem.totalPen.toString()),
-            }
-          : salesTotals([{ qty: item.qty, unitPricePen: price }]);
+          ? stored
+          : item.unitPricePen === undefined && qty.equals(pending)
+            ? closingPartTotals(
+                stored,
+                alreadyAmounts,
+                salesTotals([{ qty: item.qty, unitPricePen: price }]),
+              )
+            : salesTotals([{ qty: item.qty, unitPricePen: price }]);
+        usedAmountsHere.set(
+          orderItem.id,
+          addAmounts(usedAmountsHere.get(orderItem.id) ?? ZERO_AMOUNTS, totals),
+        );
         const s = serializeSalesTotals(totals);
         return {
           productId: orderItem.productId,
@@ -934,7 +956,7 @@ export class InvoicingService {
           affectedItemId: { in: affected.items.map((i) => i.id) },
           document: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
         },
-        _sum: { qty: true },
+        _sum: { qty: true, subtotalPen: true, igvPen: true, totalPen: true },
       });
       const creditedByItem = new Map(
         credited.map((r) => [
@@ -942,6 +964,11 @@ export class InvoicingService {
           toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString()),
         ]),
       );
+      // D-265: y sus importes, para que la parte que cierra la línea tome el resto.
+      const creditedAmounts = new Map(
+        credited.map((r) => [r.affectedItemId ?? '', amountsOf(r._sum)]),
+      );
+      const usedAmountsHere = new Map<string, PartAmounts>();
 
       const requested =
         input.items && input.items.length > 0
@@ -993,23 +1020,40 @@ export class InvoicingService {
         // NC no llegaba al total del afectado y su cuenta por cobrar no cerraba nunca. Una
         // acreditación **parcial** sí se calcula: el importe exacto es del total de la línea y
         // una fracción de él hay que derivarla.
+        const stored = {
+          subtotal: toDecimal(original.subtotalPen.toString()),
+          igv: toDecimal(original.igvPen.toString()),
+          total: toDecimal(original.totalPen.toString()),
+        };
+        // D-255: la fracción sale del unitario **derivado del importe** (diez decimales), no
+        // del guardado para mostrar: 1920 de 3840 kg por 11 715.254 acreditan la mitad.
+        const fraction = () =>
+          salesTotals([
+            {
+              qty: line.qty,
+              unitPricePen: derivedUnitValue(
+                original.qty.toString(),
+                original.subtotalPen.toString(),
+              ).toFixed(DERIVED_UNIT_VALUE_DECIMALS),
+            },
+          ]);
         const totals = toDecimal(line.qty).equals(toDecimal(original.qty.toString()))
-          ? {
-              subtotal: toDecimal(original.subtotalPen.toString()),
-              igv: toDecimal(original.igvPen.toString()),
-              total: toDecimal(original.totalPen.toString()),
-            }
-          : // D-255: la fracción sale del unitario **derivado del importe** (diez decimales), no
-            // del guardado para mostrar: 1920 de 3840 kg por 11 715.254 acreditan la mitad.
-            salesTotals([
-              {
-                qty: line.qty,
-                unitPricePen: derivedUnitValue(
-                  original.qty.toString(),
-                  original.subtotalPen.toString(),
-                ).toFixed(DERIVED_UNIT_VALUE_DECIMALS),
-              },
-            ]);
+          ? stored
+          : // D-265 (P2-8): la parte que agota lo que queda por acreditar toma el resto.
+            qty.equals(pending)
+            ? closingPartTotals(
+                stored,
+                addAmounts(
+                  creditedAmounts.get(original.id) ?? ZERO_AMOUNTS,
+                  usedAmountsHere.get(original.id) ?? ZERO_AMOUNTS,
+                ),
+                fraction(),
+              )
+            : fraction();
+        usedAmountsHere.set(
+          original.id,
+          addAmounts(usedAmountsHere.get(original.id) ?? ZERO_AMOUNTS, totals),
+        );
         return {
           original,
           qty: line.qty,
@@ -3333,4 +3377,37 @@ export class InvoicingService {
       })),
     };
   }
+}
+
+/** D-265: importes acumulados de las partes de una línea (facturadas o acreditadas). */
+interface PartAmounts {
+  subtotal: Decimal;
+  igv: Decimal;
+  total: Decimal;
+}
+
+const ZERO_AMOUNTS: PartAmounts = {
+  subtotal: new Decimal(0),
+  igv: new Decimal(0),
+  total: new Decimal(0),
+};
+
+function amountsOf(sum: {
+  subtotalPen: Prisma.Decimal | null;
+  igvPen: Prisma.Decimal | null;
+  totalPen: Prisma.Decimal | null;
+}): PartAmounts {
+  return {
+    subtotal: toDecimal((sum.subtotalPen ?? 0).toString()),
+    igv: toDecimal((sum.igvPen ?? 0).toString()),
+    total: toDecimal((sum.totalPen ?? 0).toString()),
+  };
+}
+
+function addAmounts(a: PartAmounts, b: PartAmounts): PartAmounts {
+  return {
+    subtotal: a.subtotal.plus(b.subtotal),
+    igv: a.igv.plus(b.igv),
+    total: a.total.plus(b.total),
+  };
 }
