@@ -94,9 +94,7 @@ test.describe('D-282 — modal de venta de bobina', () => {
       await dialog.getByLabel('Filtrar bobinas').fill(free.coil.code);
       await dialog.getByRole('button', { name: `Elegir ${free.coil.code}` }).click();
       await expect(dialog).toBeHidden();
-      await expect(page.getByLabel('Bobina a vender de la línea 1')).toContainText(
-        free.coil.code,
-      );
+      await expect(page.getByLabel('Bobina a vender de la línea 1')).toContainText(free.coil.code);
       await expect(page.getByLabel('Cantidad de la línea 1')).toHaveValue(free.coil.availableKg);
     } finally {
       await purgeRoofingTrail(api, heldTrail);

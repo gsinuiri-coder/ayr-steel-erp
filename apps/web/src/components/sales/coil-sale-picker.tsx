@@ -179,9 +179,8 @@ export function CoilSalePickerDialog({
               <ul className="max-h-40 overflow-y-auto rounded-lg border p-2 text-xs text-muted-foreground">
                 {taken.map((c) => (
                   <li key={c.coilId}>
-                    <span className="font-medium text-foreground">{c.code}</span> ·{' '}
-                    {c.thicknessMm} mm · {c.finishName} · {formatQty(c.balanceKg, 'kg')} —{' '}
-                    {c.reason}
+                    <span className="font-medium text-foreground">{c.code}</span> · {c.thicknessMm}{' '}
+                    mm · {c.finishName} · {formatQty(c.balanceKg, 'kg')} — {c.reason}
                   </li>
                 ))}
               </ul>

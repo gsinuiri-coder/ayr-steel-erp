@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  descriptionFromStored,
-  descriptionToSend,
-  MAX_LINE_DESCRIPTION,
-} from './line-description';
+import { descriptionFromStored, descriptionToSend, MAX_LINE_DESCRIPTION } from './line-description';
 
 /**
  * D-283: la descripción de una línea arranca con el nombre del producto y se puede editar. Solo
@@ -28,15 +24,17 @@ describe('line-description', () => {
   });
 
   it('sin editar, vacía o igual al nombre no viaja: manda el API', () => {
-    expect(descriptionToSend({ description: 'x', descriptionEdited: false }, 'Teja', '')).toEqual(
+    expect(descriptionToSend({ description: 'x', descriptionEdited: false }, 'Teja', '')).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(descriptionToSend({ description: '  ', descriptionEdited: true }, 'Teja', '')).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(descriptionToSend({ description: 'Teja', descriptionEdited: true }, 'Teja', '')).toEqual(
       { ok: true, value: undefined },
     );
-    expect(descriptionToSend({ description: '  ', descriptionEdited: true }, 'Teja', '')).toEqual(
-      { ok: true, value: undefined },
-    );
-    expect(
-      descriptionToSend({ description: 'Teja', descriptionEdited: true }, 'Teja', ''),
-    ).toEqual({ ok: true, value: undefined });
   });
 
   it('editada viaja recortada y con los largos al final', () => {

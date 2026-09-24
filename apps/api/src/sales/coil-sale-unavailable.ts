@@ -19,9 +19,7 @@ export interface CoilHolders {
 
 /** El de menor número que quien lee puede ver (D-267/D-275), o `undefined`. */
 function firstVisible(holders: CoilHolder[], viewer?: HolderViewer): CoilHolder | undefined {
-  return [...holders]
-    .sort((a, b) => a.seq - b.seq)
-    .find((h) => !isForeign(h.sellerId, viewer));
+  return [...holders].sort((a, b) => a.seq - b.seq).find((h) => !isForeign(h.sellerId, viewer));
 }
 
 /**
