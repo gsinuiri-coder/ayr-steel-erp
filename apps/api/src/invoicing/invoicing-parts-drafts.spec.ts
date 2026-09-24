@@ -37,7 +37,9 @@ const ACTOR: RequestUser = {
   sessionId: 'session-1',
 };
 
-type GroupWhere = { document: { status: unknown } };
+interface GroupWhere {
+  document: { status: unknown };
+}
 const sum = (row: typeof HALF) => ({
   qty: D(row.qty),
   subtotalPen: D(row.subtotalPen),
@@ -122,7 +124,7 @@ describe('InvoicingService — la parte que cierra con las otras en borrador (D-
             id: 'f-1',
             number: 'F001-1',
             docType: FiscalDocType.FACTURA,
-            origin: FiscalDocumentOrigin.ERP,
+            origin: FiscalDocumentOrigin.ISSUED_HERE,
             status: FiscalDocumentStatus.ACCEPTED,
             customerId: 'c-1',
             salesOrderId: 'o-1',
