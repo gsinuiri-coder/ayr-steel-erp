@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import { businessToday } from '@ayr/shared';
 import { adminApi, createSupplier, createUser, getJson, postJson } from '../helpers/api';
 import { apiAs } from '../helpers/production';
 import { buyRoofingCoil, createColor, createRoofingFinish } from '../helpers/roofing';
@@ -58,6 +59,7 @@ test.describe('SM-P1-1 — coil-pool por vendedor', () => {
       // La venta de la bobina entera la ata a la cotización de A (D-116).
       const quotation = await postJson<QuotationDto>(sellerA, '/api/sales/quotations', {
         customerId: customer.id,
+        issueDate: businessToday(),
         items: [{ saleCoilId: coil.id, qty: '900.000', unitPricePen: '20.0000' }],
       });
       quotationIds.push(quotation.id);
