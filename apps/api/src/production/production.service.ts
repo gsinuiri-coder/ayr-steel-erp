@@ -1370,6 +1370,7 @@ export class ProductionService {
       select: { itemId: true, qty: true },
     });
     const availableKg = new Map(balances.map((b) => [b.itemId, b.qty.toFixed(3)]));
+    const coilsByReport = await this.reportCoils(order.reports.map((r) => r.id));
     const actors = await this.resolveActorNames([
       order.createdById,
       ...(order.priorityById ? [order.priorityById] : []),
@@ -1415,6 +1416,7 @@ export class ProductionService {
         })),
         theoreticalKg: r.theoreticalKg.toFixed(3),
         consumedKg: r.consumedKg === null ? null : r.consumedKg.toFixed(3),
+        coils: coilsByReport.get(r.id) ?? [],
         rawMaterialWarning: r.rawMaterialWarning,
         materialCostPen: r.materialCostPen.toFixed(4),
         unitCostPen: r.unitCostPen.toFixed(4),
@@ -1426,6 +1428,48 @@ export class ProductionService {
         revertedAt: r.revertedAt ? r.revertedAt.toISOString() : null,
       })),
     };
+  }
+
+  /**
+   * D-291: las bobinas/flejes de los que salió el material de cada reporte, derivadas del
+   * kardex: salidas `PRODUCTION` de `COIL` **vivas** (ni anuladas ni la anulación de otra)
+   * cuyo `refId` es el reporte. Dos consultas para toda la orden, sin N+1, y sin estado
+   * almacenado (§3.4): el dato ya lo dice el kardex.
+   */
+  private async reportCoils(
+    reportIds: string[],
+  ): Promise<Map<string, { id: string; code: string; kg: string }[]>> {
+    const out = new Map<string, { id: string; code: string; kg: string }[]>();
+    if (reportIds.length === 0) return out;
+    const movements = await this.prisma.inventoryMovement.findMany({
+      where: {
+        refType: 'PRODUCTION',
+        refId: { in: reportIds },
+        itemType: 'COIL',
+        type: 'OUT',
+        reversalOfId: null,
+        reversals: { none: {} },
+      },
+      select: { refId: true, itemId: true, qty: true },
+      orderBy: { id: 'asc' },
+    });
+    if (movements.length === 0) return out;
+    const coils = await this.prisma.coil.findMany({
+      where: { id: { in: [...new Set(movements.map((m) => m.itemId))] } },
+      select: { id: true, code: true },
+    });
+    const codeById = new Map(coils.map((c) => [c.id, c.code]));
+    for (const m of movements) {
+      if (m.refId === null) continue;
+      const list = out.get(m.refId) ?? [];
+      list.push({
+        id: m.itemId,
+        code: codeById.get(m.itemId) ?? m.itemId,
+        kg: m.qty.toFixed(3),
+      });
+      out.set(m.refId, list);
+    }
+    return out;
   }
 
   /**

@@ -108,14 +108,14 @@ export function ComprobantesView() {
             el PSE todavía no lo haya aceptado.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-3">
+          {/* D-292: el estado del PSE, en un modal (ⓘ) con su badge en la cabecera. */}
+          <ContingencyCard />
           <Button asChild>
             <Link href="/comprobantes/nuevo">Nuevo comprobante</Link>
           </Button>
         </div>
       </div>
-
-      <ContingencyCard />
 
       {/*
         El aviso de D-073. "Pendiente" no es un error —es el estado normal de un documento

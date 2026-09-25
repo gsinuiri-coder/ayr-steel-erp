@@ -350,6 +350,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
               <TableRow>
                 <TableHead>Fecha</TableHead>
                 <TableHead className="text-right">Piezas</TableHead>
+                <TableHead>Bobina / fleje</TableHead>
                 <TableHead className="text-right">Fleje teórico</TableHead>
                 <TableHead className="text-right">Material</TableHead>
                 <TableHead className="text-right">Costo/pieza</TableHead>
@@ -363,6 +364,26 @@ export function ProduccionDetalleView({ id }: { id: string }) {
                 <TableRow key={r.id}>
                   <TableCell>{formatTimestampDate(r.createdAt)}</TableCell>
                   <TableCell className="text-right font-medium">{r.pieces}</TableCell>
+                  {/* D-291: de qué bobina/fleje(s) salió el material del reporte (solo lectura;
+                      drywall reparte FIFO entre flejes y puede traer más de uno). */}
+                  <TableCell data-testid="report-coils">
+                    {r.coils.length === 0
+                      ? '—'
+                      : r.coils.map((c, i) => (
+                          <span key={c.id} className="whitespace-nowrap">
+                            {i > 0 && ', '}
+                            <Link className={LINK_CLASSNAME} href={`/bobinas/${c.id}`}>
+                              {c.code}
+                            </Link>
+                            {r.coils.length > 1 && (
+                              <span className="text-xs text-muted-foreground">
+                                {' '}
+                                ({formatQty(c.kg, 'kg')})
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                  </TableCell>
                   <TableCell className="text-right">{formatQty(r.theoreticalKg, 'kg')}</TableCell>
                   <TableCell className="text-right">{formatMoney(r.materialCostPen)}</TableCell>
                   <TableCell className="text-right">
@@ -391,7 +412,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
               ))}
               {o.reports.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground">
                     Todavía no se reportaron piezas.
                   </TableCell>
                 </TableRow>

@@ -36,6 +36,7 @@ import { ExpressCreateCustomer } from '@/components/express-create';
 import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { InfoPopover } from '@/components/info-popover';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -352,12 +353,19 @@ export function ImportarCotizacionesView() {
       <div className="grid gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-lg font-semibold">Importar cotizaciones</h1>
-            <p className="max-w-3xl text-sm text-muted-foreground">
+            <div className="flex items-center gap-1">
+              <h1 className="text-lg font-semibold">Importar cotizaciones</h1>
+              {/* D-292: la explicación estática (4 líneas) pasa a ⓘ; el subtítulo queda en una. */}
+              <InfoPopover label="Cómo funciona la importación">
+                <p className="text-sm">
+                  Cada comprobante se convierte en una <strong>cotización en borrador</strong> sin
+                  fecha de vencimiento, con su número anotado en las observaciones; de ahí en
+                  adelante el camino es el normal: emitir, confirmar, producir y vender.
+                </p>
+              </InfoPopover>
+            </div>
+            <p className="text-sm text-muted-foreground">
               Sube el export de ventas detalladas y revisa cada comprobante antes de crear nada.
-              Cada uno se convierte en una <strong>cotización en borrador</strong> sin fecha de
-              vencimiento, con su número anotado en las observaciones; de ahí en adelante el camino
-              es el normal: emitir, confirmar, producir y vender.
             </p>
           </div>
           <Button variant="outline" asChild>
