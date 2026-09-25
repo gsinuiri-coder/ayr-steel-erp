@@ -28,6 +28,8 @@ import {
   type CoilQuery,
   type CoilSplitDto,
   type PaginatedResult,
+  NEGATIVE_TERMINAL_STATUSES,
+  statusCondition,
 } from '@ayr/shared';
 import { toSharedLineCode, toPrismaLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
@@ -335,7 +337,11 @@ export class CoilsService {
     const where: Prisma.CoilWhereInput = {
       businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
       finishId: query.finishId,
-      status: query.statusNe ? { equals: query.status, not: query.statusNe } : query.status,
+      // D-289: varios estados, y sin ninguno la lista omite las anuladas (salvo al buscar).
+      status: {
+        ...statusCondition(query.status, NEGATIVE_TERMINAL_STATUSES.coil, Boolean(query.search)),
+        ...(query.statusNe ? { not: query.statusNe } : {}),
+      },
       supplierId: query.supplierId,
       thicknessMm: query.thicknessMm,
       kind: query.kind,

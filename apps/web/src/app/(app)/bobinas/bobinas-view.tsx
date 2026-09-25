@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -11,15 +10,19 @@ import {
   Role,
   type BusinessLine,
   type CoilDto,
-  type CoilStatus,
   type FinishDto,
   type PaginatedResult,
 } from '@ayr/shared';
 import { COIL_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
-import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import { usePagination } from '@/lib/use-pagination';
+import {
+  URL_PAGINATION_DEFAULTS,
+  useUrlPagination,
+  useUrlSearchInput,
+  useUrlState,
+} from '@/lib/use-url-state';
+import { StatusFilter } from '@/components/status-filter';
 import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
 import { RoleGate } from '@/components/role-gate';
 import { SortableTableHead } from '@/components/sortable-table-head';
@@ -66,17 +69,31 @@ const VIEW_TAB_LABELS: Record<ViewTab, string> = {
 
 /** Inventario de bobinas por línea (RF-23), con filtros de acabado, espesor y estado. */
 export function BobinasView() {
-  const [tab, setTab] = useState<ViewTab>('disponibles');
-  const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
-  const [finishId, setFinishId] = useState<string>(ALL);
-  const [thicknessMm, setThicknessMm] = useState('');
-  // Solo se usa en la pestaña "Todas": las otras tres fijan el estado (o su ausencia)
-  // desde la pestaña misma.
-  const [status, setStatus] = useState<CoilStatus | typeof ALL>(ALL);
-  const [search, setSearch] = useState('');
-  const debouncedSearch = useDebouncedValue(search);
-  const debouncedThickness = useDebouncedValue(thicknessMm);
-  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
+  // D-289: pestaña, filtros, búsqueda y página viven en la URL.
+  const [url, setUrl] = useUrlState({
+    ...URL_PAGINATION_DEFAULTS,
+    tab: 'disponibles',
+    line: '',
+    finish: '',
+    thickness: '',
+    // Solo se usa en la pestaña "Todas": las otras tres fijan el estado (o su ausencia)
+    // desde la pestaña misma.
+    status: '',
+    search: '',
+  });
+  const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
+  const tab: ViewTab = (VIEW_TABS as readonly string[]).includes(url.tab)
+    ? (url.tab as ViewTab)
+    : 'disponibles';
+  const businessLine = url.line as BusinessLine | '';
+  const finishId = url.finish;
+  const status = url.status;
+  const [thicknessText, setThicknessText, thicknessMm] = useUrlSearchInput(url.thickness, (v) => {
+    setUrl({ thickness: v });
+  });
+  const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
 
   const finishes = useQuery({
     queryKey: ['finishes'],
@@ -84,11 +101,11 @@ export function BobinasView() {
   });
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (businessLine !== ALL) params.set('businessLine', businessLine);
-  if (finishId !== ALL) params.set('finishId', finishId);
+  if (businessLine) params.set('businessLine', businessLine);
+  if (finishId) params.set('finishId', finishId);
   // Se manda solo cuando ya es un decimal válido: a medio escribir el API responde 400.
-  if (isPositiveDecimal(debouncedThickness)) params.set('thicknessMm', debouncedThickness.trim());
-  if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+  if (isPositiveDecimal(thicknessMm)) params.set('thicknessMm', thicknessMm);
+  if (search) params.set('search', search);
   if (tab === 'disponibles') {
     params.set('statusNe', 'IN_THIRD_PARTY');
     params.set('availability', 'available');
@@ -97,16 +114,10 @@ export function BobinasView() {
   } else if (tab === 'agotadas') {
     params.set('statusNe', 'IN_THIRD_PARTY');
     params.set('availability', 'depleted');
-  } else if (status !== ALL) {
+  } else if (status) {
     params.set('status', status);
   }
   const queryString = params.toString();
-
-  // Volver a la página 1 cuando cambia cualquier filtro: si no, una búsqueda nueva podía
-  // dejar la pantalla en blanco en una página que el resultado nuevo ya no tiene.
-  useEffect(() => {
-    resetPage();
-  }, [tab, businessLine, finishId, debouncedThickness, status, debouncedSearch, resetPage]);
 
   const coils = useQuery({
     queryKey: ['coils', queryString],
@@ -171,7 +182,7 @@ export function BobinasView() {
         <Tabs
           value={tab}
           onValueChange={(v) => {
-            setTab(v as ViewTab);
+            setUrl({ tab: v });
           }}
         >
           <TabsList>
@@ -184,9 +195,9 @@ export function BobinasView() {
         </Tabs>
 
         <Select
-          value={businessLine}
+          value={businessLine || ALL}
           onValueChange={(v) => {
-            setBusinessLine(v as BusinessLine | typeof ALL);
+            setUrl({ line: v === ALL ? '' : v });
           }}
         >
           <SelectTrigger className="w-52" aria-label="Línea de negocio">
@@ -202,7 +213,12 @@ export function BobinasView() {
           </SelectContent>
         </Select>
 
-        <Select value={finishId} onValueChange={setFinishId}>
+        <Select
+          value={finishId || ALL}
+          onValueChange={(v) => {
+            setUrl({ finish: v === ALL ? '' : v });
+          }}
+        >
           <SelectTrigger className="w-52" aria-label="Acabado">
             <SelectValue />
           </SelectTrigger>
@@ -221,40 +237,34 @@ export function BobinasView() {
           placeholder="Espesor (mm)"
           className="w-36"
           inputMode="decimal"
-          value={thicknessMm}
+          value={thicknessText}
           onChange={(e) => {
-            setThicknessMm(e.target.value);
+            setThicknessText(e.target.value);
           }}
         />
 
         {tab === 'todas' && (
-          <Select
+          <StatusFilter
             value={status}
-            onValueChange={(v) => {
-              setStatus(v as CoilStatus | typeof ALL);
+            onChange={(v) => {
+              setUrl({ status: v });
             }}
-          >
-            <SelectTrigger className="w-44" aria-label="Estado">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>Todos los estados</SelectItem>
-              {COIL_STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {COIL_STATUS_LABELS[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={COIL_STATUSES.filter((s) => s !== 'CANCELLED').map((s) => ({
+              value: s,
+              label: COIL_STATUS_LABELS[s],
+            }))}
+            negativeValue="CANCELLED"
+            className="w-44"
+          />
         )}
 
         <Input
           aria-label="Buscar bobinas por código"
           placeholder="Buscar por código…"
           className="max-w-xs"
-          value={search}
+          value={searchText}
           onChange={(e) => {
-            setSearch(e.target.value);
+            setSearchText(e.target.value);
           }}
         />
       </div>

@@ -2,14 +2,19 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { z } from 'zod';
 import {
   BUSINESS_LINES,
+  inventoryItemResolveQuerySchema,
   inventoryQuerySchema,
   Role,
+  searchQuerySchema,
   type BusinessLine,
   type InventoryBalanceDto,
+  type InventoryItemOptionDto,
+  type InventoryItemResolveQuery,
   type InventoryMovementDto,
   type InventoryQuery,
   type InventorySummaryDto,
   type PaginatedResult,
+  type SearchQuery,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -53,6 +58,28 @@ export class InventoryController {
     @Query(new ZodValidationPipe(inventoryQuerySchema)) query: InventoryQuery,
   ): Promise<PaginatedResult<InventoryMovementDto>> {
     return this.inventory.findMovements(query, canSeeCosts(actor));
+  }
+
+  /**
+   * D-290: buscador de ítems del kardex (bobinas por código, productos por SKU/nombre).
+   * Mismo rol que el kardex; solo lectura y sin costos.
+   */
+  @Get('items/search')
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  searchItems(
+    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQuery,
+  ): Promise<InventoryItemOptionDto[]> {
+    return this.inventory.searchItems(query.q);
+  }
+
+  /** D-290: rotula el ítem elegido que viene en la URL del kardex. */
+  @Get('items/resolve')
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  resolveItem(
+    @Query(new ZodValidationPipe(inventoryItemResolveQuerySchema))
+    query: InventoryItemResolveQuery,
+  ): Promise<InventoryItemOptionDto> {
+    return this.inventory.resolveItem(query);
   }
 
   /** Inventario valorizado agregado de una línea (RF-51): bobinas por tipo y productos. */

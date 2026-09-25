@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
+import { Section } from '@/components/section';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -297,7 +298,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         </Stat>
       </StatStrip>
 
-      <div className="rounded-lg border">
+      <Section title="Líneas">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -380,18 +381,15 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             )}
           </TableBody>
         </Table>
-      </div>
+      </Section>
 
       {/* D-187: cada edición que movió un precio, con quién y cuándo. */}
       <PriceChangesCard changes={q.priceChanges} />
 
       {q.notes && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Observaciones</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">{q.notes}</CardContent>
-        </Card>
+        <Section title="Observaciones" bodyClassName="px-2.5 text-sm text-muted-foreground">
+          {q.notes}
+        </Section>
       )}
 
       <div className="text-xs text-muted-foreground">

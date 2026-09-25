@@ -96,3 +96,14 @@ export function orderStageWhere(stage: OrderStage): Prisma.SalesOrderWhereInput 
       return { status: stage };
   }
 }
+
+/**
+ * D-289: varios estados a la vez (`?stage=CONFIRMED,READY`). Cada uno conserva su condición
+ * (D-277); la lista los une con `OR`. Con uno solo es exactamente `orderStageWhere`.
+ */
+export function orderStagesWhere(stages: readonly OrderStage[]): Prisma.SalesOrderWhereInput {
+  const [first, ...rest] = stages;
+  if (first !== undefined && rest.length === 0) return orderStageWhere(first);
+  // En `AND` y no en `OR` directo: la búsqueda de la lista ya usa el `OR` de la raíz.
+  return { AND: [{ OR: stages.map((s) => orderStageWhere(s)) }] };
+}

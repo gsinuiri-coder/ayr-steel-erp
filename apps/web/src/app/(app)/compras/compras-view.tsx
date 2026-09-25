@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -11,16 +10,18 @@ import {
   PURCHASE_STATUSES,
   PURCHASE_TYPE_LABELS,
   PURCHASE_TYPES,
-  type BusinessLine,
   type PaginatedResult,
   type PurchaseListItemDto,
-  type PurchaseStatus,
-  type PurchaseType,
 } from '@ayr/shared';
 import { PURCHASE_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
-import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import { usePagination } from '@/lib/use-pagination';
+import {
+  URL_PAGINATION_DEFAULTS,
+  useUrlPagination,
+  useUrlSearchInput,
+  useUrlState,
+} from '@/lib/use-url-state';
+import { StatusFilter } from '@/components/status-filter';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
@@ -49,24 +50,28 @@ const ALL = 'ALL';
 
 /** Lista central de compras (D-030), filtrable por línea, tipo, estado y saldo. */
 export function ComprasView() {
-  const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
-  const [type, setType] = useState<PurchaseType | typeof ALL>(ALL);
-  const [status, setStatus] = useState<PurchaseStatus | typeof ALL>(ALL);
-  const [onlyWithBalance, setOnlyWithBalance] = useState(false);
-  const [search, setSearch] = useState('');
-  const debouncedSearch = useDebouncedValue(search);
-  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
-
-  useEffect(() => {
-    resetPage();
-  }, [businessLine, type, status, onlyWithBalance, debouncedSearch, resetPage]);
+  // D-289: filtros, búsqueda y página viven en la URL.
+  const [url, setUrl] = useUrlState({
+    ...URL_PAGINATION_DEFAULTS,
+    line: '',
+    type: '',
+    status: '',
+    balance: '',
+    search: '',
+  });
+  const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
+  const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
+  const { line: businessLine, type, status } = url;
+  const onlyWithBalance = url.balance === '1';
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (businessLine !== ALL) params.set('businessLine', businessLine);
-  if (type !== ALL) params.set('type', type);
-  if (status !== ALL) params.set('status', status);
+  if (businessLine) params.set('businessLine', businessLine);
+  if (type) params.set('type', type);
+  if (status) params.set('status', status);
   if (onlyWithBalance) params.set('onlyWithBalance', 'true');
-  if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+  if (search) params.set('search', search);
   const queryString = params.toString();
 
   const purchases = useQuery({
@@ -92,9 +97,9 @@ export function ComprasView() {
 
       <div className="flex flex-wrap items-center gap-3">
         <Select
-          value={businessLine}
+          value={businessLine || ALL}
           onValueChange={(v) => {
-            setBusinessLine(v as BusinessLine | typeof ALL);
+            setUrl({ line: v === ALL ? '' : v });
           }}
         >
           <SelectTrigger className="w-52" aria-label="Línea de negocio">
@@ -111,9 +116,9 @@ export function ComprasView() {
         </Select>
 
         <Select
-          value={type}
+          value={type || ALL}
           onValueChange={(v) => {
-            setType(v as PurchaseType | typeof ALL);
+            setUrl({ type: v === ALL ? '' : v });
           }}
         >
           <SelectTrigger className="w-52" aria-label="Tipo de compra">
@@ -129,30 +134,24 @@ export function ComprasView() {
           </SelectContent>
         </Select>
 
-        <Select
+        <StatusFilter
           value={status}
-          onValueChange={(v) => {
-            setStatus(v as PurchaseStatus | typeof ALL);
+          onChange={(v) => {
+            setUrl({ status: v });
           }}
-        >
-          <SelectTrigger className="w-44" aria-label="Estado">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los estados</SelectItem>
-            {PURCHASE_STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {PURCHASE_STATUS_LABELS[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          options={PURCHASE_STATUSES.filter((s) => s !== 'CANCELLED').map((s) => ({
+            value: s,
+            label: PURCHASE_STATUS_LABELS[s],
+          }))}
+          negativeValue="CANCELLED"
+          className="w-44"
+        />
 
         <Button
           variant={onlyWithBalance ? 'default' : 'outline'}
           aria-pressed={onlyWithBalance}
           onClick={() => {
-            setOnlyWithBalance((v) => !v);
+            setUrl({ balance: onlyWithBalance ? '' : '1' });
           }}
         >
           Solo con saldo
@@ -162,9 +161,9 @@ export function ComprasView() {
           aria-label="Buscar compras"
           placeholder="Buscar por comprobante o proveedor…"
           className="max-w-xs"
-          value={search}
+          value={searchText}
           onChange={(e) => {
-            setSearch(e.target.value);
+            setSearchText(e.target.value);
           }}
         />
       </div>

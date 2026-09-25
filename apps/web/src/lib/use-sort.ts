@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import { toDecimal } from '@ayr/shared';
+import { useUrlState } from './use-url-state';
 
 export type SortDir = 'asc' | 'desc';
 
@@ -17,11 +17,15 @@ export interface SortState<K extends string> {
  * invierte; clickear otra columna arranca esa en ascendente.
  */
 export function useSort<K extends string>(): [SortState<K>, (key: K) => void] {
-  const [state, setState] = useState<SortState<K>>({ key: null, dir: 'asc' });
+  // D-289: el orden vive en la URL (`?sort=code&dir=desc`) como el resto de los filtros.
+  const [url, setUrl] = useUrlState({ sort: '', dir: 'asc' });
+  const state: SortState<K> = {
+    key: url.sort === '' ? null : (url.sort as K),
+    dir: url.dir === 'desc' ? 'desc' : 'asc',
+  };
   const toggle = (key: K) => {
-    setState((s) =>
-      s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' },
-    );
+    if (state.key === key) setUrl({ dir: state.dir === 'asc' ? 'desc' : 'asc' });
+    else setUrl({ sort: key, dir: 'asc' });
   };
   return [state, toggle];
 }

@@ -202,18 +202,21 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       await expect(
         page.getByRole('heading', { name: 'Historial de órdenes', exact: true }),
       ).toBeVisible();
-      await expect(page.getByText('Historial de órdenes de producción')).toBeVisible();
-      const historyGroup = page
-        .getByRole('link', { name: a.order.code, exact: true })
-        .locator('xpath=ancestor::div[@data-slot="card"][1]');
-      await expect(historyGroup).toContainText(customer.name);
+      // D-291: el historial es una tabla con una fila por pedido; sus órdenes se ven al abrirla.
+      const historyRow = page
+        .getByTestId('history-order-row')
+        .filter({ has: page.getByRole('link', { name: a.order.code, exact: true }) });
+      await expect(historyRow).toContainText(customer.name);
+      // Órdenes cerradas / total: ninguna cerrada todavía, dos en total.
+      await expect(historyRow).toContainText('0 / 2');
+      await historyRow.getByRole('button', { name: /Ver las órdenes de/ }).click();
+      const historyGroup = page.getByTestId('history-orders-detail');
       await expect(
         historyGroup.getByRole('link', { name: firstCode, exact: true }),
       ).toHaveAttribute('href', `/produccion/${first!}`);
       await expect(
         historyGroup.getByRole('link', { name: secondCode, exact: true }),
       ).toHaveAttribute('href', `/produccion/${second!}`);
-      await expect(historyGroup).toContainText('2 órdenes');
       // Y ya no convive plegado con la lista de pedidos.
       await expect(
         page.getByRole('region', { name: 'Pedidos con producción pendiente' }),

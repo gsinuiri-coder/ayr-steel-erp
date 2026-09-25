@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
+  DEFAULT_PAGE_SIZE,
   FISCAL_DOC_TYPE_LABELS,
   Role,
   toDecimal,
@@ -13,7 +14,7 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
-import { usePagination } from '@/lib/use-pagination';
+import { useUrlState } from '@/lib/use-url-state';
 import { PaginationBar } from '@/components/pagination-bar';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { RoleGate } from '@/components/role-gate';
@@ -45,8 +46,33 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
  * comprobante, no contra el pedido).
  */
 export function CobranzasView() {
-  const receivablesPage = usePagination();
-  const pendingPage = usePagination();
+  // D-289: la página y el tamaño de cada tabla viven en la URL (`rPage`/`rSize`, `pPage`/`pSize`).
+  const [url, setUrl] = useUrlState({
+    rPage: '1',
+    rSize: String(DEFAULT_PAGE_SIZE),
+    pPage: '1',
+    pSize: String(DEFAULT_PAGE_SIZE),
+  });
+  const receivablesPage = {
+    page: Math.max(1, Number(url.rPage) || 1),
+    pageSize: Number(url.rSize) || DEFAULT_PAGE_SIZE,
+    setPage: (p: number) => {
+      setUrl({ rPage: String(p) });
+    },
+    setPageSize: (size: number) => {
+      setUrl({ rSize: String(size), rPage: '1' });
+    },
+  };
+  const pendingPage = {
+    page: Math.max(1, Number(url.pPage) || 1),
+    pageSize: Number(url.pSize) || DEFAULT_PAGE_SIZE,
+    setPage: (p: number) => {
+      setUrl({ pPage: String(p) });
+    },
+    setPageSize: (size: number) => {
+      setUrl({ pSize: String(size), pPage: '1' });
+    },
+  };
 
   const totals = useQuery({
     queryKey: ['receivables-summary'],

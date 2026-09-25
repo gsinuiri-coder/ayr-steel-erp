@@ -5,6 +5,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import type { InventoryValuationService } from './inventory-valuation.service';
 import type { KardexPepsService } from './kardex-peps.service';
+import type { KardexSheetService } from './kardex-sheet.service';
 import { ReportsController } from './reports.controller';
 import type { ReportsService } from './reports.service';
 import type { SalesMarginService } from './sales-margin.service';
@@ -90,13 +91,15 @@ function build() {
   const inventoryValuation = { valuation: jest.fn().mockResolvedValue(VALUATION) };
   const salesMargin = { salesMargin: jest.fn().mockResolvedValue(MARGIN) };
   const kardexPeps = { report: jest.fn().mockResolvedValue(PEPS) };
+  const kardexSheet = { sheet: jest.fn() };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
     salesMargin as unknown as SalesMarginService,
     kardexPeps as unknown as KardexPepsService,
+    kardexSheet as unknown as KardexSheetService,
   );
-  return { controller, reports, inventoryValuation, salesMargin, kardexPeps };
+  return { controller, reports, inventoryValuation, salesMargin, kardexPeps, kardexSheet };
 }
 
 describe('ReportsController', () => {
@@ -110,6 +113,9 @@ describe('ReportsController', () => {
     expect(rolesOf('inventoryValuationXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('salesMarginXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('kardexPepsXlsxFile')).toEqual([Role.ADMINISTRADOR]);
+    // D-296/D-298: el PEPS en JSON y el Excel del cliente llevan costos: solo ADMINISTRADOR.
+    expect(rolesOf('kardexPepsJson')).toEqual([Role.ADMINISTRADOR]);
+    expect(rolesOf('kardexSheetXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
   });
 
@@ -169,6 +175,45 @@ describe('ReportsController', () => {
     expect(kardexPeps.report).toHaveBeenCalledWith(query);
     expect(res.headers['Content-Disposition']).toBe(
       'attachment; filename="kardex-peps-BOB-001-2026-09-01-2026-09-30.xlsx"',
+    );
+  });
+
+  it('el PEPS en JSON sale del mismo reporte que el Excel (D-296)', async () => {
+    const { controller, kardexPeps } = build();
+    const query = {
+      itemType: 'COIL' as const,
+      itemId: '11111111-1111-1111-1111-111111111111',
+      from: '2026-09-01',
+      to: '2026-09-30',
+    };
+    const dto = await controller.kardexPepsJson(query);
+    expect(kardexPeps.report).toHaveBeenCalledWith(query);
+    expect(dto).toMatchObject({ itemCode: 'BOB-001', from: '2026-09-01', rows: [] });
+  });
+
+  it('el Excel del kardex con el formato del cliente pide la hoja y viaja como adjunto (D-298)', async () => {
+    const { controller, kardexSheet } = build();
+    kardexSheet.sheet.mockResolvedValue({
+      method: 'AVERAGE',
+      itemCode: 'BOB-001',
+      itemDescription: 'Bobina',
+      from: '2026-09-01',
+      to: '2026-09-30',
+      unit: 'KGM',
+      rows: [],
+    });
+    const res = fakeResponse();
+    const query = {
+      itemType: 'COIL' as const,
+      itemId: '11111111-1111-1111-1111-111111111111',
+      from: '2026-09-01',
+      to: '2026-09-30',
+      method: 'AVERAGE' as const,
+    };
+    await controller.kardexSheetXlsxFile(query, res);
+    expect(kardexSheet.sheet).toHaveBeenCalledWith(query);
+    expect(res.headers['Content-Disposition']).toBe(
+      'attachment; filename="kardex-average-BOB-001-2026-09-01-2026-09-30.xlsx"',
     );
   });
 });

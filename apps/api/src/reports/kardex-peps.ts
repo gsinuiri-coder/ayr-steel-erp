@@ -58,6 +58,12 @@ export interface PepsRow {
   balanceUnitCost: string;
   balanceTotal: string;
   warning: string | null;
+  /**
+   * D-298: de qué capas sale una salida, una porción por capa (a su costo), y el faltante sin
+   * capa al costo que registró el kardex. Es lo que la hoja del cliente abre en una fila por
+   * capa. `null` en lo que no es una salida.
+   */
+  outLayers: PepsLayer[] | null;
 }
 
 export interface PepsBalance {
@@ -166,6 +172,14 @@ class PepsQueue {
   }
 }
 
+function layerOf(qty: Decimal, unitCost: Decimal): PepsLayer {
+  return {
+    qty: toFixedString(qty, 'KG'),
+    unitCost: toFixedString(unitCost, 'MONEY'),
+    total: toFixedString(qty.times(unitCost), 'MONEY'),
+  };
+}
+
 function costOf(pieces: Piece[]): Decimal {
   return pieces.reduce((acc, p) => acc.plus(p.qty.times(p.unitCost)), ZERO);
 }
@@ -200,6 +214,7 @@ export function valuePeps(movements: PepsMovement[], from: string, to: string): 
     let rowIn: { qty: Decimal | null; total: Decimal } | null = null;
     let rowOut: { qty: Decimal | null; total: Decimal } | null = null;
     let warning: string | null = null;
+    let outLayers: PepsLayer[] | null = null;
 
     if (m.type === 'IN') {
       const original = m.reversalOfId ? consumed.get(m.reversalOfId) : undefined;
@@ -236,6 +251,10 @@ export function valuePeps(movements: PepsMovement[], from: string, to: string): 
         warning = `Salida sin capas PEPS suficientes: ${toFixedString(missing, 'KG')} valorizados al costo registrado del kardex (${toFixedString(registeredUnit, 'MONEY')})`;
       }
       rowOut = { qty, total };
+      outLayers = [
+        ...pieces.map((p) => layerOf(p.qty, p.unitCost)),
+        ...(missing.gt(0) ? [layerOf(missing, registeredUnit)] : []),
+      ];
     } else {
       // ADJUST: solo valor. Positivo va en entradas, negativo en salidas, sin cantidad.
       if (!queue.spread(registered)) {
@@ -276,6 +295,7 @@ export function valuePeps(movements: PepsMovement[], from: string, to: string): 
       ),
       balanceTotal: toFixedString(balanceTotal, 'MONEY'),
       warning,
+      outLayers,
     });
   }
 

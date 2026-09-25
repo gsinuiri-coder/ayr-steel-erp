@@ -192,6 +192,22 @@ export async function headerAction(page: Page, name: string): Promise<Locator> {
 }
 
 /**
+ * D-292: el menú lateral es un acordeón, así que el enlace de un ítem solo se puede clickear
+ * con su grupo abierto. Abre el grupo (`Comercial`, `Catálogo`, `Planta`, `Administración`)
+ * si está cerrado y no hace nada si ya lo está: un click sobre una cabecera abierta la cierra,
+ * y por eso se mira `aria-expanded` antes de clickear.
+ */
+export async function openSidebarGroup(page: Page, group: string): Promise<void> {
+  const header = page
+    .locator('[data-slot="sidebar-group-label"]')
+    .getByText(group, { exact: true })
+    .locator('xpath=ancestor-or-self::button[1]');
+  await expect(header).toBeVisible({ timeout: 30_000 });
+  if ((await header.getAttribute('aria-expanded')) !== 'true') await header.click();
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+}
+
+/**
  * Inicia sesión con un usuario efímero recién creado (contraseña temporal) y
  * completa el cambio de contraseña obligatorio del primer ingreso.
  */

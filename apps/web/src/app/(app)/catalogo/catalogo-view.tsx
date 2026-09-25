@@ -19,8 +19,12 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { CATALOG_BAJO_PISO_VER_TODOS } from '@/lib/catalog-links';
 import { useSession } from '@/lib/session';
+import { useColumnFilters } from '@/lib/use-column-filters';
+import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
+import { SortableTableHead } from '@/components/sortable-table-head';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -80,6 +84,18 @@ export function CatalogoView() {
   // `1` (más de 8 en el card) solo llega a la vista sin resaltar nada en particular.
   const highlightProductId = useSearchParams().get('bajoPiso');
   const [activeLineId, setActiveLineId] = useState<string | null>(null);
+  // Punto 13 del cliente (D-290): la búsqueda por SKU o nombre filtra en el cliente sobre
+  // el catálogo ya cargado —no pagina (D-113)— y vive en la URL (`?q=`), con debounce de 150 ms.
+  const [url, setUrl] = useUrlState({ q: '' });
+  const [searchText, setSearchText, search] = useUrlSearchInput(
+    url.q,
+    (v) => {
+      setUrl({ q: v });
+    },
+    150,
+  );
+  const needle = search.toLowerCase();
+  const columnFilters = useColumnFilters<'sku' | 'name'>();
 
   const lines = useQuery({
     queryKey: ['business-lines'],
@@ -154,11 +170,31 @@ export function CatalogoView() {
           <ColoresPanel isAdmin={isAdmin} />
         </TabsContent>
         {lines.data.map((line) => {
-          const lineProducts = products.data?.filter((p) => p.businessLineId === line.id) ?? [];
+          const inLine = products.data?.filter((p) => p.businessLineId === line.id) ?? [];
+          const searched = needle
+            ? inLine.filter(
+                (p) =>
+                  p.sku.toLowerCase().includes(needle) || p.name.toLowerCase().includes(needle),
+              )
+            : inLine;
+          // D-295: el catálogo no pagina, así que el filtro por columna es exacto.
+          const lineProducts = columnFilters.apply(searched, {
+            sku: (p) => p.sku,
+            name: (p) => p.name,
+          });
           return (
             <TabsContent key={line.id} value={line.id} className="grid gap-4">
-              {isAdmin && (
-                <div className="flex justify-end">
+              <div className="flex items-center justify-between gap-3">
+                <Input
+                  aria-label="Buscar productos por SKU o nombre"
+                  placeholder="Buscar por SKU o nombre…"
+                  className="max-w-xs"
+                  value={searchText}
+                  onChange={(e) => {
+                    setSearchText(e.target.value);
+                  }}
+                />
+                {isAdmin && (
                   <Button
                     size="sm"
                     onClick={() => {
@@ -167,14 +203,34 @@ export function CatalogoView() {
                   >
                     Nuevo producto
                   </Button>
-                </div>
-              )}
+                )}
+              </div>
               <div className="rounded-lg border">
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
-                      <TableHead>SKU</TableHead>
-                      <TableHead>Nombre</TableHead>
+                      <SortableTableHead
+                        filter={{
+                          label: 'SKU',
+                          value: columnFilters.filters.sku ?? '',
+                          onChange: (v) => {
+                            columnFilters.setFilter('sku', v);
+                          },
+                        }}
+                      >
+                        SKU
+                      </SortableTableHead>
+                      <SortableTableHead
+                        filter={{
+                          label: 'nombre',
+                          value: columnFilters.filters.name ?? '',
+                          onChange: (v) => {
+                            columnFilters.setFilter('name', v);
+                          },
+                        }}
+                      >
+                        Nombre
+                      </SortableTableHead>
                       {usesColor(line.code) && <TableHead>Color</TableHead>}
                       {/* D-127: el subtipo decide qué hace la confirmación con esta línea,
                           así que se ve en la lista y no solo dentro del diálogo. */}
@@ -280,7 +336,9 @@ export function CatalogoView() {
                           colSpan={(isAdmin ? 7 : 6) + (usesColor(line.code) ? 1 : 0)}
                           className="text-center text-muted-foreground"
                         >
-                          Sin productos en esta línea.
+                          {needle
+                            ? `Ningún producto de esta línea coincide con «${search}».`
+                            : 'Sin productos en esta línea.'}
                         </TableCell>
                       </TableRow>
                     )}

@@ -18,6 +18,7 @@ import {
 } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyFields } from './idempotency';
+import { statusListSchema } from './status-filter';
 import { backdatableFields } from './operation';
 import { roofingPieceSchema } from './roofing';
 
@@ -584,6 +585,13 @@ export const productionReportSchema = z.object({
    */
   consumedKg: z.string().nullable(),
   /**
+   * D-291: de qué bobina(s) o fleje(s) salió el material de este reporte —lo que el kardex
+   * registró como salida `PRODUCTION` viva con este reporte de referencia—. Coberturas suele
+   * traer una; drywall reparte FIFO entre flejes y puede traer varias. Solo lectura, derivado
+   * al leer; un reporte revertido queda sin bobinas (su salida ya no está viva).
+   */
+  coils: z.array(z.object({ id: z.string().uuid(), code: z.string(), kg: z.string() })),
+  /**
    * D-154: el aviso del agregado que este reporte dejó anotado, si lo dejó. Se guarda en la
    * fila y no solo en `audit_log` porque es la mitad que le falta al cierre para explicar
    * por qué el material no alcanzó: quien audita la corrida mira sus reportes, no el log.
@@ -703,7 +711,7 @@ export const productionOrderListItemSchema = productionOrderSchema
 export type ProductionOrderListItemDto = z.infer<typeof productionOrderListItemSchema>;
 
 export const productionOrderQuerySchema = z.object({
-  status: z.enum(PRODUCTION_ORDER_STATUSES).optional(),
+  status: statusListSchema(PRODUCTION_ORDER_STATUSES),
   kind: z.enum(PRODUCTION_ORDER_KINDS).optional(),
   productId: z.string().uuid().optional(),
   businessLine: z.enum(BUSINESS_LINES).optional(),

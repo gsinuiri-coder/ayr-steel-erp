@@ -63,6 +63,8 @@ export const inventoryMovementSchema = z.object({
    */
   balanceQty: z.string().nullable(),
   balanceAvgCost: z.string().nullable().optional(),
+  /** D-298: el valor del saldo corrido (cantidad × promedio), para la hoja del cliente. */
+  balanceTotalCost: z.string().nullable().optional(),
 });
 export type InventoryMovementDto = z.infer<typeof inventoryMovementSchema>;
 
@@ -142,3 +144,26 @@ export type InventorySummaryDto = z.infer<typeof inventorySummarySchema>;
 /** Cantidades de kardex: siempre positivas; el sentido lo da el tipo de movimiento. */
 export const inventoryQtySchema = decimalStringSchema('KG', { positive: true });
 export const inventoryCostSchema = decimalStringSchema('MONEY');
+
+/**
+ * D-290: un ítem elegible en el kardex —una bobina por código o un producto por SKU/nombre—
+ * en una sola lista. Solo lectura; la materia prima (`RAW_MATERIAL`) no se elige por acá.
+ */
+export const inventoryItemOptionSchema = z.object({
+  itemType: z.enum(['COIL', 'PRODUCT']),
+  itemId: z.string().uuid(),
+  /** Código de la bobina o SKU del producto: lo que el usuario reconoce. */
+  code: z.string(),
+  /** Segunda línea: el nombre del producto, o espesor y acabado de la bobina. */
+  description: z.string(),
+  /** Producto dado de baja o bobina anulada: sigue teniendo kardex, la lista lo avisa. */
+  inactive: z.boolean(),
+});
+export type InventoryItemOptionDto = z.infer<typeof inventoryItemOptionSchema>;
+
+/** Resuelve un ítem puntual, para rotular lo ya elegido que viene en la URL. */
+export const inventoryItemResolveQuerySchema = z.object({
+  itemType: z.enum(['COIL', 'PRODUCT']),
+  itemId: z.string().uuid(),
+});
+export type InventoryItemResolveQuery = z.infer<typeof inventoryItemResolveQuerySchema>;

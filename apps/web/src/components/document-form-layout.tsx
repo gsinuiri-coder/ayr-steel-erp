@@ -1,6 +1,7 @@
 import { useId, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/format';
+import { FormGrid } from '@/components/form';
 
 /**
  * D-284: el esqueleto común de los formularios de documento (cotización, pedido directo,
@@ -40,14 +41,26 @@ export function DocumentSection({
       <h2 id={headingId} className="mb-3 text-sm font-medium">
         {title}
       </h2>
-      <div className={cn('grid gap-x-4 gap-y-3 md:grid-cols-4', className)}>{children}</div>
+      {/* D-293: la grilla de 12 columnas del modelo de formularios (`components/form`). */}
+      <FormGrid className={cn('gap-y-3', className)}>{children}</FormGrid>
     </section>
   );
 }
 
-const SPAN = { 1: '', 2: 'md:col-span-2', 3: 'md:col-span-3', 4: 'md:col-span-4' } as const;
+/**
+ * Las cuatro «columnas» de los formularios de documento, en la grilla de 12: 1 → 3, 2 → 6, 3 → 9,
+ * 4 → 12. Las proporciones son las de siempre (D-284); lo que cambia es la base de 12, que es la
+ * misma de todos los formularios (D-293).
+ */
+const SPAN = { 1: 'col-span-3', 2: 'col-span-6', 3: 'col-span-9', 4: 'col-span-12' } as const;
 
-/** Un campo de la grilla: rótulo arriba, control, y a lo sumo un renglón de ayuda debajo. */
+/**
+ * Un campo de la grilla: rótulo arriba, control, y a lo sumo un renglón de ayuda debajo.
+ *
+ * D-293: el rótulo mide siempre 16 px y la celda reserva la altura de rótulo + control + un
+ * renglón de ayuda (`min-h-[4.5rem]`), así que un texto debajo de un campo —o su ausencia— no
+ * cambia dónde empieza el control del vecino. Todo va alineado arriba (`items-start`).
+ */
 export function FormField({
   span = 1,
   children,
@@ -57,7 +70,20 @@ export function FormField({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={cn('grid content-start gap-1.5', SPAN[span], className)}>{children}</div>;
+  return (
+    <div
+      data-slot="form-cell"
+      className={cn(
+        'flex min-h-[4.5rem] min-w-0 flex-col items-start gap-1',
+        '[&>[data-slot=label]]:h-4 [&>[data-slot=label]]:leading-4',
+        '[&>:not([data-slot=label])]:w-full',
+        SPAN[span],
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 /** Los importes del documento, con el vocabulario de D-162, en una columna derecha. */

@@ -28,8 +28,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
+import { Section } from '@/components/section';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -403,189 +403,179 @@ export function PedidoDetalleView({ id }: { id: string }) {
         </Stat>
       </StatStrip>
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-medium">Líneas</h2>
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead>#</TableHead>
-                <TableHead>Producto</TableHead>
-                <TableHead className="text-right">Cantidad</TableHead>
-                {/* D-162: valor = sin IGV. Es lo que la línea congeló al confirmarse. */}
-                <TableHead className="text-right">Valor unitario</TableHead>
-                <TableHead className="text-right">Valor de venta</TableHead>
-                {showLineActions && <TableHead className="text-right">Acciones</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {o.items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>{item.lineNumber}</TableCell>
-                  <TableCell>
-                    <div className="font-medium">{item.productSku}</div>
-                    {item.reserveItemType === 'COIL' && (
-                      <div className="text-xs text-muted-foreground">
-                        Bobina {item.reserveItemLabel}
-                      </div>
-                    )}
-                    <div className="text-xs text-muted-foreground">{item.description}</div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(item.qty, unitSymbol(item.unit))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatMoney(item.unitPricePen, 'PEN', 4)}
-                    {/* D-161: el valor por metro con el que se cotizó la plancha. */}
-                    {item.valuePerMeterPen !== null && (
-                      <span className="block text-xs text-muted-foreground tabular-nums">
-                        {formatMoney(item.valuePerMeterPen, 'PEN', 4)} /m
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
-                  {showLineActions && (
-                    <TableCell className="text-right">
-                      {canEditAsAdmin && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Cambiar precio de la línea ${String(item.lineNumber)}`}
-                          onClick={() => {
-                            setPricing(item);
-                          }}
-                        >
-                          Precio
-                        </Button>
-                      )}
-                      {/* D-116: una bobina entera vende su saldo; su cantidad no se edita. */}
-                      {canEditAsOwner && item.reserveItemType !== 'COIL' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Cambiar cantidad de la línea ${String(item.lineNumber)}`}
-                          onClick={() => {
-                            setResizing(item);
-                          }}
-                        >
-                          Cantidad
-                        </Button>
-                      )}
-                      {/* D-254: atar la línea a una bobina de su pool; cantidad e importe quedan. */}
-                      {canEditAsOwner && isCoilSaleLine(item) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Cambiar bobina de la línea ${String(item.lineNumber)}`}
-                          onClick={() => {
-                            setRecoiling(item);
-                          }}
-                        >
-                          Bobina
-                        </Button>
-                      )}
-                    </TableCell>
+      <Section title="Líneas">
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <TableHead>#</TableHead>
+              <TableHead>Producto</TableHead>
+              <TableHead className="text-right">Cantidad</TableHead>
+              {/* D-162: valor = sin IGV. Es lo que la línea congeló al confirmarse. */}
+              <TableHead className="text-right">Valor unitario</TableHead>
+              <TableHead className="text-right">Valor de venta</TableHead>
+              {showLineActions && <TableHead className="text-right">Acciones</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {o.items.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell>{item.lineNumber}</TableCell>
+                <TableCell>
+                  <div className="font-medium">{item.productSku}</div>
+                  {item.reserveItemType === 'COIL' && (
+                    <div className="text-xs text-muted-foreground">
+                      Bobina {item.reserveItemLabel}
+                    </div>
                   )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </section>
+                  <div className="text-xs text-muted-foreground">{item.description}</div>
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatQty(item.qty, unitSymbol(item.unit))}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatMoney(item.unitPricePen, 'PEN', 4)}
+                  {/* D-161: el valor por metro con el que se cotizó la plancha. */}
+                  {item.valuePerMeterPen !== null && (
+                    <span className="block text-xs text-muted-foreground tabular-nums">
+                      {formatMoney(item.valuePerMeterPen, 'PEN', 4)} /m
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
+                {showLineActions && (
+                  <TableCell className="text-right">
+                    {canEditAsAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Cambiar precio de la línea ${String(item.lineNumber)}`}
+                        onClick={() => {
+                          setPricing(item);
+                        }}
+                      >
+                        Precio
+                      </Button>
+                    )}
+                    {/* D-116: una bobina entera vende su saldo; su cantidad no se edita. */}
+                    {canEditAsOwner && item.reserveItemType !== 'COIL' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Cambiar cantidad de la línea ${String(item.lineNumber)}`}
+                        onClick={() => {
+                          setResizing(item);
+                        }}
+                      >
+                        Cantidad
+                      </Button>
+                    )}
+                    {/* D-254: atar la línea a una bobina de su pool; cantidad e importe quedan. */}
+                    {canEditAsOwner && isCoilSaleLine(item) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Cambiar bobina de la línea ${String(item.lineNumber)}`}
+                        onClick={() => {
+                          setRecoiling(item);
+                        }}
+                      >
+                        Bobina
+                      </Button>
+                    )}
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Section>
 
       {isAdmin && <ProductionOrdersCard salesOrderId={o.id} canOperate={canOperate} />}
 
-      <section className="space-y-2">
-        <h2 className="flex items-center gap-2 text-sm font-medium">
-          Reservas de material
-          <InfoPopover label="Sobre las reservas de material">
-            Una reserva activa descuenta el disponible del ítem sin tocar el kardex (D-054): el
-            material sigue físicamente en el almacén, pero ninguna otra operación lo puede tomar.
-          </InfoPopover>
-        </h2>
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead>Ítem</TableHead>
-                <TableHead className="text-right">Cantidad</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Orden de producción</TableHead>
-                <TableHead>Creada</TableHead>
-                {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {o.reservations.map((r) => (
-                <TableRow key={r.id} className={r.status === 'RELEASED' ? 'opacity-60' : undefined}>
-                  <TableCell>
-                    <div className="font-medium">{r.itemLabel}</div>
-                    <div className="text-xs text-muted-foreground">{r.itemName}</div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(r.qty, unitSymbol(r.unit))}
-                  </TableCell>
-                  <TableCell>
-                    {reservationBadge(r)}
-                    {r.isStale && (
-                      <Badge variant="outline" className="ml-2">
-                        Vieja
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {r.productionOrderId ? (
-                      <Link href={`/produccion/${r.productionOrderId}`} className={LINK_CLASSNAME}>
-                        {r.productionOrderCode}
-                      </Link>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell>{formatTimestampDate(r.createdAt)}</TableCell>
-                  {isAdmin && (
-                    <TableCell className="text-right">
-                      {r.status === 'ACTIVE' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() => {
-                            if (busy) return;
-                            setReleasing(r);
-                          }}
-                        >
-                          Liberar
-                        </Button>
-                      )}
-                    </TableCell>
+      <Section
+        title={
+          <>
+            Reservas de material
+            <InfoPopover label="Sobre las reservas de material">
+              Una reserva activa descuenta el disponible del ítem sin tocar el kardex (D-054): el
+              material sigue físicamente en el almacén, pero ninguna otra operación lo puede tomar.
+            </InfoPopover>
+          </>
+        }
+      >
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <TableHead>Ítem</TableHead>
+              <TableHead className="text-right">Cantidad</TableHead>
+              <TableHead>Estado</TableHead>
+              <TableHead>Orden de producción</TableHead>
+              <TableHead>Creada</TableHead>
+              {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {o.reservations.map((r) => (
+              <TableRow key={r.id} className={r.status === 'RELEASED' ? 'opacity-60' : undefined}>
+                <TableCell>
+                  <div className="font-medium">{r.itemLabel}</div>
+                  <div className="text-xs text-muted-foreground">{r.itemName}</div>
+                </TableCell>
+                <TableCell className="text-right">{formatQty(r.qty, unitSymbol(r.unit))}</TableCell>
+                <TableCell>
+                  {reservationBadge(r)}
+                  {r.isStale && (
+                    <Badge variant="outline" className="ml-2">
+                      Vieja
+                    </Badge>
                   )}
-                </TableRow>
-              ))}
-              {o.reservations.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={isAdmin ? 6 : 5}
-                    className="text-center text-muted-foreground"
-                  >
-                    El pedido no tiene reservas.
+                </TableCell>
+                <TableCell>
+                  {r.productionOrderId ? (
+                    <Link href={`/produccion/${r.productionOrderId}`} className={LINK_CLASSNAME}>
+                      {r.productionOrderCode}
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>{formatTimestampDate(r.createdAt)}</TableCell>
+                {isAdmin && (
+                  <TableCell className="text-right">
+                    {r.status === 'ACTIVE' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          if (busy) return;
+                          setReleasing(r);
+                        }}
+                      >
+                        Liberar
+                      </Button>
+                    )}
                   </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </section>
+                )}
+              </TableRow>
+            ))}
+            {o.reservations.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={isAdmin ? 6 : 5} className="text-center text-muted-foreground">
+                  El pedido no tiene reservas.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Section>
 
       <PriceChangesCard changes={o.priceChanges} />
 
       {o.notes && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Observaciones</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">{o.notes}</CardContent>
-        </Card>
+        <Section title="Observaciones" bodyClassName="px-2.5 text-sm text-muted-foreground">
+          {o.notes}
+        </Section>
       )}
 
       <div className="text-xs text-muted-foreground">

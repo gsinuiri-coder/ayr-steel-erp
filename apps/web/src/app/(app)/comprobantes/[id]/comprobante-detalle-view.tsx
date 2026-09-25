@@ -48,6 +48,7 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
+import { Section } from '@/components/section';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -939,66 +940,63 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         </div>
       )}
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-medium">Líneas</h2>
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead>#</TableHead>
-                <TableHead>Descripción</TableHead>
-                <TableHead className="text-right">Cantidad</TableHead>
-                {/* D-162: sin IGV, que es sobre lo que SUNAT factura. */}
-                <TableHead className="text-right">Valor unitario</TableHead>
-                <TableHead className="text-right">Subtotal</TableHead>
-                <TableHead className="text-right">IGV</TableHead>
-                <TableHead className="text-right">Acreditado</TableHead>
+      <Section title="Líneas" className="gap-2">
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <TableHead>#</TableHead>
+              <TableHead>Descripción</TableHead>
+              <TableHead className="text-right">Cantidad</TableHead>
+              {/* D-162: sin IGV, que es sobre lo que SUNAT factura. */}
+              <TableHead className="text-right">Valor unitario</TableHead>
+              <TableHead className="text-right">Subtotal</TableHead>
+              <TableHead className="text-right">IGV</TableHead>
+              <TableHead className="text-right">Acreditado</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {d.items.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell>{item.lineNumber}</TableCell>
+                <TableCell>
+                  <div className="font-medium">{item.productSku ?? item.description}</div>
+                  {item.productSku && (
+                    <div className="text-xs text-muted-foreground">{item.description}</div>
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatQty(item.qty, unitSymbol(item.unit))}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatMoney(item.unitPricePen, 'PEN', 4)}
+                </TableCell>
+                <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
+                <TableCell className="text-right">{formatMoney(item.igvPen)}</TableCell>
+                <TableCell className="text-right">
+                  {toDecimal(item.creditedQty).gt(0)
+                    ? formatQty(item.creditedQty, unitSymbol(item.unit))
+                    : '—'}
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {d.items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>{item.lineNumber}</TableCell>
-                  <TableCell>
-                    <div className="font-medium">{item.productSku ?? item.description}</div>
-                    {item.productSku && (
-                      <div className="text-xs text-muted-foreground">{item.description}</div>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(item.qty, unitSymbol(item.unit))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatMoney(item.unitPricePen, 'PEN', 4)}
-                  </TableCell>
-                  <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
-                  <TableCell className="text-right">{formatMoney(item.igvPen)}</TableCell>
-                  <TableCell className="text-right">
-                    {toDecimal(item.creditedQty).gt(0)
-                      ? formatQty(item.creditedQty, unitSymbol(item.unit))
-                      : '—'}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-        <div className="flex justify-end gap-6 text-sm">
+            ))}
+          </TableBody>
+        </Table>
+        <div className="flex justify-end gap-6 px-2.5 text-sm">
           <span>Subtotal {formatMoney(d.subtotalPen)}</span>
           <span>IGV {formatMoney(d.igvPen)}</span>
           <span className="font-semibold">Total {formatMoney(d.totalPen)}</span>
         </div>
-      </section>
+      </Section>
 
       {/*
         RF-86/RF-87: la cobranza vive en el comprobante porque el saldo es del comprobante
         (D-075). Una nota de crédito y una guía no se cobran.
       */}
       {!isDispatchNote && d.docType !== 'NOTA_CREDITO' && (
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium">Cobros</h2>
-            {canCollect && (
+        <Section
+          title="Cobros"
+          action={
+            canCollect ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -1009,102 +1007,98 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               >
                 Registrar cobro
               </Button>
-            )}
-          </div>
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background">
-                <TableRow>
-                  <TableHead>Fecha</TableHead>
-                  <TableHead>Medio</TableHead>
-                  <TableHead>Referencia</TableHead>
-                  <TableHead className="text-right">Monto</TableHead>
-                  <TableHead>Registrado por</TableHead>
-                  {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {d.payments.map((p) => (
-                  <TableRow key={p.id} className={p.reversedAt !== null ? 'opacity-60' : undefined}>
-                    <TableCell>{formatDate(p.date)}</TableCell>
-                    <TableCell>{PAYMENT_METHOD_LABELS[p.method]}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {p.reference ?? '—'}
-                    </TableCell>
+            ) : undefined
+          }
+        >
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-background">
+              <TableRow>
+                <TableHead>Fecha</TableHead>
+                <TableHead>Medio</TableHead>
+                <TableHead>Referencia</TableHead>
+                <TableHead className="text-right">Monto</TableHead>
+                <TableHead>Registrado por</TableHead>
+                {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {d.payments.map((p) => (
+                <TableRow key={p.id} className={p.reversedAt !== null ? 'opacity-60' : undefined}>
+                  <TableCell>{formatDate(p.date)}</TableCell>
+                  <TableCell>{PAYMENT_METHOD_LABELS[p.method]}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {p.reference ?? '—'}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatMoney(p.amountPen)}
+                    {p.reversedAt !== null && (
+                      <Badge variant="outline" className="ml-2">
+                        Revertido
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm">{p.createdByName ?? '—'}</TableCell>
+                  {isAdmin && (
                     <TableCell className="text-right">
-                      {formatMoney(p.amountPen)}
-                      {p.reversedAt !== null && (
-                        <Badge variant="outline" className="ml-2">
-                          Revertido
-                        </Badge>
+                      {p.reversedAt === null && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setReversingPayment(p);
+                          }}
+                        >
+                          Revertir
+                        </Button>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm">{p.createdByName ?? '—'}</TableCell>
-                    {isAdmin && (
-                      <TableCell className="text-right">
-                        {p.reversedAt === null && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setReversingPayment(p);
-                            }}
-                          >
-                            Revertir
-                          </Button>
-                        )}
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))}
-                {d.payments.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={isAdmin ? 6 : 5}
-                      className="text-center text-muted-foreground"
-                    >
-                      Todavía no hay cobros.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </section>
+                  )}
+                </TableRow>
+              ))}
+              {d.payments.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={isAdmin ? 6 : 5}
+                    className="text-center text-muted-foreground"
+                  >
+                    Todavía no hay cobros.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Section>
       )}
 
       {d.creditNotes.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium">Notas de crédito</h2>
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background">
-                <TableRow>
-                  <TableHead>Número</TableHead>
-                  <TableHead>Fecha</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
+        <Section title="Notas de crédito">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-background">
+              <TableRow>
+                <TableHead>Número</TableHead>
+                <TableHead>Fecha</TableHead>
+                <TableHead>Estado</TableHead>
+                <TableHead className="text-right">Total</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {d.creditNotes.map((n) => (
+                <TableRow key={n.id}>
+                  <TableCell>
+                    <Link href={`/comprobantes/${n.id}`} className={LINK_CLASSNAME}>
+                      {n.number ?? 'Borrador'}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{formatDate(n.issueDate)}</TableCell>
+                  <TableCell>
+                    <FiscalDocumentStatusBadge status={n.status} />
+                  </TableCell>
+                  <TableCell className="text-right">{formatMoney(n.totalPen)}</TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {d.creditNotes.map((n) => (
-                  <TableRow key={n.id}>
-                    <TableCell>
-                      <Link href={`/comprobantes/${n.id}`} className={LINK_CLASSNAME}>
-                        {n.number ?? 'Borrador'}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{formatDate(n.issueDate)}</TableCell>
-                    <TableCell>
-                      <FiscalDocumentStatusBadge status={n.status} />
-                    </TableCell>
-                    <TableCell className="text-right">{formatMoney(n.totalPen)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </section>
+              ))}
+            </TableBody>
+          </Table>
+        </Section>
       )}
 
       {/*
@@ -1113,39 +1107,36 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         físico: que haya sido corregida, cuándo y por qué es parte de lo que necesita ver.
       */}
       {issueDateChanges.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium">Correcciones de la fecha de emisión</h2>
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background">
-                <TableRow>
-                  <TableHead>Cuándo</TableHead>
-                  <TableHead>Quién</TableHead>
-                  <TableHead>Emisión</TableHead>
-                  <TableHead>Vencimiento</TableHead>
-                  <TableHead>Motivo</TableHead>
+        <Section title="Correcciones de la fecha de emisión">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-background">
+              <TableRow>
+                <TableHead>Cuándo</TableHead>
+                <TableHead>Quién</TableHead>
+                <TableHead>Emisión</TableHead>
+                <TableHead>Vencimiento</TableHead>
+                <TableHead>Motivo</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {issueDateChanges.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell>{formatTimestampDate(c.changedAt)}</TableCell>
+                  <TableCell>{c.changedByName ?? '—'}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {formatDate(c.beforeIssueDate)} → {formatDate(c.afterIssueDate)}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {c.beforeDueDate === null
+                      ? '—'
+                      : `${formatDate(c.beforeDueDate)} → ${formatDate(c.afterDueDate ?? c.beforeDueDate)}`}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{c.reason}</TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {issueDateChanges.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>{formatTimestampDate(c.changedAt)}</TableCell>
-                    <TableCell>{c.changedByName ?? '—'}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {formatDate(c.beforeIssueDate)} → {formatDate(c.afterIssueDate)}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {c.beforeDueDate === null
-                        ? '—'
-                        : `${formatDate(c.beforeDueDate)} → ${formatDate(c.afterDueDate ?? c.beforeDueDate)}`}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{c.reason}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </section>
+              ))}
+            </TableBody>
+          </Table>
+        </Section>
       )}
 
       {d.affectedDocumentNumber && (

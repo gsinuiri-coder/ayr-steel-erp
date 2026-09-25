@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { adminApi, createUser } from '../helpers/api';
+import { openSidebarGroup } from '../helpers/ui';
 
 test.describe('Usuarios (RF-04)', () => {
   test.skip(!!process.env.E2E_BASE_URL, 'Crea datos: solo local/CI');
@@ -26,6 +27,7 @@ test.describe('Usuarios (RF-04)', () => {
     await page.getByRole('button', { name: 'Guardar contraseña' }).click();
     await expect(page).toHaveURL(/\/$/);
 
+    await openSidebarGroup(page, 'Administración');
     await page.getByRole('link', { name: 'Usuarios' }).click();
     await expect(page.getByRole('heading', { name: 'Usuarios' })).toBeVisible();
 

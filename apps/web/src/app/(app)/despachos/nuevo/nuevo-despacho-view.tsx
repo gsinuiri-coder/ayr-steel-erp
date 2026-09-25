@@ -26,11 +26,11 @@ import { useSession } from '@/lib/session';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { RoleGate } from '@/components/role-gate';
+import { FormCell, FormGrid } from '@/components/form';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -338,49 +338,48 @@ export function NuevoDespachoView() {
         <CardHeader>
           <CardTitle>Pedido y fecha</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
-          <div className="space-y-1">
-            <Label>Pedido</Label>
-            <Select value={salesOrderId} onValueChange={setSalesOrderId}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Elige un pedido" />
-              </SelectTrigger>
-              <SelectContent>
-                {(orders.data ?? [])
-                  .filter((o) => o.status !== 'CANCELLED' && o.status !== 'FULFILLED')
-                  .map((o) => (
-                    <SelectItem key={o.id} value={o.id}>
-                      {o.code} · {o.customerName}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label>Fecha de traslado</Label>
-            <Input
-              type="date"
-              max={businessToday()}
-              value={dispatchDate}
-              // D-124: es la fecha de operación del despacho. Solo un administrador la puede
-              // mover del día; el API rechaza con 403 a cualquier otro rol que lo intente,
-              // así que la pantalla no ofrece algo que va a fallar.
-              disabled={user.role !== Role.ADMINISTRADOR}
-              onChange={(e) => {
-                setDispatchDate(e.target.value);
-              }}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Bultos</Label>
-            <Input
-              inputMode="numeric"
-              value={packageCount}
-              onChange={(e) => {
-                setPackageCount(e.target.value);
-              }}
-            />
-          </div>
+        <CardContent>
+          <FormGrid>
+            <FormCell span={4} label="Pedido">
+              <Select value={salesOrderId} onValueChange={setSalesOrderId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Elige un pedido" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(orders.data ?? [])
+                    .filter((o) => o.status !== 'CANCELLED' && o.status !== 'FULFILLED')
+                    .map((o) => (
+                      <SelectItem key={o.id} value={o.id}>
+                        {o.code} · {o.customerName}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </FormCell>
+            <FormCell span={4} label="Fecha de traslado">
+              <Input
+                type="date"
+                max={businessToday()}
+                value={dispatchDate}
+                // D-124: es la fecha de operación del despacho. Solo un administrador la puede
+                // mover del día; el API rechaza con 403 a cualquier otro rol que lo intente,
+                // así que la pantalla no ofrece algo que va a fallar.
+                disabled={user.role !== Role.ADMINISTRADOR}
+                onChange={(e) => {
+                  setDispatchDate(e.target.value);
+                }}
+              />
+            </FormCell>
+            <FormCell span={4} label="Bultos">
+              <Input
+                inputMode="numeric"
+                value={packageCount}
+                onChange={(e) => {
+                  setPackageCount(e.target.value);
+                }}
+              />
+            </FormCell>
+          </FormGrid>
         </CardContent>
       </Card>
 
@@ -388,93 +387,92 @@ export function NuevoDespachoView() {
         <CardHeader>
           <CardTitle>Traslado</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-2">
-          <div className="space-y-1">
-            <Label>Dirección de partida</Label>
-            <Input
-              value={originAddress}
-              list="origenes"
-              maxLength={240}
-              onChange={(e) => {
-                setOriginAddress(e.target.value);
-                const match = suggestions.data?.origins.find((o) => o.address === e.target.value);
-                if (match) setOriginUbigeo(match.ubigeo);
-              }}
-            />
-            <datalist id="origenes">
-              {(suggestions.data?.origins ?? []).map((o) => (
-                <option key={o.address} value={o.address} />
-              ))}
-            </datalist>
-          </div>
-          <div className="space-y-1">
-            <Label>Ubigeo de partida</Label>
-            <Input
-              inputMode="numeric"
-              maxLength={6}
-              placeholder="150101"
-              value={originUbigeo}
-              onChange={(e) => {
-                setOriginUbigeo(e.target.value);
-              }}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Dirección de llegada</Label>
-            <Input
-              value={destinationAddress}
-              maxLength={240}
-              onChange={(e) => {
-                setDestinationAddress(e.target.value);
-              }}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Ubigeo de llegada</Label>
-            <Input
-              inputMode="numeric"
-              maxLength={6}
-              placeholder="150131"
-              value={destinationUbigeo}
-              onChange={(e) => {
-                setDestinationUbigeo(e.target.value);
-              }}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Modalidad</Label>
-            <Select
-              value={transferMode}
-              onValueChange={(v) => {
-                setTransferMode(v as TransferMode);
-              }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TRANSFER_MODES.map((m) => (
-                  <SelectItem key={m} value={m}>
-                    {TRANSFER_MODE_LABELS[m]}
-                  </SelectItem>
+        <CardContent>
+          <FormGrid>
+            <FormCell span={6} label="Dirección de partida">
+              <Input
+                value={originAddress}
+                list="origenes"
+                maxLength={240}
+                onChange={(e) => {
+                  setOriginAddress(e.target.value);
+                  const match = suggestions.data?.origins.find((o) => o.address === e.target.value);
+                  if (match) setOriginUbigeo(match.ubigeo);
+                }}
+              />
+              <datalist id="origenes">
+                {(suggestions.data?.origins ?? []).map((o) => (
+                  <option key={o.address} value={o.address} />
                 ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1" hidden={transferMode === 'PICKUP'}>
-            <Label>Peso bruto total (kg)</Label>
-            <Input
-              inputMode="decimal"
-              value={totalWeightKg}
-              onChange={(e) => {
-                setTotalWeightKg(e.target.value);
-              }}
-            />
-            <p className="text-xs text-muted-foreground">
-              Propuesto {suggestedWeight} kg a partir del material reservado; corrígelo con la
-              báscula.
-            </p>
-          </div>
+              </datalist>
+            </FormCell>
+            <FormCell span={6} label="Ubigeo de partida">
+              <Input
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="150101"
+                value={originUbigeo}
+                onChange={(e) => {
+                  setOriginUbigeo(e.target.value);
+                }}
+              />
+            </FormCell>
+            <FormCell span={6} label="Dirección de llegada">
+              <Input
+                value={destinationAddress}
+                maxLength={240}
+                onChange={(e) => {
+                  setDestinationAddress(e.target.value);
+                }}
+              />
+            </FormCell>
+            <FormCell span={6} label="Ubigeo de llegada">
+              <Input
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="150131"
+                value={destinationUbigeo}
+                onChange={(e) => {
+                  setDestinationUbigeo(e.target.value);
+                }}
+              />
+            </FormCell>
+            <FormCell span={6} label="Modalidad">
+              <Select
+                value={transferMode}
+                onValueChange={(v) => {
+                  setTransferMode(v as TransferMode);
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TRANSFER_MODES.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {TRANSFER_MODE_LABELS[m]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormCell>
+            <FormCell
+              span={6}
+              label="Peso bruto total (kg)"
+              size="lg"
+              numeric
+              help={`Propuesto ${suggestedWeight} kg a partir del material reservado; corrígelo con la báscula.`}
+              className={transferMode === 'PICKUP' ? 'hidden' : undefined}
+            >
+              <Input
+                inputMode="decimal"
+                value={totalWeightKg}
+                onChange={(e) => {
+                  setTotalWeightKg(e.target.value);
+                }}
+              />
+            </FormCell>
+          </FormGrid>
         </CardContent>
       </Card>
 
@@ -485,152 +483,145 @@ export function NuevoDespachoView() {
             {transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
-          {transferMode === 'PRIVATE' ? (
-            <>
-              <div className="space-y-1">
-                <Label>Placa</Label>
-                <Input
-                  value={vehiclePlate}
-                  list="placas"
-                  maxLength={10}
-                  onChange={(e) => {
-                    setVehiclePlate(e.target.value.toUpperCase());
-                  }}
-                />
-                <datalist id="placas">
-                  {(suggestions.data?.vehicles ?? []).map((v) => (
-                    <option key={v.plate} value={v.plate} />
-                  ))}
-                </datalist>
-              </div>
-              {/*
+        <CardContent>
+          <FormGrid>
+            {transferMode === 'PRIVATE' ? (
+              <>
+                <FormCell span={4} label="Placa">
+                  <Input
+                    value={vehiclePlate}
+                    list="placas"
+                    maxLength={10}
+                    onChange={(e) => {
+                      setVehiclePlate(e.target.value.toUpperCase());
+                    }}
+                  />
+                  <datalist id="placas">
+                    {(suggestions.data?.vehicles ?? []).map((v) => (
+                      <option key={v.plate} value={v.plate} />
+                    ))}
+                  </datalist>
+                </FormCell>
+                {/*
                 Nombres y apellidos por separado: SUNAT los pide así y el PSE rechaza la
                 guía sin los apellidos. Partirlos de un campo único se equivoca con un
                 nombre compuesto, y esa adivinanza saldría impresa en la guía.
               */}
-              <div className="space-y-1">
-                <Label>Nombres del conductor</Label>
-                <Input
-                  value={driverGivenNames}
-                  list="conductores"
-                  maxLength={80}
-                  onChange={(e) => {
-                    setDriverGivenNames(e.target.value);
-                    // Elegir un conductor conocido trae sus apellidos, su documento y su
-                    // licencia: es lo que reemplaza al catálogo diferido (D-078).
-                    const match = suggestions.data?.drivers.find(
-                      (d) => d.givenNames === e.target.value,
-                    );
-                    if (match) {
-                      setDriverFamilyNames(match.familyNames);
-                      setDriverDocType(match.docType);
-                      setDriverDocNumber(match.docNumber);
-                      setDriverLicense(match.license);
-                    }
-                  }}
-                />
-                <datalist id="conductores">
-                  {(suggestions.data?.drivers ?? []).map((d) => (
-                    <option key={d.docNumber} value={d.givenNames} />
-                  ))}
-                </datalist>
-              </div>
-              <div className="space-y-1">
-                <Label>Apellidos del conductor</Label>
-                <Input
-                  value={driverFamilyNames}
-                  maxLength={80}
-                  onChange={(e) => {
-                    setDriverFamilyNames(e.target.value);
-                  }}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Licencia</Label>
-                <Input
-                  value={driverLicense}
-                  maxLength={20}
-                  onChange={(e) => {
-                    setDriverLicense(e.target.value.toUpperCase());
-                  }}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Tipo de documento</Label>
-                <Select
-                  value={driverDocType}
-                  onValueChange={(v) => {
-                    setDriverDocType(v as DocType);
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DOC_TYPES.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {t}
-                      </SelectItem>
+                <FormCell span={4} label="Nombres del conductor">
+                  <Input
+                    value={driverGivenNames}
+                    list="conductores"
+                    maxLength={80}
+                    onChange={(e) => {
+                      setDriverGivenNames(e.target.value);
+                      // Elegir un conductor conocido trae sus apellidos, su documento y su
+                      // licencia: es lo que reemplaza al catálogo diferido (D-078).
+                      const match = suggestions.data?.drivers.find(
+                        (d) => d.givenNames === e.target.value,
+                      );
+                      if (match) {
+                        setDriverFamilyNames(match.familyNames);
+                        setDriverDocType(match.docType);
+                        setDriverDocNumber(match.docNumber);
+                        setDriverLicense(match.license);
+                      }
+                    }}
+                  />
+                  <datalist id="conductores">
+                    {(suggestions.data?.drivers ?? []).map((d) => (
+                      <option key={d.docNumber} value={d.givenNames} />
                     ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label>Número de documento</Label>
-                <Input
-                  value={driverDocNumber}
-                  maxLength={20}
-                  onChange={(e) => {
-                    setDriverDocNumber(e.target.value);
-                  }}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="space-y-1">
-                <Label>RUC del transportista</Label>
-                <Input
-                  value={carrierDocNumber}
-                  list="transportistas"
-                  maxLength={20}
-                  onChange={(e) => {
-                    setCarrierDocNumber(e.target.value);
-                    const match = suggestions.data?.carriers.find(
-                      (c) => c.docNumber === e.target.value,
-                    );
-                    if (match) setCarrierName(match.name);
-                  }}
-                />
-                <datalist id="transportistas">
-                  {(suggestions.data?.carriers ?? []).map((c) => (
-                    <option key={c.docNumber} value={c.docNumber} />
-                  ))}
-                </datalist>
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>Razón social del transportista</Label>
-                <Input
-                  value={carrierName}
-                  maxLength={160}
-                  onChange={(e) => {
-                    setCarrierName(e.target.value);
-                  }}
-                />
-              </div>
-            </>
-          )}
-          <div className="space-y-2 md:col-span-3">
-            <Label>Observaciones</Label>
-            <Input
-              value={notes}
-              maxLength={500}
-              onChange={(e) => {
-                setNotes(e.target.value);
-              }}
-            />
-          </div>
+                  </datalist>
+                </FormCell>
+                <FormCell span={4} label="Apellidos del conductor">
+                  <Input
+                    value={driverFamilyNames}
+                    maxLength={80}
+                    onChange={(e) => {
+                      setDriverFamilyNames(e.target.value);
+                    }}
+                  />
+                </FormCell>
+                <FormCell span={4} label="Licencia">
+                  <Input
+                    value={driverLicense}
+                    maxLength={20}
+                    onChange={(e) => {
+                      setDriverLicense(e.target.value.toUpperCase());
+                    }}
+                  />
+                </FormCell>
+                <FormCell span={4} label="Tipo de documento">
+                  <Select
+                    value={driverDocType}
+                    onValueChange={(v) => {
+                      setDriverDocType(v as DocType);
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DOC_TYPES.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {t}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormCell>
+                <FormCell span={4} label="Número de documento">
+                  <Input
+                    value={driverDocNumber}
+                    maxLength={20}
+                    onChange={(e) => {
+                      setDriverDocNumber(e.target.value);
+                    }}
+                  />
+                </FormCell>
+              </>
+            ) : (
+              <>
+                <FormCell span={4} label="RUC del transportista">
+                  <Input
+                    value={carrierDocNumber}
+                    list="transportistas"
+                    maxLength={20}
+                    onChange={(e) => {
+                      setCarrierDocNumber(e.target.value);
+                      const match = suggestions.data?.carriers.find(
+                        (c) => c.docNumber === e.target.value,
+                      );
+                      if (match) setCarrierName(match.name);
+                    }}
+                  />
+                  <datalist id="transportistas">
+                    {(suggestions.data?.carriers ?? []).map((c) => (
+                      <option key={c.docNumber} value={c.docNumber} />
+                    ))}
+                  </datalist>
+                </FormCell>
+                <FormCell span={8} label="Razón social del transportista">
+                  <Input
+                    value={carrierName}
+                    maxLength={160}
+                    onChange={(e) => {
+                      setCarrierName(e.target.value);
+                    }}
+                  />
+                </FormCell>
+              </>
+            )}
+            <FormCell span={12} label="Observaciones">
+              <Input
+                value={notes}
+                maxLength={500}
+                onChange={(e) => {
+                  setNotes(e.target.value);
+                }}
+              />
+            </FormCell>
+          </FormGrid>
         </CardContent>
       </Card>
 

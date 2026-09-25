@@ -35,7 +35,7 @@ import {
   TEST_DENSITY,
 } from '../helpers/roofing';
 import { createCustomer, stockPanel } from '../helpers/sales';
-import { loginAndSetPassword, selectOption } from '../helpers/ui';
+import { loginAndSetPassword, openSidebarGroup, selectOption } from '../helpers/ui';
 
 /**
  * F8-S4 — D-203: un acabado es tipo + color + línea, y el color de la bobina sale de él.
@@ -501,6 +501,7 @@ test.describe('F8-S4 — acabado con tipo, color y línea; la bobina toma el col
     const admin = await createUser(api, 'ADMINISTRADOR');
     const code = `EUI${uniqueDocumentNumber().slice(-8)}`;
     await loginAndSetPassword(page, admin, ADMIN_PASSWORD);
+    await openSidebarGroup(page, 'Catálogo');
     await page.getByRole('link', { name: 'Acabados' }).click();
     await expect(page.getByRole('heading', { name: 'Acabados' })).toBeVisible();
 

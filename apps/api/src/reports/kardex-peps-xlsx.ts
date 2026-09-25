@@ -16,14 +16,14 @@ import type { KardexPepsReport } from './kardex-peps.service';
 const TITLE =
   'FORMATO 13.1: REGISTRO DE INVENTARIO PERMANENTE VALORIZADO - DETALLE DEL INVENTARIO VALORIZADO';
 
-function num(value: string | null): number | null {
+export function num(value: string | null): number | null {
   if (value === null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** `YYYY-MM-DD` → `DD/MM/YYYY`, como lo lee un contador. */
-function dmy(value: string): string {
+export function dmy(value: string): string {
   const [y, m, d] = value.split('-');
   return `${d}/${m}/${y}`;
 }

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { adminApi, createUser } from '../helpers/api';
-import { loginAndSetPassword } from '../helpers/ui';
+import { loginAndSetPassword, openSidebarGroup } from '../helpers/ui';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -22,6 +22,7 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
 
     const code = `E2E${Date.now()}`.slice(0, 20);
     try {
+      await openSidebarGroup(page, 'Catálogo');
       await page.getByRole('link', { name: 'Acabados' }).click();
       await expect(page.getByRole('heading', { name: 'Acabados' })).toBeVisible();
 
@@ -62,6 +63,7 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
 
     const sku = `SKU-${Date.now()}`;
     try {
+      await openSidebarGroup(page, 'Catálogo');
       await page.getByRole('link', { name: 'Catálogo' }).click();
       await expect(page.getByRole('heading', { name: 'Catálogo' })).toBeVisible();
       await page.getByRole('tab', { name: 'Drywall' }).click();
@@ -117,6 +119,7 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
     try {
       // S10/M2: Márgenes y tipo de cambio comparten un solo ítem de menú (pestañas); F8-S2
       // (D-185) le sumó la pestaña de reservas temporales.
+      await openSidebarGroup(page, 'Administración');
       await page.getByRole('link', { name: 'Márgenes, tipo de cambio y reservas' }).click();
       await expect(page.getByRole('heading', { name: 'Márgenes' })).toBeVisible();
 

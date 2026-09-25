@@ -171,7 +171,7 @@ function SummaryTable({
                   {row.itemId ? (
                     <Link
                       className={LINK_CLASSNAME}
-                      href={`/kardex?itemType=${row.itemType}&item=${row.itemId}`}
+                      href={`/kardex?itemType=${row.itemType}&item=${row.itemId}&range=all`}
                     >
                       {row.key}
                     </Link>

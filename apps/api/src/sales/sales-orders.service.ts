@@ -79,8 +79,10 @@ import {
   type StockPanelQuery,
   type SellableCoilQuery,
   type OrderReadinessDto,
+  NEGATIVE_TERMINAL_STATUSES,
+  statusCondition,
 } from '@ayr/shared';
-import { deriveOrderReadiness, deriveOrderStage, orderStageWhere } from './order-readiness';
+import { deriveOrderReadiness, deriveOrderStage, orderStagesWhere } from './order-readiness';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
@@ -2560,8 +2562,18 @@ export class SalesOrdersService {
     const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
     const where: Prisma.SalesOrderWhereInput = {
       ...sellerWhere(actor),
-      // D-277: `stage` filtra por el estado que se muestra («Listo» incluido).
-      ...(query.stage ? orderStageWhere(query.stage) : { status: query.status }),
+      // D-277: `stage` filtra por el estado que se muestra («Listo» incluido); D-289: acepta
+      // varios y manda sobre `status`. Sin ninguno, la bandeja omite los anulados (no si se
+      // busca o se acota a un cliente).
+      ...(query.stage
+        ? orderStagesWhere(query.stage)
+        : {
+            status: statusCondition(
+              query.status,
+              NEGATIVE_TERMINAL_STATUSES.salesOrder,
+              Boolean(query.search) || Boolean(query.customerId),
+            ),
+          }),
       customerId: query.customerId,
       // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
       // línea" — un pedido mixto aparece en el filtro de cualquiera de sus líneas.

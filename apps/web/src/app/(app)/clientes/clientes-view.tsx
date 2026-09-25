@@ -1,14 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, Role, type CustomerDto, type PaginatedResult } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
-import { useDebounced } from '@/lib/use-debounced';
-import { usePagination } from '@/lib/use-pagination';
+import {
+  URL_PAGINATION_DEFAULTS,
+  useUrlPagination,
+  useUrlSearchInput,
+  useUrlState,
+} from '@/lib/use-url-state';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -53,23 +56,18 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
   };
   // D-172: `?search=` deja que otra pantalla linkee a "este cliente" sin una ficha propia
   // (T4).
-  const searchParams = useSearchParams();
-  const [search, setSearch] = useState(() => searchParams.get('search') ?? '');
-  const debouncedSearch = useDebounced(search.trim(), 300);
-  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
+  // D-289: `?search=&page=&pageSize=` es el mismo mecanismo que el resto de las listas.
+  const [url, setUrl] = useUrlState({ ...URL_PAGINATION_DEFAULTS, search: '' });
+  const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
+  const [searchText, setSearchText, debouncedSearch] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
 
   // Solo al montar (y solo si el rol puede dar de alta): cerrar el diálogo no debe
   // reabrirlo, y navegar a /clientes tampoco.
   useEffect(() => {
     if (autoOpenNew && isAdmin) setDialog((d) => ({ open: true, nonce: d.nonce + 1 }));
   }, [autoOpenNew, isAdmin]);
-
-  // Esta pantalla nunca escribe `search` de vuelta en la URL —tipear en el buscador no la
-  // toca—, así que este efecto solo dispara ante una navegación ajena (otro `customerSearchHref`
-  // entrando con un RUC distinto) y no pisa lo que el usuario está escribiendo.
-  useEffect(() => {
-    setSearch(searchParams.get('search') ?? '');
-  }, [searchParams]);
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (debouncedSearch) params.set('search', debouncedSearch);
@@ -122,10 +120,9 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
       <Input
         placeholder="Buscar por nombre o número de documento…"
         className="max-w-sm"
-        value={search}
+        value={searchText}
         onChange={(e) => {
-          setSearch(e.target.value);
-          resetPage();
+          setSearchText(e.target.value);
         }}
       />
 
@@ -211,7 +208,7 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
             {customers.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground">
-                  {search
+                  {debouncedSearch
                     ? 'Ningún cliente coincide con la búsqueda.'
                     : 'No hay clientes registrados.'}
                 </TableCell>

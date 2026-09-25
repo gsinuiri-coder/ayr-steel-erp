@@ -11,6 +11,7 @@ import {
 } from '../enums';
 import { backdatableFields } from './operation';
 import { paginationQuerySchema } from './pagination';
+import { statusListSchema } from './status-filter';
 
 /**
  * Bobina de acero (RF-10..RF-14). Alta siempre por una de las tres vías de Fase 2a
@@ -94,7 +95,7 @@ export const coilQuerySchema = paginationQuerySchema.extend({
   businessLine: z.enum(BUSINESS_LINES).optional(),
   finishId: z.string().uuid().optional(),
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
-  status: z.enum(COIL_STATUSES).optional(),
+  status: statusListSchema(COIL_STATUSES),
   /**
    * Exclusión puntual de un estado (Fase 7e, D-121). La pestaña "Disponibles" de la vista
    * necesita "cualquier estado salvo en corte tercerizado"; agregar un segundo eje de

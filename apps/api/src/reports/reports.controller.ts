@@ -3,12 +3,15 @@ import type { Response } from 'express';
 import {
   coilMonthReportQuerySchema,
   kardexPepsQuerySchema,
+  kardexSheetQuerySchema,
   salesMarginQuerySchema,
   Role,
   type CoilMonthReportDto,
   type CoilMonthReportQuery,
   type InventoryValuationDto,
   type KardexPepsQuery,
+  type KardexPepsReportDto,
+  type KardexSheetQuery,
   type SalesMarginDto,
   type SalesMarginQuery,
 } from '@ayr/shared';
@@ -16,8 +19,11 @@ import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { InventoryValuationService } from './inventory-valuation.service';
+import { kardexPepsToDto } from './kardex-peps-dto';
 import { kardexPepsXlsx } from './kardex-peps-xlsx';
 import { KardexPepsService } from './kardex-peps.service';
+import { kardexSheetXlsx } from './kardex-sheet-xlsx';
+import { KardexSheetService } from './kardex-sheet.service';
 import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
 import { ReportsService } from './reports.service';
 import { SalesMarginService } from './sales-margin.service';
@@ -36,6 +42,7 @@ export class ReportsController {
     private readonly inventoryValuation: InventoryValuationService,
     private readonly salesMargin: SalesMarginService,
     private readonly kardexPeps: KardexPepsService,
+    private readonly kardexSheet: KardexSheetService,
   ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
@@ -91,6 +98,33 @@ export class ReportsController {
   ): Promise<void> {
     const report = await this.salesMargin.salesMargin(query);
     sendXlsx(res, salesMarginXlsx(report));
+  }
+
+  /**
+   * D-298. El Excel del kardex de un ítem con el formato del cliente (Fecha, Detalle, ENTRADAS,
+   * SALIDAS, SALDO), en el método elegido. Solo ADMINISTRADOR: lleva costos. Compone el kardex
+   * y el reporte PEPS que ya existen; no calcula nada nuevo.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('kardex/xlsx')
+  async kardexSheetXlsxFile(
+    @Query(new ZodValidationPipe(kardexSheetQuerySchema)) query: KardexSheetQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(res, kardexSheetXlsx(await this.kardexSheet.sheet(query)));
+  }
+
+  /**
+   * D-296. El mismo kardex PEPS, en JSON, para verlo en pantalla junto al costo promedio.
+   * Sale del mismo servicio que el Excel (`KardexPepsService.report`): no recalcula nada. Solo
+   * ADMINISTRADOR, como el Excel.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('kardex-peps')
+  async kardexPepsJson(
+    @Query(new ZodValidationPipe(kardexPepsQuerySchema)) query: KardexPepsQuery,
+  ): Promise<KardexPepsReportDto> {
+    return kardexPepsToDto(await this.kardexPeps.report(query));
   }
 
   /**
