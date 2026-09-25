@@ -27,7 +27,12 @@ import {
 
 /** ¿La ruta actual pertenece a este ítem del menú? (la misma regla que marca el ítem activo). */
 function isItemActive(item: NavItem, pathname: string): boolean {
-  return item.href === '/' ? pathname === '/' : pathname.startsWith(item.activePrefix ?? item.href);
+  if (item.href === '/') return pathname === '/';
+  // `href` puede llevar query (`/catalogo?tab=colores`): para marcar el ítem activo cuenta el path.
+  const prefixes = item.activePrefix ?? item.href.split('?')[0] ?? item.href;
+  return (Array.isArray(prefixes) ? prefixes : [prefixes]).some((prefix) =>
+    pathname.startsWith(prefix as string),
+  );
 }
 
 /**

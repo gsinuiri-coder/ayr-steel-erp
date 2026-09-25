@@ -4,17 +4,21 @@ import {
   Boxes,
   CalendarRange,
   ClipboardList,
+  Coins,
   FileText,
   Hammer,
   History,
   Home,
   Layers,
   PackageSearch,
+  Paintbrush,
   Palette,
   Percent,
   ReceiptText,
   Scissors,
   ScrollText,
+  Settings,
+  ShieldCheck,
   ShoppingCart,
   Store,
   Send,
@@ -39,7 +43,7 @@ export interface NavItem {
    * que apunta a la primera de varias rutas hermanas (pestañas) sigue "activo" en las
    * demás. Por defecto es `href`.
    */
-  activePrefix?: string;
+  activePrefix?: string | readonly string[];
 }
 
 export interface NavGroup {
@@ -52,10 +56,13 @@ const ALL = [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR] as const
 /**
  * Menú lateral por rol (§3.4). Los módulos de fases futuras se muestran deshabilitados.
  *
- * S10/M2: el orden y la agrupación son los que pidió el dueño — Comercial, Catálogo,
- * Planta, Administración —, sin la sección "General" de antes. "Panel" (antes "Inicio")
- * queda como el único ítem sin grupo (`label: ''`, que `app-sidebar.tsx` no pinta), a la
- * cabeza del menú. Ningún `href` cambió: es reordenar y renombrar, no mover rutas.
+ * D-326 (enmienda a D-175, decisión del dueño, correcciones 04): los grupos son Comercial,
+ * Compras, Almacén, Planta, Catálogo, Reportes y Administración, con «Panel» suelto a la cabeza
+ * (`label: ''`, que `app-sidebar.tsx` no pinta). Cada grupo responde a una tarea: vender,
+ * comprar, guardar y mover material, producir, mantener el maestro, mirar reportes y administrar.
+ * Ningún `href` cambió: es mover ítems entre grupos, no rutas. El único ítem que el mapa del
+ * dueño no nombraba, «Reservas temporales» (D-185), se queda en Comercial junto a Cotizaciones,
+ * que es de donde salen.
  */
 export const NAV: NavGroup[] = [
   {
@@ -65,20 +72,6 @@ export const NAV: NavGroup[] = [
   {
     label: 'Comercial',
     items: [
-      {
-        // Fase 7b (RF-60): primero de la lista porque es la pantalla que más se abre al
-        // día, y la única que se usa de pie con una tablet en la mano.
-        title: 'Mostrador',
-        href: '/pos',
-        icon: Store,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
-      {
-        title: 'Clientes',
-        href: '/clientes',
-        icon: UsersRound,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
       {
         title: 'Cotizaciones',
         href: '/cotizaciones',
@@ -99,12 +92,6 @@ export const NAV: NavGroup[] = [
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
       },
       {
-        title: 'Comprobantes',
-        href: '/comprobantes',
-        icon: ReceiptText,
-        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
-      },
-      {
         title: 'Despachos',
         href: '/despachos',
         icon: Send,
@@ -112,19 +99,70 @@ export const NAV: NavGroup[] = [
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA],
       },
       {
+        title: 'Comprobantes',
+        href: '/comprobantes',
+        icon: ReceiptText,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
         title: 'Cobranzas',
         href: '/cobranzas',
         icon: Banknote,
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
       },
+      {
+        // Fase 7b (RF-60): la única pantalla que se usa de pie con una tablet en la mano.
+        title: 'Mostrador',
+        href: '/pos',
+        icon: Store,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
+      {
+        title: 'Clientes',
+        href: '/clientes',
+        icon: UsersRound,
+        roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
+      },
     ],
   },
   {
-    label: 'Catálogo',
+    label: 'Compras',
     items: [
-      { title: 'Líneas', href: '/lineas', icon: Layers, roles: ALL },
-      { title: 'Acabados', href: '/acabados', icon: Palette, roles: ALL },
-      { title: 'Catálogo', href: '/catalogo', icon: PackageSearch, roles: ALL },
+      {
+        title: 'Compras',
+        href: '/compras',
+        icon: ShoppingCart,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        title: 'Proveedores',
+        href: '/proveedores',
+        icon: Truck,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+    ],
+  },
+  {
+    label: 'Almacén',
+    items: [
+      {
+        title: 'Bobinas',
+        href: '/bobinas',
+        icon: Boxes,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        title: 'Flejes',
+        href: '/flejes',
+        icon: Scissors,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        title: 'Corte tercerizado',
+        href: '/corte',
+        icon: Scissors,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
       {
         title: 'Inventario',
         href: '/inventario',
@@ -137,42 +175,16 @@ export const NAV: NavGroup[] = [
         icon: ScrollText,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
-      {
-        title: 'Flejes',
-        href: '/flejes',
-        icon: Scissors,
-        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-      },
     ],
   },
   {
     label: 'Planta',
     items: [
-      {
-        title: 'Bobinas',
-        href: '/bobinas',
-        icon: Boxes,
-        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-      },
-      {
-        title: 'Compras',
-        href: '/compras',
-        icon: ShoppingCart,
-        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-      },
-      {
-        title: 'Corte tercerizado',
-        href: '/corte',
-        icon: Scissors,
-        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-      },
       /*
-        D-160: **dos** sitios de producción y no tres. D-155 había intentado distinguir la
-        terminal del espacio del pedido por el nombre —"Producir un pedido" contra "Terminal
-        de planta"—, pero el problema no era el rótulo: eran dos pantallas que hacían lo mismo
-        con la mitad de las herramientas cada una. Se fundieron en `/planta`, que es la única
-        entrada a **producir**; `/produccion` queda para **gestionar** las órdenes (costos,
-        kardex y correcciones), que es lo que nunca se hace con guantes puestos.
+        D-160: **dos** sitios de producción y no tres: `/planta` es la única entrada a
+        **producir** y `/produccion` sirve para **gestionar** las órdenes (historial, costos y
+        correcciones). D-190 sacó «Órdenes de producción» del menú; D-326 lo devuelve porque el
+        cliente lo pidió en su mapa — `/produccion` redirige al historial de `/planta`.
       */
       {
         title: 'Producción',
@@ -180,20 +192,44 @@ export const NAV: NavGroup[] = [
         icon: Hammer,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
-      /*
-        D-190: «Órdenes de producción» (`/produccion`) salió del menú. Producción se opera
-        desde la cola y el workspace de `/planta`, las órdenes de un pedido se ven en su
-        detalle y el historial completo es una sección de `/planta`. `/produccion` redirige.
-      */
       {
-        title: 'Proveedores',
-        href: '/proveedores',
-        icon: Truck,
+        title: 'Órdenes de producción',
+        href: '/produccion',
+        icon: History,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+    ],
+  },
+  {
+    label: 'Catálogo',
+    items: [
+      { title: 'Productos', href: '/catalogo', icon: PackageSearch, roles: ALL },
+      { title: 'Líneas', href: '/lineas', icon: Layers, roles: ALL },
+      { title: 'Acabados', href: '/acabados', icon: Palette, roles: ALL },
+      // Los colores son una pestaña de `/catalogo` (D-273): el ítem abre esa pestaña.
+      { title: 'Colores', href: '/catalogo?tab=colores', icon: Paintbrush, roles: ALL },
+    ],
+  },
+  {
+    label: 'Reportes',
+    items: [
+      {
+        // RF-S4a/M2.
+        title: 'Ventas y margen',
+        href: '/reportes/ventas-margen',
+        icon: TrendingUp,
+        roles: [Role.ADMINISTRADOR],
+      },
+      {
+        // RF-S4a/M1: llevan costos en cada fila y son solo del administrador.
+        title: 'Inventario valorizado',
+        href: '/reportes/inventario-valorizado',
+        icon: Coins,
+        roles: [Role.ADMINISTRADOR],
       },
       {
         // D-124: el corte mensual que la fecha de operación hace posible.
-        title: 'Reporte de bobinas',
+        title: 'Reporte mensual de bobinas',
         href: '/reportes/bobinas',
         icon: CalendarRange,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
@@ -203,28 +239,13 @@ export const NAV: NavGroup[] = [
   {
     label: 'Administración',
     items: [
-      {
-        // RF-S4a/M1: van en Administración y no junto al reporte de bobinas porque llevan
-        // costos en cada fila y son solo del administrador. La ruta del API dice lo mismo.
-        title: 'Inventario valorizado',
-        href: '/reportes/inventario-valorizado',
-        icon: Boxes,
-        roles: [Role.ADMINISTRADOR],
-      },
-      {
-        // RF-S4a/M2.
-        title: 'Ventas y margen',
-        href: '/reportes/ventas-margen',
-        icon: TrendingUp,
-        roles: [Role.ADMINISTRADOR],
-      },
       { title: 'Usuarios', href: '/usuarios', icon: Users, roles: [Role.ADMINISTRADOR] },
       {
         // S10/M2: Márgenes y tipo de cambio comparten pantalla (pestañas en
-        // configuracion/layout.tsx); el ítem del menú apunta al primer tab.
-        title: 'Márgenes, tipo de cambio y reservas',
+        // configuracion/layout.tsx); el ítem apunta a la primera y sigue activo en la segunda.
+        title: 'Márgenes y tipo de cambio',
         href: '/configuracion/margenes',
-        activePrefix: '/configuracion',
+        activePrefix: ['/configuracion/margenes', '/configuracion/tipo-cambio'],
         icon: Percent,
         roles: [Role.ADMINISTRADOR],
       },
@@ -232,7 +253,15 @@ export const NAV: NavGroup[] = [
         // D-218/RF-S2/M3: visor unificado de auditoría, admin-only (RF-95).
         title: 'Auditoría',
         href: '/auditoria',
-        icon: History,
+        icon: ShieldCheck,
+        roles: [Role.ADMINISTRADOR],
+      },
+      {
+        // Lo que se configura del comercial —las reservas temporales (D-185)—: la tercera
+        // pestaña de `/configuracion`.
+        title: 'Configuración',
+        href: '/configuracion/reservas',
+        icon: Settings,
         roles: [Role.ADMINISTRADOR],
       },
     ],

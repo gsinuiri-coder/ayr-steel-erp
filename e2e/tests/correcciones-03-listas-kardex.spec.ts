@@ -55,9 +55,9 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
     await expect(headerButton('Comercial')).toHaveAttribute('data-state', 'open');
     await expect(page.getByRole('link', { name: 'Cotizaciones', exact: true })).toBeVisible();
 
-    // Abrir otro grupo cierra el anterior.
-    await headerButton('Catálogo').click();
-    await expect(headerButton('Catálogo')).toHaveAttribute('aria-expanded', 'true');
+    // Abrir otro grupo cierra el anterior (D-326: el kardex es del grupo Almacén).
+    await headerButton('Almacén').click();
+    await expect(headerButton('Almacén')).toHaveAttribute('aria-expanded', 'true');
     await expect(headerButton('Comercial')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByRole('link', { name: 'Cotizaciones', exact: true })).toBeHidden();
     await expect(page.getByRole('link', { name: 'Kardex', exact: true })).toBeVisible();
@@ -65,7 +65,7 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
     // Navegar por un ítem deja abierto su grupo, y solo ese.
     await page.getByRole('link', { name: 'Kardex', exact: true }).click();
     await expect(page).toHaveURL(/\/kardex$/);
-    await expect(headerButton('Catálogo')).toHaveAttribute('aria-expanded', 'true');
+    await expect(headerButton('Almacén')).toHaveAttribute('aria-expanded', 'true');
     const openGroups = await page
       .locator('[data-slot="sidebar-group-label"][data-state="open"]')
       .count();
@@ -76,7 +76,55 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
     await expect(headerButton('Comercial')).toHaveAttribute('aria-expanded', 'true', {
       timeout: 60_000,
     });
-    await expect(headerButton('Catálogo')).toHaveAttribute('aria-expanded', 'false');
+    await expect(headerButton('Almacén')).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('D-326: el mapa del menú del administrador, grupo por grupo, y la pestaña «Colores»', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page);
+    const map: Record<string, string[]> = {
+      Comercial: [
+        'Cotizaciones',
+        'Reservas temporales',
+        'Pedidos',
+        'Despachos',
+        'Comprobantes',
+        'Cobranzas',
+        'Mostrador',
+        'Clientes',
+      ],
+      Compras: ['Compras', 'Proveedores'],
+      Almacén: ['Bobinas', 'Flejes', 'Corte tercerizado', 'Inventario', 'Kardex'],
+      Planta: ['Producción', 'Órdenes de producción'],
+      Catálogo: ['Productos', 'Líneas', 'Acabados', 'Colores'],
+      Reportes: ['Ventas y margen', 'Inventario valorizado', 'Reporte mensual de bobinas'],
+      Administración: ['Usuarios', 'Márgenes y tipo de cambio', 'Auditoría', 'Configuración'],
+    };
+    // Los grupos aparecen en este orden, con «Panel» suelto a la cabeza.
+    const labels = page.locator('[data-slot="sidebar-group-label"]');
+    await expect(labels).toHaveText(Object.keys(map), { timeout: 60_000 });
+    for (const [group, items] of Object.entries(map)) {
+      await openSidebarGroup(page, group);
+      const content = page.locator(`#nav-group-${group}`);
+      await expect(content.getByRole('link')).toHaveText(items);
+    }
+
+    // «Colores» abre la pestaña de colores del catálogo, y «Productos» vuelve a las líneas.
+    await openSidebarGroup(page, 'Catálogo');
+    await page.getByRole('link', { name: 'Colores', exact: true }).click();
+    await expect(page).toHaveURL(/\/catalogo\?tab=colores/);
+    await expect(page.getByRole('tab', { name: 'Colores' })).toHaveAttribute(
+      'data-state',
+      'active',
+      { timeout: 60_000 },
+    );
+    await page.getByRole('link', { name: 'Productos', exact: true }).click();
+    await expect(page).not.toHaveURL(/tab=colores/);
+    await expect(page.getByRole('tab', { name: 'Colores' })).toHaveAttribute(
+      'data-state',
+      'inactive',
+    );
   });
 });
 

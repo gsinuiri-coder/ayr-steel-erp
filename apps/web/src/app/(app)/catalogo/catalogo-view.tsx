@@ -87,7 +87,8 @@ export function CatalogoView() {
   const [activeLineId, setActiveLineId] = useState<string | null>(null);
   // Punto 13 del cliente (D-290): la búsqueda por SKU o nombre filtra en el cliente sobre
   // el catálogo ya cargado —no pagina (D-113)— y vive en la URL (`?q=`), con debounce de 150 ms.
-  const [url, setUrl] = useUrlState({ q: '' });
+  // D-326: `?tab=colores` abre la pestaña de colores (el ítem «Colores» del menú); sin él, la línea.
+  const [url, setUrl] = useUrlState({ q: '', tab: '' });
   const [searchText, setSearchText, search] = useUrlSearchInput(
     url.q,
     (v) => {
@@ -114,8 +115,22 @@ export function CatalogoView() {
       highlightProductId && highlightProductId !== CATALOG_BAJO_PISO_VER_TODOS
         ? products.data?.find((p) => p.id === highlightProductId)
         : undefined;
-    setActiveLineId(highlighted?.businessLineId ?? lines.data[0]?.id ?? null);
-  }, [activeLineId, highlightProductId, lines.data, products.data]);
+    setActiveLineId(
+      url.tab === 'colores'
+        ? 'colores'
+        : (highlighted?.businessLineId ?? lines.data[0]?.id ?? null),
+    );
+  }, [activeLineId, highlightProductId, lines.data, products.data, url.tab]);
+
+  // El menú lateral cambia `?tab=` con la pantalla ya abierta: la pestaña sigue a la URL.
+  useEffect(() => {
+    if (activeLineId === null) return;
+    if (url.tab === 'colores' && activeLineId !== 'colores') setActiveLineId('colores');
+    if (url.tab !== 'colores' && activeLineId === 'colores') {
+      setActiveLineId(lines.data?.[0]?.id ?? null);
+    }
+    // Solo cuando cambia la URL: elegir una pestaña a mano ya escribe `tab` (abajo).
+  }, [url.tab]);
 
   useEffect(() => {
     if (!highlightProductId || highlightProductId === CATALOG_BAJO_PISO_VER_TODOS) return;
@@ -159,7 +174,13 @@ export function CatalogoView() {
         )}
       </div>
 
-      <Tabs value={activeLineId ?? lines.data[0]?.id} onValueChange={setActiveLineId}>
+      <Tabs
+        value={activeLineId ?? lines.data[0]?.id}
+        onValueChange={(value) => {
+          setActiveLineId(value);
+          setUrl({ tab: value === 'colores' ? 'colores' : '' });
+        }}
+      >
         <TabsList>
           {lines.data.map((l) => (
             <TabsTrigger key={l.id} value={l.id}>
