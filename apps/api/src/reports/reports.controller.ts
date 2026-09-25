@@ -9,6 +9,7 @@ import {
   type CoilMonthReportQuery,
   type InventoryValuationDto,
   type KardexPepsQuery,
+  type KardexPepsReportDto,
   type SalesMarginDto,
   type SalesMarginQuery,
 } from '@ayr/shared';
@@ -16,6 +17,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { InventoryValuationService } from './inventory-valuation.service';
+import { kardexPepsToDto } from './kardex-peps-dto';
 import { kardexPepsXlsx } from './kardex-peps-xlsx';
 import { KardexPepsService } from './kardex-peps.service';
 import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
@@ -91,6 +93,19 @@ export class ReportsController {
   ): Promise<void> {
     const report = await this.salesMargin.salesMargin(query);
     sendXlsx(res, salesMarginXlsx(report));
+  }
+
+  /**
+   * D-296. El mismo kardex PEPS, en JSON, para verlo en pantalla junto al costo promedio.
+   * Sale del mismo servicio que el Excel (`KardexPepsService.report`): no recalcula nada. Solo
+   * ADMINISTRADOR, como el Excel.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('kardex-peps')
+  async kardexPepsJson(
+    @Query(new ZodValidationPipe(kardexPepsQuerySchema)) query: KardexPepsQuery,
+  ): Promise<KardexPepsReportDto> {
+    return kardexPepsToDto(await this.kardexPeps.report(query));
   }
 
   /**

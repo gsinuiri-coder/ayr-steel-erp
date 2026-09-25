@@ -9,7 +9,7 @@ import {
   reportPieces,
   setupRoofingScenario,
 } from '../helpers/roofing';
-import { openSidebarGroup } from '../helpers/ui';
+import { openSidebarGroup, selectOption } from '../helpers/ui';
 
 /**
  * Correcciones 03 del cliente (2026-09-25), por pantalla:
@@ -265,6 +265,26 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       ).toBeVisible();
       await page.getByLabel('Filtrar por movimiento').fill('');
       await expect(movementRows).toHaveCount(totalMovements);
+
+      // D-296: método de costeo PEPS junto al promedio, con las mismas filas del Excel.
+      await selectOption(page, page.getByRole('combobox', { name: 'Método de costeo' }), 'PEPS');
+      await expect(page).toHaveURL(/costing=peps/);
+      const pepsTable = page.getByTestId('kardex-peps');
+      await expect(pepsTable).toBeVisible({ timeout: 30_000 });
+      await expect(pepsTable.getByText('Saldo inicial')).toBeVisible();
+      await expect(pepsTable.getByText('Totales')).toBeVisible();
+      await expect(
+        pepsTable.getByRole('row').filter({ hasText: '2,000.000' }).first(),
+      ).toBeVisible();
+      await page.reload();
+      await expect(page.getByTestId('kardex-peps')).toBeVisible({ timeout: 30_000 });
+      await selectOption(
+        page,
+        page.getByRole('combobox', { name: 'Método de costeo' }),
+        'Promedio (por defecto)',
+      );
+      await expect(page).not.toHaveURL(/costing=/);
+      await expect(page.getByTestId('kardex-peps')).toHaveCount(0);
 
       // --- Catálogo: búsqueda por SKU, en la URL ---
       await page.goto('/catalogo');

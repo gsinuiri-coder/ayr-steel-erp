@@ -33,6 +33,14 @@ import { useSession } from '@/lib/session';
 import { useColumnFilters } from '@/lib/use-column-filters';
 import { useUrlState } from '@/lib/use-url-state';
 import { SortableTableHead } from '@/components/sortable-table-head';
+import { KardexPepsTable } from './kardex-peps-table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { FilterChip } from '@/components/filter-chip';
 import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
@@ -51,6 +59,9 @@ import {
 } from '@/components/ui/table';
 
 /** El id de una opción del selector lleva el tipo: `COIL:<uuid>` o `PRODUCT:<uuid>`. */
+/** «Todo» en PEPS: el formato declara un período, así que se lee desde el principio de los tiempos. */
+const PEPS_ALL_FROM = '2000-01-01';
+
 function optionId(item: Pick<InventoryItemOptionDto, 'itemType' | 'itemId'>): string {
   return `${item.itemType}:${item.itemId}`;
 }
@@ -77,6 +88,7 @@ export function KardexView() {
     itemType: '',
     item: '',
     range: '',
+    costing: '',
     from: '',
     to: '',
   });
@@ -90,6 +102,10 @@ export function KardexView() {
   const range = parseKardexRange(url.range);
   const today = businessToday();
   const dates = resolveKardexDates(range, url.from, url.to, today);
+  // D-296: método de costeo de lo que se ve. El promedio ponderado es el del sistema (D-028) y
+  // el default; PEPS es un reporte solo del administrador, con las mismas filas que el Excel.
+  const isAdmin = user.role === Role.ADMINISTRADOR;
+  const pepsMode = hasItem && isAdmin && url.costing === 'peps';
 
   const selectedItem = useQuery({
     queryKey: ['inventory', 'item', itemType, itemId],
@@ -109,7 +125,7 @@ export function KardexView() {
     queryKey: ['inventory', 'movements', queryString],
     queryFn: () =>
       api<PaginatedResult<InventoryMovementDto>>(`/inventory/movements?${queryString}`),
-    enabled: hasItem,
+    enabled: hasItem && !pepsMode,
   });
   // D-295: el kardex de un ítem no pagina (D-237), así que filtrar por columna es exacto.
   const columnFilters = useColumnFilters<'type' | 'origin' | 'notes'>();
@@ -134,7 +150,7 @@ export function KardexView() {
   // administrador. El formato siempre declara un período: sin fechas, el mes en curso.
   const pepsFrom = dates.from || `${today.slice(0, 7)}-01`;
   const pepsTo = dates.to || today;
-  const canDownloadPeps = hasItem && user.role === Role.ADMINISTRADOR;
+  const canDownloadPeps = hasItem && isAdmin;
 
   const columnCount = 9;
 
@@ -224,6 +240,25 @@ export function KardexView() {
             }}
           />
         </label>
+        {hasItem && isAdmin && (
+          <div className="grid gap-1 text-sm">
+            <span className="text-muted-foreground">Método de costeo</span>
+            <Select
+              value={pepsMode ? 'peps' : 'avg'}
+              onValueChange={(v) => {
+                setUrl({ costing: v === 'peps' ? 'peps' : '' });
+              }}
+            >
+              <SelectTrigger className="w-56" aria-label="Método de costeo">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="avg">Promedio (por defecto)</SelectItem>
+                <SelectItem value="peps">PEPS</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
       {range === 'custom' &&
         dates.from &&
@@ -239,6 +274,13 @@ export function KardexView() {
         >
           Elegí un ítem para ver su kardex
         </div>
+      ) : pepsMode ? (
+        <KardexPepsTable
+          itemType={itemType as 'COIL' | 'PRODUCT'}
+          itemId={itemId}
+          from={dates.from || PEPS_ALL_FROM}
+          to={dates.to || today}
+        />
       ) : (
         <div className="rounded-lg border">
           <Table>

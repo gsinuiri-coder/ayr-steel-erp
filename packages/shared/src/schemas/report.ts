@@ -346,3 +346,54 @@ export const kardexPepsQuerySchema = z
   })
   .refine((v) => v.from <= v.to, { message: 'El rango termina antes de empezar' });
 export type KardexPepsQuery = z.infer<typeof kardexPepsQuerySchema>;
+
+/**
+ * D-296 — las mismas filas del Excel PEPS (D-279), en JSON, para verlas en pantalla junto al
+ * costo promedio. Sale del mismo servicio (`KardexPepsService.report`): no recalcula nada.
+ * Todos los importes viajan como string (D-003).
+ */
+export interface KardexPepsLayerDto {
+  qty: string;
+  unitCost: string;
+  total: string;
+}
+export interface KardexPepsBalanceDto {
+  qty: string;
+  unitCost: string;
+  total: string;
+  layers: KardexPepsLayerDto[];
+}
+export interface KardexPepsRowDto {
+  movementId: string;
+  operationDate: string;
+  /** Tabla 10 de SUNAT, serie y número; vacíos si el movimiento no tiene comprobante. */
+  docTypeCode: string;
+  series: string;
+  number: string;
+  /** Tabla 12 de SUNAT. */
+  operationCode: string;
+  operationLabel: string;
+  inQty: string | null;
+  inUnitCost: string | null;
+  inTotal: string | null;
+  outQty: string | null;
+  outUnitCost: string | null;
+  outTotal: string | null;
+  balanceQty: string;
+  balanceUnitCost: string;
+  balanceTotal: string;
+  /** Advertencia de la fila y nota del movimiento, juntas (la columna «Observación» del Excel). */
+  observation: string | null;
+}
+export interface KardexPepsReportDto {
+  from: string;
+  to: string;
+  itemCode: string;
+  itemDescription: string;
+  unitCode: string;
+  opening: KardexPepsBalanceDto;
+  rows: KardexPepsRowDto[];
+  closing: KardexPepsBalanceDto;
+  totals: { inQty: string; inTotal: string; outQty: string; outTotal: string };
+  warnings: string[];
+}

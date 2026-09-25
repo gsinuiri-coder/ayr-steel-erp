@@ -84,7 +84,7 @@ export function CatalogoView() {
   // `1` (más de 8 en el card) solo llega a la vista sin resaltar nada en particular.
   const highlightProductId = useSearchParams().get('bajoPiso');
   const [activeLineId, setActiveLineId] = useState<string | null>(null);
-  // Punto 13 del cliente (D-289/D-291): la búsqueda por SKU o nombre filtra en el cliente sobre
+  // Punto 13 del cliente (D-290): la búsqueda por SKU o nombre filtra en el cliente sobre
   // el catálogo ya cargado —no pagina (D-113)— y vive en la URL (`?q=`), con debounce de 150 ms.
   const [url, setUrl] = useUrlState({ q: '' });
   const [searchText, setSearchText, search] = useUrlSearchInput(
