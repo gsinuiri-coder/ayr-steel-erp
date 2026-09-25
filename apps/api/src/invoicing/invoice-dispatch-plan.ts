@@ -157,7 +157,7 @@ export function planInvoiceDispatches(
       // se contó y no pudo salir antes. Entregarla sin salida la dejaría vendible otra vez.
       if (
         kardex.openingDate !== null &&
-        inv.issueDate < kardex.openingDate &&
+        base.operationDate < kardex.openingDate &&
         itemKey.startsWith('COIL:')
       ) {
         return {
@@ -168,7 +168,7 @@ export function planInvoiceDispatches(
           reason: `La bobina está en el inventario inicial (${kardex.openingDate}) y el comprobante es anterior`,
         };
       }
-      if (kardex.openingDate !== null && inv.issueDate < kardex.openingDate) {
+      if (kardex.openingDate !== null && base.operationDate < kardex.openingDate) {
         return {
           ...base,
           reserveQty,

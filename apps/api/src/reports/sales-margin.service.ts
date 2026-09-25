@@ -439,7 +439,8 @@ export class SalesMarginService {
 
       const documentDtos: SalesMarginDocumentDto[] = docs.map((d) => {
         const docSales = signedSubtotal(d);
-        const docCost = costByDocument.get(d.id) ?? null;
+        // Fuera de los totales, el comprobante tampoco muestra costo (autorrevisión P2-7).
+        const docCost = inTotals ? (costByDocument.get(d.id) ?? null) : null;
         return {
           id: d.id,
           number: d.number,

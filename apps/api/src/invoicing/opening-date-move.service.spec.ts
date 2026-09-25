@@ -1,11 +1,19 @@
 import { Prisma } from '@prisma/client';
+import { Decimal } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
+import { reservedByItem } from '../sales/reserved-ledger';
 import { OPENING_MOVE_ACTION } from './opening-date-move';
 import {
   ADDED_OUT_REASON,
   OpeningDateMoveService,
   openingPlanSignature,
 } from './opening-date-move.service';
+
+jest.mock('../sales/reserved-ledger', () => ({ reservedByItem: jest.fn() }));
+
+beforeEach(() => {
+  jest.mocked(reservedByItem).mockResolvedValue(new Map([['upvc', new Decimal(12)]]));
+});
 
 /**
  * D-285 a nivel servicio: con una `tx` falsa, el plan simula la carga inicial refechada, agrega
@@ -17,7 +25,7 @@ const D = (v: string): Prisma.Decimal => new Prisma.Decimal(v);
 const day = (v: string): Date => new Date(`${v}T00:00:00.000Z`);
 const ADMIN = { id: 'admin', role: 'ADMINISTRADOR' } as RequestUser;
 
-function fakeTx(opts: { appliedAudit?: boolean } = {}) {
+function fakeTx(opts: { appliedAudit?: boolean; importDate?: string } = {}) {
   const updates: { id: bigint; date: string }[] = [];
   const tx = {
     $executeRaw: jest.fn().mockResolvedValue(0),
@@ -29,7 +37,14 @@ function fakeTx(opts: { appliedAudit?: boolean } = {}) {
       findMany: jest.fn(({ where }: { where: { refType?: string } }) =>
         Promise.resolve(
           where.refType === 'IMPORT'
-            ? [{ id: 7n, itemType: 'PRODUCT', itemId: 'upvc', operationDate: day('2026-09-22') }]
+            ? [
+                {
+                  id: 7n,
+                  itemType: 'PRODUCT',
+                  itemId: 'upvc',
+                  operationDate: day(opts.importDate ?? '2026-09-22'),
+                },
+              ]
             : [
                 {
                   id: 7n,
@@ -38,7 +53,7 @@ function fakeTx(opts: { appliedAudit?: boolean } = {}) {
                   type: 'IN',
                   qty: D('970'),
                   refType: 'IMPORT',
-                  operationDate: day('2026-09-22'),
+                  operationDate: day(opts.importDate ?? '2026-09-22'),
                   at: new Date('2026-09-22T15:00:00Z'),
                 },
               ],
@@ -67,7 +82,9 @@ function fakeTx(opts: { appliedAudit?: boolean } = {}) {
     inventoryBalance: {
       findMany: jest
         .fn()
-        .mockResolvedValue([{ itemType: 'PRODUCT', itemId: 'upvc', avgCost: D('43.2203') }]),
+        .mockResolvedValue([
+          { itemType: 'PRODUCT', itemId: 'upvc', avgCost: D('43.2203'), qty: D('970') },
+        ]),
     },
     product: { findMany: jest.fn().mockResolvedValue([{ id: 'upvc', sku: 'UPVC36MT' }]) },
     coil: { findMany: jest.fn().mockResolvedValue([]) },
@@ -189,5 +206,14 @@ describe('OpeningDateMoveService (D-285)', () => {
       'F1',
       expect.objectContaining({ number: 'FFA1-1' }),
     );
+  });
+
+  it('execute se retoma: sin nada que mover, la guarda no bloquea los pasos 2 y 3', async () => {
+    const { tx, updates } = fakeTx({ appliedAudit: true, importDate: '2026-08-01' });
+    const { svc, dispatches } = service(tx);
+    const expected = openingPlanSignature(await svc.plan());
+    await svc.execute(ADMIN, expected);
+    expect(updates).toHaveLength(0);
+    expect(dispatches.addMissingMovementInTx).toHaveBeenCalledTimes(1);
   });
 });

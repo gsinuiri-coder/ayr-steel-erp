@@ -12,6 +12,7 @@ BEGIN
   IF TG_OP = 'UPDATE'
      AND current_setting('ayr.opening_date_move', true) = 'on'
      AND OLD."ref_type" = 'IMPORT'
+     AND NEW."operation_date" = DATE '2026-08-01'
      AND (to_jsonb(NEW) - 'operation_date') = (to_jsonb(OLD) - 'operation_date')
   THEN
     RETURN NEW;

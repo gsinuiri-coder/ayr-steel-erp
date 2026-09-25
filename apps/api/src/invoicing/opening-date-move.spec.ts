@@ -93,3 +93,25 @@ describe('planMissingOuts (D-285)', () => {
     expect(plan[0]).toMatchObject({ action: 'REVIEW' });
   });
 });
+
+describe('planMissingOuts — lo reservado (autorrevisión P1-1)', () => {
+  const D = (v: number): Decimal => new Decimal(v);
+  it('la salida no puede dejar el saldo por debajo de lo reservado vivo', () => {
+    const plan = planMissingOuts(
+      [
+        { id: 'a', itemKey: 'P', date: '2026-08-11', qty: D(10) },
+        { id: 'b', itemKey: 'P', date: '2026-08-12', qty: D(15) },
+      ],
+      new Map([
+        [
+          'P',
+          { openingDate: '2026-08-01', movements: [{ date: '2026-08-01', signedQty: D(100) }] },
+        ],
+      ]),
+      // Saldo 100, reservado 80: caben 20.
+      new Map([['P', D(20)]]),
+    );
+    expect(plan.map((p) => p.action)).toEqual(['ADD', 'REVIEW']);
+    expect(plan[1]?.reason).toContain('reservado');
+  });
+});

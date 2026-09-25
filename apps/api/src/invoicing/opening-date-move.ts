@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { type Decimal } from '@ayr/shared';
+import { Decimal } from '@ayr/shared';
 import { firstNegativeDate, type PlanItemKardex } from './invoice-dispatch-plan';
 
 /**
@@ -12,6 +12,7 @@ import { firstNegativeDate, type PlanItemKardex } from './invoice-dispatch-plan'
  * `operation_date` de esos movimientos (cantidades, costos y `at` quedan), una vez, auditada
  * movimiento por movimiento.
  */
+export const OPENING_MOVE_DATE = '2026-08-01';
 export const OPENING_MOVE_ACTION = 'inventory.opening-date.move';
 export const OPENING_MOVE_REASON =
   'fecha efectiva del inventario inicial = inicio de la carga histórica (D-285, decisión del dueño)';
@@ -90,7 +91,14 @@ export interface PlannedMissingOut extends MissingOut {
 export function planMissingOuts(
   missing: readonly MissingOut[],
   kardexByItem: ReadonlyMap<string, PlanItemKardex>,
+  /**
+   * Autorrevisión P1-1: saldo de hoy menos lo reservado vivo, por ítem. `InventoryService.record`
+   * rechaza una salida que deje el saldo por debajo de lo reservado; el plan lo anticipa.
+   * Sin entrada para un ítem, no se limita.
+   */
+  headroom: ReadonlyMap<string, Decimal> = new Map(),
 ): PlannedMissingOut[] {
+  const used = new Map<string, Decimal>();
   const accepted = new Map<string, { date: string; qty: Decimal }[]>();
   return [...missing]
     .sort((a, b) => (a.date === b.date ? a.id.localeCompare(b.id) : a.date < b.date ? -1 : 1))
@@ -113,6 +121,16 @@ export function planMissingOuts(
           reason: `Una salida el ${m.date} deja el kardex negativo el ${negativeOn}`,
         };
       }
+      const room = headroom.get(m.itemKey);
+      const spent = (used.get(m.itemKey) ?? new Decimal(0)).plus(m.qty);
+      if (room !== undefined && spent.gt(room)) {
+        return {
+          ...m,
+          action: 'REVIEW',
+          reason: `El saldo no cubre lo reservado vivo: quedan ${room.toFixed(3)} libres y las salidas suman ${spent.toFixed(3)}`,
+        };
+      }
+      used.set(m.itemKey, spent);
       accepted.set(m.itemKey, candidate);
       return { ...m, action: 'ADD', reason: null };
     });

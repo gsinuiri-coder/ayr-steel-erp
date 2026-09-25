@@ -621,7 +621,7 @@ export function planSignature(invoice: PlannedInvoice): string {
   return invoice.lines
     .map(
       (l) =>
-        `${String(l.lineNumber)}:${l.action}:${l.qty.toFixed(3)}:${l.reserveQty.toFixed(3)}:${l.itemKey ?? '-'}`,
+        `${String(l.lineNumber)}:${l.action}:${l.qty.toFixed(3)}:${l.reserveQty.toFixed(3)}:${l.itemKey ?? '-'}:${l.operationDate}`,
     )
     .join('|');
 }

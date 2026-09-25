@@ -5,6 +5,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { reservedByItem } from '../sales/reserved-ledger';
 import { DispatchesService } from './dispatches.service';
 import type { PlanItemKardex } from './invoice-dispatch-plan';
 import {
@@ -137,8 +138,13 @@ export class OpeningDateMoveService {
         },
       },
     });
-    const missing = missingRows.filter((r) => carriesInventory(r.product.businessLine));
+    // Solo productos (autorrevisión P2-3): una bobina tiene identidad y no se le agrega una
+    // salida a ciegas; va a revisión.
+    const inventoryRows = missingRows.filter((r) => carriesInventory(r.product.businessLine));
+    const missing = inventoryRows.filter((r) => r.itemType === 'PRODUCT');
+    const coilRows = inventoryRows.filter((r) => r.itemType !== 'PRODUCT');
     const missingIds = [...new Set(missing.map((m) => m.itemId))];
+    const labelIds = [...new Set(inventoryRows.map((m) => m.itemId))];
     const kardex = await this.kardex(tx, missingIds, movedOpening);
     const plannedOuts = planMissingOuts(
       missing.map((m) => ({
@@ -148,10 +154,21 @@ export class OpeningDateMoveService {
         qty: toDecimal(m.reserveQty.toString()),
       })),
       kardex,
+      await this.headroom(tx, missingIds),
     );
+    for (const c of coilRows) {
+      plannedOuts.push({
+        id: c.id,
+        itemKey: `${c.itemType}:${c.itemId}`,
+        date: day(c.dispatch.dispatchDate),
+        qty: toDecimal(c.reserveQty.toString()),
+        action: 'REVIEW',
+        reason: 'Bobina despachada sin salida: se revisa a mano',
+      });
+    }
     const avgCost = await this.avgCosts(tx, [...new Set([...missingIds, ...importItemIds])]);
-    const missingLabels = await this.labels(tx, missingIds);
-    const rowById = new Map(missing.map((m) => [m.id, m]));
+    const missingLabels = await this.labels(tx, labelIds);
+    const rowById = new Map(inventoryRows.map((m) => [m.id, m]));
     const added: AddedOut[] = plannedOuts.map((p) => {
       const row = rowById.get(p.id);
       if (row === undefined) throw new Error('línea de despacho perdida');
@@ -180,12 +197,18 @@ export class OpeningDateMoveService {
    * no escribe nada. La excepción del paso 1 no se repite (auditoría).
    */
   async execute(actor: RequestUser, expected: string): Promise<OpeningDateMovePlan> {
-    const applied = await this.prisma.auditLog.findFirst({
-      where: { action: OPENING_MOVE_ACTION },
-      select: { id: true },
-    });
-    assertOpeningMoveNotApplied(applied !== null);
     const plan = await this.prisma.$transaction((tx) => this.buildPlan(tx), { timeout: 180_000 });
+    // La guarda de un solo uso vale para el paso 1 (autorrevisión P1-2): si ya no queda nada que
+    // mover, los pasos 2 y 3 se pueden retomar después de una falla (son idempotentes: toman solo
+    // lo que sigue sin salida o sin despacho).
+    const toMove = plan.moves.filter((m) => m.action === 'MOVE');
+    if (toMove.length > 0) {
+      const applied = await this.prisma.auditLog.findFirst({
+        where: { action: OPENING_MOVE_ACTION },
+        select: { id: true },
+      });
+      assertOpeningMoveNotApplied(applied !== null);
+    }
     const now = openingPlanSignature(plan);
     if (now !== expected) {
       throw new BadRequestException(
@@ -194,35 +217,36 @@ export class OpeningDateMoveService {
     }
 
     // Paso 1, en una sola transacción: todos los movimientos o ninguno.
-    await this.prisma.$transaction(
-      async (tx) => {
-        const again = await tx.auditLog.findFirst({
-          where: { action: OPENING_MOVE_ACTION },
-          select: { id: true },
-        });
-        assertOpeningMoveNotApplied(again !== null);
-        // SET LOCAL: vale solo para esta transacción (migración 20260925010000).
-        await tx.$queryRaw`SELECT set_config('ayr.opening_date_move', 'on', true)`;
-        const to = new Date(`${plan.target}T00:00:00.000Z`);
-        for (const mv of plan.moves.filter((m) => m.action === 'MOVE')) {
-          for (const [i, id] of mv.movementIds.entries()) {
-            await tx.inventoryMovement.update({
-              where: { id: BigInt(id) },
-              data: { operationDate: to },
-            });
-            await this.audit.write(tx, {
-              actorId: actor.id,
-              action: OPENING_MOVE_ACTION,
-              entity: 'inventory_movements',
-              entityId: id,
-              before: { operationDate: mv.from[i] },
-              after: { operationDate: plan.target, item: mv.label, reason: OPENING_MOVE_REASON },
-            });
+    if (toMove.length > 0)
+      await this.prisma.$transaction(
+        async (tx) => {
+          const again = await tx.auditLog.findFirst({
+            where: { action: OPENING_MOVE_ACTION },
+            select: { id: true },
+          });
+          assertOpeningMoveNotApplied(again !== null);
+          // SET LOCAL: vale solo para esta transacción (migración 20260925010000).
+          await tx.$queryRaw`SELECT set_config('ayr.opening_date_move', 'on', true)`;
+          const to = new Date(`${plan.target}T00:00:00.000Z`);
+          for (const mv of toMove) {
+            for (const [i, id] of mv.movementIds.entries()) {
+              await tx.inventoryMovement.update({
+                where: { id: BigInt(id) },
+                data: { operationDate: to },
+              });
+              await this.audit.write(tx, {
+                actorId: actor.id,
+                action: OPENING_MOVE_ACTION,
+                entity: 'inventory_movements',
+                entityId: id,
+                before: { operationDate: mv.from[i] },
+                after: { operationDate: plan.target, item: mv.label, reason: OPENING_MOVE_REASON },
+              });
+            }
           }
-        }
-      },
-      { timeout: 120_000 },
-    );
+        },
+        { timeout: 120_000 },
+      );
 
     // Paso 2: una transacción por línea de despacho.
     for (const out of plan.added.filter((a) => a.action === 'ADD')) {
@@ -291,6 +315,23 @@ export class OpeningDateMoveService {
       out.set(key, entry);
     }
     return out;
+  }
+
+  /** Saldo de hoy menos lo reservado vivo (firme y temporal), por ítem de producto. */
+  private async headroom(tx: Prisma.TransactionClient, productIds: string[]) {
+    const [balances, reserved] = await Promise.all([
+      tx.inventoryBalance.findMany({
+        where: { itemType: 'PRODUCT', itemId: { in: productIds } },
+        select: { itemId: true, qty: true },
+      }),
+      reservedByItem(tx, 'PRODUCT', productIds),
+    ]);
+    return new Map(
+      balances.map((b) => [
+        `PRODUCT:${b.itemId}`,
+        toDecimal(b.qty.toString()).minus(reserved.get(b.itemId) ?? new Decimal(0)),
+      ]),
+    );
   }
 
   private async avgCosts(tx: Prisma.TransactionClient, itemIds: string[]) {
