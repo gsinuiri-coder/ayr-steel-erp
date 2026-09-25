@@ -10,7 +10,8 @@ import { firstNegativeDate, type PlanItemKardex } from './invoice-dispatch-plan'
  * sistema registra: las ventas de agosto sí lo consumieron. Se fecha el `HISTORICAL_LOAD_START`
  * (2026-08-01). Es la **única** excepción a la regla append-only del kardex: cambia solo
  * `operation_date` de esos movimientos (cantidades, costos y `at` quedan), una vez, auditada
- * movimiento por movimiento.
+ * movimiento por movimiento. Ya se aplicó (2026-09-25) y la puerta está cerrada: el trigger
+ * volvió a ser estricto y la herramienta se niega a correr (D-286).
  */
 export const OPENING_MOVE_DATE = '2026-08-01';
 export const OPENING_MOVE_ACTION = 'inventory.opening-date.move';
@@ -61,14 +62,21 @@ export function planOpeningMoves(items: readonly OpeningItem[], target: string):
   });
 }
 
-/** La guarda de código: la excepción no se puede repetir. */
+/**
+ * La guarda de código: la herramienta corrió una vez y queda deshabilitada para siempre. Con su
+ * auditoría registrada no planifica ni ejecuta nada, tampoco los pasos 2 y 3 (D-286); el trigger
+ * del kardex ya no admite el cambio de fecha (migración 20260925120000).
+ */
 export function assertOpeningMoveNotApplied(alreadyApplied: boolean): void {
   if (alreadyApplied) {
     throw new BadRequestException(
-      'La fecha del inventario inicial ya se aplicó (D-285): la excepción no se repite.',
+      'La fecha del inventario inicial ya se aplicó (D-285): la herramienta quedó deshabilitada.',
     );
   }
 }
+
+/** Llave del advisory lock que impide dos corridas a la vez (D-286). */
+export const OPENING_MOVE_LOCK = 'ayr.inventory.opening-date-move';
 
 export interface MissingOut {
   /** La línea del despacho sin salida de kardex. */

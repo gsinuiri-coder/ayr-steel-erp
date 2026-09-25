@@ -54,7 +54,7 @@ describe('assertOpeningMoveNotApplied (D-285)', () => {
   it('la excepción no se repite: con la auditoría del movimiento, se niega', () => {
     expect(() => {
       assertOpeningMoveNotApplied(true);
-    }).toThrow('ya se aplicó');
+    }).toThrow('quedó deshabilitada');
     expect(() => {
       assertOpeningMoveNotApplied(false);
     }).not.toThrow();
