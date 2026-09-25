@@ -29,11 +29,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 const ALL = 'ALL';
 
 /** Stock de flejes por ancho (RF-42): a diferencia de `/inventario`, agrupa por tipo Y ancho. */
 export function FlejesView() {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<
+    'finish' | 'thickness' | 'width' | 'qty' | 'cost' | 'value' | 'coils'
+  >();
   const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
 
   const queryString = businessLine !== ALL ? `?businessLine=${businessLine}` : '';
@@ -82,13 +89,63 @@ export function FlejesView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Acabado</TableHead>
-              <TableHead className="text-right">Espesor</TableHead>
-              <TableHead className="text-right">Ancho</TableHead>
-              <TableHead className="text-right">Stock</TableHead>
-              <TableHead className="text-right">Costo/kg</TableHead>
-              <TableHead className="text-right">Valorizado</TableHead>
-              <TableHead className="text-right">Bobinas</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="finish">
+                Acabado
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="thickness"
+                className="text-right"
+                align="right"
+              >
+                Espesor
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="width"
+                className="text-right"
+                align="right"
+              >
+                Ancho
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="qty"
+                className="text-right"
+                align="right"
+              >
+                Stock
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="cost"
+                className="text-right"
+                align="right"
+              >
+                Costo/kg
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="value"
+                className="text-right"
+                align="right"
+              >
+                Valorizado
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="coils"
+                className="text-right"
+                align="right"
+              >
+                Bobinas
+              </SortHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -107,7 +164,15 @@ export function FlejesView() {
                 </TableCell>
               </TableRow>
             )}
-            {stock.data?.map((r) => (
+            {sortRows(stock.data ?? [], sort, {
+              finish: { text: (r) => r.finishCode },
+              thickness: { decimal: (r) => String(r.thicknessMm) },
+              width: { decimal: (r) => String(r.widthMm) },
+              qty: { decimal: (r) => String(r.qtyKg) },
+              cost: { decimal: (r) => String(r.avgCostPen ?? '') },
+              value: { decimal: (r) => String(r.totalValuePen ?? '') },
+              coils: { decimal: (r) => String(r.coilCount) },
+            }).map((r) => (
               <TableRow key={`${r.typeKey}-${r.widthMm}`}>
                 <TableCell className="font-medium">{r.finishCode}</TableCell>
                 <TableCell className="text-right">{r.thicknessMm} mm</TableCell>

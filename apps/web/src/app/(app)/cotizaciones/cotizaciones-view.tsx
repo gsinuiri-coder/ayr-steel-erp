@@ -8,7 +8,10 @@ import {
   Role,
   type PaginatedResult,
   type QuotationListItemDto,
+  type QuotationQuery,
 } from '@ayr/shared';
+
+type QuotationSortKey = NonNullable<QuotationQuery['sort']>;
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
@@ -32,7 +35,7 @@ import {
   CUSTOMER_NAME_CLASSNAME,
   LINK_CLASSNAME,
 } from '@/lib/utils';
-import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
+import { useSort } from '@/lib/use-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import {
   Table,
@@ -61,44 +64,24 @@ export function CotizacionesView() {
   });
   const status = url.status;
 
+  // D-323: el orden por columna es del servidor (las cinco columnas son de la propia cotización).
+  const [sort, toggleSort] = useSort<QuotationSortKey>();
+
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (status) params.set('status', status);
   if (search) params.set('search', search);
+  if (sort.key) {
+    params.set('sort', sort.key);
+    params.set('dir', sort.dir);
+  }
 
   const quotations = useQuery({
-    queryKey: ['quotations', page, pageSize, status, search],
+    queryKey: ['quotations', page, pageSize, status, search, sort.key, sort.dir],
     queryFn: () =>
       api<PaginatedResult<QuotationListItemDto>>(`/sales/quotations?${params.toString()}`),
   });
 
-  // S10b/M1: sort sobre la página actual, no sobre el total (D-176 del handoff de S10:
-  // el orden por defecto del servidor —descendente— no se toca, esto solo se activa si
-  // el usuario clickea una columna).
-  const [sort, toggleSort] = useSort<'code' | 'customer' | 'issueDate' | 'total' | 'status'>();
-  const unsortedRows = quotations.data?.items ?? [];
-  const rows =
-    sort.key === null
-      ? unsortedRows
-      : [...unsortedRows].sort((a, b) => {
-          switch (sort.key) {
-            case 'code':
-              return compareBy(sort.dir, a.code, b.code);
-            case 'customer':
-              return compareBy(
-                sort.dir,
-                a.customerName.toLowerCase(),
-                b.customerName.toLowerCase(),
-              );
-            case 'issueDate':
-              return compareBy(sort.dir, a.issueDate, b.issueDate);
-            case 'total':
-              return compareDecimalBy(sort.dir, a.totalPen, b.totalPen);
-            case 'status':
-              return compareBy(sort.dir, a.status, b.status);
-            default:
-              return 0;
-          }
-        });
+  const rows = quotations.data?.items ?? [];
 
   return (
     <RoleGate allow={SALES_ROLES}>

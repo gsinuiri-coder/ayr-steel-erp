@@ -13,6 +13,7 @@ import {
   Role,
   type FiscalDocumentListItemDto,
   type PaginatedResult,
+  type FiscalDocumentQuery,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
@@ -54,6 +55,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/sortable-table-head';
+import { useSort } from '@/lib/use-sort';
 
 const ALL = 'ALL';
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
@@ -78,15 +81,33 @@ export function ComprobantesView() {
   const { status, docType, origin } = url;
   const pendingOnly = url.pendingOnly === '1';
 
+  // D-323: el orden por columna es del servidor (todas estas columnas son de la propia fila).
+  const [sort, toggleSort] = useSort<NonNullable<FiscalDocumentQuery['sort']>>();
+
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (status) params.set('status', status);
   if (docType) params.set('docType', docType);
   if (origin) params.set('origin', origin);
   if (pendingOnly) params.set('pendingOnly', 'true');
   if (search) params.set('search', search);
+  if (sort.key) {
+    params.set('sort', sort.key);
+    params.set('dir', sort.dir);
+  }
 
   const documents = useQuery({
-    queryKey: ['fiscal-documents', page, pageSize, status, docType, origin, pendingOnly, search],
+    queryKey: [
+      'fiscal-documents',
+      page,
+      pageSize,
+      status,
+      docType,
+      origin,
+      pendingOnly,
+      search,
+      sort.key,
+      sort.dir,
+    ],
     queryFn: () =>
       api<PaginatedResult<FiscalDocumentListItemDto>>(`/invoicing/documents?${params.toString()}`),
   });
@@ -209,14 +230,75 @@ export function ComprobantesView() {
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
-                <TableHead>Número</TableHead>
-                <TableHead className="hidden md:table-cell">Tipo</TableHead>
-                <TableHead>Cliente</TableHead>
-                <TableHead className="hidden sm:table-cell">Emisión</TableHead>
-                <TableHead className="hidden md:table-cell">Vencimiento</TableHead>
-                <TableHead className="text-right">Total</TableHead>
+                <SortableTableHead
+                  active={sort.key === 'number'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('number');
+                  }}
+                >
+                  Número
+                </SortableTableHead>
+                <SortableTableHead
+                  className="hidden md:table-cell"
+                  active={sort.key === 'docType'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('docType');
+                  }}
+                >
+                  Tipo
+                </SortableTableHead>
+                <SortableTableHead
+                  active={sort.key === 'customer'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('customer');
+                  }}
+                >
+                  Cliente
+                </SortableTableHead>
+                <SortableTableHead
+                  className="hidden sm:table-cell"
+                  active={sort.key === 'issueDate'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('issueDate');
+                  }}
+                >
+                  Emisión
+                </SortableTableHead>
+                <SortableTableHead
+                  className="hidden md:table-cell"
+                  active={sort.key === 'dueDate'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('dueDate');
+                  }}
+                >
+                  Vencimiento
+                </SortableTableHead>
+                <SortableTableHead
+                  className="text-right"
+                  align="right"
+                  active={sort.key === 'total'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('total');
+                  }}
+                >
+                  Total
+                </SortableTableHead>
                 <TableHead className="text-right">Saldo</TableHead>
-                <TableHead>Estado</TableHead>
+                <SortableTableHead
+                  active={sort.key === 'status'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('status');
+                  }}
+                >
+                  Estado
+                </SortableTableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -18,10 +18,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { UserDialog } from './user-dialog';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 export const USERS_QUERY_KEY = ['users'] as const;
 
 export function UsersView() {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<'name' | 'email' | 'role' | 'status'>();
   const { user: me } = useSession();
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<{ open: boolean; user?: UserDto; nonce: number }>({
@@ -72,10 +77,18 @@ export function UsersView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Nombre</TableHead>
-              <TableHead>Correo</TableHead>
-              <TableHead>Rol</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="name">
+                Nombre
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="email">
+                Correo
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="role">
+                Rol
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="status">
+                Estado
+              </SortHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
@@ -95,7 +108,12 @@ export function UsersView() {
                 </TableCell>
               </TableRow>
             )}
-            {users.data?.map((u) => (
+            {sortRows(users.data ?? [], sort, {
+              name: { text: (u) => u.name },
+              email: { text: (u) => u.email },
+              role: { text: (u) => u.role },
+              status: { text: (u) => (u.active ? 'Activo' : 'Inactivo') },
+            }).map((u) => (
               <TableRow key={u.id} data-state={u.active ? undefined : 'inactive'}>
                 <TableCell className="font-medium">
                   {u.name}

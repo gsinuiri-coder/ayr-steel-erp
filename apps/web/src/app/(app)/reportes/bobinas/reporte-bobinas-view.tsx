@@ -26,6 +26,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { LINK_CLASSNAME } from '@/lib/utils';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 /**
  * Reporte mensual de bobinas.
@@ -39,6 +42,19 @@ import { LINK_CLASSNAME } from '@/lib/utils';
  * sería mezclar dos cortes en la misma fila. En el mes en curso las dos cifras coinciden.
  */
 export function ReporteBobinasView() {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<
+    | 'code'
+    | 'type'
+    | 'line'
+    | 'color'
+    | 'width'
+    | 'opening'
+    | 'weight'
+    | 'closing'
+    | 'cost'
+    | 'status'
+  >();
   const [month, setMonth] = useState(businessMonth());
 
   const report = useQuery({
@@ -83,16 +99,66 @@ export function ReporteBobinasView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Código</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead className="hidden md:table-cell">Línea</TableHead>
-              <TableHead>Color</TableHead>
-              <TableHead className="text-right">Ancho</TableHead>
-              <TableHead className="text-right">Saldo inicio mes (kg)</TableHead>
-              <TableHead className="text-right">Peso (kg)</TableHead>
-              <TableHead className="text-right">Saldo fin de mes (kg)</TableHead>
-              <TableHead className="hidden text-right lg:table-cell">Costo/kg</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="code">
+                Código
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="type">
+                Tipo
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="line" className="hidden md:table-cell">
+                Línea
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="color">
+                Color
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="width"
+                className="text-right"
+                align="right"
+              >
+                Ancho
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="opening"
+                className="text-right"
+                align="right"
+              >
+                Saldo inicio mes (kg)
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="weight"
+                className="text-right"
+                align="right"
+              >
+                Peso (kg)
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="closing"
+                className="text-right"
+                align="right"
+              >
+                Saldo fin de mes (kg)
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="cost"
+                className="hidden text-right lg:table-cell"
+                align="right"
+              >
+                Costo/kg
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="status">
+                Estado
+              </SortHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -117,7 +183,18 @@ export function ReporteBobinasView() {
                 </TableCell>
               </TableRow>
             )}
-            {report.data?.rows.map((row) => (
+            {sortRows(report.data?.rows ?? [], sort, {
+              code: { text: (row) => row.code },
+              type: { text: (row) => row.typeKey ?? '' },
+              line: { text: (row) => row.businessLine },
+              color: { text: (row) => row.colorName ?? '' },
+              width: { decimal: (row) => String(row.widthMm) },
+              opening: { decimal: (row) => String(row.openingKg) },
+              weight: { decimal: (row) => String(row.weightKg) },
+              closing: { decimal: (row) => String(row.closingKg) },
+              cost: { decimal: (row) => String(row.unitCostPerKg ?? '') },
+              status: { text: (row) => row.status },
+            }).map((row) => (
               <TableRow key={row.id}>
                 <TableCell className="font-mono">
                   <Link className={LINK_CLASSNAME} href={`/bobinas/${row.id}`}>

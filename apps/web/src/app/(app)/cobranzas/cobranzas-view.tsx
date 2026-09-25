@@ -35,6 +35,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -88,7 +91,19 @@ export function CobranzasView() {
         `/invoicing/receivables?page=${receivablesPage.page}&pageSize=${receivablesPage.pageSize}`,
       ),
   });
-  const receivableRows = receivables.data?.items ?? [];
+  // D-323: las dos tablas muestran su lista entera; el orden por columna es sobre todas las filas,
+  // cada una con su propio par de parámetros en la URL.
+  const [rSort, toggleRSort] = useSort<'customer' | 'count' | 'next' | 'overdue' | 'balance'>('r');
+  const [pSort, togglePSort] = useSort<
+    'number' | 'customer' | 'issue' | 'due' | 'total' | 'paid' | 'balance'
+  >('p');
+  const receivableRows = sortRows(receivables.data?.items ?? [], rSort, {
+    customer: { text: (r) => r.customerName },
+    count: { decimal: (r) => String(r.documentCount) },
+    next: { text: (r) => r.nextDueDate ?? '' },
+    overdue: { decimal: (r) => r.overduePen },
+    balance: { decimal: (r) => r.balancePen },
+  });
 
   const pending = useQuery({
     queryKey: ['fiscal-documents', 'pending', pendingPage.page, pendingPage.pageSize],
@@ -97,7 +112,15 @@ export function CobranzasView() {
         `/invoicing/documents?pendingOnly=true&page=${pendingPage.page}&pageSize=${pendingPage.pageSize}`,
       ),
   });
-  const pendingRows = pending.data?.items ?? [];
+  const pendingRows = sortRows(pending.data?.items ?? [], pSort, {
+    number: { text: (d) => d.number ?? '' },
+    customer: { text: (d) => d.customerName },
+    issue: { text: (d) => d.issueDate },
+    due: { text: (d) => d.dueDate ?? '' },
+    total: { decimal: (d) => d.totalPen },
+    paid: { decimal: (d) => d.paidPen },
+    balance: { decimal: (d) => d.balancePen },
+  });
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -143,11 +166,44 @@ export function CobranzasView() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead className="hidden text-right sm:table-cell">Comprobantes</TableHead>
-                  <TableHead className="hidden md:table-cell">Vencimiento más próximo</TableHead>
-                  <TableHead className="text-right">Vencido</TableHead>
-                  <TableHead className="text-right">Saldo</TableHead>
+                  <SortHead sort={rSort} onSort={toggleRSort} k="customer">
+                    Cliente
+                  </SortHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="count"
+                    className="hidden text-right sm:table-cell"
+                    align="right"
+                  >
+                    Comprobantes
+                  </SortHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="next"
+                    className="hidden md:table-cell"
+                  >
+                    Vencimiento más próximo
+                  </SortHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="overdue"
+                    className="text-right"
+                    align="right"
+                  >
+                    Vencido
+                  </SortHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="balance"
+                    className="text-right"
+                    align="right"
+                  >
+                    Saldo
+                  </SortHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -221,13 +277,50 @@ export function CobranzasView() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
-                  <TableHead>Número</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead className="hidden sm:table-cell">Emisión</TableHead>
-                  <TableHead>Vencimiento</TableHead>
-                  <TableHead className="hidden text-right md:table-cell">Total</TableHead>
-                  <TableHead className="hidden text-right lg:table-cell">Cobrado</TableHead>
-                  <TableHead className="text-right">Saldo</TableHead>
+                  <SortHead sort={pSort} onSort={togglePSort} k="number">
+                    Número
+                  </SortHead>
+                  <SortHead sort={pSort} onSort={togglePSort} k="customer">
+                    Cliente
+                  </SortHead>
+                  <SortHead
+                    sort={pSort}
+                    onSort={togglePSort}
+                    k="issue"
+                    className="hidden sm:table-cell"
+                  >
+                    Emisión
+                  </SortHead>
+                  <SortHead sort={pSort} onSort={togglePSort} k="due">
+                    Vencimiento
+                  </SortHead>
+                  <SortHead
+                    sort={pSort}
+                    onSort={togglePSort}
+                    k="total"
+                    className="hidden text-right md:table-cell"
+                    align="right"
+                  >
+                    Total
+                  </SortHead>
+                  <SortHead
+                    sort={pSort}
+                    onSort={togglePSort}
+                    k="paid"
+                    className="hidden text-right lg:table-cell"
+                    align="right"
+                  >
+                    Cobrado
+                  </SortHead>
+                  <SortHead
+                    sort={pSort}
+                    onSort={togglePSort}
+                    k="balance"
+                    className="text-right"
+                    align="right"
+                  >
+                    Saldo
+                  </SortHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

@@ -3,7 +3,6 @@ import { createElement } from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useColumnFilters } from './use-column-filters';
 import { kardexCustomPatch } from './kardex-range';
 import { useSort } from './use-sort';
 import {
@@ -312,32 +311,6 @@ describe('useUrlSearchInput', () => {
       });
     });
     expect(result.current.input[0]).toBe('20512345678');
-    unmount();
-  });
-});
-
-describe('useColumnFilters', () => {
-  it('filtra en el cliente por columna, combina con Y y se limpia', () => {
-    const { result, unmount } = renderHook(() => useColumnFilters<'sku' | 'name'>());
-    const rows = [
-      { sku: 'A-1', name: 'Bobina azul' },
-      { sku: 'B-2', name: 'Bobina roja' },
-    ];
-    const accessors = {
-      sku: (r: (typeof rows)[number]) => r.sku,
-      name: (r: (typeof rows)[number]) => r.name,
-    };
-    expect(result.current.hasActive).toBe(false);
-    act(() => {
-      result.current.setFilter('name', 'bobina');
-      result.current.setFilter('sku', 'b-');
-    });
-    expect(result.current.hasActive).toBe(true);
-    expect(result.current.apply(rows, accessors).map((r) => r.sku)).toEqual(['B-2']);
-    act(() => {
-      result.current.clear();
-    });
-    expect(result.current.apply(rows, accessors)).toHaveLength(2);
     unmount();
   });
 });

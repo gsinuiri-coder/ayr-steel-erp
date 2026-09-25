@@ -275,17 +275,17 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       await page.getByRole('button', { name: 'Todo', exact: true }).click();
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
 
-      // D-295: filtro de texto del detalle (no pagina): solo la salida de producción.
+      // D-323: sin filtros por columna; la fecha ordena (la más reciente primero) y el saldo
+      // inicial y los totales se quedan en su lugar.
       const totalMovements = await movementRows.count();
       expect(totalMovements).toBeGreaterThanOrEqual(2);
-      await page.getByLabel('Filtrar por detalle').fill('Producción');
-      await expect(movementRows).toHaveCount(1);
+      await expect(page.getByLabel('Filtrar por detalle')).toHaveCount(0);
+      await expect(movementRows.first()).toContainText('Compra');
+      await sheet.getByRole('button', { name: 'Fecha', exact: true }).click();
+      await expect(page).toHaveURL(/sort=date/);
+      await sheet.getByRole('button', { name: 'Fecha', exact: true }).click();
+      await expect(page).toHaveURL(/dir=desc/);
       await expect(movementRows.first()).toContainText('Producción');
-      await page.getByLabel('Filtrar por detalle').fill('zzz');
-      await expect(
-        page.getByText('Ningún movimiento coincide con el filtro del detalle.'),
-      ).toBeVisible();
-      await page.getByLabel('Filtrar por detalle').fill('');
       await expect(movementRows).toHaveCount(totalMovements);
 
       // D-296/D-298: método de costeo PEPS con el mismo formato.
@@ -337,12 +337,10 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       await search.fill(scenario.product.sku);
       await expect(page).toHaveURL(new RegExp(`q=${scenario.product.sku}`), { timeout: 30_000 });
       await expect(page.getByRole('row').filter({ hasText: scenario.product.sku })).toHaveCount(1);
-      // D-295: filtro por columna (SKU) sobre el catálogo ya cargado.
+      // D-323: el catálogo no tiene filtros por columna; los encabezados ordenan.
       await search.fill('');
       await expect(page).not.toHaveURL(/q=/);
-      await page.getByLabel('Filtrar por SKU').first().fill(scenario.product.sku);
-      await expect(page.getByRole('row').filter({ hasText: scenario.product.sku })).toHaveCount(1);
-      await page.getByLabel('Filtrar por SKU').first().fill('');
+      await expect(page.getByLabel('Filtrar por SKU')).toHaveCount(0);
       await search.fill('zzzz-no-existe');
       await expect(page.getByText(/Ningún producto de esta línea coincide/)).toBeVisible();
 

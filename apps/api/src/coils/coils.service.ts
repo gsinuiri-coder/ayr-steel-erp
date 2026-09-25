@@ -36,6 +36,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ensureCoilSaleProduct } from '../sales/coil-sale-product';
 import { buildCoilPdf, buildCoilsReportPdf } from './coil-pdf';
+import { listOrderBy } from '../common/list-sort';
 
 /** Datos mínimos para dar de alta una bobina. Los códigos se derivan aquí, no los trae el llamador. */
 export interface CreateCoilInput {
@@ -368,7 +369,12 @@ export class CoilsService {
         include: COIL_RELATIONS,
         // D-124: por día de negocio, no por instante de grabación. Una bobina de agosto
         // cargada hoy tiene que aparecer entre las de agosto, no encabezando la lista.
-        orderBy: [{ operationDate: 'desc' }, { createdAt: 'desc' }],
+        // D-323: la columna elegida ordena la lista entera; el día de operación desempata.
+        orderBy: listOrderBy<NonNullable<CoilQuery['sort']>, Prisma.CoilOrderByWithRelationInput>(
+          query,
+          { code: (d) => ({ code: d }), status: (d) => ({ status: d }) },
+          [{ operationDate: 'desc' }, { createdAt: 'desc' }],
+        ),
         skip,
         take,
       }),

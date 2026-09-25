@@ -20,11 +20,18 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SupplierDialog } from './supplier-dialog';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 const SUPPLIERS_QUERY_KEY = ['suppliers'] as const;
 
 /** RF-81/RF-83/RF-84: proveedores, incluido si prestan corte tercerizado (D-033/P-10). */
 export function ProveedoresView() {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<
+    'code' | 'document' | 'name' | 'cutting' | 'credit' | 'status'
+  >();
   const { user } = useSession();
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
@@ -94,12 +101,24 @@ export function ProveedoresView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Código</TableHead>
-              <TableHead>Documento</TableHead>
-              <TableHead>Nombre</TableHead>
-              <TableHead>Corte tercerizado</TableHead>
-              <TableHead>Días de crédito</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="code">
+                Código
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="document">
+                Documento
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="name">
+                Nombre
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="cutting">
+                Corte tercerizado
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="credit">
+                Días de crédito
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="status">
+                Estado
+              </SortHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
@@ -119,7 +138,14 @@ export function ProveedoresView() {
                 </TableCell>
               </TableRow>
             )}
-            {filtered?.map((s) => (
+            {sortRows(filtered ?? [], sort, {
+              code: { text: (s) => s.code },
+              document: { text: (s) => `${s.docType} ${s.docNumber}` },
+              name: { text: (s) => s.name },
+              cutting: { text: (s) => (s.providesCuttingService ? 'Sí' : 'No') },
+              credit: { decimal: (s) => String(s.creditDays) },
+              status: { text: (s) => (s.isActive ? 'Activo' : 'Inactivo') },
+            }).map((s) => (
               <TableRow key={s.id} data-state={s.isActive ? undefined : 'inactive'}>
                 <TableCell className="font-mono font-medium">{s.code}</TableCell>
                 <TableCell>

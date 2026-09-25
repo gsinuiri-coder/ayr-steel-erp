@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import type { KardexSheetRow } from '@ayr/shared';
 import { formatDate, formatMoneyOrDash, formatQty } from '@/lib/format';
 import { SortableTableHead } from '@/components/sortable-table-head';
+import type { SortDir } from '@/lib/use-sort';
 import {
   Table,
   TableBody,
@@ -35,7 +36,7 @@ export function KardexSheetTable({
   isPending,
   isError,
   emptyMessage,
-  detailFilter,
+  dateSort,
   renderDetail,
   rowClassName,
 }: {
@@ -43,7 +44,8 @@ export function KardexSheetTable({
   isPending: boolean;
   isError: boolean;
   emptyMessage: string;
-  detailFilter: { value: string; onChange: (value: string) => void };
+  /** D-323: la fecha es la única columna que ordena; `dir: null` es el orden en que llegan. */
+  dateSort: { dir: SortDir | null; onToggle: () => void };
   renderDetail?: (row: KardexSheetRow) => ReactNode;
   rowClassName?: (row: KardexSheetRow) => string | undefined;
 }) {
@@ -54,19 +56,16 @@ export function KardexSheetTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead rowSpan={2} className="align-bottom">
-              Fecha
-            </TableHead>
             <SortableTableHead
-              className="min-w-52 align-bottom"
-              filter={{
-                label: 'detalle',
-                value: detailFilter.value,
-                onChange: detailFilter.onChange,
-              }}
+              className="align-bottom"
+              rowSpan={2}
+              active={dateSort.dir !== null}
+              dir={dateSort.dir ?? 'asc'}
+              onClick={dateSort.onToggle}
             >
-              Detalle
+              Fecha
             </SortableTableHead>
+            <TableHead className="min-w-52 align-bottom">Detalle</TableHead>
             <TableHead colSpan={3} className={group}>
               ENTRADAS
             </TableHead>

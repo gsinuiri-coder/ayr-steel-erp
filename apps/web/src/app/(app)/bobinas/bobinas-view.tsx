@@ -23,7 +23,7 @@ import {
   useUrlState,
 } from '@/lib/use-url-state';
 import { StatusFilter } from '@/components/status-filter';
-import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
+import { compareDecimalBy, useSort } from '@/lib/use-sort';
 import { RoleGate } from '@/components/role-gate';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { formatMoneyOrDash, formatQty, isPositiveDecimal } from '@/lib/format';
@@ -117,32 +117,24 @@ export function BobinasView() {
   } else if (status) {
     params.set('status', status);
   }
+  const [sort, toggleSort] = useSort<'code' | 'availableKg' | 'status'>();
+  if (sort.key === 'code' || sort.key === 'status') {
+    params.set('sort', sort.key);
+    params.set('dir', sort.dir);
+  }
   const queryString = params.toString();
 
   const coils = useQuery({
     queryKey: ['coils', queryString],
     queryFn: () => api<PaginatedResult<CoilDto>>(`/coils?${queryString}`),
   });
-  // S10b/M1: sort sobre la página actual, no sobre el total — el orden por defecto del
-  // servidor (por `operationDate` descendente, D-124) no se toca salvo que el usuario
-  // clickee una columna.
-  const [sort, toggleSort] = useSort<'code' | 'availableKg' | 'status'>();
-  const unsortedRows = coils.data?.items ?? [];
+  // D-323: código y estado se ordenan en el servidor; el disponible vive en el kardex y no es una
+  // columna de la bobina, así que ordena solo las filas de la página.
+  const rawRows = coils.data?.items ?? [];
   const rows =
-    sort.key === null
-      ? unsortedRows
-      : [...unsortedRows].sort((a, b) => {
-          switch (sort.key) {
-            case 'code':
-              return compareBy(sort.dir, a.code, b.code);
-            case 'availableKg':
-              return compareDecimalBy(sort.dir, a.availableKg, b.availableKg);
-            case 'status':
-              return compareBy(sort.dir, a.status, b.status);
-            default:
-              return 0;
-          }
-        });
+    sort.key === 'availableKg'
+      ? [...rawRows].sort((x, y) => compareDecimalBy(sort.dir, x.availableKg, y.availableKg))
+      : rawRows;
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -290,6 +282,7 @@ export function BobinasView() {
               <SortableTableHead
                 active={sort.key === 'availableKg'}
                 dir={sort.dir}
+                title="Ordena las filas de esta página"
                 align="right"
                 className="text-right"
                 onClick={() => {

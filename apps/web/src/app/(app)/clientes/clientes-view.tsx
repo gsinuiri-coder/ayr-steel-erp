@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { DOC_TYPE_LABELS, Role, type CustomerDto, type PaginatedResult } from '@ayr/shared';
+import {
+  DOC_TYPE_LABELS,
+  Role,
+  type CustomerDto,
+  type PaginatedResult,
+  type CustomerQuery,
+} from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import {
@@ -26,6 +32,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/sortable-table-head';
+import { useSort } from '@/lib/use-sort';
 import { CustomerDialog } from '@/components/customers/customer-dialog';
 
 /**
@@ -69,11 +77,18 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
     if (autoOpenNew && isAdmin) setDialog((d) => ({ open: true, nonce: d.nonce + 1 }));
   }, [autoOpenNew, isAdmin]);
 
+  // D-323: el orden por columna es del servidor (todas estas columnas son de la propia fila).
+  const [sort, toggleSort] = useSort<NonNullable<CustomerQuery['sort']>>();
+
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (debouncedSearch) params.set('search', debouncedSearch);
+  if (sort.key) {
+    params.set('sort', sort.key);
+    params.set('dir', sort.dir);
+  }
 
   const customers = useQuery({
-    queryKey: [...CUSTOMERS_QUERY_KEY, page, pageSize, debouncedSearch],
+    queryKey: [...CUSTOMERS_QUERY_KEY, page, pageSize, debouncedSearch, sort.key, sort.dir],
     queryFn: () => api<PaginatedResult<CustomerDto>>(`/customers?${params.toString()}`),
   });
   const rows = customers.data?.items ?? [];
@@ -130,11 +145,44 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Documento</TableHead>
-              <TableHead>Nombre</TableHead>
+              <SortableTableHead
+                active={sort.key === 'docNumber'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('docNumber');
+                }}
+              >
+                Documento
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'name'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('name');
+                }}
+              >
+                Nombre
+              </SortableTableHead>
               <TableHead className="hidden md:table-cell">Contacto</TableHead>
-              <TableHead className="hidden sm:table-cell">Días de crédito</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortableTableHead
+                className="hidden sm:table-cell"
+                active={sort.key === 'creditDays'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('creditDays');
+                }}
+              >
+                Días de crédito
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'status'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('status');
+                }}
+              >
+                Estado
+              </SortableTableHead>
               {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
             </TableRow>
           </TableHeader>

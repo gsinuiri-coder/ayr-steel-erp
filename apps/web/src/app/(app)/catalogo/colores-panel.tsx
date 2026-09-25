@@ -37,6 +37,9 @@ import {
 } from '@/components/ui/table';
 import { colorsQueryKey, useColors } from '@/components/colors/color-select';
 import { ColorSwatch } from '@/components/colors/color-swatch';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 /**
  * D-273: el mismo candado que el API, para que el aviso salga en el campo y no en un 400. Se
@@ -82,6 +85,8 @@ type FormValues = z.infer<ReturnType<typeof formSchemaFor>>;
  * color y no es una pantalla de trabajo diario.
  */
 export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<'code' | 'name' | 'status'>();
   const colors = useColors();
   const [editing, setEditing] = useState<ColorDto | null>(null);
   const [creating, setCreating] = useState(false);
@@ -124,16 +129,26 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Código</TableHead>
-              <TableHead>Color</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="code">
+                Código
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="name">
+                Color
+              </SortHead>
               <TableHead title="Desde D-273 el RAL va en el acabado">RAL (histórico)</TableHead>
               <TableHead>Hex</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="status">
+                Estado
+              </SortHead>
               {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {colors.data.map((c) => (
+            {sortRows(colors.data, sort, {
+              code: { text: (c) => c.code },
+              name: { text: (c) => c.name },
+              status: { text: (c) => (c.isActive ? 'Activo' : 'Inactivo') },
+            }).map((c) => (
               <TableRow key={c.id} data-state={c.isActive ? undefined : 'inactive'}>
                 <TableCell className="font-medium">{c.code}</TableCell>
                 <TableCell>

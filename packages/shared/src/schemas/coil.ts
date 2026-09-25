@@ -10,7 +10,7 @@ import {
   PRODUCTION_ORDER_STATUSES,
 } from '../enums';
 import { backdatableFields } from './operation';
-import { paginationQuerySchema } from './pagination';
+import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
 
 /**
@@ -91,7 +91,11 @@ export const coilSchema = z.object({
 export type CoilDto = z.infer<typeof coilSchema>;
 
 /** Filtros de la lista de bobinas por línea (RF-23), paginada (Fase 7d, D-113). */
+/** D-323: columnas de la lista de bobinas que se ordenan en el servidor (el disponible no: vive en el kardex). */
+export const COIL_SORT_KEYS = ['code', 'status'] as const;
+
 export const coilQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(COIL_SORT_KEYS),
   businessLine: z.enum(BUSINESS_LINES).optional(),
   finishId: z.string().uuid().optional(),
   thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),

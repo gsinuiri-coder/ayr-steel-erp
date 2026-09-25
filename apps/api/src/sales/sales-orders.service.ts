@@ -118,6 +118,8 @@ import {
 } from './sales-lines';
 import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
 import { reservationDispatches } from './reservation-dispatches';
+import { listOrderBy } from '../common/list-sort';
+
 import { buildPlantOrderPdf } from './plant-order-pdf';
 import { plantLineMeasures } from './plant-measures';
 import { findPriceChanges } from './price-changes';
@@ -2616,7 +2618,21 @@ export class SalesOrdersService {
             },
           },
         },
-        orderBy: { seq: 'desc' },
+        // D-323: la columna elegida ordena la lista entera; el número desempata. El estado que
+        // se muestra es derivado y se ordena en la vista.
+        orderBy: listOrderBy<
+          NonNullable<SalesOrderQuery['sort']>,
+          Prisma.SalesOrderOrderByWithRelationInput
+        >(
+          query,
+          {
+            code: (d) => ({ seq: d }),
+            customer: (d) => ({ customer: { name: d } }),
+            issueDate: (d) => ({ issueDate: d }),
+            total: (d) => ({ totalPen: d }),
+          },
+          [{ seq: 'desc' }],
+        ),
         skip,
         take,
       }),

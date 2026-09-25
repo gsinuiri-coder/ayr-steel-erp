@@ -25,7 +25,7 @@ import {
 } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyKeySchema } from './idempotency';
-import { paginationQuerySchema } from './pagination';
+import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
 import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing';
 
@@ -739,7 +739,11 @@ export const quotationListItemSchema = quotationSchema
   });
 export type QuotationListItemDto = z.infer<typeof quotationListItemSchema>;
 
+/** D-323: columnas de la lista de cotizaciones que se ordenan en el servidor. */
+export const QUOTATION_SORT_KEYS = ['code', 'customer', 'issueDate', 'total', 'status'] as const;
+
 export const quotationQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(QUOTATION_SORT_KEYS),
   /** D-289: uno o varios estados (`A,B`); sin él, la lista omite las anuladas salvo que haya `search`. */
   status: statusListSchema(QUOTATION_STATUSES),
   customerId: z.string().uuid().optional(),
@@ -1275,7 +1279,11 @@ export const changeSalesOrderCustomerSchema = z.object({
 });
 export type ChangeSalesOrderCustomerInput = z.infer<typeof changeSalesOrderCustomerSchema>;
 
+/** D-323: columnas de la lista de pedidos que se ordenan en el servidor (el estado mostrado no). */
+export const SALES_ORDER_SORT_KEYS = ['code', 'customer', 'issueDate', 'total'] as const;
+
 export const salesOrderQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(SALES_ORDER_SORT_KEYS),
   status: statusListSchema(SALES_ORDER_STATUSES),
   /** D-277: filtro por el estado que se muestra; manda sobre `status` si vienen los dos. */
   stage: statusListSchema(ORDER_STAGES),

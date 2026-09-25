@@ -19,7 +19,8 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { CATALOG_BAJO_PISO_VER_TODOS } from '@/lib/catalog-links';
 import { useSession } from '@/lib/session';
-import { useColumnFilters } from '@/lib/use-column-filters';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { Badge } from '@/components/ui/badge';
@@ -95,7 +96,8 @@ export function CatalogoView() {
     150,
   );
   const needle = search.toLowerCase();
-  const columnFilters = useColumnFilters<'sku' | 'name'>();
+  // D-323: el catálogo no pagina; el orden por columna se hace sobre todo lo cargado.
+  const [sort, toggleSort] = useSort<'sku' | 'name' | 'unit' | 'status' | 'price'>();
 
   const lines = useQuery({
     queryKey: ['business-lines'],
@@ -177,10 +179,12 @@ export function CatalogoView() {
                   p.sku.toLowerCase().includes(needle) || p.name.toLowerCase().includes(needle),
               )
             : inLine;
-          // D-295: el catálogo no pagina, así que el filtro por columna es exacto.
-          const lineProducts = columnFilters.apply(searched, {
-            sku: (p) => p.sku,
-            name: (p) => p.name,
+          const lineProducts = sortRows(searched, sort, {
+            sku: { text: (p) => p.sku },
+            name: { text: (p) => p.name },
+            unit: { text: (p) => p.unit },
+            status: { text: (p) => (p.isActive ? 'Activo' : 'Inactivo') },
+            price: { decimal: (p) => p.listPricePen ?? '' },
           });
           return (
             <TabsContent key={line.id} value={line.id} className="grid gap-4">
@@ -210,23 +214,19 @@ export function CatalogoView() {
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
                       <SortableTableHead
-                        filter={{
-                          label: 'SKU',
-                          value: columnFilters.filters.sku ?? '',
-                          onChange: (v) => {
-                            columnFilters.setFilter('sku', v);
-                          },
+                        active={sort.key === 'sku'}
+                        dir={sort.dir}
+                        onClick={() => {
+                          toggleSort('sku');
                         }}
                       >
                         SKU
                       </SortableTableHead>
                       <SortableTableHead
-                        filter={{
-                          label: 'nombre',
-                          value: columnFilters.filters.name ?? '',
-                          onChange: (v) => {
-                            columnFilters.setFilter('name', v);
-                          },
+                        active={sort.key === 'name'}
+                        dir={sort.dir}
+                        onClick={() => {
+                          toggleSort('name');
                         }}
                       >
                         Nombre
@@ -237,10 +237,36 @@ export function CatalogoView() {
                       {line.code === BusinessLine.METALLIC_ROOFING && (
                         <TableHead>Subtipo</TableHead>
                       )}
-                      <TableHead>Unidad</TableHead>
+                      <SortableTableHead
+                        active={sort.key === 'unit'}
+                        dir={sort.dir}
+                        onClick={() => {
+                          toggleSort('unit');
+                        }}
+                      >
+                        Unidad
+                      </SortableTableHead>
                       <TableHead>Origen</TableHead>
-                      <TableHead>Estado</TableHead>
-                      <TableHead className="text-right">Precio de lista (con IGV)</TableHead>
+                      <SortableTableHead
+                        active={sort.key === 'status'}
+                        dir={sort.dir}
+                        onClick={() => {
+                          toggleSort('status');
+                        }}
+                      >
+                        Estado
+                      </SortableTableHead>
+                      <SortableTableHead
+                        active={sort.key === 'price'}
+                        dir={sort.dir}
+                        align="right"
+                        className="text-right"
+                        onClick={() => {
+                          toggleSort('price');
+                        }}
+                      >
+                        Precio de lista (con IGV)
+                      </SortableTableHead>
                       {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
                     </TableRow>
                   </TableHeader>

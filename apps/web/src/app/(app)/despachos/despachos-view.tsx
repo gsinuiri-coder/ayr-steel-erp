@@ -9,6 +9,7 @@ import {
   TRANSFER_MODE_LABELS,
   type DispatchListItemDto,
   type PaginatedResult,
+  type DispatchQuery,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatQty } from '@/lib/format';
@@ -38,6 +39,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/sortable-table-head';
+import { useSort } from '@/lib/use-sort';
 
 /**
  * §3.4 + D-074: despachar es un acto de **almacén**, así que planta entra acá aunque no
@@ -55,12 +58,19 @@ export function DespachosView() {
   });
   const status = url.status;
 
+  // D-323: el orden por columna es del servidor (todas estas columnas son de la propia fila).
+  const [sort, toggleSort] = useSort<NonNullable<DispatchQuery['sort']>>();
+
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (status) params.set('status', status);
   if (search) params.set('search', search);
+  if (sort.key) {
+    params.set('sort', sort.key);
+    params.set('dir', sort.dir);
+  }
 
   const dispatches = useQuery({
-    queryKey: ['dispatches', page, pageSize, status, search],
+    queryKey: ['dispatches', page, pageSize, status, search, sort.key, sort.dir],
     queryFn: () => api<PaginatedResult<DispatchListItemDto>>(`/dispatches?${params.toString()}`),
   });
 
@@ -113,14 +123,66 @@ export function DespachosView() {
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
-                <TableHead>Despacho</TableHead>
-                <TableHead className="hidden md:table-cell">Pedido</TableHead>
-                <TableHead>Cliente</TableHead>
-                <TableHead className="hidden sm:table-cell">Fecha</TableHead>
+                <SortableTableHead
+                  active={sort.key === 'code'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('code');
+                  }}
+                >
+                  Despacho
+                </SortableTableHead>
+                <SortableTableHead
+                  className="hidden md:table-cell"
+                  active={sort.key === 'order'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('order');
+                  }}
+                >
+                  Pedido
+                </SortableTableHead>
+                <SortableTableHead
+                  active={sort.key === 'customer'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('customer');
+                  }}
+                >
+                  Cliente
+                </SortableTableHead>
+                <SortableTableHead
+                  className="hidden sm:table-cell"
+                  active={sort.key === 'date'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('date');
+                  }}
+                >
+                  Fecha
+                </SortableTableHead>
                 <TableHead className="hidden lg:table-cell">Traslado</TableHead>
-                <TableHead className="hidden text-right lg:table-cell">Peso</TableHead>
+                <SortableTableHead
+                  className="hidden text-right lg:table-cell"
+                  align="right"
+                  active={sort.key === 'weight'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('weight');
+                  }}
+                >
+                  Peso
+                </SortableTableHead>
                 <TableHead>Guía</TableHead>
-                <TableHead>Estado</TableHead>
+                <SortableTableHead
+                  active={sort.key === 'status'}
+                  dir={sort.dir}
+                  onClick={() => {
+                    toggleSort('status');
+                  }}
+                >
+                  Estado
+                </SortableTableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

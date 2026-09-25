@@ -26,6 +26,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -35,6 +38,8 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
  * cuenta como liberada.
  */
 export function ReservasTemporalesView() {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<'quotation' | 'customer' | 'expires'>();
   const queryClient = useQueryClient();
   const [releasing, setReleasing] = useState<TemporaryReservationListItemDto | null>(null);
 
@@ -82,16 +87,28 @@ export function ReservasTemporalesView() {
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
-                <TableHead>Cotización</TableHead>
-                <TableHead>Cliente</TableHead>
+                <SortHead sort={sort} onSort={toggleSort} k="quotation">
+                  Cotización
+                </SortHead>
+                <SortHead sort={sort} onSort={toggleSort} k="customer">
+                  Cliente
+                </SortHead>
                 <TableHead>Material apartado</TableHead>
-                <TableHead>Vence</TableHead>
-                <TableHead>Queda</TableHead>
+                <SortHead sort={sort} onSort={toggleSort} k="expires">
+                  Vence
+                </SortHead>
+                <SortHead sort={sort} onSort={toggleSort} k="expires">
+                  Queda
+                </SortHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.data.map((r) => (
+              {sortRows(list.data, sort, {
+                quotation: { text: (r) => r.quotationCode },
+                customer: { text: (r) => r.customerName },
+                expires: { text: (r) => r.expiresAt },
+              }).map((r) => (
                 <TableRow key={r.quotationId} className="align-top">
                   <TableCell>
                     <Link href={`/cotizaciones/${r.quotationId}`} className={LINK_CLASSNAME}>

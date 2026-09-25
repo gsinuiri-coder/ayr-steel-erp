@@ -26,6 +26,19 @@ export const paginationQuerySchema = z.object({
 });
 export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
 
+/**
+ * D-323: orden de columna **en el servidor** para los listados paginados. Ordenar solo la página
+ * que se ve daba un orden que cambiaba al pasar de página; con `sort`/`dir` en la consulta el
+ * orden es del listado entero. Cada listado declara sus claves (las columnas propias de la
+ * entidad: código, cliente, fecha, total, estado…); una columna derivada —un saldo, el estado
+ * que se muestra— no es una clave y la vista la ordena sobre la página, y lo dice.
+ */
+export const SORT_DIRS = ['asc', 'desc'] as const;
+export type SortDirection = (typeof SORT_DIRS)[number];
+export function sortQueryFields<const K extends readonly [string, ...string[]]>(keys: K) {
+  return { sort: z.enum(keys).optional(), dir: z.enum(SORT_DIRS).optional() };
+}
+
 /** Forma de respuesta de todo listado paginado. `items` ya viene recortado a la página. */
 export interface PaginatedResult<T> {
   items: T[];

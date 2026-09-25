@@ -88,6 +88,7 @@ import {
   type PartyRef,
   type ProviderResult,
 } from './ports/electronic-invoicing.port';
+import { listOrderBy } from '../common/list-sort';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -3071,6 +3072,24 @@ export class InvoicingService {
     actor?: RequestUser,
   ): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
     const where = fiscalDocumentListWhere(query, actor, LIVE_DOCUMENT_STATUSES);
+    // D-323: la columna elegida ordena la lista entera (también con `pendingOnly`, antes del tope);
+    // la fecha de emisión desempata. Solo columnas propias: el saldo es derivado.
+    const orderBy = listOrderBy<
+      NonNullable<FiscalDocumentQuery['sort']>,
+      Prisma.FiscalDocumentOrderByWithRelationInput
+    >(
+      query,
+      {
+        number: (d) => ({ number: d }),
+        docType: (d) => ({ docType: d }),
+        customer: (d) => ({ customer: { name: d } }),
+        issueDate: (d) => ({ issueDate: d }),
+        dueDate: (d) => ({ dueDate: d }),
+        total: (d) => ({ totalPen: d }),
+        status: (d) => ({ status: d }),
+      },
+      [{ issueDate: 'desc' }, { createdAt: 'desc' }],
+    );
 
     if (!query.pendingOnly) {
       const { skip, take } = toSkipTake(query);
@@ -3081,7 +3100,7 @@ export class InvoicingService {
           include: documentInclude,
           // D-124: por fecha de emisión — la fecha de operación de un comprobante, la misma
           // que trae un importado (RF-71) y la que usan los reportes de ventas.
-          orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
+          orderBy,
           skip,
           take,
         }),
@@ -3096,7 +3115,7 @@ export class InvoicingService {
     const rows = await this.prisma.fiscalDocument.findMany({
       where,
       include: documentInclude,
-      orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
+      orderBy,
       take: DERIVED_FILTER_FETCH_CAP,
     });
     const pending = (await this.toListDtos(rows)).filter((d) => toDecimal(d.balancePen).gt(0));

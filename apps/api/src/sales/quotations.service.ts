@@ -59,6 +59,7 @@ import { rawMaterialSpecLabels } from './raw-material';
 import { SalesOrdersService } from './sales-orders.service';
 import { coilTieReasons, findCoilTies, lineCoilPool } from './coil-sale-product';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
+import { listOrderBy } from '../common/list-sort';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -985,7 +986,21 @@ export class QuotationsService {
         // La lista muestra totales, no líneas: traer `items` con su producto para 500
         // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
         include: { ...quotationInclude, items: false, _count: { select: { items: true } } },
-        orderBy: { seq: 'desc' },
+        // D-323: la columna elegida ordena la lista entera; el número desempata.
+        orderBy: listOrderBy<
+          NonNullable<QuotationQuery['sort']>,
+          Prisma.QuotationOrderByWithRelationInput
+        >(
+          query,
+          {
+            code: (d) => ({ seq: d }),
+            customer: (d) => ({ customer: { name: d } }),
+            issueDate: (d) => ({ issueDate: d }),
+            total: (d) => ({ totalPen: d }),
+            status: (d) => ({ status: d }),
+          },
+          [{ seq: 'desc' }],
+        ),
         skip,
         take,
       }),
