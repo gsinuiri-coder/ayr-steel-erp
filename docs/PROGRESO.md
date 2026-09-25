@@ -60,6 +60,60 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
 - **Cierre post-ventana** (2026-09-25, PR #23 → D-286 y PR #24 → D-287). Autorrevisión de #24 por
   un subagente nuevo del mismo modelo: 0 P0, 0 P1, 3 P2 (dos corregidos en la rama). #23 no tuvo
   pase aparte: es la reversa literal de la migración de D-285. Motivo: el mismo.
+- **D-288** (2026-09-25, PR #26, desplegado y aplicado a FFA1-00001386). Autorrevisión por un
+  subagente nuevo del mismo modelo: 0 P0, **2 P1 corregidos antes del merge** (el PEPS dejaba el
+  faltante de una salida anulada; el re-fechado podía despachar otra cantidad que la revertida),
+  5 P2 (cuatro corregidos). Motivo: el mismo. Pieza de riesgo: la reversa en modo re-fechado,
+  que exceptúa al comprobante corregido del bloqueo por documento declarado.
+
+## Re-fechado de FFA1-00001386 / DES-000019 y D-288 (2026-09-25)
+
+Handoff: `docs/handoff/refechar-despacho.md`. UAT: `docs/uat/refechar-despacho-d288.md`. PR #26,
+merge `377df70`.
+
+- **El flujo existente no servía:** `DispatchesService.reverse` rechaza revertir mientras un
+  comprobante declarado facture el despacho (FFA1-00001386 está ACCEPTED). Se paró y el dueño
+  eligió construir primero el re-fechado atómico, con la reversa a la fecha de la salida
+  original **solo** dentro del re-fechado (corrección de fecha, no devolución).
+- **D-288:** la corrección de la fecha de emisión exige decidir `redateDispatches` si hay
+  despachos «a la fecha del comprobante»; con `true` revierte y vuelve a despachar en la misma
+  transacción, exigiendo que lo re-despachado sea exactamente lo revertido. PEPS: la reversa de
+  una salida sin capas devuelve su faltante. CLI `pnpm dispatch:redate` para un comprobante ya
+  corregido. El E2E destapó el negativo de paso del par salida/reversa del mismo día.
+- **Verificación local:** unitarios de la API 1190/1190, lint, typecheck (API, web, shared, CLI),
+  `format:check`; E2E `refechar-despacho-d288` (3), `despacho-fecha-comprobante-d278` y
+  `fecha-emision-manual-f8s7`: 11/11. CI de `24b79f7` verde con Sonar (el primer análisis dio
+  cobertura de código nuevo 55.3 %; con los unitarios agregados pasó). La suite E2E completa
+  corrió en la CI (Postgres del runner), no local.
+- **Ensayo en demo** restablecida desde production (dos veces: con el código de la primera
+  versión y con el final, mismo resultado): salida nueva 19-08 (50 u, S/ 3 728.815), par del
+  19-09 neto en cero en kardex y PEPS, 0 negativos en 109 ítems, totales de agosto idénticos.
+- **Production:** API `ayr-steel-erp-api-00053-fgk` (`git-sha=24b79f7`), health 200, smoke verde
+  con web vieja y con la nueva (Vercel ok). Respaldo `respaldo-pre-refechar-des19-20260925`
+  (`br-long-firefly-ae1aej4w`). `pnpm dispatch:redate --number FFA1-00001386`: dry-run idéntico
+  al de demo; execute: DES-000019 revertido, despacho nuevo `8c6f17b2…`. Verificado:
+  - TC5 UPVC ROJO: salida 19-08 de 50 u a S/ 3 728.815; el 19-09, salida vieja y su reversa
+    (S/ 3 728.815 cada una) netas; saldo final 574, mínimo corrido 0.
+  - PEPS agosto: la salida del 19-08, cierre 574 / S/ 42 806.7962, sin advertencias. PEPS
+    septiembre: inicial = final = 574 / S/ 42 806.7962, entradas y salidas S/ 3 728.8150.
+  - Kardex completo: 306 movimientos (+2), 109 ítems, **0 negativos**, 0 descuadres con
+    `inventory_balances`, 0 líneas despachadas sin salida.
+  - Agosto antes y después **idéntico**: venta S/ 308 419.8262, costo S/ 273 568.7489, margen
+    11.30 %, 28 pedidos `COMPLETO`. Dry-run de D-278: 0 comprobantes, 0 líneas a revisión.
+- Fotos en `local-data/refechar-d288/` (production y demo, antes y después).
+
+**Pendientes que deja:**
+
+- **Dueño:** confirmar si el costo de la compra PRRG1-0002 (S/ 3.43/kg, nota «REGULARIZAR FACT
+  1321», proveedor IMPORTACION, las 6 bobinas de PED-000018) debe incluir flete o desaduanaje.
+  Si sí, el margen de 0.08 % de PED-000018 no es real y el costo se corrige con un ajuste de
+  costo (D-043) sobre esas bobinas.
+- P2 abierto de la autorrevisión de D-288: en el saldo corrido del kardex (costo promedio), el
+  par del día viejo puede mostrar un negativo de paso dentro del día cuando el stock es justo
+  (al cierre del día es correcto). Documentado en D-288 y en el UAT.
+- Demo quedó con el re-fechado aplicado (copia de production de hoy más la operación).
+- Respaldos de Neon: `respaldo-pre-kardex-estricto-20260925` y
+  `respaldo-pre-refechar-des19-20260925` se suman a los de la ventana.
 
 ## Cierre post-ventana (2026-09-25)
 
