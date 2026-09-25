@@ -19,7 +19,7 @@ import { useDebounced } from './use-debounced';
  */
 export function useUrlState<S extends Record<string, string>>(
   defaults: S,
-): [S, (patch: Partial<S>) => void] {
+): [S, (patch: Partial<S> | ((current: S) => Partial<S>)) => void] {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -46,9 +46,19 @@ export function useUrlState<S extends Record<string, string>>(
   }, [searchParams]);
 
   const setState = useCallback(
-    (patch: Partial<S>) => {
+    (input: Partial<S> | ((current: S) => Partial<S>)) => {
       const base = defaultsRef.current;
       const next = new URLSearchParams(latest.current);
+      // Con una función, el parche se calcula sobre la URL **más reciente** y no sobre lo que se
+      // pintó: dos toggles seguidos (chips) parten cada uno del resultado del anterior.
+      let patch: Partial<S>;
+      if (typeof input === 'function') {
+        const current: Record<string, string> = {};
+        for (const key of Object.keys(base)) current[key] = next.get(key) ?? base[key] ?? '';
+        patch = input(current as S);
+      } else {
+        patch = input;
+      }
       const touchesPage = 'page' in patch;
       let changedFilter = false;
       for (const [key, value] of Object.entries(patch) as [string, string | undefined][]) {

@@ -75,9 +75,14 @@ export function PedidosView() {
     stages.length > 0 && stages.every((s) => s === 'FULFILLED' || s === 'CANCELLED');
   const selectValue = stages.length === 1 && !historyOnly ? (stages[0] ?? ALL) : ALL;
   const toggleChip = (stage: 'FULFILLED' | 'CANCELLED') => {
-    const current = historyOnly ? stages : [];
-    const next = current.includes(stage) ? current.filter((s) => s !== stage) : [...current, stage];
-    setUrl({ stage: next.join(',') });
+    // Sobre la URL más reciente, no sobre lo pintado: dos chips pulsados seguidos no se pisan.
+    setUrl((cur) => {
+      const now = cur.stage.split(',').filter(Boolean);
+      const chipsOnly = now.length > 0 && now.every((s) => s === 'FULFILLED' || s === 'CANCELLED');
+      const base = chipsOnly ? now : [];
+      const next = base.includes(stage) ? base.filter((s) => s !== stage) : [...base, stage];
+      return { stage: next.join(',') };
+    });
   };
 
   // Sin estado elegido: los activos; y buscando, todos (quien pega `PED-000123` lo quiere
