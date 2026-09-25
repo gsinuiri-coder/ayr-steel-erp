@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { DispatchStatus, Prisma } from '@prisma/client';
 import { carriesInventory, Decimal, dispatchCode, salesOrderCode, toDecimal } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -17,6 +17,7 @@ import {
   acceptedOuts,
   assertOpeningMoveNotApplied,
   OPENING_MOVE_ACTION,
+  OPENING_MOVE_LOCK,
   OPENING_MOVE_REASON,
   planMissingOuts,
   planOpeningMoves,
@@ -74,6 +75,7 @@ export class OpeningDateMoveService {
     return this.prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        await this.assertNotApplied(tx);
         return this.buildPlan(tx);
       },
       { timeout: 180_000 },
@@ -192,23 +194,40 @@ export class OpeningDateMoveService {
     return { target, moves, added, dispatch, avgCost };
   }
 
+  /** Se niega si la auditoría de la ejecución ya existe (D-286: deshabilitada para siempre). */
+  private async assertNotApplied(client: Prisma.TransactionClient): Promise<void> {
+    const applied = await client.auditLog.findFirst({
+      where: { action: OPENING_MOVE_ACTION },
+      select: { id: true },
+    });
+    assertOpeningMoveNotApplied(applied !== null);
+  }
+
   /**
    * Ejecuta los tres pasos. `expected` es la huella del dry-run: si la de ahora no coincide,
-   * no escribe nada. La excepción del paso 1 no se repite (auditoría).
+   * no escribe nada. Corre una sola vez (auditoría) y nunca dos a la vez: una transacción
+   * aparte sostiene un advisory lock mientras duran los tres pasos (D-286).
    */
   async execute(actor: RequestUser, expected: string): Promise<OpeningDateMovePlan> {
+    return this.prisma.$transaction(
+      async (lockTx) => {
+        const [lock] = await lockTx.$queryRaw<{ locked: boolean }[]>`
+          SELECT pg_try_advisory_xact_lock(hashtext(${OPENING_MOVE_LOCK})) AS locked`;
+        if (lock?.locked !== true) {
+          throw new ConflictException(
+            'La herramienta de D-285 ya está corriendo en otra sesión: no se escribe nada.',
+          );
+        }
+        await this.assertNotApplied(lockTx);
+        return this.executeLocked(actor, expected);
+      },
+      { timeout: 30 * 60_000 },
+    );
+  }
+
+  private async executeLocked(actor: RequestUser, expected: string): Promise<OpeningDateMovePlan> {
     const plan = await this.prisma.$transaction((tx) => this.buildPlan(tx), { timeout: 180_000 });
-    // La guarda de un solo uso vale para el paso 1 (autorrevisión P1-2): si ya no queda nada que
-    // mover, los pasos 2 y 3 se pueden retomar después de una falla (son idempotentes: toman solo
-    // lo que sigue sin salida o sin despacho).
     const toMove = plan.moves.filter((m) => m.action === 'MOVE');
-    if (toMove.length > 0) {
-      const applied = await this.prisma.auditLog.findFirst({
-        where: { action: OPENING_MOVE_ACTION },
-        select: { id: true },
-      });
-      assertOpeningMoveNotApplied(applied !== null);
-    }
     const now = openingPlanSignature(plan);
     if (now !== expected) {
       throw new BadRequestException(
@@ -220,11 +239,7 @@ export class OpeningDateMoveService {
     if (toMove.length > 0)
       await this.prisma.$transaction(
         async (tx) => {
-          const again = await tx.auditLog.findFirst({
-            where: { action: OPENING_MOVE_ACTION },
-            select: { id: true },
-          });
-          assertOpeningMoveNotApplied(again !== null);
+          await this.assertNotApplied(tx);
           // SET LOCAL: vale solo para esta transacción (migración 20260925010000).
           await tx.$queryRaw`SELECT set_config('ayr.opening_date_move', 'on', true)`;
           const to = new Date(`${plan.target}T00:00:00.000Z`);

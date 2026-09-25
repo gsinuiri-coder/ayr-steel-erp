@@ -25,11 +25,17 @@ const D = (v: string): Prisma.Decimal => new Prisma.Decimal(v);
 const day = (v: string): Date => new Date(`${v}T00:00:00.000Z`);
 const ADMIN = { id: 'admin', role: 'ADMINISTRADOR' } as RequestUser;
 
-function fakeTx(opts: { appliedAudit?: boolean; importDate?: string } = {}) {
+function fakeTx(opts: { appliedAudit?: boolean; importDate?: string; locked?: boolean } = {}) {
   const updates: { id: bigint; date: string }[] = [];
   const tx = {
     $executeRaw: jest.fn().mockResolvedValue(0),
-    $queryRaw: jest.fn().mockResolvedValue([{ set_config: 'on' }]),
+    $queryRaw: jest.fn((strings: TemplateStringsArray) =>
+      Promise.resolve(
+        strings.join('?').includes('pg_try_advisory_xact_lock')
+          ? [{ locked: opts.locked ?? true }]
+          : [{ set_config: 'on' }],
+      ),
+    ),
     auditLog: {
       findFirst: jest.fn().mockResolvedValue(opts.appliedAudit === true ? { id: 'a' } : null),
     },
@@ -162,10 +168,28 @@ describe('OpeningDateMoveService (D-285)', () => {
     ).toHaveLength(1);
   });
 
-  it('execute: guarda de un solo uso — con la auditoría del movimiento, no escribe', async () => {
+  it('execute: con la auditoría de la ejecución, la herramienta está deshabilitada (D-286)', async () => {
     const { tx, updates } = fakeTx({ appliedAudit: true });
+    const { svc, dispatches, invoiceDispatch } = service(tx);
+    await expect(svc.execute(ADMIN, 'x')).rejects.toThrow('quedó deshabilitada');
+    expect(updates).toHaveLength(0);
+    expect(dispatches.addMissingMovementInTx).not.toHaveBeenCalled();
+    expect(invoiceDispatch.executeInTx).not.toHaveBeenCalled();
+  });
+
+  it('plan: con la auditoría de la ejecución, tampoco planifica (D-286)', async () => {
+    const { tx } = fakeTx({ appliedAudit: true });
+    const { svc, invoiceDispatch } = service(tx);
+    await expect(svc.plan()).rejects.toThrow('quedó deshabilitada');
+    expect(invoiceDispatch.buildPlan).not.toHaveBeenCalled();
+  });
+
+  it('execute: con otra corrida sosteniendo el advisory lock, no escribe (D-286)', async () => {
+    const { tx, updates } = fakeTx({ locked: false });
     const { svc, dispatches } = service(tx);
-    await expect(svc.execute(ADMIN, 'x')).rejects.toThrow('ya se aplicó');
+    const expected = openingPlanSignature(await svc.plan());
+    await expect(svc.execute(ADMIN, expected)).rejects.toThrow('ya está corriendo');
+    expect(tx.auditLog.findFirst).toHaveBeenCalledTimes(1); // solo la del plan
     expect(updates).toHaveLength(0);
     expect(dispatches.addMissingMovementInTx).not.toHaveBeenCalled();
   });
@@ -208,12 +232,11 @@ describe('OpeningDateMoveService (D-285)', () => {
     );
   });
 
-  it('execute se retoma: sin nada que mover, la guarda no bloquea los pasos 2 y 3', async () => {
+  it('execute ya no se retoma: sin nada que mover pero con la auditoría, se niega (D-286)', async () => {
     const { tx, updates } = fakeTx({ appliedAudit: true, importDate: '2026-08-01' });
     const { svc, dispatches } = service(tx);
-    const expected = openingPlanSignature(await svc.plan());
-    await svc.execute(ADMIN, expected);
+    await expect(svc.execute(ADMIN, 'x')).rejects.toThrow('quedó deshabilitada');
     expect(updates).toHaveLength(0);
-    expect(dispatches.addMissingMovementInTx).toHaveBeenCalledTimes(1);
+    expect(dispatches.addMissingMovementInTx).not.toHaveBeenCalled();
   });
 });
