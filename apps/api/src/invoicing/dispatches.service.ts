@@ -33,6 +33,8 @@ import {
   type PaginatedResult,
   type ReverseMovementInput,
   type TransportSuggestionsDto,
+  NEGATIVE_TERMINAL_STATUSES,
+  statusCondition,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -1090,7 +1092,12 @@ export class DispatchesService {
     actor?: RequestUser,
   ): Promise<PaginatedResult<DispatchListItemDto>> {
     const where: Prisma.DispatchWhereInput = {
-      status: query.status,
+      // D-289: sin estado, la bandeja omite los revertidos (no si se busca o se acota a un pedido).
+      status: statusCondition(
+        query.status,
+        NEGATIVE_TERMINAL_STATUSES.dispatch,
+        Boolean(query.search) || Boolean(query.salesOrderId),
+      ),
       salesOrderId: query.salesOrderId,
       ...(actor ? { salesOrder: sellerWhere(actor) } : {}),
     };

@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -13,8 +12,13 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatQty } from '@/lib/format';
-import { useDebounced } from '@/lib/use-debounced';
-import { usePagination } from '@/lib/use-pagination';
+import {
+  URL_PAGINATION_DEFAULTS,
+  useUrlPagination,
+  useUrlSearchInput,
+  useUrlState,
+} from '@/lib/use-url-state';
+import { StatusFilter } from '@/components/status-filter';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import {
@@ -24,13 +28,6 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
@@ -42,8 +39,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-const ALL = 'ALL';
-
 /**
  * §3.4 + D-074: despachar es un acto de **almacén**, así que planta entra acá aunque no
  * entre al resto del módulo comercial. El despacho no muestra ningún precio.
@@ -52,21 +47,20 @@ const DISPATCH_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANT
 
 /** RF-77..RF-79: listado de despachos. */
 export function DespachosView() {
-  const [status, setStatus] = useState<string>(ALL);
-  const [search, setSearch] = useState('');
-  const debouncedSearch = useDebounced(search.trim(), 300);
-  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
-
-  useEffect(() => {
-    resetPage();
-  }, [status, debouncedSearch, resetPage]);
+  // D-289: filtros, búsqueda y página viven en la URL.
+  const [url, setUrl] = useUrlState({ ...URL_PAGINATION_DEFAULTS, search: '', status: '' });
+  const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
+  const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
+  const status = url.status;
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (status !== ALL) params.set('status', status);
-  if (debouncedSearch) params.set('search', debouncedSearch);
+  if (status) params.set('status', status);
+  if (search) params.set('search', search);
 
   const dispatches = useQuery({
-    queryKey: ['dispatches', page, pageSize, status, debouncedSearch],
+    queryKey: ['dispatches', page, pageSize, status, search],
     queryFn: () => api<PaginatedResult<DispatchListItemDto>>(`/dispatches?${params.toString()}`),
   });
 
@@ -87,28 +81,29 @@ export function DespachosView() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Input
           placeholder="Buscar por cliente, placa o transportista…"
           className="max-w-sm"
-          value={search}
+          value={searchText}
           onChange={(e) => {
-            setSearch(e.target.value);
+            setSearchText(e.target.value);
           }}
         />
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-52">
-            <SelectValue placeholder="Estado" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los estados</SelectItem>
-            {DISPATCH_STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {DISPATCH_STATUS_LABELS[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <StatusFilter
+          value={status}
+          onChange={(v) => {
+            setUrl({ status: v });
+          }}
+          options={DISPATCH_STATUSES.filter((s) => s !== 'REVERSED').map((s) => ({
+            value: s,
+            label: DISPATCH_STATUS_LABELS[s],
+          }))}
+          negativeValue="REVERSED"
+          negativeLabel="Revertidos"
+          allLabel="Todos, sin revertidos"
+          className="w-52"
+        />
       </div>
 
       {dispatches.isPending ? (

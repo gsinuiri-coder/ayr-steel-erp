@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -17,8 +16,13 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
-import { useDebounced } from '@/lib/use-debounced';
-import { usePagination } from '@/lib/use-pagination';
+import {
+  URL_PAGINATION_DEFAULTS,
+  useUrlPagination,
+  useUrlSearchInput,
+  useUrlState,
+} from '@/lib/use-url-state';
+import { StatusFilter } from '@/components/status-filter';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { ContingencyCard } from '@/components/invoicing/contingency-card';
@@ -57,28 +61,32 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** RF-70: listado de comprobantes electrónicos, con el aviso de contingencia (D-073). */
 export function ComprobantesView() {
-  const [status, setStatus] = useState<string>(ALL);
-  const [docType, setDocType] = useState<string>(ALL);
-  /** D-153: separar lo que el ERP emitió de lo que solo registró es la pregunta del mes. */
-  const [origin, setOrigin] = useState<string>(ALL);
-  const [pendingOnly, setPendingOnly] = useState(false);
-  const [search, setSearch] = useState('');
-  const debouncedSearch = useDebounced(search.trim(), 300);
-  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
-
-  useEffect(() => {
-    resetPage();
-  }, [status, docType, origin, pendingOnly, debouncedSearch, resetPage]);
+  // D-289: filtros, búsqueda y página viven en la URL. `origin` (D-153) separa lo que el ERP
+  // emitió de lo que solo registró.
+  const [url, setUrl] = useUrlState({
+    ...URL_PAGINATION_DEFAULTS,
+    search: '',
+    status: '',
+    docType: '',
+    origin: '',
+    pendingOnly: '',
+  });
+  const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
+  const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
+  const { status, docType, origin } = url;
+  const pendingOnly = url.pendingOnly === '1';
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (status !== ALL) params.set('status', status);
-  if (docType !== ALL) params.set('docType', docType);
-  if (origin !== ALL) params.set('origin', origin);
+  if (status) params.set('status', status);
+  if (docType) params.set('docType', docType);
+  if (origin) params.set('origin', origin);
   if (pendingOnly) params.set('pendingOnly', 'true');
-  if (debouncedSearch) params.set('search', debouncedSearch);
+  if (search) params.set('search', search);
 
   const documents = useQuery({
-    queryKey: ['fiscal-documents', page, pageSize, status, docType, pendingOnly, debouncedSearch],
+    queryKey: ['fiscal-documents', page, pageSize, status, docType, origin, pendingOnly, search],
     queryFn: () =>
       api<PaginatedResult<FiscalDocumentListItemDto>>(`/invoicing/documents?${params.toString()}`),
   });
@@ -126,16 +134,21 @@ export function ComprobantesView() {
         </Alert>
       )}
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Input
           placeholder="Buscar por número, cliente o documento…"
           className="max-w-sm"
-          value={search}
+          value={searchText}
           onChange={(e) => {
-            setSearch(e.target.value);
+            setSearchText(e.target.value);
           }}
         />
-        <Select value={docType} onValueChange={setDocType}>
+        <Select
+          value={docType || ALL}
+          onValueChange={(v) => {
+            setUrl({ docType: v === ALL ? '' : v });
+          }}
+        >
           <SelectTrigger className="w-56">
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
@@ -149,7 +162,12 @@ export function ComprobantesView() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={origin} onValueChange={setOrigin}>
+        <Select
+          value={origin || ALL}
+          onValueChange={(v) => {
+            setUrl({ origin: v === ALL ? '' : v });
+          }}
+        >
           <SelectTrigger className="w-56">
             <SelectValue placeholder="Origen" />
           </SelectTrigger>
@@ -162,23 +180,22 @@ export function ComprobantesView() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Estado" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los estados</SelectItem>
-            {FISCAL_DOCUMENT_STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {FISCAL_DOCUMENT_STATUS_LABELS[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <StatusFilter
+          value={status}
+          onChange={(v) => {
+            setUrl({ status: v });
+          }}
+          options={FISCAL_DOCUMENT_STATUSES.filter((s) => s !== 'VOIDED' && s !== 'ANNULLED').map(
+            (s) => ({ value: s, label: FISCAL_DOCUMENT_STATUS_LABELS[s] }),
+          )}
+          negativeValue="VOIDED,ANNULLED"
+          allLabel="Todos, sin anulados"
+        />
         <Button
           variant={pendingOnly ? 'default' : 'outline'}
+          aria-pressed={pendingOnly}
           onClick={() => {
-            setPendingOnly((v) => !v);
+            setUrl({ pendingOnly: pendingOnly ? '' : '1' });
           }}
         >
           Solo con saldo

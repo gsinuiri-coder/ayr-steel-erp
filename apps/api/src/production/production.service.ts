@@ -1336,7 +1336,10 @@ export class ProductionService {
   async findAll(query: ProductionOrderQuery): Promise<ProductionOrderListItemDto[]> {
     const orders = await this.prisma.productionOrder.findMany({
       where: {
-        status: query.status,
+        // D-289: varios estados. Sin estado NO se omiten las anuladas: el detalle del pedido
+        // (D-190) y la cola de planta leen esta lista y necesitan verlas; el historial de planta
+        // pide su conjunto por `status`.
+        status: query.status ? { in: query.status } : undefined,
         kind: query.kind,
         productId: query.productId,
         // D-190: las órdenes de un pedido, para su detalle.

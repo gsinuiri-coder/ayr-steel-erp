@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -15,18 +14,16 @@ import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { useSession } from '@/lib/session';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
-import { useDebounced } from '@/lib/use-debounced';
-import { usePagination } from '@/lib/use-pagination';
+import {
+  URL_PAGINATION_DEFAULTS,
+  useUrlPagination,
+  useUrlSearchInput,
+  useUrlState,
+} from '@/lib/use-url-state';
+import { StatusFilter } from '@/components/status-filter';
 import { PaginationBar } from '@/components/pagination-bar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   cn,
@@ -46,7 +43,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-const ALL = 'ALL';
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -54,24 +50,23 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 export function CotizacionesView() {
   const { user } = useSession();
   const isAdmin = user.role === Role.ADMINISTRADOR;
-  const [status, setStatus] = useState<string>(ALL);
-  const [search, setSearch] = useState('');
+  // D-289: filtros, búsqueda y página viven en la URL.
+  const [url, setUrl] = useUrlState({ ...URL_PAGINATION_DEFAULTS, search: '', status: '' });
+  const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
   // La búsqueda va al API (RF-84) para que una cotización fuera de la página actual se
   // pueda encontrar: por nombre/documento del cliente, o por código (extrae el número de
   // "COT-…").
-  const debouncedSearch = useDebounced(search.trim(), 300);
-  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
-
-  useEffect(() => {
-    resetPage();
-  }, [status, debouncedSearch, resetPage]);
+  const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
+  const status = url.status;
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (status !== ALL) params.set('status', status);
-  if (debouncedSearch) params.set('search', debouncedSearch);
+  if (status) params.set('status', status);
+  if (search) params.set('search', search);
 
   const quotations = useQuery({
-    queryKey: ['quotations', page, pageSize, status, debouncedSearch],
+    queryKey: ['quotations', page, pageSize, status, search],
     queryFn: () =>
       api<PaginatedResult<QuotationListItemDto>>(`/sales/quotations?${params.toString()}`),
   });
@@ -127,28 +122,26 @@ export function CotizacionesView() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Input
           placeholder="Buscar por código, cliente o documento…"
           className="max-w-sm"
-          value={search}
+          value={searchText}
           onChange={(e) => {
-            setSearch(e.target.value);
+            setSearchText(e.target.value);
           }}
         />
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Estado" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los estados</SelectItem>
-            {QUOTATION_STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {QUOTATION_STATUS_LABELS[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <StatusFilter
+          value={status}
+          onChange={(v) => {
+            setUrl({ status: v });
+          }}
+          options={QUOTATION_STATUSES.filter((s) => s !== 'CANCELLED').map((s) => ({
+            value: s,
+            label: QUOTATION_STATUS_LABELS[s],
+          }))}
+          negativeValue="CANCELLED"
+        />
       </div>
 
       <div className="rounded-lg border">
@@ -263,7 +256,7 @@ export function CotizacionesView() {
             {quotations.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-muted-foreground">
-                  {search || status !== ALL
+                  {search || status
                     ? 'Ninguna cotización coincide con el filtro.'
                     : 'No hay cotizaciones todavía.'}
                 </TableCell>

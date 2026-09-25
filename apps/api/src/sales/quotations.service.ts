@@ -41,6 +41,8 @@ import {
   type QuotationQuery,
   type SalesItemInput,
   type UpdateQuotationInput,
+  NEGATIVE_TERMINAL_STATUSES,
+  statusCondition,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -899,7 +901,12 @@ export class QuotationsService {
     const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
     const where: Prisma.QuotationWhereInput = {
       ...quotationSellerWhere(actor),
-      status: query.status,
+      // D-289: sin estado, la bandeja omite las anuladas (no si se busca o se acota a un cliente).
+      status: statusCondition(
+        query.status,
+        NEGATIVE_TERMINAL_STATUSES.quotation,
+        Boolean(query.search) || Boolean(query.customerId),
+      ),
       customerId: query.customerId,
       // D-119: sin `businessLineId` propio, "de esta línea" es "tiene algún ítem de esta
       // línea" — una cotización mixta aparece en el filtro de cualquiera de sus líneas.

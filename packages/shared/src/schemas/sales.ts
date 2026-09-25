@@ -26,6 +26,7 @@ import {
 import { reasonSchema } from './coil';
 import { idempotencyKeySchema } from './idempotency';
 import { paginationQuerySchema } from './pagination';
+import { statusListSchema } from './status-filter';
 import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing';
 
 /**
@@ -722,7 +723,8 @@ export const quotationListItemSchema = quotationSchema
 export type QuotationListItemDto = z.infer<typeof quotationListItemSchema>;
 
 export const quotationQuerySchema = paginationQuerySchema.extend({
-  status: z.enum(QUOTATION_STATUSES).optional(),
+  /** D-289: uno o varios estados (`A,B`); sin él, la lista omite las anuladas salvo que haya `search`. */
+  status: statusListSchema(QUOTATION_STATUSES),
   customerId: z.string().uuid().optional(),
   /** D-119: al menos una línea del documento es de esta línea de negocio. */
   businessLine: z.enum(BUSINESS_LINES).optional(),
@@ -1257,9 +1259,9 @@ export const changeSalesOrderCustomerSchema = z.object({
 export type ChangeSalesOrderCustomerInput = z.infer<typeof changeSalesOrderCustomerSchema>;
 
 export const salesOrderQuerySchema = paginationQuerySchema.extend({
-  status: z.enum(SALES_ORDER_STATUSES).optional(),
+  status: statusListSchema(SALES_ORDER_STATUSES),
   /** D-277: filtro por el estado que se muestra; manda sobre `status` si vienen los dos. */
-  stage: z.enum(ORDER_STAGES).optional(),
+  stage: statusListSchema(ORDER_STAGES),
   customerId: z.string().uuid().optional(),
   /** D-119: al menos una línea del documento es de esta línea de negocio. */
   businessLine: z.enum(BUSINESS_LINES).optional(),

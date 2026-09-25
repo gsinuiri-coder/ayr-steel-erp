@@ -1,11 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   ORDER_STAGE_LABELS,
-  ORDER_STAGES,
   Role,
   type PaginatedResult,
   type SalesOrderListItemDto,
@@ -14,8 +12,13 @@ import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { OrderStageBadge } from '@/components/sales/status-badges';
-import { useDebounced } from '@/lib/use-debounced';
-import { usePagination } from '@/lib/use-pagination';
+import {
+  URL_PAGINATION_DEFAULTS,
+  useUrlPagination,
+  useUrlSearchInput,
+  useUrlState,
+} from '@/lib/use-url-state';
+import { FilterChip } from '@/components/filter-chip';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PaginationBar } from '@/components/pagination-bar';
@@ -49,25 +52,44 @@ const ALL = 'ALL';
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
+/**
+ * D-289: la bandeja de pedidos muestra por defecto los que siguen vivos. «Atendidos»
+ * (FULFILLED) y «Anulados» (CANCELLED) son historia y se piden con su chip; con chip activo
+ * la lista muestra **solo** esos.
+ */
+const ACTIVE_STAGES = ['CONFIRMED', 'IN_PRODUCTION', 'READY', 'PARTIALLY_FULFILLED'] as const;
+
 /** Pedidos (D-065). La reserva viva es lo que hace que el pedido signifique algo. */
 export function PedidosView() {
-  const [status, setStatus] = useState<string>(ALL);
-  const [search, setSearch] = useState('');
+  // D-289: filtros, búsqueda y página viven en la URL. `stage` es una lista separada por comas.
+  const [url, setUrl] = useUrlState({ ...URL_PAGINATION_DEFAULTS, search: '', stage: '' });
+  const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
   // La búsqueda va al API (RF-84) para que un pedido fuera de la página actual se pueda
   // encontrar: por nombre/documento del cliente, o por código (extrae el número de "PED-…").
-  const debouncedSearch = useDebounced(search.trim(), 300);
-  const { page, pageSize, setPage, setPageSize, resetPage } = usePagination();
+  const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
 
-  useEffect(() => {
-    resetPage();
-  }, [status, debouncedSearch, resetPage]);
+  const stages = url.stage.split(',').filter(Boolean);
+  const historyOnly =
+    stages.length > 0 && stages.every((s) => s === 'FULFILLED' || s === 'CANCELLED');
+  const selectValue = stages.length === 1 && !historyOnly ? (stages[0] ?? ALL) : ALL;
+  const toggleChip = (stage: 'FULFILLED' | 'CANCELLED') => {
+    const current = historyOnly ? stages : [];
+    const next = current.includes(stage) ? current.filter((s) => s !== stage) : [...current, stage];
+    setUrl({ stage: next.join(',') });
+  };
+
+  // Sin estado elegido: los activos; y buscando, todos (quien pega `PED-000123` lo quiere
+  // esté como esté).
+  const stageParam = stages.length > 0 ? stages.join(',') : search ? '' : ACTIVE_STAGES.join(',');
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (status !== ALL) params.set('stage', status);
-  if (debouncedSearch) params.set('search', debouncedSearch);
+  if (stageParam) params.set('stage', stageParam);
+  if (search) params.set('search', search);
 
   const orders = useQuery({
-    queryKey: ['sales-orders', page, pageSize, status, debouncedSearch],
+    queryKey: ['sales-orders', page, pageSize, stageParam, search],
     queryFn: () =>
       api<PaginatedResult<SalesOrderListItemDto>>(`/sales/orders?${params.toString()}`),
   });
@@ -114,28 +136,49 @@ export function PedidosView() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Input
           placeholder="Buscar por código, cliente o documento…"
           className="max-w-sm"
-          value={search}
+          value={searchText}
           onChange={(e) => {
-            setSearch(e.target.value);
+            setSearchText(e.target.value);
           }}
         />
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-56">
+        <Select
+          value={selectValue}
+          onValueChange={(v) => {
+            setUrl({ stage: v === ALL ? '' : v });
+          }}
+        >
+          <SelectTrigger className="w-56" aria-label="Estado">
             <SelectValue placeholder="Estado" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>Todos los estados</SelectItem>
-            {ORDER_STAGES.map((s) => (
+            <SelectItem value={ALL}>Pedidos en curso</SelectItem>
+            {ACTIVE_STAGES.map((s) => (
               <SelectItem key={s} value={s}>
                 {ORDER_STAGE_LABELS[s]}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+        <FilterChip
+          active={stages.includes('FULFILLED')}
+          onToggle={() => {
+            toggleChip('FULFILLED');
+          }}
+        >
+          Atendidos
+        </FilterChip>
+        <FilterChip
+          active={stages.includes('CANCELLED')}
+          onToggle={() => {
+            toggleChip('CANCELLED');
+          }}
+        >
+          Anulados
+        </FilterChip>
       </div>
 
       <div className="rounded-lg border">
@@ -249,7 +292,7 @@ export function PedidosView() {
             {orders.isSuccess && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-muted-foreground">
-                  {search || status !== ALL
+                  {search || stages.length > 0
                     ? 'Ningún pedido coincide con el filtro.'
                     : 'No hay pedidos todavía.'}
                 </TableCell>

@@ -59,6 +59,8 @@ import {
   type InvoicingSettingsDto,
   type SalesOrderProgressDto,
   type UpdateInvoicingSettingsInput,
+  NEGATIVE_TERMINAL_STATUSES,
+  statusCondition,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -3070,7 +3072,13 @@ export class InvoicingService {
     actor?: RequestUser,
   ): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
     const where: Prisma.FiscalDocumentWhereInput = {
-      status: query.status,
+      // D-289: sin estado, la bandeja omite los dados de baja (no si se busca o se acota a un
+      // cliente/pedido: «los comprobantes de este cliente» son todos).
+      status: statusCondition(
+        query.status,
+        NEGATIVE_TERMINAL_STATUSES.fiscalDocument,
+        Boolean(query.search) || Boolean(query.customerId) || Boolean(query.salesOrderId),
+      ),
       docType: query.docType,
       customerId: query.customerId,
       salesOrderId: query.salesOrderId,

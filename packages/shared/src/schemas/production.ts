@@ -18,6 +18,7 @@ import {
 } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyFields } from './idempotency';
+import { statusListSchema } from './status-filter';
 import { backdatableFields } from './operation';
 import { roofingPieceSchema } from './roofing';
 
@@ -703,7 +704,7 @@ export const productionOrderListItemSchema = productionOrderSchema
 export type ProductionOrderListItemDto = z.infer<typeof productionOrderListItemSchema>;
 
 export const productionOrderQuerySchema = z.object({
-  status: z.enum(PRODUCTION_ORDER_STATUSES).optional(),
+  status: statusListSchema(PRODUCTION_ORDER_STATUSES),
   kind: z.enum(PRODUCTION_ORDER_KINDS).optional(),
   productId: z.string().uuid().optional(),
   businessLine: z.enum(BUSINESS_LINES).optional(),

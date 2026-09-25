@@ -49,6 +49,8 @@ import {
   type SupplierPaymentDto,
   type SupplierStatementDto,
   type UpdatePurchaseDocumentInput,
+  NEGATIVE_TERMINAL_STATUSES,
+  statusCondition,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -1110,7 +1112,12 @@ export class PurchasesService {
     const where: Prisma.PurchaseWhereInput = {
       businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
       type: query.type,
-      status: query.status,
+      // D-289: sin estado, la bandeja omite las anuladas (salvo al buscar).
+      status: statusCondition(
+        query.status,
+        NEGATIVE_TERMINAL_STATUSES.purchase,
+        Boolean(query.search),
+      ),
       supplierId: query.supplierId,
       issueDate: {
         gte: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,

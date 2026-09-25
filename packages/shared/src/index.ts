@@ -4,6 +4,7 @@ export * from './enums';
 export * from './decimal';
 export * from './coil-code';
 export * from './schemas/pagination';
+export * from './schemas/status-filter';
 export * from './schemas/search';
 export * from './schemas/operation';
 export * from './schemas/idempotency';

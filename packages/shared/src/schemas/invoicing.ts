@@ -21,6 +21,7 @@ import { reasonSchema } from './coil';
 import { idempotencyFields, idempotencyKeySchema } from './idempotency';
 import { backdatableFields } from './operation';
 import { paginationQuerySchema } from './pagination';
+import { statusListSchema } from './status-filter';
 import { businessToday } from '../business-date';
 
 /**
@@ -668,7 +669,7 @@ export const fiscalDocumentListItemSchema = fiscalDocumentSchema
 export type FiscalDocumentListItemDto = z.infer<typeof fiscalDocumentListItemSchema>;
 
 export const fiscalDocumentQuerySchema = paginationQuerySchema.extend({
-  status: z.enum(FISCAL_DOCUMENT_STATUSES).optional(),
+  status: statusListSchema(FISCAL_DOCUMENT_STATUSES),
   docType: z.enum(FISCAL_DOC_TYPES).optional(),
   origin: z.enum(FISCAL_DOCUMENT_ORIGINS).optional(),
   /**
@@ -957,7 +958,7 @@ export const dispatchListItemSchema = dispatchSchema
 export type DispatchListItemDto = z.infer<typeof dispatchListItemSchema>;
 
 export const dispatchQuerySchema = paginationQuerySchema.extend({
-  status: z.enum(DISPATCH_STATUSES).optional(),
+  status: statusListSchema(DISPATCH_STATUSES),
   salesOrderId: z.string().uuid().optional(),
   search: z.string().trim().max(80).optional(),
 });

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { decimalStringSchema } from '../decimal';
 import { reasonSchema } from './coil';
 import { paginationQuerySchema } from './pagination';
+import { statusListSchema } from './status-filter';
 import {
   BUSINESS_LINES,
   COIL_BUSINESS_LINES,
@@ -347,7 +348,7 @@ export type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>;
 export const purchaseQuerySchema = paginationQuerySchema.extend({
   businessLine: z.enum(BUSINESS_LINES).optional(),
   type: z.enum(PURCHASE_TYPES).optional(),
-  status: z.enum(PURCHASE_STATUSES).optional(),
+  status: statusListSchema(PURCHASE_STATUSES),
   supplierId: z.string().uuid().optional(),
   /** Solo compras con saldo pendiente (D-039). */
   onlyWithBalance: z.coerce.boolean().optional(),
