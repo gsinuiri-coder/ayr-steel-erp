@@ -29,6 +29,25 @@ export interface KardexDates {
   to: string;
 }
 
+/**
+ * Lo que se escribe en la URL al editar **una** fecha a mano. La otra fecha se toma de la URL
+ * **más reciente** (`current`) si el rango ya era `custom`, y solo si no, de lo que se estaba
+ * viendo (`shown`: el mes en curso, «Mes anterior»…). Antes cada campo reenviaba la otra fecha
+ * tal como se había pintado: dos fechas escritas casi a la vez (o un `router.replace` lento)
+ * pisaban la primera con el valor viejo y dejaban «Desde» posterior a «Hasta».
+ */
+export function kardexCustomPatch(
+  side: 'from' | 'to',
+  value: string,
+  current: { range: string; from: string; to: string },
+  shown: KardexDates,
+): { range: 'custom'; from: string; to: string } {
+  const custom = current.range === 'custom';
+  const from = side === 'from' ? value : custom ? current.from : shown.from;
+  const to = side === 'to' ? value : custom ? current.to : shown.to;
+  return { range: 'custom', from, to };
+}
+
 /** Último día del mes de `YYYY-MM-…` (día 0 del mes siguiente, en UTC para no depender del huso). */
 function lastDayOfMonth(year: number, month: number): string {
   const day = new Date(Date.UTC(year, month, 0)).getUTCDate();

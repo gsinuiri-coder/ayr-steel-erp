@@ -264,6 +264,17 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       );
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
 
+      // M0.1 (correcciones 04): «Desde» y «Hasta» escritos uno tras otro, sin pausa, se conservan
+      // los dos. Antes la segunda escritura reenviaba el «Desde» viejo y dejaba el rango al revés.
+      await page.getByLabel('Desde').fill('2026-08-01');
+      await page.getByLabel('Hasta').fill('2026-08-31');
+      await expect
+        .poll(() => Object.fromEntries(new URL(page.url()).searchParams), { timeout: 15_000 })
+        .toMatchObject({ range: 'custom', from: '2026-08-01', to: '2026-08-31' });
+      await expect(page.getByText(/La fecha «Desde» es posterior a «Hasta»/)).toBeHidden();
+      await page.getByRole('button', { name: 'Todo', exact: true }).click();
+      await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
+
       // D-295: filtro de texto del detalle (no pagina): solo la salida de producción.
       const totalMovements = await movementRows.count();
       expect(totalMovements).toBeGreaterThanOrEqual(2);

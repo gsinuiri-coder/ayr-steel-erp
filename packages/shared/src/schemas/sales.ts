@@ -717,6 +717,16 @@ export const quotationSchema = z.object({
 });
 export type QuotationDto = z.infer<typeof quotationSchema>;
 
+/**
+ * D-322: la respuesta de duplicar una cotización. Es la cotización nueva más los avisos de lo que
+ * no se pudo copiar tal cual: una bobina entera que sigue atada a otra cotización abierta se copia
+ * como línea `BOB…` sin bobina, y el aviso dice cuál era y a qué documento sigue atada.
+ */
+export const quotationDuplicateSchema = quotationSchema.extend({
+  warnings: z.array(z.string()),
+});
+export type QuotationDuplicateDto = z.infer<typeof quotationDuplicateSchema>;
+
 // D-119: el listado no carga `items` (perf: 500 cotizaciones con sus líneas es arrastrar
 // miles de filas por pantallazo), así que tampoco puede derivar `businessLines` sin una
 // consulta aparte por fila. Nadie lo muestra en la lista hoy — se omite acá y se recalcula

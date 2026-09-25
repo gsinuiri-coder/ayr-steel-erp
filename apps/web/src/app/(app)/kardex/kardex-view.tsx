@@ -23,6 +23,7 @@ import { api } from '@/lib/api';
 import { formatDate, formatTimestampDate } from '@/lib/format';
 import {
   isIsoDate,
+  kardexCustomPatch,
   KARDEX_RANGE_LABELS,
   parseKardexRange,
   resolveKardexDates,
@@ -284,7 +285,8 @@ export function KardexView() {
             className="w-40"
             value={dates.from}
             onChange={(e) => {
-              setUrl({ range: 'custom', from: e.target.value, to: dates.to });
+              const value = e.target.value;
+              setUrl((cur) => kardexCustomPatch('from', value, cur, dates));
             }}
           />
         </label>
@@ -295,7 +297,8 @@ export function KardexView() {
             className="w-40"
             value={dates.to}
             onChange={(e) => {
-              setUrl({ range: 'custom', from: dates.from, to: e.target.value });
+              const value = e.target.value;
+              setUrl((cur) => kardexCustomPatch('to', value, cur, dates));
             }}
           />
         </label>

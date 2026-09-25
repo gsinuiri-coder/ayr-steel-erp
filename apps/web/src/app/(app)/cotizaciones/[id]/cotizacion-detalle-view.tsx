@@ -8,13 +8,16 @@ import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
   Role,
+  isImportedQuotation,
   toDecimal,
   type QuotationDto,
+  type QuotationDuplicateDto,
   type SalesOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
+import { unassignedCoilLines } from '@/lib/unassigned-coil-lines';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { AuditHistoryLink } from '@/components/audit-history-link';
@@ -119,9 +122,13 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   // D-119: duplicar crea una cotización nueva en cualquier estado — la única acción de esta
   // pantalla que no depende de `q.status`. D-184: nace emitida, igual que cualquier alta.
   const duplicate = useMutation({
-    mutationFn: () => api<QuotationDto>(`/sales/quotations/${id}/duplicate`, { method: 'POST' }),
+    mutationFn: () =>
+      api<QuotationDuplicateDto>(`/sales/quotations/${id}/duplicate`, { method: 'POST' }),
     onSuccess: (created) => {
       toast.success(`Cotización ${created.code} creada`);
+      // D-322: lo que no se pudo copiar tal cual (una bobina que sigue atada a otro documento).
+      // El aviso también queda en la pantalla de la cotización nueva, derivado de sus líneas.
+      for (const warning of created.warnings) toast.warning(warning, { duration: 15_000 });
       invalidateSales(queryClient);
       router.push(`/cotizaciones/${created.id}`);
     },
@@ -236,6 +243,23 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           </AlertDescription>
         </Alert>
       )}
+
+      {q.status !== 'CONFIRMED' &&
+        q.status !== 'CANCELLED' &&
+        unassignedCoilLines(q.items).length > 0 && (
+          <Alert>
+            <AlertDescription>
+              {unassignedCoilLines(q.items)
+                .map((i) => `Línea ${String(i.lineNumber)} (${i.productSku})`)
+                .join(', ')}
+              : no tiene una bobina asignada, así que no se puede confirmar. Edita la cotización y{' '}
+              {isImportedQuotation(q.notes)
+                ? 'elige la bobina con «Convertir en venta de bobina»'
+                : 'quita la línea y elige la bobina con «Bobina completa (venta directa)»'}
+              .
+            </AlertDescription>
+          </Alert>
+        )}
 
       {q.temporaryReservation && (
         <Card>

@@ -37,6 +37,7 @@ import {
   type CreateQuotationInternalInput,
   type PaginatedResult,
   type QuotationDto,
+  type QuotationDuplicateDto,
   type QuotationListItemDto,
   type QuotationQuery,
   type SalesItemInput,
@@ -56,7 +57,7 @@ import { findPriceChanges, recordPriceChanges } from './price-changes';
 import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
 import { SalesOrdersService } from './sales-orders.service';
-import { lineCoilPool } from './coil-sale-product';
+import { coilTieReasons, findCoilTies, lineCoilPool } from './coil-sale-product';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 
 function toDateOnly(value: string): Date {
@@ -509,7 +510,7 @@ export class QuotationsService {
    * Sin chequeo de dueño (RF-66 es sobre **editar/confirmar/anular** la propia; duplicar es
    * "usa esto de plantilla", abierto al mismo equipo que ya lee cualquier cotización).
    */
-  async duplicate(actor: RequestUser, id: string): Promise<QuotationDto> {
+  async duplicate(actor: RequestUser, id: string): Promise<QuotationDuplicateDto> {
     const source = await this.prisma.quotation.findUnique({
       where: { id },
       include: {
@@ -536,6 +537,29 @@ export class QuotationsService {
     });
     const madeToOrderProductIds = new Set(boms.map((b) => b.productId));
 
+    // D-322: una bobina entera que sigue atada a una cotización abierta (la propia original, si
+    // sigue viva, u otra) no se puede volver a vender: la copia lleva esa línea como producto
+    // `BOB…` sin bobina y el aviso dice cuál era. Lo demás se copia como siempre.
+    const isWholeCoil = (i: (typeof source.items)[number]) =>
+      i.reserveItemType === 'COIL' && !madeToOrderProductIds.has(i.productId);
+    const wholeCoilIds = source.items.filter(isWholeCoil).map((i) => i.reserveItemId);
+    // Sin líneas de bobina entera no hay nada que consultar.
+    const tieReasons =
+      wholeCoilIds.length === 0
+        ? new Map<string, string>()
+        : coilTieReasons(await findCoilTies(this.prisma, wholeCoilIds), actor);
+    const coilCodes = new Map(
+      (tieReasons.size === 0
+        ? []
+        : await this.prisma.coil.findMany({
+            where: { id: { in: [...tieReasons.keys()] } },
+            select: { id: true, code: true },
+          })
+      ).map((c) => [c.id, c.code]),
+    );
+    const unassignedCoilProducts = new Set<string>();
+    const warnings: string[] = [];
+
     const items: SalesItemInput[] = source.items.map((i) => {
       // D-161: si la línea se cotizó por metro (una plancha de catálogo), el duplicado se
       // vuelve a cotizar por metro y el unitario se recalcula. Mandar los dos es un 400 del
@@ -555,7 +579,23 @@ export class QuotationsService {
         i.pieces.length > 0
           ? i.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty }))
           : undefined;
-      if (i.reserveItemType === 'COIL' && !madeToOrderProductIds.has(i.productId)) {
+      const tied = isWholeCoil(i) ? tieReasons.get(i.reserveItemId) : undefined;
+      if (tied !== undefined) {
+        unassignedCoilProducts.add(i.productId);
+        warnings.push(
+          `Línea ${String(i.lineNumber)}: la bobina ${coilCodes.get(i.reserveItemId) ?? ''} sigue ${
+            tied === 'no disponible' ? 'tomada por otro documento' : tied
+          }; elegí otra con «Bobina completa (venta directa)».`,
+        );
+        return {
+          productId: i.productId,
+          qty: i.qty.toFixed(3),
+          unitPricePen: derivedUnitValue(i.qty.toString(), i.subtotalPen.toString()).toFixed(
+            DERIVED_UNIT_VALUE_DECIMALS,
+          ),
+        };
+      }
+      if (isWholeCoil(i)) {
         // D-116: venta de bobina completa. El API resuelve producto y cantidad solos a
         // partir del saldo vivo de la bobina; `qty` es obligatoria en el schema pero se
         // ignora para esta línea, así que basta con un valor no vacío.
@@ -585,8 +625,10 @@ export class QuotationsService {
       // precio quedó por debajo del mínimo de hoy rebota, y así tiene que ser.
       const lines = await resolveSalesLines(tx, items, {
         priceFloor: this.priceFloor(),
-        // D-310: si la original sigue abierta, el duplicado no puede vender la misma bobina.
+        // D-310: la bobina atada a otro documento vivo ya no viaja como venta de bobina (arriba);
+        // la que sí viaja se vuelve a comprobar por si se ató entre la lectura y la escritura.
         coilTies: { viewer: actor },
+        unassignedCoilProducts,
       });
       const totals = documentTotals(lines);
       const issueDate = businessToday();
@@ -630,7 +672,7 @@ export class QuotationsService {
     });
 
     await this.generatePdf(newId);
-    return this.findOne(newId);
+    return { ...(await this.findOne(newId)), warnings };
   }
 
   /**

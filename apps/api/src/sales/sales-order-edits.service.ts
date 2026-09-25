@@ -521,6 +521,9 @@ export class SalesOrderEditsService {
         const lines = await resolveSalesLines(tx, input.items, {
           priceFloor: { toleranceMm: roofingToleranceMm(this.env) },
           firstLineNumber: (existing._max.lineNumber ?? 0) + 1,
+          // D-320: una bobina entera atada a una cotización abierta no se agrega a un pedido por
+          // el lado (la misma regla que el alta de cotización, D-310).
+          coilTies: { viewer: actor },
         });
 
         const created = [];
