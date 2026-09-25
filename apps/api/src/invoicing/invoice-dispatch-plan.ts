@@ -230,20 +230,29 @@ export function planInvoiceDispatches(
   }));
 }
 
+/** Motivo de la reversa y del despacho nuevo cuando se corrige la fecha de emisión (D-288). */
+export const REDATE_REASON = 'corrección de la fecha de emisión del comprobante (D-288)';
+
 /**
- * D-288: saca del kardex simulado los pares movimiento/reversa **del mismo día**. Netean cero
- * dentro del día, pero recorridos evento por evento dejan un negativo de paso entre los dos (la
- * salida vieja antes de su reversa) que `firstNegativeDate` leía como un kardex negativo de
- * verdad. Es justo lo que deja el re-fechado de un despacho: la salida vieja y su reversa a la
- * misma fecha. Una reversa de otro día sí cambia el saldo entre las dos fechas y se queda.
+ * D-288: saca del kardex simulado los pares salida/reversa **del re-fechado** (la reversa lleva
+ * `REDATE_REASON` como nota) que caen el mismo día. Netean cero dentro del día, pero recorridos
+ * evento por evento dejan un negativo de paso entre los dos (la salida vieja antes de su
+ * reversa) que `firstNegativeDate` leía como un kardex negativo de verdad. Solo los del
+ * re-fechado: una reversa normal (D-124) es un hecho del día y su hueco intermedio se sigue
+ * mirando como siempre, y una reversa de otro día cambia el saldo entre las dos fechas.
  */
 export function dropSameDayReversals<
-  T extends { id: bigint | string; reversalOfId: bigint | string | null; date: string },
+  T extends {
+    id: bigint | string;
+    reversalOfId: bigint | string | null;
+    notes: string | null;
+    date: string;
+  },
 >(movements: readonly T[]): T[] {
   const dateById = new Map(movements.map((m) => [String(m.id), m.date]));
   const paired = new Set<string>();
   for (const m of movements) {
-    if (m.reversalOfId === null) continue;
+    if (m.reversalOfId === null || m.notes !== REDATE_REASON) continue;
     const original = String(m.reversalOfId);
     if (dateById.get(original) === m.date) {
       paired.add(original);

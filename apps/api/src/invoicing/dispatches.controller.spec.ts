@@ -26,3 +26,18 @@ describe('DispatchesController — roles del despacho a la fecha del comprobante
     ]);
   });
 });
+
+describe('DispatchesController — despachos enlazados (D-288)', () => {
+  it('linkedAtIssueDate exige ADMINISTRADOR y delega en el servicio', async () => {
+    expect(
+      new Reflector().get<Role[] | undefined>(
+        ROLES_KEY,
+        DispatchesController.prototype.linkedAtIssueDate,
+      ),
+    ).toEqual([Role.ADMINISTRADOR]);
+    const invoiceDispatch = { linkedDispatches: jest.fn().mockResolvedValue({ dispatches: [] }) };
+    const controller = new DispatchesController({} as never, {} as never, invoiceDispatch as never);
+    expect(await controller.linkedAtIssueDate('F1')).toEqual({ dispatches: [] });
+    expect(invoiceDispatch.linkedDispatches).toHaveBeenCalledWith('F1');
+  });
+});

@@ -177,8 +177,11 @@ function costOf(pieces: Piece[]): Decimal {
  */
 export function valuePeps(movements: PepsMovement[], from: string, to: string): PepsResult {
   const queue = new PepsQueue();
-  /** Lo que consumió cada salida, para devolverlo si se anula. */
-  const consumed = new Map<string, Piece[]>();
+  /**
+   * Lo que consumió cada salida, para devolverlo si se anula: las porciones con capa y el
+   * faltante que salió sin capa (con su costo unitario registrado).
+   */
+  const consumed = new Map<string, { pieces: Piece[]; missing: Decimal; missingUnit: Decimal }>();
   const rows: PepsRow[] = [];
   const warnings: string[] = [];
   let opening: PepsBalance | null = null;
@@ -201,9 +204,23 @@ export function valuePeps(movements: PepsMovement[], from: string, to: string): 
     if (m.type === 'IN') {
       const original = m.reversalOfId ? consumed.get(m.reversalOfId) : undefined;
       if (original) {
+        // D-288: el faltante de la salida anulada vuelve primero. Lo que el faltante todavía
+        // debe se cancela; lo que ya cubrió una entrada posterior vuelve como capa a su costo
+        // registrado. Sin esto la reversa de una salida sin capas dejaba el faltante para
+        // siempre (el saldo PEPS negativo que el re-fechado hacia atrás produce siempre que el
+        // stock es justo).
+        const cancelled = Decimal.min(queue.deficit, original.missing);
+        queue.deficit = queue.deficit.minus(cancelled);
+        const uncovered = original.missing.minus(cancelled);
         // Vuelven las porciones de la salida anulada, al frente y en su orden original.
-        for (const piece of [...original].reverse()) queue.push(piece, true);
-        rowIn = { qty, total: costOf(original) };
+        for (const piece of [...original.pieces].reverse()) queue.push(piece, true);
+        if (uncovered.gt(0)) {
+          queue.push({ qty: uncovered, unitCost: original.missingUnit, sourceId: m.id }, true);
+        }
+        rowIn = {
+          qty,
+          total: costOf(original.pieces).plus(original.missing.times(original.missingUnit)),
+        };
       } else {
         const unitCost = qty.gt(0) ? registered.div(qty) : ZERO;
         queue.push({ qty, unitCost, sourceId: m.id });
@@ -211,10 +228,10 @@ export function valuePeps(movements: PepsMovement[], from: string, to: string): 
       }
     } else if (m.type === 'OUT') {
       const { pieces, missing } = queue.take(qty, m.reversalOfId ?? undefined);
-      consumed.set(m.id, pieces);
+      const registeredUnit = qty.gt(0) ? registered.div(qty) : ZERO;
+      consumed.set(m.id, { pieces, missing, missingUnit: registeredUnit });
       let total = costOf(pieces);
       if (missing.gt(0)) {
-        const registeredUnit = qty.gt(0) ? registered.div(qty) : ZERO;
         total = total.plus(missing.times(registeredUnit));
         warning = `Salida sin capas PEPS suficientes: ${toFixedString(missing, 'KG')} valorizados al costo registrado del kardex (${toFixedString(registeredUnit, 'MONEY')})`;
       }

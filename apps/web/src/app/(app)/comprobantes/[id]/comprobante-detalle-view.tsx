@@ -1286,6 +1286,14 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               </AlertDescription>
             </Alert>
           )}
+          {linkedDispatches.isError && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                No se pudieron leer los despachos del comprobante; cerrá y volvé a abrir para
+                reintentar.
+              </AlertDescription>
+            </Alert>
+          )}
           {atIssueDateDispatches.length > 0 && (
             <Alert data-testid="issue-date-redate">
               <AlertDescription className="grid gap-2">
@@ -1341,8 +1349,10 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Cancelar
             </Button>
             <Button
-              // Sin la lista de despachos todavía no se sabe si hay que decidir el re-fechado.
-              disabled={!issueDateValid || busy || linkedDispatches.isPending}
+              // Sin la lista de despachos no se sabe si hay que decidir el re-fechado.
+              disabled={
+                !issueDateValid || busy || linkedDispatches.isPending || linkedDispatches.isError
+              }
               pending={updateIssueDate.isPending}
               pendingText="Corrigiendo…"
               onClick={() => {

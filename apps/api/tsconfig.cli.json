@@ -12,7 +12,8 @@
     "prisma/sweep-imported-documents-cli.ts",
     "prisma/retire-unused-color-cli.ts",
     "prisma/dispatch-at-issue-date-cli.ts",
-    "prisma/opening-date-cli.ts"
+    "prisma/opening-date-cli.ts",
+    "prisma/dispatch-redate-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

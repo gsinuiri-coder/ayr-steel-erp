@@ -28,6 +28,7 @@ import { DispatchesService } from './dispatches.service';
 import {
   allocateUndispatched,
   dropSameDayReversals,
+  REDATE_REASON,
   planInvoiceDispatches,
   type PlanInvoice,
   type PlanItemKardex,
@@ -91,8 +92,21 @@ export function isAtIssueDateDispatch(notes: string | null, number: string | nul
   return Object.values(atIssueDateNotes).some((note) => note(number) === notes);
 }
 
-/** Motivo de la reversa y del despacho nuevo cuando se corrige la fecha de emisión (D-288). */
-export const REDATE_REASON = 'corrección de la fecha de emisión del comprobante (D-288)';
+export { REDATE_REASON } from './invoice-dispatch-plan';
+
+/** Cantidad por línea de pedido, en la unidad de venta. */
+function sumByLine(
+  rows: readonly { salesOrderItemId: string; qty: { toString(): string } }[],
+): Map<string, Decimal> {
+  const out = new Map<string, Decimal>();
+  for (const r of rows) {
+    out.set(
+      r.salesOrderItemId,
+      (out.get(r.salesOrderItemId) ?? new Decimal(0)).plus(toDecimal(r.qty.toString())),
+    );
+  }
+  return out;
+}
 
 /**
  * D-278: despacho de lo facturado y no despachado, a la fecha del comprobante.
@@ -171,9 +185,11 @@ export class InvoiceDispatchService {
    * dentro de la transacción de la corrección (el comprobante ya tiene la fecha nueva). Cada
    * uno se revierte como corrección de fecha —el movimiento inverso a la fecha del que anula,
    * y el comprobante que se corrige no bloquea— y lo facturado se vuelve a despachar por
-   * `executeInTx`, que planifica a la fecha nueva. Si alguna línea no se puede volver a
-   * despachar (iría a revisión), no se escribe nada: la transacción entera se deshace.
-   * Los despachos manuales enlazados no se tocan.
+   * `executeInTx`, que planifica a la fecha nueva. **Lo que se vuelve a despachar tiene que ser
+   * exactamente lo que se revirtió**, línea por línea (autorrevisión P1-2): ni una línea que
+   * hoy iría a revisión, ni lo que una nota de crédito acreditó después (volvería al kardex sin
+   * haber entrado), ni una línea pendiente que no estaba en el despacho. Si no coincide, no se
+   * escribe nada: la transacción entera se deshace. Los despachos manuales no se tocan.
    */
   async redateInTx(
     tx: Prisma.TransactionClient,
@@ -182,19 +198,51 @@ export class InvoiceDispatchService {
   ): Promise<{ reversed: string[]; created: string[] } | null> {
     const linked = (await this.linkedInTx(tx, invoiceId)).filter((d) => d.atIssueDate);
     if (linked.length === 0) return null;
+    // Todos los despachos antes que nada y en orden de id (autorrevisión P2-3): sin esto, una
+    // reversa concurrente del segundo podía cruzarse con esta, que ya tiene el pedido tomado.
+    const ids = linked.map((d) => d.id).sort();
+    await tx.$queryRaw`
+      SELECT "id" FROM "dispatches" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE
+    `;
+    const reversedQty = sumByLine(
+      await tx.dispatchItem.findMany({
+        where: { dispatchId: { in: ids } },
+        select: { salesOrderItemId: true, qty: true },
+      }),
+    );
     for (const d of linked) {
       await this.dispatches.reverseInTx(tx, actor, d.id, REDATE_REASON, {
         redateInvoiceId: invoiceId,
       });
     }
-    const result = await this.executeInTx(tx, actor, invoiceId);
-    const stuck = result.lines.filter((l) => l.action === 'REVIEW');
+
+    const planned = (await this.buildPlan(tx, { id: invoiceId })).invoices[0];
+    const lines = planned?.lines ?? [];
+    const stuck = lines.filter((l) => l.action === 'REVIEW');
     if (stuck.length > 0) {
       throw new BadRequestException(
         'No se puede re-fechar el despacho a la fecha nueva: ' +
           stuck.map((l) => `línea ${String(l.lineNumber)}: ${l.reason ?? ''}`).join('; '),
       );
     }
+    const redispatchQty = sumByLine(
+      lines.map((l) => ({ salesOrderItemId: l.orderItemId, qty: l.qty })),
+    );
+    const lineIds = new Set([...reversedQty.keys(), ...redispatchQty.keys()]);
+    const differs = [...lineIds].filter(
+      (lineId) =>
+        !(reversedQty.get(lineId) ?? new Decimal(0)).eq(
+          redispatchQty.get(lineId) ?? new Decimal(0),
+        ),
+    );
+    if (planned === undefined || differs.length > 0) {
+      throw new BadRequestException(
+        'No se puede re-fechar: el despacho nuevo no sería el mismo que se revierte (' +
+          'una nota de crédito o una línea pendiente cambió lo facturado sin despachar). ' +
+          'Resolvelo a mano desde el pedido.',
+      );
+    }
+    const result = await this.executeInTx(tx, actor, invoiceId, planned);
     const reversed = linked.map((d) => dispatchCode(d.seq));
     await this.audit.write(tx, {
       actorId: actor.id,
@@ -638,6 +686,7 @@ export class InvoiceDispatchService {
           operationDate: true,
           at: true,
           reversalOfId: true,
+          notes: true,
         },
       }),
       tx.inventoryBalance.findMany({

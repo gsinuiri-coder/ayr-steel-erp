@@ -4,6 +4,7 @@ import {
   dropSameDayReversals,
   firstNegativeDate,
   planInvoiceDispatches,
+  REDATE_REASON,
   type PlanInvoice,
   type PlanItemKardex,
 } from './invoice-dispatch-plan';
@@ -246,13 +247,14 @@ describe('planInvoiceDispatches — cupo de lo fabricado y reservado (D-287)', (
 });
 
 describe('dropSameDayReversals (D-288)', () => {
-  const mv = (id: string, date: string, reversalOfId: string | null = null) => ({
-    id,
-    date,
-    reversalOfId,
-  });
+  const mv = (
+    id: string,
+    date: string,
+    reversalOfId: string | null = null,
+    notes: string | null = reversalOfId === null ? null : REDATE_REASON,
+  ) => ({ id, date, reversalOfId, notes });
 
-  it('saca el par salida/reversa del mismo día y deja la reversa de otro día', () => {
+  it('saca el par del re-fechado del mismo día y deja la reversa de otro día', () => {
     const kept = dropSameDayReversals([
       mv('1', '2026-09-19'),
       mv('2', '2026-09-24'),
@@ -261,6 +263,14 @@ describe('dropSameDayReversals (D-288)', () => {
       mv('5', '2026-09-25', '4'),
     ]);
     expect(kept.map((m) => m.id)).toEqual(['1', '4', '5']);
+  });
+
+  it('una reversa normal del mismo día (D-124) se queda: su hueco intermedio sigue contando', () => {
+    const kept = dropSameDayReversals([
+      mv('1', '2026-09-24'),
+      mv('2', '2026-09-24', '1', 'devolución del cliente'),
+    ]);
+    expect(kept.map((m) => m.id)).toEqual(['1', '2']);
   });
 
   it('sin el par, la salida nueva anterior no ve un negativo de paso', () => {
