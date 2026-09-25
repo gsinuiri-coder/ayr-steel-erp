@@ -246,6 +246,11 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
 - **Conventional commits en español**: `feat(sales): …`, `fix(catalog): …`, `docs(progreso): …`.
 - Commits chicos y temáticos; el handoff lista la secuencia al cierre.
 - Al cerrar el worktree: eliminarlo junto con la rama local. La rama remota la borra el dueño.
+- **Antes de borrar un worktree, copiar su `local-data/` al checkout principal y verificar la
+  copia** (mismos archivos y mismos tamaños, p. ej. comparando los listados de ambos lados). Un
+  worktree nace con `local-data/` vacía y lo que guarda ahí —planes de dry-run, fotos de
+  reportes, capturas— no está en git: borrar el worktree lo borra para siempre. Pasó con las
+  capturas «antes» de M8 de correcciones 02 (`local-data/capturas-corr02/`), que se perdieron.
 
 ---
 
