@@ -65,9 +65,9 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   faltante de una salida anulada; el re-fechado podía despachar otra cantidad que la revertida),
   5 P2 (cuatro corregidos). Motivo: el mismo. Pieza de riesgo: la reversa en modo re-fechado,
   que exceptúa al comprobante corregido del bloqueo por documento declarado.
-- **Correcciones 03** (2026-09-25, rama `fix/correcciones-03`). D-289 a D-296. Autorrevisión por
+- **Correcciones 03** (2026-09-25, rama `fix/correcciones-03`). D-289 a D-299. Autorrevisión por
   un subagente nuevo del mismo modelo que escribió (`docs/revision/correcciones-03-autorrevision.md`):
-  0 P0, 3 P1 (dos corregidos; el tercero es preexistente y espera decisión del dueño), 8 P2. Motivo:
+  0 P0, 3 P1 (los tres resueltos: dos en la rama y el preexistente en D-297), 8 P2. **Segunda pasada** por otro subagente nuevo sobre D-297/D-298 (apéndice del mismo archivo): 0 P0, 1 P1 corregido, 11 P2 anotados. Motivo:
   esquema de un solo agente, sin segundo revisor disponible. Piezas de riesgo para el pase cruzado:
   el default de exclusión de terminales negativos en el API (`statusCondition`) y `useUrlState`.
 
@@ -89,9 +89,36 @@ Handoff: `docs/handoff/correcciones-03.md`. UAT: `docs/uat/correcciones-03.md`. 
   `reportes-costeo-rf-s4a.spec.ts:167` (Nubefact rechaza el correlativo; no se comprobó contra `main`).
 - **Medido (1366×768):** filas por pantalla en listas 16→19; cajas con borde en detalles 2/3/6/2→1/0/0/0.
 - **No entró:** formulario de compra y diálogos de acabados/colores/receta sin migrar al modelo de D-293.
-- **Hallazgo preexistente para el dueño:** la búsqueda de `GET /invoicing/documents` pisa el `OR` de
-  alcance por vendedor (un VENDEDOR podría ver comprobantes de otros). No se tocó (§3.16).
-- **Ventana:** sin migración; propuesta en el handoff, **pendiente de OK del dueño**. Nada desplegado.
+- **Hallazgo preexistente (búsqueda de comprobantes que pisaba el alcance por vendedor):** corregido en la misma PR, D-297, con E2E de dos vendedores.
+- **Segunda tanda (M1 alcance, M2 hoja del kardex, M3 Sonar; D-297 a D-299):** ver «Ventana de Correcciones 03» abajo y el handoff §9.
+
+## Ventana de Correcciones 03 (2026-09-25, sin migración)
+
+PR #28, merge `0e31c83`; SHA desplegado `6182e3e`. Handoff: `docs/handoff/correcciones-03.md` §9.
+
+- **Migraciones:** `node scripts/migrations-status.mjs --branch production` → 74 encontradas, **0
+  pendientes** («Database schema is up to date»).
+- **Respaldo Neon:** rama `respaldo-pre-corr03-20260925` (`br-fragrant-wave-aede6p5b`, creada
+  2026-09-25 14:00 UTC desde `production`, vía `run` quiet con `--no-secrets --output json`);
+  verificada en `neonctl branches list`.
+- **API (Cloud Run):** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+  desde el worktree. Revisión **`ayr-steel-erp-api-00054-rw8`** con el **100 % del tráfico**, label
+  `git-sha=6182e3e`, `/health` 200; el script verificó los nombres de variables («sin sorpresas»; la
+  revisión trae 14 nombres: `APIS_NET_PE_TOKEN`, `COMPANY_LEGAL_NAME`, `COMPANY_RUC`, `DATABASE_URL`,
+  `DIRECT_URL`, `JOBS_ENABLED`, `JWT_SECRET`, `NODE_ENV`, `R2_ACCESS_KEY_ID`, `R2_ACCOUNT_ID`,
+  `R2_BUCKET`, `R2_ENDPOINT`, `R2_SECRET_ACCESS_KEY`, `WEB_ORIGIN`). Revisión anterior para rollback:
+  `ayr-steel-erp-api-00053-fgk`.
+- **Smoke contra la web vieja (API nueva):** `pnpm smoke:prod` en verde.
+- **Merge** de la PR #28 a `main` (CI verde: lint/typecheck/unit, E2E del runner, smoke con Neon
+  `ci`, análisis estático y **SonarCloud «Quality Gate» en `pass`**); Vercel en `success`.
+- **Smoke contra `v2.mareliac.pe`:** `pnpm smoke:prod` en verde.
+- **Alineación de runtime:** `git diff --quiet 6182e3e origin/main -- apps packages Dockerfile
+.gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` → **exit 0**.
+- **SonarCloud:** el primer intento de la PR falló por **cobertura de código nuevo 55 % (exigido
+  80 %)**: los hooks del web (`useUrlState`, `useSort`, `useColumnFilters`) contaban 0 %. Se agregaron
+  pruebas de esos hooks bajo `jsdom` (D-299), de la hoja del kardex, de los controladores y de
+  `reportCoils`; medido en local sobre las líneas nuevas: 99 %. El gate pasó en la segunda corrida.
+- **Rollback (no usado):** tráfico a `ayr-steel-erp-api-00053-fgk` y revert del merge.
 
 ## Re-fechado de FFA1-00001386 / DES-000019 y D-288 (2026-09-25)
 
