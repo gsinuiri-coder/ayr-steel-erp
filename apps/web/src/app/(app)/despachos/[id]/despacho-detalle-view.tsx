@@ -26,6 +26,7 @@ import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { HeaderActions } from '@/components/header-actions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Section } from '@/components/section';
 import { Skeleton } from '@/components/ui/skeleton';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
@@ -272,43 +273,40 @@ export function DespachoDetalleView({ id }: { id: string }) {
         </CardContent>
       </Card>
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-medium">Qué salió</h2>
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead>#</TableHead>
-                <TableHead>Producto</TableHead>
-                <TableHead>Material</TableHead>
-                <TableHead className="text-right">Cantidad</TableHead>
-                <TableHead className="text-right">Salió del kardex</TableHead>
-                <TableHead className="text-right">Peso</TableHead>
+      <Section title="Qué salió">
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <TableHead>#</TableHead>
+              <TableHead>Producto</TableHead>
+              <TableHead>Material</TableHead>
+              <TableHead className="text-right">Cantidad</TableHead>
+              <TableHead className="text-right">Salió del kardex</TableHead>
+              <TableHead className="text-right">Peso</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {d.items.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell>{item.lineNumber}</TableCell>
+                <TableCell>
+                  <div className="font-medium">{item.productSku}</div>
+                  <div className="text-xs text-muted-foreground">{item.description}</div>
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {item.itemType === 'COIL' ? 'Bobina' : 'Producto'}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatQty(item.qty, unitSymbol(item.unit))}
+                </TableCell>
+                {/* Lo que realmente salió del kardex, que no siempre es la cantidad de venta. */}
+                <TableCell className="text-right">{formatQty(item.reserveQty)}</TableCell>
+                <TableCell className="text-right">{formatQty(item.weightKg, 'kg')}</TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {d.items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>{item.lineNumber}</TableCell>
-                  <TableCell>
-                    <div className="font-medium">{item.productSku}</div>
-                    <div className="text-xs text-muted-foreground">{item.description}</div>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {item.itemType === 'COIL' ? 'Bobina' : 'Producto'}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(item.qty, unitSymbol(item.unit))}
-                  </TableCell>
-                  {/* Lo que realmente salió del kardex, que no siempre es la cantidad de venta. */}
-                  <TableCell className="text-right">{formatQty(item.reserveQty)}</TableCell>
-                  <TableCell className="text-right">{formatQty(item.weightKg, 'kg')}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </section>
+            ))}
+          </TableBody>
+        </Table>
+      </Section>
 
       {d.notes && (
         <Card>

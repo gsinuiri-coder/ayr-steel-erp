@@ -34,7 +34,7 @@ import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Section } from '@/components/section';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn, LINK_CLASSNAME } from '@/lib/utils';
 import {
@@ -277,150 +277,140 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         />
       </StatStrip>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            {o.kind === ProductionOrderKind.ROOFING
-              ? 'Bobinas montadas en la orden'
-              : 'Flejes consumidos por la orden'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{o.kind === ProductionOrderKind.ROOFING ? 'Bobina' : 'Fleje'}</TableHead>
-                <TableHead>Bobina madre</TableHead>
-                <TableHead className="text-right">Asignado</TableHead>
-                <TableHead className="text-right">Consumido</TableHead>
-                <TableHead className="text-right">Pendiente</TableHead>
-                <TableHead>Estado</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {o.consumptions.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>
-                    <Link className={cn('font-mono', LINK_CLASSNAME)} href={`/bobinas/${c.coilId}`}>
-                      {c.coilCode}
+      <Section
+        title={
+          o.kind === ProductionOrderKind.ROOFING
+            ? 'Bobinas montadas en la orden'
+            : 'Flejes consumidos por la orden'
+        }
+      >
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{o.kind === ProductionOrderKind.ROOFING ? 'Bobina' : 'Fleje'}</TableHead>
+              <TableHead>Bobina madre</TableHead>
+              <TableHead className="text-right">Asignado</TableHead>
+              <TableHead className="text-right">Consumido</TableHead>
+              <TableHead className="text-right">Pendiente</TableHead>
+              <TableHead>Estado</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {o.consumptions.map((c) => (
+              <TableRow key={c.id}>
+                <TableCell>
+                  <Link className={cn('font-mono', LINK_CLASSNAME)} href={`/bobinas/${c.coilId}`}>
+                    {c.coilCode}
+                  </Link>
+                  <div className="text-xs text-muted-foreground">{c.widthMm} mm</div>
+                </TableCell>
+                <TableCell>
+                  {c.parentCoilId ? (
+                    <Link
+                      className={cn('font-mono text-sm', LINK_CLASSNAME)}
+                      href={`/bobinas/${c.parentCoilId}`}
+                    >
+                      {c.parentCoilCode}
                     </Link>
-                    <div className="text-xs text-muted-foreground">{c.widthMm} mm</div>
-                  </TableCell>
-                  <TableCell>
-                    {c.parentCoilId ? (
-                      <Link
-                        className={cn('font-mono text-sm', LINK_CLASSNAME)}
-                        href={`/bobinas/${c.parentCoilId}`}
-                      >
-                        {c.parentCoilCode}
-                      </Link>
-                    ) : (
-                      '—'
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">{formatQty(c.assignedKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">{formatQty(c.consumedKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">{formatQty(c.remainingKg, 'kg')}</TableCell>
-                  <TableCell>
-                    <Badge variant={c.releasedAt ? 'outline' : 'secondary'}>
-                      {c.releasedAt ? 'Liberado' : 'Tomado por la orden'}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {o.consumptions.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
-                    La orden todavía no tomó ningún fleje.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Reportes de piezas</CardTitle>
-        </CardHeader>
-        <CardContent className="px-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Fecha</TableHead>
-                <TableHead className="text-right">Piezas</TableHead>
-                <TableHead>Bobina / fleje</TableHead>
-                <TableHead className="text-right">Fleje teórico</TableHead>
-                <TableHead className="text-right">Material</TableHead>
-                <TableHead className="text-right">Costo/pieza</TableHead>
-                <TableHead>Operario</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead />
+                  ) : (
+                    '—'
+                  )}
+                </TableCell>
+                <TableCell className="text-right">{formatQty(c.assignedKg, 'kg')}</TableCell>
+                <TableCell className="text-right">{formatQty(c.consumedKg, 'kg')}</TableCell>
+                <TableCell className="text-right">{formatQty(c.remainingKg, 'kg')}</TableCell>
+                <TableCell>
+                  <Badge variant={c.releasedAt ? 'outline' : 'secondary'}>
+                    {c.releasedAt ? 'Liberado' : 'Tomado por la orden'}
+                  </Badge>
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {o.reports.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>{formatTimestampDate(r.createdAt)}</TableCell>
-                  <TableCell className="text-right font-medium">{r.pieces}</TableCell>
-                  {/* D-291: de qué bobina/fleje(s) salió el material del reporte (solo lectura;
+            ))}
+            {o.consumptions.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  La orden todavía no tomó ningún fleje.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Section>
+
+      <Section title="Reportes de piezas">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Fecha</TableHead>
+              <TableHead className="text-right">Piezas</TableHead>
+              <TableHead>Bobina / fleje</TableHead>
+              <TableHead className="text-right">Fleje teórico</TableHead>
+              <TableHead className="text-right">Material</TableHead>
+              <TableHead className="text-right">Costo/pieza</TableHead>
+              <TableHead>Operario</TableHead>
+              <TableHead>Estado</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {o.reports.map((r) => (
+              <TableRow key={r.id}>
+                <TableCell>{formatTimestampDate(r.createdAt)}</TableCell>
+                <TableCell className="text-right font-medium">{r.pieces}</TableCell>
+                {/* D-291: de qué bobina/fleje(s) salió el material del reporte (solo lectura;
                       drywall reparte FIFO entre flejes y puede traer más de uno). */}
-                  <TableCell data-testid="report-coils">
-                    {r.coils.length === 0
-                      ? '—'
-                      : r.coils.map((c, i) => (
-                          <span key={c.id} className="whitespace-nowrap">
-                            {i > 0 && ', '}
-                            <Link className={LINK_CLASSNAME} href={`/bobinas/${c.id}`}>
-                              {c.code}
-                            </Link>
-                            {r.coils.length > 1 && (
-                              <span className="text-xs text-muted-foreground">
-                                {' '}
-                                ({formatQty(c.kg, 'kg')})
-                              </span>
-                            )}
-                          </span>
-                        ))}
-                  </TableCell>
-                  <TableCell className="text-right">{formatQty(r.theoreticalKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">{formatMoney(r.materialCostPen)}</TableCell>
-                  <TableCell className="text-right">
-                    {formatMoney(r.unitCostPen, 'PEN', 4)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{r.createdByName ?? '—'}</TableCell>
-                  <TableCell>
-                    <Badge variant={PRODUCTION_REPORT_TONE[r.status]}>
-                      {PRODUCTION_REPORT_STATUS_LABELS[r.status]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {o.status === 'IN_PROGRESS' && r.id === lastActive?.id && (
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => {
-                          setReverting(r);
-                        }}
-                      >
-                        Revertir
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {o.reports.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground">
-                    Todavía no se reportaron piezas.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                <TableCell data-testid="report-coils">
+                  {r.coils.length === 0
+                    ? '—'
+                    : r.coils.map((c, i) => (
+                        <span key={c.id} className="whitespace-nowrap">
+                          {i > 0 && ', '}
+                          <Link className={LINK_CLASSNAME} href={`/bobinas/${c.id}`}>
+                            {c.code}
+                          </Link>
+                          {r.coils.length > 1 && (
+                            <span className="text-xs text-muted-foreground">
+                              {' '}
+                              ({formatQty(c.kg, 'kg')})
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                </TableCell>
+                <TableCell className="text-right">{formatQty(r.theoreticalKg, 'kg')}</TableCell>
+                <TableCell className="text-right">{formatMoney(r.materialCostPen)}</TableCell>
+                <TableCell className="text-right">{formatMoney(r.unitCostPen, 'PEN', 4)}</TableCell>
+                <TableCell className="text-muted-foreground">{r.createdByName ?? '—'}</TableCell>
+                <TableCell>
+                  <Badge variant={PRODUCTION_REPORT_TONE[r.status]}>
+                    {PRODUCTION_REPORT_STATUS_LABELS[r.status]}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">
+                  {o.status === 'IN_PROGRESS' && r.id === lastActive?.id && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => {
+                        setReverting(r);
+                      }}
+                    >
+                      Revertir
+                    </Button>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+            {o.reports.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center text-muted-foreground">
+                  Todavía no se reportaron piezas.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Section>
 
       <ReasonDialog
         open={reverting !== null}

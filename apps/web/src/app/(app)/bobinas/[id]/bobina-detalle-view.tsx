@@ -38,7 +38,7 @@ import { Badge } from '@/components/ui/badge';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Section } from '@/components/section';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -268,326 +268,300 @@ export function BobinaDetalleView({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Material</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-1 text-sm">
-            <Row label="Acabado" value={`${c.finishCode} — ${c.finishName}`} />
-            <Row label="Espesor" value={`${c.thicknessMm} mm`} />
-            <Row label="Ancho" value={`${c.widthMm} mm`} />
-            <Row label="Peso de alta" value={formatQty(c.weightKg, 'kg')} />
-            <Row
-              label="Disponible"
-              value={
-                // F8-S3c/M3: kg · ≈ ML del saldo (D-116), presentación pura — el kardex sigue
-                // en kg, esto solo lo traduce para quien piensa en metros de plancha.
-                c.equivalentMeters !== null
-                  ? `${formatQty(c.availableKg, 'kg')} · ≈ ${formatQty(c.equivalentMeters, 'm')}`
-                  : formatQty(c.availableKg, 'kg')
-              }
-            />
-          </CardContent>
-        </Card>
+      <div className="grid gap-3 md:grid-cols-3">
+        <Section separated={false} title="Material" bodyClassName="grid gap-1 text-sm px-2.5">
+          <Row label="Acabado" value={`${c.finishCode} — ${c.finishName}`} />
+          <Row label="Espesor" value={`${c.thicknessMm} mm`} />
+          <Row label="Ancho" value={`${c.widthMm} mm`} />
+          <Row label="Peso de alta" value={formatQty(c.weightKg, 'kg')} />
+          <Row
+            label="Disponible"
+            value={
+              // F8-S3c/M3: kg · ≈ ML del saldo (D-116), presentación pura — el kardex sigue
+              // en kg, esto solo lo traduce para quien piensa en metros de plancha.
+              c.equivalentMeters !== null
+                ? `${formatQty(c.availableKg, 'kg')} · ≈ ${formatQty(c.equivalentMeters, 'm')}`
+                : formatQty(c.availableKg, 'kg')
+            }
+          />
+        </Section>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Costo</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-1 text-sm">
-            <Row label="Moneda" value={c.currency ? CURRENCY_LABELS[c.currency] : '—'} />
-            {c.currency !== 'PEN' && <Row label="Tipo de cambio" value={c.exchangeRate ?? '—'} />}
-            <Row
-              label="Costo por kg"
-              value={formatMoneyOrDash(c.unitCostPerKg, c.currency ?? 'PEN', 4)}
-            />
-            <Row label="Costo total" value={formatMoneyOrDash(c.totalCost, c.currency ?? 'PEN')} />
-            <Row label="Costo total en soles" value={formatMoneyOrDash(c.totalCostPen)} />
-            {/* D-164: el promedio del kardex, que puede diferir del costo de compra tras un
+        <Section separated={false} title="Costo" bodyClassName="grid gap-1 text-sm px-2.5">
+          <Row label="Moneda" value={c.currency ? CURRENCY_LABELS[c.currency] : '—'} />
+          {c.currency !== 'PEN' && <Row label="Tipo de cambio" value={c.exchangeRate ?? '—'} />}
+          <Row
+            label="Costo por kg"
+            value={formatMoneyOrDash(c.unitCostPerKg, c.currency ?? 'PEN', 4)}
+          />
+          <Row label="Costo total" value={formatMoneyOrDash(c.totalCost, c.currency ?? 'PEN')} />
+          <Row label="Costo total en soles" value={formatMoneyOrDash(c.totalCostPen)} />
+          {/* D-164: el promedio del kardex, que puede diferir del costo de compra tras un
                 landed cost (D-043) o un partido, y es con el que se valoriza lo que salga. */}
-            <Row
-              label="Promedio del kardex"
-              value={c.avgCostPen ? `${formatMoneyOrDash(c.avgCostPen, 'PEN', 4)}/kg` : '—'}
-            />
-            <Row
-              label="Saldo valorizado"
-              value={
-                c.avgCostPen
-                  ? formatMoneyOrDash(new Decimal(c.availableKg).times(c.avgCostPen).toFixed(4))
-                  : '—'
-              }
-            />
-          </CardContent>
-        </Card>
+          <Row
+            label="Promedio del kardex"
+            value={c.avgCostPen ? `${formatMoneyOrDash(c.avgCostPen, 'PEN', 4)}/kg` : '—'}
+          />
+          <Row
+            label="Saldo valorizado"
+            value={
+              c.avgCostPen
+                ? formatMoneyOrDash(new Decimal(c.availableKg).times(c.avgCostPen).toFixed(4))
+                : '—'
+            }
+          />
+        </Section>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Origen</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-1 text-sm">
-            <Row
-              label="Compra"
-              value={
-                c.purchaseId && c.purchaseLabel ? (
-                  <Link className={LINK_CLASSNAME} href={`/compras/${c.purchaseId}`}>
-                    {c.purchaseLabel}
-                  </Link>
-                ) : (
-                  '—'
-                )
-              }
-            />
-            <Row label="Alta" value={formatTimestampDate(c.createdAt)} />
-            <Row label="Observaciones" value={c.notes ?? '—'} />
-          </CardContent>
-        </Card>
+        <Section separated={false} title="Origen" bodyClassName="grid gap-1 text-sm px-2.5">
+          <Row
+            label="Compra"
+            value={
+              c.purchaseId && c.purchaseLabel ? (
+                <Link className={LINK_CLASSNAME} href={`/compras/${c.purchaseId}`}>
+                  {c.purchaseLabel}
+                </Link>
+              ) : (
+                '—'
+              )
+            }
+          />
+          <Row label="Alta" value={formatTimestampDate(c.createdAt)} />
+          <Row label="Observaciones" value={c.notes ?? '—'} />
+        </Section>
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle>Partidos (RF-15)</CardTitle>
-        </CardHeader>
-        <CardContent className="px-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Fecha</TableHead>
-                <TableHead className="text-right">Peso partido</TableHead>
-                <TableHead className="text-right">Merma de corte</TableHead>
-                <TableHead>Hijas</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <QueryStates query={splits} colSpan={6} error="No se pudieron cargar los partidos." />
-              {splits.data?.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="whitespace-nowrap">
-                    {new Date(s.createdAt).toLocaleString('es-PE')}
-                  </TableCell>
-                  <TableCell className="text-right">{formatQty(s.splitWeightKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">
-                    {s.kerfLossMm} mm · {formatQty(s.kerfLossKg, 'kg')}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-2">
-                      {s.children.map((child) => (
-                        <Link
-                          key={child.id}
-                          className={cn('font-mono text-xs', LINK_CLASSNAME)}
-                          href={`/bobinas/${child.id}`}
-                        >
-                          {child.code} ({child.widthMm} mm · {formatQty(child.weightKg, 'kg')})
-                        </Link>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={COIL_SPLIT_TONE[s.status]}>
-                      {COIL_SPLIT_STATUS_LABELS[s.status]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {s.status === 'ACTIVE' && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setPending({
-                            kind: 'revert-split',
-                            splitId: s.id,
-                            label: s.children.map((ch) => ch.code).join(', '),
-                          });
-                        }}
+      <Section title="Partidos (RF-15)">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Fecha</TableHead>
+              <TableHead className="text-right">Peso partido</TableHead>
+              <TableHead className="text-right">Merma de corte</TableHead>
+              <TableHead>Hijas</TableHead>
+              <TableHead>Estado</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <QueryStates query={splits} colSpan={6} error="No se pudieron cargar los partidos." />
+            {splits.data?.map((s) => (
+              <TableRow key={s.id}>
+                <TableCell className="whitespace-nowrap">
+                  {new Date(s.createdAt).toLocaleString('es-PE')}
+                </TableCell>
+                <TableCell className="text-right">{formatQty(s.splitWeightKg, 'kg')}</TableCell>
+                <TableCell className="text-right">
+                  {s.kerfLossMm} mm · {formatQty(s.kerfLossKg, 'kg')}
+                </TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap gap-2">
+                    {s.children.map((child) => (
+                      <Link
+                        key={child.id}
+                        className={cn('font-mono text-xs', LINK_CLASSNAME)}
+                        href={`/bobinas/${child.id}`}
                       >
-                        Revertir
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {splits.data?.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
-                    Esta bobina no se partió todavía.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle>Órdenes de producción</CardTitle>
-        </CardHeader>
-        <CardContent className="px-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Orden</TableHead>
-                <TableHead>Producto</TableHead>
-                <TableHead>Pedido</TableHead>
-                <TableHead className="text-right">Asignado</TableHead>
-                <TableHead className="text-right">Consumido</TableHead>
-                <TableHead>Estado</TableHead>
+                        {child.code} ({child.widthMm} mm · {formatQty(child.weightKg, 'kg')})
+                      </Link>
+                    ))}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={COIL_SPLIT_TONE[s.status]}>
+                    {COIL_SPLIT_STATUS_LABELS[s.status]}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">
+                  {s.status === 'ACTIVE' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setPending({
+                          kind: 'revert-split',
+                          splitId: s.id,
+                          label: s.children.map((ch) => ch.code).join(', '),
+                        });
+                      }}
+                    >
+                      Revertir
+                    </Button>
+                  )}
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              <QueryStates
-                query={consumptions}
-                colSpan={6}
-                error="No se pudieron cargar las órdenes de producción."
-              />
-              {consumptions.data?.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="font-mono">
-                    <Link className={LINK_CLASSNAME} href={`/produccion/${c.productionOrderId}`}>
-                      {c.productionOrderCode}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{c.productSku}</TableCell>
-                  <TableCell>
-                    {c.salesOrderId ? (
-                      <>
-                        <Link className={LINK_CLASSNAME} href={`/pedidos/${c.salesOrderId}`}>
-                          {c.salesOrderCode}
-                        </Link>
-                        {c.customerName && (
-                          <span className="text-muted-foreground"> · {c.customerName}</span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">Sin pedido</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">{formatQty(c.assignedKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">{formatQty(c.consumedKg, 'kg')}</TableCell>
-                  <TableCell>{PRODUCTION_ORDER_STATUS_LABELS[c.productionOrderStatus]}</TableCell>
-                </TableRow>
-              ))}
-              {consumptions.isSuccess && consumptions.data.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
-                    Ninguna orden de producción montó esta bobina todavía.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+            ))}
+            {splits.data?.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  Esta bobina no se partió todavía.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Section>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between pb-2">
-          <CardTitle>Kardex de la bobina (RF-53)</CardTitle>
+      <Section title="Órdenes de producción">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Orden</TableHead>
+              <TableHead>Producto</TableHead>
+              <TableHead>Pedido</TableHead>
+              <TableHead className="text-right">Asignado</TableHead>
+              <TableHead className="text-right">Consumido</TableHead>
+              <TableHead>Estado</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <QueryStates
+              query={consumptions}
+              colSpan={6}
+              error="No se pudieron cargar las órdenes de producción."
+            />
+            {consumptions.data?.map((c) => (
+              <TableRow key={c.id}>
+                <TableCell className="font-mono">
+                  <Link className={LINK_CLASSNAME} href={`/produccion/${c.productionOrderId}`}>
+                    {c.productionOrderCode}
+                  </Link>
+                </TableCell>
+                <TableCell>{c.productSku}</TableCell>
+                <TableCell>
+                  {c.salesOrderId ? (
+                    <>
+                      <Link className={LINK_CLASSNAME} href={`/pedidos/${c.salesOrderId}`}>
+                        {c.salesOrderCode}
+                      </Link>
+                      {c.customerName && (
+                        <span className="text-muted-foreground"> · {c.customerName}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">Sin pedido</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right">{formatQty(c.assignedKg, 'kg')}</TableCell>
+                <TableCell className="text-right">{formatQty(c.consumedKg, 'kg')}</TableCell>
+                <TableCell>{PRODUCTION_ORDER_STATUS_LABELS[c.productionOrderStatus]}</TableCell>
+              </TableRow>
+            ))}
+            {consumptions.isSuccess && consumptions.data.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  Ninguna orden de producción montó esta bobina todavía.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Section>
+
+      <Section
+        title="Kardex de la bobina (RF-53)"
+        action={
           <Button variant="outline" size="sm" asChild>
             <Link href={`/kardex?itemType=COIL&item=${id}&range=all`}>Ver kardex completo</Link>
           </Button>
-        </CardHeader>
-        <CardContent className="px-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Fecha</TableHead>
-                <TableHead>Movimiento</TableHead>
-                <TableHead>Origen</TableHead>
-                <TableHead className="text-right">Cantidad</TableHead>
-                <TableHead className="text-right">Saldo</TableHead>
-                <TableHead>Motivo</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <QueryStates query={movements} colSpan={7} error="No se pudo cargar el kardex." />
-              {movementRows.map((m) => (
-                <TableRow key={m.id} className={m.reversedById ? 'opacity-60' : undefined}>
-                  <TableCell className="whitespace-nowrap">
-                    {new Date(m.at).toLocaleString('es-PE')}
-                  </TableCell>
-                  <TableCell>
-                    {INVENTORY_MOVEMENT_TYPE_LABELS[m.type]}
-                    {m.reversalOfId && (
-                      <span className="ml-2 text-xs text-muted-foreground">anulación</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {/* F8-S5/M1 (D-205): mismo criterio que /kardex — link cuando el API
+        }
+      >
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Fecha</TableHead>
+              <TableHead>Movimiento</TableHead>
+              <TableHead>Origen</TableHead>
+              <TableHead className="text-right">Cantidad</TableHead>
+              <TableHead className="text-right">Saldo</TableHead>
+              <TableHead>Motivo</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <QueryStates query={movements} colSpan={7} error="No se pudo cargar el kardex." />
+            {movementRows.map((m) => (
+              <TableRow key={m.id} className={m.reversedById ? 'opacity-60' : undefined}>
+                <TableCell className="whitespace-nowrap">
+                  {new Date(m.at).toLocaleString('es-PE')}
+                </TableCell>
+                <TableCell>
+                  {INVENTORY_MOVEMENT_TYPE_LABELS[m.type]}
+                  {m.reversalOfId && (
+                    <span className="ml-2 text-xs text-muted-foreground">anulación</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {/* F8-S5/M1 (D-205): mismo criterio que /kardex — link cuando el API
                         ya resolvió a qué pantalla apunta la referencia y el rol de quien
                         mira puede entrar ahí (revisor: sin el chequeo, un rol sin acceso
                         al destino topaba con "No tienes permiso"). */}
-                    {m.refTargetType &&
-                    m.refTargetId &&
-                    REF_TARGET_ROLES[m.refTargetType].includes(user.role) ? (
-                      <Link
-                        className={LINK_CLASSNAME}
-                        href={`${REF_TARGET_ROUTES[m.refTargetType]}/${m.refTargetId}`}
-                      >
-                        {INVENTORY_REF_TYPE_LABELS[m.refType]}
-                      </Link>
-                    ) : (
-                      INVENTORY_REF_TYPE_LABELS[m.refType]
-                    )}
-                    {m.refType === 'SALE' && (
-                      <div className="text-xs text-muted-foreground">
-                        Factura:{' '}
-                        {m.invoiceId && INVOICE_LINK_ROLES.includes(user.role) ? (
-                          <Link className={LINK_CLASSNAME} href={`/comprobantes/${m.invoiceId}`}>
-                            ver
-                          </Link>
-                        ) : (
-                          '—'
-                        )}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {m.type === 'ADJUST' ? '—' : formatQty(m.qty, unitSymbol(m.unit))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {m.balanceQty ? formatQty(m.balanceQty, unitSymbol(m.unit)) : '—'}
-                  </TableCell>
-                  <TableCell className="max-w-xs truncate text-muted-foreground">
-                    {m.notes ?? ''}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {/* Solo la merma se anula desde acá: un ingreso se deshace anulando la
+                  {m.refTargetType &&
+                  m.refTargetId &&
+                  REF_TARGET_ROLES[m.refTargetType].includes(user.role) ? (
+                    <Link
+                      className={LINK_CLASSNAME}
+                      href={`${REF_TARGET_ROUTES[m.refTargetType]}/${m.refTargetId}`}
+                    >
+                      {INVENTORY_REF_TYPE_LABELS[m.refType]}
+                    </Link>
+                  ) : (
+                    INVENTORY_REF_TYPE_LABELS[m.refType]
+                  )}
+                  {m.refType === 'SALE' && (
+                    <div className="text-xs text-muted-foreground">
+                      Factura:{' '}
+                      {m.invoiceId && INVOICE_LINK_ROLES.includes(user.role) ? (
+                        <Link className={LINK_CLASSNAME} href={`/comprobantes/${m.invoiceId}`}>
+                          ver
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  {m.type === 'ADJUST' ? '—' : formatQty(m.qty, unitSymbol(m.unit))}
+                </TableCell>
+                <TableCell className="text-right">
+                  {m.balanceQty ? formatQty(m.balanceQty, unitSymbol(m.unit)) : '—'}
+                </TableCell>
+                <TableCell className="max-w-xs truncate text-muted-foreground">
+                  {m.notes ?? ''}
+                </TableCell>
+                <TableCell className="text-right">
+                  {/* Solo la merma se anula desde acá: un ingreso se deshace anulando la
                         bobina o la compra, un partido se revierte entero (RF-16) y el ajuste
                         del cierre se deshace reabriendo la bobina (D-164), no por RF-18. */}
-                    {m.refType === 'SCRAP' && !m.reversalOfId && !m.reversedById && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => {
-                          if (busy) return;
-                          setPending({
-                            kind: 'cancel-scrap',
-                            movementId: m.id,
-                            qty: m.qty,
-                          });
-                        }}
-                      >
-                        Anular merma
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {movements.isSuccess && movementRows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
-                    Sin movimientos.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                  {m.refType === 'SCRAP' && !m.reversalOfId && !m.reversedById && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        if (busy) return;
+                        setPending({
+                          kind: 'cancel-scrap',
+                          movementId: m.id,
+                          qty: m.qty,
+                        });
+                      }}
+                    >
+                      Anular merma
+                    </Button>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+            {movements.isSuccess && movementRows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                  Sin movimientos.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Section>
 
       <CoilSplitDialog
         coil={c}

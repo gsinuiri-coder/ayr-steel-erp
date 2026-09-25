@@ -2,7 +2,7 @@
 
 import { money, salePriceFromValue, toFixedString, type SalesPriceChangeDto } from '@ayr/shared';
 import { formatMoney } from '@/lib/format';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Section } from '@/components/section';
 import {
   Table,
   TableBody,
@@ -42,40 +42,35 @@ function priceLabel(unitValuePen: string, valuePerMeterPen: string | null): stri
 export function PriceChangesCard({ changes }: { changes: SalesPriceChangeDto[] }) {
   if (changes.length === 0) return null;
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Cambios de precio</CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        <Table aria-label="Cambios de precio">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Fecha</TableHead>
-              <TableHead>Usuario</TableHead>
-              <TableHead>Línea</TableHead>
-              <TableHead className="text-right">Antes (con IGV)</TableHead>
-              <TableHead className="text-right">Después (con IGV)</TableHead>
+    <Section title="Cambios de precio">
+      <Table aria-label="Cambios de precio">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Fecha</TableHead>
+            <TableHead>Usuario</TableHead>
+            <TableHead>Línea</TableHead>
+            <TableHead className="text-right">Antes (con IGV)</TableHead>
+            <TableHead className="text-right">Después (con IGV)</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {changes.map((c) => (
+            <TableRow key={c.id}>
+              <TableCell className="tabular-nums">{formatChangedAt(c.changedAt)}</TableCell>
+              <TableCell>{c.changedByName ?? '—'}</TableCell>
+              <TableCell>
+                L{c.lineNumber} · {c.productSku}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {priceLabel(c.beforeUnitValuePen, c.beforeValuePerMeterPen)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {priceLabel(c.afterUnitValuePen, c.afterValuePerMeterPen)}
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {changes.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell className="tabular-nums">{formatChangedAt(c.changedAt)}</TableCell>
-                <TableCell>{c.changedByName ?? '—'}</TableCell>
-                <TableCell>
-                  L{c.lineNumber} · {c.productSku}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {priceLabel(c.beforeUnitValuePen, c.beforeValuePerMeterPen)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {priceLabel(c.afterUnitValuePen, c.afterValuePerMeterPen)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+          ))}
+        </TableBody>
+      </Table>
+    </Section>
   );
 }
