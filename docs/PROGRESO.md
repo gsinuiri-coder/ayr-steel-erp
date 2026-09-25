@@ -71,6 +71,13 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   esquema de un solo agente, sin segundo revisor disponible. Piezas de riesgo para el pase cruzado:
   el default de exclusión de terminales negativos en el API (`statusCondition`) y `useUrlState`.
 
+- **Hallazgos de la guía** (2026-09-25, rama `fix/hallazgos-guia`, PR #30). D-310 a D-312.
+  Autorrevisión por un subagente nuevo del mismo modelo que escribió
+  (`docs/revision/hallazgos-guia-autorrevision.md`): 0 P0, 0 P1, 7 P2 (H1, H2 y H6 corregidos en la
+  rama). Motivo: esquema de un solo agente, sin segundo revisor disponible. Pieza de riesgo para el
+  pase cruzado: `assertCoilsNotTied` (rechaza al guardar) y su alcance —agregar ítems a un pedido
+  confirmado no lo aplica—.
+
 ## Correcciones 03 del cliente — UI y listas (2026-09-25)
 
 Handoff: `docs/handoff/correcciones-03.md`. UAT: `docs/uat/correcciones-03.md`. Cliente:
@@ -119,6 +126,44 @@ PR #28, merge `0e31c83`; SHA desplegado `6182e3e`. Handoff: `docs/handoff/correc
   pruebas de esos hooks bajo `jsdom` (D-299), de la hoja del kardex, de los controladores y de
   `reportCoils`; medido en local sobre las líneas nuevas: 99 %. El gate pasó en la segunda corrida.
 - **Rollback (no usado):** tráfico a `ayr-steel-erp-api-00053-fgk` y revert del merge.
+
+## Ventana de Hallazgos de la guía (2026-09-25, sin migración)
+
+PR #30, merge `dffb2eb`; SHA desplegado `fbd2c04`. Handoff: `docs/handoff/hallazgos-guia.md`.
+
+- **Migraciones:** `node scripts/migrations-status.mjs --branch production` → 74 encontradas, **0
+  pendientes**.
+- **Respaldo Neon:** rama `respaldo-pre-hallazgos-guia-20260925` (`br-damp-mode-aeoopko6`), creada
+  desde `production` con `neonctl` vía `run` quiet (`--no-secrets --output json`); verificada en el
+  listado.
+- **API (Cloud Run):** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+  desde el worktree. Revisión **`ayr-steel-erp-api-00055-8cs`** con el **100 %** del tráfico, label
+  `git-sha=fbd2c04`, `/health` 200 y **14** nombres de variables (los de la ventana anterior, sin
+  sorpresas). Revisión anterior para rollback: `ayr-steel-erp-api-00054-rw8`.
+- **Smoke contra la web vieja (API nueva):** `pnpm smoke:prod` en verde.
+- **Merge** del PR #30 (CI verde: lint/typecheck/unit, E2E del runner, smoke con Neon `ci`, análisis
+  estático y **SonarCloud en `pass`**; el primer intento falló por cobertura de código nuevo 66,4 %
+  contra 80 %, y pasó al agregar `coil-ties-lists.spec.ts`); Vercel en `success`.
+- **Smoke contra `v2.mareliac.pe`:** `pnpm smoke:prod --base-url https://v2.mareliac.pe` en verde.
+- **Alineación de runtime:** `git diff --quiet fbd2c04 origin/main -- apps packages Dockerfile
+.gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` → **exit 0**.
+- **Verificación en producción (solo lectura, admin efímero borrado en cada corrida):** las dos
+  bobinas de COT-000002 y COT-000011 salen en «No se ofrecen» como «atada a COT-…» (antes del deploy
+  se ofrecían); PED-000028 dice «Entregada en DES-000009», sin «Despachar» y con «Entregada en
+  DES-000009» en la columna de cada reserva (antes: «2 reservas ya fueron consumidas por producción»,
+  «Despachar» visible y «—»); etiqueta «Emisión electrónica: apagada» en Comprobantes. El kardex de
+  UPVC6MT con «Todo» trae 15 filas; el par salida/reversa del 19/09 no quedó en el log de esta corrida
+  (se había verificado por API la misma mañana).
+- **Rollback (no usado):** tráfico a `ayr-steel-erp-api-00054-rw8` y revert del merge.
+
+## M4 — el 500 de `GET /dispatches/:id` (solo lectura, 2026-09-25)
+
+Único 500 de la revisión `00053-fgk` en 3 días: 2026-09-25 08:06:30 UTC, `GET /dispatches/e074b6a9…`,
+10,007 s. Causa: Prisma **P2024** («Timed out fetching a new connection from the connection pool», límite
+5, timeout 10 s) en `AuthService.validateAccessToken` → `session.findUnique()`, es decir **antes del
+controlador de despachos**. No había otras peticiones en los 30 s previos (no fue saturación por
+concurrencia); el reintento 19 s después respondió 200 en 0,46 s. Compatible con una conexión inactiva
+o con Neon despertando; no está confirmada. Sin cambio de código.
 
 ## Re-fechado de FFA1-00001386 / DES-000019 y D-288 (2026-09-25)
 
