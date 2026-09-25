@@ -177,4 +177,43 @@ describe('ReportsController', () => {
       'attachment; filename="kardex-peps-BOB-001-2026-09-01-2026-09-30.xlsx"',
     );
   });
+
+  it('el PEPS en JSON sale del mismo reporte que el Excel (D-296)', async () => {
+    const { controller, kardexPeps } = build();
+    const query = {
+      itemType: 'COIL' as const,
+      itemId: '11111111-1111-1111-1111-111111111111',
+      from: '2026-09-01',
+      to: '2026-09-30',
+    };
+    const dto = await controller.kardexPepsJson(query);
+    expect(kardexPeps.report).toHaveBeenCalledWith(query);
+    expect(dto).toMatchObject({ itemCode: 'BOB-001', from: '2026-09-01', rows: [] });
+  });
+
+  it('el Excel del kardex con el formato del cliente pide la hoja y viaja como adjunto (D-298)', async () => {
+    const { controller, kardexSheet } = build();
+    kardexSheet.sheet.mockResolvedValue({
+      method: 'AVERAGE',
+      itemCode: 'BOB-001',
+      itemDescription: 'Bobina',
+      from: '2026-09-01',
+      to: '2026-09-30',
+      unit: 'KGM',
+      rows: [],
+    });
+    const res = fakeResponse();
+    const query = {
+      itemType: 'COIL' as const,
+      itemId: '11111111-1111-1111-1111-111111111111',
+      from: '2026-09-01',
+      to: '2026-09-30',
+      method: 'AVERAGE' as const,
+    };
+    await controller.kardexSheetXlsxFile(query, res);
+    expect(kardexSheet.sheet).toHaveBeenCalledWith(query);
+    expect(res.headers['Content-Disposition']).toBe(
+      'attachment; filename="kardex-average-BOB-001-2026-09-01-2026-09-30.xlsx"',
+    );
+  });
 });

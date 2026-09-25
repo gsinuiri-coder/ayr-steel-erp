@@ -96,7 +96,7 @@ export function movementsToKardexSheet(
   const rows: KardexSheetRow[] = movements.map((m) => {
     const adjust = m.type === 'ADJUST';
     const total = m.totalCost ?? null;
-    const negative = total !== null && total.startsWith('-');
+    const negative = total?.startsWith('-') ?? false;
     const label = INVENTORY_REF_TYPE_LABELS[m.refType];
     const detail = [
       m.reversalOfId ? `${label} (anulación)` : adjust ? `${label} (ajuste de costo)` : label,

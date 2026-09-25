@@ -84,6 +84,41 @@ describe('InventoryService.resolveItem', () => {
     });
   });
 
+  it('rotula una bobina (anulada = inactiva)', async () => {
+    const { prisma, service } = build();
+    prisma.coil.findUnique.mockResolvedValue(coil('C-9', 'CANCELLED'));
+    await expect(service.resolveItem({ itemType: 'COIL', itemId: 'c-C-9' })).resolves.toEqual({
+      itemType: 'COIL',
+      itemId: 'c-C-9',
+      code: 'C-9',
+      description: 'ALZ-0.38',
+      inactive: true,
+    });
+  });
+
+  it('404 si el producto no existe', async () => {
+    const { prisma, service } = build();
+    prisma.product.findUnique.mockResolvedValue(null);
+    await expect(service.resolveItem({ itemType: 'PRODUCT', itemId: 'x' })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('con texto, ordena por prefijo antes que por «contiene» (rankSearchMatches)', async () => {
+    const { prisma, service } = build();
+    prisma.coil.findMany.mockResolvedValue([coil('XX-BOB-1'), coil('BOB-2')]);
+    prisma.product.findMany.mockResolvedValue([
+      product('ZZ', 'Larga bobina'),
+      product('BOB9', 'x'),
+    ]);
+    const out = await service.searchItems('bob');
+    expect(out.filter((o) => o.itemType === 'COIL').map((o) => o.code)).toEqual([
+      'BOB-2',
+      'XX-BOB-1',
+    ]);
+    expect(out.filter((o) => o.itemType === 'PRODUCT').map((o) => o.code)).toEqual(['BOB9', 'ZZ']);
+  });
+
   it('404 si el ítem no existe', async () => {
     const { prisma, service } = build();
     prisma.coil.findUnique.mockResolvedValue(null);
