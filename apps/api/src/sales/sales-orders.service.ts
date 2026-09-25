@@ -116,7 +116,7 @@ import {
   theoreticalKgForMeters,
   toSalesItemDto,
 } from './sales-lines';
-import { coilPoolFor, coilPoolKeyOfProduct } from './coil-sale-product';
+import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
 import { buildPlantOrderPdf } from './plant-order-pdf';
 import { plantLineMeasures } from './plant-measures';
 import { findPriceChanges } from './price-changes';
@@ -1116,6 +1116,8 @@ export class SalesOrdersService {
       ...(options.counterSale === true
         ? {}
         : { priceFloor: { toleranceMm: roofingToleranceMm(this.env) } }),
+      // D-310: una bobina entera atada a una cotización abierta ajena no se vende por el lado.
+      coilTies: { viewer: actor },
     });
 
     // D-119: un pedido directo (sin cotización) exige que **ninguna** línea venga de una
@@ -3227,7 +3229,18 @@ export class SalesOrdersService {
 
     // D-163: el piso por kg de cada rollo vendible, con la misma función que lo va a exigir
     // al guardar. Se calcula sobre los que sobreviven al filtro, no sobre los 500 leídos.
-    const sellable = coils.filter((c) => !assignedIds.has(c.id));
+    // D-310: una bobina atada a otra cotización abierta (sin reserva) no se ofrece: es de ella. La
+    // propia cotización que se edita no se cuenta (`excludeQuotationId`).
+    const tiedIds = new Set(
+      (
+        await findCoilTies(
+          this.prisma,
+          ids,
+          query.excludeQuotationId ? [query.excludeQuotationId] : [],
+        )
+      ).map((t) => t.coilId),
+    );
+    const sellable = coils.filter((c) => !assignedIds.has(c.id) && !tiedIds.has(c.id));
     const floors = await computePriceFloors(
       this.prisma,
       sellable.map((c) => ({
@@ -3297,6 +3310,8 @@ export class SalesOrdersService {
 
     const ids = coils.map((c) => c.id);
     const exceptQuotationIds = query.excludeQuotationId ? [query.excludeQuotationId] : [];
+    // D-310: cotizaciones abiertas que venden la bobina entera sin reservarla.
+    const ties = await findCoilTies(this.prisma, ids, exceptQuotationIds);
     const [balances, reservedById, assigned, firm, temporary] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
@@ -3333,6 +3348,13 @@ export class SalesOrdersService {
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
     const mountedIds = new Set(assigned.map((a) => a.coilId));
+    const tiedById = new Map<string, { seq: number; sellerId: string | null }[]>();
+    for (const tie of ties) {
+      tiedById.set(tie.coilId, [
+        ...(tiedById.get(tie.coilId) ?? []),
+        { seq: tie.seq, sellerId: tie.sellerId },
+      ]);
+    }
     const holdersOf = <T extends { itemId: string }, H>(rows: T[], pick: (row: T) => H) => {
       const out = new Map<string, H[]>();
       for (const row of rows) out.set(row.itemId, [...(out.get(row.itemId) ?? []), pick(row)]);
@@ -3346,7 +3368,8 @@ export class SalesOrdersService {
       if (balance.lte(0)) return [];
       const mounted = mountedIds.has(c.id);
       const free = balance.minus(reservedById.get(c.id) ?? toDecimal('0'));
-      if (!mounted && free.gt(0)) return [];
+      // D-310: una bobina atada a otra cotización abierta tampoco se ofrece, aunque tenga saldo libre.
+      if (!mounted && free.gt(0) && !tiedById.has(c.id)) return [];
       return [
         {
           coilId: c.id,
@@ -3363,6 +3386,7 @@ export class SalesOrdersService {
               mounted,
               firm: firmById.get(c.id) ?? [],
               temporary: temporaryById.get(c.id) ?? [],
+              tied: tiedById.get(c.id) ?? [],
             },
             actor,
           ),

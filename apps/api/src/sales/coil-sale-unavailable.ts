@@ -1,4 +1,5 @@
 import { quotationCode, salesOrderCode } from '@ayr/shared';
+import { coilTieReasons } from './coil-sale-product';
 import { isForeign, type HolderViewer } from './reserved-ledger';
 
 /** Un documento que tiene tomada una bobina: su número y su vendedor. */
@@ -15,6 +16,11 @@ export interface CoilHolders {
   firm: CoilHolder[];
   /** Cotizaciones con reserva temporal vigente sobre la bobina (D-185). */
   temporary: CoilHolder[];
+  /**
+   * D-310: cotizaciones abiertas (`DRAFT`/`EMITTED`) que la venden entera **sin reservarla**
+   * (`findCoilTies`). Opcional: los llamadores previos a D-310 no la traen.
+   */
+  tied?: CoilHolder[];
 }
 
 /** El de menor número que quien lee puede ver (D-267/D-275), o `undefined`. */
@@ -38,6 +44,15 @@ export function unavailableCoilReason(holders: CoilHolders, viewer?: HolderViewe
     return quotation
       ? `atada a ${quotationCode(quotation.seq)} (reserva temporal)`
       : 'no disponible';
+  }
+  const tied = holders.tied ?? [];
+  if (tied.length > 0) {
+    // El mismo texto que el pool de venta (`coilTieReasons`): «atada a COT-…» o «no disponible».
+    const reasons = coilTieReasons(
+      tied.map((t) => ({ coilId: 'x', seq: t.seq, sellerId: t.sellerId })),
+      viewer,
+    );
+    return reasons.get('x') ?? 'no disponible';
   }
   return 'sin saldo libre';
 }

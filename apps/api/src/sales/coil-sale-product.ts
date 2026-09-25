@@ -367,6 +367,74 @@ export interface CoilPool {
   taken: { code: string; by: string }[];
 }
 
+/** Una cotización abierta que ata una bobina: su número y su vendedor. */
+export interface CoilTie {
+  coilId: string;
+  seq: number;
+  sellerId: string | null;
+}
+
+/**
+ * D-310: **la única definición de «bobina atada a otro documento vivo».** Una cotización
+ * `DRAFT` o `EMITTED` que vende esa bobina entera (`reserveItemType = COIL`) la tiene tomada
+ * aunque **no la reserve** (la trae el importador, o se liberó su reserva, o venció): quien
+ * arma otra venta no puede elegirla. La usan el pool de venta (`coilPoolFor`), las listas del
+ * selector de venta de bobina (`sellable-coils` y su «no se ofrecen») y el guardado de las
+ * líneas (`resolveSalesLines`); antes cada una tenía su propia idea y el selector directo
+ * ofrecía bobinas que el pool ya descartaba.
+ *
+ * `exceptQuotationIds` deja fuera al documento que se está editando: su propia bobina no la
+ * bloquea a sí mismo.
+ */
+export async function findCoilTies(
+  tx: Prisma.TransactionClient,
+  coilIds: readonly string[],
+  exceptQuotationIds: readonly string[] = [],
+): Promise<CoilTie[]> {
+  if (coilIds.length === 0) return [];
+  const rows = await tx.quotationItem.findMany({
+    where: {
+      reserveItemType: InventoryItemType.COIL,
+      reserveItemId: { in: [...coilIds] },
+      quotation: {
+        status: { in: [QuotationStatus.DRAFT, QuotationStatus.EMITTED] },
+        ...(exceptQuotationIds.length > 0 ? { id: { notIn: [...exceptQuotationIds] } } : {}),
+      },
+    },
+    select: { reserveItemId: true, quotation: { select: { seq: true, sellerId: true } } },
+  });
+  return rows.flatMap((r) =>
+    r.reserveItemId === null
+      ? []
+      : [{ coilId: r.reserveItemId, seq: r.quotation.seq, sellerId: r.quotation.sellerId }],
+  );
+}
+
+/**
+ * D-310: por qué está atada cada bobina, para quien lo lee: la cotización de menor número que
+ * quien lee puede ver («atada a COT-…»), o «no disponible» si todas son de otro vendedor y
+ * quien lee es VENDEDOR (D-267/D-275: no se le nombra la cotización ajena).
+ */
+export function coilTieReasons(
+  ties: readonly CoilTie[],
+  viewer?: { id: string; role: Role },
+): Map<string, string> {
+  const reasons = new Map<string, string>();
+  const foreign = (sellerId: string | null) =>
+    viewer?.role === Role.VENDEDOR && sellerId !== viewer.id;
+  for (const tie of [...ties].sort((a, b) => a.seq - b.seq)) {
+    if (foreign(tie.sellerId)) {
+      if (!reasons.has(tie.coilId)) reasons.set(tie.coilId, 'no disponible');
+      continue;
+    }
+    const current = reasons.get(tie.coilId);
+    if (current === undefined || current === 'no disponible') {
+      reasons.set(tie.coilId, `atada a ${quotationCode(tie.seq)}`);
+    }
+  }
+  return reasons;
+}
+
 /**
  * D-254: las bobinas que pueden atender una línea de un SKU canónico.
  *
@@ -419,40 +487,16 @@ export async function coilPoolFor(
     findLiveStripAssignments(tx, ids),
     // Una cotización no reserva hasta confirmarse, pero una **abierta** que ya vende esa bobina
     // la tiene tomada para este fin: dos importaciones no pueden elegir sola la misma
-    // (autorrevisión RF-S4b). La propia cotización no se excluye a sí misma.
-    tx.quotationItem.findMany({
-      where: {
-        reserveItemType: InventoryItemType.COIL,
-        reserveItemId: { in: ids },
-        quotation: {
-          status: { in: [QuotationStatus.DRAFT, QuotationStatus.EMITTED] },
-          ...(scope.exceptQuotationIds?.length ? { id: { notIn: scope.exceptQuotationIds } } : {}),
-        },
-      },
-      select: { reserveItemId: true, quotation: { select: { seq: true, sellerId: true } } },
-    }),
+    // (autorrevisión RF-S4b). La propia cotización no se excluye a sí misma. D-310: la misma
+    // definición que usan el selector de venta de bobina y el guardado.
+    findCoilTies(tx, ids, scope.exceptQuotationIds),
   ]);
   const balanceById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-  const takenIds = new Set([
-    ...mounted.map((m) => m.coilId),
-    ...quoted.map((q) => q.reserveItemId),
-  ]);
+  const takenIds = new Set([...mounted.map((m) => m.coilId), ...quoted.map((q) => q.coilId)]);
   const need = toDecimal(qty);
   // Por qué no se ofrece cada una: la primera cotización (por número) que la ata y que quien
   // lee puede ver; si ninguna, «no disponible» (D-267).
-  const takenBy = new Map<string, string>();
-  const foreign = (sellerId: string | null) =>
-    viewer?.role === Role.VENDEDOR && sellerId !== viewer.id;
-  for (const q of [...quoted].sort((a, b) => a.quotation.seq - b.quotation.seq)) {
-    if (foreign(q.quotation.sellerId)) {
-      if (!takenBy.has(q.reserveItemId)) takenBy.set(q.reserveItemId, 'no disponible');
-      continue;
-    }
-    const current = takenBy.get(q.reserveItemId);
-    if (current === undefined || current === 'no disponible') {
-      takenBy.set(q.reserveItemId, `atada a ${quotationCode(q.quotation.seq)}`);
-    }
-  }
+  const takenBy = coilTieReasons(quoted, viewer);
   for (const m of mounted) if (!takenBy.has(m.coilId)) takenBy.set(m.coilId, 'montada en una OP');
 
   let available = new Decimal(0);

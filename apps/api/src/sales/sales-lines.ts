@@ -5,6 +5,7 @@ import {
   InventoryItemType,
   type BusinessLineCode,
   type Prisma,
+  type Role,
 } from '@prisma/client';
 import {
   carriesInventory,
@@ -36,6 +37,8 @@ import { toSharedLineCode } from '../common/business-line-code';
 import {
   COIL_SALE_IDENTITY_SELECT,
   coilPoolFor,
+  coilTieReasons,
+  findCoilTies,
   coilPoolKeyOf,
   coilPoolKeyOfProduct,
   coilSaleSkus,
@@ -175,6 +178,15 @@ export interface ResolveSalesLinesOptions {
    * continuación de lo que ya existe, y los rechazos tienen que nombrar esa línea y no «Línea 1».
    */
   firstLineNumber?: number;
+  /**
+   * D-310: una línea que vende una bobina entera no puede tomar una que **otra** cotización
+   * abierta ya vende (`findCoilTies`). Opt-in: lo pasan el alta, la edición y el duplicado de
+   * cotización y el pedido directo. `exceptQuotationIds` deja fuera a la que se edita (su propia
+   * bobina no compite consigo misma) y `viewer` decide si el rechazo nombra la cotización o
+   * dice «no disponible» (un VENDEDOR frente a la de otro, D-267/D-275). Las líneas del papel
+   * ya pasan por `assertPaperCoilsInPool` y no se repiten.
+   */
+  coilTies?: { exceptQuotationIds?: readonly string[]; viewer?: { id: string; role: Role } };
 }
 
 export async function resolveSalesLines(
@@ -255,6 +267,7 @@ export async function resolveSalesLines(
   // su pool **en el servidor**, en todo camino —importador y edición de cotización, no solo el
   // pedido—. Asíncrono, así que va antes del `.map` que arma las líneas.
   await assertPaperCoilsInPool(tx, items, saleCoilById, productById, isPaperLine, options);
+  await assertCoilsNotTied(tx, items, saleCoilById, isPaperLine, options);
 
   // D-163: las líneas a comprobar contra su piso, con la coordenada del costo que le
   // corresponde a cada una. Se juntan durante el `.map` —que es síncrono— y se comprueban
@@ -835,6 +848,40 @@ async function assertPaperCoilsInPool(
         `${at}: ${sale.coilCode} no es candidata del pool ${sale.pool.sku} para ${qty} kg: tiene que estar libre —sin reserva de otro documento, sin OP y sin otra cotización abierta— y con saldo suficiente`,
       );
     }
+  }
+}
+
+/**
+ * D-310: la bobina entera de una línea no puede estar atada a **otra** cotización abierta. Es la
+ * misma comprobación que el pool (`coilPoolFor`) y que la lista de `sellable-coils`, con el mismo
+ * texto («atada a COT-…», o «no disponible» para un VENDEDOR frente a la de otro): sin ella, dos
+ * cotizaciones prometían la misma bobina y la segunda en confirmar se enteraba tarde.
+ */
+async function assertCoilsNotTied(
+  tx: Prisma.TransactionClient,
+  items: readonly SalesItemInput[],
+  saleCoilById: ReadonlyMap<string, SaleCoilResolution>,
+  isPaperLine: (index: number) => boolean,
+  options: ResolveSalesLinesOptions,
+): Promise<void> {
+  if (!options.coilTies) return;
+  const lineOfCoil = new Map<string, number>();
+  for (const [index, item] of items.entries()) {
+    if (item.saleCoilId === undefined || isPaperLine(index)) continue;
+    lineOfCoil.set(item.saleCoilId, index);
+  }
+  if (lineOfCoil.size === 0) return;
+  const ties = await findCoilTies(tx, [...lineOfCoil.keys()], options.coilTies.exceptQuotationIds);
+  if (ties.length === 0) return;
+  const reasons = coilTieReasons(ties, options.coilTies.viewer);
+  for (const [coilId, index] of lineOfCoil) {
+    const reason = reasons.get(coilId);
+    if (reason === undefined) continue;
+    const at = `Línea ${String((options.firstLineNumber ?? 1) + index)}`;
+    const code = saleCoilById.get(coilId)?.coilCode ?? coilId;
+    throw new BadRequestException(
+      `${at}: la bobina ${code} no se puede vender: ${reason} (otra cotización abierta la vende entera)`,
+    );
   }
 }
 

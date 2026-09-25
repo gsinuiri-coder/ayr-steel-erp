@@ -1,4 +1,4 @@
-import { CoilKind, CoilStatus, FinishKind, InventoryStrategy, Prisma } from '@prisma/client';
+import { CoilKind, CoilStatus, FinishKind, InventoryStrategy, Prisma, Role } from '@prisma/client';
 import { IMPORT_ROUNDING_TOLERANCE_PEN } from '@ayr/shared';
 import { resolveSalesLines } from './sales-lines';
 
@@ -293,6 +293,54 @@ describe('D-254 en el servidor: la bobina de una línea del papel es candidata d
     await expect(resolveSalesLines(txWith(), [noProduct], { exactAmounts: PAPER })).rejects.toThrow(
       /tiene que decir de qué producto de bobina es/,
     );
+  });
+});
+
+describe('D-310: una bobina entera atada a otra cotización abierta no se vende en el alta', () => {
+  const hand = { saleCoilId: COIL_ID, qty: '1.000', unitPricePen: '3.0000' };
+  const tied = (sellerId: string | null) => {
+    const tx = txWith();
+    (tx.quotationItem.findMany as jest.Mock).mockResolvedValue([
+      { reserveItemId: COIL_ID, quotation: { seq: 2, sellerId } },
+    ]);
+    return tx;
+  };
+
+  it('sin la opción, la línea a mano no mira las cotizaciones (importador, ediciones de pedido)', async () => {
+    const [line] = await resolveSalesLines(txWith({ quoted: true }), [hand]);
+    expect(line?.reserveItemId).toBe(COIL_ID);
+  });
+
+  it('nombra la cotización que la tiene atada, con el número de la línea', async () => {
+    await expect(
+      resolveSalesLines(tied('v-1'), [hand], {
+        coilTies: { viewer: { id: 'a-1', role: Role.ADMINISTRADOR } },
+      }),
+    ).rejects.toThrow(/Línea 1: la bobina SALDO-AZUL-4194 no se puede vender: atada a COT-000002/);
+  });
+
+  it('a un VENDEDOR no se le nombra la cotización de otro vendedor', async () => {
+    await expect(
+      resolveSalesLines(tied('v-1'), [hand], {
+        coilTies: { viewer: { id: 'v-2', role: Role.VENDEDOR } },
+      }),
+    ).rejects.toThrow(/no se puede vender: no disponible/);
+  });
+
+  it('la cotización que se edita no compite consigo misma', async () => {
+    const tx = txWith();
+    await resolveSalesLines(tx, [hand], {
+      coilTies: { exceptQuotationIds: ['q-1'], viewer: { id: 'a-1', role: Role.ADMINISTRADOR } },
+    });
+    const calls = (tx.quotationItem.findMany as jest.Mock).mock.calls as [
+      { where: { quotation: { id: { notIn: string[] } } } },
+    ][];
+    expect(calls[0]?.[0].where.quotation.id).toEqual({ notIn: ['q-1'] });
+  });
+
+  it('una bobina libre pasa', async () => {
+    const [line] = await resolveSalesLines(txWith(), [hand], { coilTies: {} });
+    expect(line?.reserveItemId).toBe(COIL_ID);
   });
 });
 
