@@ -3,7 +3,13 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
-import { InvoiceDispatchService, planSignature } from './invoice-dispatch.service';
+import {
+  atIssueDateNotes,
+  InvoiceDispatchService,
+  isAtIssueDateDispatch,
+  planSignature,
+  REDATE_REASON,
+} from './invoice-dispatch.service';
 
 jest.mock('../sales/reservation-transfer', () => ({
   resolveDispatchTarget: jest.fn(),
@@ -148,6 +154,7 @@ function service(tx: ReturnType<typeof fakeTx>) {
       .mockResolvedValueOnce('11111111-1111-4111-8111-111111111111')
       .mockResolvedValueOnce('22222222-2222-4222-8222-222222222222'),
     linkInvoiceInTx: jest.fn().mockResolvedValue(undefined),
+    reverseInTx: jest.fn().mockResolvedValue(undefined),
   };
   const audit = { write: jest.fn().mockResolvedValue(undefined) };
   const prisma = {
@@ -460,5 +467,211 @@ describe('InvoiceDispatchService (D-278)', () => {
       action: 'BEFORE_OPENING',
       itemLabel: 'UPVC36MT',
     });
+  });
+});
+
+describe('D-288 — re-fechar el despacho a la fecha del comprobante', () => {
+  it('la marca: solo las notas de este servicio y del mismo comprobante', () => {
+    for (const note of Object.values(atIssueDateNotes)) {
+      expect(isAtIssueDateDispatch(note('FFA1-1'), 'FFA1-1')).toBe(true);
+      expect(isAtIssueDateDispatch(note('FFA1-1'), 'FFA1-2')).toBe(false);
+    }
+    expect(isAtIssueDateDispatch('Despacho del camión de la mañana', 'FFA1-1')).toBe(false);
+    expect(isAtIssueDateDispatch(null, 'FFA1-1')).toBe(false);
+    expect(isAtIssueDateDispatch(atIssueDateNotes.atIssueDate('FFA1-1'), null)).toBe(false);
+  });
+
+  function redateTx() {
+    return {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      // Lo que tenía el despacho que se revierte: 50 de la línea l1.
+      dispatchItem: {
+        findMany: jest.fn().mockResolvedValue([{ salesOrderItemId: 'l1', qty: D('50') }]),
+      },
+      fiscalDocument: { findUnique: jest.fn().mockResolvedValue({ number: 'FFA1-1' }) },
+      dispatch: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'auto',
+            seq: 19,
+            dispatchDate: day('2026-09-19'),
+            notes: atIssueDateNotes.beforeOpening('FFA1-1'),
+          },
+          { id: 'manual', seq: 20, dispatchDate: day('2026-09-20'), notes: 'Recogió el cliente' },
+        ]),
+      },
+    };
+  }
+
+  const redispatched = (action: 'DISPATCH' | 'REVIEW') => ({
+    invoiceId: 'F1',
+    lines: [
+      {
+        lineNumber: 1,
+        sku: 'UPVC36MT',
+        qty: '50.000',
+        itemLabel: 'UPVC36MT',
+        action,
+        operationDate: '2026-08-19',
+        reason: action === 'REVIEW' ? 'deja el kardex negativo' : null,
+      },
+    ],
+    dispatchIds: action === 'REVIEW' ? [] : ['nuevo'],
+    orderStatus: 'FULFILLED',
+  });
+
+  /** El plan que ve el re-fechado después de revertir: una línea por (línea, cantidad, acción). */
+  function plannedAfter(lines: { orderItemId: string; qty: string; action: string }[]) {
+    return {
+      invoices: [
+        {
+          invoiceId: 'F1',
+          number: 'FFA1-1',
+          salesOrderId: 'ped',
+          issueDate: '2026-08-19',
+          orderCode: 'PED-000030',
+          sellerId: null,
+          lines: lines.map((l, i) => ({
+            orderItemId: l.orderItemId,
+            lineNumber: i + 1,
+            sku: 'UPVC36MT',
+            qty: new Decimal(l.qty),
+            reserveQty: new Decimal(l.qty),
+            itemKey: 'PRODUCT:upvc',
+            action: l.action,
+            operationDate: '2026-08-19',
+            reason: l.action === 'REVIEW' ? 'deja el kardex negativo' : null,
+          })),
+        },
+      ],
+      items: new Map(),
+    };
+  }
+
+  it('revierte solo el automático, como corrección de fecha, y vuelve a despachar; auditado', async () => {
+    const tx = redateTx();
+    const { svc, dispatches, audit } = service(tx as never);
+    const planned = plannedAfter([{ orderItemId: 'l1', qty: '50', action: 'DISPATCH' }]);
+    jest.spyOn(svc, 'buildPlan').mockResolvedValue(planned as never);
+    const execute = jest.spyOn(svc, 'executeInTx').mockResolvedValue(redispatched('DISPATCH'));
+    const done = await svc.redateInTx(tx as never, ADMIN, 'F1');
+
+    expect(tx.$queryRaw).toHaveBeenCalled(); // lock de los despachos, en orden de id
+    expect(dispatches.reverseInTx).toHaveBeenCalledTimes(1);
+    expect(dispatches.reverseInTx).toHaveBeenCalledWith(tx, ADMIN, 'auto', REDATE_REASON, {
+      redateInvoiceId: 'F1',
+    });
+    // Con el plan como `expected`: la ejecución lo vuelve a comparar antes de escribir.
+    expect(execute).toHaveBeenCalledWith(tx, ADMIN, 'F1', planned.invoices[0]);
+    expect(done).toEqual({ reversed: ['DES-000019'], created: ['nuevo'] });
+    expect(audit.write).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        action: 'invoicing.dispatch.redate',
+        before: { dispatches: [{ code: 'DES-000019', date: '2026-09-19' }] },
+      }),
+    );
+  });
+
+  it('si alguna línea iría a revisión, falla (la transacción del llamador se deshace)', async () => {
+    const tx = redateTx();
+    const { svc, audit } = service(tx as never);
+    jest
+      .spyOn(svc, 'buildPlan')
+      .mockResolvedValue(
+        plannedAfter([{ orderItemId: 'l1', qty: '50', action: 'REVIEW' }]) as never,
+      );
+    const execute = jest.spyOn(svc, 'executeInTx');
+    await expect(svc.redateInTx(tx as never, ADMIN, 'F1')).rejects.toThrow('No se puede re-fechar');
+    expect(execute).not.toHaveBeenCalled();
+    expect(audit.write).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    // Una nota de crédito acreditó 20 después: se despacharían 30 y 20 volverían al kardex.
+    [
+      'menos de lo revertido (nota de crédito)',
+      [{ orderItemId: 'l1', qty: '30', action: 'DISPATCH' }],
+    ],
+    // Una línea pendiente que no estaba en el despacho saldría de paso.
+    [
+      'una línea que no estaba en el despacho',
+      [
+        { orderItemId: 'l1', qty: '50', action: 'DISPATCH' },
+        { orderItemId: 'l2', qty: '5', action: 'DISPATCH' },
+      ],
+    ],
+  ])('si el despacho nuevo no es el revertido (%s), falla sin escribir', async (_name, lines) => {
+    const tx = redateTx();
+    const { svc, audit } = service(tx as never);
+    jest.spyOn(svc, 'buildPlan').mockResolvedValue(plannedAfter(lines) as never);
+    const execute = jest.spyOn(svc, 'executeInTx');
+    await expect(svc.redateInTx(tx as never, ADMIN, 'F1')).rejects.toThrow(
+      'el despacho nuevo no sería el mismo',
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(audit.write).not.toHaveBeenCalled();
+  });
+
+  it('sin despachos automáticos no hace nada', async () => {
+    const tx = redateTx();
+    tx.dispatch.findMany.mockResolvedValue([
+      { id: 'manual', seq: 20, dispatchDate: day('2026-09-20'), notes: null },
+    ]);
+    const { svc, dispatches } = service(tx as never);
+    const execute = jest.spyOn(svc, 'executeInTx');
+    expect(await svc.redateInTx(tx as never, ADMIN, 'F1')).toBeNull();
+    expect(dispatches.reverseInTx).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('InvoiceDispatchService.linkedDispatches (D-288)', () => {
+  it('lista los despachos vigentes del comprobante y marca los re-fechables', async () => {
+    const db = {
+      fiscalDocument: { findUnique: jest.fn().mockResolvedValue({ number: 'FFA1-1' }) },
+      dispatch: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            seq: 19,
+            dispatchDate: day('2026-09-19'),
+            notes: atIssueDateNotes.atIssueDate('FFA1-1'),
+          },
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            seq: 20,
+            dispatchDate: day('2026-09-20'),
+            notes: 'Recogió el cliente',
+          },
+        ]),
+      },
+    };
+    const svc = new InvoiceDispatchService(db as never, {} as never, {} as never, {} as never);
+    expect(await svc.linkedDispatches('F1')).toEqual({
+      dispatches: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          code: 'DES-000019',
+          dispatchDate: '2026-09-19',
+          atIssueDate: true,
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          code: 'DES-000020',
+          dispatchDate: '2026-09-20',
+          atIssueDate: false,
+        },
+      ],
+    });
+    expect(db.dispatch.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { invoiceId: 'F1', status: 'ISSUED' } }),
+    );
+  });
+
+  it('comprobante inexistente: 404', async () => {
+    const db = { fiscalDocument: { findUnique: jest.fn().mockResolvedValue(null) } };
+    const svc = new InvoiceDispatchService(db as never, {} as never, {} as never, {} as never);
+    await expect(svc.linkedDispatches('F9')).rejects.toThrow('Comprobante no encontrado');
   });
 });

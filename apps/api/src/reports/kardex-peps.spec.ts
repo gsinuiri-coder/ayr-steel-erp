@@ -185,3 +185,49 @@ describe('valuePeps', () => {
     expect(result.rows[2]?.balanceTotal).toBe('180.0000');
   });
 });
+
+describe('valuePeps — reversa de una salida sin capas (D-288)', () => {
+  beforeEach(() => {
+    seq = 0;
+  });
+
+  it('re-fechado hacia atrás con stock justo: el par del día viejo queda neto en cero', () => {
+    // 10 u a 10 el 10-08; la salida nueva (re-fechada) el 19-08 se las lleva; la vieja del
+    // 19-09 sale sin capas y su reversa la anula el mismo día.
+    const result = valuePeps(
+      [
+        mv('IN', '10.000', '100.0000', '2026-08-10'),
+        mv('OUT', '10.000', '100.0000', '2026-08-19'),
+        mv('OUT', '10.000', '100.0000', '2026-09-19'),
+        mv('IN', '10.000', '100.0000', '2026-09-19', { reversalOfId: '3' }),
+      ],
+      '2026-09-01',
+      '2026-09-30',
+    );
+    expect(result.opening.qty).toBe('0.000');
+    expect(result.totals).toEqual({
+      inQty: '10.000',
+      inTotal: '100.0000',
+      outQty: '10.000',
+      outTotal: '100.0000',
+    });
+    expect(result.closing.qty).toBe('0.000');
+    expect(result.closing.total).toBe('0.0000');
+  });
+
+  it('si una entrada posterior ya cubrió el faltante, la reversa lo devuelve como capa', () => {
+    // Sale 10 sin capas el 01-09 (faltante), entra 10 a 12 el 02-09 (cubre el faltante) y el
+    // 03-09 se anula la salida: vuelven 10 u, a su costo registrado (10).
+    const result = valuePeps(
+      [
+        mv('OUT', '10.000', '100.0000', '2026-09-01'),
+        mv('IN', '10.000', '120.0000', '2026-09-02'),
+        mv('IN', '10.000', '100.0000', '2026-09-03', { reversalOfId: '1' }),
+      ],
+      '2026-09-01',
+      '2026-09-30',
+    );
+    expect(result.closing.qty).toBe('10.000');
+    expect(result.closing.total).toBe('100.0000');
+  });
+});

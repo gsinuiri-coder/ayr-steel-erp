@@ -578,16 +578,20 @@ export class DispatchesService {
   private async declaringDocument(
     tx: Prisma.TransactionClient,
     dispatch: { salesOrderId: string; items: { salesOrderItemId: string }[] },
-  ): Promise<{ number: string | null } | null> {
+    /** D-288: el comprobante que se está re-fechando no bloquea su propio re-fechado. */
+    exceptDocumentId: string | null = null,
+  ): Promise<{ id: string; number: string | null } | null> {
     const lineIds = dispatch.items.map((i) => i.salesOrderItemId);
     const documents = await tx.fiscalDocument.findMany({
       where: {
+        ...(exceptDocumentId === null ? {} : { id: { not: exceptDocumentId } }),
         salesOrderId: dispatch.salesOrderId,
         status: { in: DECLARED_STATUSES },
         docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
         items: { some: { salesOrderItemId: { in: lineIds } } },
       },
       select: {
+        id: true,
         number: true,
         items: {
           where: { salesOrderItemId: { in: lineIds } },
@@ -647,134 +651,167 @@ export class DispatchesService {
     // D-124: revertir un despacho es un hecho de hoy; no hereda la fecha del despacho.
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
-      async (tx) => {
-        const rows = await tx.$queryRaw<
-          { id: string; status: DispatchStatus; sales_order_id: string }[]
-        >`
-          SELECT "id", "status", "sales_order_id" FROM "dispatches"
-          WHERE "id" = ${id}::uuid FOR UPDATE
-        `;
-        const head = rows[0];
-        if (!head) throw new NotFoundException('Despacho no encontrado');
-        if (head.status === DispatchStatus.REVERSED) {
-          throw new ConflictException('El despacho ya fue revertido');
-        }
-
-        // El pedido, en el mismo orden que `create`: pedido → bobinas → saldos.
-        await tx.$queryRaw`
-          SELECT "id" FROM "sales_orders" WHERE "id" = ${head.sales_order_id}::uuid FOR UPDATE
-        `;
-
-        const dispatch = await tx.dispatch.findUniqueOrThrow({
-          where: { id },
-          include: {
-            items: {
-              orderBy: { lineNumber: 'asc' },
-              // D-088: la reserva ya no se lee desde la línea (son varias); la reversa la
-              // busca por las coordenadas del ítem que este despacho sacó.
-              include: { salesOrderItem: { select: { id: true } } },
-            },
-            documents: { select: { number: true, status: true } },
-          },
-        });
-
-        const declaredNote = dispatch.documents.find((d) => DECLARED_STATUSES.includes(d.status));
-        if (declaredNote) {
-          // El mensaje dice **el camino completo** porque la baja de una guía puede tener
-          // que hacerse en el panel del PSE: hoy la operación de baja del proveedor no la
-          // reconoce ("el documento no existe o no fue enviado"), y sin decirlo el despacho
-          // parecía imposible de revertir para siempre. «Consultar al PSE» sobre la guía
-          // reconcilia la baja hecha por fuera y desbloquea esta reversa.
-          throw new BadRequestException(
-            `La guía ${declaredNote.number ?? 'de este despacho'} está vigente y declara este traslado: dala de baja y usa «Consultar al PSE» sobre ella antes de revertir el despacho.`,
-          );
-        }
-
-        const blocking = await this.declaringDocument(tx, dispatch);
-        if (blocking) {
-          throw new BadRequestException(
-            `El comprobante ${blocking.number ?? ''} todavía factura líneas de este despacho: dalo de baja, o emítele una nota de crédito por lo que falta acreditar, antes de revertirlo`,
-          );
-        }
-
-        // **Bobinas antes que saldos**, el mismo orden que `create` y que `createReservations`
-        // (la línea de arriba lo promete desde Fase 5b y la reversa no lo cumplía). Sin este
-        // lock, revertir tomaba primero los saldos —dentro de `inventory.reverse`— y recién
-        // después escribía sobre `coils`: orden inverso al de todo el resto, así que dos
-        // transacciones sobre el mismo rollo podían trabarse en un deadlock, y un
-        // `CoilOperationsService.setStatus` concurrente —que sí toma `lockCoil`— podía quedar
-        // pisado por el cambio de estado de D-170.
-        const lockedCoilIds = [
-          ...new Set(dispatch.items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
-        ].sort(byCodeUnit);
-        if (lockedCoilIds.length > 0) {
-          await tx.$queryRaw`
-            SELECT "id" FROM "coils" WHERE "id" = ANY(${lockedCoilIds}::uuid[]) ORDER BY "id" FOR UPDATE
-          `;
-        }
-
-        for (const item of dispatch.items) {
-          if (item.movementId !== null) {
-            await this.inventory.reverse(tx, item.movementId, actor.id, reason, operationDate);
-          }
-          // Toda reversa aguas abajo restaura la reserva (D-066/D-074): sin esto el
-          // material vuelve al almacén sin nada que lo proteja mientras el pedido lo
-          // sigue prometiendo, que es el defecto que 5a costó encontrar.
-          //
-          // D-088: se restaura la reserva **del ítem que salió**, que el propio despacho
-          // guardó en `itemType`/`itemId`. Con la reserva de la línea a secas, revertir el
-          // despacho de una cobertura habría devuelto la promesa a la bobina en vez de a los
-          // metros que vuelven al almacén.
-          const held = await findLineReservation(
-            tx,
-            item.salesOrderItemId,
-            item.itemType,
-            item.itemId,
-          );
-          if (held) {
-            // `reserveQty` y no `qty`: se devuelve exactamente lo que salió, en la unidad
-            // del ítem de kardex.
-            await restoreReservationQty(tx, held.id, toDecimal(item.reserveQty.toString()));
-          }
-        }
-
-        // D-170: los kilos ya volvieron al rollo; el estado tiene que volver con ellos.
-        const reopenedCoils = await this.reopenRevertedCoils(
-          tx,
-          actor,
-          lockedCoilIds,
-          dispatch.seq,
-        );
-
-        await tx.dispatch.update({
-          where: { id },
-          data: {
-            status: DispatchStatus.REVERSED,
-            reversedAt: new Date(),
-            reversedById: actor.id,
-            // F8-S7/M3: la reversa devuelve la mercadería al kardex, así que este despacho ya
-            // no cubre ningún comprobante (D-205). Dejar el enlace puesto es un dato que
-            // contradice al kardex y que nadie vuelve a mirar: la pantalla de emisión filtra
-            // los revertidos, así que no saltaría por ningún lado.
-            invoiceId: null,
-          },
-        });
-
-        const status = await this.recomputeOrderStatus(tx, dispatch.salesOrderId);
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'invoicing.dispatch.reverse',
-          entity: 'dispatches',
-          entityId: id,
-          before: { status: DispatchStatus.ISSUED, lines: dispatch.items.length },
-          after: { status: DispatchStatus.REVERSED, reason, orderStatus: status, reopenedCoils },
-        });
-      },
+      (tx) => this.reverseInTx(tx, actor, id, reason, { operationDate }),
       { timeout: 30_000 },
     );
 
     return this.findOne(id, actor);
+  }
+
+  /**
+   * La reversa dentro de la transacción del llamador. Dos modos:
+   *
+   * - `{ operationDate }`: la reversa de siempre, un hecho con su fecha (hoy por D-124).
+   * - `{ redateInvoiceId }` (D-288): **corrección de fecha, no devolución**. La usa solo el
+   *   re-fechado de un despacho «a la fecha del comprobante» cuando se corrige la emisión:
+   *   cada movimiento inverso va a la fecha del movimiento que anula (el par queda neto en
+   *   cero el mismo día) y el comprobante que se está corrigiendo no bloquea, porque la
+   *   misma transacción lo vuelve a cubrir con el despacho nuevo. Cualquier otro documento
+   *   declarado (otro comprobante, la guía) bloquea igual que siempre.
+   */
+  async reverseInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    id: string,
+    reason: string,
+    mode: { operationDate: string } | { redateInvoiceId: string },
+  ): Promise<void> {
+    const redateInvoiceId = 'redateInvoiceId' in mode ? mode.redateInvoiceId : null;
+    const rows = await tx.$queryRaw<
+      { id: string; status: DispatchStatus; sales_order_id: string }[]
+    >`
+          SELECT "id", "status", "sales_order_id" FROM "dispatches"
+          WHERE "id" = ${id}::uuid FOR UPDATE
+        `;
+    const head = rows[0];
+    if (!head) throw new NotFoundException('Despacho no encontrado');
+    if (head.status === DispatchStatus.REVERSED) {
+      throw new ConflictException('El despacho ya fue revertido');
+    }
+
+    // El pedido, en el mismo orden que `create`: pedido → bobinas → saldos.
+    await tx.$queryRaw`
+          SELECT "id" FROM "sales_orders" WHERE "id" = ${head.sales_order_id}::uuid FOR UPDATE
+        `;
+
+    const dispatch = await tx.dispatch.findUniqueOrThrow({
+      where: { id },
+      include: {
+        items: {
+          orderBy: { lineNumber: 'asc' },
+          // D-088: la reserva ya no se lee desde la línea (son varias); la reversa la
+          // busca por las coordenadas del ítem que este despacho sacó.
+          include: { salesOrderItem: { select: { id: true } } },
+        },
+        documents: { select: { number: true, status: true } },
+      },
+    });
+
+    const declaredNote = dispatch.documents.find((d) => DECLARED_STATUSES.includes(d.status));
+    if (declaredNote) {
+      // El mensaje dice **el camino completo** porque la baja de una guía puede tener
+      // que hacerse en el panel del PSE: hoy la operación de baja del proveedor no la
+      // reconoce ("el documento no existe o no fue enviado"), y sin decirlo el despacho
+      // parecía imposible de revertir para siempre. «Consultar al PSE» sobre la guía
+      // reconcilia la baja hecha por fuera y desbloquea esta reversa.
+      throw new BadRequestException(
+        `La guía ${declaredNote.number ?? 'de este despacho'} está vigente y declara este traslado: dala de baja y usa «Consultar al PSE» sobre ella antes de revertir el despacho.`,
+      );
+    }
+
+    const blocking = await this.declaringDocument(tx, dispatch, redateInvoiceId);
+    if (blocking) {
+      throw new BadRequestException(
+        `El comprobante ${blocking.number ?? ''} todavía factura líneas de este despacho: dalo de baja, o emítele una nota de crédito por lo que falta acreditar, antes de revertirlo`,
+      );
+    }
+
+    // **Bobinas antes que saldos**, el mismo orden que `create` y que `createReservations`
+    // (la línea de arriba lo promete desde Fase 5b y la reversa no lo cumplía). Sin este
+    // lock, revertir tomaba primero los saldos —dentro de `inventory.reverse`— y recién
+    // después escribía sobre `coils`: orden inverso al de todo el resto, así que dos
+    // transacciones sobre el mismo rollo podían trabarse en un deadlock, y un
+    // `CoilOperationsService.setStatus` concurrente —que sí toma `lockCoil`— podía quedar
+    // pisado por el cambio de estado de D-170.
+    const lockedCoilIds = [
+      ...new Set(dispatch.items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
+    ].sort(byCodeUnit);
+    if (lockedCoilIds.length > 0) {
+      await tx.$queryRaw`
+            SELECT "id" FROM "coils" WHERE "id" = ANY(${lockedCoilIds}::uuid[]) ORDER BY "id" FOR UPDATE
+          `;
+    }
+
+    for (const item of dispatch.items) {
+      if (item.movementId !== null) {
+        if ('operationDate' in mode) {
+          await this.inventory.reverse(tx, item.movementId, actor.id, reason, mode.operationDate);
+        } else {
+          // D-288: a la fecha del movimiento que se anula; el acuse de retrofecha va
+          // implícito, como en el despacho a la fecha del comprobante.
+          const original = await tx.inventoryMovement.findUniqueOrThrow({
+            where: { id: item.movementId },
+            select: { operationDate: true },
+          });
+          await this.inventory.reverse(
+            tx,
+            item.movementId,
+            actor.id,
+            reason,
+            original.operationDate.toISOString().slice(0, 10),
+            true,
+          );
+        }
+      }
+      // Toda reversa aguas abajo restaura la reserva (D-066/D-074): sin esto el
+      // material vuelve al almacén sin nada que lo proteja mientras el pedido lo
+      // sigue prometiendo, que es el defecto que 5a costó encontrar.
+      //
+      // D-088: se restaura la reserva **del ítem que salió**, que el propio despacho
+      // guardó en `itemType`/`itemId`. Con la reserva de la línea a secas, revertir el
+      // despacho de una cobertura habría devuelto la promesa a la bobina en vez de a los
+      // metros que vuelven al almacén.
+      const held = await findLineReservation(tx, item.salesOrderItemId, item.itemType, item.itemId);
+      if (held) {
+        // `reserveQty` y no `qty`: se devuelve exactamente lo que salió, en la unidad
+        // del ítem de kardex.
+        await restoreReservationQty(tx, held.id, toDecimal(item.reserveQty.toString()));
+      }
+    }
+
+    // D-170: los kilos ya volvieron al rollo; el estado tiene que volver con ellos.
+    const reopenedCoils = await this.reopenRevertedCoils(tx, actor, lockedCoilIds, dispatch.seq);
+
+    await tx.dispatch.update({
+      where: { id },
+      data: {
+        status: DispatchStatus.REVERSED,
+        reversedAt: new Date(),
+        reversedById: actor.id,
+        // F8-S7/M3: la reversa devuelve la mercadería al kardex, así que este despacho ya
+        // no cubre ningún comprobante (D-205). Dejar el enlace puesto es un dato que
+        // contradice al kardex y que nadie vuelve a mirar: la pantalla de emisión filtra
+        // los revertidos, así que no saltaría por ningún lado.
+        invoiceId: null,
+      },
+    });
+
+    const status = await this.recomputeOrderStatus(tx, dispatch.salesOrderId);
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.dispatch.reverse',
+      entity: 'dispatches',
+      entityId: id,
+      before: { status: DispatchStatus.ISSUED, lines: dispatch.items.length },
+      after: {
+        status: DispatchStatus.REVERSED,
+        reason,
+        orderStatus: status,
+        reopenedCoils,
+        ...(redateInvoiceId === null ? {} : { redateOfInvoice: redateInvoiceId }),
+      },
+    });
   }
 
   // -------------------------------------------------------------------------

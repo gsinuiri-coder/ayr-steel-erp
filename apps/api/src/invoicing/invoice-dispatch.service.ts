@@ -9,12 +9,14 @@ import {
 import {
   carriesInventory,
   Decimal,
+  dispatchCode,
   LIVE_DOCUMENT_STATUSES,
   salesOrderCode,
   toDecimal,
   TransferMode,
   type InvoiceDispatchPlanDto,
   type InvoiceDispatchResultDto,
+  type InvoiceLinkedDispatchesDto,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -25,6 +27,8 @@ import { findLineReservation, resolveDispatchTarget } from '../sales/reservation
 import { DispatchesService } from './dispatches.service';
 import {
   allocateUndispatched,
+  dropSameDayReversals,
+  REDATE_REASON,
   planInvoiceDispatches,
   type PlanInvoice,
   type PlanItemKardex,
@@ -70,6 +74,41 @@ function day(value: Date): string {
 }
 
 /**
+ * Las notas con que este servicio firma cada despacho que crea (D-278, D-285). Son también la
+ * marca de «lo creó el despacho a la fecha del comprobante» que D-288 usa para re-fecharlo: un
+ * despacho manual enlazado al comprobante lleva la nota que le puso quien lo registró.
+ */
+export const atIssueDateNotes = {
+  atIssueDate: (number: string) => `Despacho a la fecha del comprobante ${number} (D-278)`,
+  afterProduction: (number: string) =>
+    `Despacho de ${number} a la fecha del último parte de producción (D-285)`,
+  beforeOpening: (number: string) =>
+    `Entregado antes del inventario inicial — comprobante ${number} (D-278)`,
+};
+
+/** D-288: ¿este despacho lo creó «Despachar a la fecha del comprobante» para `number`? */
+export function isAtIssueDateDispatch(notes: string | null, number: string | null): boolean {
+  if (notes === null || number === null) return false;
+  return Object.values(atIssueDateNotes).some((note) => note(number) === notes);
+}
+
+export { REDATE_REASON } from './invoice-dispatch-plan';
+
+/** Cantidad por línea de pedido, en la unidad de venta. */
+function sumByLine(
+  rows: readonly { salesOrderItemId: string; qty: { toString(): string } }[],
+): Map<string, Decimal> {
+  const out = new Map<string, Decimal>();
+  for (const r of rows) {
+    out.set(
+      r.salesOrderItemId,
+      (out.get(r.salesOrderItemId) ?? new Decimal(0)).plus(toDecimal(r.qty.toString())),
+    );
+  }
+  return out;
+}
+
+/**
  * D-278: despacho de lo facturado y no despachado, a la fecha del comprobante.
  *
  * Todo lo que escribe pasa por `DispatchesService.createInTx` —y de ahí por
@@ -112,6 +151,114 @@ export class InvoiceDispatchService {
       // Un despacho por comprobante, con los locks de bobina y saldo de siempre.
       timeout: 60_000,
     });
+  }
+
+  /** D-288: los despachos vigentes que cubren el comprobante, marcando los re-fechables. */
+  async linkedDispatches(invoiceId: string): Promise<InvoiceLinkedDispatchesDto> {
+    const rows = await this.linkedInTx(this.prisma, invoiceId);
+    return {
+      dispatches: rows.map((r) => ({
+        id: r.id,
+        code: dispatchCode(r.seq),
+        dispatchDate: day(r.dispatchDate),
+        atIssueDate: r.atIssueDate,
+      })),
+    };
+  }
+
+  async linkedInTx(client: Prisma.TransactionClient, invoiceId: string) {
+    const invoice = await client.fiscalDocument.findUnique({
+      where: { id: invoiceId },
+      select: { number: true },
+    });
+    if (invoice === null) throw new NotFoundException('Comprobante no encontrado');
+    const rows = await client.dispatch.findMany({
+      where: { invoiceId, status: DispatchStatus.ISSUED },
+      orderBy: { seq: 'asc' },
+      select: { id: true, seq: true, dispatchDate: true, notes: true },
+    });
+    return rows.map((r) => ({ ...r, atIssueDate: isAtIssueDateDispatch(r.notes, invoice.number) }));
+  }
+
+  /**
+   * D-288: re-fecha los despachos «a la fecha del comprobante» después de corregir su emisión,
+   * dentro de la transacción de la corrección (el comprobante ya tiene la fecha nueva). Cada
+   * uno se revierte como corrección de fecha —el movimiento inverso a la fecha del que anula,
+   * y el comprobante que se corrige no bloquea— y lo facturado se vuelve a despachar por
+   * `executeInTx`, que planifica a la fecha nueva. **Lo que se vuelve a despachar tiene que ser
+   * exactamente lo que se revirtió**, línea por línea (autorrevisión P1-2): ni una línea que
+   * hoy iría a revisión, ni lo que una nota de crédito acreditó después (volvería al kardex sin
+   * haber entrado), ni una línea pendiente que no estaba en el despacho. Si no coincide, no se
+   * escribe nada: la transacción entera se deshace. Los despachos manuales no se tocan.
+   */
+  async redateInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    invoiceId: string,
+  ): Promise<{ reversed: string[]; created: string[] } | null> {
+    const linked = (await this.linkedInTx(tx, invoiceId)).filter((d) => d.atIssueDate);
+    if (linked.length === 0) return null;
+    // Todos los despachos antes que nada y en orden de id (autorrevisión P2-3): sin esto, una
+    // reversa concurrente del segundo podía cruzarse con esta, que ya tiene el pedido tomado.
+    const ids = linked.map((d) => d.id).sort();
+    await tx.$queryRaw`
+      SELECT "id" FROM "dispatches" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE
+    `;
+    const reversedQty = sumByLine(
+      await tx.dispatchItem.findMany({
+        where: { dispatchId: { in: ids } },
+        select: { salesOrderItemId: true, qty: true },
+      }),
+    );
+    for (const d of linked) {
+      await this.dispatches.reverseInTx(tx, actor, d.id, REDATE_REASON, {
+        redateInvoiceId: invoiceId,
+      });
+    }
+
+    const planned = (await this.buildPlan(tx, { id: invoiceId })).invoices[0];
+    const lines = planned?.lines ?? [];
+    const stuck = lines.filter((l) => l.action === 'REVIEW');
+    if (stuck.length > 0) {
+      throw new BadRequestException(
+        'No se puede re-fechar el despacho a la fecha nueva: ' +
+          stuck.map((l) => `línea ${String(l.lineNumber)}: ${l.reason ?? ''}`).join('; '),
+      );
+    }
+    const redispatchQty = sumByLine(
+      lines.map((l) => ({ salesOrderItemId: l.orderItemId, qty: l.qty })),
+    );
+    const lineIds = new Set([...reversedQty.keys(), ...redispatchQty.keys()]);
+    const differs = [...lineIds].filter(
+      (lineId) =>
+        !(reversedQty.get(lineId) ?? new Decimal(0)).eq(
+          redispatchQty.get(lineId) ?? new Decimal(0),
+        ),
+    );
+    if (planned === undefined || differs.length > 0) {
+      throw new BadRequestException(
+        'No se puede re-fechar: el despacho nuevo no sería el mismo que se revierte (' +
+          'una nota de crédito o una línea pendiente cambió lo facturado sin despachar). ' +
+          'Resolvelo a mano desde el pedido.',
+      );
+    }
+    const result = await this.executeInTx(tx, actor, invoiceId, planned);
+    const reversed = linked.map((d) => dispatchCode(d.seq));
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.dispatch.redate',
+      entity: 'fiscal_documents',
+      entityId: invoiceId,
+      before: {
+        dispatches: linked.map((d) => ({ code: dispatchCode(d.seq), date: day(d.dispatchDate) })),
+      },
+      after: {
+        dispatchIds: result.dispatchIds,
+        lines: result.lines.map((l) => ({ line: l.lineNumber, operationDate: l.operationDate })),
+        reason: REDATE_REASON,
+      },
+    });
+    return { reversed, created: result.dispatchIds };
   }
 
   /**
@@ -188,8 +335,8 @@ export class InvoiceDispatchService {
           ...base,
           dispatchDate: operationDate,
           notes: afterProduction
-            ? `Despacho de ${invoice.number} a la fecha del último parte de producción (D-285)`
-            : `Despacho a la fecha del comprobante ${invoice.number} (D-278)`,
+            ? atIssueDateNotes.afterProduction(invoice.number)
+            : atIssueDateNotes.atIssueDate(invoice.number),
           items: lines.map((l) => ({
             salesOrderItemId: l.orderItemId,
             qty: l.qty.toFixed(3),
@@ -209,7 +356,7 @@ export class InvoiceDispatchService {
         actor,
         {
           ...base,
-          notes: `Entregado antes del inventario inicial — comprobante ${invoice.number} (D-278)`,
+          notes: atIssueDateNotes.beforeOpening(invoice.number),
           items: beforeOpening.map((l) => ({
             salesOrderItemId: l.orderItemId,
             qty: l.qty.toFixed(3),
@@ -538,6 +685,8 @@ export class InvoiceDispatchService {
           refType: true,
           operationDate: true,
           at: true,
+          reversalOfId: true,
+          notes: true,
         },
       }),
       tx.inventoryBalance.findMany({
@@ -550,21 +699,24 @@ export class InvoiceDispatchService {
     // D-285: con la fecha de la carga inicial movida (simulación del dry-run), el kardex se
     // vuelve a ordenar como lo ordena la base: fecha de operación, grabación, id.
     const moved = sim.movedOpening ?? new Map<string, string>();
-    const dated = movements
-      .map((m) => ({ ...m, date: moved.get(m.id.toString()) ?? day(m.operationDate) }))
-      .sort((a, b) =>
-        a.date !== b.date
-          ? a.date < b.date
+    const dated = dropSameDayReversals(
+      movements.map((m) => ({
+        ...m,
+        date: moved.get(m.id.toString()) ?? day(m.operationDate),
+      })),
+    ).sort((a, b) =>
+      a.date !== b.date
+        ? a.date < b.date
+          ? -1
+          : 1
+        : a.at.getTime() !== b.at.getTime()
+          ? a.at.getTime() - b.at.getTime()
+          : a.id < b.id
             ? -1
-            : 1
-          : a.at.getTime() !== b.at.getTime()
-            ? a.at.getTime() - b.at.getTime()
-            : a.id < b.id
-              ? -1
-              : a.id > b.id
-                ? 1
-                : 0,
-      );
+            : a.id > b.id
+              ? 1
+              : 0,
+    );
     const kardex = new Map<string, PlanItemKardex>();
     for (const m of dated) {
       const key = `${m.itemType}:${m.itemId}`;
