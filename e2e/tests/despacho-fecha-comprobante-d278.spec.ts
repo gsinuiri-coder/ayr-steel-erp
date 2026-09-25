@@ -116,6 +116,35 @@ test.describe('D-278 — despacho a la fecha del comprobante', () => {
       // Nada más que despachar: la tarjeta ya no aparece y el plan viene vacío.
       const after = await getJson<PlanDto>(api, `/api/dispatches/at-issue-date/${invoice.id}`);
       expect(after.lines).toHaveLength(0);
+
+      // D-311/D-312: el pedido atendido dice dónde se entregó —no pide revertir una orden de
+      // producción que nunca existió— y ya no ofrece «Despachar».
+      const reserved = await getJson<{
+        reservations: { status: string; dispatchId: string | null; dispatchCode: string | null }[];
+      }>(api, `/api/sales/orders/${scenario.order.id}`);
+      const delivered = reserved.reservations.find((r) => r.status === 'CONSUMED');
+      expect(delivered?.dispatchId).toBe(dispatchIds[0]);
+      expect(delivered?.dispatchCode).toMatch(/^DES-\d{6}$/);
+
+      await page.goto(`/pedidos/${scenario.order.id}`);
+      const main = page.locator('main');
+      await expect(main.getByRole('heading', { name: scenario.order.code })).toBeVisible({
+        timeout: 60_000,
+      });
+      // El aviso nombra la entrega con un enlace, y la columna de la reserva también.
+      await expect(main.getByRole('alert')).toContainText(
+        `Entregada en ${delivered?.dispatchCode ?? ''}`,
+      );
+      await expect(
+        main.getByRole('alert').getByRole('link', { name: `${delivered?.dispatchCode ?? ''}` }),
+      ).toHaveAttribute('href', `/despachos/${dispatchIds[0] ?? ''}`);
+      await expect(
+        main
+          .getByRole('table')
+          .getByRole('link', { name: `Entregada en ${delivered?.dispatchCode ?? ''}` }),
+      ).toHaveAttribute('href', `/despachos/${dispatchIds[0] ?? ''}`);
+      await expect(main.getByText(/consumidas? por producción/)).toHaveCount(0);
+      await expect(main.getByRole('link', { name: 'Despachar', exact: true })).toHaveCount(0);
     } finally {
       await purgeInvoicingTrail(api, {
         documentIds: trail,

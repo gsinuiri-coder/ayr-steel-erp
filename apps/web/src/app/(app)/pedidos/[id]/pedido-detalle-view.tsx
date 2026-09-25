@@ -12,7 +12,9 @@ import {
   type ReservationDto,
   type RoofingBatchCreateResultDto,
   type SalesItemDto,
+  toDecimal,
   type SalesOrderDto,
+  type SalesOrderProgressDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/lib/session';
@@ -92,6 +94,12 @@ export function PedidoDetalleView({ id }: { id: string }) {
     queryFn: () => api<SalesOrderDto>(`/sales/orders/${id}`),
   });
   const o = order.data;
+  // D-312: lo pendiente de despachar, con la misma consulta y la misma cifra que el formulario
+  // de despacho (`pendingDispatchQty`). Comparte su clave: abrir el formulario no la repite.
+  const progress = useQuery({
+    queryKey: ['order-progress', id],
+    queryFn: () => api<SalesOrderProgressDto>(`/invoicing/orders/${id}/progress`),
+  });
   // Antes de los retornos tempranos: es un hook (el de compartir mira `navigator`).
   const plantSheetActions = usePlantSheetActions(id, o?.code ?? '');
 
@@ -178,7 +186,14 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const queuedRoofingLines = o.reservations.filter(
     (r) => r.status === 'ACTIVE' && r.itemType === 'RAW_MATERIAL' && r.productionOrderId !== null,
   ).length;
-  const consumed = o.reservations.filter((r) => r.status === 'CONSUMED');
+  // D-311: una reserva consumida la consumió una **entrega** (despacho) o una orden de
+  // producción. Solo la segunda impide anular hasta revertir la orden; la primera ya es un
+  // hecho consumado y el aviso dice dónde se entregó.
+  const consumed = o.reservations.filter((r) => r.status === 'CONSUMED' && r.dispatchId === null);
+  const delivered = o.reservations.filter((r) => r.status === 'CONSUMED' && r.dispatchId !== null);
+  const deliveryCodes = [
+    ...new Map(delivered.map((r) => [r.dispatchId, r.dispatchCode] as const)).entries(),
+  ];
   const stale = o.reservations.filter((r) => r.isStale);
   // El botón se apaga cuando una OP viva está fabricando con el material: el propio aviso
   // de abajo dice que no se puede, y dejarlo habilitado terminaba en un diálogo con motivo
@@ -191,6 +206,13 @@ export function PedidoDetalleView({ id }: { id: string }) {
   // pero sí se puede seguir facturando, así que el botón de comprobante vive con este
   // mismo permiso y el API es el que corta lo que ya no queda pendiente.
   const canOperate = o.status !== 'CANCELLED';
+  // D-312: «Despachar» solo si hay algo que despachar. Un pedido atendido o anulado, o cuyas
+  // líneas ya salieron completas, no lo ofrece. Mientras la cifra no llega se asume que sí
+  // (el caso normal), y el API sigue siendo quien corta lo que ya no queda.
+  const hasPendingDispatch =
+    progress.data === undefined ||
+    progress.data.lines.some((l) => toDecimal(l.pendingDispatchQty).gt(0));
+  const canDispatch = canOperate && o.status !== 'FULFILLED' && hasPendingDispatch;
   // F8-S1/M1: anular, liberar una reserva y generar las OP de golpe cambian el mismo
   // pedido; sin este `busy` combinado, "Anular pedido" seguía habilitado mientras
   // "Generar todas las órdenes" del mismo pedido estaba en vuelo.
@@ -270,7 +292,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
               {
                 key: 'dispatch',
                 label: 'Despachar',
-                show: canOperate,
+                show: canDispatch,
                 href: `/despachos/nuevo?pedido=${o.id}`,
               },
               {
@@ -381,6 +403,22 @@ export function PedidoDetalleView({ id }: { id: string }) {
               ? 'Una reserva ya fue consumida'
               : `${consumed.length} reservas ya fueron consumidas`}{' '}
             por producción: el pedido no se puede anular hasta revertir o anular esa orden.
+          </AlertDescription>
+        </Alert>
+      )}
+      {delivered.length > 0 && (
+        <Alert>
+          <AlertDescription>
+            Entregada en{' '}
+            {deliveryCodes.map(([id, code], index) => (
+              <span key={id}>
+                {index > 0 && ', '}
+                <Link href={`/despachos/${id ?? ''}`} className={LINK_CLASSNAME}>
+                  {code}
+                </Link>
+              </span>
+            ))}
+            .
           </AlertDescription>
         </Alert>
       )}
@@ -509,7 +547,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
               <TableHead>Ítem</TableHead>
               <TableHead className="text-right">Cantidad</TableHead>
               <TableHead>Estado</TableHead>
-              <TableHead>Orden de producción</TableHead>
+              <TableHead>Orden o entrega</TableHead>
               <TableHead>Creada</TableHead>
               {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
             </TableRow>
@@ -535,6 +573,12 @@ export function PedidoDetalleView({ id }: { id: string }) {
                     <Link href={`/produccion/${r.productionOrderId}`} className={LINK_CLASSNAME}>
                       {r.productionOrderCode}
                     </Link>
+                  ) : r.dispatchId ? (
+                    <Link href={`/despachos/${r.dispatchId}`} className={LINK_CLASSNAME}>
+                      Entregada en {r.dispatchCode}
+                    </Link>
+                  ) : r.status === 'CONSUMED' ? (
+                    <span className="text-muted-foreground">Consumida</span>
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}

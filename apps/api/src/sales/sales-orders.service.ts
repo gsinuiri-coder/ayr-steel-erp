@@ -117,6 +117,7 @@ import {
   toSalesItemDto,
 } from './sales-lines';
 import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
+import { reservationDispatches } from './reservation-dispatches';
 import { buildPlantOrderPdf } from './plant-order-pdf';
 import { plantLineMeasures } from './plant-measures';
 import { findPriceChanges } from './price-changes';
@@ -2327,7 +2328,7 @@ export class SalesOrdersService {
       },
     });
     const labels = await this.reserveLabels([row]);
-    return this.toReservationDto(row, labels);
+    return this.toReservationDto(row, labels, await reservationDispatches(this.prisma, [row]));
   }
 
   // -------------------------------------------------------------------------
@@ -2696,7 +2697,7 @@ export class SalesOrdersService {
     if (!row) throw new NotFoundException('Pedido no encontrado');
     if (actor) assertSellerAccess(actor, row.sellerId, 'Pedido');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
-    const [actors, context, priceChanges, invoice] = await Promise.all([
+    const [actors, context, priceChanges, invoice, dispatches] = await Promise.all([
       this.resolveActorNames([row.createdById, row.sellerId].filter(Boolean) as string[]),
       this.computeOrderContext(row),
       findPriceChanges(this.prisma, { salesOrderId: id }),
@@ -2710,9 +2711,10 @@ export class SalesOrdersService {
         },
         select: { id: true },
       }),
+      reservationDispatches(this.prisma, row.reservations),
     ]);
     return {
-      ...this.toDto(row, labels, actors, context),
+      ...this.toDto(row, labels, actors, context, dispatches),
       priceChanges,
       isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
     };
@@ -3426,7 +3428,8 @@ export class SalesOrdersService {
       take: 500,
     });
     const labels = await this.reserveLabels(rows);
-    return rows.map((r) => this.toReservationDto(r, labels));
+    const dispatches = await reservationDispatches(this.prisma, rows);
+    return rows.map((r) => this.toReservationDto(r, labels, dispatches));
   }
 
   // -------------------------------------------------------------------------
@@ -3533,8 +3536,10 @@ export class SalesOrdersService {
   private toReservationDto(
     row: ReservationRow,
     labels: Map<string, { label: string; name: string }>,
+    dispatches: ReadonlyMap<string, { id: string; code: string }> = new Map(),
   ): ReservationDto {
     const op = row.productionOrders[0];
+    const dispatch = dispatches.get(row.id);
     const staleFrom = new Date(Date.now() - RESERVATION_STALE_DAYS * 24 * 60 * 60 * 1000);
     const label = labels.get(row.itemId);
     return {
@@ -3553,6 +3558,8 @@ export class SalesOrdersService {
       status: row.status,
       productionOrderId: op?.id ?? null,
       productionOrderCode: op ? productionOrderCode(op.seq) : null,
+      dispatchId: dispatch?.id ?? null,
+      dispatchCode: dispatch?.code ?? null,
       isStale: row.status === ReservationStatus.ACTIVE && row.createdAt < staleFrom,
       createdAt: row.createdAt.toISOString(),
       consumedAt: row.consumedAt?.toISOString() ?? null,
@@ -3576,6 +3583,7 @@ export class SalesOrdersService {
     labels: Map<string, { label: string; name: string }>,
     actors: Map<string, string>,
     context?: { queueStatus: QueueStatus | null; readiness: OrderReadinessDto },
+    dispatches?: ReadonlyMap<string, { id: string; code: string }>,
   ): SalesOrderDto {
     const readiness = context?.readiness ?? {
       status: 'SIN_PRODUCCION' as const,
@@ -3606,7 +3614,7 @@ export class SalesOrdersService {
       totalPen: row.totalPen.toFixed(4),
       notes: row.notes,
       items: row.items.map((i) => toSalesItemDto(i, labels.get(i.reserveItemId)?.label ?? '')),
-      reservations: row.reservations.map((r) => this.toReservationDto(r, labels)),
+      reservations: row.reservations.map((r) => this.toReservationDto(r, labels, dispatches)),
       createdAt: row.createdAt.toISOString(),
       createdById: row.createdById,
       createdByName: actors.get(row.createdById) ?? null,
