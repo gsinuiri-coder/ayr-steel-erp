@@ -54,6 +54,65 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
 - **D-285** (2026-09-25, rama `fix/inventario-inicial-fecha`, PR #21, desplegado y ejecutado).
   Autorrevisión por un subagente nuevo del mismo modelo: 0 P0, 2 P1 corregidos antes de ejecutar.
   Motivo: el mismo. Pieza de riesgo: la migración que relaja el trigger append-only.
+  **2026-09-25:** revisión por un **segundo modelo** (Sonnet, contexto limpio) sobre
+  `e27570a..5100da2` (`docs/revision/corr02-segundo-modelo.md`): 0 P0, 1 P1 (corregido en
+  D-287), 4 P2. Otro modelo, no otra persona: sigue pendiente la revisión humana.
+- **Cierre post-ventana** (2026-09-25, PR #23 → D-286 y PR #24 → D-287). Autorrevisión de #24 por
+  un subagente nuevo del mismo modelo: 0 P0, 0 P1, 3 P2 (dos corregidos en la rama). #23 no tuvo
+  pase aparte: es la reversa literal de la migración de D-285. Motivo: el mismo.
+
+## Cierre post-ventana (2026-09-25)
+
+Handoff: `docs/handoff/cierre-post-ventana.md`. Orden del dueño, de corrido. D-286 y D-287.
+
+- **Kardex estricto (D-286, PR #23).** Respaldo `respaldo-pre-kardex-estricto-20260925`
+  (`br-blue-night-aeconhje`, padre production, ready). `migrate status`: 1 pendiente;
+  `migrate diff` = drift conocido exacto (5 defaults, 5 FK, 2 índices, 1 renombre). `db:prod`
+  aplicó `20260925120000_kardex_append_only_estricto`. Contra production, en transacciones que
+  siempre se revierten y escribiendo el mismo valor: con `ayr.opening_date_move = 'on'` el
+  UPDATE de un IMPORT falla, y un UPDATE de `unit_cost` también (`inventory_movements es
+append-only: no se permite UPDATE`); la función quedó idéntica a la de `20260903120000`. API
+  `ayr-steel-erp-api-00050-hvk` (`git-sha=a472252`), health 200, `smoke:prod` verde, merge
+  `11628d2`, diff de runtime vacío. CI de la PR verde (Sonar incluido).
+- **Saldo corrido de todo el kardex (solo lectura).** 304 movimientos, 109 ítems (92 bobinas, 17
+  productos), en el orden del kardex: **ningún saldo negativo en ninguna fecha**; saldo final =
+  `inventory_balances` en los 109. Las 64 bobinas con compra de agosto grabada después nunca
+  bajan de 0. 0 líneas despachadas sin salida.
+- **Cabecera del PEPS.** `COMPANY_RUC=20608427377` y `COMPANY_LEGAL_NAME=PERFILES METALICOS A &
+R E.I.R.L.` en Cloud Run por `--env-vars-file` (revisión `00051-k7j`, label intacto, los 9
+  secretos montados, health 200). **Sin verificar en el Excel:** leerlo desde la sesión del
+  navegador exigía tomar el token de la sesión y quedó bloqueado; lo confirma el dueño
+  descargando el PEPS. `deploy-api.mjs` las conserva desde D-287 (antes un deploy las borraba).
+- **Capturas «después» de M8** (cotización, pedido y comprobante nuevos, sin guardar nada) en
+  `local-data/capturas-corr02-despues/` del checkout principal; guía del cliente actualizada.
+  **Las capturas «antes» se perdieron:** vivían en el `local-data/` del worktree de corr02, que
+  se borró. De ahí la regla nueva de AGENTS.md §4.
+- **Revisión de segundo modelo** (`docs/revision/corr02-segundo-modelo.md`): P1-1 y P2-3 →
+  D-287. **P2 a seguimiento:**
+  - P2-1 (carrera de dos `execute` de D-285): cerrado por D-286.
+  - P2-2 (fecha 2026-08-01 fija en el SQL del trigger): sin efecto desde D-286.
+  - P2-4 (`addMissingMovementInTx` usa la unidad de venta como respaldo de la del kardex):
+    abierto; inalcanzable con D-285 deshabilitada.
+- **D-287 (PR #24).** Autorrevisión: 0 P0, 0 P1. P2 corregidos: tests puros del cupo
+  (`invoice-dispatch-plan.spec.ts`) y el comentario de `ENV_VARS`. **P2 abierto:** el test de
+  servicio de D-287 no tiene parte de producción (`notBefore` nulo); falta un caso con el kardex
+  corto por otra salida. Unitarios de la API 1165 en el primer commit más 17/17 del plan en el
+  segundo, `test:scripts` 38, CI verde en `a5b39c5` (Sonar incluido). API
+  `ayr-steel-erp-api-00052-mcz` (`git-sha=a5b39c5`), `COMPANY_*` conservadas por el deploy,
+  health 200, `smoke:prod` verde, merge `5f6eacc`, diff de runtime vacío. Dry-run de solo
+  lectura `pnpm dispatch:at-issue-date --branch production`: **0 comprobantes, 0 líneas a
+  revisión**.
+- **Margen de agosto** (`SalesMarginService`, 01–31/08, solo lectura): venta S/ 308 419.8262,
+  costo S/ 273 568.7489, margen S/ 34 851.0773 (**11.30 %**); 28 pedidos, todos `COMPLETO`, 0
+  parciales, 0 no rastreables. Menores: PED-000018 0.08 %, PED-000034 6.38 %, PED-000035 6.38 %,
+  PED-000028 7.33 %, PED-000027 7.37 %. Mayores: PED-000021 22.56 %, PED-000013 21.77 %,
+  PED-000001 20.45 %, PED-000014 18.72 %, PED-000020 18.48 %. La foto de D-285 decía venta
+  S/ 304 394.4022 y 11.35 %: la venta de agosto subió S/ 4 025.4240 desde entonces (sin
+  investigar en esta sesión; PED-000034/035 son los candidatos por número).
+
+**Pendientes que deja:** confirmar la cabecera en el Excel del PEPS; P2-4; el P2 abierto de
+D-287; los respaldos de Neon de las ventanas del 24 y 25 quedan para proponer su borrado cuando
+cumplan siete días.
 
 ## Ventana de correcciones 02 (2026-09-24 → 25)
 
