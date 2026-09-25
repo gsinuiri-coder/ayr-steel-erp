@@ -30,6 +30,7 @@ function report(): KardexPepsReport {
           balanceUnitCost: '5.0000',
           balanceTotal: '500.0000',
           warning: null,
+          outLayers: null,
         },
         {
           movementId: '2',
@@ -44,6 +45,7 @@ function report(): KardexPepsReport {
           balanceUnitCost: '5.0000',
           balanceTotal: '300.0000',
           warning: 'Faltan 2 kg de capa',
+          outLayers: [{ qty: '40.000', unitCost: '5.0000', total: '200.0000' }],
         },
       ],
       closing: { ...balance, qty: '60.000', unitCost: '5.0000', total: '300.0000' },

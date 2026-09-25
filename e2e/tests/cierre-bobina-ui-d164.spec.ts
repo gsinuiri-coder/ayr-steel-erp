@@ -254,7 +254,7 @@ test.describe('D-164 — cerrar una bobina con saldo desde la pantalla', () => {
     await expect(page.getByRole('heading', { name: 'Kardex' })).toBeVisible({ timeout: 60_000 });
     const filaCompleta = filaDeCierre(page);
     await expect(filaCompleta).toHaveCount(1);
-    await expect(filaCompleta).toContainText('60.000 kg');
+    await expect(filaCompleta).toContainText('60.000');
     // Sale al costo promedio vigente (D-028/D-040), como toda salida.
     await expect(filaCompleta).toContainText('S/ 4.0000');
     await expect(filaCompleta).toContainText('S/ 240.00');
@@ -321,7 +321,7 @@ test.describe('D-164 — cerrar una bobina con saldo desde la pantalla', () => {
     await page.getByRole('link', { name: 'Ver kardex completo' }).click();
     await expect(page.getByRole('heading', { name: 'Kardex' })).toBeVisible({ timeout: 60_000 });
     const filaCompleta = filaDeCierre(page);
-    await expect(filaCompleta).toContainText('50.000 kg');
+    await expect(filaCompleta).toContainText('50.000');
     await expect(filaCompleta).toContainText('S/ 200.00');
   });
 });

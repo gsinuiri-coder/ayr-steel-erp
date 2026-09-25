@@ -50,6 +50,13 @@ describe('valuePeps', () => {
     expect(out?.balanceQty).toBe('30.000');
     expect(out?.balanceTotal).toBe('360.0000');
     expect(out?.balanceUnitCost).toBe('12.0000');
+    // D-298: la hoja del cliente abre la salida en una fila por capa, cada una a su costo.
+    expect(out?.outLayers).toEqual([
+      { qty: '100.000', unitCost: '10.0000', total: '1000.0000' },
+      { qty: '20.000', unitCost: '12.0000', total: '240.0000' },
+    ]);
+    // Las capas suman lo que la fila declara.
+    expect(result.rows[0]?.outLayers).toBeNull();
     expect(result.closing.layers).toEqual([
       { qty: '30.000', unitCost: '12.0000', total: '360.0000' },
     ]);

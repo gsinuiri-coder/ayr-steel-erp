@@ -352,6 +352,24 @@ export type KardexPepsQuery = z.infer<typeof kardexPepsQuerySchema>;
  * costo promedio. Sale del mismo servicio (`KardexPepsService.report`): no recalcula nada.
  * Todos los importes viajan como string (D-003).
  */
+/**
+ * D-298 — el Excel del kardex de un ítem con el formato del cliente, en el método elegido. Solo
+ * ADMINISTRADOR (lleva costos, como el Excel PEPS). El rango es obligatorio: sin fechas la
+ * pantalla manda desde el principio de los tiempos hasta hoy.
+ */
+export const kardexSheetQuerySchema = z
+  .object({
+    itemType: z.enum(['PRODUCT', 'COIL'], {
+      errorMap: () => ({ message: 'El kardex es de un producto o de una bobina' }),
+    }),
+    itemId: z.string().uuid(),
+    from: operationDateSchema,
+    to: operationDateSchema,
+    method: z.enum(['AVERAGE', 'PEPS']).default('AVERAGE'),
+  })
+  .refine((v) => v.from <= v.to, { message: 'El rango termina antes de empezar' });
+export type KardexSheetQuery = z.infer<typeof kardexSheetQuerySchema>;
+
 export interface KardexPepsLayerDto {
   qty: string;
   unitCost: string;
@@ -384,6 +402,8 @@ export interface KardexPepsRowDto {
   balanceTotal: string;
   /** Advertencia de la fila y nota del movimiento, juntas (la columna «Observación» del Excel). */
   observation: string | null;
+  /** D-298: las capas de las que sale una salida (una porción por capa); null si no es salida. */
+  outLayers: KardexPepsLayerDto[] | null;
 }
 export interface KardexPepsReportDto {
   from: string;

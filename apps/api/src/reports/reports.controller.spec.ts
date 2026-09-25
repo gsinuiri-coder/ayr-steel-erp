@@ -5,6 +5,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import type { InventoryValuationService } from './inventory-valuation.service';
 import type { KardexPepsService } from './kardex-peps.service';
+import type { KardexSheetService } from './kardex-sheet.service';
 import { ReportsController } from './reports.controller';
 import type { ReportsService } from './reports.service';
 import type { SalesMarginService } from './sales-margin.service';
@@ -90,13 +91,15 @@ function build() {
   const inventoryValuation = { valuation: jest.fn().mockResolvedValue(VALUATION) };
   const salesMargin = { salesMargin: jest.fn().mockResolvedValue(MARGIN) };
   const kardexPeps = { report: jest.fn().mockResolvedValue(PEPS) };
+  const kardexSheet = { sheet: jest.fn() };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
     salesMargin as unknown as SalesMarginService,
     kardexPeps as unknown as KardexPepsService,
+    kardexSheet as unknown as KardexSheetService,
   );
-  return { controller, reports, inventoryValuation, salesMargin, kardexPeps };
+  return { controller, reports, inventoryValuation, salesMargin, kardexPeps, kardexSheet };
 }
 
 describe('ReportsController', () => {
@@ -110,6 +113,9 @@ describe('ReportsController', () => {
     expect(rolesOf('inventoryValuationXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('salesMarginXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('kardexPepsXlsxFile')).toEqual([Role.ADMINISTRADOR]);
+    // D-296/D-298: el PEPS en JSON y el Excel del cliente llevan costos: solo ADMINISTRADOR.
+    expect(rolesOf('kardexPepsJson')).toEqual([Role.ADMINISTRADOR]);
+    expect(rolesOf('kardexSheetXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
   });
 

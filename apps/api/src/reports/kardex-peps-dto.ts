@@ -37,6 +37,7 @@ export function kardexPepsToDto(report: KardexPepsReport): KardexPepsReportDto {
         balanceUnitCost: row.balanceUnitCost,
         balanceTotal: row.balanceTotal,
         observation: observation || null,
+        outLayers: row.outLayers,
       };
     }),
     closing: peps.closing,

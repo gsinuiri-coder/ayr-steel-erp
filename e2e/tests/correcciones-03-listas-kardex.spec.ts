@@ -226,11 +226,22 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
         'aria-pressed',
         'true',
       );
-      const movementRows = page.getByRole('row').filter({ hasText: /Entrada|Salida/ });
+      // D-298: la hoja del cliente —cabecera Producto / Código / Método y las columnas Fecha,
+      // Detalle, ENTRADAS, SALIDAS y SALDO—, igual para los dos métodos.
+      const header = page.getByTestId('kardex-header');
+      await expect(header).toContainText('Producto');
+      await expect(header).toContainText(scenario.coil.code);
+      await expect(header).toContainText('Método');
+      const sheet = page.getByTestId('kardex-sheet');
+      for (const group of ['Fecha', 'Detalle', 'ENTRADAS', 'SALIDAS', 'SALDO']) {
+        await expect(sheet.getByRole('columnheader', { name: group })).toBeVisible();
+      }
+      // La compra y la salida de producción son de hoy.
+      const movementRows = sheet.getByRole('row').filter({ hasText: /Compra|Producción/ });
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
-      // Saldo corrido: el ingreso deja el peso completo de la bobina.
-      await expect(page.getByRole('row').filter({ hasText: 'Entrada' }).first()).toContainText(
-        '2,000.000 kg',
+      // Saldo corrido: el ingreso deja el peso completo de la bobina (cantidad y monto).
+      await expect(sheet.getByRole('row').filter({ hasText: 'Compra' }).first()).toContainText(
+        '2,000.000',
       );
 
       // Mes anterior: vacío, y el rango queda en la URL.
@@ -253,38 +264,57 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       );
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
 
-      // D-295: filtro de texto por columna en el kardex del ítem (no pagina): solo las salidas.
+      // D-295: filtro de texto del detalle (no pagina): solo la salida de producción.
       const totalMovements = await movementRows.count();
       expect(totalMovements).toBeGreaterThanOrEqual(2);
-      await page.getByLabel('Filtrar por movimiento').fill('Salida');
+      await page.getByLabel('Filtrar por detalle').fill('Producción');
       await expect(movementRows).toHaveCount(1);
-      await expect(movementRows.first()).toContainText('Salida');
-      await page.getByLabel('Filtrar por movimiento').fill('zzz');
+      await expect(movementRows.first()).toContainText('Producción');
+      await page.getByLabel('Filtrar por detalle').fill('zzz');
       await expect(
-        page.getByText('Ningún movimiento coincide con los filtros de columna.'),
+        page.getByText('Ningún movimiento coincide con el filtro del detalle.'),
       ).toBeVisible();
-      await page.getByLabel('Filtrar por movimiento').fill('');
+      await page.getByLabel('Filtrar por detalle').fill('');
       await expect(movementRows).toHaveCount(totalMovements);
 
-      // D-296: método de costeo PEPS junto al promedio, con las mismas filas del Excel.
+      // D-296/D-298: método de costeo PEPS con el mismo formato.
       await selectOption(page, page.getByRole('combobox', { name: 'Método de costeo' }), 'PEPS');
       await expect(page).toHaveURL(/costing=peps/);
-      const pepsTable = page.getByTestId('kardex-peps');
-      await expect(pepsTable).toBeVisible({ timeout: 30_000 });
-      await expect(pepsTable.getByText('Saldo inicial')).toBeVisible();
-      await expect(pepsTable.getByText('Totales')).toBeVisible();
-      await expect(
-        pepsTable.getByRole('row').filter({ hasText: '2,000.000' }).first(),
-      ).toBeVisible();
+      await expect(sheet.getByText('Saldo inicial')).toBeVisible({ timeout: 30_000 });
+      await expect(sheet.getByText('Totales')).toBeVisible();
+      await expect(sheet.getByRole('row').filter({ hasText: '2,000.000' }).first()).toBeVisible();
+      // «Descargar Excel» apunta al formato del cliente en el método elegido.
+      await page.setViewportSize({ width: 1366, height: 768 });
+      await page.screenshot({ path: 'test-results/kardex-hoja-peps.png' });
+      await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+        'href',
+        /\/api\/reports\/kardex\/xlsx\?.*method=PEPS/,
+      );
       await page.reload();
-      await expect(page.getByTestId('kardex-peps')).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId('kardex-sheet').getByText('Saldo inicial')).toBeVisible({
+        timeout: 30_000,
+      });
       await selectOption(
         page,
         page.getByRole('combobox', { name: 'Método de costeo' }),
         'Promedio (por defecto)',
       );
       await expect(page).not.toHaveURL(/costing=/);
-      await expect(page.getByTestId('kardex-peps')).toHaveCount(0);
+      await expect(page.getByTestId('kardex-sheet').getByText('Saldo inicial')).toHaveCount(0);
+      await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+        'href',
+        /method=AVERAGE/,
+      );
+
+      // El Excel del cliente baja en los dos métodos (solo ADMINISTRADOR) y es un .xlsx.
+      for (const method of ['AVERAGE', 'PEPS']) {
+        const file = await api.get(
+          `/api/reports/kardex/xlsx?itemType=COIL&itemId=${scenario.coil.id}&from=2000-01-01&to=2100-01-01&method=${method}`,
+        );
+        expect(file.ok(), `El Excel ${method} debía bajar`).toBe(true);
+        expect(file.headers()['content-type']).toContain('spreadsheetml');
+        expect((await file.body()).subarray(0, 2).toString()).toBe('PK');
+      }
 
       // --- Catálogo: búsqueda por SKU, en la URL ---
       await page.goto('/catalogo');

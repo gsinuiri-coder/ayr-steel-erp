@@ -63,6 +63,8 @@ export const inventoryMovementSchema = z.object({
    */
   balanceQty: z.string().nullable(),
   balanceAvgCost: z.string().nullable().optional(),
+  /** D-298: el valor del saldo corrido (cantidad × promedio), para la hoja del cliente. */
+  balanceTotalCost: z.string().nullable().optional(),
 });
 export type InventoryMovementDto = z.infer<typeof inventoryMovementSchema>;
 

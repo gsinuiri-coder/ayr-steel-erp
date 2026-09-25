@@ -1103,6 +1103,7 @@ export class InventoryService {
         operationDate: fromDateOnly(m.operationDate),
         balanceQty: singleItem ? runningQty.toFixed(3) : null,
         balanceAvgCost: singleItem && showCosts ? toFixedString(runningAvg, 'MONEY') : null,
+        balanceTotalCost: singleItem && showCosts ? toFixedString(runningValue, 'MONEY') : null,
       } satisfies InventoryMovementDto;
     });
 
