@@ -221,8 +221,16 @@ export type InventoryValuationDto = z.infer<typeof inventoryValuationSchema>;
  *   rango no declaran su despacho, así que su venta parcial no se puede cruzar con un costo
  *   de la misma porción. Se muestra la venta, el costo va vacío y **queda fuera de los
  *   totales de margen**, listado aparte. Prorratear daría un número inventado.
+ * - `NO_RASTREABLE` (D-285): alguna línea del pedido se despachó sin su salida de kardex, así
+ *   que su costo no se puede rastrear. Fuera de los totales de margen y contado aparte: con costo
+ *   0 se leía como margen del 100 %.
  */
-export const MARGIN_COST_STATUSES = ['COMPLETO', 'PARCIAL', 'NO_COMPARABLE'] as const;
+export const MARGIN_COST_STATUSES = [
+  'COMPLETO',
+  'PARCIAL',
+  'NO_COMPARABLE',
+  'NO_RASTREABLE',
+] as const;
 export type MarginCostStatus = (typeof MARGIN_COST_STATUSES)[number];
 
 export const salesMarginQuerySchema = z
@@ -315,6 +323,9 @@ export const salesMarginSchema = z.object({
     /** Cuántas filas quedaron fuera por no ser comparables, y cuánta venta se llevaron. */
     excludedOrderCount: z.number().int(),
     excludedSalesPen: z.string(),
+    /** D-285: pedidos despachados sin salida de kardex, fuera del margen, y su venta. */
+    untraceableOrderCount: z.number().int(),
+    untraceableSalesPen: z.string(),
   }),
 });
 export type SalesMarginDto = z.infer<typeof salesMarginSchema>;

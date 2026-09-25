@@ -56,7 +56,7 @@ interface Seeds {
   costs?: { orderId: string; invoiceId?: string | null; line?: string; cost: string }[];
   opMaterial?: { orderId: string; material: string }[];
   salesByLine?: { documentId: string; line: string | null; subtotal: string }[];
-  pending?: { orderId: string; pending: boolean }[];
+  pending?: { orderId: string; pending: boolean; untraceable?: boolean }[];
 }
 
 async function buildService(
@@ -68,7 +68,11 @@ async function buildService(
     calls.push(sql);
     if (sql.includes('BOOL_OR')) {
       return Promise.resolve(
-        (seeds.pending ?? []).map((p) => ({ sales_order_id: p.orderId, pending: p.pending })),
+        (seeds.pending ?? []).map((p) => ({
+          sales_order_id: p.orderId,
+          pending: p.pending,
+          untraceable: p.untraceable ?? false,
+        })),
       );
     }
     if (sql.includes('AS "outside"')) {
@@ -448,5 +452,34 @@ describe('SalesMarginService', () => {
     expect(salesMarginQuerySchema.safeParse({ from: '2026-09-01', to: '2026-09-30' }).success).toBe(
       true,
     );
+  });
+});
+
+/**
+ * D-285: un pedido despachado con alguna línea sin salida de kardex (lo «entregado antes del
+ * inventario inicial» de D-278) no tiene costo rastreable. Con costo 0 aparecía con margen del
+ * 100 %: queda fuera de los totales de margen y se cuenta aparte.
+ */
+describe('SalesMarginService — costo no rastreable (D-285)', () => {
+  it('despachado sin salida de kardex: NO_RASTREABLE, fuera del margen y contado aparte', async () => {
+    const { service } = await buildService({
+      documents: [
+        { id: 'd1', subtotal: '1000.0000', orderId: 'o1' },
+        { id: 'd2', subtotal: '500.0000', orderId: 'o2', orderSeq: 2 },
+      ],
+      costs: [{ orderId: 'o2', cost: '300.0000' }],
+      pending: [
+        { orderId: 'o1', pending: false, untraceable: true },
+        { orderId: 'o2', pending: false },
+      ],
+    });
+    const report = await service.salesMargin({ from: '2026-09-01', to: '2026-09-30' });
+    const o1 = report.orders.find((o) => o.salesOrderId === 'o1');
+    expect(o1).toMatchObject({ costStatus: 'NO_RASTREABLE', inTotals: false, costPen: null });
+    expect(report.totals.salesPen).toBe('500.0000');
+    expect(report.totals.costPen).toBe('300.0000');
+    expect(report.totals.untraceableOrderCount).toBe(1);
+    expect(report.totals.untraceableSalesPen).toBe('1000.0000');
+    expect(report.totals.excludedOrderCount).toBe(0);
   });
 });

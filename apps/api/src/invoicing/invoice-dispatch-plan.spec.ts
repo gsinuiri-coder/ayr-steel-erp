@@ -154,3 +154,24 @@ describe('planInvoiceDispatches — bobinas (autorrevisión P2-3)', () => {
     expect(plan[0]?.lines[0]?.reason).toContain('inventario inicial');
   });
 });
+
+describe('planInvoiceDispatches — fecha del parte de producción (D-285)', () => {
+  it('la salida va el día más tardío entre la emisión y el parte de producción', () => {
+    const inv = invoice('F1', '2026-08-05', [{ itemKey: 'COB', qty: '226.8' }]);
+    inv.lines[0]!.notBefore = '2026-09-15';
+    const plan = planInvoiceDispatches(
+      [inv],
+      new Map([['COB', kardex(null, [['2026-09-15', 600]])]]),
+    );
+    expect(plan[0]?.lines[0]).toMatchObject({ action: 'DISPATCH', operationDate: '2026-09-15' });
+  });
+
+  it('las salidas previas del mismo arreglo se suman al kardex simulado', () => {
+    const plan = planInvoiceDispatches(
+      [invoice('F1', '2026-09-10', [{ itemKey: 'A', qty: '60' }])],
+      new Map([['A', kardex(null, [['2026-09-01', 100]])]]),
+      new Map([['A', [{ date: '2026-09-02', qty: new Decimal(50) }]]]),
+    );
+    expect(plan[0]?.lines[0]?.action).toBe('REVIEW');
+  });
+});

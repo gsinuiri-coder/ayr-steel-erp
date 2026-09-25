@@ -243,6 +243,8 @@ export function salesMarginXlsx(report: SalesMarginDto): { buffer: Buffer; filen
       ['Pedidos con costo parcial', report.totals.partialOrderCount, null, null, null],
       ['Pedidos fuera de los totales', report.totals.excludedOrderCount, null, null, null],
       ['Venta fuera de los totales', num(report.totals.excludedSalesPen), null, null, null],
+      ['Pedidos con costo no rastreable', report.totals.untraceableOrderCount, null, null, null],
+      ['Venta con costo no rastreable', num(report.totals.untraceableSalesPen), null, null, null],
     ],
   };
 
@@ -256,4 +258,5 @@ const COST_STATUS_LABELS: Record<SalesMarginDto['orders'][number]['costStatus'],
   COMPLETO: 'Completo',
   PARCIAL: 'Costo parcial',
   NO_COMPARABLE: 'No comparable',
+  NO_RASTREABLE: 'Costo no rastreable',
 };

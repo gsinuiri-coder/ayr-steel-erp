@@ -11,7 +11,8 @@
     "prisma/normalize-coil-skus-cli.ts",
     "prisma/sweep-imported-documents-cli.ts",
     "prisma/retire-unused-color-cli.ts",
-    "prisma/dispatch-at-issue-date-cli.ts"
+    "prisma/dispatch-at-issue-date-cli.ts",
+    "prisma/opening-date-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

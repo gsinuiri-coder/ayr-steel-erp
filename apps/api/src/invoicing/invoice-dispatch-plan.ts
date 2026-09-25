@@ -43,6 +43,11 @@ export interface PlanInvoiceLine {
   /** Lo facturado y todavía no despachado, en la unidad de venta. */
   qty: Decimal;
   target: PlanTarget;
+  /**
+   * D-285: la salida no puede ser anterior a esta fecha (el último parte de producción que
+   * generó el stock de la línea). La salida va el día más tardío entre la emisión y este.
+   */
+  notBefore?: string | null;
 }
 
 export interface PlanInvoice {
@@ -108,8 +113,12 @@ export function firstNegativeDate(
 export function planInvoiceDispatches(
   invoices: readonly PlanInvoice[],
   kardexByItem: ReadonlyMap<string, PlanItemKardex>,
+  /** Salidas que se crean antes que este plan (D-285): se suman al kardex simulado. */
+  priorOuts: ReadonlyMap<string, readonly { date: string; qty: Decimal }[]> = new Map(),
 ): PlannedInvoice[] {
-  const outsByItem = new Map<string, { date: string; qty: Decimal }[]>();
+  const outsByItem = new Map<string, { date: string; qty: Decimal }[]>(
+    [...priorOuts].map(([k, v]) => [k, [...v]]),
+  );
   const ordered = [...invoices].sort((a, b) =>
     a.issueDate === b.issueDate
       ? a.number.localeCompare(b.number)
@@ -128,7 +137,10 @@ export function planInvoiceDispatches(
         lineNumber: line.lineNumber,
         sku: line.sku,
         qty: line.qty,
-        operationDate: inv.issueDate,
+        operationDate:
+          line.notBefore !== undefined && line.notBefore !== null && line.notBefore > inv.issueDate
+            ? line.notBefore
+            : inv.issueDate,
       };
       if (!line.target.ok) {
         return {
@@ -166,7 +178,7 @@ export function planInvoiceDispatches(
         };
       }
       const outs = outsByItem.get(itemKey) ?? [];
-      const candidate = [...outs, { date: inv.issueDate, qty: reserveQty }];
+      const candidate = [...outs, { date: base.operationDate, qty: reserveQty }];
       const negativeOn = firstNegativeDate(kardex.movements, candidate);
       if (negativeOn !== null) {
         return {
@@ -174,7 +186,7 @@ export function planInvoiceDispatches(
           reserveQty,
           itemKey,
           action: 'REVIEW',
-          reason: `Una salida el ${inv.issueDate} deja el kardex negativo el ${negativeOn}`,
+          reason: `Una salida el ${base.operationDate} deja el kardex negativo el ${negativeOn}`,
         };
       }
       outsByItem.set(itemKey, candidate);
