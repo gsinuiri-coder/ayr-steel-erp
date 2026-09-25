@@ -17,6 +17,9 @@ export function invalidateSales(
   if (ids.orderId) void queryClient.invalidateQueries({ queryKey: ['sales-order', ids.orderId] });
   void queryClient.invalidateQueries({ queryKey: ['quotations'] });
   void queryClient.invalidateQueries({ queryKey: ['sales-orders'] });
+  // D-312: lo pendiente de despachar (el que decide si el pedido ofrece «Despachar») cambia al
+  // agregar o quitar cantidad del pedido.
+  void queryClient.invalidateQueries({ queryKey: ['order-progress'] });
   void queryClient.invalidateQueries({ queryKey: ['reservations'] });
   // D-185: reservar, liberar, editar y confirmar cambian la vista de temporales vigentes.
   void queryClient.invalidateQueries({ queryKey: ['temporary-reservations'] });

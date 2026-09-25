@@ -324,7 +324,7 @@ describe('D-310: una bobina entera atada a otra cotización abierta no se vende 
       resolveSalesLines(tied('v-1'), [hand], {
         coilTies: { viewer: { id: 'v-2', role: Role.VENDEDOR } },
       }),
-    ).rejects.toThrow(/no se puede vender: no disponible/);
+    ).rejects.toThrow(/no se puede vender: no disponible$/);
   });
 
   it('la cotización que se edita no compite consigo misma', async () => {
@@ -336,6 +336,13 @@ describe('D-310: una bobina entera atada a otra cotización abierta no se vende 
       { where: { quotation: { id: { notIn: string[] } } } },
     ][];
     expect(calls[0]?.[0].where.quotation.id).toEqual({ notIn: ['q-1'] });
+  });
+
+  it('la bobina que el documento ya vendía no se rechaza al editarlo (dato anterior a D-310)', async () => {
+    const [line] = await resolveSalesLines(tied('v-1'), [hand], {
+      coilTies: { keepCoilIds: new Set([COIL_ID]) },
+    });
+    expect(line?.reserveItemId).toBe(COIL_ID);
   });
 
   it('una bobina libre pasa', async () => {

@@ -277,7 +277,11 @@ export class QuotationsService {
               }
             : {}),
           // D-310: la propia cotización no compite consigo misma; las de otros sí.
-          coilTies: { exceptQuotationIds: [id], viewer: actor },
+          coilTies: {
+            exceptQuotationIds: [id],
+            viewer: actor,
+            keepCoilIds: await this.storedCoilIds(tx, id),
+          },
         });
         const totals = documentTotals(lines);
         // D-157: una cotización **sin vencimiento** (la trajo el importador) lo sigue siendo al

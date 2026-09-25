@@ -186,7 +186,15 @@ export interface ResolveSalesLinesOptions {
    * dice «no disponible» (un VENDEDOR frente a la de otro, D-267/D-275). Las líneas del papel
    * ya pasan por `assertPaperCoilsInPool` y no se repiten.
    */
-  coilTies?: { exceptQuotationIds?: readonly string[]; viewer?: { id: string; role: Role } };
+  coilTies?: {
+    exceptQuotationIds?: readonly string[];
+    viewer?: { id: string; role: Role };
+    /**
+     * Bobinas que el documento que se edita **ya vendía**: no se rechazan aunque otra cotización
+     * abierta también las tenga (dato anterior a D-310); solo se rechaza lo que se agrega o cambia.
+     */
+    keepCoilIds?: ReadonlySet<string>;
+  };
 }
 
 export async function resolveSalesLines(
@@ -868,6 +876,7 @@ async function assertCoilsNotTied(
   const lineOfCoil = new Map<string, number>();
   for (const [index, item] of items.entries()) {
     if (item.saleCoilId === undefined || isPaperLine(index)) continue;
+    if (options.coilTies.keepCoilIds?.has(item.saleCoilId)) continue;
     lineOfCoil.set(item.saleCoilId, index);
   }
   if (lineOfCoil.size === 0) return;
@@ -879,8 +888,11 @@ async function assertCoilsNotTied(
     if (reason === undefined) continue;
     const at = `Línea ${String((options.firstLineNumber ?? 1) + index)}`;
     const code = saleCoilById.get(coilId)?.coilCode ?? coilId;
+    // Para un VENDEDOR frente a la cotización de otro, el motivo ya es «no disponible»: no se
+    // añade nada que confirme que otra cotización la tiene.
+    const detail = reason === 'no disponible' ? '' : ' (otra cotización abierta la vende entera)';
     throw new BadRequestException(
-      `${at}: la bobina ${code} no se puede vender: ${reason} (otra cotización abierta la vende entera)`,
+      `${at}: la bobina ${code} no se puede vender: ${reason}${detail}`,
     );
   }
 }
