@@ -39,6 +39,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'invoicing.credit-note.create': 'Nota de crédito creada',
   'invoicing.dispatch.create': 'Despacho creado',
   'invoicing.dispatch.reverse': 'Despacho revertido',
+  'invoicing.dispatch.redate': 'Despacho re-fechado con la fecha de emisión corregida',
   'invoicing.dispatch-note.create': 'Guía de remisión creada',
   'invoicing.document.correct': 'Comprobante corregido y reemitido',
   'invoicing.document.create': 'Comprobante creado',

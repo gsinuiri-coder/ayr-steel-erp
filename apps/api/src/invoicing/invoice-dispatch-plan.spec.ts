@@ -1,6 +1,8 @@
 import { Decimal } from '@ayr/shared';
 import {
   allocateUndispatched,
+  dropSameDayReversals,
+  firstNegativeDate,
   planInvoiceDispatches,
   type PlanInvoice,
   type PlanItemKardex,
@@ -240,5 +242,36 @@ describe('planInvoiceDispatches — cupo de lo fabricado y reservado (D-287)', (
       new Map([['A', kardex(null, [['2026-09-10', 100]])]]),
     );
     expect(plan.map((p) => p.lines[0]?.action)).toEqual(['DISPATCH', 'REVIEW']);
+  });
+});
+
+describe('dropSameDayReversals (D-288)', () => {
+  const mv = (id: string, date: string, reversalOfId: string | null = null) => ({
+    id,
+    date,
+    reversalOfId,
+  });
+
+  it('saca el par salida/reversa del mismo día y deja la reversa de otro día', () => {
+    const kept = dropSameDayReversals([
+      mv('1', '2026-09-19'),
+      mv('2', '2026-09-24'),
+      mv('3', '2026-09-24', '2'),
+      mv('4', '2026-09-20'),
+      mv('5', '2026-09-25', '4'),
+    ]);
+    expect(kept.map((m) => m.id)).toEqual(['1', '4', '5']);
+  });
+
+  it('sin el par, la salida nueva anterior no ve un negativo de paso', () => {
+    // Entrada de 1000 el 19; la salida vieja (24) y su reversa (24); la salida nueva el 22.
+    const movements = [
+      { ...mv('1', '2026-09-19'), signedQty: d(1000) },
+      { ...mv('2', '2026-09-24'), signedQty: d(-1000) },
+      { ...mv('3', '2026-09-24', '2'), signedQty: d(1000) },
+    ];
+    const out = [{ date: '2026-09-22', qty: d(1000) }];
+    expect(firstNegativeDate(movements, out)).toBe('2026-09-24');
+    expect(firstNegativeDate(dropSameDayReversals(movements), out)).toBeNull();
   });
 });

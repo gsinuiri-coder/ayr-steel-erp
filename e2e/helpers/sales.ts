@@ -302,7 +302,14 @@ export interface CoilScenario {
  */
 export async function setupCoilStock(
   api: APIRequestContext,
-  options: { lineCode: string; weightKg?: string; unitPrice?: string; thicknessMm?: string },
+  options: {
+    lineCode: string;
+    weightKg?: string;
+    unitPrice?: string;
+    thicknessMm?: string;
+    /** D-288: fecha de la compra y de su recepción (retrofechada; por defecto hoy). */
+    receivedOn?: string;
+  },
 ): Promise<CoilScenario> {
   const supplier = await createCuttingSupplier(api);
   // D-203: el acabado es de la línea de la compra (natural, sin color).
@@ -316,7 +323,7 @@ export async function setupCoilStock(
     docType: 'FACTURA',
     series: 'F001',
     number: uniqueDocumentNumber(),
-    issueDate: today(),
+    issueDate: options.receivedOn ?? today(),
     currency: 'PEN',
     igvRate: '18',
     paymentTerms: 'CONTADO',
@@ -335,7 +342,13 @@ export async function setupCoilStock(
       },
     ],
   });
-  await postJson<PurchaseDto>(api, `/api/purchases/${purchase.id}/receive`);
+  await postJson<PurchaseDto>(
+    api,
+    `/api/purchases/${purchase.id}/receive`,
+    options.receivedOn === undefined
+      ? undefined
+      : { operationDate: options.receivedOn, confirmBackdate: true },
+  );
   const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
   const coil = coils[0]!;
   expect(coil.availableKg).toBe(`${Number(weightKg).toFixed(0)}.000`);

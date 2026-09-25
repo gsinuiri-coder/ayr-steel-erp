@@ -839,6 +839,24 @@ export const invoiceDispatchResultSchema = invoiceDispatchPlanSchema.extend({
 });
 export type InvoiceDispatchResultDto = z.infer<typeof invoiceDispatchResultSchema>;
 
+/**
+ * D-288: los despachos vigentes que cubren un comprobante, para el diálogo de corregir la
+ * fecha de emisión. `atIssueDate` = lo creó «Despachar a la fecha del comprobante» (D-278 o
+ * D-285) y se puede re-fechar con el comprobante; los demás tienen fecha propia y solo se
+ * avisan.
+ */
+export const invoiceLinkedDispatchesSchema = z.object({
+  dispatches: z.array(
+    z.object({
+      id: z.string().uuid(),
+      code: z.string(),
+      dispatchDate: z.string(),
+      atIssueDate: z.boolean(),
+    }),
+  ),
+});
+export type InvoiceLinkedDispatchesDto = z.infer<typeof invoiceLinkedDispatchesSchema>;
+
 /** Revertir un despacho (RF-79): devuelve stock y estado del pedido. Siempre con motivo. */
 export const reverseDispatchSchema = z.object({
   ...backdatableFields,
@@ -1113,6 +1131,13 @@ export const updateManualIssueDateSchema = z
      * colateral se vea y se acepte es más barato que descubrirlo en un reporte de mora.
      */
     confirmDueDateShift: z.boolean().optional(),
+    /**
+     * D-288: qué hacer con los despachos creados «a la fecha del comprobante». `true` los
+     * revierte y los vuelve a despachar a la fecha nueva en la misma transacción; `false` los
+     * deja como están. Si el comprobante tiene alguno y no viene, no se toca nada: la decisión
+     * tiene que ser explícita, como la del vencimiento.
+     */
+    redateDispatches: z.boolean().optional(),
     /** Por qué se corrige. Queda en el registro de cambios y en la auditoría. */
     reason: z.string().trim().min(3, 'Explicá el motivo de la corrección').max(200),
   })

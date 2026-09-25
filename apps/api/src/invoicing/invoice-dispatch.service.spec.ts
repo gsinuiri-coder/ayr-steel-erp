@@ -3,7 +3,13 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
-import { InvoiceDispatchService, planSignature } from './invoice-dispatch.service';
+import {
+  atIssueDateNotes,
+  InvoiceDispatchService,
+  isAtIssueDateDispatch,
+  planSignature,
+  REDATE_REASON,
+} from './invoice-dispatch.service';
 
 jest.mock('../sales/reservation-transfer', () => ({
   resolveDispatchTarget: jest.fn(),
@@ -148,6 +154,7 @@ function service(tx: ReturnType<typeof fakeTx>) {
       .mockResolvedValueOnce('11111111-1111-4111-8111-111111111111')
       .mockResolvedValueOnce('22222222-2222-4222-8222-222222222222'),
     linkInvoiceInTx: jest.fn().mockResolvedValue(undefined),
+    reverseInTx: jest.fn().mockResolvedValue(undefined),
   };
   const audit = { write: jest.fn().mockResolvedValue(undefined) };
   const prisma = {
@@ -460,5 +467,92 @@ describe('InvoiceDispatchService (D-278)', () => {
       action: 'BEFORE_OPENING',
       itemLabel: 'UPVC36MT',
     });
+  });
+});
+
+describe('D-288 — re-fechar el despacho a la fecha del comprobante', () => {
+  it('la marca: solo las notas de este servicio y del mismo comprobante', () => {
+    for (const note of Object.values(atIssueDateNotes)) {
+      expect(isAtIssueDateDispatch(note('FFA1-1'), 'FFA1-1')).toBe(true);
+      expect(isAtIssueDateDispatch(note('FFA1-1'), 'FFA1-2')).toBe(false);
+    }
+    expect(isAtIssueDateDispatch('Despacho del camión de la mañana', 'FFA1-1')).toBe(false);
+    expect(isAtIssueDateDispatch(null, 'FFA1-1')).toBe(false);
+    expect(isAtIssueDateDispatch(atIssueDateNotes.atIssueDate('FFA1-1'), null)).toBe(false);
+  });
+
+  function redateTx() {
+    return {
+      fiscalDocument: { findUnique: jest.fn().mockResolvedValue({ number: 'FFA1-1' }) },
+      dispatch: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'auto',
+            seq: 19,
+            dispatchDate: day('2026-09-19'),
+            notes: atIssueDateNotes.beforeOpening('FFA1-1'),
+          },
+          { id: 'manual', seq: 20, dispatchDate: day('2026-09-20'), notes: 'Recogió el cliente' },
+        ]),
+      },
+    };
+  }
+
+  const redispatched = (action: 'DISPATCH' | 'REVIEW') => ({
+    invoiceId: 'F1',
+    lines: [
+      {
+        lineNumber: 1,
+        sku: 'UPVC36MT',
+        qty: '50.000',
+        itemLabel: 'UPVC36MT',
+        action,
+        operationDate: '2026-08-19',
+        reason: action === 'REVIEW' ? 'deja el kardex negativo' : null,
+      },
+    ],
+    dispatchIds: action === 'REVIEW' ? [] : ['nuevo'],
+    orderStatus: 'FULFILLED',
+  });
+
+  it('revierte solo el automático, como corrección de fecha, y vuelve a despachar; auditado', async () => {
+    const tx = redateTx();
+    const { svc, dispatches, audit } = service(tx as never);
+    const execute = jest.spyOn(svc, 'executeInTx').mockResolvedValue(redispatched('DISPATCH'));
+    const done = await svc.redateInTx(tx as never, ADMIN, 'F1');
+
+    expect(dispatches.reverseInTx).toHaveBeenCalledTimes(1);
+    expect(dispatches.reverseInTx).toHaveBeenCalledWith(tx, ADMIN, 'auto', REDATE_REASON, {
+      redateInvoiceId: 'F1',
+    });
+    expect(execute).toHaveBeenCalledWith(tx, ADMIN, 'F1');
+    expect(done).toEqual({ reversed: ['DES-000019'], created: ['nuevo'] });
+    expect(audit.write).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        action: 'invoicing.dispatch.redate',
+        before: { dispatches: [{ code: 'DES-000019', date: '2026-09-19' }] },
+      }),
+    );
+  });
+
+  it('si alguna línea iría a revisión, falla (la transacción del llamador se deshace)', async () => {
+    const tx = redateTx();
+    const { svc, audit } = service(tx as never);
+    jest.spyOn(svc, 'executeInTx').mockResolvedValue(redispatched('REVIEW'));
+    await expect(svc.redateInTx(tx as never, ADMIN, 'F1')).rejects.toThrow('No se puede re-fechar');
+    expect(audit.write).not.toHaveBeenCalled();
+  });
+
+  it('sin despachos automáticos no hace nada', async () => {
+    const tx = redateTx();
+    tx.dispatch.findMany.mockResolvedValue([
+      { id: 'manual', seq: 20, dispatchDate: day('2026-09-20'), notes: null },
+    ]);
+    const { svc, dispatches } = service(tx as never);
+    const execute = jest.spyOn(svc, 'executeInTx');
+    expect(await svc.redateInTx(tx as never, ADMIN, 'F1')).toBeNull();
+    expect(dispatches.reverseInTx).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 });

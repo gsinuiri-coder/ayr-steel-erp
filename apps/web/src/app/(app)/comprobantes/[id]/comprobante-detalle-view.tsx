@@ -24,6 +24,7 @@ import {
   type CreditNoteReason,
   type CustomerPaymentDto,
   type FiscalDocumentDto,
+  type InvoiceLinkedDispatchesDto,
   type InvoicingSettingsDto,
   type PaymentMethod,
 } from '@ayr/shared';
@@ -44,6 +45,7 @@ import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
@@ -155,6 +157,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const [issueDateOpen, setIssueDateOpen] = useState(false);
   const [newIssueDate, setNewIssueDate] = useState('');
   const [issueDateReason, setIssueDateReason] = useState('');
+  // D-288: re-fechar también los despachos «a la fecha del comprobante». Marcado por defecto:
+  // corregir la emisión y dejar la salida en la fecha vieja es el hueco que esto cierra.
+  const [redateDispatches, setRedateDispatches] = useState(true);
 
   /**
    * D-153: el otro terminal del borrador. No manda nada al PSE — cierra el comprobante con la
@@ -180,6 +185,17 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     },
   });
 
+  // D-288: los despachos vigentes que cubren el comprobante, solo con el diálogo abierto.
+  const linkedDispatches = useQuery({
+    queryKey: ['fiscal-document', id, 'linked-dispatches'],
+    queryFn: () => api<InvoiceLinkedDispatchesDto>(`/dispatches/at-issue-date/${id}/linked`),
+    enabled: issueDateOpen,
+  });
+  const atIssueDateDispatches = (linkedDispatches.data?.dispatches ?? []).filter(
+    (x) => x.atIssueDate,
+  );
+  const ownDateDispatches = (linkedDispatches.data?.dispatches ?? []).filter((x) => !x.atIssueDate);
+
   /**
    * F8-S7/M1: corrige la fecha de emisión de un comprobante manual (D-153).
    *
@@ -195,6 +211,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           issueDate: newIssueDate,
           reason: issueDateReason.trim(),
           confirmDueDateShift: true,
+          // Solo si hay algo que re-fechar: el API exige la decisión únicamente en ese caso.
+          ...(atIssueDateDispatches.length > 0 ? { redateDispatches } : {}),
         },
       }),
     onSuccess: (updated) => {
@@ -1268,6 +1286,38 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               </AlertDescription>
             </Alert>
           )}
+          {atIssueDateDispatches.length > 0 && (
+            <Alert data-testid="issue-date-redate">
+              <AlertDescription className="grid gap-2">
+                <span>
+                  {atIssueDateDispatches.map((x) => x.code).join(', ')}{' '}
+                  {atIssueDateDispatches.length === 1 ? 'se despachó' : 'se despacharon'} a la fecha
+                  del comprobante ({atIssueDateDispatches.map((x) => x.dispatchDate).join(', ')}).
+                </span>
+                <span className="flex items-center gap-2">
+                  <Checkbox
+                    id="issue-date-redate-check"
+                    checked={redateDispatches}
+                    onCheckedChange={(checked) => {
+                      setRedateDispatches(checked === true);
+                    }}
+                  />
+                  <Label htmlFor="issue-date-redate-check">
+                    Re-fechar también el despacho a la fecha nueva (se revierte y se vuelve a
+                    despachar en la misma operación)
+                  </Label>
+                </span>
+              </AlertDescription>
+            </Alert>
+          )}
+          {ownDateDispatches.length > 0 && (
+            <Alert data-testid="issue-date-own-dispatches">
+              <AlertDescription>
+                {ownDateDispatches.map((x) => `${x.code} (${x.dispatchDate})`).join(', ')}{' '}
+                {ownDateDispatches.length === 1 ? 'tiene' : 'tienen'} fecha propia: no se tocan.
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="grid gap-1.5">
             <Label htmlFor="issue-date-reason">Motivo</Label>
             <Input
@@ -1291,7 +1341,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Cancelar
             </Button>
             <Button
-              disabled={!issueDateValid || busy}
+              // Sin la lista de despachos todavía no se sabe si hay que decidir el re-fechado.
+              disabled={!issueDateValid || busy || linkedDispatches.isPending}
               pending={updateIssueDate.isPending}
               pendingText="Corrigiendo…"
               onClick={() => {

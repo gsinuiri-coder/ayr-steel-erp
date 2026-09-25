@@ -11,6 +11,7 @@ import {
   type FiscalDocumentDto,
   type InvoiceDispatchPlanDto,
   type InvoiceDispatchResultDto,
+  type InvoiceLinkedDispatchesDto,
   type PaginatedResult,
   type ReverseDispatchInput,
   type TransportSuggestionsDto,
@@ -64,6 +65,18 @@ export class DispatchesController {
     @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
   ): Promise<InvoiceDispatchPlanDto> {
     return this.invoiceDispatch.preview(actor, invoiceId);
+  }
+
+  /**
+   * D-288: los despachos vigentes que cubren el comprobante, para el diálogo de corregir la
+   * fecha de emisión (que ya es solo ADMINISTRADOR).
+   */
+  @Get('at-issue-date/:invoiceId/linked')
+  @Roles(Role.ADMINISTRADOR)
+  linkedAtIssueDate(
+    @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
+  ): Promise<InvoiceLinkedDispatchesDto> {
+    return this.invoiceDispatch.linkedDispatches(invoiceId);
   }
 
   /**

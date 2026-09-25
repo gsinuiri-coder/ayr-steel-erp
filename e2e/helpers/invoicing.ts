@@ -318,12 +318,16 @@ export interface OrderScenario {
  */
 export async function setupOrderScenario(
   api: APIRequestContext,
-  options: { coilKg?: string; unitPricePen?: string } = {},
+  options: { coilKg?: string; unitPricePen?: string; coilReceivedOn?: string } = {},
 ): Promise<OrderScenario> {
   // El cliente y la bobina no se necesitan entre sí; el pedido de abajo necesita a los dos.
   const [customer, stock] = await Promise.all([
     createInvoiceableCustomer(api),
-    setupCoilStock(api, { lineCode: DISPATCH_LINE, weightKg: options.coilKg ?? '1000' }),
+    setupCoilStock(api, {
+      lineCode: DISPATCH_LINE,
+      weightKg: options.coilKg ?? '1000',
+      receivedOn: options.coilReceivedOn,
+    }),
   ]);
   const order = await createDirectOrder(api, {
     customerId: customer.id,

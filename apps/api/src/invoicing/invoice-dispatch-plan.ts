@@ -231,6 +231,29 @@ export function planInvoiceDispatches(
 }
 
 /**
+ * D-288: saca del kardex simulado los pares movimiento/reversa **del mismo día**. Netean cero
+ * dentro del día, pero recorridos evento por evento dejan un negativo de paso entre los dos (la
+ * salida vieja antes de su reversa) que `firstNegativeDate` leía como un kardex negativo de
+ * verdad. Es justo lo que deja el re-fechado de un despacho: la salida vieja y su reversa a la
+ * misma fecha. Una reversa de otro día sí cambia el saldo entre las dos fechas y se queda.
+ */
+export function dropSameDayReversals<
+  T extends { id: bigint | string; reversalOfId: bigint | string | null; date: string },
+>(movements: readonly T[]): T[] {
+  const dateById = new Map(movements.map((m) => [String(m.id), m.date]));
+  const paired = new Set<string>();
+  for (const m of movements) {
+    if (m.reversalOfId === null) continue;
+    const original = String(m.reversalOfId);
+    if (dateById.get(original) === m.date) {
+      paired.add(original);
+      paired.add(String(m.id));
+    }
+  }
+  return movements.filter((m) => !paired.has(String(m.id)));
+}
+
+/**
  * Cuánto de cada comprobante de una línea de pedido quedó sin despachar. Lo ya despachado
  * cubre primero los comprobantes más antiguos (`invoiced` viene en ese orden), y nada supera
  * lo que le queda pendiente al pedido.
