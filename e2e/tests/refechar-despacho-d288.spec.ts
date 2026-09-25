@@ -105,7 +105,7 @@ test.describe('D-288 — re-fechar el despacho al corregir la fecha de emisión'
       // La pantalla avisa y ofrece re-fechar, marcado por defecto.
       await loginAsAdmin(page);
       await page.goto(`/comprobantes/${invoice.id}`);
-      await page.getByRole('button', { name: 'Más acciones' }).click();
+      await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
       await page.getByRole('menuitem', { name: 'Corregir fecha de emisión' }).click();
       await page.locator('#new-issue-date').fill(day(-3));
       await page.locator('#issue-date-reason').fill('Se tipeó mal la fecha del papel');
