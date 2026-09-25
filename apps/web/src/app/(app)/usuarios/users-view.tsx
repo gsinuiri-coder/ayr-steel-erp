@@ -21,6 +21,7 @@ import { UserDialog } from './user-dialog';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
+import { RowActions } from '@/components/row-actions';
 
 export const USERS_QUERY_KEY = ['users'] as const;
 
@@ -136,27 +137,29 @@ export function UsersView() {
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      openDialog(u);
-                    }}
-                  >
-                    Editar
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={u.id === me.id || toggleActive.isPending}
-                    pending={toggleActive.isPending && toggleActive.variables?.id === u.id}
-                    onClick={() => {
-                      if (toggleActive.isPending) return;
-                      toggleActive.mutate(u);
-                    }}
-                  >
-                    {u.active ? 'Desactivar' : 'Activar'}
-                  </Button>
+                  <RowActions
+                    label={u.name}
+                    primary="edit"
+                    actions={[
+                      {
+                        key: 'edit',
+                        label: 'Editar',
+                        onSelect: () => {
+                          openDialog(u);
+                        },
+                      },
+                      {
+                        key: 'toggle',
+                        label: u.active ? 'Desactivar' : 'Activar',
+                        disabled: u.id === me.id || toggleActive.isPending,
+                        pending: toggleActive.isPending && toggleActive.variables?.id === u.id,
+                        onSelect: () => {
+                          if (toggleActive.isPending) return;
+                          toggleActive.mutate(u);
+                        },
+                      },
+                    ]}
+                  />
                 </TableCell>
               </TableRow>
             ))}

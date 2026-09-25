@@ -16,14 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LINK_CLASSNAME } from '@/lib/utils';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
@@ -131,9 +124,9 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
               type: { text: (p) => p.type },
               issue: { text: (p) => p.issueDate },
               due: { text: (p) => p.dueDate ?? '' },
-              total: { decimal: (p) => String(p.total) },
-              balance: { decimal: (p) => String(p.balance) },
-              balancePen: { decimal: (p) => String(p.balancePen) },
+              total: { decimal: (p) => p.total },
+              balance: { decimal: (p) => p.balance },
+              balancePen: { decimal: (p) => p.balancePen },
               overdue: { decimal: (p) => String(p.overdueDays ?? '') },
             }).map((p) => (
               <TableRow key={p.id}>

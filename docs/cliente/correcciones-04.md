@@ -23,12 +23,12 @@ en el reporte mensual de bobinas, se refiere al cerrado y abierto de fill o prot
 
 ## Puntos, en el orden del texto
 
-| #   | Punto                                                                        | Milestone |
-| --- | ---------------------------------------------------------------------------- | --------- |
-| 1   | Filtros por columna: solo reordenar, como las demás tablas                   | M1        |
+| #   | Punto                                                                       | Milestone |
+| --- | --------------------------------------------------------------------------- | --------- |
+| 1   | Filtros por columna: solo reordenar, como las demás tablas                  | M1        |
 | 2   | Historial de pedidos: scroll horizontal de toda la pantalla por las bobinas | M2        |
-| 3   | Sacar las bobinas montadas del detalle de la orden                           | M3        |
-| 4   | Ubicación de un grupo del sidebar (foto)                                     | M4        |
-| 5   | Tablas con varias acciones: un menú desplegable                              | M5        |
-| 6   | Cierre de bobinas: dos tipos (film de protección)                            | M6        |
-| 7   | Reporte mensual de bobinas: dos tablas y ubicación de la pestaña             | M4 y M6   |
+| 3   | Sacar las bobinas montadas del detalle de la orden                          | M3        |
+| 4   | Ubicación de un grupo del sidebar (foto)                                    | M4        |
+| 5   | Tablas con varias acciones: un menú desplegable                             | M5        |
+| 6   | Cierre de bobinas: dos tipos (film de protección)                           | M6        |
+| 7   | Reporte mensual de bobinas: dos tablas y ubicación de la pestaña            | M4 y M6   |

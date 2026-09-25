@@ -35,6 +35,7 @@ import {
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { useSort } from '@/lib/use-sort';
 import { CustomerDialog } from '@/components/customers/customer-dialog';
+import { RowActions } from '@/components/row-actions';
 
 /**
  * Prefijo de invalidación: React Query hace *match* parcial, así que
@@ -228,27 +229,29 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                 </TableCell>
                 {isAdmin && (
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        openDialog(c);
-                      }}
-                    >
-                      Editar
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={toggleActive.isPending}
-                      pending={toggleActive.isPending && toggleActive.variables?.id === c.id}
-                      onClick={() => {
-                        if (toggleActive.isPending) return;
-                        toggleActive.mutate(c);
-                      }}
-                    >
-                      {c.isActive ? 'Desactivar' : 'Activar'}
-                    </Button>
+                    <RowActions
+                      label={c.name}
+                      primary="edit"
+                      actions={[
+                        {
+                          key: 'edit',
+                          label: 'Editar',
+                          onSelect: () => {
+                            openDialog(c);
+                          },
+                        },
+                        {
+                          key: 'toggle',
+                          label: c.isActive ? 'Desactivar' : 'Activar',
+                          disabled: toggleActive.isPending,
+                          pending: toggleActive.isPending && toggleActive.variables?.id === c.id,
+                          onSelect: () => {
+                            if (toggleActive.isPending) return;
+                            toggleActive.mutate(c);
+                          },
+                        },
+                      ]}
+                    />
                   </TableCell>
                 )}
               </TableRow>

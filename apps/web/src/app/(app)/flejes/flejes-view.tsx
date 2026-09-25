@@ -21,14 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
@@ -166,11 +159,11 @@ export function FlejesView() {
             )}
             {sortRows(stock.data ?? [], sort, {
               finish: { text: (r) => r.finishCode },
-              thickness: { decimal: (r) => String(r.thicknessMm) },
-              width: { decimal: (r) => String(r.widthMm) },
-              qty: { decimal: (r) => String(r.qtyKg) },
-              cost: { decimal: (r) => String(r.avgCostPen ?? '') },
-              value: { decimal: (r) => String(r.totalValuePen ?? '') },
+              thickness: { decimal: (r) => r.thicknessMm },
+              width: { decimal: (r) => r.widthMm },
+              qty: { decimal: (r) => r.qtyKg },
+              cost: { decimal: (r) => r.avgCostPen ?? '' },
+              value: { decimal: (r) => r.totalValuePen ?? '' },
               coils: { decimal: (r) => String(r.coilCount) },
             }).map((r) => (
               <TableRow key={`${r.typeKey}-${r.widthMm}`}>

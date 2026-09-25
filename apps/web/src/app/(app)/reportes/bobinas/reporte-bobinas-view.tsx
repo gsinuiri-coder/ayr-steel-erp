@@ -17,14 +17,7 @@ import { RoleGate } from '@/components/role-gate';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
@@ -188,11 +181,11 @@ export function ReporteBobinasView() {
               type: { text: (row) => row.typeKey ?? '' },
               line: { text: (row) => row.businessLine },
               color: { text: (row) => row.colorName ?? '' },
-              width: { decimal: (row) => String(row.widthMm) },
-              opening: { decimal: (row) => String(row.openingKg) },
-              weight: { decimal: (row) => String(row.weightKg) },
-              closing: { decimal: (row) => String(row.closingKg) },
-              cost: { decimal: (row) => String(row.unitCostPerKg ?? '') },
+              width: { decimal: (row) => row.widthMm },
+              opening: { decimal: (row) => row.openingKg },
+              weight: { decimal: (row) => row.weightKg },
+              closing: { decimal: (row) => row.closingKg },
+              cost: { decimal: (row) => row.unitCostPerKg ?? '' },
               status: { text: (row) => row.status },
             }).map((row) => (
               <TableRow key={row.id}>

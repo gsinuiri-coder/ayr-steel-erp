@@ -18,7 +18,7 @@ import {
   purgeSalesTrail,
   type SalesOrderDto,
 } from '../helpers/sales';
-import { chooseOption, loginAndSetPassword } from '../helpers/ui';
+import { chooseOption, loginAndSetPassword, rowAction } from '../helpers/ui';
 
 /**
  * QA de la sesión F8-S2b: huecos de cobertura sobre lo que dejaron D-185 (addendum F8-S2b) y
@@ -265,28 +265,28 @@ test.describe('F8-S2b — huecos de cobertura', () => {
 
       // Precio: se tipea uno distinto en la línea 1, se cancela sin guardar, y la línea 2 tiene
       // que abrir con SU propio precio — no con el "999.99" que quedó sin guardar.
-      await page.getByRole('button', { name: 'Cambiar precio de la línea 1' }).click();
+      await (await rowAction(page, 'línea 1', 'Cambiar precio de la línea 1')).click();
       let dialog = page.getByRole('dialog');
       await expect(dialog.getByLabel(/Precio con IGV/)).toHaveValue('23.60');
       await dialog.getByLabel(/Precio con IGV/).fill('999.99');
       await dialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(dialog).toBeHidden();
 
-      await page.getByRole('button', { name: 'Cambiar precio de la línea 2' }).click();
+      await (await rowAction(page, 'línea 2', 'Cambiar precio de la línea 2')).click();
       dialog = page.getByRole('dialog');
       await expect(dialog.getByLabel(/Precio con IGV/)).toHaveValue('41.30');
       await dialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(dialog).toBeHidden();
 
       // Misma pregunta para el diálogo de cantidad.
-      await page.getByRole('button', { name: 'Cambiar cantidad de la línea 1' }).click();
+      await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       dialog = page.getByRole('dialog');
       await expect(dialog.getByLabel(/Cantidad/)).toHaveValue('5.000');
       await dialog.getByLabel(/Cantidad/).fill('777');
       await dialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(dialog).toBeHidden();
 
-      await page.getByRole('button', { name: 'Cambiar cantidad de la línea 2' }).click();
+      await (await rowAction(page, 'línea 2', 'Cambiar cantidad de la línea 2')).click();
       dialog = page.getByRole('dialog');
       await expect(dialog.getByLabel(/Cantidad/)).toHaveValue('9.000');
     } finally {
@@ -325,7 +325,7 @@ test.describe('F8-S2b — huecos de cobertura', () => {
       });
 
       // Línea 1 (un solo largo): se agrega una fila más y se llena, sin guardar.
-      await page.getByRole('button', { name: 'Cambiar cantidad de la línea 1' }).click();
+      await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       let dialog = page.getByRole('dialog');
       await expect(dialog.getByLabel('Largo 1 en metros')).toHaveValue('10.000');
       await expect(dialog.getByLabel('Planchas del largo 1')).toHaveValue('1');
@@ -337,7 +337,7 @@ test.describe('F8-S2b — huecos de cobertura', () => {
 
       // Línea 2 (dos largos propios): tiene que abrir con SUS dos filas, ni con la fila extra
       // que quedó armada en la línea 1, ni con solo una fila si el reseteo se quedó a medias.
-      await page.getByRole('button', { name: 'Cambiar cantidad de la línea 2' }).click();
+      await (await rowAction(page, 'línea 2', 'Cambiar cantidad de la línea 2')).click();
       dialog = page.getByRole('dialog');
       await expect(dialog.getByRole('button', { name: /Quitar el largo/ })).toHaveCount(2);
       await expect(dialog.getByLabel('Largo 1 en metros')).toHaveValue('6.000');

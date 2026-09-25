@@ -42,6 +42,7 @@ import { ColoresPanel } from './colores-panel';
 import { ProductDialog } from '@/components/catalog/product-dialog';
 import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
+import { RowActions } from '@/components/row-actions';
 
 /**
  * Qué productos llevan receta (D-059, D-087). Las mismas condiciones que valida
@@ -339,40 +340,38 @@ export function CatalogoView() {
                         </TableCell>
                         {isAdmin && (
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                openDialog(p.businessLineId, p);
-                              }}
-                            >
-                              Editar
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={toggleActive.isPending}
-                              pending={
-                                toggleActive.isPending && toggleActive.variables?.id === p.id
-                              }
-                              onClick={() => {
-                                if (toggleActive.isPending) return;
-                                toggleActive.mutate(p);
-                              }}
-                            >
-                              {p.isActive ? 'Desactivar' : 'Activar'}
-                            </Button>
-                            {hasBom(p) && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setBomProduct(p);
-                                }}
-                              >
-                                Receta
-                              </Button>
-                            )}
+                            <RowActions
+                              label={p.sku}
+                              primary="edit"
+                              actions={[
+                                {
+                                  key: 'edit',
+                                  label: 'Editar',
+                                  onSelect: () => {
+                                    openDialog(p.businessLineId, p);
+                                  },
+                                },
+                                {
+                                  key: 'bom',
+                                  label: 'Receta',
+                                  show: hasBom(p),
+                                  onSelect: () => {
+                                    setBomProduct(p);
+                                  },
+                                },
+                                {
+                                  key: 'toggle',
+                                  label: p.isActive ? 'Desactivar' : 'Activar',
+                                  disabled: toggleActive.isPending,
+                                  pending:
+                                    toggleActive.isPending && toggleActive.variables?.id === p.id,
+                                  onSelect: () => {
+                                    if (toggleActive.isPending) return;
+                                    toggleActive.mutate(p);
+                                  },
+                                },
+                              ]}
+                            />
                           </TableCell>
                         )}
                       </TableRow>

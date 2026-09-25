@@ -35,14 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
@@ -244,9 +237,9 @@ export function TipoCambioView() {
             {sortRows(rates.data ?? [], sort, {
               date: { text: (r) => r.date },
               currency: { text: (r) => r.currency },
-              buy: { decimal: (r) => String(r.buy) },
-              sell: { decimal: (r) => String(r.sell) },
-              source: { text: (r) => String(r.source) },
+              buy: { decimal: (r) => r.buy },
+              sell: { decimal: (r) => r.sell },
+              source: { text: (r) => r.source },
             }).map((r) => (
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.date}</TableCell>

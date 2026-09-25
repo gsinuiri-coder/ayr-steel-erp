@@ -28,6 +28,7 @@ import { FinishDialog } from './finish-dialog';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
+import { RowActions } from '@/components/row-actions';
 
 const FINISHES_QUERY_KEY = ['finishes'] as const;
 
@@ -133,7 +134,7 @@ export function AcabadosView() {
               line: { text: (f) => f.businessLine ?? '' },
               kind: { text: (f) => f.kind ?? '' },
               color: { text: (f) => f.colorName ?? '' },
-              density: { decimal: (f) => String(f.densityFactor) },
+              density: { decimal: (f) => f.densityFactor },
               status: { text: (f) => (f.isActive ? 'Activo' : 'Inactivo') },
             }).map((f) => (
               <TableRow key={f.id} data-state={f.isActive ? undefined : 'inactive'}>
@@ -167,27 +168,29 @@ export function AcabadosView() {
                 </TableCell>
                 {isAdmin && (
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        openDialog(f);
-                      }}
-                    >
-                      Editar
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={toggleActive.isPending}
-                      pending={toggleActive.isPending && toggleActive.variables?.id === f.id}
-                      onClick={() => {
-                        if (toggleActive.isPending) return;
-                        toggleActive.mutate(f);
-                      }}
-                    >
-                      {f.isActive ? 'Desactivar' : 'Activar'}
-                    </Button>
+                    <RowActions
+                      label={f.code}
+                      primary="edit"
+                      actions={[
+                        {
+                          key: 'edit',
+                          label: 'Editar',
+                          onSelect: () => {
+                            openDialog(f);
+                          },
+                        },
+                        {
+                          key: 'toggle',
+                          label: f.isActive ? 'Desactivar' : 'Activar',
+                          disabled: toggleActive.isPending,
+                          pending: toggleActive.isPending && toggleActive.variables?.id === f.id,
+                          onSelect: () => {
+                            if (toggleActive.isPending) return;
+                            toggleActive.mutate(f);
+                          },
+                        },
+                      ]}
+                    />
                   </TableCell>
                 )}
               </TableRow>

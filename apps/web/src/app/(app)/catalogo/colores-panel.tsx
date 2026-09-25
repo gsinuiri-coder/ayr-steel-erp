@@ -40,6 +40,7 @@ import { ColorSwatch } from '@/components/colors/color-swatch';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
+import { RowActions } from '@/components/row-actions';
 
 /**
  * D-273: el mismo candado que el API, para que el aviso salga en el campo y no en un 400. Se
@@ -167,29 +168,29 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
                 </TableCell>
                 {isAdmin && (
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Editar el color ${c.name}`}
-                      onClick={() => {
-                        setEditing(c);
-                      }}
-                    >
-                      Editar
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`${c.isActive ? 'Desactivar' : 'Activar'} el color ${c.name}`}
-                      disabled={toggleActive.isPending}
-                      pending={toggleActive.isPending && toggleActive.variables?.id === c.id}
-                      onClick={() => {
-                        if (toggleActive.isPending) return;
-                        toggleActive.mutate(c);
-                      }}
-                    >
-                      {c.isActive ? 'Desactivar' : 'Activar'}
-                    </Button>
+                    <RowActions
+                      label={c.name}
+                      primary="edit"
+                      actions={[
+                        {
+                          key: 'edit',
+                          label: 'Editar',
+                          onSelect: () => {
+                            setEditing(c);
+                          },
+                        },
+                        {
+                          key: 'toggle',
+                          label: c.isActive ? 'Desactivar' : 'Activar',
+                          disabled: toggleActive.isPending,
+                          pending: toggleActive.isPending && toggleActive.variables?.id === c.id,
+                          onSelect: () => {
+                            if (toggleActive.isPending) return;
+                            toggleActive.mutate(c);
+                          },
+                        },
+                      ]}
+                    />
                   </TableCell>
                 )}
               </TableRow>

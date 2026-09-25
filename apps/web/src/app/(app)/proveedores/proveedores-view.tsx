@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DOC_TYPE_LABELS, Role, type SupplierDto } from '@ayr/shared';
@@ -23,6 +22,7 @@ import { SupplierDialog } from './supplier-dialog';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
+import { RowActions } from '@/components/row-actions';
 
 const SUPPLIERS_QUERY_KEY = ['suppliers'] as const;
 
@@ -175,36 +175,37 @@ export function ProveedoresView() {
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  {isAdmin && (
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link href={`/proveedores/${s.id}/estado-cuenta`}>Estado de cuenta</Link>
-                    </Button>
-                  )}
-                  {isAdmin && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        openDialog(s);
-                      }}
-                    >
-                      Editar
-                    </Button>
-                  )}
-                  {isAdmin && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={toggleActive.isPending}
-                      pending={toggleActive.isPending && toggleActive.variables?.id === s.id}
-                      onClick={() => {
-                        if (toggleActive.isPending) return;
-                        toggleActive.mutate(s);
-                      }}
-                    >
-                      {s.isActive ? 'Desactivar' : 'Activar'}
-                    </Button>
-                  )}
+                  <RowActions
+                    label={s.name}
+                    primary="account"
+                    actions={[
+                      {
+                        key: 'account',
+                        label: 'Estado de cuenta',
+                        show: isAdmin,
+                        href: `/proveedores/${s.id}/estado-cuenta`,
+                      },
+                      {
+                        key: 'edit',
+                        label: 'Editar',
+                        show: isAdmin,
+                        onSelect: () => {
+                          openDialog(s);
+                        },
+                      },
+                      {
+                        key: 'toggle',
+                        label: s.isActive ? 'Desactivar' : 'Activar',
+                        show: isAdmin,
+                        disabled: toggleActive.isPending,
+                        pending: toggleActive.isPending && toggleActive.variables?.id === s.id,
+                        onSelect: () => {
+                          if (toggleActive.isPending) return;
+                          toggleActive.mutate(s);
+                        },
+                      },
+                    ]}
+                  />
                 </TableCell>
               </TableRow>
             ))}

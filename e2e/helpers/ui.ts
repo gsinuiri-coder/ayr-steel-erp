@@ -192,6 +192,25 @@ export async function headerAction(page: Page, name: string): Promise<Locator> {
 }
 
 /**
+ * D-327: una acción de **una fila** (`RowActions`). Si la acción es la principal de la fila es un
+ * botón a la vista; si no, vive en el menú «Más acciones de <fila>», que se abre para alcanzarla.
+ * Devuelve el elemento a clickear, igual que `headerAction` con la cabecera. `rowLabel` es como se
+ * llama la fila (su código, SKU o «línea 1»); `name` el texto o el `aria-label` de la acción.
+ */
+export async function rowAction(page: Page, rowLabel: string, name: string): Promise<Locator> {
+  const visible = page
+    .getByRole('button', { name, exact: true })
+    .or(page.getByRole('link', { name, exact: true }));
+  const more = page.getByRole('button', { name: `Más acciones de ${rowLabel}`, exact: true });
+  await expect(visible.or(more).first()).toBeVisible({ timeout: 30_000 });
+  if ((await visible.count()) > 0) return visible.first();
+  await more.click();
+  const item = page.getByRole('menuitem', { name, exact: true });
+  await expect(item).toBeVisible();
+  return item;
+}
+
+/**
  * D-292: el menú lateral es un acordeón, así que el enlace de un ítem solo se puede clickear
  * con su grupo abierto. Abre el grupo (`Comercial`, `Catálogo`, `Planta`, `Administración`)
  * si está cerrado y no hace nada si ya lo está: un click sobre una cabecera abierta la cierra,

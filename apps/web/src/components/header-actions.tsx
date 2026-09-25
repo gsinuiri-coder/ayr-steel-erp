@@ -51,6 +51,11 @@ export interface HeaderAction {
   destructive?: boolean;
   /** Aviso nativo (`title`) para cuando `disabled` viene de una razón que conviene explicar. */
   title?: string;
+  /**
+   * Nombre accesible cuando el texto visible no alcanza: en una tabla, «Precio» no dice de qué
+   * línea (`RowActions`, D-327).
+   */
+  ariaLabel?: string;
 }
 
 export function HeaderActions({
