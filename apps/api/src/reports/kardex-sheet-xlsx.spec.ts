@@ -61,7 +61,7 @@ const sheet: KardexSheet = {
 
 function read(buffer: Buffer): (string | number | null)[][] {
   const book = XLSX.read(buffer, { type: 'buffer' });
-  const grid = book.Sheets['Kardex']!;
+  const grid = book.Sheets.Kardex!;
   return XLSX.utils.sheet_to_json<(string | number | null)[]>(grid, { header: 1, defval: null });
 }
 

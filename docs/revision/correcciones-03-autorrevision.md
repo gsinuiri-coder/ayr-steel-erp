@@ -107,3 +107,67 @@ Arreglo: commitear ese cambio junto con el resto de los specs de menú (`fase1`,
 
 Además, la corrida completa de la suite destapó dos specs acoplados al markup viejo del formulario
 de despacho (`despacho-peso-por-linea.spec.ts`: `div.space-y-1` y `label + input`), ya migrados.
+
+## Apéndice: M1 (D-297) y M2 (D-298), revisión por subagente nuevo
+
+Revisión de solo lectura de `2c13715`, `1d91da6` y `9daefe0`, por un subagente que no escribió el cambio ni leyó el handoff de implementación. **Sigue siendo autorrevisión** (mismo repo, mismo proceso): es una lista de riesgos, no un pase independiente. Corridas: `jest` de `fiscal-document-where`, `kardex-sheet`, `kardex-peps`, `kardex-sheet-xlsx` y `kardex-sheet.service` (27 verdes) y `vitest` de `use-url-state.spec.ts` (11 verdes). No se corrió E2E.
+
+### P0
+
+Sin hallazgos.
+
+### P1
+
+**P1-1. `apps/web/src/app/(app)/kardex/kardex-view.tsx:210` — «Descargar PEPS (SUNAT 13.1)» con el rango «Todo» baja solo el mes en curso (regresión).**
+Antes de `1d91da6` el enlace usaba `dates.from || PEPS_ALL_FROM` (`2000-01-01`); ahora usa `dates.from || "<mes en curso>-01"` (`${today.slice(0, 7)}-01`). Escenario: el administrador elige «Todo» (o borra «Desde»), ve en pantalla todo el historial y descarga el formato 13.1: el archivo trae solo el mes actual, con saldo inicial del mes. Es el mismo defecto que esta rama ya había corregido («Descargar PEPS con Todo bajaba solo el mes», tabla de resolución de este archivo), y ningún E2E lo cubre (el E2E nuevo solo comprueba el `href` de «Descargar Excel»). Sugerencia: usar `excelFrom` (que ya vale `dates.from || KARDEX_ALL_FROM`) y agregar una aserción de `href` del botón SUNAT con «Todo».
+
+### P2
+
+**P2-1. `packages/shared/src/kardex-sheet.ts:99-104` (meta `from`) y `apps/api/src/reports/kardex-sheet.service.ts:39` — el Excel de Promedio con «Todo» rotula el período «01/01/2000 al …» y nombra el archivo `kardex-average-<código>-2000-01-01-…`.**
+`pepsToKardexSheet` normaliza `KARDEX_ALL_FROM` a vacío («desde el inicio»), pero `movementsToKardexSheet` pasa `query.from` tal cual. Escenario: «Todo» + Promedio + Descargar Excel. Sugerencia: normalizar `from === KARDEX_ALL_FROM` a `''` en el servicio (o dentro de `movementsToKardexSheet`) para que los dos métodos rotulen igual; agregar el caso a `kardex-sheet-xlsx.spec.ts`.
+
+**P2-2. `apps/web/src/app/(app)/kardex/kardex-sheet-table.tsx:28` — la pantalla ya no muestra la unidad de medida.**
+La tabla vieja escribía «60.000 kg»; ahora `formatQty(value)` sin unidad, y la cabecera de pantalla (Producto / Código / Método) tampoco la trae (el Excel sí: `UNIDAD:`). Escenario: producto en MTR o NIU frente a una bobina en kg: las cantidades no se distinguen. Los E2E se relajaron a `'60.000'`, lo que confirma la pérdida. Sugerencia: mostrar la unidad en la cabecera de la hoja (o como sufijo en las cantidades).
+
+**P2-3. `packages/shared/src/kardex-sheet.ts:158-172` y `apps/api/src/reports/kardex-peps.ts:175-180` — la suma de los montos de las capas puede diferir en 0,0001 del monto del movimiento.**
+Cada capa se redondea por separado (`layerOf` redondea `qty × unitCost` a 4 decimales) mientras que `outTotal` de la fila se redondea una vez sobre la suma de porciones, y el C.U. de la capa (4 decimales) no reproduce `total ÷ qty`. Escenario: salida sobre 3 capas con costos unitarios de más de 4 decimales (capas nacidas de `total ÷ qty`, o afectadas por un ajuste de costo repartido): Σ filas de capa ≠ total del movimiento; `Totales` sale del movimiento entero, así que no hay doble conteo. Las cantidades sí cuadran exactamente (`Decimal` a escala 3). No hay aritmética nueva en el Excel: `num()` solo transporta (`Number(string)`); sin incumplimiento de la regla de `Decimal`. Sugerencia: documentarlo en el UAT, o hacer que la última capa absorba el residuo de redondeo (`outTotal − Σ capas previas`).
+
+**P2-4. `packages/shared/src/kardex-sheet.ts:86-125` — la hoja de Promedio no lleva «Saldo inicial» ni «Totales»; la de PEPS sí.**
+Con «Mes actual» o un rango acotado, la primera fila trae el saldo ya arrastrado (`openingBalance`) sin fila que lo explique, y el Excel de Promedio no tiene totales. Escenario: el contador quiere cuadrar el período en el Excel de Promedio. Los saldos son correctos, pero la hoja «igual para los dos métodos» no lo es. Sugerencia: confirmar con el dueño si el formato del cliente exige ambas filas también en Promedio (el saldo de apertura ya lo calcula `findMovements`) y registrarlo como decisión.
+
+**P2-5. `apps/api/src/reports/kardex-sheet.service.ts:31-34` — el Excel de Promedio hereda el tope de 10 000 movimientos de `findMovements` (orden ascendente).**
+Un ítem con más de 10 000 movimientos entrega los más antiguos y omite los recientes sin avisar; PEPS no tiene tope. Improbable hoy. Sugerencia: error o aviso explícito si `items.length === 10_000`.
+
+**P2-6. `apps/web/src/app/(app)/kardex/kardex-view.tsx:82-91` y `115-116` — pantalla y Excel de Promedio no leen el mismo rango con «Todo».**
+La pantalla manda `to` vacío (sin cota superior) y el Excel manda `to = hoy`; un movimiento con `operationDate` futura aparecería en pantalla y no en el Excel. Solo un ADMINISTRADOR puede fijar fecha de operación. Sugerencia: aplicar la misma cota a ambos.
+
+**P2-7. `apps/web/src/app/(app)/kardex/kardex-view.tsx:105-108` — el filtro de detalle solo ve `row.detail` (texto de la hoja), no lo que el Promedio pinta.**
+En Promedio la celda muestra además el usuario (`actorName`), «Factura: ver» y «registrado …», que el filtro no encuentra. Escenario: filtrar por el nombre del usuario devuelve «Ningún movimiento coincide». En PEPS, con el filtro activo, las filas «Saldo inicial», «Totales» y la última fila de capa (donde va el saldo) desaparecen si su texto no coincide. Sugerencia: aceptable si se documenta; si no, filtrar sobre el texto renderizado.
+
+**P2-8. Rótulos distintos entre métodos (`kardex-sheet.service.ts`, `kardex-sheet.ts`).**
+`UNIDAD:` sale como `KGM` en Promedio y `01 - KILOGRAMOS` en PEPS; el detalle de una anulación dice «(anulación)» en Promedio y «OTROS · <nota>» en PEPS. Cosmético; unificar cuando se toque el formato.
+
+**P2-9. `apps/web/src/app/(app)/kardex/kardex-view.tsx:158` (preexistente) — `RoleGate` deja pasar a VENDEDOR, pero `/inventory/movements` y `/inventory/items/search` son de ADMINISTRADOR y SUPERVISOR_PLANTA.**
+El vendedor que teclea `/kardex` ve la pantalla y «No se pudo cargar el kardex.». No expone datos (el API responde 403). Sugerencia: quitar `Role.VENDEDOR` del `RoleGate`.
+
+**P2-10. `apps/api/src/reports/kardex-sheet-xlsx.ts:57-70` — el Excel no da formato numérico a las celdas** (se ve `4` y `1234.5` en vez de `4.0000` y `1,234.50`) y la fecha es texto `DD/MM/YYYY` (heredado del PEPS). Cosmético.
+
+**P2-11. Pruebas.** `9daefe0` no tiene pruebas en vacío que se hayan detectado. El test del eco atrasado (`use-url-state.spec.ts`, «el eco atrasado de un commit propio…») **falla con la implementación vieja por razonamiento**: con la vieja, al llegar el eco de «ab» con `lastCommitted = 'abc'`, `urlValue !== lastCommitted` ejecuta `setDraft('ab')` y la aserción `toBe('abc')` cae. No se ejecutó contra la versión vieja (revisión de solo lectura); conviene hacerlo una vez en una rama descartable con el `use-url-state.ts` de `95a498f^`. Falta un caso de `useUrlSearchInput` que ejercite la limpieza de `ownCommits`. Además, `e2e/tests/correcciones-03-listas-kardex.spec.ts` no cubre el botón SUNAT (P1-1) ni el rango «Todo» del Excel de Promedio (P2-1).
+
+### Sin hallazgos en (lo revisado)
+
+- **M1, barrido.** `fiscalDocumentListWhere` compone alcance y búsqueda con `AND: [{OR}, {OR}]`; `pendingOnly` solo reemplaza `status` y `docType`, no toca `AND`, así que sigue respetando el alcance. `customerId` y `salesOrderId` de la query son filtros conjuntivos: un VENDEDOR que apunta a un pedido o cliente ajeno recibe cero filas. Los roles de la ruta son ADMINISTRADOR y VENDEDOR, y `actor.role !== ADMINISTRADOR` equivale a `=== VENDEDOR` ahí. Otros `OR` de búsqueda en `apps/api/src`: `quotations.service.ts:918`, `sales-orders.service.ts:2585` y `dispatches.service.ts:1105` usan `sellerWhere`/`quotationSellerWhere`, que devuelven `{ sellerId }` sin `OR` (sin colisión; `orderStagesWhere` usa `AND` y la búsqueda `OR`, claves distintas); `receivables` y cobranzas son solo ADMINISTRADOR y sin `search`; `customers`, `catalog`, `coils`, `pos`, `inventory` y `purchases` no tienen alcance por vendedor. El E2E de dos vendedores falla con el código viejo (A vería el comprobante de B por nombre o documento).
+- **M2, mapeo numérico.** `movementsToKardexSheet`: ADJUST positivo va a entradas y negativo a salidas sin cantidad ni C.U., con el monto en valor absoluto; las anulaciones conservan el sentido del movimiento y se rotulan; `totalCost` y `balance*` nulos (sin costos) quedan como celda vacía; el saldo sale de `findMovements`, sin recalcular (el `balanceTotalCost` nuevo es el `runningValue` que ya existía). `pepsToKardexSheet`: con una sola capa (o ninguna) usa la fila del motor; con varias abre una fila por capa, el saldo va solo en la última, y `Totales` sale de `report.totals` (el movimiento se cuenta una vez: sin doble conteo). `outLayers` incluye el faltante sin capa al costo registrado; para la anulación de una entrada (OUT con `reversalOfId`) toma primero la capa que abrió esa entrada y luego las más antiguas, coherente con `consumed`. Las cantidades de las capas suman exactamente `outQty`. Sin aritmética con `number`.
+- **M2, seguridad.** `GET /reports/kardex/xlsx`, `GET /reports/kardex-peps` y `.../kardex-peps/xlsx` son solo ADMINISTRADOR (con centinela de metadatos en `reports.controller.spec.ts`). `costing=peps` en la URL lo ignora la pantalla si el rol no es ADMINISTRADOR (`method` depende de `isAdmin`) y el API lo rechazaría igual. SUPERVISOR_PLANTA ve el promedio con costos (comportamiento previo); `balanceTotalCost` está bajo `showCosts`. VENDEDOR no llega a los datos.
+- **Web.** Estados de carga y error correctos (`isPending` de PEPS acotado a `validRange`; consulta de Promedio deshabilitada en PEPS y viceversa); opacidad de anuladas solo en Promedio y por `reversedById`; enlaces del Detalle respetan `REF_TARGET_ROLES` e `INVOICE_LINK_ROLES`; `KARDEX_ALL_FROM` normalizado a vacío en la hoja PEPS.
+
+### Resolución del apéndice (agente que implementó, 2026-09-25)
+
+| Hallazgo                                                                      | Qué se hizo                                                                                                                                                             |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P1-1** «Descargar PEPS (SUNAT 13.1)» con «Todo» bajaba solo el mes en curso | **Corregido**: el enlace usa el mismo rango que «Descargar Excel» (`KARDEX_ALL_FROM` hasta hoy). Sin aserción E2E propia (el botón vive en el menú «⋯»); queda como P2. |
+| P2-1 período «01/01/2000» en el Excel de Promedio con «Todo»                  | **Corregido** en `movementsToKardexSheet` (con su unitario).                                                                                                            |
+| P2-2 la pantalla ya no muestra la unidad                                      | Pendiente (baja): la cabecera puede llevarla.                                                                                                                           |
+| P2-3 capas redondeadas una a una                                              | Sin cambio: la suma puede diferir en 0,0001 del monto del movimiento; el saldo y los totales salen del motor, no de sumar filas.                                        |
+| P2-4 la hoja de Promedio no lleva «Saldo inicial» ni «Totales»                | Pendiente (el API de movimientos no entrega el saldo inicial del rango).                                                                                                |
+| P2-5 a P2-11                                                                  | Pendientes, anotados; ninguno bloquea el deploy.                                                                                                                        |

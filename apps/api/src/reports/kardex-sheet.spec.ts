@@ -1,4 +1,5 @@
 import {
+  KARDEX_ALL_FROM,
   movementsToKardexSheet,
   pepsToKardexSheet,
   type InventoryMovementDto,
@@ -96,6 +97,12 @@ describe('movementsToKardexSheet (promedio)', () => {
       outTotal: '25.0000',
       inTotal: null,
     });
+  });
+
+  it('«Todo» (2000-01-01) no aparece como período: la hoja queda sin cota, como en PEPS', () => {
+    const sheet = movementsToKardexSheet([movement({})], { ...meta, from: KARDEX_ALL_FROM });
+    expect(sheet.from).toBe('');
+    expect(sheet.to).toBe('2026-09-30');
   });
 
   it('marca la anulación en el detalle y lleva la nota', () => {

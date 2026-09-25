@@ -207,7 +207,7 @@ export function KardexView() {
   };
 
   const excelHref = `/api/reports/kardex/xlsx?itemType=${itemType}&itemId=${itemId}&from=${excelFrom}&to=${excelTo}&method=${method}`;
-  const sunatHref = `/api/reports/kardex-peps/xlsx?itemType=${itemType}&itemId=${itemId}&from=${dates.from || `${today.slice(0, 7)}-01`}&to=${excelTo}`;
+  const sunatHref = `/api/reports/kardex-peps/xlsx?itemType=${itemType}&itemId=${itemId}&from=${excelFrom}&to=${excelTo}`;
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR]}>

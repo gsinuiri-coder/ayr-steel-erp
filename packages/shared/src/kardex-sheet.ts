@@ -126,7 +126,8 @@ export function movementsToKardexSheet(
       balanceTotal: m.balanceTotalCost ?? null,
     };
   });
-  return { method: 'AVERAGE', ...meta, rows };
+  // «Todo» viaja como 2000-01-01 (el formato exige período): en la hoja es «sin cota», como en PEPS.
+  return { method: 'AVERAGE', ...meta, from: meta.from === KARDEX_ALL_FROM ? '' : meta.from, rows };
 }
 
 /**
