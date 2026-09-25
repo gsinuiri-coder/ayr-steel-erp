@@ -34,7 +34,18 @@ export interface PlanItemKardex {
 }
 
 export type PlanTarget =
-  { ok: true; itemKey: string; reserveQty: Decimal } | { ok: false; reason: string };
+  | {
+      ok: true;
+      itemKey: string;
+      reserveQty: Decimal;
+      /**
+       * Lo fabricado y reservado para la línea de pedido (cupo), o null si la línea no sale de
+       * producción propia. Se reparte entre los comprobantes de la línea en orden de emisión y
+       * solo lo gasta la línea que se entrega (D-287).
+       */
+      held?: { qty: Decimal; unit: string } | null;
+    }
+  | { ok: false; reason: string };
 
 export interface PlanInvoiceLine {
   orderItemId: string;
@@ -119,6 +130,10 @@ export function planInvoiceDispatches(
   const outsByItem = new Map<string, { date: string; qty: Decimal }[]>(
     [...priorOuts].map(([k, v]) => [k, [...v]]),
   );
+  // D-287: el cupo de lo fabricado y reservado se gasta solo cuando la línea se entrega
+  // (DISPATCH o BEFORE_OPENING, que también descuenta la reserva). Si va a revisión, el cupo
+  // sigue disponible para el comprobante siguiente de la misma línea de pedido.
+  const heldUsed = new Map<string, Decimal>();
   const ordered = [...invoices].sort((a, b) =>
     a.issueDate === b.issueDate
       ? a.number.localeCompare(b.number)
@@ -151,7 +166,25 @@ export function planInvoiceDispatches(
           reason: line.target.reason,
         };
       }
-      const { itemKey, reserveQty } = line.target;
+      const { itemKey, reserveQty, held } = line.target;
+      const used = heldUsed.get(line.orderItemId) ?? new Decimal(0);
+      if (held !== undefined && held !== null) {
+        const left = Decimal.max(new Decimal(0), held.qty.minus(used));
+        if (reserveQty.gt(left)) {
+          return {
+            ...base,
+            reserveQty: new Decimal(0),
+            itemKey: null,
+            action: 'REVIEW',
+            reason: `Hay ${left.toFixed(3)} ${held.unit} fabricados y reservados para la línea y se facturaron ${reserveQty.toFixed(3)}: falta producir`,
+          };
+        }
+      }
+      const consumeHeld = (): void => {
+        if (held !== undefined && held !== null) {
+          heldUsed.set(line.orderItemId, used.plus(reserveQty));
+        }
+      };
       const kardex = kardexByItem.get(itemKey) ?? { openingDate: null, movements: [] };
       // Una bobina tiene identidad: si estaba en la carga inicial, estaba en el almacén cuando
       // se contó y no pudo salir antes. Entregarla sin salida la dejaría vendible otra vez.
@@ -169,6 +202,7 @@ export function planInvoiceDispatches(
         };
       }
       if (kardex.openingDate !== null && base.operationDate < kardex.openingDate) {
+        consumeHeld();
         return {
           ...base,
           reserveQty,
@@ -190,6 +224,7 @@ export function planInvoiceDispatches(
         };
       }
       outsByItem.set(itemKey, candidate);
+      consumeHeld();
       return { ...base, reserveQty, itemKey, action: 'DISPATCH', reason: null };
     }),
   }));
