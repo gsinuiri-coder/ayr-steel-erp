@@ -58,7 +58,10 @@ export function ProductionOrdersCard({
   const rows = columnFilters.apply(allRows, {
     code: (o) => o.code,
     product: (o) => `${o.productSku} ${o.productName}`,
-    status: (o) => PRODUCTION_ORDER_STATUS_LABELS[o.status],
+    status: (o) =>
+      o.status === 'DRAFT' && o.kind === 'ROOFING'
+        ? 'En cola'
+        : PRODUCTION_ORDER_STATUS_LABELS[o.status],
   });
 
   if (orders.isSuccess && allRows.length === 0) return null;

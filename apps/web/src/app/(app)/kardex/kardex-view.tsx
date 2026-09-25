@@ -148,7 +148,7 @@ export function KardexView() {
 
   // D-279: el kardex PEPS (formato 13.1) es de un producto o una bobina y solo lo baja el
   // administrador. El formato siempre declara un período: sin fechas, el mes en curso.
-  const pepsFrom = dates.from || `${today.slice(0, 7)}-01`;
+  const pepsFrom = dates.from || PEPS_ALL_FROM;
   const pepsTo = dates.to || today;
   const canDownloadPeps = hasItem && isAdmin;
 

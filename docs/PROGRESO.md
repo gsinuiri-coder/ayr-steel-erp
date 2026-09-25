@@ -65,6 +65,33 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   faltante de una salida anulada; el re-fechado podía despachar otra cantidad que la revertida),
   5 P2 (cuatro corregidos). Motivo: el mismo. Pieza de riesgo: la reversa en modo re-fechado,
   que exceptúa al comprobante corregido del bloqueo por documento declarado.
+- **Correcciones 03** (2026-09-25, rama `fix/correcciones-03`). D-289 a D-296. Autorrevisión por
+  un subagente nuevo del mismo modelo que escribió (`docs/revision/correcciones-03-autorrevision.md`):
+  0 P0, 3 P1 (dos corregidos; el tercero es preexistente y espera decisión del dueño), 8 P2. Motivo:
+  esquema de un solo agente, sin segundo revisor disponible. Piezas de riesgo para el pase cruzado:
+  el default de exclusión de terminales negativos en el API (`statusCondition`) y `useUrlState`.
+
+## Correcciones 03 del cliente — UI y listas (2026-09-25)
+
+Handoff: `docs/handoff/correcciones-03.md`. UAT: `docs/uat/correcciones-03.md`. Cliente:
+`docs/cliente/correcciones-03.md` (**incompleto: el texto del cliente no llegó**) y
+`docs/cliente/revision-2026-09-25.md` §1.15.
+
+- **Entró (M0–M6, sin migraciones ni cambios de dominio):** estado de las listas en la URL y filtro
+  de estado múltiple con chips «Anulados»/«Atendidos» (D-289); kardex por ítem con buscador, mes en
+  curso y búsqueda en catálogo (D-290); columna de bobina en reportes de OP e historial de órdenes
+  en tabla (D-291); sidebar acordeón y estado del PSE en ⓘ (D-292); modelo de formularios (D-293);
+  estilo compacto y `Section` (D-294); filtros de columna (D-295); PEPS junto al promedio (D-296).
+- **Verificación:** lint, typecheck, unitarias (API 1208, web 36), format y build en verde. Suite
+  E2E completa con builds de producción: **410 pasados, 6 fallidos en 45,5 min**; 5 reintentados en
+  verde (2 de pruebas —menú acordeón y markup viejo del despacho—, 1 prueba propia mal acotada, 2
+  de R2 sin credenciales en el worktree); **queda 1 rojo de infraestructura**:
+  `reportes-costeo-rf-s4a.spec.ts:167` (Nubefact rechaza el correlativo; no se comprobó contra `main`).
+- **Medido (1366×768):** filas por pantalla en listas 16→19; cajas con borde en detalles 2/3/6/2→1/0/0/0.
+- **No entró:** formulario de compra y diálogos de acabados/colores/receta sin migrar al modelo de D-293.
+- **Hallazgo preexistente para el dueño:** la búsqueda de `GET /invoicing/documents` pisa el `OR` de
+  alcance por vendedor (un VENDEDOR podría ver comprobantes de otros). No se tocó (§3.16).
+- **Ventana:** sin migración; propuesta en el handoff, **pendiente de OK del dueño**. Nada desplegado.
 
 ## Re-fechado de FFA1-00001386 / DES-000019 y D-288 (2026-09-25)
 

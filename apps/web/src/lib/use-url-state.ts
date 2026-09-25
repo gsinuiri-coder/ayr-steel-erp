@@ -122,22 +122,31 @@ export function useUrlSearchInput(
 ): [string, (value: string) => void, string] {
   const [draft, setDraft] = useState(urlValue);
   const lastCommitted = useRef(urlValue);
+  // Valores que este hook ya escribió y cuyo eco puede llegar tarde: con latencia, el
+  // `router.replace` de «ab» puede resolverse cuando el usuario ya tecleó «abc», y ese eco no es
+  // un cambio externo (no debe pisar el cuadro).
+  const ownCommits = useRef(new Set<string>());
   const trimmed = draft.trim();
   const debounced = useDebounced(trimmed, delay);
 
   useEffect(() => {
     if (debounced !== lastCommitted.current) {
       lastCommitted.current = debounced;
+      ownCommits.current.add(debounced);
       commit(debounced);
     }
     // `commit` cambia de identidad con el path; lo que importa es el valor debounced.
   }, [debounced]);
 
   useEffect(() => {
-    if (urlValue !== lastCommitted.current) {
-      lastCommitted.current = urlValue;
-      setDraft(urlValue);
+    if (urlValue === lastCommitted.current) {
+      // La URL alcanzó lo último que se escribió: ya no hay ecos pendientes.
+      ownCommits.current.clear();
+      return;
     }
+    if (ownCommits.current.has(urlValue)) return; // eco atrasado de un commit propio
+    lastCommitted.current = urlValue; // cambio externo (otro enlace, atrás/adelante)
+    setDraft(urlValue);
   }, [urlValue]);
 
   return [draft, setDraft, urlValue];

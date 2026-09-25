@@ -39,12 +39,14 @@ async function loginAsAdmin(page: Page): Promise<void> {
  */
 function inputAfterLabel(page: Page, label: string) {
   return page.locator(
-    `xpath=//label[normalize-space(text())="${label}"]/following-sibling::input[1]`,
+    `xpath=//label[normalize-space(text())="${label}"]/following-sibling::*[1]//input[1]`,
   );
 }
 
 function fieldGroup(page: Page, exactLabel: string) {
-  return page.locator('div.space-y-1', { has: page.getByText(exactLabel, { exact: true }) });
+  return page.locator('[data-slot="form-cell"]', {
+    has: page.getByText(exactLabel, { exact: true }),
+  });
 }
 
 test.describe('F8-S1/M3 — peso por línea en el despacho', () => {

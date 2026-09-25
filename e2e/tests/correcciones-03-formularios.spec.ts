@@ -77,13 +77,17 @@ async function measure(page: Page, rootSelector: string): Promise<LayoutReport> 
   }, rootSelector);
 }
 
-function expectClean(report: LayoutReport, label: string) {
+function expectClean(report: LayoutReport, label: string, checkPage = true) {
   expect(report.cells, `${label}: no encontró celdas de formulario`).toBeGreaterThan(3);
   expect(report.overlaps, `${label}: celdas que se pisan`).toEqual([]);
   // El rótulo mide siempre lo mismo: todos los controles arrancan a la misma distancia.
   const distinct = [...new Set(report.offsets)];
   expect(distinct.length, `${label}: distancias rótulo→control ${distinct.join(', ')} px`).toBe(1);
-  expect(report.pageOverflow, `${label}: scroll horizontal de la página`).toBeLessThanOrEqual(0);
+  // Con un diálogo abierto se mide el diálogo: la página de atrás (el catálogo, con datos de todas
+  // las corridas) no es lo que se prueba acá.
+  if (checkPage) {
+    expect(report.pageOverflow, `${label}: scroll horizontal de la página`).toBeLessThanOrEqual(0);
+  }
   expect(
     report.containerOverflow,
     `${label}: scroll horizontal del contenedor`,
@@ -118,14 +122,14 @@ for (const viewport of VIEWPORTS) {
         .getByPlaceholder('3000')
         .fill('3')
         .catch(() => undefined);
-      expectClean(await measure(page, '[role="dialog"]'), 'ProductDialog coberturas');
+      expectClean(await measure(page, '[role="dialog"]'), 'ProductDialog coberturas', false);
       await page.keyboard.press('Escape');
 
       // Drywall: ancho, largo y peso de la pieza en una fila.
       await page.getByRole('tab', { name: 'Drywall' }).click();
       await page.getByRole('button', { name: 'Nuevo producto' }).first().click();
       await expect(page.getByRole('dialog').getByText('Peso de la pieza (kg)')).toBeVisible();
-      expectClean(await measure(page, '[role="dialog"]'), 'ProductDialog drywall');
+      expectClean(await measure(page, '[role="dialog"]'), 'ProductDialog drywall', false);
       await page.keyboard.press('Escape');
     });
 
