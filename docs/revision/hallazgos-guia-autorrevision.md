@@ -59,14 +59,14 @@ Recomendación: excluir en `findCoilTies` las `EMITTED` con `validUntil < hoy` (
 
 Consultas nuevas por petición (medidas por lectura de código, no ejecutadas):
 
-| Petición | Consultas nuevas | Dónde |
-| --- | --- | --- |
-| `GET /sales/sellable-coils` | +1 (`quotationItem.findMany`), **secuencial** tras el `Promise.all` | `sales-orders.service.ts:3236` |
-| `GET /sales/sellable-coils/unavailable` | +1, **secuencial** antes del `Promise.all` | `sales-orders.service.ts:3316` |
-| Alta/edición/duplicado de cotización, pedido directo | +1 solo si alguna línea trae `saleCoilId` no papel; 0 en el resto | `sales-lines.ts:860` |
-| `GET /sales/orders/:id` (`findOne`) | +1 (`dispatchItem.findMany`) solo si hay reservas `CONSUMED`; entra en el `Promise.all` existente | `sales-orders.service.ts:2714` |
-| `GET /sales/reservations`, `release` | +1 condicional a que haya `CONSUMED` | `sales-orders.service.ts:3431`, `2331` |
-| Web, detalle del pedido | +1 petición HTTP (`orders/:id/progress`), ~5-6 consultas en el API (pedido+items, 2 `groupBy`, 1-3 de etiquetas) en cada carga | `pedido-detalle-view.tsx:99` |
+| Petición                                             | Consultas nuevas                                                                                                               | Dónde                                  |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| `GET /sales/sellable-coils`                          | +1 (`quotationItem.findMany`), **secuencial** tras el `Promise.all`                                                            | `sales-orders.service.ts:3236`         |
+| `GET /sales/sellable-coils/unavailable`              | +1, **secuencial** antes del `Promise.all`                                                                                     | `sales-orders.service.ts:3316`         |
+| Alta/edición/duplicado de cotización, pedido directo | +1 solo si alguna línea trae `saleCoilId` no papel; 0 en el resto                                                              | `sales-lines.ts:860`                   |
+| `GET /sales/orders/:id` (`findOne`)                  | +1 (`dispatchItem.findMany`) solo si hay reservas `CONSUMED`; entra en el `Promise.all` existente                              | `sales-orders.service.ts:2714`         |
+| `GET /sales/reservations`, `release`                 | +1 condicional a que haya `CONSUMED`                                                                                           | `sales-orders.service.ts:3431`, `2331` |
+| Web, detalle del pedido                              | +1 petición HTTP (`orders/:id/progress`), ~5-6 consultas en el API (pedido+items, 2 `groupBy`, 1-3 de etiquetas) en cada carga | `pedido-detalle-view.tsx:99`           |
 
 No hay prueba de presupuesto de consultas para ninguna de estas rutas (no existe test análogo a `stock-panel-batch.spec.ts` para `sellable-coils`).
 
