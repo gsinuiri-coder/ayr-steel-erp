@@ -51,6 +51,64 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   Autorrevisión por dos subagentes nuevos del mismo modelo que escribió: 0 P0, P1 corregidos en
   la rama. Motivo: esquema de un solo agente, sin segundo revisor disponible. Pieza de riesgo
   para el pase cruzado: el arreglo de datos de D-278 (salidas retroactivas de kardex).
+- **D-285** (2026-09-25, rama `fix/inventario-inicial-fecha`, PR #21, desplegado y ejecutado).
+  Autorrevisión por un subagente nuevo del mismo modelo: 0 P0, 2 P1 corregidos antes de ejecutar.
+  Motivo: el mismo. Pieza de riesgo: la migración que relaja el trigger append-only.
+
+## Ventana de correcciones 02 (2026-09-24 → 25)
+
+Runbook `docs/handoff/ventana-color-comercial.md` (pasos 0 a 5c) y, después, D-285. El dueño
+confirmó que nadie operaba. Todo desde el checkout principal o worktrees en el SHA desplegado,
+con `AYR_ENV_SETUP` apuntando al `.env.setup` del checkout principal.
+
+- **Foto base** (`local-data/ventana-corr02/`): bobinas S/ 572 992.1133, inventario total
+  S/ 1 108 105.2721, venta de agosto S/ 304 394.4022 con costo 0. El login de la foto con las
+  credenciales de `.env.setup` dio 401 (queda un `auth.login.failed`); se usó el admin efímero
+  (`--ephemeral-admin --branch production`), borrado al terminar.
+- **#18:** API `ayr-steel-erp-api-00046-vkz` (`be6ecb6`), smoke verde con web vieja, merge
+  `a8cbf7b`, Vercel ok, smoke verde, reportes idénticos. **Retiro de NATURAL**: respaldo
+  `respaldo-pre-color-comercial-20260924`, dry-run 2 specs y 0 referencias, execute, diagnóstico
+  sin fusiones ni paradas, reportes idénticos.
+- **#19:** API `00047-t76` (`cab1aad`), merge `9fe8d98`, primer smoke verde contra
+  `v2.mareliac.pe`.
+- **#20:** sin migración. Respaldo `respaldo-pre-correcciones-02-20260924`, API `00048-cjf`
+  (`e364e3e`), merge `ad552a0`, smoke verde. **D-278**: dry-run idéntico al del día (28
+  comprobantes, 6 salidas, 23 en la excepción, 15 a revisión, S/ 84 676.41), execute con
+  `--expect`: 19 comprobantes, pedidos atendidos. Foto: bobinas −S/ 84 676.41 y costo de agosto
+  +S/ 84 676.41 exactos. **Parada:** los pedidos de costo parcial bajaron de 27 a 9 porque los 17
+  pedidos de UPVC entregados «antes del inventario inicial» quedaban con costo completo 0.
+- **Corrección del dueño → D-285** (PR #21): condición de parada original (ningún movimiento
+  anterior al 15-09 que no sea carga inicial) **no se cumplía**: 70 movimientos (64 compras de
+  bobina de agosto registradas en septiembre y las 6 salidas de PED-000018). El dueño la acotó
+  por ítem y fijó la fecha en 2026-08-01. Respaldo `respaldo-pre-inventario-inicial-20260925`,
+  migración `20260925010000_d285_mover_fecha_inventario_inicial` (`db:prod`, solo `migrate
+deploy`; `migrate diff` = drift conocido exacto), API `00049-zns` (`962f17f`), merge
+  `5ef7e36`, smoke verde. Dry-run de la ventana con la misma huella que el del día; execute:
+  **18 movimientos de carga inicial al 2026-08-01, 38 salidas nuevas (23 agregadas a despachos
+  de UPVC y 15 despachos nuevos de coberturas y planchas a la fecha del parte de producción),
+  0 a revisión, S/ 188 892.3388.**
+- **Foto después de D-285:** productos −S/ 188 892.3388 exacto (inventario total
+  S/ 834 536.5233); costo de ventas del año +S/ 188 892.3389 (agosto +S/ 185 163.5239,
+  septiembre +S/ 3 728.8150). La diferencia de S/ 0.0001 es redondeo: el reporte suma el
+  `total_cost` de cada salida a 4 decimales y el valorizado sale del saldo. Margen de agosto
+  11.35 %; 0 pedidos con costo parcial y 0 con costo no rastreable.
+- **Verificación de solo lectura:** PEPS de UPVC36MT cuadra con el kardex (663 u, sin
+  advertencias, mínimo corrido 0); igual UPVC6MT (574) y UPVC36MTAZUL (0). 0 líneas despachadas
+  sin salida. Carga inicial: 18 movimientos al 2026-08-01, 18 auditorías
+  `inventory.opening-date.move`.
+
+**Pendientes que deja:**
+
+- Una migración que devuelva la función del trigger `inventory_movements_immutable` a su forma
+  estricta (D-285 ya se aplicó; la excepción queda cerrada también en código por la guarda y
+  por la fecha fija).
+- P2 abiertos de la autorrevisión de D-285: concurrencia de dos `--execute` a la vez (sin
+  advisory lock) y el saldo corrido del kardex en ítems con compras fechadas entre el 01-08 y la
+  fecha vieja de carga grabadas antes (a mirar en el kardex de un ítem así).
+- Las credenciales de `ADMIN_*` de `.env.setup` no entran a production (401): revisar.
+- RUC y razón social del PEPS (`COMPANY_RUC`, `COMPANY_LEGAL_NAME`).
+- Respaldos de esta ventana en Neon: `respaldo-pre-color-comercial-20260924`,
+  `respaldo-pre-correcciones-02-20260924`, `respaldo-pre-inventario-inicial-20260925`.
 
 ## Correcciones 02 del cliente (2026-09-24)
 

@@ -1,6 +1,6 @@
 # Runbook — deploy del color comercial (D-270..D-274)
 
-**Estado: NO EJECUTADO.** Lo corre el dueño con el agente esta noche. Cada paso marcado
+**Estado: EJECUTADO** el 2026-09-24 → 25 (pasos 0 a 5c, y después D-285). Resultado en `docs/PROGRESO.md`, «Ventana de correcciones 02». Cada paso marcado
 **[OK]** espera el OK explícito del dueño en la sesión (D-251/D-232).
 
 - PR: https://github.com/gsinuiri-coder/ayr-steel-erp/pull/18, rama `feat/color-comercial`.
