@@ -161,6 +161,8 @@ export class QuotationsService {
     const lines = await resolveSalesLines(tx, input.items, {
       ...((options.enforcePriceFloor ?? true) ? { priceFloor: this.priceFloor() } : {}),
       ...(options.exactAmounts ? { exactAmounts: options.exactAmounts } : {}),
+      // D-310: el importador de históricos trae hechos consumados y no compite por bobinas.
+      ...(options.exactAmounts ? {} : { coilTies: { viewer: actor } }),
     });
     const totals = documentTotals(lines);
     // D-157: `null` es **sin vencimiento** y se guarda como `NULL`, no como una fecha lejana.
@@ -274,6 +276,12 @@ export class QuotationsService {
                 },
               }
             : {}),
+          // D-310: la propia cotización no compite consigo misma; las de otros sí.
+          coilTies: {
+            exceptQuotationIds: [id],
+            viewer: actor,
+            keepCoilIds: await this.storedCoilIds(tx, id),
+          },
         });
         const totals = documentTotals(lines);
         // D-157: una cotización **sin vencimiento** (la trajo el importador) lo sigue siendo al
@@ -575,7 +583,11 @@ export class QuotationsService {
       // D-163: el duplicado **sí** pasa por el piso, por el mismo motivo por el que vence
       // (D-157): lo que sale es una cotización viva de hoy. Duplicar una importada cuyo
       // precio quedó por debajo del mínimo de hoy rebota, y así tiene que ser.
-      const lines = await resolveSalesLines(tx, items, { priceFloor: this.priceFloor() });
+      const lines = await resolveSalesLines(tx, items, {
+        priceFloor: this.priceFloor(),
+        // D-310: si la original sigue abierta, el duplicado no puede vender la misma bobina.
+        coilTies: { viewer: actor },
+      });
       const totals = documentTotals(lines);
       const issueDate = businessToday();
       // D-157: **el duplicado sí vence**, aunque la original no venciera. Duplicar es "usá

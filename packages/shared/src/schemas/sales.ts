@@ -365,6 +365,13 @@ export const reservationSchema = z.object({
   /** OP que la consumió, si ya la consumió (D-060: `production_orders.reservation_id`). */
   productionOrderId: z.string().uuid().nullable(),
   productionOrderCode: z.string().nullable(),
+  /**
+   * D-311: el despacho vigente que se llevó el material de esta reserva (la consumió una
+   * entrega, no una orden de producción). Derivado al leer de las líneas del despacho; no hay
+   * columna. `null` mientras la reserva no esté consumida o si la consumió una OP.
+   */
+  dispatchId: z.string().uuid().nullable(),
+  dispatchCode: z.string().nullable(),
   /** `true` cuando lleva `RESERVATION_STALE_DAYS` activa: la alerta de D-054. */
   isStale: z.boolean(),
   createdAt: z.string(),

@@ -116,7 +116,8 @@ import {
   theoreticalKgForMeters,
   toSalesItemDto,
 } from './sales-lines';
-import { coilPoolFor, coilPoolKeyOfProduct } from './coil-sale-product';
+import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
+import { reservationDispatches } from './reservation-dispatches';
 import { buildPlantOrderPdf } from './plant-order-pdf';
 import { plantLineMeasures } from './plant-measures';
 import { findPriceChanges } from './price-changes';
@@ -1116,6 +1117,8 @@ export class SalesOrdersService {
       ...(options.counterSale === true
         ? {}
         : { priceFloor: { toleranceMm: roofingToleranceMm(this.env) } }),
+      // D-310: una bobina entera atada a una cotización abierta ajena no se vende por el lado.
+      coilTies: { viewer: actor },
     });
 
     // D-119: un pedido directo (sin cotización) exige que **ninguna** línea venga de una
@@ -2325,7 +2328,7 @@ export class SalesOrdersService {
       },
     });
     const labels = await this.reserveLabels([row]);
-    return this.toReservationDto(row, labels);
+    return this.toReservationDto(row, labels, await reservationDispatches(this.prisma, [row]));
   }
 
   // -------------------------------------------------------------------------
@@ -2694,7 +2697,7 @@ export class SalesOrdersService {
     if (!row) throw new NotFoundException('Pedido no encontrado');
     if (actor) assertSellerAccess(actor, row.sellerId, 'Pedido');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
-    const [actors, context, priceChanges, invoice] = await Promise.all([
+    const [actors, context, priceChanges, invoice, dispatches] = await Promise.all([
       this.resolveActorNames([row.createdById, row.sellerId].filter(Boolean) as string[]),
       this.computeOrderContext(row),
       findPriceChanges(this.prisma, { salesOrderId: id }),
@@ -2708,9 +2711,10 @@ export class SalesOrdersService {
         },
         select: { id: true },
       }),
+      reservationDispatches(this.prisma, row.reservations),
     ]);
     return {
-      ...this.toDto(row, labels, actors, context),
+      ...this.toDto(row, labels, actors, context, dispatches),
       priceChanges,
       isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
     };
@@ -3227,7 +3231,18 @@ export class SalesOrdersService {
 
     // D-163: el piso por kg de cada rollo vendible, con la misma función que lo va a exigir
     // al guardar. Se calcula sobre los que sobreviven al filtro, no sobre los 500 leídos.
-    const sellable = coils.filter((c) => !assignedIds.has(c.id));
+    // D-310: una bobina atada a otra cotización abierta (sin reserva) no se ofrece: es de ella. La
+    // propia cotización que se edita no se cuenta (`excludeQuotationId`).
+    const tiedIds = new Set(
+      (
+        await findCoilTies(
+          this.prisma,
+          ids,
+          query.excludeQuotationId ? [query.excludeQuotationId] : [],
+        )
+      ).map((t) => t.coilId),
+    );
+    const sellable = coils.filter((c) => !assignedIds.has(c.id) && !tiedIds.has(c.id));
     const floors = await computePriceFloors(
       this.prisma,
       sellable.map((c) => ({
@@ -3297,6 +3312,8 @@ export class SalesOrdersService {
 
     const ids = coils.map((c) => c.id);
     const exceptQuotationIds = query.excludeQuotationId ? [query.excludeQuotationId] : [];
+    // D-310: cotizaciones abiertas que venden la bobina entera sin reservarla.
+    const ties = await findCoilTies(this.prisma, ids, exceptQuotationIds);
     const [balances, reservedById, assigned, firm, temporary] = await Promise.all([
       this.prisma.inventoryBalance.findMany({
         where: { itemType: InventoryItemTypeEnum.COIL, itemId: { in: ids } },
@@ -3333,6 +3350,13 @@ export class SalesOrdersService {
     ]);
     const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
     const mountedIds = new Set(assigned.map((a) => a.coilId));
+    const tiedById = new Map<string, { seq: number; sellerId: string | null }[]>();
+    for (const tie of ties) {
+      tiedById.set(tie.coilId, [
+        ...(tiedById.get(tie.coilId) ?? []),
+        { seq: tie.seq, sellerId: tie.sellerId },
+      ]);
+    }
     const holdersOf = <T extends { itemId: string }, H>(rows: T[], pick: (row: T) => H) => {
       const out = new Map<string, H[]>();
       for (const row of rows) out.set(row.itemId, [...(out.get(row.itemId) ?? []), pick(row)]);
@@ -3346,7 +3370,8 @@ export class SalesOrdersService {
       if (balance.lte(0)) return [];
       const mounted = mountedIds.has(c.id);
       const free = balance.minus(reservedById.get(c.id) ?? toDecimal('0'));
-      if (!mounted && free.gt(0)) return [];
+      // D-310: una bobina atada a otra cotización abierta tampoco se ofrece, aunque tenga saldo libre.
+      if (!mounted && free.gt(0) && !tiedById.has(c.id)) return [];
       return [
         {
           coilId: c.id,
@@ -3363,6 +3388,7 @@ export class SalesOrdersService {
               mounted,
               firm: firmById.get(c.id) ?? [],
               temporary: temporaryById.get(c.id) ?? [],
+              tied: tiedById.get(c.id) ?? [],
             },
             actor,
           ),
@@ -3402,7 +3428,8 @@ export class SalesOrdersService {
       take: 500,
     });
     const labels = await this.reserveLabels(rows);
-    return rows.map((r) => this.toReservationDto(r, labels));
+    const dispatches = await reservationDispatches(this.prisma, rows);
+    return rows.map((r) => this.toReservationDto(r, labels, dispatches));
   }
 
   // -------------------------------------------------------------------------
@@ -3509,8 +3536,10 @@ export class SalesOrdersService {
   private toReservationDto(
     row: ReservationRow,
     labels: Map<string, { label: string; name: string }>,
+    dispatches: ReadonlyMap<string, { id: string; code: string }> = new Map(),
   ): ReservationDto {
     const op = row.productionOrders[0];
+    const dispatch = dispatches.get(row.id);
     const staleFrom = new Date(Date.now() - RESERVATION_STALE_DAYS * 24 * 60 * 60 * 1000);
     const label = labels.get(row.itemId);
     return {
@@ -3529,6 +3558,8 @@ export class SalesOrdersService {
       status: row.status,
       productionOrderId: op?.id ?? null,
       productionOrderCode: op ? productionOrderCode(op.seq) : null,
+      dispatchId: dispatch?.id ?? null,
+      dispatchCode: dispatch?.code ?? null,
       isStale: row.status === ReservationStatus.ACTIVE && row.createdAt < staleFrom,
       createdAt: row.createdAt.toISOString(),
       consumedAt: row.consumedAt?.toISOString() ?? null,
@@ -3552,6 +3583,7 @@ export class SalesOrdersService {
     labels: Map<string, { label: string; name: string }>,
     actors: Map<string, string>,
     context?: { queueStatus: QueueStatus | null; readiness: OrderReadinessDto },
+    dispatches?: ReadonlyMap<string, { id: string; code: string }>,
   ): SalesOrderDto {
     const readiness = context?.readiness ?? {
       status: 'SIN_PRODUCCION' as const,
@@ -3582,7 +3614,7 @@ export class SalesOrdersService {
       totalPen: row.totalPen.toFixed(4),
       notes: row.notes,
       items: row.items.map((i) => toSalesItemDto(i, labels.get(i.reserveItemId)?.label ?? '')),
-      reservations: row.reservations.map((r) => this.toReservationDto(r, labels)),
+      reservations: row.reservations.map((r) => this.toReservationDto(r, labels, dispatches)),
       createdAt: row.createdAt.toISOString(),
       createdById: row.createdById,
       createdByName: actors.get(row.createdById) ?? null,

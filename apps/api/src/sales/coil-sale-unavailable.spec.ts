@@ -65,6 +65,20 @@ describe('unavailableCoilReason', () => {
     ).toBe('atada a COT-000005 (reserva temporal)');
   });
 
+  it('D-310: una cotización que la vende entera sin reservarla dice «atada a COT-…» como el pool', () => {
+    const tied = [{ seq: 2, sellerId: 'beto' }];
+    expect(unavailableCoilReason({ mounted: false, firm: [], temporary: [], tied }, ADMIN)).toBe(
+      'atada a COT-000002',
+    );
+    expect(unavailableCoilReason({ mounted: false, firm: [], temporary: [], tied }, ANA)).toBe(
+      'no disponible',
+    );
+    // La montada y la reserva firme siguen mandando sobre la cotización.
+    expect(unavailableCoilReason({ mounted: true, firm: [], temporary: [], tied }, ADMIN)).toBe(
+      'montada en una OP',
+    );
+  });
+
   it('sin titular conocido, un motivo genérico', () => {
     expect(unavailableCoilReason({ mounted: false, firm: [], temporary: [] }, ADMIN)).toBe(
       'sin saldo libre',

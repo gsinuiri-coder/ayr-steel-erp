@@ -131,3 +131,43 @@ contra la web vieja; merge del PR con `AYR_OWNER_PUSH=1`; Vercel; `pnpm smoke:pr
 
 `9864460` M0 · `967bfc0` M1 · `4a8096c` M2 · tests E2E · `65265ca` M3 · `c918251` M4 · `94a0256` M5 ·
 `f0bf1ca` M6 · docs y correcciones de cierre (commit siguiente).
+
+## 9. Segunda tanda, deploy y cierre (2026-09-25, misma rama, PR #28 mergeada)
+
+**Lo que cambia respecto de §3 a §6 de arriba:** el hallazgo de seguridad de §4.1 **está corregido**
+(D-297); el texto del cliente **llegó** y `docs/cliente/correcciones-03.md` está completo (§4.2); la
+ventana **se ejecutó** (§6); el gate de Sonar **pasó**.
+
+| Milestone | Commit    | Decisión | Resumen                                                                                                                                                                                                                                                                 |
+| --------- | --------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0        | `3453b63` | —        | Texto íntegro del cliente y respuestas a los puntos 5–9 en `docs/cliente/` (6 y 8 resueltos; 5, 7 y 9 «a validar esta noche en demo»)                                                                                                                                   |
+| M1        | `2c13715` | D-297    | La búsqueda de comprobantes ya no pisa el alcance del vendedor: `fiscalDocumentListWhere` compone alcance y búsqueda con `AND`; barrido de las demás listas (ninguna tenía el patrón); unitario del `where` y E2E de dos vendedores                                     |
+| M2        | `1d91da6` | D-298    | Kardex con el formato del cliente (Fecha, Detalle, ENTRADAS, SALIDAS, SALDO; cantidad, C.U., monto) para **Promedio y PEPS**, en pantalla y en Excel (`GET /reports/kardex/xlsx`, solo ADMINISTRADOR); PEPS abre las salidas en una fila por capa (`PepsRow.outLayers`) |
+| M3        | `9daefe0` | D-299    | Sonar: cobertura de código nuevo 55 % → gate en `pass`; hooks del web probados bajo `jsdom`                                                                                                                                                                             |
+| Revisión  | `6182e3e` | —        | Correcciones de la autorrevisión de M1/M2 (descarga SUNAT con «Todo», período sin cota en el Excel de promedio) y del lint de CI                                                                                                                                        |
+
+**Verificación de la segunda tanda:** lint, typecheck, `format:check` y unitarias (API 112 suites /
+1239 pruebas; web 8 archivos) en verde; E2E afectados con builds de producción (kardex, cierre de
+bobina, alcance de dos vendedores, formularios) en verde; **CI de la PR en verde en los cinco jobs**
+(lint/typecheck/unit, E2E del runner, smoke con Neon `ci`, análisis estático y SonarCloud). El rojo
+local `reportes-costeo-rf-s4a:167` (Nubefact) **pasó en el runner de CI**: era del entorno local.
+
+**Autorrevisión de M1 y M2** (subagente nuevo, apéndice de `docs/revision/correcciones-03-autorrevision.md`,
+sigue **PENDIENTE DE REVISIÓN INDEPENDIENTE**): 0 P0, 1 P1 (corregido), 11 P2 anotados. M1 sin
+hallazgos: `AND: [{OR}, {OR}]` es correcto, `pendingOnly`/`customerId`/`salesOrderId` respetan el
+alcance y ningún otro `OR` de búsqueda pisa uno de alcance.
+
+**Deploy:** ver la sección «Ventana de Correcciones 03» de `docs/PROGRESO.md` (respaldo
+`respaldo-pre-corr03-20260925`, revisión `ayr-steel-erp-api-00054-rw8` con el 100 % del tráfico y
+label `git-sha=6182e3e`, smoke en verde antes y después del merge, alineación de runtime exit 0).
+
+**Pendientes que quedan** (todos bajos, ninguno bloquea): P2 de las dos autorrevisiones (unidad de
+medida en la hoja del kardex, «Saldo inicial»/«Totales» en la hoja de Promedio, tope de 10 000
+movimientos en el Excel de Promedio, `aria-describedby` de `FormCell`, aserciones negativas del
+menú); migrar el formulario de compra y los diálogos de acabados/colores/receta al modelo de D-293;
+validar en demo los puntos 5, 7 y 9 del cliente; las ramas remotas (`fix/correcciones-03` y `docs/cierre-corr03`)
+para que el dueño las borre.
+
+**Cierre del worktree:** `local-data/corr03/` (corridas de la suite) y la captura de la hoja del
+kardex se copiaron a `local-data/` del checkout principal y se compararon (mismos archivos y tamaños)
+antes de borrar el worktree.

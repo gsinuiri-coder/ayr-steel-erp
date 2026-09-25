@@ -227,6 +227,18 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
       // Nada movió kardex (D-060): montar/reservar una bobina no toca el saldo.
       expect(await balanceOf(api, 'COIL', scenario.coil.id)).toMatchObject({ qty: '300.000' });
 
+      // D-310: anular el pedido devuelve la cotización a «emitida», y una cotización abierta que
+      // vende la bobina entera vuelve a atarla: sigue sin ofrecerse en otra venta.
+      const revived = await getJson<QuotationDto>(api, `/api/sales/quotations/${quotation.id}`);
+      expect(revived.status).toBe('EMITTED');
+      expect((await sellableCoils(api, 'metallic-roofing')).map((o) => o.coilId)).not.toContain(
+        scenario.coil.id,
+      );
+
+      // La custodia se libera del todo al anular también la cotización.
+      await postJson(api, `/api/sales/quotations/${quotation.id}/cancel`, {
+        reason: 'Cliente desistió de la compra',
+      });
       const offeredAgain = (await sellableCoils(api, 'metallic-roofing')).find(
         (o) => o.coilId === scenario.coil.id,
       );
