@@ -59,11 +59,10 @@ import {
   type InvoicingSettingsDto,
   type SalesOrderProgressDto,
   type UpdateInvoicingSettingsInput,
-  NEGATIVE_TERMINAL_STATUSES,
-  statusCondition,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { fiscalDocumentListWhere } from './fiscal-document-where';
 import { assertSellerAccess } from '../auth/seller-scope';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
@@ -3071,46 +3070,7 @@ export class InvoicingService {
     query: FiscalDocumentQuery,
     actor?: RequestUser,
   ): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
-    const where: Prisma.FiscalDocumentWhereInput = {
-      // D-289: sin estado, la bandeja omite los dados de baja (no si se busca o se acota a un
-      // cliente/pedido: «los comprobantes de este cliente» son todos).
-      status: statusCondition(
-        query.status,
-        NEGATIVE_TERMINAL_STATUSES.fiscalDocument,
-        Boolean(query.search) || Boolean(query.customerId) || Boolean(query.salesOrderId),
-      ),
-      docType: query.docType,
-      customerId: query.customerId,
-      salesOrderId: query.salesOrderId,
-      origin: query.origin,
-      // RF-72: la versión archivada por una reimportación deja de ser el comprobante y sale
-      // de la lista. Sigue existiendo, y se llega a ella desde la vigente que la reemplazó.
-      ...(query.includeArchived ? {} : { archivedAt: null }),
-      ...(actor && actor.role !== Role.ADMINISTRADOR
-        ? {
-            OR: [
-              { createdById: actor.id },
-              { salesOrder: { sellerId: actor.id } },
-              { dispatch: { salesOrder: { sellerId: actor.id } } },
-            ],
-          }
-        : {}),
-    };
-    if (query.pendingOnly) {
-      // El saldo es derivado (D-075) y no se puede sumar en SQL sin duplicar la regla que
-      // vive en `@ayr/shared`. Lo que **sí** se puede acotar en SQL es qué documentos son
-      // capaces de tener saldo: sin esto, el universo a filtrar en memoria se llenaba de
-      // borradores y notas de crédito.
-      where.status = { in: LIVE_DOCUMENT_STATUSES };
-      where.docType = { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] };
-    }
-    if (query.search) {
-      where.OR = [
-        { number: { contains: query.search, mode: 'insensitive' } },
-        { customer: { name: { contains: query.search, mode: 'insensitive' } } },
-        { customer: { docNumber: { contains: query.search, mode: 'insensitive' } } },
-      ];
-    }
+    const where = fiscalDocumentListWhere(query, actor, LIVE_DOCUMENT_STATUSES);
 
     if (!query.pendingOnly) {
       const { skip, take } = toSkipTake(query);
