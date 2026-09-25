@@ -175,3 +175,70 @@ describe('planInvoiceDispatches — fecha del parte de producción (D-285)', () 
     expect(plan[0]?.lines[0]?.action).toBe('REVIEW');
   });
 });
+
+describe('planInvoiceDispatches — cupo de lo fabricado y reservado (D-287)', () => {
+  /** Un comprobante de la misma línea de pedido `L1`, con 6 MTR fabricados y reservados. */
+  function held(number: string, issueDate: string, qty: string): PlanInvoice {
+    return {
+      invoiceId: number,
+      number,
+      salesOrderId: 'ped',
+      issueDate,
+      lines: [
+        {
+          orderItemId: 'L1',
+          lineNumber: 1,
+          sku: 'COB',
+          qty: d(qty),
+          target: {
+            ok: true,
+            itemKey: 'A',
+            reserveQty: d(qty),
+            held: { qty: d(6), unit: 'MTR' },
+          },
+        },
+      ],
+    };
+  }
+
+  it('cupo insuficiente: revisión con la forma de siempre (sin ítem ni cantidad)', () => {
+    const plan = planInvoiceDispatches(
+      [held('F1', '2026-09-10', '8')],
+      new Map([['A', kardex(null, [['2026-09-01', 100]])]]),
+    );
+    expect(plan[0]?.lines[0]).toMatchObject({
+      action: 'REVIEW',
+      itemKey: null,
+      reason:
+        'Hay 6.000 MTR fabricados y reservados para la línea y se facturaron 8.000: falta producir',
+    });
+    expect(plan[0]?.lines[0]?.reserveQty.toFixed(3)).toBe('0.000');
+  });
+
+  it('lo que va a revisión por el kardex deja el cupo al comprobante siguiente', () => {
+    const plan = planInvoiceDispatches(
+      [held('F1', '2026-09-05', '6'), held('F2', '2026-09-12', '6')],
+      new Map([['A', kardex(null, [['2026-09-10', 100]])]]),
+    );
+    expect(plan.map((p) => p.lines[0]?.action)).toEqual(['REVIEW', 'DISPATCH']);
+    expect(plan[0]?.lines[0]?.reason).toContain('kardex negativo');
+  });
+
+  it('lo entregado antes del inventario inicial sí gasta el cupo', () => {
+    const plan = planInvoiceDispatches(
+      [held('F1', '2026-08-11', '4'), held('F2', '2026-09-25', '4')],
+      new Map([['A', kardex('2026-09-22', [['2026-09-22', 100]])]]),
+    );
+    expect(plan[0]?.lines[0]?.action).toBe('BEFORE_OPENING');
+    expect(plan[1]?.lines[0]).toMatchObject({ action: 'REVIEW', itemKey: null });
+    expect(plan[1]?.lines[0]?.reason).toContain('Hay 2.000 MTR');
+  });
+
+  it('un DISPATCH gasta el cupo del siguiente', () => {
+    const plan = planInvoiceDispatches(
+      [held('F1', '2026-09-11', '5'), held('F2', '2026-09-12', '5')],
+      new Map([['A', kardex(null, [['2026-09-10', 100]])]]),
+    );
+    expect(plan.map((p) => p.lines[0]?.action)).toEqual(['DISPATCH', 'REVIEW']);
+  });
+});
