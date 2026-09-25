@@ -48,7 +48,9 @@ export function VentasMargenView() {
     enabled: from <= to,
   });
 
-  const excluded = report.data?.orders.filter((o) => !o.inTotals) ?? [];
+  const excluded = report.data?.orders.filter((o) => o.costStatus === 'NO_COMPARABLE') ?? [];
+  // D-285: despachados sin salida de kardex; su costo no se puede rastrear.
+  const untraceable = report.data?.orders.filter((o) => o.costStatus === 'NO_RASTREABLE') ?? [];
   const included = report.data?.orders.filter((o) => o.inTotals) ?? [];
 
   return (
@@ -200,6 +202,37 @@ export function VentasMargenView() {
             </section>
           )}
 
+          {untraceable.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold">Costo no rastreable</h2>
+              <p className="text-xs text-muted-foreground">
+                Estos pedidos se despacharon sin su salida de inventario, así que no se sabe su
+                costo. Quedan fuera de los totales de arriba (venta excluida:{' '}
+                {formatMoney(report.data.totals.untraceableSalesPen)}).
+              </p>
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Pedido</TableHead>
+                      <TableHead>Cliente</TableHead>
+                      <TableHead className="text-right">Venta en el rango</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {untraceable.map((order) => (
+                      <TableRow key={order.salesOrderId ?? order.documents[0]?.id}>
+                        <TableCell className="font-mono">{order.orderCode ?? '—'}</TableCell>
+                        <TableCell>{order.customerName}</TableCell>
+                        <TableCell className="text-right">{formatMoney(order.salesPen)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
+          )}
+
           <section className="space-y-2">
             <h2 className="text-sm font-semibold">Totales por línea de negocio</h2>
             <div className="overflow-x-auto rounded-md border">
@@ -302,6 +335,7 @@ const COST_STATUS_LABELS: Record<MarginCostStatus, string> = {
   COMPLETO: 'Completo',
   PARCIAL: 'Costo parcial',
   NO_COMPARABLE: 'No comparable',
+  NO_RASTREABLE: 'Costo no rastreable',
 };
 
 function CostStatusBadge({ status }: { status: MarginCostStatus }) {

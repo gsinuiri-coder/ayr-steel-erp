@@ -67,6 +67,8 @@ interface SalesByLineRow {
 interface PendingDispatchRow {
   sales_order_id: string;
   pending: boolean;
+  /** D-285: alguna línea despachada que lleva inventario no tiene salida de kardex. */
+  untraceable: boolean;
 }
 
 /**
@@ -285,7 +287,8 @@ export class SalesMarginService {
     return this.prisma.$queryRaw<PendingDispatchRow[]>`
       SELECT
         soi."sales_order_id",
-        BOOL_OR(COALESCE(inv."qty", 0) > COALESCE(disp."qty", 0)) AS "pending"
+        BOOL_OR(COALESCE(inv."qty", 0) > COALESCE(disp."qty", 0)) AS "pending",
+        BOOL_OR(COALESCE(nomov."lines", 0) > 0) AS "untraceable"
       FROM "sales_order_items" soi
       LEFT JOIN (
         SELECT
@@ -305,6 +308,17 @@ export class SalesMarginService {
         WHERE d."status" = 'ISSUED'
         GROUP BY di."sales_order_item_id"
       ) disp ON disp."id" = soi."id"
+      LEFT JOIN (
+        SELECT di."sales_order_item_id" AS "id", COUNT(*) AS "lines"
+        FROM "dispatch_items" di
+        JOIN "dispatches" d ON d."id" = di."dispatch_id"
+        JOIN "products" p ON p."id" = di."product_id"
+        JOIN "business_lines" bl ON bl."id" = p."business_line_id"
+        WHERE d."status" = 'ISSUED'
+          AND di."movement_id" IS NULL
+          AND bl."inventory_strategy"::text <> 'NOOP'
+        GROUP BY di."sales_order_item_id"
+      ) nomov ON nomov."id" = soi."id"
       WHERE soi."sales_order_id" = ANY(${orderIds}::uuid[])
       GROUP BY soi."sales_order_id"
     `;
@@ -327,6 +341,9 @@ export class SalesMarginService {
     );
     const isPending = new Set(
       pendingDispatch.filter((r) => r.pending).map((r) => r.sales_order_id),
+    );
+    const isUntraceable = new Set(
+      pendingDispatch.filter((r) => r.untraceable).map((r) => r.sales_order_id),
     );
     const opMaterialByOrder = new Map(
       opMaterial.map((r) => [r.sales_order_id, toDecimal(r.material_pen.toString())]),
@@ -375,6 +392,8 @@ export class SalesMarginService {
     let totalCost = ZERO;
     let partialOrderCount = 0;
     let excludedOrderCount = 0;
+    let untraceableOrderCount = 0;
+    let untraceableSales = ZERO;
     let excludedSales = ZERO;
 
     for (const docs of buckets.values()) {
@@ -390,10 +409,11 @@ export class SalesMarginService {
         orderId,
         hasOutside,
         isPending,
+        isUntraceable,
         docs,
         costByDocument,
       });
-      const inTotals = costStatus !== 'NO_COMPARABLE';
+      const inTotals = costStatus !== 'NO_COMPARABLE' && costStatus !== 'NO_RASTREABLE';
 
       // **Las filas de costo que le tocan a este pedido**, elegidas una sola vez: de acá salen
       // tanto el monto de la fila como su apertura por línea de negocio, y por eso los dos no
@@ -419,7 +439,8 @@ export class SalesMarginService {
 
       const documentDtos: SalesMarginDocumentDto[] = docs.map((d) => {
         const docSales = signedSubtotal(d);
-        const docCost = costByDocument.get(d.id) ?? null;
+        // Fuera de los totales, el comprobante tampoco muestra costo (autorrevisión P2-7).
+        const docCost = inTotals ? (costByDocument.get(d.id) ?? null) : null;
         return {
           id: d.id,
           number: d.number,
@@ -452,6 +473,11 @@ export class SalesMarginService {
         documents: documentDtos,
       });
 
+      if (costStatus === 'NO_RASTREABLE') {
+        untraceableOrderCount += 1;
+        untraceableSales = untraceableSales.plus(sales);
+        continue;
+      }
       if (!inTotals) {
         excludedOrderCount += 1;
         excludedSales = excludedSales.plus(sales);
@@ -506,6 +532,8 @@ export class SalesMarginService {
         partialOrderCount,
         excludedOrderCount,
         excludedSalesPen: toFixedString(excludedSales, 'MONEY'),
+        untraceableOrderCount,
+        untraceableSalesPen: toFixedString(untraceableSales, 'MONEY'),
       },
     };
   }
@@ -559,12 +587,15 @@ function resolveCostStatus(input: {
   orderId: string | null;
   hasOutside: Set<string>;
   isPending: Set<string>;
+  isUntraceable: Set<string>;
   docs: DocumentRow[];
   costByDocument: Map<string, Decimal>;
 }): MarginCostStatus {
-  const { orderId, hasOutside, isPending, docs, costByDocument } = input;
+  const { orderId, hasOutside, isPending, isUntraceable, docs, costByDocument } = input;
   // Una venta directa sin pedido no tiene nada fuera del rango con lo que compartir costo.
   if (orderId === null) return 'COMPLETO';
+  // D-285: algo salió del almacén sin su salida de kardex: el costo no se puede rastrear.
+  if (isUntraceable.has(orderId)) return 'NO_RASTREABLE';
   if (hasOutside.has(orderId)) {
     const everyDocDeclaresDispatch = docs.every((d) => costByDocument.has(d.id));
     if (!everyDocDeclaresDispatch) return 'NO_COMPARABLE';

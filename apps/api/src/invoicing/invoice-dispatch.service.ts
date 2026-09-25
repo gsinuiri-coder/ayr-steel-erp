@@ -39,6 +39,8 @@ const SALE_DOCS: FiscalDocType[] = [FiscalDocType.FACTURA, FiscalDocType.BOLETA]
 /** Motivos que quedan en la auditoría y en la nota de cada salida (D-278). */
 export const AT_ISSUE_DATE_REASON = 'despacho a la fecha del comprobante';
 export const BEFORE_OPENING_REASON = 'entregado antes del inventario inicial';
+export const AFTER_PRODUCTION_REASON =
+  'despacho a la fecha del último parte de producción (posterior al comprobante)';
 
 export interface PlanItemInfo {
   key: string;
@@ -47,6 +49,15 @@ export interface PlanItemInfo {
   openingDate: string | null;
   balanceQty: Decimal;
   avgCost: Decimal;
+}
+
+/**
+ * D-285: lo que el dry-run del arreglo del inventario inicial simula antes de escribir: la
+ * fecha nueva de cada movimiento de carga inicial (por id) y las salidas que se agregan antes.
+ */
+export interface PlanSimulation {
+  movedOpening?: ReadonlyMap<string, string>;
+  priorOuts?: ReadonlyMap<string, readonly { date: string; qty: Decimal }[]>;
 }
 
 export interface InvoiceDispatchPlan {
@@ -163,21 +174,30 @@ export class InvoiceDispatchService {
       transferMode: TransferMode.PICKUP,
     };
     const dispatchIds: string[] = [];
-    if (toDispatch.length > 0) {
+    // D-285: una línea fabricada después de la emisión sale el día de su último parte de
+    // producción, así que un comprobante puede dar más de una fecha: un despacho por fecha.
+    const byDate = new Map<string, typeof toDispatch>();
+    for (const l of toDispatch)
+      byDate.set(l.operationDate, [...(byDate.get(l.operationDate) ?? []), l]);
+    for (const [operationDate, lines] of [...byDate].sort(([a], [b]) => a.localeCompare(b))) {
+      const afterProduction = operationDate !== invoice.issueDate;
       const id = await this.dispatches.createInTx(
         tx,
         actor,
         {
           ...base,
-          notes: `Despacho a la fecha del comprobante ${invoice.number} (D-278)`,
-          items: toDispatch.map((l) => ({
+          dispatchDate: operationDate,
+          notes: afterProduction
+            ? `Despacho de ${invoice.number} a la fecha del último parte de producción (D-285)`
+            : `Despacho a la fecha del comprobante ${invoice.number} (D-278)`,
+          items: lines.map((l) => ({
             salesOrderItemId: l.orderItemId,
             qty: l.qty.toFixed(3),
           })),
         },
         {
-          movementNote: `${AT_ISSUE_DATE_REASON} ${invoice.number}`,
-          auditReason: AT_ISSUE_DATE_REASON,
+          movementNote: `${afterProduction ? AFTER_PRODUCTION_REASON : AT_ISSUE_DATE_REASON} ${invoice.number}`,
+          auditReason: afterProduction ? AFTER_PRODUCTION_REASON : AT_ISSUE_DATE_REASON,
         },
       );
       await this.dispatches.linkInvoiceInTx(tx, id, invoice.invoiceId);
@@ -224,9 +244,12 @@ export class InvoiceDispatchService {
           sku: l.sku,
           qty: l.qty.toFixed(3),
           action: l.action,
+          operationDate: l.operationDate,
           reason:
             l.action === 'DISPATCH'
-              ? AT_ISSUE_DATE_REASON
+              ? l.operationDate === invoice.issueDate
+                ? AT_ISSUE_DATE_REASON
+                : AFTER_PRODUCTION_REASON
               : l.action === 'BEFORE_OPENING'
                 ? BEFORE_OPENING_REASON
                 : l.reason,
@@ -256,6 +279,7 @@ export class InvoiceDispatchService {
   async buildPlan(
     tx: Prisma.TransactionClient,
     where: Prisma.FiscalDocumentWhereInput,
+    sim: PlanSimulation = {},
   ): Promise<InvoiceDispatchPlan> {
     const invoices = await tx.fiscalDocument.findMany({
       where: {
@@ -399,6 +423,34 @@ export class InvoiceDispatchService {
       }
     }
 
+    // D-285: la salida de lo fabricado no va antes del último parte de producción de la línea.
+    const producedIds = orderItems
+      .filter((i) => {
+        const t = targets.get(i.id);
+        return t?.ok === true && t.fromProduction;
+      })
+      .map((i) => i.id);
+    const reports =
+      producedIds.length === 0
+        ? []
+        : await tx.productionReport.findMany({
+            where: {
+              status: 'ACTIVE',
+              productionOrder: { reservation: { salesOrderItemId: { in: producedIds } } },
+            },
+            select: {
+              operationDate: true,
+              productionOrder: { select: { reservation: { select: { salesOrderItemId: true } } } },
+            },
+          });
+    const lastReport = new Map<string, string>();
+    for (const rep of reports) {
+      const lineId = rep.productionOrder.reservation?.salesOrderItemId;
+      if (lineId === undefined) continue;
+      const date = day(rep.operationDate);
+      if ((lastReport.get(lineId) ?? '') < date) lastReport.set(lineId, date);
+    }
+
     const planInputs: PlanInvoice[] = [];
     // Lo fabricado y reservado de una línea se reparte entre sus comprobantes en orden de
     // emisión (autorrevisión P2-2): sin acumular, el dry-run prometía dos salidas que el
@@ -462,6 +514,7 @@ export class InvoiceDispatchService {
             sku: item.product.sku,
             qty,
             target,
+            notBefore: lastReport.get(orderItemId) ?? null,
           };
         }),
       });
@@ -484,12 +537,14 @@ export class InvoiceDispatchService {
         // El mismo orden que el kardex: fecha de operación, grabación, id.
         orderBy: [{ operationDate: 'asc' }, { at: 'asc' }, { id: 'asc' }],
         select: {
+          id: true,
           itemType: true,
           itemId: true,
           type: true,
           qty: true,
           refType: true,
           operationDate: true,
+          at: true,
         },
       }),
       tx.inventoryBalance.findMany({
@@ -499,17 +554,35 @@ export class InvoiceDispatchService {
       tx.product.findMany({ where: { id: { in: ids } }, select: { id: true, sku: true } }),
       tx.coil.findMany({ where: { id: { in: ids } }, select: { id: true, code: true } }),
     ]);
+    // D-285: con la fecha de la carga inicial movida (simulación del dry-run), el kardex se
+    // vuelve a ordenar como lo ordena la base: fecha de operación, grabación, id.
+    const moved = sim.movedOpening ?? new Map<string, string>();
+    const dated = movements
+      .map((m) => ({ ...m, date: moved.get(m.id.toString()) ?? day(m.operationDate) }))
+      .sort((a, b) =>
+        a.date !== b.date
+          ? a.date < b.date
+            ? -1
+            : 1
+          : a.at.getTime() !== b.at.getTime()
+            ? a.at.getTime() - b.at.getTime()
+            : a.id < b.id
+              ? -1
+              : a.id > b.id
+                ? 1
+                : 0,
+      );
     const kardex = new Map<string, PlanItemKardex>();
-    for (const m of movements) {
+    for (const m of dated) {
       const key = `${m.itemType}:${m.itemId}`;
       const entry = kardex.get(key) ?? { openingDate: null, movements: [] };
       const qty = toDecimal(m.qty.toString());
       entry.movements.push({
-        date: day(m.operationDate),
+        date: m.date,
         signedQty: m.type === 'IN' ? qty : m.type === 'OUT' ? qty.negated() : new Decimal(0),
       });
       if (m.type === 'IN' && m.refType === 'IMPORT' && entry.openingDate === null) {
-        entry.openingDate = day(m.operationDate);
+        entry.openingDate = m.date;
       }
       kardex.set(key, entry);
     }
@@ -531,7 +604,7 @@ export class InvoiceDispatchService {
       });
     }
 
-    const planned = planInvoiceDispatches(planInputs, kardex);
+    const planned = planInvoiceDispatches(planInputs, kardex, sim.priorOuts);
     return {
       invoices: planned.map((p) => ({
         ...p,
@@ -548,7 +621,7 @@ export function planSignature(invoice: PlannedInvoice): string {
   return invoice.lines
     .map(
       (l) =>
-        `${String(l.lineNumber)}:${l.action}:${l.qty.toFixed(3)}:${l.reserveQty.toFixed(3)}:${l.itemKey ?? '-'}`,
+        `${String(l.lineNumber)}:${l.action}:${l.qty.toFixed(3)}:${l.reserveQty.toFixed(3)}:${l.itemKey ?? '-'}:${l.operationDate}`,
     )
     .join('|');
 }

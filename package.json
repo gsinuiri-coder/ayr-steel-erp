@@ -49,6 +49,7 @@
     "retire:unused-color": "node scripts/retire-unused-color.mjs",
     "check:color-comercial": "node scripts/color-comercial-dry-run.mjs",
     "dispatch:at-issue-date": "node scripts/dispatch-at-issue-date.mjs",
+    "inventory:opening-date": "node scripts/opening-date.mjs",
     "export:coils": "node scripts/export-coils.mjs",
     "limpia:v4": "node scripts/production-cleanup-v4.mjs",
     "backfill:seller-scope": "node scripts/backfill-seller-scope.mjs",

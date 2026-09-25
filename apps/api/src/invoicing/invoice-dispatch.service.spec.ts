@@ -113,7 +113,9 @@ function fakeTx(f: Fixture) {
     },
     inventoryMovement: {
       findMany: jest.fn().mockResolvedValue(
-        f.movements.map((m) => ({
+        f.movements.map((m, i) => ({
+          id: BigInt(i + 1),
+          at: new Date(`${m.date}T12:00:00.000Z`),
           itemType: m.itemType,
           itemId: m.itemId,
           type: m.type,
@@ -132,6 +134,7 @@ function fakeTx(f: Fixture) {
     },
     product: { findMany: jest.fn().mockResolvedValue([{ id: 'upvc', sku: 'UPVC36MT' }]) },
     coil: { findMany: jest.fn().mockResolvedValue([{ id: 'bob', code: 'IMPO-1' }]) },
+    productionReport: { findMany: jest.fn().mockResolvedValue([]) },
     salesOrder: { findUniqueOrThrow: jest.fn().mockResolvedValue({ status: 'FULFILLED' }) },
   };
   return tx;
