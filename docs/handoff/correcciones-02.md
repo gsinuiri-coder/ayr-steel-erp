@@ -55,7 +55,24 @@ local con builds de producción y CI de la PR.
 
 - **Decisión del dueño:** RUC y razón social de la cabecera del PEPS (`COMPANY_RUC`,
   `COMPANY_LEGAL_NAME` en Cloud Run); hoy «(sin configurar)».
-- Las 15 líneas a revisión de M2 se despachan por la pantalla de despacho con la fecha real.
+- ~~Las 15 líneas a revisión de M2~~: resueltas por D-285 (despachadas a la fecha del parte de producción).
 - Validar con el contador los códigos de tabla 12 del PEPS.
 - `dev:local` desde un worktree necesita `COMPOSE_PROJECT_NAME=ayr-steel-erp` para no chocar con
   el contenedor `ayr-local-db`.
+
+## 6. Ventana (2026-09-24 → 25) y D-285
+
+Detalle en PROGRESO («Ventana de correcciones 02»). #18, #19, #20 y #21 mergeadas y desplegadas;
+API final `ayr-steel-erp-api-00049-zns` (`git-sha=962f17f`), `main` en `5ef7e36` más este cierre.
+
+- D-278 se ejecutó (19 comprobantes) y la foto mostró 17 pedidos de UPVC con costo completo 0.
+  El dueño corrigió la premisa: las ventas de agosto **sí** consumen el inventario inicial.
+- **D-285**: carga inicial fechada el 2026-08-01 (única excepción al append-only, con migración
+  de trigger, guarda de un solo uso y auditoría por movimiento), 23 salidas agregadas a los
+  despachos de UPVC y 15 despachos nuevos de coberturas y planchas a la fecha del parte de
+  producción. 0 a revisión; S/ 188 892.3388; PEPS de UPVC cuadra con el kardex; 0 pedidos con
+  costo no rastreable.
+- La excepción «entregado antes del inventario inicial» de D-278 queda en el código como regla
+  general, pero hoy no tiene ningún caso vivo.
+
+**Todo lo de esta sesión queda PENDIENTE DE REVISIÓN INDEPENDIENTE.**
