@@ -30,7 +30,9 @@ import {
 } from '@/lib/kardex-range';
 import { INVOICE_LINK_ROLES, REF_TARGET_ROLES } from '@/lib/nav';
 import { useSession } from '@/lib/session';
+import { useColumnFilters } from '@/lib/use-column-filters';
 import { useUrlState } from '@/lib/use-url-state';
+import { SortableTableHead } from '@/components/sortable-table-head';
 import { FilterChip } from '@/components/filter-chip';
 import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
@@ -109,7 +111,20 @@ export function KardexView() {
       api<PaginatedResult<InventoryMovementDto>>(`/inventory/movements?${queryString}`),
     enabled: hasItem,
   });
-  const rows = movements.data?.items ?? [];
+  // D-295: el kardex de un ítem no pagina (D-237), así que filtrar por columna es exacto.
+  const columnFilters = useColumnFilters<'type' | 'origin' | 'notes'>();
+  const colFilter = (key: 'type' | 'origin' | 'notes', label: string) => ({
+    label,
+    value: columnFilters.filters[key] ?? '',
+    onChange: (v: string) => {
+      columnFilters.setFilter(key, v);
+    },
+  });
+  const rows = columnFilters.apply(movements.data?.items ?? [], {
+    type: (m) => INVENTORY_MOVEMENT_TYPE_LABELS[m.type],
+    origin: (m) => INVENTORY_REF_TYPE_LABELS[m.refType],
+    notes: (m) => `${m.notes ?? ''} ${m.actorName ?? ''}`,
+  });
 
   const setRange = (next: KardexRange) => {
     setUrl({ range: next, from: '', to: '' });
@@ -230,14 +245,23 @@ export function KardexView() {
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>Fecha de operación</TableHead>
-                <TableHead>Movimiento</TableHead>
-                <TableHead className="hidden md:table-cell">Origen</TableHead>
+                <SortableTableHead filter={colFilter('type', 'movimiento')}>
+                  Movimiento
+                </SortableTableHead>
+                <SortableTableHead
+                  className="hidden md:table-cell"
+                  filter={colFilter('origin', 'origen')}
+                >
+                  Origen
+                </SortableTableHead>
                 <TableHead className="text-right">Cantidad</TableHead>
                 <TableHead className="hidden text-right lg:table-cell">Costo unit. (S/)</TableHead>
                 <TableHead className="text-right">Total (S/)</TableHead>
                 <TableHead className="text-right">Saldo</TableHead>
                 <TableHead className="text-right">Costo prom.</TableHead>
-                <TableHead>Motivo / usuario</TableHead>
+                <SortableTableHead filter={colFilter('notes', 'motivo o usuario')}>
+                  Motivo / usuario
+                </SortableTableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -348,7 +372,9 @@ export function KardexView() {
               {movements.isSuccess && rows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
-                    No hay movimientos en este rango. Prueba con «Mes anterior» o «Todo».
+                    {columnFilters.hasActive
+                      ? 'Ningún movimiento coincide con los filtros de columna.'
+                      : 'No hay movimientos en este rango. Prueba con «Mes anterior» o «Todo».'}
                   </TableCell>
                 </TableRow>
               )}

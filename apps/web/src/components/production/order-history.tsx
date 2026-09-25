@@ -17,6 +17,7 @@ import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { formatDate, formatQty } from '@/lib/format';
 import { groupHistoryByOrder, type HistoryGroup } from '@/lib/order-history';
+import { useColumnFilters } from '@/lib/use-column-filters';
 import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
 import { URL_PAGINATION_DEFAULTS, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { PaginationBar } from '@/components/pagination-bar';
@@ -86,7 +87,22 @@ export function OrderHistory() {
   });
   // El servidor ya entrega las OP por correlativo descendente (D-113). El primer encuentro
   // fija también el orden de los pedidos: actividad de producción más reciente primero.
-  const unsorted = groupHistoryByOrder(orders.data ?? []);
+  // D-295: el historial tiene todas las órdenes en el cliente (hasta el tope), así que el filtro por
+  // columna se aplica a todos los pedidos, no solo a la página que se ve.
+  const columnFilters = useColumnFilters<'order' | 'customer' | 'status'>();
+  const colFilter = (key: 'order' | 'customer' | 'status', label: string) => ({
+    label,
+    value: columnFilters.filters[key] ?? '',
+    onChange: (v: string) => {
+      columnFilters.setFilter(key, v);
+      setUrl({ page: '1' });
+    },
+  });
+  const unsorted = columnFilters.apply(groupHistoryByOrder(orders.data ?? []), {
+    order: (g) => g.salesOrderCode ?? 'Corridas sin pedido',
+    customer: (g) => g.customerName ?? '',
+    status: (g) => PRODUCTION_ORDER_STATUS_LABELS[g.status],
+  });
   const groups =
     sort.key === null
       ? unsorted
@@ -169,6 +185,7 @@ export function OrderHistory() {
             <TableRow>
               <TableHead className="w-8" />
               <SortableTableHead
+                filter={colFilter('order', 'pedido')}
                 active={sort.key === 'order'}
                 dir={sort.dir}
                 onClick={() => {
@@ -178,6 +195,7 @@ export function OrderHistory() {
                 Pedido
               </SortableTableHead>
               <SortableTableHead
+                filter={colFilter('customer', 'cliente')}
                 active={sort.key === 'customer'}
                 dir={sort.dir}
                 onClick={() => {
@@ -218,6 +236,7 @@ export function OrderHistory() {
                 ML reportado / plan
               </SortableTableHead>
               <SortableTableHead
+                filter={colFilter('status', 'estado')}
                 active={sort.key === 'status'}
                 dir={sort.dir}
                 onClick={() => {

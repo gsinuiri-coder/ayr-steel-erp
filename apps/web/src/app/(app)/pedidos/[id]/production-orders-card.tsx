@@ -6,6 +6,8 @@ import { PRODUCTION_ORDER_STATUS_LABELS, type ProductionOrderListItemDto } from 
 import { api } from '@/lib/api';
 import { formatQty } from '@/lib/format';
 import { LINK_CLASSNAME } from '@/lib/utils';
+import { useColumnFilters } from '@/lib/use-column-filters';
+import { SortableTableHead } from '@/components/sortable-table-head';
 import { OrderPriorityControl } from '@/components/production-queue';
 import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { Badge } from '@/components/ui/badge';
@@ -43,18 +45,34 @@ export function ProductionOrdersCard({
     queryKey: ['production-orders', 'sales-order', salesOrderId],
     queryFn: () => api<ProductionOrderListItemDto[]>(`/production?salesOrderId=${salesOrderId}`),
   });
-  const rows = [...(orders.data ?? [])].sort((a, b) => a.code.localeCompare(b.code));
+  const columnFilters = useColumnFilters<'code' | 'product' | 'status'>();
+  const colFilter = (key: 'code' | 'product' | 'status', label: string) => ({
+    label,
+    value: columnFilters.filters[key] ?? '',
+    onChange: (v: string) => {
+      columnFilters.setFilter(key, v);
+    },
+  });
+  const allRows = [...(orders.data ?? [])].sort((a, b) => a.code.localeCompare(b.code));
+  // D-295: las órdenes de un pedido no paginan, así que filtrar por columna es exacto.
+  const rows = columnFilters.apply(allRows, {
+    code: (o) => o.code,
+    product: (o) => `${o.productSku} ${o.productName}`,
+    status: (o) => PRODUCTION_ORDER_STATUS_LABELS[o.status],
+  });
 
-  if (orders.isSuccess && rows.length === 0) return null;
+  if (orders.isSuccess && allRows.length === 0) return null;
 
   return (
     <Section title="Órdenes de producción">
       <Table>
         <TableHeader className="sticky top-0 z-10 bg-background">
           <TableRow>
-            <TableHead>Orden</TableHead>
-            <TableHead>Producto</TableHead>
-            <TableHead>Estado</TableHead>
+            <SortableTableHead filter={colFilter('code', 'orden')}>Orden</SortableTableHead>
+            <SortableTableHead filter={colFilter('product', 'producto')}>
+              Producto
+            </SortableTableHead>
+            <SortableTableHead filter={colFilter('status', 'estado')}>Estado</SortableTableHead>
             <TableHead>Bobina montada</TableHead>
             <TableHead className="text-right">Avance</TableHead>
             <TableHead className="text-right">Acciones</TableHead>

@@ -119,10 +119,7 @@ test.describe('Correcciones 03 — pedidos: chips y URL (D-289)', () => {
         `/api/sales/orders?search=${encodeURIComponent(order.code)}`,
       );
       expect(bySearch.map((o) => o.id)).toContain(order.id);
-      const byStage = await getItems<{ id: string }>(
-        api,
-        '/api/sales/orders?stage=CANCELLED',
-      );
+      const byStage = await getItems<{ id: string }>(api, '/api/sales/orders?stage=CANCELLED');
       expect(byStage.map((o) => o.id)).toContain(order.id);
 
       await loginAsAdmin(page);
@@ -256,19 +253,35 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       );
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
 
+      // D-295: filtro de texto por columna en el kardex del ítem (no pagina): solo las salidas.
+      const totalMovements = await movementRows.count();
+      expect(totalMovements).toBeGreaterThanOrEqual(2);
+      await page.getByLabel('Filtrar por movimiento').fill('Salida');
+      await expect(movementRows).toHaveCount(1);
+      await expect(movementRows.first()).toContainText('Salida');
+      await page.getByLabel('Filtrar por movimiento').fill('zzz');
+      await expect(
+        page.getByText('Ningún movimiento coincide con los filtros de columna.'),
+      ).toBeVisible();
+      await page.getByLabel('Filtrar por movimiento').fill('');
+      await expect(movementRows).toHaveCount(totalMovements);
+
       // --- Catálogo: búsqueda por SKU, en la URL ---
       await page.goto('/catalogo');
       await expect(page.getByRole('heading', { name: 'Catálogo', exact: true })).toBeVisible({
         timeout: 60_000,
       });
-      await page
-        .getByRole('tab', { name: 'Coberturas Aluzinc' })
-        .first()
-        .click();
+      await page.getByRole('tab', { name: 'Coberturas Aluzinc' }).first().click();
       const search = page.getByLabel('Buscar productos por SKU o nombre').first();
       await search.fill(scenario.product.sku);
       await expect(page).toHaveURL(new RegExp(`q=${scenario.product.sku}`), { timeout: 30_000 });
       await expect(page.getByRole('row').filter({ hasText: scenario.product.sku })).toHaveCount(1);
+      // D-295: filtro por columna (SKU) sobre el catálogo ya cargado.
+      await search.fill('');
+      await expect(page).not.toHaveURL(/q=/);
+      await page.getByLabel('Filtrar por SKU').first().fill(scenario.product.sku);
+      await expect(page.getByRole('row').filter({ hasText: scenario.product.sku })).toHaveCount(1);
+      await page.getByLabel('Filtrar por SKU').first().fill('');
       await search.fill('zzzz-no-existe');
       await expect(page.getByText(/Ningún producto de esta línea coincide/)).toBeVisible();
 

@@ -19,7 +19,9 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { CATALOG_BAJO_PISO_VER_TODOS } from '@/lib/catalog-links';
 import { useSession } from '@/lib/session';
+import { useColumnFilters } from '@/lib/use-column-filters';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
+import { SortableTableHead } from '@/components/sortable-table-head';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,6 +95,7 @@ export function CatalogoView() {
     150,
   );
   const needle = search.toLowerCase();
+  const columnFilters = useColumnFilters<'sku' | 'name'>();
 
   const lines = useQuery({
     queryKey: ['business-lines'],
@@ -168,12 +171,17 @@ export function CatalogoView() {
         </TabsContent>
         {lines.data.map((line) => {
           const inLine = products.data?.filter((p) => p.businessLineId === line.id) ?? [];
-          const lineProducts = needle
+          const searched = needle
             ? inLine.filter(
                 (p) =>
                   p.sku.toLowerCase().includes(needle) || p.name.toLowerCase().includes(needle),
               )
             : inLine;
+          // D-295: el catálogo no pagina, así que el filtro por columna es exacto.
+          const lineProducts = columnFilters.apply(searched, {
+            sku: (p) => p.sku,
+            name: (p) => p.name,
+          });
           return (
             <TabsContent key={line.id} value={line.id} className="grid gap-4">
               <div className="flex items-center justify-between gap-3">
@@ -201,8 +209,28 @@ export function CatalogoView() {
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
-                      <TableHead>SKU</TableHead>
-                      <TableHead>Nombre</TableHead>
+                      <SortableTableHead
+                        filter={{
+                          label: 'SKU',
+                          value: columnFilters.filters.sku ?? '',
+                          onChange: (v) => {
+                            columnFilters.setFilter('sku', v);
+                          },
+                        }}
+                      >
+                        SKU
+                      </SortableTableHead>
+                      <SortableTableHead
+                        filter={{
+                          label: 'nombre',
+                          value: columnFilters.filters.name ?? '',
+                          onChange: (v) => {
+                            columnFilters.setFilter('name', v);
+                          },
+                        }}
+                      >
+                        Nombre
+                      </SortableTableHead>
                       {usesColor(line.code) && <TableHead>Color</TableHead>}
                       {/* D-127: el subtipo decide qué hace la confirmación con esta línea,
                           así que se ve en la lista y no solo dentro del diálogo. */}
