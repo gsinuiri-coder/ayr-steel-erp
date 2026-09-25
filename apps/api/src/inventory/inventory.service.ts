@@ -20,13 +20,17 @@ import {
   Decimal,
   fromDateOnly,
   paginate,
+  rankSearchMatches,
   RefTargetType,
+  SEARCH_RESULT_LIMIT,
   toDateOnly,
   toDecimal,
   toFixedString,
   toSkipTake,
   type BusinessLine,
   type InventoryBalanceDto,
+  type InventoryItemOptionDto,
+  type InventoryItemResolveQuery,
   type InventoryMovementDto,
   type InventoryQuery,
   type InventorySummaryDto,
@@ -45,6 +49,9 @@ import {
 } from '../sales/raw-material';
 import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
 import { reservedByItem as sumReservedByItem, type HolderViewer } from '../sales/reserved-ledger';
+
+/** Candidatos que se traen antes de rankear y recortar el buscador de ítems (D-290). */
+const ITEM_SEARCH_CANDIDATE_POOL = 100;
 
 /**
  * D-134: los movimientos de un **partido**, que no se comprueban contra el agregado uno por
@@ -771,6 +778,94 @@ export class InventoryService {
   }
 
   /** Inventario valorizado (RF-51, base de RF-90). */
+  /**
+   * D-290: buscador de ítems del kardex. Bobinas por código y productos por SKU o nombre en
+   * una sola lista, para el selector de `/kardex` (D-229: búsqueda en el servidor, sin traer
+   * el maestro). A diferencia de `/catalog/search` **incluye lo inactivo**: un producto dado de
+   * baja o una bobina anulada siguen teniendo historia, y el kardex es donde se mira. Es solo
+   * lectura: no toca kardex, reservas ni costeo.
+   */
+  async searchItems(q: string | undefined): Promise<InventoryItemOptionDto[]> {
+    const needle = q ?? '';
+    const [coils, products] = await Promise.all([
+      this.prisma.coil.findMany({
+        where: { code: { contains: needle, mode: 'insensitive' } },
+        select: { id: true, code: true, typeKey: true, status: true },
+        orderBy: { code: 'asc' },
+        take: ITEM_SEARCH_CANDIDATE_POOL,
+      }),
+      this.prisma.product.findMany({
+        where: {
+          OR: [
+            { sku: { contains: needle, mode: 'insensitive' } },
+            { name: { contains: needle, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, sku: true, name: true, isActive: true },
+        orderBy: { name: 'asc' },
+        take: ITEM_SEARCH_CANDIDATE_POOL,
+      }),
+    ]);
+    const rankedCoils = needle ? rankSearchMatches(coils, needle, (c) => [c.code]) : coils;
+    const rankedProducts = needle
+      ? rankSearchMatches(products, needle, (p) => [p.sku, p.name])
+      : products;
+    // Tope total de `SEARCH_RESULT_LIMIT`: la mitad para cada tipo, y lo que un tipo no llene
+    // se le da al otro (buscar «BOB038» solo encuentra productos y no debe quedar en 10).
+    const half = SEARCH_RESULT_LIMIT / 2;
+    const coilsOut = rankedCoils.slice(
+      0,
+      Math.max(half, SEARCH_RESULT_LIMIT - rankedProducts.length),
+    );
+    const productsOut = rankedProducts.slice(0, SEARCH_RESULT_LIMIT - coilsOut.length);
+    return [
+      ...coilsOut.map((c): InventoryItemOptionDto => ({
+        itemType: 'COIL',
+        itemId: c.id,
+        code: c.code,
+        description: c.typeKey,
+        inactive: c.status === 'CANCELLED',
+      })),
+      ...productsOut.map((p): InventoryItemOptionDto => ({
+        itemType: 'PRODUCT',
+        itemId: p.id,
+        code: p.sku,
+        description: p.name,
+        inactive: !p.isActive,
+      })),
+    ];
+  }
+
+  /** D-290: rotula un ítem puntual (el que viene en la URL del kardex). 404 si no existe. */
+  async resolveItem(query: InventoryItemResolveQuery): Promise<InventoryItemOptionDto> {
+    if (query.itemType === 'COIL') {
+      const coil = await this.prisma.coil.findUnique({
+        where: { id: query.itemId },
+        select: { id: true, code: true, typeKey: true, status: true },
+      });
+      if (!coil) throw new NotFoundException('Bobina no encontrada');
+      return {
+        itemType: 'COIL',
+        itemId: coil.id,
+        code: coil.code,
+        description: coil.typeKey,
+        inactive: coil.status === 'CANCELLED',
+      };
+    }
+    const product = await this.prisma.product.findUnique({
+      where: { id: query.itemId },
+      select: { id: true, sku: true, name: true, isActive: true },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    return {
+      itemType: 'PRODUCT',
+      itemId: product.id,
+      code: product.sku,
+      description: product.name,
+      inactive: !product.isActive,
+    };
+  }
+
   async findBalances(query: InventoryQuery, showCosts: boolean): Promise<InventoryBalanceDto[]> {
     const balances = await this.prisma.inventoryBalance.findMany({
       where: {

@@ -485,7 +485,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
         <CardHeader className="flex-row items-center justify-between pb-2">
           <CardTitle>Kardex de la bobina (RF-53)</CardTitle>
           <Button variant="outline" size="sm" asChild>
-            <Link href={`/kardex?itemType=COIL&item=${id}`}>Ver kardex completo</Link>
+            <Link href={`/kardex?itemType=COIL&item=${id}&range=all`}>Ver kardex completo</Link>
           </Button>
         </CardHeader>
         <CardContent className="px-0">
