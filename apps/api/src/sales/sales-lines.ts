@@ -186,13 +186,6 @@ export interface ResolveSalesLinesOptions {
    * dice «no disponible» (un VENDEDOR frente a la de otro, D-267/D-275). Las líneas del papel
    * ya pasan por `assertPaperCoilsInPool` y no se repiten.
    */
-  /**
-   * D-322: productos de venta de bobina (`BOB…`) que **esta** llamada admite sin bobina asignada.
-   * Solo lo pasa el duplicado de cotización, para la línea cuya bobina sigue atada a otro
-   * documento: la copia nace con la línea del producto y quien la edita elige la bobina. Sin
-   * esto, un `BOB…` suelto es un 400 (D-254 R1).
-   */
-  unassignedCoilProducts?: ReadonlySet<string>;
   coilTies?: {
     exceptQuotationIds?: readonly string[];
     viewer?: { id: string; role: Role };
@@ -202,6 +195,13 @@ export interface ResolveSalesLinesOptions {
      */
     keepCoilIds?: ReadonlySet<string>;
   };
+  /**
+   * D-322: productos de venta de bobina (`BOB…`) que **esta** llamada admite sin bobina asignada.
+   * Solo lo pasa el duplicado de cotización, para la línea cuya bobina sigue atada a otro
+   * documento: la copia nace con la línea del producto y quien la edita elige la bobina. Sin
+   * esto, un `BOB…` suelto es un 400 (D-254 R1).
+   */
+  unassignedCoilProducts?: ReadonlySet<string>;
 }
 
 export async function resolveSalesLines(

@@ -36,7 +36,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Section } from '@/components/section';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -278,10 +278,66 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       </StatStrip>
 
       {/*
-        D-325: la sección «Bobinas montadas en la orden» se retiró del detalle. Era de solo
-        lectura —montar, liberar y reportar viven en `/planta` (D-160)— y lo que se necesita
-        leer acá, de qué bobina o fleje salió cada reporte, está en la columna «Bobina / fleje».
+        D-325: las **bobinas montadas** de una orden de coberturas se retiraron del detalle. Era de
+        solo lectura —montar, liberar y reportar viven en `/planta` (D-160)— y de qué bobina salió
+        cada reporte se lee en la columna «Bobina / fleje». Los **flejes** de una orden de drywall se
+        quedan: su consumo (asignado, consumido, pendiente, liberado) no está en otra tabla.
       */}
+      {o.kind !== ProductionOrderKind.ROOFING && (
+        <Section title="Flejes consumidos por la orden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Fleje</TableHead>
+                <TableHead>Bobina madre</TableHead>
+                <TableHead className="text-right">Asignado</TableHead>
+                <TableHead className="text-right">Consumido</TableHead>
+                <TableHead className="text-right">Pendiente</TableHead>
+                <TableHead>Estado</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {o.consumptions.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell>
+                    <Link className={cn('font-mono', LINK_CLASSNAME)} href={`/bobinas/${c.coilId}`}>
+                      {c.coilCode}
+                    </Link>
+                    <div className="text-xs text-muted-foreground">{c.widthMm} mm</div>
+                  </TableCell>
+                  <TableCell>
+                    {c.parentCoilId ? (
+                      <Link
+                        className={cn('font-mono text-sm', LINK_CLASSNAME)}
+                        href={`/bobinas/${c.parentCoilId}`}
+                      >
+                        {c.parentCoilCode}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">{formatQty(c.assignedKg, 'kg')}</TableCell>
+                  <TableCell className="text-right">{formatQty(c.consumedKg, 'kg')}</TableCell>
+                  <TableCell className="text-right">{formatQty(c.remainingKg, 'kg')}</TableCell>
+                  <TableCell>
+                    <Badge variant={c.releasedAt ? 'outline' : 'secondary'}>
+                      {c.releasedAt ? 'Liberado' : 'Tomado por la orden'}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {o.consumptions.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
+                    La orden todavía no tomó ningún fleje.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Section>
+      )}
 
       <Section title="Reportes de piezas">
         <Table>

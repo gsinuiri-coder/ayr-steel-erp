@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 import { SessionProvider } from '@/lib/session';
 import { AppSidebar } from '@/components/app-sidebar';
 import { Separator } from '@/components/ui/separator';
@@ -8,7 +8,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <SessionProvider>
       <SidebarProvider>
-        <AppSidebar />
+        {/* `useSearchParams` del menú (ítem activo por `?tab=`) pide un límite de Suspense. */}
+        <Suspense fallback={null}>
+          <AppSidebar />
+        </Suspense>
         <SidebarInset>
           {/* Barra mínima: solo el interruptor del menú. El nombre del sistema ya está en
               la cabecera del menú lateral y repetirlo costaba una franja de 48 px en todas

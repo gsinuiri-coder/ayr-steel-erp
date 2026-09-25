@@ -41,6 +41,20 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
  * detalle por comprobante, que es donde se cobra (D-075: el cobro va contra el
  * comprobante, no contra el pedido).
  */
+/** D-323: las columnas de «Pendientes» que ordena el servidor (`FISCAL_DOCUMENT_SORT_KEYS`). */
+const PENDING_SERVER_KEYS = {
+  number: 'number',
+  customer: 'customer',
+  issue: 'issueDate',
+  due: 'dueDate',
+  total: 'total',
+  paid: null,
+  balance: null,
+} as const;
+
+/** Sin orden elegido: `sortRows` deja las filas como llegan. */
+const NO_SORT = { key: null, dir: 'asc' } as const;
+
 export function CobranzasView() {
   // D-289: la página y el tamaño de cada tabla viven en la URL (`rPage`/`rSize`, `pPage`/`pSize`).
   const [url, setUrl] = useUrlState({
@@ -84,8 +98,10 @@ export function CobranzasView() {
         `/invoicing/receivables?page=${receivablesPage.page}&pageSize=${receivablesPage.pageSize}`,
       ),
   });
-  // D-323: las dos tablas muestran su lista entera; el orden por columna es sobre todas las filas,
-  // cada una con su propio par de parámetros en la URL.
+  // D-323: las dos tablas están paginadas por el servidor. «Por cliente» (resumen armado en
+  // memoria) ordena solo las filas de la página y sus encabezados lo dicen; «Pendientes»
+  // (comprobantes) manda al servidor las columnas propias del comprobante y ordena en la página
+  // solo lo derivado (cobrado y saldo). Cada tabla lleva su propio par de parámetros en la URL.
   const [rSort, toggleRSort] = useSort<'customer' | 'count' | 'next' | 'overdue' | 'balance'>('r');
   const [pSort, togglePSort] = useSort<
     'number' | 'customer' | 'issue' | 'due' | 'total' | 'paid' | 'balance'
@@ -98,19 +114,25 @@ export function CobranzasView() {
     balance: { decimal: (r) => r.balancePen },
   });
 
+  const serverSort = pSort.key === null ? null : PENDING_SERVER_KEYS[pSort.key];
   const pending = useQuery({
-    queryKey: ['fiscal-documents', 'pending', pendingPage.page, pendingPage.pageSize],
+    queryKey: [
+      'fiscal-documents',
+      'pending',
+      pendingPage.page,
+      pendingPage.pageSize,
+      serverSort,
+      pSort.dir,
+    ],
     queryFn: () =>
       api<PaginatedResult<FiscalDocumentListItemDto>>(
-        `/invoicing/documents?pendingOnly=true&page=${pendingPage.page}&pageSize=${pendingPage.pageSize}`,
+        `/invoicing/documents?pendingOnly=true&page=${pendingPage.page}&pageSize=${pendingPage.pageSize}${
+          serverSort ? `&sort=${serverSort}&dir=${pSort.dir}` : ''
+        }`,
       ),
   });
-  const pendingRows = sortRows(pending.data?.items ?? [], pSort, {
-    number: { text: (d) => d.number ?? '' },
-    customer: { text: (d) => d.customerName },
-    issue: { text: (d) => d.issueDate },
-    due: { text: (d) => d.dueDate ?? '' },
-    total: { decimal: (d) => d.totalPen },
+  // El servidor ya entregó ordenadas las columnas propias; acá solo lo derivado.
+  const pendingRows = sortRows(pending.data?.items ?? [], serverSort ? NO_SORT : pSort, {
     paid: { decimal: (d) => d.paidPen },
     balance: { decimal: (d) => d.balancePen },
   });
@@ -159,7 +181,12 @@ export function CobranzasView() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
-                  <SortHead sort={rSort} onSort={toggleRSort} k="customer">
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="customer"
+                    title="Ordena las filas de esta página"
+                  >
                     Cliente
                   </SortHead>
                   <SortHead

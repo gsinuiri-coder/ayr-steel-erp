@@ -1145,7 +1145,7 @@ export class PurchasesService {
     >(
       query,
       {
-        number: (d) => ({ series: d }),
+        number: (d) => [{ series: d }, { number: d }],
         supplier: (d) => ({ supplier: { name: d } }),
         type: (d) => ({ type: d }),
         issueDate: (d) => ({ issueDate: d }),

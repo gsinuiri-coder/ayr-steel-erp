@@ -15,10 +15,11 @@ import type { SortDirection } from '@ayr/shared';
  */
 export function listOrderBy<K extends string, O>(
   query: { sort?: K | undefined; dir?: SortDirection | undefined },
-  columns: Readonly<Record<K, (dir: SortDirection) => O>>,
+  columns: Readonly<Record<K, (dir: SortDirection) => O | readonly O[]>>,
   fallback: readonly O[],
 ): O[] {
   const column = query.sort === undefined ? undefined : columns[query.sort];
   if (column === undefined) return [...fallback];
-  return [column(query.dir ?? 'asc'), ...fallback];
+  const chosen = column(query.dir ?? 'asc');
+  return [...(Array.isArray(chosen) ? (chosen as readonly O[]) : [chosen as O]), ...fallback];
 }

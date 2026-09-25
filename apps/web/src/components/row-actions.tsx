@@ -15,8 +15,8 @@ import type { HeaderAction } from '@/components/header-actions';
 /**
  * D-327 (correcciones 04): las acciones de **una fila** de una tabla. Una acción sola queda como
  * botón, igual que antes; con dos o más, una principal visible —la más frecuente de esa tabla— y
- * «⋯» con el resto. Las destructivas van al final del menú, separadas y en rojo (D-180), y siguen
- * pidiendo su diálogo de confirmación: este componente solo decide dónde vive cada botón.
+ * «⋯» con el resto. Las destructivas van al final del menú, separadas y en rojo (D-180), y conservan
+ * la confirmación que ya tuvieran: este componente solo decide dónde vive cada botón.
  *
  * Es el hermano de `HeaderActions` (F8-S3b) para filas, y usa el mismo tipo de acción. El menú
  * lleva `aria-label` «Más acciones de <fila>» para que un lector de pantalla —y el E2E— distinga

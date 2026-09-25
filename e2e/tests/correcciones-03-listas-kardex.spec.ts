@@ -119,8 +119,17 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
       'active',
       { timeout: 60_000 },
     );
+    // Solo «Colores» está marcado: «Productos» apunta a la misma ruta, sin la pestaña.
+    const active = (name: string) =>
+      page
+        .getByRole('link', { name, exact: true })
+        .locator('xpath=ancestor-or-self::*[@data-active][1]');
+    await expect(active('Colores')).toHaveAttribute('data-active', 'true');
+    await expect(active('Productos')).toHaveAttribute('data-active', 'false');
     await page.getByRole('link', { name: 'Productos', exact: true }).click();
     await expect(page).not.toHaveURL(/tab=colores/);
+    await expect(active('Productos')).toHaveAttribute('data-active', 'true');
+    await expect(active('Colores')).toHaveAttribute('data-active', 'false');
     await expect(page.getByRole('tab', { name: 'Colores' })).toHaveAttribute(
       'data-state',
       'inactive',

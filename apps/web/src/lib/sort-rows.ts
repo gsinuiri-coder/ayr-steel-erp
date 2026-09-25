@@ -9,14 +9,18 @@ export type SortAccessor<T> = { text: (row: T) => string } | { decimal: (row: T)
  * la columna es derivada). Sin columna elegida devuelve las filas como vienen. El texto se compara
  * sin acentos ni mayúsculas y con los números por su valor (`PED-9` antes que `PED-10`); los
  * decimales por `Decimal`, nunca como `number` (regla dura 9). Un valor vacío va siempre al final.
+ *
+ * El orden viene de la URL (`?sort=`), que escribe cualquiera y que dos tablas de la misma pantalla
+ * pueden compartir: una clave que esta tabla no declara se ignora y las filas quedan como llegan.
  */
 export function sortRows<T, K extends string>(
   rows: readonly T[],
   sort: SortState<K>,
-  accessors: Readonly<Record<K, SortAccessor<T>>>,
+  accessors: Readonly<Partial<Record<K, SortAccessor<T>>>>,
 ): T[] {
   if (sort.key === null) return [...rows];
   const accessor = accessors[sort.key];
+  if (accessor === undefined) return [...rows];
   const sign = sort.dir === 'asc' ? 1 : -1;
   const collator = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
   return [...rows].sort((a, b) => {

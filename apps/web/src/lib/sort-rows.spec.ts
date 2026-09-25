@@ -51,6 +51,11 @@ describe('sortRows', () => {
     ]);
   });
 
+  it('una clave que la tabla no declara (la URL la escribe cualquiera) deja las filas como llegan', () => {
+    const out = sortRows(rows, { key: 'otra' as never, dir: 'asc' }, accessors);
+    expect(out.map((r) => r.code)).toEqual(['PED-10', 'PED-9', 'PED-2']);
+  });
+
   it('los decimales se comparan por valor, no como texto: 9.5 antes que 10', () => {
     expect(sortRows(rows, { key: 'price', dir: 'asc' }, accessors).map((r) => r.price)).toEqual([
       '9.5',

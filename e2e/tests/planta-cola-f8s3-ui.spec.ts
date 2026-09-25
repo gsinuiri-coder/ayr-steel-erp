@@ -193,10 +193,11 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       await expect(panel.getByText(firstCode, { exact: true })).toBeVisible();
       await expect(panel.getByText('Faltan 10 × 4.00 m')).toBeVisible();
 
-      // `/produccion` ya no está en el menú y redirige al historial, que es vista propia.
+      // D-326: «Órdenes de producción» volvió al menú (grupo Planta) y `/produccion` redirige al
+      // historial, que es vista propia.
       await expect(
         page.getByRole('link', { name: 'Órdenes de producción', exact: true }),
-      ).toHaveCount(0);
+      ).toHaveAttribute('href', '/produccion');
       await page.goto('/produccion');
       await expect(page).toHaveURL(/\/planta\?historial=1$/, { timeout: 60_000 });
       await expect(

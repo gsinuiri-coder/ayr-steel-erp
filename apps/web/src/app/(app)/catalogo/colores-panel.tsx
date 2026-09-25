@@ -87,7 +87,7 @@ type FormValues = z.infer<ReturnType<typeof formSchemaFor>>;
  */
 export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
   // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
-  const [sort, toggleSort] = useSort<'code' | 'name' | 'status'>();
+  const [sort, toggleSort] = useSort<'code' | 'name' | 'status'>('c');
   const colors = useColors();
   const [editing, setEditing] = useState<ColorDto | null>(null);
   const [creating, setCreating] = useState(false);
