@@ -346,6 +346,14 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
 
       // --- Reporte de la OP: de qué bobina salió el material ---
       await page.goto(`/produccion/${opId}`);
+      // D-325: el detalle ya no trae la sección «Bobinas montadas en la orden»; de qué bobina salió
+      // cada reporte se lee en la columna «Bobina / fleje».
+      await expect(page.getByRole('heading', { name: 'Reportes de piezas' })).toBeVisible({
+        timeout: 60_000,
+      });
+      await expect(
+        page.getByText(/Bobinas montadas en la orden|Flejes consumidos por la orden/),
+      ).toHaveCount(0);
       const coilCell = page.getByTestId('report-coils').first();
       await expect(coilCell.getByRole('link', { name: scenario.coil.code })).toHaveAttribute(
         'href',
