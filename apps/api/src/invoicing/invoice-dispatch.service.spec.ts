@@ -316,6 +316,59 @@ describe('InvoiceDispatchService (D-278)', () => {
     expect(plan.invoices.map((i) => i.lines[0]!.action)).toEqual(['DISPATCH', 'REVIEW']);
   });
 
+  it('D-287: el cupo de un comprobante que va a revisión por el kardex queda para el siguiente', async () => {
+    jest.mocked(resolveDispatchTarget).mockResolvedValue({
+      itemType: 'PRODUCT',
+      itemId: 'upvc',
+      unit: 'MTR',
+      reservationId: 'r',
+      fromProduction: true,
+    });
+    jest.mocked(findLineReservation).mockResolvedValue({
+      id: 'r',
+      qty: new Decimal(6),
+      status: 'ACTIVE',
+      unit: 'MTR',
+    });
+    const tx = fakeTx({
+      invoices: [
+        // Emitido antes de que entre lo fabricado (20/09): la salida del 18/09 deja el kardex
+        // negativo y va a revisión.
+        {
+          id: 'A',
+          number: 'A-1',
+          issueDate: '2026-09-18',
+          items: [{ id: 'a', orderItemId: 'l1', qty: '6' }],
+        },
+        {
+          id: 'B',
+          number: 'B-1',
+          issueDate: '2026-09-24',
+          items: [{ id: 'b', orderItemId: 'l1', qty: '6' }],
+        },
+      ],
+      orderItems: [MIXED.orderItems[0]!],
+      movements: [
+        {
+          itemType: 'PRODUCT',
+          itemId: 'upvc',
+          type: 'IN',
+          qty: '100',
+          refType: 'PRODUCTION',
+          date: '2026-09-20',
+        },
+      ],
+      balances: [{ itemType: 'PRODUCT', itemId: 'upvc', qty: '100', avgCost: '1' }],
+    });
+    const plan = await service(tx).svc.planAll();
+    const [a, b] = plan.invoices.map((i) => i.lines[0]!);
+    expect(a).toMatchObject({ action: 'REVIEW' });
+    expect(a!.reason).toContain('kardex negativo');
+    // Antes: «Hay 0.000 MTR fabricados y reservados … falta producir», con el cupo gastado por A.
+    expect(b).toMatchObject({ action: 'DISPATCH', reason: null, itemKey: 'PRODUCT:upvc' });
+    expect(b!.reserveQty.toFixed(3)).toBe('6.000');
+  });
+
   it('el comprobante anterior al inicio de la carga histórica va a revisión', async () => {
     const f = { ...MIXED, invoices: [{ ...MIXED.invoices[0]!, issueDate: '2026-07-31' }] };
     const plan = await service(fakeTx(f)).svc.planAll();

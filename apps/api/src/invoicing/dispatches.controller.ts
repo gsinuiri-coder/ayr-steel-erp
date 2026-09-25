@@ -52,10 +52,13 @@ export class DispatchesController {
   }
 
   /**
-   * D-278: qué haría «Despachar a la fecha del comprobante». Solo lectura. Rutas fijas antes
-   * de `:id`, por el mismo motivo que `transport-suggestions`.
+   * D-278: qué haría «Despachar a la fecha del comprobante». Solo lectura, y solo
+   * ADMINISTRADOR como el POST (D-287: la web ya lo mostraba solo al administrador, pero el
+   * endpoint lo leía cualquier rol del controlador). Rutas fijas antes de `:id`, por el mismo
+   * motivo que `transport-suggestions`.
    */
   @Get('at-issue-date/:invoiceId')
+  @Roles(Role.ADMINISTRADOR)
   previewAtIssueDate(
     @CurrentUser() actor: RequestUser,
     @Param('invoiceId', ParseUUIDPipe) invoiceId: string,

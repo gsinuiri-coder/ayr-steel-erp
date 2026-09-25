@@ -452,10 +452,8 @@ export class InvoiceDispatchService {
     }
 
     const planInputs: PlanInvoice[] = [];
-    // Lo fabricado y reservado de una línea se reparte entre sus comprobantes en orden de
-    // emisión (autorrevisión P2-2): sin acumular, el dry-run prometía dos salidas que el
-    // `--execute` después no podía hacer.
-    const heldUsed = new Map<string, Decimal>();
+    // Lo fabricado y reservado de una línea (`held`) se reparte entre sus comprobantes en
+    // `planInvoiceDispatches`, que es donde se sabe si la línea sale o va a revisión (D-287).
     invoices.sort((a, b) =>
       day(a.issueDate) === day(b.issueDate)
         ? (a.number ?? '').localeCompare(b.number ?? '')
@@ -496,17 +494,12 @@ export class InvoiceDispatchService {
             const reserveQty = t.fromProduction
               ? qty
               : proratedQty(qty, item.qty.toString(), item.reserveQty.toString());
-            const used = heldUsed.get(orderItemId) ?? new Decimal(0);
-            const left = t.held === null ? null : Decimal.max(new Decimal(0), t.held.minus(used));
-            if (left !== null && reserveQty.gt(left)) {
-              target = {
-                ok: false,
-                reason: `Hay ${left.toFixed(3)} ${t.unit} fabricados y reservados para la línea y se facturaron ${reserveQty.toFixed(3)}: falta producir`,
-              };
-            } else {
-              if (left !== null) heldUsed.set(orderItemId, used.plus(reserveQty));
-              target = { ok: true, itemKey: `${t.itemType}:${t.itemId}`, reserveQty };
-            }
+            target = {
+              ok: true,
+              itemKey: `${t.itemType}:${t.itemId}`,
+              reserveQty,
+              held: t.held === null ? null : { qty: t.held, unit: t.unit },
+            };
           }
           return {
             orderItemId,

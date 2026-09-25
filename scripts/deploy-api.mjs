@@ -25,8 +25,18 @@ const gitSha = run('git', ['rev-parse', '--short', 'HEAD']).trim();
  * termina partiendo por comas y las tres variables colapsan en una sola de nombre roto
  * (`"^|^NODE_ENV`, hallazgo de la ventana RF-S1+HOTFIX, deuda S3 #2). `--env-vars-file` no pasa
  * por ese parseo: es un YAML aparte, sin delimitadores que la shell pueda comerse.
+ *
+ * `--env-vars-file` **reemplaza** todas las variables planas de la revisión: lo que no esté acá
+ * se borra en cada deploy. Por eso la cabecera del PEPS (D-279) vive acá y no solo en Cloud
+ * Run: RUC y razón social de la empresa, confirmados por el dueño (D-287).
  */
-const ENV_VARS = { NODE_ENV: 'production', WEB_ORIGIN: webOrigin, JOBS_ENABLED: 'true' };
+const ENV_VARS = {
+  NODE_ENV: 'production',
+  WEB_ORIGIN: webOrigin,
+  JOBS_ENABLED: 'true',
+  COMPANY_RUC: '20608427377',
+  COMPANY_LEGAL_NAME: 'PERFILES METALICOS A & R E.I.R.L.',
+};
 const envVarsFileDir = mkdtempSync(join(tmpdir(), 'ayr-deploy-api-'));
 const envVarsFilePath = join(envVarsFileDir, 'env-vars.yaml');
 try {
