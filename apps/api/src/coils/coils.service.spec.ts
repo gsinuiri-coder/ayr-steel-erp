@@ -127,6 +127,79 @@ describe('códigos de bobina (RF-13, RF-14, D-037)', () => {
   });
 });
 
+describe('CoilsService — film de protección (D-328)', () => {
+  function serviceWith(prisma: Record<string, unknown>): CoilsService {
+    return new CoilsService(prisma as unknown as PrismaService, {} as unknown as InventoryService);
+  }
+
+  it('el historial va del más reciente al más antiguo, con el nombre de quien lo registró', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'e2',
+        type: 'RESEALED',
+        source: 'MANUAL',
+        operationDate: new Date('2026-09-12T00:00:00Z'),
+        reason: null,
+        actorId: 'u1',
+        at: new Date('2026-09-12T15:00:00Z'),
+      },
+      {
+        id: 'e1',
+        type: 'OPENED',
+        source: 'BIRTH',
+        operationDate: new Date('2026-09-10T00:00:00Z'),
+        reason: 'nació abierta',
+        actorId: null,
+        at: new Date('2026-09-10T15:00:00Z'),
+      },
+    ]);
+    const service = serviceWith({
+      coilFilmEvent: { findMany },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 'u1', name: 'Ana Planta' }]) },
+    });
+    const events = await service.findFilmEvents('coil-1');
+    expect(findMany).toHaveBeenCalledWith({
+      where: { coilId: 'coil-1' },
+      orderBy: [{ operationDate: 'desc' }, { at: 'desc' }, { id: 'desc' }],
+    });
+    expect(events.map((e) => [e.type, e.source, e.operationDate, e.actorName])).toEqual([
+      ['RESEALED', 'MANUAL', '2026-09-12', 'Ana Planta'],
+      ['OPENED', 'BIRTH', '2026-09-10', null],
+    ]);
+    expect(events[1]?.reason).toBe('nació abierta');
+  });
+
+  it('sin eventos no consulta usuarios', async () => {
+    const userFindMany = jest.fn();
+    const service = serviceWith({
+      coilFilmEvent: { findMany: jest.fn().mockResolvedValue([]) },
+      user: { findMany: userFindMany },
+    });
+    await expect(service.findFilmEvents('coil-1')).resolves.toEqual([]);
+    expect(userFindMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['SEALED', true],
+    ['OPENED', false],
+  ])('el filtro film=%s acota a las vigentes con filmSealed=%s', async (film, sealed) => {
+    const count = jest.fn().mockResolvedValue(0);
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = serviceWith({ coil: { count, findMany } });
+    await service.findAll({ film, page: 1, pageSize: 20 } as never);
+    const where = (count.mock.calls as { where: Record<string, unknown> }[][])[0]![0]!.where;
+    expect(where.AND).toEqual([{ status: 'OPEN' }, { filmSealed: sealed }]);
+  });
+
+  it('sin el filtro no agrega ninguna condición de film', async () => {
+    const count = jest.fn().mockResolvedValue(0);
+    const service = serviceWith({ coil: { count, findMany: jest.fn().mockResolvedValue([]) } });
+    await service.findAll({ page: 1, pageSize: 20 });
+    const where = (count.mock.calls as { where: Record<string, unknown> }[][])[0]![0]!.where;
+    expect(where.AND).toBeUndefined();
+  });
+});
+
 describe('CoilsService.create (RF-10..RF-14)', () => {
   let service: CoilsService;
   const inventory = { record: jest.fn().mockResolvedValue({ id: BigInt(1) }) };
