@@ -152,6 +152,32 @@ PRs #35 (merge `f334f93`) y el de cierre documental. SHA desplegado `200e54c`. H
 - **Verificación local:** los 5 casos de `film-bobina-d328.spec.ts` y los specs ajustados pasan en local;
   la suite E2E completa **no** se corrió en la máquina de desarrollo (se apoyó en el runner de CI).
 
+## D-340 — reporte mensual de bobinas por primer movimiento (2026-09-26, sin migración)
+
+PR #37, merge `2fe7b19`; SHA desplegado `2632958`. Handoff: `docs/handoff/correcciones-04b.md`, §5.
+
+- **CI del PR #37 sobre `2632958`:** lint/typecheck/unit, **E2E completo del runner**, smoke con Neon `ci`,
+  análisis estático y **SonarCloud** en SUCCESS.
+- **API (Cloud Run):** `pnpm deploy:api` con secretos fijados por versión. Revisión
+  **`ayr-steel-erp-api-00059-p8k`** con el 100 % del tráfico, label `git-sha=2632958`, `/health` 200, los
+  **14** nombres de variables y `DATABASE_URL:7`, `DIRECT_URL:6`, `JWT_SECRET:6` y los seis restantes en la 5.
+  Revisión de rollback: `00058-b67`.
+- **Smoke contra la web vieja:** `pnpm smoke:prod` en verde. **Merge** del #37 con `gh pr merge 37 --merge`;
+  Vercel en `success`; **smoke contra `v2.mareliac.pe`** en verde; **diff de runtime**
+  `git diff --quiet 2632958 origin/main -- apps packages Dockerfile …` → **exit 0**.
+- **Verificación de solo lectura (admin efímero borrado):**
+  - **Agosto (2026-08):** Selladas 73 bobinas (291 636.000 kg, S/ 787 657.05) + Abiertas 6 (las terminadas
+    por venta, 0 kg) = **79 bobinas, 291 636.000 kg** = saldo inicial de septiembre. Las **15 `SALDO-…`**
+    de la carga de V-4 (46 805.000 kg) están en «Selladas». Antes: 58 + 6 = 64 bobinas y 244 831 kg.
+  - **Septiembre (2026-09):** Selladas 43 (161 637.000 kg) + Abiertas 49 (18 047.418 kg) = **92 bobinas,
+    179 684.418 kg, S/ 487 584.47**, **igual que antes**; coincide con la suma del disponible y con el
+    inventario valorizado.
+  - Las dos anuladas figuran con 0.000 kg en septiembre (no aparecen en agosto: su primer movimiento es de
+    septiembre).
+  - Los subtotales suman el total en los dos meses.
+- **Rollback (no usado):** tráfico a `00058-b67` (vuelve la regla por fecha de alta); no hay migración ni datos
+  que revertir.
+
 ## Correcciones 03 del cliente — UI y listas (2026-09-25)
 
 Handoff: `docs/handoff/correcciones-03.md`. UAT: `docs/uat/correcciones-03.md`. Cliente:
