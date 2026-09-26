@@ -48,16 +48,16 @@ describe('mapa del menú (D-326)', () => {
 
   it('el vendedor no ve compras, almacén, planta, reportes ni administración', () => {
     expect(Object.keys(titles(Role.VENDEDOR))).toEqual(['', 'Comercial', 'Catálogo']);
-    expect(titles(Role.VENDEDOR)['Comercial']).toContain('Despachos');
-    expect(titles(Role.VENDEDOR)['Comercial']).toContain('Cotizaciones');
+    expect(titles(Role.VENDEDOR).Comercial).toContain('Despachos');
+    expect(titles(Role.VENDEDOR).Comercial).toContain('Cotizaciones');
   });
 
   it('planta ve almacén, compras, producción y el reporte mensual, y solo esos reportes', () => {
     const planta = titles(Role.SUPERVISOR_PLANTA);
-    expect(planta['Reportes']).toEqual(['Reporte mensual de bobinas']);
-    expect(planta['Planta']).toEqual(['Producción', 'Órdenes de producción']);
+    expect(planta.Reportes).toEqual(['Reporte mensual de bobinas']);
+    expect(planta.Planta).toEqual(['Producción', 'Órdenes de producción']);
     expect(planta['Administración']).toBeUndefined();
-    expect(planta['Comercial']).toEqual(['Despachos']);
+    expect(planta.Comercial).toEqual(['Despachos']);
   });
 
   it('ninguna ruta se repite salvo la pestaña de colores, que comparte /catalogo', () => {
