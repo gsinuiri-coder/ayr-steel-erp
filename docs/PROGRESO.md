@@ -78,6 +78,13 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   pase cruzado: `assertCoilsNotTied` (rechaza al guardar) y su alcance —agregar ítems a un pedido
   confirmado no lo aplica—.
 
+- **Correcciones 04, tanda A** (2026-09-25, rama `fix/correcciones-04`, PR #32). D-320 a D-327.
+  Autorrevisión por un subagente nuevo del mismo modelo que escribió
+  (`docs/revision/correcciones-04-autorrevision.md`): **1 P0 y 2 P1, corregidos en la rama**, 9 P2
+  (varios corregidos). Motivo: esquema de un solo agente, sin segundo revisor disponible. Piezas de
+  riesgo para el pase cruzado: el orden por columna del servidor (`listOrderBy`, `sortRows`, el
+  `page` que `useSort` borra) y el duplicado de cotización con líneas `BOB…` sin bobina (D-322).
+
 ## Correcciones 03 del cliente — UI y listas (2026-09-25)
 
 Handoff: `docs/handoff/correcciones-03.md`. UAT: `docs/uat/correcciones-03.md`. Cliente:
@@ -126,6 +133,35 @@ PR #28, merge `0e31c83`; SHA desplegado `6182e3e`. Handoff: `docs/handoff/correc
   pruebas de esos hooks bajo `jsdom` (D-299), de la hoja del kardex, de los controladores y de
   `reportCoils`; medido en local sobre las líneas nuevas: 99 %. El gate pasó en la segunda corrida.
 - **Rollback (no usado):** tráfico a `ayr-steel-erp-api-00053-fgk` y revert del merge.
+
+## Ventana de Correcciones 04, tanda A (2026-09-25, sin migración)
+
+PR #32, merge `6033844`; SHA desplegado `4d2959d`. Handoff: `docs/handoff/correcciones-04.md`.
+
+- **Migraciones:** `node scripts/migrations-status.mjs --branch production` → 74 encontradas, **0
+  pendientes**.
+- **Respaldo Neon:** rama `respaldo-pre-corr04a-20260925` (`br-winter-brook-aeq166s3`), desde
+  `production` con `neonctl` vía `run` quiet (`--no-secrets --output json`); verificada en el listado.
+- **API (Cloud Run):** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+  desde el worktree. Revisión **`ayr-steel-erp-api-00056-hm8`** con el **100 %** del tráfico, label
+  `git-sha=4d2959d`, `/health` 200 y los mismos **14** nombres de variables. Revisión anterior para
+  rollback: `ayr-steel-erp-api-00055-8cs`.
+- **Smoke contra la web vieja (API nueva):** `pnpm smoke:prod` en verde.
+- **Merge** del PR #32 (CI verde: lint/typecheck/unit, **E2E completo del runner (427 casos)**, smoke con
+  Neon `ci`, análisis estático y **SonarCloud en `pass`**, 95 % de cobertura de código nuevo; el primer
+  intento falló por 74,7 % y por un spec propio mal esperado); Vercel en `success`.
+- **Smoke contra `v2.mareliac.pe`:** `pnpm smoke:prod --base-url https://v2.mareliac.pe` en verde.
+- **Alineación de runtime:** `git diff --quiet 4d2959d origin/main -- apps packages Dockerfile
+.gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` → **exit 0**.
+- **Verificación en producción (solo lectura, admin efímero borrado):** los siete grupos del menú con sus
+  ítems; `/cotizaciones?sort=customer` con `aria-sort` ascendente y sin cuadros «Filtrar…»; en Clientes
+  la primera fila trae «Editar» y «⋯» con «Desactivar»; `/catalogo?tab=colores` abre Colores con un solo
+  ítem del menú marcado; el historial de `/planta` sin scroll horizontal (1366 = 1366; hoy no hay pedidos
+  en el historial, así que el «+N» no se vio con datos reales: lo cubre el E2E).
+- **Verificación local:** la suite E2E completa **no terminó** en la máquina de desarrollo (el sistema la
+  mató por memoria a ~100 casos, sin relanzarla); sus rojos se repitieron por separado. La suite completa
+  corrió en el runner de CI.
+- **Rollback (no usado):** tráfico a `ayr-steel-erp-api-00055-8cs` y revert del merge.
 
 ## Ventana de Hallazgos de la guía (2026-09-25, sin migración)
 

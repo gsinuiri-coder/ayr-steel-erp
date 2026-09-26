@@ -82,7 +82,19 @@ esa pantalla), la única ruta de configuración que el mapa no cubría con «Má
 
 ### 5. Verificación
 
-(Se completa al cerrar la tanda; ver `docs/PROGRESO.md`.)
+- `pnpm lint`, `pnpm typecheck`, `pnpm test` (API 1320, web 67) y `pnpm format:check`: en verde.
+- **Suite E2E completa local: no terminó.** Se corrió con builds de producción y la base Docker de la suite
+  (`E2E_API_PORT=3010`), y el sistema la mató por memoria a ~100 casos; no se relanzó. Sus rojos se
+  repitieron por separado: `huecos-cobertura-f8s3b:399` era una regresión real de M5 (el selector
+  «Más acciones» coincidía con los menús de fila; corregido con `exact: true`), `fase5a:100` es
+  infraestructura (R2 sin credenciales en el worktree) y `fase2a:359` (lectura del XML) falla también
+  en modo dev y no toca lo cambiado, pero **no se comprobó contra `main`**; pasó en CI.
+- **CI del PR #32:** todo verde, incluido el E2E completo del runner (427 casos) y Sonar (95 % de
+  cobertura de código nuevo). Dos rojos intermedios: un spec propio (`acciones-fila-d327`) que abría el
+  menú de una fila mientras la lista la reordenaba, y un lint del spec del menú.
+- **Producción:** ver `docs/PROGRESO.md`, «Ventana de Correcciones 04, tanda A».
+- **Autorrevisión:** `docs/revision/correcciones-04-autorrevision.md` (1 P0 y 2 P1 corregidos; 9 P2, con
+  su resolución al final). **Pendiente de revisión independiente.**
 
 ### 6. Para el dueño
 
