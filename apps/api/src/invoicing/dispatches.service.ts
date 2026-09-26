@@ -46,7 +46,7 @@ import { consumeReservationQty, restoreReservationQty } from '../sales/reservati
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
 import { byCodeUnit, reservedByItem } from '../sales/reserved-ledger';
 import { pendingQty, proratedQty } from './invoicing-math';
-import { listOrderBy } from '../common/list-sort';
+import { dispatchOrderBy } from '../common/list-orderings';
 
 /**
  * Despacho de un pedido (RF-77..RF-79; D-074, D-078).
@@ -1117,21 +1117,7 @@ export class DispatchesService {
         include: dispatchInclude,
         // D-124: el despacho se ubica por su `dispatchDate`, que es su fecha de operación.
         // D-323: la columna elegida ordena la lista entera; la fecha y el número desempatan.
-        orderBy: listOrderBy<
-          NonNullable<DispatchQuery['sort']>,
-          Prisma.DispatchOrderByWithRelationInput
-        >(
-          query,
-          {
-            code: (d) => ({ seq: d }),
-            order: (d) => ({ salesOrder: { seq: d } }),
-            customer: (d) => ({ salesOrder: { customer: { name: d } } }),
-            date: (d) => ({ dispatchDate: d }),
-            weight: (d) => ({ totalWeightKg: d }),
-            status: (d) => ({ status: d }),
-          },
-          [{ dispatchDate: 'desc' }, { seq: 'desc' }],
-        ),
+        orderBy: dispatchOrderBy(query),
         skip,
         take,
       }),

@@ -52,6 +52,8 @@ test.describe('D-327 — acciones de fila en un menú', () => {
     await expect(page.getByRole('menuitem', { name: 'Desactivar', exact: true })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Editar', exact: true })).toHaveCount(0);
     await page.keyboard.press('Escape');
+    // Esperar a que el menú termine de cerrarse: el helper de abajo lo vuelve a abrir con un clic.
+    await expect(page.getByRole('menuitem', { name: 'Desactivar', exact: true })).toBeHidden();
 
     // Desactivar desde el menú (con el helper de los E2E) cambia el estado de verdad.
     await (await rowAction(page, customer.name, 'Desactivar')).click();

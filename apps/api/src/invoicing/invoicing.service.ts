@@ -88,7 +88,7 @@ import {
   type PartyRef,
   type ProviderResult,
 } from './ports/electronic-invoicing.port';
-import { listOrderBy } from '../common/list-sort';
+import { fiscalDocumentOrderBy } from '../common/list-orderings';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -3074,22 +3074,7 @@ export class InvoicingService {
     const where = fiscalDocumentListWhere(query, actor, LIVE_DOCUMENT_STATUSES);
     // D-323: la columna elegida ordena la lista entera (también con `pendingOnly`, antes del tope);
     // la fecha de emisión desempata. Solo columnas propias: el saldo es derivado.
-    const orderBy = listOrderBy<
-      NonNullable<FiscalDocumentQuery['sort']>,
-      Prisma.FiscalDocumentOrderByWithRelationInput
-    >(
-      query,
-      {
-        number: (d) => ({ number: d }),
-        docType: (d) => ({ docType: d }),
-        customer: (d) => ({ customer: { name: d } }),
-        issueDate: (d) => ({ issueDate: d }),
-        dueDate: (d) => ({ dueDate: d }),
-        total: (d) => ({ totalPen: d }),
-        status: (d) => ({ status: d }),
-      },
-      [{ issueDate: 'desc' }, { createdAt: 'desc' }],
-    );
+    const orderBy = fiscalDocumentOrderBy(query);
 
     if (!query.pendingOnly) {
       const { skip, take } = toSkipTake(query);
