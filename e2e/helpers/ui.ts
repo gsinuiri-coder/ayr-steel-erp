@@ -171,6 +171,18 @@ export async function openQueuedOrder(page: Page, code: string): Promise<void> {
 }
 
 /**
+ * D-328: montar una bobina **sellada** desde el selector de planta pasa por un paso de
+ * confirmación («al continuar se abre»). Las bobinas que crean los escenarios de E2E nacen
+ * selladas, así que el paso siempre aparece: este helper lo verifica y lo confirma.
+ */
+export async function confirmFilmOpen(modal: Locator): Promise<void> {
+  const step = modal.getByTestId('film-open-step');
+  await expect(step).toBeVisible();
+  await expect(step.getByTestId('film-open-notice')).toContainText('al continuar se abre');
+  await step.getByRole('button', { name: /^Abrir y montar/ }).click();
+}
+
+/**
  * F8-S3b/M3: una acción de la cabecera de una vista (`HeaderActions`). La principal es un
  * botón o enlace a la vista; las secundarias viven en el menú «Más acciones». Devuelve el
  * elemento a clickear, abriendo el menú si hace falta, para que el test no dependa de cuál de

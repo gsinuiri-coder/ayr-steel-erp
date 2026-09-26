@@ -131,8 +131,8 @@ function filaDeCierre(page: Page): Locator {
 async function abrirDialogoDeCierre(page: Page, coil: CoilRow): Promise<Locator> {
   await page.goto(`/bobinas/${coil.id}`);
   await expect(page.getByRole('heading', { name: coil.code })).toBeVisible({ timeout: 60_000 });
-  await (await headerAction(page, 'Cerrar')).click();
-  const dialog = page.getByRole('dialog').filter({ hasText: `Cerrar ${coil.code}` });
+  await (await headerAction(page, 'Terminar bobina')).click();
+  const dialog = page.getByRole('dialog').filter({ hasText: `Terminar ${coil.code}` });
   await expect(dialog).toBeVisible();
   return dialog;
 }
@@ -193,7 +193,7 @@ test.describe('D-164 — cerrar una bobina con saldo desde la pantalla', () => {
     await expect(kilos).toHaveValue('');
     // Con el campo vacío no hay liquidación que anunciar y el motivo es opcional.
     await expect(dialog.getByLabel('Motivo (opcional)')).toBeVisible();
-    const cerrar = dialog.getByRole('button', { name: 'Cerrar bobina' });
+    const cerrar = dialog.getByRole('button', { name: 'Terminar bobina' });
     await expect(cerrar).toBeDisabled();
 
     // -----------------------------------------------------------------------
@@ -222,10 +222,10 @@ test.describe('D-164 — cerrar una bobina con saldo desde la pantalla', () => {
     // 4. Cerrar: la bobina queda CERRADA y el saldo baja al conteo real.
     // -----------------------------------------------------------------------
     await cerrar.click();
-    await expect(page.getByText('Bobina cerrada')).toBeVisible();
+    await expect(page.getByText('Bobina terminada')).toBeVisible();
     await expect(dialog).toHaveCount(0);
 
-    await expect(page.getByText('Cerrada', { exact: true })).toBeVisible();
+    await expect(page.getByText('Terminada', { exact: true })).toBeVisible();
     await expect(datoDeTarjeta(page, 'Disponible')).toContainText('940.000 kg');
     // Y el inventario valorizado deja de contar el material que ya no existe, que es el
     // defecto entero que D-164 vino a cerrar: 940 × 4 = S/ 3,760.
@@ -276,7 +276,7 @@ test.describe('D-164 — cerrar una bobina con saldo desde la pantalla', () => {
     const dialog = await abrirDialogoDeCierre(page, coil);
     await expect(dialog).toContainText('El kardex tiene 100.000 kg de saldo');
     const kilos = dialog.getByLabel('Kilos que quedan en el rollo');
-    const cerrar = dialog.getByRole('button', { name: 'Cerrar bobina' });
+    const cerrar = dialog.getByRole('button', { name: 'Terminar bobina' });
 
     // -----------------------------------------------------------------------
     // 1. Un rollo no puede tener más kilos de los que entraron: la pantalla lo
@@ -301,13 +301,13 @@ test.describe('D-164 — cerrar una bobina con saldo desde la pantalla', () => {
     await expect(cerrar).toBeEnabled();
 
     await cerrar.click();
-    await expect(page.getByText('Bobina cerrada')).toBeVisible();
+    await expect(page.getByText('Bobina terminada')).toBeVisible();
 
     // -----------------------------------------------------------------------
     // 3. La bobina queda cerrada **con más kilos** de los que tenía, y el
     //    movimiento es una entrada.
     // -----------------------------------------------------------------------
-    await expect(page.getByText('Cerrada', { exact: true })).toBeVisible();
+    await expect(page.getByText('Terminada', { exact: true })).toBeVisible();
     await expect(datoDeTarjeta(page, 'Disponible')).toContainText('150.000 kg');
     await expect(datoDeTarjeta(page, 'Saldo valorizado')).toContainText('S/ 600.00');
 

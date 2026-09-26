@@ -83,7 +83,7 @@ async function movementsOf(api: APIRequestContext, coilId: string): Promise<Move
   return getItems<MovementDto>(api, `/api/inventory/movements?itemType=COIL&itemId=${coilId}`);
 }
 
-test.describe('D-193 — reabrir una bobina cerrada para montarla', () => {
+test.describe('D-193 — reabrir una bobina terminada para montarla', () => {
   test('por API: se ofrece con su ajuste; sin confirmar se rechaza sin tocar nada; confirmando se revierte el ajuste y se monta', async ({
     baseURL,
   }) => {
@@ -119,7 +119,7 @@ test.describe('D-193 — reabrir una bobina cerrada para montarla', () => {
       const refused = await postExpectingError(api, `/api/production/roofing/${opId}/coils`, {
         coilId: closed.coil.id,
       });
-      expect(refused.message).toMatch(/está cerrada: para montarla hay que confirmar/);
+      expect(refused.message).toMatch(/está terminada: para montarla hay que confirmar/);
       expect(await movementsOf(api, closed.coil.id)).toHaveLength(movementsBefore.length);
       // Y confirmar sin motivo tampoco pasa el schema.
       const noReason = await postExpectingError(api, `/api/production/roofing/${opId}/coils`, {
@@ -188,8 +188,8 @@ test.describe('D-193 — reabrir una bobina cerrada para montarla', () => {
       await expect(
         modal.getByRole('button', { name: `Montar ${closed.coil.code}`, exact: true }),
       ).toHaveCount(0);
-      await modal.getByRole('button', { name: /Ver bobinas cerradas/ }).click();
-      const closedTable = modal.getByRole('table', { name: 'Bobinas cerradas' });
+      await modal.getByRole('button', { name: /Ver bobinas terminadas/ }).click();
+      const closedTable = modal.getByRole('table', { name: 'Bobinas terminadas' });
       const row = closedTable.getByRole('row').filter({ hasText: closed.coil.code });
       await expect(row).toContainText('−100.000 kg');
       await expect(row).toContainText('500.000 kg');
@@ -197,7 +197,7 @@ test.describe('D-193 — reabrir una bobina cerrada para montarla', () => {
       // Paso explícito, y «Volver» no mueve nada.
       await row.getByRole('button', { name: `Reabrir y montar ${closed.coil.code}` }).click();
       await expect(modal.getByRole('alert')).toContainText(
-        `${closed.coil.code} cerrada con ajuste de 100.000 kg (faltante) — reabrirla revierte el ajuste`,
+        `${closed.coil.code} terminada con ajuste de 100.000 kg (faltante) — reabrirla revierte el ajuste`,
       );
       const confirm = modal.getByRole('button', {
         name: `Confirmar: reabrir y montar ${closed.coil.code}`,

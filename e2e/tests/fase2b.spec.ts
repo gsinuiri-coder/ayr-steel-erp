@@ -1481,7 +1481,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
       };
       const blocked = await postExpectingError(api, `/api/coils/${coil.id}/split`, splitBody);
       expect(blocked.status).toBe(400);
-      expect(blocked.message).toContain('cerrada');
+      expect(blocked.message).toContain('terminada');
       expect(await getJson<SplitDto[]>(api, `/api/coils/${coil.id}/splits`)).toHaveLength(0);
       expect(await coilMovements(api, coil.id)).toHaveLength(1);
 
@@ -1490,7 +1490,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
         status: 'CLOSED',
       });
       expect(twice.status).toBe(400);
-      expect(twice.message).toContain('ya está cerrada');
+      expect(twice.message).toContain('ya está terminada');
 
       const reopened = await postJson<CoilDto>(api, `/api/coils/${coil.id}/status`, {
         status: 'OPEN',

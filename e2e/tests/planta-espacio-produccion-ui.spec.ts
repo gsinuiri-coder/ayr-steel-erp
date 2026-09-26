@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, postJson } from '../helpers/api';
-import { openQueuedOrder } from '../helpers/ui';
+import { confirmFilmOpen, openQueuedOrder } from '../helpers/ui';
 import { balanceOf, today, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -104,6 +104,8 @@ async function mountFromModal(page: Page, orderCode: string, coilCode: string): 
   await expect(modal.getByText(`Bobinas para ${orderCode}`)).toBeVisible();
   await modal.getByLabel('Filtrar opciones').fill(coilCode);
   await modal.getByRole('button', { name: `Montar ${coilCode}`, exact: true }).click();
+  // D-328: la bobina del escenario nace sellada; montarla pide confirmar que se abre.
+  await confirmFilmOpen(modal);
   await expect(modal).toHaveCount(0);
 }
 
@@ -226,6 +228,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await modal
         .getByRole('button', { name: `Montar ${scenario.coil.code}`, exact: true })
         .click();
+      await confirmFilmOpen(modal);
       await expect(modal).toHaveCount(0);
 
       await expect(tabA).toContainText('Lista');
