@@ -347,6 +347,20 @@ describe('backfill (classifyBackfill)', () => {
     ).toMatchObject({ reason: 'IN_CUTTING', operationDate: '2026-09-05' });
   });
 
+  it('sin ningún candidato (arreglo vacío) devuelve KEEP y no revienta al elegir la evidencia', () => {
+    // Nada de uso, nada enviado, nada montado, sin salidas: el arreglo de candidatos queda vacío.
+    expect(() => classifyBackfill(base)).not.toThrow();
+    expect(classifyBackfill({ ...base, outflows: [] })).toEqual({
+      action: 'KEEP',
+      reason: 'NO_USE',
+    });
+    // Con una sola evidencia, el `reduce` arranca en ella y la devuelve.
+    expect(classifyBackfill({ ...base, mountedOn: '2026-09-07' })).toMatchObject({
+      action: 'OPEN',
+      operationDate: '2026-09-07',
+    });
+  });
+
   it('es idempotente: una bobina que ya tiene eventos no se toca', () => {
     expect(
       classifyBackfill({

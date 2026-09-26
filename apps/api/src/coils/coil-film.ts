@@ -237,7 +237,11 @@ export function classifyBackfill(facts: BackfillFacts): BackfillDecision {
     });
   }
 
-  if (candidates.length === 0) {
+  // Sin evidencia de uso no hay nada que abrir. La desestructuración deja el primer candidato
+  // como valor inicial del `reduce` de abajo (un `reduce` sin valor inicial revienta sobre un
+  // arreglo vacío; Sonar lo marca como bug de confiabilidad) y cubre el arreglo vacío.
+  const [head, ...rest] = candidates;
+  if (head === undefined) {
     const sold = facts.outflows.some((o) => o.refType === 'SALE');
     return {
       action: 'KEEP',
@@ -245,7 +249,7 @@ export function classifyBackfill(facts: BackfillFacts): BackfillDecision {
     };
   }
   // El evento se fecha en la evidencia más temprana; a igualdad, gana la que ya estaba primero.
-  const first = candidates.reduce((min, c) => (c.date < min.date ? c : min));
+  const first = rest.reduce((min, c) => (c.date < min.date ? c : min), head);
   return {
     action: 'OPEN',
     reason: first.reason,
