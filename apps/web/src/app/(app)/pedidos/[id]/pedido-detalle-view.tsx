@@ -89,6 +89,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const [ordersDate, setOrdersDate] = useState<string | undefined>(undefined);
   /** F8-S3b/M3: generar las órdenes pasa por un diálogo que ofrece esa fecha. */
   const [generateOpen, setGenerateOpen] = useState(false);
+  /** D-341: «Completar reserva» de un pedido confirmado con faltante. */
+  const [completeOpen, setCompleteOpen] = useState(false);
 
   const order = useQuery({
     queryKey: ['sales-order', id],
@@ -128,6 +130,28 @@ export function PedidoDetalleView({ id }: { id: string }) {
     onSuccess: () => {
       toast.success('Reserva liberada');
       setReleasing(null);
+      invalidateSales(queryClient, { orderId: id });
+    },
+    onError,
+  });
+
+  /**
+   * D-341: reserva lo que hoy alcanza del faltante. Si no alcanza nada, el API lo dice y no
+   * cambia nada — el toast de error es el resultado, no un fallo de la pantalla.
+   */
+  const completeReservation = useMutation({
+    mutationFn: (reason: string) =>
+      api<SalesOrderDto>(`/sales/orders/${id}/complete-reservation`, {
+        method: 'POST',
+        body: { reason },
+      }),
+    onSuccess: (updated) => {
+      toast.success(
+        updated.shortfalls.length > 0
+          ? 'Reserva completada en parte: todavía falta material'
+          : 'Reserva completada: el pedido ya no tiene faltante',
+      );
+      setCompleteOpen(false);
       invalidateSales(queryClient, { orderId: id });
     },
     onError,
@@ -217,7 +241,11 @@ export function PedidoDetalleView({ id }: { id: string }) {
   // F8-S1/M1: anular, liberar una reserva y generar las OP de golpe cambian el mismo
   // pedido; sin este `busy` combinado, "Anular pedido" seguía habilitado mientras
   // "Generar todas las órdenes" del mismo pedido estaba en vuelo.
-  const busy = cancel.isPending || release.isPending || generateOrders.isPending;
+  const busy =
+    cancel.isPending ||
+    release.isPending ||
+    generateOrders.isPending ||
+    completeReservation.isPending;
   // D-187: precio y cliente son de ADMINISTRADOR; agregar ítems y cambiar cantidades, también
   // del vendedor dueño del pedido. El API es el que corta; esto solo evita ofrecer un 403.
   const canEditAsAdmin = o.isEditable && isAdmin;
@@ -231,6 +259,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-lg font-semibold">{o.code}</h1>
             <OrderStageBadge stage={o.stage} />
+            {/* D-341: confirmado por un administrador con material sin reservar. */}
+            {o.shortfalls.length > 0 && <Badge variant="warning">Con faltante</Badge>}
             {/* RF-37 (D-093): "en cola" no es un estado del pedido, es una vista derivada. */}
             {o.queueStatus === 'EN_COLA' && <Badge variant="outline">En cola de producción</Badge>}
             {o.queueStatus === 'EN_PRODUCCION' && <Badge variant="progress">En producción</Badge>}
@@ -325,6 +355,19 @@ export function PedidoDetalleView({ id }: { id: string }) {
                   setGenerateOpen(true);
                 },
               },
+              // D-341: reserva lo que ya llegó del material que faltaba al confirmar.
+              {
+                key: 'complete-reservation',
+                label: 'Completar reserva',
+                show: isAdmin && canOperate && o.shortfalls.length > 0,
+                disabled: busy,
+                pending: completeReservation.isPending,
+                pendingText: 'Completando…',
+                onSelect: () => {
+                  if (busy) return;
+                  setCompleteOpen(true);
+                },
+              },
               {
                 key: 'add-items',
                 label: 'Agregar ítems',
@@ -397,6 +440,26 @@ export function PedidoDetalleView({ id }: { id: string }) {
         </Dialog>
       </div>
 
+      {o.shortfalls.length > 0 && o.status !== 'CANCELLED' && (
+        <Alert className="border-amber-500/60">
+          <AlertDescription className="grid gap-1">
+            <span className="font-medium text-foreground">
+              Este pedido se confirmó con faltante de material. Falta reservar:
+            </span>
+            <ul className="grid gap-0.5">
+              {o.shortfalls.map((s) => (
+                <li key={s.label} className="tabular-nums">
+                  {formatQty(s.missingQty, unitSymbol(s.unit))} de {s.label}
+                </li>
+              ))}
+            </ul>
+            <span className="text-xs">
+              Las órdenes de producción existen igual; planta ve el aviso de material faltante.
+              {isAdmin && ' Cuando llegue el material, usa «Completar reserva» en el menú ⋯.'}
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
       {consumed.length > 0 && o.status !== 'CANCELLED' && (
         <Alert>
           <AlertDescription>
@@ -557,7 +620,14 @@ export function PedidoDetalleView({ id }: { id: string }) {
                   <div className="font-medium">{r.itemLabel}</div>
                   <div className="text-xs text-muted-foreground">{r.itemName}</div>
                 </TableCell>
-                <TableCell className="text-right">{formatQty(r.qty, unitSymbol(r.unit))}</TableCell>
+                <TableCell className="text-right">
+                  {formatQty(r.qty, unitSymbol(r.unit))}
+                  {r.status === 'ACTIVE' && toDecimal(r.shortfallQty).gt(0) && (
+                    <span className="block text-xs text-amber-700 dark:text-amber-400">
+                      faltan {formatQty(r.shortfallQty, unitSymbol(r.unit))}
+                    </span>
+                  )}
+                </TableCell>
                 <TableCell>
                   {reservationBadge(r)}
                   {r.isStale && (
@@ -633,6 +703,19 @@ export function PedidoDetalleView({ id }: { id: string }) {
         pending={cancel.isPending}
         onConfirm={(reason) => {
           cancel.mutate(reason);
+        }}
+      />
+
+      <ReasonDialog
+        open={completeOpen}
+        onOpenChange={setCompleteOpen}
+        title={`Completar la reserva de ${o.code}`}
+        description="Reserva lo que hoy alcanza del material que faltaba al confirmar. Si todavía no hay material nuevo disponible, no cambia nada. No se crean órdenes nuevas."
+        confirmLabel="Completar reserva"
+        placeholder="Qué material llegó"
+        pending={completeReservation.isPending}
+        onConfirm={(reason) => {
+          completeReservation.mutate(reason);
         }}
       />
 

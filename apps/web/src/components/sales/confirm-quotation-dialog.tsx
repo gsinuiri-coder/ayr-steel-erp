@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ConfirmLineAction, ConfirmPreviewDto } from '@ayr/shared';
 import { api } from '@/lib/api';
@@ -8,6 +9,9 @@ import { formatExpiry } from '@/components/sales/temporary-reservation';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -36,6 +40,10 @@ const ACTION_LABELS: Record<ConfirmLineAction, string> = {
  * D-186: confirmar es **un solo clic después de ver qué va a pasar**: qué se reserva, qué
  * órdenes salen con qué plan, qué líneas no generan nada. Si falta material el botón queda
  * apagado con el faltante dicho línea por línea (la confirmación bloquea, D-054).
+ *
+ * D-341: para un ADMINISTRADOR el faltante ya no apaga el botón: lo confirma **a conciencia**,
+ * con el faltante a la vista, una casilla que lo reconoce y un motivo que queda en la auditoría.
+ * El vendedor sigue viendo el bloqueo de siempre.
  */
 export function ConfirmQuotationDialog({
   quotationId,
@@ -48,8 +56,18 @@ export function ConfirmQuotationDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pending: boolean;
-  onConfirm: () => void;
+  onConfirm: (shortfall?: { confirmShortfall: true; shortfallReason: string }) => void;
 }) {
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [reason, setReason] = useState('');
+  // Ni el reconocimiento ni el motivo se arrastran de una apertura a la siguiente: el faltante
+  // pudo cambiar, y confirmar «a conciencia» con la casilla marcada de antes no es conciencia.
+  useEffect(() => {
+    if (open) {
+      setAcknowledged(false);
+      setReason('');
+    }
+  }, [open]);
   const preview = useQuery({
     queryKey: ['confirm-preview', quotationId],
     queryFn: () => api<ConfirmPreviewDto>(`/sales/quotations/${quotationId}/confirm-preview`),
@@ -60,7 +78,11 @@ export function ConfirmQuotationDialog({
   });
 
   const data = preview.data;
-  const blocked = !data || data.blockers.length > 0;
+  const withShortfall = data?.canConfirmWithShortfall === true;
+  const trimmedReason = reason.trim();
+  // Con faltante hace falta reconocerlo y explicarlo (mismo mínimo que el API).
+  const shortfallPending = withShortfall && (!acknowledged || trimmedReason.length < 5);
+  const blocked = !data || data.blockers.length > 0 || shortfallPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -163,6 +185,50 @@ export function ConfirmQuotationDialog({
                 </AlertDescription>
               </Alert>
             )}
+            {withShortfall && (
+              <Alert className="border-amber-500/60">
+                <AlertDescription className="grid gap-3">
+                  <div>
+                    <p className="font-medium text-foreground">
+                      Falta material: el pedido se confirma con faltante.
+                    </p>
+                    <ul className="mt-1 grid gap-1">
+                      {data.shortfallNotes.map((n) => (
+                        <li key={n}>{n}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs">
+                      Se reserva lo que hay y las órdenes de producción salen igual. El pedido queda
+                      marcado «Con faltante» hasta que se complete la reserva.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="ack-shortfall"
+                      checked={acknowledged}
+                      onCheckedChange={(v) => {
+                        setAcknowledged(v === true);
+                      }}
+                    />
+                    <Label htmlFor="ack-shortfall">
+                      Entiendo que falta material y confirmo el pedido con faltante
+                    </Label>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="shortfall-reason">Motivo</Label>
+                    <Input
+                      id="shortfall-reason"
+                      value={reason}
+                      maxLength={500}
+                      placeholder="Ej.: llega bobina el lunes; el cliente acepta esperar"
+                      onChange={(e) => {
+                        setReason(e.target.value);
+                      }}
+                    />
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
         )}
 
@@ -181,10 +247,14 @@ export function ConfirmQuotationDialog({
             pendingText="Confirmando…"
             onClick={() => {
               if (pending || blocked) return;
-              onConfirm();
+              onConfirm(
+                withShortfall
+                  ? { confirmShortfall: true, shortfallReason: trimmedReason }
+                  : undefined,
+              );
             }}
           >
-            Confirmar
+            {withShortfall ? 'Confirmar con faltante' : 'Confirmar'}
           </Button>
         </DialogFooter>
       </DialogContent>

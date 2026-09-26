@@ -35,6 +35,7 @@ export function ReasonDialog({
   confirmLabel = 'Confirmar',
   pending = false,
   withOperationDate = false,
+  placeholder = 'Por qué se anula',
   onConfirm,
 }: {
   open: boolean;
@@ -43,6 +44,8 @@ export function ReasonDialog({
   description: string;
   confirmLabel?: string;
   pending?: boolean;
+  /** El ejemplo del campo; por defecto el de una anulación, que es el uso más común. */
+  placeholder?: string;
   /** D-124: exponer la fecha de operación de la reversa (solo si el hecho queda fechado). */
   withOperationDate?: boolean;
   onConfirm: (reason: string, operationDate: string | undefined) => void;
@@ -75,7 +78,7 @@ export function ReasonDialog({
             id="reason-input"
             value={reason}
             maxLength={240}
-            placeholder="Por qué se anula"
+            placeholder={placeholder}
             onChange={(e) => {
               setReason(e.target.value);
             }}

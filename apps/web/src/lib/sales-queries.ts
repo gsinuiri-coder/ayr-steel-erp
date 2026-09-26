@@ -26,6 +26,8 @@ export function invalidateSales(
   // D-188: la misma cuenta que la vista previa de confirmar — cualquier cosa que mueva
   // disponible o el estado de una cotización puede sacarla (o meterla) en el aviso del Panel.
   void queryClient.invalidateQueries({ queryKey: ['quotation-stock-shortages'] });
+  // D-341: confirmar con faltante, completar la reserva, liberar y anular mueven esta tarjeta.
+  void queryClient.invalidateQueries({ queryKey: ['orders-with-shortfall'] });
   void queryClient.invalidateQueries({ queryKey: ['stock-panel'] });
   void queryClient.invalidateQueries({ queryKey: ['inventory'] });
   void queryClient.invalidateQueries({ queryKey: ['coils'] });

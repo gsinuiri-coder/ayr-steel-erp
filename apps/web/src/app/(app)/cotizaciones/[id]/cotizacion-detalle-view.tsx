@@ -69,9 +69,17 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   }
 
   const confirm = useMutation({
-    mutationFn: () => api<SalesOrderDto>(`/sales/quotations/${id}/confirm`, { method: 'POST' }),
+    mutationFn: (shortfall?: { confirmShortfall: true; shortfallReason: string }) =>
+      api<SalesOrderDto>(`/sales/quotations/${id}/confirm`, {
+        method: 'POST',
+        ...(shortfall ? { body: shortfall } : {}),
+      }),
     onSuccess: (order) => {
-      toast.success(`Pedido ${order.code} creado con su reserva y sus órdenes`);
+      toast.success(
+        order.shortfalls.length > 0
+          ? `Pedido ${order.code} creado con faltante: complétalo desde el pedido cuando llegue el material`
+          : `Pedido ${order.code} creado con su reserva y sus órdenes`,
+      );
       setConfirmOpen(false);
       invalidateSales(queryClient, { quotationId: id, orderId: order.id });
       router.push(`/pedidos/${order.id}`);
@@ -430,8 +438,8 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         pending={confirm.isPending}
-        onConfirm={() => {
-          confirm.mutate();
+        onConfirm={(shortfall) => {
+          confirm.mutate(shortfall);
         }}
       />
 
