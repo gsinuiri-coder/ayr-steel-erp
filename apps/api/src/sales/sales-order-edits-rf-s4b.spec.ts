@@ -289,6 +289,12 @@ describe('SalesOrderEditsService.updateItemCoil — D-254', () => {
     const { service, tx, orders, audit } = build();
     await service.updateItemCoil(ADMIN, 'o-1', 'i-1', input);
     expect(tx.reservation.updateMany).toHaveBeenCalledTimes(1);
+    // D-341: liberar la reserva anterior cierra también su faltante.
+    expect(tx.reservation.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ qty: '0', shortfallQty: '0' }) as unknown,
+      }),
+    );
     const set = (tx.salesOrderItem.update.mock.calls[0] as [{ data: Record<string, unknown> }])[0]
       .data;
     expect(set).toMatchObject({

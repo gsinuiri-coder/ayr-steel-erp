@@ -406,6 +406,7 @@ export class SalesOrderEditsService {
       where: { salesOrderItemId: item.id, status: ReservationStatus.ACTIVE },
       data: {
         qty: '0',
+        shortfallQty: '0', // D-341: al liberar, lo que faltaba reservar se cierra con ella.
         status: ReservationStatus.RELEASED,
         releasedAt: new Date(),
         releasedById: actor.id,
@@ -736,6 +737,7 @@ export class SalesOrderEditsService {
             where: { id: { in: active.map((r) => r.id) }, status: ReservationStatus.ACTIVE },
             data: {
               qty: '0',
+              shortfallQty: '0', // D-341: ídem.
               status: ReservationStatus.RELEASED,
               releasedAt: new Date(),
               releasedById: actor.id,

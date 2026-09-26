@@ -1796,6 +1796,13 @@ model Reservation {
   /// que hace que el resto de la línea siga protegido después de un despacho parcial.
   qty              Decimal           @db.Decimal(16, 3)
   unit             String            @db.VarChar(20)
+  /// D-341: lo que **no se pudo reservar** al confirmar con faltante (solo ADMINISTRADOR). Es un
+  /// hecho de ese momento, no una cuenta que se pueda rehacer después: `qty` baja con cada reporte
+  /// y despacho, así que «prometido − reservado» dejaría de significar faltante en cuanto la
+  /// producción arranca. Solo lo mueven confirmar con faltante (lo fija), «Completar reserva» (lo
+  /// baja por lo que reserva) y anular el pedido o liberar la reserva (a cero). La producción y
+  /// el despacho no lo tocan. CHECK `>= 0` en la base.
+  shortfallQty     Decimal           @default(0) @map("shortfall_qty") @db.Decimal(16, 3)
   status           ReservationStatus @default(ACTIVE)
   createdById      String            @map("created_by_id") @db.Uuid
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)

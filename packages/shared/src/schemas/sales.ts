@@ -354,6 +354,8 @@ export const reservationSchema = z.object({
   itemLabel: z.string(),
   itemName: z.string(),
   qty: z.string(),
+  /** D-341: lo que no se pudo reservar al confirmar con faltante. `"0.000"` si nada falta. */
+  shortfallQty: z.string(),
   unit: unitStringSchema,
   status: z.enum(RESERVATION_STATUSES),
   /**
@@ -772,10 +774,56 @@ export type CreateSalesOrderInput = z.infer<typeof createSalesOrderSchema>;
  * D-096 solo la deja fijar en el acto de crear el pedido — antes no hay dónde guardarla (la
  * cotización no es un pedido) y después es de ADMINISTRADOR (`updatePromisedDeliveryDateSchema`).
  */
-export const confirmQuotationSchema = z.object({
-  promisedDeliveryDate: isoDateSchema.optional(),
-});
+export const confirmQuotationSchema = z
+  .object({
+    promisedDeliveryDate: isoDateSchema.optional(),
+    /**
+     * D-341: el ADMINISTRADOR confirma aunque falte materia prima. Sin esta bandera confirmar
+     * sigue rechazando por faltante, para todos: no se confirma con faltante «por defecto».
+     * Un VENDEDOR que la manda recibe 403 (D-054 sigue en pie para él).
+     */
+    confirmShortfall: z.boolean().optional(),
+    /** Obligatorio con `confirmShortfall`: queda en `audit_log` como el motivo de la excepción. */
+    shortfallReason: z
+      .string()
+      .trim()
+      .min(5, 'Explica el motivo (mínimo 5 caracteres)')
+      .max(500)
+      .optional(),
+  })
+  .refine((v) => v.confirmShortfall !== true || (v.shortfallReason?.length ?? 0) >= 5, {
+    message: 'Confirmar con faltante exige un motivo',
+    path: ['shortfallReason'],
+  });
 export type ConfirmQuotationInput = z.infer<typeof confirmQuotationSchema>;
+
+/**
+ * D-341: lo que falta de un pedido confirmado con faltante, **sumado por el ítem que se
+ * prometió** (espesor + color para materia prima; el propio SKU para stock). Sale de
+ * `reservations.shortfall_qty` de las reservas vivas.
+ */
+export const orderShortfallSchema = z.object({
+  /** Etiqueta del agregado (espesor + color) o del producto. */
+  label: z.string(),
+  missingQty: z.string(),
+  unit: unitStringSchema,
+});
+export type OrderShortfallDto = z.infer<typeof orderShortfallSchema>;
+
+/** «Completar reserva» (D-341): el motivo es opcional; queda en `audit_log` si se da. */
+export const completeReservationSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+});
+export type CompleteReservationInput = z.infer<typeof completeReservationSchema>;
+
+/** Una fila de la tarjeta «Pedidos con faltante» del Panel (D-341). */
+export const orderWithShortfallSchema = z.object({
+  orderId: z.string().uuid(),
+  orderCode: z.string(),
+  customerName: z.string(),
+  shortfalls: z.array(orderShortfallSchema),
+});
+export type OrderWithShortfallDto = z.infer<typeof orderWithShortfallSchema>;
 
 /**
  * D-186: qué hace confirmar con cada línea.
@@ -819,6 +867,14 @@ export const confirmPreviewSchema = z.object({
   lines: z.array(confirmPreviewLineSchema),
   /** Por qué no se puede confirmar hoy. Vacío = el botón confirma. */
   blockers: z.array(z.string()),
+  /**
+   * D-341: el faltante de materia prima, dicho línea por línea. Para un VENDEDOR también va en
+   * `blockers` (D-054); para un ADMINISTRADOR ya **no** bloquea: puede confirmar con
+   * `confirmShortfall`, con el faltante a la vista y un motivo.
+   */
+  shortfallNotes: z.array(z.string()),
+  /** `true` si el que pregunta puede confirmar pese al faltante (ADMINISTRADOR con faltante). */
+  canConfirmWithShortfall: z.boolean(),
 });
 export type ConfirmPreviewDto = z.infer<typeof confirmPreviewSchema>;
 
@@ -1123,6 +1179,8 @@ export const salesOrderSchema = z.object({
   readiness: orderReadinessSchema,
   /** D-277: estado que se muestra (el persistido más «Listo»). */
   stage: z.enum(ORDER_STAGES),
+  /** D-341: lo que falta por reservar (confirmado con faltante). Vacío = «Con faltante» no aplica. */
+  shortfalls: z.array(orderShortfallSchema),
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 
@@ -1143,6 +1201,8 @@ export const salesOrderListItemSchema = salesOrderSchema
     importedDocumentNumber: true,
     priceChanges: true,
     isEditable: true,
+    // D-341: el faltante sale del detalle y de la tarjeta del Panel, no de cada fila del listado.
+    shortfalls: true,
   })
   .extend({
     itemCount: z.number().int(),

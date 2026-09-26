@@ -127,6 +127,7 @@ describe('findReservations — D-311', () => {
       itemType: 'COIL',
       itemId: COIL_ID,
       qty: D('0'),
+      shortfallQty: D('0'),
       unit: 'KGM',
       status,
       createdAt: new Date('2026-09-20T10:00:00Z'),
