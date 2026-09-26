@@ -102,6 +102,17 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   «volver a sellar» y el resello automático (`coil-film.ts`), el trigger `coil_film_events_sync` y la
   clasificación del reporte mensual a fin de mes (`monthEndTable`). **Revisada por el dueño el 2026-09-26.**
 
+- **Correcciones 03b** (2026-09-26, rama `feat/correcciones-03b`). D-341, D-342 y D-343. **Dos pases, los dos por
+  subagentes** —autorrevisión y segundo modelo con `model: sonnet` y contexto limpio—, así que **ninguno vale como
+  pase independiente** (`docs/revision/correcciones-03b-segundo-modelo.md`: 0 P0, 2 P1 —el faltante que
+  desaparecía al pasar la reserva a CONSUMED y la reversa sin tope—, ambos resueltos antes del deploy; varios P2,
+  dos diferidos). **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-26, motivo: esquema de un solo agente). Piezas de
+  riesgo para el pase cruzado: `reservations.shortfall_qty` y sus cuatro transiciones (`order-shortfall.ts`,
+  `completeReservation`, el tope de `restoreReservationQty`) —toca reservas, no kardex—; el reporte de un
+  accesorio en metros (`reportInTx`, rama de accesorio: kilos teóricos con una pieza sintética y kardex del
+  producto terminado en metros, **sí toca kardex**); y el CHECK `products_roofing_kind_unit_check` recreado con
+  ACCESORIO.
+
 ## Ventana de Correcciones 04, tanda B (2026-09-26, con migración)
 
 PRs #35 (merge `f334f93`) y el de cierre documental. SHA desplegado `200e54c`. Handoff:
