@@ -331,13 +331,32 @@ export async function restoreReservationQty(
 ): Promise<boolean> {
   const reservation = await tx.reservation.findUnique({
     where: { id: reservationId },
-    select: { id: true, status: true, qty: true, salesOrder: { select: { status: true } } },
+    select: {
+      id: true,
+      status: true,
+      qty: true,
+      shortfallQty: true,
+      salesOrderItem: { select: { reserveQty: true } },
+      salesOrder: { select: { status: true } },
+    },
   });
   if (!reservation) return false;
   if (reservation.status === ReservationStatus.RELEASED) return false;
   if (reservation.salesOrder.status === SalesOrderStatus.CANCELLED) return false;
 
-  const restored = toDecimal(reservation.qty.toString()).plus(qty);
+  let restored = toDecimal(reservation.qty.toString()).plus(qty);
+  // D-341: en una reserva **parcial** (confirmada con faltante) el consumo se topó en lo que había
+  // reservado, pero la reversa devuelve todo lo que salió: sin este tope la reserva quedaba por
+  // encima de lo que la línea promete menos lo que nunca se reservó. Solo con faltante: el resto
+  // de las reservas se comporta exactamente como antes.
+  const shortfall = toDecimal(reservation.shortfallQty.toString());
+  if (shortfall.gt(0)) {
+    const ceiling = Decimal.max(
+      toDecimal(reservation.salesOrderItem.reserveQty.toString()).minus(shortfall),
+      new Decimal(0),
+    );
+    restored = Decimal.min(restored, ceiling);
+  }
   await tx.reservation.update({
     where: { id: reservationId },
     data: { qty: restored.toFixed(3), status: ReservationStatus.ACTIVE, consumedAt: null },

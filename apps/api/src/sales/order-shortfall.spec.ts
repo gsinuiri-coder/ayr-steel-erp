@@ -16,7 +16,11 @@ import { RoofingProductionService } from '../production/roofing-production.servi
 import type * as assignmentsModule from '../production/production-assignments';
 import * as rawMaterialModule from './raw-material';
 import type * as ledgerModule from './reserved-ledger';
-import { consumeReservationQty, releaseRemainingReservation } from './reservation-guard';
+import {
+  consumeReservationQty,
+  releaseRemainingReservation,
+  restoreReservationQty,
+} from './reservation-guard';
 import { reduceReservation } from './reservation-transfer';
 import { shortfallAudit, splitReservable, sumShortfalls } from './order-shortfall';
 import { SalesOrdersService } from './sales-orders.service';
@@ -113,15 +117,18 @@ describe('D-341 — aritmética del faltante (pura)', () => {
       const out = sumShortfalls([row(), row({ itemId: 'spec-2', shortfallQty: '5' })], labelOf);
       expect(out.map((o) => o.label)).toEqual(['0.40 mm · AZUL', '0.50 mm · ROJO']);
     });
-    it('una reserva liberada o consumida no aporta faltante', () => {
+    it('una reserva liberada no aporta faltante: ya no promete nada', () => {
+      expect(sumShortfalls([row({ status: ReservationStatus.RELEASED })], labelOf)).toEqual([]);
+    });
+    it('una reserva consumida SÍ lo aporta: la producción agotó lo reservado pero no tocó el faltante', () => {
       const out = sumShortfalls(
         [
-          row({ status: ReservationStatus.RELEASED }),
-          row({ status: ReservationStatus.CONSUMED, itemId: 'spec-2' }),
+          row({ status: ReservationStatus.CONSUMED, shortfallQty: '400.000' }),
+          row({ status: ReservationStatus.RELEASED, shortfallQty: '999' }),
         ],
         labelOf,
       );
-      expect(out).toEqual([]);
+      expect(out).toEqual([{ label: '0.50 mm · ROJO', missingQty: '400.000', unit: 'KGM' }]);
     });
     it('faltante cero no genera fila', () => {
       expect(sumShortfalls([row({ shortfallQty: '0.000' })], labelOf)).toEqual([]);
@@ -352,7 +359,7 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
     expect(upserts).toHaveLength(0);
   });
 
-  it('un producto de catálogo con stock admite reserva parcial con la bandera', async () => {
+  it('un producto de catálogo con stock sigue siendo todo o nada aunque haya bandera (el faltante es de la materia prima)', async () => {
     const inventory = {
       lockAvailability: jest.fn().mockResolvedValue({
         available: new Decimal('4'),
@@ -375,22 +382,24 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
       },
     });
     const shortfalls: never[] = [];
-    await service.createReservations(
-      tx as never,
-      ADMIN,
-      'o-1',
-      [
-        rawLine({
-          reserveItemType: InventoryItemType.PRODUCT,
-          reserveItemId: 'prod-1',
-          reserveQty: '10.000',
-          reserveUnit: 'NIU',
-        }),
-      ],
-      { allowShortfall: true, shortfalls },
-    );
-    expect(upserts).toEqual([expect.objectContaining({ qty: '4.000', shortfallQty: '6.000' })]);
-    expect(shortfalls).toHaveLength(1);
+    await expect(
+      service.createReservations(
+        tx as never,
+        ADMIN,
+        'o-1',
+        [
+          rawLine({
+            reserveItemType: InventoryItemType.PRODUCT,
+            reserveItemId: 'prod-1',
+            reserveQty: '10.000',
+            reserveUnit: 'NIU',
+          }),
+        ],
+        { allowShortfall: true, shortfalls },
+      ),
+    ).rejects.toThrow(/tiene 4\.000 NIU disponibles/);
+    expect(upserts).toHaveLength(0);
+    expect(shortfalls).toHaveLength(0);
   });
 
   it('un reintento no arrastra el faltante del intento anterior a la auditoría', async () => {
@@ -568,6 +577,8 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
       expect(updates[0]?.data).toEqual({
         qty: { increment: '30.000' },
         shortfallQty: '10.000',
+        status: ReservationStatus.ACTIVE,
+        consumedAt: null,
       });
       const entry = auditEntry() as {
         action: string;
@@ -588,7 +599,50 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
         (fn: (t: unknown) => Promise<unknown>) => fn(tx),
       );
       await service.completeReservation(ADMIN, 'o-1');
-      expect(updates[0]?.data).toEqual({ qty: { increment: '40.000' }, shortfallQty: '0.000' });
+      expect(updates[0]?.data).toEqual({
+        qty: { increment: '40.000' },
+        shortfallQty: '0.000',
+        status: ReservationStatus.ACTIVE,
+        consumedAt: null,
+      });
+    });
+
+    it('una reserva CONSUMIDA con faltante también se completa: pide las CONSUMIDAS y las revive', async () => {
+      available('500');
+      const { tx, updates } = completeTx();
+      (prisma as { $transaction: unknown }).$transaction = jest.fn(
+        (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+      );
+      await service.completeReservation(ADMIN, 'o-1');
+      const where = (
+        (tx.reservation.findMany.mock.calls as unknown[][])[0]?.[0] as {
+          where: { status: { in: string[] } };
+        }
+      ).where;
+      expect(where.status.in).toEqual([ReservationStatus.ACTIVE, ReservationStatus.CONSUMED]);
+      // Al reservar algo, la fila vuelve a ACTIVA; sin nada reservado no se toca su estado.
+      expect(updates[0]?.data).toMatchObject({
+        status: ReservationStatus.ACTIVE,
+        consumedAt: null,
+      });
+    });
+
+    it('un pedido ya atendido no se completa', async () => {
+      const { tx } = completeTx();
+      tx.$queryRaw = jest.fn().mockResolvedValueOnce([
+        {
+          id: 'o-1',
+          seq: 1,
+          status: SalesOrderStatus.FULFILLED,
+          origin: 'ERP',
+          quotation_id: null,
+          promised_delivery_date: null,
+        },
+      ]);
+      (prisma as { $transaction: unknown }).$transaction = jest.fn(
+        (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+      );
+      await expect(service.completeReservation(ADMIN, 'o-1')).rejects.toThrow(/ya está atendido/);
     });
 
     it('sin material nuevo disponible no cambia nada ni audita', async () => {
@@ -730,6 +784,44 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
       expect(entry.before.shortfalls).toEqual([{ reservationId: 'res-1', missingQty: '40.000' }]);
     });
 
+    it('anular también cierra el faltante de una reserva CONSUMIDA, y lo deja en la auditoría', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as never);
+      const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      const consumed = {
+        id: 'res-2',
+        status: ReservationStatus.CONSUMED,
+        shortfallQty: new Decimal('400'),
+        productionOrders: [],
+      };
+      const tx = {
+        $queryRaw: jest
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: 'o-1',
+              seq: 1,
+              status: SalesOrderStatus.CONFIRMED,
+              origin: 'ERP',
+              quotation_id: null,
+              promised_delivery_date: null,
+            },
+          ])
+          .mockResolvedValue([]),
+        reservation: { findMany: jest.fn().mockResolvedValue([consumed]), updateMany },
+        salesOrder: { update: jest.fn() },
+      };
+      (prisma as { $transaction: unknown }).$transaction = jest.fn(
+        (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+      );
+      await service.cancel(ADMIN, 'o-1', 'el cliente desistió');
+      expect(updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['res-2'] } },
+        data: { shortfallQty: '0' },
+      });
+      const entry = auditEntry() as { before: { shortfalls: unknown[] } };
+      expect(entry.before.shortfalls).toEqual([{ reservationId: 'res-2', missingQty: '400.000' }]);
+    });
+
     it('anular un pedido sin faltante no agrega ruido a la auditoría', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue({} as never);
       const tx = {
@@ -842,6 +934,45 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
         expect(writtenKeys(t)).not.toContain('shortfallQty');
       }
     });
+
+    describe('restoreReservationQty: la reversa de una reserva parcial', () => {
+      const consumedRow = (shortfall: string) => ({
+        id: 'res-1',
+        status: ReservationStatus.CONSUMED,
+        qty: new Decimal('0'),
+        shortfallQty: new Decimal(shortfall),
+        salesOrderItem: { reserveQty: new Decimal('10') },
+        salesOrder: { status: SalesOrderStatus.CONFIRMED },
+      });
+      const restore = async (shortfall: string, returned: string) => {
+        const update = jest.fn();
+        const t = {
+          reservation: { findUnique: jest.fn().mockResolvedValue(consumedRow(shortfall)), update },
+        };
+        await restoreReservationQty(t as never, 'res-1', new Decimal(returned));
+        return (update.mock.calls as unknown[][])[0]?.[0] as {
+          data: { qty: string; status: string; consumedAt: null };
+        };
+      };
+
+      it('no devuelve más de lo que la línea promete menos lo que nunca se reservó', async () => {
+        // Línea de 10, faltante 4 (solo 6 reservados): el reporte sacó 8 y consumió 6.
+        const call = await restore('4', '8');
+        expect(call.data).toEqual({
+          qty: '6.000',
+          status: ReservationStatus.ACTIVE,
+          consumedAt: null,
+        });
+      });
+
+      it('con faltante, una reversa menor que el tope se restaura completa', async () => {
+        expect((await restore('4', '5')).data.qty).toBe('5.000');
+      });
+
+      it('sin faltante no se topa: el comportamiento de siempre', async () => {
+        expect((await restore('0', '8')).data.qty).toBe('8.000');
+      });
+    });
   });
 
   describe('findOrdersWithShortfall', () => {
@@ -882,9 +1013,10 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
         (findMany.mock.calls as unknown[][])[0]?.[0] as { where: Record<string, unknown> }
       ).where;
       expect(where).toMatchObject({
-        status: ReservationStatus.ACTIVE,
+        // La producción y el despacho agotan la reserva (CONSUMIDA) sin tocar el faltante.
+        status: { in: [ReservationStatus.ACTIVE, ReservationStatus.CONSUMED] },
         shortfallQty: { gt: 0 },
-        salesOrder: { status: { not: SalesOrderStatus.CANCELLED } },
+        salesOrder: { status: { notIn: [SalesOrderStatus.CANCELLED, SalesOrderStatus.FULFILLED] } },
       });
       expect(out).toEqual([
         {

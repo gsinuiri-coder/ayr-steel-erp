@@ -174,7 +174,7 @@ export class CatalogService {
     const roofingKind = input.roofingKind ?? null;
     assertStructuredFields(line.code, { ...input, roofingKind, finishId: finish?.id ?? null });
     this.assertFinishCoherence(input.businessLineId, colorId, finish);
-    await this.assertAccessorySku(input.sku, roofingKind, colorId, input.thicknessMm);
+    await this.assertAccessorySku(input.sku, roofingKind, colorId, input.thicknessMm, line.code);
 
     try {
       const product = await this.prisma.$transaction(async (tx) => {
@@ -237,8 +237,13 @@ export class CatalogService {
     roofingKind: RoofingProductKind | null,
     colorId: string | null,
     thicknessMm: string | null,
+    lineCode: BusinessLineCode,
   ): Promise<void> {
-    const startsAccessory = sku.toUpperCase().startsWith(ACCESSORY_SKU_PREFIX);
+    // El prefijo es reservado **solo en coberturas**: en otra línea (drywall, trading) un SKU
+    // como `ACCESORIO-…` sigue siendo un SKU cualquiera.
+    const startsAccessory =
+      lineCode === BusinessLineCode.METALLIC_ROOFING &&
+      sku.toUpperCase().startsWith(ACCESSORY_SKU_PREFIX);
     if (roofingKind !== RoofingProductKind.ACCESORIO) {
       if (startsAccessory) {
         throw new BadRequestException(
@@ -259,7 +264,16 @@ export class CatalogService {
       where: { id: colorId },
       select: { code: true },
     });
-    const expected = canonicalAccessorySku(thicknessMm, color?.code ?? '');
+    let expected: string;
+    try {
+      expected = canonicalAccessorySku(thicknessMm, color?.code ?? '');
+    } catch {
+      // El token del SKU exige centésimas enteras entre 0.01 y 9.99 mm: sin esto, un espesor fuera
+      // de la regla salía como un 500 y no como un error que dice qué corregir.
+      throw new BadRequestException(
+        'El espesor de un accesorio va en centésimas de milímetro, entre 0.01 y 9.99 mm: de él sale su SKU',
+      );
+    }
     if (sku.toUpperCase() !== expected) {
       throw new BadRequestException(
         `El SKU de un accesorio se forma con su espesor y su color: para este producto es ${expected}`,

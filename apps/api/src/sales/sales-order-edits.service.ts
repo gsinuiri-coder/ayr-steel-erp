@@ -50,6 +50,7 @@ import {
   findCoilSaleProducts,
   lineCoilPool,
 } from './coil-sale-product';
+import { shortfallAudit } from './order-shortfall';
 import { recordPriceChanges } from './price-changes';
 import { assertPriceFloor } from './price-floor';
 import { resolveSalesLines } from './sales-lines';
@@ -663,6 +664,7 @@ export class SalesOrderEditsService {
             id: true,
             status: true,
             itemType: true,
+            shortfallQty: true,
             // **Todas** las OP no anuladas, cerradas incluidas: una OP que reportó y se cerró
             // ya no está viva, pero dejó producto fabricado con su propia reserva y la de
             // materia prima liberada. Mirar solo las vivas dejaba recalcular encima de eso.
@@ -834,6 +836,8 @@ export class SalesOrderEditsService {
             lineNumber: item.lineNumber,
             qty: item.qty.toString(),
             reserveQty: item.reserveQty.toString(),
+            // D-341: el faltante que se cierra al liberar y volver a reservar la línea completa.
+            ...shortfallAudit(active),
           },
           after: {
             qty: line.qty,

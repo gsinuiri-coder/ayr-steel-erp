@@ -255,51 +255,55 @@ export function AccessoryReportCard({
                 <p className="text-destructive">Las piezas son un número entero mayor a cero.</p>
               )}
             </div>
-            {
-              <div className="grid gap-1.5 sm:max-w-[14rem]">
-                <Label htmlFor={`acc-cierre-${order.orderId}`}>
-                  kg que consumió la bobina al cerrar (opcional)
-                </Label>
-                <Input
-                  id={`acc-cierre-${order.orderId}`}
-                  inputMode="decimal"
-                  placeholder="opcional"
-                  disabled={busy}
-                  value={closeKg}
-                  onChange={(e) => {
-                    onCloseKg(e.target.value);
-                  }}
-                />
-              </div>
-            }
+            <div className="grid gap-1.5 sm:max-w-[14rem]">
+              <Label htmlFor={`acc-cierre-${order.orderId}`}>
+                kg que consumió la bobina al cerrar (opcional)
+              </Label>
+              <Input
+                id={`acc-cierre-${order.orderId}`}
+                inputMode="decimal"
+                placeholder="opcional"
+                disabled={busy}
+                value={closeKg}
+                onChange={(e) => {
+                  onCloseKg(e.target.value);
+                }}
+              />
+            </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 variant="outline"
                 aria-label={`Reportar los metros de ${order.code}`}
                 disabled={!canSend || busy}
+                pending={send.isPending && !closeMode}
+                pendingText="Guardando…"
                 onClick={() => {
                   start(false);
                 }}
               >
-                {send.isPending && !closeMode ? 'Guardando…' : 'Reportar'}
+                Reportar
               </Button>
               <Button
                 aria-label={`Reportar y cerrar ${order.code}`}
                 disabled={!canSend || busy}
+                pending={send.isPending && closeMode}
+                pendingText="Cerrando…"
                 onClick={() => {
                   start(true);
                 }}
               >
-                {send.isPending && closeMode ? 'Cerrando…' : 'Reportar y cerrar'}
+                Reportar y cerrar
               </Button>
               {canCloseOnly && (
                 <Button
                   variant="outline"
                   aria-label={`Cerrar ${order.code} sin reportar más`}
                   disabled={busy}
+                  pending={closing}
+                  pendingText="Cerrando…"
                   onClick={onCloseOnly}
                 >
-                  {closing ? 'Cerrando…' : `Cerrar ${order.code} sin reportar más`}
+                  Cerrar {order.code} sin reportar más
                 </Button>
               )}
             </div>

@@ -36,6 +36,7 @@ export function ReasonDialog({
   pending = false,
   withOperationDate = false,
   placeholder = 'Por qué se anula',
+  constructive = false,
   onConfirm,
 }: {
   open: boolean;
@@ -46,6 +47,8 @@ export function ReasonDialog({
   pending?: boolean;
   /** El ejemplo del campo; por defecto el de una anulación, que es el uso más común. */
   placeholder?: string;
+  /** La acción no destruye nada (p. ej. completar una reserva): el botón no va en rojo. */
+  constructive?: boolean;
   /** D-124: exponer la fecha de operación de la reversa (solo si el hecho queda fechado). */
   withOperationDate?: boolean;
   onConfirm: (reason: string, operationDate: string | undefined) => void;
@@ -104,7 +107,7 @@ export function ReasonDialog({
             Cancelar
           </Button>
           <Button
-            variant="destructive"
+            variant={constructive ? 'default' : 'destructive'}
             disabled={pending || trimmed.length < 3}
             pending={pending}
             pendingText="Procesando…"

@@ -790,9 +790,11 @@ export class SalesOrdersService {
       const label = labels.get(line.reserveItemId)?.label ?? line.reserveItemId;
       if (shortfall !== null) {
         const note = `Línea ${String(item.lineNumber)}: ${label} tiene ${Decimal.max(forThisLine, new Decimal(0)).toFixed(3)} ${line.reserveUnit} disponibles y el pedido necesita ${qty.toFixed(3)} — faltan ${shortfall.toFixed(3)}`;
-        // D-341: una bobina entera es todo o nada, así que su faltante bloquea a todos los roles.
-        if (line.reserveItemType === InventoryItemTypeEnum.COIL) blockers.push(note);
-        else shortfallNotes.push(note);
+        // D-341: confirmar con faltante es de la **materia prima** (el agregado que una OP va a
+        // consumir). El producto de catálogo con stock y la bobina entera siguen todo o nada, y su
+        // faltante bloquea a todos los roles.
+        if (line.reserveItemType === InventoryItemTypeEnum.RAW_MATERIAL) shortfallNotes.push(note);
+        else blockers.push(note);
       }
       previewLines.push({
         ...base,
@@ -1660,26 +1662,8 @@ export class SalesOrdersService {
         itemId: item.reserveItemId,
         unit: item.reserveUnit,
       });
-      // D-341: solo el producto de catálogo admite reserva parcial. Una bobina entera (RF-73) es
-      // todo o nada: no se vende «media bobina», y su reserva la protege `assertRawMaterialInvariant`.
-      if (
-        qty.gt(availability.available) &&
-        options?.allowShortfall &&
-        item.reserveItemType === InventoryItemTypeEnum.PRODUCT
-      ) {
-        const split = splitReservable(qty, availability.available);
-        options.shortfalls?.push({
-          lineNumber: item.lineNumber,
-          label: await this.itemLabel(tx, item.reserveItemType, item.reserveItemId),
-          unit: item.reserveUnit,
-          promisedQty: qty.toFixed(3),
-          reservedQty: split.reserve.toFixed(3),
-          missingQty: split.shortfall.toFixed(3),
-        });
-        await write(item, split.reserve, split.shortfall);
-        written += 1;
-        continue;
-      }
+      // D-341: el faltante solo se admite en materia prima (la rama de arriba). El producto de
+      // catálogo con stock y la bobina entera siguen siendo todo o nada, con o sin la bandera.
       if (qty.gt(availability.available)) {
         const label = await this.itemLabel(tx, item.reserveItemType, item.reserveItemId);
         throw new BadRequestException(
@@ -2287,6 +2271,17 @@ export class SalesOrdersService {
       }
 
       const active = reservations.filter((r) => r.status === ReservationStatus.ACTIVE);
+      // D-341: una reserva `CONSUMIDA` (la producción agotó lo reservado) puede seguir con
+      // faltante: anular el pedido también lo cierra.
+      const consumedWithShortfall = reservations.filter(
+        (r) => r.status === ReservationStatus.CONSUMED && r.shortfallQty.gt(0),
+      );
+      if (consumedWithShortfall.length > 0) {
+        await tx.reservation.updateMany({
+          where: { id: { in: consumedWithShortfall.map((r) => r.id) } },
+          data: { shortfallQty: '0' },
+        });
+      }
       if (active.length > 0) {
         await tx.reservation.updateMany({
           where: { id: { in: active.map((r) => r.id) }, status: ReservationStatus.ACTIVE },
@@ -2342,7 +2337,7 @@ export class SalesOrdersService {
           status: order.status,
           activeReservations: active.length,
           // D-341: el faltante que se da por cerrado con la anulación.
-          ...shortfallAudit(active),
+          ...shortfallAudit([...active, ...consumedWithShortfall]),
         },
         after: {
           status: SalesOrderStatus.CANCELLED,
@@ -2483,14 +2478,20 @@ export class SalesOrdersService {
         if (order.status === SalesOrderStatus.CANCELLED) {
           throw new BadRequestException('El pedido está anulado: no hay reserva que completar');
         }
+        if (order.status === SalesOrderStatus.FULFILLED) {
+          throw new BadRequestException('El pedido ya está atendido: no hay reserva que completar');
+        }
         await tx.$queryRaw`
           SELECT "id" FROM "reservations" WHERE "sales_order_id" = ${orderId}::uuid
           ORDER BY "id" FOR UPDATE
         `;
+        // `ACTIVA` o `CONSUMIDA`: la producción o el despacho agotan lo reservado (`qty` llega a 0
+        // y la fila pasa a `CONSUMIDA`) sin tocar `shortfall_qty`, así que el faltante sigue siendo
+        // del pedido. Una `LIBERADA` ya no promete nada (D-341) y no entra.
         const pending = await tx.reservation.findMany({
           where: {
             salesOrderId: orderId,
-            status: ReservationStatus.ACTIVE,
+            status: { in: [ReservationStatus.ACTIVE, ReservationStatus.CONSUMED] },
             shortfallQty: { gt: 0 },
           },
           include: { salesOrderItem: { select: { lineNumber: true, productId: true } } },
@@ -2526,6 +2527,9 @@ export class SalesOrdersService {
               data: {
                 qty: { increment: reserved.toFixed(3) },
                 shortfallQty: stillMissing.toFixed(3),
+                // Una reserva consumida vuelve a `ACTIVA` con lo que se le suma, igual que cuando
+                // una reversa restaura la promesa (`restoreReservationQty`).
+                ...(reserved.gt(0) ? { status: ReservationStatus.ACTIVE, consumedAt: null } : {}),
               },
             });
           },
@@ -2566,9 +2570,12 @@ export class SalesOrdersService {
   async findOrdersWithShortfall(): Promise<OrderWithShortfallDto[]> {
     const rows = await this.prisma.reservation.findMany({
       where: {
-        status: ReservationStatus.ACTIVE,
+        // Todo lo que no esté liberada: la producción y el despacho no tocan el faltante (D-341).
+        status: { in: [ReservationStatus.ACTIVE, ReservationStatus.CONSUMED] },
         shortfallQty: { gt: 0 },
-        salesOrder: { status: { not: SalesOrderStatus.CANCELLED } },
+        salesOrder: {
+          status: { notIn: [SalesOrderStatus.CANCELLED, SalesOrderStatus.FULFILLED] },
+        },
       },
       select: {
         salesOrderId: true,
@@ -3929,7 +3936,7 @@ export class SalesOrdersService {
       stage: deriveOrderStage(row.status, readiness.status),
       // D-341: un pedido anulado ya no espera material.
       shortfalls:
-        row.status === SalesOrderStatus.CANCELLED
+        row.status === SalesOrderStatus.CANCELLED || row.status === SalesOrderStatus.FULFILLED
           ? []
           : sumShortfalls(row.reservations, (_type, id) => labels.get(id)?.label),
     };

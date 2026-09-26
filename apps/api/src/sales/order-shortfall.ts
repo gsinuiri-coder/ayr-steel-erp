@@ -33,9 +33,10 @@ export interface ShortfallReservationRow {
 
 /**
  * Suma el faltante por ítem prometido (para materia prima, el agregado espesor + color) de las
- * reservas **vivas**. Una reserva liberada o consumida no aporta: la liberada ya no promete nada
- * y la consumida es material que la producción ya usó, así que su faltante dejó de ser una
- * pregunta abierta del pedido.
+ * reservas que no están **liberadas**. Una liberada ya no promete nada y no aporta; una
+ * **consumida** sí: la producción y el despacho agotan `qty` (la fila pasa a `CONSUMIDA`) pero no
+ * tocan `shortfall_qty`, y lo que faltaba reservar sigue faltando hasta que el administrador lo
+ * completa, libera o anula el pedido (D-341).
  */
 export function sumShortfalls(
   rows: readonly ShortfallReservationRow[],
@@ -43,7 +44,7 @@ export function sumShortfalls(
 ): OrderShortfallDto[] {
   const byKey = new Map<string, { label: string; unit: string; missing: Decimal }>();
   for (const row of rows) {
-    if (row.status !== ReservationStatus.ACTIVE) continue;
+    if (row.status === ReservationStatus.RELEASED) continue;
     const missing = toDecimal(row.shortfallQty.toString());
     if (missing.lte(0)) continue;
     const key = `${row.itemType}:${row.itemId}:${row.unit}`;

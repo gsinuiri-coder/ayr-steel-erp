@@ -466,6 +466,18 @@ export class RoofingProductionService {
       const order = await lockOrder(tx, orderId);
       assertKind(order, ProductionOrderKind.ROOFING);
       assertLive(order, 'cambiar el plan de corte');
+      // D-343: un accesorio no tiene plan de largos —sus reportes no dejan detalle de largos, así
+      // que un plan haría que cada reporte se compare solo contra él y no acumule (D-146)—; lo
+      // que pide el pedido son sus metros.
+      const planned = await tx.product.findUniqueOrThrow({
+        where: { id: order.productId },
+        select: { roofingKind: true },
+      });
+      if (isAccessory(planned)) {
+        throw new BadRequestException(
+          'Un accesorio no lleva plan de largos: lo que pide el pedido son sus metros lineales de bobina',
+        );
+      }
 
       // D-191: el plan nuevo no puede quedar por debajo de lo que el borrador ya ocupa sobre lo
       // reportado. Sin esto el borrador quedaba inválido en silencio y planta se enteraba
@@ -2491,12 +2503,15 @@ export class RoofingProductionService {
 
       const live = await tx.productionReport.findMany({
         where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
-        select: { pieces: true },
+        select: { pieces: true, metersM: true },
       });
       if (live.length > 0) {
-        const planchas = live.reduce((acc, r) => acc + r.pieces, 0);
+        // D-343: un accesorio reporta metros de bobina, no planchas.
+        const produced = live.some((r) => r.metersM !== null && r.pieces === 0)
+          ? `${live.reduce((acc, r) => acc.plus(r.metersM ?? 0), new Decimal(0)).toFixed(3)} m de bobina`
+          : `${live.reduce((acc, r) => acc + r.pieces, 0)} planchas`;
         throw new BadRequestException(
-          `La orden tiene ${live.length} reporte(s) vigente(s) con ${planchas} planchas: revierte esos reportes antes de anularla`,
+          `La orden tiene ${live.length} reporte(s) vigente(s) con ${produced}: revierte esos reportes antes de anularla`,
         );
       }
 

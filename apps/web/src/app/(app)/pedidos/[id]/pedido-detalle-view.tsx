@@ -713,6 +713,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
         description="Reserva lo que hoy alcanza del material que faltaba al confirmar. Si todavía no hay material nuevo disponible, no cambia nada. No se crean órdenes nuevas."
         confirmLabel="Completar reserva"
         placeholder="Qué material llegó"
+        constructive
         pending={completeReservation.isPending}
         onConfirm={(reason) => {
           completeReservation.mutate(reason);
