@@ -42,6 +42,8 @@ interface PlannedCoil {
   kind: string;
   status: string;
   availableKg: string;
+  /** Fecha de la última salida viva de uso o venta, para listar las agotadas que siguen vigentes. */
+  lastOutflowOn: string | null;
   decision: BackfillDecision;
 }
 
@@ -113,6 +115,11 @@ async function plan(): Promise<PlannedCoil[]> {
     kind: c.kind,
     status: c.status,
     availableKg: availableByCoil.get(c.id) ?? '0.000',
+    lastOutflowOn:
+      (outflowsByCoil.get(c.id) ?? [])
+        .map((o) => o.operationDate)
+        .sort()
+        .at(-1) ?? null,
     decision: classifyBackfill({
       status: c.status,
       bornOpen: c.parentCoilId !== null,
@@ -162,6 +169,16 @@ async function main(): Promise<void> {
     byReason.set(p.decision.reason, (byReason.get(p.decision.reason) ?? 0) + 1);
   }
 
+  // Categorías **excluyentes**: cada bobina tiene una sola decisión, y la suma tiene que dar el total.
+  const byCategory = new Map<string, number>();
+  for (const p of planned) {
+    const key = `${p.decision.action === 'OPEN' ? 'ABRIR' : 'sin evento'} · ${p.decision.reason} · ${p.status}`;
+    byCategory.set(key, (byCategory.get(key) ?? 0) + 1);
+  }
+  const categorySum = [...byCategory.values()].reduce((a, b) => a + b, 0);
+  // Vigentes sin saldo: agotadas que nadie terminó. No se tocan en la ventana (decisión del dueño).
+  const exhausted = planned.filter((p) => p.status === 'OPEN' && Number(p.availableKg) <= 0);
+
   const lines: string[] = [];
   lines.push(
     `Backfill del film (D-328) — rama ${branchLabel} — ${execute ? 'EXECUTE' : 'DRY-RUN'}`,
@@ -170,8 +187,18 @@ async function main(): Promise<void> {
     'Por motivo:',
     ...[...byReason.entries()].sort().map(([k, v]) => `  ${String(v).padStart(5)}  ${k}`),
     '',
+    'Categorías (excluyentes; suman el total):',
+    ...[...byCategory.entries()].sort().map(([k, v]) => `  ${String(v).padStart(5)}  ${k}`),
+    `  ${String(categorySum).padStart(5)}  = TOTAL (${categorySum === planned.length ? 'coincide' : 'NO COINCIDE'} con ${planned.length} bobinas)`,
+    '',
     'Estado actual:',
     ...(await stateCounts()),
+    '',
+    `Vigentes con saldo 0 (${exhausted.length}) — pendientes del dueño, terminar desde la pantalla (código, saldo, última salida):`,
+    ...exhausted.map(
+      (p) =>
+        `  ${p.code.padEnd(34)} ${p.availableKg.padStart(11)} kg  última salida: ${p.lastOutflowOn ?? '—'}`,
+    ),
     '',
     'Detalle (código, clase, estado, saldo, decisión):',
     ...planned.map(describe),
