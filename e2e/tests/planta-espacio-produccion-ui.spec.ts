@@ -103,9 +103,16 @@ async function mountFromModal(page: Page, orderCode: string, coilCode: string): 
   const modal = page.getByRole('dialog');
   await expect(modal.getByText(`Bobinas para ${orderCode}`)).toBeVisible();
   await modal.getByLabel('Filtrar opciones').fill(coilCode);
+  // D-328: la bobina del escenario nace sellada y montarla pide confirmar que se abre; una que
+  // ya se abrió (montada antes en otra orden y bajada, o compartida) se monta directo.
   await modal.getByRole('button', { name: `Montar ${coilCode}`, exact: true }).click();
-  // D-328: la bobina del escenario nace sellada; montarla pide confirmar que se abre.
-  await confirmFilmOpen(modal);
+  // No se decide antes de hacer clic: la lista del selector se refresca y puede traer un instante
+  // el film de la consulta anterior. Se espera a lo que pasa: el paso de confirmación o el cierre.
+  const step = modal.getByTestId('film-open-step');
+  await expect
+    .poll(async () => (await step.count()) > 0 || (await page.getByRole('dialog').count()) === 0)
+    .toBe(true);
+  if ((await step.count()) > 0) await confirmFilmOpen(modal);
   await expect(modal).toHaveCount(0);
 }
 

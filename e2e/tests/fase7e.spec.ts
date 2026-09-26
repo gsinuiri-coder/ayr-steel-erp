@@ -438,7 +438,7 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
     }
   });
 
-  test('duplicar una cotización cuya bobina ya se vendió deja un error claro por esa línea, no un 500 (D-119)', async () => {
+  test('duplicar una cotización cuya bobina ya se vendió copia la línea sin bobina y avisa cuál era, no un 500 (D-119, A-1)', async () => {
     const customer = await createCustomer(api);
     const scenario = await buyCoilForSale(api, {
       lineCode: 'drywall',
@@ -474,11 +474,14 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
         items: [{ salesOrderItemId: order.items[0]!.id, qty: '150' }],
       });
 
+      // Revisión independiente (A-1): duplicar con la bobina ya vendida no rebota entero con un
+      // 400; la copia se crea con esa línea como `BOB…` sin bobina y el aviso nombra la bobina.
       const res = await api.post(`/api/sales/quotations/${quotation.id}/duplicate`);
-      expect(res.status()).toBe(400);
-      const body = (await res.json()) as { message?: string | string[] };
-      const message = Array.isArray(body.message) ? body.message.join(', ') : (body.message ?? '');
-      expect(message).toContain(scenario.coil.code);
+      expect(res.status()).toBeLessThan(300);
+      const body = (await res.json()) as { id: string; warnings: string[] };
+      trail.quotationIds.push(body.id);
+      expect(body.warnings.join(' ')).toContain(scenario.coil.code);
+      expect(body.warnings.join(' ')).toContain('ya no tiene saldo para vender');
 
       await api
         .post(`/api/dispatches/${dispatch.id}/reverse`, {

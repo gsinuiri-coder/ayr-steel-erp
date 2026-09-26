@@ -222,7 +222,7 @@ test.describe('D-164 — cerrar una bobina con saldo desde la pantalla', () => {
     // 4. Cerrar: la bobina queda CERRADA y el saldo baja al conteo real.
     // -----------------------------------------------------------------------
     await cerrar.click();
-    await expect(page.getByText('Bobina terminada')).toBeVisible();
+    await expect(page.getByText('Bobina terminada').first()).toBeVisible();
     await expect(dialog).toHaveCount(0);
 
     await expect(page.getByText('Terminada', { exact: true })).toBeVisible();
@@ -301,7 +301,7 @@ test.describe('D-164 — cerrar una bobina con saldo desde la pantalla', () => {
     await expect(cerrar).toBeEnabled();
 
     await cerrar.click();
-    await expect(page.getByText('Bobina terminada')).toBeVisible();
+    await expect(page.getByText('Bobina terminada').first()).toBeVisible();
 
     // -----------------------------------------------------------------------
     // 3. La bobina queda cerrada **con más kilos** de los que tenía, y el
