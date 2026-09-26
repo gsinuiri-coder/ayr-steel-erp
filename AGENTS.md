@@ -129,11 +129,16 @@ Reglas de convivencia, sin excepción:
     alguna vez corre por accidente, ejecutar `pnpm prod:purge-e2e` inmediatamente y documentar
     el incidente en `docs/PROGRESO.md`; la purga es solo una herramienta de emergencia y no
     convierte la corrida en segura.
-13. **`needsPieces` se decide por unidad de venta**, nunca por subtipo de producto (D-131).
-    `sellsByLength(product)` —`unit === MTR`— responde si la línea necesita detalle de largos;
-    `isMadeToMeasure(product)` —`roofingKind === A_MEDIDA`— responde si se cotiza a medida.
-    Son preguntas distintas aunque ambas devuelvan `boolean`; el centinela vive en
-    `apps/api/src/sales/sales-lines.spec.ts`.
+13. **«Por metro» son tres preguntas distintas, y ninguna se responde con otra** (D-131, D-343; en
+    el código y los docs históricos se cita como «regla dura 14», su numeración de entonces).
+    `sellsByLength(product)` —`unit === MTR`, **solo la unidad**— responde si la unidad de venta es
+    el metro lineal (cantidad, precio, kardex y unidad SUNAT en metros y no conoce el subtipo);
+    `detailsLengths(product)` —`unit === MTR` **y** `roofingKind !== ACCESORIO`— responde si la
+    línea lleva desglose de largos (`needsPieces`); `isMadeToMeasure(product)`
+    —`roofingKind === A_MEDIDA`— responde si se cotiza a medida. Son preguntas distintas aunque
+    las tres devuelvan `boolean`; el centinela vive en `apps/api/src/sales/sales-lines.spec.ts`, cubre la tabla
+    completa unidad × subtipo (con `sellsByFixedLength` e `isMadeToOrder`) y falla si
+    `detailsLengths` se define solo con la unidad o `sellsByLength` con el subtipo.
 14. **La historia previa al día D vive fuera del sistema** (D-150): no se importan compras ni
     movimientos históricos. Única excepción viva: la herramienta de inventario inicial
     (D-206/D-207), que hereda invariantes vía servicios de dominio y rechaza correr sobre
