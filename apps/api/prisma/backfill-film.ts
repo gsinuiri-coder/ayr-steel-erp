@@ -194,6 +194,9 @@ async function main(): Promise<void> {
     async (tx) => {
       for (const p of toOpen) {
         if (!p.decision.operationDate || !p.decision.source) continue;
+        // Revisión independiente (B-5): el plan se leyó fuera de esta transacción. Si entre el
+        // plan y el execute alguien abrió o resello la bobina, ese historial manda: no se toca.
+        if ((await tx.coilFilmEvent.count({ where: { coilId: p.id } })) > 0) continue;
         await recordFilmEvent(tx, {
           coilId: p.id,
           type: 'OPENED',

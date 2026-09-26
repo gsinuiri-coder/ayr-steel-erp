@@ -41,14 +41,18 @@ export class CoilFilmService {
         );
       }
       if (!coil.filmSealed) throw new ConflictException('La bobina ya está abierta');
-      await recordFilmEvent(tx, {
-        coilId: coil.id,
-        type: CoilFilmEventType.OPENED,
-        source: CoilFilmSource.MANUAL,
-        operationDate,
-        actorId: actor.id,
-        reason: input.reason ?? null,
-      });
+      await recordFilmEvent(
+        tx,
+        {
+          coilId: coil.id,
+          type: CoilFilmEventType.OPENED,
+          source: CoilFilmSource.MANUAL,
+          operationDate,
+          actorId: actor.id,
+          reason: input.reason ?? null,
+        },
+        { strictDate: true },
+      );
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'coils.film_open',
@@ -71,14 +75,18 @@ export class CoilFilmService {
     await this.prisma.$transaction(async (tx) => {
       const coil = await this.coils.lockCoil(tx, coilId);
       await assertCanReseal(tx, coil);
-      await recordFilmEvent(tx, {
-        coilId: coil.id,
-        type: CoilFilmEventType.RESEALED,
-        source: CoilFilmSource.MANUAL,
-        operationDate,
-        actorId: actor.id,
-        reason: input.reason ?? null,
-      });
+      await recordFilmEvent(
+        tx,
+        {
+          coilId: coil.id,
+          type: CoilFilmEventType.RESEALED,
+          source: CoilFilmSource.MANUAL,
+          operationDate,
+          actorId: actor.id,
+          reason: input.reason ?? null,
+        },
+        { strictDate: true },
+      );
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'coils.film_reseal',

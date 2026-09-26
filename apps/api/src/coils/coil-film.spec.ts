@@ -123,15 +123,21 @@ describe('volver a sellar (resealBlocker)', () => {
     ).toBeNull();
   });
 
-  it('una salida ANTERIOR a la apertura no la impide (se abrió por error tras haberla usado y anulado)', () => {
-    expect(
-      resealBlocker({
-        ...base,
-        outflows: [
-          { refType: 'SCRAP', operationDate: '2026-09-01', at: new Date('2026-09-01T09:00:00Z') },
-        ],
-      }),
-    ).toBeNull();
+  it('una salida viva ANTERIOR a la apertura registrada también lo impide (usada antes de tener film)', () => {
+    // Revisión independiente, B-3: una bobina usada en agosto, cuyo primer evento se registró
+    // después (el backfill no había corrido), no puede pasar por sellada.
+    const msg = resealBlocker({
+      ...base,
+      outflows: [
+        { refType: 'SCRAP', operationDate: '2026-08-01', at: new Date('2026-08-01T09:00:00Z') },
+      ],
+    });
+    expect(msg).toContain('una merma del 2026-08-01');
+  });
+
+  it('una salida anulada ya no está en la lista: la bobina se puede volver a sellar', () => {
+    // `loadResealFacts` solo trae salidas vivas; sin ellas, nada bloquea.
+    expect(resealBlocker({ ...base, outflows: [] })).toBeNull();
   });
 
   it('una salida en el mismo instante de la apertura sí cuenta (abrir y mermar van juntos)', () => {

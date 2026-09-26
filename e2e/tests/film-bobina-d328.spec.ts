@@ -130,7 +130,7 @@ test.describe('D-328 — film de protección', () => {
     }
   });
 
-  test('un evento retrofechado no contradice al último por fecha: la ficha, el historial y el reporte dicen lo mismo', async ({
+  test('la fecha de un evento manual no puede ser anterior al último del film: la ficha, el historial y el reporte no se contradicen', async ({
     baseURL,
   }) => {
     const api = await adminApi(baseURL!);
@@ -139,13 +139,15 @@ test.describe('D-328 — film de protección', () => {
     try {
       await postJson(api, `/api/coils/${id}/film/open`, {});
       await postJson(api, `/api/coils/${id}/film/reseal`, {});
-      // Abrir con fecha de agosto (retroactivo, solo ADMINISTRADOR): el último evento por fecha
-      // sigue siendo el «volver a sellar» de hoy, así que la bobina sigue sellada.
-      await postJson(api, `/api/coils/${id}/film/open`, { operationDate: '2026-08-20' });
+      // Abrir con fecha de agosto (retroactivo, solo ADMINISTRADOR) quedaría detrás del «volver a
+      // sellar» de hoy en el orden por fecha: se rechaza en vez de decir que abrió y no hacerlo.
+      const early = await postExpectingError(api, `/api/coils/${id}/film/open`, {
+        operationDate: '2026-08-20',
+      });
+      expect(early.status).toBe(400);
+      expect(early.message).toContain('no puede ser anterior');
       expect((await coilOf(api, id)).film).toBe('SEALED');
-      const events = await eventsOf(api, id);
-      expect(events[0]).toMatchObject({ type: 'RESEALED', operationDate: today() });
-      expect(events.map((e) => e.operationDate)).toContain('2026-08-20');
+      expect(await eventsOf(api, id)).toHaveLength(2);
     } finally {
       await purgeRoofingTrail(api, trailOf(scenario));
       await api.dispose();

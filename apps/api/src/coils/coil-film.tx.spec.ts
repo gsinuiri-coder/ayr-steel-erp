@@ -21,7 +21,12 @@ interface FakeTx {
 }
 
 function fakeTx(over: {
-  lastEvent?: { type: string; source: string; refId?: string | null } | null;
+  lastEvent?: {
+    type: string;
+    source: string;
+    refId?: string | null;
+    operationDate?: Date;
+  } | null;
   lastOpen?: { source: string; at: Date } | null;
   movements?: { refType: string; operationDate: Date; at: Date }[];
   assignments?: { orderSeq: number }[];
@@ -81,6 +86,45 @@ describe('recordFilmEvent', () => {
       refId: null,
     });
     expect((data.operationDate as Date).toISOString().slice(0, 10)).toBe('2026-09-10');
+  });
+
+  const earlier = {
+    coilId: 'c1',
+    type: 'OPENED',
+    source: 'SCRAP',
+    operationDate: '2026-08-15',
+    actorId: 'u1',
+  } as const;
+  const lastEvent = {
+    type: 'RESEALED',
+    source: 'MANUAL',
+    operationDate: new Date('2026-09-05T00:00:00Z'),
+  };
+
+  it('una operación automática retrofechada se ajusta a la fecha del último evento (B-1)', async () => {
+    const tx = fakeTx({ lastEvent });
+    await recordFilmEvent(tx, earlier);
+    const data = firstArg(tx.coilFilmEvent.create).data as Record<string, unknown>;
+    expect((data.operationDate as Date).toISOString().slice(0, 10)).toBe('2026-09-05');
+  });
+
+  it('una acción manual con fecha anterior al último evento se rechaza y no escribe nada', async () => {
+    const tx = fakeTx({ lastEvent });
+    await expect(recordFilmEvent(tx, earlier, { strictDate: true })).rejects.toThrow(
+      /no puede ser anterior al último movimiento del film de la bobina \(2026-09-05\)/,
+    );
+    expect(tx.coilFilmEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('una fecha igual o posterior al último evento se respeta tal cual', async () => {
+    const tx = fakeTx({ lastEvent });
+    await recordFilmEvent(tx, { ...earlier, operationDate: '2026-09-05' }, { strictDate: true });
+    await recordFilmEvent(tx, { ...earlier, operationDate: '2026-09-20' }, { strictDate: true });
+    const calls = tx.coilFilmEvent.create.mock.calls as { data: { operationDate: Date } }[][];
+    expect(calls.map((c) => c[0]!.data.operationDate.toISOString().slice(0, 10))).toEqual([
+      '2026-09-05',
+      '2026-09-20',
+    ]);
   });
 });
 

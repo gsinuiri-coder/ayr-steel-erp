@@ -107,16 +107,13 @@ export function resealBlocker(facts: ResealFacts): string | null {
   if (facts.lastOpen?.source === CoilFilmSource.BIRTH) {
     return 'La bobina nació abierta (hija de un partido o fleje de corte): no tiene film que volver a poner';
   }
-  // Un evento deducido por el backfill se grabó **después** de las salidas que lo motivaron (su
-  // `at` es el del backfill, su día de negocio es el de la primera salida): para esos, cualquier
-  // salida viva cuenta, sin comparar instantes de grabación.
-  const since =
-    facts.lastOpen === null || facts.lastOpen.source === CoilFilmSource.BACKFILL
-      ? null
-      : facts.lastOpen.at;
+  // Cualquier salida viva de uso bloquea el resello, sin comparar instantes de grabación (revisión
+  // independiente, B-3): toda operación que usa la bobina abre **antes** de mover kardex, así que
+  // no hay un caso legítimo de salida viva previa a la apertura vigente; y una bobina ya usada
+  // antes de que existiera su primer evento (el backfill no había corrido) no puede pasar por
+  // sellada. Tampoco depende de relojes de instancias distintas.
   const used = facts.outflows
     .filter((o) => (USE_REF_TYPES as readonly string[]).includes(o.refType))
-    .filter((o) => since === null || o.at.getTime() >= since.getTime())
     .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
   if (used) {
     const label = USE_LABELS[used.refType] ?? 'un movimiento';
@@ -273,21 +270,41 @@ export interface RecordFilmEventInput {
 }
 
 /**
- * Inserta un evento de film. El trigger `coil_film_events_sync` actualiza `coils.film_sealed` en
- * la misma sentencia. **Llamar antes** de los movimientos de kardex de la misma operación:
- * «salió material desde que se abrió» compara instantes de grabación (`at`), y la apertura tiene
- * que quedar antes (o en el mismo milisegundo) que la salida que la provocó.
+ * Inserta un evento de film. El trigger `coil_film_events_sync` recalcula `coils.film_sealed` en
+ * la misma sentencia. Se llama antes de los movimientos de kardex de la misma operación.
+ *
+ * La fecha de un evento nunca es anterior a la del último de esa bobina (revisión independiente,
+ * B-1): el reporte, el historial y `coils.film_sealed` ordenan por (fecha, instante), y un
+ * «volver a sellar» fechado antes de la última apertura quedaría **detrás** de ella y no haría
+ * nada aunque diga que sí. Una operación automática con fecha retroactiva se ajusta a esa fecha;
+ * una acción manual (`strictDate`), donde la persona escribe la fecha, se rechaza.
  */
 export async function recordFilmEvent(
   tx: Prisma.TransactionClient,
   input: RecordFilmEventInput,
+  options: { strictDate?: boolean } = {},
 ): Promise<void> {
+  const last = await tx.coilFilmEvent.findFirst({
+    where: { coilId: input.coilId },
+    orderBy: [{ operationDate: 'desc' }, { at: 'desc' }, { id: 'desc' }],
+    select: { operationDate: true },
+  });
+  const lastDay = last?.operationDate ? last.operationDate.toISOString().slice(0, 10) : null;
+  let operationDate = input.operationDate;
+  if (lastDay !== null && operationDate < lastDay) {
+    if (options.strictDate) {
+      throw new BadRequestException(
+        `La fecha no puede ser anterior al último movimiento del film de la bobina (${lastDay})`,
+      );
+    }
+    operationDate = lastDay;
+  }
   await tx.coilFilmEvent.create({
     data: {
       coilId: input.coilId,
       type: input.type,
       source: input.source,
-      operationDate: toDateOnly(input.operationDate),
+      operationDate: toDateOnly(operationDate),
       reason: input.reason ?? null,
       refId: input.refId ?? null,
       actorId: input.actorId,

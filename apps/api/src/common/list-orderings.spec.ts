@@ -25,10 +25,10 @@ import {
 const DEFAULTS = {
   quotation: [{ seq: 'desc' }],
   salesOrder: [{ seq: 'desc' }],
-  coil: [{ operationDate: 'desc' }, { createdAt: 'desc' }],
-  customer: [{ isActive: 'desc' }, { name: 'asc' }],
-  purchase: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
-  fiscalDocument: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
+  coil: [{ operationDate: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+  customer: [{ isActive: 'desc' }, { name: 'asc' }, { id: 'asc' }],
+  purchase: [{ issueDate: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+  fiscalDocument: [{ issueDate: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
   dispatch: [{ dispatchDate: 'desc' }, { seq: 'desc' }],
 };
 

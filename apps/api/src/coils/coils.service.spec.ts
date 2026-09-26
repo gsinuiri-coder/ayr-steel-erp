@@ -64,6 +64,7 @@ function createFakeTx() {
       }),
     },
     coilFilmEvent: {
+      findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
         filmEvents.push(data);
         return Promise.resolve({});
