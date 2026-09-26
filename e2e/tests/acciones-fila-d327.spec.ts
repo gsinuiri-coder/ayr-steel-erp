@@ -66,7 +66,9 @@ test.describe('D-327 — acciones de fila en un menú', () => {
         },
       )
       .toBe(false);
-    // Y la fila ofrece lo contrario.
+    // Y la fila ofrece lo contrario. Primero se espera a que la lista se reordene (el inactivo baja
+    // al final): abrir el menú mientras la fila cambia de lugar lo cierra.
+    await expect(row).toContainText('Inactivo', { timeout: 30_000 });
     await row.getByRole('button', { name: `Más acciones de ${customer.name}` }).click();
     await expect(page.getByRole('menuitem', { name: 'Activar', exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
