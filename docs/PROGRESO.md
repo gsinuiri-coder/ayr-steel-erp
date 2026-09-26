@@ -2,7 +2,15 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## PENDIENTE DE REVISIÓN INDEPENDIENTE (registro, 2026-09-23)
+## Registro de riesgo — piezas revisadas por el dueño (2026-09-26; antes «PENDIENTE DE REVISIÓN INDEPENDIENTE»)
+
+**2026-09-26: el dueño hizo la revisión humana de todas las piezas de esta lista y confirmó que quedó todo
+bien.** Cada entrada queda marcada como **revisada por el dueño el 2026-09-26**. La lista se conserva solo
+como **registro de riesgo de lo que toca kardex o datos** (dónde mirar primero si algo aparece), no como
+deuda de revisión. El estándar vigente para cada entrega está en `AGENTS.md` §2, regla 2.
+
+Texto original del registro (2026-09-23):
+
 
 Por `AGENTS.md` §2.2: con un solo agente, la revisión de una sesión la hace un subagente que no
 leyó el handoff de implementación, marcada como autorrevisión y sin valor de pase cruzado. Las
@@ -11,14 +19,14 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
 - **RF-S4a** (2026-09-22). Autorrevisión documentada en `docs/revision/rf-s4a-d246.md` y en
   D-248 de `docs/ventana-rf-s4a` (sin mergear): la escribió el mismo agente que implementó
   RF-S4a, en la sesión inmediatamente anterior. Motivo: `agy` y Codex estaban sin saldo y
-  RF-S4a ya estaba desplegado.
+  RF-S4a ya estaba desplegado. **Revisada por el dueño el 2026-09-26.**
 - **HOTFIX D-249** (2026-09-22, rama `hotfix-d249`, sin push). Tolerancia de laminado simétrica.
   Motivo: continuación directa de la sesión de RF-S4a, mismo agente, sin segundo revisor
-  disponible.
+  disponible. **Revisada por el dueño el 2026-09-26.**
 - **Este cambio de `AGENTS.md` §2** (2026-09-23, esta sesión). Reescribe el esquema de agentes y
   la propia regla de revisión que lo documenta; no hay una sesión distinta que lo haya mirado
   con ojos frescos. Motivo: sesión de limpieza de un solo agente, sin segundo revisor
-  disponible — el mismo motivo estructural que documenta la regla.
+  disponible — el mismo motivo estructural que documenta la regla. **Revisada por el dueño el 2026-09-26.**
 - **RF-S4b** (2026-09-23, rama `rf-s4b`). Autorrevisión por un subagente que no escribió el
   cambio, en `docs/revision/rf-s4b-autorrevision.md`. Motivo: esquema de un solo agente, sin
   segundo revisor disponible. Pieza de riesgo para el pase cruzado: la resolución bobina →
@@ -29,61 +37,61 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   `3d15ad8`, el timeout de la edición de cotizaciones) no tuvieron ningún pase. Sigue pendiente
   hasta que haya un revisor de otro modelo o persona. **2026-09-24, ventana:** desplegado en
   production sin cambios de runtime; se suma `57b10c9` (D-262, `db:prod` sin seed), escrito y
-  mergeado en la misma ventana sin pase de revisión.
+  mergeado en la misma ventana sin pase de revisión. **Revisada por el dueño el 2026-09-26.**
 - **Correcciones del delta RF-S4b** (2026-09-24, PR #15 y `fix/rf-s4b-delta-2`). D-263 a
   D-266, M2 a M6. Autorrevisión por subagentes nuevos (sin P0/P1), el mismo modelo que escribió.
   Motivo: esquema de un solo agente, sin segundo revisor disponible. **2026-09-24, post-S4b:**
   revisión por un **segundo modelo** (Sonnet, contexto limpio) sobre `f60ab6c..e27570a`
   (`docs/revision/rf-s4b-segundo-modelo.md`): 0 P0, 1 P1 (SM-P1-1, corregido en D-267), 4 P2.
-  Es otro modelo, no otra persona: sigue pendiente una revisión humana independiente.
+  Es otro modelo, no otra persona: sigue pendiente una revisión humana independiente. **Revisada por el dueño el 2026-09-26.**
 - **Correcciones post-RF-S4b** (2026-09-24, rama `fix/post-s4b`, PR #17). D-267 a D-269.
-  Autorrevisión por un subagente nuevo del mismo modelo que escribió. Motivo: el mismo.
+  Autorrevisión por un subagente nuevo del mismo modelo que escribió. Motivo: el mismo. **Revisada por el dueño el 2026-09-26.**
 - **Color comercial** (2026-09-24, rama `feat/color-comercial`, PR #18). D-270 a D-274.
   Autorrevisión por dos subagentes nuevos (API y web), el mismo modelo que escribió
   (`docs/revision/color-comercial-autorrevision.md`): 0 P0, 0 P1 de código. Motivo: esquema de
   un solo agente, sin segundo revisor disponible. Pieza de riesgo para el pase cruzado: el
-  retiro de specs de D-274 (borra filas de `raw_material_specs`).
+  retiro de specs de D-274 (borra filas de `raw_material_specs`). **Revisada por el dueño el 2026-09-26.**
 - **Deudas post-RF-S4b** (2026-09-24, rama `fix/deudas-post-s4b`). D-275 y D-276. Autorrevisión
   por un subagente nuevo del mismo modelo que escribió
   (`docs/revision/deudas-post-s4b-autorrevision.md`): 0 P0, 1 P1 (corregido en la rama). Motivo:
-  esquema de un solo agente, sin segundo revisor disponible.
+  esquema de un solo agente, sin segundo revisor disponible. **Revisada por el dueño el 2026-09-26.**
 - **Correcciones 02** (2026-09-24, rama `fix/correcciones-02`, PR #20). D-277 a D-284.
   Autorrevisión por dos subagentes nuevos del mismo modelo que escribió: 0 P0, P1 corregidos en
   la rama. Motivo: esquema de un solo agente, sin segundo revisor disponible. Pieza de riesgo
-  para el pase cruzado: el arreglo de datos de D-278 (salidas retroactivas de kardex).
+  para el pase cruzado: el arreglo de datos de D-278 (salidas retroactivas de kardex). **Revisada por el dueño el 2026-09-26.**
 - **D-285** (2026-09-25, rama `fix/inventario-inicial-fecha`, PR #21, desplegado y ejecutado).
   Autorrevisión por un subagente nuevo del mismo modelo: 0 P0, 2 P1 corregidos antes de ejecutar.
   Motivo: el mismo. Pieza de riesgo: la migración que relaja el trigger append-only.
   **2026-09-25:** revisión por un **segundo modelo** (Sonnet, contexto limpio) sobre
   `e27570a..5100da2` (`docs/revision/corr02-segundo-modelo.md`): 0 P0, 1 P1 (corregido en
-  D-287), 4 P2. Otro modelo, no otra persona: sigue pendiente la revisión humana.
+  D-287), 4 P2. Otro modelo, no otra persona: sigue pendiente la revisión humana. **Revisada por el dueño el 2026-09-26.**
 - **Cierre post-ventana** (2026-09-25, PR #23 → D-286 y PR #24 → D-287). Autorrevisión de #24 por
   un subagente nuevo del mismo modelo: 0 P0, 0 P1, 3 P2 (dos corregidos en la rama). #23 no tuvo
-  pase aparte: es la reversa literal de la migración de D-285. Motivo: el mismo.
+  pase aparte: es la reversa literal de la migración de D-285. Motivo: el mismo. **Revisada por el dueño el 2026-09-26.**
 - **D-288** (2026-09-25, PR #26, desplegado y aplicado a FFA1-00001386). Autorrevisión por un
   subagente nuevo del mismo modelo: 0 P0, **2 P1 corregidos antes del merge** (el PEPS dejaba el
   faltante de una salida anulada; el re-fechado podía despachar otra cantidad que la revertida),
   5 P2 (cuatro corregidos). Motivo: el mismo. Pieza de riesgo: la reversa en modo re-fechado,
-  que exceptúa al comprobante corregido del bloqueo por documento declarado.
+  que exceptúa al comprobante corregido del bloqueo por documento declarado. **Revisada por el dueño el 2026-09-26.**
 - **Correcciones 03** (2026-09-25, rama `fix/correcciones-03`). D-289 a D-299. Autorrevisión por
   un subagente nuevo del mismo modelo que escribió (`docs/revision/correcciones-03-autorrevision.md`):
   0 P0, 3 P1 (los tres resueltos: dos en la rama y el preexistente en D-297), 8 P2. **Segunda pasada** por otro subagente nuevo sobre D-297/D-298 (apéndice del mismo archivo): 0 P0, 1 P1 corregido, 11 P2 anotados. Motivo:
   esquema de un solo agente, sin segundo revisor disponible. Piezas de riesgo para el pase cruzado:
-  el default de exclusión de terminales negativos en el API (`statusCondition`) y `useUrlState`.
+  el default de exclusión de terminales negativos en el API (`statusCondition`) y `useUrlState`. **Revisada por el dueño el 2026-09-26.**
 
 - **Hallazgos de la guía** (2026-09-25, rama `fix/hallazgos-guia`, PR #30). D-310 a D-312.
   Autorrevisión por un subagente nuevo del mismo modelo que escribió
   (`docs/revision/hallazgos-guia-autorrevision.md`): 0 P0, 0 P1, 7 P2 (H1, H2 y H6 corregidos en la
   rama). Motivo: esquema de un solo agente, sin segundo revisor disponible. Pieza de riesgo para el
   pase cruzado: `assertCoilsNotTied` (rechaza al guardar) y su alcance —agregar ítems a un pedido
-  confirmado no lo aplica—.
+  confirmado no lo aplica—. **Revisada por el dueño el 2026-09-26.**
 
 - **Correcciones 04, tanda A** (2026-09-25, rama `fix/correcciones-04`, PR #32). D-320 a D-327.
   Autorrevisión por un subagente nuevo del mismo modelo que escribió
   (`docs/revision/correcciones-04-autorrevision.md`): **1 P0 y 2 P1, corregidos en la rama**, 9 P2
   (varios corregidos). Motivo: esquema de un solo agente, sin segundo revisor disponible. Piezas de
   riesgo para el pase cruzado: el orden por columna del servidor (`listOrderBy`, `sortRows`, el
-  `page` que `useSort` borra) y el duplicado de cotización con líneas `BOB…` sin bobina (D-322).
+  `page` que `useSort` borra) y el duplicado de cotización con líneas `BOB…` sin bobina (D-322). **Revisada por el dueño el 2026-09-26.**
 
 - **Correcciones 04, tanda B** (2026-09-26, rama `feat/correcciones-04b`, PR #35). D-328 y D-329.
   **Dos pases, los dos por subagentes** —el segundo con `model: sonnet` y contexto limpio—, así que
@@ -93,7 +101,7 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   también revisó el delta de la **tanda A**, que estaba en producción sin pase independiente. Motivo: esquema
   de un solo agente, sin segundo revisor disponible. Piezas de riesgo para el pase cruzado: las reglas de
   «volver a sellar» y el resello automático (`coil-film.ts`), el trigger `coil_film_events_sync` y la
-  clasificación del reporte mensual a fin de mes (`monthEndTable`).
+  clasificación del reporte mensual a fin de mes (`monthEndTable`). **Revisada por el dueño el 2026-09-26.**
 
 ## Ventana de Correcciones 04, tanda B (2026-09-26, con migración)
 
