@@ -1,11 +1,12 @@
 # Handoff — Correcciones 04, tanda B (film de protección y pool de conexiones), 2026-09-26
 
-**Estado al cierre:** la **tanda B está en producción** (PR #35, merge `f334f93`; API
-`ayr-steel-erp-api-00058-b67`, git-sha `200e54c`; migraciones `20260926120000` y `20260926130000`
-aplicadas; backfill ejecutado: 43 eventos). Decisiones **D-328** (film) y **D-329** (pool y secretos por
-versión) en `docs/ARQUITECTURA.md` §0.2. La corrección del reporte mensual (**D-340**) va en una rama
-aparte, `fix/reporte-bobinas-mes`. Guion UAT: `docs/uat/correcciones-04b.md`. Bitácora de la ventana:
-`docs/PROGRESO.md`, «Ventana de Correcciones 04, tanda B».
+**Estado al cierre:** la **tanda B está en producción** (PR #35, merge `f334f93`; migraciones
+`20260926120000` y `20260926130000` aplicadas; backfill ejecutado: 43 eventos) y **D-340** (corrección del
+reporte mensual, PR #37, merge `2fe7b19`) también. **API vigente: `ayr-steel-erp-api-00059-p8k`, git-sha
+`2632958`**, con los secretos fijados por versión. Decisiones **D-328** (film), **D-329** (pool y secretos por
+versión) y **D-340** (reporte mensual por primer movimiento) en `docs/ARQUITECTURA.md` §0.2. Guion UAT:
+`docs/uat/correcciones-04b.md`. Bitácora: `docs/PROGRESO.md`, «Ventana de Correcciones 04, tanda B» y
+«D-340».
 
 ## 1. Qué entró
 
@@ -105,16 +106,22 @@ cobertura · `312fd1b` film por fecha (autorrevisión) · `9c11f5a` hallazgos de
    necesita export/PDF propios (ver §1).
 5. **Revisión independiente** de la tanda B (y del delta de la tanda A): pendiente.
 
-## 5. Hallazgo previo a esta entrega — D-340
+## 5. Hallazgo previo a la tanda B — corregido en D-340
 
 Diferencia entre el saldo final de **agosto** (244 831 kg) y el inicial de **septiembre** (291 636 kg): **46
 805 kg exactos = las 15 bobinas `SALDO-…` de la carga de V-4**. Su fecha de alta es de septiembre, pero D-285
-fechó sus movimientos de entrada el **2026-08-01**; el reporte mensual incluye una bobina en el mes de su fecha
-de alta (`c.operation_date`), así que agosto no las cuenta y septiembre las trae con saldo inicial. **No son
-las 28 bobinas con alta en septiembre:** las otras 13 son compras reales de septiembre y están bien. No lo
-causó esta entrega (el filtro no se tocó) y no se corrigió en la ventana. **D-340** (`fix/reporte-bobinas-mes`)
-incluye una bobina según su **primer movimiento de kardex** con `operation_date` ≤ fin de mes. Las anuladas se
-trataban igual antes y después de la tanda B: aparecen con 0 kg y no cambian.
+fechó sus movimientos de entrada el **2026-08-01**; el reporte mensual incluía una bobina en el mes de su fecha
+de alta (`c.operation_date`), así que agosto no las contaba y septiembre las traía con saldo inicial. **No
+son las 28 bobinas con alta en septiembre:** las otras 13 son compras reales de septiembre y estaban bien. No
+lo causó la tanda B (el filtro no se tocó).
+
+**Corregido en D-340** (PR #37, sin tocar datos): una bobina entra al reporte del mes de su **primer
+movimiento de kardex** con `operation_date` anterior al fin de ese mes (`coilInMonth`). Unitario del
+invariante «saldo final de M = saldo inicial de M+1» con una bobina cuya alta es posterior a su primer
+movimiento. **Las anuladas se trataban igual antes** (la consulta nunca filtró por estado: entran con sus
+kilos de entonces y en 0 desde su reversa) **y no cambian.** Verificado en producción tras el redeploy
+(`00059-p8k`): agosto **291 636.000 kg** = inicial de septiembre, con las 15 `SALDO-…` en «Selladas»
+(46 805 kg); septiembre **igual que antes** (179 684.418 kg, S/ 487 584.47).
 
 ## 6. Rollback
 
@@ -122,9 +129,11 @@ trataban igual antes y después de la tanda B: aparecen con 0 kg y no cambian.
   dejan de usarse volviendo a una API anterior. Respaldo: rama Neon `respaldo-pre-corr04b-20260926`
   (`br-shiny-moon-aefzj0gz`).
 - **API:** llevar el tráfico a una revisión anterior (`gcloud run services update-traffic ayr-steel-erp-api
---to-revisions <rev>=100`, vía `cmd /c` o un `.mjs`). **`00057-q49`** (git-sha `40cdf44`) es la revisión de
-  rollback inmediata y la primera con secretos fijados. Una API anterior al film sigue funcionando sobre el
-  esquema nuevo (ignora la tabla y la columna).
+--to-revisions <rev>=100`, vía `cmd /c` o un `.mjs`). Revisiones: **`00059-p8k`** (git-sha `2632958`, vigente,
+  con D-340) → **`00058-b67`** (git-sha `200e54c`, tanda B) es la de rollback inmediata → `00057-q49`
+  (git-sha `40cdf44`, la primera con secretos fijados). Una API anterior al film sigue funcionando sobre el
+  esquema nuevo (ignora la tabla y la columna). Volver a `00058` devuelve el reporte mensual a la regla por
+  fecha de alta (con los 46 805 kg de diferencia).
 - **Secretos:** `deploy-api.mjs` monta cada secreto **por número de versión**. Para cambiar uno, o volver a una
   versión anterior, se **redespliega** con `SECRET_VERSION_<NOMBRE>=<n>` (p. ej.
   `SECRET_VERSION_DATABASE_URL=6`). **Volver el tráfico a `00056` deja activa la versión 7 de `DATABASE_URL`**,
@@ -152,5 +161,11 @@ trataban igual antes y después de la tanda B: aparecen con 0 kg y no cambian.
 
 ## 8. Ramas y worktrees al cerrar
 
-Se listan al terminar la sesión (ver el mensaje de cierre): remotas para borrar con OK del dueño, y el
-worktree `../ayr-steel-erp-corr04b` con sus ramas locales, eliminados tras copiar y verificar `local-data/`.
+- **Remotas para que el dueño borre** (todas mergeadas o a punto de estarlo; no son protegidas):
+  `feat/correcciones-04b` (PR #35), `docs/cierre-corr04b` (PR #36), `fix/reporte-bobinas-mes` (PR #37) y
+  `docs/cierre-d340` (este cierre, tras su merge). `main` queda como única. Comando por rama, con OK por
+  nombre: `git push origin --delete <rama>`.
+- **Local:** el worktree `../ayr-steel-erp-corr04b` y sus ramas locales (`feat/correcciones-04b`,
+  `docs/cierre-corr04b`, `fix/reporte-bobinas-mes`, `docs/cierre-d340`) se eliminan al terminar, después de
+  copiar `local-data/` al checkout principal (`local-data/corr04b-2026-09-26/`) y verificar la copia (mismos
+  archivos y tamaños). Contiene el dry-run de producción del backfill (`film-dry-run-production.txt`).
