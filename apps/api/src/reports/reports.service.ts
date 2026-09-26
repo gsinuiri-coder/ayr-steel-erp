@@ -37,6 +37,8 @@ interface CoilMonthRow {
   closing_value: Prisma.Decimal;
   /** D-328: tipo del último evento de film con `operation_date` hasta el fin de mes. */
   last_film_event: string | null;
+  /** D-340: fecha del primer movimiento de kardex de la bobina (de cualquier mes), o `null`. */
+  first_movement_date: Date | null;
 }
 
 /**
@@ -99,7 +101,8 @@ export class ReportsService {
                THEN CASE m."type" WHEN 'OUT' THEN -m."total_cost" ELSE m."total_cost" END
                ELSE 0 END
         ), 0) AS "closing_value",
-        ev."type" AS "last_film_event"
+        ev."type" AS "last_film_event",
+        MIN(m."operation_date") AS "first_movement_date"
       FROM "coils" c
       JOIN "business_lines" bl ON bl."id" = c."business_line_id"
       LEFT JOIN "colors" col ON col."id" = c."color_id"
@@ -113,10 +116,10 @@ export class ReportsService {
         ORDER BY e."operation_date" DESC, e."at" DESC, e."id" DESC
         LIMIT 1
       ) ev ON true
-      -- La bobina entra al reporte del mes en que se dio de alta y en todos los siguientes:
-      -- una comprada en agosto sigue siendo saldo inicial de septiembre.
-      WHERE c."operation_date" < ${toDateOnly(nextFrom)}::date
-        AND (${lineCode}::text IS NULL OR bl."code"::text = ${lineCode}::text)
+      -- D-340: la bobina entra al reporte del mes de su **primer movimiento de kardex** y en todos
+      -- los siguientes, no del mes de su fecha de alta (ver coilInMonth): sin filtro por fecha
+      -- acá, el filtro está en TypeScript para poder probarlo.
+      WHERE (${lineCode}::text IS NULL OR bl."code"::text = ${lineCode}::text)
       GROUP BY c."id", bl."code", col."name", ev."type"
       ORDER BY c."code" ASC
     `;
@@ -126,6 +129,7 @@ export class ReportsService {
     const accum = { sealed: emptyTotals(), opened: emptyTotals() };
 
     for (const r of rows) {
+      if (!coilInMonth(r.first_movement_date, toDateOnly(nextFrom))) continue;
       const opening = toDecimal(r.opening_kg.toString());
       const closing = toDecimal(r.closing_kg.toString());
       const weight = toDecimal(r.weight_kg.toString());
@@ -162,6 +166,19 @@ export class ReportsService {
       totals: toTotalsDto(general, showCosts),
     };
   }
+}
+
+/**
+ * D-340: ¿la bobina pertenece al reporte de un mes? Sí cuando su **primer movimiento de kardex** cae
+ * antes del primer día del mes siguiente. Era su fecha de alta (`coils.operation_date`), y con ella el
+ * saldo final de un mes dejaba de coincidir con el inicial del siguiente: D-285 fechó el 2026-08-01
+ * los movimientos de la carga de V-4, pero la fecha de alta de esas bobinas quedó en septiembre, así
+ * que agosto no las contaba y septiembre las traía con saldo inicial (46 805 kg de diferencia). El
+ * saldo de una bobina en una fecha es la suma de sus movimientos hasta ella: incluirla exactamente
+ * cuando tiene alguno anterior al corte hace que `cierre(M) = inicio(M+1)` valga siempre.
+ */
+export function coilInMonth(firstMovementDate: Date | null, nextMonthStart: Date): boolean {
+  return firstMovementDate !== null && firstMovementDate.getTime() < nextMonthStart.getTime();
 }
 
 interface Accum {
