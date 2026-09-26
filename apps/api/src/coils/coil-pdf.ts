@@ -1,12 +1,13 @@
 import PDFDocument from 'pdfkit';
 import {
   BUSINESS_LINE_LABELS,
-  COIL_STATUS_LABELS,
+  coilStateLabel,
   INVENTORY_MOVEMENT_TYPE_LABELS,
   INVENTORY_REF_TYPE_LABELS,
   type BusinessLine,
   type CoilConsumptionDto,
   type CoilDto,
+  type CoilFilmState,
   type CoilStatus,
   type InventoryMovementDto,
 } from '@ayr/shared';
@@ -58,6 +59,8 @@ export interface CoilPdfInput {
   widthMm: string;
   thicknessMm: string;
   status: CoilStatus;
+  /** D-328: el film rotula a la vigente («Sellada» / «Abierta»); una terminada dice «Terminada». */
+  film: CoilFilmState;
   weightKg: string;
   availableKg: string;
   avgCostPen: string | null;
@@ -100,7 +103,7 @@ export function buildCoilPdf(input: CoilPdfInput): Promise<Buffer> {
     );
   y += 13;
   doc.text(
-    `${BUSINESS_LINE_LABELS[input.businessLine]} · ${input.supplierName} · ${COIL_STATUS_LABELS[input.status]}`,
+    `${BUSINESS_LINE_LABELS[input.businessLine]} · ${input.supplierName} · ${coilStateLabel(input)}`,
     MARGIN,
     y,
     { width: CONTENT_WIDTH },
@@ -230,7 +233,7 @@ export function coilsReportTable(rows: CoilDto[]): {
       `${c.widthMm} mm`,
       c.availableKg,
       c.equivalentMeters ?? '—',
-      COIL_STATUS_LABELS[c.status],
+      coilStateLabel(c),
     ]),
   };
 }

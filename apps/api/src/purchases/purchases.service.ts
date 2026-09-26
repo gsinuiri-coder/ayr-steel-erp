@@ -227,7 +227,7 @@ export class PurchasesService {
                 widthMm: item.widthMm ? toFixedString(item.widthMm, 'MM') : null,
                 thicknessMm: item.thicknessMm ? toFixedString(item.thicknessMm, 'MM') : null,
                 // D-116: `null` en compras que no son COIL; `receive()` decide el default
-                // (CLOSED) si la línea COIL no lo trajo.
+                // (OPEN, sellada — D-328) si la línea COIL no lo trajo.
                 coilStatus: input.type === PurchaseType.COIL ? (item.coilStatus ?? null) : null,
               })),
             },
@@ -400,9 +400,11 @@ export class PurchasesService {
               currency: purchase.currency,
               exchangeRate: purchase.exchangeRate.toFixed(4),
               unitCostPerKg: item.unitPrice.toFixed(4),
-              // D-116: CLOSED por defecto si la línea no lo trajo (compra manual anterior a
-              // esta fase, o XML, que no tiene de dónde leerlo).
-              status: item.coilStatus ?? CoilStatus.CLOSED,
+              // D-328 (sustituye el default de D-117): la bobina comprada nace **vigente y
+              // sellada**. «Cerrada por defecto» era el proxy de «con el film puesto»; ahora el
+              // film es su propio eje y la bobina no nace terminada. Una línea que traiga un
+              // estado explícito (D-116) lo conserva.
+              status: item.coilStatus ?? CoilStatus.OPEN,
               refType: 'PURCHASE',
               refId: purchase.id,
               actorId: actor.id,

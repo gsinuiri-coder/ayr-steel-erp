@@ -401,12 +401,92 @@ export const CoilStatus = {
 } as const;
 export type CoilStatus = (typeof CoilStatus)[keyof typeof CoilStatus];
 export const COIL_STATUSES = Object.values(CoilStatus) as [CoilStatus, ...CoilStatus[]];
+/**
+ * D-328: `CLOSED` se muestra «Terminada» (el cierre de D-164 no cambia, solo su nombre) y
+ * `OPEN` es «Vigente»: «Abierta» pasó a ser el estado del **film** de protección. Para rotular
+ * una bobina con su film usa `coilStateLabel`, que mira los dos ejes.
+ */
 export const COIL_STATUS_LABELS: Record<CoilStatus, string> = {
-  OPEN: 'Abierta',
-  CLOSED: 'Cerrada',
+  OPEN: 'Vigente',
+  CLOSED: 'Terminada',
   CANCELLED: 'Anulada',
   IN_THIRD_PARTY: 'En corte tercerizado',
 };
+
+/**
+ * D-328: film de protección de la bobina. Es un eje **aparte** de `CoilStatus`: la bobina nueva
+ * llega con el film puesto (`SEALED`, «Sellada»); «Abrir» es quitarlo para empezar a usarla
+ * (`OPENED`, «Abierta»). El estado sale del último evento de `coil_film_events`; no es una columna
+ * que alguien edite.
+ */
+export const CoilFilmState = {
+  SEALED: 'SEALED',
+  OPENED: 'OPENED',
+} as const;
+export type CoilFilmState = (typeof CoilFilmState)[keyof typeof CoilFilmState];
+export const COIL_FILM_STATES = Object.values(CoilFilmState) as [CoilFilmState, ...CoilFilmState[]];
+export const COIL_FILM_LABELS: Record<CoilFilmState, string> = {
+  SEALED: 'Sellada',
+  OPENED: 'Abierta',
+};
+
+/** Tipo de un evento de film (append-only): se abrió, o se volvió a sellar. */
+export const CoilFilmEventType = {
+  OPENED: 'OPENED',
+  RESEALED: 'RESEALED',
+} as const;
+export type CoilFilmEventType = (typeof CoilFilmEventType)[keyof typeof CoilFilmEventType];
+export const COIL_FILM_EVENT_TYPES = Object.values(CoilFilmEventType) as [
+  CoilFilmEventType,
+  ...CoilFilmEventType[],
+];
+export const COIL_FILM_EVENT_TYPE_LABELS: Record<CoilFilmEventType, string> = {
+  OPENED: 'Abierta',
+  RESEALED: 'Vuelta a sellar',
+};
+
+/**
+ * Qué causó un evento de film. `MANUAL` es el botón de la ficha; el resto son operaciones que
+ * abren la bobina por dentro (montar, merma, partir, enviar a corte) o que la resellan al
+ * deshacerse (`*_UNDO`). `BIRTH` es la bobina que nace ya abierta (hija de partido, fleje de
+ * corte) y `BACKFILL` la deducción histórica de D-328.
+ */
+export const CoilFilmSource = {
+  MANUAL: 'MANUAL',
+  MOUNT: 'MOUNT',
+  MOUNT_UNDO: 'MOUNT_UNDO',
+  SCRAP: 'SCRAP',
+  SPLIT: 'SPLIT',
+  CUTTING_SEND: 'CUTTING_SEND',
+  CUTTING_UNDO: 'CUTTING_UNDO',
+  BIRTH: 'BIRTH',
+  BACKFILL: 'BACKFILL',
+} as const;
+export type CoilFilmSource = (typeof CoilFilmSource)[keyof typeof CoilFilmSource];
+export const COIL_FILM_SOURCES = Object.values(CoilFilmSource) as [
+  CoilFilmSource,
+  ...CoilFilmSource[],
+];
+export const COIL_FILM_SOURCE_LABELS: Record<CoilFilmSource, string> = {
+  MANUAL: 'Manual',
+  MOUNT: 'Al montarla en una OP',
+  MOUNT_UNDO: 'Al liberarla de la OP sin reportes',
+  SCRAP: 'Al registrar una merma',
+  SPLIT: 'Al partirla',
+  CUTTING_SEND: 'Al enviarla a corte',
+  CUTTING_UNDO: 'Al cancelar el envío a corte',
+  BIRTH: 'Nació abierta',
+  BACKFILL: 'Deducida del historial',
+};
+
+/**
+ * D-328: cómo se rotula una bobina en pantalla, PDF y reportes. Una terminada, anulada o en
+ * corte se nombra por su estado; una vigente, por su film («Sellada» / «Abierta»).
+ */
+export function coilStateLabel(coil: { status: CoilStatus; film: CoilFilmState }): string {
+  if (coil.status === CoilStatus.OPEN) return COIL_FILM_LABELS[coil.film];
+  return COIL_STATUS_LABELS[coil.status];
+}
 
 /** Clase de fila de `coils` (D-049). Un fleje es una bobina `STRIP`. */
 export const CoilKind = {

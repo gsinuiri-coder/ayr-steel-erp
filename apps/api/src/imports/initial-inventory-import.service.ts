@@ -350,7 +350,7 @@ export function sameColorName(a: string, b: string): boolean {
 /** Por defecto se omiten las cerradas y las que ya no tienen kilos (dueño, V-4). */
 export function coilExportSkipReason(raw: Record<string, unknown>): string | null {
   const status = exportField(raw, EXPORT_COLUMNS.status).toUpperCase();
-  if (status === 'CLOSED') return 'bobina cerrada';
+  if (status === 'CLOSED') return 'bobina terminada';
   const currentKg = exportField(raw, EXPORT_COLUMNS.currentKg);
   if (currentKg !== '' && !toDecimal(currentKg).gt(0)) return 'sin kilos actuales';
   return null;

@@ -38,6 +38,7 @@ function input(overrides: Partial<CreateCoilInput> = {}): CreateCoilInput {
 function createFakeTx() {
   const state = { coilSeq: 0 };
   const created: Record<string, unknown>[] = [];
+  const filmEvents: Record<string, unknown>[] = [];
   const queries: string[] = [];
   const upserts: { where: unknown; create: Record<string, unknown> }[] = [];
 
@@ -62,6 +63,12 @@ function createFakeTx() {
         return Promise.resolve({ id: `coil-${created.length}`, ...data });
       }),
     },
+    coilFilmEvent: {
+      create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+        filmEvents.push(data);
+        return Promise.resolve({});
+      }),
+    },
     $queryRaw: jest.fn((strings: TemplateStringsArray) => {
       queries.push(strings.join('?'));
       state.coilSeq += 1;
@@ -69,7 +76,7 @@ function createFakeTx() {
     }),
   };
 
-  return { tx: tx as unknown as Prisma.TransactionClient, created, queries, upserts };
+  return { tx: tx as unknown as Prisma.TransactionClient, created, filmEvents, queries, upserts };
 }
 
 describe('códigos de bobina (RF-13, RF-14, D-037)', () => {
@@ -185,6 +192,37 @@ describe('CoilsService.create (RF-10..RF-14)', () => {
     const codes = fake.created.map((c) => c.code);
     expect(codes).toEqual(['ACERO-GALV-0.50-4500-1', 'ACERO-GALV-0.50-4500-2']);
     expect(new Set(codes).size).toBe(2);
+  });
+
+  // D-328: compra y carga inicial nacen selladas (sin evento); la hija de un partido y el fleje
+  // de un corte nacen abiertas, con un evento `BIRTH` del día de su alta.
+  it('D-328: una bobina de compra nace sellada, sin evento de film', async () => {
+    const fake = createFakeTx();
+    await service.create(fake.tx, input());
+    expect(fake.filmEvents).toHaveLength(0);
+  });
+
+  it('D-328: la hija de un partido nace abierta (evento BIRTH fechado en su alta)', async () => {
+    const fake = createFakeTx();
+    await service.create(
+      fake.tx,
+      input({
+        parentCoilId: 'madre-1',
+        splitId: 'split-1',
+        refType: 'SPLIT',
+        operationDate: '2026-09-10',
+      }),
+    );
+    expect(fake.filmEvents).toHaveLength(1);
+    expect(fake.filmEvents[0]).toMatchObject({
+      coilId: 'coil-1',
+      type: 'OPENED',
+      source: 'BIRTH',
+      actorId: ACTOR,
+    });
+    expect((fake.filmEvents[0]?.operationDate as Date).toISOString().slice(0, 10)).toBe(
+      '2026-09-10',
+    );
   });
 
   it('asegura el producto de trading con el SKU canónico de D-252 y emite la entrada de kardex', async () => {

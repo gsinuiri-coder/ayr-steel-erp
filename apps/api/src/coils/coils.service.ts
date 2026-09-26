@@ -10,6 +10,9 @@ import {
 } from '@prisma/client';
 import {
   businessToday,
+  CoilFilmEventType,
+  CoilFilmSource,
+  CoilFilmState,
   coilCode,
   coilTypeKey,
   equivalentMeters,
@@ -25,6 +28,7 @@ import {
   Unit,
   type CoilConsumptionDto,
   type CoilDto,
+  type CoilFilmEventDto,
   type CoilQuery,
   type CoilSplitDto,
   type PaginatedResult,
@@ -36,6 +40,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ensureCoilSaleProduct } from '../sales/coil-sale-product';
 import { buildCoilPdf, buildCoilsReportPdf } from './coil-pdf';
+import { recordFilmEvent } from './coil-film';
 import { coilOrderBy } from '../common/list-orderings';
 
 /** Datos mínimos para dar de alta una bobina. Los códigos se derivan aquí, no los trae el llamador. */
@@ -184,6 +189,19 @@ export class CoilsService {
         operationDate: toDateOnly(input.operationDate ?? businessToday()),
       },
     });
+
+    // D-328: la hija de un partido y el fleje de un corte nacen **abiertas** (cortadas, no
+    // llevan film). Compra y carga inicial nacen selladas: sin evento. El evento va antes del
+    // movimiento de entrada, como manda `recordFilmEvent`.
+    if (input.parentCoilId) {
+      await recordFilmEvent(tx, {
+        coilId: coil.id,
+        type: CoilFilmEventType.OPENED,
+        source: CoilFilmSource.BIRTH,
+        operationDate: input.operationDate ?? businessToday(),
+        actorId: input.actorId,
+      });
+    }
 
     // El producto de `trading` es uno por `typeKey`: en un partido todas las hijas
     // comparten acabado y espesor, así que basta asegurarlo una vez.
@@ -346,6 +364,10 @@ export class CoilsService {
       supplierId: query.supplierId,
       thicknessMm: query.thicknessMm,
       kind: query.kind,
+      // D-328: el film solo rotula a las vigentes; pedir «selladas» o «abiertas» las acota.
+      ...(query.film
+        ? { AND: [{ status: CoilStatus.OPEN }, { filmSealed: query.film === 'SEALED' }] }
+        : {}),
       ...(availabilityIds ? { id: { in: availabilityIds } } : {}),
       // `sin-color` es un filtro real y no la ausencia de filtro: es como se listan las
       // galvanizadas, que son justo las que un producto sin color puede montar (D-086).
@@ -484,6 +506,26 @@ export class CoilsService {
     });
   }
 
+  /** D-328: historial del film de la bobina, del más reciente al más antiguo. */
+  async findFilmEvents(coilId: string): Promise<CoilFilmEventDto[]> {
+    const events = await this.prisma.coilFilmEvent.findMany({
+      where: { coilId },
+      orderBy: [{ operationDate: 'desc' }, { at: 'desc' }, { id: 'desc' }],
+    });
+    const actorNames = await this.resolveActorNames(
+      events.flatMap((e) => (e.actorId === null ? [] : [e.actorId])),
+    );
+    return events.map((e) => ({
+      id: e.id,
+      type: e.type,
+      source: e.source,
+      operationDate: fromDateOnly(e.operationDate),
+      reason: e.reason,
+      actorName: e.actorId === null ? null : (actorNames.get(e.actorId) ?? null),
+      at: e.at.toISOString(),
+    }));
+  }
+
   /** PDF de una sola bobina (T6, D-173): identificación, saldo, OP y kardex. */
   async pdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
     const [coil, consumptions, movements] = await Promise.all([
@@ -504,6 +546,7 @@ export class CoilsService {
       widthMm: coil.widthMm,
       thicknessMm: coil.thicknessMm,
       status: coil.status,
+      film: coil.film,
       weightKg: coil.weightKg,
       availableKg: coil.availableKg,
       avgCostPen: coil.avgCostPen,
@@ -584,6 +627,7 @@ export class CoilsService {
         totalCost: c.totalCost.toFixed(4),
         totalCostPen: c.totalCostPen.toFixed(4),
         status: c.status,
+        film: c.filmSealed ? CoilFilmState.SEALED : CoilFilmState.OPENED,
         parentCoilId: c.parentCoilId,
         parentCoilCode: c.parentCoil?.code ?? null,
         splitId: c.splitId,

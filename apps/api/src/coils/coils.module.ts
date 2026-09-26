@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { InventoryModule } from '../inventory/inventory.module';
+import { CoilFilmService } from './coil-film.service';
 import { CoilOperationsService } from './coil-operations.service';
 import { CoilsController } from './coils.controller';
 import { CoilsService } from './coils.service';
@@ -12,7 +13,7 @@ import { CoilsService } from './coils.service';
 @Module({
   imports: [InventoryModule],
   controllers: [CoilsController],
-  providers: [CoilsService, CoilOperationsService],
+  providers: [CoilsService, CoilOperationsService, CoilFilmService],
   exports: [CoilsService, CoilOperationsService],
 })
 export class CoilsModule {}

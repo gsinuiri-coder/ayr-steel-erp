@@ -948,7 +948,7 @@ async function resolveSaleCoils(
     }
     if (coil.status !== CoilStatus.OPEN && coil.status !== CoilStatus.CLOSED) {
       throw new BadRequestException(
-        `${coil.code} no está disponible (${coil.status}): solo se vende una bobina abierta o cerrada`,
+        `${coil.code} no está disponible (${coil.status}): solo se vende una bobina vigente o terminada`,
       );
     }
     const sku = coilSaleSkus(coil).canonical;
