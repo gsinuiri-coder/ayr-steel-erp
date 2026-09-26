@@ -78,6 +78,7 @@ Reglas de convivencia, sin excepción:
    `docs/PROGRESO.md` conserva la lista de piezas como **registro de riesgo de lo que toca kardex
    o datos** (dónde mirar primero si algo aparece), con fecha y motivo; una pieza revisada por el
    dueño se marca así. Deja de ser una deuda de «revisión independiente» pendiente.
+
 3. **Una rama por ventana/tarea**, desde `origin/main` actualizado. Nunca se trabaja directo
    sobre `main`. Antes de abrir rama: `git fetch` y CI de `main` verde
    (`gh run list --branch main --limit 3`).

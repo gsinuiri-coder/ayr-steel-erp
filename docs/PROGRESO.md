@@ -11,7 +11,6 @@ deuda de revisión. El estándar vigente para cada entrega está en `AGENTS.md` 
 
 Texto original del registro (2026-09-23):
 
-
 Por `AGENTS.md` §2.2: con un solo agente, la revisión de una sesión la hace un subagente que no
 leyó el handoff de implementación, marcada como autorrevisión y sin valor de pase cruzado. Las
 piezas en ese estado, a recuperar cuando haya un segundo revisor:
