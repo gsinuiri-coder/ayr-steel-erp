@@ -17,14 +17,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+import { Form, FormControl, FormField } from '@/components/ui/form';
+import { FormFieldCell, FormGrid, FormRow } from '@/components/form';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -265,7 +259,7 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
         if (!open) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{editing ? 'Editar color' : 'Nuevo color'}</DialogTitle>
         </DialogHeader>
@@ -282,67 +276,70 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
                 {form.formState.errors.root.message}
               </p>
             )}
-            <FormField
-              control={form.control}
-              name="code"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Código</FormLabel>
-                  <FormControl>
-                    <Input disabled={editing} placeholder="ROJ" autoComplete="off" {...field} />
-                  </FormControl>
-                  <p className="text-xs text-muted-foreground">
-                    Va en el SKU de la cobertura para leerlo a simple vista; el sistema nunca lo
-                    interpreta.
-                  </p>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Nombre</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Rojo colonial" autoComplete="off" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="hexColor"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Muestra</FormLabel>
-                  <div className="flex items-center gap-3">
-                    <FormControl>
-                      <Input
-                        type="color"
-                        aria-label="Selector de color"
-                        className="h-10 w-16 p-1"
-                        {...field}
-                      />
-                    </FormControl>
-                    <Input
-                      aria-label="Código hexadecimal"
-                      className="font-mono"
-                      value={field.value}
-                      onChange={field.onChange}
-                    />
-                    <span
-                      aria-hidden
-                      className="size-8 shrink-0 rounded border border-border"
-                      style={{ backgroundColor: /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : undefined }}
-                    />
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {/* D-293: grilla de 12 columnas, rótulo fijo y ayuda reservada. */}
+            <FormGrid>
+              <FormRow>
+                <FormField
+                  control={form.control}
+                  name="code"
+                  render={({ field }) => (
+                    <FormFieldCell
+                      span={5}
+                      label="Código"
+                      help="Va en el SKU de la cobertura; el sistema nunca lo interpreta."
+                    >
+                      <FormControl>
+                        <Input disabled={editing} placeholder="ROJ" autoComplete="off" {...field} />
+                      </FormControl>
+                    </FormFieldCell>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormFieldCell span={7} label="Nombre">
+                      <FormControl>
+                        <Input placeholder="Rojo colonial" autoComplete="off" {...field} />
+                      </FormControl>
+                    </FormFieldCell>
+                  )}
+                />
+              </FormRow>
+              <FormRow>
+                <FormField
+                  control={form.control}
+                  name="hexColor"
+                  render={({ field }) => (
+                    <FormFieldCell span={12} label="Muestra">
+                      <div className="flex items-center gap-3">
+                        <FormControl>
+                          <Input
+                            type="color"
+                            aria-label="Selector de color"
+                            className="h-10 w-16 p-1"
+                            {...field}
+                          />
+                        </FormControl>
+                        <Input
+                          aria-label="Código hexadecimal"
+                          className="font-mono"
+                          value={field.value}
+                          onChange={field.onChange}
+                        />
+                        <span
+                          aria-hidden
+                          className="size-8 shrink-0 rounded border border-border"
+                          style={{
+                            backgroundColor: /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : undefined,
+                          }}
+                        />
+                      </div>
+                    </FormFieldCell>
+                  )}
+                />
+              </FormRow>
+            </FormGrid>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancelar

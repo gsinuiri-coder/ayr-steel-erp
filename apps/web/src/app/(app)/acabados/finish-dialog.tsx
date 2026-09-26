@@ -24,15 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+import { Form, FormControl, FormField } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -42,6 +34,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ColorSelect } from '@/components/colors/color-select';
+import { FormFieldCell, FormGrid, FormRow } from '@/components/form';
 
 const FINISHES_QUERY_KEY = ['finishes'] as const;
 
@@ -149,7 +142,7 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{editing ? 'Editar acabado' : 'Nuevo acabado'}</DialogTitle>
           <DialogDescription>
@@ -182,126 +175,126 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
                 {form.formState.errors.root.message}
               </p>
             )}
-            <FormField
-              control={form.control}
-              name="code"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Código</FormLabel>
-                  <FormControl>
-                    <Input disabled={editing} autoComplete="off" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+            {/* D-293: grilla de 12 columnas, rótulo fijo y ayuda reservada. */}
+            <FormGrid>
+              <FormRow>
+                <FormField
+                  control={form.control}
+                  name="code"
+                  render={({ field }) => (
+                    <FormFieldCell span={4} label="Código">
+                      <FormControl>
+                        <Input disabled={editing} autoComplete="off" {...field} />
+                      </FormControl>
+                    </FormFieldCell>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormFieldCell span={8} label="Nombre">
+                      <FormControl>
+                        <Input autoComplete="off" {...field} />
+                      </FormControl>
+                    </FormFieldCell>
+                  )}
+                />
+              </FormRow>
+              <FormRow>
+                <FormField
+                  control={form.control}
+                  name="businessLine"
+                  render={({ field }) => (
+                    <FormFieldCell span={6} label="Línea">
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        disabled={identityLocked}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full" aria-label="Línea">
+                            <SelectValue placeholder="Elige la línea" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {COIL_BUSINESS_LINES.map((line) => (
+                            <SelectItem key={line} value={line}>
+                              {BUSINESS_LINE_LABELS[line]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormFieldCell>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="kind"
+                  render={({ field }) => (
+                    <FormFieldCell span={6} label="Tipo">
+                      <Select
+                        value={field.value}
+                        disabled={identityLocked}
+                        onValueChange={(v) => {
+                          field.onChange(v);
+                          form.clearErrors('colorId');
+                        }}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full" aria-label="Tipo">
+                            <SelectValue placeholder="Elige el tipo" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {KINDS.map((k) => (
+                            <SelectItem key={k} value={k}>
+                              {FINISH_KIND_LABELS[k]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormFieldCell>
+                  )}
+                />
+              </FormRow>
+              {withColor && (
+                <FormRow>
+                  <FormField
+                    control={form.control}
+                    name="colorId"
+                    render={({ field }) => (
+                      <FormFieldCell
+                        span={12}
+                        label="Color"
+                        help="Los colores se administran en Catálogo → Colores."
+                      >
+                        <ColorSelect
+                          value={field.value}
+                          onChange={field.onChange}
+                          allowEmpty={false}
+                          disabled={identityLocked}
+                          placeholder="Elige el color"
+                        />
+                      </FormFieldCell>
+                    )}
+                  />
+                </FormRow>
               )}
-            />
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Nombre</FormLabel>
-                  <FormControl>
-                    <Input autoComplete="off" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="businessLine"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Línea</FormLabel>
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    disabled={identityLocked}
-                  >
-                    <FormControl>
-                      <SelectTrigger className="w-full" aria-label="Línea">
-                        <SelectValue placeholder="Elige la línea" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {COIL_BUSINESS_LINES.map((line) => (
-                        <SelectItem key={line} value={line}>
-                          {BUSINESS_LINE_LABELS[line]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="kind"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Tipo</FormLabel>
-                  <Select
-                    value={field.value}
-                    disabled={identityLocked}
-                    onValueChange={(v) => {
-                      field.onChange(v);
-                      form.clearErrors('colorId');
-                    }}
-                  >
-                    <FormControl>
-                      <SelectTrigger className="w-full" aria-label="Tipo">
-                        <SelectValue placeholder="Elige el tipo" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {KINDS.map((k) => (
-                        <SelectItem key={k} value={k}>
-                          {FINISH_KIND_LABELS[k]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            {withColor && (
-              <FormField
-                control={form.control}
-                name="colorId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Color</FormLabel>
-                    <ColorSelect
-                      value={field.value}
-                      onChange={field.onChange}
-                      allowEmpty={false}
-                      disabled={identityLocked}
-                      placeholder="Elige el color"
-                    />
-                    <FormDescription>
-                      Los colores se administran en Catálogo → Colores.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
-            <FormField
-              control={form.control}
-              name="densityFactor"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Factor de densidad</FormLabel>
-                  <FormControl>
-                    <Input inputMode="decimal" autoComplete="off" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormRow>
+                <FormField
+                  control={form.control}
+                  name="densityFactor"
+                  render={({ field }) => (
+                    <FormFieldCell span={6} label="Factor de densidad" size="lg" numeric>
+                      <FormControl>
+                        <Input inputMode="decimal" autoComplete="off" {...field} />
+                      </FormControl>
+                    </FormFieldCell>
+                  )}
+                />
+              </FormRow>
+            </FormGrid>
             <DialogFooter>
               <Button
                 type="button"

@@ -26,14 +26,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+import { Form, FormControl, FormField } from '@/components/ui/form';
+import { FormFieldCell, FormGrid, FormRow } from '@/components/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -147,7 +141,7 @@ export function BomDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Receta de {product.sku}</DialogTitle>
           <DialogDescription>
@@ -202,63 +196,62 @@ export function BomDialog({
                     {form.formState.errors.root.message}
                   </p>
                 )}
-                <FormField
-                  control={form.control}
-                  name="finishId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Acabado / Color del fleje</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger className="w-full" disabled={finishes.isPending}>
-                            <SelectValue
-                              placeholder={
-                                finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
-                              }
-                            />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {finishOptions.map((f) => (
-                            <SelectItem key={f.id} value={f.id}>
-                              {finishOptionLabels.get(f.id) ?? f.code}
-                              {f.isActive ? '' : ' (desactivado)'}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <div className="grid grid-cols-2 gap-3">
-                  <FormField
-                    control={form.control}
-                    name="inputThicknessMm"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Espesor (mm)</FormLabel>
-                        <FormControl>
-                          <Input inputMode="decimal" autoComplete="off" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="inputWidthMm"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Ancho (mm)</FormLabel>
-                        <FormControl>
-                          <Input inputMode="decimal" autoComplete="off" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                {/* D-293: grilla de 12 columnas, rótulo fijo y ayuda reservada. */}
+                <FormGrid>
+                  <FormRow>
+                    <FormField
+                      control={form.control}
+                      name="finishId"
+                      render={({ field }) => (
+                        <FormFieldCell span={12} label="Acabado / Color del fleje">
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger className="w-full" disabled={finishes.isPending}>
+                                <SelectValue
+                                  placeholder={
+                                    finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
+                                  }
+                                />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {finishOptions.map((f) => (
+                                <SelectItem key={f.id} value={f.id}>
+                                  {finishOptionLabels.get(f.id) ?? f.code}
+                                  {f.isActive ? '' : ' (desactivado)'}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormFieldCell>
+                      )}
+                    />
+                  </FormRow>
+                  <FormRow>
+                    <FormField
+                      control={form.control}
+                      name="inputThicknessMm"
+                      render={({ field }) => (
+                        <FormFieldCell span={6} label="Espesor (mm)" size="lg" numeric>
+                          <FormControl>
+                            <Input inputMode="decimal" autoComplete="off" {...field} />
+                          </FormControl>
+                        </FormFieldCell>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="inputWidthMm"
+                      render={({ field }) => (
+                        <FormFieldCell span={6} label="Ancho (mm)" size="lg" numeric>
+                          <FormControl>
+                            <Input inputMode="decimal" autoComplete="off" {...field} />
+                          </FormControl>
+                        </FormFieldCell>
+                      )}
+                    />
+                  </FormRow>
+                </FormGrid>
                 <p className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
                   Cada pieza consume <strong>{product.pieceWeightKg ?? '—'} kg</strong> y mide{' '}
                   <strong>{product.lengthMm ?? '—'} mm</strong>. Los dos son del SKU (D-139): se
