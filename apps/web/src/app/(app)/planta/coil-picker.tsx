@@ -8,6 +8,7 @@ import {
 } from '@ayr/shared';
 import { formatQty } from '@/lib/format';
 import { ColorSwatch } from '@/components/colors/color-swatch';
+import { FilmOpenNotice } from '@/components/film-open-notice';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -75,6 +76,11 @@ export function CoilPicker({
   const [reopening, setReopening] = useState<RoofingCoilOptionDto | null>(null);
   const [reopenReason, setReopenReason] = useState('');
   const [showClosed, setShowClosed] = useState(false);
+  /** D-328: el paso de confirmación de abrir el film de las bobinas selladas que se van a montar. */
+  const [filmStep, setFilmStep] = useState<{
+    coilIds: string[];
+    sealed: RoofingCoilOptionDto[];
+  } | null>(null);
 
   // El filtro y la selección no sobreviven al cierre: reabrir con una selección vieja montaría
   // rollos que ya nadie está mirando.
@@ -82,6 +88,7 @@ export function CoilPicker({
     if (open) {
       setFilter('');
       setSelected(new Set());
+      setFilmStep(null);
       setReopening(null);
       setReopenReason('');
       setShowClosed(false);
@@ -122,7 +129,14 @@ export function CoilPicker({
     );
   }
 
+  // D-328: montar una bobina sellada la abre. Antes de montar se pide la confirmación explícita
+  // —un paso aparte, como el de reabrir una terminada—; si ninguna está sellada, se monta directo.
   const mount = (ids: string[]) => {
+    const sealed = openOptions.filter((c) => ids.includes(c.coilId) && c.film === 'SEALED');
+    if (sealed.length > 0) {
+      setFilmStep({ coilIds: ids, sealed });
+      return;
+    }
     onMount(ids);
     setOpen(false);
   };
@@ -152,7 +166,42 @@ export function CoilPicker({
               Monta una con su botón, o elige varias y móntalas juntas.
             </DialogDescription>
           </DialogHeader>
-          {reopening !== null ? (
+          {filmStep !== null ? (
+            <div className="grid gap-3" data-testid="film-open-step">
+              <FilmOpenNotice
+                coils={filmStep.sealed.map((c) => ({
+                  code: c.code,
+                  status: 'OPEN' as const,
+                  film: c.film,
+                }))}
+              />
+              <p className="text-sm text-muted-foreground">
+                Abrir el film no mueve el kardex. Si después bajas la bobina de la orden sin haber
+                reportado planchas, vuelve a quedar sellada.
+              </p>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setFilmStep(null);
+                  }}
+                >
+                  Volver
+                </Button>
+                <Button
+                  disabled={pending}
+                  onClick={() => {
+                    onMount(filmStep.coilIds);
+                    setOpen(false);
+                  }}
+                >
+                  {filmStep.coilIds.length === 1
+                    ? 'Abrir y montar'
+                    : `Abrir y montar ${String(filmStep.coilIds.length)}`}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : reopening !== null ? (
             <ReopenStep
               coil={reopening}
               reason={reopenReason}
@@ -222,7 +271,12 @@ export function CoilPicker({
                           />
                         </TableCell>
                         <TableCell>
-                          <div className="font-mono font-medium">{c.code}</div>
+                          <div className="font-mono font-medium">
+                            {c.code}{' '}
+                            <Badge variant={c.film === 'SEALED' ? 'outline' : 'progress'}>
+                              {c.film === 'SEALED' ? 'Sellada' : 'Abierta'}
+                            </Badge>
+                          </div>
                           <div className="text-xs text-muted-foreground">
                             alcanza para {c.estimatedMeters} m
                           </div>
@@ -265,7 +319,7 @@ export function CoilPicker({
                       <TableRow>
                         <TableCell colSpan={8} className="text-center text-muted-foreground">
                           {openOptions.length === 0
-                            ? 'No hay bobinas libres de esta spec: mira las cerradas.'
+                            ? 'No hay bobinas libres de esta spec: mira las terminadas.'
                             : 'Ninguna bobina coincide con ese texto.'}
                         </TableCell>
                       </TableRow>
@@ -274,8 +328,9 @@ export function CoilPicker({
                 </Table>
               </div>
               {/*
-              D-193: las cerradas del mismo espesor y color. Se ven a pedido, separadas de las
-              libres, y su botón no monta: abre el paso que dice qué ajuste se va a revertir.
+              D-193: las terminadas (antes «cerradas», D-328) del mismo espesor y color. Se ven a
+              pedido, separadas de las libres, y su botón no monta: abre el paso que dice qué
+              ajuste se va a revertir.
             */}
               {closedOptions.length > 0 && (
                 <div className="grid gap-2">
@@ -287,14 +342,14 @@ export function CoilPicker({
                       setShowClosed((v) => !v);
                     }}
                   >
-                    {showClosed ? 'Ocultar' : 'Ver'} bobinas cerradas ({closedOptions.length})
+                    {showClosed ? 'Ocultar' : 'Ver'} bobinas terminadas ({closedOptions.length})
                   </Button>
                   {showClosed && (
                     <div className="max-h-60 overflow-auto rounded-lg border">
-                      <Table aria-label="Bobinas cerradas">
+                      <Table aria-label="Bobinas terminadas">
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Bobina cerrada</TableHead>
+                            <TableHead>Bobina terminada</TableHead>
                             <TableHead>Acabado (RAL)</TableHead>
                             <TableHead className="text-right">Peso inicial</TableHead>
                             <TableHead className="text-right">Ajuste del cierre</TableHead>
@@ -349,7 +404,7 @@ export function CoilPicker({
               )}
             </div>
           )}
-          {reopening === null && (
+          {reopening === null && filmStep === null && (
             <DialogFooter>
               <Button
                 variant="outline"
@@ -399,7 +454,7 @@ function FinishCell({ coil }: { coil: RoofingCoilOptionDto }) {
 }
 
 /**
- * D-193: el paso explícito antes de reabrir una bobina cerrada. Dice **qué** va a pasar en el
+ * D-193: el paso explícito antes de reabrir una bobina terminada. Dice **qué** va a pasar en el
  * kardex —el ajuste del cierre se revierte con un asiento compensatorio, el original no se toca—
  * y pide el motivo que la reversa exige. Sin este clic nada se mueve.
  */
@@ -427,21 +482,25 @@ function ReopenStep({
       >
         {adjustment === null ? (
           <>
-            <span className="font-mono font-medium">{coil.code}</span> está cerrada sin un ajuste de
-            cierre pendiente: reabrirla no mueve el kardex.
+            <span className="font-mono font-medium">{coil.code}</span> está terminada sin un ajuste
+            de cierre pendiente: reabrirla no mueve el kardex.
           </>
         ) : (
           <>
-            <span className="font-mono font-medium">{coil.code}</span> cerrada con ajuste de{' '}
+            <span className="font-mono font-medium">{coil.code}</span> terminada con ajuste de{' '}
             {formatQty(adjustment.qtyKg, 'kg')} (
             {adjustment.kind === 'SHORTAGE' ? 'faltante' : 'sobrante'}) — reabrirla revierte el
             ajuste: {adjustment.kind === 'SHORTAGE' ? 'vuelven al kardex' : 'salen del kardex'}{' '}
-            {formatQty(adjustment.qtyKg, 'kg')} con un asiento compensatorio. Al cerrarla de nuevo
+            {formatQty(adjustment.qtyKg, 'kg')} con un asiento compensatorio. Al terminarla de nuevo
             se calcula un ajuste nuevo con el saldo real.
           </>
         )}{' '}
         Queda montada en esta orden con {formatQty(coil.availableKg, 'kg')}.
       </div>
+      <FilmOpenNotice
+        coils={[{ code: coil.code, status: 'OPEN', film: coil.film }]}
+        className="rounded-lg bg-tone-warning p-3 text-sm text-tone-warning-foreground"
+      />
       <div className="grid gap-1.5">
         <Label htmlFor={`reabrir-${coil.coilId}`}>Motivo de la reapertura</Label>
         <Input

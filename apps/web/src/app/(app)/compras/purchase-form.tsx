@@ -12,7 +12,6 @@ import {
   BUSINESS_LINE_LABELS,
   BUSINESS_LINES,
   COIL_BUSINESS_LINES,
-  COIL_STATUS_LABELS,
   CURRENCIES,
   CURRENCY_LABELS,
   Decimal,
@@ -80,8 +79,6 @@ const itemSchema = z.object({
   finishId: z.string().optional(),
   widthMm: z.string().trim().optional(),
   thicknessMm: z.string().trim().optional(),
-  /** D-116: estado con el que nace la bobina, editable; CLOSED por defecto. */
-  coilStatus: z.enum(['OPEN', 'CLOSED']).optional(),
 });
 
 const baseFormSchema = z.object({
@@ -188,8 +185,6 @@ export function emptyItem(type: PurchaseType): PurchaseFormValues['items'][numbe
     widthMm: '',
     thicknessMm: '',
     productId: '',
-    // D-116: CERRADA por defecto, editable en el propio formulario.
-    coilStatus: type === PurchaseType.COIL ? 'CLOSED' : undefined,
   };
 }
 
@@ -909,30 +904,6 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                         </FormItem>
                       )}
                     />
-                    <FormField
-                      control={form.control}
-                      name={`items.${index}.coilStatus`}
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Estado al alta</FormLabel>
-                          <Select value={field.value ?? 'CLOSED'} onValueChange={field.onChange}>
-                            <FormControl>
-                              <SelectTrigger className="w-full">
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {(['CLOSED', 'OPEN'] as const).map((s) => (
-                                <SelectItem key={s} value={s}>
-                                  {COIL_STATUS_LABELS[s]}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
                   </>
                 )}
                 <FormField
@@ -1138,7 +1109,7 @@ function toApiBody(values: PurchaseFormValues): Record<string, unknown> {
       finishId: item.finishId?.trim() ? item.finishId : undefined,
       widthMm: item.widthMm?.trim() ? item.widthMm : undefined,
       thicknessMm: item.thicknessMm?.trim() ? item.thicknessMm : undefined,
-      coilStatus: isCoil ? (item.coilStatus ?? 'CLOSED') : undefined,
+      // D-328: la bobina comprada llega vigente y con el film puesto; el API la da de alta así.
     })),
   };
 }

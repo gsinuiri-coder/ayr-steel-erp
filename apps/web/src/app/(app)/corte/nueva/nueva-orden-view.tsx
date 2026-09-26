@@ -15,6 +15,7 @@ import {
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { FilmOpenNotice } from '@/components/film-open-notice';
 import { OperationDateField } from '@/components/operation-date-field';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatQty, isPositiveDecimal } from '@/lib/format';
@@ -267,6 +268,10 @@ export function NuevaOrdenCorteView() {
           }}
         />
       ))}
+
+      {/* D-328: enviar a corte abre las bobinas selladas; cancelar el envío sin recibir nada las
+          vuelve a sellar. */}
+      <FilmOpenNotice coils={drafts.map((d) => d.coil)} />
 
       <div className="flex flex-wrap items-center justify-end gap-3">
         <OperationDateField value={operationDate} onChange={setOperationDate} />

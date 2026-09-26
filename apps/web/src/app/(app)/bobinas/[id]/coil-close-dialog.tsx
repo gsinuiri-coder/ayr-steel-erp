@@ -22,8 +22,8 @@ import { OperationDateField } from '@/components/operation-date-field';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 
 /**
- * Cerrar una bobina con saldo (RF-19, **D-164**): el remanente se liquida como movimiento de
- * kardex en la misma transacción que el cierre.
+ * Terminar una bobina con saldo (RF-19, **D-164**; en pantalla «terminar», antes «cerrar», D-328):
+ * el remanente se liquida como movimiento de kardex en la misma transacción que el cierre.
  *
  * El diálogo existe para que la baja de inventario **no ocurra por defecto**. Antes de D-164
  * cerrar era un botón sin pregunta y el saldo teórico se quedaba en el valorizado para
@@ -104,12 +104,12 @@ export function CoilCloseDialog({
         },
       }),
     onSuccess: () => {
-      toast.success('Bobina cerrada');
+      toast.success('Bobina terminada');
       onOpenChange(false);
       onDone();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la bobina'),
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo terminar la bobina'),
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
     await close.mutateAsync(confirmBackdate);
@@ -119,11 +119,11 @@ export function CoilCloseDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Cerrar {coil.code}</DialogTitle>
+          <DialogTitle>Terminar {coil.code}</DialogTitle>
           <DialogDescription>
             El kardex tiene {formatQty(coil.availableKg, 'kg')} de saldo, valorizados en{' '}
-            {formatMoney(balance.times(avgCost).toFixed(4))}. Al cerrar, la diferencia contra lo que
-            quede de verdad se liquida como movimiento de kardex (D-164).
+            {formatMoney(balance.times(avgCost).toFixed(4))}. Al terminarla, la diferencia contra lo
+            que quede de verdad se liquida como movimiento de kardex (D-164).
           </DialogDescription>
         </DialogHeader>
 
@@ -175,7 +175,7 @@ export function CoilCloseDialog({
                 </p>
               ) : (
                 <p className="text-muted-foreground">
-                  No se liquida nada: la bobina se cierra conservando su saldo y deja de estar
+                  No se liquida nada: la bobina se termina conservando su saldo y deja de estar
                   disponible para producción y partido.
                 </p>
               )}
@@ -213,7 +213,7 @@ export function CoilCloseDialog({
               void backdate.attempt();
             }}
           >
-            {close.isPending ? 'Cerrando…' : 'Cerrar bobina'}
+            {close.isPending ? 'Terminando…' : 'Terminar bobina'}
           </Button>
         </DialogFooter>
       </DialogContent>

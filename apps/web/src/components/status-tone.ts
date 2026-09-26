@@ -1,4 +1,5 @@
 import type {
+  CoilFilmState,
   CoilSplitStatus,
   OrderStage,
   CoilStatus,
@@ -85,6 +86,15 @@ export const COIL_TONE: Record<CoilStatus, StatusTone> = {
   CANCELLED: 'outline',
   IN_THIRD_PARTY: 'progress',
 };
+
+/**
+ * D-328: una vigente se rotula por su film. Sellada es neutra (está guardada, sin tocar) y
+ * abierta está en curso (ya se usa); una terminada, anulada o en corte conserva su tono.
+ */
+export function coilTone(coil: { status: CoilStatus; film: CoilFilmState }): StatusTone {
+  if (coil.status === 'OPEN') return coil.film === 'SEALED' ? 'outline' : 'progress';
+  return COIL_TONE[coil.status];
+}
 
 export const PRODUCTION_ORDER_TONE: Record<ProductionOrderStatus, StatusTone> = {
   DRAFT: 'outline',
