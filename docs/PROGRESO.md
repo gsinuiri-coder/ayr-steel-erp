@@ -85,6 +85,73 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   riesgo para el pase cruzado: el orden por columna del servidor (`listOrderBy`, `sortRows`, el
   `page` que `useSort` borra) y el duplicado de cotización con líneas `BOB…` sin bobina (D-322).
 
+- **Correcciones 04, tanda B** (2026-09-26, rama `feat/correcciones-04b`, PR #35). D-328 y D-329.
+  **Dos pases, los dos por subagentes** —el segundo con `model: sonnet` y contexto limpio—, así que
+  **ninguno vale como pase independiente**: la autorrevisión (`P1` de fechas retroactivas y de compras
+  heredadas) y la del segundo modelo (`docs/revision/correcciones-04-segundo-modelo.md`: 0 P0, 4 P1 —B-1,
+  B-2, B-3 y A-1, los cuatro resueltos antes del deploy—, 11 P2, varios diferidos). El segundo modelo
+  también revisó el delta de la **tanda A**, que estaba en producción sin pase independiente. Motivo: esquema
+  de un solo agente, sin segundo revisor disponible. Piezas de riesgo para el pase cruzado: las reglas de
+  «volver a sellar» y el resello automático (`coil-film.ts`), el trigger `coil_film_events_sync` y la
+  clasificación del reporte mensual a fin de mes (`monthEndTable`).
+
+## Ventana de Correcciones 04, tanda B (2026-09-26, con migración)
+
+PRs #35 (merge `f334f93`) y el de cierre documental. SHA desplegado `200e54c`. Handoff:
+`docs/handoff/correcciones-04b.md`. UAT: `docs/uat/correcciones-04b.md`.
+
+- **CI del PR #35 sobre la cabeza `200e54c`:** lint/typecheck/unit, **E2E completo del runner**, smoke con
+  Neon `ci`, análisis estático y **SonarCloud en SUCCESS**. Dos rojos antes: el E2E (cuatro specs propios
+  ajustados a los renombres, un flaky de la tanda A) y **Sonar, «C Reliability Rating on New Code»**
+  (`reduce` sin valor inicial en `classifyBackfill`, S6959, corregido con su unitario).
+- **Respaldo Neon:** rama `respaldo-pre-corr04b-20260926` (`br-shiny-moon-aefzj0gz`), desde `production`
+  con `neonctl` vía `run` quiet (`--no-secrets --output json`); verificada en el listado.
+- **Migraciones:** `migrations-status` → **2 pendientes** (`20260926120000_d328_film_de_bobina`,
+  `20260926130000_d328_film_sync_por_fecha`). `migrate diff` = el **drift conocido** (5 defaults de
+  `operation_date`, 5 FK recreadas, 2 índices, un renombre) **más** la tabla, los dos enums, los índices, la
+  FK y la columna del film; nada más. `pnpm db:prod` (sin seed): aplicadas las dos. Antes se validaron sobre
+  una base descartable con las 76 migraciones.
+- **Backfill del film** (`pnpm backfill:film --branch production`): dry-run **92 bobinas** en categorías
+  excluyentes que suman el total (43 ABRIR por salida viva · 41 vigentes sin uso, quedan selladas · 2
+  anuladas · 6 terminadas cuya única salida fue una venta); el primer desglose que escribí sumaba 94 por un
+  error de redacción (41 + 2 anuladas son los 43 de «NO_USE»), no del clasificador. Con OK del dueño:
+  `--execute --confirm-production` → **43 eventos `OPENED` (fuente `BACKFILL`)**, fechados en la primera
+  salida (15, 16, 18 y 22 de septiembre); segunda pasada en dry-run: **0 por abrir**. Leído por API tras el
+  execute: 43 abiertas, 41 selladas, 6 terminadas y 2 anuladas (`XSY-ALZ-ROJO-3020-0.38-4544-9` e
+  `IMPO-ALZ-ROJO-3020-0.28-4240-1`, films sellados).
+- **M7:** `DATABASE_URL` versión 7 (versión 6 + `connection_limit=10`, `pool_timeout=20`,
+  `connect_timeout=15`), con OK del dueño y verificación previa y posterior por hash; la 6 sigue habilitada.
+  Ver D-329.
+- **API (Cloud Run):** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+  con **secretos fijados por versión** (primera vez, D-329). Primero `00057-q49` (git-sha `40cdf44`) —**primera
+  revisión con secretos fijados**—; el gate de Sonar obligó a un segundo deploy: **`ayr-steel-erp-api-00058-b67`**
+  con el 100 % del tráfico, label `git-sha=200e54c`, `/health` 200, los **14** nombres de variables sin
+  cambios y `DATABASE_URL:7`, `DIRECT_URL:6`, `JWT_SECRET:6` y los seis restantes en la 5. Revisión de
+  rollback: `00057-q49`.
+- **Smoke contra la web vieja (API nueva):** `pnpm smoke:prod` en verde, dos veces.
+- **Merge** del PR #35 con `gh pr merge 35 --merge` (`f334f93`), con `headRefOid` `200e54c` y todos los
+  checks en SUCCESS; Vercel en `success`.
+- **Smoke contra `v2.mareliac.pe`:** `pnpm smoke:prod --base-url https://v2.mareliac.pe` en verde.
+- **Alineación de runtime:** `git diff --quiet 200e54c origin/main -- apps packages Dockerfile
+.gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` → **exit 0**.
+- **Verificación de solo lectura (admin efímero borrado):** 92 bobinas = 43 abiertas + 41 selladas + 6
+  terminadas + 2 anuladas; **43 eventos de film**, todos `OPENED`/`BACKFILL`. **Reporte de septiembre:**
+  Selladas 43 bobinas (161 637.000 kg, S/ 436 966.78) + Abiertas 49 (18 047.418 kg, S/ 50 617.70) = **92
+  bobinas, 179 684.418 kg, S/ 487 584.47**; coincide con la suma del disponible de las 92 bobinas y con el
+  inventario valorizado (S/ 487 584.4733; 0.0001 de redondeo). **Reporte de agosto:** Selladas 58
+  (244 831.000 kg) + Abiertas 6 (las terminadas por venta, 0 kg) = 64 bobinas, 244 831.000 kg; los
+  subtotales suman el total en los dos meses.
+- **Hallazgo previo a esta entrega:** el saldo final de agosto (244 831 kg) no coincide con el inicial de
+  septiembre (291 636 kg); la diferencia, **46 805 kg exactos, son las 15 bobinas `SALDO-…` de la carga de
+  V-4**, cuya fecha de alta es de septiembre pero cuyos movimientos D-285 fechó el 2026-08-01: el reporte
+  las incluye en el mes de su fecha de alta y no en el de su primer movimiento. No lo causó esta entrega
+  (el filtro no se tocó). Se corrige en **D-340** (rama `fix/reporte-bobinas-mes`).
+- **Rollback (no usado):** redesplegar con `SECRET_VERSION_<NOMBRE>=<n>` y/o llevar el tráfico a
+  `00057-q49`; volver a `00056` deja activa la versión 7 de `DATABASE_URL` (00056 monta `:latest`); las
+  migraciones son aditivas y no se revierten.
+- **Verificación local:** los 5 casos de `film-bobina-d328.spec.ts` y los specs ajustados pasan en local;
+  la suite E2E completa **no** se corrió en la máquina de desarrollo (se apoyó en el runner de CI).
+
 ## Correcciones 03 del cliente — UI y listas (2026-09-25)
 
 Handoff: `docs/handoff/correcciones-03.md`. UAT: `docs/uat/correcciones-03.md`. Cliente:
