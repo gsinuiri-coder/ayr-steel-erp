@@ -15,6 +15,7 @@ import {
   type InventoryMovement,
 } from '@prisma/client';
 import {
+  CoilFilmSource,
   coilTypeKey,
   fromDateOnly,
   Role,
@@ -42,6 +43,7 @@ import { assertRawMaterialInvariant } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
+import { openFilmIfSealed } from './coil-film';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
 import { CoilsService } from './coils.service';
 
@@ -99,6 +101,12 @@ export class CoilOperationsService {
         // acá lo detectaría; partirlo mientras la orden lo tiene montado le sacaría el
         // material por debajo.
         await assertStripsNotAssigned(tx, [coil.id], 'partirlo');
+        // D-328: partir una bobina sellada la abre (la pantalla lo confirma antes).
+        await openFilmIfSealed(tx, coil, {
+          source: CoilFilmSource.SPLIT,
+          operationDate,
+          actorId: actor.id,
+        });
 
         const balance = await tx.inventoryBalance.findUnique({
           where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
@@ -391,6 +399,13 @@ export class CoilOperationsService {
       // D-060: mermar un fleje montado en una OP le quitaría a la orden el material que
       // sus piezas todavía no consumieron, y la merma del cierre saldría de menos.
       await assertStripsNotAssigned(tx, [coil.id], 'registrarle merma');
+      // D-328: mermar una bobina sellada la abre (la pantalla lo confirma antes). Va antes del
+      // movimiento: «salió material desde la apertura» compara instantes de grabación.
+      await openFilmIfSealed(tx, coil, {
+        source: CoilFilmSource.SCRAP,
+        operationDate,
+        actorId: actor.id,
+      });
 
       const movement = await this.inventory.record(tx, {
         businessLineId: coil.businessLineId,
@@ -504,14 +519,15 @@ export class CoilOperationsService {
           await assertNotReserved(
             tx,
             [{ itemType: InventoryItemType.COIL, itemId: coil.id }],
-            'cerrarla',
+            'terminarla',
           );
         }
+        // D-328: «cerrada» se llama «terminada»; «abierta» es el film, no este estado.
         if (coil.status === input.status) {
           throw new BadRequestException(
             input.status === CoilStatus.OPEN
-              ? 'La bobina ya está abierta'
-              : 'La bobina ya está cerrada',
+              ? 'La bobina no está terminada: no hay nada que reabrir'
+              : 'La bobina ya está terminada',
           );
         }
 
@@ -577,7 +593,7 @@ export class CoilOperationsService {
   ): Promise<CloseAdjustmentSummary | null> {
     const coil = await this.coils.lockCoil(tx, coilId);
     if (coil.status !== CoilStatus.CLOSED) {
-      throw new BadRequestException(`${coil.code} no está cerrada: no hay nada que reabrir`);
+      throw new BadRequestException(`${coil.code} no está terminada: no hay nada que reabrir`);
     }
     await assertStripsNotAssigned(tx, [coil.id], 'reabrirla');
     const reversed = await this.reverseCloseAdjustment(
@@ -645,7 +661,7 @@ export class CoilOperationsService {
       if (balanceKg.gt(0)) {
         throw new BadRequestException(
           `La bobina tiene ${balanceKg.toFixed(3)} kg de saldo: indica cuántos kilos quedan de ` +
-            'verdad en el rollo para liquidar la diferencia al cerrarla (D-164).',
+            'verdad en el rollo para liquidar la diferencia al terminarla (D-164).',
         );
       }
       return null;
@@ -692,7 +708,7 @@ export class CoilOperationsService {
       }
     } else if (!input.reason) {
       throw new BadRequestException(
-        `Cerrar liquida ${plan.qtyKg.toFixed(3)} kg de remanente (S/ ` +
+        `Terminar liquida ${plan.qtyKg.toFixed(3)} kg de remanente (S/ ` +
           `${plan.totalCostPen.toFixed(2)}) como merma: explica el motivo.`,
       );
     }
@@ -780,7 +796,7 @@ export class CoilOperationsService {
 
     if (!input.reason) {
       throw new BadRequestException(
-        `Al cerrarla se liquidaron ${adjustment.qty.toFixed(3)} kg: reabrirla los devuelve al ` +
+        `Al terminarla se liquidaron ${adjustment.qty.toFixed(3)} kg: reabrirla los devuelve al ` +
           'kardex con un movimiento inverso, así que explica el motivo.',
       );
     }
@@ -827,10 +843,14 @@ export class CoilOperationsService {
           throw new BadRequestException('La bobina está anulada: no se puede editar');
         }
         if (input.widthMm !== undefined && coil.status !== CoilStatus.OPEN) {
-          throw new BadRequestException('El ancho solo se edita con la bobina abierta');
+          throw new BadRequestException(
+            'El ancho solo se edita con la bobina vigente (no terminada)',
+          );
         }
         if (input.finishId !== undefined && coil.status !== CoilStatus.OPEN) {
-          throw new BadRequestException('El acabado solo se edita con la bobina abierta');
+          throw new BadRequestException(
+            'El acabado solo se edita con la bobina vigente (no terminada)',
+          );
         }
         // D-060: recostear (D-045) o reanchar un fleje montado en una OP cambiaría, a mitad
         // de la corrida, el costo con el que ya entraron piezas y el ancho contra el que se
@@ -1083,14 +1103,14 @@ export class CoilOperationsService {
 }
 
 /**
- * Mensaje para una bobina que no está `OPEN`, distinguiendo por qué: cerrada (RF-19),
- * anulada (RF-21) o en poder de un tercero de corte (D-050, Fase 3). Antes de D-050 solo
- * existían las dos primeras razones; sin distinguir la tercera, una bobina enviada a
- * corte —que no tiene nada de anulado— se reportaba como "anulada".
+ * Mensaje para una bobina que no está `OPEN`, distinguiendo por qué: terminada (RF-19; antes
+ * «cerrada», D-328), anulada (RF-21) o en poder de un tercero de corte (D-050, Fase 3). Antes
+ * de D-050 solo existían las dos primeras razones; sin distinguir la tercera, una bobina enviada
+ * a corte —que no tiene nada de anulado— se reportaba como "anulada".
  */
 function notOpenMessage(status: CoilStatus): string {
   if (status === CoilStatus.CLOSED)
-    return 'La bobina está cerrada: ábrela antes de operarla (RF-19)';
+    return 'La bobina está terminada: reábrela antes de operarla (RF-19)';
   if (status === CoilStatus.IN_THIRD_PARTY) {
     return 'La bobina está enviada a corte tercerizado: recíbela o cancela la orden antes de operarla';
   }

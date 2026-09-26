@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  coilFilmActionSchema,
   coilQuerySchema,
   createCoilScrapSchema,
   createCoilSplitSchema,
@@ -21,6 +22,8 @@ import {
   updateCoilSchema,
   type CoilConsumptionDto,
   type CoilDto,
+  type CoilFilmActionInput,
+  type CoilFilmEventDto,
   type CoilQuery,
   type CoilSplitDto,
   type CreateCoilScrapInput,
@@ -34,6 +37,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { CoilFilmService } from './coil-film.service';
 import { CoilOperationsService } from './coil-operations.service';
 import { CoilsService } from './coils.service';
 
@@ -53,6 +57,7 @@ export class CoilsController {
   constructor(
     private readonly coils: CoilsService,
     private readonly operations: CoilOperationsService,
+    private readonly film: CoilFilmService,
   ) {}
 
   @Get()
@@ -151,7 +156,33 @@ export class CoilsController {
     return this.operations.registerScrap(actor, id, body);
   }
 
-  /** Abrir o cerrar la bobina (RF-19). */
+  /** D-328: historial del film de la bobina. */
+  @Get(':id/film-events')
+  findFilmEvents(@Param('id', ParseUUIDPipe) id: string): Promise<CoilFilmEventDto[]> {
+    return this.coils.findFilmEvents(id);
+  }
+
+  /** D-328: «Abrir bobina» — quitarle el film para empezar a usarla. */
+  @Post(':id/film/open')
+  openFilm(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(coilFilmActionSchema)) body: CoilFilmActionInput,
+  ): Promise<CoilDto> {
+    return this.film.open(actor, id, body);
+  }
+
+  /** D-328: «Volver a sellar» — la bobina se abrió por error y no se usó. */
+  @Post(':id/film/reseal')
+  resealFilm(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(coilFilmActionSchema)) body: CoilFilmActionInput,
+  ): Promise<CoilDto> {
+    return this.film.reseal(actor, id, body);
+  }
+
+  /** Terminar o reabrir la bobina (RF-19; en pantalla «terminar», D-328). */
   @Post(':id/status')
   setStatus(
     @CurrentUser() actor: RequestUser,

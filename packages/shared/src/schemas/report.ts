@@ -45,23 +45,46 @@ export const coilMonthReportRowSchema = z.object({
   closingKg: z.string(),
   /** Costo por kg del documento, sin IGV (D-038). `null` para quien no ve costos. */
   unitCostPerKg: z.string().nullable(),
+  /**
+   * D-328: valor del saldo de fin de mes, en soles, **del kardex** (entradas − salidas ± ajustes
+   * de valor con `operationDate` hasta el último día del mes): el mismo número que daría el
+   * kardex de la bobina a esa fecha. `null` para quien no ve costos.
+   */
+  closingValuePen: z.string().nullable(),
   status: z.enum(COIL_STATUSES),
   /** D-124: día de negocio en que la bobina entró. */
   operationDate: z.string(),
 });
 export type CoilMonthReportRowDto = z.infer<typeof coilMonthReportRowSchema>;
 
+/** Subtotales de una tabla del reporte (kg y, si el rol ve costos, valor del cierre). */
+export const coilMonthReportTotalsSchema = z.object({
+  openingKg: z.string(),
+  weightKg: z.string(),
+  closingKg: z.string(),
+  closingValuePen: z.string().nullable(),
+});
+export type CoilMonthReportTotalsDto = z.infer<typeof coilMonthReportTotalsSchema>;
+
+export const coilMonthReportSectionSchema = z.object({
+  rows: z.array(coilMonthReportRowSchema),
+  totals: coilMonthReportTotalsSchema,
+});
+export type CoilMonthReportSectionDto = z.infer<typeof coilMonthReportSectionSchema>;
+
+/**
+ * D-328: el reporte mensual va en **dos tablas** según el film de cada bobina **al último día
+ * del mes**: «Selladas» (nunca se abrió, o se volvió a sellar) y «Abiertas» (se abrió; incluye
+ * las terminadas con saldo final 0). El total general es la suma de las dos.
+ */
 export const coilMonthReportSchema = z.object({
   month: monthSchema,
   /** Primer y último día del mes, `YYYY-MM-DD`, para rotular el corte sin recalcularlo. */
   from: z.string(),
   to: z.string(),
-  rows: z.array(coilMonthReportRowSchema),
-  totals: z.object({
-    openingKg: z.string(),
-    weightKg: z.string(),
-    closingKg: z.string(),
-  }),
+  sealed: coilMonthReportSectionSchema,
+  opened: coilMonthReportSectionSchema,
+  totals: coilMonthReportTotalsSchema,
 });
 export type CoilMonthReportDto = z.infer<typeof coilMonthReportSchema>;
 

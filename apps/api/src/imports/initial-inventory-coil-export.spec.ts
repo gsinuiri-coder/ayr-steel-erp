@@ -37,7 +37,7 @@ describe('carga inicial desde el export de bobinas', () => {
 
   it('omite cerradas y sin kilos; carga las abiertas aunque estén consumidas en parte', () => {
     expect(coilExportSkipReason(exportRow)).toBeNull();
-    expect(coilExportSkipReason({ ...exportRow, ESTADO: 'CLOSED' })).toBe('bobina cerrada');
+    expect(coilExportSkipReason({ ...exportRow, ESTADO: 'CLOSED' })).toBe('bobina terminada');
     expect(coilExportSkipReason({ ...exportRow, 'KILOS ACTUALES': '0.000' })).toBe(
       'sin kilos actuales',
     );

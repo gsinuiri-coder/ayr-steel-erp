@@ -57,7 +57,9 @@ export function coilOrderBy(
   return listOrderBy<NonNullable<CoilQuery['sort']>, Prisma.CoilOrderByWithRelationInput>(
     query,
     { code: (d) => ({ code: d }), status: (d) => ({ status: d }) },
-    [{ operationDate: 'desc' }, { createdAt: 'desc' }],
+    // Revisión independiente (A-2): el `id` al final hace único el desempate, así una fila no se
+    // repite ni se pierde entre páginas cuando muchas empatan en la columna.
+    [{ operationDate: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
   );
 }
 
@@ -73,7 +75,7 @@ export function customerOrderBy(
       // Activos primero en ascendente: `true` va después de `false` al ordenar de menor a mayor.
       status: (d) => ({ isActive: d === 'asc' ? 'desc' : 'asc' }),
     },
-    [{ isActive: 'desc' }, { name: 'asc' }],
+    [{ isActive: 'desc' }, { name: 'asc' }, { id: 'asc' }],
   );
 }
 
@@ -91,7 +93,7 @@ export function purchaseOrderBy(
       total: (d) => ({ totalPen: d }),
       status: (d) => ({ status: d }),
     },
-    [{ issueDate: 'desc' }, { createdAt: 'desc' }],
+    [{ issueDate: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
   );
 }
 
@@ -112,7 +114,7 @@ export function fiscalDocumentOrderBy(
       total: (d) => ({ totalPen: d }),
       status: (d) => ({ status: d }),
     },
-    [{ issueDate: 'desc' }, { createdAt: 'desc' }],
+    [{ issueDate: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
   );
 }
 

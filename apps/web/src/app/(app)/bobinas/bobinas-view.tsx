@@ -5,15 +5,18 @@ import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
   BUSINESS_LINES,
+  COIL_FILM_STATES,
   COIL_STATUS_LABELS,
   COIL_STATUSES,
+  coilStateLabel,
   Role,
   type BusinessLine,
   type CoilDto,
+  type CoilFilmState,
   type FinishDto,
   type PaginatedResult,
 } from '@ayr/shared';
-import { COIL_TONE } from '@/components/status-tone';
+import { coilTone } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import {
@@ -54,16 +57,18 @@ const ALL = 'ALL';
 
 /**
  * Pestañas de la vista (Fase 7e, D-121): el default es lo que planta usa a diario —
- * disponible y en planta—; lo demás (en corte tercerizado, agotadas) queda a un clic
+ * disponible y en planta—; lo demás (en corte tercerizado, terminadas) queda a un clic
  * pero no compite por espacio. Nada se borra: "Todas" trae la lista completa de antes,
  * con el filtro de Estado fino para cuando alguien necesita ver una anulada puntual.
+ *
+ * D-328: «Agotadas» pasó a llamarse «Terminadas» (solo el rótulo: sigue siendo saldo en cero).
  */
-const VIEW_TABS = ['disponibles', 'en-corte', 'agotadas', 'todas'] as const;
+const VIEW_TABS = ['disponibles', 'en-corte', 'terminadas', 'todas'] as const;
 type ViewTab = (typeof VIEW_TABS)[number];
 const VIEW_TAB_LABELS: Record<ViewTab, string> = {
   disponibles: 'Disponibles',
   'en-corte': 'En corte',
-  agotadas: 'Agotadas',
+  terminadas: 'Terminadas',
   todas: 'Todas',
 };
 
@@ -79,6 +84,8 @@ export function BobinasView() {
     // Solo se usa en la pestaña "Todas": las otras tres fijan el estado (o su ausencia)
     // desde la pestaña misma.
     status: '',
+    // D-328: solo las selladas o solo las abiertas (las vigentes se rotulan por su film).
+    film: '',
     search: '',
   });
   const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
@@ -88,6 +95,9 @@ export function BobinasView() {
   const businessLine = url.line as BusinessLine | '';
   const finishId = url.finish;
   const status = url.status;
+  const film = (COIL_FILM_STATES as readonly string[]).includes(url.film)
+    ? (url.film as CoilFilmState)
+    : '';
   const [thicknessText, setThicknessText, thicknessMm] = useUrlSearchInput(url.thickness, (v) => {
     setUrl({ thickness: v });
   });
@@ -111,12 +121,13 @@ export function BobinasView() {
     params.set('availability', 'available');
   } else if (tab === 'en-corte') {
     params.set('status', 'IN_THIRD_PARTY');
-  } else if (tab === 'agotadas') {
+  } else if (tab === 'terminadas') {
     params.set('statusNe', 'IN_THIRD_PARTY');
     params.set('availability', 'depleted');
   } else if (status) {
     params.set('status', status);
   }
+  if (film && (tab === 'disponibles' || tab === 'todas')) params.set('film', film);
   const [sort, toggleSort] = useSort<'code' | 'availableKg' | 'status'>();
   if (sort.key === 'code' || sort.key === 'status') {
     params.set('sort', sort.key);
@@ -234,6 +245,27 @@ export function BobinasView() {
             setThicknessText(e.target.value);
           }}
         />
+
+        {(tab === 'disponibles' || tab === 'todas') && (
+          <Select
+            value={film || ALL}
+            onValueChange={(v) => {
+              setUrl({ film: v === ALL ? '' : v });
+            }}
+          >
+            <SelectTrigger className="w-40" aria-label="Film de protección">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Selladas y abiertas</SelectItem>
+              {COIL_FILM_STATES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s === 'SEALED' ? 'Solo selladas' : 'Solo abiertas'}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         {tab === 'todas' && (
           <StatusFilter
@@ -356,7 +388,7 @@ export function BobinasView() {
                   {formatMoneyOrDash(c.unitCostPerKg, c.currency ?? 'PEN', 4)}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={COIL_TONE[c.status]}>{COIL_STATUS_LABELS[c.status]}</Badge>
+                  <Badge variant={coilTone(c)}>{coilStateLabel(c)}</Badge>
                 </TableCell>
               </TableRow>
             ))}

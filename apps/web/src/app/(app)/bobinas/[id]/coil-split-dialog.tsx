@@ -25,6 +25,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { FilmOpenNotice } from '@/components/film-open-notice';
 import { OperationDateField } from '@/components/operation-date-field';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 
@@ -195,6 +196,8 @@ export function CoilSplitDialog({
             </div>
           )}
         </div>
+
+        <FilmOpenNotice coils={[coil]} />
 
         <OperationDateField value={operationDate} onChange={setOperationDate} />
 

@@ -11,6 +11,7 @@ import {
   QuotationStatus,
   SalesOrderStatus,
   TemporaryReservationStatus,
+  CoilStatus,
   InventoryItemType,
 } from '@prisma/client';
 import {
@@ -56,6 +57,7 @@ import { roofingToleranceMm } from '../production/roofing-coil-match';
 import { findPriceChanges, recordPriceChanges } from './price-changes';
 import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
+import { reservedByItem } from './reserved-ledger';
 import { SalesOrdersService } from './sales-orders.service';
 import { coilTieReasons, findCoilTies, lineCoilPool } from './coil-sale-product';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
@@ -99,6 +101,9 @@ type QuotationRow = Prisma.QuotationGetPayload<{ include: typeof quotationInclud
  *
  * Todo en soles (D-064): no hay moneda ni tipo de cambio en el ciclo comercial.
  */
+/** Motivo con el que `duplicate` degrada una bobina entera que ya no tiene saldo para vender. */
+const NO_BALANCE_REASON = 'sin saldo';
+
 @Injectable()
 export class QuotationsService {
   private readonly logger = new Logger(QuotationsService.name);
@@ -511,6 +516,36 @@ export class QuotationsService {
    * Sin chequeo de dueño (RF-66 es sobre **editar/confirmar/anular** la propia; duplicar es
    * "usa esto de plantilla", abierto al mismo equipo que ya lee cualquier cotización).
    */
+  /**
+   * Las bobinas enteras que hoy no se podrían vender: no existen, no están vigentes ni terminadas
+   * o su saldo menos lo reservado es cero. Es el mismo criterio que `resolveSalesLines`, leído
+   * antes para poder degradar la línea en vez de rechazar todo el duplicado.
+   */
+  private async unsellableWholeCoils(coilIds: readonly string[]): Promise<string[]> {
+    if (coilIds.length === 0) return [];
+    const [coils, balances, reserved] = await Promise.all([
+      this.prisma.coil.findMany({
+        where: { id: { in: [...coilIds] } },
+        select: { id: true, status: true },
+      }),
+      this.prisma.inventoryBalance.findMany({
+        where: { itemType: InventoryItemType.COIL, itemId: { in: [...coilIds] } },
+        select: { itemId: true, qty: true },
+      }),
+      reservedByItem(this.prisma, InventoryItemType.COIL, [...coilIds]),
+    ]);
+    const statusById = new Map(coils.map((c) => [c.id, c.status]));
+    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+    return coilIds.filter((coilId) => {
+      const status = statusById.get(coilId);
+      if (status !== CoilStatus.OPEN && status !== CoilStatus.CLOSED) return true;
+      const available = (qtyById.get(coilId) ?? toDecimal('0')).minus(
+        reserved.get(coilId) ?? toDecimal('0'),
+      );
+      return available.lte(0);
+    });
+  }
+
   async duplicate(actor: RequestUser, id: string): Promise<QuotationDuplicateDto> {
     const source = await this.prisma.quotation.findUnique({
       where: { id },
@@ -549,6 +584,15 @@ export class QuotationsService {
       wholeCoilIds.length === 0
         ? new Map<string, string>()
         : coilTieReasons(await findCoilTies(this.prisma, wholeCoilIds), actor);
+    // Revisión independiente (A-1): duplicar una cotización **confirmada** (o cuya bobina ya se
+    // despachó, se montó o se anuló) daba un 400 «no tiene saldo disponible» y no duplicaba nada.
+    // La bobina que `resolveSalesLines` no podría vender por saldo o estado se degrada igual que la
+    // atada: la línea viaja como producto `BOB…` sin bobina y el aviso dice por qué.
+    for (const coilId of await this.unsellableWholeCoils(
+      wholeCoilIds.filter((coilId) => !tieReasons.has(coilId)),
+    )) {
+      tieReasons.set(coilId, NO_BALANCE_REASON);
+    }
     const coilCodes = new Map(
       (tieReasons.size === 0
         ? []
@@ -584,8 +628,10 @@ export class QuotationsService {
       if (tied !== undefined) {
         unassignedCoilProducts.add(i.productId);
         warnings.push(
-          `Línea ${String(i.lineNumber)}: la bobina ${coilCodes.get(i.reserveItemId) ?? ''} sigue ${
-            tied === 'no disponible' ? 'tomada por otro documento' : tied
+          `Línea ${String(i.lineNumber)}: la bobina ${coilCodes.get(i.reserveItemId) ?? ''} ${
+            tied === NO_BALANCE_REASON
+              ? 'ya no tiene saldo para vender (reservada, despachada o fuera de servicio)'
+              : `sigue ${tied === 'no disponible' ? 'tomada por otro documento' : tied}`
           }; elegí otra con «Bobina completa (venta directa)».`,
         );
         return {

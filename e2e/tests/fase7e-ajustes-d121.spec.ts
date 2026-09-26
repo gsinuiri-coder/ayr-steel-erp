@@ -5,7 +5,7 @@ import { deactivateTrail, purgeProductionOrder, setupScenario } from '../helpers
 /**
  * Verificación puntual de D-121 (ajustes de alcance pedidos por el dueño sobre Fase 7e):
  *
- * a) `/bobinas` con pestañas (Disponibles/En corte/Agotadas/Todas) que mandan distintos
+ * a) `/bobinas` con pestañas (Disponibles/En corte/Terminadas/Todas) que mandan distintos
  *    query params al API, y el `<select>` de Estado que solo vive en "Todas".
  * b) el stat "Piezas teóricas" (derivado, sin cambio de backend) en el espacio de producción
  *    y en el detalle de una OP de drywall.
@@ -71,7 +71,8 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
     const agotadasRes = page.waitForResponse(
       (r) => r.url().includes('/api/coils?') && r.url().includes('availability=depleted'),
     );
-    await page.getByRole('tab', { name: 'Agotadas' }).click();
+    // D-328: «Agotadas» pasó a llamarse «Terminadas»; los parámetros no cambian.
+    await page.getByRole('tab', { name: 'Terminadas' }).click();
     const agotadas = await agotadasRes;
     const agotadasParams = new URL(agotadas.url()).searchParams;
     expect(agotadasParams.get('statusNe')).toBe('IN_THIRD_PARTY');

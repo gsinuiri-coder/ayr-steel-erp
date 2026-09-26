@@ -1112,6 +1112,14 @@ model Coil {
   externalCode       String?                      @map("external_code") @db.VarChar(40)
   /// Observaciones editables mientras la bobina está abierta (RF-20).
   notes              String?                      @db.VarChar(500)
+  /// D-328: film de protección. `true` = sellada (default: la bobina nueva llega con film).
+  /// **No es una fuente**: la mantiene el trigger `coil_film_events_sync` en la misma
+  /// sentencia que inserta el evento (`OPENED` → false, `RESEALED` → true). Existe para poder
+  /// filtrar la lista por film sin una subconsulta «último evento» por fila; el reporte
+  /// mensual, que sí necesita el estado a una fecha pasada, lee los eventos.
+  filmSealed         Boolean                      @default(true) @map("film_sealed")
+  /// D-328: historial append-only del film de esta bobina.
+  filmEvents         CoilFilmEvent[]
   createdById        String                       @map("created_by_id") @db.Uuid
   /// D-124: día de negocio en que la bobina entró (Lima). `createdAt` queda como el
   /// instante de grabación, para auditoría.
@@ -1132,6 +1140,49 @@ model Coil {
   /// y espesor. El rango de tolerancia lo resuelve el planner sobre `thickness_mm`.
   @@index([businessLineId, status, colorId, thicknessMm])
   @@map("coils")
+}
+
+/// D-328: evento del film de protección de una bobina. **Append-only** (trigger
+/// `coil_film_events_immutable`): abrir y volver a sellar son hechos fechados, no un campo que
+/// se sobrescribe. El estado del film es el del último evento (`operationDate`, `at`, `id`).
+/// Una bobina sin eventos está sellada. No toca el kardex ni `coils.status`.
+model CoilFilmEvent {
+  id            String              @id @default(uuid()) @db.Uuid
+  coilId        String              @map("coil_id") @db.Uuid
+  coil          Coil                @relation(fields: [coilId], references: [id])
+  type          CoilFilmEventType
+  source        CoilFilmSource
+  /// D-124: día de negocio (Lima) del hecho. Es el que corta el reporte mensual.
+  operationDate DateTime            @map("operation_date") @db.Date
+  reason        String?             @db.VarChar(240)
+  /// Qué causó el evento, para poder deshacerlo solo cuando corresponde: el id del consumo
+  /// de OP (`MOUNT`) o de la bobina de la orden de corte (`CUTTING_SEND`).
+  refId         String?             @map("ref_id") @db.VarChar(80)
+  actorId       String?             @map("actor_id") @db.Uuid
+  at            DateTime            @default(now()) @db.Timestamptz(3)
+
+  @@index([coilId, operationDate, at])
+  @@index([operationDate])
+  @@map("coil_film_events")
+}
+
+/// D-328: el film se abre o se vuelve a sellar.
+enum CoilFilmEventType {
+  OPENED
+  RESEALED
+}
+
+/// D-328: qué causó el evento de film.
+enum CoilFilmSource {
+  MANUAL
+  MOUNT
+  MOUNT_UNDO
+  SCRAP
+  SPLIT
+  CUTTING_SEND
+  CUTTING_UNDO
+  BIRTH
+  BACKFILL
 }
 
 /// Partido de bobina (RF-15). Agrupa la salida de la madre y las entradas de las hijas

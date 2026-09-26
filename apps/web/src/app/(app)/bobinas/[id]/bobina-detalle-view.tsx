@@ -6,10 +6,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
+  COIL_FILM_EVENT_TYPE_LABELS,
+  COIL_FILM_SOURCE_LABELS,
   COIL_SPLIT_STATUS_LABELS,
+  coilStateLabel,
   INVENTORY_MOVEMENT_TYPE_LABELS,
   INVENTORY_REF_TYPE_LABELS,
-  COIL_STATUS_LABELS,
   CURRENCY_LABELS,
   Decimal,
   PRODUCTION_ORDER_STATUS_LABELS,
@@ -17,11 +19,12 @@ import {
   Role,
   type CoilConsumptionDto,
   type CoilDto,
+  type CoilFilmEventDto,
   type CoilSplitDto,
   type InventoryMovementDto,
   type PaginatedResult,
 } from '@ayr/shared';
-import { COIL_SPLIT_TONE, COIL_TONE } from '@/components/status-tone';
+import { COIL_SPLIT_TONE, coilTone } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
 import {
   formatMoneyOrDash,
@@ -50,6 +53,7 @@ import {
 } from '@/components/ui/table';
 import { CoilCloseDialog } from './coil-close-dialog';
 import { CoilEditDialog } from './coil-edit-dialog';
+import { CoilFilmDialog } from './coil-film-dialog';
 import { CoilScrapDialog } from './coil-scrap-dialog';
 import { CoilSplitDialog } from './coil-split-dialog';
 import { cn, LINK_CLASSNAME } from '@/lib/utils';
@@ -75,10 +79,17 @@ export function BobinaDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
 
-  const [dialog, setDialog] = useState<'split' | 'scrap' | 'edit' | 'close' | null>(null);
+  const [dialog, setDialog] = useState<
+    'split' | 'scrap' | 'edit' | 'close' | 'film-open' | 'film-reseal' | null
+  >(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
 
   const coil = useQuery({ queryKey: ['coil', id], queryFn: () => api<CoilDto>(`/coils/${id}`) });
+  // D-328: historial del film (abrir / volver a sellar), append-only.
+  const filmEvents = useQuery({
+    queryKey: ['coil', id, 'film-events'],
+    queryFn: () => api<CoilFilmEventDto[]>(`/coils/${id}/film-events`),
+  });
   const splits = useQuery({
     queryKey: ['coil', id, 'splits'],
     queryFn: () => api<CoilSplitDto[]>(`/coils/${id}/splits`),
@@ -187,8 +198,8 @@ export function BobinaDetalleView({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-start gap-2">
-          <Badge variant={COIL_TONE[c.status]} className="mt-2">
-            {COIL_STATUS_LABELS[c.status]}
+          <Badge variant={coilTone(c)} className="mt-2">
+            {coilStateLabel(c)}
           </Badge>
           <AuditHistoryLink entityType="coils" entityId={c.id} />
           {/*
@@ -218,9 +229,32 @@ export function BobinaDetalleView({ id }: { id: string }) {
                   setDialog('scrap');
                 },
               },
+              // D-328: el film es un eje aparte de terminar/reabrir. «Abrir bobina» solo existe
+              // para una vigente sellada; «Volver a sellar» para una abierta que no nació así
+              // (la hija de un partido y el fleje de corte no llevan film que volver a poner).
+              {
+                key: 'film-open',
+                label: 'Abrir bobina',
+                show: isOpen && c.film === 'SEALED',
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setDialog('film-open');
+                },
+              },
+              {
+                key: 'film-reseal',
+                label: 'Volver a sellar',
+                show: isOpen && c.film === 'OPENED' && c.parentCoilId === null,
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setDialog('film-reseal');
+                },
+              },
               {
                 key: 'close-open',
-                label: isOpen ? 'Cerrar' : 'Abrir',
+                label: isOpen ? 'Terminar bobina' : 'Reabrir bobina terminada',
                 show: c.status !== 'CANCELLED',
                 disabled: busy,
                 onSelect: () => {
@@ -274,6 +308,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
           <Row label="Espesor" value={`${c.thicknessMm} mm`} />
           <Row label="Ancho" value={`${c.widthMm} mm`} />
           <Row label="Peso de alta" value={formatQty(c.weightKg, 'kg')} />
+          <Row label="Film de protección" value={c.film === 'SEALED' ? 'Sellada' : 'Abierta'} />
           <Row
             label="Disponible"
             value={
@@ -328,6 +363,45 @@ export function BobinaDetalleView({ id }: { id: string }) {
           <Row label="Observaciones" value={c.notes ?? '—'} />
         </Section>
       </div>
+
+      <Section title="Film de protección">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Fecha</TableHead>
+              <TableHead>Evento</TableHead>
+              <TableHead>Causa</TableHead>
+              <TableHead>Registró</TableHead>
+              <TableHead>Motivo</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <QueryStates
+              query={filmEvents}
+              colSpan={5}
+              error="No se pudo cargar el historial del film."
+            />
+            {filmEvents.data?.map((e) => (
+              <TableRow key={e.id}>
+                <TableCell className="whitespace-nowrap">{e.operationDate}</TableCell>
+                <TableCell>{COIL_FILM_EVENT_TYPE_LABELS[e.type]}</TableCell>
+                <TableCell>{COIL_FILM_SOURCE_LABELS[e.source]}</TableCell>
+                <TableCell>{e.actorName ?? '—'}</TableCell>
+                <TableCell className="max-w-xs truncate text-muted-foreground">
+                  {e.reason ?? ''}
+                </TableCell>
+              </TableRow>
+            ))}
+            {filmEvents.isSuccess && filmEvents.data.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                  Llegó con el film puesto y no se ha abierto todavía.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Section>
 
       <Section title="Partidos (RF-15)">
         <Table>
@@ -587,6 +661,15 @@ export function BobinaDetalleView({ id }: { id: string }) {
         }}
         onDone={invalidate}
       />
+      <CoilFilmDialog
+        coil={c}
+        mode={dialog === 'film-reseal' ? 'reseal' : 'open'}
+        open={dialog === 'film-open' || dialog === 'film-reseal'}
+        onOpenChange={(open) => {
+          if (!open) setDialog(null);
+        }}
+        onDone={invalidate}
+      />
       <CoilEditDialog
         coil={c}
         canEditCost={isAdmin}
@@ -618,7 +701,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 function pendingTitle(action: PendingAction | null): string {
   if (action?.kind === 'revert-split') return 'Revertir el partido';
   if (action?.kind === 'cancel-scrap') return 'Anular la merma';
-  if (action?.kind === 'reopen') return 'Reabrir la bobina';
+  if (action?.kind === 'reopen') return 'Reabrir la bobina terminada';
   return 'Anular la bobina';
 }
 
@@ -631,8 +714,8 @@ function pendingDescription(action: PendingAction | null): string {
   }
   if (action?.kind === 'reopen') {
     return action.qty === null
-      ? 'La bobina vuelve a estar disponible para producción y partido. Si su cierre había liquidado un remanente, esos kilos vuelven al saldo con un movimiento inverso (D-164).'
-      : `Al cerrarla se liquidaron ${action.qty} kg: reabrirla los devuelve al saldo con un movimiento inverso (D-164). El ajuste original no se borra.`;
+      ? 'La bobina vuelve a estar disponible para producción y partido. Si al terminarla se había liquidado un remanente, esos kilos vuelven al saldo con un movimiento inverso (D-164).'
+      : `Al terminarla se liquidaron ${action.qty} kg: reabrirla los devuelve al saldo con un movimiento inverso (D-164). El ajuste original no se borra.`;
   }
   return 'La bobina queda anulada y su ingreso se revierte en el kardex. Solo se puede si no tiene ningún otro movimiento.';
 }

@@ -13,6 +13,8 @@ import {
 } from '@prisma/client';
 import {
   businessToday,
+  CoilFilmSource,
+  CoilFilmState,
   compareQueueRank,
   Decimal,
   finishRal,
@@ -58,6 +60,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { sellerWhere } from '../auth/seller-scope';
+import { openFilmIfSealed, resealIfOpenedBy } from '../coils/coil-film';
 import { CoilOperationsService } from '../coils/coil-operations.service';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
@@ -543,7 +546,9 @@ export class RoofingProductionService {
     // D-193: las cerradas que planta confirmó reabrir. El asiento compensatorio se fecha hoy: es
     // un hecho de hoy (se reabre para montarla ahora), no una corrección del cierre original.
     const reopenIds = new Set(input.reopenCoilIds ?? []);
-    const reopenDate = reopenIds.size > 0 ? this.operationDate.resolve(actor, undefined) : '';
+    // D-328: el día de negocio de la apertura del film, que es el del montaje (hoy).
+    const mountDate = this.operationDate.resolve(actor, undefined);
+    const reopenDate = reopenIds.size > 0 ? mountDate : '';
     // El presupuesto por defecto de Prisma son 5 s, y montar una bobina ya no entra:
     // además del lock y las lecturas de siempre, D-134 agregó la comprobación del agregado,
     // que recorre las bobinas compatibles. Contra Neon —con latencia de red real— se pasaba
@@ -583,8 +588,8 @@ export class RoofingProductionService {
           if (coil.status !== CoilStatus.OPEN && !reopening) {
             throw new BadRequestException(
               coil.status === CoilStatus.CLOSED
-                ? `${coil.code} está cerrada: para montarla hay que confirmar que se reabre (revierte el ajuste del cierre, D-193)`
-                : `${coil.code} no está disponible (${coil.status}): solo una bobina abierta entra a producción`,
+                ? `${coil.code} está terminada: para montarla hay que confirmar que se reabre (revierte el ajuste del cierre, D-193)`
+                : `${coil.code} no está disponible (${coil.status}): solo una bobina vigente entra a producción`,
             );
           }
           if (coil.businessLineId !== order.businessLineId) {
@@ -682,6 +687,20 @@ export class RoofingProductionService {
             where: { id: orderId },
             data: { status: ProductionOrderStatus.IN_PROGRESS },
           });
+          // D-328: montar una bobina sellada la abre (la pantalla lo confirma antes). En este
+          // punto la bobina ya está vigente —lo estaba, o `reopenInTx` la reabrió—, aunque la
+          // fila leída arriba diga `CLOSED`. El evento guarda el consumo: `releaseCoil` la vuelve
+          // a sellar solo si la apertura fue de un montaje.
+          await openFilmIfSealed(
+            tx,
+            { id: coil.id, status: CoilStatus.OPEN, filmSealed: coil.filmSealed },
+            {
+              source: CoilFilmSource.MOUNT,
+              operationDate: mountDate,
+              actorId: actor.id,
+              refId: consumption.id,
+            },
+          );
 
           mounted.push({
             consumptionId: consumption.id,
@@ -778,12 +797,26 @@ export class RoofingProductionService {
       });
       await recomputeStatus(tx, orderId);
 
+      // D-328: bajar una bobina que el montaje abrió, sin que nada haya salido de ella, la
+      // vuelve a sellar. Si se abrió a mano, o ya se usó, o sigue montada en otra orden, no.
+      const coil = await this.coils.lockCoil(tx, consumption.coilId);
+      const resealed = await resealIfOpenedBy(
+        tx,
+        coil,
+        {
+          source: CoilFilmSource.MOUNT,
+          undoSource: CoilFilmSource.MOUNT_UNDO,
+          refId: consumption.id,
+        },
+        { operationDate: this.operationDate.resolve(actor, undefined), actorId: actor.id },
+      );
+
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'production.roofing.release',
         entity: 'production_orders',
         entityId: orderId,
-        after: { consumptionId, coilCode: consumption.coil.code },
+        after: { consumptionId, coilCode: consumption.coil.code, filmResealed: resealed },
       });
     });
 
@@ -2479,6 +2512,7 @@ export class RoofingProductionService {
       id: true,
       code: true,
       status: true,
+      filmSealed: true,
       typeKey: true,
       weightKg: true,
       widthMm: true,
@@ -2646,6 +2680,8 @@ export class RoofingProductionService {
         colorHex: c.color?.hexColor ?? null,
         weightKg: c.weightKg.toFixed(3),
         status: c.status,
+        // D-328: montar una bobina sellada la abre; el selector lo avisa antes de montar.
+        film: c.filmSealed ? CoilFilmState.SEALED : CoilFilmState.OPENED,
         closeAdjustment: (() => {
           const adjustment = c.status === 'CLOSED' ? adjustmentById.get(c.id) : undefined;
           return adjustment === undefined

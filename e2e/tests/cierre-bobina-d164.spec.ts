@@ -490,7 +490,7 @@ test.describe('D-164 — el cierre de una bobina liquida su remanente', () => {
     // que reabrir también admite un conteo.
     const alAbrir = await closeExpectingError(api, coil.id, { status: 'OPEN', physicalKg: '10' });
     expect(alAbrir.status).toBe(400);
-    expect(alAbrir.message).toContain('al cerrar');
+    expect(alAbrir.message).toContain('al terminar');
 
     // Y un rollo no puede tener más material del que ingresó: es la cota que impide que un
     // `1500` tipeado donde iba `150` dé de alta 1 350 kg valorizados, con un texto libre como

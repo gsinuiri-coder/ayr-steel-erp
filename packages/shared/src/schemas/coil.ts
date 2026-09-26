@@ -2,6 +2,9 @@ import { z } from 'zod';
 import { decimalStringSchema, MAX_VALUE, toDecimal } from '../decimal';
 import {
   BUSINESS_LINES,
+  COIL_FILM_EVENT_TYPES,
+  COIL_FILM_SOURCES,
+  COIL_FILM_STATES,
   COIL_KINDS,
   COIL_SPLIT_STATUSES,
   COIL_STATUSES,
@@ -54,6 +57,12 @@ export const coilSchema = z.object({
   totalCost: z.string().nullable(),
   totalCostPen: z.string().nullable(),
   status: z.enum(COIL_STATUSES),
+  /**
+   * D-328: estado del film de protección (`SEALED` sellada / `OPENED` abierta), del último evento
+   * de `coil_film_events`. Solo rotula a las vigentes (`status = OPEN`): una terminada se nombra
+   * «Terminada» y `coilStateLabel` lo resuelve.
+   */
+  film: z.enum(COIL_FILM_STATES),
   parentCoilId: z.string().uuid().nullable(),
   /** Código de la bobina madre, cuando esta nació de un partido (RF-15). */
   parentCoilCode: z.string().nullable(),
@@ -107,6 +116,8 @@ export const coilQuerySchema = paginationQuerySchema.extend({
    * combinación de las dos formas.
    */
   statusNe: z.enum(COIL_STATUSES).optional(),
+  /** D-328: solo las selladas o solo las abiertas (implica `status = OPEN`). */
+  film: z.enum(COIL_FILM_STATES).optional(),
   supplierId: z.string().uuid().optional(),
   /** D-049: filtra bobinas (`COIL`) o flejes (`STRIP`); sin filtro trae ambos. */
   kind: z.enum(COIL_KINDS).optional(),
@@ -278,7 +289,33 @@ export const reverseMovementSchema = z.object({
 export type ReverseMovementInput = z.infer<typeof reverseMovementSchema>;
 
 /**
+ * D-328: abrir el film de una bobina sellada, o volver a sellar una abierta por error. Es un
+ * hecho fechado (D-124) y separado del estado `OPEN`/`CLOSED`: no mueve kardex. El motivo es
+ * opcional al abrir; al volver a sellar también, pero si se escribe queda en el historial.
+ */
+export const coilFilmActionSchema = z.object({
+  ...backdatableFields,
+  reason: reasonSchema.optional(),
+});
+export type CoilFilmActionInput = z.infer<typeof coilFilmActionSchema>;
+
+export const coilFilmEventSchema = z.object({
+  id: z.string().uuid(),
+  type: z.enum(COIL_FILM_EVENT_TYPES),
+  source: z.enum(COIL_FILM_SOURCES),
+  /** D-124: día de negocio (Lima). `at` dice cuándo se grabó. */
+  operationDate: z.string(),
+  reason: z.string().nullable(),
+  actorName: z.string().nullable(),
+  at: z.string(),
+});
+export type CoilFilmEventDto = z.infer<typeof coilFilmEventSchema>;
+
+/**
  * RF-19: abrir o cerrar una bobina. Una cerrada no entra a producción ni a partido.
+ *
+ * D-328: en pantalla «cerrar» se llama **terminar** (`CLOSED` = «Terminada»); el nombre del
+ * estado no cambia en el API.
  *
  * D-164: cerrar con saldo teórico obliga a decir **qué queda de verdad** (`physicalKg`) y a
  * dar un motivo si eso difiere del saldo; la diferencia se liquida como movimiento de kardex
@@ -310,7 +347,7 @@ export const setCoilStatusSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['physicalKg'],
-        message: 'Los kilos que quedan solo se declaran al cerrar la bobina',
+        message: 'Los kilos que quedan solo se declaran al terminar la bobina',
       });
     }
   });

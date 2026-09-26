@@ -101,7 +101,7 @@ export function RawMaterialPoolList({ rows }: { rows: RawMaterialStockDto[] }) {
   if (rows.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        No hay bobinas abiertas en esta línea de negocio.
+        No hay bobinas vigentes en esta línea de negocio.
       </p>
     );
   }

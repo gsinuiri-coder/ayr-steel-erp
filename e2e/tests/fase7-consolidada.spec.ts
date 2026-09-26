@@ -107,17 +107,32 @@ interface CoilMonthReport {
   month: string;
   from: string;
   to: string;
+  /** Todas las filas del reporte, sin importar en qué tabla caen (`sealed` + `opened`). */
   rows: CoilReportRow[];
   totals: { openingKg: string; weightKg: string; closingKg: string };
 }
 
-function coilReport(
+interface CoilMonthReportTwoTables extends Omit<CoilMonthReport, 'rows'> {
+  sealed: { rows: CoilReportRow[] };
+  opened: { rows: CoilReportRow[] };
+}
+
+/**
+ * D-328: el reporte va en dos tablas (`sealed` / `opened`). Este spec mide **fechas**, no film,
+ * así que junta las dos en `rows` — el mes en que una bobina aparece y sus saldos no dependen de
+ * en cuál de las dos cae. El reparto entre tablas lo prueba `film-bobina-d328.spec.ts`.
+ */
+async function coilReport(
   api: APIRequestContext,
   month: string,
   businessLine?: string,
 ): Promise<CoilMonthReport> {
   const filtro = businessLine === undefined ? '' : `&businessLine=${businessLine}`;
-  return getJson<CoilMonthReport>(api, `/api/reports/coils?month=${month}${filtro}`);
+  const report = await getJson<CoilMonthReportTwoTables>(
+    api,
+    `/api/reports/coils?month=${month}${filtro}`,
+  );
+  return { ...report, rows: [...report.sealed.rows, ...report.opened.rows] };
 }
 
 /** Kardex de un ítem, tal cual lo devuelve el API (más reciente primero) — sin reordenar. */

@@ -180,7 +180,7 @@ test.describe('F8-S2b — huecos de cobertura', () => {
       // pool existe pero está vacío — la sección entera está ausente, no una versión vacía.
       await expect(dialog.getByText('Bobinas del pool (espesor + color)')).toHaveCount(0);
       await expect(
-        dialog.getByText('No hay bobinas abiertas en esta línea de negocio.'),
+        dialog.getByText('No hay bobinas vigentes en esta línea de negocio.'),
       ).toHaveCount(0);
 
       await dialog.getByLabel('Filtrar productos').fill(product.sku);

@@ -69,8 +69,15 @@ test.describe('D-327 — acciones de fila en un menú', () => {
     // Y la fila ofrece lo contrario. Primero se espera a que la lista se reordene (el inactivo baja
     // al final): abrir el menú mientras la fila cambia de lugar lo cierra.
     await expect(row).toContainText('Inactivo', { timeout: 30_000 });
-    await row.getByRole('button', { name: `Más acciones de ${customer.name}` }).click();
-    await expect(page.getByRole('menuitem', { name: 'Activar', exact: true })).toBeVisible();
+    // La lista puede volver a traerse y reordenarse justo después, y eso cierra un menú recién
+    // abierto (falló en CI aun con la espera de arriba): se reintenta abrirlo hasta verlo.
+    await expect(async () => {
+      await page.keyboard.press('Escape');
+      await row.getByRole('button', { name: `Más acciones de ${customer.name}` }).click();
+      await expect(page.getByRole('menuitem', { name: 'Activar', exact: true })).toBeVisible({
+        timeout: 3_000,
+      });
+    }).toPass({ timeout: 30_000 });
     await page.keyboard.press('Escape');
   });
 

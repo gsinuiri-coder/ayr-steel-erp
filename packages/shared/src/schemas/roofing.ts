@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Decimal, decimalStringSchema, MAX_VALUE, roundTo, toDecimal } from '../decimal';
-import { PRODUCTION_ORDER_STATUSES } from '../enums';
+import { COIL_FILM_STATES, PRODUCTION_ORDER_STATUSES } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyFields } from './idempotency';
 import { backdatableFields } from './operation';
@@ -570,7 +570,7 @@ export const mountRoofingCoilSchema = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['reopenReason'],
-          message: 'Reabrir una bobina cerrada exige un motivo',
+          message: 'Reabrir una bobina terminada exige un motivo',
         });
       }
       if (v.reopenCoilIds.some((id) => !listed.has(id))) {
@@ -879,6 +879,11 @@ export const roofingCoilOptionSchema = z.object({
    * monta reabriéndola, con confirmación explícita.
    */
   status: z.enum(['OPEN', 'CLOSED']),
+  /**
+   * D-328: film de protección. Montar una bobina **sellada** la abre: el selector avisa antes de
+   * confirmar. En una terminada (`CLOSED`) el film ya no rotula nada.
+   */
+  film: z.enum(COIL_FILM_STATES),
   /**
    * D-193: el ajuste del cierre que reabrir va a revertir (D-164), o `null` si no hay ninguno
    * pendiente. `SHORTAGE` sacó kilos del kardex al cerrar (reabrir los devuelve); `SURPLUS`

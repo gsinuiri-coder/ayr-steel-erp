@@ -133,7 +133,7 @@ export function CoilSalePickerDialog({
                       <TableCell className="whitespace-normal break-words">
                         <div className="font-medium">{c.code}</div>
                         <div className="text-xs text-muted-foreground">
-                          {c.widthMm} mm de ancho{c.status === 'CLOSED' ? ' · cerrada' : ''}
+                          {c.widthMm} mm de ancho{c.status === 'CLOSED' ? ' · terminada' : ''}
                         </div>
                       </TableCell>
                       <TableCell className="text-xs whitespace-normal break-words">

@@ -390,7 +390,7 @@ export class ProductionService {
       }
       if (coil.status !== CoilStatus.OPEN) {
         throw new BadRequestException(
-          `${coil.code} no está disponible (${coil.status}): solo un fleje abierto entra a producción`,
+          `${coil.code} no está disponible (${coil.status}): solo un fleje vigente entra a producción`,
         );
       }
       if (coil.businessLineId !== order.businessLineId) {

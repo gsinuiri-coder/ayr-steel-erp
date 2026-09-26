@@ -10,6 +10,7 @@ import {
   type Coil,
 } from '@prisma/client';
 import {
+  CoilFilmSource,
   Decimal,
   fromDateOnly,
   toDateOnly,
@@ -29,6 +30,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { OperationDateService } from '../common/operation-date.service';
+import { openFilmIfSealed, resealIfOpenedBy } from '../coils/coil-film';
 import { planCoilSplit } from '../coils/coil-split-math';
 import { CoilsService } from '../coils/coils.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -116,7 +118,7 @@ export class CuttingService {
           }
           if (coil.status !== CoilStatus.OPEN) {
             throw new BadRequestException(
-              `${coil.code} no está disponible (${coil.status}): solo bobinas abiertas se envían a corte`,
+              `${coil.code} no está disponible (${coil.status}): solo bobinas vigentes se envían a corte`,
             );
           }
           if (coil.businessLineId !== drywallLine.id) {
@@ -162,7 +164,7 @@ export class CuttingService {
         });
 
         for (const item of input.coils) {
-          await tx.cuttingOrderCoil.create({
+          const sentRow = await tx.cuttingOrderCoil.create({
             data: {
               cuttingOrderId: order.id,
               coilId: item.coilId,
@@ -172,6 +174,17 @@ export class CuttingService {
               createdById: actor.id,
             },
           });
+          // D-328: enviar una bobina sellada a corte la abre (la pantalla lo confirma antes);
+          // cancelar el envío la vuelve a sellar si nada más la abrió.
+          const sentCoil = byId.get(item.coilId);
+          if (sentCoil) {
+            await openFilmIfSealed(tx, sentCoil, {
+              source: CoilFilmSource.CUTTING_SEND,
+              operationDate,
+              actorId: actor.id,
+              refId: sentRow.id,
+            });
+          }
           await tx.coil.update({
             where: { id: item.coilId },
             data: { status: CoilStatus.IN_THIRD_PARTY },
@@ -553,7 +566,7 @@ export class CuttingService {
     const { reason } = input;
     // Cancelar lo no recibido no mueve kardex (D-050): no hay fecha de operación que
     // escribir, pero la validación corre igual para que el contrato no mienta.
-    this.operationDate.resolve(actor, input.operationDate);
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`
         SELECT "id" FROM "cutting_orders" WHERE "id" = ${cuttingOrderId}::uuid FOR UPDATE
@@ -583,7 +596,20 @@ export class CuttingService {
           data: { status: CuttingOrderCoilStatus.CANCELLED, cancelledAt: new Date() },
         });
         // La bobina no tuvo ningún movimiento de kardex (D-050): vuelve a OPEN sin reversa.
+        const sentCoil = await this.coils.lockCoil(tx, row.coilId);
         await tx.coil.update({ where: { id: row.coilId }, data: { status: CoilStatus.OPEN } });
+        // D-328: si el envío fue lo que abrió el film y nada más la usó, vuelve a sellarse. Se
+        // evalúa con el estado ya restaurado (`OPEN`): ese es el que tendrá al terminar.
+        await resealIfOpenedBy(
+          tx,
+          { id: sentCoil.id, status: CoilStatus.OPEN, filmSealed: sentCoil.filmSealed },
+          {
+            source: CoilFilmSource.CUTTING_SEND,
+            undoSource: CoilFilmSource.CUTTING_UNDO,
+            refId: row.id,
+          },
+          { operationDate, actorId: actor.id },
+        );
       }
 
       await this.recomputeOrderStatus(tx, cuttingOrderId);

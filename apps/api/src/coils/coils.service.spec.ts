@@ -38,6 +38,7 @@ function input(overrides: Partial<CreateCoilInput> = {}): CreateCoilInput {
 function createFakeTx() {
   const state = { coilSeq: 0 };
   const created: Record<string, unknown>[] = [];
+  const filmEvents: Record<string, unknown>[] = [];
   const queries: string[] = [];
   const upserts: { where: unknown; create: Record<string, unknown> }[] = [];
 
@@ -62,6 +63,13 @@ function createFakeTx() {
         return Promise.resolve({ id: `coil-${created.length}`, ...data });
       }),
     },
+    coilFilmEvent: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+        filmEvents.push(data);
+        return Promise.resolve({});
+      }),
+    },
     $queryRaw: jest.fn((strings: TemplateStringsArray) => {
       queries.push(strings.join('?'));
       state.coilSeq += 1;
@@ -69,7 +77,7 @@ function createFakeTx() {
     }),
   };
 
-  return { tx: tx as unknown as Prisma.TransactionClient, created, queries, upserts };
+  return { tx: tx as unknown as Prisma.TransactionClient, created, filmEvents, queries, upserts };
 }
 
 describe('códigos de bobina (RF-13, RF-14, D-037)', () => {
@@ -117,6 +125,79 @@ describe('códigos de bobina (RF-13, RF-14, D-037)', () => {
         sequence: 7,
       }),
     ).toBe('ACERO-GALV-0.50-4500-7');
+  });
+});
+
+describe('CoilsService — film de protección (D-328)', () => {
+  function serviceWith(prisma: Record<string, unknown>): CoilsService {
+    return new CoilsService(prisma as unknown as PrismaService, {} as unknown as InventoryService);
+  }
+
+  it('el historial va del más reciente al más antiguo, con el nombre de quien lo registró', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'e2',
+        type: 'RESEALED',
+        source: 'MANUAL',
+        operationDate: new Date('2026-09-12T00:00:00Z'),
+        reason: null,
+        actorId: 'u1',
+        at: new Date('2026-09-12T15:00:00Z'),
+      },
+      {
+        id: 'e1',
+        type: 'OPENED',
+        source: 'BIRTH',
+        operationDate: new Date('2026-09-10T00:00:00Z'),
+        reason: 'nació abierta',
+        actorId: null,
+        at: new Date('2026-09-10T15:00:00Z'),
+      },
+    ]);
+    const service = serviceWith({
+      coilFilmEvent: { findMany },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 'u1', name: 'Ana Planta' }]) },
+    });
+    const events = await service.findFilmEvents('coil-1');
+    expect(findMany).toHaveBeenCalledWith({
+      where: { coilId: 'coil-1' },
+      orderBy: [{ operationDate: 'desc' }, { at: 'desc' }, { id: 'desc' }],
+    });
+    expect(events.map((e) => [e.type, e.source, e.operationDate, e.actorName])).toEqual([
+      ['RESEALED', 'MANUAL', '2026-09-12', 'Ana Planta'],
+      ['OPENED', 'BIRTH', '2026-09-10', null],
+    ]);
+    expect(events[1]?.reason).toBe('nació abierta');
+  });
+
+  it('sin eventos no consulta usuarios', async () => {
+    const userFindMany = jest.fn();
+    const service = serviceWith({
+      coilFilmEvent: { findMany: jest.fn().mockResolvedValue([]) },
+      user: { findMany: userFindMany },
+    });
+    await expect(service.findFilmEvents('coil-1')).resolves.toEqual([]);
+    expect(userFindMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['SEALED', true],
+    ['OPENED', false],
+  ])('el filtro film=%s acota a las vigentes con filmSealed=%s', async (film, sealed) => {
+    const count = jest.fn().mockResolvedValue(0);
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = serviceWith({ coil: { count, findMany } });
+    await service.findAll({ film, page: 1, pageSize: 20 } as never);
+    const where = (count.mock.calls as { where: Record<string, unknown> }[][])[0]![0]!.where;
+    expect(where.AND).toEqual([{ status: 'OPEN' }, { filmSealed: sealed }]);
+  });
+
+  it('sin el filtro no agrega ninguna condición de film', async () => {
+    const count = jest.fn().mockResolvedValue(0);
+    const service = serviceWith({ coil: { count, findMany: jest.fn().mockResolvedValue([]) } });
+    await service.findAll({ page: 1, pageSize: 20 });
+    const where = (count.mock.calls as { where: Record<string, unknown> }[][])[0]![0]!.where;
+    expect(where.AND).toBeUndefined();
   });
 });
 
@@ -185,6 +266,37 @@ describe('CoilsService.create (RF-10..RF-14)', () => {
     const codes = fake.created.map((c) => c.code);
     expect(codes).toEqual(['ACERO-GALV-0.50-4500-1', 'ACERO-GALV-0.50-4500-2']);
     expect(new Set(codes).size).toBe(2);
+  });
+
+  // D-328: compra y carga inicial nacen selladas (sin evento); la hija de un partido y el fleje
+  // de un corte nacen abiertas, con un evento `BIRTH` del día de su alta.
+  it('D-328: una bobina de compra nace sellada, sin evento de film', async () => {
+    const fake = createFakeTx();
+    await service.create(fake.tx, input());
+    expect(fake.filmEvents).toHaveLength(0);
+  });
+
+  it('D-328: la hija de un partido nace abierta (evento BIRTH fechado en su alta)', async () => {
+    const fake = createFakeTx();
+    await service.create(
+      fake.tx,
+      input({
+        parentCoilId: 'madre-1',
+        splitId: 'split-1',
+        refType: 'SPLIT',
+        operationDate: '2026-09-10',
+      }),
+    );
+    expect(fake.filmEvents).toHaveLength(1);
+    expect(fake.filmEvents[0]).toMatchObject({
+      coilId: 'coil-1',
+      type: 'OPENED',
+      source: 'BIRTH',
+      actorId: ACTOR,
+    });
+    expect((fake.filmEvents[0]?.operationDate as Date).toISOString().slice(0, 10)).toBe(
+      '2026-09-10',
+    );
   });
 
   it('asegura el producto de trading con el SKU canónico de D-252 y emite la entrada de kardex', async () => {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, getJson, postJson } from '../helpers/api';
-import { openQueuedOrder } from '../helpers/ui';
+import { confirmFilmOpen, openQueuedOrder } from '../helpers/ui';
 import { balanceOf, postExpectingError, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -174,6 +174,8 @@ test.describe('D-192 — montar varias bobinas', () => {
       await modal
         .getByRole('button', { name: `Montar las 2 bobinas elegidas en ${op.code}` })
         .click();
+      // D-328: las dos nacen selladas; montarlas pide confirmar que se abren (un solo paso).
+      await confirmFilmOpen(modal);
       await expect(modal).toHaveCount(0);
 
       // Las dos, como filas.
