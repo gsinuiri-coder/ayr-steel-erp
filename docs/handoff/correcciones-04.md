@@ -1,12 +1,14 @@
 # Handoff — Correcciones 04 del cliente, 2026-09-25
 
-Rama `fix/correcciones-04` (worktree `../ayr-steel-erp-corr04`), desde `origin/main` en `86d8db0`.
-Decisiones **D-320 a D-327** (`docs/ARQUITECTURA.md` §0.2); D-328 y D-329 quedan para la tanda B.
-Texto del cliente: `docs/cliente/correcciones-04.md`. Estado de partida en producción: API
-`ayr-steel-erp-api-00055-8cs` (git-sha `fbd2c04`).
+**Estado al cierre de esta sesión (2026-09-25):** la **tanda A está en producción** (PR #32, merge
+`6033844`, API `ayr-steel-erp-api-00056-hm8`, git-sha `4d2959d`); la **tanda B no se empezó** y va en
+una **sesión nueva**. Ramas `fix/correcciones-04` y `docs/cierre-corr04a`: borradas del remoto con OK del
+dueño. Decisiones **D-320 a D-327** (`docs/ARQUITECTURA.md` §0.2); **D-328 y D-329 están reservadas** para
+la tanda B (film y pool de conexiones). Texto del cliente: `docs/cliente/correcciones-04.md`. Estado de
+partida de la tanda A: API `00055-8cs` (git-sha `fbd2c04`).
 
-Hay **dos tandas con deploy propio**. Este documento cubre la **A** (sin migración); la **B** (film de
-protección, reporte mensual en dos tablas y pool de conexiones) se agrega abajo cuando corra.
+Hay **dos tandas con deploy propio**. Las secciones «Tanda A» cubren lo hecho (sin migración); la
+sección «Tanda B» dice **qué falta y qué hay que preguntar antes de empezar**.
 
 ## Tanda A
 
@@ -106,3 +108,94 @@ esa pantalla), la única ruta de configuración que el mapa no cubría con «Má
    «Bobina completa (venta directa)».
 4. **Puerto 3000:** hay un `nuxt dev` de otro proyecto en `[::1]:3000` (no es de este repo). Los E2E
    locales corrieron con `E2E_API_PORT=3010`.
+
+## Tanda B — pendiente, sesión nueva (con migración)
+
+**No se empezó, a propósito.** Espera las respuestas del cliente de la revisión de la noche del
+2026-09-25 sobre el film. Sin ellas, M6 tendría que adivinar dos cosas de negocio (regla dura 16):
+
+1. **El nombre de los estados.** El brief propone «Con film» / «Sin film» y las acciones «Quitar film» y
+   «Volver a sellar», y prohíbe «cerrada/abierta» para el film (el cliente usó esas palabras, pero
+   `coils.status` OPEN/CLOSED ya significa otra cosa, D-164). Hay que confirmar con el cliente que
+   esos nombres le sirven, porque son los que verá en la lista, el detalle y el reporte mensual.
+2. **Qué cuenta como «ya usada»** para impedir volver a sellar una bobina. El brief lo define como: hubo
+   algún movimiento de salida **vivo** (producción, merma, partido, corte o envío a tercero, venta) con
+   fecha posterior al último «quitar film», o la bobina está montada en una OP viva o en poder de un
+   tercero. Falta que el cliente diga si esa regla coincide con su idea (por ejemplo, si un simple montaje
+   sin reportes ya la deja «usada»). El brief lo resuelve a favor de poder volver a sellar mientras no haya
+   una salida viva.
+
+**Cuando lleguen las respuestas**, la sesión nueva arranca con `ayr-arranque` y lee este handoff. Alcance
+de M6 y M7 tal como lo dejó el dueño (resumen; el detalle vive en el brief de esa sesión):
+
+- **M6 — Film de protección (puntos 6 y 7).** Estado aparte del ciclo de consumo; `coils.status` no cambia.
+  Tabla append-only `coil_film_events` (`coil_id`, `kind` REMOVED|RESEALED, `operation_date` D-124,
+  `actor_id`, `reason`, `created_at`) con trigger append-only como `inventory_movements`; estado
+  derivado del último evento (opcional `coils.has_film` denormalizada en la misma transacción: elegir y
+  justificar). Quitar el film: rol de planta o administrador, solo si tiene film; montar una bobina con
+  film (`mountCoil` y multi-montar D-192) pide confirmación y registra REMOVED en la misma transacción;
+  volver a sellar solo sin salida viva posterior, con el motivo concreto en el mensaje; reversa en la misma
+  fase (RESEALED revierte un REMOVED; liberar un montaje sin reportes resella solo). La venta de bobina
+  entera (D-170) vale con o sin film. Todo auditado con `reason`.
+  - **Bobinas existentes:** CLI `pnpm backfill:coil-film --branch <b>`, dry-run por defecto; sin film si tuvo
+    una salida viva o está CLOSED, con film el resto; escribe REMOVED con fecha = la primera salida. El
+    dry-run imprime la lista a `local-data/corr04/film-dry-run-<rama>.txt` para que el dueño la revise;
+    `--execute` solo con OK y, contra production, además `--confirm-production`.
+  - **UI:** badge «Con film/Sin film» y chip en lista y detalle de bobinas, acciones con `RowActions`
+    (D-327), historial de eventos en el detalle.
+  - **Reporte mensual de bobinas:** dos tablas, «Con film (cerradas)» y «Sin film (abiertas)», cada bobina
+    según su estado **al último día del mes** (eventos con `operation_date <= fin de mes`), con subtotales
+    de kg y valor y total general; igual en el PDF (D-173) y el export. La tabla actual está en
+    `apps/web/src/app/(app)/reportes/bobinas/reporte-bobinas-view.tsx` (hoy una sola tabla ordenable, D-323).
+  - **Antes de migrar:** leer los CHECK y triggers de `coils` (lección D-145/D-205); migración aditiva
+    generada contra una **base descartable**, nunca `ayr_local`.
+- **M7 — Pool de conexiones (P2024).** Primero **diagnóstico de solo lectura**: logs de Cloud Run de la hora
+  del P2024 (ver «M4» en `docs/PROGRESO.md`: 2026-09-25 08:06:30 UTC, `session.findUnique` en `AuthGuard`,
+  `connection_limit=5`, `timeout=10`), configuración efectiva (¿`DATABASE_URL` usa el pooler `-pooler` de
+  Neon?, `pool_timeout`, `max-instances`, límite del pooler) y candidatos (ráfagas de `Promise.all`,
+  transacciones largas, `stock-shortages`/`floor-summary` del Panel). Luego una **propuesta con valores
+  concretos** (p. ej. `connection_limit=10`, `pool_timeout=20`) y la cuenta contra el límite del pooler,
+  **antes de aplicar**; cambiar el secreto y redesplegar solo con OK del dueño por comando, con la
+  credencial fuera de argv (regla dura 2; `scripts/gcp-secrets.mjs` o equivalente con `run` quiet).
+- **Deploy B**, igual que el A: respaldo `respaldo-pre-corr04b-<fecha>`, `migrations-status`, `pnpm db:prod`
+  solo con la migración de M6 (el `migrate diff` debe coincidir **exacto** con el drift conocido más la
+  migración; si no, parar), deploy de API con label `git-sha` (14 nombres de variable), merge, Vercel,
+  smoke y diff de runtime; después el backfill del film en dry-run contra production, revisión del dueño
+  y `--execute --confirm-production`, con verificación de conteos y del reporte de agosto y septiembre.
+- **Cierre de la tanda B:** `docs/uat/correcciones-04.md`, este handoff, PROGRESO, §0.2 con D-328 y D-329, y
+  la sección «Correcciones 04» de la guía del cliente.
+
+## Lo que la sesión siguiente tiene que saber (aprendido en esta)
+
+- **Puertos:** hay un `nuxt dev` de otro proyecto del dueño en `[::1]:3000` (no es de este repo; no se
+  toca). Los E2E locales van con `E2E_API_PORT=3010`. Con `CI=true` el config no aplica sus defaults
+  locales: se exportan `DATABASE_URL`/`DIRECT_URL` de `ayr_local_e2e` (`scripts/local-docker-env.mjs`),
+  `JWT_SECRET` y las credenciales del admin local, o el guard de la base de pruebas lo rechaza.
+- **Memoria:** la suite E2E completa con builds de producción **fue matada por el sistema** por falta de
+  memoria a unos 100 casos. Si se necesita la suite entera, cerrar lo demás antes, o apoyarse en la CI del
+  runner (que la corre entera en unos 20 min).
+- **`.next` compartido:** correr un E2E en modo dev (sin `CI=true`) pisa el build de producción de
+  `apps/web/.next`; después hay que reconstruir (`pnpm build`) antes de volver a correr en modo
+  producción («routesManifest.dataRoutes is not iterable»).
+- **Verificar en producción:** script de un solo uso en `local-data/` (ignorada) que crea un admin efímero
+  (`prisma/e2e-admin.ts`), maneja el web con Playwright y lo borra en el `finally`; corre con
+  `AYR_ENV_SETUP=<.env.setup del checkout principal>`. Se borra al cerrar. `gcloud` no corre desde Git
+  Bash: un `.mjs` con `spawnSync('cmd.exe', ['/c', 'gcloud', …])`, mostrando solo campos elegidos.
+- **Antes de empujar:** `pnpm lint` **completo** (no solo el archivo tocado: dos rojos de CI de esta
+  sesión eran lint de specs nuevos), `pnpm format:check` y una medición de cobertura de código nuevo
+  (Sonar exige 80 %; los cambios en servicios grandes necesitan un spec propio o extraer la lógica a un
+  módulo puro probable).
+- **Selectores de E2E:** «Más acciones» ahora también nombra los menús de fila («Más acciones de <fila>»);
+  usar `exact: true` o el helper `rowAction` (`e2e/helpers/ui.ts`). Abrir el menú de una fila mientras
+  la lista la reordena lo cierra: esperar a que la fila se asiente.
+- **Pendientes de la tanda A para el dueño:** las cinco imágenes del cliente no llegaron a
+  `local-data/corr04/` (M2 y M4 se hicieron con el texto y el mapa del brief); la autorrevisión de la tanda A
+  queda **pendiente de revisión independiente**; `fase2a:359` (lectura del XML) falla local y pasa en CI, sin
+  comprobar contra `main`.
+
+## Estado de ramas y worktrees al cerrar
+
+- Remoto: `fix/correcciones-04` y `docs/cierre-corr04a` borradas (`git ls-remote --heads origin` no las
+  lista). `docs/handoff-corr04-cierre` (este cierre) la borra el dueño tras el merge (AGENTS §4).
+- Local: worktree `../ayr-steel-erp-corr04` y sus ramas locales eliminados al terminar, con `local-data/`
+  copiada y verificada en el checkout principal (`local-data/corr04-2026-09-25/`).

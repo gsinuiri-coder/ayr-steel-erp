@@ -162,6 +162,10 @@ PR #32, merge `6033844`; SHA desplegado `4d2959d`. Handoff: `docs/handoff/correc
   mató por memoria a ~100 casos, sin relanzarla); sus rojos se repitieron por separado. La suite completa
   corrió en el runner de CI.
 - **Rollback (no usado):** tráfico a `ayr-steel-erp-api-00055-8cs` y revert del merge.
+- **Tanda B (film de protección, reporte mensual en dos tablas, pool de conexiones): pendiente, sesión
+  nueva.** Espera las respuestas del cliente de la revisión de la noche sobre el nombre de los estados
+  y qué cuenta como «ya usada»; ver `docs/handoff/correcciones-04.md`, «Tanda B». D-328 y D-329
+  reservadas.
 
 ## Ventana de Hallazgos de la guía (2026-09-25, sin migración)
 
