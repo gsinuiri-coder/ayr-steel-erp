@@ -18,6 +18,59 @@ if (!webOrigin || !webOrigin.split(',').every((o) => o.trim().startsWith('https:
 const gitSha = run('git', ['rev-parse', '--short', 'HEAD']).trim();
 
 /**
+ * D-329: los secretos se montan **fijados a un número de versión**, no como `:latest`. Con
+ * `:latest`, crear una versión nueva de un secreto la toma cualquier instancia nueva de la
+ * revisión que ya corre —sin deploy y sin poder volver atrás redesplegando—, y el rollback de una
+ * revisión no devolvía el secreto. Fijado, el secreto cambia solo con un deploy y se revierte
+ * redesplegando con la versión anterior (`SECRET_VERSION_<NOMBRE>=<n>` la fuerza; sin ella se usa
+ * la versión habilitada más reciente al momento del deploy). Solo se leen y se imprimen números.
+ */
+const SECRET_NAMES = [
+  'DATABASE_URL',
+  'DIRECT_URL',
+  'JWT_SECRET',
+  'APIS_NET_PE_TOKEN',
+  'R2_ACCOUNT_ID',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+  'R2_BUCKET',
+  'R2_ENDPOINT',
+];
+const secretVersions = Object.fromEntries(
+  SECRET_NAMES.map((name) => {
+    const forced = process.env[`SECRET_VERSION_${name}`];
+    if (forced !== undefined) {
+      if (!/^[1-9]d*$/.test(forced))
+        throw new Error(`SECRET_VERSION_${name} no es un número de versión`);
+      return [name, forced];
+    }
+    const latest = run('gcloud', [
+      'secrets',
+      'versions',
+      'list',
+      name,
+      '--project',
+      project,
+      '--filter=state=ENABLED',
+      '--sort-by=~createTime',
+      '--limit=1',
+      '--format=value(name)',
+    ])
+      .trim()
+      .split('/')
+      .pop();
+    if (!latest || !/^[1-9]d*$/.test(latest)) {
+      throw new Error(`No se pudo resolver la versión habilitada de ${name}`);
+    }
+    return [name, latest];
+  }),
+);
+console.log(
+  'Versiones de secretos fijadas: ' +
+    SECRET_NAMES.map((n) => `${n}:${secretVersions[n]}`).join(', '),
+);
+
+/**
  * `--set-env-vars` con el delimitador `^|^` (necesario porque `WEB_ORIGIN` puede llevar comas)
  * se rompía en Windows: `lib.mjs#run` arma el comando con `cmd /d /s /c`, y `q()` envuelve en
  * comillas cualquier argumento con `^`/`|` — la comilla queda pegada al valor que ve
@@ -83,17 +136,7 @@ try {
     // `NUBEFACT_URL=NUBEFACT_URL:latest` y `NUBEFACT_TOKEN=NUBEFACT_TOKEN:latest` a la lista
     // de abajo, después de cargarlas en Secret Manager.
     '--set-secrets',
-    [
-      'DATABASE_URL=DATABASE_URL:latest',
-      'DIRECT_URL=DIRECT_URL:latest',
-      'JWT_SECRET=JWT_SECRET:latest',
-      'APIS_NET_PE_TOKEN=APIS_NET_PE_TOKEN:latest',
-      'R2_ACCOUNT_ID=R2_ACCOUNT_ID:latest',
-      'R2_ACCESS_KEY_ID=R2_ACCESS_KEY_ID:latest',
-      'R2_SECRET_ACCESS_KEY=R2_SECRET_ACCESS_KEY:latest',
-      'R2_BUCKET=R2_BUCKET:latest',
-      'R2_ENDPOINT=R2_ENDPOINT:latest',
-    ].join(','),
+    SECRET_NAMES.map((n) => `${n}=${n}:${secretVersions[n]}`).join(','),
     // D-214/D-224: toda ventana cierra comparando este label contra el SHA desplegado.
     '--update-labels',
     `git-sha=${gitSha}`,
@@ -126,17 +169,7 @@ const envNames = run('gcloud', [
   .filter(Boolean)
   .sort();
 const expectedEnvNames = [...Object.keys(ENV_VARS)].sort();
-const secretNames = [
-  'DATABASE_URL',
-  'DIRECT_URL',
-  'JWT_SECRET',
-  'APIS_NET_PE_TOKEN',
-  'R2_ACCOUNT_ID',
-  'R2_ACCESS_KEY_ID',
-  'R2_SECRET_ACCESS_KEY',
-  'R2_BUCKET',
-  'R2_ENDPOINT',
-].sort();
+const secretNames = [...SECRET_NAMES].sort();
 const allExpected = [...expectedEnvNames, ...secretNames].sort();
 const missing = allExpected.filter((n) => !envNames.includes(n));
 const unexpected = envNames.filter((n) => !allExpected.includes(n));
@@ -146,6 +179,40 @@ if (missing.length || unexpected.length) {
   );
 }
 console.log('Variables de entorno/secretos de la revisión: nombres verificados, sin sorpresas.');
+
+// D-329: cada secreto de la revisión desplegada tiene que llevar un número de versión explícito
+// (nunca `latest`) y coincidir con el que se pidió. Solo se imprimen números.
+const deployed = JSON.parse(
+  run('gcloud', [
+    'run',
+    'services',
+    'describe',
+    API_SERVICE,
+    '--project',
+    project,
+    '--region',
+    GCP_REGION,
+    '--format',
+    'json',
+  ]),
+);
+const mounted = Object.fromEntries(
+  (deployed.spec.template.spec.containers[0].env ?? [])
+    .filter((e) => e.valueFrom?.secretKeyRef)
+    .map((e) => [e.name, e.valueFrom.secretKeyRef.key]),
+);
+const notPinned = SECRET_NAMES.filter(
+  (n) => !/^[1-9]d*$/.test(String(mounted[n])) || mounted[n] !== secretVersions[n],
+);
+if (notPinned.length) {
+  throw new Error(
+    `Secretos sin la versión fijada esperada en la revisión: [${notPinned.join(', ')}]`,
+  );
+}
+console.log(
+  'Secretos de la revisión con versión explícita: ' +
+    SECRET_NAMES.map((n) => `${n}:${mounted[n]}`).join(', '),
+);
 
 const url = run('gcloud', [
   'run',
