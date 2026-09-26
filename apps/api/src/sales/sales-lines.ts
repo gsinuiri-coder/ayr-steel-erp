@@ -48,6 +48,7 @@ import {
 } from './coil-sale-product';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { assertPriceFloor, type PriceFloorCandidate } from './price-floor';
+import { FLOOR_COST_SELECT, productFloorCost } from './price-floor-cost';
 import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material';
 import { reservedByItem, type ReservedScope } from './reserved-ledger';
 
@@ -220,6 +221,11 @@ export async function resolveSalesLines(
       isActive: true,
       businessLineId: true,
       listPricePen: true,
+      // D-342: origen, peso por pieza y receta —lo que decide de dónde sale el costo del piso de
+      // un perfil de drywall (`productFloorCost`)—.
+      source: true,
+      pieceWeightKg: true,
+      bom: FLOOR_COST_SELECT.bom,
       // D-127: el subtipo decide la rama de la reserva. La geometría y la densidad del
       // acabado son lo que convierte metros lineales en kilos de bobina.
       roofingKind: true,
@@ -609,7 +615,10 @@ export async function resolveSalesLines(
       // aplica un producto físico que todavía no tuvo ninguna compra, y ahí es una laguna
       // temporal, no una exención. Que las dos cosas se vean iguales fue lo que dejó pasar
       // el defecto original.
-      if (withInventory) {
+      // D-342: un perfil de drywall sin receta activa no tiene piso: no se comprueba (sin costo
+      // no hay piso, D-163) y el formulario ya avisó por qué al elegirlo.
+      const floorCost = productFloorCost(product);
+      if (withInventory && 'cost' in floorCost) {
         floorCandidates.push({
           at,
           sku: product.sku,
@@ -622,7 +631,7 @@ export async function resolveSalesLines(
               ? { kind: 'PER_METER', lengthMm: product.lengthMm.toFixed(2) }
               : { kind: 'UNIT', unitLabel: product.unit },
           unitValuePen: unitPricePen,
-          cost: { kind: 'PRODUCT', productId: product.id },
+          cost: floorCost.cost,
         });
       }
     }

@@ -2,6 +2,26 @@ import { z } from 'zod';
 import { decimalStringSchema, MAX_VALUE } from '../decimal';
 import { BUSINESS_LINES, PRODUCT_SOURCES, ROOFING_PRODUCT_KINDS } from '../enums';
 
+/**
+ * D-342: por qué un perfil de drywall **no tiene piso de precio** (D-163). El piso de un perfil
+ * sale de su receta —kilos de la pieza × costo ponderado por kilo de los flejes que la receta
+ * consume— y le falta uno de los tres ingredientes:
+ *
+ * - `NO_RECIPE`: no tiene receta activa. Las recetas las carga el dueño desde el catálogo.
+ * - `NO_PIECE_WEIGHT`: tiene receta pero el SKU no declara el peso de la pieza.
+ * - `NO_STRIP_COST`: tiene todo, pero no hay flejes compatibles abiertos con saldo que den costo.
+ *
+ * En los tres casos **no se bloquea** nada: sin costo no hay piso (D-163), y esto solo lo dice.
+ */
+export const NO_FLOOR_REASONS = ['NO_RECIPE', 'NO_PIECE_WEIGHT', 'NO_STRIP_COST'] as const;
+export type NoFloorReason = (typeof NO_FLOOR_REASONS)[number];
+
+export const NO_FLOOR_REASON_LABELS: Record<NoFloorReason, string> = {
+  NO_RECIPE: 'Sin receta: sin piso de precio',
+  NO_PIECE_WEIGHT: 'Sin peso por pieza: sin piso de precio',
+  NO_STRIP_COST: 'Sin costo de flejes: sin piso',
+};
+
 /** Catálogo de productos por línea (RF-50). SKU único dentro de su línea, no global. */
 export const productSchema = z.object({
   id: z.string().uuid(),
@@ -54,6 +74,12 @@ export const productSchema = z.object({
   theoreticalKgPerUnit: z.string().nullable(),
   isActive: z.boolean(),
   source: z.enum(PRODUCT_SOURCES),
+  /**
+   * D-342: solo en un perfil de drywall al que **ya se sabe** que le falta un ingrediente del
+   * piso (`NO_RECIPE` o `NO_PIECE_WEIGHT`). `NO_STRIP_COST` no viaja acá: depende del saldo de
+   * flejes de hoy y solo lo dicen el panel de stock y `GET /catalog/:id/price-floor`.
+   */
+  noFloorReason: z.enum(NO_FLOOR_REASONS).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

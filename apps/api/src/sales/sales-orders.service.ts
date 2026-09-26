@@ -33,6 +33,7 @@ import {
   type ConfirmPreviewDto,
   type ConfirmPreviewLineDto,
   type ConfirmQuotationInput,
+  type NoFloorReason,
   type OrderWithShortfallDto,
   type QuotationTemporaryReservationDto,
   type SalesSettingsDto,
@@ -141,6 +142,7 @@ import {
 } from './reserved-ledger';
 import { unavailableCoilReason } from './coil-sale-unavailable';
 import { computePriceFloors, type PriceFloorCandidate } from './price-floor';
+import { FLOOR_COST_SELECT, productFloorCost } from './price-floor-cost';
 import {
   assertRawMaterialInvariant,
   rawMaterialAvailability,
@@ -3241,8 +3243,13 @@ export class SalesOrdersService {
         // necesita para encontrar el margen mínimo de la línea— y, desde D-171, también
         // `unit` y `lengthMm`, que `orderedMeters` usa para convertir planchas en metros.
         ...ROOFING_PRODUCT_SELECT,
+        // D-342: origen, peso y receta, para el costo del piso de un perfil de drywall.
+        source: true,
+        pieceWeightKg: true,
+        bom: FLOOR_COST_SELECT.bom,
         // D-167: si la línea lleva existencias. El panel lo muestra en vez de un cero.
-        businessLine: { select: { inventoryStrategy: true } },
+        // `code` (D-342): es lo que distingue un perfil de drywall.
+        businessLine: { select: { inventoryStrategy: true, code: true } },
       },
     });
     if (products.length === 0) return [];
@@ -3290,6 +3297,11 @@ export class SalesOrdersService {
     // veces era duplicar la consulta más cara de una ruta que el formulario llama en cada
     // cambio de selección.
     const floorCandidates: PriceFloorCandidate[] = [];
+    // D-342: por qué un perfil de drywall no tiene piso. `staticReasons` es lo que se sabe sin
+    // mirar saldos (sin receta, sin peso); `stripRecipeProductIds` son los perfiles con receta,
+    // que quedan «sin costo de flejes» si aun así `computePriceFloors` no les encontró piso.
+    const staticReasons = new Map<string, NoFloorReason>();
+    const stripRecipeProductIds = new Set<string>();
 
     const out: ProductStockDto[] = [];
     for (const product of products) {
@@ -3360,14 +3372,22 @@ export class SalesOrdersService {
           });
         }
       } else if (carriesInventory(product.businessLine)) {
-        floorCandidates.push({
-          at: product.id,
-          sku: product.sku,
-          businessLineId: product.businessLineId,
-          basis,
-          unitValuePen: '0.0000',
-          cost: { kind: 'PRODUCT', productId: product.id },
-        });
+        // D-342: un perfil de drywall con receta cuesta lo que sus flejes; sin ella (o sin peso)
+        // no tiene piso, y el formulario lo dice en la línea sin bloquear.
+        const floorCost = productFloorCost(product);
+        if ('cost' in floorCost) {
+          floorCandidates.push({
+            at: product.id,
+            sku: product.sku,
+            businessLineId: product.businessLineId,
+            basis,
+            unitValuePen: '0.0000',
+            cost: floorCost.cost,
+          });
+          if (floorCost.cost.kind === 'STRIP_RECIPE') stripRecipeProductIds.add(product.id);
+        } else {
+          staticReasons.set(product.id, floorCost.noFloorReason);
+        }
       }
       out.push({
         productId: product.id,
@@ -3382,6 +3402,7 @@ export class SalesOrdersService {
         // una tanda para no repetir por SKU la consulta de márgenes y la de costos.
         minPricePen: null,
         minValuePen: null,
+        noFloorReason: null,
         carriesInventory: carriesInventory(product.businessLine),
       });
     }
@@ -3393,9 +3414,15 @@ export class SalesOrdersService {
     );
     return out.map((row) => {
       const floor = floors.get(row.productId);
-      return floor === undefined
-        ? row
-        : { ...row, minPricePen: floor.minPricePen, minValuePen: floor.minValuePen };
+      if (floor !== undefined) {
+        return { ...row, minPricePen: floor.minPricePen, minValuePen: floor.minValuePen };
+      }
+      // D-342: sin piso porque a un perfil de drywall le falta receta o peso, o —con receta y
+      // peso— porque no hay flejes compatibles con saldo que den costo.
+      const reason =
+        staticReasons.get(row.productId) ??
+        (stripRecipeProductIds.has(row.productId) ? ('NO_STRIP_COST' as const) : null);
+      return reason === null ? row : { ...row, noFloorReason: reason };
     });
   }
 

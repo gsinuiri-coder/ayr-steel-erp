@@ -22,6 +22,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { getField, parseSpreadsheet, type ImportColumn } from '../imports/parse-spreadsheet';
 import { PrismaService } from '../prisma/prisma.service';
 import { computePriceFloors, type PriceFloorCandidate } from '../sales/price-floor';
+import { FLOOR_COST_SELECT, productFloorCost } from '../sales/price-floor-cost';
 import {
   PRICE_FLOOR_UNUSED_TOLERANCE_MM,
   priceListValueChanged,
@@ -71,13 +72,13 @@ export class PriceListImportService {
         : await this.prisma.product.findMany({
             where: { sku: { in: skus } },
             select: {
-              id: true,
               sku: true,
               name: true,
               unit: true,
-              businessLineId: true,
               isActive: true,
               listPricePen: true,
+              // D-342: origen, peso y receta, para el costo del piso de un perfil de drywall.
+              ...FLOOR_COST_SELECT,
             },
           });
     const bySku = new Map<string, typeof products>();
@@ -169,14 +170,18 @@ export class PriceListImportService {
       rows.push(row);
       if (status !== 'UNCHANGED') {
         rowIndexByProductId.set(product.id, rows.length - 1);
-        floorCandidates.push({
-          at: product.id,
-          sku: product.sku,
-          businessLineId: product.businessLineId,
-          basis: { kind: 'UNIT', unitLabel: product.unit },
-          unitValuePen: afterValuePen,
-          cost: { kind: 'PRODUCT', productId: product.id },
-        });
+        // D-342: un perfil de drywall sin receta no tiene piso que comprobar.
+        const floorCost = productFloorCost(product);
+        if ('cost' in floorCost) {
+          floorCandidates.push({
+            at: product.id,
+            sku: product.sku,
+            businessLineId: product.businessLineId,
+            basis: { kind: 'UNIT', unitLabel: product.unit },
+            unitValuePen: afterValuePen,
+            cost: floorCost.cost,
+          });
+        }
       }
     }
 

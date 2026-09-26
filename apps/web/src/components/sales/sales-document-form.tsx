@@ -21,6 +21,7 @@ import {
   MAX_SALES_ITEMS,
   money,
   PIECE_LENGTH_RANGE_LABEL,
+  NO_FLOOR_REASON_LABELS,
   piecesCount,
   piecesMeters,
   salePriceFromValue,
@@ -1918,7 +1919,18 @@ function PriceFloorHint({
   const minPricePen =
     l.kind === 'BOBINA' ? (coil?.minPricePen ?? null) : (stock?.minPricePen ?? null);
   const minValuePen = l.kind === 'BOBINA' ? minPricePen : (stock?.minValuePen ?? null);
-  if (minPricePen === null || minValuePen === null) return null;
+  if (minPricePen === null || minValuePen === null) {
+    // D-342: un perfil de drywall sin receta (o sin peso, o sin costo de flejes) no tiene piso.
+    // Se dice en la línea, sin bloquear: sin costo no hay piso (D-163).
+    if (l.kind !== 'BOBINA' && stock?.noFloorReason) {
+      return (
+        <span className="mt-1 block text-right text-xs text-amber-700 dark:text-amber-400">
+          {NO_FLOOR_REASON_LABELS[stock.noFloorReason]}
+        </span>
+      );
+    }
+    return null;
+  }
   const fixedLength = byFixedLength(product);
   // `minPricePen` **ya viene en la unidad en la que se tipea** —por metro en una plancha, por
   // kg en una bobina— y ya es un precio tipeable de dos decimales (D-163, `minTypeablePrice`).

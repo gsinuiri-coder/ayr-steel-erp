@@ -26,6 +26,7 @@ import {
 import { reasonSchema } from './coil';
 import { idempotencyKeySchema } from './idempotency';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
+import { NO_FLOOR_REASONS } from './product';
 import { statusListSchema } from './status-filter';
 import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing';
 
@@ -1431,6 +1432,12 @@ export const productStockSchema = z.object({
    */
   minPricePen: z.string().nullable(),
   minValuePen: z.string().nullable(),
+  /**
+   * D-342: por qué un **perfil de drywall** no tiene piso —sin receta activa, sin peso por pieza
+   * o sin costo de flejes—. El formulario lo dice en la línea, sin bloquear. `null` en el resto y
+   * cuando el piso existe.
+   */
+  noFloorReason: z.enum(NO_FLOOR_REASONS).nullable(),
   /**
    * D-167: `false` en un producto de una línea `NOOP` —un servicio—, que no lleva
    * existencias. Viaja como bandera propia y no se deduce de `availableQty === '0.000'`
