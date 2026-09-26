@@ -130,6 +130,28 @@ test.describe('D-328 — film de protección', () => {
     }
   });
 
+  test('un evento retrofechado no contradice al último por fecha: la ficha, el historial y el reporte dicen lo mismo', async ({
+    baseURL,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const scenario = await setupRoofingScenario(api, { weightKg: '500' });
+    const id = scenario.coil.id;
+    try {
+      await postJson(api, `/api/coils/${id}/film/open`, {});
+      await postJson(api, `/api/coils/${id}/film/reseal`, {});
+      // Abrir con fecha de agosto (retroactivo, solo ADMINISTRADOR): el último evento por fecha
+      // sigue siendo el «volver a sellar» de hoy, así que la bobina sigue sellada.
+      await postJson(api, `/api/coils/${id}/film/open`, { operationDate: '2026-08-20' });
+      expect((await coilOf(api, id)).film).toBe('SEALED');
+      const events = await eventsOf(api, id);
+      expect(events[0]).toMatchObject({ type: 'RESEALED', operationDate: today() });
+      expect(events.map((e) => e.operationDate)).toContain('2026-08-20');
+    } finally {
+      await purgeRoofingTrail(api, trailOf(scenario));
+      await api.dispose();
+    }
+  });
+
   test('la merma abre; con la merma viva no se puede volver a sellar (el error la nombra); anulada, sí; partir abre y su reversa no resella', async ({
     baseURL,
   }) => {

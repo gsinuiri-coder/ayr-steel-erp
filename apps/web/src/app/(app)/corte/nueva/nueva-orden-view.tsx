@@ -245,7 +245,7 @@ export function NuevaOrdenCorteView() {
               {!availableCoils.isPending && !availableCoils.isError && candidates.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center text-muted-foreground">
-                    No hay bobinas abiertas disponibles.
+                    No hay bobinas vigentes disponibles.
                   </TableCell>
                 </TableRow>
               )}

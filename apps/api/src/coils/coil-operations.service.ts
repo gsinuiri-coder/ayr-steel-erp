@@ -843,10 +843,14 @@ export class CoilOperationsService {
           throw new BadRequestException('La bobina está anulada: no se puede editar');
         }
         if (input.widthMm !== undefined && coil.status !== CoilStatus.OPEN) {
-          throw new BadRequestException('El ancho solo se edita con la bobina abierta');
+          throw new BadRequestException(
+            'El ancho solo se edita con la bobina vigente (no terminada)',
+          );
         }
         if (input.finishId !== undefined && coil.status !== CoilStatus.OPEN) {
-          throw new BadRequestException('El acabado solo se edita con la bobina abierta');
+          throw new BadRequestException(
+            'El acabado solo se edita con la bobina vigente (no terminada)',
+          );
         }
         // D-060: recostear (D-045) o reanchar un fleje montado en una OP cambiaría, a mitad
         // de la corrida, el costo con el que ya entraron piezas y el ancho contra el que se

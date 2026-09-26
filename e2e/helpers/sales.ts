@@ -359,8 +359,8 @@ export async function setupCoilStock(
 /**
  * Una bobina propia (`kind=COIL`) comprada y recibida, para venderla **entera** (D-116,
  * Fase 7e). A diferencia de `setupCoilStock` —pensada para reservar kilos parciales, y por
- * eso siempre `OPEN`— acá el estado es el que pida el test: `CLOSED` (el default real de
- * D-117, sin mandar `coilStatus`) o `OPEN` (una bobina que también se puede vender entera,
+ * eso siempre `OPEN`— acá el estado es el que pida el test: `CLOSED` (terminada; el default real ahora es `OPEN` sellada, D-328, que sustituye a
+ * D-117) o `OPEN` (una bobina que también se puede vender entera,
  * y que además sirve para ejercitar guardrails que exigen `OPEN` antes de llegar a la
  * custodia, como enviar a corte o montar en una OP).
  */
@@ -419,7 +419,7 @@ export async function buyCoilForSale(
   const coils = await getItems<CoilDto>(api, `/api/coils?supplierId=${supplier.id}`);
   const coil = coils[0]!;
   expect(coil.availableKg).toBe(`${Number(weightKg).toFixed(0)}.000`);
-  expect(coil.status).toBe(options.coilStatus ?? 'CLOSED');
+  expect(coil.status).toBe(options.coilStatus ?? 'OPEN');
 
   return { supplier, finish, purchaseId: purchase.id, coil };
 }

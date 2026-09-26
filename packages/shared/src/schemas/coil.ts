@@ -347,7 +347,7 @@ export const setCoilStatusSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['physicalKg'],
-        message: 'Los kilos que quedan solo se declaran al cerrar la bobina',
+        message: 'Los kilos que quedan solo se declaran al terminar la bobina',
       });
     }
   });

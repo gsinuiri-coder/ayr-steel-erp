@@ -73,7 +73,7 @@ test.describe('Fase 7e — venta de bobina completa, catálogo y multi-línea', 
       lineCode: 'drywall',
       weightKg: '500',
       unitPrice: '5',
-      // D-117: sin `coilStatus` nace CERRADA (el default real); D-116 la admite igual
+      // D-328: el default real es OPEN sellada; acá se pide CLOSED (terminada) y D-116 la admite igual
       // para venderla entera.
       coilStatus: 'CLOSED',
     });

@@ -118,7 +118,7 @@ export class CuttingService {
           }
           if (coil.status !== CoilStatus.OPEN) {
             throw new BadRequestException(
-              `${coil.code} no está disponible (${coil.status}): solo bobinas abiertas se envían a corte`,
+              `${coil.code} no está disponible (${coil.status}): solo bobinas vigentes se envían a corte`,
             );
           }
           if (coil.businessLineId !== drywallLine.id) {

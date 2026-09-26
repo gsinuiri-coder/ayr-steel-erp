@@ -180,7 +180,7 @@ export function CoilEditDialog({
             />
             {coil.status !== 'OPEN' && (
               <p className="text-sm text-muted-foreground">
-                El ancho solo se edita con la bobina abierta.
+                El ancho solo se edita con la bobina vigente (no terminada).
               </p>
             )}
           </div>
@@ -233,7 +233,7 @@ export function CoilEditDialog({
               .{' '}
               {coil.status === 'OPEN'
                 ? 'El color sale del acabado: para corregirlo, elige el acabado correcto. La orden de coberturas ofrece las bobinas del mismo color comercial que el producto, primero las de su mismo acabado (RAL) (D-270, D-271).'
-                : 'El acabado solo se edita con la bobina abierta.'}
+                : 'El acabado solo se edita con la bobina vigente (no terminada).'}
             </p>
           </div>
           <div className="grid gap-1">
