@@ -15,10 +15,10 @@ import {
   MAX_PIECE_LINES,
   MAX_PIECE_QTY,
   MIN_PIECE_LENGTH_MM,
+  detailsLengths,
   Role,
   toDecimal,
   toFixedString,
-  Unit,
   type Decimal,
   type CoilPoolCandidateDto,
   type CustomerDto,
@@ -1174,8 +1174,13 @@ function resolveRow(
   // (D-131), y cambiar el producto en el desplegable cambia la respuesta: sin recalcular, una
   // fila reasignada a un producto por metro lineal dejaba la celda del plan apagada y el
   // archivo entero moría en el confirm.
-  const unit = productId === null ? null : (productsById.get(productId)?.unit ?? raw.productUnit);
-  const needsPieces = unit === null ? raw.needsPieces : unit === Unit.MTR;
+  const chosen = productId === null ? undefined : productsById.get(productId);
+  const unit = productId === null ? null : (chosen?.unit ?? raw.productUnit);
+  // D-343: el desglose lo decide `detailsLengths` (unidad `MTR` y no accesorio), no la unidad sola.
+  const needsPieces =
+    unit === null
+      ? raw.needsPieces
+      : detailsLengths({ unit, roofingKind: chosen?.roofingKind ?? null });
   /**
    * El plan **llega relleno**: el que el preview resolvió, o la sugerencia `1 × los ML de la
    * línea` cuando el archivo no traía ninguno posible. La sugerencia no siempre es válida

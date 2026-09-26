@@ -11,6 +11,8 @@ import {
   Decimal,
   DEFAULT_QUOTATION_VALIDITY_DAYS,
   describePieces,
+  detailsLengths,
+  isAccessory,
   fixedLengthMeters,
   fixedLengthUnitValue,
   fixedLengthValuePerMeter,
@@ -194,6 +196,11 @@ interface LineDraft {
   descriptionEdited: boolean;
   /** Texto guardado sin sufijo de largos (papel importado): se reenvía tal cual si no se toca. */
   descriptionVerbatim?: boolean;
+  /**
+   * D-343: cantidad de piezas de un accesorio, **solo informativa** (no entra a ningún cálculo).
+   * Opcional en el tipo para que las filas nuevas no tengan que declararla; ausente = vacío.
+   */
+  piecesHint?: string;
 }
 
 /** D-255: lo que la línea guardada tenía, para reconocer que nadie la tocó. */
@@ -386,15 +393,24 @@ function toPieces(rows: PieceDraft[]): RoofingPieceDto[] | null {
 }
 
 /**
- * D-083: la línea es compuesta cuando el producto se vende por metro lineal.
+ * D-083: la línea es compuesta cuando el producto lleva **desglose de largos**.
  *
- * El nombre es `sellsByLength` y no `isMadeToMeasure` a propósito (D-131): la unidad y el
- * subtipo son **dos preguntas distintas**, y en el API `isMadeToMeasure` es la del subtipo.
- * Compartir el nombre entre las dos es exactamente lo que dejó al mostrador vendiendo
- * material a medida.
+ * D-343: la decide `detailsLengths` de `@ayr/shared` —la unidad `MTR` **y** que no sea un
+ * accesorio—, la misma pregunta que responde el API para exigir o prohibir los subítems. Hasta
+ * D-343 esta función se llamaba `sellsByLength` y miraba solo la unidad; ese nombre es de la otra
+ * pregunta («¿la unidad de venta es el metro?»), que acá nadie hace: los dos sitios que usaban
+ * esta función —enviar los largos y dibujar su editor— son de desglose. Un accesorio se vende en
+ * metros y **no** desglosa: su cantidad se escribe a mano y sus piezas son informativas.
+ *
+ * El nombre no es `isMadeToMeasure` a propósito (D-131): la unidad y el subtipo son **dos
+ * preguntas distintas**. Compartir el nombre entre las dos es exactamente lo que dejó al
+ * mostrador vendiendo material a medida.
  */
-function sellsByLength(product: ProductDto | undefined): boolean {
-  return product?.unit === Unit.MTR;
+function detailsLengthsOf(product: ProductDto | undefined): boolean {
+  return (
+    product !== undefined &&
+    detailsLengths({ unit: product.unit, roofingKind: product.roofingKind })
+  );
 }
 
 /**
@@ -468,6 +484,7 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
     amountMode: 'PRICE',
     netAmountPen: '',
     original: { ...stored, kind: 'PRODUCT', productId: item.productId, saleCoilId: '' },
+    piecesHint: item.piecesHint === null ? '' : String(item.piecesHint),
     pieces:
       item.pieces.length > 0
         ? item.pieces.map((p) => ({ lengthM: mmToMeters(p.lengthMm), qty: String(p.qty) }))
@@ -890,7 +907,7 @@ export function SalesDocumentForm({
               : 'elige la bobina que se vende con «Bobina completa (venta directa)».'),
         };
       }
-      const sellsMeters = sellsByLength(product);
+      const sellsMeters = detailsLengthsOf(product);
       const pieces = sellsMeters ? toPieces(l.pieces) : null;
       if (sellsMeters) {
         const parsed = parsePieceRows(l.pieces);
@@ -949,6 +966,12 @@ export function SalesDocumentForm({
           );
       if (!description.ok) return { error: `${at}: ${description.reason}` };
 
+      // D-343: las piezas de un accesorio son informativas; si se escriben, un entero mayor a cero.
+      const hintText = (l.piecesHint ?? '').trim();
+      if (isAccessory(product) && hintText !== '' && !/^[1-9]\d{0,6}$/.test(hintText)) {
+        return { error: `${at}: las piezas son un número entero mayor a cero` };
+      }
+
       // D-134: la línea ya no dice qué reservar. Una cobertura a medida promete kilos del
       // agregado compatible y el API los calcula; el aviso de que no alcanzan sale del panel
       // de stock, y la palabra final la tiene el API bajo el lock, que es donde importa.
@@ -961,6 +984,7 @@ export function SalesDocumentForm({
         ...pricing.payload,
         ...(pieces ? { pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })) } : {}),
         ...(description.value === undefined ? {} : { description: description.value }),
+        ...(isAccessory(product) && hintText !== '' ? { piecesHint: Number(hintText) } : {}),
       });
     }
     return { items };
@@ -1324,7 +1348,7 @@ function LineRow({
   const product = productById.get(l.productId);
   const lineTotal = pricing?.amounts.subtotal ?? null;
   const byAmount = l.amountMode === 'AMOUNT';
-  const sellsMeters = sellsByLength(product);
+  const sellsMeters = detailsLengthsOf(product);
   // D-161: una plancha de catálogo cotiza por metro y su cantidad se cuenta en planchas, así
   // que la cantidad la manda su editor de largo fijo igual que en una a medida la manda el
   // detalle de largos. En las dos, el campo de cantidad de la fila es de solo lectura.
@@ -1515,6 +1539,27 @@ function LineRow({
                 });
               }}
             />
+          )}
+          {/* D-343: un accesorio se vende por metros lineales de bobina y no desglosa largos; las
+              piezas son solo para información del usuario y no entran a ningún cálculo. */}
+          {l.kind === 'PRODUCT' && product && isAccessory(product) && (
+            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+              <Label htmlFor={`piezas-${index}`} className="text-xs font-normal">
+                Piezas (informativo)
+              </Label>
+              <Input
+                id={`piezas-${index}`}
+                className="h-8 w-24 text-right text-xs tabular-nums"
+                inputMode="numeric"
+                placeholder="opcional"
+                aria-label={`Piezas de la línea ${index + 1} (solo información)`}
+                value={l.piecesHint ?? ''}
+                onChange={(e) => {
+                  onPatch({ piecesHint: e.target.value });
+                }}
+              />
+              <span>Los metros de arriba son los de bobina que se van a usar.</span>
+            </div>
           )}
         </TableCell>
         <TableCell className="whitespace-normal">
