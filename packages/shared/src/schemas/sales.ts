@@ -19,6 +19,7 @@ import {
   MAX_TEMPORARY_RESERVATION_BUSINESS_DAYS,
   QUOTATION_STATUSES,
   RESERVATION_STATUSES,
+  ROOFING_PRODUCT_KINDS,
   SALES_ORDER_ORIGINS,
   SALES_ORDER_STATUSES,
   ORDER_STAGES,
@@ -442,6 +443,13 @@ export const salesItemInputSchema = z.object({
    */
   valuePerMeterPen: priceSchema.optional(),
   /**
+   * D-343: cantidad de **piezas** de un accesorio, **solo para información del usuario**. No entra a
+   * ningún cálculo —kilos, importe, reserva ni piso no se mueven con ella— y solo la acepta un
+   * producto `ACCESORIO`: en cualquier otro es un 400. La descripción de la línea la escribe el
+   * usuario (D-083 ya la deja tipear).
+   */
+  piecesHint: z.number().int().min(1).max(1_000_000).optional(),
+  /**
    * D-169: el **importe exacto de la línea tal como sale del papel** (valor de venta, SIN
    * IGV, en soles). Solo lo acepta el importador de históricos (D-152); en cualquier otra
    * ruta mandarlo es un 400.
@@ -605,6 +613,14 @@ export const salesItemSchema = z.object({
    * lo cotizado antes de D-161.
    */
   valuePerMeterPen: z.string().nullable(),
+  /** D-343: piezas informativas de un accesorio. Null en el resto; no entra a ningún cálculo. */
+  piecesHint: z.number().int().nullable(),
+  /**
+   * D-343: subtipo de cobertura del producto de la línea, para que la pantalla sepa si es un
+   * accesorio (sin detalle de largos) sin volver a pedir el catálogo. Null fuera de coberturas y
+   * en una venta de bobina.
+   */
+  productRoofingKind: z.enum(ROOFING_PRODUCT_KINDS).nullable(),
   subtotalPen: z.string(),
   igvPen: z.string(),
   totalPen: z.string(),

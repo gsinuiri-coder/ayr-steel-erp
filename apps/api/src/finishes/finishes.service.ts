@@ -263,6 +263,7 @@ function toDto(f: FinishRow): FinishDto {
     colorName: f.color?.name ?? null,
     colorHex: f.color?.hexColor ?? null,
     colorRal: f.color?.ralCode ?? null,
+    colorCode: f.color?.code ?? null,
     businessLine: f.businessLine ? toSharedLineCode(f.businessLine.code) : null,
     inUse: f._count.coils > 0 || f._count.purchaseItems > 0,
     isActive: f.isActive,

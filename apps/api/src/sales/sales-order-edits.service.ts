@@ -541,6 +541,7 @@ export class SalesOrderEditsService {
                 listPricePen: l.listPricePen,
                 unitPricePen: l.unitPricePen,
                 valuePerMeterPen: l.valuePerMeterPen,
+                piecesHint: l.piecesHint,
                 subtotalPen: l.subtotalPen,
                 igvPen: l.igvPen,
                 totalPen: l.totalPen,

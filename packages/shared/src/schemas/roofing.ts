@@ -232,6 +232,54 @@ export function sellsByFixedLength(product: FixedLengthProductLike): boolean {
   );
 }
 
+// --------------------------------------------------------------------------
+// D-343 — el accesorio: metros de bobina sin detalle de largos
+// --------------------------------------------------------------------------
+
+/** Lo mínimo de un producto que hace falta para saber si es un accesorio. */
+export interface AccessoryProductLike {
+  roofingKind: string | null;
+}
+
+/**
+ * D-343: **¿es un accesorio?** — el subtipo `ACCESORIO` de coberturas (cumbrera, canal, remate…).
+ * Se vende en metros lineales **de bobina**, se fabrica siempre contra pedido, y el usuario
+ * tipea los metros que va a usar: no hay subítems de largo ni plan de piezas.
+ *
+ * Es una pregunta sobre **qué es** el producto, no sobre cómo se mide ni cómo se cuenta. No
+ * decide por sí sola ni los largos ni la reserva: eso lo responden `detailsLengths` y
+ * `isMadeToOrder`, cada una con su regla.
+ */
+export function isAccessory(product: AccessoryProductLike): boolean {
+  return product.roofingKind === 'ACCESORIO';
+}
+
+/** Lo que hace falta de un producto para decidir si su línea lleva detalle de largos. */
+export interface DetailsLengthsProductLike extends AccessoryProductLike {
+  unit: string;
+}
+
+/**
+ * D-343: **¿la línea lleva desglose de largos?** — la **quinta** pregunta de la familia de D-131.
+ *
+ * Es la pregunta que hoy contestaban, sin decirlo, todos los sitios que preguntaban por
+ * `sellsByLength`: exigir o prohibir los subítems `(largo, cantidad)`, sumarlos a la cantidad,
+ * mostrar el editor de largos, generar el plan de corte. **`sellsByLength` sigue diciendo solo lo
+ * que decía —«la unidad de venta es el metro lineal» (cantidad, precio y kardex en `MTR`)— y no
+ * conoce el subtipo.** Esta pregunta es distinta: una línea se mide en metros **y** un accesorio
+ * también, pero el accesorio no desglosa en largos porque no se corta en piezas de largo
+ * conocido: se usan N metros de bobina.
+ *
+ * Por eso depende de las dos cosas, y de ninguna sola: `unit === MTR` (hay metros que
+ * desglosar) y `roofingKind !== ACCESORIO` (y este no lo hace). Definirla solo por la unidad la
+ * haría idéntica a `sellsByLength` y dejaría al accesorio pidiendo largos; definirla solo por el
+ * subtipo dejaría a un producto en `MTR` sin subtipo (un SKU legado) sin su editor. El
+ * centinela de `sales-lines.spec.ts` prueba las dos direcciones.
+ */
+export function detailsLengths(product: DetailsLengthsProductLike): boolean {
+  return product.unit === 'MTR' && !isAccessory(product);
+}
+
 /**
  * D-161: valor unitario (sin IGV) de **una** plancha = `largo del SKU en metros × valor por
  * metro`. Sin redondear: lo redondea el llamador, una sola vez, al persistir.
@@ -605,8 +653,15 @@ export const mountRoofingCoilSchema = z
   });
 export type MountRoofingCoilInput = z.infer<typeof mountRoofingCoilSchema>;
 
-/** Reportar los largos que de verdad salieron (D-083). Parcial, N veces, como D-058. */
-export const reportRoofingPiecesSchema = z.object({
+/**
+ * Reportar los largos que de verdad salieron (D-083). Parcial, N veces, como D-058.
+ *
+ * **D-343: un accesorio no reporta largos sino metros lineales de bobina.** El cuerpo trae
+ * `pieces` (planchas y coberturas a medida) **o** `meters` (accesorio), nunca los dos: qué forma
+ * corresponde lo decide el subtipo del producto de la orden, que el schema no conoce, así que lo
+ * comprueba el servicio; acá solo se garantiza que venga exactamente una.
+ */
+export const reportRoofingBaseSchema = z.object({
   /**
    * Bobina de la que salieron estas planchas. Opcional cuando la orden tiene una sola
    * montada, que es el caso normal. **Un reporte sale de un rollo**: el kilo teórico
@@ -616,7 +671,19 @@ export const reportRoofingPiecesSchema = z.object({
    * cada una por turno.
    */
   coilId: z.string().uuid().optional(),
-  pieces: roofingPiecesSchema,
+  pieces: roofingPiecesSchema.optional(),
+  /**
+   * D-343: **metros lineales de bobina** que usó un accesorio en este reporte. Es el dato de
+   * primera clase de un accesorio —no hay largos ni cantidad × largo—: de él salen los kilos
+   * teóricos (con el ancho de la bobina montada), lo que entra al kardex del producto terminado y
+   * lo que se compara contra lo que el pedido encargó.
+   */
+  meters: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+  /**
+   * D-343: cantidad de piezas que el operario quiere dejar anotada. **Solo información**: no
+   * entra a ningún cálculo. Solo con `meters`.
+   */
+  piecesCount: z.number().int().min(1).max(1_000_000).optional(),
   /**
    * D-146: kilos que planta dice que la bobina consumió en **este** reporte. Opcional, y
    * cuando viene es **dato declarado, no consumo**: el kardex sigue sacando de la bobina el
@@ -632,6 +699,36 @@ export const reportRoofingPiecesSchema = z.object({
   ...backdatableFields,
   ...idempotencyFields,
 });
+
+/** Exactamente una de las dos formas: largos o metros; y las piezas informativas solo con metros. */
+function refineReportForm(
+  v: { pieces?: unknown; meters?: unknown; piecesCount?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  if (v.pieces !== undefined && v.meters !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['meters'],
+      message: 'Reporta los largos o los metros lineales, no los dos',
+    });
+  }
+  if (v.pieces === undefined && v.meters === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['pieces'],
+      message: 'Detalla los largos que salieron, o los metros lineales si es un accesorio',
+    });
+  }
+  if (v.piecesCount !== undefined && v.meters === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['piecesCount'],
+      message: 'La cantidad de piezas informativa va junto con los metros de un accesorio',
+    });
+  }
+}
+
+export const reportRoofingPiecesSchema = reportRoofingBaseSchema.superRefine(refineReportForm);
 export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>;
 
 // --------------------------------------------------------------------------
@@ -787,6 +884,12 @@ export const roofingBatchOrderSchema = z.object({
   salesOrderId: z.string().uuid().nullable(),
   salesOrderCode: z.string().nullable(),
   customerName: z.string().nullable(),
+  /**
+   * D-343: la orden es de un **accesorio**. La pantalla de planta reporta metros lineales de
+   * bobina en vez de largos, y `planMeters` / `reportedMeters` / `remainingMeters` son los metros
+   * que encargó la línea, los ya reportados y lo que falta — sin plan de largos ni borrador.
+   */
+  isAccessory: z.boolean(),
   planItems: z.array(roofingPieceSchema),
   planMeters: z.string(),
   reportedMeters: z.string(),
@@ -838,10 +941,12 @@ export type CloseRoofingOrderInput = z.infer<typeof closeRoofingOrderSchema>;
  * ninguno se confunda con el `consumedKg` **del reporte**, que es otra cosa: aquel es el kilo
  * declarado de esta pasada (D-146) y este el consumo total de la corrida (D-089).
  */
-export const reportAndCloseRoofingSchema = reportRoofingPiecesSchema.extend({
-  closeConsumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
-  closeReason: reasonSchema.optional(),
-});
+export const reportAndCloseRoofingSchema = reportRoofingBaseSchema
+  .extend({
+    closeConsumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+    closeReason: reasonSchema.optional(),
+  })
+  .superRefine(refineReportForm);
 export type ReportAndCloseRoofingInput = z.infer<typeof reportAndCloseRoofingSchema>;
 
 // --------------------------------------------------------------------------

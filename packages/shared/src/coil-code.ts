@@ -305,3 +305,21 @@ export function coilCode(input: {
 export function coilProductName(finishName: string, thicknessMm: DecimalInput): string {
   return `Bobina ${finishName} ${formatThickness(thicknessMm)} mm`;
 }
+
+// ---------------------------------------------------------------------------
+// D-343 — SKU del accesorio
+// ---------------------------------------------------------------------------
+
+/** Prefijo de todo SKU de accesorio de coberturas (cumbrera, canal, remate…). */
+export const ACCESSORY_SKU_PREFIX = 'ACCES';
+
+/**
+ * D-343: el SKU canónico de un accesorio: `ACCES` + espesor de 3 dígitos + color comercial.
+ * `0.30` rojo → `ACCES030ROJO`. Usa **los mismos tokens** que el SKU de bobina (D-252) —el mismo
+ * espesor ×100 y el mismo color comercial sin sufijo RAL—, porque es la misma pregunta (qué
+ * material nombra este SKU) y dos lugares que la respondan vuelven a divergir. El accesorio no
+ * lleva ancho en el SKU: el ancho de la bobina que se monte lo pone la producción.
+ */
+export function canonicalAccessorySku(thicknessMm: DecimalInput, colorCode: string): string {
+  return `${ACCESSORY_SKU_PREFIX}${coilThicknessToken(thicknessMm)}${commercialColorToken(colorCode)}`;
+}

@@ -275,6 +275,11 @@ enum RoofingProductKind {
   /// A medida: se cotiza en metros lineales por subítems de largo y se **fabrica** contra
   /// pedido reservando kilos de bobina (RF-31, D-084).
   A_MEDIDA
+  /// D-343: accesorio (cumbrera, canal, remate…). Se **fabrica** siempre contra pedido desde
+  /// bobina, se vende en metros lineales **de bobina** y **no lleva detalle de largos**: el
+  /// usuario tipea los metros que va a usar y la cantidad de piezas es solo informativa. Su SKU es
+  /// `ACCES` + espesor de 3 dígitos + color comercial (`ACCES030ROJO`).
+  ACCESORIO
 
   @@map("roofing_product_kind")
 }
@@ -1606,6 +1611,9 @@ model QuotationItem {
   /// un perfil o un producto de trading se cotizan por unidad. También queda `NULL` en las
   /// planchas cotizadas antes de D-161 y en las que importó D-152, que no se recalculan.
   valuePerMeterPen Decimal?          @map("value_per_meter_pen") @db.Decimal(18, 4)
+  /// D-343: cantidad de piezas de un accesorio, **solo para información del usuario**. No entra a
+  /// ningún cálculo —ni kilos, ni importe, ni reserva, ni piso— y solo la lleva un accesorio.
+  piecesHint       Int?              @map("pieces_hint")
   subtotalPen      Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
   igvPen           Decimal           @map("igv_pen") @db.Decimal(18, 4)
   totalPen         Decimal           @map("total_pen") @db.Decimal(18, 4)
@@ -1711,6 +1719,8 @@ model SalesOrderItem {
   /// D-161: copia congelada del valor por metro con el que se cotizó una plancha. Ver
   /// `QuotationItem.valuePerMeterPen`.
   valuePerMeterPen Decimal?          @map("value_per_meter_pen") @db.Decimal(18, 4)
+  /// D-343: copia congelada de las piezas informativas de un accesorio (`QuotationItem.piecesHint`).
+  piecesHint       Int?              @map("pieces_hint")
   subtotalPen      Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
   igvPen           Decimal           @map("igv_pen") @db.Decimal(18, 4)
   totalPen         Decimal           @map("total_pen") @db.Decimal(18, 4)

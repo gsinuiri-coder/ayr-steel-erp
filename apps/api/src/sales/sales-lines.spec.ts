@@ -1,14 +1,34 @@
 import { RoofingProductKind } from '@prisma/client';
 import { sellsByFixedLength, Unit } from '@ayr/shared';
-import { isMadeToMeasure, isMadeToOrder, sellsByLength } from './sales-lines';
+import {
+  detailsLengths,
+  isAccessory,
+  isMadeToMeasure,
+  isMadeToOrder,
+  sellsByLength,
+} from './sales-lines';
 
 /**
  * **Centinela de D-131, ampliado por D-161.** Las preguntas que ya se confundieron dos veces,
  * con la tabla completa de combinaciones para que la próxima confusión sea un test rojo y no
  * un defecto.
  *
- * - *¿La línea necesita el detalle de largos?* → la decide la **unidad** (`sellsByLength`), y
- *   vale para cualquier línea de negocio.
+ * **D-343 — las preguntas ahora son cinco, y una de ellas se partió en dos.** El accesorio se
+ * vende en metros lineales de bobina y **no** desglosa largos: dos cosas que hasta entonces
+ * coincidían.
+ *
+ * - *¿La unidad de venta es el metro lineal?* → la decide **solo la unidad** (`sellsByLength`):
+ *   cantidad, precio, kardex y unidad SUNAT en metros. **No conoce el subtipo.**
+ * - *¿La línea lleva desglose de largos?* → `detailsLengths`: la **unidad `MTR` y que no sea un
+ *   accesorio**. Depende de las dos cosas y de ninguna sola.
+ * - *¿Es un accesorio?* → `isAccessory`: el **subtipo `ACCESORIO`**, y nada más.
+ * - Las otras tres, como antes; `isMadeToOrder` suma el accesorio **en metros**.
+ *
+ * Los casos del final de este archivo fallan si alguien define `detailsLengths` solo con la unidad
+ * o `sellsByLength` con el subtipo.
+ *
+ * - *¿La línea necesita el detalle de largos?* → (antes de D-343) la decidía la **unidad**
+ *   (`sellsByLength`), y valía para cualquier línea de negocio.
  * - *¿Se cotiza a la medida del cliente?* → la decide el **subtipo `A_MEDIDA`**
  *   (`isMadeToMeasure`), y es exclusiva de Metallic Roofing. Desde D-171 responde por la
  *   **forma de la línea**, no por el origen del material.
@@ -31,6 +51,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: RoofingProductKind.A_MEDIDA,
       lengthMm: null,
       byLength: true,
+      details: true,
       made: true,
       order: true,
       fixed: false,
@@ -45,6 +66,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: RoofingProductKind.PLANCHA,
       lengthMm: LARGO,
       byLength: true,
+      details: true,
       made: false,
       order: false,
       fixed: false,
@@ -57,6 +79,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: RoofingProductKind.PLANCHA,
       lengthMm: LARGO,
       byLength: false,
+      details: false,
       made: false,
       order: false,
       fixed: false,
@@ -67,6 +90,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: null,
       lengthMm: LARGO,
       byLength: true,
+      details: true,
       made: false,
       order: false,
       fixed: false,
@@ -77,6 +101,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: RoofingProductKind.PLANCHA,
       lengthMm: LARGO,
       byLength: false,
+      details: false,
       made: false,
       order: true,
       fixed: true,
@@ -89,6 +114,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: RoofingProductKind.PLANCHA,
       lengthMm: null,
       byLength: false,
+      details: false,
       made: false,
       order: false,
       fixed: false,
@@ -99,6 +125,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: null,
       lengthMm: LARGO,
       byLength: false,
+      details: false,
       made: false,
       order: false,
       fixed: false,
@@ -108,6 +135,44 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: null,
       lengthMm: null,
       byLength: false,
+      details: false,
+      made: false,
+      order: false,
+      fixed: false,
+    },
+    // D-343: el accesorio. Se vende en metros (la unidad es `MTR`) y se produce contra el pedido,
+    // pero **no desglosa largos**: es el único caso donde `sellsByLength` y `detailsLengths`
+    // discrepan. Tampoco es «a medida» ni cotiza por largo fijo.
+    {
+      unit: Unit.MTR,
+      roofingKind: RoofingProductKind.ACCESORIO,
+      lengthMm: null,
+      byLength: true,
+      details: false,
+      made: false,
+      order: true,
+      fixed: false,
+    },
+    // Un largo cargado por error en un accesorio no lo vuelve plancha ni le crea largos.
+    {
+      unit: Unit.MTR,
+      roofingKind: RoofingProductKind.ACCESORIO,
+      lengthMm: LARGO,
+      byLength: true,
+      details: false,
+      made: false,
+      order: true,
+      fixed: false,
+    },
+    // Imposible por el CHECK (`ACCESORIO ⇒ MTR`), pero la garantía del CHECK no viaja con el
+    // predicado: en `KGM` la cantidad no son metros de bobina, así que **no** se produce (la
+    // misma lección de D-171 con la plancha legada), y tampoco lleva largos.
+    {
+      unit: Unit.KGM,
+      roofingKind: RoofingProductKind.ACCESORIO,
+      lengthMm: null,
+      byLength: false,
+      details: false,
       made: false,
       order: false,
       fixed: false,
@@ -118,6 +183,7 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
       roofingKind: RoofingProductKind.A_MEDIDA,
       lengthMm: null,
       byLength: false,
+      details: false,
       made: true,
       order: true,
       fixed: false,
@@ -127,6 +193,11 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
   for (const c of cases) {
     it(`${c.unit} + ${c.roofingKind ?? 'sin subtipo'} + largo ${c.lengthMm ?? 'null'}: largos=${String(c.byLength)}, a medida=${String(c.made)}, por metro=${String(c.fixed)}, se produce=${String(c.order)}`, () => {
       expect(sellsByLength({ unit: c.unit })).toBe(c.byLength);
+      // D-343: la pregunta partida en dos, y el subtipo por su cuenta.
+      expect(detailsLengths({ unit: c.unit, roofingKind: c.roofingKind })).toBe(c.details);
+      expect(isAccessory({ roofingKind: c.roofingKind })).toBe(
+        c.roofingKind === RoofingProductKind.ACCESORIO,
+      );
       expect(isMadeToMeasure({ roofingKind: c.roofingKind })).toBe(c.made);
       expect(
         isMadeToOrder({ roofingKind: c.roofingKind, unit: c.unit, lengthMm: c.lengthMm }),
@@ -215,5 +286,105 @@ describe('D-131/D-161 — subítems por unidad, fabricación por subtipo, precio
         lengthMm: '0.00',
       }),
     ).toBe(false);
+  });
+});
+
+/**
+ * **D-343 — el centinela de la pregunta partida.** Fallan si alguien define `detailsLengths` solo
+ * con la unidad (la vuelve idéntica a `sellsByLength` y el accesorio pide largos), `detailsLengths`
+ * solo con el subtipo (deja sin editor a un SKU legado en `MTR` sin subtipo), o `sellsByLength` con
+ * el subtipo (deja de responder solo por la unidad y un accesorio dejaría de medirse en metros).
+ *
+ * Las aserciones van contra **las funciones** y contra implementaciones equivocadas escritas acá
+ * mismo: si la definición real se acerca a una de ellas, el caso correspondiente se cae.
+ */
+describe('D-343 — detailsLengths y sellsByLength no se pueden confundir', () => {
+  const LARGO_PRUEBA = '3600.00';
+  const KINDS = [null, ...Object.values(RoofingProductKind)] as const;
+  const UNITS = [Unit.MTR, Unit.NIU, Unit.KGM] as const;
+  const everyCombination = UNITS.flatMap((unit) =>
+    KINDS.map((roofingKind) => ({ unit, roofingKind })),
+  );
+
+  // Las tres definiciones equivocadas, a propósito y a la vista.
+  const wrongDetailsByUnitOnly = (p: { unit: string }): boolean => p.unit === Unit.MTR;
+  const wrongDetailsBySubtypeOnly = (p: { roofingKind: string | null }): boolean =>
+    p.roofingKind !== RoofingProductKind.ACCESORIO;
+  const wrongSellsWithSubtype = (p: { unit: string; roofingKind: string | null }): boolean =>
+    p.unit === Unit.MTR && p.roofingKind !== RoofingProductKind.ACCESORIO;
+
+  it('sellsByLength responde solo por la unidad: el subtipo no la mueve', () => {
+    for (const kind of KINDS) {
+      // El parámetro de `sellsByLength` es solo `{ unit }`: pasarle el subtipo no puede cambiarle
+      // la respuesta, y si algún día lo leyera, este caso se caería.
+      const sells = (unit: string) =>
+        sellsByLength({ unit, roofingKind: kind } as unknown as { unit: string });
+      expect(sells(Unit.MTR)).toBe(true);
+      expect(sells(Unit.NIU)).toBe(false);
+      expect(sells(Unit.KGM)).toBe(false);
+    }
+  });
+
+  it('detailsLengths depende de la unidad Y del subtipo, y de ninguna sola', () => {
+    // La unidad importa: fuera de `MTR` ningún subtipo lleva largos.
+    for (const kind of KINDS) {
+      expect(detailsLengths({ unit: Unit.NIU, roofingKind: kind })).toBe(false);
+      expect(detailsLengths({ unit: Unit.KGM, roofingKind: kind })).toBe(false);
+    }
+    // El subtipo importa: en `MTR`, el accesorio no y todo lo demás sí (incluido el SKU legado
+    // sin subtipo, que sigue teniendo su editor de largos).
+    expect(detailsLengths({ unit: Unit.MTR, roofingKind: RoofingProductKind.ACCESORIO })).toBe(
+      false,
+    );
+    expect(detailsLengths({ unit: Unit.MTR, roofingKind: RoofingProductKind.A_MEDIDA })).toBe(true);
+    expect(detailsLengths({ unit: Unit.MTR, roofingKind: RoofingProductKind.PLANCHA })).toBe(true);
+    expect(detailsLengths({ unit: Unit.MTR, roofingKind: null })).toBe(true);
+  });
+
+  it('el accesorio en metros es el único caso donde las dos preguntas discrepan', () => {
+    const discrepancies = everyCombination.filter((p) => sellsByLength(p) !== detailsLengths(p));
+    expect(discrepancies).toEqual([{ unit: Unit.MTR, roofingKind: RoofingProductKind.ACCESORIO }]);
+  });
+
+  it('FALLARÍA si detailsLengths se definiera solo con la unidad', () => {
+    const differs = everyCombination.some((p) => wrongDetailsByUnitOnly(p) !== detailsLengths(p));
+    expect(differs).toBe(true);
+    // Esa definición daría lo mismo que `sellsByLength` en toda la tabla: la pregunta partida
+    // volvería a ser una sola.
+    expect(everyCombination.every((p) => wrongDetailsByUnitOnly(p) === sellsByLength(p))).toBe(
+      true,
+    );
+  });
+
+  it('FALLARÍA si detailsLengths se definiera solo con el subtipo', () => {
+    expect(everyCombination.some((p) => wrongDetailsBySubtypeOnly(p) !== detailsLengths(p))).toBe(
+      true,
+    );
+  });
+
+  it('FALLARÍA si sellsByLength aprendiera el subtipo', () => {
+    expect(everyCombination.some((p) => wrongSellsWithSubtype(p) !== sellsByLength(p))).toBe(true);
+    expect(
+      wrongSellsWithSubtype({ unit: Unit.MTR, roofingKind: RoofingProductKind.ACCESORIO }),
+    ).not.toBe(sellsByLength({ unit: Unit.MTR }));
+  });
+
+  it('las cinco preguntas dan una huella distinta para cada subtipo en su unidad natural', () => {
+    const answers = (p: { unit: string; roofingKind: RoofingProductKind | null }) =>
+      [
+        sellsByLength(p),
+        detailsLengths(p),
+        isMadeToMeasure(p),
+        sellsByFixedLength({ ...p, lengthMm: LARGO_PRUEBA }),
+        isMadeToOrder({ ...p, lengthMm: LARGO_PRUEBA }),
+      ].join('|');
+    // Si dos preguntas se confundieran, dos de estas filas colapsarían en la misma huella.
+    const fingerprints = [
+      { unit: Unit.MTR, roofingKind: RoofingProductKind.A_MEDIDA },
+      { unit: Unit.MTR, roofingKind: RoofingProductKind.ACCESORIO },
+      { unit: Unit.NIU, roofingKind: RoofingProductKind.PLANCHA },
+      { unit: Unit.MTR, roofingKind: null },
+    ].map(answers);
+    expect(new Set(fingerprints).size).toBe(fingerprints.length);
   });
 });

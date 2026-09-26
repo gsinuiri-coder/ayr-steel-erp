@@ -74,7 +74,14 @@ const quotationInclude = {
     include: {
       // D-119: `businessLine` de cada producto es lo que arma `businessLines` del
       // documento (una cotización puede mezclar líneas).
-      product: { select: { sku: true, name: true, businessLine: { select: { code: true } } } },
+      product: {
+        select: {
+          sku: true,
+          name: true,
+          roofingKind: true,
+          businessLine: { select: { code: true } },
+        },
+      },
       // D-083: los largos de una línea compuesta. Vacío en el resto del catálogo.
       pieces: { orderBy: { lineNumber: 'asc' } },
     },
@@ -481,7 +488,14 @@ export class QuotationsService {
         description: true,
         reserveItemType: true,
         reserveItemId: true,
-        product: { select: { sku: true, name: true, businessLine: { select: { code: true } } } },
+        product: {
+          select: {
+            sku: true,
+            name: true,
+            roofingKind: true,
+            businessLine: { select: { code: true } },
+          },
+        },
       },
     });
     const pools = new Set<string>();
@@ -659,6 +673,8 @@ export class QuotationsService {
         qty: i.qty.toFixed(3),
         ...price,
         ...(pieces ? { pieces } : {}),
+        // D-343: el duplicado conserva las piezas informativas de un accesorio.
+        ...(i.piecesHint === null ? {} : { piecesHint: i.piecesHint }),
         ...(i.reserveItemType === 'COIL'
           ? { reserveFromCoilId: i.reserveItemId, reserveKg: i.reserveQty.toFixed(3) }
           : {}),
@@ -1243,6 +1259,8 @@ function toItemCreate(
     // D-161: el valor por metro con el que se cotizó una plancha se guarda **junto** al valor
     // unitario que sale de él, no en su lugar: lo que se factura es el unitario.
     valuePerMeterPen: line.valuePerMeterPen,
+    // D-343: las piezas informativas de un accesorio; no entran a ningún cálculo.
+    piecesHint: line.piecesHint,
     subtotalPen: line.subtotalPen,
     igvPen: line.igvPen,
     totalPen: line.totalPen,

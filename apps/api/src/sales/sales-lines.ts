@@ -11,6 +11,8 @@ import {
   carriesInventory,
   Decimal,
   describePieces,
+  detailsLengths,
+  isAccessory,
   fixedLengthUnitValue,
   importRoundingTolerance,
   isPlausiblePieceLength,
@@ -80,6 +82,8 @@ export interface ResolvedSalesLine {
   unitPricePen: string;
   /** D-161: valor por metro de una plancha de catálogo. Null en el resto de las líneas. */
   valuePerMeterPen: string | null;
+  /** D-343: piezas informativas de un accesorio; no entra a ningún cálculo. Null en el resto. */
+  piecesHint: number | null;
   subtotalPen: string;
   igvPen: string;
   totalPen: string;
@@ -377,6 +381,7 @@ export async function resolveSalesLines(
         listPricePen: null,
         unitPricePen,
         valuePerMeterPen: null,
+        piecesHint: null,
         subtotalPen: toFixedString(amounts.subtotal, 'MONEY'),
         igvPen: toFixedString(amounts.igv, 'MONEY'),
         totalPen: toFixedString(amounts.total, 'MONEY'),
@@ -471,7 +476,10 @@ export async function resolveSalesLines(
     //
     // Haber respondido (a) con el subtipo dejó de exigir subítems a todo producto en `MTR`
     // fuera de coberturas — y con eso el mostrador pasó a poder vender material a medida.
-    const byLength = sellsByLength(product);
+    // (d) D-343: ¿la línea lleva **desglose de largos**? La decide `detailsLengths`: la unidad
+    //     `MTR` **y** que no sea un accesorio. Es la pregunta que hasta D-343 se contestaba con
+    //     `sellsByLength`; esa sigue diciendo solo que la unidad de venta es el metro.
+    const byLength = detailsLengths(product);
     const madeToOrder = isMadeToOrder(product);
     if (byLength && item.pieces === undefined) {
       throw new BadRequestException(
@@ -480,9 +488,18 @@ export async function resolveSalesLines(
     }
     if (!byLength && item.pieces !== undefined) {
       throw new BadRequestException(
-        `${at}: ${product.sku} no se vende a medida (se mide en ${product.unit}): quita el detalle de largos`,
+        isAccessory(product)
+          ? `${at}: ${product.sku} es un accesorio: no lleva detalle de largos, escribe los metros lineales de bobina que va a usar`
+          : `${at}: ${product.sku} no se vende a medida (se mide en ${product.unit}): quita el detalle de largos`,
       );
     }
+    // D-343: las piezas de un accesorio son solo información, y solo un accesorio las lleva.
+    if (item.piecesHint !== undefined && !isAccessory(product)) {
+      throw new BadRequestException(
+        `${at}: ${product.sku} no es un accesorio: la cantidad de piezas informativa solo la lleva un accesorio`,
+      );
+    }
+    const piecesHint = item.piecesHint ?? null;
 
     const pieces: RoofingPieceDto[] = (item.pieces ?? []).map((piece, i) => ({
       lineNumber: i + 1,
@@ -650,6 +667,7 @@ export async function resolveSalesLines(
       listPricePen,
       unitPricePen,
       valuePerMeterPen,
+      piecesHint,
       subtotalPen: toFixedString(totals.subtotal, 'MONEY'),
       igvPen: toFixedString(totals.igv, 'MONEY'),
       totalPen: toFixedString(totals.total, 'MONEY'),
@@ -1014,6 +1032,7 @@ export function toSalesItemDto(
     listPricePen: Prisma.Decimal | null;
     unitPricePen: Prisma.Decimal;
     valuePerMeterPen: Prisma.Decimal | null;
+    piecesHint: number | null;
     subtotalPen: Prisma.Decimal;
     igvPen: Prisma.Decimal;
     totalPen: Prisma.Decimal;
@@ -1022,7 +1041,12 @@ export function toSalesItemDto(
     reserveQty: Prisma.Decimal;
     reserveUnit: string;
     pieces?: { lineNumber: number; lengthMm: Prisma.Decimal; qty: number }[];
-    product: { sku: string; name: string; businessLine: { code: BusinessLineCode } };
+    product: {
+      sku: string;
+      name: string;
+      roofingKind: RoofingProductKind | null;
+      businessLine: { code: BusinessLineCode };
+    };
   },
   reserveItemLabel: string,
 ): SalesItemDto {
@@ -1039,6 +1063,8 @@ export function toSalesItemDto(
     listPricePen: row.listPricePen === null ? null : row.listPricePen.toFixed(4),
     unitPricePen: row.unitPricePen.toFixed(4),
     valuePerMeterPen: row.valuePerMeterPen === null ? null : row.valuePerMeterPen.toFixed(4),
+    piecesHint: row.piecesHint,
+    productRoofingKind: row.product.roofingKind,
     subtotalPen: row.subtotalPen.toFixed(4),
     igvPen: row.igvPen.toFixed(4),
     totalPen: row.totalPen.toFixed(4),
@@ -1121,17 +1147,23 @@ export function isMadeToMeasure(product: { roofingKind: RoofingProductKind | nul
 }
 
 /**
- * D-131, la otra mitad: **¿esta línea necesita el detalle de largos?**
+ * D-131, la otra mitad: **¿la unidad de venta de esta línea es el metro lineal?**
  *
- * La decide la **unidad** y nada más. No es lo mismo que `isMadeToMeasure`, y confundirlas ya
+ * **D-343: desde acá dice solo eso.** Hasta D-343 también contestaba «¿necesita el detalle de
+ * largos?», y esa pregunta ahora es de `detailsLengths`: un accesorio se vende en metros y **no**
+ * desglosa largos, y son dos preguntas distintas que antes coincidían. Esta responde por la
+ * **unidad** y nada más —cantidad, precio, kardex y unidad SUNAT en metros— y **no conoce el
+ * subtipo**; el centinela de `sales-lines.spec.ts` falla si alguien se lo enseña.
+ *
+ * La decide la **unidad**. No es lo mismo que `isMadeToMeasure`, y confundirlas ya
  * costó dos defectos: la primera vez, el mostrador pasó a poder vender material a medida; la
  * segunda, el importador de cotizaciones (D-152) dejó pasar sin marca toda línea en `MTR` que
  * no fuera `A_MEDIDA` y el archivo entero moría al confirmar.
  *
- * Se venden por metro lineal las coberturas a medida **y** cualquier otro producto que el
- * maestro mida en `MTR`, de la línea de negocio que sea. Se fabrican a medida solo las
- * primeras. Toda pregunta sobre subítems se responde con esta función; toda pregunta sobre la
- * rama de la reserva, con `isMadeToMeasure`.
+ * Se venden por metro lineal las coberturas a medida, los accesorios **y** cualquier otro
+ * producto que el maestro mida en `MTR`, de la línea de negocio que sea. Se fabrican a medida
+ * solo las primeras. Toda pregunta sobre subítems se responde con `detailsLengths`; toda
+ * pregunta sobre la rama de la reserva, con `isMadeToOrder`.
  *
  * El parámetro es `string` y no `Unit` porque `products.unit` es una columna de texto —el
  * código UN/EDI—, no un enum de Postgres: tipar más fino acá obligaría a un `as` en cada
@@ -1141,6 +1173,11 @@ export function isMadeToMeasure(product: { roofingKind: RoofingProductKind | nul
 export function sellsByLength(product: { unit: string }): boolean {
   return product.unit === Unit.MTR;
 }
+
+// D-343: las dos preguntas nuevas de la familia viven en `@ayr/shared` —las lee también el web— y
+// se reexportan acá para que el centinela y los llamadores del API tengan un solo lugar donde
+// importar la familia entera.
+export { detailsLengths, isAccessory } from '@ayr/shared';
 
 /**
  * D-171, la cuarta: **¿esta línea se fabrica desde bobina contra el pedido?**
@@ -1172,12 +1209,24 @@ export function sellsByLength(product: { unit: string }): boolean {
  *   **subtipo, la unidad y el largo**.
  * - `isMadeToMeasure` — *¿se cotiza a la medida del cliente?* → el **subtipo `A_MEDIDA`**. Desde
  *   D-171 ya **no** decide la rama de la reserva; decide la forma de la línea.
- * - `isMadeToOrder` — *¿la reserva es materia prima y hay que producirla?* → las dos de arriba.
+ * - `isMadeToOrder` — *¿la reserva es materia prima y hay que producirla?* → las dos de arriba
+ *   **y el accesorio en metros** (D-343).
+ * - `detailsLengths` (D-343) — *¿la línea lleva desglose de largos?* → la **unidad `MTR` y que no
+ *   sea un accesorio**. Es la que hasta D-343 contestaba `sellsByLength`, que desde entonces dice
+ *   solo que la unidad de venta es el metro.
  *
  * El centinela es `sales-lines.spec.ts`, con la tabla completa de combinaciones.
  */
 export function isMadeToOrder(product: MadeToOrderLike): boolean {
-  return isMadeToMeasure(product) || sellsByFixedLength(toFixedLengthLike(product));
+  return (
+    isMadeToMeasure(product) ||
+    sellsByFixedLength(toFixedLengthLike(product)) ||
+    // D-343: el accesorio se fabrica siempre contra pedido desde bobina, y sus metros ya son los de
+    // bobina (`orderedMeters` devuelve la cantidad). **Con la unidad**, por la misma razón que la
+    // plancha de D-171: el CHECK de la base prohíbe un accesorio fuera de `MTR`, pero esa garantía
+    // no viaja con el predicado, y en `KGM` la cantidad no serían metros.
+    (isAccessory(product) && product.unit === Unit.MTR)
+  );
 }
 
 /**

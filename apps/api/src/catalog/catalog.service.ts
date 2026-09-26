@@ -6,7 +6,9 @@ import {
 } from '@nestjs/common';
 import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
+  ACCESSORY_SKU_PREFIX,
   BusinessLine as SharedLineCode,
+  canonicalAccessorySku,
   Decimal,
   isPlausiblePieceLength,
   MAX_PAGE_SIZE,
@@ -172,6 +174,7 @@ export class CatalogService {
     const roofingKind = input.roofingKind ?? null;
     assertStructuredFields(line.code, { ...input, roofingKind, finishId: finish?.id ?? null });
     this.assertFinishCoherence(input.businessLineId, colorId, finish);
+    await this.assertAccessorySku(input.sku, roofingKind, colorId, input.thicknessMm);
 
     try {
       const product = await this.prisma.$transaction(async (tx) => {
@@ -222,6 +225,48 @@ export class CatalogService {
     }
   }
 
+  /**
+   * D-343: el SKU de un accesorio **es** `ACCES` + espesor de 3 dígitos + color comercial
+   * (`ACCES030ROJO`), y solo un accesorio lo lleva. Se comprueba contra el color y el espesor del
+   * propio producto —los mismos tokens que el SKU de bobina, D-252— y no se acepta otro: el SKU
+   * es lo que el vendedor lee para saber qué material es, y uno que dijera `ACCES030ROJO` sobre un
+   * producto azul de 0.45 mentiría en cada cotización.
+   */
+  private async assertAccessorySku(
+    sku: string,
+    roofingKind: RoofingProductKind | null,
+    colorId: string | null,
+    thicknessMm: string | null,
+  ): Promise<void> {
+    const startsAccessory = sku.toUpperCase().startsWith(ACCESSORY_SKU_PREFIX);
+    if (roofingKind !== RoofingProductKind.ACCESORIO) {
+      if (startsAccessory) {
+        throw new BadRequestException(
+          `Los SKU ${ACCESSORY_SKU_PREFIX}… son de accesorios de coberturas: crea el producto con el subtipo «Accesorio» o usa otro SKU`,
+        );
+      }
+      return;
+    }
+    if (colorId === null) {
+      throw new BadRequestException(
+        'Un accesorio necesita su color: de él sale el SKU y el color de la bobina con que se fabrica',
+      );
+    }
+    if (thicknessMm === null) {
+      throw new BadRequestException('El espesor del accesorio es obligatorio');
+    }
+    const color = await this.prisma.color.findUnique({
+      where: { id: colorId },
+      select: { code: true },
+    });
+    const expected = canonicalAccessorySku(thicknessMm, color?.code ?? '');
+    if (sku.toUpperCase() !== expected) {
+      throw new BadRequestException(
+        `El SKU de un accesorio se forma con su espesor y su color: para este producto es ${expected}`,
+      );
+    }
+  }
+
   async update(actor: RequestUser, id: string, input: UpdateProductInput): Promise<ProductDto> {
     const before = await this.prisma.product.findUnique({
       where: { id },
@@ -260,6 +305,20 @@ export class CatalogService {
     // desactivar una receta que el propio subtipo necesita viva.
     const changesRoofingKind =
       input.roofingKind !== undefined && input.roofingKind !== before.roofingKind;
+    // D-343: el SKU de un accesorio refleja su espesor y su color, y el SKU no se edita. Cambiar
+    // cualquiera de los dos —o pasar de/hacia accesorio— dejaría un SKU que miente: se crea otro.
+    if (before.roofingKind === RoofingProductKind.ACCESORIO || input.roofingKind === 'ACCESORIO') {
+      const changesColor = input.colorId !== undefined && input.colorId !== before.colorId;
+      const changesThickness =
+        input.thicknessMm !== undefined &&
+        (before.thicknessMm === null ||
+          !toDecimal(input.thicknessMm ?? '0').equals(before.thicknessMm.toString()));
+      if (changesRoofingKind || changesColor || changesThickness) {
+        throw new BadRequestException(
+          `El SKU ${before.sku} refleja el espesor y el color del accesorio, y el subtipo no cambia: para otro espesor u otro color crea otro accesorio`,
+        );
+      }
+    }
     if ((changesUnit && !changesRoofingKind) || changesSource) {
       const bom = await this.prisma.productBom.findFirst({
         // Solo una receta **activa** bloquea: una desactivada no la monta ninguna orden, y
@@ -613,15 +672,20 @@ function assertStructuredFields(
     // plancha se mide en lo que la empresa venda (unidades, casi siempre), y exigirle `NIU`
     // acá dejaría sin poder editarse a cualquier producto legado con otra unidad.
     const expectedUnit = ROOFING_KIND_UNIT[fields.roofingKind];
-    const unitOk =
-      fields.roofingKind === RoofingProductKind.A_MEDIDA
-        ? fields.unit === expectedUnit
-        : fields.unit !== 'MTR';
+    // D-343: el accesorio también se mide en metros lineales (de bobina): la unidad SUNAT, el
+    // kardex y el despacho son los del metro. Lo que lo distingue —que no lleva largos— es del
+    // subtipo, no de la unidad.
+    const measuredInMeters =
+      fields.roofingKind === RoofingProductKind.A_MEDIDA ||
+      fields.roofingKind === RoofingProductKind.ACCESORIO;
+    const unitOk = measuredInMeters ? fields.unit === expectedUnit : fields.unit !== 'MTR';
     if (!unitOk) {
       throw new BadRequestException(
-        fields.roofingKind === RoofingProductKind.A_MEDIDA
-          ? 'Una cobertura a medida se mide en metros lineales (MTR)'
-          : 'Una plancha de catálogo no se mide en metros lineales: eso es una cobertura a medida',
+        fields.roofingKind === RoofingProductKind.ACCESORIO
+          ? 'Un accesorio se mide en metros lineales (MTR)'
+          : fields.roofingKind === RoofingProductKind.A_MEDIDA
+            ? 'Una cobertura a medida se mide en metros lineales (MTR)'
+            : 'Una plancha de catálogo no se mide en metros lineales: eso es una cobertura a medida',
       );
     }
     // El largo solo lo lleva la plancha: es su largo fijo. Una cobertura a medida no tiene
@@ -648,6 +712,11 @@ function assertStructuredFields(
     if (fields.roofingKind === RoofingProductKind.A_MEDIDA && fields.lengthMm !== null) {
       throw new BadRequestException(
         'Una cobertura a medida no lleva largo fijo: el largo va en los subítems de cada línea',
+      );
+    }
+    if (fields.roofingKind === RoofingProductKind.ACCESORIO && fields.lengthMm !== null) {
+      throw new BadRequestException(
+        'Un accesorio no lleva largo: se vende por metros lineales de bobina, sin detalle de largos',
       );
     }
   } else if (fields.roofingKind !== null) {

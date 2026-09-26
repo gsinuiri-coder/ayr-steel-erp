@@ -173,7 +173,14 @@ const orderInclude = {
     include: {
       // D-119: `businessLine` de cada producto arma `businessLines` del pedido (puede
       // mezclar líneas).
-      product: { select: { sku: true, name: true, businessLine: { select: { code: true } } } },
+      product: {
+        select: {
+          sku: true,
+          name: true,
+          roofingKind: true,
+          businessLine: { select: { code: true } },
+        },
+      },
       // D-083: copia congelada de los largos que se cotizaron.
       pieces: { orderBy: { lineNumber: 'asc' } },
     },
@@ -460,6 +467,8 @@ export class SalesOrdersService {
                   unitPricePen: i.unitPricePen,
                   // D-161: el pedido congela el valor por metro igual que congela el unitario.
                   valuePerMeterPen: i.valuePerMeterPen,
+                  // D-343: el pedido congela las piezas informativas de un accesorio.
+                  piecesHint: i.piecesHint,
                   subtotalPen: i.subtotalPen,
                   igvPen: i.igvPen,
                   totalPen: i.totalPen,
@@ -1243,6 +1252,7 @@ export class SalesOrdersService {
             listPricePen: l.listPricePen,
             unitPricePen: l.unitPricePen,
             valuePerMeterPen: l.valuePerMeterPen,
+            piecesHint: l.piecesHint,
             subtotalPen: l.subtotalPen,
             igvPen: l.igvPen,
             totalPen: l.totalPen,
