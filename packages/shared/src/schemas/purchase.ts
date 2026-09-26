@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { decimalStringSchema } from '../decimal';
 import { reasonSchema } from './coil';
-import { paginationQuerySchema } from './pagination';
+import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
 import {
   BUSINESS_LINES,
@@ -345,7 +345,19 @@ export const createPurchaseSchema = z
 export type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>;
 
 /** Filtros de la lista central de compras (D-030). */
+/** D-323: columnas de la lista de compras que se ordenan en el servidor (el saldo no: es derivado). */
+export const PURCHASE_SORT_KEYS = [
+  'number',
+  'supplier',
+  'type',
+  'issueDate',
+  'dueDate',
+  'total',
+  'status',
+] as const;
+
 export const purchaseQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(PURCHASE_SORT_KEYS),
   businessLine: z.enum(BUSINESS_LINES).optional(),
   type: z.enum(PURCHASE_TYPES).optional(),
   status: statusListSchema(PURCHASE_STATUSES),

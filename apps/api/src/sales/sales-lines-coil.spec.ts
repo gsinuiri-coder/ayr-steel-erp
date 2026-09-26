@@ -306,7 +306,7 @@ describe('D-310: una bobina entera atada a otra cotización abierta no se vende 
     return tx;
   };
 
-  it('sin la opción, la línea a mano no mira las cotizaciones (importador, ediciones de pedido)', async () => {
+  it('sin la opción, la línea a mano no mira las cotizaciones (importador y ediciones de líneas de un pedido)', async () => {
     const [line] = await resolveSalesLines(txWith({ quoted: true }), [hand]);
     expect(line?.reserveItemId).toBe(COIL_ID);
   });

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseKardexRange, resolveKardexDates } from './kardex-range';
+import {
+  kardexCustomPatch,
+  orderKardexRows,
+  parseKardexRange,
+  resolveKardexDates,
+} from './kardex-range';
 
 describe('resolveKardexDates (D-290)', () => {
   it('el mes actual va del primero de mes a hoy', () => {
@@ -44,6 +49,64 @@ describe('resolveKardexDates (D-290)', () => {
       to: '2026-08-20',
     });
     expect(resolveKardexDates('custom', 'abc', '', '2026-09-25')).toEqual({ from: '', to: '' });
+  });
+});
+
+describe('kardexCustomPatch (M0 de correcciones 04)', () => {
+  const shown = { from: '2026-09-01', to: '2026-09-25' };
+
+  it('desde el mes en curso, cambiar «Desde» conserva el «Hasta» que se veía', () => {
+    expect(
+      kardexCustomPatch('from', '2026-08-01', { range: 'month', from: '', to: '' }, shown),
+    ).toEqual({ range: 'custom', from: '2026-08-01', to: '2026-09-25' });
+  });
+
+  it('con el rango ya a mano, la otra fecha sale de la URL más reciente, no de lo pintado', () => {
+    // «Desde» acaba de escribirse (URL: agosto) y lo pintado todavía es el mes en curso: escribir
+    // «Hasta» no puede devolver «Desde» a septiembre.
+    expect(
+      kardexCustomPatch(
+        'to',
+        '2026-08-31',
+        { range: 'custom', from: '2026-08-01', to: '2026-09-25' },
+        shown,
+      ),
+    ).toEqual({ range: 'custom', from: '2026-08-01', to: '2026-08-31' });
+  });
+
+  it('vaciar una fecha la deja sin cota', () => {
+    expect(
+      kardexCustomPatch(
+        'from',
+        '',
+        { range: 'custom', from: '2026-08-01', to: '2026-08-31' },
+        shown,
+      ),
+    ).toEqual({ range: 'custom', from: '', to: '2026-08-31' });
+  });
+});
+
+describe('orderKardexRows (D-323)', () => {
+  const rows = [
+    { kind: 'opening' as const, key: 'o' },
+    { kind: 'movement' as const, key: 'a' },
+    { kind: 'movement' as const, key: 'b' },
+    { kind: 'movement' as const, key: 'c' },
+    { kind: 'totals' as const, key: 't' },
+  ];
+
+  it('ascendente (o sin orden) deja las filas como llegan', () => {
+    expect(orderKardexRows(rows, 'asc').map((r) => r.key)).toEqual(['o', 'a', 'b', 'c', 't']);
+    expect(orderKardexRows(rows, null).map((r) => r.key)).toEqual(['o', 'a', 'b', 'c', 't']);
+  });
+
+  it('descendente invierte solo los movimientos: el saldo inicial arriba y los totales abajo', () => {
+    expect(orderKardexRows(rows, 'desc').map((r) => r.key)).toEqual(['o', 'c', 'b', 'a', 't']);
+  });
+
+  it('no muta la entrada', () => {
+    orderKardexRows(rows, 'desc');
+    expect(rows.map((r) => r.key)).toEqual(['o', 'a', 'b', 'c', 't']);
   });
 });
 

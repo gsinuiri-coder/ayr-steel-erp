@@ -25,7 +25,7 @@ import {
 } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyKeySchema } from './idempotency';
-import { paginationQuerySchema } from './pagination';
+import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
 import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing';
 
@@ -717,6 +717,16 @@ export const quotationSchema = z.object({
 });
 export type QuotationDto = z.infer<typeof quotationSchema>;
 
+/**
+ * D-322: la respuesta de duplicar una cotización. Es la cotización nueva más los avisos de lo que
+ * no se pudo copiar tal cual: una bobina entera que sigue atada a otra cotización abierta se copia
+ * como línea `BOB…` sin bobina, y el aviso dice cuál era y a qué documento sigue atada.
+ */
+export const quotationDuplicateSchema = quotationSchema.extend({
+  warnings: z.array(z.string()),
+});
+export type QuotationDuplicateDto = z.infer<typeof quotationDuplicateSchema>;
+
 // D-119: el listado no carga `items` (perf: 500 cotizaciones con sus líneas es arrastrar
 // miles de filas por pantallazo), así que tampoco puede derivar `businessLines` sin una
 // consulta aparte por fila. Nadie lo muestra en la lista hoy — se omite acá y se recalcula
@@ -729,7 +739,11 @@ export const quotationListItemSchema = quotationSchema
   });
 export type QuotationListItemDto = z.infer<typeof quotationListItemSchema>;
 
+/** D-323: columnas de la lista de cotizaciones que se ordenan en el servidor. */
+export const QUOTATION_SORT_KEYS = ['code', 'customer', 'issueDate', 'total', 'status'] as const;
+
 export const quotationQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(QUOTATION_SORT_KEYS),
   /** D-289: uno o varios estados (`A,B`); sin él, la lista omite las anuladas salvo que haya `search`. */
   status: statusListSchema(QUOTATION_STATUSES),
   customerId: z.string().uuid().optional(),
@@ -1265,7 +1279,11 @@ export const changeSalesOrderCustomerSchema = z.object({
 });
 export type ChangeSalesOrderCustomerInput = z.infer<typeof changeSalesOrderCustomerSchema>;
 
+/** D-323: columnas de la lista de pedidos que se ordenan en el servidor (el estado mostrado no). */
+export const SALES_ORDER_SORT_KEYS = ['code', 'customer', 'issueDate', 'total'] as const;
+
 export const salesOrderQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(SALES_ORDER_SORT_KEYS),
   status: statusListSchema(SALES_ORDER_STATUSES),
   /** D-277: filtro por el estado que se muestra; manda sobre `status` si vienen los dos. */
   stage: statusListSchema(ORDER_STAGES),

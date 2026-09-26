@@ -195,6 +195,13 @@ export interface ResolveSalesLinesOptions {
      */
     keepCoilIds?: ReadonlySet<string>;
   };
+  /**
+   * D-322: productos de venta de bobina (`BOB…`) que **esta** llamada admite sin bobina asignada.
+   * Solo lo pasa el duplicado de cotización, para la línea cuya bobina sigue atada a otro
+   * documento: la copia nace con la línea del producto y quien la edita elige la bobina. Sin
+   * esto, un `BOB…` suelto es un 400 (D-254 R1).
+   */
+  unassignedCoilProducts?: ReadonlySet<string>;
 }
 
 export async function resolveSalesLines(
@@ -389,7 +396,7 @@ export async function resolveSalesLines(
     // D-254 (R1): un producto de venta de bobina **no** se vende como producto de catálogo. Su
     // disponibilidad es el pool de bobinas, no un saldo propio que nunca tiene: vendido así,
     // confirmar rebotaba con «BOB38AZUL tiene 0.000 KGM disponibles» (COT-000002).
-    if (isCoilSaleProduct(product)) {
+    if (isCoilSaleProduct(product) && !options.unassignedCoilProducts?.has(product.id)) {
       throw new BadRequestException(
         `${at}: ${product.sku} es el producto de venta de una bobina: elige la bobina que se vende (venta directa)`,
       );

@@ -7,6 +7,7 @@ import {
   Role,
   type PaginatedResult,
   type SalesOrderListItemDto,
+  type SalesOrderQuery,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
@@ -37,7 +38,7 @@ import {
   CUSTOMER_NAME_CLASSNAME,
   LINK_CLASSNAME,
 } from '@/lib/utils';
-import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
+import { compareBy, useSort } from '@/lib/use-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import {
   Table,
@@ -58,6 +59,9 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
  * la lista muestra **solo** esos.
  */
 const ACTIVE_STAGES = ['CONFIRMED', 'IN_PRODUCTION', 'READY', 'PARTIALLY_FULFILLED'] as const;
+
+/** D-323: las columnas que ordena el servidor, más `status` (el estado mostrado, de la página). */
+type OrderSortKey = NonNullable<SalesOrderQuery['sort']> | 'status';
 
 /** Pedidos (D-065). La reserva viva es lo que hace que el pedido signifique algo. */
 export function PedidosView() {
@@ -89,43 +93,30 @@ export function PedidosView() {
   // esté como esté).
   const stageParam = stages.length > 0 ? stages.join(',') : search ? '' : ACTIVE_STAGES.join(',');
 
+  const [sort, toggleSort] = useSort<OrderSortKey>();
+  const serverSort = sort.key !== null && sort.key !== 'status' ? sort.key : null;
+
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (stageParam) params.set('stage', stageParam);
   if (search) params.set('search', search);
+  if (serverSort) {
+    params.set('sort', serverSort);
+    params.set('dir', sort.dir);
+  }
 
   const orders = useQuery({
-    queryKey: ['sales-orders', page, pageSize, stageParam, search],
+    queryKey: ['sales-orders', page, pageSize, stageParam, search, serverSort, sort.dir],
     queryFn: () =>
       api<PaginatedResult<SalesOrderListItemDto>>(`/sales/orders?${params.toString()}`),
   });
 
-  // S10b/M1: sort sobre la página actual, no sobre el total — el orden por defecto del
-  // servidor (descendente) no se toca salvo que el usuario clickee una columna.
-  const [sort, toggleSort] = useSort<'code' | 'customer' | 'issueDate' | 'total' | 'status'>();
-  const unsortedRows = orders.data?.items ?? [];
+  // D-323: código, cliente, fecha y total se ordenan en el servidor; el estado que se muestra es
+  // derivado (etapa de producción y despacho) y solo se ordena entre las filas de la página.
+  const rawRows = orders.data?.items ?? [];
   const rows =
-    sort.key === null
-      ? unsortedRows
-      : [...unsortedRows].sort((a, b) => {
-          switch (sort.key) {
-            case 'code':
-              return compareBy(sort.dir, a.code, b.code);
-            case 'customer':
-              return compareBy(
-                sort.dir,
-                a.customerName.toLowerCase(),
-                b.customerName.toLowerCase(),
-              );
-            case 'issueDate':
-              return compareBy(sort.dir, a.issueDate, b.issueDate);
-            case 'total':
-              return compareDecimalBy(sort.dir, a.totalPen, b.totalPen);
-            case 'status':
-              return compareBy(sort.dir, a.stage, b.stage);
-            default:
-              return 0;
-          }
-        });
+    sort.key === 'status'
+      ? [...rawRows].sort((x, y) => compareBy(sort.dir, x.stage, y.stage))
+      : rawRows;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -234,6 +225,7 @@ export function PedidosView() {
               <SortableTableHead
                 active={sort.key === 'status'}
                 dir={sort.dir}
+                title="Ordena las filas de esta página"
                 onClick={() => {
                   toggleSort('status');
                 }}

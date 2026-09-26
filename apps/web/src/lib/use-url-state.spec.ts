@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useColumnFilters } from './use-column-filters';
+import { kardexCustomPatch } from './kardex-range';
 import { useSort } from './use-sort';
 import {
   URL_PAGINATION_DEFAULTS,
@@ -160,6 +160,41 @@ describe('useUrlState', () => {
   });
 });
 
+describe('useUrlState — dos fechas escritas seguidas (kardex «Desde» y «Hasta»)', () => {
+  const RANGE = { range: '', from: '', to: '' };
+  const patch = (side: 'from' | 'to', value: string) => (cur: typeof RANGE) =>
+    kardexCustomPatch(side, value, cur, { from: '2026-09-01', to: '2026-09-25' });
+
+  it('con la navegación lenta, «Hasta» no pisa el «Desde» recién escrito', () => {
+    nav.deferred = true;
+    const { result, unmount } = renderHook(() => useUrlState(RANGE));
+    act(() => {
+      result.current[1](patch('from', '2026-08-01'));
+      // La URL todavía no reflejó el primer cambio: el segundo parte de la más reciente.
+      result.current[1](patch('to', '2026-08-31'));
+    });
+    flush();
+    const params = new URLSearchParams(nav.search);
+    expect(params.get('range')).toBe('custom');
+    expect(params.get('from')).toBe('2026-08-01');
+    expect(params.get('to')).toBe('2026-08-31');
+    unmount();
+  });
+
+  it('dos parches sobre claves distintas, sin función, conservan los dos', () => {
+    nav.deferred = true;
+    const { result, unmount } = renderHook(() => useUrlState({ from: '', to: '' }));
+    act(() => {
+      result.current[1]({ from: '2026-08-01' });
+      result.current[1]({ to: '2026-08-31' });
+    });
+    flush();
+    expect(new URLSearchParams(nav.search).get('from')).toBe('2026-08-01');
+    expect(new URLSearchParams(nav.search).get('to')).toBe('2026-08-31');
+    unmount();
+  });
+});
+
 describe('useUrlPagination', () => {
   it('lee página y tamaño de la URL y los escribe sin repetir los defaults', () => {
     nav.search = 'page=3&pageSize=100';
@@ -276,32 +311,6 @@ describe('useUrlSearchInput', () => {
       });
     });
     expect(result.current.input[0]).toBe('20512345678');
-    unmount();
-  });
-});
-
-describe('useColumnFilters', () => {
-  it('filtra en el cliente por columna, combina con Y y se limpia', () => {
-    const { result, unmount } = renderHook(() => useColumnFilters<'sku' | 'name'>());
-    const rows = [
-      { sku: 'A-1', name: 'Bobina azul' },
-      { sku: 'B-2', name: 'Bobina roja' },
-    ];
-    const accessors = {
-      sku: (r: (typeof rows)[number]) => r.sku,
-      name: (r: (typeof rows)[number]) => r.name,
-    };
-    expect(result.current.hasActive).toBe(false);
-    act(() => {
-      result.current.setFilter('name', 'bobina');
-      result.current.setFilter('sku', 'b-');
-    });
-    expect(result.current.hasActive).toBe(true);
-    expect(result.current.apply(rows, accessors).map((r) => r.sku)).toEqual(['B-2']);
-    act(() => {
-      result.current.clear();
-    });
-    expect(result.current.apply(rows, accessors)).toHaveLength(2);
     unmount();
   });
 });

@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import type { QuotationDuplicateDto } from '@ayr/shared';
 import { adminApi, getJson, postJson } from '../helpers/api';
 import { purgeRoofingTrail, ROOFING_LINE, setupRoofingScenario } from '../helpers/roofing';
 import {
@@ -93,10 +94,21 @@ test.describe('D-310 — bobina atada a otra cotización', () => {
       expect(second.status()).toBe(400);
       expect(await second.text()).toMatch(new RegExp(`no se puede vender: atada a ${first.code}`));
 
-      // 5. Duplicar la primera (sigue abierta) tampoco la vende dos veces.
-      const duplicate = await api.post(`/api/sales/quotations/${first.id}/duplicate`);
-      expect(duplicate.status()).toBe(400);
-      expect(await duplicate.text()).toMatch(/atada a COT-/);
+      // 5. D-322: duplicar la primera (sigue abierta) **crea** la copia, pero la bobina no se vuelve
+      // a vender: la línea viaja como el producto BOB… sin bobina, con su aviso.
+      const duplicate = await postJson<QuotationDuplicateDto>(
+        api,
+        `/api/sales/quotations/${first.id}/duplicate`,
+      );
+      trail.quotationIds.push(duplicate.id);
+      expect(duplicate.warnings).toHaveLength(1);
+      expect(duplicate.warnings[0]).toContain(s.coil.code);
+      expect(duplicate.warnings[0]).toContain(`sigue atada a ${first.code}`);
+      expect(duplicate.items).toHaveLength(1);
+      expect(duplicate.items[0]?.reserveItemType).not.toBe('COIL');
+      expect(duplicate.items[0]?.productSku).toMatch(/^BOB/);
+      // La copia no ata la bobina: sigue siendo de la primera.
+      expect((await sellableCoils(api)).some((c) => c.coilId === s.coil.id)).toBe(false);
 
       // 6. Anulada la primera, la bobina vuelve a ofrecerse y se puede vender.
       await postJson(api, `/api/sales/quotations/${first.id}/cancel`, {
@@ -112,6 +124,73 @@ test.describe('D-310 — bobina atada a otra cotización', () => {
       expect(again.items[0]?.reserveItemId).toBe(s.coil.id);
     } finally {
       await purgeRoofingTrail(api, trail);
+    }
+  });
+
+  test('D-320: agregar una bobina atada a otra cotización a un pedido confirmado se rechaza', async () => {
+    const owned = await setupRoofingScenario(api, { weightKg: '200' });
+    const tied = await setupRoofingScenario(api, { weightKg: '150' });
+    const customer = await createCustomer(api);
+    const trail = {
+      supplierId: owned.supplier.id,
+      finishId: owned.finish.id,
+      colorId: owned.color.id,
+      productIds: [owned.product.id],
+      coilIds: [owned.coil.id],
+      purchaseIds: [owned.purchaseId],
+      orderIds: [] as string[],
+      quotationIds: [] as string[],
+    };
+    try {
+      // Un pedido confirmado con su propia bobina.
+      const quotation = await createQuotationWithLines(api, {
+        customerId: customer.id,
+        businessLine: ROOFING_LINE,
+        items: [{ saleCoilId: owned.coil.id, qty: owned.coil.availableKg, unitPricePen: '8' }],
+      });
+      trail.quotationIds.push(quotation.id);
+      const order = await postJson<{ id: string }>(
+        api,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+      );
+      trail.orderIds.push(order.id);
+
+      // Otra cotización abierta ata la segunda bobina.
+      const other = await createQuotationWithLines(api, {
+        customerId: customer.id,
+        businessLine: ROOFING_LINE,
+        items: [{ saleCoilId: tied.coil.id, qty: tied.coil.availableKg, unitPricePen: '8' }],
+      });
+      trail.quotationIds.push(other.id);
+
+      const add = await api.post(`/api/sales/orders/${order.id}/items`, {
+        data: {
+          items: [{ saleCoilId: tied.coil.id, qty: tied.coil.availableKg, unitPricePen: '8.0000' }],
+        },
+      });
+      expect(add.status()).toBe(400);
+      expect(await add.text()).toContain(`atada a ${other.code}`);
+
+      // Anulada la otra cotización, la bobina se puede agregar.
+      await postJson(api, `/api/sales/quotations/${other.id}/cancel`, {
+        reason: 'Liberar la bobina para la prueba de D-320',
+      });
+      const ok = await api.post(`/api/sales/orders/${order.id}/items`, {
+        data: {
+          items: [{ saleCoilId: tied.coil.id, qty: tied.coil.availableKg, unitPricePen: '8.0000' }],
+        },
+      });
+      expect(ok.ok(), await ok.text()).toBe(true);
+    } finally {
+      await purgeRoofingTrail(api, trail);
+      await purgeRoofingTrail(api, {
+        supplierId: tied.supplier.id,
+        finishId: tied.finish.id,
+        colorId: tied.color.id,
+        productIds: [tied.product.id],
+        coilIds: [tied.coil.id],
+        purchaseIds: [tied.purchaseId],
+      });
     }
   });
 });

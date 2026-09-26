@@ -35,14 +35,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 const EXCHANGE_RATES_QUERY_KEY = ['exchange-rates'] as const;
 
@@ -55,6 +51,8 @@ const today = businessToday();
 
 /** D-029/P-06: tipo de cambio SUNAT (apis.net.pe) con caché y fallback manual. */
 export function TipoCambioView() {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<'date' | 'currency' | 'buy' | 'sell' | 'source'>();
   const { user } = useSession();
   const queryClient = useQueryClient();
   const rates = useQuery({
@@ -203,11 +201,21 @@ export function TipoCambioView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Fecha</TableHead>
-              <TableHead>Moneda</TableHead>
-              <TableHead>Compra</TableHead>
-              <TableHead>Venta</TableHead>
-              <TableHead>Origen</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="date">
+                Fecha
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="currency">
+                Moneda
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="buy">
+                Compra
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="sell">
+                Venta
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="source">
+                Origen
+              </SortHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -226,7 +234,13 @@ export function TipoCambioView() {
                 </TableCell>
               </TableRow>
             )}
-            {rates.data?.map((r) => (
+            {sortRows(rates.data ?? [], sort, {
+              date: { text: (r) => r.date },
+              currency: { text: (r) => r.currency },
+              buy: { decimal: (r) => r.buy },
+              sell: { decimal: (r) => r.sell },
+              source: { text: (r) => r.source },
+            }).map((r) => (
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.date}</TableCell>
                 <TableCell>{CURRENCY_LABELS[r.currency]}</TableCell>

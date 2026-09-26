@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, createUser, getJson, postJson } from '../helpers/api';
-import { headerAction } from '../helpers/ui';
+import { headerAction, rowAction } from '../helpers/ui';
 import { expireTemporaryReservationsNow } from '../helpers/db';
 import { apiAs, ROLE_PASSWORD } from '../helpers/production';
 import {
@@ -291,7 +291,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       );
 
       // Lo que ve lo puede usar: la cantidad pasa de 1 a 2 planchas de 10 m desde el diálogo.
-      await page.getByRole('button', { name: 'Cambiar cantidad de la línea 1' }).click();
+      await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByLabel('Planchas del largo 1', { exact: true })).toHaveValue('1');
       await dialog.getByLabel('Planchas del largo 1', { exact: true }).fill('2');
@@ -484,7 +484,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       });
       await expect(page.getByText('40.400 kg', { exact: true })).toBeVisible();
 
-      await page.getByRole('button', { name: 'Cambiar cantidad de la línea 1' }).click();
+      await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByLabel('Largo 1 en metros', { exact: true })).toHaveValue(
         /^10(\.0+)?$/,

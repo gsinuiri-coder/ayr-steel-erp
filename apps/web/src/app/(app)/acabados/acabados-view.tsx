@@ -25,11 +25,19 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { FinishDialog } from './finish-dialog';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
+import { RowActions } from '@/components/row-actions';
 
 const FINISHES_QUERY_KEY = ['finishes'] as const;
 
 /** RF-25: catálogo de acabados de bobina, con su factor de densidad. */
 export function AcabadosView() {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<
+    'code' | 'name' | 'line' | 'kind' | 'color' | 'density' | 'status'
+  >();
   const { user } = useSession();
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
@@ -80,13 +88,27 @@ export function AcabadosView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Código</TableHead>
-              <TableHead>Nombre</TableHead>
-              <TableHead>Línea</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead>Color</TableHead>
-              <TableHead>Factor de densidad</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="code">
+                Código
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="name">
+                Nombre
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="line">
+                Línea
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="kind">
+                Tipo
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="color">
+                Color
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="density">
+                Factor de densidad
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="status">
+                Estado
+              </SortHead>
               {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
             </TableRow>
           </TableHeader>
@@ -106,7 +128,15 @@ export function AcabadosView() {
                 </TableCell>
               </TableRow>
             )}
-            {finishes.data?.map((f) => (
+            {sortRows(finishes.data ?? [], sort, {
+              code: { text: (f) => f.code },
+              name: { text: (f) => f.name },
+              line: { text: (f) => f.businessLine ?? '' },
+              kind: { text: (f) => f.kind ?? '' },
+              color: { text: (f) => f.colorName ?? '' },
+              density: { decimal: (f) => f.densityFactor },
+              status: { text: (f) => (f.isActive ? 'Activo' : 'Inactivo') },
+            }).map((f) => (
               <TableRow key={f.id} data-state={f.isActive ? undefined : 'inactive'}>
                 <TableCell className="font-medium">{f.code}</TableCell>
                 <TableCell>{f.name}</TableCell>
@@ -138,27 +168,29 @@ export function AcabadosView() {
                 </TableCell>
                 {isAdmin && (
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        openDialog(f);
-                      }}
-                    >
-                      Editar
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={toggleActive.isPending}
-                      pending={toggleActive.isPending && toggleActive.variables?.id === f.id}
-                      onClick={() => {
-                        if (toggleActive.isPending) return;
-                        toggleActive.mutate(f);
-                      }}
-                    >
-                      {f.isActive ? 'Desactivar' : 'Activar'}
-                    </Button>
+                    <RowActions
+                      label={f.code}
+                      primary="edit"
+                      actions={[
+                        {
+                          key: 'edit',
+                          label: 'Editar',
+                          onSelect: () => {
+                            openDialog(f);
+                          },
+                        },
+                        {
+                          key: 'toggle',
+                          label: f.isActive ? 'Desactivar' : 'Activar',
+                          disabled: toggleActive.isPending,
+                          pending: toggleActive.isPending && toggleActive.variables?.id === f.id,
+                          onSelect: () => {
+                            if (toggleActive.isPending) return;
+                            toggleActive.mutate(f);
+                          },
+                        },
+                      ]}
+                    />
                   </TableCell>
                 )}
               </TableRow>

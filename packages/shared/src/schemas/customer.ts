@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DOC_TYPES } from '../enums';
-import { paginationQuerySchema } from './pagination';
+import { paginationQuerySchema, sortQueryFields } from './pagination';
 
 /** Cadena vacía tras `trim()` se guarda como `null`, no como `''`. */
 function emptyToNull(v: string | undefined): string | null {
@@ -43,7 +43,11 @@ export type CustomerDto = z.infer<typeof customerSchema>;
  * entera, que es exactamente lo que dejó de pasar. Los inactivos se siguen trayendo (el
  * orden ya los manda al final): son los que un administrador tiene que poder reactivar.
  */
+/** D-323: columnas de la lista de clientes que se ordenan en el servidor. */
+export const CUSTOMER_SORT_KEYS = ['docNumber', 'name', 'creditDays', 'status'] as const;
+
 export const customerQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(CUSTOMER_SORT_KEYS),
   search: z.string().trim().max(80).optional(),
 });
 export type CustomerQuery = z.infer<typeof customerQuerySchema>;

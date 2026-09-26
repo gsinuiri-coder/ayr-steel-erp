@@ -11,6 +11,7 @@ import {
   quoteAndOrderLines,
   setupRoofingScenario,
 } from '../helpers/roofing';
+import { rowAction } from '../helpers/ui';
 
 /**
  * F8-S3 — huecos de cobertura que los specs de la sesión dejaron sin mirar.
@@ -106,7 +107,9 @@ test.describe('F8-S3 — huecos de cobertura', () => {
       await expect(execute).toBeEnabled();
 
       // --- Corregir la fila 2: el editor llega con lo que la fila tenía ---
-      await panel.getByRole('button', { name: `Corregir la fila 2 de ${opCode}` }).click();
+      await (
+        await rowAction(page, `fila 2 de ${opCode}`, `Corregir la fila 2 de ${opCode}`)
+      ).click();
       await expect(panel.getByLabel('Largo 1 en metros')).toHaveValue(/^4(\.0+)?$/);
       await expect(panel.getByLabel('Planchas del largo 1')).toHaveValue('2');
       await expect(panel.getByLabel(`Kilos consumidos de ${opCode}`)).toHaveValue(/^40(\.0+)?$/);
@@ -133,7 +136,7 @@ test.describe('F8-S3 — huecos de cobertura', () => {
       ]);
 
       // --- Quitar la fila 1 ---
-      await panel.getByRole('button', { name: `Quitar la fila 1 de ${opCode}` }).click();
+      await (await rowAction(page, `fila 1 de ${opCode}`, `Quitar la fila 1 de ${opCode}`)).click();
       await expect(table.getByRole('row')).toHaveCount(2);
       await expect(table.getByRole('row').filter({ hasText: '3 × 4.00 m' })).toHaveCount(0);
       drafts = await getJson<DraftDto[]>(api, draftsPath(opId));

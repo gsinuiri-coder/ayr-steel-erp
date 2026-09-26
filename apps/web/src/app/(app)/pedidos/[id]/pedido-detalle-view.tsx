@@ -63,6 +63,7 @@ import { usePlantSheetActions } from '@/components/sales/plant-sheet-buttons';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { OrderStageBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
+import { RowActions } from '@/components/row-actions';
 
 function reservationBadge(r: ReservationDto) {
   return <Badge variant={RESERVATION_TONE[r.status]}>{RESERVATION_STATUS_LABELS[r.status]}</Badge>;
@@ -482,44 +483,41 @@ export function PedidoDetalleView({ id }: { id: string }) {
                 <TableCell className="text-right">{formatMoney(item.subtotalPen)}</TableCell>
                 {showLineActions && (
                   <TableCell className="text-right">
-                    {canEditAsAdmin && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        aria-label={`Cambiar precio de la línea ${String(item.lineNumber)}`}
-                        onClick={() => {
-                          setPricing(item);
-                        }}
-                      >
-                        Precio
-                      </Button>
-                    )}
-                    {/* D-116: una bobina entera vende su saldo; su cantidad no se edita. */}
-                    {canEditAsOwner && item.reserveItemType !== 'COIL' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        aria-label={`Cambiar cantidad de la línea ${String(item.lineNumber)}`}
-                        onClick={() => {
-                          setResizing(item);
-                        }}
-                      >
-                        Cantidad
-                      </Button>
-                    )}
-                    {/* D-254: atar la línea a una bobina de su pool; cantidad e importe quedan. */}
-                    {canEditAsOwner && isCoilSaleLine(item) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        aria-label={`Cambiar bobina de la línea ${String(item.lineNumber)}`}
-                        onClick={() => {
-                          setRecoiling(item);
-                        }}
-                      >
-                        Bobina
-                      </Button>
-                    )}
+                    <RowActions
+                      label={`línea ${String(item.lineNumber)}`}
+                      primary="price"
+                      actions={[
+                        {
+                          key: 'price',
+                          label: 'Precio',
+                          ariaLabel: `Cambiar precio de la línea ${String(item.lineNumber)}`,
+                          show: canEditAsAdmin,
+                          onSelect: () => {
+                            setPricing(item);
+                          },
+                        },
+                        // D-116: una bobina entera vende su saldo; su cantidad no se edita.
+                        {
+                          key: 'qty',
+                          label: 'Cantidad',
+                          ariaLabel: `Cambiar cantidad de la línea ${String(item.lineNumber)}`,
+                          show: canEditAsOwner && item.reserveItemType !== 'COIL',
+                          onSelect: () => {
+                            setResizing(item);
+                          },
+                        },
+                        // D-254: atar la línea a una bobina de su pool; cantidad e importe quedan.
+                        {
+                          key: 'coil',
+                          label: 'Bobina',
+                          ariaLabel: `Cambiar bobina de la línea ${String(item.lineNumber)}`,
+                          show: canEditAsOwner && isCoilSaleLine(item),
+                          onSelect: () => {
+                            setRecoiling(item);
+                          },
+                        },
+                      ]}
+                    />
                   </TableCell>
                 )}
               </TableRow>

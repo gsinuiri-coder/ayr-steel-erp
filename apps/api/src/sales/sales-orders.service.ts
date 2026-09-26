@@ -118,6 +118,8 @@ import {
 } from './sales-lines';
 import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
 import { reservationDispatches } from './reservation-dispatches';
+import { salesOrderOrderBy } from '../common/list-orderings';
+
 import { buildPlantOrderPdf } from './plant-order-pdf';
 import { plantLineMeasures } from './plant-measures';
 import { findPriceChanges } from './price-changes';
@@ -2616,7 +2618,9 @@ export class SalesOrdersService {
             },
           },
         },
-        orderBy: { seq: 'desc' },
+        // D-323: la columna elegida ordena la lista entera; el número desempata. El estado que
+        // se muestra es derivado y se ordena en la vista.
+        orderBy: salesOrderOrderBy(query),
         skip,
         take,
       }),

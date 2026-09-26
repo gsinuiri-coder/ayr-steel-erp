@@ -27,14 +27,10 @@ import {
   CUSTOMER_NAME_CLASSNAME,
   LINK_CLASSNAME,
 } from '@/lib/utils';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -45,6 +41,20 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
  * detalle por comprobante, que es donde se cobra (D-075: el cobro va contra el
  * comprobante, no contra el pedido).
  */
+/** D-323: las columnas de «Pendientes» que ordena el servidor (`FISCAL_DOCUMENT_SORT_KEYS`). */
+const PENDING_SERVER_KEYS = {
+  number: 'number',
+  customer: 'customer',
+  issue: 'issueDate',
+  due: 'dueDate',
+  total: 'total',
+  paid: null,
+  balance: null,
+} as const;
+
+/** Sin orden elegido: `sortRows` deja las filas como llegan. */
+const NO_SORT = { key: null, dir: 'asc' } as const;
+
 export function CobranzasView() {
   // D-289: la página y el tamaño de cada tabla viven en la URL (`rPage`/`rSize`, `pPage`/`pSize`).
   const [url, setUrl] = useUrlState({
@@ -88,16 +98,44 @@ export function CobranzasView() {
         `/invoicing/receivables?page=${receivablesPage.page}&pageSize=${receivablesPage.pageSize}`,
       ),
   });
-  const receivableRows = receivables.data?.items ?? [];
+  // D-323: las dos tablas están paginadas por el servidor. «Por cliente» (resumen armado en
+  // memoria) ordena solo las filas de la página y sus encabezados lo dicen; «Pendientes»
+  // (comprobantes) manda al servidor las columnas propias del comprobante y ordena en la página
+  // solo lo derivado (cobrado y saldo). Cada tabla lleva su propio par de parámetros en la URL.
+  const [rSort, toggleRSort] = useSort<'customer' | 'count' | 'next' | 'overdue' | 'balance'>('r');
+  const [pSort, togglePSort] = useSort<
+    'number' | 'customer' | 'issue' | 'due' | 'total' | 'paid' | 'balance'
+  >('p');
+  const receivableRows = sortRows(receivables.data?.items ?? [], rSort, {
+    customer: { text: (r) => r.customerName },
+    count: { decimal: (r) => String(r.documentCount) },
+    next: { text: (r) => r.nextDueDate ?? '' },
+    overdue: { decimal: (r) => r.overduePen },
+    balance: { decimal: (r) => r.balancePen },
+  });
 
+  const serverSort = pSort.key === null ? null : PENDING_SERVER_KEYS[pSort.key];
   const pending = useQuery({
-    queryKey: ['fiscal-documents', 'pending', pendingPage.page, pendingPage.pageSize],
+    queryKey: [
+      'fiscal-documents',
+      'pending',
+      pendingPage.page,
+      pendingPage.pageSize,
+      serverSort,
+      pSort.dir,
+    ],
     queryFn: () =>
       api<PaginatedResult<FiscalDocumentListItemDto>>(
-        `/invoicing/documents?pendingOnly=true&page=${pendingPage.page}&pageSize=${pendingPage.pageSize}`,
+        `/invoicing/documents?pendingOnly=true&page=${pendingPage.page}&pageSize=${pendingPage.pageSize}${
+          serverSort ? `&sort=${serverSort}&dir=${pSort.dir}` : ''
+        }`,
       ),
   });
-  const pendingRows = pending.data?.items ?? [];
+  // El servidor ya entregó ordenadas las columnas propias; acá solo lo derivado.
+  const pendingRows = sortRows(pending.data?.items ?? [], serverSort ? NO_SORT : pSort, {
+    paid: { decimal: (d) => d.paidPen },
+    balance: { decimal: (d) => d.balancePen },
+  });
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -143,11 +181,49 @@ export function CobranzasView() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead className="hidden text-right sm:table-cell">Comprobantes</TableHead>
-                  <TableHead className="hidden md:table-cell">Vencimiento más próximo</TableHead>
-                  <TableHead className="text-right">Vencido</TableHead>
-                  <TableHead className="text-right">Saldo</TableHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="customer"
+                    title="Ordena las filas de esta página"
+                  >
+                    Cliente
+                  </SortHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="count"
+                    className="hidden text-right sm:table-cell"
+                    align="right"
+                  >
+                    Comprobantes
+                  </SortHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="next"
+                    className="hidden md:table-cell"
+                  >
+                    Vencimiento más próximo
+                  </SortHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="overdue"
+                    className="text-right"
+                    align="right"
+                  >
+                    Vencido
+                  </SortHead>
+                  <SortHead
+                    sort={rSort}
+                    onSort={toggleRSort}
+                    k="balance"
+                    className="text-right"
+                    align="right"
+                  >
+                    Saldo
+                  </SortHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -221,13 +297,50 @@ export function CobranzasView() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
-                  <TableHead>Número</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead className="hidden sm:table-cell">Emisión</TableHead>
-                  <TableHead>Vencimiento</TableHead>
-                  <TableHead className="hidden text-right md:table-cell">Total</TableHead>
-                  <TableHead className="hidden text-right lg:table-cell">Cobrado</TableHead>
-                  <TableHead className="text-right">Saldo</TableHead>
+                  <SortHead sort={pSort} onSort={togglePSort} k="number">
+                    Número
+                  </SortHead>
+                  <SortHead sort={pSort} onSort={togglePSort} k="customer">
+                    Cliente
+                  </SortHead>
+                  <SortHead
+                    sort={pSort}
+                    onSort={togglePSort}
+                    k="issue"
+                    className="hidden sm:table-cell"
+                  >
+                    Emisión
+                  </SortHead>
+                  <SortHead sort={pSort} onSort={togglePSort} k="due">
+                    Vencimiento
+                  </SortHead>
+                  <SortHead
+                    sort={pSort}
+                    onSort={togglePSort}
+                    k="total"
+                    className="hidden text-right md:table-cell"
+                    align="right"
+                  >
+                    Total
+                  </SortHead>
+                  <SortHead
+                    sort={pSort}
+                    onSort={togglePSort}
+                    k="paid"
+                    className="hidden text-right lg:table-cell"
+                    align="right"
+                  >
+                    Cobrado
+                  </SortHead>
+                  <SortHead
+                    sort={pSort}
+                    onSort={togglePSort}
+                    k="balance"
+                    className="text-right"
+                    align="right"
+                  >
+                    Saldo
+                  </SortHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

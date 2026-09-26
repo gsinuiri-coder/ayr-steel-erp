@@ -36,11 +36,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 const ALL = 'ALL';
 
 /** Órdenes de corte tercerizado (RF-40..42, RF-22), filtrables por línea y estado. */
 export function CorteView() {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<'supplier' | 'line' | 'coils' | 'sent' | 'status'>();
   const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
   const [status, setStatus] = useState<CuttingOrderStatus | typeof ALL>(ALL);
 
@@ -114,11 +119,27 @@ export function CorteView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Proveedor</TableHead>
-              <TableHead>Línea</TableHead>
-              <TableHead className="text-right">Bobinas</TableHead>
-              <TableHead>Enviada</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="supplier">
+                Proveedor
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="line">
+                Línea
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="coils"
+                className="text-right"
+                align="right"
+              >
+                Bobinas
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="sent">
+                Enviada
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="status">
+                Estado
+              </SortHead>
               <TableHead>Notas</TableHead>
             </TableRow>
           </TableHeader>
@@ -138,7 +159,13 @@ export function CorteView() {
                 </TableCell>
               </TableRow>
             )}
-            {orders.data?.map((o) => (
+            {sortRows(orders.data ?? [], sort, {
+              supplier: { text: (o) => o.supplierName },
+              line: { text: (o) => o.businessLine },
+              coils: { decimal: (o) => String(o.coilCount) },
+              sent: { text: (o) => o.sentAt ?? '' },
+              status: { text: (o) => o.status },
+            }).map((o) => (
               <TableRow key={o.id}>
                 <TableCell className="font-medium">
                   <Link href={`/corte/${o.id}`} className={LINK_CLASSNAME}>

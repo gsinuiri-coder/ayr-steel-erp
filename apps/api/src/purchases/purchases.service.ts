@@ -75,6 +75,7 @@ import {
   startOfDayUtc,
   toPurchaseCurrency,
 } from './purchase-math';
+import { purchaseOrderBy } from '../common/list-orderings';
 
 /** Compras a proveedor (D-030): registro → recepción → cuenta por pagar → pagos. */
 @Injectable()
@@ -1137,10 +1138,8 @@ export class PurchasesService {
           }
         : {}),
     };
-    const orderBy: Prisma.PurchaseOrderByWithRelationInput[] = [
-      { issueDate: 'desc' },
-      { createdAt: 'desc' },
-    ];
+    // D-323: la columna elegida ordena la lista entera; la fecha de emisión desempata.
+    const orderBy = purchaseOrderBy(query);
 
     if (!query.onlyWithBalance) {
       const { skip, take } = toSkipTake(query);

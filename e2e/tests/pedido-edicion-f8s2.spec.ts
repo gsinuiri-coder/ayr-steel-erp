@@ -9,7 +9,7 @@ import {
   type InvoicingTrail,
 } from '../helpers/invoicing';
 import { apiAs, postExpectingError, putJson } from '../helpers/production';
-import { chooseProductWithStock, headerAction } from '../helpers/ui';
+import { chooseProductWithStock, headerAction, rowAction } from '../helpers/ui';
 import {
   metersOf,
   mountCoil,
@@ -446,7 +446,7 @@ test.describe('F8-S2 — edición del pedido confirmado (D-187)', () => {
         timeout: 60_000,
       });
 
-      await page.getByRole('button', { name: 'Cambiar precio de la línea 1' }).click();
+      await (await rowAction(page, 'línea 1', 'Cambiar precio de la línea 1')).click();
       const dialog = page.getByRole('dialog');
       // 8.0000 sin IGV son 9.44 con IGV; se sube a 11.80 (10.0000 sin IGV).
       await expect(dialog.getByLabel(/Precio con IGV/)).toHaveValue('9.44');

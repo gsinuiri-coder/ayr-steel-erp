@@ -414,7 +414,7 @@ test.describe('F8-S3b — huecos de cobertura', () => {
       await expect(main.getByRole('link', { name: 'Despachar', exact: true })).toBeVisible();
       await expect(main.getByRole('button', { name: 'Anular pedido', exact: true })).toHaveCount(0);
 
-      await main.getByRole('button', { name: 'Más acciones' }).click();
+      await main.getByRole('button', { name: 'Más acciones', exact: true }).click();
       const menu = page.getByRole('menu');
       await expect(menu).toBeVisible();
       const items = menu.getByRole('menuitem');

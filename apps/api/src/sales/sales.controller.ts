@@ -56,6 +56,7 @@ import {
   type LineWithoutOrderDto,
   type PaginatedResult,
   type QuotationDto,
+  type QuotationDuplicateDto,
   type QuotationListItemDto,
   type QuotationQuery,
   type QuotationStockShortageDto,
@@ -196,7 +197,7 @@ export class SalesController {
   duplicateQuotation(
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<QuotationDto> {
+  ): Promise<QuotationDuplicateDto> {
     return this.quotations.duplicate(actor, id);
   }
 

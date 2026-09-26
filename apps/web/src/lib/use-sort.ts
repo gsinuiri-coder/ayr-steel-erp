@@ -16,16 +16,25 @@ export interface SortState<K extends string> {
  * tocan). Clickear una columna por primera vez ordena ascendente; clickearla de nuevo
  * invierte; clickear otra columna arranca esa en ascendente.
  */
-export function useSort<K extends string>(): [SortState<K>, (key: K) => void] {
+export function useSort<K extends string>(
+  /** Prefijo de las claves de la URL, para una segunda tabla en la misma pantalla (`h` → `hsort`). */
+  prefix = '',
+): [SortState<K>, (key: K) => void] {
   // D-289: el orden vive en la URL (`?sort=code&dir=desc`) como el resto de los filtros.
-  const [url, setUrl] = useUrlState({ sort: '', dir: 'asc' });
+  // `page` va en los defaults solo para poder borrarla: ordenar una lista paginada por el
+  // servidor cambia qué filas hay en cada página, así que vuelve a la primera (D-323).
+  const sortKey = `${prefix}sort`;
+  const dirKey = `${prefix}dir`;
+  const [url, setUrl] = useUrlState({ [sortKey]: '', [dirKey]: 'asc', page: '' });
+  const current = url[sortKey] ?? '';
+  const currentDir = url[dirKey] === 'desc' ? 'desc' : 'asc';
   const state: SortState<K> = {
-    key: url.sort === '' ? null : (url.sort as K),
-    dir: url.dir === 'desc' ? 'desc' : 'asc',
+    key: current === '' ? null : (current as K),
+    dir: currentDir,
   };
   const toggle = (key: K) => {
-    if (state.key === key) setUrl({ dir: state.dir === 'asc' ? 'desc' : 'asc' });
-    else setUrl({ sort: key, dir: 'asc' });
+    if (state.key === key) setUrl({ [dirKey]: state.dir === 'asc' ? 'desc' : 'asc', page: '' });
+    else setUrl({ [sortKey]: key, [dirKey]: 'asc', page: '' });
   };
   return [state, toggle];
 }

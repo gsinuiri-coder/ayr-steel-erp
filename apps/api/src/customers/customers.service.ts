@@ -20,6 +20,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { customerOrderBy } from '../common/list-orderings';
 
 /**
  * Cuántas filas trae SQL antes de rankear en JS (RF-S3/M1). Más que
@@ -62,7 +63,8 @@ export class CustomersService {
       this.prisma.customer.count({ where }),
       this.prisma.customer.findMany({
         where,
-        orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+        // D-323: la columna elegida ordena la lista entera; activos primero y por nombre desempatan.
+        orderBy: customerOrderBy(query),
         skip,
         take,
       }),

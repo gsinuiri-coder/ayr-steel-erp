@@ -17,13 +17,13 @@ import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { formatDate, formatQty } from '@/lib/format';
 import { groupHistoryByOrder, type HistoryGroup } from '@/lib/order-history';
-import { useColumnFilters } from '@/lib/use-column-filters';
 import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
 import { URL_PAGINATION_DEFAULTS, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { PaginationBar } from '@/components/pagination-bar';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { StatusFilter } from '@/components/status-filter';
 import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -87,22 +87,9 @@ export function OrderHistory() {
   });
   // El servidor ya entrega las OP por correlativo descendente (D-113). El primer encuentro
   // fija también el orden de los pedidos: actividad de producción más reciente primero.
-  // D-295: el historial tiene todas las órdenes en el cliente (hasta el tope), así que el filtro por
-  // columna se aplica a todos los pedidos, no solo a la página que se ve.
-  const columnFilters = useColumnFilters<'order' | 'customer' | 'status'>();
-  const colFilter = (key: 'order' | 'customer' | 'status', label: string) => ({
-    label,
-    value: columnFilters.filters[key] ?? '',
-    onChange: (v: string) => {
-      columnFilters.setFilter(key, v);
-      setUrl({ page: '1' });
-    },
-  });
-  const unsorted = columnFilters.apply(groupHistoryByOrder(orders.data ?? []), {
-    order: (g) => g.salesOrderCode ?? 'Corridas sin pedido',
-    customer: (g) => g.customerName ?? '',
-    status: (g) => PRODUCTION_ORDER_STATUS_LABELS[g.status],
-  });
+  // D-323: el historial tiene todas las órdenes en el cliente (hasta el tope), así que el orden por
+  // columna es sobre todos los pedidos, no solo sobre la página que se ve.
+  const unsorted = groupHistoryByOrder(orders.data ?? []);
   const groups =
     sort.key === null
       ? unsorted
@@ -140,7 +127,7 @@ export function OrderHistory() {
   };
 
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 gap-3">
       <div className="flex flex-wrap items-center gap-3">
         <StatusFilter
           value={url.hstatus}
@@ -179,13 +166,12 @@ export function OrderHistory() {
       {orders.isError && (
         <p className="text-sm text-destructive">No se pudieron cargar las órdenes de producción.</p>
       )}
-      <div className="rounded-lg border">
+      <div className="min-w-0 max-w-full overflow-x-auto rounded-lg border">
         <Table data-testid="order-history">
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead className="w-8" />
               <SortableTableHead
-                filter={colFilter('order', 'pedido')}
                 active={sort.key === 'order'}
                 dir={sort.dir}
                 onClick={() => {
@@ -195,7 +181,6 @@ export function OrderHistory() {
                 Pedido
               </SortableTableHead>
               <SortableTableHead
-                filter={colFilter('customer', 'cliente')}
                 active={sort.key === 'customer'}
                 dir={sort.dir}
                 onClick={() => {
@@ -236,7 +221,6 @@ export function OrderHistory() {
                 ML reportado / plan
               </SortableTableHead>
               <SortableTableHead
-                filter={colFilter('status', 'estado')}
                 active={sort.key === 'status'}
                 dir={sort.dir}
                 onClick={() => {
@@ -348,47 +332,49 @@ function HistoryRow({
       {expanded && (
         <TableRow data-testid="history-orders-detail" className="bg-muted/30 hover:bg-muted/30">
           <TableCell />
-          <TableCell colSpan={6} className="py-2">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Orden</TableHead>
-                  <TableHead>Producto</TableHead>
-                  <TableHead className="text-right">Producido</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Bobinas usadas</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {group.orders.map((o) => (
-                  <TableRow key={o.id}>
-                    <TableCell>
-                      <Link
-                        href={`/produccion/${o.id}`}
-                        className={`font-mono font-medium ${LINK_CLASSNAME}`}
-                      >
-                        {o.code}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      {o.productSku} · {o.productName}
-                      <div className="text-xs text-muted-foreground">
-                        {PRODUCTION_ORDER_KIND_LABELS[o.kind]}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{producedLabel(o)}</TableCell>
-                    <TableCell>
-                      <Badge variant={PRODUCTION_ORDER_TONE[o.status]}>
-                        {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <UsedCoils order={o} />
-                    </TableCell>
+          <TableCell colSpan={6} className="max-w-0 py-2">
+            <div className="min-w-0 overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Orden</TableHead>
+                    <TableHead>Producto</TableHead>
+                    <TableHead className="text-right">Producido</TableHead>
+                    <TableHead>Estado</TableHead>
+                    <TableHead>Bobinas usadas</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {group.orders.map((o) => (
+                    <TableRow key={o.id}>
+                      <TableCell>
+                        <Link
+                          href={`/produccion/${o.id}`}
+                          className={`font-mono font-medium ${LINK_CLASSNAME}`}
+                        >
+                          {o.code}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        {o.productSku} · {o.productName}
+                        <div className="text-xs text-muted-foreground">
+                          {PRODUCTION_ORDER_KIND_LABELS[o.kind]}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{producedLabel(o)}</TableCell>
+                      <TableCell>
+                        <Badge variant={PRODUCTION_ORDER_TONE[o.status]}>
+                          {PRODUCTION_ORDER_STATUS_LABELS[o.status]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <UsedCoils order={o} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </TableCell>
         </TableRow>
       )}
@@ -419,17 +405,28 @@ function UsedCoils({ order }: { order: ProductionOrderListItemDto }) {
   }
   const coils = [...used.values()];
   if (coils.length === 0) {
-    return order.mountedCoilCodes.length > 0 ? (
+    if (order.mountedCoilCodes.length === 0)
+      return <span className="text-muted-foreground">—</span>;
+    const shown = order.mountedCoilCodes.slice(0, MAX_INLINE_COILS);
+    const rest = order.mountedCoilCodes.slice(MAX_INLINE_COILS);
+    return (
       <span className="text-muted-foreground">
-        {order.mountedCoilCodes.join(', ')} <span className="text-xs">(montadas)</span>
+        {shown.join(', ')}
+        {rest.length > 0 && (
+          <CoilOverflow
+            count={rest.length}
+            items={rest.map((code) => ({ key: code, label: code, href: null, kg: null }))}
+          />
+        )}{' '}
+        <span className="text-xs">(montadas)</span>
       </span>
-    ) : (
-      <span className="text-muted-foreground">—</span>
     );
   }
+  const shown = coils.slice(0, MAX_INLINE_COILS);
+  const rest = coils.slice(MAX_INLINE_COILS);
   return (
-    <span>
-      {coils.map((c, i) => (
+    <span data-testid="used-coils">
+      {shown.map((c, i) => (
         <span key={c.id} className="whitespace-nowrap">
           {i > 0 && ', '}
           <Link href={`/bobinas/${c.id}`} className={LINK_CLASSNAME}>
@@ -437,7 +434,63 @@ function UsedCoils({ order }: { order: ProductionOrderListItemDto }) {
           </Link>
         </span>
       ))}
+      {rest.length > 0 && (
+        <CoilOverflow
+          count={rest.length}
+          items={rest.map((c) => ({
+            key: c.id,
+            label: c.code,
+            href: `/bobinas/${c.id}`,
+            kg: c.kg,
+          }))}
+        />
+      )}
     </span>
+  );
+}
+
+/** D-324: cuántos códigos de bobina caben en la fila; el resto va en un popover «+N». */
+const MAX_INLINE_COILS = 2;
+
+/**
+ * D-324: el resto de las bobinas de una orden. Un pedido con muchas bobinas hacía crecer la fila
+ * expandida del historial y, con ella, el ancho de toda la página (scroll horizontal): la lista
+ * larga vive en un popover y la fila queda del mismo tamaño con dos bobinas o con cincuenta.
+ */
+function CoilOverflow({
+  count,
+  items,
+}: {
+  count: number;
+  items: { key: string; label: string; href: string | null; kg: string | null }[];
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label={`Ver las ${String(count)} bobinas restantes`}
+        className="ml-1 rounded-sm border px-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        +{count}
+      </PopoverTrigger>
+      <PopoverContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
+        <ul className="grid gap-1 text-sm" data-testid="used-coils-more">
+          {items.map((c) => (
+            <li key={c.key} className="flex items-baseline justify-between gap-4">
+              {c.href ? (
+                <Link href={c.href} className={LINK_CLASSNAME}>
+                  {c.label}
+                </Link>
+              ) : (
+                <span>{c.label}</span>
+              )}
+              {c.kg !== null && (
+                <span className="tabular-nums text-muted-foreground">{formatQty(c.kg, 'kg')}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }
 

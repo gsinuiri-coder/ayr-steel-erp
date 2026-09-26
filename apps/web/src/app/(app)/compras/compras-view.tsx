@@ -12,6 +12,7 @@ import {
   PURCHASE_TYPES,
   type PaginatedResult,
   type PurchaseListItemDto,
+  type PurchaseQuery,
 } from '@ayr/shared';
 import { PURCHASE_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
@@ -45,6 +46,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/sortable-table-head';
+import { useSort } from '@/lib/use-sort';
 
 const ALL = 'ALL';
 
@@ -66,12 +69,19 @@ export function ComprasView() {
   const { line: businessLine, type, status } = url;
   const onlyWithBalance = url.balance === '1';
 
+  // D-323: el orden por columna es del servidor (todas estas columnas son de la propia fila).
+  const [sort, toggleSort] = useSort<NonNullable<PurchaseQuery['sort']>>();
+
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (businessLine) params.set('businessLine', businessLine);
   if (type) params.set('type', type);
   if (status) params.set('status', status);
   if (onlyWithBalance) params.set('onlyWithBalance', 'true');
   if (search) params.set('search', search);
+  if (sort.key) {
+    params.set('sort', sort.key);
+    params.set('dir', sort.dir);
+  }
   const queryString = params.toString();
 
   const purchases = useQuery({
@@ -172,15 +182,76 @@ export function ComprasView() {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Comprobante</TableHead>
-              <TableHead>Proveedor</TableHead>
+              <SortableTableHead
+                active={sort.key === 'number'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('number');
+                }}
+              >
+                Comprobante
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'supplier'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('supplier');
+                }}
+              >
+                Proveedor
+              </SortableTableHead>
               <TableHead className="hidden lg:table-cell">Línea</TableHead>
-              <TableHead className="hidden md:table-cell">Tipo</TableHead>
-              <TableHead className="hidden sm:table-cell">Emisión</TableHead>
-              <TableHead className="hidden md:table-cell">Vence</TableHead>
-              <TableHead className="text-right">Total</TableHead>
+              <SortableTableHead
+                className="hidden md:table-cell"
+                active={sort.key === 'type'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('type');
+                }}
+              >
+                Tipo
+              </SortableTableHead>
+              <SortableTableHead
+                className="hidden sm:table-cell"
+                active={sort.key === 'issueDate'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('issueDate');
+                }}
+              >
+                Emisión
+              </SortableTableHead>
+              <SortableTableHead
+                className="hidden md:table-cell"
+                active={sort.key === 'dueDate'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('dueDate');
+                }}
+              >
+                Vence
+              </SortableTableHead>
+              <SortableTableHead
+                className="text-right"
+                align="right"
+                active={sort.key === 'total'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('total');
+                }}
+              >
+                Total
+              </SortableTableHead>
               <TableHead className="text-right">Saldo</TableHead>
-              <TableHead>Estado</TableHead>
+              <SortableTableHead
+                active={sort.key === 'status'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('status');
+                }}
+              >
+                Estado
+              </SortableTableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

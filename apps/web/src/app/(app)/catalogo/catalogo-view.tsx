@@ -19,7 +19,8 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { CATALOG_BAJO_PISO_VER_TODOS } from '@/lib/catalog-links';
 import { useSession } from '@/lib/session';
-import { useColumnFilters } from '@/lib/use-column-filters';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { Badge } from '@/components/ui/badge';
@@ -41,6 +42,7 @@ import { ColoresPanel } from './colores-panel';
 import { ProductDialog } from '@/components/catalog/product-dialog';
 import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
+import { RowActions } from '@/components/row-actions';
 
 /**
  * Qué productos llevan receta (D-059, D-087). Las mismas condiciones que valida
@@ -86,7 +88,8 @@ export function CatalogoView() {
   const [activeLineId, setActiveLineId] = useState<string | null>(null);
   // Punto 13 del cliente (D-290): la búsqueda por SKU o nombre filtra en el cliente sobre
   // el catálogo ya cargado —no pagina (D-113)— y vive en la URL (`?q=`), con debounce de 150 ms.
-  const [url, setUrl] = useUrlState({ q: '' });
+  // D-326: `?tab=colores` abre la pestaña de colores (el ítem «Colores» del menú); sin él, la línea.
+  const [url, setUrl] = useUrlState({ q: '', tab: '' });
   const [searchText, setSearchText, search] = useUrlSearchInput(
     url.q,
     (v) => {
@@ -95,7 +98,8 @@ export function CatalogoView() {
     150,
   );
   const needle = search.toLowerCase();
-  const columnFilters = useColumnFilters<'sku' | 'name'>();
+  // D-323: el catálogo no pagina; el orden por columna se hace sobre todo lo cargado.
+  const [sort, toggleSort] = useSort<'sku' | 'name' | 'unit' | 'status' | 'price'>();
 
   const lines = useQuery({
     queryKey: ['business-lines'],
@@ -112,8 +116,22 @@ export function CatalogoView() {
       highlightProductId && highlightProductId !== CATALOG_BAJO_PISO_VER_TODOS
         ? products.data?.find((p) => p.id === highlightProductId)
         : undefined;
-    setActiveLineId(highlighted?.businessLineId ?? lines.data[0]?.id ?? null);
-  }, [activeLineId, highlightProductId, lines.data, products.data]);
+    setActiveLineId(
+      url.tab === 'colores'
+        ? 'colores'
+        : (highlighted?.businessLineId ?? lines.data[0]?.id ?? null),
+    );
+  }, [activeLineId, highlightProductId, lines.data, products.data, url.tab]);
+
+  // El menú lateral cambia `?tab=` con la pantalla ya abierta: la pestaña sigue a la URL.
+  useEffect(() => {
+    if (activeLineId === null) return;
+    if (url.tab === 'colores' && activeLineId !== 'colores') setActiveLineId('colores');
+    if (url.tab !== 'colores' && activeLineId === 'colores') {
+      setActiveLineId(lines.data?.[0]?.id ?? null);
+    }
+    // Solo cuando cambia la URL: elegir una pestaña a mano ya escribe `tab` (abajo).
+  }, [url.tab]);
 
   useEffect(() => {
     if (!highlightProductId || highlightProductId === CATALOG_BAJO_PISO_VER_TODOS) return;
@@ -157,7 +175,13 @@ export function CatalogoView() {
         )}
       </div>
 
-      <Tabs value={activeLineId ?? lines.data[0]?.id} onValueChange={setActiveLineId}>
+      <Tabs
+        value={activeLineId ?? lines.data[0]?.id}
+        onValueChange={(value) => {
+          setActiveLineId(value);
+          setUrl({ tab: value === 'colores' ? 'colores' : '' });
+        }}
+      >
         <TabsList>
           {lines.data.map((l) => (
             <TabsTrigger key={l.id} value={l.id}>
@@ -177,10 +201,12 @@ export function CatalogoView() {
                   p.sku.toLowerCase().includes(needle) || p.name.toLowerCase().includes(needle),
               )
             : inLine;
-          // D-295: el catálogo no pagina, así que el filtro por columna es exacto.
-          const lineProducts = columnFilters.apply(searched, {
-            sku: (p) => p.sku,
-            name: (p) => p.name,
+          const lineProducts = sortRows(searched, sort, {
+            sku: { text: (p) => p.sku },
+            name: { text: (p) => p.name },
+            unit: { text: (p) => p.unit },
+            status: { text: (p) => (p.isActive ? 'Activo' : 'Inactivo') },
+            price: { decimal: (p) => p.listPricePen ?? '' },
           });
           return (
             <TabsContent key={line.id} value={line.id} className="grid gap-4">
@@ -210,23 +236,19 @@ export function CatalogoView() {
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
                       <SortableTableHead
-                        filter={{
-                          label: 'SKU',
-                          value: columnFilters.filters.sku ?? '',
-                          onChange: (v) => {
-                            columnFilters.setFilter('sku', v);
-                          },
+                        active={sort.key === 'sku'}
+                        dir={sort.dir}
+                        onClick={() => {
+                          toggleSort('sku');
                         }}
                       >
                         SKU
                       </SortableTableHead>
                       <SortableTableHead
-                        filter={{
-                          label: 'nombre',
-                          value: columnFilters.filters.name ?? '',
-                          onChange: (v) => {
-                            columnFilters.setFilter('name', v);
-                          },
+                        active={sort.key === 'name'}
+                        dir={sort.dir}
+                        onClick={() => {
+                          toggleSort('name');
                         }}
                       >
                         Nombre
@@ -237,10 +259,36 @@ export function CatalogoView() {
                       {line.code === BusinessLine.METALLIC_ROOFING && (
                         <TableHead>Subtipo</TableHead>
                       )}
-                      <TableHead>Unidad</TableHead>
+                      <SortableTableHead
+                        active={sort.key === 'unit'}
+                        dir={sort.dir}
+                        onClick={() => {
+                          toggleSort('unit');
+                        }}
+                      >
+                        Unidad
+                      </SortableTableHead>
                       <TableHead>Origen</TableHead>
-                      <TableHead>Estado</TableHead>
-                      <TableHead className="text-right">Precio de lista (con IGV)</TableHead>
+                      <SortableTableHead
+                        active={sort.key === 'status'}
+                        dir={sort.dir}
+                        onClick={() => {
+                          toggleSort('status');
+                        }}
+                      >
+                        Estado
+                      </SortableTableHead>
+                      <SortableTableHead
+                        active={sort.key === 'price'}
+                        dir={sort.dir}
+                        align="right"
+                        className="text-right"
+                        onClick={() => {
+                          toggleSort('price');
+                        }}
+                      >
+                        Precio de lista (con IGV)
+                      </SortableTableHead>
                       {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -292,40 +340,38 @@ export function CatalogoView() {
                         </TableCell>
                         {isAdmin && (
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                openDialog(p.businessLineId, p);
-                              }}
-                            >
-                              Editar
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={toggleActive.isPending}
-                              pending={
-                                toggleActive.isPending && toggleActive.variables?.id === p.id
-                              }
-                              onClick={() => {
-                                if (toggleActive.isPending) return;
-                                toggleActive.mutate(p);
-                              }}
-                            >
-                              {p.isActive ? 'Desactivar' : 'Activar'}
-                            </Button>
-                            {hasBom(p) && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setBomProduct(p);
-                                }}
-                              >
-                                Receta
-                              </Button>
-                            )}
+                            <RowActions
+                              label={p.sku}
+                              primary="edit"
+                              actions={[
+                                {
+                                  key: 'edit',
+                                  label: 'Editar',
+                                  onSelect: () => {
+                                    openDialog(p.businessLineId, p);
+                                  },
+                                },
+                                {
+                                  key: 'bom',
+                                  label: 'Receta',
+                                  show: hasBom(p),
+                                  onSelect: () => {
+                                    setBomProduct(p);
+                                  },
+                                },
+                                {
+                                  key: 'toggle',
+                                  label: p.isActive ? 'Desactivar' : 'Activar',
+                                  disabled: toggleActive.isPending,
+                                  pending:
+                                    toggleActive.isPending && toggleActive.variables?.id === p.id,
+                                  onSelect: () => {
+                                    if (toggleActive.isPending) return;
+                                    toggleActive.mutate(p);
+                                  },
+                                },
+                              ]}
+                            />
                           </TableCell>
                         )}
                       </TableRow>

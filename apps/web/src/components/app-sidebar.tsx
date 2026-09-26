@@ -1,11 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { ChevronRight, LogOut } from 'lucide-react';
 import { ROLE_LABELS, Role } from '@ayr/shared';
-import { navForRole, type NavItem } from '@/lib/nav';
+import { NAV, navForRole, type NavItem } from '@/lib/nav';
 import { useSession } from '@/lib/session';
 import { useProductionQueue } from '@/components/production-queue';
 import { Button } from '@/components/ui/button';
@@ -25,9 +25,38 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 
-/** ¿La ruta actual pertenece a este ítem del menú? (la misma regla que marca el ítem activo). */
-function isItemActive(item: NavItem, pathname: string): boolean {
-  return item.href === '/' ? pathname === '/' : pathname.startsWith(item.activePrefix ?? item.href);
+/** `?a=b&c=d` de un `href` como pares, para comparar con la query de la pantalla. */
+function queryOf(href: string): [string, string][] {
+  return [...new URLSearchParams(href.split('?')[1] ?? '').entries()];
+}
+
+/**
+ * ¿La ruta actual pertenece a este ítem del menú? (la misma regla que marca el ítem activo).
+ *
+ * D-326: dos ítems pueden apuntar a la misma ruta con y sin query (`/catalogo` y
+ * `/catalogo?tab=colores`). El que lleva query solo está activo si la pantalla tiene esa query, y el
+ * que no la lleva deja de estarlo cuando un hermano con query sí lo está: sin esto los dos se
+ * marcaban a la vez.
+ */
+function isItemActive(item: NavItem, pathname: string, search: URLSearchParams): boolean {
+  if (item.href === '/') return pathname === '/';
+  // `href` puede llevar query: para el prefijo de ruta cuenta solo el path.
+  const prefixes = item.activePrefix ?? item.href.split('?')[0] ?? item.href;
+  const onPath = (Array.isArray(prefixes) ? prefixes : [prefixes]).some((prefix) =>
+    pathname.startsWith(prefix as string),
+  );
+  if (!onPath) return false;
+  const own = queryOf(item.href);
+  if (own.length > 0) return own.every(([key, value]) => search.get(key) === value);
+  // Sin query propia: no está activo si un hermano de la misma ruta con query sí lo está.
+  const path = item.href.split('?')[0];
+  return !NAV.flatMap((g) => g.items).some(
+    (other) =>
+      other !== item &&
+      other.href.split('?')[0] === path &&
+      queryOf(other.href).length > 0 &&
+      queryOf(other.href).every(([key, value]) => search.get(key) === value),
+  );
 }
 
 /**
@@ -41,12 +70,13 @@ function isItemActive(item: NavItem, pathname: string): boolean {
  */
 export function AppSidebar() {
   const pathname = usePathname();
+  const search = useSearchParams();
   const { state: sidebarState } = useSidebar();
   const iconOnly = sidebarState === 'collapsed';
   const { user, logout, isLoggingOut } = useSession();
   const groups = navForRole(user.role);
   const activeGroupLabel =
-    groups.find((g) => g.label && g.items.some((i) => !i.soon && isItemActive(i, pathname)))
+    groups.find((g) => g.label && g.items.some((i) => !i.soon && isItemActive(i, pathname, search)))
       ?.label ?? null;
   const [openGroup, setOpenGroup] = useState<string | null>(activeGroupLabel);
   // Navegar (incluido el «atrás» del navegador) abre el grupo de la pantalla en la que se cae.
@@ -113,7 +143,7 @@ export function AppSidebar() {
                       ) : (
                         <SidebarMenuButton
                           asChild
-                          isActive={isItemActive(item, pathname)}
+                          isActive={isItemActive(item, pathname, search)}
                           tooltip={item.title}
                         >
                           <Link href={item.href}>

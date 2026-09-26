@@ -55,9 +55,9 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
     await expect(headerButton('Comercial')).toHaveAttribute('data-state', 'open');
     await expect(page.getByRole('link', { name: 'Cotizaciones', exact: true })).toBeVisible();
 
-    // Abrir otro grupo cierra el anterior.
-    await headerButton('Catálogo').click();
-    await expect(headerButton('Catálogo')).toHaveAttribute('aria-expanded', 'true');
+    // Abrir otro grupo cierra el anterior (D-326: el kardex es del grupo Almacén).
+    await headerButton('Almacén').click();
+    await expect(headerButton('Almacén')).toHaveAttribute('aria-expanded', 'true');
     await expect(headerButton('Comercial')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByRole('link', { name: 'Cotizaciones', exact: true })).toBeHidden();
     await expect(page.getByRole('link', { name: 'Kardex', exact: true })).toBeVisible();
@@ -65,7 +65,7 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
     // Navegar por un ítem deja abierto su grupo, y solo ese.
     await page.getByRole('link', { name: 'Kardex', exact: true }).click();
     await expect(page).toHaveURL(/\/kardex$/);
-    await expect(headerButton('Catálogo')).toHaveAttribute('aria-expanded', 'true');
+    await expect(headerButton('Almacén')).toHaveAttribute('aria-expanded', 'true');
     const openGroups = await page
       .locator('[data-slot="sidebar-group-label"][data-state="open"]')
       .count();
@@ -76,7 +76,64 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
     await expect(headerButton('Comercial')).toHaveAttribute('aria-expanded', 'true', {
       timeout: 60_000,
     });
-    await expect(headerButton('Catálogo')).toHaveAttribute('aria-expanded', 'false');
+    await expect(headerButton('Almacén')).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('D-326: el mapa del menú del administrador, grupo por grupo, y la pestaña «Colores»', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page);
+    const map: Record<string, string[]> = {
+      Comercial: [
+        'Cotizaciones',
+        'Reservas temporales',
+        'Pedidos',
+        'Despachos',
+        'Comprobantes',
+        'Cobranzas',
+        'Mostrador',
+        'Clientes',
+      ],
+      Compras: ['Compras', 'Proveedores'],
+      Almacén: ['Bobinas', 'Flejes', 'Corte tercerizado', 'Inventario', 'Kardex'],
+      Planta: ['Producción', 'Órdenes de producción'],
+      Catálogo: ['Productos', 'Líneas', 'Acabados', 'Colores'],
+      Reportes: ['Ventas y margen', 'Inventario valorizado', 'Reporte mensual de bobinas'],
+      Administración: ['Usuarios', 'Márgenes y tipo de cambio', 'Auditoría', 'Configuración'],
+    };
+    // Los grupos aparecen en este orden, con «Panel» suelto a la cabeza.
+    const labels = page.locator('[data-slot="sidebar-group-label"]');
+    await expect(labels).toHaveText(Object.keys(map), { timeout: 60_000 });
+    for (const [group, items] of Object.entries(map)) {
+      await openSidebarGroup(page, group);
+      const content = page.locator(`#nav-group-${group}`);
+      await expect(content.getByRole('link')).toHaveText(items);
+    }
+
+    // «Colores» abre la pestaña de colores del catálogo, y «Productos» vuelve a las líneas.
+    await openSidebarGroup(page, 'Catálogo');
+    await page.getByRole('link', { name: 'Colores', exact: true }).click();
+    await expect(page).toHaveURL(/\/catalogo\?tab=colores/);
+    await expect(page.getByRole('tab', { name: 'Colores' })).toHaveAttribute(
+      'data-state',
+      'active',
+      { timeout: 60_000 },
+    );
+    // Solo «Colores» está marcado: «Productos» apunta a la misma ruta, sin la pestaña.
+    const active = (name: string) =>
+      page
+        .getByRole('link', { name, exact: true })
+        .locator('xpath=ancestor-or-self::*[@data-active][1]');
+    await expect(active('Colores')).toHaveAttribute('data-active', 'true');
+    await expect(active('Productos')).toHaveAttribute('data-active', 'false');
+    await page.getByRole('link', { name: 'Productos', exact: true }).click();
+    await expect(page).not.toHaveURL(/tab=colores/);
+    await expect(active('Productos')).toHaveAttribute('data-active', 'true');
+    await expect(active('Colores')).toHaveAttribute('data-active', 'false');
+    await expect(page.getByRole('tab', { name: 'Colores' })).toHaveAttribute(
+      'data-state',
+      'inactive',
+    );
   });
 });
 
@@ -264,17 +321,28 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       );
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
 
-      // D-295: filtro de texto del detalle (no pagina): solo la salida de producción.
+      // M0.1 (correcciones 04): «Desde» y «Hasta» escritos uno tras otro, sin pausa, se conservan
+      // los dos. Antes la segunda escritura reenviaba el «Desde» viejo y dejaba el rango al revés.
+      await page.getByLabel('Desde').fill('2026-08-01');
+      await page.getByLabel('Hasta').fill('2026-08-31');
+      await expect
+        .poll(() => Object.fromEntries(new URL(page.url()).searchParams), { timeout: 15_000 })
+        .toMatchObject({ range: 'custom', from: '2026-08-01', to: '2026-08-31' });
+      await expect(page.getByText(/La fecha «Desde» es posterior a «Hasta»/)).toBeHidden();
+      await page.getByRole('button', { name: 'Todo', exact: true }).click();
+      await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
+
+      // D-323: sin filtros por columna; la fecha ordena (la más reciente primero) y el saldo
+      // inicial y los totales se quedan en su lugar.
       const totalMovements = await movementRows.count();
       expect(totalMovements).toBeGreaterThanOrEqual(2);
-      await page.getByLabel('Filtrar por detalle').fill('Producción');
-      await expect(movementRows).toHaveCount(1);
+      await expect(page.getByLabel('Filtrar por detalle')).toHaveCount(0);
+      await expect(movementRows.first()).toContainText('Compra');
+      await sheet.getByRole('button', { name: 'Fecha', exact: true }).click();
+      await expect(page).toHaveURL(/sort=date/);
+      await sheet.getByRole('button', { name: 'Fecha', exact: true }).click();
+      await expect(page).toHaveURL(/dir=desc/);
       await expect(movementRows.first()).toContainText('Producción');
-      await page.getByLabel('Filtrar por detalle').fill('zzz');
-      await expect(
-        page.getByText('Ningún movimiento coincide con el filtro del detalle.'),
-      ).toBeVisible();
-      await page.getByLabel('Filtrar por detalle').fill('');
       await expect(movementRows).toHaveCount(totalMovements);
 
       // D-296/D-298: método de costeo PEPS con el mismo formato.
@@ -326,17 +394,23 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       await search.fill(scenario.product.sku);
       await expect(page).toHaveURL(new RegExp(`q=${scenario.product.sku}`), { timeout: 30_000 });
       await expect(page.getByRole('row').filter({ hasText: scenario.product.sku })).toHaveCount(1);
-      // D-295: filtro por columna (SKU) sobre el catálogo ya cargado.
+      // D-323: el catálogo no tiene filtros por columna; los encabezados ordenan.
       await search.fill('');
       await expect(page).not.toHaveURL(/q=/);
-      await page.getByLabel('Filtrar por SKU').first().fill(scenario.product.sku);
-      await expect(page.getByRole('row').filter({ hasText: scenario.product.sku })).toHaveCount(1);
-      await page.getByLabel('Filtrar por SKU').first().fill('');
+      await expect(page.getByLabel('Filtrar por SKU')).toHaveCount(0);
       await search.fill('zzzz-no-existe');
       await expect(page.getByText(/Ningún producto de esta línea coincide/)).toBeVisible();
 
       // --- Reporte de la OP: de qué bobina salió el material ---
       await page.goto(`/produccion/${opId}`);
+      // D-325: el detalle ya no trae la sección «Bobinas montadas en la orden»; de qué bobina salió
+      // cada reporte se lee en la columna «Bobina / fleje».
+      await expect(page.getByRole('heading', { name: 'Reportes de piezas' })).toBeVisible({
+        timeout: 60_000,
+      });
+      await expect(
+        page.getByText(/Bobinas montadas en la orden|Flejes consumidos por la orden/),
+      ).toHaveCount(0);
       const coilCell = page.getByTestId('report-coils').first();
       await expect(coilCell.getByRole('link', { name: scenario.coil.code })).toHaveAttribute(
         'href',

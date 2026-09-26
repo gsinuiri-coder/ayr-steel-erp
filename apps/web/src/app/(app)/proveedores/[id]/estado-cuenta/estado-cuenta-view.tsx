@@ -16,17 +16,17 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LINK_CLASSNAME } from '@/lib/utils';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
+import { SortHead } from '@/components/sortable-table-head';
+import { sortRows } from '@/lib/sort-rows';
+import { useSort } from '@/lib/use-sort';
 
 /** Estado de cuenta por proveedor (D-039): compras con saldo, antigüedad y total adeudado. */
 export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
+  // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
+  const [sort, toggleSort] = useSort<
+    'document' | 'line' | 'type' | 'issue' | 'due' | 'total' | 'balance' | 'balancePen' | 'overdue'
+  >();
   const statement = useQuery({
     queryKey: ['supplier-statement', supplierId],
     queryFn: () => api<SupplierStatementDto>(`/purchases/suppliers/${supplierId}/statement`),
@@ -70,19 +70,65 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead>Comprobante</TableHead>
-              <TableHead>Línea</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead>Emisión</TableHead>
-              <TableHead>Vence</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-              <TableHead className="text-right">Saldo</TableHead>
-              <TableHead className="text-right">Saldo en soles</TableHead>
-              <TableHead>Antigüedad</TableHead>
+              <SortHead sort={sort} onSort={toggleSort} k="document">
+                Comprobante
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="line">
+                Línea
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="type">
+                Tipo
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="issue">
+                Emisión
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="due">
+                Vence
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="total"
+                className="text-right"
+                align="right"
+              >
+                Total
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="balance"
+                className="text-right"
+                align="right"
+              >
+                Saldo
+              </SortHead>
+              <SortHead
+                sort={sort}
+                onSort={toggleSort}
+                k="balancePen"
+                className="text-right"
+                align="right"
+              >
+                Saldo en soles
+              </SortHead>
+              <SortHead sort={sort} onSort={toggleSort} k="overdue">
+                Antigüedad
+              </SortHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {s.purchases.map((p) => (
+            {sortRows(s.purchases, sort, {
+              document: { text: (p) => p.documentLabel },
+              line: { text: (p) => p.businessLine },
+              type: { text: (p) => p.type },
+              issue: { text: (p) => p.issueDate },
+              due: { text: (p) => p.dueDate ?? '' },
+              total: { decimal: (p) => p.total },
+              balance: { decimal: (p) => p.balance },
+              balancePen: { decimal: (p) => p.balancePen },
+              overdue: { decimal: (p) => String(p.overdueDays ?? '') },
+            }).map((p) => (
               <TableRow key={p.id}>
                 <TableCell className="font-medium">
                   <Link href={`/compras/${p.id}`} className={LINK_CLASSNAME}>

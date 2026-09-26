@@ -20,7 +20,7 @@ import {
 import { reasonSchema } from './coil';
 import { idempotencyFields, idempotencyKeySchema } from './idempotency';
 import { backdatableFields } from './operation';
-import { paginationQuerySchema } from './pagination';
+import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
 import { businessToday } from '../business-date';
 
@@ -668,7 +668,19 @@ export const fiscalDocumentListItemSchema = fiscalDocumentSchema
   .extend({ itemCount: z.number().int() });
 export type FiscalDocumentListItemDto = z.infer<typeof fiscalDocumentListItemSchema>;
 
+/** D-323: columnas de la lista de comprobantes que se ordenan en el servidor (el saldo no: es derivado). */
+export const FISCAL_DOCUMENT_SORT_KEYS = [
+  'number',
+  'docType',
+  'customer',
+  'issueDate',
+  'dueDate',
+  'total',
+  'status',
+] as const;
+
 export const fiscalDocumentQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(FISCAL_DOCUMENT_SORT_KEYS),
   status: statusListSchema(FISCAL_DOCUMENT_STATUSES),
   docType: z.enum(FISCAL_DOC_TYPES).optional(),
   origin: z.enum(FISCAL_DOCUMENT_ORIGINS).optional(),
@@ -957,7 +969,18 @@ export const dispatchListItemSchema = dispatchSchema
   .extend({ itemCount: z.number().int() });
 export type DispatchListItemDto = z.infer<typeof dispatchListItemSchema>;
 
+/** D-323: columnas de la lista de despachos que se ordenan en el servidor. */
+export const DISPATCH_SORT_KEYS = [
+  'code',
+  'order',
+  'customer',
+  'date',
+  'weight',
+  'status',
+] as const;
+
 export const dispatchQuerySchema = paginationQuerySchema.extend({
+  ...sortQueryFields(DISPATCH_SORT_KEYS),
   status: statusListSchema(DISPATCH_STATUSES),
   salesOrderId: z.string().uuid().optional(),
   search: z.string().trim().max(80).optional(),

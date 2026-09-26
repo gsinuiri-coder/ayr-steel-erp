@@ -54,6 +54,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { CoilPicker } from './coil-picker';
+import { RowActions } from '@/components/row-actions';
 
 /**
  * El ciclo completo de **una** orden de coberturas dentro del espacio de producción
@@ -793,36 +794,39 @@ export function RoofingOrderPanel({
                           {d.consumedKg ?? '—'}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Corregir la fila ${String(d.rowNumber)} de ${order.code}`}
-                            disabled={busy}
-                            onClick={() => {
-                              onDraft({
-                                editingDraftId: d.id,
-                                coilId: d.coilId,
-                                consumedKg: d.consumedKg ?? '',
-                                rows: d.pieces.map((p) => ({
-                                  lengthM: mmToMeters(p.lengthMm),
-                                  qty: String(p.qty),
-                                })),
-                              });
-                            }}
-                          >
-                            Corregir
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Quitar la fila ${String(d.rowNumber)} de ${order.code}`}
-                            disabled={busy}
-                            onClick={() => {
-                              removeDraft.mutate(d.id);
-                            }}
-                          >
-                            Quitar
-                          </Button>
+                          <RowActions
+                            label={`fila ${String(d.rowNumber)} de ${order.code}`}
+                            primary="fix"
+                            actions={[
+                              {
+                                key: 'fix',
+                                label: 'Corregir',
+                                ariaLabel: `Corregir la fila ${String(d.rowNumber)} de ${order.code}`,
+                                disabled: busy,
+                                onSelect: () => {
+                                  onDraft({
+                                    editingDraftId: d.id,
+                                    coilId: d.coilId,
+                                    consumedKg: d.consumedKg ?? '',
+                                    rows: d.pieces.map((p) => ({
+                                      lengthM: mmToMeters(p.lengthMm),
+                                      qty: String(p.qty),
+                                    })),
+                                  });
+                                },
+                              },
+                              {
+                                key: 'remove',
+                                label: 'Quitar',
+                                ariaLabel: `Quitar la fila ${String(d.rowNumber)} de ${order.code}`,
+                                destructive: true,
+                                disabled: busy,
+                                onSelect: () => {
+                                  removeDraft.mutate(d.id);
+                                },
+                              },
+                            ]}
+                          />
                         </TableCell>
                       </TableRow>
                     ))}

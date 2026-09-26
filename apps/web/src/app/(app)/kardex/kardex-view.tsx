@@ -23,14 +23,16 @@ import { api } from '@/lib/api';
 import { formatDate, formatTimestampDate } from '@/lib/format';
 import {
   isIsoDate,
+  kardexCustomPatch,
   KARDEX_RANGE_LABELS,
+  orderKardexRows,
   parseKardexRange,
   resolveKardexDates,
   type KardexRange,
 } from '@/lib/kardex-range';
 import { INVOICE_LINK_ROLES, REF_TARGET_ROLES } from '@/lib/nav';
 import { useSession } from '@/lib/session';
-import { useColumnFilters } from '@/lib/use-column-filters';
+import { useSort } from '@/lib/use-sort';
 import { useUrlState } from '@/lib/use-url-state';
 import { FilterChip } from '@/components/filter-chip';
 import { HeaderActions } from '@/components/header-actions';
@@ -141,11 +143,9 @@ export function KardexView() {
           })
         : null;
 
-  // D-295: el kardex de un ítem no pagina (D-237), así que filtrar por columna es exacto.
-  const columnFilters = useColumnFilters<'detail'>();
-  const rows = columnFilters.apply(sheet?.rows ?? [], {
-    detail: (r) => r.detail,
-  });
+  // D-323: el kardex de un ítem no pagina (D-237); lo único que ordena es la fecha.
+  const [sort, toggleSort] = useSort<'date'>();
+  const rows = orderKardexRows(sheet?.rows ?? [], sort.key === 'date' ? sort.dir : null);
   const isPending = method === 'PEPS' ? peps.isPending && validRange : movements.isPending;
   const isError = method === 'PEPS' ? peps.isError : movements.isError;
 
@@ -284,7 +284,8 @@ export function KardexView() {
             className="w-40"
             value={dates.from}
             onChange={(e) => {
-              setUrl({ range: 'custom', from: e.target.value, to: dates.to });
+              const value = e.target.value;
+              setUrl((cur) => kardexCustomPatch('from', value, cur, dates));
             }}
           />
         </label>
@@ -295,7 +296,8 @@ export function KardexView() {
             className="w-40"
             value={dates.to}
             onChange={(e) => {
-              setUrl({ range: 'custom', from: dates.from, to: e.target.value });
+              const value = e.target.value;
+              setUrl((cur) => kardexCustomPatch('to', value, cur, dates));
             }}
           />
         </label>
@@ -374,15 +376,11 @@ export function KardexView() {
               rows={rows}
               isPending={isPending}
               isError={isError}
-              emptyMessage={
-                columnFilters.hasActive
-                  ? 'Ningún movimiento coincide con el filtro del detalle.'
-                  : 'No hay movimientos en este rango. Prueba con «Mes anterior» o «Todo».'
-              }
-              detailFilter={{
-                value: columnFilters.filters.detail ?? '',
-                onChange: (v) => {
-                  columnFilters.setFilter('detail', v);
+              emptyMessage="No hay movimientos en este rango. Prueba con «Mes anterior» o «Todo»."
+              dateSort={{
+                dir: sort.key === 'date' ? sort.dir : null,
+                onToggle: () => {
+                  toggleSort('date');
                 },
               }}
               renderDetail={method === 'AVERAGE' ? renderAverageDetail : undefined}
