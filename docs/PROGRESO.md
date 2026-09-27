@@ -195,6 +195,46 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
     que `mergeProductInto`, D-253); y el riesgo residual documentado — el fix de la carrera es quirúrgico
     sobre el único llamador vulnerable de hoy, no un lock sistémico en `InventoryService.record()`.
 
+## Ventana de Drywall sin receta (2026-09-27, con migración)
+
+PR #43 (merge `17b5097`). SHA desplegado `d33ebd2`. Handoff: `docs/handoff/drywall-sin-receta.md`. UAT:
+`docs/uat/drywall-sin-receta.md`. Revisión: `docs/revision/drywall-sin-receta-segundo-modelo.md` (M1-M4) y
+`docs/revision/drywall-sin-receta-m6-segundo-modelo.md` (M6). Ventana corrida un domingo, a propósito
+(«nadie usa el sistema»), con OK del dueño comando por comando.
+
+- **Antes de la ventana (verificado de nuevo, no solo recordado):** 8 ramas Neon (`production`, `dev`, `ci`,
+  `demo` y 4 respaldos); `retire:boms` dry-run en `dev` y `demo` → **0 recetas activas en las dos**;
+  `development_mm` **no existe en `production` ni en `demo`** (`migrate diff` de solo lectura, drift idéntico
+  al conocido).
+- **CI del PR #43 sobre la cabeza `d33ebd2`:** lint/typecheck/unit, E2E completo del runner, smoke con Neon
+  `ci` (aplica `d344`), análisis estático y SonarCloud en SUCCESS; 7 checks, estado CLEAN.
+- **Respaldo Neon:** rama `respaldo-pre-drywall-20260927` (`br-flat-grass-aecz7h01`, padre `production`).
+- **Migraciones:** `migrations-status` → **1 pendiente** (`20260927120000_d344_drywall_sin_receta`, la única
+  de esta sesión); `retire:boms` dry-run en `production` → **0 recetas activas** (medido: la única receta de
+  `production` es de coberturas y ya estaba inactiva); `pnpm db:prod` (sin seed) la aplicó. `migrate diff`
+  posterior = el drift conocido (mismos 5 defaults de `operation_date`, 5 FK recreadas, 2 índices, un
+  renombre) y nada más.
+- **API (Cloud Run):** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+  desde el worktree, sobre `d33ebd2`: **`ayr-steel-erp-api-00061-rbw`**, label `git-sha=d33ebd2`, `/health`
+  200, los **14** nombres sin sorpresas y los 9 secretos con versión explícita.
+- **Smoke contra la web vieja (API nueva):** `pnpm smoke:prod` en verde (catálogo 176 filas).
+- **Merge** del PR #43 con `gh pr merge 43 --merge --match-head-commit d33ebd2…`, los 7 checks en SUCCESS;
+  Vercel en `success`.
+- **Smoke contra `v2.mareliac.pe`:** `pnpm smoke:prod --base-url https://v2.mareliac.pe` en verde.
+- **Alineación de runtime:** `git diff --quiet d33ebd2 origin/main -- apps packages Dockerfile .gcloudignore
+package.json pnpm-lock.yaml pnpm-workspace.yaml` → **exit 0** (el deploy de esta ventana realinea la
+  excepción a §3.2 que dejó el PR #42, documental).
+- **Verificación de solo lectura + una escritura de prueba controlada (admin efímero borrado):**
+  - **Los 10 perfiles de drywall, uno por uno:** los 10 dan `NO_THICKNESS` (ninguno tiene espesor cargado —
+    coincide exacto con lo medido antes de la sesión).
+  - **Producto de prueba sin uso, creado y borrado por la API:** `canDelete: true` al crearlo; `DELETE` →
+    204; `audit_log` del id muestra `catalog.create` (el alta de la propia prueba) y `catalog.product-delete`
+    (el borrado) — **ninguna acción inesperada**.
+  - **Editar el nombre de `ACCES030ROJO` sin tocar espesor ni color:** `PATCH {name: <mismo valor>}` → 200,
+    sin rebote (M5 funciona contra un producto real de producción).
+- **Rollback (no usado):** llevar el tráfico a la revisión anterior; la migración es aditiva (`CHECK (NOT
+is_active)`) y no se revierte sin aprobación explícita del dueño.
+
 ## Ventana de Correcciones 03b (2026-09-26, con migración)
 
 PR #39 (merge `78e8e9e`). SHA desplegado `34e6795`. Handoff: `docs/handoff/correcciones-03b.md`. UAT:

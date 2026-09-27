@@ -1,17 +1,23 @@
 # Handoff — Drywall sin receta, ancho del accesorio y notas de crédito por línea (D-344 a D-347)
 
-**Estado al cierre:** el trabajo está en el PR #43 (`feat/drywall-sin-receta`), con CI en curso o
-en SUCCESS (confirmar antes del deploy). **No desplegado todavía**: esta ventana empieza el lunes,
-con OK del dueño por comando (D-251). Decisiones **D-344** a **D-347** en `docs/ARQUITECTURA.md`
-§0.2. Guion UAT: `docs/uat/drywall-sin-receta.md`. Bitácora: `docs/PROGRESO.md`, entrada «Drywall
-sin receta» en el registro de riesgo. Respuesta a la revisión de M1-M4:
-`docs/revision/drywall-sin-receta-segundo-modelo.md`; respuesta a la revisión de M6:
+**Estado al cierre: desplegado.** PR #43 mergeado (`17b5097`). API en Cloud Run
+`ayr-steel-erp-api-00061-rbw` (git-sha `d33ebd2`), migración `d344` aplicada en `production`, web
+en Vercel (`v2.mareliac.pe`), smoke en verde en los dos, verificación de solo lectura hecha con
+admin efímero (detalle en `docs/PROGRESO.md`, «Ventana de Drywall sin receta»). Ventana corrida un
+domingo a propósito, con OK del dueño comando por comando. Decisiones **D-344** a **D-347** en
+`docs/ARQUITECTURA.md` §0.2. Guion UAT: `docs/uat/drywall-sin-receta.md`. Bitácora:
+`docs/PROGRESO.md`, entrada «Drywall sin receta» en el registro de riesgo. Respuesta a la revisión
+de M1-M4: `docs/revision/drywall-sin-receta-segundo-modelo.md`; respuesta a la revisión de M6:
 `docs/revision/drywall-sin-receta-m6-segundo-modelo.md`.
 
 **M5** (editar un accesorio sin tocar espesor/color/subtipo) y el saneamiento de Neon `ci`
 entraron a la misma sesión/PR después de escrito lo de arriba (ver §7 y §8). **M6** (D-347,
 borrado físico de un producto sin uso, §10) también entró completo: Paso 0 resuelto con el dueño,
 implementado, revisado (dos hallazgos P1 corregidos) y con tests.
+
+**Lo más urgente ahora que está en producción:** los 10 perfiles de drywall activos no tienen
+espesor cargado, así que **hoy no se puede abrir una orden de producción para ninguno** hasta que
+el dueño los complete (punto 1 de §4, lista en `docs/cliente/revision-2026-09-25.md` §2.5).
 
 ## 1. Qué entró
 
@@ -75,8 +81,10 @@ completo) que cierra esta sesión.
    el catálogo.
 3. **Decidir si una NC de solo monto debería seguir liberando cantidad facturable** (hoy sí, por
    coherencia con D-223). Si el dueño quiere separarlo, es alcance nuevo.
-4. **Correr `pnpm retire:boms` en dev y demo** antes de aplicar la migración `d344` ahí (en
-   producción no hace falta: 0 recetas activas).
+4. **`d344` sigue sin aplicarse en `dev` y `demo`** (solo se desplegó a `production` esta ventana).
+   `retire:boms` dry-run ya confirmó 0 recetas activas en las dos, así que la migración entra sin
+   `--execute` cuando cada una se resetee/sincronice de la forma normal (Docker local para `dev`,
+   restablecer desde `production` con OK del dueño para `demo`).
 5. **Revisión con ojos frescos** de las piezas de riesgo (§3).
 6. **M6, riesgo residual a decidir en otra sesión** (§10): ¿vale la pena mover el lock de la
    carrera de kardex a `InventoryService.record()` mismo (sistémico, protege cualquier escritor
