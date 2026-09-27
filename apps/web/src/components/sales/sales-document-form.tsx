@@ -2290,7 +2290,7 @@ function RawMaterialCell({
   // y el vendedor veía que el material alcanzaba justo cuando no alcanzaba.
   // La rama la decide `byFixedLength` —el mismo predicado que el API usa en `orderedMeters`—
   // y **no** el subtipo: preguntarlo por `roofingKind === A_MEDIDA` coincide hoy solo porque
-  // el catálogo fuerza `A_MEDIDA → MTR`, y es literalmente el patrón que la regla dura 14
+  // el catálogo fuerza `A_MEDIDA → MTR`, y es literalmente el patrón que la regla dura 13 de AGENTS.md
   // prohíbe. La primera `PLANCHA` legada en otra unidad separaba las dos cuentas.
   const meters = !isPositiveDecimal(l.qty)
     ? null

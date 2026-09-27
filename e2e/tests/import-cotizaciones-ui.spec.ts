@@ -688,7 +688,7 @@ test.describe('D-152/D-156/D-158 — la pantalla del importador de cotizaciones'
     try {
       const customer = await createCustomer(api);
       // Por metro lineal (`MTR`): es la unidad —no el subtipo— la que decide si la línea
-      // necesita el detalle de largos (D-131, regla dura 14).
+      // necesita el detalle de largos (D-131, regla dura 13 de AGENTS.md).
       const product = await createSellableProduct(api, { lineCode: 'roofing', unit: 'MTR' });
       const documentKey = `FFA1-${randomLetters(4)}`;
 

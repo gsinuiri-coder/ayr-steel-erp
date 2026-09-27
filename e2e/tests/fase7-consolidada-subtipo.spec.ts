@@ -327,7 +327,7 @@ test.describe('D-127 — subtipo de cobertura', () => {
       const sheetLine = sheetOrder.items[0]!;
       expect(sheetLine.qty).toBe('10.000');
       expect(sheetLine.unit).toBe('NIU');
-      // Línea simple: `sellsByLength` es la unidad, y esta no es `MTR` (regla dura 14).
+      // Línea simple: `sellsByLength` es la unidad, y esta no es `MTR` (regla dura 13 de AGENTS.md).
       expect(sheetLine.pieces ?? []).toEqual([]);
       const sheetReservation = (await reservationsOf(api, sheetOrder.id))[0]!;
       expect(sheetReservation).toMatchObject({

@@ -67,8 +67,8 @@ edición de cantidad con faltante. Merge `78e8e9e`.
 5. **Readiness de coberturas:** `computeOrderContext` usa `reserveQty` (kilos) como «metros pedidos»; el estado
    «Listo con faltante» de un pedido de coberturas compara metros con kilos. Anterior a esta sesión, sin tocar.
 6. **Mostrador:** sigue exento del piso (D-163) y sin vender coberturas ni accesorios.
-7. **Confirmar el cambio de `AGENTS.md`** (§2 regla 2, estándar de revisión) y la **renumeración de la regla
-   «por metro»** (hoy la 13; en decisiones antiguas aparece como 14).
+7. **Confirmar el cambio de `AGENTS.md`** (§2 regla 2, estándar de revisión) y la **regla dura 13
+   «por metro»** (en `CLAUDE.md`, retirado por D-233, era la 14; las citas anteriores usan ese número).
 8. **Revisión con ojos frescos** de las piezas de riesgo (§3).
 9. **Las 27 bobinas vigentes con saldo 0** las termina el dueño desde la pantalla (heredado de 04b; no se
    tocaron).

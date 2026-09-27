@@ -116,9 +116,12 @@ Reglas de convivencia, sin excepción:
 5. **Dry-run por default.** Escrituras masivas requieren `--confirm-production`; un
    `--execute --confirm-production` exige aprobación explícita del dueño.
 6. **Los puertos 4000/4001 son del dueño** (`dev:preview`). Ningún agente los toca ni los mata.
-   El entorno demo corre en web 3001 / api 3000.
+   El entorno demo corre en web 3001 / api 3000. Matar el `:4001` del dueño le tira la sesión del
+   navegador sin aviso.
 7. **Sin texto multilínea por `node -e` ni interpolación de shell** (regla añadida después de
-   borrar por accidente la BD de E2E).
+   borrar por accidente la BD de E2E). En la sesión Precios (2026-09-09) un `node -e` con backticks
+   ejecutó un `pnpm e2e` que vació `ayr_local_e2e` en plena corrida; es una regla de forma, no de
+   criterio, porque el daño lo hace un comando que la shell arma sola.
 8. **Todo movimiento de stock pasa por `InventoryService.record()`.** El kardex es append-only:
    las reversas son movimientos inversos, nunca edición de saldos.
 9. **`Decimal`, nunca `number`,** para dinero, pesos y dimensiones.
@@ -130,7 +133,7 @@ Reglas de convivencia, sin excepción:
     el incidente en `docs/PROGRESO.md`; la purga es solo una herramienta de emergencia y no
     convierte la corrida en segura.
 13. **«Por metro» son tres preguntas distintas, y ninguna se responde con otra** (D-131, D-343; en
-    el código y los docs históricos se cita como «regla dura 14», su numeración de entonces).
+    CLAUDE.md, retirado por D-233, era la regla dura 14; las citas de código y docs anteriores usan ese número).
     `sellsByLength(product)` —`unit === MTR`, **solo la unidad**— responde si la unidad de venta es
     el metro lineal (cantidad, precio, kardex y unidad SUNAT en metros y no conoce el subtipo);
     `detailsLengths(product)` —`unit === MTR` **y** `roofingKind !== ACCESORIO`— responde si la
