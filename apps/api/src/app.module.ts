@@ -18,6 +18,7 @@ import { FinishesModule } from './finishes/finishes.module';
 import { HealthController } from './health/health.controller';
 import { InitialInventoryImportModule } from './imports/initial-inventory-import.module';
 import { QuotationImportModule } from './imports/quotation-import.module';
+import { PurchaseImportModule } from './imports/purchase-import.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { InvoicingModule } from './invoicing/invoicing.module';
 import { JobsModule } from './jobs/jobs.module';
@@ -59,6 +60,7 @@ import { UsersModule } from './users/users.module';
     DocumentsModule,
     InventoryModule,
     QuotationImportModule,
+    PurchaseImportModule,
     InitialInventoryImportModule,
     CoilsModule,
     PurchasesModule,

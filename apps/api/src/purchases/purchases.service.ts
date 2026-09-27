@@ -156,9 +156,48 @@ export class PurchasesService {
   }
 
   async create(actor: RequestUser, input: CreatePurchaseInput): Promise<PurchaseDto> {
+    // El TC se resuelve **antes** de abrir la transacción: puede ir a SUNAT (D-029), y una
+    // llamada a un tercero no espera con una conexión del pool tomada.
+    const exchange = await this.resolveExchangeRate(input);
+    const created = await this.prisma.$transaction((tx) =>
+      this.createInTx(tx, actor, input, exchange),
+    );
+    return this.findOne(created.id);
+  }
+
+  /**
+   * El tipo de cambio con el que se registraría la compra: el que trae el input (manual), 1 en
+   * soles o el de SUNAT del día de emisión (D-029). Público para el importador (D-351), que lo
+   * resuelve fuera de su transacción y lo muestra en el preview antes de confirmar.
+   */
+  resolveExchangeRate(
+    input: Pick<CreatePurchaseInput, 'exchangeRate' | 'issueDate' | 'currency'>,
+  ): Promise<{ rate: Decimal; source: ExchangeRateSource }> {
+    if (input.exchangeRate) {
+      return Promise.resolve({
+        rate: toDecimal(input.exchangeRate),
+        source: ExchangeRateSource.MANUAL,
+      });
+    }
+    return this.rateFor(input.issueDate, input.currency);
+  }
+
+  /**
+   * El alta de una compra dentro de una transacción ajena (patrón `*InTx`, D-099). La usa el
+   * importador de compras (D-351) con un `SAVEPOINT` por comprobante, y el proveedor que da de
+   * alta desde el padrón en la misma transacción: por eso **todas** las validaciones leen de
+   * `tx`, no de `this.prisma`. El TC llega resuelto (`resolveExchangeRate`).
+   */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: CreatePurchaseInput,
+    exchange: { rate: Decimal; source: ExchangeRateSource },
+    options: { importBatchId?: string; externalCodes?: readonly (string | null)[] } = {},
+  ): Promise<Purchase> {
     const [supplier, businessLine] = await Promise.all([
-      this.prisma.supplier.findUnique({ where: { id: input.supplierId } }),
-      this.prisma.businessLine.findUnique({
+      tx.supplier.findUnique({ where: { id: input.supplierId } }),
+      tx.businessLine.findUnique({
         where: { code: toPrismaLineCode(input.businessLine) },
       }),
     ]);
@@ -173,82 +212,83 @@ export class PurchasesService {
       );
     }
 
-    const colorByFinish = await this.assertItemsAreConsistent(input, businessLine.id);
-    await this.assertLandedCostLinkIsValid(actor, input, businessLine.id);
-    await this.assertCuttingOrderLinkIsValid(actor, input, businessLine.id);
+    const colorByFinish = await this.assertItemsAreConsistent(tx, input, businessLine.id);
+    await this.assertLandedCostLinkIsValid(tx, actor, input, businessLine.id);
+    await this.assertCuttingOrderLinkIsValid(tx, actor, input, businessLine.id);
 
-    const { rate, source } = await this.resolveExchangeRate(input);
+    const { rate, source } = exchange;
     const totals = computeTotals(input);
     const dueDate = computeDueDate(input);
 
     try {
-      const created = await this.prisma.$transaction(async (tx) => {
-        const purchase = await tx.purchase.create({
-          data: {
-            supplierId: input.supplierId,
-            businessLineId: businessLine.id,
-            type: input.type,
-            docType: input.docType,
-            series: input.series,
-            number: input.number,
-            issueDate: new Date(`${input.issueDate}T00:00:00.000Z`),
-            currency: input.currency,
-            exchangeRate: toFixedString(rate, 'RATE'),
-            exchangeRateSource: source,
-            subtotal: toFixedString(totals.subtotal, 'MONEY'),
-            igv: toFixedString(totals.igv, 'MONEY'),
-            total: toFixedString(totals.total, 'MONEY'),
-            totalPen: toFixedString(totals.total.times(rate), 'MONEY'),
-            paymentTerms: input.paymentTerms,
-            creditDays: input.paymentTerms === 'CREDITO' ? (input.creditDays ?? null) : null,
-            dueDate: dueDate ? new Date(`${dueDate}T00:00:00.000Z`) : null,
-            serviceKind: input.type === PurchaseType.SERVICE ? (input.serviceKind ?? null) : null,
-            relatedPurchaseId:
-              input.type === PurchaseType.SERVICE ? (input.relatedPurchaseId ?? null) : null,
-            relatedCuttingOrderId:
-              input.type === PurchaseType.SERVICE ? (input.relatedCuttingOrderId ?? null) : null,
-            sourceXmlKey: input.sourceXmlKey ?? null,
-            notes: input.notes ?? null,
-            createdById: actor.id,
-            items: {
-              create: totals.items.map((item, index) => ({
-                lineNumber: index + 1,
-                productId: item.productId ?? null,
-                description: item.description,
-                qty: toFixedString(item.qty, 'KG'),
-                unit: item.unit,
-                unitPrice: toFixedString(item.unitPrice, 'MONEY'),
-                subtotal: toFixedString(item.subtotal, 'MONEY'),
-                igv: toFixedString(item.igv, 'MONEY'),
-                total: toFixedString(item.total, 'MONEY'),
-                finishId: item.finishId ?? null,
-                // D-203: el color de la bobina es el de su acabado, nunca un dato aparte.
-                colorId: item.finishId ? (colorByFinish.get(item.finishId) ?? null) : null,
-                widthMm: item.widthMm ? toFixedString(item.widthMm, 'MM') : null,
-                thicknessMm: item.thicknessMm ? toFixedString(item.thicknessMm, 'MM') : null,
-                // D-116: `null` en compras que no son COIL; `receive()` decide el default
-                // (OPEN, sellada — D-328) si la línea COIL no lo trajo.
-                coilStatus: input.type === PurchaseType.COIL ? (item.coilStatus ?? null) : null,
-              })),
-            },
+      const purchase = await tx.purchase.create({
+        data: {
+          supplierId: input.supplierId,
+          businessLineId: businessLine.id,
+          type: input.type,
+          docType: input.docType,
+          series: input.series,
+          number: input.number,
+          issueDate: new Date(`${input.issueDate}T00:00:00.000Z`),
+          currency: input.currency,
+          exchangeRate: toFixedString(rate, 'RATE'),
+          exchangeRateSource: source,
+          subtotal: toFixedString(totals.subtotal, 'MONEY'),
+          igv: toFixedString(totals.igv, 'MONEY'),
+          total: toFixedString(totals.total, 'MONEY'),
+          totalPen: toFixedString(totals.total.times(rate), 'MONEY'),
+          paymentTerms: input.paymentTerms,
+          creditDays: input.paymentTerms === 'CREDITO' ? (input.creditDays ?? null) : null,
+          dueDate: dueDate ? new Date(`${dueDate}T00:00:00.000Z`) : null,
+          serviceKind: input.type === PurchaseType.SERVICE ? (input.serviceKind ?? null) : null,
+          relatedPurchaseId:
+            input.type === PurchaseType.SERVICE ? (input.relatedPurchaseId ?? null) : null,
+          relatedCuttingOrderId:
+            input.type === PurchaseType.SERVICE ? (input.relatedCuttingOrderId ?? null) : null,
+          sourceXmlKey: input.sourceXmlKey ?? null,
+          notes: input.notes ?? null,
+          importBatchId: options.importBatchId ?? null,
+          createdById: actor.id,
+          items: {
+            create: totals.items.map((item, index) => ({
+              lineNumber: index + 1,
+              productId: item.productId ?? null,
+              description: item.description,
+              qty: toFixedString(item.qty, 'KG'),
+              unit: item.unit,
+              unitPrice: toFixedString(item.unitPrice, 'MONEY'),
+              subtotal: toFixedString(item.subtotal, 'MONEY'),
+              igv: toFixedString(item.igv, 'MONEY'),
+              total: toFixedString(item.total, 'MONEY'),
+              finishId: item.finishId ?? null,
+              // D-203: el color de la bobina es el de su acabado, nunca un dato aparte.
+              colorId: item.finishId ? (colorByFinish.get(item.finishId) ?? null) : null,
+              widthMm: item.widthMm ? toFixedString(item.widthMm, 'MM') : null,
+              thicknessMm: item.thicknessMm ? toFixedString(item.thicknessMm, 'MM') : null,
+              // D-116: `null` en compras que no son COIL; `receive()` decide el default
+              // (OPEN, sellada — D-328) si la línea COIL no lo trajo.
+              coilStatus: input.type === PurchaseType.COIL ? (item.coilStatus ?? null) : null,
+              // D-351: el código del proveedor para la bobina, que la recepción copia.
+              externalCode:
+                input.type === PurchaseType.COIL ? (options.externalCodes?.[index] ?? null) : null,
+            })),
           },
-        });
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'purchases.create',
-          entity: 'purchases',
-          entityId: purchase.id,
-          after: {
-            supplierId: purchase.supplierId,
-            type: purchase.type,
-            document: `${purchase.series}-${purchase.number}`,
-            total: purchase.total.toFixed(4),
-            currency: purchase.currency,
-          },
-        });
-        return purchase;
+        },
       });
-      return await this.findOne(created.id);
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'purchases.create',
+        entity: 'purchases',
+        entityId: purchase.id,
+        after: {
+          supplierId: purchase.supplierId,
+          type: purchase.type,
+          document: `${purchase.series}-${purchase.number}`,
+          total: purchase.total.toFixed(4),
+          currency: purchase.currency,
+        },
+      });
+      return purchase;
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         // D-132: la unicidad cuenta solo las compras vivas, así que este conflicto es
@@ -405,6 +445,8 @@ export class PurchasesService {
               // film es su propio eje y la bobina no nace terminada. Una línea que traiga un
               // estado explícito (D-116) lo conserva.
               status: item.coilStatus ?? CoilStatus.OPEN,
+              // D-351: el código del proveedor, si la compra lo trajo (importador).
+              ...(item.externalCode ? { externalCode: item.externalCode } : {}),
               refType: 'PURCHASE',
               refId: purchase.id,
               actorId: actor.id,
@@ -1239,6 +1281,7 @@ export class PurchasesService {
    * el color de cada acabado usado (D-203).
    */
   private async assertItemsAreConsistent(
+    db: Prisma.TransactionClient,
     input: CreatePurchaseInput,
     businessLineId: string,
   ): Promise<Map<string, string | null>> {
@@ -1247,7 +1290,7 @@ export class PurchasesService {
       const finishIds = [
         ...new Set(input.items.map((i) => i.finishId).filter(Boolean)),
       ] as string[];
-      const finishes = await this.prisma.finish.findMany({
+      const finishes = await db.finish.findMany({
         where: { id: { in: finishIds }, isActive: true },
         select: {
           id: true,
@@ -1285,7 +1328,7 @@ export class PurchasesService {
       const productIds = [
         ...new Set(input.items.map((i) => i.productId).filter(Boolean)),
       ] as string[];
-      const products = await this.prisma.product.findMany({
+      const products = await db.product.findMany({
         where: { id: { in: productIds }, isActive: true },
         select: { id: true, businessLineId: true },
       });
@@ -1307,6 +1350,7 @@ export class PurchasesService {
    * base de datos delante.
    */
   private async assertLandedCostLinkIsValid(
+    db: Prisma.TransactionClient,
     actor: RequestUser,
     input: CreatePurchaseInput,
     businessLineId: string,
@@ -1321,7 +1365,7 @@ export class PurchasesService {
         'Solo un administrador puede imputar el costo de un servicio a una compra de bobinas',
       );
     }
-    const related = await this.prisma.purchase.findUnique({
+    const related = await db.purchase.findUnique({
       where: { id: input.relatedPurchaseId },
       select: { id: true, type: true, status: true, businessLineId: true },
     });
@@ -1351,6 +1395,7 @@ export class PurchasesService {
    * flejes se mueven.
    */
   private async assertCuttingOrderLinkIsValid(
+    db: Prisma.TransactionClient,
     actor: RequestUser,
     input: CreatePurchaseInput,
     businessLineId: string,
@@ -1361,7 +1406,7 @@ export class PurchasesService {
         'Solo un administrador puede imputar el costo de un servicio a una orden de corte',
       );
     }
-    const order = await this.prisma.cuttingOrder.findUnique({
+    const order = await db.cuttingOrder.findUnique({
       where: { id: input.relatedCuttingOrderId },
       select: { id: true, status: true, businessLineId: true },
     });
@@ -1374,15 +1419,6 @@ export class PurchasesService {
         'El servicio y la orden de corte tienen que estar en la misma línea de negocio',
       );
     }
-  }
-
-  private async resolveExchangeRate(
-    input: CreatePurchaseInput,
-  ): Promise<{ rate: Decimal; source: ExchangeRateSource }> {
-    if (input.exchangeRate) {
-      return { rate: toDecimal(input.exchangeRate), source: ExchangeRateSource.MANUAL };
-    }
-    return this.rateFor(input.issueDate, input.currency);
   }
 
   /** TC del día (D-029). Para pagar en moneda extranjera se compra al tipo de venta. */
