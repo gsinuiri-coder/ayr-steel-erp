@@ -597,10 +597,14 @@ export class CoilsService {
 
     return coils.map((c) => {
       const availableKg = available.get(c.id) ?? '0.000';
-      const meters = equivalentMeters(
-        { widthMm: c.widthMm, thicknessMm: c.thicknessMm, densityFactor: c.finish.densityFactor },
-        availableKg,
-      );
+      const geometry = {
+        widthMm: c.widthMm,
+        thicknessMm: c.thicknessMm,
+        densityFactor: c.finish.densityFactor,
+      };
+      const meters = equivalentMeters(geometry, availableKg);
+      // D-356: la misma conversión sobre el peso inicial.
+      const initialMeters = equivalentMeters(geometry, c.weightKg);
       return {
         id: c.id,
         code: c.code,
@@ -636,6 +640,7 @@ export class CoilsService {
         availableKg,
         avgCostPen: avgCost.get(c.id) ?? '0.0000',
         equivalentMeters: meters === null ? null : meters.toFixed(3),
+        initialMeters: initialMeters === null ? null : initialMeters.toFixed(3),
         operationDate: fromDateOnly(c.operationDate),
         createdAt: c.createdAt.toISOString(),
         updatedAt: c.updatedAt.toISOString(),

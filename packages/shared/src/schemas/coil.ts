@@ -90,6 +90,12 @@ export const coilSchema = z.object({
    */
   equivalentMeters: z.string().nullable(),
   /**
+   * D-356: metro lineal teórico del **peso inicial** (`weightKg`), con la misma conversión que
+   * `equivalentMeters` (`equivalentMeters` de `@ayr/shared`): solo cambia el peso que recibe. Es la
+   * columna «ML teórico (peso inicial)» de la lista y del PDF.
+   */
+  initialMeters: z.string().nullable(),
+  /**
    * D-124: día de negocio en que la bobina entró (`YYYY-MM-DD`, Lima). Es la fecha por la
    * que el reporte mensual de bobinas la ubica; `createdAt` dice cuándo se tipeó.
    */

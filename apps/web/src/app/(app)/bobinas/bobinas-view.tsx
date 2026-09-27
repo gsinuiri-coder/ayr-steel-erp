@@ -331,8 +331,9 @@ export function BobinasView() {
                 Disponible
               </SortableTableHead>
               {/* D-281: el ancho sale de la tabla (sigue en el detalle y en el PDF); en su
-                  lugar, cuántos metros de plancha da lo disponible — la pregunta de planta. */}
-              <TableHead className="text-right">Metro lineal teórico</TableHead>
+                  lugar, el metro lineal teórico; D-356: del peso inicial (el del disponible está en
+                  Inventario → «Bobinas por tipo» y en el detalle). */}
+              <TableHead className="text-right">ML teórico (peso inicial)</TableHead>
               <TableHead className="hidden text-right lg:table-cell">Costo/kg</TableHead>
               <SortableTableHead
                 active={sort.key === 'status'}
@@ -386,10 +387,10 @@ export function BobinasView() {
                 <TableCell className="text-right font-medium">
                   {formatQty(c.availableKg, 'kg')}
                 </TableCell>
-                {/* El API lo calcula con `equivalentMeters` (@ayr/shared, D-116/D-165): kg
-                    disponibles ÷ (ancho × espesor × densidad estándar del acabado). */}
+                {/* D-356: el API lo calcula con `equivalentMeters` (@ayr/shared, D-116/D-165) sobre el
+                 **peso inicial**: kg ÷ (ancho × espesor × densidad estándar del acabado). */}
                 <TableCell className="text-right">
-                  {c.equivalentMeters === null ? '—' : formatQty(c.equivalentMeters, 'm')}
+                  {c.initialMeters === null ? '—' : formatQty(c.initialMeters, 'm')}
                 </TableCell>
                 <TableCell className="hidden text-right lg:table-cell">
                   {formatMoneyOrDash(c.unitCostPerKg, c.currency ?? 'PEN', 4)}

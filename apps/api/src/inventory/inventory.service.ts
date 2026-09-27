@@ -18,6 +18,7 @@ import {
   businessToday,
   carriesInventory,
   Decimal,
+  equivalentMeters,
   fromDateOnly,
   paginate,
   rankSearchMatches,
@@ -925,6 +926,26 @@ export class InventoryService {
     // D-066: lo reservado se agrega por grupo junto con la cantidad, para que la pantalla
     // muestre físico, reservado y disponible como tres columnas de la misma fila.
     const reserved = await this.reservedByItem(withStock);
+    // D-356: la geometría de cada bobina, para el metro lineal teórico de su disponible. Una
+    // consulta para toda la línea.
+    const coilIds = withStock.filter((b) => b.itemType === 'COIL').map((b) => b.itemId);
+    const geometries = new Map(
+      (coilIds.length === 0
+        ? []
+        : await this.prisma.coil.findMany({
+            where: { id: { in: coilIds } },
+            select: {
+              id: true,
+              widthMm: true,
+              thicknessMm: true,
+              finish: { select: { densityFactor: true } },
+            },
+          })
+      ).map((c) => [
+        c.id,
+        { widthMm: c.widthMm, thicknessMm: c.thicknessMm, densityFactor: c.finish.densityFactor },
+      ]),
+    );
 
     const groups = new Map<
       string,
@@ -932,6 +953,7 @@ export class InventoryService {
         qty: Decimal;
         value: Decimal;
         reserved: Decimal;
+        meters: Decimal | null;
       }
     >();
 
@@ -943,11 +965,16 @@ export class InventoryService {
       const qty = toDecimal(b.qty.toString());
       const value = qty.times(toDecimal(b.avgCost.toString()));
       const itemReserved = reserved.get(labelKey(b.itemType, b.itemId)) ?? new Decimal(0);
+      const geometry = b.itemType === 'COIL' ? geometries.get(b.itemId) : undefined;
+      const itemMeters =
+        geometry === undefined ? null : equivalentMeters(geometry, qty.minus(itemReserved));
       const current = groups.get(`${b.itemType}:${key}`);
       if (current) {
         current.qty = current.qty.plus(qty);
         current.value = current.value.plus(value);
         current.reserved = current.reserved.plus(itemReserved);
+        if (itemMeters !== null)
+          current.meters = (current.meters ?? new Decimal(0)).plus(itemMeters);
         current.ids.push(b.itemId);
       } else {
         groups.set(`${b.itemType}:${key}`, {
@@ -960,6 +987,7 @@ export class InventoryService {
           qty,
           value,
           reserved: itemReserved,
+          meters: itemMeters,
         });
       }
     }
@@ -978,6 +1006,7 @@ export class InventoryService {
           ? toFixedString(g.qty.lte(0) ? new Decimal(0) : g.value.div(g.qty), 'MONEY')
           : null,
         totalValuePen: showCosts ? toFixedString(g.value, 'MONEY') : null,
+        theoreticalMeters: g.meters === null ? null : g.meters.toFixed(3),
         itemCount: g.ids.length,
         // Solo tiene sentido enlazar al kardex de un ítem cuando el grupo es uno solo.
         itemId: g.ids.length === 1 ? (g.ids[0] ?? null) : null,

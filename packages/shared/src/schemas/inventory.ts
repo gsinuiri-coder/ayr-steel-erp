@@ -126,6 +126,13 @@ export const inventorySummaryRowSchema = z.object({
   /** Costo promedio ponderado en soles del grupo (valor total / cantidad). */
   avgCostPen: z.string().nullable().optional(),
   totalValuePen: z.string().nullable().optional(),
+  /**
+   * D-356: metro lineal teórico del **disponible** del grupo, sumado bobina por bobina con su
+   * propio ancho, espesor y acabado (`equivalentMeters`: la misma conversión que la columna del
+   * peso inicial de `/bobinas`; solo cambia el peso). `null` en un producto de catálogo o si
+   * ninguna bobina del grupo tiene geometría.
+   */
+  theoreticalMeters: z.string().nullable().optional(),
   /** Cuántas bobinas hay detrás de la fila; siempre 1 en un producto de catálogo. */
   itemCount: z.number().int(),
   /** Id del ítem cuando la fila es un solo ítem (producto), para enlazar al kardex. */

@@ -13,7 +13,7 @@ import { today, uniqueDocumentNumber } from '../helpers/production';
 
 /**
  * Correcciones 02 / M5 (D-281): la tabla de `/bobinas` deja la columna «Ancho» y suma
- * «Metro lineal teórico» justo después de «Disponible».
+ * «ML teórico (peso inicial)» justo después de «Disponible».
  *
  * El número es el `equivalentMeters` que el API ya calcula por bobina con la fórmula del
  * dominio (`equivalentMeters` de `@ayr/shared`: kg disponibles ÷ (ancho × espesor × densidad
@@ -33,6 +33,7 @@ interface CoilRow {
   purchaseId: string | null;
   availableKg: string;
   equivalentMeters: string | null;
+  initialMeters: string | null;
 }
 
 const purchaseIds: string[] = [];
@@ -109,12 +110,14 @@ test.describe('D-281 — metro lineal teórico en la tabla de bobinas', () => {
     await api.dispose();
   });
 
-  test('sin «Ancho», y «Metro lineal teórico» después de «Disponible» con la cuenta del dominio', async ({
+  test('sin «Ancho», y «ML teórico (peso inicial)» después de «Disponible» con la cuenta del dominio', async ({
     page,
   }) => {
     const coil = await buyCoil(api, supplier, finish);
     expect(coil.availableKg).toBe('1000.000');
     expect(coil.equivalentMeters).toBe('1623.113');
+    // D-356: la columna usa el peso inicial; recién comprada, coincide con el disponible.
+    expect(coil.initialMeters).toBe('1623.113');
 
     await loginAsAdmin(page);
     await page.goto('/bobinas');
@@ -124,14 +127,14 @@ test.describe('D-281 — metro lineal teórico en la tabla de bobinas', () => {
       timeout: 60_000,
     });
     const headers = table.getByRole('columnheader');
-    await expect(headers.filter({ hasText: 'Metro lineal teórico' })).toBeVisible({
+    await expect(headers.filter({ hasText: 'ML teórico (peso inicial)' })).toBeVisible({
       timeout: 60_000,
     });
     const labels = (await headers.allInnerTexts()).map((t) => t.trim());
     expect(labels).not.toContain('Ancho');
     const disponible = labels.findIndex((t) => t.startsWith('Disponible'));
     expect(disponible).toBeGreaterThanOrEqual(0);
-    expect(labels[disponible + 1]).toBe('Metro lineal teórico');
+    expect(labels[disponible + 1]).toBe('ML teórico (peso inicial)');
 
     // La fila de la bobina: la celda que sigue al disponible.
     const row = table.getByRole('row').filter({ hasText: coil.code });
