@@ -357,14 +357,25 @@ export class CatalogService {
         );
       }
     }
-    // D-344: drywall no lleva acabado en el SKU (es siempre galvanizado) y ya no hay receta que
-    // bloquee cambiar la unidad o el origen de un producto.
-    if (
-      before.businessLine.code === BusinessLineCode.DRYWALL &&
-      input.finishId !== undefined &&
-      input.finishId !== null
-    ) {
-      throw new BadRequestException(DRYWALL_NO_FINISH_MESSAGE);
+    if (before.businessLine.code === BusinessLineCode.DRYWALL) {
+      // D-344: drywall no lleva acabado en el SKU (es siempre galvanizado).
+      if (input.finishId !== undefined && input.finishId !== null) {
+        throw new BadRequestException(DRYWALL_NO_FINISH_MESSAGE);
+      }
+      // D-055/D-059/D-344 (antes lo bloqueaba «la receta viva»): lo que decide qué fleje consume un
+      // perfil y cómo se cuenta —unidad, origen, espesor y ancho del fleje— no se cambia por debajo
+      // de una orden de producción en curso: sus flejes ya se montaron contra los valores de antes.
+      const changesUnit = input.unit !== undefined && input.unit !== before.unit;
+      const changesSource = input.source !== undefined && input.source !== before.source;
+      const changesStrip =
+        decimalChanged(input.thicknessMm, before.thicknessMm) ||
+        decimalChanged(input.widthMm, before.widthMm);
+      if (changesUnit || changesSource || changesStrip) {
+        await this.assertNoLiveRoofingOrders(
+          id,
+          'la unidad, el origen, el espesor o el ancho del fleje',
+        );
+      }
     }
 
     // D-118: solo se revalida cuando el propio pedido toca uno de los campos
@@ -482,13 +493,13 @@ export class CatalogService {
   }
 
   /** Órdenes de coberturas vivas de este producto: las que el cambio de color rompería. */
-  private async assertNoLiveRoofingOrders(productId: string): Promise<void> {
+  private async assertNoLiveRoofingOrders(productId: string, what = 'el color'): Promise<void> {
     const live = await this.prisma.productionOrder.count({
       where: { productId, status: { in: ['DRAFT', 'IN_PROGRESS'] } },
     });
     if (live > 0) {
       throw new BadRequestException(
-        `El producto tiene ${live} orden(es) de producción en curso: ciérralas o anúlalas antes de cambiarle el color`,
+        `El producto tiene ${live} orden(es) de producción en curso: ciérralas o anúlalas antes de cambiar ${what}`,
       );
     }
   }
@@ -785,6 +796,16 @@ function assertStructuredFields(
       throw new BadRequestException('El peso de la pieza terminada es obligatorio en Drywall');
     }
   }
+}
+
+/** ¿El valor que llega (o `undefined` si no se toca) es distinto del guardado? Compara como decimal. */
+function decimalChanged(
+  incoming: string | null | undefined,
+  stored: Prisma.Decimal | null,
+): boolean {
+  if (incoming === undefined) return false;
+  if (incoming === null || stored === null) return incoming !== stored?.toString();
+  return !toDecimal(incoming).equals(stored.toString());
 }
 
 function decimalOrNull(value: Prisma.Decimal | null, scale: 'MM' | 'KG'): string | null {

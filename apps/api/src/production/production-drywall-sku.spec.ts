@@ -5,6 +5,7 @@ import {
   CoilStatus,
   FinishKind,
   Prisma,
+  ProductSource,
   ProductionOrderKind,
   ProductionOrderStatus,
 } from '@prisma/client';
@@ -30,6 +31,8 @@ function product(over: Record<string, unknown> = {}) {
     id: 'p-1',
     sku: 'OMEGA045',
     isActive: true,
+    source: ProductSource.MANUFACTURED,
+    unit: 'NIU',
     businessLineId: BL,
     businessLine: { id: BL, code: BusinessLineCode.DRYWALL },
     thicknessMm: D('0.45'),
@@ -110,6 +113,19 @@ describe('ProductionService.create — drywall sin receta (D-344)', () => {
       expect(tx.productionOrder.create).not.toHaveBeenCalled();
     },
   );
+
+  it('un perfil comprado o medido en kilos no se produce: lo que la receta exigía, ahora lo exige la orden (D-055/D-059)', async () => {
+    const { service, prisma, tx } = build();
+    prisma.product.findUnique.mockResolvedValueOnce(product({ source: ProductSource.PURCHASED }));
+    await expect(service.create(ADMIN, { productId: 'p-1' } as never)).rejects.toThrow(
+      /no es un producto fabricado/,
+    );
+    prisma.product.findUnique.mockResolvedValueOnce(product({ unit: 'KGM' }));
+    await expect(service.create(ADMIN, { productId: 'p-1' } as never)).rejects.toThrow(
+      /se debe medir en unidades \(NIU\)/,
+    );
+    expect(tx.productionOrder.create).not.toHaveBeenCalled();
+  });
 
   it('un producto que no es de drywall sigue rechazándose por esta ruta', async () => {
     const { service, prisma } = build();

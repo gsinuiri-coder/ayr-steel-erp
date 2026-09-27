@@ -6,6 +6,7 @@ import {
   ProductionOrderKind,
   ProductionOrderStatus,
   ProductionReportStatus,
+  ProductSource,
   SalesOrderStatus,
   Prisma,
   type InventoryMovement,
@@ -228,6 +229,18 @@ export class ProductionService {
     if (product.businessLine.code !== BusinessLineCode.DRYWALL) {
       throw new BadRequestException(
         'Esta ruta produce perfiles de Drywall: las coberturas se producen desde producción de coberturas, contra un pedido (RF-31)',
+      );
+    }
+    // D-055/D-059 (antes lo exigía la receta): un perfil se fabrica y se cuenta por pieza. Un
+    // producto comprado, o medido en kilos, no se produce en perfiladora.
+    if (product.source !== ProductSource.MANUFACTURED) {
+      throw new BadRequestException(
+        `${product.sku} no es un producto fabricado: cambia su origen a Fabricado en el catálogo antes de producirlo`,
+      );
+    }
+    if (product.unit !== Unit.NIU) {
+      throw new BadRequestException(
+        `${product.sku} se debe medir en unidades (${Unit.NIU}): la pieza es la unidad del producto terminado (D-055)`,
       );
     }
     // D-344: sin receta, es el SKU el que dice qué fleje consume la orden. Sin espesor, ancho del

@@ -65,6 +65,7 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
     businessLine: { findUnique: jest.fn() },
     finish: { findUnique: jest.fn(), findFirst: jest.fn() },
     product: { findUnique: jest.fn(), findMany: jest.fn() },
+    productionOrder: { count: jest.fn() },
     $transaction: jest.fn(),
   };
   const colors = { resolveActive: jest.fn() };
@@ -75,6 +76,7 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
     prisma.finish.findUnique.mockResolvedValue(null);
     // Acabado galvanizado activo: de él sale la densidad del aviso de kg/pieza.
     prisma.finish.findFirst.mockResolvedValue({ densityFactor: new Decimal('7.8500') });
+    prisma.productionOrder.count.mockResolvedValue(0);
     colors.resolveActive.mockResolvedValue(null);
     prisma.$transaction.mockRejectedValue(STOP);
     const moduleRef = await Test.createTestingModule({
@@ -146,6 +148,47 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
     it('cambiar la unidad u origen ya no lo frena una receta (no existen)', async () => {
       prisma.product.findUnique.mockResolvedValue(stored());
       await expect(service.update(ACTOR, 'p-1', { unit: 'UND' })).rejects.toBe(STOP);
+    });
+  });
+
+  describe('con una orden de producción en curso (antes: «la receta se bloquea»)', () => {
+    beforeEach(() => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      prisma.productionOrder.count.mockResolvedValue(2);
+    });
+
+    it.each([
+      ['el espesor del fleje', { thicknessMm: '0.60' }],
+      ['el ancho del fleje', { widthMm: '120.00' }],
+      ['la unidad', { unit: 'UND' }],
+      ['el origen', { source: ProductSource.PURCHASED }],
+    ])(
+      'no se cambia %s: sus flejes ya se montaron contra el valor de antes',
+      async (_n, change) => {
+        await expect(service.update(ACTOR, 'p-1', change as never)).rejects.toThrow(
+          /tiene 2 orden\(es\) de producción en curso: ciérralas o anúlalas antes de cambiar la unidad, el origen, el espesor o el ancho del fleje/,
+        );
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it('lo que no decide el fleje sí se edita: el peso, el largo, el nombre y el mismo espesor con otro formato', async () => {
+      await expect(service.update(ACTOR, 'p-1', { pieceWeightKg: '1.300' })).rejects.toBe(STOP);
+      await expect(service.update(ACTOR, 'p-1', { name: 'OMEGA 2' })).rejects.toBe(STOP);
+      // «0.4500» es el mismo espesor que 0.45: no es un cambio.
+      await expect(service.update(ACTOR, 'p-1', { thicknessMm: '0.4500' })).rejects.toBe(STOP);
+    });
+
+    it('sin órdenes en curso, cambiar el espesor pasa', async () => {
+      prisma.productionOrder.count.mockResolvedValue(0);
+      await expect(service.update(ACTOR, 'p-1', { thicknessMm: '0.60' })).rejects.toBe(STOP);
+    });
+
+    it('quitar el espesor (o el ancho) también es un cambio y también se frena', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored({ thicknessMm: null }));
+      await expect(service.update(ACTOR, 'p-1', { thicknessMm: '0.45' })).rejects.toThrow(
+        /en curso/,
+      );
     });
   });
 
