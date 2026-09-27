@@ -80,19 +80,6 @@ export interface ProductDto {
   theoreticalKgPerUnit?: string | null;
 }
 
-export interface ProductBomDto {
-  id: string;
-  productId: string;
-  /** D-122: desde entonces, solo `DRYWALL` — una cobertura ya no lleva receta. */
-  kind: string;
-  /** D-139: sale de `products.pieceWeightKg`, no de la geometría del fleje. */
-  kgPerPiece: string | null;
-  inputWidthMm: string | null;
-  /** D-139: sale de `products.lengthMm`. */
-  pieceLengthMm: string | null;
-  inputThicknessMm: string;
-}
-
 export interface ProductionConsumptionDto {
   id: string;
   coilId: string;
@@ -432,7 +419,7 @@ export async function apiAs(baseURL: string, user: CreatedUser): Promise<APIRequ
 }
 
 // ---------------------------------------------------------------------------
-// Maestro: producto de catálogo y receta
+// Maestro: producto de catálogo
 // ---------------------------------------------------------------------------
 
 export async function businessLineId(api: APIRequestContext, code: string): Promise<string> {
@@ -454,7 +441,11 @@ export async function createCatalogProduct(
     unit?: string;
     source?: 'MANUFACTURED' | 'PURCHASED';
     name?: string;
-    /** D-118: campos estructurados de la pieza terminada; con overrides propios si hacen falta. */
+    /**
+     * D-118/D-344: campos estructurados del SKU; con overrides propios si hacen falta. En drywall
+     * `widthMm` y `thicknessMm` son los **del fleje** (600 y 0.50: los flejes que deja
+     * `setupScenario`), y `lengthMm`/`pieceWeightKg` los de la pieza terminada.
+     */
     widthMm?: string;
     lengthMm?: string;
     /**
@@ -480,7 +471,8 @@ export async function createCatalogProduct(
   const structured =
     lineCode === LINE
       ? {
-          widthMm: options.widthMm ?? '100',
+          thicknessMm: options.thicknessMm ?? '0.50',
+          widthMm: options.widthMm ?? '600',
           lengthMm: options.lengthMm ?? '3000',
           pieceWeightKg: options.pieceWeightKg ?? '6',
         }
@@ -523,29 +515,6 @@ export function roofingKindFields(
   return { roofingKind: kind, lengthMm: lengthMm ?? '3000' };
 }
 
-/**
- * Receta de drywall (D-059). Desde D-122/D-139 solo describe el fleje de entrada (acabado,
- * espesor, ancho): el largo de la pieza y sus kilos ya no viven acá, viven en el propio SKU
- * (`products.lengthMm`/`products.pieceWeightKg`, D-118/D-139) y `kgPerPiece` en el DTO los
- * lee de ahí. El producto **necesita `pieceWeightKg` cargado antes** de poder tener receta,
- * o el API lo rechaza (D-139).
- */
-export async function upsertBom(
-  api: APIRequestContext,
-  productId: string,
-  input: {
-    finishId: string;
-    inputThicknessMm?: string;
-    inputWidthMm?: string;
-  },
-): Promise<ProductBomDto> {
-  return putJson<ProductBomDto>(api, `/api/production/boms/${productId}`, {
-    finishId: input.finishId,
-    inputThicknessMm: input.inputThicknessMm ?? '0.50',
-    inputWidthMm: input.inputWidthMm ?? '600',
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Escenario completo: bobina → corte tercerizado → flejes → producto con receta
 // ---------------------------------------------------------------------------
@@ -558,13 +527,12 @@ export interface Scenario {
   cuttingOrderId: string;
   strips: CoilDto[];
   product: ProductDto;
-  bom: ProductBomDto;
 }
 
 /**
  * Deja el escenario listo: bobina madre comprada y recibida (4 800 kg a S/ 4/kg, 1 200 mm),
  * partida por un tercero en dos flejes de 600 mm × 2 400 kg (RF-40/41), y un perfil de
- * drywall con su receta (D-059) de 2 kg por pieza.
+ * drywall de 2 kg por pieza cuyo SKU pide ese fleje (D-344: sin receta).
  */
 export async function setupScenario(
   api: APIRequestContext,
@@ -638,11 +606,11 @@ export async function setupScenario(
   }
   expect(strips[0]).toMatchObject({ kind: 'STRIP', widthMm: '600.00', availableKg: '2400.000' });
 
-  // Producto terminado: piezas (NIU), fabricado, línea drywall (D-055). D-139: los kilos
-  // por pieza se cargan en el propio SKU, no en la receta.
+  // Producto terminado: piezas (NIU), fabricado, línea drywall (D-055). D-344: sin receta, el SKU
+  // dice qué fleje consume (galvanizado, 0.50 mm de espesor y 600 mm de ancho: los flejes de arriba)
+  // y cuántos kilos gasta cada pieza (D-139).
   const product = await createCatalogProduct(api, { pieceWeightKg: KG_PER_PIECE });
-  const bom = await upsertBom(api, product.id, { finishId: finish.id });
-  expect(bom.kgPerPiece).toBe(KG_PER_PIECE);
+  expect(product.pieceWeightKg).toBe(KG_PER_PIECE);
 
   return {
     supplier,
@@ -652,7 +620,6 @@ export async function setupScenario(
     cuttingOrderId: order.id,
     strips,
     product,
-    bom,
   };
 }
 

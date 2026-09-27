@@ -268,7 +268,7 @@ export async function createSellableProduct(
   // D-122 el acabado (Metallic Roofing ya no tiene receta de la que sacar la densidad).
   const structured =
     options.lineCode === 'drywall'
-      ? { widthMm: '100', lengthMm: '3000', pieceWeightKg: '6' }
+      ? { thicknessMm: '0.50', widthMm: '100', lengthMm: '3000', pieceWeightKg: '6' }
       : options.lineCode === 'metallic-roofing'
         ? {
             thicknessMm: options.thicknessMm ?? '0.50',

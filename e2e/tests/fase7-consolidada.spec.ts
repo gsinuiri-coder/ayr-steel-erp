@@ -18,7 +18,6 @@ import {
   purgeProductionOrder,
   today,
   uniqueDocumentNumber,
-  upsertBom,
   KG_PER_PIECE,
   LINE,
   type CoilDto,
@@ -336,10 +335,10 @@ test.describe('D-124 — fecha de operación', () => {
       }
 
       // (c) Una OP abierta el 10, con 100 piezas reportadas el 12 y cerrada el 14.
-      // D-139: los kilos por pieza se cargan en el propio SKU, no en la receta.
+      // D-139/D-344: los kilos por pieza y el fleje (espesor y ancho) se cargan en el propio SKU;
+      // ya no hay receta.
       const product = await createCatalogProduct(api, { pieceWeightKg: KG_PER_PIECE });
       trail.productId = product.id;
-      await upsertBom(api, product.id, { finishId: finish.id });
 
       const order = await postJson<ProductionOrderDto & { operationDate: string }>(
         api,

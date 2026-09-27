@@ -73,9 +73,10 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
       await dialog.getByLabel('SKU').fill(sku);
       await dialog.getByLabel('Nombre').fill('Producto E2E');
       await dialog.getByLabel('Unidad').fill('unidad');
-      // D-118 (Fase 7e, B): ancho/largo/peso de la pieza terminada son obligatorios en
-      // Drywall — sin esto el API responde 400 y el diálogo se queda abierto.
-      await dialog.getByLabel('Ancho de la pieza (mm)').fill('35.00');
+      // D-118 (Fase 7e, B) y D-344: espesor y ancho del fleje, y largo y peso de la pieza, son
+      // obligatorios en Drywall — sin esto el API responde 400 y el diálogo se queda abierto.
+      await dialog.getByLabel('Espesor del fleje (mm)').fill('0.45');
+      await dialog.getByLabel('Ancho del fleje — desarrollo (mm)').fill('135.00');
       await dialog.getByLabel('Largo de la pieza (mm)').fill('3000.00');
       await dialog.getByLabel('Peso de la pieza (kg)').fill('1.200');
       await dialog.getByRole('button', { name: 'Crear producto' }).click();

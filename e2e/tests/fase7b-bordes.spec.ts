@@ -194,7 +194,9 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
         unit: 'NIU',
         source: 'PURCHASED',
         listPricePen: '10',
-        // D-118 (Fase 7e, B): obligatorios en Drywall, sin importar el origen.
+        // D-118 (Fase 7e, B): obligatorios en Drywall, sin importar el origen (D-344: el espesor
+        // y el ancho son los del fleje).
+        thicknessMm: '0.50',
         widthMm: '100',
         lengthMm: '3000',
         pieceWeightKg: '6',
