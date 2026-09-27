@@ -50,6 +50,7 @@ import {
   priceListValueChanged,
   recordPriceListChange,
 } from './price-list-changes';
+import { describeProductUsage, productsWithUsage } from './product-usage';
 
 /** Mismo criterio que `SEARCH_CANDIDATE_POOL` de `CustomersService` (RF-S3/M1). */
 const SEARCH_CANDIDATE_POOL = 100;
@@ -72,7 +73,9 @@ export class CatalogService {
       include: PRODUCT_RELATIONS,
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
-    return products.map((p) => toDto(p));
+    // D-347/M6: un número fijo de consultas para el catálogo entero, no una por fila.
+    const used = await productsWithUsage(this.prisma, products);
+    return products.map((p) => toDto(p, !used.has(p.id)));
   }
 
   /**
@@ -97,7 +100,9 @@ export class CatalogService {
       orderBy: { name: 'asc' },
       take: SEARCH_CANDIDATE_POOL,
     });
-    return rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]).map((p) => toDto(p));
+    const ranked = rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]);
+    const used = await productsWithUsage(this.prisma, ranked);
+    return ranked.map((p) => toDto(p, !used.has(p.id)));
   }
 
   /**
@@ -160,7 +165,8 @@ export class CatalogService {
       include: PRODUCT_RELATIONS,
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    return toDto(product);
+    const used = await productsWithUsage(this.prisma, [product]);
+    return toDto(product, !used.has(product.id));
   }
 
   async create(actor: RequestUser, input: CreateProductInput): Promise<ProductDto> {
@@ -224,7 +230,8 @@ export class CatalogService {
         }
         return created;
       });
-      return toDto(product);
+      // Recién creado: no puede tener uso todavía en esta misma corrida.
+      return toDto(product, true);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException('Ya existe un producto con ese SKU en esta línea');
@@ -465,7 +472,44 @@ export class CatalogService {
       }
       return updated;
     });
-    return toDto(after);
+    const used = await productsWithUsage(this.prisma, [after]);
+    return toDto(after, !used.has(after.id));
+  }
+
+  /**
+   * D-347/M6: borrado físico de un producto que **nunca se usó** (ADMINISTRADOR). Se
+   * diferencia de `update({isActive: false})` a propósito — desactivar es reversible y dejar
+   * el SKU visible como inactivo protege su historia; esto es para un SKU cargado de más, sin
+   * historia detrás, que ensucia el catálogo. Bloqueado el mismo producto entre el chequeo y
+   * el borrado (`FOR UPDATE`, mismo patrón que `mergeProductInto`): dos borrados a la vez, o un
+   * borrado en carrera con algo que recién empieza a usar el producto, no pueden pisarse.
+   */
+  async remove(actor: RequestUser, id: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "products" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const product = await tx.product.findUnique({
+        where: { id },
+        select: { id: true, sku: true, name: true, businessLine: { select: { code: true } } },
+      });
+      if (!product) throw new NotFoundException('Producto no encontrado');
+      const reasons = await describeProductUsage(tx, product);
+      if (reasons.length > 0) {
+        throw new ConflictException(
+          `${product.sku} no se puede borrar: está en uso (${reasons.join('; ')}). Desactívalo en vez de borrarlo.`,
+        );
+      }
+      await tx.product.delete({ where: { id } });
+      // D-347: sin antes/después completo (decisión del dueño) — el producto ya no existe
+      // después de esta acción, así que un `after` no dice nada; el SKU y el nombre alcanzan
+      // para identificar qué se borró sin repetir todo el catálogo del producto en el audit_log.
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'catalog.product-delete',
+        entity: 'products',
+        entityId: product.id,
+        before: { sku: product.sku, name: product.name },
+      });
+    });
   }
 
   /** Órdenes de coberturas vivas de este producto: las que el cambio de color rompería. */
@@ -864,7 +908,7 @@ function pieceWeightCheckOf(p: WithLineCode) {
   });
 }
 
-function toDto(p: WithLineCode): ProductDto {
+function toDto(p: WithLineCode, canDelete: boolean): ProductDto {
   return {
     id: p.id,
     businessLineId: p.businessLineId,
@@ -892,6 +936,7 @@ function toDto(p: WithLineCode): ProductDto {
     // D-342/D-344: solo el motivo que se sabe sin mirar saldos; el de flejes y margen lo dice el piso.
     noFloorReason: staticNoFloorReason(p),
     pieceWeightCheck: pieceWeightCheckOf(p),
+    canDelete,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };

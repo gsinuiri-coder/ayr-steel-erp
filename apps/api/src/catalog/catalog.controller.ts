@@ -2,7 +2,10 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -115,5 +118,13 @@ export class CatalogController {
     @Body(new ZodValidationPipe(updateProductSchema)) body: UpdateProductInput,
   ): Promise<ProductDto> {
     return this.catalog.update(actor, id, body);
+  }
+
+  /** D-347/M6: borrado físico de un producto que nunca se usó. `canDelete` en el DTO lo decide. */
+  @Delete(':id')
+  @Roles(Role.ADMINISTRADOR)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(@CurrentUser() actor: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.catalog.remove(actor, id);
   }
 }

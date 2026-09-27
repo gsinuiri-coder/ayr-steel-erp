@@ -114,6 +114,13 @@ export const productSchema = z.object({
    * algún dato del cálculo o si no hay un acabado galvanizado activo del que sacar la densidad.
    */
   pieceWeightCheck: pieceWeightCheckSchema.nullable(),
+  /**
+   * D-347: si nunca se usó (sin kardex, sin documento comercial, sin producción, sin ser
+   * destino de una fusión) y por eso `DELETE /catalog/:id` lo puede borrar físicamente en vez
+   * de solo desactivarlo. Se calcula en el servidor, nunca en el navegador: la lista de tablas
+   * que cuentan como «uso» es demasiado larga para adivinarla del lado del cliente.
+   */
+  canDelete: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

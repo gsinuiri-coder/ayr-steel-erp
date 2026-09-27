@@ -38,6 +38,7 @@ import {
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { ColoresPanel } from './colores-panel';
 import { ProductDialog } from '@/components/catalog/product-dialog';
+import { DeleteProductDialog } from '@/components/catalog/delete-product-dialog';
 import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 import { RowActions } from '@/components/row-actions';
@@ -61,6 +62,7 @@ export function CatalogoView() {
     nonce: number;
   }>({ open: false, lineId: '', nonce: 0 });
   const [historyProduct, setHistoryProduct] = useState<ProductDto | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProductDto | null>(null);
   // RF-S3/M4: el card «SKUs con lista bajo piso» del Panel enlaza acá con
   // `?bajoPiso=<productId>` — un id concreto resalta esa fila (y abre su línea), el valor
   // `1` (más de 8 en el card) solo llega a la vista sin resaltar nada en particular.
@@ -132,6 +134,17 @@ export function CatalogoView() {
       void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+  });
+
+  const deleteProduct = useMutation({
+    mutationFn: (p: ProductDto) => api(`/catalog/${p.id}`, { method: 'DELETE' }),
+    onSuccess: (_, p) => {
+      toast.success(`${p.sku} borrado del catálogo`);
+      setDeleteTarget(null);
+      void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo borrar el producto'),
   });
 
   if (lines.isPending || products.isPending) {
@@ -358,6 +371,18 @@ export function CatalogoView() {
                                     toggleActive.mutate(p);
                                   },
                                 },
+                                {
+                                  key: 'delete',
+                                  label: 'Eliminar',
+                                  destructive: true,
+                                  disabled: !p.canDelete,
+                                  title: p.canDelete
+                                    ? undefined
+                                    : 'Ya se usó (kardex, un documento comercial o producción): desactivalo en vez de borrarlo',
+                                  onSelect: () => {
+                                    setDeleteTarget(p);
+                                  },
+                                },
                               ]}
                             />
                           </TableCell>
@@ -406,6 +431,20 @@ export function CatalogoView() {
           open
           onOpenChange={(open) => {
             if (!open) setHistoryProduct(null);
+          }}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteProductDialog
+          sku={deleteTarget.sku}
+          open
+          pending={deleteProduct.isPending}
+          onOpenChange={(open) => {
+            if (!open && !deleteProduct.isPending) setDeleteTarget(null);
+          }}
+          onConfirm={() => {
+            deleteProduct.mutate(deleteTarget);
           }}
         />
       )}

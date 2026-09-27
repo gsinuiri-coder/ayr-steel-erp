@@ -15,6 +15,14 @@ import { CatalogService } from './catalog.service';
 const ACTOR = { id: 'u-1' } as never;
 const STOP = new Error('llegó a la transacción');
 const BL = 'bl-drywall';
+/**
+ * D-347/M6: `findAll`/`findOne`/`search` calculan `canDelete` con `productsWithUsage`, un
+ * número fijo de `findMany` por tabla — nada que ver con el SKU de drywall de este archivo, así
+ * que siempre «sin uso» acá.
+ */
+function noUsageMocks() {
+  return { findMany: jest.fn().mockResolvedValue([]) };
+}
 
 const baseInput = {
   businessLineId: BL,
@@ -64,8 +72,18 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
   const prisma = {
     businessLine: { findUnique: jest.fn() },
     finish: { findUnique: jest.fn(), findFirst: jest.fn() },
-    product: { findUnique: jest.fn(), findMany: jest.fn() },
-    productionOrder: { count: jest.fn() },
+    product: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    productionOrder: { count: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    purchaseItem: noUsageMocks(),
+    productBom: noUsageMocks(),
+    quotationItem: noUsageMocks(),
+    salesOrderItem: noUsageMocks(),
+    salesPriceChange: noUsageMocks(),
+    fiscalDocumentItem: noUsageMocks(),
+    dispatchItem: noUsageMocks(),
+    inventoryMovement: noUsageMocks(),
+    reservation: noUsageMocks(),
+    quotationReservation: noUsageMocks(),
     $transaction: jest.fn(),
   };
   const colors = { resolveActive: jest.fn() };

@@ -169,9 +169,17 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
     después del 2026-10-03**, es un checkpoint con fecha propia, no la política general de 7 días). Se
     borraron las 10 restantes (ramas de ensayo, `dev-antes-de-*`, `pre-api-*`, `pre-s1-hotfix-*` y los
     `respaldo-pre-*` fuera de la lista), verificando el id contra el nombre antes de cada borrado. Quedan 8.
-  - **M6 (borrado físico de un producto sin uso) sigue en Paso 0**: falta la respuesta del dueño sobre si
-    `sales_price_changes.productId` cuenta como «uso» (mismo patrón que el historial de precio de lista, que
-    no cuenta) antes de diseñar el endpoint. Sin código escrito todavía (AGENTS §3 regla 16, ambigüedad).
+  - **M6 (D-347, borrado físico de un producto sin uso) implementado y con tests.** El dueño confirmó
+    `sales_price_changes.productId` como uso (nombra el documento en el 409) y el resto del Paso 0 con el
+    criterio «historia de catálogo no cuenta, historia de documento comercial/inventario/producción sí»; ser
+    el destino de una fusión (`mergedFrom`) entra por el mismo motivo que el historial de precio por línea
+    (algo quedaría apuntando a un producto borrado). `DELETE /catalog/:id` (ADMINISTRADOR), `canDelete` en
+    el DTO (`productsWithUsage`, presupuesto fijo de consultas por tanda) y el detalle del 409
+    (`describeProductUsage`, un producto). Unitario (`product-usage.spec.ts`, `catalog.service.remove.spec.ts`)
+    y E2E (`borrar-producto-d347.spec.ts`, los dos caminos: sin uso se borra, con una cotización detrás el
+    menú lo bloquea y el API lo rechaza igual). Piezas de riesgo para el pase cruzado: la lista de tablas de
+    «uso» (si aparece una tabla nueva que referencie `products`, hay que sumarla ahí, no en otro lado) y el
+    `FOR UPDATE` de la fila (mismo patrón que `mergeProductInto`, D-253).
 
 ## Ventana de Correcciones 03b (2026-09-26, con migración)
 

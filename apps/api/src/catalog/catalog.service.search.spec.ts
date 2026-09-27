@@ -33,10 +33,27 @@ function product(overrides: Partial<Record<string, unknown>> = {}) {
 
 describe('CatalogService.search (RF-S3/M1)', () => {
   let service: CatalogService;
+  // D-347/M6: `search` calcula `canDelete` con `productsWithUsage`, un `findMany` fijo por
+  // tabla — sin nada que ver con el ranking de este archivo, así que siempre «sin uso» acá.
+  const noUsage = () => ({ findMany: jest.fn().mockResolvedValue([]) });
   const prisma = {
     product: { findMany: jest.fn() },
     // D-344: la densidad del acabado galvanizado para el aviso de kg/pieza; sin acabado no hay aviso.
     finish: { findFirst: jest.fn().mockResolvedValue(null) },
+    // D-347/M6: un `BOB…` de este archivo (`isCoilSaleProduct`) intenta resolver su pool de
+    // bobinas (`coilPoolKeyOfProduct`), que empieza mirando los colores del catálogo.
+    color: { findMany: jest.fn().mockResolvedValue([]) },
+    purchaseItem: noUsage(),
+    productBom: noUsage(),
+    productionOrder: noUsage(),
+    quotationItem: noUsage(),
+    salesOrderItem: noUsage(),
+    salesPriceChange: noUsage(),
+    fiscalDocumentItem: noUsage(),
+    dispatchItem: noUsage(),
+    inventoryMovement: noUsage(),
+    reservation: noUsage(),
+    quotationReservation: noUsage(),
   };
   const audit = { write: jest.fn() };
   const colors = {};

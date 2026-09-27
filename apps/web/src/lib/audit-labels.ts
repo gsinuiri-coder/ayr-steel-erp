@@ -11,6 +11,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'auth.password.changed': 'Cambio de contraseña propia',
   'catalog.create': 'Alta de producto',
   'catalog.update': 'Edición de producto',
+  'catalog.product-delete': 'Producto borrado del catálogo (D-347, nunca se usó)',
   'catalog.price-list-import.confirm': 'Carga masiva de precios de lista confirmada',
   'catalog.price-list-import.revert': 'Carga masiva de precios de lista revertida',
   'coils.cancel': 'Anulación de bobina',

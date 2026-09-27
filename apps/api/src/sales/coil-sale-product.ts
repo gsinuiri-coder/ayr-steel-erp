@@ -138,8 +138,15 @@ export async function knownCoilAttributes(tx: Prisma.TransactionClient): Promise
   ]);
 }
 
-/** El token de color o tipo de un acabado, o `null` si es un prepintado sin color (D-203). */
-function attributeOf(finish: { kind: FinishKind; color: { code: string } | null }): string | null {
+/**
+ * El token de color o tipo de un acabado, o `null` si es un prepintado sin color (D-203).
+ * Exportada para M6 (`product-usage.ts`): el mismo filtro que usa el pool de venta, para saber
+ * si alguna bobina resolvió alguna vez al SKU `BOB…` de un producto que se quiere borrar.
+ */
+export function attributeOf(finish: {
+  kind: FinishKind;
+  color: { code: string } | null;
+}): string | null {
   if (finish.kind !== FinishKind.PREPINTADO) return finish.kind;
   return finish.color === null ? null : commercialColorToken(finish.color.code);
 }
