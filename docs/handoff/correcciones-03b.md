@@ -72,6 +72,9 @@ edición de cantidad con faltante. Merge `78e8e9e`.
 8. **Revisión con ojos frescos** de las piezas de riesgo (§3).
 9. **Las 27 bobinas vigentes con saldo 0** las termina el dueño desde la pantalla (heredado de 04b; no se
    tocaron).
+10. **Punto 9 del cliente — reporte de ganancia por artículo: pendiente y fuera de alcance de esta ventana.**
+    El dueño lo revisa a fondo antes de diseñarlo; hasta entonces no se toca ni se estima. (El punto 10, el
+    formulario de compra y los diálogos de acabados, colores y receta, **sí entró**: M4, `d19b453`.)
 
 ## 5. Rollback
 
