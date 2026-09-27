@@ -253,6 +253,27 @@ export function ProductDialog({
         // Un desalineado histórico se corrige a propósito, cambiando el acabado, igual que
         // en «Editar bobina» — no como efecto de lado de guardar cualquier otro campo.
         const finishChanged = values.finishId !== product.finishId;
+        // D-343/M5: mismo criterio que el acabado — un campo estructurado solo se manda si de
+        // verdad cambió contra lo guardado. Guardar el nombre o el precio de un accesorio (o de
+        // cualquier producto con campos estructurados) no puede reabrir el guardrail de "el SKU
+        // refleja el espesor y el color" con el propio valor que ya tenía.
+        const changedStructuredFields = {
+          ...(structuredFields.thicknessMm !== (product.thicknessMm ?? '')
+            ? { thicknessMm: structuredFields.thicknessMm }
+            : {}),
+          ...(structuredFields.widthMm !== (product.widthMm ?? '')
+            ? { widthMm: structuredFields.widthMm }
+            : {}),
+          ...(structuredFields.lengthMm !== (product.lengthMm ?? '')
+            ? { lengthMm: structuredFields.lengthMm }
+            : {}),
+          ...(structuredFields.pieceWeightKg !== (product.pieceWeightKg ?? '')
+            ? { pieceWeightKg: structuredFields.pieceWeightKg }
+            : {}),
+          ...(structuredFields.roofingKind !== product.roofingKind
+            ? { roofingKind: structuredFields.roofingKind }
+            : {}),
+        };
         return api<ProductDto>(`/catalog/${product.id}`, {
           method: 'PATCH',
           body: {
@@ -262,7 +283,7 @@ export function ProductDialog({
             listPricePen: values.listPricePen,
             ...(showColor && finishChanged ? { colorId } : {}),
             ...(showRoofingFields ? { finishId: values.finishId } : {}),
-            ...structuredFields,
+            ...changedStructuredFields,
           },
         });
       }
