@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { BadRequestException } from '@nestjs/common';
 import { InventoryItemType, type Prisma } from '@prisma/client';
 import { parseSpreadsheet } from './parse-spreadsheet';
@@ -122,5 +123,29 @@ describe('referencias de la carga inicial (D-352)', () => {
         where: expect.objectContaining({ itemType: InventoryItemType.PRODUCT }),
       }),
     );
+  });
+});
+
+describe('la plantilla de ejemplo (docs/plantillas/importar-compras-ejemplo.xlsx)', () => {
+  it('se lee entera: cuatro tipos, fechas como texto DD/MM/AAAA y las dos bobinas en un comprobante', () => {
+
+    const file = readFileSync(
+      `${__dirname}/../../../../docs/plantillas/importar-compras-ejemplo.xlsx`,
+    );
+    const parsed = parsePurchaseRows(parseSpreadsheet(file));
+    expect(
+      parsed.documents.map((d) => [d.type, d.series, d.number, d.issueDate, d.lines.length]),
+    ).toEqual([
+      ['Bobinas', 'F001', '00004567', '2026-09-15', 2],
+      ['Producto terminado', 'F002', '00000891', '2026-09-18', 1],
+      ['Servicio', 'E001', '000123', '2026-09-16', 1],
+      ['Gasto', 'B001', '00045678', '2026-09-20', 1],
+    ]);
+    expect(parsed.documents[0]?.lines[0]).toMatchObject({
+      qty: '4520,5',
+      thicknessMm: '0,30',
+      externalCode: 'PR-88121',
+    });
+    expect(parsed.headerConflicts.size).toBe(0);
   });
 });
