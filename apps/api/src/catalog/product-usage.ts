@@ -146,11 +146,24 @@ export async function describeProductUsage(
 export async function productsWithUsage(
   tx: Prisma.TransactionClient,
   products: readonly (ProductUsageIdentity & { name: string })[],
+  /**
+   * D-350: la purga de cotizaciones anuladas pregunta «¿quedaría sin uso si estas cotizaciones
+   * no existieran?» — sus líneas, su historial de precio y sus reservas temporales no cuentan.
+   */
+  opts: { excludeQuotationIds?: readonly string[] } = {},
 ): Promise<Set<string>> {
   const ids = products.map((p) => p.id);
   if (ids.length === 0) return new Set();
   const used = new Set<string>();
   const distinctProductId = { distinct: ['productId' as const], select: { productId: true } };
+  const excluded = opts.excludeQuotationIds ?? [];
+  const notExcluded = excluded.length > 0 ? { quotationId: { notIn: [...excluded] } } : {};
+  // `sales_price_changes.quotation_id` es nullable (la fila de un pedido no lo tiene): `notIn`
+  // sobre una columna nula la descartaría, así que el pedido se conserva aparte.
+  const priceChangesNotExcluded =
+    excluded.length > 0
+      ? { OR: [{ quotationId: null }, { quotationId: { notIn: [...excluded] } }] }
+      : {};
   const [
     purchaseItems,
     boms,
@@ -168,9 +181,15 @@ export async function productsWithUsage(
     tx.purchaseItem.findMany({ where: { productId: { in: ids } }, ...distinctProductId }),
     tx.productBom.findMany({ where: { productId: { in: ids } }, ...distinctProductId }),
     tx.productionOrder.findMany({ where: { productId: { in: ids } }, ...distinctProductId }),
-    tx.quotationItem.findMany({ where: { productId: { in: ids } }, ...distinctProductId }),
+    tx.quotationItem.findMany({
+      where: { productId: { in: ids }, ...notExcluded },
+      ...distinctProductId,
+    }),
     tx.salesOrderItem.findMany({ where: { productId: { in: ids } }, ...distinctProductId }),
-    tx.salesPriceChange.findMany({ where: { productId: { in: ids } }, ...distinctProductId }),
+    tx.salesPriceChange.findMany({
+      where: { productId: { in: ids }, ...priceChangesNotExcluded },
+      ...distinctProductId,
+    }),
     tx.fiscalDocumentItem.findMany({ where: { productId: { in: ids } }, ...distinctProductId }),
     tx.dispatchItem.findMany({ where: { productId: { in: ids } }, ...distinctProductId }),
     tx.inventoryMovement.findMany({
@@ -184,7 +203,7 @@ export async function productsWithUsage(
       select: { itemId: true },
     }),
     tx.quotationReservation.findMany({
-      where: { itemType: PRODUCT, itemId: { in: ids } },
+      where: { itemType: PRODUCT, itemId: { in: ids }, ...notExcluded },
       distinct: ['itemId'],
       select: { itemId: true },
     }),
