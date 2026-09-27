@@ -24,7 +24,7 @@ import {
  */
 
 /** Una hoja: encabezados, filas y anchos de columna. */
-interface Sheet {
+export interface Sheet {
   name: string;
   header: string[];
   rows: (string | number | null)[][];
@@ -32,13 +32,13 @@ interface Sheet {
 }
 
 /** Monto o cantidad a celda numérica. `null` queda vacío, que no es lo mismo que cero. */
-function num(value: string | null): number | null {
+export function num(value: string | null): number | null {
   if (value === null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function build(sheets: Sheet[]): Buffer {
+export function build(sheets: Sheet[]): Buffer {
   const book = XLSX.utils.book_new();
   for (const sheet of sheets) {
     const grid = XLSX.utils.aoa_to_sheet([sheet.header, ...sheet.rows]);

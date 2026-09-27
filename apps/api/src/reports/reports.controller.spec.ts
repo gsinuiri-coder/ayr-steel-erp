@@ -1,6 +1,6 @@
 import { Reflector } from '@nestjs/core';
 import type { Response } from 'express';
-import { Role } from '@ayr/shared';
+import { Role, type SalesByMaterialDto } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import type { InventoryValuationService } from './inventory-valuation.service';
@@ -8,6 +8,7 @@ import type { KardexPepsService } from './kardex-peps.service';
 import type { KardexSheetService } from './kardex-sheet.service';
 import { ReportsController } from './reports.controller';
 import type { ReportsService } from './reports.service';
+import type { SalesByMaterialService } from './sales-by-material.service';
 import type { SalesMarginService } from './sales-margin.service';
 
 /**
@@ -86,20 +87,59 @@ const PEPS = {
   documents: new Map(),
 };
 
+const FIGURES = {
+  metersSold: '0.000',
+  theoreticalKg: '0.000',
+  realKg: '0.000',
+  yieldKg: '0.000',
+  yieldPct: null,
+  salesPen: '0.0000',
+  costPen: '0.0000',
+  profitPen: '0.0000',
+  costPerKgPen: null,
+  pricePerKgPen: null,
+  marginPerKgPen: null,
+};
+
+const BY_MATERIAL: SalesByMaterialDto = {
+  from: '2026-09-01',
+  to: '2026-09-30',
+  rows: [],
+  subtotals: [],
+  total: FIGURES,
+  untraceable: [],
+  untraceableSalesPen: '0.0000',
+  reconciliation: {
+    roofingSalesPen: '0.0000',
+    coilSalesPen: '0.0000',
+    unclassifiedSalesPen: '0.0000',
+  },
+};
+
 function build() {
   const reports = { coilsByMonth: jest.fn().mockResolvedValue({ rows: [] }) };
   const inventoryValuation = { valuation: jest.fn().mockResolvedValue(VALUATION) };
   const salesMargin = { salesMargin: jest.fn().mockResolvedValue(MARGIN) };
+  const salesByMaterial = { report: jest.fn().mockResolvedValue(BY_MATERIAL) };
   const kardexPeps = { report: jest.fn().mockResolvedValue(PEPS) };
   const kardexSheet = { sheet: jest.fn() };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
     salesMargin as unknown as SalesMarginService,
+    salesByMaterial as unknown as SalesByMaterialService,
     kardexPeps as unknown as KardexPepsService,
     kardexSheet as unknown as KardexSheetService,
   );
-  return { controller, reports, inventoryValuation, salesMargin, kardexPeps, kardexSheet };
+  return {
+    controller,
+    reports,
+    inventoryValuation,
+    salesMargin,
+    salesByMaterial,
+    kardexPeps,
+    kardexSheet,
+  };
 }
 
 describe('ReportsController', () => {
@@ -112,6 +152,9 @@ describe('ReportsController', () => {
     expect(rolesOf('salesMarginReport')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('inventoryValuationXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('salesMarginXlsxFile')).toEqual([Role.ADMINISTRADOR]);
+    // D-354: ventas por material lleva costos.
+    expect(rolesOf('salesByMaterialReport')).toEqual([Role.ADMINISTRADOR]);
+    expect(rolesOf('salesByMaterialXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('kardexPepsXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     // D-296/D-298: el PEPS en JSON y el Excel del cliente llevan costos: solo ADMINISTRADOR.
     expect(rolesOf('kardexPepsJson')).toEqual([Role.ADMINISTRADOR]);
@@ -160,6 +203,20 @@ describe('ReportsController', () => {
     expect(salesMargin.salesMargin).toHaveBeenCalledTimes(1);
     expect(salesMargin.salesMargin).toHaveBeenCalledWith(query);
     expect(res.headers['Content-Disposition']).toMatch(/^attachment; filename=".+\.xlsx"$/);
+  });
+
+  it('ventas por material: JSON y xlsx con los mismos filtros, del mismo servicio (D-354)', async () => {
+    const { controller, salesByMaterial } = build();
+    const query = { from: '2026-09-01', to: '2026-09-30', kind: 'PLANCHA' as const };
+    await expect(controller.salesByMaterialReport(query)).resolves.toBe(BY_MATERIAL);
+    const res = fakeResponse();
+    await controller.salesByMaterialXlsxFile(query, res);
+    expect(salesByMaterial.report).toHaveBeenCalledTimes(2);
+    expect(salesByMaterial.report).toHaveBeenLastCalledWith(query);
+    expect(res.headers['Content-Disposition']).toBe(
+      'attachment; filename="ventas-por-material-2026-09-01-a-2026-09-30.xlsx"',
+    );
+    expect(Buffer.isBuffer(res.body)).toBe(true);
   });
 
   it('el xlsx del kardex PEPS pide el ítem y el rango y viaja como adjunto (D-279)', async () => {

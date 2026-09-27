@@ -41,7 +41,12 @@ describe('mapa del menú (D-326)', () => {
       Almacén: ['Bobinas', 'Flejes', 'Corte tercerizado', 'Inventario', 'Kardex'],
       Planta: ['Producción', 'Órdenes de producción'],
       Catálogo: ['Productos', 'Líneas', 'Acabados', 'Colores'],
-      Reportes: ['Ventas y margen', 'Inventario valorizado', 'Reporte mensual de bobinas'],
+      Reportes: [
+        'Ventas y margen',
+        'Ventas por material',
+        'Inventario valorizado',
+        'Reporte mensual de bobinas',
+      ],
       Administración: ['Usuarios', 'Márgenes y tipo de cambio', 'Auditoría', 'Configuración'],
     });
   });
