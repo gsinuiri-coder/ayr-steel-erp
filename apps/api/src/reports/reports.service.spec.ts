@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma/prisma.service';
-import { ReportsService, coilInMonth } from './reports.service';
+import { Decimal } from '@ayr/shared';
+import { ReportsService, coilInMonth, monthPresence } from './reports.service';
 
 /**
  * D-328 — el reporte mensual de bobinas en dos tablas. La consulta SQL (el estado del film **al
@@ -40,6 +41,8 @@ function raw(r: RawRow) {
     last_film_event: r.event,
     // D-340: el reporte incluye la bobina según su primer movimiento de kardex.
     first_movement_date: new Date('2026-08-05T00:00:00Z'),
+    entries_kg: new Prisma.Decimal('0'),
+    annulled_on: null,
   };
 }
 
@@ -80,7 +83,7 @@ describe('ReportsService.coilsByMonth (D-328)', () => {
       value: '2100',
       event: 'RESEALED',
     }),
-    // Terminada con saldo final 0: va a «Abiertas» sin haber tenido nunca un evento.
+    // Terminada con saldo final 0: D-355, no se lista; se resume como terminada.
     raw({
       id: 'd',
       code: 'B-D',
@@ -105,10 +108,16 @@ describe('ReportsService.coilsByMonth (D-328)', () => {
   it('reparte cada bobina según su film al fin de mes', async () => {
     const report = await serviceWith(rows).coilsByMonth({ month: '2026-08' }, true);
     expect(report.sealed.rows.map((r) => r.code)).toEqual(['B-A', 'B-C', 'B-E']);
-    expect(report.opened.rows.map((r) => r.code)).toEqual(['B-B', 'B-D']);
+    expect(report.opened.rows.map((r) => r.code)).toEqual(['B-B']);
   });
 
-  it('cada tabla lleva sus subtotales y el total general es su suma exacta', async () => {
+  it('D-355: la terminada con saldo 0 no se lista y se resume con lo que consumió', async () => {
+    const report = await serviceWith(rows).coilsByMonth({ month: '2026-08' }, true);
+    expect(report.finished).toEqual({ count: 1, consumedKg: '200.000' });
+    expect(report.annulledWithOpening).toEqual({ count: 0, openingKg: '0.000' });
+  });
+
+  it('cada tabla lleva sus subtotales; el total general suma también lo no listado', async () => {
     const report = await serviceWith(rows).coilsByMonth({ month: '2026-08' }, true);
     expect(report.sealed.totals).toEqual({
       openingKg: '1800.000',
@@ -117,8 +126,8 @@ describe('ReportsService.coilsByMonth (D-328)', () => {
       closingValuePen: '7560.0000',
     });
     expect(report.opened.totals).toEqual({
-      openingKg: '1200.000',
-      weightKg: '2000.000',
+      openingKg: '1000.000',
+      weightKg: '1000.000',
       closingKg: '600.000',
       closingValuePen: '2520.0000',
     });
@@ -130,12 +139,19 @@ describe('ReportsService.coilsByMonth (D-328)', () => {
     });
   });
 
-  it('el total general cuadra con la suma de todas las filas, estén en la tabla que estén', async () => {
+  it('el saldo final general cuadra con la suma de las filas listadas (lo no listado cierra en 0)', async () => {
     const report = await serviceWith(rows).coilsByMonth({ month: '2026-08' }, true);
     const all = [...report.sealed.rows, ...report.opened.rows];
-    expect(all).toHaveLength(rows.length);
-    const sumClosing = all.reduce((acc, r) => acc + Number(r.closingKg), 0);
-    expect(sumClosing).toBe(Number(report.totals.closingKg));
+    expect(all).toHaveLength(rows.length - 1);
+    const sumClosing = all.reduce((acc, r) => acc.plus(r.closingKg), new Decimal(0));
+    expect(sumClosing.toFixed(3)).toBe(report.totals.closingKg);
+    // Inicio + altas − salidas = cierre.
+    expect(report.flow).toEqual({
+      openingKg: '3000.000',
+      entriesKg: '0.000',
+      exitsKg: '600.000',
+      closingKg: '2400.000',
+    });
   });
 
   it('sin permiso de costos no viaja ni el costo por kg ni ningún valor', async () => {
@@ -188,6 +204,8 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
     type: 'IN' | 'OUT';
     qty: number;
     cost: number;
+    /** Reversa de otro movimiento (la anulación de la entrada es una). */
+    reversal?: boolean;
   }
   interface Fixture {
     id: string;
@@ -212,6 +230,14 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
               .filter((m) => day(m.date) < limit)
               .reduce((acc, m) => acc + (m.type === 'IN' ? pick(m) : -pick(m)), 0);
           const first = f.moves.map((m) => m.date).sort((a, b) => a.localeCompare(b))[0];
+          const entries = f.moves
+            .filter((m) => m.type === 'IN' && m.reversal !== true)
+            .filter((m) => day(m.date) >= from && day(m.date) < nextFrom)
+            .reduce((acc, m) => acc + m.qty, 0);
+          const annulled = f.moves
+            .filter((m) => m.type === 'OUT' && m.reversal === true)
+            .map((m) => m.date)
+            .sort((a, b) => b.localeCompare(a))[0];
           return {
             id: f.id,
             code: f.code,
@@ -229,6 +255,8 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
             closing_value: new Prisma.Decimal(sum(nextFrom, (m) => m.cost)),
             last_film_event: null,
             first_movement_date: first === undefined ? null : day(first),
+            entries_kg: new Prisma.Decimal(entries),
+            annulled_on: annulled === undefined ? null : day(annulled),
           };
         }),
       );
@@ -257,8 +285,8 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
       alta: '2026-09-20',
       moves: [{ date: '2026-09-20', type: 'IN', qty: 500, cost: 2000 }],
     },
-    // Anulada en septiembre (entrada y reversa): en agosto tenía sus kilos y desde septiembre 0;
-    // se trataba igual antes de esta corrección.
+    // Anulada en septiembre (entrada y reversa): en agosto tenía sus kilos y desde septiembre 0.
+    // D-355: en septiembre no se lista y se resume como anulada con saldo al inicio.
     {
       id: 'd',
       code: 'B-D',
@@ -266,7 +294,29 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
       status: 'CANCELLED',
       moves: [
         { date: '2026-08-12', type: 'IN', qty: 200, cost: 800 },
-        { date: '2026-09-03', type: 'OUT', qty: 200, cost: 800 },
+        { date: '2026-09-03', type: 'OUT', qty: 200, cost: 800, reversal: true },
+      ],
+    },
+    // D-355: anulada en el mismo mes de su alta: entra y sale, no figura en ningún lado.
+    {
+      id: 'e',
+      code: 'B-E',
+      alta: '2026-09-10',
+      status: 'CANCELLED',
+      moves: [
+        { date: '2026-09-10', type: 'IN', qty: 300, cost: 1200 },
+        { date: '2026-09-12', type: 'OUT', qty: 300, cost: 1200, reversal: true },
+      ],
+    },
+    // D-355: terminada en septiembre (consumida entera): vigente en agosto, resumida en septiembre.
+    {
+      id: 'f',
+      code: 'B-F',
+      alta: '2026-08-20',
+      status: 'CLOSED',
+      moves: [
+        { date: '2026-08-20', type: 'IN', qty: 400, cost: 1600 },
+        { date: '2026-09-07', type: 'OUT', qty: 400, cost: 1600 },
       ],
     },
   ];
@@ -283,13 +333,38 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
 
   it('agosto incluye la bobina de la carga de V-4 aunque su alta sea de septiembre', async () => {
     const aug = await service().coilsByMonth({ month: '2026-08' }, true);
-    expect(codes(aug)).toEqual(['B-A', 'B-D', 'SALDO-B']);
-    expect(aug.totals.closingKg).toBe('4300.000'); // 1000 + 3100 + 200
+    expect(codes(aug)).toEqual(['B-A', 'B-D', 'B-F', 'SALDO-B']);
+    expect(aug.totals.closingKg).toBe('4700.000'); // 1000 + 3100 + 200 + 400
   });
 
-  it('septiembre las trae a todas', async () => {
+  it('D-355: septiembre lista solo las vigentes al 30; la anulada del mismo mes no figura', async () => {
     const sep = await service().coilsByMonth({ month: '2026-09' }, true);
-    expect(codes(sep)).toEqual(['B-A', 'B-C', 'B-D', 'SALDO-B']);
+    expect(codes(sep)).toEqual(['B-A', 'B-C', 'SALDO-B']);
+    expect(sep.finished).toEqual({ count: 1, consumedKg: '400.000' });
+    expect(sep.annulledWithOpening).toEqual({ count: 1, openingKg: '200.000' });
+  });
+
+  it('D-355: inicio + altas − salidas = cierre, sin la anulada del mismo mes', async () => {
+    const sep = await service().coilsByMonth({ month: '2026-09' }, true);
+    // Altas: solo B-C (500); B-E entra y sale en el mes y no cuenta ni como alta ni como salida.
+    // Salidas: la anulada con saldo al inicio (200) y la terminada (400).
+    expect(sep.flow).toEqual({
+      openingKg: '4700.000',
+      entriesKg: '500.000',
+      exitsKg: '600.000',
+      closingKg: '4600.000',
+    });
+    // Las tablas más las líneas de abajo explican el inicio entero.
+    const listedOpening = [...sep.sealed.rows, ...sep.opened.rows].reduce(
+      (acc, r) => acc.plus(r.openingKg),
+      new Decimal(0),
+    );
+    expect(
+      listedOpening
+        .plus(sep.finished.consumedKg)
+        .plus(sep.annulledWithOpening.openingKg)
+        .toFixed(3),
+    ).toBe(sep.flow.openingKg);
   });
 
   it('el saldo final de cada mes coincide con el inicial del siguiente (el invariante)', async () => {
@@ -298,10 +373,11 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
     const reports = await Promise.all(months.map((m) => svc.coilsByMonth({ month: m }, true)));
     for (let i = 0; i < reports.length - 1; i += 1) {
       expect(reports[i]!.totals.closingKg).toBe(reports[i + 1]!.totals.openingKg);
+      expect(reports[i]!.flow.closingKg).toBe(reports[i + 1]!.flow.openingKg);
     }
-    // Agosto cierra en 4 300 kg: es exactamente lo que septiembre trae como saldo inicial.
-    expect(reports[1]!.totals.closingKg).toBe('4300.000');
-    expect(reports[2]!.totals.openingKg).toBe('4300.000');
+    // Agosto cierra en 4 700 kg: es exactamente lo que septiembre trae como saldo inicial.
+    expect(reports[1]!.totals.closingKg).toBe('4700.000');
+    expect(reports[2]!.totals.openingKg).toBe('4700.000');
   });
 
   it('un mes anterior a todos los movimientos queda vacío', async () => {
@@ -310,12 +386,16 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
     expect(jul.totals.closingKg).toBe('0.000');
   });
 
-  it('la anulada figura con sus kilos de entonces en agosto y en 0 desde septiembre', async () => {
+  it('la anulada figura con sus kilos de entonces en agosto y desaparece de las tablas en septiembre', async () => {
     const svc = service();
     const aug = await svc.coilsByMonth({ month: '2026-08' }, true);
     const sep = await svc.coilsByMonth({ month: '2026-09' }, true);
     expect(byCode(aug, 'B-D').closingKg).toBe('200.000');
-    expect(byCode(sep, 'B-D').closingKg).toBe('0.000');
+    expect(codes(sep)).not.toContain('B-D');
+    // En octubre ya no figura en ningún lado: sin saldo ni movimiento.
+    const oct = await svc.coilsByMonth({ month: '2026-10' }, true);
+    expect(oct.annulledWithOpening.count).toBe(0);
+    expect(oct.finished.count).toBe(0);
   });
 });
 
@@ -331,5 +411,56 @@ describe('coilInMonth (D-340)', () => {
     expect(coilInMonth(new Date('2026-09-01T00:00:00Z'), nextMonth)).toBe(false);
     expect(coilInMonth(new Date('2026-10-05T00:00:00Z'), nextMonth)).toBe(false);
     expect(coilInMonth(null, nextMonth)).toBe(false);
+  });
+});
+
+describe('monthPresence (D-355)', () => {
+  const from = new Date('2026-09-01T00:00:00Z');
+  const nextFrom = new Date('2026-10-01T00:00:00Z');
+  const base = {
+    status: 'OPEN' as never,
+    openingKg: new Decimal(0),
+    entriesKg: new Decimal(0),
+    closingKg: new Decimal(0),
+    annulledOn: null,
+    from,
+    nextFrom,
+  };
+  const d = (v: string) => new Decimal(v);
+
+  it('con saldo al cierre se lista, aunque hoy esté terminada o anulada', () => {
+    expect(monthPresence({ ...base, closingKg: d('1') })).toBe('LISTED');
+    expect(monthPresence({ ...base, status: 'CLOSED', closingKg: d('5') })).toBe('LISTED');
+    expect(
+      monthPresence({
+        ...base,
+        status: 'CANCELLED',
+        closingKg: d('5'),
+        annulledOn: new Date('2026-10-02T00:00:00Z'),
+      }),
+    ).toBe('LISTED');
+  });
+
+  it('anulada en el mes: con saldo al inicio se resume; sin él, entró y salió en el mes', () => {
+    const annulled = {
+      ...base,
+      status: 'CANCELLED' as never,
+      annulledOn: new Date('2026-09-15T00:00:00Z'),
+    };
+    expect(monthPresence({ ...annulled, openingKg: d('200') })).toBe('ANNULLED_WITH_OPENING');
+    expect(monthPresence({ ...annulled, entriesKg: d('300') })).toBe('ANNULLED_SAME_MONTH');
+  });
+
+  it('en cero sin anulación en el mes: terminada o agotada si tuvo saldo o alta; si no, no figura', () => {
+    expect(monthPresence({ ...base, openingKg: d('10') })).toBe('FINISHED');
+    expect(monthPresence({ ...base, entriesKg: d('10') })).toBe('FINISHED');
+    expect(monthPresence(base)).toBe('ABSENT');
+    expect(
+      monthPresence({
+        ...base,
+        status: 'CANCELLED',
+        annulledOn: new Date('2026-08-15T00:00:00Z'),
+      }),
+    ).toBe('ABSENT');
   });
 });

@@ -21,6 +21,7 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { coilMonthXlsx } from './coil-month-xlsx';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { kardexPepsToDto } from './kardex-peps-dto';
 import { kardexPepsXlsx } from './kardex-peps-xlsx';
@@ -61,6 +62,17 @@ export class ReportsController {
     @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
   ): Promise<CoilMonthReportDto> {
     return this.reports.coilsByMonth(query, canSeeCosts(actor));
+  }
+
+  /** D-355. El Excel del reporte mensual, del mismo DTO y con el mismo enmascarado por rol. */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Get('coils/xlsx')
+  async coilsXlsxFile(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(res, coilMonthXlsx(await this.reports.coilsByMonth(query, canSeeCosts(actor))));
   }
 
   /**

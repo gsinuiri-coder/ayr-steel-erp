@@ -1,6 +1,6 @@
 import { Reflector } from '@nestjs/core';
 import type { Response } from 'express';
-import { Role, type SalesByMaterialDto } from '@ayr/shared';
+import { Role, type CoilMonthReportDto, type SalesByMaterialDto } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import type { InventoryValuationService } from './inventory-valuation.service';
@@ -116,6 +116,23 @@ const BY_MATERIAL: SalesByMaterialDto = {
   },
 };
 
+const EMPTY_SECTION = {
+  rows: [],
+  totals: { openingKg: '0.000', weightKg: '0.000', closingKg: '0.000', closingValuePen: null },
+};
+
+const COIL_MONTH: CoilMonthReportDto = {
+  month: '2026-08',
+  from: '2026-08-01',
+  to: '2026-08-31',
+  sealed: EMPTY_SECTION,
+  opened: EMPTY_SECTION,
+  totals: EMPTY_SECTION.totals,
+  finished: { count: 0, consumedKg: '0.000' },
+  annulledWithOpening: { count: 0, openingKg: '0.000' },
+  flow: { openingKg: '0.000', entriesKg: '0.000', exitsKg: '0.000', closingKg: '0.000' },
+};
+
 function build() {
   const reports = { coilsByMonth: jest.fn().mockResolvedValue({ rows: [] }) };
   const inventoryValuation = { valuation: jest.fn().mockResolvedValue(VALUATION) };
@@ -160,6 +177,7 @@ describe('ReportsController', () => {
     expect(rolesOf('kardexPepsJson')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('kardexSheetXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
+    expect(rolesOf('coilsXlsxFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
   });
 
   it('/reports/coils muestra costos a ADMINISTRADOR y a planta, y a nadie más', async () => {
@@ -173,6 +191,17 @@ describe('ReportsController', () => {
       true,
       false,
     ]);
+  });
+
+  it('el xlsx del reporte mensual usa el mismo mes y el mismo enmascarado (D-355)', async () => {
+    const { controller, reports } = build();
+    reports.coilsByMonth.mockResolvedValue(COIL_MONTH);
+    const res = fakeResponse();
+    await controller.coilsXlsxFile(actor(Role.SUPERVISOR_PLANTA), { month: '2026-08' }, res);
+    expect(reports.coilsByMonth).toHaveBeenCalledWith({ month: '2026-08' }, true);
+    expect(res.headers['Content-Disposition']).toBe(
+      'attachment; filename="reporte-bobinas-2026-08.xlsx"',
+    );
   });
 
   it('las rutas JSON devuelven el DTO del servicio tal cual', async () => {

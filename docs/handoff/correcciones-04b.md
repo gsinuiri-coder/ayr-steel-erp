@@ -29,9 +29,9 @@ versión) y **D-340** (reporte mensual por primer movimiento) en `docs/ARQUITECT
   OP no resella** (se hace a mano con «Volver a sellar»).
 - **La fecha de un evento manual no puede ser anterior a la del último del film** (400); la de una operación
   automática retrofechada se ajusta a esa fecha.
-- **El reporte mensual no tiene PDF ni export propios hoy**: el «igual en PDF y export» del brief quedó en el
-  PDF de la lista de bobinas (columna de estado con el film). Si el cliente quiere un export del reporte, es
-  trabajo nuevo.
+- **El reporte mensual no tenía PDF ni export propios** al cierre de esta sesión: el «igual en PDF y export» del
+  brief quedó en el PDF de la lista de bobinas (columna de estado con el film). **Actualización (correcciones 05,
+  D-355):** el reporte mensual tiene Excel desde entonces; PDF propio sigue sin haber.
 
 ## 2. Secuencia de commits (PR #35)
 
