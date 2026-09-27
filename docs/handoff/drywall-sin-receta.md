@@ -19,6 +19,13 @@ implementado, revisado (dos hallazgos P1 corregidos) y con tests.
 espesor cargado, así que **hoy no se puede abrir una orden de producción para ninguno** hasta que
 el dueño los complete (punto 1 de §4, lista en `docs/cliente/revision-2026-09-25.md` §2.5).
 
+**Dos filas en `audit_log` de producción del 2026-09-27 son de la verificación de esta ventana,
+no de operación real:** `catalog.create` y `catalog.product-delete`, las dos sobre el SKU
+`ZTEST-D347-074522` («Producto de prueba — verificación de ventana D-347 (borrar)», línea
+Reventa/`trading`). Se creó y se borró con el admin efímero de la verificación de solo lectura
+(§ de arriba) para confirmar que `DELETE /catalog/:id` funciona contra un producto real de
+producción; el producto ya no existe.
+
 ## 1. Qué entró
 
 | Milestone | Decisión | Resumen                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
