@@ -113,6 +113,49 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   producto terminado en metros, **sí toca kardex**); y el CHECK `products_roofing_kind_unit_check` recreado con
   ACCESORIO.
 
+## Ventana de Correcciones 03b (2026-09-26, con migración)
+
+PR #39 (merge `78e8e9e`). SHA desplegado `34e6795`. Handoff: `docs/handoff/correcciones-03b.md`. UAT:
+`docs/uat/correcciones-03b.md`. Revisión: `docs/revision/correcciones-03b-segundo-modelo.md`.
+
+- **CI del PR #39 sobre la cabeza `34e6795`:** lint/typecheck/unit, **E2E completo del runner**, smoke con Neon
+  `ci` (aplica las 3 migraciones), análisis estático y **SonarCloud en SUCCESS**; 7 checks, estado CLEAN. Un
+  rojo antes, en `orden-columnas-d323` («una clave inventada es 400»): **infraestructura de prueba, no
+  producto** —la búsqueda de cotizaciones compara el número con los dígitos del texto y el token `ORDEDAD4A`
+  traía la cotización nº 4—; el token pasó a ser solo de letras (`a23505e`).
+- **Verificación local previa:** API 1535 y web 69 pruebas en verde, más los unitarios del rechazo de la edición
+  de cantidad con faltante; typecheck, lint y `prettier --check .` en verde. E2E local de las specs afectadas:
+  66 de 67 (el rojo, `huecos-cobertura-f8s2b`, pasa aislado, 6 de 6: servidor de desarrollo lento).
+- **Respaldo Neon:** rama `respaldo-pre-corr03b-20260926` (`br-winter-hill-ae38ek2x`, padre `production`),
+  creada por el dueño con `node local-data/corr03b/neon-backup.mjs` (`run` quiet, `--no-secrets --output json`,
+  solo imprime id, nombre, padre y estado); el clasificador de permisos había denegado dos veces el mismo
+  comando.
+- **Migraciones:** `migrations-status` → **3 pendientes** (`20260926140000_d341_reservas_faltante`,
+  `20260926150000_d343_accesorio_enum`, `20260926150100_d343_accesorio_check_y_piezas`); `pnpm db:prod` (sin
+  seed, leído `db-prod-plan.mjs` antes) las aplicó. **`migrate diff` posterior = el drift conocido**
+  (5 defaults de `operation_date`: `coils`, `cutting_orders`, `inventory_movements`, `production_orders`,
+  `production_reports`; 5 FK recreadas: `dispatches.invoice_id`, `finishes.color_id`, `production_orders.bom_id`,
+  `products.finish_id`, `raw_material_specs.color_id`; 2 índices quitados; un renombre) y nada más; lo corrió el
+  dueño con `!` porque el clasificador lo denegó. Antes se validaron desde cero en Docker.
+- **API (Cloud Run):** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+  desde el checkout principal en `--detach` sobre `34e6795`: **`ayr-steel-erp-api-00060-wbk`** con el 100 % del
+  tráfico, label `git-sha=34e6795` en el servicio y en la revisión, `/health` 200, los **14** nombres sin
+  cambios y `DATABASE_URL:7`, `DIRECT_URL:6`, `JWT_SECRET:6` y los seis restantes en la 5 (iguales a `00059`).
+  Revisión de rollback: `00059-p8k`.
+- **Smoke contra la web vieja (API nueva):** `pnpm smoke:prod` en verde.
+- **Merge** del PR #39 con `gh pr merge 39 --merge --match-head-commit 34e6795…`, con los 7 checks en SUCCESS;
+  Vercel en `success`.
+- **Smoke contra `v2.mareliac.pe`:** `pnpm smoke:prod --base-url https://v2.mareliac.pe` en verde.
+- **Alineación de runtime:** `git diff --quiet 34e6795 origin/main -- apps packages Dockerfile .gcloudignore
+package.json pnpm-lock.yaml pnpm-workspace.yaml` → **exit 0**.
+- **Verificación de solo lectura (admin efímero borrado):** catálogo de 176 filas; **10 perfiles de drywall
+  activos y una sola receta, inactiva**, así que los 10 quedan con `NO_RECIPE` (lista en el handoff);
+  `GET /sales/orders/with-shortfall` devuelve la lista vacía; 0 productos `ACCESORIO`. Un primer conteo dio «0
+  perfiles» por un filtro con `DRYWALL` en mayúscula (el código es `drywall`); se corrigió y se repitió antes de
+  reportar.
+- **Rollback (no usado):** llevar el tráfico a `00059-p8k`; las migraciones son aditivas y no se revierten. La
+  versión 6 de `DATABASE_URL` y la de `DIRECT_URL` siguen habilitadas.
+
 ## Ventana de Correcciones 04, tanda B (2026-09-26, con migración)
 
 PRs #35 (merge `f334f93`) y el de cierre documental. SHA desplegado `200e54c`. Handoff:
