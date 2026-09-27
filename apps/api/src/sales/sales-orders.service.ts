@@ -128,6 +128,7 @@ import {
 } from './sales-lines';
 import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
 import { reservationDispatches } from './reservation-dispatches';
+import { liveDocumentsByOrder } from './order-documents';
 import { salesOrderOrderBy } from '../common/list-orderings';
 
 import { buildPlantOrderPdf } from './plant-order-pdf';
@@ -2886,9 +2887,16 @@ export class SalesOrdersService {
         take,
       }),
     ]);
-    const actors = await this.resolveActorNames(
-      rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
-    );
+    const [actors, documentsByOrder] = await Promise.all([
+      this.resolveActorNames(
+        rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
+      ),
+      // Correcciones 05 / M4: los comprobantes vivos de toda la página, en una sola consulta.
+      liveDocumentsByOrder(
+        this.prisma,
+        rows.map((r) => r.id),
+      ),
+    ]);
 
     // M2: Compute readiness for list
     const ops = await this.prisma.productionOrder.findMany({
@@ -2952,6 +2960,7 @@ export class SalesOrdersService {
         ...rest,
         itemCount: r._count.items,
         activeReservations: r._count.reservations,
+        documents: documentsByOrder.get(r.id) ?? [],
       };
     });
     return paginate(items, total, query);
@@ -2962,26 +2971,30 @@ export class SalesOrdersService {
     if (!row) throw new NotFoundException('Pedido no encontrado');
     if (actor) assertSellerAccess(actor, row.sellerId, 'Pedido');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
-    const [actors, context, priceChanges, invoice, dispatches] = await Promise.all([
-      this.resolveActorNames([row.createdById, row.sellerId].filter(Boolean) as string[]),
-      this.computeOrderContext(row),
-      findPriceChanges(this.prisma, { salesOrderId: id }),
-      // D-187: el mismo corte que `SalesOrderEditsService.lockEditable`.
-      this.prisma.fiscalDocument.findFirst({
-        where: {
-          salesOrderId: id,
-          docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
-          status: { in: [...STANDING_DOCUMENT_STATUSES] },
-          archivedAt: null,
-        },
-        select: { id: true },
-      }),
-      reservationDispatches(this.prisma, row.reservations),
-    ]);
+    const [actors, context, priceChanges, invoice, dispatches, documentsByOrder] =
+      await Promise.all([
+        this.resolveActorNames([row.createdById, row.sellerId].filter(Boolean) as string[]),
+        this.computeOrderContext(row),
+        findPriceChanges(this.prisma, { salesOrderId: id }),
+        // D-187: el mismo corte que `SalesOrderEditsService.lockEditable`.
+        this.prisma.fiscalDocument.findFirst({
+          where: {
+            salesOrderId: id,
+            docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
+            status: { in: [...STANDING_DOCUMENT_STATUSES] },
+            archivedAt: null,
+          },
+          select: { id: true },
+        }),
+        reservationDispatches(this.prisma, row.reservations),
+        // Correcciones 05 / M4: los comprobantes vivos, junto al estado del pedido.
+        liveDocumentsByOrder(this.prisma, [id]),
+      ]);
     return {
       ...this.toDto(row, labels, actors, context, dispatches),
       priceChanges,
       isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
+      documents: documentsByOrder.get(id) ?? [],
     };
   }
 

@@ -15,6 +15,7 @@ import {
 } from '../decimal';
 import {
   BUSINESS_LINES,
+  FISCAL_DOC_TYPES,
   INVENTORY_ITEM_TYPES,
   MAX_TEMPORARY_RESERVATION_BUSINESS_DAYS,
   QUOTATION_STATUSES,
@@ -1147,6 +1148,19 @@ export const orderReadinessSchema = z.object({
 });
 export type OrderReadinessDto = z.infer<typeof orderReadinessSchema>;
 
+/**
+ * Correcciones 05 / M4: un comprobante **vivo** del pedido (`LIVE_DOCUMENT_STATUSES`, no
+ * archivado, sin la guía de remisión), para enlazarlo desde la lista y el detalle. El tipo
+ * viaja para rotular la nota de crédito, que resta y no es «la factura del pedido».
+ */
+export const salesOrderDocumentLinkSchema = z.object({
+  id: z.string().uuid(),
+  number: z.string().nullable(),
+  docType: z.enum(FISCAL_DOC_TYPES),
+  issueDate: z.string(),
+});
+export type SalesOrderDocumentLinkDto = z.infer<typeof salesOrderDocumentLinkSchema>;
+
 export const salesOrderSchema = z.object({
   id: z.string().uuid(),
   /** `PED-000123`, derivado del correlativo (D-068). */
@@ -1198,6 +1212,12 @@ export const salesOrderSchema = z.object({
   stage: z.enum(ORDER_STAGES),
   /** D-341: lo que falta por reservar (confirmado con faltante). Vacío = «Con faltante» no aplica. */
   shortfalls: z.array(orderShortfallSchema),
+  /**
+   * Correcciones 05 / M4: los comprobantes vivos del pedido, por fecha de emisión y número.
+   * Opcional: lo llenan la lista y el detalle (`GET /sales/orders[/:id]`); la respuesta de una
+   * acción sobre el pedido no lo trae, y ausente no quiere decir «sin comprobante».
+   */
+  documents: z.array(salesOrderDocumentLinkSchema).optional(),
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 
