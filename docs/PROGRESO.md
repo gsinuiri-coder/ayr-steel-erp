@@ -113,6 +113,22 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   producto terminado en metros, **sí toca kardex**); y el CHECK `products_roofing_kind_unit_check` recreado con
   ACCESORIO.
 
+- **Drywall sin receta** (2026-09-27, rama `feat/drywall-sin-receta`, PR #43). D-344, D-345 y D-346. **Dos
+  pases, los dos por subagentes** —autorrevisión y segundo modelo con `model: sonnet` y contexto limpio—, así
+  que **ninguno vale como pase independiente** (`docs/revision/drywall-sin-receta-segundo-modelo.md`: 0 P0,
+  3 P1 —lint roto en CI, un locator y una aserción del E2E nuevo, y `galvanizedDensity()` sin filtrar por
+  línea—, los tres resueltos antes del deploy; varios P2, todos resueltos salvo dos datos anotados para el
+  dueño). **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-27, motivo: esquema de un solo agente). Piezas de
+  riesgo para el pase cruzado: el fleje compatible (`common/drywall-strip.ts`, usado por el piso, `/planta`
+  y la orden) —toca kardex a través de `consume`/`stripOptions`—; la migración `d344` (`CHECK NOT is_active`
+  sobre `product_boms`, que no se borra); la CLI `retire:boms` (auditada, dry-run por defecto); y las tres
+  lecturas de `productBom` retiradas en `reservation-transfer`, `quotations.service` y `sales-orders.service`
+  (se verificó que eran restos de D-122 sin efecto observable, no se puede confirmar contra datos reales de
+  dev/demo). **Dos datos para el dueño, no defectos de código:** los pesos declarados de los perfiles
+  coinciden con el teórico **sin** el 1 % de merma de D-165 (el piso queda ~1 % bajo hasta que se revisen);
+  una nota de crédito de solo monto (descuento, ajuste) también libera cantidad facturable de la línea,
+  igual que D-223 ya lo hace por el total en dinero.
+
 ## Ventana de Correcciones 03b (2026-09-26, con migración)
 
 PR #39 (merge `78e8e9e`). SHA desplegado `34e6795`. Handoff: `docs/handoff/correcciones-03b.md`. UAT:
