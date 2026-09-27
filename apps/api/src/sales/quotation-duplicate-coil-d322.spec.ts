@@ -68,6 +68,7 @@ function serviceWith(opts: {
         }),
       },
       productBom: { findMany: jest.fn().mockResolvedValue([]) },
+      product: { findMany: jest.fn().mockResolvedValue([]) },
       quotationItem: {
         findMany: jest.fn().mockResolvedValue(
           opts.tied

@@ -121,6 +121,15 @@ export const productSchema = z.object({
    * que cuentan como «uso» es demasiado larga para adivinarla del lado del cliente.
    */
   canDelete: z.boolean(),
+  /**
+   * D-348: si se le puede cambiar el subtipo, el espesor o el color **en lo que toca al
+   * accesorio** (un accesorio, o pasar a serlo). `false` solo cuando es un accesorio con uso real
+   * (kardex, saldos, compras, pedidos, comprobantes, despachos, producción, reservas de pedido o
+   * una cotización que no esté anulada ni vencida); el resto del catálogo se edita como siempre.
+   * `structureLockReason` dice qué lo usa.
+   */
+  canEditStructure: z.boolean(),
+  structureLockReason: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -218,6 +227,11 @@ export type CreateProductInput = z.infer<typeof createProductSchema>;
 
 export const updateProductSchema = z
   .object({
+    /**
+     * D-348: el SKU solo cambia junto con el subtipo, el espesor o el color de un accesorio (el
+     * SKU los refleja). En cualquier otra edición, un SKU distinto del guardado se rechaza.
+     */
+    sku: skuSchema,
     name: nameSchema,
     unit: unitSchema,
     source: z.enum(PRODUCT_SOURCES),

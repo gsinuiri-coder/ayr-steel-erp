@@ -82,6 +82,7 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
     fiscalDocumentItem: noUsageMocks(),
     dispatchItem: noUsageMocks(),
     inventoryMovement: noUsageMocks(),
+    inventoryBalance: noUsageMocks(),
     reservation: noUsageMocks(),
     quotationReservation: noUsageMocks(),
     $transaction: jest.fn(),

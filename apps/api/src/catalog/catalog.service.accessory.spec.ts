@@ -1,5 +1,11 @@
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { BusinessLineCode, ProductSource, RoofingProductKind } from '@prisma/client';
+import {
+  BusinessLineCode,
+  ProductSource,
+  QuotationStatus,
+  RoofingProductKind,
+} from '@prisma/client';
 import {
   Decimal,
   canonicalAccessorySku,
@@ -74,6 +80,7 @@ describe('CatalogService — el accesorio (D-343)', () => {
     color: { findUnique: jest.fn() },
     product: { findUnique: jest.fn() },
     productBom: { findFirst: jest.fn() },
+    productionOrder: { count: jest.fn().mockResolvedValue(0) },
     $transaction: jest.fn(),
   };
   const colors = { resolveActive: jest.fn() };
@@ -185,30 +192,6 @@ describe('CatalogService — el accesorio (D-343)', () => {
       prisma.product.findUnique.mockResolvedValue(stored());
     });
 
-    it('cambiar el espesor de un accesorio es un 400: el SKU lo refleja', async () => {
-      await expect(service.update(ACTOR, 'p-acc', { thicknessMm: '0.45' })).rejects.toThrow(
-        /refleja el espesor y el color del accesorio/,
-      );
-    });
-
-    it('cambiar el color de un accesorio es un 400', async () => {
-      await expect(service.update(ACTOR, 'p-acc', { colorId: 'color-azul' })).rejects.toThrow(
-        /refleja el espesor y el color/,
-      );
-    });
-
-    it('cambiar el subtipo desde o hacia accesorio es un 400', async () => {
-      await expect(
-        service.update(ACTOR, 'p-acc', { roofingKind: RoofingProductKind.A_MEDIDA }),
-      ).rejects.toThrow(/refleja el espesor y el color/);
-      prisma.product.findUnique.mockResolvedValue(
-        stored({ roofingKind: RoofingProductKind.PLANCHA, unit: 'NIU', sku: 'PL030ROJO' }),
-      );
-      await expect(
-        service.update(ACTOR, 'p-acc', { roofingKind: RoofingProductKind.ACCESORIO }),
-      ).rejects.toThrow(/refleja el espesor y el color/);
-    });
-
     it('lo que no toca esos tres campos se edita normal (nombre, precio de lista)', async () => {
       await expect(
         service.update(ACTOR, 'p-acc', {
@@ -227,6 +210,186 @@ describe('CatalogService — el accesorio (D-343)', () => {
           listPricePen: '35.0000',
         }),
       ).rejects.toBe(STOP);
+    });
+  });
+
+  /**
+   * D-348 — subtipo, espesor y color de un accesorio cambian si el producto no tiene uso real.
+   * Las cotizaciones anuladas o vencidas no cuentan; una viva, un pedido o el kardex sí.
+   */
+  describe('edición de la estructura sin uso real (D-348)', () => {
+    interface Usage {
+      quotations?: { seq: number; status: QuotationStatus }[];
+      orders?: number[];
+      movements?: number;
+    }
+    let usage: Usage;
+    const update = jest.fn();
+    const queryRaw = jest.fn();
+
+    /** Aplica el filtro `quotation.status.notIn` que manda el código, como lo haría la base. */
+    function live(where: { quotation?: { status: { notIn: QuotationStatus[] } } }) {
+      return (usage.quotations ?? []).filter(
+        (q) => !(where.quotation?.status.notIn ?? []).includes(q.status),
+      );
+    }
+
+    beforeEach(() => {
+      usage = {};
+      update.mockReset().mockRejectedValue(STOP);
+      queryRaw.mockReset().mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(stored());
+      prisma.color.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+        Promise.resolve({ code: where.id === 'color-azul' ? 'AZUL' : 'ROJO-3020' }),
+      );
+      colors.resolveActive.mockImplementation((id: string | null) => Promise.resolve(id));
+      prisma.finish.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+        Promise.resolve({
+          id: where.id,
+          code: where.id,
+          isActive: true,
+          kind: 'PREPINTADO',
+          colorId: where.id === 'finish-azul' ? 'color-azul' : COLOR_ID,
+          businessLineId: 'bl-roofing',
+        }),
+      );
+      const count = (n = 0) => jest.fn().mockResolvedValue(n);
+      const tx = {
+        $queryRaw: queryRaw,
+        inventoryMovement: { count: count(usage.movements) },
+        inventoryBalance: { count: count() },
+        purchaseItem: { count: count() },
+        salesOrderItem: { findMany: jest.fn() },
+        fiscalDocumentItem: { count: count() },
+        dispatchItem: { count: count() },
+        productionOrder: { count: count() },
+        reservation: { count: count() },
+        quotationItem: { findMany: jest.fn() },
+        quotationReservation: { count: count() },
+        product: { update },
+      };
+      tx.inventoryMovement.count.mockImplementation(() => Promise.resolve(usage.movements ?? 0));
+      tx.salesOrderItem.findMany.mockImplementation(() =>
+        Promise.resolve((usage.orders ?? []).map((seq) => ({ salesOrder: { seq } }))),
+      );
+      tx.quotationItem.findMany.mockImplementation(({ where }) =>
+        Promise.resolve(live(where).map((q) => ({ quotation: { seq: q.seq } }))),
+      );
+      prisma.$transaction.mockImplementation((fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+    });
+
+    it('solo con cotizaciones anuladas o vencidas: el espesor cambia junto con su SKU', async () => {
+      usage.quotations = [
+        { seq: 3, status: QuotationStatus.CANCELLED },
+        { seq: 4, status: QuotationStatus.EXPIRED },
+      ];
+      await expect(
+        service.update(ACTOR, 'p-acc', { thicknessMm: '0.45', sku: 'ACCES045ROJO' }),
+      ).rejects.toBe(STOP);
+      // Revalidó bajo lock dentro de la transacción y llegó a escribir el SKU nuevo.
+      expect(queryRaw).toHaveBeenCalled();
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ sku: 'ACCES045ROJO', thicknessMm: '0.45' }),
+        }),
+      );
+    });
+
+    it('el color cambia si no hay uso real, con el SKU del color nuevo', async () => {
+      await expect(
+        service.update(ACTOR, 'p-acc', {
+          colorId: 'color-azul',
+          finishId: 'finish-azul',
+          sku: 'ACCES030AZUL',
+        }),
+      ).rejects.toBe(STOP);
+    });
+
+    it('con una cotización emitida viva rebota nombrándola', async () => {
+      usage.quotations = [
+        { seq: 3, status: QuotationStatus.CANCELLED },
+        { seq: 5, status: QuotationStatus.EMITTED },
+      ];
+      const err = service.update(ACTOR, 'p-acc', { thicknessMm: '0.45', sku: 'ACCES045ROJO' });
+      await expect(err).rejects.toBeInstanceOf(ConflictException);
+      await expect(err).rejects.toThrow(/cotización\(es\) vigente\(s\) COT-000005/);
+      await expect(err).rejects.toThrow(/Crea otro producto y desactiva este/);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it('con un pedido rebota nombrándolo', async () => {
+      usage.orders = [12];
+      await expect(
+        service.update(ACTOR, 'p-acc', { thicknessMm: '0.45', sku: 'ACCES045ROJO' }),
+      ).rejects.toThrow(/pedido\(s\) PED-000012/);
+    });
+
+    it('con kardex rebota con el conteo', async () => {
+      usage.movements = 2;
+      await expect(
+        service.update(ACTOR, 'p-acc', { roofingKind: RoofingProductKind.A_MEDIDA, sku: 'COB030' }),
+      ).rejects.toThrow(/2 movimiento\(s\) de kardex/);
+    });
+
+    it('cambiar el espesor sin corregir el SKU es un error del campo SKU', async () => {
+      const err = service.update(ACTOR, 'p-acc', { thicknessMm: '0.45' });
+      await expect(err).rejects.toBeInstanceOf(BadRequestException);
+      await expect(err).rejects.toMatchObject({
+        response: { errors: { sku: [expect.stringMatching(/es ACCES045ROJO/)] } },
+      });
+    });
+
+    it('pasar a accesorio con un SKU fuera del patrón es error de campo; con el canónico entra', async () => {
+      prisma.product.findUnique.mockResolvedValue(
+        stored({ roofingKind: RoofingProductKind.A_MEDIDA, sku: 'COB030ROJO' }),
+      );
+      await expect(
+        service.update(ACTOR, 'p-acc', { roofingKind: RoofingProductKind.ACCESORIO }),
+      ).rejects.toMatchObject({
+        response: { errors: { sku: [expect.stringMatching(/es ACCES030ROJO/)] } },
+      });
+      await expect(
+        service.update(ACTOR, 'p-acc', {
+          roofingKind: RoofingProductKind.ACCESORIO,
+          sku: 'ACCES030ROJO',
+        }),
+      ).rejects.toBe(STOP);
+    });
+
+    it('pasar a accesorio valida la unidad como en el alta (metros lineales)', async () => {
+      prisma.product.findUnique.mockResolvedValue(
+        stored({
+          roofingKind: RoofingProductKind.PLANCHA,
+          unit: 'NIU',
+          lengthMm: new Decimal('3000.00'),
+          sku: 'PL030ROJO',
+        }),
+      );
+      await expect(
+        service.update(ACTOR, 'p-acc', {
+          roofingKind: RoofingProductKind.ACCESORIO,
+          sku: 'ACCES030ROJO',
+          lengthMm: null,
+        }),
+      ).rejects.toThrow(/Un accesorio se mide en metros lineales/);
+    });
+
+    it('dejar de ser accesorio obliga a salir del prefijo ACCES', async () => {
+      await expect(
+        service.update(ACTOR, 'p-acc', { roofingKind: RoofingProductKind.A_MEDIDA }),
+      ).rejects.toMatchObject({
+        response: { errors: { sku: [expect.stringMatching(/Los SKU ACCES… son de accesorios/)] } },
+      });
+      await expect(
+        service.update(ACTOR, 'p-acc', { roofingKind: RoofingProductKind.A_MEDIDA, sku: 'COB030' }),
+      ).rejects.toBe(STOP);
+    });
+
+    it('el SKU no se edita suelto, sin cambiar la estructura de un accesorio', async () => {
+      await expect(service.update(ACTOR, 'p-acc', { sku: 'OTRO' })).rejects.toMatchObject({
+        response: { errors: { sku: [expect.stringMatching(/El SKU no se edita/)] } },
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 });

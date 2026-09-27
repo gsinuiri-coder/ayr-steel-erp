@@ -52,6 +52,7 @@ describe('CatalogService.search (RF-S3/M1)', () => {
     fiscalDocumentItem: noUsage(),
     dispatchItem: noUsage(),
     inventoryMovement: noUsage(),
+    inventoryBalance: noUsage(),
     reservation: noUsage(),
     quotationReservation: noUsage(),
   };

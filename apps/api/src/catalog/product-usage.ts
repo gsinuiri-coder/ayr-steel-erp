@@ -33,7 +33,7 @@ const PRODUCT = InventoryItemType.PRODUCT;
  * de este producto de venta de bobina. `[]` si no es uno (`isCoilSaleProduct`) o si nunca hubo
  * una bobina de su espesor/acabado.
  */
-async function coilCodesEverInPool(
+export async function coilCodesEverInPool(
   tx: Prisma.TransactionClient,
   product: ProductUsageIdentity & { name: string },
 ): Promise<string[]> {
