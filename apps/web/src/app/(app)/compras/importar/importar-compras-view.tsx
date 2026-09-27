@@ -33,6 +33,7 @@ import {
   type ReviewLine,
 } from '@/lib/purchase-import';
 import { RoleGate } from '@/components/role-gate';
+import { ReasonDialog } from '@/components/reason-dialog';
 import { InfoPopover } from '@/components/info-popover';
 import { ProductDialog } from '@/components/catalog/product-dialog';
 import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
@@ -70,6 +71,7 @@ export function ImportarComprasView() {
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [result, setResult] = useState<PurchaseImportResultDto | null>(null);
   const [undone, setUndone] = useState<PurchaseImportUndoResultDto | null>(null);
+  const [undoOpen, setUndoOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const version = useRef(0);
   const idempotency = useIdempotencyKey();
@@ -235,11 +237,13 @@ export function ImportarComprasView() {
   });
 
   const undo = useMutation({
-    mutationFn: (batchId: string) =>
+    mutationFn: ({ batchId, reason }: { batchId: string; reason: string }) =>
       api<PurchaseImportUndoResultDto>(`/imports/purchases/batches/${batchId}/undo`, {
         method: 'POST',
+        body: { reason },
       }),
     onSuccess: (data) => {
+      setUndoOpen(false);
       setUndone(data);
       toast.success(`${String(data.cancelled.length)} compras anuladas`);
     },
@@ -340,11 +344,23 @@ export function ImportarComprasView() {
                     pending={undo.isPending}
                     pendingText="Deshaciendo…"
                     onClick={() => {
-                      undo.mutate(result.batchId);
+                      setUndoOpen(true);
                     }}
                   >
                     Deshacer lote
                   </Button>
+                  {/* Anula compras: pide el motivo, como toda anulación (segundo modelo, P1). */}
+                  <ReasonDialog
+                    open={undoOpen}
+                    onOpenChange={setUndoOpen}
+                    title="Deshacer el lote"
+                    description={`Se anularán las compras de esta importación que sigan en borrador y sin pagos (${String(result.purchases.length)} en el lote). Las ya recibidas no se tocan.`}
+                    confirmLabel="Deshacer lote"
+                    pending={undo.isPending}
+                    onConfirm={(reason) => {
+                      undo.mutate({ batchId: result.batchId, reason });
+                    }}
+                  />
                 </div>
               )}
               {undone && (

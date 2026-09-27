@@ -107,3 +107,16 @@ describe('productsRealUsage (D-348)', () => {
     );
   });
 });
+
+describe('cotización vencida por fecha (D-348, segundo modelo)', () => {
+  it('una EMITIDA con validUntil pasado no cuenta aunque el job no la haya marcado EXPIRED', async () => {
+    const tx = fakeTx({});
+    await describeProductRealUsage(tx, PRODUCT);
+    const findMany = (tx as unknown as { quotationItem: { findMany: jest.Mock } }).quotationItem
+      .findMany;
+    const call = findMany.mock.calls[0] as [{ where: { quotation: Record<string, unknown> } }];
+    expect(call[0].where.quotation).toMatchObject({
+      NOT: { status: QuotationStatus.EMITTED, validUntil: { lt: expect.any(Date) } },
+    });
+  });
+});

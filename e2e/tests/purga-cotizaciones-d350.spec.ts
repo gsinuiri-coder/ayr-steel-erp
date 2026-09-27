@@ -1,7 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 import { adminApi, createFinish, postJson } from '../helpers/api';
-import { createCustomer, createQuotation, createSellableProduct } from '../helpers/sales';
+import {
+  createCustomer,
+  createQuotation,
+  createSellableProduct,
+  purgeSalesTrail,
+} from '../helpers/sales';
+import { quoteAndOrder, setupRoofingScenario } from '../helpers/roofing';
 
 /**
  * D-350 — la CLI real de la purga de cotizaciones anuladas, contra la base de pruebas: el dry-run
@@ -42,7 +48,18 @@ test('D-350 — dry-run, execute y bloqueo de una no anulada', async ({ baseURL 
   await postJson(api, `/api/sales/quotations/${cancelled.id}/cancel`, {
     reason: 'Prueba E2E de D-350',
   });
-  const numbers = `${cancelled.code},${live.code}`;
+  // Segundo modelo (P1): el bloqueo «tiene pedido» contra Postgres real. Confirmar crea el pedido;
+  // anularlo devuelve la cotización a EMITIDA, y recién entonces se anula: queda ANULADA con un
+  // pedido (anulado) detrás, que la purga no puede tocar.
+  // Confirmar exige stock: se cotiza sobre el escenario de coberturas, que trae su bobina.
+  const scenario = await setupRoofingScenario(api, { weightKg: '1000' });
+  const { quotation: ordered, order } = await quoteAndOrder(api, {
+    customerId: customer.id,
+    productId: scenario.product.id,
+    rows: [{ lengthMm: '3000', qty: 2 }],
+  });
+  await purgeSalesTrail(api, { orderIds: [order.id], quotationIds: [ordered.id] });
+  const numbers = `${cancelled.code},${live.code},${ordered.code}`;
 
   // Dry-run: informa, no borra.
   const dry = purge(['--numbers', numbers]);
@@ -50,6 +67,9 @@ test('D-350 — dry-run, execute y bloqueo de una no anulada', async ({ baseURL 
   expect(dry.stdout).toContain(`A borrar: 1`);
   expect(dry.stdout).toContain(`${cancelled.code}  CANCELLED`);
   expect(dry.stdout).toMatch(new RegExp(`${live.code}\\s+EMITTED\\s+está EMITTED, no ANULADA`));
+  expect(dry.stdout).toMatch(
+    new RegExp(`${ordered.code}\\s+CANCELLED\\s+tiene pedido\\(s\\) ${order.code}`),
+  );
   expect((await api.get(`/api/sales/quotations/${cancelled.id}`)).status()).toBe(200);
 
   // Execute: se va la anulada; la emitida queda.
@@ -58,6 +78,8 @@ test('D-350 — dry-run, execute y bloqueo de una no anulada', async ({ baseURL 
   expect(run.stdout).toContain('Borradas: 1');
   expect((await api.get(`/api/sales/quotations/${cancelled.id}`)).status()).toBe(404);
   expect((await api.get(`/api/sales/quotations/${live.id}`)).status()).toBe(200);
+  // La anulada con pedido detrás sigue ahí: la purga no la tocó.
+  expect((await api.get(`/api/sales/quotations/${ordered.id}`)).status()).toBe(200);
 
   // El producto sigue usado por la emitida: todavía no es borrable.
   const after = (await (await api.get(`/api/catalog/${product.id}`)).json()) as {

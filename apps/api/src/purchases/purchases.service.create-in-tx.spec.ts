@@ -140,3 +140,23 @@ describe('PurchasesService.resolveExchangeRate (D-351)', () => {
     expect(pen.rate.toFixed(0)).toBe('1');
   });
 });
+
+describe('PurchasesService.cancel — onlyDraft (D-351, deshacer lote)', () => {
+  it('una compra que ya se recibió no se anula desde el lote', async () => {
+    const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    const transaction = jest.fn();
+    Object.assign(svc, {
+      operationDate: { resolve: () => '2026-09-27' },
+      prisma: {
+        purchase: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'pu-1', status: 'RECEIVED', payments: [] }),
+        },
+        $transaction: transaction,
+      },
+    });
+    await expect(
+      svc.cancel(ACTOR, 'pu-1', { reason: 'Deshacer lote' }, { onlyDraft: true }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+});

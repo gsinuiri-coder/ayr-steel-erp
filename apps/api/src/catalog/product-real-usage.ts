@@ -1,5 +1,5 @@
 import { InventoryItemType, QuotationStatus, type Prisma } from '@prisma/client';
-import { quotationCode, salesOrderCode } from '@ayr/shared';
+import { businessToday, quotationCode, salesOrderCode, toDateOnly } from '@ayr/shared';
 import { isCoilSaleProduct } from '../sales/coil-sale-product';
 import { coilCodesEverInPool, type ProductUsageIdentity } from './product-usage';
 
@@ -25,7 +25,20 @@ export const DEAD_QUOTATION_STATUSES: readonly QuotationStatus[] = [
   QuotationStatus.EXPIRED,
 ];
 
-const liveQuotation = { status: { notIn: [...DEAD_QUOTATION_STATUSES] } };
+/**
+ * Una cotización viva: ni anulada ni vencida. «Vencida» también es la EMITIDA cuyo `validUntil`
+ * ya pasó aunque el job diario todavía no la haya marcado `EXPIRED` (el mismo criterio que
+ * `isQuotationExpired`/`confirm()`; segundo modelo, P1). `validUntil` nulo no vence (D-157).
+ */
+function liveQuotation(): Prisma.QuotationWhereInput {
+  return {
+    status: { notIn: [...DEAD_QUOTATION_STATUSES] },
+    NOT: {
+      status: QuotationStatus.EMITTED,
+      validUntil: { lt: toDateOnly(businessToday()) },
+    },
+  };
+}
 
 function list(codes: readonly string[]): string {
   const unique = [...new Set(codes)];
@@ -67,11 +80,11 @@ export async function describeProductRealUsage(
     tx.productionOrder.count({ where }),
     tx.reservation.count({ where: { itemType: PRODUCT, itemId: product.id } }),
     tx.quotationItem.findMany({
-      where: { ...where, quotation: liveQuotation },
+      where: { ...where, quotation: liveQuotation() },
       select: { quotation: { select: { seq: true } } },
     }),
     tx.quotationReservation.count({
-      where: { itemType: PRODUCT, itemId: product.id, quotation: liveQuotation },
+      where: { itemType: PRODUCT, itemId: product.id, quotation: liveQuotation() },
     }),
     isCoilSaleProduct(product) ? coilCodesEverInPool(tx, product) : Promise.resolve([]),
   ]);
@@ -139,11 +152,11 @@ export async function productsRealUsage(
     tx.productionOrder.findMany({ where: { productId: { in: ids } }, ...byProduct }),
     tx.reservation.findMany({ where: polymorphic, ...byItem }),
     tx.quotationItem.findMany({
-      where: { productId: { in: ids }, quotation: liveQuotation },
+      where: { productId: { in: ids }, quotation: liveQuotation() },
       ...byProduct,
     }),
     tx.quotationReservation.findMany({
-      where: { ...polymorphic, quotation: liveQuotation },
+      where: { ...polymorphic, quotation: liveQuotation() },
       ...byItem,
     }),
   ]);

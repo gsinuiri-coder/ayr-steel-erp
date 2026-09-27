@@ -38,7 +38,7 @@ export interface ParsedPurchaseFile {
   documents: PurchaseImportDocumentInput[];
   /**
    * Por comprobante, lo que solo se ve en el archivo y no en el comprobante armado: filas que no
-   * repiten la cabecera, bobinas con KG y CANTIDAD distintos. Son errores del preview.
+   * repiten la cabecera, bobinas con KG y CANTIDAD distintos. Son avisos del preview, que dicen qué se tomó.
    */
   headerConflicts: Map<string, string[]>;
   rows: number;
@@ -110,7 +110,7 @@ export function parsePurchaseRows(raws: readonly Record<string, unknown>[]): Par
     };
     if (isCoil && kgConflict(raw)) {
       report(
-        `Fila ${String(rowNumber)}: KG y CANTIDAD no coinciden; en una bobina la cantidad son los kilos`,
+        `Fila ${String(rowNumber)}: KG y CANTIDAD no coinciden; en una bobina la cantidad son los kilos: se tomó KG`,
       );
     }
 
@@ -120,7 +120,7 @@ export function parsePurchaseRows(raws: readonly Record<string, unknown>[]): Par
       if (conflicts.length > 0) {
         const labels = conflicts.map((f) => PURCHASE_IMPORT_COLUMNS[f].header).join(', ');
         report(
-          `Fila ${String(rowNumber)}: trae ${labels} distinto de la primera fila del comprobante`,
+          `Fila ${String(rowNumber)}: trae ${labels} distinto de la primera fila del comprobante: se tomó el de la primera fila`,
         );
       }
       // Las observaciones de varias filas se juntan, sin repetir.

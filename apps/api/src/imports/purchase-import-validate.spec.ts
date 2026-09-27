@@ -484,3 +484,38 @@ describe('colorMatches', () => {
     expect(colorMatches(written, rojo)).toBe(expected);
   });
 });
+
+describe('validateDocument — el alta pasa por createPurchaseSchema (autorrevisión, P1)', () => {
+  it('kilos que el redondeo deja en cero son error de la fila, no una bobina de 0 kg', () => {
+    const r = validateDocument(doc({ lines: [coilLine({ qty: '0,0004' })] }), ctx());
+    expect(r.input).toBeNull();
+    expect(r.dto.lines[0]?.issues[0]).toMatchObject({
+      field: 'lines.0.qty',
+      message: expect.stringMatching(/^Fila 2: /),
+    });
+  });
+
+  it('un precio fuera de rango no llega a la base (sin 500 por overflow)', () => {
+    const r = validateDocument(
+      doc({ lines: [coilLine({ unitPrice: '99999999999999999999' })] }),
+      ctx(),
+    );
+    expect(r.input).toBeNull();
+    expect(r.dto.lines[0]?.issues.length).toBeGreaterThan(0);
+  });
+
+  it('el duplicado vivo se detecta aunque el número traiga otros ceros a la izquierda', () => {
+    const r = validateDocument(
+      doc({ number: '12345' }),
+      ctx({
+        livePurchases: new Map([
+          [
+            livePurchaseKey('sup-1', 'FACTURA', 'F001', '00012345'),
+            { issueDate: '2026-09-20', status: 'RECEIVED' },
+          ],
+        ]),
+      }),
+    );
+    expect(errors(r)[0]).toMatch(/Ya registrada/);
+  });
+});

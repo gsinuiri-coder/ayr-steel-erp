@@ -1,5 +1,6 @@
 import {
   businessLineOf,
+  createPurchaseSchema,
   COIL_BUSINESS_LINES,
   comparableDocument,
   commercialColorToken,
@@ -7,6 +8,7 @@ import {
   Decimal,
   money,
   MAX_PURCHASE_IMPORT_LINES,
+  MAX_VALUE,
   newSupplierCodeSchema,
   normalizeDecimal,
   paymentTermsOf,
@@ -105,7 +107,9 @@ export function livePurchaseKey(
   series: string,
   number: string,
 ): string {
-  return `${supplierId}|${docType}|${series.toUpperCase()}|${number}`;
+  // El número sin ceros a la izquierda: `F001-00012` y `F001-12` son el mismo papel del proveedor
+  // (autorrevisión, P2), aunque el índice único de D-132 los compare como texto.
+  return `${supplierId}|${docType}|${series.toUpperCase()}|${number.replace(/^0+(?=\d)/, '')}`;
 }
 
 const DEFAULT_IGV = '18';
@@ -247,7 +251,7 @@ export function validateDocument(
   } else if (currency === 'USD') {
     if (doc.exchangeRate !== '') {
       const rate = normalizeDecimal(doc.exchangeRate);
-      if (rate === null || toDecimal(rate).lte(0)) {
+      if (rate === null || toDecimal(rate).lte(0) || toDecimal(rate).gt(MAX_VALUE.RATE)) {
         error('exchangeRate', `«${doc.exchangeRate}» no es un tipo de cambio`);
       } else {
         exchangeRate = toDecimal(rate).toFixed(4);
@@ -382,8 +386,46 @@ export function validateDocument(
       return l.item;
     }),
   };
+  // D-351 (autorrevisión, P1): el alta armada pasa además por **el mismo schema que el
+  // formulario** (`createPurchaseSchema`): un valor que el redondeo deja en cero (0,0004 kg), un
+  // número fuera de rango o un texto demasiado largo no llegan a la base. Lo que el schema rechaza
+  // se vuelve error del campo que lo trajo. Un proveedor nuevo todavía no tiene id: se prueba con
+  // uno de relleno, que la confirmación reemplaza por el del proveedor creado.
+  const parsed = createPurchaseSchema.safeParse({
+    ...input,
+    // Los ids ya los resolvió el maestro (arriba): acá solo se prueban los **valores**.
+    supplierId: PLACEHOLDER_ID,
+    items: input.items.map((item) => ({
+      ...item,
+      ...(item.productId ? { productId: PLACEHOLDER_ID } : {}),
+      ...(item.finishId ? { finishId: PLACEHOLDER_ID } : {}),
+    })),
+  });
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      const [head, index, field] = issue.path;
+      if (head === 'items' && typeof index === 'number') {
+        const line = dto.lines[index];
+        const at = line && line.rowNumber > 0 ? `Fila ${String(line.rowNumber)}: ` : '';
+        line?.issues.push({
+          severity: 'error',
+          field: `lines.${String(index)}.${String(field ?? 'line')}`,
+          message: `${at}${issue.message}`,
+        });
+      } else {
+        dto.issues.push({
+          severity: 'error',
+          field: String(head ?? 'document'),
+          message: issue.message,
+        });
+      }
+    }
+    return { dto, input: null, externalCodes: [] };
+  }
   return { dto, input, externalCodes: lines.map((l) => l.externalCode) };
 }
+
+const PLACEHOLDER_ID = '00000000-0000-4000-8000-000000000000';
 
 interface ValidatedLine {
   dto: PurchaseImportLineDto;
@@ -458,7 +500,23 @@ function validateLine(
   }
 
   const subtotal =
-    qty !== null && unitPrice !== null ? money(toDecimal(qty).times(unitPrice)) : null;
+    qty !== null && unitPrice !== null
+      ? // Con los mismos redondeos con que se guarda la línea (kg 3, dinero 4): el preview no
+        // muestra un total distinto del que va a quedar (autorrevisión, P2).
+        money(toDecimal(toDecimal(qty).toFixed(3)).times(toDecimal(unitPrice).toFixed(4)))
+      : null;
+  // Topes de las columnas (`MAX_VALUE`): un número fuera de rango es error de la fila y no un 500
+  // por desborde al grabar (autorrevisión, P1).
+  if (qty !== null && toDecimal(qty).gt(MAX_VALUE.KG))
+    error('qty', 'La cantidad está fuera de rango');
+  if (subtotal?.gt(MAX_VALUE.MONEY) === true) {
+    error('unitPrice', 'El precio o el importe de la línea están fuera de rango');
+  }
+  if (thickness !== null && toDecimal(thickness).gt(MAX_VALUE.THICKNESS_MM)) {
+    error('thicknessMm', 'El espesor está fuera de rango');
+  }
+  if (width !== null && toDecimal(width).gt(MAX_VALUE.WIDTH_MM))
+    error('widthMm', 'El ancho está fuera de rango');
   const dto: PurchaseImportLineDto = {
     ...line,
     description,

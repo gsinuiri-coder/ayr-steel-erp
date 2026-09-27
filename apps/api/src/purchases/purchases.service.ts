@@ -513,7 +513,18 @@ export class PurchasesService {
    * creó. Se bloquea si algo de lo que entró con esa compra ya se movió después:
    * revertir el ingreso de kilos que ya salieron dejaría el saldo en negativo.
    */
-  async cancel(actor: RequestUser, id: string, input: CancelPurchaseInput): Promise<PurchaseDto> {
+  async cancel(
+    actor: RequestUser,
+    id: string,
+    input: CancelPurchaseInput,
+    /**
+     * D-351 (autorrevisión): deshacer un lote del importador solo anula borradores. Sin esto, una
+     * compra recibida entre la lectura del lote y esta anulación se anulaba recibida (con su
+     * reversa de kardex). La anulación condicionada de abajo usa el estado leído acá, así que
+     * exigirlo cierra la carrera.
+     */
+    options: { onlyDraft?: boolean } = {},
+  ): Promise<PurchaseDto> {
     const { reason } = input;
     // D-124: la anulación se fecha hoy salvo que un administrador la retrofeche; no
     // hereda la fecha de la recepción que deshace.
@@ -525,6 +536,9 @@ export class PurchasesService {
     if (!purchase) throw new NotFoundException('Compra no encontrada');
     if (purchase.status === PurchaseStatus.CANCELLED) {
       throw new BadRequestException('La compra ya está anulada');
+    }
+    if (options.onlyDraft === true && purchase.status !== PurchaseStatus.DRAFT) {
+      throw new ConflictException('La compra ya no está en borrador: no se anula desde el lote');
     }
 
     await this.prisma.$transaction(

@@ -21,6 +21,8 @@ import {
   type PurchaseImportResultDto,
   type PurchaseImportUndoResultDto,
   type ValidatePurchaseImportInput,
+  undoPurchaseImportSchema,
+  type UndoPurchaseImportInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -86,7 +88,8 @@ export class PurchaseImportController {
   undo(
     @CurrentUser() actor: RequestUser,
     @Param('batchId', new ParseUUIDPipe()) batchId: string,
+    @Body(new ZodValidationPipe(undoPurchaseImportSchema)) body: UndoPurchaseImportInput,
   ): Promise<PurchaseImportUndoResultDto> {
-    return this.imports.undo(actor, batchId);
+    return this.imports.undo(actor, batchId, body.reason);
   }
 }

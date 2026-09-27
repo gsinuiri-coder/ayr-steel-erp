@@ -383,3 +383,13 @@ export function suggestSupplierCode(name: string, taken: ReadonlySet<string>): s
 
 /** El código de un proveedor nuevo: las mismas reglas que el alta. */
 export const newSupplierCodeSchema = supplierCodeSchema;
+
+/** Deshacer un lote (D-351): anula compras, así que pide su motivo, como toda anulación. */
+export const undoPurchaseImportSchema = z.object({
+  reason: z
+    .string({ required_error: 'El motivo es obligatorio' })
+    .trim()
+    .min(3, 'Explica el motivo en al menos 3 caracteres')
+    .max(180, 'Máximo 180 caracteres'),
+});
+export type UndoPurchaseImportInput = z.infer<typeof undoPurchaseImportSchema>;

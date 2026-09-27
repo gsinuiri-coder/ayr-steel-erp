@@ -503,7 +503,11 @@ export class CatalogService {
         if (accessoryStructureChange) {
           // D-348: mismo lock que el borrado (D-347). Una línea nueva de pedido, cotización o
           // compra toma un lock de clave sobre esta fila por su FK, así que no puede aparecer
-          // entre el chequeo y el cambio.
+          // entre el chequeo y el cambio. **Riesgo residual (el mismo de D-347):** el kardex y las
+          // reservas son polimórficos, sin FK; los escritores de kardex conocidos de un producto pasan antes
+          // por una fila con FK (línea de compra, de pedido, OP) que ya cuenta como uso, salvo la
+          // carga inicial, que toma este mismo lock a mano (M6). Un escritor nuevo que no lo haga
+          // reabre el hueco (autorrevisión P2-6, segundo modelo P1-1).
           await tx.$queryRaw`SELECT "id" FROM "products" WHERE "id" = ${id}::uuid FOR UPDATE`;
           const reasons = await describeProductRealUsage(tx, before);
           if (reasons.length > 0) {

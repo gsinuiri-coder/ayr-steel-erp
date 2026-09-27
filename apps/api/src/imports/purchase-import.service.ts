@@ -61,6 +61,9 @@ import { initialLoadReferencesOf } from './purchase-import-initial-load';
  * el padrón, a la vista y en la misma transacción (D-158); el acabado y el producto no se crean
  * nunca desde acá.
  */
+/** Scope de la clave de idempotencia de la confirmación (D-182). */
+const IDEMPOTENCY_SCOPE = 'purchase-import:confirm';
+
 @Injectable()
 export class PurchaseImportService {
   constructor(
@@ -105,7 +108,7 @@ export class PurchaseImportService {
       const extra: PurchaseImportIssueDto[] = (fileIssues.get(doc.key) ?? []).map((message) => ({
         severity: 'warning',
         field: 'document',
-        message: `${message} (se tomó la primera fila)`,
+        message,
       }));
       const name = doc.supplierId === null ? ctx.padron.get(doc.supplierRuc) : undefined;
       if (name !== undefined && !ctx.suppliersByRuc.has(doc.supplierRuc)) {
@@ -251,7 +254,6 @@ export class PurchaseImportService {
       where: {
         supplierId: { in: knownIds },
         status: { not: PurchaseStatus.CANCELLED },
-        number: { in: [...new Set(documents.map((d) => d.number))] },
       },
       select: {
         supplierId: true,
@@ -362,6 +364,16 @@ export class PurchaseImportService {
     actor: RequestUser,
     input: ConfirmPurchaseImportInput,
   ): Promise<PurchaseImportResultDto> {
+    // D-182 (autorrevisión, P1): un reintento con la misma clave de un envío que **sí** entró
+    // tiene que devolver ese lote **antes** de validar — si no, cada comprobante ya se ve como
+    // «Ya registrada» y el usuario pierde el lote (y su «Deshacer lote»).
+    if (input.idempotencyKey !== undefined) {
+      const seen = await this.prisma.idempotencyKey.findUnique({
+        where: { key: input.idempotencyKey },
+      });
+      if (seen?.scope === IDEMPOTENCY_SCOPE)
+        return this.batchResult(this.prisma, seen.resourceId, []);
+    }
     // Todo lo que va a un tercero (padrón, SUNAT) se resuelve **antes** de abrir la transacción.
     const { ctx } = await this.loadContext(input.documents);
     const validated = this.validateAll(input.documents, ctx);
@@ -377,11 +389,7 @@ export class PurchaseImportService {
 
     return this.prisma.$transaction(
       async (tx) => {
-        const claim = await claimIdempotencyKey(
-          tx,
-          'purchase-import:confirm',
-          input.idempotencyKey,
-        );
+        const claim = await claimIdempotencyKey(tx, IDEMPOTENCY_SCOPE, input.idempotencyKey);
         if (!claim.claimed) return this.batchResult(tx, claim.resourceId, []);
         const batchId = claim.resourceId;
 
@@ -518,7 +526,11 @@ export class PurchaseImportService {
    * del lote que sigan en BORRADOR y sin pagos. Las recibidas, las pagadas y las ya anuladas se
    * nombran y no se tocan. Solo ADMINISTRADOR: anular una compra ya lo es.
    */
-  async undo(actor: RequestUser, batchId: string): Promise<PurchaseImportUndoResultDto> {
+  async undo(
+    actor: RequestUser,
+    batchId: string,
+    reason: string,
+  ): Promise<PurchaseImportUndoResultDto> {
     if (actor.role !== Role.ADMINISTRADOR) {
       throw new ForbiddenException('Solo un administrador puede deshacer un lote de compras');
     }
@@ -546,9 +558,15 @@ export class PurchaseImportService {
         kept.push({ document, reason: 'tiene pagos registrados' });
       } else {
         try {
-          await this.purchases.cancel(actor, p.id, {
-            reason: `Deshacer el lote de importación ${batchId}`,
-          });
+          await this.purchases.cancel(
+            actor,
+            p.id,
+            {
+              // La anulación lleva el motivo del usuario (como toda anulación) y dice de qué lote.
+              reason: `${reason} (lote ${batchId.slice(0, 8)})`.slice(0, 240),
+            },
+            { onlyDraft: true },
+          );
           cancelled.push(document);
         } catch (err) {
           if (!(err instanceof HttpException)) throw err;
@@ -563,7 +581,7 @@ export class PurchaseImportService {
         action: 'imports.purchases.undo',
         entity: 'purchases',
         entityId: batchId,
-        after: { batchId, cancelled, kept },
+        after: { batchId, reason, cancelled, kept },
       }),
     );
     return { batchId, cancelled, kept };

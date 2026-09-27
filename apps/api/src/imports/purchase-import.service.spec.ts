@@ -105,7 +105,25 @@ function setup(
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue(null),
     },
-    purchase: { findMany: jest.fn().mockResolvedValue([]) },
+    purchase: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(
+          opts.claimed === false
+            ? [{ id: 'pu-1', series: 'F001', number: '1', supplier: { name: 'Aceros SAC' } }]
+            : [],
+        ),
+    },
+    idempotencyKey: {
+      findUnique: jest.fn().mockResolvedValue(
+        opts.claimed === false
+          ? {
+              scope: 'purchase-import:confirm',
+              resourceId: '11111111-1111-1111-1111-111111111111',
+            }
+          : null,
+      ),
+    },
     $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
   };
   const purchases = {
@@ -206,6 +224,10 @@ describe('PurchaseImportService.confirm (D-351)', () => {
     });
     expect(result.batchId).toBe('11111111-1111-1111-1111-111111111111');
     expect(s.purchases.createInTx).not.toHaveBeenCalled();
+    // Autorrevisión (P1): el reintento no vuelve a validar — si validara, las compras que ya
+    // creó el primer envío se verían como «Ya registrada» y el lote se perdería.
+    expect(s.prisma.supplier.findMany).not.toHaveBeenCalled();
+    expect(s.prisma.$transaction).not.toHaveBeenCalled();
     expect(result.purchases).toEqual([{ id: 'pu-1', document: 'F001-1', supplier: 'Aceros SAC' }]);
   });
 
@@ -284,11 +306,20 @@ describe('PurchaseImportService.undo (D-351)', () => {
       { id: 'c', series: 'F001', number: '3', status: 'DRAFT', payments: [{ id: 'pay' }] },
       { id: 'd', series: 'F001', number: '4', status: 'CANCELLED', payments: [] },
     ]);
-    const result = await s.service.undo(ADMIN, '22222222-2222-2222-2222-222222222222');
+    const result = await s.service.undo(
+      ADMIN,
+      '22222222-2222-2222-2222-222222222222',
+      'Archivo equivocado',
+    );
     expect(s.purchases.cancel).toHaveBeenCalledTimes(1);
-    expect(s.purchases.cancel).toHaveBeenCalledWith(ADMIN, 'a', {
-      reason: 'Deshacer el lote de importación 22222222-2222-2222-2222-222222222222',
-    });
+    expect(s.purchases.cancel).toHaveBeenCalledWith(
+      ADMIN,
+      'a',
+      {
+        reason: 'Archivo equivocado (lote 22222222)',
+      },
+      { onlyDraft: true },
+    );
     expect(result.cancelled).toEqual(['F001-1']);
     expect(result.kept).toEqual([
       { document: 'F001-2', reason: 'ya se recibió: anúlala desde la compra si corresponde' },
@@ -303,9 +334,11 @@ describe('PurchaseImportService.undo (D-351)', () => {
 
   it('solo ADMINISTRADOR; un lote vacío es 404', async () => {
     const s = setup();
-    await expect(s.service.undo(SUPERVISOR, 'x')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(s.service.undo(SUPERVISOR, 'x', 'motivo')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
     s.prisma.purchase.findMany.mockResolvedValue([]);
-    await expect(s.service.undo(ADMIN, 'x')).rejects.toThrow(/no tiene compras/);
+    await expect(s.service.undo(ADMIN, 'x', 'motivo')).rejects.toThrow(/no tiene compras/);
   });
 });
 

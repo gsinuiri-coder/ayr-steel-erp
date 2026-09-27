@@ -209,6 +209,9 @@ test('D-351 — cuatro tipos → preview → corregir → confirmar → recibir 
 
   // Deshacer el lote: anula por el servicio las tres que siguen en borrador; la recibida se nombra.
   await page.getByRole('button', { name: 'Deshacer lote' }).click();
+  const undoDialog = page.getByRole('dialog', { name: 'Deshacer el lote' });
+  await undoDialog.getByLabel('Motivo').fill('Prueba E2E: archivo equivocado');
+  await undoDialog.getByRole('button', { name: 'Deshacer lote' }).click();
   await expect(
     page.getByText(/Lote deshecho: 3 anuladas; no se tocaron .*ya se recibió/),
   ).toBeVisible({

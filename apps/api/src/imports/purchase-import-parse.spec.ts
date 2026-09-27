@@ -56,8 +56,8 @@ describe('parsePurchaseRows (D-351)', () => {
       ),
     );
     expect(parsed.headerConflicts.get('20100000001|FACTURA|F001-1')).toEqual([
-      'Fila 2: KG y CANTIDAD no coinciden; en una bobina la cantidad son los kilos',
-      'Fila 3: trae FECHA DE EMISIÓN distinto de la primera fila del comprobante',
+      'Fila 2: KG y CANTIDAD no coinciden; en una bobina la cantidad son los kilos: se tomó KG',
+      'Fila 3: trae FECHA DE EMISIÓN distinto de la primera fila del comprobante: se tomó el de la primera fila',
     ]);
     // KG manda en una bobina.
     expect(parsed.documents[0]?.lines[0]?.qty).toBe('200');
