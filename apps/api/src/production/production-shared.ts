@@ -27,8 +27,6 @@ export interface LockedOrder {
   status: ProductionOrderStatus;
   businessLineId: string;
   productId: string;
-  /** D-122: null en una OP de coberturas, que ya no nace de una receta. */
-  bomId: string | null;
   notes: string | null;
   closedAt: Date | null;
   reservationId: string | null;
@@ -56,7 +54,6 @@ export async function lockOrder(
       status: true,
       businessLineId: true,
       productId: true,
-      bomId: true,
       notes: true,
       closedAt: true,
       reservationId: true,

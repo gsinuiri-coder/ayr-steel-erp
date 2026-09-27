@@ -161,7 +161,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             {o.productSku} · {o.productName} ·{' '}
             {o.kind === ProductionOrderKind.ROOFING
               ? `bobina de ${o.productThicknessMm ?? '—'} mm (±0.02)`
-              : `${o.productPieceWeightKg ?? '—'} kg por pieza desde fleje de ${o.bom?.inputWidthMm ?? '—'} mm`}
+              : `${o.productPieceWeightKg ?? '—'} kg por pieza desde fleje de ${o.productWidthMm ?? '—'} mm`}
             {o.salesOrderCode !== null && (
               <>
                 {' '}

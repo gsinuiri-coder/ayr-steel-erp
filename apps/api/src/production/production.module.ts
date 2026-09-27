@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CoilsModule } from '../coils/coils.module';
 import { InventoryModule } from '../inventory/inventory.module';
-import { BomsService } from './boms.service';
 import { ProductionController } from './production.controller';
 import { ProductionService } from './production.service';
 import { RoofingProductionController } from './roofing-production.controller';
@@ -23,9 +22,9 @@ import { RoofingProductionService } from './roofing-production.service';
 @Module({
   imports: [InventoryModule, CoilsModule],
   controllers: [RoofingProductionController, ProductionController],
-  providers: [ProductionService, RoofingProductionService, RoofingDraftsService, BomsService],
+  providers: [ProductionService, RoofingProductionService, RoofingDraftsService],
   // D-141: `imports` crea la OP de coberturas en la misma transacción que el pedido
   // importado pendiente (`createFromReservationInTx`), así que necesita el servicio.
-  exports: [ProductionService, RoofingProductionService, BomsService],
+  exports: [ProductionService, RoofingProductionService],
 })
 export class ProductionModule {}

@@ -47,6 +47,7 @@
     "normalize:coil-skus": "node scripts/normalize-coil-skus.mjs",
     "sweep:imported": "node scripts/sweep-imported-documents.mjs",
     "retire:unused-color": "node scripts/retire-unused-color.mjs",
+    "retire:boms": "node scripts/retire-boms.mjs",
     "check:color-comercial": "node scripts/color-comercial-dry-run.mjs",
     "dispatch:at-issue-date": "node scripts/dispatch-at-issue-date.mjs",
     "inventory:opening-date": "node scripts/opening-date.mjs",

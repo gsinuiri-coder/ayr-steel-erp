@@ -7,15 +7,15 @@ import { toast } from 'sonner';
 import {
   Decimal,
   MIN_CHILD_WIDTH_MM,
-  ProductBomKind,
   Role,
   type CoilDto,
   type CuttingOrderDto,
-  type ProductBomDto,
+  type ProductDto,
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { FilmOpenNotice } from '@/components/film-open-notice';
+import { drywallProfilesOf, type DrywallProfile } from '@/lib/drywall-profiles';
 import { OperationDateField } from '@/components/operation-date-field';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { formatQty, isPositiveDecimal } from '@/lib/format';
@@ -43,12 +43,12 @@ import {
 
 interface WidthRow {
   /**
-   * E (Fase 7e): el ancho ya no se tipea a mano — se elige el SKU de perfil de drywall
-   * cuya receta (`product_boms.input_width_mm`, D-059) necesita ese fleje, y el ancho sale
-   * de ahí. `widthMm` queda derivado, no editable, para que el plan de corte no invente
-   * anchos que ninguna receta consume.
+   * E (Fase 7e) / D-344: el ancho ya no se tipea a mano — se elige el SKU del perfil de drywall
+   * que necesita ese fleje, y el ancho sale de su SKU (`products.width_mm`, el ancho del fleje).
+   * `widthMm` queda derivado, no editable, para que el plan de corte no invente anchos que
+   * ningún perfil consume.
    */
-  bomProductId: string;
+  profileProductId: string;
   widthMm: string;
   stripsCount: string;
 }
@@ -90,17 +90,15 @@ export function NuevaOrdenCorteView() {
   const addedIds = new Set(drafts.map((d) => d.coil.id));
   const candidates = (availableCoils.data ?? []).filter((c) => !addedIds.has(c.id));
 
-  // E: el ancho de cada fleje sale de la receta del perfil que lo va a consumir
-  // (`product_boms.input_width_mm`), no de un campo libre — así el plan de corte nunca
-  // pide un ancho que ninguna receta de drywall necesita.
-  const boms = useQuery({
-    queryKey: ['production', 'boms'],
-    queryFn: () => api<ProductBomDto[]>('/production/boms'),
+  // E/D-344: el ancho de cada fleje sale del SKU del perfil que lo va a consumir (su ancho de
+  // fleje, `products.width_mm`), no de un campo libre — así el plan de corte nunca pide un
+  // ancho que ningún perfil de drywall necesita. Ya no hay receta que lo guarde.
+  const catalog = useQuery({
+    queryKey: ['catalog'],
+    queryFn: () => api<ProductDto[]>('/catalog'),
   });
-  const drywallBoms = (boms.data ?? []).filter(
-    (b) => b.kind === ProductBomKind.DRYWALL && b.isActive && b.inputWidthMm !== null,
-  );
-  const bomById = new Map(drywallBoms.map((b) => [b.productId, b]));
+  const drywallProfiles = drywallProfilesOf(catalog.data ?? []).ready;
+  const profileById = new Map(drywallProfiles.map((p) => [p.productId, p]));
 
   // D-124: día de negocio del envío. Enviar a corte no mueve kardex (D-050), así que acá no
   // hay advertencia de orden que confirmar: solo la fecha con la que queda la orden.
@@ -231,7 +229,7 @@ export function NuevaOrdenCorteView() {
                           ...prev,
                           {
                             coil: c,
-                            widthPlanMm: [{ bomProductId: '', widthMm: '', stripsCount: '1' }],
+                            widthPlanMm: [{ profileProductId: '', widthMm: '', stripsCount: '1' }],
                             expectedKerfLossMm: '0',
                           },
                         ]);
@@ -258,8 +256,8 @@ export function NuevaOrdenCorteView() {
         <DraftCoilCard
           key={draft.coil.id}
           draft={draft}
-          drywallBoms={drywallBoms}
-          bomById={bomById}
+          drywallProfiles={drywallProfiles}
+          profileById={profileById}
           onChange={(next) => {
             setDrafts((prev) => prev.map((d, i) => (i === draftIndex ? next : d)));
           }}
@@ -298,14 +296,14 @@ export function NuevaOrdenCorteView() {
 
 function DraftCoilCard({
   draft,
-  drywallBoms,
-  bomById,
+  drywallProfiles,
+  profileById,
   onChange,
   onRemove,
 }: {
   draft: DraftCoil;
-  drywallBoms: ProductBomDto[];
-  bomById: Map<string, ProductBomDto>;
+  drywallProfiles: DrywallProfile[];
+  profileById: Map<string, DrywallProfile>;
   onChange: (next: DraftCoil) => void;
   onRemove: () => void;
 }) {
@@ -343,16 +341,16 @@ function DraftCoilCard({
         <div className="grid gap-2">
           <Label>Plan de corte (por SKU de perfil)</Label>
           {draft.widthPlanMm.map((row, rowIndex) => {
-            const bom = bomById.get(row.bomProductId);
+            const profile = profileById.get(row.profileProductId);
             return (
               <div key={rowIndex} className="flex items-center gap-2">
                 <Select
-                  value={row.bomProductId}
+                  value={row.profileProductId}
                   onValueChange={(v) => {
-                    const chosen = bomById.get(v);
+                    const chosen = profileById.get(v);
                     const rows = draft.widthPlanMm.map((r, i) =>
                       i === rowIndex
-                        ? { ...r, bomProductId: v, widthMm: chosen?.inputWidthMm ?? '' }
+                        ? { ...r, profileProductId: v, widthMm: chosen?.widthMm ?? '' }
                         : r,
                     );
                     onChange({ ...draft, widthPlanMm: rows });
@@ -365,14 +363,15 @@ function DraftCoilCard({
                     <SelectValue placeholder="Elige el perfil que consume este fleje" />
                   </SelectTrigger>
                   <SelectContent>
-                    {drywallBoms.map((b) => (
-                      <SelectItem key={b.productId} value={b.productId}>
-                        {b.productSku} — {b.productName} ({b.inputWidthMm} mm)
+                    {drywallProfiles.map((p) => (
+                      <SelectItem key={p.productId} value={p.productId}>
+                        {p.sku} — {p.name} ({p.widthMm} mm)
                       </SelectItem>
                     ))}
-                    {drywallBoms.length === 0 && (
+                    {drywallProfiles.length === 0 && (
                       <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                        Ningún perfil de drywall tiene receta activa (D-059).
+                        Ningún perfil de drywall tiene el SKU completo (espesor, ancho del fleje y
+                        peso).
                       </div>
                     )}
                   </SelectContent>
@@ -390,7 +389,7 @@ function DraftCoilCard({
                   }}
                 />
                 <span className="w-20 shrink-0 text-xs text-muted-foreground">
-                  {bom ? `${bom.inputWidthMm} mm` : '—'}
+                  {profile ? `${profile.widthMm} mm` : '—'}
                 </span>
                 <Button
                   variant="ghost"
@@ -417,7 +416,7 @@ function DraftCoilCard({
                 ...draft,
                 widthPlanMm: [
                   ...draft.widthPlanMm,
-                  { bomProductId: '', widthMm: '', stripsCount: '1' },
+                  { profileProductId: '', widthMm: '', stripsCount: '1' },
                 ],
               });
             }}

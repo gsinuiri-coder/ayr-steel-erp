@@ -218,16 +218,14 @@ export async function resolveDispatchTarget(
   // venta de planchas, que es exactamente lo que D-088 vino a cerrar.
   //
   // El criterio correcto es el mismo que decide la rama de la reserva: **tener subtipo de
-  // cobertura** (`isMadeToOrder`). La receta sigue mirándose para drywall, que sí la tiene.
+  // cobertura** (`isMadeToOrder`). D-344: drywall tampoco tiene receta —un perfil siempre reserva
+  // producto terminado y no llega a esta rama—, así que ya nada mira `product_boms`.
   if (!backedByProduct) {
     const product = await tx.product.findUnique({
       where: { id: item.productId },
       select: { roofingKind: true },
     });
-    const madeToOrder =
-      onProduct !== null ||
-      (product?.roofingKind ?? null) !== null ||
-      (await tx.productBom.count({ where: { productId: item.productId, isActive: true } })) > 0;
+    const madeToOrder = onProduct !== null || (product?.roofingKind ?? null) !== null;
     if (madeToOrder) {
       throw new BadRequestException(
         `La línea ${item.lineNumber} se fabrica contra el pedido y no tiene producto terminado reservado: produce lo que falta antes de despacharlo`,

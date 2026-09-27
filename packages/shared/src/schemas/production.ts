@@ -9,8 +9,6 @@ import {
 } from '../decimal';
 import {
   BUSINESS_LINES,
-  PRODUCT_BOM_KINDS,
-  ProductBomKind,
   PRODUCTION_ORDER_KINDS,
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_REPORT_STATUSES,
@@ -247,82 +245,60 @@ export function theoreticalKgPerSellingUnit(input: {
   return null;
 }
 
-// --------------------------------------------------------------------------
-// D-059 — receta en el maestro de productos
-// --------------------------------------------------------------------------
+/**
+ * D-344: densidad del acero galvanizado del fleje de drywall, como **constante física** (mismo
+ * valor que el resto del código documenta para el acero, `≈ 7.85 t/m³` — ver el comentario de
+ * `NORMAL_SCRAP_RATE_PCT`). No sale de ningún `Finish`: desde D-344 el SKU de drywall no guarda
+ * acabado, y buscar «el» acabado galvanizado activo de la línea es ambiguo apenas existe más de
+ * uno (dos altas del dueño, o —como pasó en el E2E de CI, que comparte la base entre 444
+ * pruebas— un acabado de otra prueba con otra densidad, creado en la línea drywall por
+ * comodidad). Un aviso que puede confundirse con el fleje equivocado es peor que no avisar.
+ */
+export const STEEL_DENSITY_FACTOR = '7.85';
+
+/**
+ * D-344: umbral, en %, del aviso «el kg/pieza declarado se aleja del teórico». Con el ancho del
+ * fleje, el largo y el espesor del SKU, y la densidad del acero (`STEEL_DENSITY_FACTOR`), el peso
+ * de una pieza de drywall es una cuenta: un declarado que se aparta más de esto casi siempre es un
+ * dato de relleno (`1.00 / 1.000`) o un espesor mal cargado.
+ */
+export const PIECE_WEIGHT_WARN_PCT = '5';
+
+/**
+ * D-344: compara el peso declarado de una pieza de drywall contra el teórico
+ * (`theoreticalKgPerPiece`, con `STEEL_DENSITY_FACTOR` y el 1 % de merma de D-165). Devuelve
+ * `null` si falta cualquier dato de la cuenta o si el teórico da cero. Nunca bloquea: es un aviso.
+ */
+export function drywallPieceWeightCheck(input: {
+  widthMm: DecimalInput | null;
+  lengthMm: DecimalInput | null;
+  thicknessMm: DecimalInput | null;
+  pieceWeightKg: DecimalInput | null;
+}): { theoreticalKg: string; deviationPct: string; warn: boolean } | null {
+  const { widthMm, lengthMm, thicknessMm, pieceWeightKg } = input;
+  if (widthMm === null || lengthMm === null || thicknessMm === null || pieceWeightKg === null) {
+    return null;
+  }
+  const theoretical = theoreticalKgPerPiece({
+    widthMm,
+    thicknessMm,
+    pieceLengthMm: lengthMm,
+    densityFactor: STEEL_DENSITY_FACTOR,
+  });
+  if (theoretical.lte(0)) return null;
+  const deviation = toDecimal(pieceWeightKg).minus(theoretical).abs().div(theoretical).times(100);
+  return {
+    theoreticalKg: theoretical.toFixed(3),
+    deviationPct: deviation.toFixed(2),
+    warn: deviation.gt(toDecimal(PIECE_WEIGHT_WARN_PCT)),
+  };
+}
 
 const piecesSchema = z
   .number({ required_error: 'Las piezas son obligatorias' })
   .int('Las piezas se cuentan en enteros')
   .min(1, 'Al menos una pieza')
   .max(MAX_REPORT_PIECES, `Máximo ${MAX_REPORT_PIECES} piezas`);
-
-export const upsertProductBomSchema = z
-  .object({
-    /**
-     * D-087. `DRYWALL` consume un fleje de ancho exacto y produce piezas de largo fijo;
-     * `ROOFING` consume una bobina filtrada por espesor y color (D-086) y produce planchas
-     * cuyo largo lo pone el pedido (a medida) o el propio SKU (plancha de catálogo).
-     */
-    kind: z.enum(PRODUCT_BOM_KINDS).default(ProductBomKind.DRYWALL),
-    finishId: z.string({ required_error: 'El acabado del material es obligatorio' }).uuid(),
-    inputThicknessMm: decimalStringSchema('MM', {
-      positive: true,
-      max: MAX_VALUE.THICKNESS_MM,
-    }),
-    /** Ancho exacto del fleje. **Solo DRYWALL**: ver el comentario del schema de Prisma. */
-    inputWidthMm: decimalStringSchema('MM', { positive: true, max: MAX_VALUE.WIDTH_MM }).optional(),
-    isActive: z.boolean().optional(),
-  })
-  .superRefine((bom, ctx) => {
-    // D-122: la receta es **solo** de drywall. Una cobertura no lleva ninguna: su acabado,
-    // su geometría y su color viven en el SKU.
-    if (bom.kind !== ProductBomKind.DRYWALL) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['kind'],
-        message:
-          'Una cobertura no lleva receta desde D-122: su acabado, su geometría y su color son del propio producto',
-      });
-      return;
-    }
-    if (bom.inputWidthMm === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['inputWidthMm'],
-        message: 'El ancho del fleje es obligatorio en una receta de drywall',
-      });
-    }
-  });
-export type UpsertProductBomInput = z.infer<typeof upsertProductBomSchema>;
-
-export const productBomSchema = z.object({
-  id: z.string().uuid(),
-  productId: z.string().uuid(),
-  productSku: z.string(),
-  productName: z.string(),
-  productUnit: z.string(),
-  businessLine: z.enum(BUSINESS_LINES),
-  kind: z.enum(PRODUCT_BOM_KINDS),
-  finishId: z.string().uuid(),
-  finishCode: z.string(),
-  finishName: z.string(),
-  /** Factor de densidad del acabado (RF-25): lo que convierte geometría en kilos (D-047). */
-  densityFactor: z.string(),
-  inputThicknessMm: z.string(),
-  inputWidthMm: z.string().nullable(),
-  /**
-   * D-122/D-139: los dos salen del **SKU**, no de la receta. Se siguen exponiendo acá
-   * porque la pantalla de la receta es donde se miran, pero se editan en el catálogo y
-   * tienen una sola fuente.
-   */
-  pieceLengthMm: z.string().nullable(),
-  kgPerPiece: z.string().nullable(),
-  isActive: z.boolean(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-export type ProductBomDto = z.infer<typeof productBomSchema>;
 
 // --------------------------------------------------------------------------
 // RF-34 — orden de producción
@@ -634,6 +610,11 @@ export const productionOrderSchema = z.object({
    * ya no la tienen).
    */
   productThicknessMm: z.string().nullable(),
+  /**
+   * D-344: ancho **del fleje** (desarrollo) del SKU de un perfil de drywall. Con el espesor y el
+   * acabado galvanizado es lo que dice qué fleje consume la orden; ya no hay receta que lo diga.
+   */
+  productWidthMm: z.string().nullable(),
   productPieceWeightKg: z.string().nullable(),
   status: z.enum(PRODUCTION_ORDER_STATUSES),
   targetPieces: z.number().int().nullable(),
@@ -662,12 +643,6 @@ export const productionOrderSchema = z.object({
   overheadCostPen: z.string().nullable(),
   totalCostPen: z.string().nullable(),
   unitCostPen: z.string().nullable(),
-  /**
-   * D-122: `null` en una OP de **coberturas**, que desde entonces nace del pedido y del
-   * producto y no de una receta. Las de drywall siguen trayendo la suya, que es lo que dice
-   * qué fleje consumen.
-   */
-  bom: productBomSchema.nullable(),
   /** D-084: el plan de corte copiado del pedido, editable. Vacío en drywall. */
   items: z.array(roofingPieceSchema),
   /** Pedido del que nació la orden (D-084). Null en una corrida de stock de drywall. */
@@ -706,7 +681,7 @@ export const productionOrderSchema = z.object({
 export type ProductionOrderDto = z.infer<typeof productionOrderSchema>;
 
 export const productionOrderListItemSchema = productionOrderSchema
-  .omit({ bom: true, items: true, consumptions: true, reports: true })
+  .omit({ items: true, consumptions: true, reports: true })
   .extend({ stripCount: z.number().int() });
 export type ProductionOrderListItemDto = z.infer<typeof productionOrderListItemSchema>;
 

@@ -77,7 +77,8 @@ export class PriceListImportService {
               unit: true,
               isActive: true,
               listPricePen: true,
-              // D-342: origen, peso y receta, para el costo del piso de un perfil de drywall.
+              // D-342/D-344: origen, peso y el espesor y ancho del fleje, para el costo del piso
+              // de un perfil de drywall.
               ...FLOOR_COST_SELECT,
             },
           });
@@ -170,7 +171,8 @@ export class PriceListImportService {
       rows.push(row);
       if (status !== 'UNCHANGED') {
         rowIndexByProductId.set(product.id, rows.length - 1);
-        // D-342: un perfil de drywall sin receta no tiene piso que comprobar.
+        // D-342/D-344: un perfil de drywall sin espesor, ancho o peso en el SKU no tiene piso que
+        // comprobar.
         const floorCost = productFloorCost(product);
         if ('cost' in floorCost) {
           floorCandidates.push({

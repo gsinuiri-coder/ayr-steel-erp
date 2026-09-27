@@ -10,10 +10,8 @@ import {
   BusinessLine,
   NO_FLOOR_REASON_LABELS,
   PRODUCT_SOURCE_LABELS,
-  ProductSource,
   Role,
   ROOFING_PRODUCT_KIND_LABELS,
-  Unit,
   type BusinessLineDto,
   type ProductDto,
 } from '@ayr/shared';
@@ -38,29 +36,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ColorSwatch } from '@/components/colors/color-swatch';
-import { BomDialog } from './bom-dialog';
 import { ColoresPanel } from './colores-panel';
 import { ProductDialog } from '@/components/catalog/product-dialog';
+import { DeleteProductDialog } from '@/components/catalog/delete-product-dialog';
 import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 import { RowActions } from '@/components/row-actions';
-
-/**
- * Qué productos llevan receta (D-059, D-087). Las mismas condiciones que valida
- * `BomsService.upsert`, para no ofrecer un diálogo que el API va a rechazar al guardarlo:
- *
- * - **Drywall**: perfil fabricado y activo, medido en piezas (`NIU`, D-055).
- * - **Coberturas** (Fase 6): fabricado y activo, en piezas si es plancha de catálogo o en
- *   metros (`MTR`) si es a medida (D-083).
- */
-function hasBom(product: ProductDto): boolean {
-  if (product.source !== ProductSource.MANUFACTURED || !product.isActive) return false;
-  if (product.businessLineCode === BusinessLine.DRYWALL) return product.unit === Unit.NIU;
-  if (product.businessLineCode === BusinessLine.METALLIC_ROOFING) {
-    return product.unit === Unit.NIU || product.unit === Unit.MTR;
-  }
-  return false;
-}
 
 /** El color solo tiene sentido donde hay material prepintado: coberturas (D-085). */
 function usesColor(lineCode: BusinessLine): boolean {
@@ -80,8 +61,8 @@ export function CatalogoView() {
     lineId: string;
     nonce: number;
   }>({ open: false, lineId: '', nonce: 0 });
-  const [bomProduct, setBomProduct] = useState<ProductDto | null>(null);
   const [historyProduct, setHistoryProduct] = useState<ProductDto | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProductDto | null>(null);
   // RF-S3/M4: el card «SKUs con lista bajo piso» del Panel enlaza acá con
   // `?bajoPiso=<productId>` — un id concreto resalta esa fila (y abre su línea), el valor
   // `1` (más de 8 en el card) solo llega a la vista sin resaltar nada en particular.
@@ -153,6 +134,22 @@ export function CatalogoView() {
       void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+  });
+
+  const deleteProduct = useMutation({
+    mutationFn: (p: ProductDto) => api(`/catalog/${p.id}`, { method: 'DELETE' }),
+    onSuccess: (_, p) => {
+      toast.success(`${p.sku} borrado del catálogo`);
+      setDeleteTarget(null);
+      void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo borrar el producto');
+      // Hallazgo de la autorrevisión: un 409 real (otra pestaña usó el producto justo antes)
+      // dejaba el `canDelete` viejo en la fila hasta el próximo refetch — «Eliminar» seguía
+      // pareciendo posible aunque el backend ya lo hubiera rechazado.
+      void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
+    },
   });
 
   if (lines.isPending || products.isPending) {
@@ -306,10 +303,18 @@ export function CatalogoView() {
                         <TableCell className="font-medium">{p.sku}</TableCell>
                         <TableCell>
                           {p.name}
-                          {/* D-342: un perfil de drywall sin receta no tiene piso de precio. */}
+                          {/* D-342/D-344: un perfil de drywall al que le falta espesor, ancho o peso no tiene piso de precio. */}
                           {p.isActive && p.noFloorReason && (
                             <span className="block text-xs text-amber-700 dark:text-amber-400">
                               {NO_FLOOR_REASON_LABELS[p.noFloorReason]}
+                            </span>
+                          )}
+                          {/* D-344: aviso (no bloqueo) de que el kg/pieza se aleja del teórico. */}
+                          {p.isActive && p.pieceWeightCheck?.warn && (
+                            <span className="block text-xs text-amber-700 dark:text-amber-400">
+                              Peso por pieza {p.pieceWeightCheck.deviationPct} % fuera del teórico (
+                              {p.pieceWeightCheck.theoreticalKg} kg): revisa ancho, largo, espesor y
+                              peso
                             </span>
                           )}
                         </TableCell>
@@ -361,14 +366,6 @@ export function CatalogoView() {
                                   },
                                 },
                                 {
-                                  key: 'bom',
-                                  label: 'Receta',
-                                  show: hasBom(p),
-                                  onSelect: () => {
-                                    setBomProduct(p);
-                                  },
-                                },
-                                {
                                   key: 'toggle',
                                   label: p.isActive ? 'Desactivar' : 'Activar',
                                   disabled: toggleActive.isPending,
@@ -377,6 +374,18 @@ export function CatalogoView() {
                                   onSelect: () => {
                                     if (toggleActive.isPending) return;
                                     toggleActive.mutate(p);
+                                  },
+                                },
+                                {
+                                  key: 'delete',
+                                  label: 'Eliminar',
+                                  destructive: true,
+                                  disabled: !p.canDelete,
+                                  title: p.canDelete
+                                    ? undefined
+                                    : 'Ya se usó (kardex, un documento comercial o producción): desactivalo en vez de borrarlo',
+                                  onSelect: () => {
+                                    setDeleteTarget(p);
                                   },
                                 },
                               ]}
@@ -420,17 +429,6 @@ export function CatalogoView() {
         />
       )}
 
-      {isAdmin && bomProduct && (
-        <BomDialog
-          key={bomProduct.id}
-          open
-          product={bomProduct}
-          onOpenChange={(open) => {
-            if (!open) setBomProduct(null);
-          }}
-        />
-      )}
-
       {historyProduct && (
         <PriceListHistoryDialog
           productId={historyProduct.id}
@@ -438,6 +436,20 @@ export function CatalogoView() {
           open
           onOpenChange={(open) => {
             if (!open) setHistoryProduct(null);
+          }}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteProductDialog
+          sku={deleteTarget.sku}
+          open
+          pending={deleteProduct.isPending}
+          onOpenChange={(open) => {
+            if (!open && !deleteProduct.isPending) setDeleteTarget(null);
+          }}
+          onConfirm={() => {
+            deleteProduct.mutate(deleteTarget);
           }}
         />
       )}

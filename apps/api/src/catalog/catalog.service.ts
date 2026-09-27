@@ -10,6 +10,7 @@ import {
   BusinessLine as SharedLineCode,
   canonicalAccessorySku,
   Decimal,
+  drywallPieceWeightCheck,
   isPlausiblePieceLength,
   MAX_PAGE_SIZE,
   money,
@@ -36,21 +37,26 @@ import { isCoilSaleProduct, openCoilCodesInPool } from '../sales/coil-sale-produ
 import { ColorsService } from '../colors/colors.service';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
-import { computePriceFloors } from '../sales/price-floor';
+import { computePriceFloorOutcomes, computePriceFloors } from '../sales/price-floor';
 import {
   FLOOR_COST_SELECT,
+  isDrywallProfile,
   productFloorCost,
   staticNoFloorReason,
-  type FloorCostProduct,
+  stripSkuNoFloorReason,
 } from '../sales/price-floor-cost';
 import {
   PRICE_FLOOR_UNUSED_TOLERANCE_MM,
   priceListValueChanged,
   recordPriceListChange,
 } from './price-list-changes';
+import { describeProductUsage, productsWithUsage } from './product-usage';
 
 /** Mismo criterio que `SEARCH_CANDIDATE_POOL` de `CustomersService` (RF-S3/M1). */
 const SEARCH_CANDIDATE_POOL = 100;
+
+const DRYWALL_NO_FINISH_MESSAGE =
+  'Drywall no lleva acabado en el SKU: su fleje es siempre galvanizado (D-344)';
 
 /** Catálogo de productos por línea (RF-50). Mutaciones solo ADMINISTRADOR. */
 @Injectable()
@@ -67,7 +73,9 @@ export class CatalogService {
       include: PRODUCT_RELATIONS,
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
-    return products.map(toDto);
+    // D-347/M6: un número fijo de consultas para el catálogo entero, no una por fila.
+    const used = await productsWithUsage(this.prisma, products);
+    return products.map((p) => toDto(p, !used.has(p.id)));
   }
 
   /**
@@ -92,7 +100,9 @@ export class CatalogService {
       orderBy: { name: 'asc' },
       take: SEARCH_CANDIDATE_POOL,
     });
-    return rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]).map(toDto);
+    const ranked = rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]);
+    const used = await productsWithUsage(this.prisma, ranked);
+    return ranked.map((p) => toDto(p, !used.has(p.id)));
   }
 
   /**
@@ -155,7 +165,8 @@ export class CatalogService {
       include: PRODUCT_RELATIONS,
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    return toDto(product);
+    const used = await productsWithUsage(this.prisma, [product]);
+    return toDto(product, !used.has(product.id));
   }
 
   async create(actor: RequestUser, input: CreateProductInput): Promise<ProductDto> {
@@ -168,6 +179,9 @@ export class CatalogService {
       throw new BadRequestException(
         `Los SKU ${COIL_SKU_PREFIX}… son de bobina y se generan solos al dar de alta la bobina (espesor + color o tipo, D-252): no se crean a mano`,
       );
+    }
+    if (line.code === BusinessLineCode.DRYWALL && input.finishId !== null) {
+      throw new BadRequestException(DRYWALL_NO_FINISH_MESSAGE);
     }
     const colorId = await this.colors.resolveActive(input.colorId);
     const finish = await this.resolveActiveFinish(input.finishId);
@@ -216,7 +230,8 @@ export class CatalogService {
         }
         return created;
       });
-      return toDto(product);
+      // Recién creado: no puede tener uso todavía en esta misma corrida.
+      return toDto(product, true);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException('Ya existe un producto con ese SKU en esta línea');
@@ -308,15 +323,7 @@ export class CatalogService {
       }
     }
 
-    // D-055/D-059: la receta valida al crearse que el producto sea fabricado y se mida en
-    // piezas. Dejar cambiar esas dos cosas después esquivaría la validación y la orden de
-    // producción quedaría metiendo piezas a un producto que dice medirse en kilos.
-    const changesUnit = input.unit !== undefined && input.unit !== before.unit;
-    const changesSource = input.source !== undefined && input.source !== before.source;
-    // D-127: corregir el subtipo **obliga** a mover la unidad (son el mismo hecho), y toda
-    // cobertura a medida tiene receta activa. Sin esta excepción, el campo que D-127 promete
-    // "visible y corregible" no se podía corregir en ningún producto real: el guardrail pedía
-    // desactivar una receta que el propio subtipo necesita viva.
+    // D-127: corregir el subtipo **obliga** a mover la unidad (son el mismo hecho).
     const changesRoofingKind =
       input.roofingKind !== undefined && input.roofingKind !== before.roofingKind;
     // D-343: el SKU de un accesorio refleja su espesor y su color, y el SKU no se edita. Cambiar
@@ -333,16 +340,23 @@ export class CatalogService {
         );
       }
     }
-    if ((changesUnit && !changesRoofingKind) || changesSource) {
-      const bom = await this.prisma.productBom.findFirst({
-        // Solo una receta **activa** bloquea: una desactivada no la monta ninguna orden, y
-        // pedir que se desactive algo ya desactivado era un mensaje sin salida.
-        where: { productId: id, isActive: true },
-        select: { id: true },
-      });
-      if (bom) {
-        throw new BadRequestException(
-          'El producto tiene una receta de fabricación: desactiva la receta antes de cambiarle la unidad o el origen',
+    if (before.businessLine.code === BusinessLineCode.DRYWALL) {
+      // D-344: drywall no lleva acabado en el SKU (es siempre galvanizado).
+      if (input.finishId !== undefined && input.finishId !== null) {
+        throw new BadRequestException(DRYWALL_NO_FINISH_MESSAGE);
+      }
+      // D-055/D-059/D-344 (antes lo bloqueaba «la receta viva»): lo que decide qué fleje consume un
+      // perfil y cómo se cuenta —unidad, origen, espesor y ancho del fleje— no se cambia por debajo
+      // de una orden de producción en curso: sus flejes ya se montaron contra los valores de antes.
+      const changesUnit = input.unit !== undefined && input.unit !== before.unit;
+      const changesSource = input.source !== undefined && input.source !== before.source;
+      const changesStrip =
+        decimalChanged(input.thicknessMm, before.thicknessMm) ||
+        decimalChanged(input.widthMm, before.widthMm);
+      if (changesUnit || changesSource || changesStrip) {
+        await this.assertNoLiveRoofingOrders(
+          id,
+          'la unidad, el origen, el espesor o el ancho del fleje',
         );
       }
     }
@@ -458,17 +472,71 @@ export class CatalogService {
       }
       return updated;
     });
-    return toDto(after);
+    const used = await productsWithUsage(this.prisma, [after]);
+    return toDto(after, !used.has(after.id));
+  }
+
+  /**
+   * D-347/M6: borrado físico de un producto que **nunca se usó** (ADMINISTRADOR). Se
+   * diferencia de `update({isActive: false})` a propósito — desactivar es reversible y dejar
+   * el SKU visible como inactivo protege su historia; esto es para un SKU cargado de más, sin
+   * historia detrás, que ensucia el catálogo. Bloqueado el mismo producto entre el chequeo y
+   * el borrado (`FOR UPDATE`, mismo patrón que `mergeProductInto`): dos borrados a la vez, o un
+   * borrado en carrera con algo que recién empieza a usar el producto, no pueden pisarse.
+   */
+  async remove(actor: RequestUser, id: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "products" WHERE "id" = ${id}::uuid FOR UPDATE`;
+      const product = await tx.product.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          businessLine: { select: { code: true } },
+          businessLineId: true,
+          unit: true,
+          source: true,
+          listPricePen: true,
+          colorId: true,
+          finishId: true,
+          thicknessMm: true,
+          widthMm: true,
+          lengthMm: true,
+          pieceWeightKg: true,
+          isActive: true,
+        },
+      });
+      if (!product) throw new NotFoundException('Producto no encontrado');
+      const reasons = await describeProductUsage(tx, product);
+      if (reasons.length > 0) {
+        throw new ConflictException(
+          `${product.sku} no se puede borrar: está en uso (${reasons.join('; ')}). Desactívalo en vez de borrarlo.`,
+        );
+      }
+      await tx.product.delete({ where: { id } });
+      // D-347: sin `after` (decisión del dueño) — el producto ya no existe después de esta
+      // acción, y no hay a qué compararlo. El `before` sí es el mismo detalle que `create`/
+      // `update` (`auditView`, hallazgo de la autorrevisión y del segundo modelo): es la única
+      // fuente que queda para reconstruir qué era el SKU si hiciera falta después.
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'catalog.product-delete',
+        entity: 'products',
+        entityId: product.id,
+        before: auditView(product),
+      });
+    });
   }
 
   /** Órdenes de coberturas vivas de este producto: las que el cambio de color rompería. */
-  private async assertNoLiveRoofingOrders(productId: string): Promise<void> {
+  private async assertNoLiveRoofingOrders(productId: string, what = 'el color'): Promise<void> {
     const live = await this.prisma.productionOrder.count({
       where: { productId, status: { in: ['DRAFT', 'IN_PROGRESS'] } },
     });
     if (live > 0) {
       throw new BadRequestException(
-        `El producto tiene ${live} orden(es) de producción en curso: ciérralas o anúlalas antes de cambiarle el color`,
+        `El producto tiene ${live} orden(es) de producción en curso: ciérralas o anúlalas antes de cambiar ${what}`,
       );
     }
   }
@@ -485,13 +553,14 @@ export class CatalogService {
       select: { sku: true, unit: true, ...FLOOR_COST_SELECT },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    // D-342: un perfil de drywall sin receta (o sin peso) no tiene piso, y se dice por qué.
+    // D-342/D-344: un perfil de drywall sin espesor, ancho o peso en el SKU no tiene piso, y se
+    // dice por qué.
     const floorCost = productFloorCost(product);
     if ('noFloorReason' in floorCost) {
       return { minPricePen: null, priceUnitLabel: null, noFloorReason: floorCost.noFloorReason };
     }
-    const floors = await this.prisma.$transaction((tx) =>
-      computePriceFloors(
+    const outcomes = await this.prisma.$transaction((tx) =>
+      computePriceFloorOutcomes(
         tx,
         [
           {
@@ -508,12 +577,23 @@ export class CatalogService {
         PRICE_FLOOR_UNUSED_TOLERANCE_MM,
       ),
     );
-    const floor = floors.get(product.id);
+    const outcome = outcomes.get(product.id);
+    if (outcome !== undefined && 'minValuePen' in outcome) {
+      return {
+        minPricePen: outcome.minPricePen,
+        priceUnitLabel: outcome.priceUnitLabel,
+        noFloorReason: null,
+      };
+    }
+    // D-344: sin piso en un perfil con SKU completo es porque no hay flejes compatibles con costo
+    // o porque la línea no tiene margen configurado: dos avisos distintos (antes eran uno solo).
     return {
-      minPricePen: floor?.minPricePen ?? null,
-      priceUnitLabel: floor?.priceUnitLabel ?? null,
-      // Con receta y peso pero sin flejes con saldo: el costo no existe y con él tampoco el piso.
-      noFloorReason: !floor && floorCost.cost.kind === 'STRIP_RECIPE' ? 'NO_STRIP_COST' : null,
+      minPricePen: null,
+      priceUnitLabel: null,
+      noFloorReason:
+        floorCost.cost.kind === 'STRIP_SKU' && outcome !== undefined
+          ? stripSkuNoFloorReason(outcome.missing)
+          : null,
     };
   }
 
@@ -541,8 +621,8 @@ export class CatalogService {
       return { totalWithListPrice: 0, withoutFloor: 0, belowFloor: [] };
     }
 
-    // D-342: un perfil de drywall sin receta no entra a `computePriceFloors` y cae en «sin piso»,
-    // igual que un SKU sin costo (D-163).
+    // D-342/D-344: un perfil de drywall sin espesor, ancho o peso en el SKU no entra a
+    // `computePriceFloors` y cae en «sin piso», igual que un SKU sin costo (D-163).
     const candidates = products.flatMap((p) => {
       const floorCost = productFloorCost(p);
       return 'cost' in floorCost
@@ -737,8 +817,14 @@ function assertStructuredFields(
     throw new BadRequestException('El subtipo de cobertura solo aplica a Metallic Roofing');
   }
   if (lineCode === BusinessLineCode.DRYWALL) {
+    // D-344 (corrige la lectura de D-118): en drywall `thicknessMm` y `widthMm` son los del
+    // **fleje** —su espesor y su ancho de desarrollo—, con los que se busca el fleje compatible.
+    // El acabado no se guarda: es siempre galvanizado.
+    if (fields.thicknessMm === null) {
+      throw new BadRequestException('El espesor del fleje es obligatorio en Drywall');
+    }
     if (fields.widthMm === null) {
-      throw new BadRequestException('El ancho de la pieza terminada es obligatorio en Drywall');
+      throw new BadRequestException('El ancho del fleje (desarrollo) es obligatorio en Drywall');
     }
     if (fields.lengthMm === null) {
       throw new BadRequestException('El largo de la pieza terminada es obligatorio en Drywall');
@@ -747,6 +833,21 @@ function assertStructuredFields(
       throw new BadRequestException('El peso de la pieza terminada es obligatorio en Drywall');
     }
   }
+}
+
+/**
+ * ¿El fleje que una OP viva ya montó dejaría de significar lo mismo? `undefined` (no se toca) y
+ * cargar un dato que faltaba (`stored` null, `incoming` con valor) no cuentan como cambio: lo que
+ * hay que impedir es mover o borrar el dato que una orden en curso ya usó, no completar el
+ * catálogo de un perfil al que todavía le falta.
+ */
+function decimalChanged(
+  incoming: string | null | undefined,
+  stored: Prisma.Decimal | null,
+): boolean {
+  if (incoming === undefined || stored === null) return false;
+  if (incoming === null) return true;
+  return !toDecimal(incoming).equals(stored.toString());
 }
 
 function decimalOrNull(value: Prisma.Decimal | null, scale: 'MM' | 'KG'): string | null {
@@ -772,8 +873,6 @@ const PRODUCT_RELATIONS = {
       businessLineId: true,
     },
   },
-  // D-342: la receta, para marcar el perfil de drywall que no tiene piso de precio.
-  bom: FLOOR_COST_SELECT.bom,
 } satisfies Prisma.ProductInclude;
 
 /** Lo que `assertFinishCoherence` necesita de un acabado: identidad, tipo, color y línea. */
@@ -789,7 +888,6 @@ type WithLineCode = Product & {
   businessLine: { code: BusinessLineCode };
   color: Color | null;
   finish: (FinishRef & { name: string; densityFactor: Prisma.Decimal }) | null;
-  bom: FloorCostProduct['bom'];
 };
 
 /**
@@ -812,7 +910,22 @@ function theoreticalKgPerUnit(p: WithLineCode): string | null {
   );
 }
 
-function toDto(p: WithLineCode): ProductDto {
+/**
+ * D-344: aviso del peso declarado de un perfil de drywall contra el teórico. La densidad es la
+ * constante física del acero (`STEEL_DENSITY_FACTOR`), no la de ningún `Finish`: drywall no guarda
+ * acabado en el SKU. `null` si no es un perfil o si falta un dato de la cuenta.
+ */
+function pieceWeightCheckOf(p: WithLineCode) {
+  if (!isDrywallProfile(p)) return null;
+  return drywallPieceWeightCheck({
+    widthMm: p.widthMm?.toFixed(2) ?? null,
+    lengthMm: p.lengthMm?.toFixed(2) ?? null,
+    thicknessMm: p.thicknessMm?.toFixed(2) ?? null,
+    pieceWeightKg: p.pieceWeightKg?.toFixed(3) ?? null,
+  });
+}
+
+function toDto(p: WithLineCode, canDelete: boolean): ProductDto {
   return {
     id: p.id,
     businessLineId: p.businessLineId,
@@ -837,14 +950,37 @@ function toDto(p: WithLineCode): ProductDto {
     theoreticalKgPerUnit: theoreticalKgPerUnit(p),
     isActive: p.isActive,
     source: p.source,
-    // D-342: solo el motivo que se sabe sin mirar saldos; el de costo de flejes lo dice el piso.
+    // D-342/D-344: solo el motivo que se sabe sin mirar saldos; el de flejes y margen lo dice el piso.
     noFloorReason: staticNoFloorReason(p),
+    pieceWeightCheck: pieceWeightCheckOf(p),
+    canDelete,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };
 }
 
-function auditView(p: Product): Prisma.InputJsonObject {
+/**
+ * Lo que `auditView` necesita de un producto — estructural, no el modelo `Product` completo,
+ * para que también lo pueda armar un `select` recortado (D-347: `remove()` no trae el producto
+ * entero, solo estos campos más lo que hace falta para `describeProductUsage`).
+ */
+interface AuditableProduct {
+  businessLineId: string;
+  sku: string;
+  name: string;
+  unit: string;
+  source: Product['source'];
+  listPricePen: Prisma.Decimal | null;
+  colorId: string | null;
+  finishId: string | null;
+  thicknessMm: Prisma.Decimal | null;
+  widthMm: Prisma.Decimal | null;
+  lengthMm: Prisma.Decimal | null;
+  pieceWeightKg: Prisma.Decimal | null;
+  isActive: boolean;
+}
+
+function auditView(p: AuditableProduct): Prisma.InputJsonObject {
   return {
     businessLineId: p.businessLineId,
     sku: p.sku,

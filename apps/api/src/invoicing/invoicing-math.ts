@@ -84,6 +84,69 @@ export function exceedsOrderTotal(input: {
   };
 }
 
+/** Un agregado `_sum` de `fiscal_document_items` agrupado por línea de pedido. */
+export interface ItemSumRow {
+  salesOrderItemId: string | null;
+  _sum: {
+    qty: { toString(): string } | null;
+    subtotalPen: { toString(): string } | null;
+    igvPen: { toString(): string } | null;
+    totalPen: { toString(): string } | null;
+  };
+}
+
+/** Lo facturado **neto** de una línea de pedido: cantidad e importes. */
+export interface NetInvoiced {
+  qty: Decimal;
+  subtotalPen: Decimal;
+  igvPen: Decimal;
+  totalPen: Decimal;
+}
+
+const dec = (v: { toString(): string } | null): Decimal => toDecimal((v ?? 0).toString());
+const atLeastZero = (d: Decimal): Decimal => (d.isNegative() ? new Decimal(0) : d);
+
+/**
+ * D-346 (deuda de D-223): lo facturado por línea de pedido = **emitido vivo − acreditado por
+ * notas de crédito vivas** sobre esa línea, en cantidad y en importes. Es el mismo criterio que
+ * `exceedsOrderTotal` aplica al total del pedido, llevado a cada línea.
+ *
+ * Nunca deja un neto negativo: una nota de crédito que acredita más de lo emitido (dato
+ * importado a mano, o una NC sobre un comprobante ya anulado a medias) no puede volver el
+ * facturado negativo, porque entonces la línea aceptaría facturar **más** que lo que se pidió.
+ * Si la cantidad neta queda en cero, los importes también: un residuo de redondeo entre lo
+ * emitido y lo acreditado no debe descontarse de la próxima parte que cierre la línea.
+ *
+ * Solo salen líneas con algo emitido; lo acreditado sin emitido no genera fila.
+ */
+export function netInvoicedByItem(
+  emitted: readonly ItemSumRow[],
+  credited: readonly ItemSumRow[],
+): Map<string, NetInvoiced> {
+  const creditedBy = new Map<string, ItemSumRow['_sum']>();
+  for (const row of credited) {
+    if (row.salesOrderItemId !== null) creditedBy.set(row.salesOrderItemId, row._sum);
+  }
+  const out = new Map<string, NetInvoiced>();
+  for (const row of emitted) {
+    if (row.salesOrderItemId === null) continue;
+    const c = creditedBy.get(row.salesOrderItemId);
+    const qty = atLeastZero(dec(row._sum.qty).minus(c ? dec(c.qty) : 0));
+    const zero = qty.isZero();
+    const net = (
+      emit: { toString(): string } | null,
+      cred: { toString(): string } | null | undefined,
+    ) => (zero ? new Decimal(0) : atLeastZero(dec(emit).minus(cred ? dec(cred) : 0)));
+    out.set(row.salesOrderItemId, {
+      qty,
+      subtotalPen: net(row._sum.subtotalPen, c?.subtotalPen),
+      igvPen: net(row._sum.igvPen, c?.igvPen),
+      totalPen: net(row._sum.totalPen, c?.totalPen),
+    });
+  }
+  return out;
+}
+
 /**
  * Cuánto del material reservado se lleva un despacho parcial (D-074).
  *

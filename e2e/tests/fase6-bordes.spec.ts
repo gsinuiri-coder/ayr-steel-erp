@@ -552,19 +552,13 @@ test.describe('Fase 6 — bordes y reversas de coberturas', () => {
       const sinReserva = await postExpectingError(api, '/api/production/roofing', {});
       expect(sinReserva.status).toBe(400);
 
-      // D-122: desde entonces una cobertura no lleva receta —su acabado, su espesor, su
-      // ancho y su color viven en el propio SKU—, así que `PUT /production/boms/:id` la
-      // rechaza aunque los campos sean válidos, antes de mirar ninguno de ellos. El rechazo
-      // sale del `superRefine` del schema: el detalle va en `errors`, no en `message` (es
-      // Zod quien corta, mismo criterio que el resto de la suite).
+      // D-122/D-344: una cobertura no lleva receta —su acabado, su espesor, su ancho y su color
+      // viven en el propio SKU— y, desde D-344, tampoco existe ya ningún endpoint de recetas:
+      // `PUT /production/boms/:id` no es una ruta.
       const conReceta = await api.put(`/api/production/boms/${scenario.product.id}`, {
         data: { kind: 'ROOFING', finishId: scenario.finish.id, inputThicknessMm: '0.50' },
       });
-      expect(conReceta.status()).toBe(400);
-      const detail = (await conReceta.json()) as { errors?: Record<string, string[]> };
-      expect(JSON.stringify(detail.errors ?? {})).toContain(
-        'Una cobertura no lleva receta desde D-122',
-      );
+      expect([400, 404]).toContain(conReceta.status());
     } finally {
       await purgeRoofingTrail(api, trail);
     }

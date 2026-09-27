@@ -81,6 +81,7 @@ import {
   partKind,
   pendingWithDrafts,
 } from './invoicing-math';
+import { invoicedByOrderItem } from './invoicing-net';
 import {
   ELECTRONIC_INVOICING_PROVIDER,
   type ElectronicInvoicingProvider,
@@ -759,25 +760,13 @@ export class InvoicingService {
         : [];
     const byId = new Map(orderItems.map((i) => [i.id, i]));
 
-    // Lo ya facturado por línea: solo cuentan los comprobantes vivos. Un rechazado nunca
-    // existió para SUNAT y un anulado dejó de existir; ninguno de los dos consume pedido.
-    const invoiced = await tx.fiscalDocumentItem.groupBy({
-      by: ['salesOrderItemId'],
-      where: {
-        salesOrderItemId: { in: orderItemIds },
-        document: {
-          status: { in: LIVE_DOCUMENT_STATUSES },
-          docType: { not: FiscalDocType.NOTA_CREDITO },
-          archivedAt: null,
-        },
-      },
-      _sum: { qty: true, subtotalPen: true, igvPen: true, totalPen: true },
-    });
+    // Lo ya facturado por línea, **neto de notas de crédito vivas** (D-346): solo cuentan los
+    // comprobantes vivos. Un rechazado nunca existió para SUNAT y un anulado dejó de existir;
+    // ninguno de los dos consume pedido, y lo que una NC viva devolvió se puede facturar de nuevo.
+    // Es la misma función que alimenta `orderProgress`.
+    const invoicedNet = await invoicedByOrderItem(tx, orderItemIds);
     const invoicedByItem = new Map(
-      invoiced.map((row) => [
-        row.salesOrderItemId ?? '',
-        toDecimal((row._sum.qty ?? new Prisma.Decimal(0)).toString()),
-      ]),
+      [...invoicedNet].map(([id, net]) => [id, net.qty] as [string, Decimal]),
     );
     // P2-A: los borradores de las mismas líneas no consumen cantidad (D-073), pero cuentan para
     // que la parte que cierra tome el resto (`pendingWithDrafts`).
@@ -796,9 +785,11 @@ export class InvoicingService {
     const draftedByItem = new Map(
       drafted.map((row) => [row.salesOrderItemId ?? '', (row._sum.qty ?? 0).toString()]),
     );
-    // D-265: y sus importes, para que la parte que cierra la línea tome el resto.
+    // D-265: y sus importes, para que la parte que cierra la línea tome el resto. D-346: lo ya
+    // hecho entra **neto** de lo acreditado (importes incluidos); con el bruto, la parte que cierra
+    // la línea después de una NC parcial tomaría un resto equivocado.
     const parts = new PartLedger(
-      invoiced.map((row) => [row.salesOrderItemId ?? '', row._sum]),
+      [...invoicedNet],
       drafted.map((row) => [row.salesOrderItemId ?? '', row._sum]),
     );
 
@@ -1879,37 +1870,15 @@ export class InvoicingService {
       where: { id: { in: ids } },
       select: { id: true, lineNumber: true, qty: true },
     });
-    const invoiced = await tx.fiscalDocumentItem.groupBy({
-      by: ['salesOrderItemId'],
-      where: {
-        salesOrderItemId: { in: ids },
-        documentId: { not: document.id },
-        document: {
-          status: { in: LIVE_DOCUMENT_STATUSES },
-          docType: { not: FiscalDocType.NOTA_CREDITO },
-          archivedAt: null,
-        },
-      },
-      _sum: { qty: true },
-    });
-    const invoicedById = new Map(
-      invoiced.flatMap((r) =>
-        r.salesOrderItemId === null
-          ? []
-          : [
-              [r.salesOrderItemId, toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString())] as [
-                string,
-                Decimal,
-              ],
-            ],
-      ),
-    );
+    // D-346: la misma función neta de NC que el guard de creación; con otra, un borrador que
+    // pasó la creación después de una NC se rechazaba justo al emitir.
+    const invoicedById = await invoicedByOrderItem(tx, ids, { excludeDocumentId: document.id });
     for (const item of document.items) {
       if (!item.salesOrderItemId) continue;
       const orderItem = orderItems.find((o) => o.id === item.salesOrderItemId);
       if (!orderItem) continue;
       const available = toDecimal(orderItem.qty.toString()).minus(
-        invoicedById.get(orderItem.id) ?? new Decimal(0),
+        invoicedById.get(orderItem.id)?.qty ?? new Decimal(0),
       );
       if (toDecimal(item.qty.toString()).gt(available)) {
         throw new ConflictException(
@@ -2946,32 +2915,11 @@ export class InvoicingService {
       ]),
     );
 
-    // Solo los comprobantes vivos y **sin contar notas de crédito**: una NC no descuenta
-    // pedido, ajusta el saldo del comprobante que afecta (D-075).
-    const invoiced = await this.prisma.fiscalDocumentItem.groupBy({
-      by: ['salesOrderItemId'],
-      where: {
-        salesOrderItemId: { in: itemIds },
-        document: {
-          status: { in: LIVE_DOCUMENT_STATUSES },
-          docType: { not: FiscalDocType.NOTA_CREDITO },
-          archivedAt: null,
-        },
-      },
-      _sum: { qty: true },
-    });
-    const invoicedByItem = new Map(
-      invoiced.flatMap((r) =>
-        r.salesOrderItemId === null
-          ? []
-          : [
-              [r.salesOrderItemId, toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString())] as [
-                string,
-                Decimal,
-              ],
-            ],
-      ),
-    );
+    // Solo los comprobantes vivos, **netos de las notas de crédito vivas** de cada línea
+    // (D-346, deuda de D-223): lo que una NC devolvió vuelve a quedar pendiente de facturar.
+    // Es la misma función que usa el guard de `resolveLines`, para que la pantalla y el tope
+    // no puedan discrepar.
+    const invoicedByItem = await invoicedByOrderItem(this.prisma, itemIds);
 
     const labels = await this.itemLabels(order.items);
 
@@ -2984,7 +2932,7 @@ export class InvoicingService {
       lines: order.items.map((item) => {
         const qty = toDecimal(item.qty.toString());
         const dispatchedQty = dispatchedByItem.get(item.id) ?? new Decimal(0);
-        const invoicedQty = invoicedByItem.get(item.id) ?? new Decimal(0);
+        const invoicedQty = invoicedByItem.get(item.id)?.qty ?? new Decimal(0);
         // F8-S1/M3: kg teórico por unidad de venta, para que el formulario de despacho
         // proponga el peso de línea sin que el usuario tenga que calcularlo. Cobertura por
         // metro o de largo fijo (D-118): geometría del producto. Drywall: su

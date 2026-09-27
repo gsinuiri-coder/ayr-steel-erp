@@ -3,24 +3,50 @@ import { decimalStringSchema, MAX_VALUE } from '../decimal';
 import { BUSINESS_LINES, PRODUCT_SOURCES, ROOFING_PRODUCT_KINDS } from '../enums';
 
 /**
- * D-342: por qué un perfil de drywall **no tiene piso de precio** (D-163). El piso de un perfil
- * sale de su receta —kilos de la pieza × costo ponderado por kilo de los flejes que la receta
- * consume— y le falta uno de los tres ingredientes:
+ * D-342/D-344: por qué un perfil de drywall **no tiene piso de precio** (D-163). El piso de un
+ * perfil sale de su **SKU** —kilos de la pieza × costo ponderado por kilo de los flejes
+ * galvanizados de su espesor y su ancho— y le falta uno de los ingredientes:
  *
- * - `NO_RECIPE`: no tiene receta activa. Las recetas las carga el dueño desde el catálogo.
- * - `NO_PIECE_WEIGHT`: tiene receta pero el SKU no declara el peso de la pieza.
- * - `NO_STRIP_COST`: tiene todo, pero no hay flejes compatibles abiertos con saldo que den costo.
+ * - `NO_THICKNESS`: el SKU no declara el espesor del fleje. Lo carga el dueño desde el catálogo.
+ * - `NO_WIDTH`: el SKU no declara el ancho del fleje (desarrollo).
+ * - `NO_PIECE_WEIGHT`: el SKU no declara el peso de la pieza.
+ * - `NO_COMPATIBLE_STRIPS`: tiene todo, pero no hay flejes compatibles abiertos con saldo y con
+ *   costo.
+ * - `NO_MARGIN`: hay costo, pero la línea de negocio no tiene margen configurado
+ *   (`pricing_settings`); antes se decía «sin costo de flejes» aunque el costo existiera.
  *
- * En los tres casos **no se bloquea** nada: sin costo no hay piso (D-163), y esto solo lo dice.
+ * En todos los casos **no se bloquea** nada: sin costo no hay piso (D-163), y esto solo lo dice.
  */
-export const NO_FLOOR_REASONS = ['NO_RECIPE', 'NO_PIECE_WEIGHT', 'NO_STRIP_COST'] as const;
+export const NO_FLOOR_REASONS = [
+  'NO_THICKNESS',
+  'NO_WIDTH',
+  'NO_PIECE_WEIGHT',
+  'NO_COMPATIBLE_STRIPS',
+  'NO_MARGIN',
+] as const;
 export type NoFloorReason = (typeof NO_FLOOR_REASONS)[number];
 
 export const NO_FLOOR_REASON_LABELS: Record<NoFloorReason, string> = {
-  NO_RECIPE: 'Sin receta: sin piso de precio',
+  NO_THICKNESS: 'Sin espesor en el SKU: sin piso',
+  NO_WIDTH: 'Sin ancho del fleje en el SKU: sin piso',
   NO_PIECE_WEIGHT: 'Sin peso por pieza: sin piso de precio',
-  NO_STRIP_COST: 'Sin costo de flejes: sin piso',
+  NO_COMPATIBLE_STRIPS: 'Sin flejes compatibles: sin piso',
+  NO_MARGIN: 'Sin margen configurado para la línea: sin piso',
 };
+
+/**
+ * D-344: comparación del peso declarado de una pieza de drywall contra el teórico
+ * (`ancho del fleje × largo × espesor × densidad del acabado galvanizado × factor de D-165`).
+ * Es un **aviso**, nunca un bloqueo: sirve para detectar marcadores como `1.00 / 1.000`.
+ */
+export const pieceWeightCheckSchema = z.object({
+  theoreticalKg: z.string(),
+  /** Desvío absoluto del declarado contra el teórico, en %, con dos decimales. */
+  deviationPct: z.string(),
+  /** `true` si el desvío pasa del umbral (`PIECE_WEIGHT_WARN_PCT`). */
+  warn: z.boolean(),
+});
+export type PieceWeightCheck = z.infer<typeof pieceWeightCheckSchema>;
 
 /** Catálogo de productos por línea (RF-50). SKU único dentro de su línea, no global. */
 export const productSchema = z.object({
@@ -49,9 +75,11 @@ export const productSchema = z.object({
   /**
    * D-118 (Fase 7e, B): campos estructurados del SKU. Metallic Roofing lleva
    * `thicknessMm`/`widthMm` (nominales, para cotizar y calcular kg teóricos sin bobina
-   * montada — la producción real usa el rollo que se monte, D-086). Drywall lleva
-   * `widthMm`/`lengthMm`/`pieceWeightKg` de la **pieza terminada**, distintos de los
-   * campos de `product_boms` (que describen el fleje de entrada). Null en el resto.
+   * montada — la producción real usa el rollo que se monte, D-086). Null en el resto.
+   *
+   * D-344 (corrige la lectura de D-118 para drywall): Drywall lleva `thicknessMm` y `widthMm` del
+   * **fleje** —su espesor y su ancho de desarrollo— y `lengthMm`/`pieceWeightKg` de la pieza
+   * terminada. Son los tres datos con los que se busca el fleje compatible; ya no hay receta.
    */
   thicknessMm: z.string().nullable(),
   widthMm: z.string().nullable(),
@@ -75,11 +103,24 @@ export const productSchema = z.object({
   isActive: z.boolean(),
   source: z.enum(PRODUCT_SOURCES),
   /**
-   * D-342: solo en un perfil de drywall al que **ya se sabe** que le falta un ingrediente del
-   * piso (`NO_RECIPE` o `NO_PIECE_WEIGHT`). `NO_STRIP_COST` no viaja acá: depende del saldo de
-   * flejes de hoy y solo lo dicen el panel de stock y `GET /catalog/:id/price-floor`.
+   * D-342/D-344: solo en un perfil de drywall al que **ya se sabe** que le falta un ingrediente
+   * del SKU (`NO_THICKNESS`, `NO_WIDTH` o `NO_PIECE_WEIGHT`). `NO_COMPATIBLE_STRIPS` y
+   * `NO_MARGIN` no viajan acá: dependen del saldo de flejes y de la configuración de hoy, y solo
+   * los dicen el panel de stock y `GET /catalog/:id/price-floor`.
    */
   noFloorReason: z.enum(NO_FLOOR_REASONS).nullable(),
+  /**
+   * D-344: aviso de kg/pieza contra el teórico. `null` fuera de un perfil de drywall, si le falta
+   * algún dato del cálculo o si no hay un acabado galvanizado activo del que sacar la densidad.
+   */
+  pieceWeightCheck: pieceWeightCheckSchema.nullable(),
+  /**
+   * D-347: si nunca se usó (sin kardex, sin documento comercial, sin producción, sin ser
+   * destino de una fusión) y por eso `DELETE /catalog/:id` lo puede borrar físicamente en vez
+   * de solo desactivarlo. Se calcula en el servidor, nunca en el navegador: la lista de tablas
+   * que cuentan como «uso» es demasiado larga para adivinarla del lado del cliente.
+   */
+  canDelete: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

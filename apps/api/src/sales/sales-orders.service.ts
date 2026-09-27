@@ -141,8 +141,12 @@ import {
   type HolderViewer,
 } from './reserved-ledger';
 import { unavailableCoilReason } from './coil-sale-unavailable';
-import { computePriceFloors, type PriceFloorCandidate } from './price-floor';
-import { FLOOR_COST_SELECT, productFloorCost } from './price-floor-cost';
+import {
+  computePriceFloorOutcomes,
+  computePriceFloors,
+  type PriceFloorCandidate,
+} from './price-floor';
+import { productFloorCost, stripSkuNoFloorReason } from './price-floor-cost';
 import {
   assertRawMaterialInvariant,
   rawMaterialAvailability,
@@ -1505,28 +1509,12 @@ export class SalesOrdersService {
     // que ya tiene el saldo.
     const coilBusinessLineById = new Map<string, string>();
     if (coilIds.length > 0) {
-      // D-116: una línea que reserva kilos de bobina para **producirla** (coberturas a
-      // medida) sigue exigiendo `OPEN` —de acá sale material que todavía tiene que montarse
-      // en una OP—, pero una línea que **vende la bobina tal cual** (RF-73, producto sin
-      // receta) también acepta `CLOSED`: es justo el estado con el que C recomienda dar de
-      // alta una bobina que ya se sabe que se va a vender entera, y bloquearlo la dejaría
-      // sin ninguna forma de reservarse.
-      const boms = await tx.productBom.findMany({
-        where: {
-          productId: { in: [...new Set(coilItems.map((i) => i.productId))] },
-          isActive: true,
-        },
-        select: { productId: true },
-      });
-      const madeToOrderProductIds = new Set(boms.map((b) => b.productId));
-      const requiresOpenByCoilId = new Map<string, boolean>();
-      for (const item of coilItems) {
-        if (madeToOrderProductIds.has(item.productId)) {
-          requiresOpenByCoilId.set(item.reserveItemId, true);
-        } else if (!requiresOpenByCoilId.has(item.reserveItemId)) {
-          requiresOpenByCoilId.set(item.reserveItemId, false);
-        }
-      }
+      // D-116: una línea que **vende la bobina tal cual** (RF-73) acepta `OPEN` y también
+      // `CLOSED`: es justo el estado con el que C recomienda dar de alta una bobina que ya se sabe
+      // que se va a vender entera, y bloquearlo la dejaría sin ninguna forma de reservarse. Desde
+      // D-122 ninguna línea con reserva de bobina se fabrica (las coberturas reservan materia
+      // prima y drywall producto terminado), y desde D-344 tampoco existe una receta que lo diga:
+      // ya no hay un caso que exija `OPEN` solamente.
 
       // **La invariante también vale al revés.** Comprobar el disponible no alcanza para
       // decidir si el material se puede prometer: entre cotizar y confirmar, la bobina pudo
@@ -1540,9 +1528,7 @@ export class SalesOrdersService {
         select: { id: true, code: true, status: true, businessLineId: true },
       });
       const unavailable = coils.filter((c) => {
-        const allowed: CoilStatus[] = requiresOpenByCoilId.get(c.id)
-          ? [CoilStatus.OPEN]
-          : [CoilStatus.OPEN, CoilStatus.CLOSED];
+        const allowed: CoilStatus[] = [CoilStatus.OPEN, CoilStatus.CLOSED];
         return !allowed.includes(c.status);
       });
       if (unavailable.length > 0) {
@@ -3260,10 +3246,12 @@ export class SalesOrdersService {
         // necesita para encontrar el margen mínimo de la línea— y, desde D-171, también
         // `unit` y `lengthMm`, que `orderedMeters` usa para convertir planchas en metros.
         ...ROOFING_PRODUCT_SELECT,
-        // D-342: origen, peso y receta, para el costo del piso de un perfil de drywall.
+        // D-342/D-344: origen, peso y el espesor y ancho del fleje del SKU, para el costo del
+        // piso de un perfil de drywall.
         source: true,
         pieceWeightKg: true,
-        bom: FLOOR_COST_SELECT.bom,
+        thicknessMm: true,
+        widthMm: true,
         // D-167: si la línea lleva existencias. El panel lo muestra en vez de un cero.
         // `code` (D-342): es lo que distingue un perfil de drywall.
         businessLine: { select: { inventoryStrategy: true, code: true } },
@@ -3314,11 +3302,12 @@ export class SalesOrdersService {
     // veces era duplicar la consulta más cara de una ruta que el formulario llama en cada
     // cambio de selección.
     const floorCandidates: PriceFloorCandidate[] = [];
-    // D-342: por qué un perfil de drywall no tiene piso. `staticReasons` es lo que se sabe sin
-    // mirar saldos (sin receta, sin peso); `stripRecipeProductIds` son los perfiles con receta,
-    // que quedan «sin costo de flejes» si aun así `computePriceFloors` no les encontró piso.
+    // D-342/D-344: por qué un perfil de drywall no tiene piso. `staticReasons` es lo que se sabe
+    // sin mirar saldos (sin espesor, sin ancho, sin peso); `stripSkuProductIds` son los perfiles con
+    // el SKU completo, que quedan «sin flejes compatibles» (o «sin margen») si aun así
+    // `computePriceFloorOutcomes` no les encontró piso.
     const staticReasons = new Map<string, NoFloorReason>();
-    const stripRecipeProductIds = new Set<string>();
+    const stripSkuProductIds = new Set<string>();
 
     const out: ProductStockDto[] = [];
     for (const product of products) {
@@ -3389,8 +3378,8 @@ export class SalesOrdersService {
           });
         }
       } else if (carriesInventory(product.businessLine)) {
-        // D-342: un perfil de drywall con receta cuesta lo que sus flejes; sin ella (o sin peso)
-        // no tiene piso, y el formulario lo dice en la línea sin bloquear.
+        // D-342/D-344: un perfil de drywall cuesta lo que sus flejes; sin espesor, ancho o peso en
+        // el SKU no tiene piso, y el formulario lo dice en la línea sin bloquear.
         const floorCost = productFloorCost(product);
         if ('cost' in floorCost) {
           floorCandidates.push({
@@ -3401,7 +3390,7 @@ export class SalesOrdersService {
             unitValuePen: '0.0000',
             cost: floorCost.cost,
           });
-          if (floorCost.cost.kind === 'STRIP_RECIPE') stripRecipeProductIds.add(product.id);
+          if (floorCost.cost.kind === 'STRIP_SKU') stripSkuProductIds.add(product.id);
         } else {
           staticReasons.set(product.id, floorCost.noFloorReason);
         }
@@ -3424,21 +3413,24 @@ export class SalesOrdersService {
       });
     }
 
-    const floors = await computePriceFloors(
+    const outcomes = await computePriceFloorOutcomes(
       this.prisma,
       floorCandidates,
       roofingToleranceMm(this.env),
     );
     return out.map((row) => {
-      const floor = floors.get(row.productId);
-      if (floor !== undefined) {
-        return { ...row, minPricePen: floor.minPricePen, minValuePen: floor.minValuePen };
+      const outcome = outcomes.get(row.productId);
+      if (outcome !== undefined && 'minValuePen' in outcome) {
+        return { ...row, minPricePen: outcome.minPricePen, minValuePen: outcome.minValuePen };
       }
-      // D-342: sin piso porque a un perfil de drywall le falta receta o peso, o —con receta y
-      // peso— porque no hay flejes compatibles con saldo que den costo.
+      // D-342/D-344: sin piso porque al perfil de drywall le falta espesor, ancho o peso en el SKU,
+      // o —con el SKU completo— porque no hay flejes compatibles con costo, o porque la línea no
+      // tiene margen configurado (antes se decía siempre «sin costo de flejes»).
       const reason =
         staticReasons.get(row.productId) ??
-        (stripRecipeProductIds.has(row.productId) ? ('NO_STRIP_COST' as const) : null);
+        (outcome !== undefined && stripSkuProductIds.has(row.productId)
+          ? stripSkuNoFloorReason(outcome.missing)
+          : null);
       return reason === null ? row : { ...row, noFloorReason: reason };
     });
   }

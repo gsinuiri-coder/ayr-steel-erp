@@ -361,12 +361,12 @@ export function DrywallOrderPanel({
             )}
             {strips.isSuccess && strips.data.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                No hay flejes libres que coincidan con la receta
-                {o.bom && (
+                No hay flejes libres que coincidan con el SKU del perfil
+                {o.productThicknessMm !== null && o.productWidthMm !== null && (
                   <>
                     {' '}
-                    ({o.bom.finishCode}, {o.bom.inputThicknessMm} mm de espesor,{' '}
-                    {o.bom.inputWidthMm} mm de ancho)
+                    (galvanizado, {o.productThicknessMm} mm de espesor, {o.productWidthMm} mm de
+                    ancho)
                   </>
                 )}
                 .

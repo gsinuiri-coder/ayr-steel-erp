@@ -208,7 +208,11 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
   Conservar siempre los dos respaldos post-día-D más recientes. Tras cada ventana verificada,
   se pueden proponer para borrado los respaldos de ventanas verificadas con más de siete días,
   conservando siempre el respaldo del día D. Las ramas de ensayo también requieren OK por
-  nombre. Antes de borrar, verificar que el ID coincide con el nombre.
+  nombre. Antes de borrar, verificar que el ID coincide con el nombre. El dueño puede declarar
+  un respaldo **checkpoint**, conservado más allá de los siete días con una fecha de borrado
+  propia (registrada en `docs/PROGRESO.md` y en el handoff de la ventana que lo propuso) —
+  por ejemplo, la foto previa a una reescritura de kardex que conviene poder comparar un tiempo
+  después de cerrada la ventana.
 - Datos reales de clientes/importaciones (Excel, CSV, JSON de decisiones, RUC, montos) viven en
   `local-data/`, ignorada por completo; nunca quedan sueltos en la raíz. Un script de un solo
   uso se crea, ejecuta y borra en la misma sesión. Si debe sobrevivir, va a `scripts/oneoff/`

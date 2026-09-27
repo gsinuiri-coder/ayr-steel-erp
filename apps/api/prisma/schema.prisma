@@ -661,12 +661,14 @@ model Product {
   finishId       String?             @map("finish_id") @db.Uuid
   finish         Finish?             @relation(fields: [finishId], references: [id])
   /// D-118 (Fase 7e, B): espesor del SKU. Obligatorio en Metallic Roofing —es también el
-  /// espesor del producto terminado (rolar no cambia el espesor)—, no aplica al resto.
+  /// espesor del producto terminado (rolar no cambia el espesor)—. D-344: obligatorio también en
+  /// Drywall, donde es el espesor **del fleje** con el que se produce el perfil. No aplica al resto.
   thicknessMm    Decimal?            @map("thickness_mm") @db.Decimal(6, 2)
   /// D-118: ancho del SKU. Obligatorio en Metallic Roofing (nominal, para cotizar sin
   /// bobina montada: la producción real usa el ancho del rollo que se monte, D-086, sin
-  /// filtro por ancho) y en Drywall (ancho de la **pieza terminada**, distinto del ancho
-  /// del fleje de entrada que ya vive en `product_boms.input_width_mm`).
+  /// filtro por ancho) y en Drywall. **D-344 corrige la lectura de D-118 para drywall:** es el
+  /// ancho **del fleje** (su desarrollo), no el de la pieza terminada; con el espesor y el acabado
+  /// galvanizado es lo que dice qué fleje consume el perfil. Ya no hay receta que lo guarde.
   widthMm        Decimal?            @map("width_mm") @db.Decimal(8, 2)
   /// D-118/D-122: largo de la **pieza terminada**. En Drywall es el largo del perfil; en
   /// Metallic Roofing es el largo fijo de una plancha de catálogo (`PLANCHA`) y queda null
@@ -1297,6 +1299,12 @@ model CuttingOrderCoil {
 // Fase 4 — Producción de drywall y terminal `/planta` (RF-32..35, RF-38, RF-39)
 // ---------------------------------------------------------------------------
 
+/// D-344: **historial, ya no se usa.** Drywall dejó de tener receta: el espesor y el ancho del fleje
+/// son del SKU (`products.thickness_mm`, `products.width_mm`) y el acabado es siempre galvanizado.
+/// La tabla se conserva porque `production_orders.bom_id` de las órdenes históricas la referencia;
+/// nadie la escribe ni la lee, y el CHECK `product_boms_none_active_ck` (migración
+/// `d344_drywall_sin_receta`, no modelado por Prisma) impide una receta activa.
+///
 /// Receta de un producto fabricado (D-059). En v1 hay **una receta por producto** y un
 /// solo insumo: el fleje. Un fleje no es un producto de catálogo (D-049: es una fila de
 /// `coils`), así que se identifica por acabado + espesor + ancho — exactamente el criterio

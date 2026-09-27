@@ -113,6 +113,88 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   producto terminado en metros, **sí toca kardex**); y el CHECK `products_roofing_kind_unit_check` recreado con
   ACCESORIO.
 
+- **Drywall sin receta** (2026-09-27, rama `feat/drywall-sin-receta`, PR #43). D-344, D-345 y D-346. **Dos
+  pases, los dos por subagentes** —autorrevisión y segundo modelo con `model: sonnet` y contexto limpio—, así
+  que **ninguno vale como pase independiente** (`docs/revision/drywall-sin-receta-segundo-modelo.md`: 0 P0,
+  3 P1 —lint roto en CI, un locator y una aserción del E2E nuevo, y `galvanizedDensity()` sin filtrar por
+  línea—, los tres resueltos antes del deploy; varios P2, todos resueltos salvo dos datos anotados para el
+  dueño). **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-27, motivo: esquema de un solo agente). Piezas de
+  riesgo para el pase cruzado: el fleje compatible (`common/drywall-strip.ts`, usado por el piso, `/planta`
+  y la orden) —toca kardex a través de `consume`/`stripOptions`—; la migración `d344` (`CHECK NOT is_active`
+  sobre `product_boms`, que no se borra); la CLI `retire:boms` (auditada, dry-run por defecto); y las tres
+  lecturas de `productBom` retiradas en `reservation-transfer`, `quotations.service` y `sales-orders.service`
+  (se verificó que eran restos de D-122 sin efecto observable, no se puede confirmar contra datos reales de
+  dev/demo). **Dos datos para el dueño, no defectos de código:** los pesos declarados de los perfiles
+  coinciden con el teórico **sin** el 1 % de merma de D-165 (el piso queda ~1 % bajo hasta que se revisen);
+  una nota de crédito de solo monto (descuento, ajuste) también libera cantidad facturable de la línea,
+  igual que D-223 ya lo hace por el total en dinero.
+
+  **El filtro de densidad de `galvanizedDensity()` (P1 de arriba) resultó insuficiente y se rediseñó**: el
+  primer arreglo (filtrar por línea de negocio) no alcanzaba porque el acabado que contamina la búsqueda
+  —creado por `bobinas-metro-lineal-d281.spec.ts` con `densityFactor:'1'` para su propia aritmética— está en
+  la **misma** línea de drywall. Se reemplazó la búsqueda en BD por una constante física fija,
+  `STEEL_DENSITY_FACTOR = '7.85'` (t/m³, exportada desde `@ayr/shared`); `galvanizedDensity()` se eliminó por
+  completo. Verificado corriendo deliberadamente el spec contaminante antes del propio en Playwright local.
+
+  **M5 agregado a la misma sesión** (editar un accesorio sin tocar espesor/color/subtipo): el bug real estaba
+  en `product-dialog.tsx`, que mandaba siempre los campos estructurados en el `PATCH` de edición aunque no se
+  hubieran tocado, rebotando contra la guarda de inmutabilidad del SKU en cualquier edición (nombre, precio).
+  Arreglado con el mismo criterio que ya tenía `colorId`/`finishId` desde F8-S5: solo se manda lo que cambió.
+  La guarda del servidor ya era correcta.
+
+  **Neon `ci` bloqueada por dos incidentes encadenados, ambos resueltos con OK del dueño por comando:**
+  1. **P3009** (migración marcada «empezada, nunca terminada»): un job de Smoke cancelado a mitad de
+     `ALTER TABLE` por un commit más nuevo (arrancó 06:30:46, la migración a las 06:31:09, cancelado a las
+     06:31:12; confirmado con `migrations-diagnose.mjs`: `steps=0, finished=NO`, nada llegó a aplicarse).
+     Resuelto con `node scripts/migrations-resolve.mjs --branch ci 20260927120000_d344_drywall_sin_receta`
+     (`--rolled-back`, nunca `--applied`; verificado en el script antes de correrlo).
+  2. **P3018** (el `CHECK (NOT is_active)` genuinamente violado): quedaba una receta activa real,
+     `E2E-PERFDPILZ` (drywall, 0.50 mm, 600 mm), residuo de una corrida anterior y no relacionada de
+     `pnpm e2e:smoke` contra Neon `ci` (D-202: ese job sí escribe datos reales ahí). Diagnosticado con un
+     script de un solo uso, de solo lectura, creado y borrado en la misma sesión (AGENTS §3.3). Resuelto con
+     OK del dueño: `NEON_BRANCHES` de `scripts/run-api-cli.mjs` ahora incluye `'ci'`; se corrió
+     `pnpm retire:boms --branch ci --execute` (desactivó la receta, auditada) y se volvió a resolver la
+     migración (el reintento dejó una segunda fila fallida). `migrations-status.mjs` confirma `ci` al día.
+  - **`dev` y `demo` confirmados limpios** (dry-run de `retire:boms`: 0 recetas activas en ambas, no hizo
+    falta `--execute`). Los helpers E2E de esta rama (`e2e/helpers/*.ts`) ya no crean `ProductBom`
+    (verificado, sin resultados para `upsertBom|ProductBom|productBom`), así que un futuro `e2e:smoke` contra
+    `ci` no debería volver a dejar una receta activa.
+  - **`development_mm` en `ci`**: columna + 2 CHECK que no existen en `production` ni `demo` (`migrate diff`
+    de solo lectura contra ambas, limpio, coincide exacto con el drift conocido). Rastreado a la rama
+    descartada `acc-demo` (`git log -S`, commit `6d74f3b`, migración `20260922150100_d242_...`). Residuo
+    inofensivo, **no tocado** por instrucción explícita del dueño; documentado acá y en el handoff.
+  - **Limpieza de ramas Neon (M4, criterio final del dueño):** se conservan `production`, `dev`, `ci`,
+    `demo`, `respaldo-pre-v4-20260915`, `respaldo-pre-corr03b-20260926`, `respaldo-pre-corr04b-20260926` y
+    `respaldo-pre-correcciones-02-20260924` (foto pre-reescritura de kardex D-278/D-285/D-288; **se borra
+    después del 2026-10-03**, es un checkpoint con fecha propia, no la política general de 7 días). Se
+    borraron las 10 restantes (ramas de ensayo, `dev-antes-de-*`, `pre-api-*`, `pre-s1-hotfix-*` y los
+    `respaldo-pre-*` fuera de la lista), verificando el id contra el nombre antes de cada borrado. Quedan 8.
+  - **M6 (D-347, borrado físico de un producto sin uso) implementado, revisado y con tests.** El dueño
+    confirmó `sales_price_changes.productId` como uso (nombra el documento en el 409) y el resto del Paso 0
+    con el criterio «historia de catálogo no cuenta, historia de documento comercial/inventario/producción
+    sí»; ser el destino de una fusión (`mergedFrom`) entra por el mismo motivo que el historial de precio
+    por línea (algo quedaría apuntando a un producto borrado). `DELETE /catalog/:id` (ADMINISTRADOR),
+    `canDelete` en el DTO (`productsWithUsage`) y el detalle del 409 (`describeProductUsage`, un producto).
+    **Segunda vuelta de revisión de M6** (autorrevisión + segundo modelo, `docs/revision/drywall-sin-receta-
+m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma independiente y corregidos —
+    **(1)** una carrera real entre `remove()` y la única herramienta que escribe kardex de un producto sin
+    pasar por una fila con FK real (`InitialInventoryProductImportService`, D-206/207): las tablas
+    polimórficas (`InventoryMovement`/`Reservation`/`QuotationReservation`, `itemType=PRODUCT`) no tienen FK
+    hacia `products`, así que el `FOR UPDATE` de `remove()` no las bloqueaba; se cerró con el mismo lock a
+    mano en esa herramienta más una revalidación de existencia (test nuevo:
+    `initial-inventory-product-import-race.spec.ts`); **(2)** el `before` del audit `catalog.product-delete`
+    solo guardaba sku+nombre, insuficiente para un borrado sin reversa — ahora usa el mismo `auditView` que
+    `create`/`update`. También corregido: el `onError` del `DELETE` en el web no invalidaba la lista del
+    catálogo (dejaba un `canDelete` viejo tras un 409 real), y el docstring de `productsWithUsage` que
+    sobreprometía «número fijo» de consultas. Unitario (`product-usage.spec.ts`,
+    `catalog.service.remove.spec.ts`, `initial-inventory-product-import-race.spec.ts`) y E2E
+    (`borrar-producto-d347.spec.ts`, los dos caminos: sin uso se borra, con una cotización detrás el menú lo
+    bloquea y el API lo rechaza igual). **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-27, motivo: esquema de
+    un solo agente). Piezas de riesgo para el pase cruzado: la lista de tablas de «uso» (si aparece una
+    tabla nueva que referencie `products`, hay que sumarla ahí); el `FOR UPDATE` de la fila (mismo patrón
+    que `mergeProductInto`, D-253); y el riesgo residual documentado — el fix de la carrera es quirúrgico
+    sobre el único llamador vulnerable de hoy, no un lock sistémico en `InventoryService.record()`.
+
 ## Ventana de Correcciones 03b (2026-09-26, con migración)
 
 PR #39 (merge `78e8e9e`). SHA desplegado `34e6795`. Handoff: `docs/handoff/correcciones-03b.md`. UAT:

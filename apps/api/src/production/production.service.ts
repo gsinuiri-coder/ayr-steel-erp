@@ -3,10 +3,10 @@ import {
   BusinessLineCode,
   CoilKind,
   CoilStatus,
-  ProductBomKind,
   ProductionOrderKind,
   ProductionOrderStatus,
   ProductionReportStatus,
+  ProductSource,
   SalesOrderStatus,
   Prisma,
   type InventoryMovement,
@@ -42,12 +42,12 @@ import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { claimIdempotencyKey } from '../common/idempotency';
+import { drywallStripMismatch, drywallStripSpec, drywallStripWhere } from '../common/drywall-strip';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertCoilsNotReserved, markReservationConsumed } from '../sales/reservation-guard';
-import { BomsService, toDto as bomToDto } from './boms.service';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
 import {
   assertKind,
@@ -66,14 +66,15 @@ import {
 
 const ORDER_RELATIONS = {
   businessLine: { select: { code: true } },
-  // D-122: el espesor y el peso por pieza son del SKU desde que la receta dejó de tenerlos.
+  // D-122/D-344: el espesor, el ancho del fleje y el peso por pieza son del SKU; ya no hay receta.
   product: {
-    select: { sku: true, name: true, unit: true, thicknessMm: true, pieceWeightKg: true },
-  },
-  bom: {
-    include: {
-      product: { include: { businessLine: { select: { code: true } } } },
-      finish: true,
+    select: {
+      sku: true,
+      name: true,
+      unit: true,
+      thicknessMm: true,
+      widthMm: true,
+      pieceWeightKg: true,
     },
   },
   /** D-084: el plan de corte de una OP de coberturas. Vacío en drywall. */
@@ -122,15 +123,21 @@ const ORDER_RELATIONS = {
 } satisfies Prisma.ProductionOrderInclude;
 
 /**
- * Lo mínimo que necesita el listado: agregados de las filas, sin la receta ni el detalle
- * de cada fleje. Con el `include` completo, 500 órdenes cerradas arrastraban miles de
+ * Lo mínimo que necesita el listado: agregados de las filas, sin el detalle de cada fleje. Con el `include` completo, 500 órdenes cerradas arrastraban miles de
  * filas por request a una pantalla que solo muestra totales.
  */
 const LIST_RELATIONS = {
   businessLine: { select: { code: true } },
-  // D-122: el espesor y el peso por pieza son del SKU desde que la receta dejó de tenerlos.
+  // D-122/D-344: el espesor, el ancho del fleje y el peso por pieza son del SKU; ya no hay receta.
   product: {
-    select: { sku: true, name: true, unit: true, thicknessMm: true, pieceWeightKg: true },
+    select: {
+      sku: true,
+      name: true,
+      unit: true,
+      thicknessMm: true,
+      widthMm: true,
+      pieceWeightKg: true,
+    },
   },
   reservation: {
     select: {
@@ -166,24 +173,6 @@ const LIST_RELATIONS = {
 type OrderForList = Prisma.ProductionOrderGetPayload<{ include: typeof LIST_RELATIONS }>;
 
 /**
- * Estrecha una receta a la forma de drywall (D-087): desde Fase 6 las tres columnas que solo
- * usa esta rama son nullable en la base, y el `CHECK` de la migración garantiza que en una
- * receta `DRYWALL` vienen las tres. Este chequeo es la red que traduce esa garantía al
- * tipo — y el mensaje existe para el caso imposible en que alguien escriba en la base sin
- * pasar por `BomsService`.
- */
-function drywallShape<T extends { kind: ProductBomKind; inputWidthMm: Prisma.Decimal | null }>(
-  bom: T,
-): T & { inputWidthMm: Prisma.Decimal } {
-  if (bom.kind !== ProductBomKind.DRYWALL || bom.inputWidthMm === null) {
-    throw new BadRequestException(
-      'La receta del producto no es una receta de drywall completa: revisa el ancho del fleje',
-    );
-  }
-  return bom as T & { inputWidthMm: Prisma.Decimal };
-}
-
-/**
  * D-139: los kilos que consume una pieza, que desde D-122 viven en el SKU.
  *
  * Hasta entonces eran `product_boms.kg_per_piece` y convivían con
@@ -203,7 +192,8 @@ function pieceWeightOf(product: { sku: string; pieceWeightKg: Prisma.Decimal | n
 /**
  * Producción de drywall (RF-32..35, RF-39; D-055..D-060).
  *
- * Ciclo: crear la OP contra la receta del producto (D-059) → asignarle flejes (no mueve
+ * Ciclo: crear la OP desde el SKU del perfil (D-344: el espesor y el ancho del fleje son del
+ * SKU, ya no hay receta) → asignarle flejes (no mueve
  * kardex, D-060) → reportar piezas en N eventos, cada uno con su kardex completo (D-058)
  * → cerrar, que saca la merma de proceso por diferencia y costea la corrida (D-057,
  * D-056). Toda escritura de stock pasa por `InventoryService` (regla dura 2) y toda
@@ -216,7 +206,6 @@ export class ProductionService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly coils: CoilsService,
-    private readonly boms: BomsService,
     private readonly operationDate: OperationDateService,
   ) {}
 
@@ -242,10 +231,30 @@ export class ProductionService {
         'Esta ruta produce perfiles de Drywall: las coberturas se producen desde producción de coberturas, contra un pedido (RF-31)',
       );
     }
-    const bom = await this.boms.requireActiveBom(product.id);
-    if (bom.kind !== ProductBomKind.DRYWALL) {
-      throw new BadRequestException('La receta del producto no es de drywall');
+    // D-055/D-059 (antes lo exigía la receta): un perfil se fabrica y se cuenta por pieza. Un
+    // producto comprado, o medido en kilos, no se produce en perfiladora.
+    if (product.source !== ProductSource.MANUFACTURED) {
+      throw new BadRequestException(
+        `${product.sku} no es un producto fabricado: cambia su origen a Fabricado en el catálogo antes de producirlo`,
+      );
     }
+    if (product.unit !== Unit.NIU) {
+      throw new BadRequestException(
+        `${product.sku} se debe medir en unidades (${Unit.NIU}): la pieza es la unidad del producto terminado (D-055)`,
+      );
+    }
+    // D-344: sin receta, es el SKU el que dice qué fleje consume la orden. Sin espesor, ancho del
+    // fleje o peso por pieza no hay manera de saber qué material sirve ni cuántos kilos gasta
+    // cada pieza, así que no se abre.
+    const strip = drywallStripSpec(product);
+    if ('noFloorReason' in strip) {
+      throw new BadRequestException(
+        strip.noFloorReason === 'NO_THICKNESS'
+          ? `${product.sku} no tiene espesor en el SKU: cárgalo en el catálogo antes de producirlo`
+          : `${product.sku} no tiene ancho del fleje en el SKU: cárgalo en el catálogo antes de producirlo`,
+      );
+    }
+    pieceWeightOf(product);
 
     const orderId = await this.prisma.$transaction(async (tx) => {
       // D-054/D-066: la OP puede nacer de un pedido. La reserva se valida acá y no al
@@ -322,7 +331,6 @@ export class ProductionService {
           kind: ProductionOrderKind.DRYWALL,
           businessLineId: product.businessLineId,
           productId: product.id,
-          bomId: bom.id,
           status: ProductionOrderStatus.DRAFT,
           targetPieces: input.targetPieces ?? null,
           reservationId: input.reservationId ?? null,
@@ -339,7 +347,7 @@ export class ProductionService {
         after: {
           code: productionOrderCode(order.seq),
           productId: product.id,
-          bomId: bom.id,
+          strip: { ...strip },
           targetPieces: order.targetPieces,
           reservationId: order.reservationId,
         },
@@ -369,18 +377,18 @@ export class ProductionService {
       const order = await this.lockOrder(tx, orderId);
       this.assertLive(order, 'consumir flejes');
 
-      // D-122: `bomId` es nullable desde que una OP de coberturas no nace de una receta.
-      // Una de drywall siempre la tiene —`create` la exige— y este chequeo traduce esa
-      // garantía al tipo.
-      if (order.bomId === null) {
-        throw new BadRequestException('La orden de drywall no tiene receta: no se puede consumir');
+      // D-344: el fleje que sirve lo dice el SKU del perfil (espesor y ancho exactos, acabado
+      // galvanizado), no una receta.
+      const product = await tx.product.findUniqueOrThrow({
+        where: { id: order.productId },
+        select: { sku: true, thicknessMm: true, widthMm: true },
+      });
+      const strip = drywallStripSpec(product);
+      if ('noFloorReason' in strip) {
+        throw new BadRequestException(
+          `${product.sku} no tiene ${strip.noFloorReason === 'NO_THICKNESS' ? 'espesor' : 'ancho del fleje'} en el SKU: no se sabe qué fleje consume la orden`,
+        );
       }
-      const bom = drywallShape(
-        await tx.productBom.findUniqueOrThrow({
-          where: { id: order.bomId },
-          include: { finish: { select: { code: true } } },
-        }),
-      );
       const coil = await this.coils.lockCoil(tx, input.coilId);
 
       if (coil.kind !== CoilKind.STRIP) {
@@ -398,18 +406,23 @@ export class ProductionService {
           `${coil.code} es de otra línea de negocio que la orden de producción`,
         );
       }
-      // RF-32 en su versión de drywall: una corrida no mezcla material. La receta fija
-      // acabado, espesor y ancho exactos; con otro fleje el kilo teórico por pieza —y con
-      // él la merma y el costo— dejarían de significar nada.
-      if (
-        coil.finishId !== bom.finishId ||
-        !coil.thicknessMm.equals(bom.inputThicknessMm) ||
-        !coil.widthMm.equals(bom.inputWidthMm)
-      ) {
-        throw new BadRequestException(
-          `${coil.code} no coincide con la receta del producto: se necesita un fleje de acabado ${bom.finish.code}, ${bom.inputThicknessMm.toFixed(2)} mm de espesor y ${bom.inputWidthMm.toFixed(2)} mm de ancho`,
-        );
-      }
+      // RF-32 en su versión de drywall: una corrida no mezcla material. El SKU fija acabado
+      // galvanizado, espesor y ancho exactos; con otro fleje el kilo teórico por pieza —y con
+      // él la merma y el costo— dejarían de significar nada. El mensaje nombra los tres datos.
+      const finish = await tx.finish.findUnique({
+        where: { id: coil.finishId },
+        select: { kind: true },
+      });
+      const mismatch = drywallStripMismatch(
+        {
+          code: coil.code,
+          finishKind: finish?.kind ?? null,
+          thicknessMm: coil.thicknessMm,
+          widthMm: coil.widthMm,
+        },
+        strip,
+      );
+      if (mismatch !== null) throw new BadRequestException(mismatch);
 
       // D-066: un fleje reservado por un pedido solo lo puede montar la OP que nace de ese
       // mismo pedido. La excepción es imprescindible: sin ella la reserva se bloquearía a
@@ -568,8 +581,8 @@ export class ProductionService {
           );
         }
 
-        // D-122: la receta sigue diciendo **qué fleje** consume el producto; cuánto pesa
-        // cada pieza es del SKU (D-139).
+        // D-122/D-139/D-344: qué fleje consume el producto y cuánto pesa cada pieza son datos
+        // del SKU; ya no hay receta.
         const product = await tx.product.findUniqueOrThrow({
           where: { id: order.productId },
           select: { sku: true, pieceWeightKg: true },
@@ -1379,8 +1392,6 @@ export class ProductionService {
 
     return {
       ...this.toListItem(order, actors),
-      // D-122: null en una OP de coberturas, que ya no nace de una receta.
-      bom: order.bom === null ? null : bomToDto(order.bom),
       items: order.items.map((i) => ({
         lineNumber: i.lineNumber,
         lengthMm: i.lengthMm.toFixed(2),
@@ -1473,21 +1484,43 @@ export class ProductionService {
   }
 
   /**
-   * Flejes que `/planta` puede ofrecer para una OP: los que coinciden con la receta, con
-   * saldo, abiertos y que ninguna otra orden tiene tomados (D-060).
+   * Flejes que `/planta` puede ofrecer para una OP: los que coinciden con el SKU del perfil
+   * (D-344: galvanizado, espesor y ancho exactos), con saldo, abiertos y que ninguna otra orden
+   * tiene tomados (D-060).
    */
   async stripOptions(productId: string): Promise<ProductionStripOptionDto[]> {
-    const bom = drywallShape(await this.boms.requireActiveBom(productId));
-    const kgPerPiece = toDecimal(pieceWeightOf(bom.product));
-    const coils = await this.prisma.coil.findMany({
-      where: {
-        kind: CoilKind.STRIP,
-        status: CoilStatus.OPEN,
-        businessLineId: bom.product.businessLineId,
-        finishId: bom.finishId,
-        thicknessMm: bom.inputThicknessMm,
-        widthMm: bom.inputWidthMm,
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: {
+        sku: true,
+        businessLineId: true,
+        businessLine: { select: { code: true } },
+        source: true,
+        unit: true,
+        thicknessMm: true,
+        widthMm: true,
+        pieceWeightKg: true,
       },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    // Mismas guardas que `create`: solo tiene sentido preguntar por flejes de un perfil de
+    // drywall fabricado y en piezas (D-055/D-059).
+    if (
+      product.businessLine.code !== BusinessLineCode.DRYWALL ||
+      product.source !== ProductSource.MANUFACTURED ||
+      product.unit !== Unit.NIU
+    ) {
+      throw new BadRequestException('Esta ruta es de perfiles de Drywall fabricados en unidades');
+    }
+    const strip = drywallStripSpec(product);
+    if ('noFloorReason' in strip) {
+      throw new BadRequestException(
+        `${product.sku} no tiene ${strip.noFloorReason === 'NO_THICKNESS' ? 'espesor' : 'ancho del fleje'} en el SKU: cárgalo en el catálogo para ver los flejes que le sirven`,
+      );
+    }
+    const kgPerPiece = toDecimal(pieceWeightOf(product));
+    const coils = await this.prisma.coil.findMany({
+      where: drywallStripWhere({ ...strip, businessLineId: product.businessLineId }),
       select: {
         id: true,
         code: true,
@@ -1606,6 +1639,7 @@ export class ProductionService {
       productName: order.product.name,
       productUnit: order.product.unit,
       productThicknessMm: order.product.thicknessMm?.toFixed(2) ?? null,
+      productWidthMm: order.product.widthMm?.toFixed(2) ?? null,
       productPieceWeightKg: order.product.pieceWeightKg?.toFixed(3) ?? null,
       status: order.status,
       targetPieces: order.targetPieces,

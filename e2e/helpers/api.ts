@@ -185,7 +185,8 @@ export async function createFinish(
   // geometría de la bobina por ese factor (D-047), y una densidad redonda deja la aritmética
   // del test comprobable a ojo.
   //
-  // D-203: un acabado es tipo + color + línea. Por defecto, natural (sin color) de Drywall.
+  // D-203: un acabado es tipo + color + línea. Por defecto, galvanizado (sin color) de Drywall
+  // (D-344) y natural en las demás líneas.
   overrides: Partial<{
     code: string;
     name: string;
@@ -203,7 +204,11 @@ export async function createFinish(
     code,
     name: overrides.name ?? `Acabado E2E ${code}`,
     densityFactor: overrides.densityFactor ?? '7.85',
-    kind: overrides.kind ?? 'NATURAL',
+    // D-344: drywall tiene un solo acabado, galvanizado, y es el que un fleje compatible exige;
+    // el resto de las líneas siguen naciendo naturales.
+    kind:
+      overrides.kind ??
+      ((overrides.businessLine ?? 'drywall') === 'drywall' ? 'GALVANIZADO' : 'NATURAL'),
     colorId: overrides.colorId ?? null,
     businessLine: overrides.businessLine ?? 'drywall',
   });

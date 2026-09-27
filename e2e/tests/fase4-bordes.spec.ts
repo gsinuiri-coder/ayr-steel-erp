@@ -7,6 +7,7 @@ import {
   getJson,
   postJson,
 } from '../helpers/api';
+import { patchExpectingError } from '../helpers/sales';
 import {
   apiAs,
   balanceOf,
@@ -19,15 +20,12 @@ import {
   optionalBalanceOf,
   postExpectingError,
   purgeProductionOrder,
-  putExpectingError,
   setupScenario,
   today,
   uniqueDocumentNumber,
-  upsertBom,
   type BusinessLineDto,
   type CoilDto,
   type MovementDto,
-  type ProductBomDto,
   type ProductDto,
   type ProductionOrderDto,
   type StripOptionDto,
@@ -178,30 +176,28 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
     }
   });
 
-  test('consumir rechaza con 400 un fleje que no coincide con la receta (acabado, ancho o espesor) y una bobina en vez de un fleje', async ({
+  test('consumir rechaza con 400 un fleje que no coincide con el SKU del perfil (ancho o espesor, sin tolerancia) y una bobina en vez de un fleje (D-344)', async ({
     baseURL,
   }) => {
     const api = await adminApi(baseURL!);
     const s = await setupScenario(api);
-    const otherFinish = await createFinish(api);
     const opIds: string[] = [];
     const productIds: string[] = [];
 
     try {
       const strip = s.strips[0]!;
 
-      /** Producto con una receta distinta a la del fleje del escenario. */
-      const orderForBom = async (bom: {
-        finishId: string;
-        inputWidthMm?: string;
-        inputThicknessMm?: string;
+      /** Perfil cuyo SKU pide un fleje distinto al del escenario (galvanizado, 0.50 mm × 600 mm). */
+      const orderForSku = async (sku: {
+        thicknessMm?: string;
+        widthMm?: string;
       }): Promise<ProductionOrderDto> => {
         const product = await createCatalogProduct(api, {
-          name: 'Perfil E2E de otra receta',
+          name: 'Perfil E2E de otro fleje',
           pieceWeightKg: KG_PER_PIECE,
+          ...sku,
         });
         productIds.push(product.id);
-        await upsertBom(api, product.id, bom);
         const op = await postJson<ProductionOrderDto>(api, '/api/production', {
           productId: product.id,
         });
@@ -209,31 +205,34 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
         return op;
       };
 
-      // Otro ancho: el fleje es de 600 mm y la receta pide 500 mm.
-      const narrow = await orderForBom({ finishId: s.finish.id, inputWidthMm: '500' });
+      // Otro ancho: el fleje es de 600 mm y el SKU pide 500 mm.
+      const narrow = await orderForSku({ widthMm: '500' });
       const byWidth = await postExpectingError(api, `/api/production/${narrow.id}/consume`, {
         coilId: strip.id,
       });
       expect(byWidth.status).toBe(400);
       expect(byWidth.message).toContain(strip.code);
-      expect(byWidth.message).toContain('no coincide con la receta');
+      expect(byWidth.message).toContain('no es compatible con el perfil');
+      // El mensaje nombra los tres datos: acabado, espesor y ancho.
+      expect(byWidth.message).toContain('galvanizado');
+      expect(byWidth.message).toContain('0.50 mm de espesor');
       expect(byWidth.message).toContain('500.00 mm de ancho');
 
-      // Otro espesor: el fleje es de 0.50 mm y la receta pide 0.90 mm.
-      const thick = await orderForBom({ finishId: s.finish.id, inputThicknessMm: '0.90' });
+      // Otro espesor: el fleje es de 0.50 mm y el SKU pide 0.90 mm.
+      const thick = await orderForSku({ thicknessMm: '0.90' });
       const byThickness = await postExpectingError(api, `/api/production/${thick.id}/consume`, {
         coilId: strip.id,
       });
       expect(byThickness.status).toBe(400);
       expect(byThickness.message).toContain('0.90 mm de espesor');
 
-      // Otro acabado: mismas medidas, material distinto.
-      const otherCoating = await orderForBom({ finishId: otherFinish.id });
-      const byFinish = await postExpectingError(api, `/api/production/${otherCoating.id}/consume`, {
+      // Sin tolerancia: 0.51 mm no es 0.50 mm (drywall compara el espesor exacto).
+      const near = await orderForSku({ thicknessMm: '0.51' });
+      const byNear = await postExpectingError(api, `/api/production/${near.id}/consume`, {
         coilId: strip.id,
       });
-      expect(byFinish.status).toBe(400);
-      expect(byFinish.message).toContain(`acabado ${otherFinish.code}`);
+      expect(byNear.status).toBe(400);
+      expect(byNear.message).toContain('0.51 mm de espesor');
 
       // Y una bobina (`kind=COIL`) no entra a la perfiladora aunque coincida en todo lo
       // demás: la línea de drywall consume flejes (D-049).
@@ -447,65 +446,86 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
     }
   });
 
-  test('el peso por pieza se carga en el catálogo (D-139), la receta se bloquea con una OP viva y solo admite productos drywall fabricados en piezas (D-059/D-055)', async ({
+  test('el espesor, el ancho del fleje y el peso viven en el SKU: el catálogo los exige, no se cambian con una OP viva y solo un perfil fabricado en piezas abre orden (D-344)', async ({
     baseURL,
   }) => {
-    // No necesita material: el catálogo, la receta y la OP en borrador viven en el maestro.
+    // No necesita material: el catálogo y la OP en borrador viven en el maestro.
     const api = await adminApi(baseURL!);
     const finish = await createFinish(api);
     const productIds: string[] = [];
     let opId = '';
 
     try {
-      // D-118 ya exige el peso de la pieza terminada **al dar de alta** el SKU de drywall
-      // (`assertStructuredFields`), así que un producto de esta línea nunca llega a existir
-      // sin él; el guardrail de D-139 en la receta ("cárgalo antes de darle receta") queda
-      // como defensa de un dato histórico, no como un camino que la API deje recorrer hoy.
-      // Lo que sí se prueba es lo que cambió de verdad: el peso vive en el catálogo, no en
-      // la receta, y el DTO de la receta lo refleja desde ahí (D-122/D-139: ya no hay
-      // "sugerido" calculado de la geometría del fleje).
+      // --- El catálogo exige los datos del fleje y no admite acabado en drywall ---
+      const drywallLine = (await getJson<BusinessLineDto[]>(api, '/api/business-lines')).find(
+        (l) => l.code === 'drywall',
+      );
+      expect(drywallLine).toBeDefined();
+      const skuBody = {
+        businessLineId: drywallLine!.id,
+        name: 'Perfil E2E sin datos completos',
+        unit: 'NIU',
+        source: 'MANUFACTURED',
+        widthMm: '600',
+        lengthMm: '3000',
+        pieceWeightKg: KG_PER_PIECE,
+      };
+      const noThickness = await postExpectingError(api, '/api/catalog', {
+        ...skuBody,
+        sku: `E2E-PERF${String(Date.now()).slice(-7)}`,
+      });
+      expect(noThickness.status).toBe(400);
+      expect(noThickness.message).toContain('El espesor del fleje es obligatorio en Drywall');
+      const withFinish = await postExpectingError(api, '/api/catalog', {
+        ...skuBody,
+        sku: `E2E-PERG${String(Date.now()).slice(-7)}`,
+        thicknessMm: '0.50',
+        finishId: finish.id,
+      });
+      expect(withFinish.status).toBe(400);
+      expect(withFinish.message).toContain('Drywall no lleva acabado en el SKU');
+
+      // --- Un perfil completo: el peso vive en el SKU y es lo que planta usa ---
       const product = await createCatalogProduct(api, { pieceWeightKg: KG_PER_PIECE });
       productIds.push(product.id);
-      const bom = await upsertBom(api, product.id, { finishId: finish.id });
-      expect(bom.kgPerPiece).toBe(KG_PER_PIECE);
+      expect(product).toMatchObject({
+        thicknessMm: '0.50',
+        widthMm: '600.00',
+        pieceWeightKg: KG_PER_PIECE,
+        finishId: null,
+      });
 
-      // Y el peso se edita en el catálogo, no en la receta: `upsertBom` ya no acepta
-      // `kgPerPiece` (el API lo ignora si se lo mandan).
-      await api.patch(`/api/catalog/${product.id}`, { data: { pieceWeightKg: '2.500' } });
-      expect(
-        (await getJson<ProductBomDto>(api, `/api/production/boms/${product.id}`)).kgPerPiece,
-      ).toBe('2.500');
-      await api.patch(`/api/catalog/${product.id}`, { data: { pieceWeightKg: KG_PER_PIECE } });
-
-      // --- Con una OP viva la receta (acabado/espesor/ancho del fleje) no se toca (D-059) ---
+      // --- Con una OP viva, lo que decide el fleje no se toca (antes: «la receta se bloquea») ---
       const op = await postJson<ProductionOrderDto>(api, '/api/production', {
         productId: product.id,
       });
       opId = op.id;
-      const locked = await putExpectingError(api, `/api/production/boms/${product.id}`, {
-        finishId: finish.id,
-        inputThicknessMm: '0.60',
-        inputWidthMm: '700',
+      const locked = await patchExpectingError(api, `/api/catalog/${product.id}`, {
+        thicknessMm: '0.60',
+        widthMm: '700',
       });
       expect(locked.status).toBe(400);
-      expect(locked.message).toContain(op.code);
-      expect(locked.message).toContain('en curso');
-      expect(
-        (await getJson<ProductBomDto>(api, `/api/production/boms/${product.id}`)).inputWidthMm,
-      ).toBe('600.00');
+      expect(locked.message).toContain('1 orden(es) de producción en curso');
+      expect(locked.message).toContain('el espesor o el ancho del fleje');
+      expect((await getJson<ProductDto>(api, `/api/catalog/${product.id}`)).widthMm).toBe('600.00');
+      // El peso por pieza sí se edita: no decide qué fleje sirve (D-139).
+      const reweighed = await api.patch(`/api/catalog/${product.id}`, {
+        data: { pieceWeightKg: '2.500' },
+      });
+      expect(reweighed.ok()).toBe(true);
+      await api.patch(`/api/catalog/${product.id}`, { data: { pieceWeightKg: KG_PER_PIECE } });
 
-      // Anulada la orden, la receta vuelve a ser editable.
+      // Anulada la orden, el SKU vuelve a ser editable.
       await postJson<ProductionOrderDto>(api, `/api/production/${opId}/cancel`, {
-        reason: 'Se anula para poder editar la receta (prueba E2E)',
+        reason: 'Se anula para poder editar el SKU (prueba E2E)',
       });
-      const edited = await upsertBom(api, product.id, {
-        finishId: finish.id,
-        inputThicknessMm: '0.60',
-        inputWidthMm: '700',
+      const edited = await api.patch(`/api/catalog/${product.id}`, {
+        data: { thicknessMm: '0.60', widthMm: '700' },
       });
-      expect(edited.inputWidthMm).toBe('700.00');
+      expect(edited.ok()).toBe(true);
+      expect(await edited.json()).toMatchObject({ thicknessMm: '0.60', widthMm: '700.00' });
 
-      // --- Productos que no pueden tener receta en Fase 4 ---
+      // --- Productos que no abren orden: otra línea, comprado, o medido en kilos ---
       // `trading` a propósito: ni Drywall ni Metallic Roofing, y sin campos estructurados
       // obligatorios (D-118/D-122) que compliquen el alta de este caso negativo.
       const lines = await getJson<BusinessLineDto[]>(api, '/api/business-lines');
@@ -518,14 +538,14 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
           lineCode: otherLine!.code,
           name: 'Producto E2E de otra línea',
         }),
-        expected: 'línea Drywall',
+        expected: 'produce perfiles de Drywall',
       });
       cases.push({
         product: await createCatalogProduct(api, {
           source: 'PURCHASED',
           name: 'Producto E2E comprado',
         }),
-        expected: 'producto fabricado',
+        expected: 'no es un producto fabricado',
       });
       cases.push({
         product: await createCatalogProduct(api, { unit: 'KGM', name: 'Producto E2E en kilos' }),
@@ -534,17 +554,14 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
 
       for (const { product: rejected, expected } of cases) {
         productIds.push(rejected.id);
-        const error = await putExpectingError(api, `/api/production/boms/${rejected.id}`, {
-          finishId: finish.id,
-          inputThicknessMm: '0.50',
-          inputWidthMm: '600',
-        });
-        expect(error.status).toBe(400);
-        expect(error.message).toContain(expected);
-        // Y sin receta, tampoco se le puede abrir una orden.
         const denied = await postExpectingError(api, '/api/production', { productId: rejected.id });
         expect(denied.status).toBe(400);
+        expect(denied.message).toContain(expected);
       }
+
+      // Las recetas ya no existen como recurso (D-344).
+      const gone = await getExpectingError(api, '/api/production/boms');
+      expect([400, 404]).toContain(gone.status);
     } finally {
       if (isProduction) {
         await deactivateTrail(api, {
@@ -556,7 +573,7 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
     }
   });
 
-  test('un supervisor de planta opera la corrida entera pero no anula la OP ni toca la receta, y un vendedor no entra a producción (D-046, §3.4)', async ({
+  test('un supervisor de planta opera la corrida entera pero no anula la OP, y un vendedor no entra a producción (D-046, §3.4)', async ({
     baseURL,
   }) => {
     const api = await adminApi(baseURL!);
@@ -607,32 +624,14 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
       );
       expect(reopened.status).toBe('IN_PROGRESS');
 
-      // --- Lo que no: anular la orden y cargar la receta son de ADMINISTRADOR ---
+      // --- Lo que no: anular la orden es de ADMINISTRADOR (D-344: ya no hay receta que cargar) ---
       const cancelDenied = await postExpectingError(supervisor, `/api/production/${opId}/cancel`, {
         reason: 'Intento de anulación desde planta (prueba E2E)',
       });
       expect(cancelDenied.status).toBe(403);
-      const bomDenied = await putExpectingError(
-        supervisor,
-        `/api/production/boms/${s.product.id}`,
-        {
-          finishId: s.finish.id,
-          inputThicknessMm: '0.50',
-          inputWidthMm: '600',
-          pieceLengthMm: '3000',
-          kgPerPiece: '3.000',
-        },
-      );
-      expect(bomDenied.status).toBe(403);
-      // La receta quedó como estaba.
-      expect(
-        (await getJson<ProductBomDto>(api, `/api/production/boms/${s.product.id}`)).kgPerPiece,
-      ).toBe(KG_PER_PIECE);
-
       // --- Y un vendedor no llega a ninguna ruta de producción (§3.4) ---
       for (const path of [
         '/api/production',
-        '/api/production/boms',
         `/api/production/${opId}`,
         `/api/production/strips?productId=${s.product.id}`,
       ]) {

@@ -217,6 +217,17 @@ describe('CatalogService — el accesorio (D-343)', () => {
         }),
       ).rejects.toBe(STOP);
     });
+
+    it('M5: editar solo el nombre y el precio, sin mandar espesor, color ni subtipo, no rebota', async () => {
+      // El caso real (D-343/M5): el diálogo dejó de reenviar los campos que no se tocaron —antes
+      // los mandaba siempre con el mismo valor, y cualquier edición rebotaba igual.
+      await expect(
+        service.update(ACTOR, 'p-acc', {
+          name: 'Cumbrera 0.30 roja',
+          listPricePen: '35.0000',
+        }),
+      ).rejects.toBe(STOP);
+    });
   });
 });
 

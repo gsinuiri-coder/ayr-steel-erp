@@ -34,7 +34,10 @@ export const EXTERNAL_OUTPUTS_OFF = Object.freeze({
   NUBEFACT_TOKEN: '',
 });
 
-const NEON_BRANCHES = new Set(['dev', 'demo', 'production']);
+// D-344: `ci` se suma para `retire:boms` — es una rama Neon persistente (no se resetea entre
+// corridas) que puede acumular residuo de `pnpm e2e:smoke` (D-202: ese job sí escribe contra Neon
+// ci, a diferencia de la suite completa, que corre contra el Postgres del propio runner).
+const NEON_BRANCHES = new Set(['dev', 'demo', 'production', 'ci']);
 const LOCAL_BRANCHES = new Set(['local', 'local-e2e']);
 
 /**

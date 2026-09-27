@@ -1965,7 +1965,8 @@ function PriceFloorHint({
     l.kind === 'BOBINA' ? (coil?.minPricePen ?? null) : (stock?.minPricePen ?? null);
   const minValuePen = l.kind === 'BOBINA' ? minPricePen : (stock?.minValuePen ?? null);
   if (minPricePen === null || minValuePen === null) {
-    // D-342: un perfil de drywall sin receta (o sin peso, o sin costo de flejes) no tiene piso.
+    // D-342/D-344: un perfil de drywall sin espesor, ancho o peso, o sin flejes compatibles, no
+    // tiene piso.
     // Se dice en la línea, sin bloquear: sin costo no hay piso (D-163).
     if (l.kind !== 'BOBINA' && stock?.noFloorReason) {
       return (
