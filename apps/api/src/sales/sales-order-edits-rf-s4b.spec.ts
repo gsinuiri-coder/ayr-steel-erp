@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { InventoryItemType, Prisma } from '@prisma/client';
+import { InventoryItemType, Prisma, ReservationStatus } from '@prisma/client';
 import { Role } from '@ayr/shared';
 import type { AuditService } from '../audit/audit.service';
 import type { Env } from '../config/env';
@@ -394,5 +394,61 @@ describe('D-256 (aclaración): cambiar la cantidad de un pedido importado', () =
 
   it('en un pedido no importado, cambiar la cantidad sigue sin piso (el precio ya lo pasó)', async () => {
     expect(await optionsOf(VENDEDOR, null)).not.toHaveProperty('priceFloor');
+  });
+});
+
+describe('D-341: cambiar la cantidad de una línea con faltante de material', () => {
+  const reservation = (status: ReservationStatus, shortfallQty: string) => ({
+    id: 'res-1',
+    status,
+    itemType: InventoryItemType.RAW_MATERIAL,
+    shortfallQty: D(shortfallQty),
+    productionOrders: [],
+  });
+  const setup = (reservations: ReturnType<typeof reservation>[]) => {
+    const { service, tx } = build({
+      notes: null,
+      item: item({ sku: 'COB-1', reserve: InventoryItemType.RAW_MATERIAL }),
+    });
+    Object.assign(tx, { reservation: { findMany: jest.fn().mockResolvedValue(reservations) } });
+    const resolve = resolveSalesLines as jest.Mock;
+    resolve.mockReset();
+    // Se corta apenas se recalcula la línea: alcanzarlo prueba que el rechazo no saltó.
+    resolve.mockRejectedValueOnce(new BadRequestException('corte del test'));
+    return { service, resolve };
+  };
+  const MESSAGE =
+    'Esta línea tiene faltante de material: completá la reserva o anulá antes de cambiar la cantidad';
+
+  it('rechaza el cambio, sin recalcular ni tocar la reserva, si la reserva tiene faltante', async () => {
+    const { service, resolve } = setup([reservation(ReservationStatus.ACTIVE, '400.000')]);
+    await expect(service.updateItemQty(ADMIN, 'o-1', 'i-1', { qty: '100.000' })).rejects.toThrow(
+      MESSAGE,
+    );
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('también rechaza si la reserva con faltante ya pasó a CONSUMIDA (completarla la revive)', async () => {
+    const { service, resolve } = setup([reservation(ReservationStatus.CONSUMED, '400.000')]);
+    await expect(service.updateItemQty(ADMIN, 'o-1', 'i-1', { qty: '100.000' })).rejects.toThrow(
+      MESSAGE,
+    );
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('sin faltante la línea se sigue editando (llega a recalcular)', async () => {
+    const { service, resolve } = setup([reservation(ReservationStatus.ACTIVE, '0')]);
+    await expect(service.updateItemQty(ADMIN, 'o-1', 'i-1', { qty: '100.000' })).rejects.toThrow(
+      'corte del test',
+    );
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('el faltante de una reserva liberada ya no bloquea', async () => {
+    const { service, resolve } = setup([reservation(ReservationStatus.RELEASED, '400.000')]);
+    await expect(service.updateItemQty(ADMIN, 'o-1', 'i-1', { qty: '100.000' })).rejects.toThrow(
+      'corte del test',
+    );
+    expect(resolve).toHaveBeenCalledTimes(1);
   });
 });

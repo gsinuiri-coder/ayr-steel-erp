@@ -50,7 +50,6 @@ import {
   findCoilSaleProducts,
   lineCoilPool,
 } from './coil-sale-product';
-import { shortfallAudit } from './order-shortfall';
 import { recordPriceChanges } from './price-changes';
 import { assertPriceFloor } from './price-floor';
 import { resolveSalesLines } from './sales-lines';
@@ -711,6 +710,18 @@ export class SalesOrderEditsService {
             `${at}: ya tiene material fabricado reservado, así que la cantidad no se cambia. ${addInstead}`,
           );
         }
+        // D-341: cambiar la cantidad libera y vuelve a reservar la línea completa, y eso borraría en
+        // silencio el faltante que el administrador aceptó al confirmar. Se rechaza, también con la
+        // reserva ya consumida: completar la reserva la admite (y la revive).
+        if (
+          reservations.some(
+            (r) => r.status !== ReservationStatus.RELEASED && r.shortfallQty.greaterThan(0),
+          )
+        ) {
+          throw new BadRequestException(
+            `${at}: Esta línea tiene faltante de material: completá la reserva o anulá antes de cambiar la cantidad`,
+          );
+        }
         if (reservations.some((r) => r.status === ReservationStatus.CONSUMED)) {
           throw new BadRequestException(
             `${at}: su material ya se consumió en producción, así que la cantidad no se cambia. ${addInstead}`,
@@ -836,8 +847,6 @@ export class SalesOrderEditsService {
             lineNumber: item.lineNumber,
             qty: item.qty.toString(),
             reserveQty: item.reserveQty.toString(),
-            // D-341: el faltante que se cierra al liberar y volver a reservar la línea completa.
-            ...shortfallAudit(active),
           },
           after: {
             qty: line.qty,
