@@ -129,6 +129,50 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
   una nota de crédito de solo monto (descuento, ajuste) también libera cantidad facturable de la línea,
   igual que D-223 ya lo hace por el total en dinero.
 
+  **El filtro de densidad de `galvanizedDensity()` (P1 de arriba) resultó insuficiente y se rediseñó**: el
+  primer arreglo (filtrar por línea de negocio) no alcanzaba porque el acabado que contamina la búsqueda
+  —creado por `bobinas-metro-lineal-d281.spec.ts` con `densityFactor:'1'` para su propia aritmética— está en
+  la **misma** línea de drywall. Se reemplazó la búsqueda en BD por una constante física fija,
+  `STEEL_DENSITY_FACTOR = '7.85'` (t/m³, exportada desde `@ayr/shared`); `galvanizedDensity()` se eliminó por
+  completo. Verificado corriendo deliberadamente el spec contaminante antes del propio en Playwright local.
+
+  **M5 agregado a la misma sesión** (editar un accesorio sin tocar espesor/color/subtipo): el bug real estaba
+  en `product-dialog.tsx`, que mandaba siempre los campos estructurados en el `PATCH` de edición aunque no se
+  hubieran tocado, rebotando contra la guarda de inmutabilidad del SKU en cualquier edición (nombre, precio).
+  Arreglado con el mismo criterio que ya tenía `colorId`/`finishId` desde F8-S5: solo se manda lo que cambió.
+  La guarda del servidor ya era correcta.
+
+  **Neon `ci` bloqueada por dos incidentes encadenados, ambos resueltos con OK del dueño por comando:**
+  1. **P3009** (migración marcada «empezada, nunca terminada»): un job de Smoke cancelado a mitad de
+     `ALTER TABLE` por un commit más nuevo (arrancó 06:30:46, la migración a las 06:31:09, cancelado a las
+     06:31:12; confirmado con `migrations-diagnose.mjs`: `steps=0, finished=NO`, nada llegó a aplicarse).
+     Resuelto con `node scripts/migrations-resolve.mjs --branch ci 20260927120000_d344_drywall_sin_receta`
+     (`--rolled-back`, nunca `--applied`; verificado en el script antes de correrlo).
+  2. **P3018** (el `CHECK (NOT is_active)` genuinamente violado): quedaba una receta activa real,
+     `E2E-PERFDPILZ` (drywall, 0.50 mm, 600 mm), residuo de una corrida anterior y no relacionada de
+     `pnpm e2e:smoke` contra Neon `ci` (D-202: ese job sí escribe datos reales ahí). Diagnosticado con un
+     script de un solo uso, de solo lectura, creado y borrado en la misma sesión (AGENTS §3.3). Resuelto con
+     OK del dueño: `NEON_BRANCHES` de `scripts/run-api-cli.mjs` ahora incluye `'ci'`; se corrió
+     `pnpm retire:boms --branch ci --execute` (desactivó la receta, auditada) y se volvió a resolver la
+     migración (el reintento dejó una segunda fila fallida). `migrations-status.mjs` confirma `ci` al día.
+  - **`dev` y `demo` confirmados limpios** (dry-run de `retire:boms`: 0 recetas activas en ambas, no hizo
+    falta `--execute`). Los helpers E2E de esta rama (`e2e/helpers/*.ts`) ya no crean `ProductBom`
+    (verificado, sin resultados para `upsertBom|ProductBom|productBom`), así que un futuro `e2e:smoke` contra
+    `ci` no debería volver a dejar una receta activa.
+  - **`development_mm` en `ci`**: columna + 2 CHECK que no existen en `production` ni `demo` (`migrate diff`
+    de solo lectura contra ambas, limpio, coincide exacto con el drift conocido). Rastreado a la rama
+    descartada `acc-demo` (`git log -S`, commit `6d74f3b`, migración `20260922150100_d242_...`). Residuo
+    inofensivo, **no tocado** por instrucción explícita del dueño; documentado acá y en el handoff.
+  - **Limpieza de ramas Neon (M4, criterio final del dueño):** se conservan `production`, `dev`, `ci`,
+    `demo`, `respaldo-pre-v4-20260915`, `respaldo-pre-corr03b-20260926`, `respaldo-pre-corr04b-20260926` y
+    `respaldo-pre-correcciones-02-20260924` (foto pre-reescritura de kardex D-278/D-285/D-288; **se borra
+    después del 2026-10-03**, es un checkpoint con fecha propia, no la política general de 7 días). Se
+    borraron las 10 restantes (ramas de ensayo, `dev-antes-de-*`, `pre-api-*`, `pre-s1-hotfix-*` y los
+    `respaldo-pre-*` fuera de la lista), verificando el id contra el nombre antes de cada borrado. Quedan 8.
+  - **M6 (borrado físico de un producto sin uso) sigue en Paso 0**: falta la respuesta del dueño sobre si
+    `sales_price_changes.productId` cuenta como «uso» (mismo patrón que el historial de precio de lista, que
+    no cuenta) antes de diseñar el endpoint. Sin código escrito todavía (AGENTS §3 regla 16, ambigüedad).
+
 ## Ventana de Correcciones 03b (2026-09-26, con migración)
 
 PR #39 (merge `78e8e9e`). SHA desplegado `34e6795`. Handoff: `docs/handoff/correcciones-03b.md`. UAT:

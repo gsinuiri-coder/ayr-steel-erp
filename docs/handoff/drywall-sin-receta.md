@@ -7,6 +7,11 @@ con OK del dueño por comando (D-251). Decisiones **D-344**, **D-345** y **D-346
 `docs/PROGRESO.md`, entrada «Drywall sin receta» en el registro de riesgo. Respuesta a la
 revisión: `docs/revision/drywall-sin-receta-segundo-modelo.md`.
 
+**M5** (editar un accesorio sin tocar espesor/color/subtipo) y el saneamiento de Neon `ci`
+entraron a la misma sesión/PR después de escrito lo de arriba (ver §7 y §8). **M6** (borrado
+físico de un producto sin uso) quedó en Paso 0, sin código, a la espera de una respuesta del
+dueño (§9).
+
 ## 1. Qué entró
 
 | Milestone | Decisión | Resumen                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -89,3 +94,102 @@ correcciones de la revisión.
 - **`getByText` en Playwright hace match por substring**: un texto de ayuda que contenga la
   palabra que se busca ocultar hace fallar un `toBeHidden()`. Usar `getByLabel` para campos de
   formulario.
+- **Una densidad no sale de una búsqueda en BD si otro spec puede crear el mismo tipo de fila.**
+  El primer diseño de la densidad del galvanizado (elegir el acabado `GALVANIZADO` más antiguo de
+  la línea) se veía bien en aislado pero se rompió en la suite completa de CI: otro spec
+  (`bobinas-metro-lineal-d281.spec.ts`) crea un acabado `GALVANIZADO` de la misma línea con
+  `densityFactor:'1'` para su propia cuenta, y ese es «el más antiguo» cuando ambos corren juntos.
+  Filtrar por línea de negocio no alcanza porque la contaminación está en la misma línea. La
+  densidad del acero es un hecho físico (7.85 t/m³), no un dato de catálogo: quedó como constante
+  (`STEEL_DENSITY_FACTOR` en `@ayr/shared`), sin consulta.
+
+## 7. M5 — editar un accesorio sin cambiar espesor, color ni subtipo
+
+Agregado a la sesión después del cierre inicial de M1–M4. El bug real (D-343) estaba en el web,
+no en el guard del servidor: `product-dialog.tsx` mandaba **siempre** los campos estructurados
+(`thicknessMm`, `widthMm`, `lengthMm`, `pieceWeightKg`, `roofingKind`) en el `PATCH` de edición,
+aunque no se hubieran tocado — el guard los compara contra lo guardado, así que cualquier edición
+(el nombre, el precio) rebotaba con «El SKU … refleja el espesor y el color». Arreglado con el
+mismo criterio que ya tenía `colorId`/`finishId` desde F8-S5: el diálogo arma el cuerpo del PATCH
+comparando cada campo estructurado contra el valor guardado y solo incluye el que cambió. Test
+unitario (`catalog.service.accessory.spec.ts`) y E2E (`e2e/tests/accesorio-edicion-m5.spec.ts`).
+
+## 8. Neon `ci` — dos incidentes encadenados con la migración `d344`, resueltos
+
+La migración `d344` agrega `CHECK (NOT is_active)` sobre `product_boms`: es retroactiva y falla si
+la rama tiene una receta activa en cualquier momento, no solo al escribir código nuevo. Contra
+Neon `ci` (persistente, no se resetea entre corridas) esto destapó dos problemas reales,
+resueltos con OK del dueño por comando en cada paso:
+
+1. **P3009 — migración marcada «empezada, nunca terminada».** Un job de Smoke fue cancelado a
+   mitad de `ALTER TABLE` cuando un commit más nuevo lo superó (arrancó 06:30:46, la migración a
+   las 06:31:09, cancelado a las 06:31:12). Confirmado con `migrations-diagnose.mjs`
+   (`steps=0, finished=NO`: nada llegó a aplicarse de verdad). Resuelto con
+   `node scripts/migrations-resolve.mjs --branch ci 20260927120000_d344_drywall_sin_receta`
+   —confirmado antes de correrlo que el script usa `--rolled-back`, nunca `--applied`.
+2. **P3018 — el CHECK genuinamente violado.** El siguiente intento de `migrate deploy` falló de
+   verdad: quedaba una receta activa real, `E2E-PERFDPILZ` (drywall, 0.50 mm, 600 mm), residuo de
+   una corrida anterior y no relacionada de `pnpm e2e:smoke` contra Neon `ci` (D-202: ese job sí
+   escribe datos reales ahí, a diferencia de la suite completa que corre contra el Postgres del
+   runner). Diagnosticado con un script de un solo uso, de solo lectura
+   (`oneoff-list-active-boms`), creado, corrido y **borrado en la misma sesión** (AGENTS §3.3).
+   Resuelto con OK del dueño: `NEON_BRANCHES` de `scripts/run-api-cli.mjs` ahora incluye `'ci'`
+   (comentario en el archivo explica el porqué); se corrió `pnpm retire:boms --branch ci --execute`
+   (desactivó la receta, auditada con `actorKind: SYSTEM`) y se volvió a resolver la migración —el
+   reintento fallido dejó una segunda fila de migración fallida. `node scripts/migrations-status.mjs
+--branch ci` confirma la rama al día.
+
+**Verificaciones adicionales pedidas por el dueño, todas hechas:**
+
+- `pnpm retire:boms --branch dev` y `--branch demo` (dry-run): **0 recetas activas en ambas**, no
+  hizo falta `--execute`.
+- Los helpers E2E de esta rama (`e2e/helpers/api.ts`, `production.ts`, `sales.ts`) ya no crean
+  `ProductBom` (verificado por grep, sin resultados para `upsertBom|ProductBom|productBom`), así
+  que un futuro `e2e:smoke` contra `ci` no debería volver a dejar una receta activa.
+- **`development_mm`** (columna + 2 CHECK en `ci`) no existe en `production` ni en `demo`
+  (`migrate diff` de solo lectura contra ambas, limpio, coincide exacto con el drift ya conocido
+  de `docs/ENTORNOS.md`). Rastreado con `git log -S"development_mm"` a la rama descartada
+  `acc-demo`, commit `6d74f3b` (migración `20260922150100_d242_accesorios_de_cobertura`). Es
+  residuo inofensivo de esa rama nunca mergeada; **no se toca**, por instrucción explícita del
+  dueño.
+- **Pendiente, para la ventana de deploy, no ahora**: `pnpm retire:boms --branch production`
+  (dry-run) debe confirmar **0 activas** justo antes de `db:prod`. Si da más de 0, parar y avisar
+  antes de seguir.
+
+## 9. Limpieza de ramas de Neon (M4, criterio final del dueño)
+
+Se conservan 8 ramas: `production`, `dev`, `ci`, `demo`, `respaldo-pre-v4-20260915`,
+`respaldo-pre-corr03b-20260926`, `respaldo-pre-corr04b-20260926` y
+`respaldo-pre-correcciones-02-20260924`. Esta última es la foto previa a las reescrituras de
+kardex D-278/D-285/D-288 (Correcciones 02): es un **checkpoint con fecha propia**, no la política
+general de 7 días — **se borra después del 2026-10-03**, con OK del dueño por nombre en ese
+momento, no antes.
+
+Se borraron 10 ramas (ramas de ensayo, `dev-antes-de-*`, `pre-api-*`, `pre-s1-hotfix-*` y los
+`respaldo-pre-*` que no estaban en la lista de arriba), verificando en cada una que el id
+correspondiera al nombre antes de borrar. Ninguna rama encontrada quedó fuera de las dos
+categorías (conservar / borrar), así que no hubo que parar a preguntar.
+
+`AGENTS.md §3.3` se actualizó con una frase que documenta el patrón de «respaldo checkpoint con
+fecha propia de borrado» (la política general de 7 días sigue igual; esto es la forma de anotar
+una excepción explícita como la de correcciones-02).
+
+## 10. M6 — borrado físico de un producto sin uso (D-nnn, sin asignar todavía)
+
+**Paso 0 (solo lectura) hecho, sin código de M6 escrito.** Se listaron todas las tablas con FK o
+referencia a `products` y cuál cuenta como «uso» según la definición del dueño (kardex, saldos,
+cotizaciones, pedidos, comprobantes, compras, órdenes de producción, bobinas —por `typeKey` del
+producto `BOB…`—, reservas, despachos). Quedaron **dos puntos dudosos sin resolver**, presentados
+al dueño y todavía sin respuesta al cierre de esta sesión:
+
+1. **`sales_price_changes.productId`**: historial de cambios de precio por línea, sin FK a
+   propósito (mismo patrón ya documentado en `product_list_price_changes`, que el propio dueño
+   dijo que NO cuenta como uso). Falta confirmar si aplica el mismo criterio.
+2. **`merged_into_id` / `onDelete: Restrict`**: confirmar que ese `Restrict` de Prisma es una
+   restricción técnica de integridad (un producto fusionado no debería desaparecer mientras algo
+   apunte a él como destino de la fusión) y no una forma adicional de «uso» de negocio que haya
+   que nombrar en el mensaje 409.
+
+**No se avanza con el diseño del endpoint, el campo `canDelete`, la acción de auditoría ni las
+pruebas hasta que el dueño conteste estos dos puntos** (AGENTS §3 regla 16: ambigüedad se detiene,
+nunca se asume en silencio).
