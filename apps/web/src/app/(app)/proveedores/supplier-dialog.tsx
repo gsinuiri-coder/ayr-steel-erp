@@ -62,10 +62,14 @@ type FormValues = z.infer<typeof formSchema>;
 interface Props {
   open: boolean;
   supplier?: SupplierDto;
+  /** D-156/D-351: lo que el importador de compras ya sabe (el RUC del papel). Solo en un alta. */
+  initial?: { docNumber?: string; code?: string };
+  /** D-156/D-351: el proveedor recién creado, para que el importador lo use en el acto. */
+  onCreated?: (supplier: SupplierDto) => void;
   onOpenChange: (open: boolean) => void;
 }
 
-export function SupplierDialog({ open, supplier, onOpenChange }: Props) {
+export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const editing = !!supplier;
   const [lookupNote, setLookupNote] = useState<string | null>(null);
@@ -80,9 +84,9 @@ export function SupplierDialog({ open, supplier, onOpenChange }: Props) {
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      code: supplier?.code ?? '',
+      code: supplier?.code ?? initial?.code ?? '',
       docType: supplier?.docType ?? 'RUC',
-      docNumber: supplier?.docNumber ?? '',
+      docNumber: supplier?.docNumber ?? initial?.docNumber ?? '',
       name: supplier?.name ?? '',
       address: supplier?.address ?? '',
       email: supplier?.email ?? '',
@@ -143,9 +147,10 @@ export function SupplierDialog({ open, supplier, onOpenChange }: Props) {
       }
       return api<SupplierDto>('/suppliers', { method: 'POST', body: values });
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
       toast.success(editing ? 'Proveedor actualizado' : 'Proveedor creado');
       void queryClient.invalidateQueries({ queryKey: SUPPLIERS_QUERY_KEY });
+      if (!editing) onCreated?.(saved);
       onOpenChange(false);
     },
     onError: (err) => {

@@ -100,9 +100,15 @@ export function ComprasView() {
             Bobinas, producto terminado, servicios y gastos, con su saldo por pagar (D-030).
           </p>
         </div>
-        <Button asChild>
-          <Link href="/compras/nueva">Nueva compra</Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {/* D-351: la carga en tanda desde planilla, junto al alta de una. */}
+          <Button variant="outline" asChild>
+            <Link href="/compras/importar">Importar compras</Link>
+          </Button>
+          <Button asChild>
+            <Link href="/compras/nueva">Nueva compra</Link>
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

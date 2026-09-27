@@ -162,12 +162,19 @@ export function BobinasView() {
           filtros que la tabla de abajo—, descarga directa contra el API (patrón D-149).
         */}
         <HeaderActions
-          primary={['new-purchase']}
+          primary={['new-purchase', 'import-purchases']}
           actions={[
             {
               key: 'new-purchase',
               label: 'Nueva compra de bobinas',
               href: '/compras/nueva?tipo=COIL',
+            },
+            // D-351: el importador de compras, el mismo para los cuatro tipos (una bobina no
+            // existe sin su compra).
+            {
+              key: 'import-purchases',
+              label: 'Importar compra de bobinas',
+              href: '/compras/importar',
             },
             { key: 'from-xml', label: 'Desde XML', href: '/bobinas/nueva-xml' },
             {
