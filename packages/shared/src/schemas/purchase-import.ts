@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { BUSINESS_LINES, CURRENCIES, PAYMENT_TERMS, PURCHASE_TYPES, SERVICE_KINDS } from '../enums';
+import {
+  type BUSINESS_LINES,
+  type CURRENCIES,
+  type PAYMENT_TERMS,
+  type PURCHASE_TYPES,
+  type SERVICE_KINDS,
+} from '../enums';
 import { idempotencyFields } from './idempotency';
 import { supplierCodeSchema } from './supplier';
 

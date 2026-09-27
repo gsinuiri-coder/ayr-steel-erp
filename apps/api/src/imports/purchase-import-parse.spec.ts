@@ -128,7 +128,6 @@ describe('referencias de la carga inicial (D-352)', () => {
 
 describe('la plantilla de ejemplo (docs/plantillas/importar-compras-ejemplo.xlsx)', () => {
   it('se lee entera: cuatro tipos, fechas como texto DD/MM/AAAA y las dos bobinas en un comprobante', () => {
-
     const file = readFileSync(
       `${__dirname}/../../../../docs/plantillas/importar-compras-ejemplo.xlsx`,
     );

@@ -295,7 +295,8 @@ describe('PurchaseImportService.undo (D-351)', () => {
       { document: 'F001-3', reason: 'tiene pagos registrados' },
       { document: 'F001-4', reason: 'ya estaba anulada' },
     ]);
-    expect(s.audit.log).toHaveBeenCalledWith(
+    expect(s.audit.write).toHaveBeenCalledWith(
+      s.tx,
       expect.objectContaining({ action: 'imports.purchases.undo' }),
     );
   });

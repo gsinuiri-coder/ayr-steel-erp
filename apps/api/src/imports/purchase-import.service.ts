@@ -556,13 +556,16 @@ export class PurchaseImportService {
         }
       }
     }
-    await this.audit.log({
-      actorId: actor.id,
-      action: 'imports.purchases.undo',
-      entity: 'purchases',
-      entityId: batchId,
-      after: { batchId, cancelled, kept },
-    });
+    // D-219: la auditoría de dominio va en una transacción real, aunque sea la única escritura.
+    await this.prisma.$transaction((tx) =>
+      this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'imports.purchases.undo',
+        entity: 'purchases',
+        entityId: batchId,
+        after: { batchId, cancelled, kept },
+      }),
+    );
     return { batchId, cancelled, kept };
   }
 }
