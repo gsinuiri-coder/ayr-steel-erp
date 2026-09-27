@@ -38,7 +38,7 @@ import {
  *
  * Desde D-171 nace `isMadeToOrder(product)` = *tener subtipo de cobertura*: `A_MEDIDA` y
  * `PLANCHA` se producen las dos. **Es una cuarta pregunta y no un cambio a las otras tres**
- * (regla dura 14): `isMadeToMeasure` y `sellsByLength` siguen respondiendo lo que respondían,
+ * (regla dura 13 de AGENTS.md): `isMadeToMeasure` y `sellsByLength` siguen respondiendo lo que respondían,
  * y el centinela de `sales-lines.spec.ts` cubre la tabla entera.
  *
  * Lo que este archivo protege, que es lo que un unitario no puede: **el camino completo**.
@@ -147,7 +147,7 @@ test.describe('D-171 — la plancha de catálogo se fabrica contra el pedido', (
       expect(line.reserveUnit).toBe('KGM');
       expect(line.reserveItemId).not.toBe(scenario.product.id);
       // La línea es **simple**: una plancha no lleva detalle de largos (`sellsByLength` es la
-      // unidad, y esta es `NIU`). Es la pregunta que la regla dura 14 no deja confundir.
+      // unidad, y esta es `NIU`). Es la pregunta que la regla dura 13 de AGENTS.md no deja confundir.
       expect(line.pieces ?? []).toEqual([]);
 
       // --- 2. La confirmación ---

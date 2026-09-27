@@ -220,7 +220,7 @@ export interface FixedLengthProductLike {
  *   admite a propósito (hay SKU legados). Multiplicar el largo por el precio solo significa
  *   algo si la cantidad de la línea son **piezas**: en una plancha vendida por kilo, ese
  *   producto no es el valor unitario de nada y el importe saldría multiplicado por el largo.
- *   Es la regla dura 14 mirada al revés — una pregunta sobre la aritmética de la unidad no se
+ *   Es la regla dura 13 de AGENTS.md mirada al revés — una pregunta sobre la aritmética de la unidad no se
  *   responde con el subtipo.
  */
 export function sellsByFixedLength(product: FixedLengthProductLike): boolean {

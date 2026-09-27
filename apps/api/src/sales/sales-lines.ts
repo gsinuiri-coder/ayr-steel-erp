@@ -1201,7 +1201,7 @@ export { detailsLengths, isAccessory } from '@ayr/shared';
  * el precio va por metro (D-161), y tiene que serlo — el precio y el material salen del mismo
  * largo, así que corregirlo en el catálogo mueve las dos cuentas juntas o ninguna.
  *
- * **Las cuatro preguntas de la familia, que devuelven todas `boolean`** (regla dura 14: el
+ * **Las cuatro preguntas de la familia, que devuelven todas `boolean`** (regla dura 13 de AGENTS.md: el
  * compilador nunca avisa cuando se responde una con otra):
  *
  * - `sellsByLength` — *¿necesita el detalle de largos?* → la **unidad**.

@@ -258,7 +258,7 @@ test.describe('D-161 — la plancha de catálogo se cotiza por metro lineal', ()
       expect(line.qty).toBe('10.000');
       expect(line.unit).toBe('NIU');
 
-      // Lo que la regla dura 14 protege: **la unidad de negociación cambió y la de la línea
+      // Lo que la regla dura 13 de AGENTS.md protege: **la unidad de negociación cambió y la de la línea
       // no**. La cantidad son planchas y la unidad `NIU`, por más que el precio se haya
       // acordado por metro.
       //
