@@ -27,6 +27,7 @@ import { StatusFilter } from '@/components/status-filter';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { ContingencyCard } from '@/components/invoicing/contingency-card';
+import { DocumentDispatchLinks } from '@/components/invoicing/document-dispatches';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -278,6 +279,8 @@ export function ComprobantesView() {
                 >
                   Vencimiento
                 </SortableTableHead>
+                {/* Correcciones 05 / M5: el despacho declarado, o los del pedido rotulados aparte. */}
+                <TableHead className="hidden md:table-cell">Despacho</TableHead>
                 <SortableTableHead
                   className="text-right"
                   align="right"
@@ -345,6 +348,12 @@ export function ComprobantesView() {
                       <span className="text-muted-foreground">Contado</span>
                     )}
                   </TableCell>
+                  <TableCell className="hidden md:table-cell">
+                    <DocumentDispatchLinks
+                      invoicedDispatches={d.invoicedDispatches}
+                      orderDispatches={d.orderDispatches}
+                    />
+                  </TableCell>
                   <TableCell className="text-right">{formatMoney(d.totalPen)}</TableCell>
                   <TableCell className="text-right">{formatMoney(d.balancePen)}</TableCell>
                   <TableCell>
@@ -370,7 +379,7 @@ export function ComprobantesView() {
               ))}
               {rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground">
                     No hay comprobantes que coincidan.
                   </TableCell>
                 </TableRow>
