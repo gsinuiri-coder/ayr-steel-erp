@@ -155,6 +155,10 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml` → **exit 0**.
   reportar.
 - **Rollback (no usado):** llevar el tráfico a `00059-p8k`; las migraciones son aditivas y no se revierten. La
   versión 6 de `DATABASE_URL` y la de `DIRECT_URL` siguen habilitadas.
+- **Excepción a §3.2 autorizada por el dueño:** main queda adelante del git-sha desplegado (34e6795) solo por
+  comentarios (PR #42); el próximo deploy de API realinea. Sin redeploy de la API. Comprobado de forma
+  mecánica antes del merge: `git diff -U0 34e6795 HEAD -- apps packages` filtrado a las líneas +/- que no son
+  comentario (`//`, `/*`, `*`) da **0 líneas** (6 líneas cambiadas, las 6 de comentario, en 3 archivos).
 
 ## Ventana de Correcciones 04, tanda B (2026-09-26, con migración)
 
