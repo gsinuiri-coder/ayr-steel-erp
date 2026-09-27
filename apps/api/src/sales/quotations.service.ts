@@ -46,6 +46,7 @@ import {
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
 } from '@ayr/shared';
+import { duplicateShapeChange } from './duplicate-shape';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { assertSellerAccess, quotationSellerWhere } from '../auth/seller-scope';
@@ -609,6 +610,32 @@ export class QuotationsService {
     );
     const unassignedCoilProducts = new Set<string>();
     const warnings: string[] = [];
+
+    // D-348: el subtipo de un producto sin uso real ahora puede cambiar (una cotización anulada o
+    // vencida no cuenta como uso). Una línea cotizada con la forma de antes —con largos, con piezas
+    // informativas, en otra unidad— no se reinterpreta: se rechaza diciendo qué cambió, en vez de
+    // dejar que `resolveSalesLines` pida algo que en un duplicado nadie puede escribir.
+    const productShapes = new Map(
+      (
+        await this.prisma.product.findMany({
+          where: { id: { in: [...new Set(source.items.map((i) => i.productId))] } },
+          select: { id: true, sku: true, unit: true, roofingKind: true },
+        })
+      ).map((p) => [p.id, p]),
+    );
+    for (const i of source.items) {
+      const product = productShapes.get(i.productId);
+      if (isWholeCoil(i) || product === undefined) continue;
+      const why = duplicateShapeChange(
+        { unit: i.unit, hasPieces: i.pieces.length > 0, hasPiecesHint: i.piecesHint !== null },
+        product,
+      );
+      if (why !== null) {
+        throw new BadRequestException(
+          `No se puede duplicar ${quotationCode(source.seq)}: en la línea ${String(i.lineNumber)}, ${product.sku} ${why} desde que se cotizó. Crea la cotización nueva con el producto como está hoy.`,
+        );
+      }
+    }
 
     const items: SalesItemInput[] = source.items.map((i) => {
       // D-161: si la línea se cotizó por metro (una plancha de catálogo), el duplicado se

@@ -14,7 +14,8 @@
     "prisma/retire-boms-cli.ts",
     "prisma/dispatch-at-issue-date-cli.ts",
     "prisma/opening-date-cli.ts",
-    "prisma/dispatch-redate-cli.ts"
+    "prisma/dispatch-redate-cli.ts",
+    "prisma/purge-cancelled-quotations-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

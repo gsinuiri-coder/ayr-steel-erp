@@ -22,6 +22,7 @@ export * from './schemas/exchange-rate';
 export * from './schemas/inventory';
 export * from './schemas/quotation-import';
 export * from './schemas/purchase';
+export * from './schemas/purchase-import';
 export * from './schemas/coil';
 export * from './schemas/cutting';
 export * from './schemas/color';

@@ -51,6 +51,11 @@ import {
   recordPriceListChange,
 } from './price-list-changes';
 import { describeProductUsage, productsWithUsage } from './product-usage';
+import {
+  describeProductRealUsage,
+  productsRealUsage,
+  structureLockReason,
+} from './product-real-usage';
 
 /** Mismo criterio que `SEARCH_CANDIDATE_POOL` de `CustomersService` (RF-S3/M1). */
 const SEARCH_CANDIDATE_POOL = 100;
@@ -67,15 +72,38 @@ export class CatalogService {
     private readonly colors: ColorsService,
   ) {}
 
-  async findAll(businessLineId?: string): Promise<ProductDto[]> {
+  /** D-349: `isActive` opcional; sin él, todos (activos primero). */
+  async findAll(businessLineId?: string, isActive?: boolean): Promise<ProductDto[]> {
     const products = await this.prisma.product.findMany({
-      where: businessLineId ? { businessLineId } : undefined,
+      where: {
+        ...(businessLineId ? { businessLineId } : {}),
+        ...(isActive === undefined ? {} : { isActive }),
+      },
       include: PRODUCT_RELATIONS,
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
-    // D-347/M6: un número fijo de consultas para el catálogo entero, no una por fila.
-    const used = await productsWithUsage(this.prisma, products);
-    return products.map((p) => toDto(p, !used.has(p.id)));
+    return this.toDtos(products);
+  }
+
+  /**
+   * D-347/M6 y D-348: un número fijo de consultas para la tanda entera, no una por fila — la del
+   * borrado (`canDelete`) y la del uso real (`canEditStructure`), que miran tablas parecidas con
+   * criterios distintos.
+   */
+  private async toDtos(products: readonly WithLineCode[]): Promise<ProductDto[]> {
+    const [used, realUsage] = await Promise.all([
+      productsWithUsage(this.prisma, products),
+      productsRealUsage(this.prisma, products),
+    ]);
+    return products.map((p) => toDto(p, !used.has(p.id), realUsage.get(p.id) ?? []));
+  }
+
+  private async toSingleDto(product: WithLineCode): Promise<ProductDto> {
+    const [used, realUsage] = await Promise.all([
+      productsWithUsage(this.prisma, [product]),
+      productsRealUsage(this.prisma, [product]),
+    ]);
+    return toDto(product, !used.has(product.id), realUsage.get(product.id) ?? []);
   }
 
   /**
@@ -101,8 +129,7 @@ export class CatalogService {
       take: SEARCH_CANDIDATE_POOL,
     });
     const ranked = rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]);
-    const used = await productsWithUsage(this.prisma, ranked);
-    return ranked.map((p) => toDto(p, !used.has(p.id)));
+    return this.toDtos(ranked);
   }
 
   /**
@@ -165,8 +192,7 @@ export class CatalogService {
       include: PRODUCT_RELATIONS,
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    const used = await productsWithUsage(this.prisma, [product]);
-    return toDto(product, !used.has(product.id));
+    return this.toSingleDto(product);
   }
 
   async create(actor: RequestUser, input: CreateProductInput): Promise<ProductDto> {
@@ -231,7 +257,7 @@ export class CatalogService {
         return created;
       });
       // Recién creado: no puede tener uso todavía en esta misma corrida.
-      return toDto(product, true);
+      return toDto(product, true, []);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException('Ya existe un producto con ese SKU en esta línea');
@@ -326,19 +352,24 @@ export class CatalogService {
     // D-127: corregir el subtipo **obliga** a mover la unidad (son el mismo hecho).
     const changesRoofingKind =
       input.roofingKind !== undefined && input.roofingKind !== before.roofingKind;
-    // D-343: el SKU de un accesorio refleja su espesor y su color, y el SKU no se edita. Cambiar
-    // cualquiera de los dos —o pasar de/hacia accesorio— dejaría un SKU que miente: se crea otro.
-    if (before.roofingKind === RoofingProductKind.ACCESORIO || input.roofingKind === 'ACCESORIO') {
-      const changesColor = input.colorId !== undefined && input.colorId !== before.colorId;
-      const changesThickness =
-        input.thicknessMm !== undefined &&
-        (before.thicknessMm === null ||
-          !toDecimal(input.thicknessMm ?? '0').equals(before.thicknessMm.toString()));
-      if (changesRoofingKind || changesColor || changesThickness) {
-        throw new BadRequestException(
-          `El SKU ${before.sku} refleja el espesor y el color del accesorio, y el subtipo no cambia: para otro espesor u otro color crea otro accesorio`,
-        );
-      }
+    // D-343/D-348: el SKU de un accesorio refleja su espesor y su color. Cambiar cualquiera de los
+    // dos —o pasar de/hacia accesorio— se permite solo si el producto no tiene uso real (se
+    // revalida bajo lock dentro de la transacción) y **junto con** el SKU que corresponde.
+    const accessoryStructureChange =
+      (before.roofingKind === RoofingProductKind.ACCESORIO ||
+        input.roofingKind === RoofingProductKind.ACCESORIO) &&
+      (changesRoofingKind ||
+        (input.colorId !== undefined && input.colorId !== before.colorId) ||
+        (input.thicknessMm !== undefined &&
+          (before.thicknessMm === null ||
+            input.thicknessMm === null ||
+            !toDecimal(input.thicknessMm).equals(before.thicknessMm.toString()))));
+    const nextSku = input.sku ?? before.sku;
+    const changesSku = nextSku !== before.sku;
+    if (changesSku && !accessoryStructureChange) {
+      throw skuFieldError(
+        'El SKU no se edita: solo cambia junto con el subtipo, el espesor o el color de un accesorio',
+      );
     }
     if (before.businessLine.code === BusinessLineCode.DRYWALL) {
       // D-344: drywall no lleva acabado en el SKU (es siempre galvanizado).
@@ -437,6 +468,26 @@ export class CatalogService {
     if (input.colorId !== undefined || input.finishId !== undefined) {
       this.assertFinishCoherence(before.businessLineId, finalColorId, finalFinish);
     }
+    if (accessoryStructureChange) {
+      // D-348: con el subtipo, el espesor y el color finales, el SKU tiene que ser el que les
+      // corresponde (y salir del prefijo ACCES si deja de ser accesorio). Es error del campo SKU:
+      // se corrige en el mismo guardado.
+      try {
+        await this.assertAccessorySku(
+          nextSku,
+          roofingKind,
+          finalColorId,
+          input.thicknessMm !== undefined
+            ? input.thicknessMm
+            : decimalOrNull(before.thicknessMm, 'MM'),
+          before.businessLine.code,
+        );
+      } catch (err) {
+        if (err instanceof BadRequestException) throw skuFieldError(err.message);
+        throw err;
+      }
+      if (changesSku) data.sku = nextSku;
+    }
     if (input.isActive !== undefined) data.isActive = input.isActive;
 
     // D-217/M1a: se compara **antes de escribir**, con `Decimal` y no con el string tal
@@ -447,33 +498,70 @@ export class CatalogService {
       listPriceTouched &&
       priceListValueChanged(before.listPricePen, data.listPricePen as string | null);
 
-    const after = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.product.update({
-        where: { id },
-        data,
-        include: PRODUCT_RELATIONS,
+    const after = await this.prisma
+      .$transaction(async (tx) => {
+        if (accessoryStructureChange) {
+          // D-348: mismo lock que el borrado (D-347). Una línea nueva de pedido, cotización o
+          // compra toma un lock de clave sobre esta fila por su FK, así que no puede aparecer
+          // entre el chequeo y el cambio. **Riesgo residual (el mismo de D-347):** el kardex y las
+          // reservas son polimórficos, sin FK; los escritores de kardex conocidos de un producto pasan antes
+          // por una fila con FK (línea de compra, de pedido, OP) que ya cuenta como uso, salvo la
+          // carga inicial, que toma este mismo lock a mano (M6). Un escritor nuevo que no lo haga
+          // reabre el hueco (autorrevisión P2-6, segundo modelo P1-1).
+          await tx.$queryRaw`SELECT "id" FROM "products" WHERE "id" = ${id}::uuid FOR UPDATE`;
+          const reasons = await describeProductRealUsage(tx, before);
+          if (reasons.length > 0) {
+            throw new ConflictException(
+              `${before.sku} tiene uso real (${reasons.join('; ')}): su subtipo, espesor y color ya no cambian. Crea otro producto y desactiva este.`,
+            );
+          }
+        }
+        return this.writeUpdate(tx, actor, before, data, listPriceChanged);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          throw new ConflictException({
+            statusCode: 409,
+            message: `Ya existe un producto con el SKU ${nextSku} en esta línea`,
+            errors: { sku: [`Ya existe un producto con el SKU ${nextSku} en esta línea`] },
+          });
+        }
+        throw err;
       });
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'catalog.update',
-        entity: 'products',
-        entityId: id,
-        before: auditView(before),
-        after: auditView(updated),
-      });
-      if (listPriceChanged) {
-        await recordPriceListChange(tx, {
-          productId: id,
-          beforeValuePen: before.listPricePen,
-          afterValuePen: updated.listPricePen,
-          changedById: actor.id,
-          origin: 'INLINE',
-        });
-      }
-      return updated;
+    return this.toSingleDto(after);
+  }
+
+  private async writeUpdate(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    before: WithLineCode,
+    data: Prisma.ProductUpdateInput,
+    listPriceChanged: boolean,
+  ): Promise<WithLineCode> {
+    const id = before.id;
+    const updated = await tx.product.update({
+      where: { id },
+      data,
+      include: PRODUCT_RELATIONS,
     });
-    const used = await productsWithUsage(this.prisma, [after]);
-    return toDto(after, !used.has(after.id));
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'catalog.update',
+      entity: 'products',
+      entityId: id,
+      before: auditView(before),
+      after: auditView(updated),
+    });
+    if (listPriceChanged) {
+      await recordPriceListChange(tx, {
+        productId: id,
+        beforeValuePen: before.listPricePen,
+        afterValuePen: updated.listPricePen,
+        changedById: actor.id,
+        origin: 'INLINE',
+      });
+    }
+    return updated;
   }
 
   /**
@@ -504,6 +592,7 @@ export class CatalogService {
           widthMm: true,
           lengthMm: true,
           pieceWeightKg: true,
+          roofingKind: true,
           isActive: true,
         },
       });
@@ -925,7 +1014,11 @@ function pieceWeightCheckOf(p: WithLineCode) {
   });
 }
 
-function toDto(p: WithLineCode, canDelete: boolean): ProductDto {
+function toDto(p: WithLineCode, canDelete: boolean, realUsage: readonly string[]): ProductDto {
+  // D-348 (decisión 2 del dueño): el bloqueo por uso real solo alcanza al accesorio. Pasar a
+  // accesorio un producto con uso lo rechaza el servidor con el detalle; el resto del catálogo
+  // cambia su estructura como siempre (con la guarda de OP en curso de D-344).
+  const structureLocked = p.roofingKind === RoofingProductKind.ACCESORIO && realUsage.length > 0;
   return {
     id: p.id,
     businessLineId: p.businessLineId,
@@ -954,6 +1047,8 @@ function toDto(p: WithLineCode, canDelete: boolean): ProductDto {
     noFloorReason: staticNoFloorReason(p),
     pieceWeightCheck: pieceWeightCheckOf(p),
     canDelete,
+    canEditStructure: !structureLocked,
+    structureLockReason: structureLocked ? structureLockReason(realUsage) : null,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };
@@ -977,6 +1072,7 @@ interface AuditableProduct {
   widthMm: Prisma.Decimal | null;
   lengthMm: Prisma.Decimal | null;
   pieceWeightKg: Prisma.Decimal | null;
+  roofingKind?: RoofingProductKind | null;
   isActive: boolean;
 }
 
@@ -994,6 +1090,13 @@ function auditView(p: AuditableProduct): Prisma.InputJsonObject {
     widthMm: p.widthMm === null ? null : p.widthMm.toFixed(2),
     lengthMm: p.lengthMm === null ? null : p.lengthMm.toFixed(2),
     pieceWeightKg: p.pieceWeightKg === null ? null : p.pieceWeightKg.toFixed(3),
+    // D-348: el subtipo ahora puede cambiar (producto sin uso real): la auditoría tiene que verlo.
+    roofingKind: p.roofingKind ?? null,
     isActive: p.isActive,
   };
+}
+
+/** D-348: un 400 atado al campo SKU del formulario (lo pinta `form.setError('sku')`). */
+function skuFieldError(message: string): BadRequestException {
+  return new BadRequestException({ statusCode: 400, message, errors: { sku: [message] } });
 }

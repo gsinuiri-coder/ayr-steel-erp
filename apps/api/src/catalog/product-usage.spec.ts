@@ -229,3 +229,19 @@ describe('productsWithUsage — el catálogo entero, presupuesto fijo de consult
     expect(used.has(BOB_PRODUCT.id)).toBe(true);
   });
 });
+
+describe('productsWithUsage — excluir cotizaciones (D-350, purga)', () => {
+  it('las líneas, el historial de precio y las reservas de las cotizaciones excluidas no cuentan', async () => {
+    const tx = fakeTx();
+    await productsWithUsage(tx, [PRODUCT], { excludeQuotationIds: ['q-1'] });
+    type WhereCall = [{ where: Record<string, unknown> }];
+    const calls = tx as unknown as Record<string, { findMany: jest.Mock<unknown, WhereCall> }>;
+    const whereOf = (table: string) => calls[table]?.findMany.mock.calls[0]?.[0].where;
+    expect(whereOf('quotationItem')).toMatchObject({ quotationId: { notIn: ['q-1'] } });
+    expect(whereOf('quotationReservation')).toMatchObject({ quotationId: { notIn: ['q-1'] } });
+    // El historial de un pedido (quotationId nulo) sigue contando.
+    expect(whereOf('salesPriceChange')).toMatchObject({
+      OR: [{ quotationId: null }, { quotationId: { notIn: ['q-1'] } }],
+    });
+  });
+});

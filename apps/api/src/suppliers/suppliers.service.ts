@@ -33,29 +33,7 @@ export class SuppliersService {
 
   async create(actor: RequestUser, input: CreateSupplierInput): Promise<SupplierDto> {
     try {
-      const supplier = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.supplier.create({
-          data: {
-            code: input.code,
-            docType: input.docType,
-            docNumber: input.docNumber,
-            name: input.name,
-            address: input.address,
-            email: input.email,
-            phone: input.phone,
-            creditDays: input.creditDays,
-            providesCuttingService: input.providesCuttingService,
-          },
-        });
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'suppliers.create',
-          entity: 'suppliers',
-          entityId: created.id,
-          after: auditView(created),
-        });
-        return created;
-      });
+      const supplier = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input));
       return toDto(supplier);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -65,6 +43,40 @@ export class SuppliersService {
       }
       throw err;
     }
+  }
+
+  /**
+   * El alta dentro de una transacción ajena (patrón `*InTx`, D-099): la usa el importador de
+   * compras (D-351) para dar de alta desde el padrón al proveedor de un comprobante en la misma
+   * transacción que sus compras. Misma escritura y misma auditoría que `create`; el `P2002` lo
+   * traduce quien llama.
+   */
+  async createInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    input: CreateSupplierInput,
+  ): Promise<Supplier> {
+    const created = await tx.supplier.create({
+      data: {
+        code: input.code,
+        docType: input.docType,
+        docNumber: input.docNumber,
+        name: input.name,
+        address: input.address,
+        email: input.email,
+        phone: input.phone,
+        creditDays: input.creditDays,
+        providesCuttingService: input.providesCuttingService,
+      },
+    });
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'suppliers.create',
+      entity: 'suppliers',
+      entityId: created.id,
+      after: auditView(created),
+    });
+    return created;
   }
 
   async update(actor: RequestUser, id: string, input: UpdateSupplierInput): Promise<SupplierDto> {

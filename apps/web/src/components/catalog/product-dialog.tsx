@@ -213,7 +213,20 @@ export function ProductDialog({
         pieceWeightKg: decimalOrNull(drWeight),
       })
     : null;
-  const isNewAccessory = !editing && watchedKind === RoofingProductKind.ACCESORIO;
+  // D-348: un accesorio con uso real no cambia subtipo, espesor ni color (el acabado, del que sale
+  // el color). Sin uso real sí, y entonces el SKU se vuelve a formar (o, si deja de ser accesorio,
+  // se escribe uno nuevo): el SKU refleja esos tres datos.
+  const structureLocked =
+    editing && product.roofingKind === RoofingProductKind.ACCESORIO && !product.canEditStructure;
+  const accessoryStructureChanged =
+    editing &&
+    (product.roofingKind === RoofingProductKind.ACCESORIO ||
+      watchedKind === RoofingProductKind.ACCESORIO) &&
+    (watchedKind !== (product.roofingKind ?? '') ||
+      watchedThickness !== (product.thicknessMm ?? '') ||
+      watchedFinishId !== (product.finishId ?? ''));
+  const isNewAccessory =
+    watchedKind === RoofingProductKind.ACCESORIO && (!editing || accessoryStructureChanged);
   const accessoryColorCode =
     finishes.data?.find((f) => f.id === watchedFinishId)?.colorCode ?? null;
   const accessorySku = (() => {
@@ -228,6 +241,13 @@ export function ProductDialog({
   useEffect(() => {
     if (isNewAccessory) form.setValue('sku', accessorySku ?? '', { shouldValidate: false });
   }, [isNewAccessory, accessorySku, form]);
+  // D-348: deshacer el cambio de estructura devuelve el SKU guardado.
+  const savedSku = product?.sku;
+  useEffect(() => {
+    if (editing && !accessoryStructureChanged && savedSku !== undefined) {
+      form.setValue('sku', savedSku, { shouldValidate: false });
+    }
+  }, [editing, accessoryStructureChanged, savedSku, form]);
 
   const save = useMutation({
     mutationFn: (values: FormValues) => {
@@ -277,6 +297,8 @@ export function ProductDialog({
         return api<ProductDto>(`/catalog/${product.id}`, {
           method: 'PATCH',
           body: {
+            // D-348: el SKU solo viaja cuando cambió junto con la estructura del accesorio.
+            ...(values.sku !== product.sku ? { sku: values.sku } : {}),
             name: values.name,
             unit: values.unit,
             source: values.source,
@@ -351,12 +373,14 @@ export function ProductDialog({
                       help={
                         isNewAccessory
                           ? 'ACCES + espesor de 3 dígitos + color (ACCES030ROJO): se forma solo con el espesor y el acabado.'
-                          : undefined
+                          : accessoryStructureChanged
+                            ? 'Deja de ser accesorio: escribe su SKU nuevo (el prefijo ACCES es solo de accesorios).'
+                            : undefined
                       }
                     >
                       <FormControl>
                         <Input
-                          disabled={editing}
+                          disabled={editing && !accessoryStructureChanged}
                           readOnly={isNewAccessory}
                           placeholder={isNewAccessory ? 'Elige espesor y acabado' : undefined}
                           autoComplete="off"
@@ -493,7 +517,10 @@ export function ProductDialog({
                         >
                           <Select value={field.value} onValueChange={field.onChange}>
                             <FormControl>
-                              <SelectTrigger className="w-full" disabled={finishes.isPending}>
+                              <SelectTrigger
+                                className="w-full"
+                                disabled={finishes.isPending || structureLocked}
+                              >
                                 <SelectValue
                                   placeholder={
                                     finishes.isPending ? 'Cargando acabados…' : 'Elige el acabado'
@@ -542,7 +569,7 @@ export function ProductDialog({
                           }}
                         >
                           <FormControl>
-                            <SelectTrigger className="w-full">
+                            <SelectTrigger className="w-full" disabled={structureLocked}>
                               <SelectValue placeholder="Elige el subtipo" />
                             </SelectTrigger>
                           </FormControl>
@@ -563,12 +590,26 @@ export function ProductDialog({
                     render={({ field }) => (
                       <FormFieldCell span={6} label="Espesor (mm)" size="md" numeric>
                         <FormControl>
-                          <Input inputMode="decimal" autoComplete="off" {...field} />
+                          <Input
+                            inputMode="decimal"
+                            autoComplete="off"
+                            disabled={structureLocked}
+                            {...field}
+                          />
                         </FormControl>
                       </FormFieldCell>
                     )}
                   />
                 </FormRow>
+              )}
+              {structureLocked && product.structureLockReason && (
+                <p
+                  role="note"
+                  data-testid="structure-lock-reason"
+                  className="col-span-12 text-sm text-muted-foreground"
+                >
+                  {product.structureLockReason}
+                </p>
               )}
               {showDrywallFields && (
                 <FormRow>

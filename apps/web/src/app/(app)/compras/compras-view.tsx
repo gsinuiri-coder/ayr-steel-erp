@@ -1,7 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
   Role,
@@ -48,6 +49,9 @@ import {
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { useSort } from '@/lib/use-sort';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
+import { receiveSequentially, summarizeOutcomes, type ReceiveOutcome } from '@/lib/receive-batch';
 
 const ALL = 'ALL';
 
@@ -91,6 +95,25 @@ export function ComprasView() {
 
   const rows = purchases.data?.items ?? [];
 
+  // D-353: «Recibir seleccionadas» — solo borradores; cada una por su propio `receive()`.
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<Record<string, string>>({});
+  const [outcomes, setOutcomes] = useState<ReceiveOutcome[] | null>(null);
+  const receiveMany = useMutation({
+    mutationFn: () =>
+      receiveSequentially(
+        Object.entries(selected).map(([id, label]) => ({ id, label })),
+        (id) => api(`/purchases/${id}/receive`, { method: 'POST', body: {} }),
+      ),
+    onSuccess: (result) => {
+      setOutcomes(result);
+      setSelected({});
+      void queryClient.invalidateQueries({ queryKey: ['purchases'] });
+      void queryClient.invalidateQueries({ queryKey: ['coils'] });
+    },
+  });
+  const selectedCount = Object.keys(selected).length;
+
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex items-center justify-between gap-4">
@@ -100,9 +123,15 @@ export function ComprasView() {
             Bobinas, producto terminado, servicios y gastos, con su saldo por pagar (D-030).
           </p>
         </div>
-        <Button asChild>
-          <Link href="/compras/nueva">Nueva compra</Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {/* D-351: la carga en tanda desde planilla, junto al alta de una. */}
+          <Button variant="outline" asChild>
+            <Link href="/compras/importar">Importar compras</Link>
+          </Button>
+          <Button asChild>
+            <Link href="/compras/nueva">Nueva compra</Link>
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -176,12 +205,42 @@ export function ComprasView() {
             setSearchText(e.target.value);
           }}
         />
+        {selectedCount > 0 && (
+          <Button
+            disabled={receiveMany.isPending}
+            pending={receiveMany.isPending}
+            pendingText="Recibiendo…"
+            onClick={() => {
+              receiveMany.mutate();
+            }}
+          >
+            Recibir seleccionadas ({selectedCount})
+          </Button>
+        )}
       </div>
+
+      {outcomes && (
+        <Alert>
+          <AlertDescription>
+            <p className="font-medium">{summarizeOutcomes(outcomes)}.</p>
+            <ul className="mt-1 grid gap-0.5 text-xs">
+              {outcomes.map((o) => (
+                <li key={o.id} className={o.ok ? '' : 'text-destructive'}>
+                  {o.label}: {o.message}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="rounded-lg border">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
+              <TableHead className="w-8">
+                <span className="sr-only">Seleccionar para recibir</span>
+              </TableHead>
               <SortableTableHead
                 active={sort.key === 'number'}
                 dir={sort.dir}
@@ -258,20 +317,38 @@ export function ComprasView() {
             {purchases.isPending &&
               [0, 1, 2].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={9}>
+                  <TableCell colSpan={10}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
             {purchases.isError && (
               <TableRow>
-                <TableCell colSpan={9} className="text-destructive">
+                <TableCell colSpan={10} className="text-destructive">
                   No se pudieron cargar las compras.
                 </TableCell>
               </TableRow>
             )}
             {rows.map((p) => (
               <TableRow key={p.id}>
+                <TableCell>
+                  {p.status === 'DRAFT' && (
+                    <Checkbox
+                      aria-label={`Seleccionar ${p.documentLabel} para recibir`}
+                      checked={selected[p.id] !== undefined}
+                      disabled={receiveMany.isPending}
+                      onCheckedChange={(checked) => {
+                        setSelected((prev) =>
+                          checked === true
+                            ? { ...prev, [p.id]: p.documentLabel }
+                            : Object.fromEntries(
+                                Object.entries(prev).filter(([id]) => id !== p.id),
+                              ),
+                        );
+                      }}
+                    />
+                  )}
+                </TableCell>
                 <TableCell className="font-medium">
                   <Link href={`/compras/${p.id}`} className={LINK_CLASSNAME}>
                     {p.documentLabel}
@@ -299,7 +376,7 @@ export function ComprasView() {
             ))}
             {purchases.isSuccess && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground">
+                <TableCell colSpan={10} className="text-center text-muted-foreground">
                   No hay compras que coincidan con los filtros.
                 </TableCell>
               </TableRow>

@@ -972,6 +972,9 @@ model Purchase {
   /// Key en R2 del XML de la factura del proveedor cuando la compra nació de RF-11.
   sourceXmlKey          String?            @map("source_xml_key") @db.VarChar(300)
   notes                 String?            @db.VarChar(500)
+  /// D-351: lote del importador de compras que la creó. Referencia suelta, sin FK (mismo
+  /// criterio que las demás `import_batch_id`); `null` en las que entraron por el formulario.
+  importBatchId         String?            @map("import_batch_id") @db.Uuid
   createdById           String             @map("created_by_id") @db.Uuid
   receivedAt            DateTime?          @map("received_at") @db.Timestamptz(3)
   cancelledAt           DateTime?          @map("cancelled_at") @db.Timestamptz(3)
@@ -993,6 +996,7 @@ model Purchase {
   @@index([supplierId, status])
   @@index([relatedPurchaseId])
   @@index([relatedCuttingOrderId])
+  @@index([importBatchId])
   @@map("purchases")
 }
 
@@ -1001,33 +1005,36 @@ model Purchase {
 /// sin IGV). En FINISHED_GOOD apunta a un `productId` del catálogo. En SERVICE y
 /// EXPENSE es solo descripción y montos.
 model PurchaseItem {
-  id          String      @id @default(uuid()) @db.Uuid
-  purchaseId  String      @map("purchase_id") @db.Uuid
-  purchase    Purchase    @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  lineNumber  Int         @map("line_number")
-  productId   String?     @map("product_id") @db.Uuid
-  product     Product?    @relation(fields: [productId], references: [id])
-  description String      @db.VarChar(240)
-  qty         Decimal     @db.Decimal(16, 3)
-  unit        String      @db.VarChar(20)
+  id           String      @id @default(uuid()) @db.Uuid
+  purchaseId   String      @map("purchase_id") @db.Uuid
+  purchase     Purchase    @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  lineNumber   Int         @map("line_number")
+  productId    String?     @map("product_id") @db.Uuid
+  product      Product?    @relation(fields: [productId], references: [id])
+  description  String      @db.VarChar(240)
+  qty          Decimal     @db.Decimal(16, 3)
+  unit         String      @db.VarChar(20)
   /// Precio unitario SIN IGV (D-038).
-  unitPrice   Decimal     @map("unit_price") @db.Decimal(18, 4)
-  subtotal    Decimal     @db.Decimal(18, 4)
-  igv         Decimal     @db.Decimal(18, 4)
-  total       Decimal     @db.Decimal(18, 4)
-  finishId    String?     @map("finish_id") @db.Uuid
-  finish      Finish?     @relation(fields: [finishId], references: [id])
+  unitPrice    Decimal     @map("unit_price") @db.Decimal(18, 4)
+  subtotal     Decimal     @db.Decimal(18, 4)
+  igv          Decimal     @db.Decimal(18, 4)
+  total        Decimal     @db.Decimal(18, 4)
+  finishId     String?     @map("finish_id") @db.Uuid
+  finish       Finish?     @relation(fields: [finishId], references: [id])
   /// D-085: color de la bobina que esta línea da de alta. Solo en compras `COIL` de
   /// material prepintado; el XML de factura no lo trae, así que esas bobinas nacen sin
   /// color y se lo pone después la edición de la bobina (RF-20).
-  colorId     String?     @map("color_id") @db.Uuid
-  color       Color?      @relation(fields: [colorId], references: [id])
-  widthMm     Decimal?    @map("width_mm") @db.Decimal(8, 2)
-  thicknessMm Decimal?    @map("thickness_mm") @db.Decimal(6, 2)
+  colorId      String?     @map("color_id") @db.Uuid
+  color        Color?      @relation(fields: [colorId], references: [id])
+  widthMm      Decimal?    @map("width_mm") @db.Decimal(8, 2)
+  thicknessMm  Decimal?    @map("thickness_mm") @db.Decimal(6, 2)
   /// D-116 (Fase 7e): estado con el que nace la bobina que esta línea da de alta. `null` en
   /// líneas que no son `COIL`; `receive()` usa `CLOSED` si la línea `COIL` no lo trae (el
   /// dueño quiere que una bobina nueva nazca cerrada por defecto, editable al registrar).
-  coilStatus  CoilStatus? @map("coil_status")
+  coilStatus   CoilStatus? @map("coil_status")
+  /// D-351: código con el que el proveedor identifica la bobina (opcional, solo `COIL`). La
+  /// recepción lo copia a `coils.external_code` (D-206).
+  externalCode String?     @map("external_code") @db.VarChar(40)
 
   coil Coil?
 
@@ -1154,19 +1161,19 @@ model Coil {
 /// se sobrescribe. El estado del film es el del último evento (`operationDate`, `at`, `id`).
 /// Una bobina sin eventos está sellada. No toca el kardex ni `coils.status`.
 model CoilFilmEvent {
-  id            String              @id @default(uuid()) @db.Uuid
-  coilId        String              @map("coil_id") @db.Uuid
-  coil          Coil                @relation(fields: [coilId], references: [id])
+  id            String            @id @default(uuid()) @db.Uuid
+  coilId        String            @map("coil_id") @db.Uuid
+  coil          Coil              @relation(fields: [coilId], references: [id])
   type          CoilFilmEventType
   source        CoilFilmSource
   /// D-124: día de negocio (Lima) del hecho. Es el que corta el reporte mensual.
-  operationDate DateTime            @map("operation_date") @db.Date
-  reason        String?             @db.VarChar(240)
+  operationDate DateTime          @map("operation_date") @db.Date
+  reason        String?           @db.VarChar(240)
   /// Qué causó el evento, para poder deshacerlo solo cuando corresponde: el id del consumo
   /// de OP (`MOUNT`) o de la bobina de la orden de corte (`CUTTING_SEND`).
-  refId         String?             @map("ref_id") @db.VarChar(80)
-  actorId       String?             @map("actor_id") @db.Uuid
-  at            DateTime            @default(now()) @db.Timestamptz(3)
+  refId         String?           @map("ref_id") @db.VarChar(80)
+  actorId       String?           @map("actor_id") @db.Uuid
+  at            DateTime          @default(now()) @db.Timestamptz(3)
 
   @@index([coilId, operationDate, at])
   @@index([operationDate])

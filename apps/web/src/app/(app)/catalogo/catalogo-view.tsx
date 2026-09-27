@@ -42,6 +42,7 @@ import { DeleteProductDialog } from '@/components/catalog/delete-product-dialog'
 import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 import { RowActions } from '@/components/row-actions';
+import { FilterChip } from '@/components/filter-chip';
 
 /** El color solo tiene sentido donde hay material prepintado: coberturas (D-085). */
 function usesColor(lineCode: BusinessLine): boolean {
@@ -71,7 +72,9 @@ export function CatalogoView() {
   // Punto 13 del cliente (D-290): la búsqueda por SKU o nombre filtra en el cliente sobre
   // el catálogo ya cargado —no pagina (D-113)— y vive en la URL (`?q=`), con debounce de 150 ms.
   // D-326: `?tab=colores` abre la pestaña de colores (el ítem «Colores» del menú); sin él, la línea.
-  const [url, setUrl] = useUrlState({ q: '', tab: '' });
+  // D-349: los inactivos se ocultan por defecto; el chip «Inactivos» (`?inactivos=1`) los suma.
+  const [url, setUrl] = useUrlState({ q: '', tab: '', inactivos: '' });
+  const showInactive = url.inactivos === '1';
   const [searchText, setSearchText, search] = useUrlSearchInput(
     url.q,
     (v) => {
@@ -193,12 +196,17 @@ export function CatalogoView() {
         </TabsContent>
         {lines.data.map((line) => {
           const inLine = products.data?.filter((p) => p.businessLineId === line.id) ?? [];
+          // D-349 (mismo criterio que D-289): buscar encuentra también los inactivos — quien
+          // escribe el SKU lo quiere esté como esté —; sin búsqueda, solo los activos salvo que
+          // el chip esté encendido.
           const searched = needle
             ? inLine.filter(
                 (p) =>
                   p.sku.toLowerCase().includes(needle) || p.name.toLowerCase().includes(needle),
               )
-            : inLine;
+            : showInactive
+              ? inLine
+              : inLine.filter((p) => p.isActive);
           const lineProducts = sortRows(searched, sort, {
             sku: { text: (p) => p.sku },
             name: { text: (p) => p.name },
@@ -209,15 +217,25 @@ export function CatalogoView() {
           return (
             <TabsContent key={line.id} value={line.id} className="grid gap-4">
               <div className="flex items-center justify-between gap-3">
-                <Input
-                  aria-label="Buscar productos por SKU o nombre"
-                  placeholder="Buscar por SKU o nombre…"
-                  className="max-w-xs"
-                  value={searchText}
-                  onChange={(e) => {
-                    setSearchText(e.target.value);
-                  }}
-                />
+                <div className="flex items-center gap-2">
+                  <Input
+                    aria-label="Buscar productos por SKU o nombre"
+                    placeholder="Buscar por SKU o nombre…"
+                    className="max-w-xs"
+                    value={searchText}
+                    onChange={(e) => {
+                      setSearchText(e.target.value);
+                    }}
+                  />
+                  <FilterChip
+                    active={showInactive}
+                    onToggle={() => {
+                      setUrl({ inactivos: showInactive ? '' : '1' });
+                    }}
+                  >
+                    Inactivos
+                  </FilterChip>
+                </div>
                 {isAdmin && (
                   <Button
                     size="sm"
