@@ -1,6 +1,19 @@
 # Handoff — Importador de compras, edición de accesorio sin uso, inactivos del catálogo y purga de cotizaciones (D-348 a D-353)
 
-**Estado al cierre: VENTANA PENDIENTE.** PR #46 (`feat/importador-compras`). Decisiones **D-348** a
+**Estado al cierre: desplegado.** PR #46 mergeado (`5796eb1`). API `ayr-steel-erp-api-00062-8st`
+(git-sha `5778fb3`), migración `d351` aplicada en `production`, web en Vercel, smoke en verde en los dos,
+verificación de solo lectura hecha (detalle en `docs/PROGRESO.md`, «Ventana del importador de compras»).
+Respaldo: `respaldo-pre-import-compras-20260927`.
+
+**Purga M0c ejecutada** (decisión del dueño: todas las anuladas): `COT-000048`, `COT-000053`, `COT-000054`,
+`COT-000066` y `COT-000074`, borradas y auditadas (`quotations.purge`); quedan **0 anuladas**. Dos PDF
+huérfanos en R2 (los de 053/054). **COT-000053 y COT-000054 (el ×6 del 22-09): purgadas el 2026-09-27 por
+decisión del dueño; el registro del incidente queda en este documento** (y en `docs/handoff/ventana-rf-s4b.md`,
+`docs/PROGRESO.md`, D-263 y D-268). Productos liberados para que el dueño los borre desde la pantalla:
+`ACCES025BLANCO`, `AUTOPER14X5`, `PERFILH`, `PERFILU`, `SIKA11FC`, `SIKBOOM` (ojo: `PERFILH`/`PERFILU` son
+dos de los 10 perfiles de drywall activos).
+
+PR #46 (`feat/importador-compras`). Decisiones **D-348** a
 **D-353** en `docs/ARQUITECTURA.md` §0.2. Guion UAT: `docs/uat/import-compras.md`. Guía del cliente:
 `docs/cliente/revision-2026-09-25.md` §1.21. Plantillas: `docs/plantillas/importar-compras*.xlsx` y
 `README-importar-compras.md`. Revisiones: `docs/revision/import-compras-autorrevision.md` y

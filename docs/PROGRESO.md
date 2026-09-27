@@ -195,6 +195,60 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
     que `mergeProductInto`, D-253); y el riesgo residual documentado — el fix de la carrera es quirúrgico
     sobre el único llamador vulnerable de hoy, no un lock sistémico en `InventoryService.record()`.
 
+- **Importador de compras** (2026-09-27, rama `feat/importador-compras`, PR #46). D-348 a D-353. **Dos pases,
+  los dos por subagentes** —autorrevisión y segundo modelo con `model: sonnet` y contexto limpio—, así que
+  **ninguno vale como pase independiente** (`docs/revision/import-compras-autorrevision.md`: 0 P0, 5 P1;
+  `docs/revision/import-compras-segundo-modelo.md`: 0 P0, 5 P1; todos resueltos antes del deploy salvo
+  dos sin cambio de código —el lock de D-348 sin tablas polimórficas, documentado como el mismo riesgo
+  residual de D-347, y el «todo o nada por lote», que es el contrato pedido— y uno decidido por el dueño
+  —el supervisor también crea proveedores desde el padrón—). **PENDIENTE DE REVISIÓN DEL DUEÑO**
+  (2026-09-27, motivo: esquema de un solo agente). Piezas de riesgo: `PurchasesService.createInTx` (extraída
+  de `create`, todas sus validaciones leen de la transacción; `create` ahora resuelve el TC antes de
+  validar), `cancel(…, { onlyDraft })`, la recepción que copia `external_code` a la bobina (**toca kardex**
+  solo por pasar por `receive()` de siempre), la purga D-350 (**borrado físico**) y el lock de D-348.
+
+## Ventana del importador de compras (2026-09-27, con migración)
+
+PR #46 (merge `5796eb1`). SHA desplegado `5778fb3`. Handoff: `docs/handoff/import-compras.md`. UAT:
+`docs/uat/import-compras.md`. Revisión: `docs/revision/import-compras-autorrevision.md` y
+`docs/revision/import-compras-segundo-modelo.md`. OK del dueño comando por comando.
+
+- **CI del PR #46 sobre `5778fb3`:** lint/typecheck/unit, E2E completo del runner, smoke con Neon `ci`
+  (aplica `d351`), análisis estático y SonarCloud en SUCCESS. El primer intento de Sonar falló por
+  «D Reliability» (un `sort()` sin comparador en la purga); corregido en `5778fb3`.
+- **Respaldo Neon:** rama `respaldo-pre-import-compras-20260927` (`br-withered-waterfall-ae0d8bos`, padre
+  `production`), creada en silencio (solo id, nombre y padre en la salida).
+- **Migraciones:** `migrations-status` → **1 pendiente** (`20260927200000_d351_importador_de_compras`, la de
+  esta sesión, aditiva); `pnpm db:prod` (sin seed) la aplicó. `migrate diff` posterior = el drift conocido
+  (5 defaults de `operation_date`, 5 FK recreadas, 2 índices, un renombre) y nada de `purchases` ni
+  `purchase_items`.
+- **API (Cloud Run):** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+  desde el worktree (con `AYR_ENV_SETUP` apuntando al `.env.setup` del checkout principal, sin copiarlo):
+  **`ayr-steel-erp-api-00062-8st`**, 100 % del tráfico, label `git-sha=5778fb3`, `/health` 200, los **14**
+  nombres y los 9 secretos con versión explícita.
+- **Smoke con la web vieja (API nueva):** `pnpm smoke:prod` en verde (catálogo 176 filas).
+- **Merge** del PR #46 con `gh pr merge 46 --merge --match-head-commit 5778fb3…`; Vercel en `success`.
+- **Smoke contra `v2.mareliac.pe`** en verde. **Alineación de runtime:** `git diff --quiet 5778fb3
+origin/main -- apps packages Dockerfile .gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml` →
+  **exit 0**.
+- **Verificación de solo lectura (admin efímero borrado):** los 3 accesorios (`ACCES025BLANCO`,
+  `ACCES030ROJO`, `ACCES028ROJO`) con `canEditStructure = true`; catálogo 176 = 173 activos + 3 inactivos;
+  **compras vivas: 10, todas `COIL`/`RECEIVED`**; preview (sin confirmar) del ejemplo más las 5 primeras
+  compras vivas como filas de gasto → las **5** marcadas «Ya registrada» (incluido `E001-261`, que existe
+  en dos proveedores y se detectó en cada uno); las 4 del ejemplo piden alta de proveedor (RUC ficticios que
+  el padrón no conoce). El preview consultó el padrón por esos 4 RUC (cuota de apis.net).
+- **M0c — purga de cotizaciones anuladas (decisión del dueño: todas, incluidas COT-000053/054):** listado de
+  solo lectura → 5 anuladas (`COT-000048`, `COT-000053`, `COT-000054`, `COT-000066`, `COT-000074`).
+  Dry-run: 5 purgables, 0 bloqueadas, 0 reservas, 10 cambios de precio, 2 PDF que quedan huérfanos en R2
+  (`quotations/d2461402-…/COT-000053.pdf`, `quotations/74e2d944-…/COT-000054.pdf`), 6 productos que
+  quedarían sin uso. Con OK del dueño, `--execute --confirm-production`: **Borradas: 5** (auditadas
+  `quotations.purge`). Verificación posterior: **0 cotizaciones anuladas**; los 6 productos liberados
+  (`ACCES025BLANCO`, `AUTOPER14X5`, `PERFILH`, `PERFILU`, `SIKA11FC`, `SIKBOOM`) figuran con
+  `canDelete = true` (127 borrables en todo el catálogo); el dueño los borra desde la pantalla. Informes en
+  `local-data/import-compras/`.
+- **Rollback (no usado):** tráfico a `00061-rbw`; la migración es aditiva (dos columnas nullable y un
+  índice). La purga no tiene reversa salvo desde el respaldo `respaldo-pre-import-compras-20260927`.
+
 ## Ventana de Drywall sin receta (2026-09-27, con migración)
 
 PR #43 (merge `17b5097`). SHA desplegado `d33ebd2`. Handoff: `docs/handoff/drywall-sin-receta.md`. UAT:
@@ -848,6 +902,7 @@ Detalle en `docs/handoff/ventana-rf-s4b.md`; salidas en `local-data/rf-s4b/venta
 - COT-000053 y COT-000054 (anuladas) en (c) «editadas a propósito»: importes ×6 del papel por un
   cambio de precio del 22/09 que pasó el precio por plancha a precio por metro (planchas de 6 m).
   Rehechas como COT-000072/073. Revisión del owner; diagnóstico en el handoff.
+  **COT-000053 y COT-000054: purgadas el 2026-09-27 por decisión del dueño; el registro del incidente queda en este documento.**
 - `ADMIN_PASSWORD` de `.env.setup` da 401 contra production (credencial vieja).
 - `smoke:prod --base-url https://v2.mareliac.pe` lo rechaza el guard de dominio.
 - **La bobina atada no se ve en la pantalla de la cotización** (solo el producto; el código de
@@ -858,6 +913,7 @@ Detalle en `docs/handoff/ventana-rf-s4b.md`; salidas en `local-data/rf-s4b/venta
   multiplica sin advertencia.** Es la causa del ×6 de COT-000053/054: «S/ 59.00 → S/ 59.00 /m»
   sobre planchas de 6 m. En esas dos no hay daño (están anuladas y rehechas), pero en un
   documento vivo el mismo gesto multiplica el importe sin que nadie lo note.
+  **COT-000053 y COT-000054: purgadas el 2026-09-27 por decisión del dueño; el registro del incidente queda en este documento.**
 - **Después de resetear demo desde production, `scripts/db-reset-dev.mjs` tiene que rotar la
   contraseña del rol en la rama `demo`.** Hoy demo hereda la credencial de production (la de
   `neondb_owner` es la misma en las ramas, AGENTS.md §3.1), así que un `.env.demo` expuesto

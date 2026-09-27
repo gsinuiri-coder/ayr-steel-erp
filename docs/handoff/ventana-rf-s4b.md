@@ -80,7 +80,8 @@ us-central1 --to-revisions ayr-steel-erp-api-00042-tdb=100` (revisión `0e1124b`
 ## Pendientes
 
 - **COT-000053 y COT-000054 quedaron en (c), «editadas a propósito», para que el owner las
-  revise.** Las dos están **anuladas**, y el barrido no las toca. Diagnóstico (solo lectura):
+  - **Nota: purgadas el 2026-09-27 por decisión del dueño; el registro del incidente queda en este documento.**
+    revise.** Las dos están **anuladas**, y el barrido no las toca. Diagnóstico (solo lectura):
   - Papel: FFA1-1393 = 2000 **UNIDAD** de `PL030NT6M` (plancha de 6000 mm) por S/ 100 000 + IGV;
     FFA1-1394 = 1500 UNIDAD de `PL040NT6MT` por S/ 109 322.034 + IGV.
   - Importadas bien: 50.00 y 72.8814 por unidad.
