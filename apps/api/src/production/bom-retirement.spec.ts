@@ -90,10 +90,10 @@ describe('retireActiveBoms', () => {
     expect(audit.write).not.toHaveBeenCalled();
   });
 
-  it('si otra sesión ya la desactivó entre la lectura y la escritura, no audita un cambio que no hizo', async () => {
+  it('si otra sesión ya la desactivó entre la lectura y la escritura, no audita un cambio que no hizo ni la cuenta como propia', async () => {
     const { tx, raw, audit } = build([bom('1', 'OMEGA045')]);
     raw.productBom.updateMany.mockResolvedValueOnce({ count: 0 });
-    await retireActiveBoms(tx, audit);
+    await expect(retireActiveBoms(tx, audit)).resolves.toEqual({ retired: 0, skus: [] });
     expect(audit.write).not.toHaveBeenCalled();
   });
 });

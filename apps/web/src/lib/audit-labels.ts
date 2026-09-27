@@ -66,6 +66,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'pos.sale.void': 'Anulación de venta de mostrador',
   'pos.sale.void-start': 'Anulación de venta de mostrador iniciada',
   'pricing.update': 'Márgenes de precio actualizados',
+  'production.bom.retire': 'Receta de drywall desactivada (D-344)',
   'production.cancel': 'Anulación de orden de producción',
   'production.close': 'Cierre de orden de producción',
   'production.consume': 'Consumo registrado en orden de producción',

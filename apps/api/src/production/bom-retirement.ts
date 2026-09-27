@@ -65,14 +65,16 @@ export async function retireActiveBoms(
   audit: Pick<AuditService, 'write'>,
 ): Promise<BomRetirementResult> {
   const active = await findActiveBoms(tx);
+  const retired: string[] = [];
   for (const bom of active) {
     // El `where` repite `isActive: true`: si otra sesión la desactivó entre la lectura y acá, no
-    // se audita un cambio que no hicimos.
+    // se audita un cambio que no hicimos, y tampoco se cuenta como propio.
     const { count } = await tx.productBom.updateMany({
       where: { id: bom.id, isActive: true },
       data: { isActive: false },
     });
     if (count === 0) continue;
+    retired.push(bom.productSku);
     await audit.write(tx, {
       actorId: null,
       actorKind: AuditActorKind.SYSTEM,
@@ -91,5 +93,5 @@ export async function retireActiveBoms(
       reason: 'D-344: drywall deja de usar receta; el espesor y el ancho del fleje son del SKU',
     });
   }
-  return { retired: active.length, skus: active.map((b) => b.productSku) };
+  return { retired: retired.length, skus: retired };
 }

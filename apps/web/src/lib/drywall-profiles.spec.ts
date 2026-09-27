@@ -57,6 +57,7 @@ describe('drywallProfilesOf', () => {
     ['sin espesor', { thicknessMm: null }],
     ['sin ancho', { widthMm: null }],
     ['sin peso', { pieceWeightKg: null }],
+    ['con peso en cero', { pieceWeightKg: '0.000' }],
   ])('%s: no se ofrece y se lista como incompleto', (_n, over) => {
     const p = product(over);
     const { ready, incomplete } = drywallProfilesOf([p]);
@@ -64,13 +65,16 @@ describe('drywallProfilesOf', () => {
     expect(incomplete).toEqual([p]);
   });
 
-  it('no cuenta lo que no es un perfil de drywall fabricado y activo', () => {
+  it('no cuenta lo que no es un perfil de drywall fabricado, activo y en piezas', () => {
     const others = [
       product({ id: 'a', isActive: false }),
       product({ id: 'b', businessLineCode: 'trading' }),
       product({ id: 'c', source: 'PURCHASED' }),
+      // Un perfil fabricado pero medido en kilos: el API lo rechazaría con «se debe medir en
+      // unidades (NIU)» (D-055), así que ni siquiera se ofrece.
+      product({ id: 'd', unit: 'KGM' }),
     ];
     expect(drywallProfilesOf(others)).toEqual({ ready: [], incomplete: [] });
-    expect(others.map(isActiveDrywallProfile)).toEqual([false, false, false]);
+    expect(others.map(isActiveDrywallProfile)).toEqual([false, false, false, false]);
   });
 });

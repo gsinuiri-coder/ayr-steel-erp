@@ -171,7 +171,11 @@ export class CatalogService {
    */
   private async galvanizedDensity(): Promise<Prisma.Decimal | null> {
     const finish = await this.prisma.finish.findFirst({
-      where: { kind: PrismaFinishKind.GALVANIZADO, isActive: true },
+      where: {
+        kind: PrismaFinishKind.GALVANIZADO,
+        isActive: true,
+        businessLine: { code: BusinessLineCode.DRYWALL },
+      },
       orderBy: { createdAt: 'asc' },
       select: { densityFactor: true },
     });
@@ -798,13 +802,18 @@ function assertStructuredFields(
   }
 }
 
-/** ¿El valor que llega (o `undefined` si no se toca) es distinto del guardado? Compara como decimal. */
+/**
+ * ¿El fleje que una OP viva ya montó dejaría de significar lo mismo? `undefined` (no se toca) y
+ * cargar un dato que faltaba (`stored` null, `incoming` con valor) no cuentan como cambio: lo que
+ * hay que impedir es mover o borrar el dato que una orden en curso ya usó, no completar el
+ * catálogo de un perfil al que todavía le falta.
+ */
 function decimalChanged(
   incoming: string | null | undefined,
   stored: Prisma.Decimal | null,
 ): boolean {
-  if (incoming === undefined) return false;
-  if (incoming === null || stored === null) return incoming !== stored?.toString();
+  if (incoming === undefined || stored === null) return false;
+  if (incoming === null) return true;
   return !toDecimal(incoming).equals(stored.toString());
 }
 

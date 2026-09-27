@@ -1,10 +1,11 @@
-import { BusinessLine, type ProductDto } from '@ayr/shared';
+import { BusinessLine, toDecimal, Unit, type ProductDto } from '@ayr/shared';
 
 /**
  * D-344 — los perfiles de drywall que planta y corte pueden usar, **sacados del SKU** (ya no hay
- * receta): un perfil fabricado, activo y con los cuatro datos del catálogo completos —espesor y
- * ancho del fleje, largo y peso de la pieza—. Sin espesor o sin ancho no se sabe qué fleje
- * consume, y sin peso no se sabe cuántos kilos gasta cada pieza; el API rechaza abrir su orden.
+ * receta): un perfil fabricado, activo, medido en piezas (`NIU`, D-055) y con los cuatro datos del
+ * catálogo completos —espesor y ancho del fleje, largo y peso de la pieza, mayor a cero—. Sin
+ * espesor o sin ancho no se sabe qué fleje consume, y sin peso no se sabe cuántos kilos gasta cada
+ * pieza; el API rechaza abrir su orden.
  */
 export interface DrywallProfile {
   productId: string;
@@ -25,7 +26,12 @@ export interface DrywallProfiles {
 }
 
 export function isActiveDrywallProfile(p: ProductDto): boolean {
-  return p.isActive && p.businessLineCode === BusinessLine.DRYWALL && p.source === 'MANUFACTURED';
+  return (
+    p.isActive &&
+    p.businessLineCode === BusinessLine.DRYWALL &&
+    p.source === 'MANUFACTURED' &&
+    p.unit === Unit.NIU
+  );
 }
 
 export function drywallProfilesOf(products: readonly ProductDto[]): DrywallProfiles {
@@ -33,7 +39,12 @@ export function drywallProfilesOf(products: readonly ProductDto[]): DrywallProfi
   const incomplete: ProductDto[] = [];
   for (const p of products) {
     if (!isActiveDrywallProfile(p)) continue;
-    if (p.thicknessMm !== null && p.widthMm !== null && p.pieceWeightKg !== null) {
+    if (
+      p.thicknessMm !== null &&
+      p.widthMm !== null &&
+      p.pieceWeightKg !== null &&
+      toDecimal(p.pieceWeightKg).gt(0)
+    ) {
       ready.push({
         productId: p.id,
         sku: p.sku,

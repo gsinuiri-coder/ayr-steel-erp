@@ -117,11 +117,11 @@ describe('ProductionService.create — drywall sin receta (D-344)', () => {
   it('un perfil comprado o medido en kilos no se produce: lo que la receta exigía, ahora lo exige la orden (D-055/D-059)', async () => {
     const { service, prisma, tx } = build();
     prisma.product.findUnique.mockResolvedValueOnce(product({ source: ProductSource.PURCHASED }));
-    await expect(service.create(ADMIN, { productId: 'p-1' } as never)).rejects.toThrow(
+    await expect(service.create(ADMIN, { productId: 'p-1' })).rejects.toThrow(
       /no es un producto fabricado/,
     );
     prisma.product.findUnique.mockResolvedValueOnce(product({ unit: 'KGM' }));
-    await expect(service.create(ADMIN, { productId: 'p-1' } as never)).rejects.toThrow(
+    await expect(service.create(ADMIN, { productId: 'p-1' })).rejects.toThrow(
       /se debe medir en unidades \(NIU\)/,
     );
     expect(tx.productionOrder.create).not.toHaveBeenCalled();

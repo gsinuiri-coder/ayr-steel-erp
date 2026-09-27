@@ -581,8 +581,8 @@ export class ProductionService {
           );
         }
 
-        // D-122: la receta sigue diciendo **qué fleje** consume el producto; cuánto pesa
-        // cada pieza es del SKU (D-139).
+        // D-122/D-139/D-344: qué fleje consume el producto y cuánto pesa cada pieza son datos
+        // del SKU; ya no hay receta.
         const product = await tx.product.findUniqueOrThrow({
           where: { id: order.productId },
           select: { sku: true, pieceWeightKg: true },
@@ -1494,12 +1494,24 @@ export class ProductionService {
       select: {
         sku: true,
         businessLineId: true,
+        businessLine: { select: { code: true } },
+        source: true,
+        unit: true,
         thicknessMm: true,
         widthMm: true,
         pieceWeightKg: true,
       },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
+    // Mismas guardas que `create`: solo tiene sentido preguntar por flejes de un perfil de
+    // drywall fabricado y en piezas (D-055/D-059).
+    if (
+      product.businessLine.code !== BusinessLineCode.DRYWALL ||
+      product.source !== ProductSource.MANUFACTURED ||
+      product.unit !== Unit.NIU
+    ) {
+      throw new BadRequestException('Esta ruta es de perfiles de Drywall fabricados en unidades');
+    }
     const strip = drywallStripSpec(product);
     if ('noFloorReason' in strip) {
       throw new BadRequestException(

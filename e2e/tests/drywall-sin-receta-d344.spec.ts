@@ -46,7 +46,7 @@ test.describe('D-344 — drywall sin receta', () => {
     // No hay campo de acabado: drywall es siempre galvanizado.
     await expect(dialog.getByText('Espesor del fleje (mm)')).toBeVisible();
     await expect(dialog.getByText('Ancho del fleje — desarrollo (mm)')).toBeVisible();
-    await expect(dialog.getByText('Acabado')).toBeHidden();
+    await expect(dialog.getByLabel('Acabado')).toBeHidden();
 
     await dialog.getByLabel('SKU').fill(sku);
     await dialog.getByLabel('Nombre').fill('Perfil E2E D-344');
@@ -77,7 +77,12 @@ test.describe('D-344 — drywall sin receta', () => {
     await expect(row).toContainText('fuera del teórico');
 
     const saved = (await getJson<ProductDto[]>(api, '/api/catalog')).find((p) => p.sku === sku);
-    expect(saved).toMatchObject({ thicknessMm: '0.45', widthMm: '1.00', finishId: null });
+    expect(saved).toMatchObject({
+      thicknessMm: '0.45',
+      widthMm: '115.00',
+      pieceWeightKg: '1.000',
+      finishId: null,
+    });
     await api.patch(`/api/catalog/${saved!.id}`, { data: { isActive: false } });
   });
 

@@ -45,7 +45,7 @@ import { Skeleton } from '@/components/ui/skeleton';
  *
  * Las tres son distintas porque el dominio las hace distintas: una cobertura a medida nace
  * del **pedido** que reserva el material (D-084), una plancha de catálogo nace de una meta a
- * stock (D-140), y un perfil de drywall nace del **producto** y su receta.
+ * stock (D-140), y un perfil de drywall nace del **SKU** (D-344: ya no hay receta).
  */
 
 /**

@@ -43,10 +43,10 @@ import {
 
 interface WidthRow {
   /**
-   * E (Fase 7e): el ancho ya no se tipea a mano — se elige el SKU de perfil de drywall
-   * cuya receta (`product_boms.input_width_mm`, D-059) necesita ese fleje, y el ancho sale
-   * de ahí. `widthMm` queda derivado, no editable, para que el plan de corte no invente
-   * anchos que ninguna receta consume.
+   * E (Fase 7e) / D-344: el ancho ya no se tipea a mano — se elige el SKU del perfil de drywall
+   * que necesita ese fleje, y el ancho sale de su SKU (`products.width_mm`, el ancho del fleje).
+   * `widthMm` queda derivado, no editable, para que el plan de corte no invente anchos que
+   * ningún perfil consume.
    */
   profileProductId: string;
   widthMm: string;

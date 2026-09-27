@@ -184,11 +184,16 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
       await expect(service.update(ACTOR, 'p-1', { thicknessMm: '0.60' })).rejects.toBe(STOP);
     });
 
-    it('quitar el espesor (o el ancho) también es un cambio y también se frena', async () => {
+    it('quitar el espesor (o el ancho) de un perfil ya montado es un cambio y se frena', async () => {
+      await expect(service.update(ACTOR, 'p-1', { thicknessMm: null })).rejects.toThrow(/en curso/);
+      await expect(service.update(ACTOR, 'p-1', { widthMm: null })).rejects.toThrow(/en curso/);
+    });
+
+    it('cargar el espesor que faltaba (los 10 de producción) NO se frena, aunque haya una orden en curso', async () => {
+      // Distinto del caso anterior: acá no hay ningún fleje montado contra un valor de antes —
+      // la orden está en curso porque el SKU ya tenía ancho y peso, y le faltaba el espesor.
       prisma.product.findUnique.mockResolvedValue(stored({ thicknessMm: null }));
-      await expect(service.update(ACTOR, 'p-1', { thicknessMm: '0.45' })).rejects.toThrow(
-        /en curso/,
-      );
+      await expect(service.update(ACTOR, 'p-1', { thicknessMm: '0.45' })).rejects.toBe(STOP);
     });
   });
 
