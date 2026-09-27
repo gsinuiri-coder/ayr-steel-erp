@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { BusinessLineCode, Currency } from '@prisma/client';
 import { CURRENCIES, decimalStringSchema, MAX_VALUE, toDecimal, toFixedString } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -96,6 +96,33 @@ export class InitialInventoryProductImportService {
     const batchId = input.batchId;
     const created = await this.prisma.$transaction(
       async (tx) => {
+        // D-347 (hallazgo del segundo modelo, revisión de M6): `inventory_movements.item_id` es
+        // polimórfico y sin FK hacia `products`, así que el `SELECT ... FOR UPDATE` de
+        // `CatalogService.remove()` no alcanza a bloquear este `INSERT` — Postgres solo hace ese
+        // bloqueo transitivo cuando hay una FK real de por medio. Se toma el mismo lock acá, a
+        // mano, para que un borrado concurrente del mismo producto y esta carga se serialicen en
+        // vez de pisarse. Si `remove()` ganó la carrera y ya borró alguno, esta carga entera se
+        // frena (mismo criterio que cualquier otra fila inválida: no hay commit parcial) en vez
+        // de dejar un movimiento de kardex apuntando a un producto que ya no existe.
+        if (productIds.length > 0) {
+          await tx.$queryRaw`
+            SELECT "id" FROM "products" WHERE "id" = ANY(${productIds}::uuid[]) ORDER BY "id" FOR UPDATE
+          `;
+          const stillExist = new Set(
+            (
+              await tx.product.findMany({
+                where: { id: { in: productIds } },
+                select: { id: true },
+              })
+            ).map((p) => p.id),
+          );
+          const missing = rows.find((r) => r.parsed && !stillExist.has(r.parsed.productId))?.parsed;
+          if (missing) {
+            throw new ConflictException(
+              `${missing.sku} se borró del catálogo justo antes de esta carga: repetí el archivo.`,
+            );
+          }
+        }
         const rowsCreated: { rowNumber: number; sku: string }[] = [];
         for (const row of rows) {
           // `ok` ya confirmó que todas las filas tienen `parsed`; el chequeo es para el tipo.

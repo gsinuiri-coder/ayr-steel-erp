@@ -10,8 +10,9 @@ import * as productUsage from './product-usage';
 /**
  * D-347/M6 — `DELETE /catalog/:id`: borrado físico de un producto que **nunca se usó**.
  * `describeProductUsage` ya tiene su propia batería de tests (`product-usage.spec.ts`); acá
- * solo se prueba que el servicio lo respeta, bloquea la fila y audita sin `after` (el producto
- * ya no existe después de esta acción).
+ * solo se prueba que el servicio lo respeta, bloquea la fila y audita con el mismo detalle que
+ * `create`/`update` (`auditView`, hallazgo de la autorrevisión y del segundo modelo) pero sin
+ * `after` — el producto ya no existe después de esta acción.
  */
 
 const ACTOR = { id: 'admin-1' } as never;
@@ -20,6 +21,17 @@ const PRODUCT = {
   sku: 'PERFIL01',
   name: 'Perfil sin uso',
   businessLine: { code: BusinessLineCode.DRYWALL },
+  businessLineId: 'bl-drywall',
+  unit: 'NIU',
+  source: 'MANUFACTURED',
+  listPricePen: null,
+  colorId: null,
+  finishId: null,
+  thicknessMm: null,
+  widthMm: null,
+  lengthMm: null,
+  pieceWeightKg: null,
+  isActive: true,
 };
 
 describe('CatalogService.remove', () => {
@@ -92,7 +104,14 @@ describe('CatalogService.remove', () => {
         action: 'catalog.product-delete',
         entity: 'products',
         entityId: PRODUCT.id,
-        before: { sku: PRODUCT.sku, name: PRODUCT.name },
+        // El mismo detalle que `create`/`update` (`auditView`), no solo sku+nombre.
+        before: expect.objectContaining({
+          sku: PRODUCT.sku,
+          name: PRODUCT.name,
+          businessLineId: PRODUCT.businessLineId,
+          unit: PRODUCT.unit,
+          isActive: PRODUCT.isActive,
+        }),
       }),
     ]);
     expect(audits[0]).not.toHaveProperty('after');

@@ -143,8 +143,13 @@ export function CatalogoView() {
       setDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo borrar el producto'),
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo borrar el producto');
+      // Hallazgo de la autorrevisión: un 409 real (otra pestaña usó el producto justo antes)
+      // dejaba el `canDelete` viejo en la fila hasta el próximo refetch — «Eliminar» seguía
+      // pareciendo posible aunque el backend ya lo hubiera rechazado.
+      void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
+    },
   });
 
   if (lines.isPending || products.isPending) {

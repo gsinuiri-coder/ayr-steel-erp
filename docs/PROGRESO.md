@@ -169,17 +169,31 @@ piezas en ese estado, a recuperar cuando haya un segundo revisor:
     después del 2026-10-03**, es un checkpoint con fecha propia, no la política general de 7 días). Se
     borraron las 10 restantes (ramas de ensayo, `dev-antes-de-*`, `pre-api-*`, `pre-s1-hotfix-*` y los
     `respaldo-pre-*` fuera de la lista), verificando el id contra el nombre antes de cada borrado. Quedan 8.
-  - **M6 (D-347, borrado físico de un producto sin uso) implementado y con tests.** El dueño confirmó
-    `sales_price_changes.productId` como uso (nombra el documento en el 409) y el resto del Paso 0 con el
-    criterio «historia de catálogo no cuenta, historia de documento comercial/inventario/producción sí»; ser
-    el destino de una fusión (`mergedFrom`) entra por el mismo motivo que el historial de precio por línea
-    (algo quedaría apuntando a un producto borrado). `DELETE /catalog/:id` (ADMINISTRADOR), `canDelete` en
-    el DTO (`productsWithUsage`, presupuesto fijo de consultas por tanda) y el detalle del 409
-    (`describeProductUsage`, un producto). Unitario (`product-usage.spec.ts`, `catalog.service.remove.spec.ts`)
-    y E2E (`borrar-producto-d347.spec.ts`, los dos caminos: sin uso se borra, con una cotización detrás el
-    menú lo bloquea y el API lo rechaza igual). Piezas de riesgo para el pase cruzado: la lista de tablas de
-    «uso» (si aparece una tabla nueva que referencie `products`, hay que sumarla ahí, no en otro lado) y el
-    `FOR UPDATE` de la fila (mismo patrón que `mergeProductInto`, D-253).
+  - **M6 (D-347, borrado físico de un producto sin uso) implementado, revisado y con tests.** El dueño
+    confirmó `sales_price_changes.productId` como uso (nombra el documento en el 409) y el resto del Paso 0
+    con el criterio «historia de catálogo no cuenta, historia de documento comercial/inventario/producción
+    sí»; ser el destino de una fusión (`mergedFrom`) entra por el mismo motivo que el historial de precio
+    por línea (algo quedaría apuntando a un producto borrado). `DELETE /catalog/:id` (ADMINISTRADOR),
+    `canDelete` en el DTO (`productsWithUsage`) y el detalle del 409 (`describeProductUsage`, un producto).
+    **Segunda vuelta de revisión de M6** (autorrevisión + segundo modelo, `docs/revision/drywall-sin-receta-
+m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma independiente y corregidos —
+    **(1)** una carrera real entre `remove()` y la única herramienta que escribe kardex de un producto sin
+    pasar por una fila con FK real (`InitialInventoryProductImportService`, D-206/207): las tablas
+    polimórficas (`InventoryMovement`/`Reservation`/`QuotationReservation`, `itemType=PRODUCT`) no tienen FK
+    hacia `products`, así que el `FOR UPDATE` de `remove()` no las bloqueaba; se cerró con el mismo lock a
+    mano en esa herramienta más una revalidación de existencia (test nuevo:
+    `initial-inventory-product-import-race.spec.ts`); **(2)** el `before` del audit `catalog.product-delete`
+    solo guardaba sku+nombre, insuficiente para un borrado sin reversa — ahora usa el mismo `auditView` que
+    `create`/`update`. También corregido: el `onError` del `DELETE` en el web no invalidaba la lista del
+    catálogo (dejaba un `canDelete` viejo tras un 409 real), y el docstring de `productsWithUsage` que
+    sobreprometía «número fijo» de consultas. Unitario (`product-usage.spec.ts`,
+    `catalog.service.remove.spec.ts`, `initial-inventory-product-import-race.spec.ts`) y E2E
+    (`borrar-producto-d347.spec.ts`, los dos caminos: sin uso se borra, con una cotización detrás el menú lo
+    bloquea y el API lo rechaza igual). **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-27, motivo: esquema de
+    un solo agente). Piezas de riesgo para el pase cruzado: la lista de tablas de «uso» (si aparece una
+    tabla nueva que referencie `products`, hay que sumarla ahí); el `FOR UPDATE` de la fila (mismo patrón
+    que `mergeProductInto`, D-253); y el riesgo residual documentado — el fix de la carrera es quirúrgico
+    sobre el único llamador vulnerable de hoy, no un lock sistémico en `InventoryService.record()`.
 
 ## Ventana de Correcciones 03b (2026-09-26, con migración)
 

@@ -489,7 +489,23 @@ export class CatalogService {
       await tx.$queryRaw`SELECT "id" FROM "products" WHERE "id" = ${id}::uuid FOR UPDATE`;
       const product = await tx.product.findUnique({
         where: { id },
-        select: { id: true, sku: true, name: true, businessLine: { select: { code: true } } },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          businessLine: { select: { code: true } },
+          businessLineId: true,
+          unit: true,
+          source: true,
+          listPricePen: true,
+          colorId: true,
+          finishId: true,
+          thicknessMm: true,
+          widthMm: true,
+          lengthMm: true,
+          pieceWeightKg: true,
+          isActive: true,
+        },
       });
       if (!product) throw new NotFoundException('Producto no encontrado');
       const reasons = await describeProductUsage(tx, product);
@@ -499,15 +515,16 @@ export class CatalogService {
         );
       }
       await tx.product.delete({ where: { id } });
-      // D-347: sin antes/después completo (decisión del dueño) — el producto ya no existe
-      // después de esta acción, así que un `after` no dice nada; el SKU y el nombre alcanzan
-      // para identificar qué se borró sin repetir todo el catálogo del producto en el audit_log.
+      // D-347: sin `after` (decisión del dueño) — el producto ya no existe después de esta
+      // acción, y no hay a qué compararlo. El `before` sí es el mismo detalle que `create`/
+      // `update` (`auditView`, hallazgo de la autorrevisión y del segundo modelo): es la única
+      // fuente que queda para reconstruir qué era el SKU si hiciera falta después.
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'catalog.product-delete',
         entity: 'products',
         entityId: product.id,
-        before: { sku: product.sku, name: product.name },
+        before: auditView(product),
       });
     });
   }
@@ -942,7 +959,28 @@ function toDto(p: WithLineCode, canDelete: boolean): ProductDto {
   };
 }
 
-function auditView(p: Product): Prisma.InputJsonObject {
+/**
+ * Lo que `auditView` necesita de un producto — estructural, no el modelo `Product` completo,
+ * para que también lo pueda armar un `select` recortado (D-347: `remove()` no trae el producto
+ * entero, solo estos campos más lo que hace falta para `describeProductUsage`).
+ */
+interface AuditableProduct {
+  businessLineId: string;
+  sku: string;
+  name: string;
+  unit: string;
+  source: Product['source'];
+  listPricePen: Prisma.Decimal | null;
+  colorId: string | null;
+  finishId: string | null;
+  thicknessMm: Prisma.Decimal | null;
+  widthMm: Prisma.Decimal | null;
+  lengthMm: Prisma.Decimal | null;
+  pieceWeightKg: Prisma.Decimal | null;
+  isActive: boolean;
+}
+
+function auditView(p: AuditableProduct): Prisma.InputJsonObject {
   return {
     businessLineId: p.businessLineId,
     sku: p.sku,

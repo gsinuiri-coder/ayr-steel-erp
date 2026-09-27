@@ -1,16 +1,17 @@
-# Handoff — Drywall sin receta, ancho del accesorio y notas de crédito por línea (D-344 a D-346)
+# Handoff — Drywall sin receta, ancho del accesorio y notas de crédito por línea (D-344 a D-347)
 
 **Estado al cierre:** el trabajo está en el PR #43 (`feat/drywall-sin-receta`), con CI en curso o
 en SUCCESS (confirmar antes del deploy). **No desplegado todavía**: esta ventana empieza el lunes,
-con OK del dueño por comando (D-251). Decisiones **D-344**, **D-345** y **D-346** en
-`docs/ARQUITECTURA.md` §0.2. Guion UAT: `docs/uat/drywall-sin-receta.md`. Bitácora:
-`docs/PROGRESO.md`, entrada «Drywall sin receta» en el registro de riesgo. Respuesta a la
-revisión: `docs/revision/drywall-sin-receta-segundo-modelo.md`.
+con OK del dueño por comando (D-251). Decisiones **D-344** a **D-347** en `docs/ARQUITECTURA.md`
+§0.2. Guion UAT: `docs/uat/drywall-sin-receta.md`. Bitácora: `docs/PROGRESO.md`, entrada «Drywall
+sin receta» en el registro de riesgo. Respuesta a la revisión de M1-M4:
+`docs/revision/drywall-sin-receta-segundo-modelo.md`; respuesta a la revisión de M6:
+`docs/revision/drywall-sin-receta-m6-segundo-modelo.md`.
 
 **M5** (editar un accesorio sin tocar espesor/color/subtipo) y el saneamiento de Neon `ci`
-entraron a la misma sesión/PR después de escrito lo de arriba (ver §7 y §8). **M6** (borrado
-físico de un producto sin uso) quedó en Paso 0, sin código, a la espera de una respuesta del
-dueño (§9).
+entraron a la misma sesión/PR después de escrito lo de arriba (ver §7 y §8). **M6** (D-347,
+borrado físico de un producto sin uso, §10) también entró completo: Paso 0 resuelto con el dueño,
+implementado, revisado (dos hallazgos P1 corregidos) y con tests.
 
 ## 1. Qué entró
 
@@ -19,7 +20,9 @@ dueño (§9).
 | M1        | D-344    | **Drywall deja de usar receta.** El espesor y el ancho del fleje son datos del SKU (`products.thickness_mm`/`width_mm`; corrige la lectura de D-118: en drywall `width_mm` es el ancho del **fleje**, no el de la pieza). El acabado no se guarda: siempre galvanizado. Fleje compatible en un solo lugar (`apps/api/src/common/drywall-strip.ts`): `STRIP` + acabado `GALVANIZADO` + espesor y ancho **exactos** (sin la tolerancia de coberturas). Piso desde el SKU (`STRIP_SKU`), con motivos `NO_THICKNESS`/`NO_WIDTH`/`NO_PIECE_WEIGHT`/`NO_COMPATIBLE_STRIPS`/`NO_MARGIN`. La OP nace sin `bom_id`, con las mismas dos guardas que tenía la receta (fabricado y `NIU`) restituidas en `ProductionService.create`/`stripOptions` y en `CatalogService.update` (no se cambia unidad/origen/espesor/ancho con una OP en curso). Se retiran `BomsService`, `/production/boms` y el diálogo de receta. Aviso (no bloqueo) de kg/pieza a más del 5 % del teórico. |
 | M2        | D-345    | El reporte de un accesorio **avisa** —sin bloquear ni cambiar ningún cálculo— cuando el ancho de la bobina montada no es el del SKU.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | M3        | D-346    | Lo facturado por línea de pedido descuenta las **notas de crédito vivas** (una sola función, `invoicedByOrderItem`, usada por el guard de facturación, la vista de avance y la revalidación al emitir).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| M4        | —        | Ramas de Neon: 3 borradas con OK del dueño por nombre (`respaldo-pre-s2-20260917`, `ensayo-v4-20260915`, `dev-antes-de-rf-s3-20260917`). Quedan 18.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| M4        | —        | Ramas de Neon: 3 borradas con OK del dueño por nombre (`respaldo-pre-s2-20260917`, `ensayo-v4-20260915`, `dev-antes-de-rf-s3-20260917`). Quedan 18 en el primer corte; ver §9 por el criterio final y la segunda tanda de borrados.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| M5        | D-343    | **Editar un accesorio sin tocar espesor, color ni subtipo ya no rebota.** El diálogo mandaba siempre los campos estructurados en el `PATCH`, aunque no se hubieran tocado; ahora solo manda lo que cambió (mismo criterio que `colorId`/`finishId` desde F8-S5). El guard del servidor ya era correcto. Detalle en §7.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| M6        | D-347    | **`DELETE /catalog/:id` borra físicamente un producto que nunca se usó** (ADMINISTRADOR). «Uso» = kardex, documento comercial (compra, cotización, pedido, comprobante, despacho, historial de precio por línea), reserva, producción, o ser destino de una fusión. No cuenta el historial de precio de **lista** ni `audit_log`. `canDelete` en el DTO; confirmación en la UI nombrando el SKU. Detalle en §10.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 **Cambios de comportamiento que el dueño debe tener presentes:**
 
@@ -45,17 +48,23 @@ dueño (§9).
 
 `c3cdf91` M3 (NC por línea) · `6725308` M1 (drywall sin receta) · `4989814` M2 (aviso de ancho del
 accesorio) · `29cf0f3` guardas de la receta trasladadas · `a154590` E2E y docs · `4c59543`
-correcciones de la revisión.
+correcciones de la revisión de M1-M4 · `28084c5` docs de cierre de M1-M4 · `aefbb25` fix de
+densidad (constante física) · `91df936` M5 (editar accesorio) · `31f34a3` Neon `ci`/AGENTS
+(checkpoint) · `a9f1e97` docs de la saga de Neon · `b793ee6` M6 (D-347) · `2cddbc2` docs de M6 ·
+más el commit de las correcciones de la revisión de M6 (carrera con la carga inicial, audit
+completo) que cierra esta sesión.
 
 ## 3. Revisiones
 
-- **Autorrevisión** (subagente nuevo, sin leer el handoff) y **segundo modelo** (subagente
-  `sonnet`, contexto limpio): 0 P0. Los 3 P1 (lint roto en CI, un locator y una aserción del E2E
-  nuevo, `galvanizedDensity()` sin filtrar por línea) se corrigieron antes del deploy, con tests.
-  Detalle y respuesta a cada punto: `docs/revision/drywall-sin-receta-segundo-modelo.md`.
+- **M1-M4**: autorrevisión + segundo modelo, 0 P0, 3 P1 corregidos antes del deploy.
+  `docs/revision/drywall-sin-receta-segundo-modelo.md`.
+- **M6**: autorrevisión + segundo modelo, 0 P0, **2 P1 corregidos** (carrera con
+  `InitialInventoryProductImportService` sobre las tablas polimórficas sin FK; `before` del audit
+  insuficiente para un borrado sin reversa). `docs/revision/drywall-sin-receta-m6-segundo-modelo.md`.
 - **Ningún pase es independiente** (AGENTS §2): registrado en `docs/PROGRESO.md` como **PENDIENTE
   DE REVISIÓN DEL DUEÑO**, con las piezas de riesgo (el fleje compatible, la migración `d344`, la
-  CLI de retirada y las lecturas de `productBom` eliminadas de ventas).
+  CLI de retirada, las lecturas de `productBom` eliminadas de ventas, la lista de tablas de «uso»
+  de M6 y el riesgo residual del lock quirúrgico contra la carrera de kardex).
 
 ## 4. Pendientes y decisiones abiertas (del dueño)
 
@@ -69,6 +78,11 @@ correcciones de la revisión.
 4. **Correr `pnpm retire:boms` en dev y demo** antes de aplicar la migración `d344` ahí (en
    producción no hace falta: 0 recetas activas).
 5. **Revisión con ojos frescos** de las piezas de riesgo (§3).
+6. **M6, riesgo residual a decidir en otra sesión** (§10): ¿vale la pena mover el lock de la
+   carrera de kardex a `InventoryService.record()` mismo (sistémico, protege cualquier escritor
+   futuro) en vez de dejarlo quirúrgico en `InitialInventoryProductImportService` (el único
+   llamador vulnerable de hoy)? Es un cambio de alcance mayor sobre un camino caliente
+   (toda venta/despacho/reporte de producción pasa por ahí) que no se decidió en esta sesión.
 
 ## 5. Rollback
 
@@ -174,22 +188,53 @@ categorías (conservar / borrar), así que no hubo que parar a preguntar.
 fecha propia de borrado» (la política general de 7 días sigue igual; esto es la forma de anotar
 una excepción explícita como la de correcciones-02).
 
-## 10. M6 — borrado físico de un producto sin uso (D-nnn, sin asignar todavía)
+## 10. M6 — borrado físico de un producto sin uso (D-347)
 
-**Paso 0 (solo lectura) hecho, sin código de M6 escrito.** Se listaron todas las tablas con FK o
-referencia a `products` y cuál cuenta como «uso» según la definición del dueño (kardex, saldos,
-cotizaciones, pedidos, comprobantes, compras, órdenes de producción, bobinas —por `typeKey` del
-producto `BOB…`—, reservas, despachos). Quedaron **dos puntos dudosos sin resolver**, presentados
-al dueño y todavía sin respuesta al cierre de esta sesión:
+**Implementado, revisado y desplegable.** El Paso 0 (solo lectura) listó todas las tablas con FK o
+referencia a `products`; quedaron dos puntos dudosos, que el dueño resolvió: **(1)**
+`sales_price_changes.productId` **sí cuenta** como uso (historial de cambios de precio por línea de
+un documento comercial; el 409 nombra la cotización/pedido) — distinto de
+`product_list_price_changes` (historial de precio de **lista**, catálogo, no cuenta); **(2)** ser
+el **destino de una fusión** (`mergedFrom`, D-253) también cuenta, por el mismo motivo que el punto
+1: borrar dejaría un `mergedIntoId` apuntando a un producto que ya no existe. Regla general que
+cerró el resto del Paso 0: historia de catálogo no cuenta, historia de documento
+comercial/inventario/producción sí.
 
-1. **`sales_price_changes.productId`**: historial de cambios de precio por línea, sin FK a
-   propósito (mismo patrón ya documentado en `product_list_price_changes`, que el propio dueño
-   dijo que NO cuenta como uso). Falta confirmar si aplica el mismo criterio.
-2. **`merged_into_id` / `onDelete: Restrict`**: confirmar que ese `Restrict` de Prisma es una
-   restricción técnica de integridad (un producto fusionado no debería desaparecer mientras algo
-   apunte a él como destino de la fusión) y no una forma adicional de «uso» de negocio que haya
-   que nombrar en el mensaje 409.
+**Qué entró:** `DELETE /catalog/:id` (ADMINISTRADOR), bloqueando la fila (`FOR UPDATE`, mismo
+patrón que `mergeProductInto`/D-253) y revalidando el uso dentro de la transacción;
+`apps/api/src/catalog/product-usage.ts` (`describeProductUsage` para el 409 con el detalle,
+`productsWithUsage` en tanda para `canDelete` del DTO); auditoría `catalog.product-delete` con el
+mismo `before` completo que `create`/`update` (`auditView`), sin `after`; UI «Eliminar» al final
+del menú de fila, en rojo, deshabilitado con motivo cuando `canDelete` es falso, con diálogo de
+confirmación que nombra el SKU.
 
-**No se avanza con el diseño del endpoint, el campo `canDelete`, la acción de auditoría ni las
-pruebas hasta que el dueño conteste estos dos puntos** (AGENTS §3 regla 16: ambigüedad se detiene,
-nunca se asume en silencio).
+**Revisión de M6** (autorrevisión + segundo modelo, `docs/revision/drywall-sin-receta-m6-segundo-
+modelo.md`): 0 P0, **2 P1 encontrados por los dos pases de forma independiente y corregidos**:
+
+1. **Carrera real** entre `remove()` y la única herramienta que escribe kardex de un producto sin
+   pasar antes por una fila con FK real hacia él (`InitialInventoryProductImportService`, D-206/
+   207): las tres tablas polimórficas (`InventoryMovement`/`Reservation`/`QuotationReservation`,
+   `itemType=PRODUCT`) no tienen FK hacia `products`, así que el `FOR UPDATE` de `remove()` no las
+   bloqueaba — un borrado y esa carga corriendo a la vez sobre el mismo producto podían dejar un
+   movimiento de kardex huérfano. Cerrado con el mismo lock a mano en esa herramienta más una
+   revalidación de existencia antes de escribir (aborta todo el lote si `remove()` ganó la
+   carrera). Test: `initial-inventory-product-import-race.spec.ts`.
+2. **El `before` del audit era demasiado pobre** (solo sku+nombre) para un borrado sin reversa —
+   corregido, usa `auditView` (línea de negocio, unidad, origen, precio, color, acabado, espesor/
+   ancho/largo/peso, `isActive`).
+
+También corregido: el `onError` del `DELETE` en el web no invalidaba la lista del catálogo (un 409
+real dejaba un `canDelete` viejo en pantalla), y el docstring de `productsWithUsage` que
+sobreprometía «número fijo» de consultas (en verdad: fijo por tabla, más dos consultas por cada
+`BOB…` sin uso todavía, acotado al puñado de SKU de reventa del catálogo).
+
+**Riesgo residual, documentado a propósito, no cerrado en esta sesión:** el fix de la carrera es
+quirúrgico sobre el único llamador vulnerable identificado hoy. Un futuro escritor de esas tres
+tablas con `itemType=PRODUCT` sin una fila FK-protegida antes en la misma transacción reabre el
+mismo hueco y necesita el mismo lock a mano; una alternativa más sistémica (mover el lock a
+`InventoryService.record()` mismo) se dejó fuera a propósito por ser un cambio de alcance mayor
+sobre un camino caliente, que merece su propia decisión del dueño si se quiere cerrar de raíz.
+
+**Ningún pase es independiente** (AGENTS §2): PENDIENTE DE REVISIÓN DEL DUEÑO, con las mismas
+piezas de riesgo de arriba (la lista de tablas de «uso», el `FOR UPDATE`, y el riesgo residual del
+lock quirúrgico).

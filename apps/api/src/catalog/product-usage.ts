@@ -134,10 +134,14 @@ export async function describeProductUsage(
 }
 
 /**
- * `canDelete` de una tanda de productos (el catálogo entero, o una línea): un número fijo de
- * consultas agrupadas por tabla, no una por producto — el mismo presupuesto que ya exige
- * AGENTS §3.4 para cualquier dato agregado. Devuelve el conjunto de ids **usados**; el resto
- * se puede borrar.
+ * `canDelete` de una tanda de productos (el catálogo entero, o una línea): las doce tablas de
+ * uso se consultan agrupadas, una vez cada una — nunca una por producto —, el presupuesto que
+ * exige AGENTS §3.4 para cualquier dato agregado. **El pool de bobinas es la excepción**: no
+ * hay forma de agrupar «¿tiene coincidencia en el pool?» en una sola consulta para varios
+ * `BOB…` a la vez (cada uno resuelve un espesor/acabado distinto), así que agrega dos consultas
+ * más **por cada `BOB…` que ninguna otra tabla ya marcó usado** (autorrevisión) — acotado en la
+ * práctica al puñado de SKU de reventa de bobina del catálogo, nunca a filas de otro tipo.
+ * Devuelve el conjunto de ids **usados**; el resto se puede borrar.
  */
 export async function productsWithUsage(
   tx: Prisma.TransactionClient,
