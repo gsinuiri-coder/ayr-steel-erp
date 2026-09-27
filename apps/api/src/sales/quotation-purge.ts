@@ -181,8 +181,9 @@ export async function executeQuotationPurge(
   // El mismo orden siempre (por `seq`): dos purgas a la vez no se cruzan los locks.
   await tx.$queryRaw`SELECT "id" FROM "quotations" WHERE "seq" = ANY(${seqs}::int[]) ORDER BY "seq" FOR UPDATE`;
   const plan = await planQuotationPurge(tx, numbers);
-  const planned = plan.purgeable.map((c) => c.code).sort();
-  const expected = [...expectedCodes].sort();
+  const byCode = (a: string, b: string) => a.localeCompare(b);
+  const planned = plan.purgeable.map((c) => c.code).sort(byCode);
+  const expected = [...expectedCodes].sort(byCode);
   if (planned.join(',') !== expected.join(',')) {
     throw new Error(
       `El plan cambió desde el dry-run (esperadas: ${expected.join(', ') || 'ninguna'}; ahora: ${planned.join(', ') || 'ninguna'}). No se borró nada.`,
