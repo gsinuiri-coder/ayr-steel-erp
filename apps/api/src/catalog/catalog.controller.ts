@@ -39,9 +39,22 @@ import { CatalogService } from './catalog.service';
 export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
 
+  /**
+   * D-349: `?active=true` solo los activos, `?active=false` solo los inactivos; sin el parámetro,
+   * todos (lo que ya leían los selectores y los importadores, que no cambian).
+   */
   @Get()
-  findAll(@Query('businessLineId') businessLineId?: string): Promise<ProductDto[]> {
-    return this.catalog.findAll(businessLineId);
+  findAll(
+    @Query('businessLineId') businessLineId?: string,
+    @Query('active') active?: string,
+  ): Promise<ProductDto[]> {
+    if (active !== undefined && active !== 'true' && active !== 'false') {
+      throw new BadRequestException('El filtro «active» es true o false');
+    }
+    return this.catalog.findAll(
+      businessLineId,
+      active === undefined ? undefined : active === 'true',
+    );
   }
 
   // D-217/M1: antes de ':id' — un GET de un solo segmento matchea contra ':id' si se

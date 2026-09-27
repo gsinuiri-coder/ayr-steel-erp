@@ -60,3 +60,26 @@ describe('CatalogController — endpoints RF-S3', () => {
     await expect(controller.findPriceListFloorSummary()).resolves.toBe(summary);
   });
 });
+
+describe('CatalogController — filtro de activos (D-349)', () => {
+  const catalog = { findAll: jest.fn().mockResolvedValue([]) };
+  const controller = new CatalogController(catalog as unknown as CatalogService);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('sin el parámetro trae todos; true y false filtran', async () => {
+    await controller.findAll();
+    await controller.findAll('bl-1', 'true');
+    await controller.findAll(undefined, 'false');
+    expect(catalog.findAll).toHaveBeenNthCalledWith(1, undefined, undefined);
+    expect(catalog.findAll).toHaveBeenNthCalledWith(2, 'bl-1', true);
+    expect(catalog.findAll).toHaveBeenNthCalledWith(3, undefined, false);
+  });
+
+  it('un valor que no es true ni false se rechaza en vez de ignorarse', () => {
+    expect(() => controller.findAll(undefined, 'si')).toThrow(BadRequestException);
+    expect(catalog.findAll).not.toHaveBeenCalled();
+  });
+});

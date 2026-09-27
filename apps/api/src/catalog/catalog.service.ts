@@ -72,9 +72,13 @@ export class CatalogService {
     private readonly colors: ColorsService,
   ) {}
 
-  async findAll(businessLineId?: string): Promise<ProductDto[]> {
+  /** D-349: `isActive` opcional; sin él, todos (activos primero). */
+  async findAll(businessLineId?: string, isActive?: boolean): Promise<ProductDto[]> {
     const products = await this.prisma.product.findMany({
-      where: businessLineId ? { businessLineId } : undefined,
+      where: {
+        ...(businessLineId ? { businessLineId } : {}),
+        ...(isActive === undefined ? {} : { isActive }),
+      },
       include: PRODUCT_RELATIONS,
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
