@@ -92,8 +92,32 @@ Requiere un fleje galvanizado del espesor y ancho del perfil (de un corte tercer
    cuenta: sigue frenando.
 5. En el detalle del pedido, el avance facturado por línea coincide con lo anterior.
 
+## 6b. Editar un accesorio sin tocar espesor, color ni subtipo (M5, D-343) ✍
+
+1. **Catálogo → Coberturas Aluzinc** → **Editar** un accesorio (`ACCES…`).
+2. Cambiar solo el **nombre** o el **precio de lista** y **Guardar cambios**: se guarda normal, sin
+   rebote. (Antes de esta corrección, cualquier edición rebotaba con «El SKU … refleja el espesor y
+   el color del accesorio…», aunque no se tocara ninguno de los dos.)
+3. **Editar** de nuevo y cambiar el **espesor**: ahí sí rebota con el mismo mensaje — el SKU lo
+   refleja y sigue sin poder cambiar.
+
+## 6c. Borrar un producto que nunca se usó (M6, D-347) ✍
+
+1. **Catálogo → Productos**, cualquier línea. En la fila de un producto **recién creado, sin
+   cotizaciones, pedidos, compras, comprobantes, kardex ni producción detrás**, abrir el menú **⋯**:
+   al final, en rojo, **«Eliminar»**.
+2. Confirmar: el diálogo nombra el SKU y avisa que no tiene reversa. **«Borrar `<SKU>`»** lo hace
+   desaparecer de la lista para siempre (no queda como inactivo).
+3. En un producto **con historia detrás** (una cotización, un pedido, kardex…), **«Eliminar»** sale
+   **deshabilitado** en el menú, con el motivo al pasar el mouse. La forma correcta de retirarlo sigue
+   siendo **Desactivar**.
+4. Si algo se salta el botón (por ejemplo, un intento directo contra el API), el borrado también se
+   rechaza con un mensaje que dice **qué** lo está usando (por ejemplo, «1 línea(s) de cotización»).
+
 ## 7. Lo que NO debe haber cambiado
 
 - Cotizar, reservar y despachar drywall con stock propio (los perfiles reservan producto terminado).
 - Las coberturas (plancha, a medida, accesorio): piso, reservas y producción.
 - El total del pedido sigue topado por lo facturado neto (D-223).
+- **Desactivar** un producto sigue siendo reversible y sigue protegiendo su historia; borrar es la
+  acción nueva y separada, solo para lo que nunca se usó.
