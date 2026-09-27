@@ -908,7 +908,7 @@ export class RoofingProductionService {
 
     const product = await tx.product.findUniqueOrThrow({
       where: { id: order.productId },
-      select: { sku: true, unit: true, lengthMm: true, roofingKind: true },
+      select: { sku: true, unit: true, lengthMm: true, widthMm: true, roofingKind: true },
     });
 
     // D-343: un accesorio reporta **metros lineales de bobina**, no largos; todo lo demás, largos.
@@ -1080,6 +1080,17 @@ export class RoofingProductionService {
           `Los reportes suman ${totalMl.toFixed(3)} m de bobina y el pedido encargó ${orderedMl.toFixed(3)} m: rindió más de lo planeado.`,
         );
       }
+    }
+
+    // D-345 (P2 de 03b): los kilos que el pedido reservó y el piso de precio de un accesorio salen
+    // del ancho **del SKU**, pero lo que se produce sale con el ancho de la bobina montada. Si
+    // difieren, el kardex sale con el real y la reserva quedó calculada con otro número: no se
+    // bloquea —el ancho del SKU es nominal y el operario monta el rollo que hay—, se **avisa** en
+    // el reporte y en la auditoría para que quien revise vea de dónde sale la diferencia.
+    if (accessory && product.widthMm !== null && !product.widthMm.equals(row.coil.widthMm)) {
+      deviation.push(
+        `La bobina montada ${row.coil.code} mide ${row.coil.widthMm.toFixed(2)} mm de ancho y el SKU ${product.sku} declara ${product.widthMm.toFixed(2)} mm: los kilos que reservó el pedido y el piso de precio salieron del ancho del SKU, y el kardex sale con el de la bobina.`,
+      );
     }
 
     // Un solo rollo por reporte, así que el reparto es trivial — pero pasa por el mismo

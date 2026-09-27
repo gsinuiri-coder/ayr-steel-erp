@@ -51,6 +51,8 @@ interface Setup {
   orderedMl?: string;
   /** Kilos que quedan montados en la bobina. */
   remainingKg?: string;
+  /** Ancho declarado por el SKU del accesorio (por defecto, el de la bobina montada). */
+  skuWidthMm?: string | null;
 }
 
 function build(setup: Setup) {
@@ -78,6 +80,7 @@ function build(setup: Setup) {
         sku: setup.roofingKind === RoofingProductKind.ACCESORIO ? 'ACCES030ROJO' : 'COB030ROJO',
         unit: setup.unit ?? 'MTR',
         lengthMm: null,
+        widthMm: setup.skuWidthMm === null ? null : D(setup.skuWidthMm ?? WIDTH),
         roofingKind: setup.roofingKind,
       }),
     },
@@ -251,6 +254,60 @@ describe('reportInTx de una orden de accesorio (D-343)', () => {
     expect(
       (auditWrites[0]?.after as { rawMaterialWarning: string | null }).rawMaterialWarning,
     ).toBeNull();
+  });
+
+  describe('ancho del SKU frente al de la bobina montada (P2 de 03b)', () => {
+    const warningOf = async (setup: Setup) => {
+      const { service, tx, created, auditWrites } = build(setup);
+      await service.reportInTx(tx, ACTOR, 'o-1', { meters: '25.000' }, '2026-09-26');
+      return {
+        created,
+        warning: (auditWrites[0]?.after as { rawMaterialWarning: string | null })
+          .rawMaterialWarning,
+      };
+    };
+
+    it('si difieren, avisa con los dos anchos y guarda el reporte igual: el kardex sale con el de la bobina', async () => {
+      const { created, warning } = await warningOf({
+        roofingKind: RoofingProductKind.ACCESORIO,
+        skuWidthMm: '1000.00',
+      });
+      expect(warning).toContain('La bobina montada BOB-1 mide 1220.00 mm de ancho');
+      expect(warning).toContain('ACCES030ROJO declara 1000.00 mm');
+      expect(warning).toContain('el kardex sale con el de la bobina');
+      // Los kilos son los del ancho de la bobina, como siempre.
+      expect(created[0]?.theoreticalKg).toBe(KG_PER_METER.times(25).toFixed(3));
+    });
+
+    it('si el ancho del SKU coincide con el de la bobina no hay aviso', async () => {
+      const { warning } = await warningOf({ roofingKind: RoofingProductKind.ACCESORIO });
+      expect(warning).toBeNull();
+    });
+
+    it('un SKU sin ancho declarado no genera aviso (no hay con qué comparar)', async () => {
+      const { warning } = await warningOf({
+        roofingKind: RoofingProductKind.ACCESORIO,
+        skuWidthMm: null,
+      });
+      expect(warning).toBeNull();
+    });
+
+    it('una cobertura a medida no lo lleva: su ancho nominal ya era solo una estimación (D-086)', async () => {
+      const { service, tx, auditWrites } = build({
+        roofingKind: RoofingProductKind.A_MEDIDA,
+        skuWidthMm: '1000.00',
+      });
+      await service.reportInTx(
+        tx,
+        ACTOR,
+        'o-1',
+        { pieces: [{ lengthMm: '6000', qty: 2 }] },
+        '2026-09-26',
+      );
+      expect(
+        (auditWrites[0]?.after as { rawMaterialWarning: string | null }).rawMaterialWarning,
+      ).toBeNull();
+    });
   });
 
   it('el reporte de una cobertura a medida sigue exigiendo y guardando sus largos (D-083 no se mueve)', async () => {
