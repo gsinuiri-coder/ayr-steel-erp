@@ -4,12 +4,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
+import {
+  BusinessLineCode,
+  FinishKind as PrismaFinishKind,
+  Prisma,
+  type Color,
+  type Product,
+} from '@prisma/client';
 import {
   ACCESSORY_SKU_PREFIX,
   BusinessLine as SharedLineCode,
   canonicalAccessorySku,
   Decimal,
+  drywallPieceWeightCheck,
   isPlausiblePieceLength,
   MAX_PAGE_SIZE,
   money,
@@ -36,12 +43,13 @@ import { isCoilSaleProduct, openCoilCodesInPool } from '../sales/coil-sale-produ
 import { ColorsService } from '../colors/colors.service';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
-import { computePriceFloors } from '../sales/price-floor';
+import { computePriceFloorOutcomes, computePriceFloors } from '../sales/price-floor';
 import {
   FLOOR_COST_SELECT,
+  isDrywallProfile,
   productFloorCost,
   staticNoFloorReason,
-  type FloorCostProduct,
+  stripSkuNoFloorReason,
 } from '../sales/price-floor-cost';
 import {
   PRICE_FLOOR_UNUSED_TOLERANCE_MM,
@@ -51,6 +59,9 @@ import {
 
 /** Mismo criterio que `SEARCH_CANDIDATE_POOL` de `CustomersService` (RF-S3/M1). */
 const SEARCH_CANDIDATE_POOL = 100;
+
+const DRYWALL_NO_FINISH_MESSAGE =
+  'Drywall no lleva acabado en el SKU: su fleje es siempre galvanizado (D-344)';
 
 /** Catálogo de productos por línea (RF-50). Mutaciones solo ADMINISTRADOR. */
 @Injectable()
@@ -67,7 +78,8 @@ export class CatalogService {
       include: PRODUCT_RELATIONS,
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
-    return products.map(toDto);
+    const galvDensity = await this.galvanizedDensity();
+    return products.map((p) => toDto(p, galvDensity));
   }
 
   /**
@@ -92,7 +104,10 @@ export class CatalogService {
       orderBy: { name: 'asc' },
       take: SEARCH_CANDIDATE_POOL,
     });
-    return rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]).map(toDto);
+    const galvDensity = await this.galvanizedDensity();
+    return rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]).map((p) =>
+      toDto(p, galvDensity),
+    );
   }
 
   /**
@@ -149,13 +164,27 @@ export class CatalogService {
     }
   }
 
+  /**
+   * D-344: la densidad del acabado **galvanizado** activo, de la que sale el peso teórico de una
+   * pieza de drywall para el aviso de kg/pieza. Drywall tiene un solo acabado (galvanizado) y el
+   * SKU ya no lo guarda; si hubiera más de uno, se toma el más antiguo. `null` si no existe.
+   */
+  private async galvanizedDensity(): Promise<Prisma.Decimal | null> {
+    const finish = await this.prisma.finish.findFirst({
+      where: { kind: PrismaFinishKind.GALVANIZADO, isActive: true },
+      orderBy: { createdAt: 'asc' },
+      select: { densityFactor: true },
+    });
+    return finish?.densityFactor ?? null;
+  }
+
   async findOne(id: string): Promise<ProductDto> {
     const product = await this.prisma.product.findUnique({
       where: { id },
       include: PRODUCT_RELATIONS,
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    return toDto(product);
+    return toDto(product, await this.galvanizedDensity());
   }
 
   async create(actor: RequestUser, input: CreateProductInput): Promise<ProductDto> {
@@ -168,6 +197,9 @@ export class CatalogService {
       throw new BadRequestException(
         `Los SKU ${COIL_SKU_PREFIX}… son de bobina y se generan solos al dar de alta la bobina (espesor + color o tipo, D-252): no se crean a mano`,
       );
+    }
+    if (line.code === BusinessLineCode.DRYWALL && input.finishId !== null) {
+      throw new BadRequestException(DRYWALL_NO_FINISH_MESSAGE);
     }
     const colorId = await this.colors.resolveActive(input.colorId);
     const finish = await this.resolveActiveFinish(input.finishId);
@@ -216,7 +248,7 @@ export class CatalogService {
         }
         return created;
       });
-      return toDto(product);
+      return toDto(product, await this.galvanizedDensity());
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException('Ya existe un producto con ese SKU en esta línea');
@@ -308,15 +340,7 @@ export class CatalogService {
       }
     }
 
-    // D-055/D-059: la receta valida al crearse que el producto sea fabricado y se mida en
-    // piezas. Dejar cambiar esas dos cosas después esquivaría la validación y la orden de
-    // producción quedaría metiendo piezas a un producto que dice medirse en kilos.
-    const changesUnit = input.unit !== undefined && input.unit !== before.unit;
-    const changesSource = input.source !== undefined && input.source !== before.source;
-    // D-127: corregir el subtipo **obliga** a mover la unidad (son el mismo hecho), y toda
-    // cobertura a medida tiene receta activa. Sin esta excepción, el campo que D-127 promete
-    // "visible y corregible" no se podía corregir en ningún producto real: el guardrail pedía
-    // desactivar una receta que el propio subtipo necesita viva.
+    // D-127: corregir el subtipo **obliga** a mover la unidad (son el mismo hecho).
     const changesRoofingKind =
       input.roofingKind !== undefined && input.roofingKind !== before.roofingKind;
     // D-343: el SKU de un accesorio refleja su espesor y su color, y el SKU no se edita. Cambiar
@@ -333,18 +357,14 @@ export class CatalogService {
         );
       }
     }
-    if ((changesUnit && !changesRoofingKind) || changesSource) {
-      const bom = await this.prisma.productBom.findFirst({
-        // Solo una receta **activa** bloquea: una desactivada no la monta ninguna orden, y
-        // pedir que se desactive algo ya desactivado era un mensaje sin salida.
-        where: { productId: id, isActive: true },
-        select: { id: true },
-      });
-      if (bom) {
-        throw new BadRequestException(
-          'El producto tiene una receta de fabricación: desactiva la receta antes de cambiarle la unidad o el origen',
-        );
-      }
+    // D-344: drywall no lleva acabado en el SKU (es siempre galvanizado) y ya no hay receta que
+    // bloquee cambiar la unidad o el origen de un producto.
+    if (
+      before.businessLine.code === BusinessLineCode.DRYWALL &&
+      input.finishId !== undefined &&
+      input.finishId !== null
+    ) {
+      throw new BadRequestException(DRYWALL_NO_FINISH_MESSAGE);
     }
 
     // D-118: solo se revalida cuando el propio pedido toca uno de los campos
@@ -458,7 +478,7 @@ export class CatalogService {
       }
       return updated;
     });
-    return toDto(after);
+    return toDto(after, await this.galvanizedDensity());
   }
 
   /** Órdenes de coberturas vivas de este producto: las que el cambio de color rompería. */
@@ -485,13 +505,14 @@ export class CatalogService {
       select: { sku: true, unit: true, ...FLOOR_COST_SELECT },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    // D-342: un perfil de drywall sin receta (o sin peso) no tiene piso, y se dice por qué.
+    // D-342/D-344: un perfil de drywall sin espesor, ancho o peso en el SKU no tiene piso, y se
+    // dice por qué.
     const floorCost = productFloorCost(product);
     if ('noFloorReason' in floorCost) {
       return { minPricePen: null, priceUnitLabel: null, noFloorReason: floorCost.noFloorReason };
     }
-    const floors = await this.prisma.$transaction((tx) =>
-      computePriceFloors(
+    const outcomes = await this.prisma.$transaction((tx) =>
+      computePriceFloorOutcomes(
         tx,
         [
           {
@@ -508,12 +529,23 @@ export class CatalogService {
         PRICE_FLOOR_UNUSED_TOLERANCE_MM,
       ),
     );
-    const floor = floors.get(product.id);
+    const outcome = outcomes.get(product.id);
+    if (outcome !== undefined && 'minValuePen' in outcome) {
+      return {
+        minPricePen: outcome.minPricePen,
+        priceUnitLabel: outcome.priceUnitLabel,
+        noFloorReason: null,
+      };
+    }
+    // D-344: sin piso en un perfil con SKU completo es porque no hay flejes compatibles con costo
+    // o porque la línea no tiene margen configurado: dos avisos distintos (antes eran uno solo).
     return {
-      minPricePen: floor?.minPricePen ?? null,
-      priceUnitLabel: floor?.priceUnitLabel ?? null,
-      // Con receta y peso pero sin flejes con saldo: el costo no existe y con él tampoco el piso.
-      noFloorReason: !floor && floorCost.cost.kind === 'STRIP_RECIPE' ? 'NO_STRIP_COST' : null,
+      minPricePen: null,
+      priceUnitLabel: null,
+      noFloorReason:
+        floorCost.cost.kind === 'STRIP_SKU' && outcome !== undefined
+          ? stripSkuNoFloorReason(outcome.missing)
+          : null,
     };
   }
 
@@ -541,8 +573,8 @@ export class CatalogService {
       return { totalWithListPrice: 0, withoutFloor: 0, belowFloor: [] };
     }
 
-    // D-342: un perfil de drywall sin receta no entra a `computePriceFloors` y cae en «sin piso»,
-    // igual que un SKU sin costo (D-163).
+    // D-342/D-344: un perfil de drywall sin espesor, ancho o peso en el SKU no entra a
+    // `computePriceFloors` y cae en «sin piso», igual que un SKU sin costo (D-163).
     const candidates = products.flatMap((p) => {
       const floorCost = productFloorCost(p);
       return 'cost' in floorCost
@@ -737,8 +769,14 @@ function assertStructuredFields(
     throw new BadRequestException('El subtipo de cobertura solo aplica a Metallic Roofing');
   }
   if (lineCode === BusinessLineCode.DRYWALL) {
+    // D-344 (corrige la lectura de D-118): en drywall `thicknessMm` y `widthMm` son los del
+    // **fleje** —su espesor y su ancho de desarrollo—, con los que se busca el fleje compatible.
+    // El acabado no se guarda: es siempre galvanizado.
+    if (fields.thicknessMm === null) {
+      throw new BadRequestException('El espesor del fleje es obligatorio en Drywall');
+    }
     if (fields.widthMm === null) {
-      throw new BadRequestException('El ancho de la pieza terminada es obligatorio en Drywall');
+      throw new BadRequestException('El ancho del fleje (desarrollo) es obligatorio en Drywall');
     }
     if (fields.lengthMm === null) {
       throw new BadRequestException('El largo de la pieza terminada es obligatorio en Drywall');
@@ -772,8 +810,6 @@ const PRODUCT_RELATIONS = {
       businessLineId: true,
     },
   },
-  // D-342: la receta, para marcar el perfil de drywall que no tiene piso de precio.
-  bom: FLOOR_COST_SELECT.bom,
 } satisfies Prisma.ProductInclude;
 
 /** Lo que `assertFinishCoherence` necesita de un acabado: identidad, tipo, color y línea. */
@@ -789,7 +825,6 @@ type WithLineCode = Product & {
   businessLine: { code: BusinessLineCode };
   color: Color | null;
   finish: (FinishRef & { name: string; densityFactor: Prisma.Decimal }) | null;
-  bom: FloorCostProduct['bom'];
 };
 
 /**
@@ -812,7 +847,24 @@ function theoreticalKgPerUnit(p: WithLineCode): string | null {
   );
 }
 
-function toDto(p: WithLineCode): ProductDto {
+/**
+ * D-344: aviso del peso declarado de un perfil de drywall contra el teórico. La densidad sale del
+ * acabado **galvanizado** activo (drywall tiene un solo acabado y el SKU ya no lo guarda). `null`
+ * si no es un perfil, si falta un dato de la cuenta o si no hay un acabado galvanizado del que
+ * sacar la densidad.
+ */
+function pieceWeightCheckOf(p: WithLineCode, galvDensity: Prisma.Decimal | null) {
+  if (!isDrywallProfile(p) || galvDensity === null) return null;
+  return drywallPieceWeightCheck({
+    widthMm: p.widthMm?.toFixed(2) ?? null,
+    lengthMm: p.lengthMm?.toFixed(2) ?? null,
+    thicknessMm: p.thicknessMm?.toFixed(2) ?? null,
+    pieceWeightKg: p.pieceWeightKg?.toFixed(3) ?? null,
+    densityFactor: galvDensity.toFixed(4),
+  });
+}
+
+function toDto(p: WithLineCode, galvDensity: Prisma.Decimal | null): ProductDto {
   return {
     id: p.id,
     businessLineId: p.businessLineId,
@@ -837,8 +889,9 @@ function toDto(p: WithLineCode): ProductDto {
     theoreticalKgPerUnit: theoreticalKgPerUnit(p),
     isActive: p.isActive,
     source: p.source,
-    // D-342: solo el motivo que se sabe sin mirar saldos; el de costo de flejes lo dice el piso.
+    // D-342/D-344: solo el motivo que se sabe sin mirar saldos; el de flejes y margen lo dice el piso.
     noFloorReason: staticNoFloorReason(p),
+    pieceWeightCheck: pieceWeightCheckOf(p, galvDensity),
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };

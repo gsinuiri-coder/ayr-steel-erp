@@ -11,6 +11,7 @@
     "prisma/normalize-coil-skus-cli.ts",
     "prisma/sweep-imported-documents-cli.ts",
     "prisma/retire-unused-color-cli.ts",
+    "prisma/retire-boms-cli.ts",
     "prisma/dispatch-at-issue-date-cli.ts",
     "prisma/opening-date-cli.ts",
     "prisma/dispatch-redate-cli.ts"

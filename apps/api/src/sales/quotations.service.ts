@@ -576,22 +576,13 @@ export class QuotationsService {
       throw new BadRequestException('La cotización no tiene líneas que duplicar');
     }
 
-    // D-116: una línea de bobina completa no tiene receta (RF-73, producto `trading`); una
-    // que reserva materia prima para fabricar sí la tiene (D-088). Es la misma distinción
-    // que usa `resolveDispatchTarget`, y la única forma de reconstruir cuál de las dos era
-    // cada línea `reserveItemType = COIL` ya persistida.
-    const productIds = [...new Set(source.items.map((i) => i.productId))];
-    const boms = await this.prisma.productBom.findMany({
-      where: { productId: { in: productIds }, isActive: true },
-      select: { productId: true },
-    });
-    const madeToOrderProductIds = new Set(boms.map((b) => b.productId));
-
+    // D-116/D-344: toda línea `reserveItemType = COIL` es una bobina entera (RF-73, producto
+    // `trading`): desde D-122 lo que se fabrica reserva materia prima o producto, y desde D-344
+    // no existe una receta que distinga otra cosa.
     // D-322: una bobina entera que sigue atada a una cotización abierta (la propia original, si
     // sigue viva, u otra) no se puede volver a vender: la copia lleva esa línea como producto
     // `BOB…` sin bobina y el aviso dice cuál era. Lo demás se copia como siempre.
-    const isWholeCoil = (i: (typeof source.items)[number]) =>
-      i.reserveItemType === 'COIL' && !madeToOrderProductIds.has(i.productId);
+    const isWholeCoil = (i: (typeof source.items)[number]) => i.reserveItemType === 'COIL';
     const wholeCoilIds = source.items.filter(isWholeCoil).map((i) => i.reserveItemId);
     // Sin líneas de bobina entera no hay nada que consultar.
     const tieReasons =

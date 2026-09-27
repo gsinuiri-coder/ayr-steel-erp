@@ -602,7 +602,7 @@ describe('SalesOrdersService.findStockShortages (RF-S3/M2)', () => {
         lockedIds = ids;
         return Promise.resolve([]);
       }),
-      productBom: { findMany: jest.fn().mockRejectedValue(expectedFailure) },
+      coil: { findMany: jest.fn().mockRejectedValue(expectedFailure) },
     };
     const privateService = service as unknown as {
       reserveLines: (

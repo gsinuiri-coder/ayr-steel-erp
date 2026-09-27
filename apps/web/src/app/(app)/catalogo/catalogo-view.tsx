@@ -10,10 +10,8 @@ import {
   BusinessLine,
   NO_FLOOR_REASON_LABELS,
   PRODUCT_SOURCE_LABELS,
-  ProductSource,
   Role,
   ROOFING_PRODUCT_KIND_LABELS,
-  Unit,
   type BusinessLineDto,
   type ProductDto,
 } from '@ayr/shared';
@@ -38,29 +36,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ColorSwatch } from '@/components/colors/color-swatch';
-import { BomDialog } from './bom-dialog';
 import { ColoresPanel } from './colores-panel';
 import { ProductDialog } from '@/components/catalog/product-dialog';
 import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 import { RowActions } from '@/components/row-actions';
-
-/**
- * Qué productos llevan receta (D-059, D-087). Las mismas condiciones que valida
- * `BomsService.upsert`, para no ofrecer un diálogo que el API va a rechazar al guardarlo:
- *
- * - **Drywall**: perfil fabricado y activo, medido en piezas (`NIU`, D-055).
- * - **Coberturas** (Fase 6): fabricado y activo, en piezas si es plancha de catálogo o en
- *   metros (`MTR`) si es a medida (D-083).
- */
-function hasBom(product: ProductDto): boolean {
-  if (product.source !== ProductSource.MANUFACTURED || !product.isActive) return false;
-  if (product.businessLineCode === BusinessLine.DRYWALL) return product.unit === Unit.NIU;
-  if (product.businessLineCode === BusinessLine.METALLIC_ROOFING) {
-    return product.unit === Unit.NIU || product.unit === Unit.MTR;
-  }
-  return false;
-}
 
 /** El color solo tiene sentido donde hay material prepintado: coberturas (D-085). */
 function usesColor(lineCode: BusinessLine): boolean {
@@ -80,7 +60,6 @@ export function CatalogoView() {
     lineId: string;
     nonce: number;
   }>({ open: false, lineId: '', nonce: 0 });
-  const [bomProduct, setBomProduct] = useState<ProductDto | null>(null);
   const [historyProduct, setHistoryProduct] = useState<ProductDto | null>(null);
   // RF-S3/M4: el card «SKUs con lista bajo piso» del Panel enlaza acá con
   // `?bajoPiso=<productId>` — un id concreto resalta esa fila (y abre su línea), el valor
@@ -306,10 +285,18 @@ export function CatalogoView() {
                         <TableCell className="font-medium">{p.sku}</TableCell>
                         <TableCell>
                           {p.name}
-                          {/* D-342: un perfil de drywall sin receta no tiene piso de precio. */}
+                          {/* D-342/D-344: un perfil de drywall al que le falta espesor, ancho o peso no tiene piso de precio. */}
                           {p.isActive && p.noFloorReason && (
                             <span className="block text-xs text-amber-700 dark:text-amber-400">
                               {NO_FLOOR_REASON_LABELS[p.noFloorReason]}
+                            </span>
+                          )}
+                          {/* D-344: aviso (no bloqueo) de que el kg/pieza se aleja del teórico. */}
+                          {p.isActive && p.pieceWeightCheck?.warn && (
+                            <span className="block text-xs text-amber-700 dark:text-amber-400">
+                              Peso por pieza {p.pieceWeightCheck.deviationPct} % fuera del teórico (
+                              {p.pieceWeightCheck.theoreticalKg} kg): revisa ancho, largo, espesor y
+                              peso
                             </span>
                           )}
                         </TableCell>
@@ -361,14 +348,6 @@ export function CatalogoView() {
                                   },
                                 },
                                 {
-                                  key: 'bom',
-                                  label: 'Receta',
-                                  show: hasBom(p),
-                                  onSelect: () => {
-                                    setBomProduct(p);
-                                  },
-                                },
-                                {
                                   key: 'toggle',
                                   label: p.isActive ? 'Desactivar' : 'Activar',
                                   disabled: toggleActive.isPending,
@@ -416,17 +395,6 @@ export function CatalogoView() {
           product={dialog.product}
           onOpenChange={(open) => {
             setDialog((d) => ({ ...d, open }));
-          }}
-        />
-      )}
-
-      {isAdmin && bomProduct && (
-        <BomDialog
-          key={bomProduct.id}
-          open
-          product={bomProduct}
-          onOpenChange={(open) => {
-            if (!open) setBomProduct(null);
           }}
         />
       )}

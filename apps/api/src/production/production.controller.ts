@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
   cancelProductionOrderSchema,
   closeProductionOrderSchema,
@@ -8,25 +8,21 @@ import {
   reportPiecesSchema,
   reverseMovementSchema,
   Role,
-  upsertProductBomSchema,
   type CancelProductionOrderInput,
   type CloseProductionOrderInput,
   type ConsumeStripInput,
   type CreateProductionOrderInput,
-  type ProductBomDto,
   type ProductionOrderDto,
   type ProductionOrderListItemDto,
   type ProductionOrderQuery,
   type ProductionStripOptionDto,
   type ReportPiecesInput,
   type ReverseMovementInput,
-  type UpsertProductBomInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { BomsService } from './boms.service';
 import { ProductionService } from './production.service';
 
 /**
@@ -36,42 +32,13 @@ import { ProductionService } from './production.service';
  * VENDEDOR no llega a estas rutas.
  *
  * Reparto de operaciones según D-046: el supervisor opera y deshace lo que registra en
- * planta (consumir, reportar, revertir un reporte, cerrar); la receta del maestro
- * (D-059) y la anulación de la orden son de ADMINISTRADOR.
+ * planta (consumir, reportar, revertir un reporte, cerrar); la anulación de la orden es de
+ * ADMINISTRADOR. D-344: ya no hay recetas en el maestro.
  */
 @Controller('production')
 @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
 export class ProductionController {
-  constructor(
-    private readonly production: ProductionService,
-    private readonly boms: BomsService,
-  ) {}
-
-  // -------------------------------------------------------------------------
-  // D-059 — recetas. Van antes de `:id` porque `boms` es una ruta fija.
-  // -------------------------------------------------------------------------
-
-  @Get('boms')
-  findBoms(
-    @Query('productId', new ParseUUIDPipe({ optional: true })) productId?: string,
-  ): Promise<ProductBomDto[]> {
-    return this.boms.findAll(productId);
-  }
-
-  @Get('boms/:productId')
-  findBom(@Param('productId', ParseUUIDPipe) productId: string): Promise<ProductBomDto> {
-    return this.boms.findByProduct(productId);
-  }
-
-  @Put('boms/:productId')
-  @Roles(Role.ADMINISTRADOR)
-  upsertBom(
-    @CurrentUser() actor: RequestUser,
-    @Param('productId', ParseUUIDPipe) productId: string,
-    @Body(new ZodValidationPipe(upsertProductBomSchema)) body: UpsertProductBomInput,
-  ): Promise<ProductBomDto> {
-    return this.boms.upsert(actor, productId, body);
-  }
+  constructor(private readonly production: ProductionService) {}
 
   /** Flejes disponibles para producir ese producto (lo que `/planta` ofrece al operario). */
   @Get('strips')

@@ -9,6 +9,7 @@ import { z } from 'zod';
 import {
   BusinessLine,
   canonicalAccessorySku,
+  drywallPieceWeightCheck,
   isPlausiblePieceLength,
   PIECE_LENGTH_RANGE_LABEL,
   PRODUCT_SOURCE_LABELS,
@@ -131,7 +132,11 @@ function deriveColorId(
   return finishId === product?.finishId ? (product?.colorId ?? '') : '';
 }
 
-/** D-118: ancho, largo y peso de la pieza terminada, obligatorios solo en Drywall. */
+/**
+ * D-118/D-344: en Drywall el espesor y el ancho son los del **fleje** (su espesor y su desarrollo)
+ * y el largo y el peso son los de la pieza terminada; los cuatro son obligatorios. Sin receta, con
+ * ellos y el acabado galvanizado se busca el fleje que sirve.
+ */
 function usesDrywallFields(lineCode: BusinessLine): boolean {
   return lineCode === BusinessLine.DRYWALL;
 }
@@ -154,7 +159,7 @@ export function ProductDialog({
   const finishes = useQuery({
     queryKey: ['finishes'],
     queryFn: () => api<FinishDto[]>('/finishes'),
-    enabled: open && showRoofingFields,
+    enabled: open && (showRoofingFields || showDrywallFields),
   });
   // El acabado guardado se ofrece siempre, aunque esté desactivado o de otra línea: si no,
   // el `Select` se vacía y parece que nadie eligió nada, cuando el producto sí tiene uno.
@@ -190,6 +195,28 @@ export function ProductDialog({
   const watchedKind = form.watch('roofingKind');
   const watchedThickness = form.watch('thicknessMm');
   const watchedFinishId = form.watch('finishId');
+  // D-344: aviso (nunca bloqueo) cuando el kg/pieza declarado se aleja más del 5 % del teórico. La
+  // densidad sale del acabado galvanizado (drywall no guarda acabado en el SKU): el más antiguo
+  // activo, el mismo que usa el API para el aviso del catálogo.
+  const galvDensity =
+    [...(finishes.data ?? [])]
+      .filter((f) => f.kind === 'GALVANIZADO' && f.isActive)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]?.densityFactor ?? null;
+  const [drWidth, drLength, drThickness, drWeight] = form.watch([
+    'widthMm',
+    'lengthMm',
+    'thicknessMm',
+    'pieceWeightKg',
+  ]);
+  const pieceWeightCheck = showDrywallFields
+    ? drywallPieceWeightCheck({
+        widthMm: decimalOrNull(drWidth),
+        lengthMm: decimalOrNull(drLength),
+        thicknessMm: decimalOrNull(drThickness),
+        pieceWeightKg: decimalOrNull(drWeight),
+        densityFactor: galvDensity,
+      })
+    : null;
   const isNewAccessory = !editing && watchedKind === RoofingProductKind.ACCESORIO;
   const accessoryColorCode =
     finishes.data?.find((f) => f.id === watchedFinishId)?.colorCode ?? null;
@@ -212,7 +239,7 @@ export function ProductDialog({
       const chosenFinish = finishes.data?.find((f) => f.id === values.finishId) ?? null;
       const colorId = showColor ? deriveColorId(chosenFinish, values.finishId, product) : '';
       const structuredFields = {
-        thicknessMm: showRoofingFields ? values.thicknessMm : '',
+        thicknessMm: showRoofingFields || showDrywallFields ? values.thicknessMm : '',
         widthMm: showRoofingFields || showDrywallFields ? values.widthMm : '',
         // D-127: el largo fijo es de la plancha. Una cobertura a medida no lo lleva —el
         // largo va en los subítems de cada línea de venta— y el API lo rechaza si viene.
@@ -526,22 +553,18 @@ export function ProductDialog({
                   />
                 </FormRow>
               )}
-              {(showRoofingFields || showDrywallFields) && (
+              {showDrywallFields && (
                 <FormRow>
                   <FormField
                     control={form.control}
-                    name="widthMm"
+                    name="thicknessMm"
                     render={({ field }) => (
                       <FormFieldCell
-                        span={showDrywallFields ? 4 : 6}
-                        label={showDrywallFields ? 'Ancho de la pieza (mm)' : 'Ancho (mm)'}
+                        span={4}
+                        label="Espesor del fleje (mm)"
                         size="md"
                         numeric
-                        help={
-                          showRoofingFields
-                            ? 'Nominal, para cotizar y calcular kg teóricos (D-118). La producción real usa el ancho del rollo que se monte (D-086), no este dato.'
-                            : undefined
-                        }
+                        help="Con el ancho y el acabado galvanizado, dice qué fleje consume este perfil (D-344)."
                       >
                         <FormControl>
                           <Input inputMode="decimal" autoComplete="off" {...field} />
@@ -549,6 +572,46 @@ export function ProductDialog({
                       </FormFieldCell>
                     )}
                   />
+                  <FormField
+                    control={form.control}
+                    name="widthMm"
+                    render={({ field }) => (
+                      <FormFieldCell
+                        span={8}
+                        label="Ancho del fleje — desarrollo (mm)"
+                        size="md"
+                        numeric
+                        help="El ancho de la tira de acero de la que sale el perfil, no el ancho del perfil terminado (D-344)."
+                      >
+                        <FormControl>
+                          <Input inputMode="decimal" autoComplete="off" {...field} />
+                        </FormControl>
+                      </FormFieldCell>
+                    )}
+                  />
+                </FormRow>
+              )}
+              {(showRoofingFields || showDrywallFields) && (
+                <FormRow>
+                  {showRoofingFields && (
+                    <FormField
+                      control={form.control}
+                      name="widthMm"
+                      render={({ field }) => (
+                        <FormFieldCell
+                          span={6}
+                          label="Ancho (mm)"
+                          size="md"
+                          numeric
+                          help="Nominal, para cotizar y calcular kg teóricos (D-118). La producción real usa el ancho del rollo que se monte (D-086), no este dato."
+                        >
+                          <FormControl>
+                            <Input inputMode="decimal" autoComplete="off" {...field} />
+                          </FormControl>
+                        </FormFieldCell>
+                      )}
+                    />
+                  )}
                   {showRoofingFields &&
                     form.watch('roofingKind') === RoofingProductKind.PLANCHA && (
                       <FormField
@@ -595,7 +658,7 @@ export function ProductDialog({
                         control={form.control}
                         name="lengthMm"
                         render={({ field }) => (
-                          <FormFieldCell span={4} label="Largo de la pieza (mm)" size="md" numeric>
+                          <FormFieldCell span={6} label="Largo de la pieza (mm)" size="md" numeric>
                             <FormControl>
                               <Input inputMode="decimal" autoComplete="off" {...field} />
                             </FormControl>
@@ -607,11 +670,28 @@ export function ProductDialog({
                         name="pieceWeightKg"
                         render={({ field }) => (
                           <FormFieldCell
-                            span={4}
+                            span={6}
                             label="Peso de la pieza (kg)"
                             size="md"
                             numeric
-                            help="Declarado, no calculado: la sección del perfil no es un prisma simple."
+                            help={
+                              <>
+                                <p>
+                                  Declarado, no calculado: la sección del perfil no es un prisma
+                                  simple.
+                                </p>
+                                {pieceWeightCheck?.warn && (
+                                  <p
+                                    role="status"
+                                    className="mt-1 text-amber-700 dark:text-amber-500"
+                                  >
+                                    ⚠ Se aleja {pieceWeightCheck.deviationPct} % del teórico (
+                                    {pieceWeightCheck.theoreticalKg} kg con este ancho, largo y
+                                    espesor): revisa los cuatro datos. Se guarda igual.
+                                  </p>
+                                )}
+                              </>
+                            }
                           >
                             <FormControl>
                               <Input inputMode="decimal" autoComplete="off" {...field} />
@@ -648,6 +728,12 @@ export function ProductDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Un decimal tipeado válido, o `null`: para el aviso en vivo, que no debe romperse con medio texto. */
+function decimalOrNull(value: string): string | null {
+  const typed = value.trim().replace(',', '.');
+  return /^\d+(\.\d+)?$/.test(typed) ? typed : null;
 }
 
 /**

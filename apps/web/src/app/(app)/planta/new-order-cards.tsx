@@ -6,13 +6,13 @@ import { toast } from 'sonner';
 import {
   describePieces,
   MAX_REPORT_PIECES,
-  ProductBomKind,
   type LineWithoutOrderDto,
-  type ProductBomDto,
+  type ProductDto,
   type ProductionOrderDto,
   type ReservationDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { drywallProfilesOf } from '@/lib/drywall-profiles';
 import { formatDate, formatQty } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -144,7 +144,10 @@ function LineWithoutOrderSummary({ entry }: { entry: LineWithoutOrderDto }) {
   );
 }
 
-/** Una corrida de perfiles de drywall: nace del producto y su receta, con meta opcional. */
+/**
+ * Una corrida de perfiles de drywall: nace del SKU del perfil (D-344: el espesor y el ancho del
+ * fleje son del SKU, ya no hay receta), con meta opcional.
+ */
 export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) => void }) {
   const queryClient = useQueryClient();
   const [productId, setProductId] = useState('');
@@ -153,9 +156,9 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
   const [reservationId, setReservationId] = useState('');
   const [orderDate, setOrderDate] = useState<string | undefined>(undefined);
 
-  const boms = useQuery({
-    queryKey: ['production-boms'],
-    queryFn: () => api<ProductBomDto[]>('/production/boms'),
+  const catalog = useQuery({
+    queryKey: ['catalog'],
+    queryFn: () => api<ProductDto[]>('/catalog'),
   });
   /**
    * Reservas activas: los pedidos que esperan que planta fabrique (D-066).
@@ -192,11 +195,9 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
       toast.error(err instanceof ApiError ? err.message : 'No se pudo crear la orden'),
   });
 
-  // Solo las recetas de drywall: una corrida de coberturas no se crea eligiendo el
-  // producto (D-084), y ofrecerla acá terminaría en un 400 del API.
-  const activeBoms = (boms.data ?? []).filter(
-    (b) => b.isActive && b.kind === ProductBomKind.DRYWALL,
-  );
+  // Solo los perfiles de drywall con el SKU completo: una corrida de coberturas no se crea
+  // eligiendo el producto (D-084), y uno sin espesor, ancho o peso terminaría en un 400 del API.
+  const { ready: profiles, incomplete } = drywallProfilesOf(catalog.data ?? []);
   // Solo las reservas de pedidos que piden **este** perfil: el API rechaza cualquier otra
   // (una reserva solo autoriza a fabricar lo que su propio pedido encargó).
   const productReservations = (reservations.data ?? []).filter((r) =>
@@ -223,10 +224,9 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
               <SelectValue placeholder="Elige el perfil" />
             </SelectTrigger>
             <SelectContent>
-              {activeBoms.map((b) => (
-                <SelectItem key={b.productId} value={b.productId}>
-                  {b.productSku} — {b.productName}
-                  {b.inputWidthMm !== null && <> ({b.inputWidthMm} mm)</>}
+              {profiles.map((p) => (
+                <SelectItem key={p.productId} value={p.productId}>
+                  {p.sku} — {p.name} ({p.widthMm} mm)
                 </SelectItem>
               ))}
             </SelectContent>
@@ -275,16 +275,24 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
             </p>
           </div>
         )}
-        {boms.isPending && <Skeleton className="h-5 w-full sm:col-span-3" />}
-        {boms.isError && (
+        {catalog.isPending && <Skeleton className="h-5 w-full sm:col-span-3" />}
+        {catalog.isError && (
           <p className="text-sm text-destructive sm:col-span-3">
-            No se pudieron cargar las recetas de fabricación.
+            No se pudo cargar el catálogo de perfiles.
           </p>
         )}
-        {boms.isSuccess && activeBoms.length === 0 && (
+        {catalog.isSuccess && profiles.length === 0 && (
           <p className="text-sm text-muted-foreground sm:col-span-3">
-            Ningún perfil tiene receta cargada todavía: pídesela a un administrador desde el
-            catálogo.
+            Ningún perfil tiene el SKU completo todavía: un administrador tiene que cargar el
+            espesor y el ancho del fleje, el largo y el peso desde el catálogo.
+          </p>
+        )}
+        {catalog.isSuccess && profiles.length > 0 && incomplete.length > 0 && (
+          <p className="text-sm text-muted-foreground sm:col-span-3">
+            {incomplete.length === 1
+              ? '1 perfil no aparece porque le falta'
+              : `${String(incomplete.length)} perfiles no aparecen porque les falta`}{' '}
+            espesor, ancho del fleje o peso en el catálogo.
           </p>
         )}
         {piecesInvalid && (

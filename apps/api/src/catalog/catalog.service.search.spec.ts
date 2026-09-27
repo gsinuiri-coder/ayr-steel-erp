@@ -33,7 +33,11 @@ function product(overrides: Partial<Record<string, unknown>> = {}) {
 
 describe('CatalogService.search (RF-S3/M1)', () => {
   let service: CatalogService;
-  const prisma = { product: { findMany: jest.fn() } };
+  const prisma = {
+    product: { findMany: jest.fn() },
+    // D-344: la densidad del acabado galvanizado para el aviso de kg/pieza; sin acabado no hay aviso.
+    finish: { findFirst: jest.fn().mockResolvedValue(null) },
+  };
   const audit = { write: jest.fn() };
   const colors = {};
 

@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { CoilKind, CoilStatus, InventoryItemType, type Prisma } from '@prisma/client';
+import { InventoryItemType, type Prisma } from '@prisma/client';
 import {
   BUSINESS_LINE_LABELS,
   Decimal,
@@ -13,6 +13,7 @@ import {
   toDecimal,
 } from '@ayr/shared';
 import { toSharedLineCode } from '../common/business-line-code';
+import { drywallStripWhere } from '../common/drywall-strip';
 import {
   rawMaterialCoilIdsBySpec,
   rawMaterialCoilKey,
@@ -54,18 +55,18 @@ export type PriceFloorCost =
    */
   | { kind: 'RAW_MATERIAL'; spec: RawMaterialSpecRef; kgPerUnit: Decimal }
   /**
-   * D-342, perfil de drywall con receta: el costo de una pieza sale de los flejes que la receta
-   * consume — `kg por pieza × costo por kg ponderado de los flejes abiertos con saldo` que
-   * coinciden en línea, acabado, espesor y ancho exactos (el mismo criterio de `stripOptions`).
-   * Es la misma cuenta por kilo del agregado de una cobertura, con otra manera de encontrar el
-   * material.
+   * D-342/D-344, perfil de drywall: el costo de una pieza sale de los flejes que su SKU consume —
+   * `kg por pieza × costo por kg ponderado de los flejes abiertos con saldo` que coinciden en
+   * línea, acabado **galvanizado**, espesor y ancho exactos (el mismo criterio de `stripOptions`
+   * y de la orden de producción). Es la misma cuenta por kilo del agregado de una cobertura, con
+   * otra manera de encontrar el material. Desde D-344 el espesor y el ancho son del SKU, no de
+   * una receta.
    */
   | {
-      kind: 'STRIP_RECIPE';
+      kind: 'STRIP_SKU';
       businessLineId: string;
-      finishId: string;
-      inputThicknessMm: string;
-      inputWidthMm: string;
+      thicknessMm: string;
+      widthMm: string;
       kgPerUnit: Decimal;
     };
 
@@ -125,6 +126,29 @@ export async function computePriceFloors(
   toleranceMm: string,
 ): Promise<Map<string, PriceFloor>> {
   const out = new Map<string, PriceFloor>();
+  const outcomes = await computePriceFloorOutcomes(tx, candidates, toleranceMm);
+  for (const [at, outcome] of outcomes) {
+    if ('minValuePen' in outcome) out.set(at, outcome);
+  }
+  return out;
+}
+
+/** Por qué una línea salió **sin** piso: no hay costo, o su línea de negocio no tiene margen. */
+export interface PriceFloorMissing {
+  missing: 'NO_COST' | 'NO_MARGIN';
+}
+
+/**
+ * D-344: lo mismo que `computePriceFloors`, pero **diciendo por qué** falta el piso de las líneas
+ * que no lo tienen. Existe para no rotular «sin flejes compatibles» una falta de margen: las dos
+ * dejan pasar la línea (sin costo no hay piso, D-163), pero el aviso al usuario es distinto.
+ */
+export async function computePriceFloorOutcomes(
+  tx: Prisma.TransactionClient,
+  candidates: PriceFloorCandidate[],
+  toleranceMm: string,
+): Promise<Map<string, PriceFloor | PriceFloorMissing>> {
+  const out = new Map<string, PriceFloor | PriceFloorMissing>();
   if (candidates.length === 0) return out;
 
   const minMarginByLineId = await minMarginsByBusinessLine(
@@ -138,9 +162,15 @@ export async function computePriceFloors(
     // Sin fila en `pricing_settings` no hay margen que aplicar. El seed crea una por línea,
     // así que esto solo alcanza a una línea de negocio agregada a mano sin su configuración;
     // dejar pasar es preferible a trabar la venta por un maestro incompleto.
-    if (minMarginPct === undefined) continue;
+    if (minMarginPct === undefined) {
+      out.set(candidate.at, { missing: 'NO_MARGIN' });
+      continue;
+    }
     const cost = costByKey.get(costKey(candidate.cost)) ?? new Decimal(0);
-    if (cost.lte(0)) continue;
+    if (cost.lte(0)) {
+      out.set(candidate.at, { missing: 'NO_COST' });
+      continue;
+    }
     const costPen = cost.toFixed(4);
     const minValuePen = minAllowedValue(costPen, minMarginPct);
     // El mismo piso, expresado en la unidad en la que el vendedor lo va a tipear: por metro
@@ -249,14 +279,17 @@ function costKey(cost: PriceFloorCost): string {
       return `C|${cost.coilId}`;
     case 'RAW_MATERIAL':
       return `R|${cost.spec.businessLineId}|${cost.spec.colorId ?? '-'}|${cost.spec.thicknessMm}|${cost.kgPerUnit.toFixed(6)}`;
-    case 'STRIP_RECIPE':
+    case 'STRIP_SKU':
       return `S|${stripKey(cost)}|${cost.kgPerUnit.toFixed(6)}`;
   }
 }
 
-/** Los flejes que una receta consume se identifican por línea + acabado + espesor + ancho. */
-function stripKey(cost: Extract<PriceFloorCost, { kind: 'STRIP_RECIPE' }>): string {
-  return `${cost.businessLineId}|${cost.finishId}|${cost.inputThicknessMm}|${cost.inputWidthMm}`;
+/**
+ * D-344: los flejes que consume un perfil de drywall se identifican por línea + espesor + ancho
+ * (el acabado es siempre galvanizado: es parte del filtro, no de la clave).
+ */
+function stripKey(cost: Extract<PriceFloorCost, { kind: 'STRIP_SKU' }>): string {
+  return `${cost.businessLineId}|${cost.thicknessMm}|${cost.widthMm}`;
 }
 
 /**
@@ -347,41 +380,30 @@ async function unitCosts(
     }
   }
 
-  await addStripRecipeCosts(tx, candidates, out);
+  await addStripSkuCosts(tx, candidates, out);
   return out;
 }
 
 /**
- * D-342: el costo de los perfiles de drywall con receta. Una consulta para todos los flejes
- * compatibles con **alguna** receta del lote y una para sus saldos, no una por perfil; después
- * se reparte en memoria por línea + acabado + espesor + ancho.
+ * D-342/D-344: el costo de los perfiles de drywall. Una consulta para todos los flejes
+ * compatibles con **algún** SKU del lote y una para sus saldos, no una por perfil; después se
+ * reparte en memoria por línea + espesor + ancho. El filtro es `drywallStripWhere`, el mismo que
+ * usa `/planta`: el piso y la producción no pueden buscar flejes distintos.
  */
-async function addStripRecipeCosts(
+async function addStripSkuCosts(
   tx: Prisma.TransactionClient,
   candidates: PriceFloorCandidate[],
   out: Map<string, Decimal>,
 ): Promise<void> {
-  const recipes = candidates.flatMap((c) =>
-    c.cost.kind === 'STRIP_RECIPE' ? [{ key: costKey(c.cost), cost: c.cost }] : [],
+  const skus = candidates.flatMap((c) =>
+    c.cost.kind === 'STRIP_SKU' ? [{ key: costKey(c.cost), cost: c.cost }] : [],
   );
-  if (recipes.length === 0) return;
+  if (skus.length === 0) return;
 
-  const distinct = new Map(recipes.map((r) => [stripKey(r.cost), r.cost]));
+  const distinct = new Map(skus.map((r) => [stripKey(r.cost), r.cost]));
   const strips = await tx.coil.findMany({
-    where: {
-      kind: CoilKind.STRIP,
-      // Los mismos flejes que ofrece `/planta` para la OP de esa receta: abiertos y de la
-      // combinación exacta. Un fleje anulado, cerrado o en poder de un tercero no es material
-      // con el que se pueda producir hoy.
-      status: CoilStatus.OPEN,
-      OR: [...distinct.values()].map((c) => ({
-        businessLineId: c.businessLineId,
-        finishId: c.finishId,
-        thicknessMm: c.inputThicknessMm,
-        widthMm: c.inputWidthMm,
-      })),
-    },
-    select: { id: true, businessLineId: true, finishId: true, thicknessMm: true, widthMm: true },
+    where: { OR: [...distinct.values()].map((c) => drywallStripWhere(c)) },
+    select: { id: true, businessLineId: true, thicknessMm: true, widthMm: true },
   });
   const balances =
     strips.length === 0
@@ -396,14 +418,13 @@ async function addStripRecipeCosts(
   }
   const balancesByStrip = new Map<string, typeof balances>();
   for (const strip of strips) {
-    if (strip.finishId === null) continue;
-    const key = `${strip.businessLineId}|${strip.finishId}|${strip.thicknessMm.toFixed(2)}|${strip.widthMm.toFixed(2)}`;
+    const key = `${strip.businessLineId}|${strip.thicknessMm.toFixed(2)}|${strip.widthMm.toFixed(2)}`;
     balancesByStrip.set(key, [
       ...(balancesByStrip.get(key) ?? []),
       ...(balancesById.get(strip.id) ?? []),
     ]);
   }
-  for (const { key, cost } of recipes) {
+  for (const { key, cost } of skus) {
     if (out.has(key)) continue;
     out.set(
       key,
