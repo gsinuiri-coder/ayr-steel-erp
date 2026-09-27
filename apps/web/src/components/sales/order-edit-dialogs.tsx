@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import {
   BusinessLine,
   COIL_SKU_PREFIX,
+  detailsLengths,
   lineAmounts,
   money,
   piecesMeters,
@@ -295,8 +296,12 @@ export function EditLineQtyDialog({
   // `false` al cerrar y el formulario cambiaba de "planchas por largo" a un campo de cantidad
   // simple (o al revés) en plena animación de salida.
   const [lastItem, setLastItem] = useState<SalesItemDto | null>(null);
-  // Regla dura 14: los largos los decide la unidad, no que la línea los haya traído.
-  const byPieces = lastItem?.unit === 'MTR';
+  // Regla dura 13 (D-131/D-343): el desglose de largos lo decide `detailsLengths` —la unidad `MTR`
+  // **y** que no sea un accesorio—, no que la línea los haya traído. Un accesorio cambia su
+  // cantidad (metros de bobina) con un campo simple, sin largos.
+  const byPieces =
+    lastItem !== null &&
+    detailsLengths({ unit: lastItem.unit, roofingKind: lastItem.productRoofingKind });
 
   useEffect(() => {
     if (item) {

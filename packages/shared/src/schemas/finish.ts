@@ -72,6 +72,8 @@ export const finishSchema = z.object({
   colorName: z.string().nullable(),
   colorHex: z.string().nullable(),
   colorRal: z.string().nullable(),
+  /** D-343: código del color, del que sale el token del SKU de un accesorio (`ACCES030ROJO`). */
+  colorCode: z.string().nullable(),
   businessLine: z.string().nullable(),
   /**
    * Tiene bobinas o ítems de compra. Con uso, tipo, color y línea ya no se cambian (D-203); la

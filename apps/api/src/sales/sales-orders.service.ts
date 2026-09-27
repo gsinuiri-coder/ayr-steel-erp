@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -31,6 +32,9 @@ import {
   capToQuotationValidity,
   type ConfirmPreviewDto,
   type ConfirmPreviewLineDto,
+  type ConfirmQuotationInput,
+  type NoFloorReason,
+  type OrderWithShortfallDto,
   type QuotationTemporaryReservationDto,
   type SalesSettingsDto,
   type TemporaryReservationLineDto,
@@ -83,6 +87,12 @@ import {
   statusCondition,
 } from '@ayr/shared';
 import { deriveOrderReadiness, deriveOrderStage, orderStagesWhere } from './order-readiness';
+import {
+  shortfallAudit,
+  splitReservable,
+  sumShortfalls,
+  type ShortfallLine,
+} from './order-shortfall';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
@@ -132,6 +142,7 @@ import {
 } from './reserved-ledger';
 import { unavailableCoilReason } from './coil-sale-unavailable';
 import { computePriceFloors, type PriceFloorCandidate } from './price-floor';
+import { FLOOR_COST_SELECT, productFloorCost } from './price-floor-cost';
 import {
   assertRawMaterialInvariant,
   rawMaterialAvailability,
@@ -162,7 +173,14 @@ const orderInclude = {
     include: {
       // D-119: `businessLine` de cada producto arma `businessLines` del pedido (puede
       // mezclar líneas).
-      product: { select: { sku: true, name: true, businessLine: { select: { code: true } } } },
+      product: {
+        select: {
+          sku: true,
+          name: true,
+          roofingKind: true,
+          businessLine: { select: { code: true } },
+        },
+      },
       // D-083: copia congelada de los largos que se cotizaron.
       pieces: { orderBy: { lineNumber: 'asc' } },
     },
@@ -257,6 +275,16 @@ interface ReservableLine {
   reserveUnit: string;
 }
 
+/**
+ * D-341: cómo reservar cuando el material no alcanza. Sin `allowShortfall` (todos los llamadores
+ * salvo confirmar de un administrador) falta material = rechazo, como siempre. `shortfalls` es
+ * donde `reserveLines` deja lo que quedó sin reservar, para el rastro de auditoría.
+ */
+interface ReserveOptions {
+  allowShortfall?: boolean;
+  shortfalls?: ShortfallLine[];
+}
+
 /** Las dos formas en que una fila nombra al ítem del kardex que reserva. */
 type ReserveRef =
   | { itemType: InventoryItemType; itemId: string }
@@ -294,8 +322,20 @@ export class SalesOrdersService {
   async confirm(
     actor: RequestUser,
     quotationId: string,
-    promisedDeliveryDate?: string,
+    input: ConfirmQuotationInput = {},
   ): Promise<SalesOrderDto> {
+    const { promisedDeliveryDate } = input;
+    // D-341: confirmar con faltante es del ADMINISTRADOR. Se decide acá, en el servicio, y no
+    // con un `@Roles` de método: ese bloquearía también la confirmación normal del vendedor.
+    // Sin la bandera el faltante sigue rechazando para todos (D-054), y por eso el motivo que
+    // pide el schema solo acompaña a la bandera.
+    const allowShortfall = input.confirmShortfall === true;
+    if (allowShortfall && actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        'Solo un administrador puede confirmar con faltante de material',
+      );
+    }
+    const shortfalls: ShortfallLine[] = [];
     const orderId = await this.prisma.$transaction(
       async (tx) => {
         const rows = await tx.$queryRaw<
@@ -427,6 +467,8 @@ export class SalesOrdersService {
                   unitPricePen: i.unitPricePen,
                   // D-161: el pedido congela el valor por metro igual que congela el unitario.
                   valuePerMeterPen: i.valuePerMeterPen,
+                  // D-343: el pedido congela las piezas informativas de un accesorio.
+                  piecesHint: i.piecesHint,
                   subtotalPen: i.subtotalPen,
                   igvPen: i.igvPen,
                   totalPen: i.totalPen,
@@ -466,7 +508,12 @@ export class SalesOrdersService {
           salesOrderId: order.id,
         });
 
-        await this.createReservations(tx, actor, order.id, order.items);
+        // Una reintentada de la transacción no debe arrastrar el faltante del intento anterior.
+        shortfalls.length = 0;
+        await this.createReservations(tx, actor, order.id, order.items, {
+          allowShortfall,
+          shortfalls,
+        });
 
         // D-186: confirmar ya deja las órdenes en cola. Cada línea que reserva materia prima
         // es una línea que se fabrica contra el pedido (D-134/D-171), y su OP nace por el
@@ -503,12 +550,15 @@ export class SalesOrdersService {
           action: 'sales.order.confirm',
           entity: 'sales_orders',
           entityId: order.id,
+          // D-341: el motivo de la excepción solo se registra si de verdad hubo faltante.
+          ...(shortfalls.length > 0 ? { reason: input.shortfallReason } : {}),
           after: {
             code: salesOrderCode(order.seq),
             quotationCode: quotationCode(head.seq),
             totalPen: order.totalPen.toFixed(4),
             convertedTemporaryLines: converted,
             productionOrders: productionOrderIds.length,
+            ...(shortfalls.length > 0 ? { shortfalls: shortfalls.map((s) => ({ ...s })) } : {}),
           },
         });
         return order.id;
@@ -579,11 +629,16 @@ export class SalesOrdersService {
       select: { expiresAt: true },
     });
 
-    const { lines: previewLines, blockers: shortfallBlockers } = await this.previewLinesOf(
-      quotationId,
-      quotation.items,
-    );
-    blockers.push(...shortfallBlockers);
+    const {
+      lines: previewLines,
+      blockers: lineBlockers,
+      shortfallNotes,
+    } = await this.previewLinesOf(quotationId, quotation.items);
+    blockers.push(...lineBlockers);
+    // D-341: al ADMINISTRADOR el faltante ya no le bloquea (confirma con la bandera y un motivo);
+    // al VENDEDOR sí (D-054).
+    const canConfirmWithShortfall = actor.role === Role.ADMINISTRADOR && shortfallNotes.length > 0;
+    if (!canConfirmWithShortfall) blockers.push(...shortfallNotes);
 
     return {
       quotationId,
@@ -591,6 +646,8 @@ export class SalesOrdersService {
       temporaryReservationExpiresAt: temporary?.expiresAt.toISOString() ?? null,
       lines: previewLines,
       blockers,
+      shortfallNotes,
+      canConfirmWithShortfall,
     };
   }
 
@@ -621,8 +678,11 @@ export class SalesOrdersService {
       };
       pieces: { lengthMm: Prisma.Decimal; qty: number }[];
     }[],
-  ): Promise<{ lines: ConfirmPreviewLineDto[]; blockers: string[] }> {
+  ): Promise<{ lines: ConfirmPreviewLineDto[]; blockers: string[]; shortfallNotes: string[] }> {
     const blockers: string[] = [];
+    // D-341: el faltante de material va aparte de los bloqueos duros, porque un administrador
+    // puede confirmar pese a él. Quién lo bloquea lo decide `confirmPreview`.
+    const shortfallNotes: string[] = [];
     let lines: ReservableLine[] = [];
     try {
       const raw = await this.resolveRawMaterial(
@@ -729,9 +789,12 @@ export class SalesOrdersService {
         : null;
       const label = labels.get(line.reserveItemId)?.label ?? line.reserveItemId;
       if (shortfall !== null) {
-        blockers.push(
-          `Línea ${String(item.lineNumber)}: ${label} tiene ${Decimal.max(forThisLine, new Decimal(0)).toFixed(3)} ${line.reserveUnit} disponibles y el pedido necesita ${qty.toFixed(3)} — faltan ${shortfall.toFixed(3)}`,
-        );
+        const note = `Línea ${String(item.lineNumber)}: ${label} tiene ${Decimal.max(forThisLine, new Decimal(0)).toFixed(3)} ${line.reserveUnit} disponibles y el pedido necesita ${qty.toFixed(3)} — faltan ${shortfall.toFixed(3)}`;
+        // D-341: confirmar con faltante es de la **materia prima** (el agregado que una OP va a
+        // consumir). El producto de catálogo con stock y la bobina entera siguen todo o nada, y su
+        // faltante bloquea a todos los roles.
+        if (line.reserveItemType === InventoryItemTypeEnum.RAW_MATERIAL) shortfallNotes.push(note);
+        else blockers.push(note);
       }
       previewLines.push({
         ...base,
@@ -746,7 +809,7 @@ export class SalesOrdersService {
       });
     }
 
-    return { lines: previewLines, blockers };
+    return { lines: previewLines, blockers, shortfallNotes };
   }
 
   /**
@@ -1191,6 +1254,7 @@ export class SalesOrdersService {
             listPricePen: l.listPricePen,
             unitPricePen: l.unitPricePen,
             valuePerMeterPen: l.valuePerMeterPen,
+            piecesHint: l.piecesHint,
             subtotalPen: l.subtotalPen,
             igvPen: l.igvPen,
             totalPen: l.totalPen,
@@ -1327,12 +1391,16 @@ export class SalesOrdersService {
     actor: RequestUser,
     orderId: string,
     items: (ReservableLine & { id: string })[],
+    /** D-341: solo `confirm` con la bandera de un administrador; los demás llamadores rechazan. */
+    options?: ReserveOptions,
   ): Promise<void> {
     await this.reserveLines(
       tx,
       items,
       'el pedido',
-      async (item) => {
+      async (item, reserved, shortfall) => {
+        // Sin faltante se escribe lo que la línea promete, tal cual, como siempre.
+        const qty = shortfall.gt(0) ? reserved.toFixed(3) : item.reserveQty;
         // `upsert` y no `create` desde D-187: cambiar la cantidad de una línea confirmada libera
         // su reserva y vuelve a reservar la misma línea sobre el mismo ítem, y la tabla admite una
         // sola fila por (línea, ítem). La fila liberada **revive** con la cantidad nueva —y con
@@ -1351,13 +1419,15 @@ export class SalesOrdersService {
             salesOrderItemId: item.id,
             itemType: item.reserveItemType,
             itemId: item.reserveItemId,
-            qty: item.reserveQty,
+            qty,
+            shortfallQty: shortfall.toFixed(3),
             unit: item.reserveUnit,
             status: ReservationStatus.ACTIVE,
             createdById: actor.id,
           },
           update: {
-            qty: item.reserveQty,
+            qty,
+            shortfallQty: shortfall.toFixed(3),
             unit: item.reserveUnit,
             status: ReservationStatus.ACTIVE,
             releasedAt: null,
@@ -1366,6 +1436,7 @@ export class SalesOrdersService {
         });
       },
       actor,
+      options,
     );
   }
 
@@ -1384,9 +1455,14 @@ export class SalesOrdersService {
     items: T[],
     /** Quién necesita el material, para el mensaje: «el pedido», «la reserva». */
     holder: string,
-    write: (item: T) => Promise<void>,
+    /**
+     * `reserved` y `shortfall` (D-341) parten en dos lo que la línea promete: sin faltante,
+     * `reserved` es todo y `shortfall` es cero, y los llamadores que no lo necesitan lo ignoran.
+     */
+    write: (item: T, reserved: Decimal, shortfall: Decimal) => Promise<void>,
     /** D-275: quien lee el rechazo; a un VENDEDOR no se le nombra la cotización de otro. */
     viewer?: HolderViewer,
+    options?: ReserveOptions,
   ): Promise<number> {
     let written = 0;
     const sorted = [...items].sort((a, b) =>
@@ -1528,6 +1604,24 @@ export class SalesOrdersService {
         // Sin `lockCoils`: las bobinas del agregado ya quedaron bloqueadas arriba, junto
         // con las demás y en un solo orden.
         const availability = await rawMaterialAvailability(tx, spec, roofingToleranceMm(this.env));
+        if (qty.gt(availability.available) && options?.allowShortfall) {
+          // D-341: un administrador confirma con faltante. Se reserva lo que hay, la línea
+          // sigue —y su OP nace igual, D-186— y lo que no alcanzó queda a la vista.
+          const split = splitReservable(qty, availability.available);
+          const label =
+            (await rawMaterialSpecLabels(tx, [spec.id])).get(spec.id) ?? 'la materia prima';
+          options.shortfalls?.push({
+            lineNumber: item.lineNumber,
+            label,
+            unit: item.reserveUnit,
+            promisedQty: qty.toFixed(3),
+            reservedQty: split.reserve.toFixed(3),
+            missingQty: split.shortfall.toFixed(3),
+          });
+          await write(item, split.reserve, split.shortfall);
+          written += 1;
+          continue;
+        }
         if (qty.gt(availability.available)) {
           const label =
             (await rawMaterialSpecLabels(tx, [spec.id])).get(spec.id) ?? 'la materia prima';
@@ -1548,7 +1642,7 @@ export class SalesOrdersService {
               'Compra o abre una bobina de ese color y espesor antes de continuar.',
           );
         }
-        await write(item);
+        await write(item, qty, new Decimal(0));
         written += 1;
         continue;
       }
@@ -1568,13 +1662,15 @@ export class SalesOrdersService {
         itemId: item.reserveItemId,
         unit: item.reserveUnit,
       });
+      // D-341: el faltante solo se admite en materia prima (la rama de arriba). El producto de
+      // catálogo con stock y la bobina entera siguen siendo todo o nada, con o sin la bandera.
       if (qty.gt(availability.available)) {
         const label = await this.itemLabel(tx, item.reserveItemType, item.reserveItemId);
         throw new BadRequestException(
           `Línea ${item.lineNumber}: ${label} tiene ${availability.available.toFixed(3)} ${availability.unit} disponibles (${availability.qty.toFixed(3)} físicos menos ${availability.reserved.toFixed(3)} ya reservados) y ${holder} necesita ${qty.toFixed(3)}.`,
         );
       }
-      await write(item);
+      await write(item, qty, new Decimal(0));
       written += 1;
     }
 
@@ -2175,6 +2271,17 @@ export class SalesOrdersService {
       }
 
       const active = reservations.filter((r) => r.status === ReservationStatus.ACTIVE);
+      // D-341: una reserva `CONSUMIDA` (la producción agotó lo reservado) puede seguir con
+      // faltante: anular el pedido también lo cierra.
+      const consumedWithShortfall = reservations.filter(
+        (r) => r.status === ReservationStatus.CONSUMED && r.shortfallQty.gt(0),
+      );
+      if (consumedWithShortfall.length > 0) {
+        await tx.reservation.updateMany({
+          where: { id: { in: consumedWithShortfall.map((r) => r.id) } },
+          data: { shortfallQty: '0' },
+        });
+      }
       if (active.length > 0) {
         await tx.reservation.updateMany({
           where: { id: { in: active.map((r) => r.id) }, status: ReservationStatus.ACTIVE },
@@ -2184,6 +2291,8 @@ export class SalesOrdersService {
             // (reservation-guard.ts). Sin esto, `reservations.qty` queda mintiendo el monto
             // original sobre una fila ya RELEASED (hallazgo de `qa`, Fase 7e).
             qty: '0',
+            // D-341: una reserva liberada no promete nada, tampoco lo que faltaba reservar.
+            shortfallQty: '0',
             status: ReservationStatus.RELEASED,
             releasedAt: new Date(),
             releasedById: actor.id,
@@ -2224,7 +2333,12 @@ export class SalesOrdersService {
         action: 'sales.order.cancel',
         entity: 'sales_orders',
         entityId: id,
-        before: { status: order.status, activeReservations: active.length },
+        before: {
+          status: order.status,
+          activeReservations: active.length,
+          // D-341: el faltante que se da por cerrado con la anulación.
+          ...shortfallAudit([...active, ...consumedWithShortfall]),
+        },
         after: {
           status: SalesOrderStatus.CANCELLED,
           reason,
@@ -2259,6 +2373,7 @@ export class SalesOrdersService {
           id: true,
           status: true,
           salesOrderId: true,
+          shortfallQty: true,
           productionOrders: {
             where: {
               status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
@@ -2290,6 +2405,8 @@ export class SalesOrdersService {
         where: { id: reservationId, status: ReservationStatus.ACTIVE },
         data: {
           status: ReservationStatus.RELEASED,
+          // D-341: liberar la reserva cierra también lo que faltaba reservar.
+          shortfallQty: '0',
           releasedAt: new Date(),
           releasedById: actor.id,
         },
@@ -2302,8 +2419,11 @@ export class SalesOrdersService {
         action: 'sales.reservation.release',
         entity: 'reservations',
         entityId: reservationId,
-        before: { status: ReservationStatus.ACTIVE },
-        after: { status: ReservationStatus.RELEASED, reason },
+        before: {
+          status: ReservationStatus.ACTIVE,
+          shortfallQty: reservation.shortfallQty.toFixed(3),
+        },
+        after: { status: ReservationStatus.RELEASED, shortfallQty: '0.000', reason },
       });
     });
 
@@ -2331,6 +2451,161 @@ export class SalesOrdersService {
     });
     const labels = await this.reserveLabels([row]);
     return this.toReservationDto(row, labels, await reservationDispatches(this.prisma, [row]));
+  }
+
+  // -------------------------------------------------------------------------
+  // D-341 — pedidos confirmados con faltante
+  // -------------------------------------------------------------------------
+
+  /**
+   * «Completar reserva»: reserva lo que **hoy** alcanza del faltante de un pedido confirmado con
+   * faltante, y deja el resto pendiente. Solo ADMINISTRADOR.
+   *
+   * Pasa por `reserveLines` —los mismos locks, en el mismo orden, y la misma comprobación de
+   * disponible— pidiéndole el faltante como si fuera lo que la línea promete: así la invariante
+   * `disponible ≥ reservado` (D-066/D-134) sigue teniendo **un** solo lugar donde se decide.
+   * Sube `reservations.qty` y baja `shortfall_qty` por lo mismo. No crea órdenes de producción:
+   * las de las líneas ya existen desde que se confirmó (D-186).
+   */
+  async completeReservation(
+    actor: RequestUser,
+    orderId: string,
+    reason?: string,
+  ): Promise<SalesOrderDto> {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const order = await this.lockOrder(tx, orderId);
+        if (order.status === SalesOrderStatus.CANCELLED) {
+          throw new BadRequestException('El pedido está anulado: no hay reserva que completar');
+        }
+        if (order.status === SalesOrderStatus.FULFILLED) {
+          throw new BadRequestException('El pedido ya está atendido: no hay reserva que completar');
+        }
+        await tx.$queryRaw`
+          SELECT "id" FROM "reservations" WHERE "sales_order_id" = ${orderId}::uuid
+          ORDER BY "id" FOR UPDATE
+        `;
+        // `ACTIVA` o `CONSUMIDA`: la producción o el despacho agotan lo reservado (`qty` llega a 0
+        // y la fila pasa a `CONSUMIDA`) sin tocar `shortfall_qty`, así que el faltante sigue siendo
+        // del pedido. Una `LIBERADA` ya no promete nada (D-341) y no entra.
+        const pending = await tx.reservation.findMany({
+          where: {
+            salesOrderId: orderId,
+            status: { in: [ReservationStatus.ACTIVE, ReservationStatus.CONSUMED] },
+            shortfallQty: { gt: 0 },
+          },
+          include: { salesOrderItem: { select: { lineNumber: true, productId: true } } },
+          orderBy: { id: 'asc' },
+        });
+        if (pending.length === 0) {
+          throw new BadRequestException('El pedido no tiene faltante de reserva por completar');
+        }
+        const byLine = new Map(pending.map((r) => [r.salesOrderItemId, r]));
+        const before = shortfallAudit(pending);
+        let added = new Decimal(0);
+
+        await this.reserveLines(
+          tx,
+          pending.map((r) => ({
+            id: r.salesOrderItemId,
+            lineNumber: r.salesOrderItem.lineNumber,
+            productId: r.salesOrderItem.productId,
+            reserveItemType: r.itemType,
+            reserveItemId: r.itemId,
+            // Lo que se pide es el faltante, no la promesa entera: la parte ya reservada ya
+            // está descontada del disponible que `reserveLines` lee.
+            reserveQty: r.shortfallQty,
+            reserveUnit: r.unit,
+          })),
+          'el pedido',
+          async (item, reserved, stillMissing) => {
+            const reservation = byLine.get(item.id);
+            if (!reservation) return;
+            added = added.plus(reserved);
+            await tx.reservation.update({
+              where: { id: reservation.id },
+              data: {
+                qty: { increment: reserved.toFixed(3) },
+                shortfallQty: stillMissing.toFixed(3),
+                // Una reserva consumida vuelve a `ACTIVA` con lo que se le suma, igual que cuando
+                // una reversa restaura la promesa (`restoreReservationQty`).
+                ...(reserved.gt(0) ? { status: ReservationStatus.ACTIVE, consumedAt: null } : {}),
+              },
+            });
+          },
+          actor,
+          { allowShortfall: true },
+        );
+
+        if (added.lte(0)) {
+          // Sin nada nuevo que reservar no hay cambio que auditar: se avisa y se deshace.
+          throw new BadRequestException(
+            'Todavía no hay material disponible para completar la reserva',
+          );
+        }
+        const after = await tx.reservation.findMany({
+          where: { id: { in: pending.map((r) => r.id) } },
+          select: { id: true, shortfallQty: true },
+        });
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'sales.order.complete-reservation',
+          entity: 'sales_orders',
+          entityId: orderId,
+          ...(reason ? { reason } : {}),
+          before,
+          after: { reservedNow: added.toFixed(3), ...shortfallAudit(after) },
+        });
+      },
+      { timeout: 60_000, maxWait: 15_000 },
+    );
+    return this.findOne(orderId);
+  }
+
+  /**
+   * La tarjeta «Pedidos con faltante» del Panel: los pedidos no anulados con reservas vivas que
+   * todavía tienen `shortfall_qty`. Tres consultas sin importar cuántos pedidos haya (reservas,
+   * y las etiquetas de los agregados y de los productos), como pide D-228 para las tarjetas.
+   */
+  async findOrdersWithShortfall(): Promise<OrderWithShortfallDto[]> {
+    const rows = await this.prisma.reservation.findMany({
+      where: {
+        // Todo lo que no esté liberada: la producción y el despacho no tocan el faltante (D-341).
+        status: { in: [ReservationStatus.ACTIVE, ReservationStatus.CONSUMED] },
+        shortfallQty: { gt: 0 },
+        salesOrder: {
+          status: { notIn: [SalesOrderStatus.CANCELLED, SalesOrderStatus.FULFILLED] },
+        },
+      },
+      select: {
+        salesOrderId: true,
+        itemType: true,
+        itemId: true,
+        unit: true,
+        status: true,
+        shortfallQty: true,
+        salesOrder: { select: { seq: true, customer: { select: { name: true } } } },
+      },
+      orderBy: { salesOrder: { seq: 'asc' } },
+    });
+    if (rows.length === 0) return [];
+    const labels = await this.reserveLabels(rows);
+    const byOrder = new Map<string, typeof rows>();
+    for (const row of rows) {
+      byOrder.set(row.salesOrderId, [...(byOrder.get(row.salesOrderId) ?? []), row]);
+    }
+    return [...byOrder.entries()].flatMap(([orderId, group]) => {
+      const first = group[0];
+      if (!first) return [];
+      return [
+        {
+          orderId,
+          orderCode: salesOrderCode(first.salesOrder.seq),
+          customerName: first.salesOrder.customer.name,
+          shortfalls: sumShortfalls(group, (_type, id) => labels.get(id)?.label),
+        },
+      ];
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -2985,8 +3260,13 @@ export class SalesOrdersService {
         // necesita para encontrar el margen mínimo de la línea— y, desde D-171, también
         // `unit` y `lengthMm`, que `orderedMeters` usa para convertir planchas en metros.
         ...ROOFING_PRODUCT_SELECT,
+        // D-342: origen, peso y receta, para el costo del piso de un perfil de drywall.
+        source: true,
+        pieceWeightKg: true,
+        bom: FLOOR_COST_SELECT.bom,
         // D-167: si la línea lleva existencias. El panel lo muestra en vez de un cero.
-        businessLine: { select: { inventoryStrategy: true } },
+        // `code` (D-342): es lo que distingue un perfil de drywall.
+        businessLine: { select: { inventoryStrategy: true, code: true } },
       },
     });
     if (products.length === 0) return [];
@@ -3034,6 +3314,11 @@ export class SalesOrdersService {
     // veces era duplicar la consulta más cara de una ruta que el formulario llama en cada
     // cambio de selección.
     const floorCandidates: PriceFloorCandidate[] = [];
+    // D-342: por qué un perfil de drywall no tiene piso. `staticReasons` es lo que se sabe sin
+    // mirar saldos (sin receta, sin peso); `stripRecipeProductIds` son los perfiles con receta,
+    // que quedan «sin costo de flejes» si aun así `computePriceFloors` no les encontró piso.
+    const staticReasons = new Map<string, NoFloorReason>();
+    const stripRecipeProductIds = new Set<string>();
 
     const out: ProductStockDto[] = [];
     for (const product of products) {
@@ -3104,14 +3389,22 @@ export class SalesOrdersService {
           });
         }
       } else if (carriesInventory(product.businessLine)) {
-        floorCandidates.push({
-          at: product.id,
-          sku: product.sku,
-          businessLineId: product.businessLineId,
-          basis,
-          unitValuePen: '0.0000',
-          cost: { kind: 'PRODUCT', productId: product.id },
-        });
+        // D-342: un perfil de drywall con receta cuesta lo que sus flejes; sin ella (o sin peso)
+        // no tiene piso, y el formulario lo dice en la línea sin bloquear.
+        const floorCost = productFloorCost(product);
+        if ('cost' in floorCost) {
+          floorCandidates.push({
+            at: product.id,
+            sku: product.sku,
+            businessLineId: product.businessLineId,
+            basis,
+            unitValuePen: '0.0000',
+            cost: floorCost.cost,
+          });
+          if (floorCost.cost.kind === 'STRIP_RECIPE') stripRecipeProductIds.add(product.id);
+        } else {
+          staticReasons.set(product.id, floorCost.noFloorReason);
+        }
       }
       out.push({
         productId: product.id,
@@ -3126,6 +3419,7 @@ export class SalesOrdersService {
         // una tanda para no repetir por SKU la consulta de márgenes y la de costos.
         minPricePen: null,
         minValuePen: null,
+        noFloorReason: null,
         carriesInventory: carriesInventory(product.businessLine),
       });
     }
@@ -3137,9 +3431,15 @@ export class SalesOrdersService {
     );
     return out.map((row) => {
       const floor = floors.get(row.productId);
-      return floor === undefined
-        ? row
-        : { ...row, minPricePen: floor.minPricePen, minValuePen: floor.minValuePen };
+      if (floor !== undefined) {
+        return { ...row, minPricePen: floor.minPricePen, minValuePen: floor.minValuePen };
+      }
+      // D-342: sin piso porque a un perfil de drywall le falta receta o peso, o —con receta y
+      // peso— porque no hay flejes compatibles con saldo que den costo.
+      const reason =
+        staticReasons.get(row.productId) ??
+        (stripRecipeProductIds.has(row.productId) ? ('NO_STRIP_COST' as const) : null);
+      return reason === null ? row : { ...row, noFloorReason: reason };
     });
   }
 
@@ -3558,6 +3858,7 @@ export class SalesOrdersService {
       itemLabel: label?.label ?? row.itemId,
       itemName: label?.name ?? '',
       qty: row.qty.toFixed(3),
+      shortfallQty: row.shortfallQty.toFixed(3),
       unit: row.unit,
       status: row.status,
       productionOrderId: op?.id ?? null,
@@ -3633,6 +3934,11 @@ export class SalesOrdersService {
       isEditable: false,
       readiness,
       stage: deriveOrderStage(row.status, readiness.status),
+      // D-341: un pedido anulado ya no espera material.
+      shortfalls:
+        row.status === SalesOrderStatus.CANCELLED || row.status === SalesOrderStatus.FULFILLED
+          ? []
+          : sumShortfalls(row.reservations, (_type, id) => labels.get(id)?.label),
     };
   }
 }

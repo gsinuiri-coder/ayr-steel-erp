@@ -406,6 +406,7 @@ export class SalesOrderEditsService {
       where: { salesOrderItemId: item.id, status: ReservationStatus.ACTIVE },
       data: {
         qty: '0',
+        shortfallQty: '0', // D-341: al liberar, lo que faltaba reservar se cierra con ella.
         status: ReservationStatus.RELEASED,
         releasedAt: new Date(),
         releasedById: actor.id,
@@ -540,6 +541,7 @@ export class SalesOrderEditsService {
                 listPricePen: l.listPricePen,
                 unitPricePen: l.unitPricePen,
                 valuePerMeterPen: l.valuePerMeterPen,
+                piecesHint: l.piecesHint,
                 subtotalPen: l.subtotalPen,
                 igvPen: l.igvPen,
                 totalPen: l.totalPen,
@@ -661,6 +663,7 @@ export class SalesOrderEditsService {
             id: true,
             status: true,
             itemType: true,
+            shortfallQty: true,
             // **Todas** las OP no anuladas, cerradas incluidas: una OP que reportó y se cerró
             // ya no está viva, pero dejó producto fabricado con su propia reserva y la de
             // materia prima liberada. Mirar solo las vivas dejaba recalcular encima de eso.
@@ -707,6 +710,18 @@ export class SalesOrderEditsService {
             `${at}: ya tiene material fabricado reservado, así que la cantidad no se cambia. ${addInstead}`,
           );
         }
+        // D-341: cambiar la cantidad libera y vuelve a reservar la línea completa, y eso borraría en
+        // silencio el faltante que el administrador aceptó al confirmar. Se rechaza, también con la
+        // reserva ya consumida: completar la reserva la admite (y la revive).
+        if (
+          reservations.some(
+            (r) => r.status !== ReservationStatus.RELEASED && r.shortfallQty.greaterThan(0),
+          )
+        ) {
+          throw new BadRequestException(
+            `${at}: Esta línea tiene faltante de material: completá la reserva o anulá antes de cambiar la cantidad`,
+          );
+        }
         if (reservations.some((r) => r.status === ReservationStatus.CONSUMED)) {
           throw new BadRequestException(
             `${at}: su material ya se consumió en producción, así que la cantidad no se cambia. ${addInstead}`,
@@ -736,6 +751,7 @@ export class SalesOrderEditsService {
             where: { id: { in: active.map((r) => r.id) }, status: ReservationStatus.ACTIVE },
             data: {
               qty: '0',
+              shortfallQty: '0', // D-341: ídem.
               status: ReservationStatus.RELEASED,
               releasedAt: new Date(),
               releasedById: actor.id,

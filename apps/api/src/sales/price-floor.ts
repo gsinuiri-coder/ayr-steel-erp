@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { InventoryItemType, type Prisma } from '@prisma/client';
+import { CoilKind, CoilStatus, InventoryItemType, type Prisma } from '@prisma/client';
 import {
   BUSINESS_LINE_LABELS,
   Decimal,
@@ -52,7 +52,22 @@ export type PriceFloorCost =
    * rola— así que el costo por metro sale de la bobina: `kg por metro × costo por kg del
    * agregado compatible`. Es el mismo agregado contra el que la línea promete al reservar.
    */
-  | { kind: 'RAW_MATERIAL'; spec: RawMaterialSpecRef; kgPerUnit: Decimal };
+  | { kind: 'RAW_MATERIAL'; spec: RawMaterialSpecRef; kgPerUnit: Decimal }
+  /**
+   * D-342, perfil de drywall con receta: el costo de una pieza sale de los flejes que la receta
+   * consume — `kg por pieza × costo por kg ponderado de los flejes abiertos con saldo` que
+   * coinciden en línea, acabado, espesor y ancho exactos (el mismo criterio de `stripOptions`).
+   * Es la misma cuenta por kilo del agregado de una cobertura, con otra manera de encontrar el
+   * material.
+   */
+  | {
+      kind: 'STRIP_RECIPE';
+      businessLineId: string;
+      finishId: string;
+      inputThicknessMm: string;
+      inputWidthMm: string;
+      kgPerUnit: Decimal;
+    };
 
 /**
  * **En qué unidad se negocia el precio de esta línea**, que no siempre es su unidad de venta.
@@ -234,7 +249,33 @@ function costKey(cost: PriceFloorCost): string {
       return `C|${cost.coilId}`;
     case 'RAW_MATERIAL':
       return `R|${cost.spec.businessLineId}|${cost.spec.colorId ?? '-'}|${cost.spec.thicknessMm}|${cost.kgPerUnit.toFixed(6)}`;
+    case 'STRIP_RECIPE':
+      return `S|${stripKey(cost)}|${cost.kgPerUnit.toFixed(6)}`;
   }
+}
+
+/** Los flejes que una receta consume se identifican por línea + acabado + espesor + ancho. */
+function stripKey(cost: Extract<PriceFloorCost, { kind: 'STRIP_RECIPE' }>): string {
+  return `${cost.businessLineId}|${cost.finishId}|${cost.inputThicknessMm}|${cost.inputWidthMm}`;
+}
+
+/**
+ * Costo por kg **ponderado por los kilos que hay**: `Σ(kg × costo) ÷ Σ kg` sobre los saldos con
+ * cantidad positiva. Cero si no hay nada con saldo (y sin costo no hay piso, D-163). Lo comparten
+ * el agregado de una cobertura y los flejes de una receta para que no puedan ponderar distinto.
+ */
+function weightedCostPerKg(
+  balances: readonly { qty: { toString(): string }; avgCost: { toString(): string } }[],
+): Decimal {
+  let kilos = new Decimal(0);
+  let value = new Decimal(0);
+  for (const balance of balances) {
+    const qty = toDecimal(balance.qty.toString());
+    if (qty.lte(0)) continue;
+    kilos = kilos.plus(qty);
+    value = value.plus(qty.times(toDecimal(balance.avgCost.toString())));
+  }
+  return kilos.lte(0) ? new Decimal(0) : value.div(kilos);
 }
 
 /**
@@ -300,19 +341,73 @@ async function unitCosts(
     }
     for (const { key, cost } of rawCandidates) {
       if (out.has(key)) continue;
-      let kilos = new Decimal(0);
-      let value = new Decimal(0);
-      for (const id of idsBySpec.get(rawMaterialCoilKey(cost.spec)) ?? []) {
-        for (const balance of balancesById.get(id) ?? []) {
-          const qty = toDecimal(balance.qty.toString());
-          if (qty.lte(0)) continue;
-          kilos = kilos.plus(qty);
-          value = value.plus(qty.times(toDecimal(balance.avgCost.toString())));
-        }
-      }
-      out.set(key, kilos.lte(0) ? new Decimal(0) : value.div(kilos).times(cost.kgPerUnit));
+      const ids = idsBySpec.get(rawMaterialCoilKey(cost.spec)) ?? [];
+      const rollBalances = ids.flatMap((id) => balancesById.get(id) ?? []);
+      out.set(key, weightedCostPerKg(rollBalances).times(cost.kgPerUnit));
     }
   }
 
+  await addStripRecipeCosts(tx, candidates, out);
   return out;
+}
+
+/**
+ * D-342: el costo de los perfiles de drywall con receta. Una consulta para todos los flejes
+ * compatibles con **alguna** receta del lote y una para sus saldos, no una por perfil; después
+ * se reparte en memoria por línea + acabado + espesor + ancho.
+ */
+async function addStripRecipeCosts(
+  tx: Prisma.TransactionClient,
+  candidates: PriceFloorCandidate[],
+  out: Map<string, Decimal>,
+): Promise<void> {
+  const recipes = candidates.flatMap((c) =>
+    c.cost.kind === 'STRIP_RECIPE' ? [{ key: costKey(c.cost), cost: c.cost }] : [],
+  );
+  if (recipes.length === 0) return;
+
+  const distinct = new Map(recipes.map((r) => [stripKey(r.cost), r.cost]));
+  const strips = await tx.coil.findMany({
+    where: {
+      kind: CoilKind.STRIP,
+      // Los mismos flejes que ofrece `/planta` para la OP de esa receta: abiertos y de la
+      // combinación exacta. Un fleje anulado, cerrado o en poder de un tercero no es material
+      // con el que se pueda producir hoy.
+      status: CoilStatus.OPEN,
+      OR: [...distinct.values()].map((c) => ({
+        businessLineId: c.businessLineId,
+        finishId: c.finishId,
+        thicknessMm: c.inputThicknessMm,
+        widthMm: c.inputWidthMm,
+      })),
+    },
+    select: { id: true, businessLineId: true, finishId: true, thicknessMm: true, widthMm: true },
+  });
+  const balances =
+    strips.length === 0
+      ? []
+      : await tx.inventoryBalance.findMany({
+          where: { itemType: InventoryItemType.COIL, itemId: { in: strips.map((s) => s.id) } },
+          select: { itemId: true, qty: true, avgCost: true },
+        });
+  const balancesById = new Map<string, typeof balances>();
+  for (const balance of balances) {
+    balancesById.set(balance.itemId, [...(balancesById.get(balance.itemId) ?? []), balance]);
+  }
+  const balancesByStrip = new Map<string, typeof balances>();
+  for (const strip of strips) {
+    if (strip.finishId === null) continue;
+    const key = `${strip.businessLineId}|${strip.finishId}|${strip.thicknessMm.toFixed(2)}|${strip.widthMm.toFixed(2)}`;
+    balancesByStrip.set(key, [
+      ...(balancesByStrip.get(key) ?? []),
+      ...(balancesById.get(strip.id) ?? []),
+    ]);
+  }
+  for (const { key, cost } of recipes) {
+    if (out.has(key)) continue;
+    out.set(
+      key,
+      weightedCostPerKg(balancesByStrip.get(stripKey(cost)) ?? []).times(cost.kgPerUnit),
+    );
+  }
 }

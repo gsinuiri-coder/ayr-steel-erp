@@ -77,8 +77,10 @@ async function measure(page: Page, rootSelector: string): Promise<LayoutReport> 
   }, rootSelector);
 }
 
-function expectClean(report: LayoutReport, label: string, checkPage = true) {
-  expect(report.cells, `${label}: no encontró celdas de formulario`).toBeGreaterThan(3);
+function expectClean(report: LayoutReport, label: string, checkPage = true, minCells = 4) {
+  expect(report.cells, `${label}: no encontró celdas de formulario`).toBeGreaterThanOrEqual(
+    minCells,
+  );
   expect(report.overlaps, `${label}: celdas que se pisan`).toEqual([]);
   // El rótulo mide siempre lo mismo: todos los controles arrancan a la misma distancia.
   const distinct = [...new Set(report.offsets)];
@@ -131,6 +133,37 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByRole('dialog').getByText('Peso de la pieza (kg)')).toBeVisible();
       expectClean(await measure(page, '[role="dialog"]'), 'ProductDialog drywall', false);
       await page.keyboard.press('Escape');
+    });
+
+    // D-293, segunda tanda (correcciones 03b, M4): los diálogos de acabados y colores y el
+    // formulario de compra, que habían quedado sin migrar.
+    test('acabados y colores: los diálogos no se pisan ni desalinean', async ({ page }) => {
+      await loginAsAdmin(page);
+      await page.goto('/acabados');
+      await expect(page.getByRole('heading', { name: 'Acabados', exact: true })).toBeVisible({
+        timeout: 60_000,
+      });
+      await page.getByRole('button', { name: 'Nuevo acabado' }).first().click();
+      const finish = page.getByRole('dialog');
+      await expect(finish.getByText('Factor de densidad')).toBeVisible();
+      expectClean(await measure(page, '[role="dialog"]'), 'FinishDialog', false);
+      await page.keyboard.press('Escape');
+
+      await page.goto('/catalogo?tab=colores');
+      await page.getByRole('button', { name: 'Nuevo color' }).first().click();
+      const color = page.getByRole('dialog');
+      await expect(color.getByText('Muestra')).toBeVisible();
+      expectClean(await measure(page, '[role="dialog"]'), 'ColorDialog', false, 3);
+      await page.keyboard.press('Escape');
+    });
+
+    test('la compra nueva (bobinas y otros tipos) no se pisa ni desalinea', async ({ page }) => {
+      await loginAsAdmin(page);
+      await page.goto('/compras/nueva');
+      await expect(page.getByRole('heading', { name: 'Nueva compra' })).toBeVisible({
+        timeout: 60_000,
+      });
+      expectClean(await measure(page, 'main'), '/compras/nueva');
     });
 
     test('cotización, despacho y comprobante nuevos', async ({ page }) => {

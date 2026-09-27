@@ -53,6 +53,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { AccessoryReportCard } from './accessory-report-card';
 import { CoilPicker } from './coil-picker';
 import { RowActions } from '@/components/row-actions';
 
@@ -520,9 +521,14 @@ export function RoofingOrderPanel({
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            {order.remainingPieces.length > 0
-              ? `Faltan ${describePieces(order.remainingPieces)}`
-              : 'El plan ya está cubierto.'}
+            {/* D-343: un accesorio no tiene plan de largos; lo que falta son metros de bobina. */}
+            {order.isAccessory
+              ? toDecimal(order.remainingMeters).gt(0)
+                ? `Faltan ${order.remainingMeters} m de bobina`
+                : 'Ya se reportaron los metros encargados.'
+              : order.remainingPieces.length > 0
+                ? `Faltan ${describePieces(order.remainingPieces)}`
+                : 'El plan ya está cubierto.'}
             {' · '}
             <Link href={`/produccion/${order.orderId}`} className="underline">
               Ver el detalle de la orden
@@ -542,17 +548,20 @@ export function RoofingOrderPanel({
         </Alert>
       )}
 
-      <PlanCard
-        order={order}
-        rows={draft.planRows}
-        pending={savePlan.isPending}
-        onRows={(planRows) => {
-          onDraft({ planRows });
-        }}
-        onSave={(pieces) => {
-          savePlan.mutate(pieces);
-        }}
-      />
+      {/* D-343: un accesorio no tiene plan de largos que editar. */}
+      {!order.isAccessory && (
+        <PlanCard
+          order={order}
+          rows={draft.planRows}
+          pending={savePlan.isPending}
+          onRows={(planRows) => {
+            onDraft({ planRows });
+          }}
+          onSave={(pieces) => {
+            savePlan.mutate(pieces);
+          }}
+        />
+      )}
 
       <Card>
         <CardHeader className="pb-3">
@@ -648,301 +657,336 @@ export function RoofingOrderPanel({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            Reportar lo que salió
-            <InfoPopover label="Sobre el borrador de reportes">
-              Cada fila del borrador es un reporte. Queda guardado aunque cierres la pantalla, y no
-              mueve inventario hasta que lo ejecutes: ahí se graban todas las filas juntas, o
-              ninguna si alguna falla.
-            </InfoPopover>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          {liveCoils.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Monta una bobina y las líneas del plan que falta aparecen acá, listas para ajustar.
-            </p>
-          ) : (
-            <div className="grid gap-3 rounded-lg border p-3">
-              {editing !== null && (
-                <p className="text-sm font-medium">Corrigiendo la fila {editing.rowNumber}</p>
-              )}
-              <LengthEditor
-                rows={draft.rows ?? seedRows(order)}
-                idPrefix={`reporte-${order.orderId}`}
-                disabled={busy}
-                onChange={(rows) => {
-                  onDraft({ rows });
-                }}
-              />
-
-              <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-end">
-                <div className="grid gap-1.5">
-                  <Label htmlFor={`kg-${order.orderId}`} className="flex items-center gap-1.5">
-                    kg consumido (opcional)
-                    <InfoPopover label="Sobre el kg consumido">
-                      Dato de planta: el kardex sale por el kilo teórico y el consumo real se
-                      reconcilia al cerrar.
-                    </InfoPopover>
-                  </Label>
-                  <Input
-                    id={`kg-${order.orderId}`}
-                    aria-label={`Kilos consumidos de ${order.code}`}
-                    inputMode="decimal"
-                    placeholder={resolved.newKg === null ? 'opcional' : resolved.newKg.toFixed(3)}
-                    disabled={busy}
-                    value={draft.consumedKg}
-                    onChange={(e) => {
-                      onDraft({ consumedKg: e.target.value });
-                    }}
-                  />
-                </div>
-                <div className="grid gap-1 text-sm">
-                  {resolved.pieces && (
-                    <p className="text-muted-foreground">
-                      {describePieces(resolved.pieces)} · {resolved.meters.toFixed(3)} m
-                      {resolved.newKg !== null && <> · {resolved.newKg.toFixed(3)} kg teóricos</>}
-                    </p>
-                  )}
-                  {resolved.error !== null && <p className="text-destructive">{resolved.error}</p>}
-                  {resolved.yieldNote !== null && (
-                    <p role="status" className="text-sky-700 dark:text-sky-400">
-                      ℹ {resolved.yieldNote}
-                    </p>
-                  )}
-                  {resolved.deviation !== null && (
-                    <p className="text-amber-700 dark:text-amber-500">⚠ {resolved.deviation}</p>
-                  )}
-                  {resolved.completesPlan && (
-                    <p className="text-muted-foreground">
-                      Con esta fila el borrador cubre el plan: agrégala y después «Ejecutar y
-                      cerrar» lo graba, cierra la orden y libera la bobina para la orden siguiente.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-end gap-2">
+      {order.isAccessory ? (
+        // D-343: un accesorio reporta metros de bobina directos, sin largos ni borrador.
+        <AccessoryReportCard
+          order={order}
+          coilId={draft.coilId === '' ? undefined : draft.coilId}
+          operationDate={operationDate}
+          closeKg={draft.closeKg}
+          onCloseKg={(closeKg) => {
+            reasonToSend.current = null;
+            onDraft({ closeKg });
+          }}
+          disabled={busy}
+          canCloseOnly={canCloseOnly}
+          closing={closeOnly.isPending}
+          onCloseOnly={() => {
+            reasonFor.current = 'close-only';
+            closeOnly.mutate(reasonToSend.current);
+          }}
+          onDone={(updated) => {
+            onNotes({ pool: updated.rawMaterialWarnings ?? [], note: null });
+            onDraft({ closeKg: '' });
+            invalidate();
+          }}
+        />
+      ) : (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2">
+              Reportar lo que salió
+              <InfoPopover label="Sobre el borrador de reportes">
+                Cada fila del borrador es un reporte. Queda guardado aunque cierres la pantalla, y
+                no mueve inventario hasta que lo ejecutes: ahí se graban todas las filas juntas, o
+                ninguna si alguna falla.
+              </InfoPopover>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {liveCoils.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Monta una bobina y las líneas del plan que falta aparecen acá, listas para ajustar.
+              </p>
+            ) : (
+              <div className="grid gap-3 rounded-lg border p-3">
                 {editing !== null && (
+                  <p className="text-sm font-medium">Corrigiendo la fila {editing.rowNumber}</p>
+                )}
+                <LengthEditor
+                  rows={draft.rows ?? seedRows(order)}
+                  idPrefix={`reporte-${order.orderId}`}
+                  disabled={busy}
+                  onChange={(rows) => {
+                    onDraft({ rows });
+                  }}
+                />
+
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-end">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor={`kg-${order.orderId}`} className="flex items-center gap-1.5">
+                      kg consumido (opcional)
+                      <InfoPopover label="Sobre el kg consumido">
+                        Dato de planta: el kardex sale por el kilo teórico y el consumo real se
+                        reconcilia al cerrar.
+                      </InfoPopover>
+                    </Label>
+                    <Input
+                      id={`kg-${order.orderId}`}
+                      aria-label={`Kilos consumidos de ${order.code}`}
+                      inputMode="decimal"
+                      placeholder={resolved.newKg === null ? 'opcional' : resolved.newKg.toFixed(3)}
+                      disabled={busy}
+                      value={draft.consumedKg}
+                      onChange={(e) => {
+                        onDraft({ consumedKg: e.target.value });
+                      }}
+                    />
+                  </div>
+                  <div className="grid gap-1 text-sm">
+                    {resolved.pieces && (
+                      <p className="text-muted-foreground">
+                        {describePieces(resolved.pieces)} · {resolved.meters.toFixed(3)} m
+                        {resolved.newKg !== null && <> · {resolved.newKg.toFixed(3)} kg teóricos</>}
+                      </p>
+                    )}
+                    {resolved.error !== null && (
+                      <p className="text-destructive">{resolved.error}</p>
+                    )}
+                    {resolved.yieldNote !== null && (
+                      <p role="status" className="text-sky-700 dark:text-sky-400">
+                        ℹ {resolved.yieldNote}
+                      </p>
+                    )}
+                    {resolved.deviation !== null && (
+                      <p className="text-amber-700 dark:text-amber-500">⚠ {resolved.deviation}</p>
+                    )}
+                    {resolved.completesPlan && (
+                      <p className="text-muted-foreground">
+                        Con esta fila el borrador cubre el plan: agrégala y después «Ejecutar y
+                        cerrar» lo graba, cierra la orden y libera la bobina para la orden
+                        siguiente.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {editing !== null && (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => {
+                        onDraft({ rows: null, consumedKg: '', editingDraftId: null });
+                      }}
+                    >
+                      Cancelar corrección
+                    </Button>
+                  )}
                   <Button
-                    variant="outline"
-                    disabled={busy}
+                    variant={hasDrafts && editing === null ? 'outline' : 'default'}
+                    aria-label={
+                      editing === null
+                        ? `Agregar al borrador de ${order.code}`
+                        : `Guardar la fila ${String(editing.rowNumber)} de ${order.code}`
+                    }
+                    disabled={resolved.pieces === null || resolved.error !== null || busy}
                     onClick={() => {
-                      onDraft({ rows: null, consumedKg: '', editingDraftId: null });
+                      if (resolved.pieces) {
+                        saveDraft.mutate({ pieces: resolved.pieces, isAdd: editing === null });
+                      }
                     }}
                   >
-                    Cancelar corrección
+                    {saveDraft.isPending
+                      ? 'Guardando…'
+                      : editing === null
+                        ? 'Agregar al borrador'
+                        : `Guardar fila ${String(editing.rowNumber)}`}
                   </Button>
-                )}
-                <Button
-                  variant={hasDrafts && editing === null ? 'outline' : 'default'}
-                  aria-label={
-                    editing === null
-                      ? `Agregar al borrador de ${order.code}`
-                      : `Guardar la fila ${String(editing.rowNumber)} de ${order.code}`
-                  }
-                  disabled={resolved.pieces === null || resolved.error !== null || busy}
-                  onClick={() => {
-                    if (resolved.pieces) {
-                      saveDraft.mutate({ pieces: resolved.pieces, isAdd: editing === null });
-                    }
-                  }}
-                >
-                  {saveDraft.isPending
-                    ? 'Guardando…'
-                    : editing === null
-                      ? 'Agregar al borrador'
-                      : `Guardar fila ${String(editing.rowNumber)}`}
-                </Button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {hasDrafts && (
-            <div className="grid gap-2">
-              <p className="text-sm font-medium">
-                Borrador de {order.code}: {order.drafts.length}{' '}
-                {order.drafts.length === 1 ? 'fila' : 'filas'} · {order.draftMeters} m sin ejecutar
-              </p>
-              <div className="overflow-x-auto rounded-lg border">
-                <Table aria-label={`Borrador de ${order.code}`}>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Fila</TableHead>
-                      <TableHead>Bobina</TableHead>
-                      <TableHead>Largos</TableHead>
-                      <TableHead className="text-right">m</TableHead>
-                      <TableHead className="text-right">kg teóricos</TableHead>
-                      <TableHead className="text-right">kg declarados</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {order.drafts.map((d) => (
-                      <TableRow
-                        key={d.id}
-                        className={d.id === draft.editingDraftId ? 'bg-primary/5' : undefined}
-                      >
-                        <TableCell>{d.rowNumber}</TableCell>
-                        <TableCell className="font-mono">{d.coilCode}</TableCell>
-                        <TableCell>{describePieces(d.pieces)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{d.meters}</TableCell>
-                        <TableCell className="text-right tabular-nums">{d.theoreticalKg}</TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {d.consumedKg ?? '—'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <RowActions
-                            label={`fila ${String(d.rowNumber)} de ${order.code}`}
-                            primary="fix"
-                            actions={[
-                              {
-                                key: 'fix',
-                                label: 'Corregir',
-                                ariaLabel: `Corregir la fila ${String(d.rowNumber)} de ${order.code}`,
-                                disabled: busy,
-                                onSelect: () => {
-                                  onDraft({
-                                    editingDraftId: d.id,
-                                    coilId: d.coilId,
-                                    consumedKg: d.consumedKg ?? '',
-                                    rows: d.pieces.map((p) => ({
-                                      lengthM: mmToMeters(p.lengthMm),
-                                      qty: String(p.qty),
-                                    })),
-                                  });
-                                },
-                              },
-                              {
-                                key: 'remove',
-                                label: 'Quitar',
-                                ariaLabel: `Quitar la fila ${String(d.rowNumber)} de ${order.code}`,
-                                destructive: true,
-                                disabled: busy,
-                                onSelect: () => {
-                                  removeDraft.mutate(d.id);
-                                },
-                              },
-                            ]}
-                          />
-                        </TableCell>
+            {hasDrafts && (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium">
+                  Borrador de {order.code}: {order.drafts.length}{' '}
+                  {order.drafts.length === 1 ? 'fila' : 'filas'} · {order.draftMeters} m sin
+                  ejecutar
+                </p>
+                <div className="overflow-x-auto rounded-lg border">
+                  <Table aria-label={`Borrador de ${order.code}`}>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Fila</TableHead>
+                        <TableHead>Bobina</TableHead>
+                        <TableHead>Largos</TableHead>
+                        <TableHead className="text-right">m</TableHead>
+                        <TableHead className="text-right">kg teóricos</TableHead>
+                        <TableHead className="text-right">kg declarados</TableHead>
+                        <TableHead className="text-right">Acciones</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {order.drafts.map((d) => (
+                        <TableRow
+                          key={d.id}
+                          className={d.id === draft.editingDraftId ? 'bg-primary/5' : undefined}
+                        >
+                          <TableCell>{d.rowNumber}</TableCell>
+                          <TableCell className="font-mono">{d.coilCode}</TableCell>
+                          <TableCell>{describePieces(d.pieces)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{d.meters}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {d.theoreticalKg}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {d.consumedKg ?? '—'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <RowActions
+                              label={`fila ${String(d.rowNumber)} de ${order.code}`}
+                              primary="fix"
+                              actions={[
+                                {
+                                  key: 'fix',
+                                  label: 'Corregir',
+                                  ariaLabel: `Corregir la fila ${String(d.rowNumber)} de ${order.code}`,
+                                  disabled: busy,
+                                  onSelect: () => {
+                                    onDraft({
+                                      editingDraftId: d.id,
+                                      coilId: d.coilId,
+                                      consumedKg: d.consumedKg ?? '',
+                                      rows: d.pieces.map((p) => ({
+                                        lengthM: mmToMeters(p.lengthMm),
+                                        qty: String(p.qty),
+                                      })),
+                                    });
+                                  },
+                                },
+                                {
+                                  key: 'remove',
+                                  label: 'Quitar',
+                                  ariaLabel: `Quitar la fila ${String(d.rowNumber)} de ${order.code}`,
+                                  destructive: true,
+                                  disabled: busy,
+                                  onSelect: () => {
+                                    removeDraft.mutate(d.id);
+                                  },
+                                },
+                              ]}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/*
+            {/*
             D-089: los kilos que la bobina consumió **de verdad** en toda la corrida. Es el dato
             del que sale el despunte, y sin él el cierre asume merma cero.
           */}
-          {(canCloseOnly || canCloseWithCommit) && (
-            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-start">
-              <div className="grid gap-1.5">
-                <Label htmlFor={`cierre-kg-${order.orderId}`}>
-                  kg que consumió la bobina (opcional)
-                </Label>
-                <Input
-                  id={`cierre-kg-${order.orderId}`}
-                  aria-label={`Kilos consumidos al cerrar ${order.code}`}
-                  inputMode="decimal"
-                  placeholder={resolved.closeBounds.consumedFloorKg.toFixed(3)}
-                  disabled={busy}
-                  value={draft.closeKg}
-                  onChange={(e) => {
-                    reasonToSend.current = null;
-                    onDraft({ closeKg: e.target.value });
-                  }}
-                />
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Sin este dato el cierre usa los kilos declarados reporte a reporte (y el teórico
-                donde no se declaró); el piso son los{' '}
-                {formatQty(resolved.closeBounds.consumedFloorKg.toFixed(3), 'kg')} teóricos de las
-                planchas {hasDrafts ? 'reportadas y del borrador' : 'ya reportadas'}. Lo que pase
-                del piso sale como despunte; el resto de la bobina vuelve al almacén.
-                {draft.closeKg.trim() === '' && resolved.estimatedScrapKg.gt(0) && (
-                  <> Despunte estimado: {formatQty(resolved.estimatedScrapKg.toFixed(3), 'kg')}.</>
-                )}
-                {resolved.closeBounds.closeKgError !== null && (
-                  <span className="text-destructive"> {resolved.closeBounds.closeKgError}</span>
-                )}
-                {resolved.closeBounds.scrapKg.gt(0) &&
-                  resolved.closeBounds.closeKgError === null && (
+            {(canCloseOnly || canCloseWithCommit) && (
+              <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-start">
+                <div className="grid gap-1.5">
+                  <Label htmlFor={`cierre-kg-${order.orderId}`}>
+                    kg que consumió la bobina (opcional)
+                  </Label>
+                  <Input
+                    id={`cierre-kg-${order.orderId}`}
+                    aria-label={`Kilos consumidos al cerrar ${order.code}`}
+                    inputMode="decimal"
+                    placeholder={resolved.closeBounds.consumedFloorKg.toFixed(3)}
+                    disabled={busy}
+                    value={draft.closeKg}
+                    onChange={(e) => {
+                      reasonToSend.current = null;
+                      onDraft({ closeKg: e.target.value });
+                    }}
+                  />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Sin este dato el cierre usa los kilos declarados reporte a reporte (y el teórico
+                  donde no se declaró); el piso son los{' '}
+                  {formatQty(resolved.closeBounds.consumedFloorKg.toFixed(3), 'kg')} teóricos de las
+                  planchas {hasDrafts ? 'reportadas y del borrador' : 'ya reportadas'}. Lo que pase
+                  del piso sale como despunte; el resto de la bobina vuelve al almacén.
+                  {draft.closeKg.trim() === '' && resolved.estimatedScrapKg.gt(0) && (
                     <>
                       {' '}
-                      Despunte al cerrar: {formatQty(resolved.closeBounds.scrapKg.toFixed(3), 'kg')}
-                      .
+                      Despunte estimado: {formatQty(resolved.estimatedScrapKg.toFixed(3), 'kg')}.
                     </>
                   )}
-              </p>
-            </div>
-          )}
+                  {resolved.closeBounds.closeKgError !== null && (
+                    <span className="text-destructive"> {resolved.closeBounds.closeKgError}</span>
+                  )}
+                  {resolved.closeBounds.scrapKg.gt(0) &&
+                    resolved.closeBounds.closeKgError === null && (
+                      <>
+                        {' '}
+                        Despunte al cerrar:{' '}
+                        {formatQty(resolved.closeBounds.scrapKg.toFixed(3), 'kg')}.
+                      </>
+                    )}
+                </p>
+              </div>
+            )}
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <OperationDateField value={operationDate} onChange={onOperationDate} />
-            {hasDrafts && (
-              <>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <OperationDateField value={operationDate} onChange={onOperationDate} />
+              {hasDrafts && (
+                <>
+                  <Button
+                    variant={resolved.draftCoversPlan ? 'outline' : 'default'}
+                    aria-label={`Ejecutar el borrador de ${order.code}`}
+                    disabled={busy || editing !== null || unsavedEditor}
+                    onClick={() => {
+                      start(false);
+                    }}
+                  >
+                    {commit.isPending && !pendingClose ? 'Ejecutando…' : 'Ejecutar borrador'}
+                  </Button>
+                  <Button
+                    variant={resolved.draftCoversPlan ? 'default' : 'outline'}
+                    aria-label={`Ejecutar el borrador y cerrar ${order.code}`}
+                    disabled={
+                      busy ||
+                      editing !== null ||
+                      unsavedEditor ||
+                      resolved.closeBounds.closeKgError !== null
+                    }
+                    onClick={() => {
+                      start(true);
+                    }}
+                  >
+                    {commit.isPending && pendingClose ? 'Cerrando…' : 'Ejecutar y cerrar'}
+                  </Button>
+                </>
+              )}
+              {canCloseOnly && (
                 <Button
-                  variant={resolved.draftCoversPlan ? 'outline' : 'default'}
-                  aria-label={`Ejecutar el borrador de ${order.code}`}
-                  disabled={busy || editing !== null || unsavedEditor}
+                  variant="outline"
+                  aria-label={`Cerrar ${order.code} sin reportar más`}
+                  disabled={busy || resolved.closeBounds.closeKgError !== null}
                   onClick={() => {
-                    start(false);
+                    reasonFor.current = 'close-only';
+                    closeOnly.mutate(reasonToSend.current);
                   }}
                 >
-                  {commit.isPending && !pendingClose ? 'Ejecutando…' : 'Ejecutar borrador'}
+                  {closeOnly.isPending
+                    ? 'Cerrando…'
+                    : `Cerrar ${order.code} sin reportar más${planCovered ? '' : ' (la bobina se acabó)'}`}
                 </Button>
-                <Button
-                  variant={resolved.draftCoversPlan ? 'default' : 'outline'}
-                  aria-label={`Ejecutar el borrador y cerrar ${order.code}`}
-                  disabled={
-                    busy ||
-                    editing !== null ||
-                    unsavedEditor ||
-                    resolved.closeBounds.closeKgError !== null
-                  }
-                  onClick={() => {
-                    start(true);
-                  }}
-                >
-                  {commit.isPending && pendingClose ? 'Cerrando…' : 'Ejecutar y cerrar'}
-                </Button>
-              </>
+              )}
+            </div>
+            {hasDrafts && editing !== null && (
+              <p className="text-right text-xs text-muted-foreground">
+                Termina o cancela la corrección antes de ejecutar.
+              </p>
             )}
-            {canCloseOnly && (
-              <Button
-                variant="outline"
-                aria-label={`Cerrar ${order.code} sin reportar más`}
-                disabled={busy || resolved.closeBounds.closeKgError !== null}
-                onClick={() => {
-                  reasonFor.current = 'close-only';
-                  closeOnly.mutate(reasonToSend.current);
-                }}
-              >
-                {closeOnly.isPending
-                  ? 'Cerrando…'
-                  : `Cerrar ${order.code} sin reportar más${planCovered ? '' : ' (la bobina se acabó)'}`}
-              </Button>
+            {hasDrafts && editing === null && unsavedEditor && (
+              <p className="text-right text-xs text-muted-foreground">
+                Hay una fila escrita en el editor: agrégala al borrador o vacía el editor antes de
+                ejecutar.
+              </p>
             )}
-          </div>
-          {hasDrafts && editing !== null && (
-            <p className="text-right text-xs text-muted-foreground">
-              Termina o cancela la corrección antes de ejecutar.
-            </p>
-          )}
-          {hasDrafts && editing === null && unsavedEditor && (
-            <p className="text-right text-xs text-muted-foreground">
-              Hay una fila escrita en el editor: agrégala al borrador o vacía el editor antes de
-              ejecutar.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       <ReasonDialog
         open={askingReason}

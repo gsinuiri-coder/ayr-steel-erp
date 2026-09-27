@@ -71,23 +71,23 @@ orden; es la que usan los handoffs y `docs/cliente/revision-2026-09-25.md`.
 
 ## Dónde quedó cada punto
 
-| Punto | Estado                                                                                                         | Dónde                                                                      |
-| ----- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| 1     | Entregado                                                                                                      | D-291                                                                      |
-| 2     | Entregado                                                                                                      | D-292                                                                      |
-| 3     | Entregado                                                                                                      | D-292                                                                      |
-| 4     | Entregado                                                                                                      | D-290 (y el formato del cliente, D-298)                                    |
-| 5     | **A validar en demo**                                                                                          | D-135 (costo de drywall por producción) y D-068 (precio de lista opcional) |
-| 6     | Cotizar sin stock ya no bloquea (D-188); lo que bloqueaba era **confirmar**, y se cambia para el administrador | D-188; a validar en demo                                                   |
-| 7     | **A validar en demo**                                                                                          | subtipo «Accesorio» de coberturas de aluzinc                               |
-| 8     | Resuelto: el filtro de bobinas es por color comercial; el acabado sigue en el producto                         | D-270, D-271, D-135                                                        |
-| 9     | **A validar en demo**                                                                                          | reporte «Ventas y margen»                                                  |
-| 10    | Entregado                                                                                                      | D-293                                                                      |
-| 11    | Entregado                                                                                                      | D-294                                                                      |
-| 12    | Entregado                                                                                                      | D-295                                                                      |
-| 13    | Entregado                                                                                                      | D-290                                                                      |
-| 14    | Entregado                                                                                                      | D-289                                                                      |
-| 15    | Entregado                                                                                                      | D-296 (y el formato del cliente, D-298)                                    |
-| 16    | Entregado                                                                                                      | D-289                                                                      |
-| 17    | Entregado                                                                                                      | D-289                                                                      |
-| 18    | Entregado                                                                                                      | D-291                                                                      |
+| Punto | Estado                                                                                 | Dónde                                                                                  |
+| ----- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 1     | Entregado                                                                              | D-291                                                                                  |
+| 2     | Entregado                                                                              | D-292                                                                                  |
+| 3     | Entregado                                                                              | D-292                                                                                  |
+| 4     | Entregado                                                                              | D-290 (y el formato del cliente, D-298)                                                |
+| 5     | Entregado                                                                              | D-342 (piso del drywall desde la receta; el 1 % de merma ya va en el peso) y D-135     |
+| 6     | Entregado: el administrador confirma con faltante, el vendedor sigue bloqueado         | D-341 (y D-188 para el aviso de cotizar sin stock)                                     |
+| 7     | Entregado                                                                              | D-343 (subtipo Accesorio: metros lineales de bobina, sin largos)                       |
+| 8     | Resuelto: el filtro de bobinas es por color comercial; el acabado sigue en el producto | D-270, D-271, D-135                                                                    |
+| 9     | **A validar en demo**                                                                  | reporte «Ventas y margen»                                                              |
+| 10    | Entregado                                                                              | D-293; los diálogos de acabados, colores y receta y el formulario de compra, en la 03b |
+| 11    | Entregado                                                                              | D-294                                                                                  |
+| 12    | Entregado                                                                              | D-295                                                                                  |
+| 13    | Entregado                                                                              | D-290                                                                                  |
+| 14    | Entregado                                                                              | D-289                                                                                  |
+| 15    | Entregado                                                                              | D-296 (y el formato del cliente, D-298)                                                |
+| 16    | Entregado                                                                              | D-289                                                                                  |
+| 17    | Entregado                                                                              | D-289                                                                                  |
+| 18    | Entregado                                                                              | D-291                                                                                  |

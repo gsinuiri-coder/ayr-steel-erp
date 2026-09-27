@@ -43,14 +43,8 @@ import { formatMoney, isPositiveDecimal, todayIso } from '@/lib/format';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+import { Form, FormControl, FormField } from '@/components/ui/form';
+import { FormFieldCell } from '@/components/form';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -355,13 +349,12 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           <CardHeader>
             <CardTitle>Comprobante</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-x-4 gap-y-3 md:grid-cols-3">
+          <CardContent className="grid grid-cols-12 items-start gap-x-3 gap-y-1">
             <FormField
               control={form.control}
               name="type"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Tipo de compra</FormLabel>
+                <FormFieldCell span={4} label="Tipo de compra">
                   <Select
                     value={field.value}
                     onValueChange={(v) => {
@@ -391,16 +384,14 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       ))}
                     </SelectContent>
                   </Select>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             <FormField
               control={form.control}
               name="supplierId"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Proveedor</FormLabel>
+                <FormFieldCell span={4} label="Proveedor">
                   <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger className="w-full">
@@ -425,16 +416,14 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       No se pudieron cargar los proveedores.
                     </p>
                   )}
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             <FormField
               control={form.control}
               name="businessLine"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Línea de negocio</FormLabel>
+                <FormFieldCell span={4} label="Línea de negocio">
                   <Select
                     value={field.value}
                     onValueChange={(v) => {
@@ -473,16 +462,14 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       )}
                     </SelectContent>
                   </Select>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             <FormField
               control={form.control}
               name="docType"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Comprobante</FormLabel>
+                <FormFieldCell span={4} label="Comprobante">
                   <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger className="w-full">
@@ -497,55 +484,47 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       ))}
                     </SelectContent>
                   </Select>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             <FormField
               control={form.control}
               name="series"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Serie</FormLabel>
+                <FormFieldCell span={4} label="Serie">
                   <FormControl>
                     <Input placeholder="F001" autoComplete="off" {...field} />
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             <FormField
               control={form.control}
               name="number"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Número</FormLabel>
+                <FormFieldCell span={4} label="Número">
                   <FormControl>
                     <Input placeholder="1523" autoComplete="off" {...field} />
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             <FormField
               control={form.control}
               name="issueDate"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Fecha de emisión</FormLabel>
+                <FormFieldCell span={4} label="Fecha de emisión">
                   <FormControl>
                     <Input type="date" {...field} />
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             <FormField
               control={form.control}
               name="currency"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Moneda</FormLabel>
+                <FormFieldCell span={4} label="Moneda">
                   <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger className="w-full">
@@ -560,8 +539,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       ))}
                     </SelectContent>
                   </Select>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             {currency !== 'PEN' && (
@@ -569,16 +547,14 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 control={form.control}
                 name="exchangeRate"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Tipo de cambio</FormLabel>
+                  <FormFieldCell span={4} label="Tipo de cambio" numeric>
                     <FormControl>
                       <Input placeholder="Automático (SUNAT del día)" {...field} />
                     </FormControl>
                     <p className="text-xs text-muted-foreground">
                       En blanco usa el TC SUNAT de la fecha de emisión (D-029).
                     </p>
-                    <FormMessage />
-                  </FormItem>
+                  </FormFieldCell>
                 )}
               />
             )}
@@ -586,21 +562,18 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
               control={form.control}
               name="igvRate"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>IGV (%)</FormLabel>
+                <FormFieldCell span={4} label="IGV (%)" numeric>
                   <FormControl>
                     <Input {...field} />
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             <FormField
               control={form.control}
               name="paymentTerms"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Condición de pago</FormLabel>
+                <FormFieldCell span={4} label="Condición de pago">
                   <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger className="w-full">
@@ -615,8 +588,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       ))}
                     </SelectContent>
                   </Select>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
             {paymentTerms === 'CREDITO' && (
@@ -624,13 +596,11 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 control={form.control}
                 name="creditDays"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Días de crédito</FormLabel>
+                  <FormFieldCell span={4} label="Días de crédito" numeric>
                     <FormControl>
                       <Input type="number" min={1} max={365} {...field} />
                     </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                  </FormFieldCell>
                 )}
               />
             )}
@@ -639,8 +609,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 control={form.control}
                 name="serviceKind"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Clase de servicio</FormLabel>
+                  <FormFieldCell span={4} label="Clase de servicio">
                     <Select value={field.value ?? ''} onValueChange={field.onChange}>
                       <FormControl>
                         <SelectTrigger className="w-full">
@@ -655,8 +624,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                         ))}
                       </SelectContent>
                     </Select>
-                    <FormMessage />
-                  </FormItem>
+                  </FormFieldCell>
                 )}
               />
             )}
@@ -665,8 +633,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 control={form.control}
                 name="relatedPurchaseId"
                 render={({ field }) => (
-                  <FormItem className="md:col-span-2">
-                    <FormLabel>Imputar al costo de una compra de bobinas (D-043)</FormLabel>
+                  <FormFieldCell span={8} label="Imputar al costo de una compra de bobinas (D-043)">
                     <Select
                       value={field.value ?? NO_LINK}
                       onValueChange={(v) => {
@@ -692,8 +659,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       de la compra elegida y sube su costo promedio. Solo un administrador puede
                       imputarlo.
                     </p>
-                    <FormMessage />
-                  </FormItem>
+                  </FormFieldCell>
                 )}
               />
             )}
@@ -702,8 +668,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 control={form.control}
                 name="relatedCuttingOrderId"
                 render={({ field }) => (
-                  <FormItem className="md:col-span-2">
-                    <FormLabel>Imputar al costo de una orden de corte (RF-41)</FormLabel>
+                  <FormFieldCell span={8} label="Imputar al costo de una orden de corte (RF-41)">
                     <Select
                       value={field.value ?? NO_LINK}
                       onValueChange={(v) => {
@@ -731,8 +696,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       ya recibidos de esa orden, sin importar si llega antes o después de la
                       recepción física. Solo un administrador puede imputarlo.
                     </p>
-                    <FormMessage />
-                  </FormItem>
+                  </FormFieldCell>
                 )}
               />
             )}
@@ -740,13 +704,11 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
               control={form.control}
               name="notes"
               render={({ field }) => (
-                <FormItem className="md:col-span-3">
-                  <FormLabel>Observaciones</FormLabel>
+                <FormFieldCell span={12} label="Observaciones">
                   <FormControl>
                     <Input autoComplete="off" placeholder="Opcional" {...field} />
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
+                </FormFieldCell>
               )}
             />
           </CardContent>
@@ -764,14 +726,16 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
               </p>
             )}
             {items.fields.map((row, index) => (
-              <div key={row.id} className="grid gap-3 rounded-lg border p-3 md:grid-cols-6">
+              <div
+                key={row.id}
+                className="grid grid-cols-12 items-start gap-x-3 gap-y-1 rounded-lg border p-3"
+              >
                 {isFinishedGood && (
                   <FormField
                     control={form.control}
                     name={`items.${index}.productId`}
                     render={({ field }) => (
-                      <FormItem className="md:col-span-2">
-                        <FormLabel>Producto</FormLabel>
+                      <FormFieldCell span={4} label="Producto">
                         <Select
                           value={field.value ?? ''}
                           onValueChange={(v) => {
@@ -803,8 +767,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                             No se pudo cargar el catálogo de la línea.
                           </p>
                         )}
-                        <FormMessage />
-                      </FormItem>
+                      </FormFieldCell>
                     )}
                   />
                 )}
@@ -813,8 +776,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                     control={form.control}
                     name={`items.${index}.finishId`}
                     render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{FINISH_FIELD_LABEL}</FormLabel>
+                      <FormFieldCell span={2} label={FINISH_FIELD_LABEL}>
                         <Select value={field.value ?? ''} onValueChange={field.onChange}>
                           <FormControl>
                             <SelectTrigger className="w-full">
@@ -858,8 +820,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                             No se pudieron cargar los acabados.
                           </p>
                         )}
-                        <FormMessage />
-                      </FormItem>
+                      </FormFieldCell>
                     )}
                   />
                 )}
@@ -867,13 +828,11 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                   control={form.control}
                   name={`items.${index}.description`}
                   render={({ field }) => (
-                    <FormItem className="md:col-span-2">
-                      <FormLabel>Descripción</FormLabel>
+                    <FormFieldCell span={4} label="Descripción">
                       <FormControl>
                         <Input autoComplete="off" {...field} />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
+                    </FormFieldCell>
                   )}
                 />
                 {isCoil && (
@@ -882,26 +841,22 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       control={form.control}
                       name={`items.${index}.widthMm`}
                       render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Ancho (mm)</FormLabel>
+                        <FormFieldCell span={2} label="Ancho (mm)" numeric>
                           <FormControl>
                             <Input inputMode="decimal" {...field} />
                           </FormControl>
-                          <FormMessage />
-                        </FormItem>
+                        </FormFieldCell>
                       )}
                     />
                     <FormField
                       control={form.control}
                       name={`items.${index}.thicknessMm`}
                       render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Espesor (mm)</FormLabel>
+                        <FormFieldCell span={2} label="Espesor (mm)" numeric>
                           <FormControl>
                             <Input inputMode="decimal" {...field} />
                           </FormControl>
-                          <FormMessage />
-                        </FormItem>
+                        </FormFieldCell>
                       )}
                     />
                   </>
@@ -910,13 +865,11 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                   control={form.control}
                   name={`items.${index}.qty`}
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{isCoil ? 'Peso (kg)' : 'Cantidad'}</FormLabel>
+                    <FormFieldCell span={2} label={isCoil ? 'Peso (kg)' : 'Cantidad'} numeric>
                       <FormControl>
                         <Input inputMode="decimal" {...field} />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
+                    </FormFieldCell>
                   )}
                 />
                 {!isCoil && (
@@ -924,8 +877,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                     control={form.control}
                     name={`items.${index}.unit`}
                     render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Unidad</FormLabel>
+                      <FormFieldCell span={2} label="Unidad">
                         <Select value={field.value} onValueChange={field.onChange}>
                           <FormControl>
                             <SelectTrigger className="w-full">
@@ -940,8 +892,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                             ))}
                           </SelectContent>
                         </Select>
-                        <FormMessage />
-                      </FormItem>
+                      </FormFieldCell>
                     )}
                   />
                 )}
@@ -949,18 +900,18 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                   control={form.control}
                   name={`items.${index}.unitPrice`}
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        {isCoil ? 'Precio por kg' : 'Precio unitario'} (sin IGV)
-                      </FormLabel>
+                    <FormFieldCell
+                      span={2}
+                      label={<>{isCoil ? 'Precio por kg' : 'Precio unitario'} (sin IGV)</>}
+                      numeric
+                    >
                       <FormControl>
                         <Input inputMode="decimal" {...field} />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
+                    </FormFieldCell>
                   )}
                 />
-                <div className="flex items-end">
+                <div className="col-span-2 mt-5">
                   <Button
                     type="button"
                     variant="ghost"

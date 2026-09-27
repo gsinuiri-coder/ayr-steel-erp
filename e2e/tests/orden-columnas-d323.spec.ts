@@ -54,7 +54,9 @@ test.describe('D-323 — orden por columna en el servidor', () => {
   test('cotizaciones: el orden es de la lista entera (entre páginas), el filtro por columna no existe y una clave inventada es 400', async ({
     page,
   }) => {
-    const token = `ORD${randomBytes(3).toString('hex').toUpperCase()}`;
+    // Solo letras: la búsqueda de cotizaciones también compara el número (`seq`) con los dígitos
+    // del texto, y un token con «4» o «25» trae la cotización nº 4 o nº 25 de otra prueba.
+    const token = `ORD${Array.from(randomBytes(4), (b) => String.fromCharCode(65 + (b % 26))).join('')}`;
     const service = await createSellableProduct(api, {
       lineCode: SERVICES_LINE,
       listPricePen: '100.0000',

@@ -28,8 +28,11 @@ import {
   cancelQuotationSchema,
   cancelSalesOrderSchema,
   reassignSellerSchema,
+  completeReservationSchema,
   confirmQuotationSchema,
   createQuotationSchema,
+  type CompleteReservationInput,
+  type OrderWithShortfallDto,
   createSalesOrderSchema,
   quotationQuerySchema,
   releaseReservationSchema,
@@ -221,7 +224,7 @@ export class SalesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(confirmQuotationSchema)) body: ConfirmQuotationInput,
   ): Promise<SalesOrderDto> {
-    return this.orders.confirm(actor, id, body.promisedDeliveryDate);
+    return this.orders.confirm(actor, id, body);
   }
 
   /**
@@ -328,6 +331,16 @@ export class SalesController {
     return this.orders.findLinesWithoutOrder(actor);
   }
 
+  /**
+   * D-341: pedidos confirmados con faltante de material — la tarjeta del Panel. Va antes de
+   * `orders/:id` por la misma razón que la anterior.
+   */
+  @Get('orders/with-shortfall')
+  @Roles(Role.ADMINISTRADOR)
+  findOrdersWithShortfall(): Promise<OrderWithShortfallDto[]> {
+    return this.orders.findOrdersWithShortfall();
+  }
+
   @Get('orders/:id')
   findOrder(
     @CurrentUser() actor: RequestUser,
@@ -354,6 +367,20 @@ export class SalesController {
     @Body(new ZodValidationPipe(cancelSalesOrderSchema)) body: CancelSalesOrderInput,
   ): Promise<SalesOrderDto> {
     return this.orders.cancel(actor, id, body.reason);
+  }
+
+  /**
+   * D-341 «Completar reserva»: reserva lo que hoy alcanza del faltante de un pedido confirmado
+   * con faltante. Solo ADMINISTRADOR; no crea órdenes nuevas.
+   */
+  @Post('orders/:id/complete-reservation')
+  @Roles(Role.ADMINISTRADOR)
+  completeReservation(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(completeReservationSchema)) body: CompleteReservationInput,
+  ): Promise<SalesOrderDto> {
+    return this.orders.completeReservation(actor, id, body.reason);
   }
 
   /** Fecha prometida, después de creado el pedido (D-096): solo ADMINISTRADOR. */

@@ -19,6 +19,7 @@ import {
   Decimal,
   finishRal,
   describePieces,
+  isAccessory,
   isOverdue,
   queueSemaphore,
   fromDateOnly,
@@ -465,6 +466,18 @@ export class RoofingProductionService {
       const order = await lockOrder(tx, orderId);
       assertKind(order, ProductionOrderKind.ROOFING);
       assertLive(order, 'cambiar el plan de corte');
+      // D-343: un accesorio no tiene plan de largos —sus reportes no dejan detalle de largos, así
+      // que un plan haría que cada reporte se compare solo contra él y no acumule (D-146)—; lo
+      // que pide el pedido son sus metros.
+      const planned = await tx.product.findUniqueOrThrow({
+        where: { id: order.productId },
+        select: { roofingKind: true },
+      });
+      if (isAccessory(planned)) {
+        throw new BadRequestException(
+          'Un accesorio no lleva plan de largos: lo que pide el pedido son sus metros lineales de bobina',
+        );
+      }
 
       // D-191: el plan nuevo no puede quedar por debajo de lo que el borrador ya ocupa sobre lo
       // reportado. Sin esto el borrador quedaba inválido en silencio y planta se enteraba
@@ -895,14 +908,30 @@ export class RoofingProductionService {
 
     const product = await tx.product.findUniqueOrThrow({
       where: { id: order.productId },
-      select: { sku: true, unit: true, lengthMm: true },
+      select: { sku: true, unit: true, lengthMm: true, roofingKind: true },
     });
+
+    // D-343: un accesorio reporta **metros lineales de bobina**, no largos; todo lo demás, largos.
+    // El schema solo garantiza que venga una de las dos formas: cuál corresponde lo decide el
+    // subtipo del producto de la orden, que solo el servicio conoce.
+    const accessory = isAccessory(product);
+    if (accessory && input.meters === undefined) {
+      throw new BadRequestException(
+        `${product.sku} es un accesorio: reporta los metros lineales de bobina que usó, no largos`,
+      );
+    }
+    if (!accessory && input.meters !== undefined) {
+      throw new BadRequestException(
+        `${product.sku} no es un accesorio: detalla los largos que salieron`,
+      );
+    }
+    const inputPieces = input.pieces ?? [];
 
     // D-083: una plancha de catálogo tiene el largo en su SKU. Reportar otro largo la
     // convertiría en un producto distinto metido en el mismo saldo.
     if (product.lengthMm !== null) {
       const fixed = product.lengthMm.toFixed(2);
-      const off = input.pieces.find((p) => toFixedString(p.lengthMm, 'MM') !== fixed);
+      const off = inputPieces.find((p) => toFixedString(p.lengthMm, 'MM') !== fixed);
       if (off) {
         throw new BadRequestException(
           `${product.sku} es una plancha de catálogo de ${toDecimal(fixed).div(1000).toFixed(2)} m: no admite un largo de ${toDecimal(off.lengthMm).div(1000).toFixed(2)} m`,
@@ -946,11 +975,27 @@ export class RoofingProductionService {
       thicknessMm: row.coil.thicknessMm.toFixed(2),
       densityFactor: row.coil.finish.densityFactor.toFixed(4),
     };
-    const pieces = input.pieces.map((p, i) => ({
-      lineNumber: i + 1,
-      lengthMm: toFixedString(p.lengthMm, 'MM'),
-      qty: p.qty,
-    }));
+    // D-343: los metros de un accesorio entran a la cuenta como **un solo largo de esa longitud**.
+    // Es solo el vehículo aritmético —el kilo teórico por metro, lo que entra al kardex, lo que
+    // se topa contra lo montado— y **no** se guarda como plan ni como detalle de largos: el
+    // reporte guarda `meters_m` directo y ninguna fila de `production_report_pieces`.
+    const pieces = accessory
+      ? [
+          {
+            lineNumber: 1,
+            lengthMm: toFixedString(toDecimal(input.meters ?? '0').times(1000), 'MM'),
+            qty: 1,
+          },
+        ]
+      : inputPieces.map((p, i) => ({
+          lineNumber: i + 1,
+          lengthMm: toFixedString(p.lengthMm, 'MM'),
+          qty: p.qty,
+        }));
+    /** Cómo se nombra lo reportado en el kardex y la auditoría: largos, o metros de bobina. */
+    const reportLabel = accessory
+      ? `${toDecimal(input.meters ?? '0').toFixed(3)} m de bobina`
+      : describePieces(pieces);
     const neededKg = roofingTheoreticalKg(geometry, pieces);
 
     // -----------------------------------------------------------------------
@@ -971,6 +1016,7 @@ export class RoofingProductionService {
       where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
       select: {
         consumedKg: true,
+        metersM: true,
         piecesDetail: { select: { lengthMm: true, qty: true } },
       },
     });
@@ -1012,6 +1058,28 @@ export class RoofingProductionService {
         planKg: progress.hasPlan ? roofingTheoreticalKg(geometry, planPieces) : null,
       });
       if (note !== null) deviation.push(note);
+    }
+
+    // D-343: un accesorio no tiene plan de largos que lo tope, y lo que el pedido encargó son
+    // **metros**: pasarse **avisa y no bloquea** —rendir más o menos de lo planeado es lo normal
+    // en un accesorio, y el aviso queda en la fila del reporte y en la auditoría—. No es un tope
+    // duro como el de D-146: ese existe para que un plan de largos no se desborde sin ajustarlo.
+    if (accessory && order.reservationId) {
+      const reservation = await tx.reservation.findUniqueOrThrow({
+        where: { id: order.reservationId },
+        select: { salesOrderItem: { select: { qty: true } } },
+      });
+      const orderedMl = toDecimal(reservation.salesOrderItem.qty.toString());
+      const reportedBeforeMl = liveReportRows.reduce(
+        (acc, r) => (r.metersM === null ? acc : acc.plus(toDecimal(r.metersM.toString()))),
+        new Decimal(0),
+      );
+      const totalMl = reportedBeforeMl.plus(newMeters);
+      if (totalMl.gt(orderedMl)) {
+        deviation.push(
+          `Los reportes suman ${totalMl.toFixed(3)} m de bobina y el pedido encargó ${orderedMl.toFixed(3)} m: rindió más de lo planeado.`,
+        );
+      }
     }
 
     // Un solo rollo por reporte, así que el reparto es trivial — pero pasa por el mismo
@@ -1086,7 +1154,8 @@ export class RoofingProductionService {
     const report = await tx.productionReport.create({
       data: {
         productionOrderId: orderId,
-        pieces: piecesCount(pieces),
+        // D-343: en un accesorio son las piezas informativas que anotó el operario (o cero); no entran a nada.
+        pieces: accessory ? (input.piecesCount ?? 0) : piecesCount(pieces),
         metersM: byLength ? toFixedString(piecesMeters(pieces), 'KG') : null,
         theoreticalKg: toFixedString(neededKg, 'KG'),
         // D-146: lo declarado se guarda tal cual y no toca ningún cálculo del kardex.
@@ -1096,7 +1165,8 @@ export class RoofingProductionService {
         notes: input.notes ?? null,
         createdById: actor.id,
         operationDate: toDateOnly(operationDate),
-        piecesDetail: { create: pieces },
+        // D-343: un accesorio no tiene detalle de largos: los metros van en `meters_m`.
+        ...(accessory ? {} : { piecesDetail: { create: pieces } }),
       },
     });
 
@@ -1128,7 +1198,7 @@ export class RoofingProductionService {
         unit: Unit.KGM,
         refType: 'PRODUCTION',
         refId: report.id,
-        notes: `Rolado de ${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
+        notes: `Rolado de ${productionOrderCode(order.seq)}: ${reportLabel}`,
         actorId: actor.id,
         // D-134/D-154: ni lo que resta de la promesa que esta orden viene a cumplir ni la de
         // sus hermanas del mismo pedido pueden bloquear su propio consumo, y el faltante de
@@ -1162,7 +1232,7 @@ export class RoofingProductionService {
       unitCost: toFixedString(unitCostPen, 'MONEY'),
       refType: 'PRODUCTION',
       refId: report.id,
-      notes: `${productionOrderCode(order.seq)}: ${describePieces(pieces)}`,
+      notes: `${productionOrderCode(order.seq)}: ${reportLabel}`,
       actorId: actor.id,
       operationDate,
       confirmBackdate: input.confirmBackdate,
@@ -1233,7 +1303,7 @@ export class RoofingProductionService {
         operationDate,
         confirmedBackdate: input.confirmBackdate === true,
         coilCode: row.coil.code,
-        plan: describePieces(pieces),
+        plan: reportLabel,
         outputQty: toFixedString(outputQty, 'KG'),
         outputUnit,
         theoreticalKg: toFixedString(neededKg, 'KG'),
@@ -1273,10 +1343,14 @@ export class RoofingProductionService {
         ...(salesOrderId ? { reservation: { salesOrderId } } : {}),
       },
       include: {
-        product: { select: { sku: true, name: true, unit: true, lengthMm: true } },
+        product: {
+          select: { sku: true, name: true, unit: true, lengthMm: true, roofingKind: true },
+        },
         items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
         reservation: {
           select: {
+            // D-343: los metros que encargó la línea, que en un accesorio son el «plan».
+            salesOrderItem: { select: { qty: true } },
             salesOrder: {
               select: {
                 id: true,
@@ -1292,6 +1366,7 @@ export class RoofingProductionService {
           select: {
             theoreticalKg: true,
             consumedKg: true,
+            metersM: true,
             piecesDetail: { select: { lengthMm: true, qty: true } },
           },
         },
@@ -1322,6 +1397,16 @@ export class RoofingProductionService {
       const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
       const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
       const salesOrder = order.reservation?.salesOrder ?? null;
+      // D-343: un accesorio no tiene plan de largos; su «plan» son los metros que encargó la línea
+      // y lo «reportado» son los metros de bobina de sus reportes (`meters_m`), que no dejan
+      // detalle de largos. Se expresan en los mismos campos para que la pantalla los muestre sin
+      // un segundo camino.
+      const accessory = isAccessory(order.product);
+      const accessoryOrdered = toDecimal(order.reservation?.salesOrderItem?.qty.toString() ?? '0');
+      const accessoryReported = order.reports.reduce(
+        (acc, r) => (r.metersM === null ? acc : acc.plus(toDecimal(r.metersM.toString()))),
+        new Decimal(0),
+      );
       return {
         orderId: order.id,
         code: productionOrderCode(order.seq),
@@ -1349,9 +1434,13 @@ export class RoofingProductionService {
           lengthMm: i.lengthMm.toFixed(2),
           qty: i.qty,
         })),
-        planMeters: progress.planMeters.toFixed(3),
-        reportedMeters: progress.reportedMeters.toFixed(3),
-        remainingMeters: progress.remainingMeters.toFixed(3),
+        isAccessory: accessory,
+        planMeters: (accessory ? accessoryOrdered : progress.planMeters).toFixed(3),
+        reportedMeters: (accessory ? accessoryReported : progress.reportedMeters).toFixed(3),
+        remainingMeters: (accessory
+          ? Decimal.max(accessoryOrdered.minus(accessoryReported), new Decimal(0))
+          : progress.remainingMeters
+        ).toFixed(3),
         remainingPieces: remainingPlanPieces(planPieces, reportedPieces)
           .filter((p) => p.qty > 0)
           .map((p, n) => ({ lineNumber: n + 1, lengthMm: p.lengthMm, qty: p.qty })),
@@ -2080,7 +2169,7 @@ export class RoofingProductionService {
         });
         if (later) {
           throw new BadRequestException(
-            `Hay reportes posteriores vigentes (${later.pieces} planchas del ${later.createdAt.toISOString().slice(0, 10)}): revierte el último primero`,
+            `Hay reportes posteriores vigentes (${later.metersM === null ? `${later.pieces} planchas` : `${later.metersM.toFixed(3)} m de bobina`} del ${later.createdAt.toISOString().slice(0, 10)}): revierte el último primero`,
           );
         }
 
@@ -2206,7 +2295,14 @@ export class RoofingProductionService {
           action: 'production.roofing.report-reverse',
           entity: 'production_orders',
           entityId: orderId,
-          before: { reportId, plan: describePieces(report.piecesDetail.map(toPieceLike)) },
+          before: {
+            reportId,
+            // D-343: un accesorio no tiene detalle de largos; se nombra por sus metros de bobina.
+            plan:
+              report.piecesDetail.length === 0 && report.metersM !== null
+                ? `${report.metersM.toFixed(3)} m de bobina`
+                : describePieces(report.piecesDetail.map(toPieceLike)),
+          },
           after: {
             reportId,
             status: ProductionReportStatus.REVERTED,
@@ -2407,12 +2503,15 @@ export class RoofingProductionService {
 
       const live = await tx.productionReport.findMany({
         where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
-        select: { pieces: true },
+        select: { pieces: true, metersM: true },
       });
       if (live.length > 0) {
-        const planchas = live.reduce((acc, r) => acc + r.pieces, 0);
+        // D-343: un accesorio reporta metros de bobina, no planchas.
+        const produced = live.some((r) => r.metersM !== null && r.pieces === 0)
+          ? `${live.reduce((acc, r) => acc.plus(r.metersM ?? 0), new Decimal(0)).toFixed(3)} m de bobina`
+          : `${live.reduce((acc, r) => acc + r.pieces, 0)} planchas`;
         throw new BadRequestException(
-          `La orden tiene ${live.length} reporte(s) vigente(s) con ${planchas} planchas: revierte esos reportes antes de anularla`,
+          `La orden tiene ${live.length} reporte(s) vigente(s) con ${produced}: revierte esos reportes antes de anularla`,
         );
       }
 

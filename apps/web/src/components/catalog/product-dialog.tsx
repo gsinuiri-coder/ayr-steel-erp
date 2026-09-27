@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -7,6 +8,7 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import {
   BusinessLine,
+  canonicalAccessorySku,
   isPlausiblePieceLength,
   PIECE_LENGTH_RANGE_LABEL,
   PRODUCT_SOURCE_LABELS,
@@ -182,6 +184,28 @@ export function ProductDialog({
     },
   });
 
+  // D-343: el SKU de un accesorio **se forma** con su espesor y su color (`ACCES030ROJO`) y no se
+  // tipea: en el alta se calcula con los mismos tokens que usa el API para validarlo, y el campo
+  // queda de solo lectura. Sin espesor válido o sin acabado con color, se explica qué falta.
+  const watchedKind = form.watch('roofingKind');
+  const watchedThickness = form.watch('thicknessMm');
+  const watchedFinishId = form.watch('finishId');
+  const isNewAccessory = !editing && watchedKind === RoofingProductKind.ACCESORIO;
+  const accessoryColorCode =
+    finishes.data?.find((f) => f.id === watchedFinishId)?.colorCode ?? null;
+  const accessorySku = (() => {
+    if (!isNewAccessory || accessoryColorCode === null) return null;
+    try {
+      return canonicalAccessorySku(watchedThickness, accessoryColorCode);
+    } catch {
+      // Espesor vacío o fuera de la regla (el token exige centésimas enteras entre 0.01 y 9.99).
+      return null;
+    }
+  })();
+  useEffect(() => {
+    if (isNewAccessory) form.setValue('sku', accessorySku ?? '', { shouldValidate: false });
+  }, [isNewAccessory, accessorySku, form]);
+
   const save = useMutation({
     mutationFn: (values: FormValues) => {
       const roofingKind = showRoofingFields ? (values.roofingKind as RoofingProductKind) : null;
@@ -277,9 +301,23 @@ export function ProductDialog({
                   control={form.control}
                   name="sku"
                   render={({ field }) => (
-                    <FormFieldCell span={4} label="SKU">
+                    <FormFieldCell
+                      span={4}
+                      label="SKU"
+                      help={
+                        isNewAccessory
+                          ? 'ACCES + espesor de 3 dígitos + color (ACCES030ROJO): se forma solo con el espesor y el acabado.'
+                          : undefined
+                      }
+                    >
                       <FormControl>
-                        <Input disabled={editing} autoComplete="off" {...field} />
+                        <Input
+                          disabled={editing}
+                          readOnly={isNewAccessory}
+                          placeholder={isNewAccessory ? 'Elige espesor y acabado' : undefined}
+                          autoComplete="off"
+                          {...field}
+                        />
                       </FormControl>
                     </FormFieldCell>
                   )}

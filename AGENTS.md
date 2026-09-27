@@ -64,14 +64,21 @@ Reglas de convivencia, sin excepción:
    directorio. Cada sesión vive en su worktree: `ayr-steel-erp-<rama>`. Los worktrees se
    conservan como práctica vigente aunque haya un solo agente: la suite E2E completa solo entra
    con builds de producción, y eso exige un worktree aislado del checkout principal.
-2. **El revisor nunca es el autor.** Sin un segundo agente disponible, la revisión la hace un
-   **subagente nuevo que no leyó el handoff de implementación** de la sesión que escribió el
-   cambio — mismo criterio que la excepción documentada en D-248. Ese pase se marca
-   explícitamente como **autorrevisión** y no vale como pase cruzado: es una lista de riesgos
-   para quien revise después con ojos frescos, no una aprobación. La sesión no cierra dándolo
-   por un pase independiente. La pieza que queda con autorrevisión se registra en
-   `docs/PROGRESO.md` como **PENDIENTE DE REVISIÓN INDEPENDIENTE**, con fecha y motivo, para
-   poder recuperarla cuando haya un segundo revisor.
+2. **El revisor nunca es el autor. Estándar de revisión (desde 2026-09-26), en cada entrega:**
+   1. **Autorrevisión** por un **subagente nuevo que no leyó el handoff de implementación** de la
+      sesión que escribió el cambio — mismo criterio que la excepción documentada en D-248. Se
+      marca explícitamente como **autorrevisión** y no vale como pase cruzado: es una lista de
+      riesgos, no una aprobación.
+   2. **Revisión de un segundo modelo** (Sonnet, contexto limpio) sobre todo el diff de la
+      entrega, con su informe en `docs/revision/<entrega>-segundo-modelo.md`. P0 y P1 se corrigen
+      antes del deploy. Sigue siendo un modelo, no una persona.
+   3. **Revisión del dueño al cierre** de la entrega. Es la única que cierra la revisión; la sesión
+      no da por independiente ninguno de los dos pases anteriores.
+
+   `docs/PROGRESO.md` conserva la lista de piezas como **registro de riesgo de lo que toca kardex
+   o datos** (dónde mirar primero si algo aparece), con fecha y motivo; una pieza revisada por el
+   dueño se marca así. Deja de ser una deuda de «revisión independiente» pendiente.
+
 3. **Una rama por ventana/tarea**, desde `origin/main` actualizado. Nunca se trabaja directo
    sobre `main`. Antes de abrir rama: `git fetch` y CI de `main` verde
    (`gh run list --branch main --limit 3`).
@@ -122,11 +129,16 @@ Reglas de convivencia, sin excepción:
     alguna vez corre por accidente, ejecutar `pnpm prod:purge-e2e` inmediatamente y documentar
     el incidente en `docs/PROGRESO.md`; la purga es solo una herramienta de emergencia y no
     convierte la corrida en segura.
-13. **`needsPieces` se decide por unidad de venta**, nunca por subtipo de producto (D-131).
-    `sellsByLength(product)` —`unit === MTR`— responde si la línea necesita detalle de largos;
-    `isMadeToMeasure(product)` —`roofingKind === A_MEDIDA`— responde si se cotiza a medida.
-    Son preguntas distintas aunque ambas devuelvan `boolean`; el centinela vive en
-    `apps/api/src/sales/sales-lines.spec.ts`.
+13. **«Por metro» son tres preguntas distintas, y ninguna se responde con otra** (D-131, D-343; en
+    el código y los docs históricos se cita como «regla dura 14», su numeración de entonces).
+    `sellsByLength(product)` —`unit === MTR`, **solo la unidad**— responde si la unidad de venta es
+    el metro lineal (cantidad, precio, kardex y unidad SUNAT en metros y no conoce el subtipo);
+    `detailsLengths(product)` —`unit === MTR` **y** `roofingKind !== ACCESORIO`— responde si la
+    línea lleva desglose de largos (`needsPieces`); `isMadeToMeasure(product)`
+    —`roofingKind === A_MEDIDA`— responde si se cotiza a medida. Son preguntas distintas aunque
+    las tres devuelvan `boolean`; el centinela vive en `apps/api/src/sales/sales-lines.spec.ts`, cubre la tabla
+    completa unidad × subtipo (con `sellsByFixedLength` e `isMadeToOrder`) y falla si
+    `detailsLengths` se define solo con la unidad o `sellsByLength` con el subtipo.
 14. **La historia previa al día D vive fuera del sistema** (D-150): no se importan compras ni
     movimientos históricos. Única excepción viva: la herramienta de inventario inicial
     (D-206/D-207), que hereda invariantes vía servicios de dominio y rechaza correr sobre

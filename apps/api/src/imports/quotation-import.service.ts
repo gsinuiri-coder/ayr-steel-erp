@@ -38,7 +38,7 @@ import {
   findCoilSaleProducts,
   knownCoilAttributes,
 } from '../sales/coil-sale-product';
-import { sellsByLength } from '../sales/sales-lines';
+import { detailsLengths } from '../sales/sales-lines';
 import { QuotationsService } from '../sales/quotations.service';
 import {
   getField,
@@ -156,7 +156,10 @@ export class QuotationImportService {
     raw: Record<string, unknown>,
     rowNumber: number,
     byDoc: Map<string, Match<{ id: string; docNumber: string; name: string }>>,
-    bySku: Map<string, Match<{ id: string; sku: string; name: string; unit: string }>>,
+    bySku: Map<
+      string,
+      Match<{ id: string; sku: string; name: string; unit: string; roofingKind: string | null }>
+    >,
     importedKeys: ReadonlySet<string>,
     padronByDoc: ReadonlyMap<string, QuotationImportPadronDto>,
     coil: CoilRowResolution | undefined,
@@ -275,12 +278,13 @@ export class QuotationImportService {
     // D-255: el trío del papel, con la **misma** lectura que el barrido (`paperRowTriplet`).
     const triplet = netAmountPen !== null ? paperRowTriplet(raw) : null;
 
-    // **La unidad, no el subtipo.** Quien exige los largos es `sellsByLength` de
-    // `sales-lines.ts` (`unit === 'MTR'`), y es la distinción exacta de D-131: preguntar por el
-    // subtipo respondía otra cosa. Un SKU en `MTR` que no sea `A_MEDIDA` pasaba el preview sin
-    // una sola marca, la pantalla ni siquiera dibujaba la celda del plan, y el archivo entero
-    // moría en el confirm con "se vende por metro lineal" y sin forma de arreglarlo.
-    const needsPieces = product !== null && sellsByLength(product);
+    // **El desglose de largos lo decide `detailsLengths` de `sales-lines.ts` (D-343)**: la unidad
+    // `MTR` **y** que el producto no sea un accesorio, que se vende en metros de bobina sin largos.
+    // No es `isMadeToMeasure` (D-131): preguntar por el subtipo `A_MEDIDA` respondía otra cosa, y un
+    // SKU en `MTR` que no fuera `A_MEDIDA` pasaba el preview sin una sola marca, la pantalla ni
+    // siquiera dibujaba la celda del plan, y el archivo entero moría en el confirm con «se vende por
+    // metro lineal» y sin forma de arreglarlo.
+    const needsPieces = product !== null && detailsLengths(product);
     // El plan sale de la cantidad **ya redondeada**, que es la que viaja en la fila: el
     // archivo trae diez decimales y el alta exige que los largos sumen exactamente la cantidad
     // de la línea (D-083). Derivarlo del valor sin redondear dejaba las dos cifras separadas

@@ -312,7 +312,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
     }
   });
 
-  test('D-186: si falta materia prima el diálogo de confirmar dice el faltante y apaga el botón; al liberarse el material, reabrirlo lo habilita', async ({
+  test('D-186/D-341: si falta materia prima el diálogo de confirmar dice el faltante y pide reconocerlo con motivo; al liberarse el material, reabrirlo confirma normal', async ({
     page,
   }) => {
     const s = await setupRoofingScenario(api, { weightKg: '100' });
@@ -353,8 +353,17 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       await expect(dialog.getByText('Reserva MP y genera OP')).toBeVisible({ timeout: 30_000 });
       await expect(dialog.getByText('faltan 21.200 kg', { exact: true })).toBeVisible();
       await expect(dialog.getByText(/Línea 1: .* faltan 21\.200$/)).toBeVisible();
-      const confirmButton = dialog.getByRole('button', { name: 'Confirmar', exact: true });
+      // D-341: el administrador ya no queda bloqueado por el faltante, pero confirmar exige
+      // reconocerlo y explicarlo: el botón sigue apagado hasta la casilla y el motivo.
+      const confirmButton = dialog.getByRole('button', {
+        name: 'Confirmar con faltante',
+        exact: true,
+      });
       await expect(confirmButton).toBeDisabled();
+      await dialog.getByRole('checkbox').click();
+      await expect(confirmButton).toBeDisabled();
+      await dialog.getByLabel('Motivo').fill('Llega bobina el lunes');
+      await expect(confirmButton).toBeEnabled();
 
       await dialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(dialog).toBeHidden();

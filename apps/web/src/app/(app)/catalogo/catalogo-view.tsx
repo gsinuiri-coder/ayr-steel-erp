@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
+  NO_FLOOR_REASON_LABELS,
   PRODUCT_SOURCE_LABELS,
   ProductSource,
   Role,
@@ -303,7 +304,15 @@ export function CatalogoView() {
                         }
                       >
                         <TableCell className="font-medium">{p.sku}</TableCell>
-                        <TableCell>{p.name}</TableCell>
+                        <TableCell>
+                          {p.name}
+                          {/* D-342: un perfil de drywall sin receta no tiene piso de precio. */}
+                          {p.isActive && p.noFloorReason && (
+                            <span className="block text-xs text-amber-700 dark:text-amber-400">
+                              {NO_FLOOR_REASON_LABELS[p.noFloorReason]}
+                            </span>
+                          )}
+                        </TableCell>
                         {usesColor(line.code) && (
                           <TableCell>
                             <ColorSwatch

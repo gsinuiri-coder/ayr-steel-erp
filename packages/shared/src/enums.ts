@@ -975,6 +975,8 @@ export const STANDING_DOCUMENT_STATUSES: readonly FiscalDocumentStatus[] = [
 export const RoofingProductKind = {
   PLANCHA: 'PLANCHA',
   A_MEDIDA: 'A_MEDIDA',
+  /** D-343: accesorio — metros lineales de bobina, sin detalle de largos. */
+  ACCESORIO: 'ACCESORIO',
 } as const;
 export type RoofingProductKind = (typeof RoofingProductKind)[keyof typeof RoofingProductKind];
 export const ROOFING_PRODUCT_KINDS = Object.values(RoofingProductKind) as [
@@ -984,16 +986,20 @@ export const ROOFING_PRODUCT_KINDS = Object.values(RoofingProductKind) as [
 export const ROOFING_PRODUCT_KIND_LABELS: Record<RoofingProductKind, string> = {
   PLANCHA: 'Plancha de catálogo',
   A_MEDIDA: 'A medida',
+  ACCESORIO: 'Accesorio',
 };
 export const ROOFING_PRODUCT_KIND_HINTS: Record<RoofingProductKind, string> = {
   PLANCHA: 'Largo fijo, se vende del stock que ya hay en almacén.',
   A_MEDIDA: 'Se cotiza por metro lineal con subítems de largo y se fabrica contra pedido.',
+  ACCESORIO:
+    'Se fabrica contra pedido y se vende por metro lineal de bobina, sin detalle de largos. Solo necesita espesor y color.',
 };
 
 /** La unidad de venta que le corresponde a cada subtipo. Subtipo y unidad son el mismo hecho. */
 export const ROOFING_KIND_UNIT: Record<RoofingProductKind, string> = {
   PLANCHA: 'NIU',
   A_MEDIDA: 'MTR',
+  ACCESORIO: 'MTR',
 };
 
 export const FiscalDocumentOrigin = {

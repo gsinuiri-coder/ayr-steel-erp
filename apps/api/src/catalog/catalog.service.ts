@@ -6,7 +6,9 @@ import {
 } from '@nestjs/common';
 import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
+  ACCESSORY_SKU_PREFIX,
   BusinessLine as SharedLineCode,
+  canonicalAccessorySku,
   Decimal,
   isPlausiblePieceLength,
   MAX_PAGE_SIZE,
@@ -35,6 +37,12 @@ import { ColorsService } from '../colors/colors.service';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
 import { computePriceFloors } from '../sales/price-floor';
+import {
+  FLOOR_COST_SELECT,
+  productFloorCost,
+  staticNoFloorReason,
+  type FloorCostProduct,
+} from '../sales/price-floor-cost';
 import {
   PRICE_FLOOR_UNUSED_TOLERANCE_MM,
   priceListValueChanged,
@@ -166,6 +174,7 @@ export class CatalogService {
     const roofingKind = input.roofingKind ?? null;
     assertStructuredFields(line.code, { ...input, roofingKind, finishId: finish?.id ?? null });
     this.assertFinishCoherence(input.businessLineId, colorId, finish);
+    await this.assertAccessorySku(input.sku, roofingKind, colorId, input.thicknessMm, line.code);
 
     try {
       const product = await this.prisma.$transaction(async (tx) => {
@@ -216,6 +225,62 @@ export class CatalogService {
     }
   }
 
+  /**
+   * D-343: el SKU de un accesorio **es** `ACCES` + espesor de 3 dígitos + color comercial
+   * (`ACCES030ROJO`), y solo un accesorio lo lleva. Se comprueba contra el color y el espesor del
+   * propio producto —los mismos tokens que el SKU de bobina, D-252— y no se acepta otro: el SKU
+   * es lo que el vendedor lee para saber qué material es, y uno que dijera `ACCES030ROJO` sobre un
+   * producto azul de 0.45 mentiría en cada cotización.
+   */
+  private async assertAccessorySku(
+    sku: string,
+    roofingKind: RoofingProductKind | null,
+    colorId: string | null,
+    thicknessMm: string | null,
+    lineCode: BusinessLineCode,
+  ): Promise<void> {
+    // El prefijo es reservado **solo en coberturas**: en otra línea (drywall, trading) un SKU
+    // como `ACCESORIO-…` sigue siendo un SKU cualquiera.
+    const startsAccessory =
+      lineCode === BusinessLineCode.METALLIC_ROOFING &&
+      sku.toUpperCase().startsWith(ACCESSORY_SKU_PREFIX);
+    if (roofingKind !== RoofingProductKind.ACCESORIO) {
+      if (startsAccessory) {
+        throw new BadRequestException(
+          `Los SKU ${ACCESSORY_SKU_PREFIX}… son de accesorios de coberturas: crea el producto con el subtipo «Accesorio» o usa otro SKU`,
+        );
+      }
+      return;
+    }
+    if (colorId === null) {
+      throw new BadRequestException(
+        'Un accesorio necesita su color: de él sale el SKU y el color de la bobina con que se fabrica',
+      );
+    }
+    if (thicknessMm === null) {
+      throw new BadRequestException('El espesor del accesorio es obligatorio');
+    }
+    const color = await this.prisma.color.findUnique({
+      where: { id: colorId },
+      select: { code: true },
+    });
+    let expected: string;
+    try {
+      expected = canonicalAccessorySku(thicknessMm, color?.code ?? '');
+    } catch {
+      // El token del SKU exige centésimas enteras entre 0.01 y 9.99 mm: sin esto, un espesor fuera
+      // de la regla salía como un 500 y no como un error que dice qué corregir.
+      throw new BadRequestException(
+        'El espesor de un accesorio va en centésimas de milímetro, entre 0.01 y 9.99 mm: de él sale su SKU',
+      );
+    }
+    if (sku.toUpperCase() !== expected) {
+      throw new BadRequestException(
+        `El SKU de un accesorio se forma con su espesor y su color: para este producto es ${expected}`,
+      );
+    }
+  }
+
   async update(actor: RequestUser, id: string, input: UpdateProductInput): Promise<ProductDto> {
     const before = await this.prisma.product.findUnique({
       where: { id },
@@ -254,6 +319,20 @@ export class CatalogService {
     // desactivar una receta que el propio subtipo necesita viva.
     const changesRoofingKind =
       input.roofingKind !== undefined && input.roofingKind !== before.roofingKind;
+    // D-343: el SKU de un accesorio refleja su espesor y su color, y el SKU no se edita. Cambiar
+    // cualquiera de los dos —o pasar de/hacia accesorio— dejaría un SKU que miente: se crea otro.
+    if (before.roofingKind === RoofingProductKind.ACCESORIO || input.roofingKind === 'ACCESORIO') {
+      const changesColor = input.colorId !== undefined && input.colorId !== before.colorId;
+      const changesThickness =
+        input.thicknessMm !== undefined &&
+        (before.thicknessMm === null ||
+          !toDecimal(input.thicknessMm ?? '0').equals(before.thicknessMm.toString()));
+      if (changesRoofingKind || changesColor || changesThickness) {
+        throw new BadRequestException(
+          `El SKU ${before.sku} refleja el espesor y el color del accesorio, y el subtipo no cambia: para otro espesor u otro color crea otro accesorio`,
+        );
+      }
+    }
     if ((changesUnit && !changesRoofingKind) || changesSource) {
       const bom = await this.prisma.productBom.findFirst({
         // Solo una receta **activa** bloquea: una desactivada no la monta ninguna orden, y
@@ -403,9 +482,14 @@ export class CatalogService {
   async priceFloor(id: string): Promise<PriceListFloorDto> {
     const product = await this.prisma.product.findUnique({
       where: { id },
-      select: { id: true, sku: true, unit: true, businessLineId: true },
+      select: { sku: true, unit: true, ...FLOOR_COST_SELECT },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
+    // D-342: un perfil de drywall sin receta (o sin peso) no tiene piso, y se dice por qué.
+    const floorCost = productFloorCost(product);
+    if ('noFloorReason' in floorCost) {
+      return { minPricePen: null, priceUnitLabel: null, noFloorReason: floorCost.noFloorReason };
+    }
     const floors = await this.prisma.$transaction((tx) =>
       computePriceFloors(
         tx,
@@ -418,7 +502,7 @@ export class CatalogService {
             // Solo lo lee `assertPriceFloor` para comparar y rechazar; acá solo se **lee**
             // el piso, así que el valor propuesto no importa.
             unitValuePen: '0',
-            cost: { kind: 'PRODUCT', productId: product.id },
+            cost: floorCost.cost,
           },
         ],
         PRICE_FLOOR_UNUSED_TOLERANCE_MM,
@@ -428,6 +512,8 @@ export class CatalogService {
     return {
       minPricePen: floor?.minPricePen ?? null,
       priceUnitLabel: floor?.priceUnitLabel ?? null,
+      // Con receta y peso pero sin flejes con saldo: el costo no existe y con él tampoco el piso.
+      noFloorReason: !floor && floorCost.cost.kind === 'STRIP_RECIPE' ? 'NO_STRIP_COST' : null,
     };
   }
 
@@ -443,12 +529,11 @@ export class CatalogService {
     const products = await this.prisma.product.findMany({
       where: { isActive: true, listPricePen: { not: null } },
       select: {
-        id: true,
         sku: true,
         name: true,
         unit: true,
         listPricePen: true,
-        businessLineId: true,
+        ...FLOOR_COST_SELECT,
       },
       orderBy: { sku: 'asc' },
     });
@@ -456,20 +541,26 @@ export class CatalogService {
       return { totalWithListPrice: 0, withoutFloor: 0, belowFloor: [] };
     }
 
+    // D-342: un perfil de drywall sin receta no entra a `computePriceFloors` y cae en «sin piso»,
+    // igual que un SKU sin costo (D-163).
+    const candidates = products.flatMap((p) => {
+      const floorCost = productFloorCost(p);
+      return 'cost' in floorCost
+        ? [
+            {
+              at: p.id,
+              sku: p.sku,
+              businessLineId: p.businessLineId,
+              basis: { kind: 'UNIT' as const, unitLabel: p.unit },
+              // Solo se lee el piso, nunca se rechaza nada acá: el valor propuesto no importa.
+              unitValuePen: '0',
+              cost: floorCost.cost,
+            },
+          ]
+        : [];
+    });
     const floors = await this.prisma.$transaction((tx) =>
-      computePriceFloors(
-        tx,
-        products.map((p) => ({
-          at: p.id,
-          sku: p.sku,
-          businessLineId: p.businessLineId,
-          basis: { kind: 'UNIT' as const, unitLabel: p.unit },
-          // Solo se lee el piso, nunca se rechaza nada acá: el valor propuesto no importa.
-          unitValuePen: '0',
-          cost: { kind: 'PRODUCT' as const, productId: p.id },
-        })),
-        PRICE_FLOOR_UNUSED_TOLERANCE_MM,
-      ),
+      computePriceFloors(tx, candidates, PRICE_FLOOR_UNUSED_TOLERANCE_MM),
     );
 
     let withoutFloor = 0;
@@ -595,15 +686,20 @@ function assertStructuredFields(
     // plancha se mide en lo que la empresa venda (unidades, casi siempre), y exigirle `NIU`
     // acá dejaría sin poder editarse a cualquier producto legado con otra unidad.
     const expectedUnit = ROOFING_KIND_UNIT[fields.roofingKind];
-    const unitOk =
-      fields.roofingKind === RoofingProductKind.A_MEDIDA
-        ? fields.unit === expectedUnit
-        : fields.unit !== 'MTR';
+    // D-343: el accesorio también se mide en metros lineales (de bobina): la unidad SUNAT, el
+    // kardex y el despacho son los del metro. Lo que lo distingue —que no lleva largos— es del
+    // subtipo, no de la unidad.
+    const measuredInMeters =
+      fields.roofingKind === RoofingProductKind.A_MEDIDA ||
+      fields.roofingKind === RoofingProductKind.ACCESORIO;
+    const unitOk = measuredInMeters ? fields.unit === expectedUnit : fields.unit !== 'MTR';
     if (!unitOk) {
       throw new BadRequestException(
-        fields.roofingKind === RoofingProductKind.A_MEDIDA
-          ? 'Una cobertura a medida se mide en metros lineales (MTR)'
-          : 'Una plancha de catálogo no se mide en metros lineales: eso es una cobertura a medida',
+        fields.roofingKind === RoofingProductKind.ACCESORIO
+          ? 'Un accesorio se mide en metros lineales (MTR)'
+          : fields.roofingKind === RoofingProductKind.A_MEDIDA
+            ? 'Una cobertura a medida se mide en metros lineales (MTR)'
+            : 'Una plancha de catálogo no se mide en metros lineales: eso es una cobertura a medida',
       );
     }
     // El largo solo lo lleva la plancha: es su largo fijo. Una cobertura a medida no tiene
@@ -630,6 +726,11 @@ function assertStructuredFields(
     if (fields.roofingKind === RoofingProductKind.A_MEDIDA && fields.lengthMm !== null) {
       throw new BadRequestException(
         'Una cobertura a medida no lleva largo fijo: el largo va en los subítems de cada línea',
+      );
+    }
+    if (fields.roofingKind === RoofingProductKind.ACCESORIO && fields.lengthMm !== null) {
+      throw new BadRequestException(
+        'Un accesorio no lleva largo: se vende por metros lineales de bobina, sin detalle de largos',
       );
     }
   } else if (fields.roofingKind !== null) {
@@ -671,6 +772,8 @@ const PRODUCT_RELATIONS = {
       businessLineId: true,
     },
   },
+  // D-342: la receta, para marcar el perfil de drywall que no tiene piso de precio.
+  bom: FLOOR_COST_SELECT.bom,
 } satisfies Prisma.ProductInclude;
 
 /** Lo que `assertFinishCoherence` necesita de un acabado: identidad, tipo, color y línea. */
@@ -686,6 +789,7 @@ type WithLineCode = Product & {
   businessLine: { code: BusinessLineCode };
   color: Color | null;
   finish: (FinishRef & { name: string; densityFactor: Prisma.Decimal }) | null;
+  bom: FloorCostProduct['bom'];
 };
 
 /**
@@ -733,6 +837,8 @@ function toDto(p: WithLineCode): ProductDto {
     theoreticalKgPerUnit: theoreticalKgPerUnit(p),
     isActive: p.isActive,
     source: p.source,
+    // D-342: solo el motivo que se sabe sin mirar saldos; el de costo de flejes lo dice el piso.
+    noFloorReason: staticNoFloorReason(p),
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };

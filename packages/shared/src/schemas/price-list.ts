@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { decimalStringSchema, MAX_VALUE } from '../decimal';
 import { idempotencyKeySchema } from './idempotency';
+import { NO_FLOOR_REASONS } from './product';
 
 /**
  * Precio de lista de catálogo (D-068, D-217/RF-S1/M1): el historial de cambios, el aviso de
@@ -44,6 +45,8 @@ export const priceListFloorSchema = z.object({
    *  costo no hay piso) o sin margen mínimo configurado para la línea. */
   minPricePen: z.string().nullable(),
   priceUnitLabel: z.string().nullable(),
+  /** D-342: por qué un perfil de drywall no tiene piso. `null` en el resto y cuando lo tiene. */
+  noFloorReason: z.enum(NO_FLOOR_REASONS).nullable(),
 });
 export type PriceListFloorDto = z.infer<typeof priceListFloorSchema>;
 

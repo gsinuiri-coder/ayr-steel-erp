@@ -46,6 +46,21 @@ interface ConfirmPreview {
     plan: string | null;
   }[];
   blockers: string[];
+  /** D-341: el faltante de material, aparte de los bloqueos duros. */
+  shortfallNotes: string[];
+  canConfirmWithShortfall: boolean;
+}
+
+/** D-341: lo que el pedido dice del faltante y de sus reservas. */
+interface ShortfallOrder {
+  status: string;
+  shortfalls: { label: string; missingQty: string; unit: string }[];
+  reservations: {
+    status: string;
+    qty: string;
+    shortfallQty: string;
+    productionOrderId: string | null;
+  }[];
 }
 
 interface TemporaryListItem {
@@ -281,7 +296,7 @@ test.describe('F8-S2 — reserva temporal y confirmar en un paso', () => {
     }
   });
 
-  test('D-186: la vista previa dice qué va a pasar y bloquea con el faltante; confirmar convierte la temporal y deja la OP en cola', async () => {
+  test('D-186/D-341: la vista previa dice qué va a pasar y avisa el faltante; sin la bandera confirmar sigue rechazando; confirmar convierte la temporal y deja la OP en cola', async () => {
     const s = await setupRoofingScenario(api, { weightKg: '100' });
     const customer = await createCustomer(api);
     const trail = trailOf(s);
@@ -321,8 +336,12 @@ test.describe('F8-S2 — reserva temporal y confirmar en un paso', () => {
         shortfallQty: '21.200',
         plan: '2 × 10.00 m',
       });
-      expect(blocked.blockers.join(' ')).toContain('faltan 21.200');
-      // Confirmar bloquea igual que la vista previa lo dijo.
+      // D-341: el faltante ya no es un bloqueo para el administrador (esta cuenta lo es): se
+      // dice aparte y confirmar exige pedirlo a conciencia.
+      expect(blocked.blockers).toEqual([]);
+      expect(blocked.shortfallNotes.join(' ')).toContain('faltan 21.200');
+      expect(blocked.canConfirmWithShortfall).toBe(true);
+      // Sin la bandera, confirmar rechaza por faltante para todos (D-054), como siempre.
       const cannotConfirm = await postExpectingError(
         api,
         `/api/sales/quotations/${quotation.id}/confirm`,
@@ -362,6 +381,96 @@ test.describe('F8-S2 — reserva temporal y confirmar en un paso', () => {
       expect(detail.temporaryReservation).toBeNull();
       const listed = await getJson<TemporaryListItem[]>(api, '/api/sales/temporary-reservations');
       expect(listed.some((r) => r.quotationId === quotation.id)).toBe(false);
+    } finally {
+      await purgeRoofingTrail(api, trail);
+    }
+  });
+
+  test('D-341: el administrador confirma con faltante; el pedido queda «Con faltante», la OP nace igual y «Completar reserva» lo cierra cuando el material aparece', async () => {
+    const s = await setupRoofingScenario(api, { weightKg: '100' });
+    const customer = await createCustomer(api);
+    const trail = trailOf(s);
+    try {
+      const rows = pieces([10, 2]); // 80.800 kg
+      const quotation = await createQuotation(api, {
+        customerId: customer.id,
+        businessLine: ROOFING_LINE,
+        productId: s.product.id,
+        qty: metersOf(rows),
+        unitPricePen: '60',
+        pieces: rows,
+      });
+      trail.quotationIds.push(quotation.id);
+
+      // Un rival aparta 40.400 kg: a esta le quedan 59.600 y le faltan 21.200.
+      const rivalRows = pieces([10, 1]);
+      const rival = await createQuotation(api, {
+        customerId: customer.id,
+        businessLine: ROOFING_LINE,
+        productId: s.product.id,
+        qty: metersOf(rivalRows),
+        unitPricePen: '60',
+        pieces: rivalRows,
+      });
+      trail.quotationIds.push(rival.id);
+      await postJson(api, `/api/sales/quotations/${rival.id}/reserve`);
+
+      // La bandera sola no alcanza: exige un motivo.
+      const noReason = await postExpectingError(
+        api,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+        { confirmShortfall: true },
+      );
+      expect(noReason.status).toBe(400);
+
+      const order = await postJson<ShortfallOrder & { id: string }>(
+        api,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+        { confirmShortfall: true, shortfallReason: 'Llega bobina el lunes' },
+      );
+      trail.orderIds.push(order.id);
+      expect(order.status).toBe('CONFIRMED');
+      expect(order.shortfalls).toHaveLength(1);
+      expect(order.shortfalls[0]).toMatchObject({ missingQty: '21.200', unit: 'KGM' });
+      expect(order.reservations).toHaveLength(1);
+      expect(order.reservations[0]).toMatchObject({
+        status: 'ACTIVE',
+        qty: '59.600',
+        shortfallQty: '21.200',
+      });
+      expect(order.reservations[0]!.productionOrderId, 'la OP nace igual').not.toBeNull();
+
+      // La tarjeta del Panel lo lista.
+      const card = await getJson<{ orderId: string; shortfalls: { missingQty: string }[] }[]>(
+        api,
+        '/api/sales/orders/with-shortfall',
+      );
+      expect(card.find((c) => c.orderId === order.id)?.shortfalls[0]?.missingQty).toBe('21.200');
+
+      // Con el material todavía tomado por el rival no hay nada que completar.
+      const nothing = await postExpectingError(
+        api,
+        `/api/sales/orders/${order.id}/complete-reservation`,
+        {},
+      );
+      expect(nothing.status).toBe(400);
+
+      // El rival suelta el material: «Completar reserva» reserva el resto y cierra el faltante.
+      await postJson(api, `/api/sales/quotations/${rival.id}/release-reservation`, {
+        reason: 'El rival no depositó',
+      });
+      const completed = await postJson<ShortfallOrder>(
+        api,
+        `/api/sales/orders/${order.id}/complete-reservation`,
+        { reason: 'Llegó la bobina' },
+      );
+      expect(completed.shortfalls).toEqual([]);
+      expect(completed.reservations[0]).toMatchObject({ qty: '80.800', shortfallQty: '0.000' });
+      const cardAfter = await getJson<{ orderId: string }[]>(
+        api,
+        '/api/sales/orders/with-shortfall',
+      );
+      expect(cardAfter.some((c) => c.orderId === order.id)).toBe(false);
     } finally {
       await purgeRoofingTrail(api, trail);
     }

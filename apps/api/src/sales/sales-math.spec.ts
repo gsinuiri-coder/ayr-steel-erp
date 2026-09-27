@@ -35,6 +35,7 @@ function line(overrides: Partial<ResolvedSalesLine>): ResolvedSalesLine {
     listPricePen: null,
     unitPricePen: '0.0000',
     valuePerMeterPen: null,
+    piecesHint: null,
     subtotalPen: '0.0000',
     igvPen: '0.0000',
     totalPen: '0.0000',
