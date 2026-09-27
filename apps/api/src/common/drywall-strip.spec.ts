@@ -89,7 +89,6 @@ describe('drywallPieceWeightCheck: el kg/pieza declarado contra el teórico (avi
     widthMm: '115.00',
     lengthMm: '3000.00',
     thicknessMm: '0.45',
-    densityFactor: '7.8500',
   };
 
   it('un peso cerca del teórico no avisa', () => {
@@ -104,7 +103,6 @@ describe('drywallPieceWeightCheck: el kg/pieza declarado contra el teórico (avi
       widthMm: '1.00',
       lengthMm: '6000.00',
       thicknessMm: '0.45',
-      densityFactor: '7.8500',
       pieceWeightKg: '1.000',
     });
     // Teórico con 1 mm de ancho: 0.021 kg; declarado 1.000 kg → desvío enorme.
@@ -135,7 +133,6 @@ describe('drywallPieceWeightCheck: el kg/pieza declarado contra el teórico (avi
     ['largo', { lengthMm: null }],
     ['espesor', { thicknessMm: null }],
     ['peso', { pieceWeightKg: null }],
-    ['densidad', { densityFactor: null }],
   ])('sin %s no hay comparación', (_n, over) => {
     expect(drywallPieceWeightCheck({ ...base, pieceWeightKg: '1.220', ...over })).toBeNull();
   });

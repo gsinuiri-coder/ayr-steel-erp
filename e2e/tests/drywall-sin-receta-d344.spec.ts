@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminApi, createFinish, createUser, getJson } from '../helpers/api';
+import { adminApi, createUser, getJson } from '../helpers/api';
 import { loginAndSetPassword, openSidebarGroup } from '../helpers/ui';
 import {
   createCatalogProduct,
@@ -31,8 +31,6 @@ test.describe('D-344 — drywall sin receta', () => {
     baseURL,
   }) => {
     const api = await adminApi(baseURL!);
-    // De la densidad del acabado galvanizado sale el peso teórico del aviso.
-    await createFinish(api, { businessLine: 'drywall', densityFactor: '7.85' });
     const admin = await createUser(api, 'ADMINISTRADOR');
     await loginAndSetPassword(page, admin, 'ClaveAdminE2E-2026');
 

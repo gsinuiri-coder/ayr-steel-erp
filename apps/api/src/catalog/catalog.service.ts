@@ -4,13 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  BusinessLineCode,
-  FinishKind as PrismaFinishKind,
-  Prisma,
-  type Color,
-  type Product,
-} from '@prisma/client';
+import { BusinessLineCode, Prisma, type Color, type Product } from '@prisma/client';
 import {
   ACCESSORY_SKU_PREFIX,
   BusinessLine as SharedLineCode,
@@ -78,8 +72,7 @@ export class CatalogService {
       include: PRODUCT_RELATIONS,
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
-    const galvDensity = await this.galvanizedDensity();
-    return products.map((p) => toDto(p, galvDensity));
+    return products.map((p) => toDto(p));
   }
 
   /**
@@ -104,10 +97,7 @@ export class CatalogService {
       orderBy: { name: 'asc' },
       take: SEARCH_CANDIDATE_POOL,
     });
-    const galvDensity = await this.galvanizedDensity();
-    return rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]).map((p) =>
-      toDto(p, galvDensity),
-    );
+    return rankSearchMatches(candidates, needle, (p) => [p.sku, p.name]).map((p) => toDto(p));
   }
 
   /**
@@ -164,31 +154,13 @@ export class CatalogService {
     }
   }
 
-  /**
-   * D-344: la densidad del acabado **galvanizado** activo, de la que sale el peso teórico de una
-   * pieza de drywall para el aviso de kg/pieza. Drywall tiene un solo acabado (galvanizado) y el
-   * SKU ya no lo guarda; si hubiera más de uno, se toma el más antiguo. `null` si no existe.
-   */
-  private async galvanizedDensity(): Promise<Prisma.Decimal | null> {
-    const finish = await this.prisma.finish.findFirst({
-      where: {
-        kind: PrismaFinishKind.GALVANIZADO,
-        isActive: true,
-        businessLine: { code: BusinessLineCode.DRYWALL },
-      },
-      orderBy: { createdAt: 'asc' },
-      select: { densityFactor: true },
-    });
-    return finish?.densityFactor ?? null;
-  }
-
   async findOne(id: string): Promise<ProductDto> {
     const product = await this.prisma.product.findUnique({
       where: { id },
       include: PRODUCT_RELATIONS,
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    return toDto(product, await this.galvanizedDensity());
+    return toDto(product);
   }
 
   async create(actor: RequestUser, input: CreateProductInput): Promise<ProductDto> {
@@ -252,7 +224,7 @@ export class CatalogService {
         }
         return created;
       });
-      return toDto(product, await this.galvanizedDensity());
+      return toDto(product);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException('Ya existe un producto con ese SKU en esta línea');
@@ -493,7 +465,7 @@ export class CatalogService {
       }
       return updated;
     });
-    return toDto(after, await this.galvanizedDensity());
+    return toDto(after);
   }
 
   /** Órdenes de coberturas vivas de este producto: las que el cambio de color rompería. */
@@ -878,23 +850,21 @@ function theoreticalKgPerUnit(p: WithLineCode): string | null {
 }
 
 /**
- * D-344: aviso del peso declarado de un perfil de drywall contra el teórico. La densidad sale del
- * acabado **galvanizado** activo (drywall tiene un solo acabado y el SKU ya no lo guarda). `null`
- * si no es un perfil, si falta un dato de la cuenta o si no hay un acabado galvanizado del que
- * sacar la densidad.
+ * D-344: aviso del peso declarado de un perfil de drywall contra el teórico. La densidad es la
+ * constante física del acero (`STEEL_DENSITY_FACTOR`), no la de ningún `Finish`: drywall no guarda
+ * acabado en el SKU. `null` si no es un perfil o si falta un dato de la cuenta.
  */
-function pieceWeightCheckOf(p: WithLineCode, galvDensity: Prisma.Decimal | null) {
-  if (!isDrywallProfile(p) || galvDensity === null) return null;
+function pieceWeightCheckOf(p: WithLineCode) {
+  if (!isDrywallProfile(p)) return null;
   return drywallPieceWeightCheck({
     widthMm: p.widthMm?.toFixed(2) ?? null,
     lengthMm: p.lengthMm?.toFixed(2) ?? null,
     thicknessMm: p.thicknessMm?.toFixed(2) ?? null,
     pieceWeightKg: p.pieceWeightKg?.toFixed(3) ?? null,
-    densityFactor: galvDensity.toFixed(4),
   });
 }
 
-function toDto(p: WithLineCode, galvDensity: Prisma.Decimal | null): ProductDto {
+function toDto(p: WithLineCode): ProductDto {
   return {
     id: p.id,
     businessLineId: p.businessLineId,
@@ -921,7 +891,7 @@ function toDto(p: WithLineCode, galvDensity: Prisma.Decimal | null): ProductDto 
     source: p.source,
     // D-342/D-344: solo el motivo que se sabe sin mirar saldos; el de flejes y margen lo dice el piso.
     noFloorReason: staticNoFloorReason(p),
-    pieceWeightCheck: pieceWeightCheckOf(p, galvDensity),
+    pieceWeightCheck: pieceWeightCheckOf(p),
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };

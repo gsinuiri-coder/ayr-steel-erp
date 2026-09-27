@@ -159,7 +159,7 @@ export function ProductDialog({
   const finishes = useQuery({
     queryKey: ['finishes'],
     queryFn: () => api<FinishDto[]>('/finishes'),
-    enabled: open && (showRoofingFields || showDrywallFields),
+    enabled: open && showRoofingFields,
   });
   // El acabado guardado se ofrece siempre, aunque esté desactivado o de otra línea: si no,
   // el `Select` se vacía y parece que nadie eligió nada, cuando el producto sí tiene uno.
@@ -196,12 +196,9 @@ export function ProductDialog({
   const watchedThickness = form.watch('thicknessMm');
   const watchedFinishId = form.watch('finishId');
   // D-344: aviso (nunca bloqueo) cuando el kg/pieza declarado se aleja más del 5 % del teórico. La
-  // densidad sale del acabado galvanizado (drywall no guarda acabado en el SKU): el más antiguo
-  // activo, el mismo que usa el API para el aviso del catálogo.
-  const galvDensity =
-    [...(finishes.data ?? [])]
-      .filter((f) => f.kind === 'GALVANIZADO' && f.isActive)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]?.densityFactor ?? null;
+  // densidad es la constante física del acero (`drywallPieceWeightCheck` la trae adentro): drywall
+  // no guarda acabado en el SKU, y buscar «el» acabado galvanizado de la línea es ambiguo apenas
+  // exista más de uno.
   const [drWidth, drLength, drThickness, drWeight] = form.watch([
     'widthMm',
     'lengthMm',
@@ -214,7 +211,6 @@ export function ProductDialog({
         lengthMm: decimalOrNull(drLength),
         thicknessMm: decimalOrNull(drThickness),
         pieceWeightKg: decimalOrNull(drWeight),
-        densityFactor: galvDensity,
       })
     : null;
   const isNewAccessory = !editing && watchedKind === RoofingProductKind.ACCESORIO;

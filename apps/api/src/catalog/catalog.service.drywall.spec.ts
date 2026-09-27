@@ -74,8 +74,6 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
     jest.clearAllMocks();
     prisma.businessLine.findUnique.mockResolvedValue({ id: BL, code: BusinessLineCode.DRYWALL });
     prisma.finish.findUnique.mockResolvedValue(null);
-    // Acabado galvanizado activo: de él sale la densidad del aviso de kg/pieza.
-    prisma.finish.findFirst.mockResolvedValue({ densityFactor: new Decimal('7.8500') });
     prisma.productionOrder.count.mockResolvedValue(0);
     colors.resolveActive.mockResolvedValue(null);
     prisma.$transaction.mockRejectedValue(STOP);
@@ -224,21 +222,16 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
       expect(await check(stored({ thicknessMm: null }))).toBeNull();
     });
 
-    it('sin un acabado galvanizado activo del que sacar la densidad no hay comparación', async () => {
-      prisma.finish.findFirst.mockResolvedValue(null);
-      expect(await check(stored())).toBeNull();
-    });
-
     it('un producto que no es un perfil de drywall no lleva el aviso', async () => {
       expect(await check(stored({ businessLine: { code: BusinessLineCode.TRADING } }))).toBeNull();
       expect(await check(stored({ source: ProductSource.PURCHASED }))).toBeNull();
     });
 
-    it('el catálogo entero calcula la densidad una sola vez, no una por producto', async () => {
+    it('la densidad es la constante física del acero, no la de ningún acabado: no consulta la tabla de acabados', async () => {
       prisma.product.findMany.mockResolvedValue([stored(), stored({ id: 'p-2', sku: 'P38' })]);
       const list = await service.findAll();
       expect(list).toHaveLength(2);
-      expect(prisma.finish.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.finish.findFirst).not.toHaveBeenCalled();
     });
   });
 });

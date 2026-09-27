@@ -246,40 +246,44 @@ export function theoreticalKgPerSellingUnit(input: {
 }
 
 /**
+ * D-344: densidad del acero galvanizado del fleje de drywall, como **constante física** (mismo
+ * valor que el resto del código documenta para el acero, `≈ 7.85 t/m³` — ver el comentario de
+ * `NORMAL_SCRAP_RATE_PCT`). No sale de ningún `Finish`: desde D-344 el SKU de drywall no guarda
+ * acabado, y buscar «el» acabado galvanizado activo de la línea es ambiguo apenas existe más de
+ * uno (dos altas del dueño, o —como pasó en el E2E de CI, que comparte la base entre 444
+ * pruebas— un acabado de otra prueba con otra densidad, creado en la línea drywall por
+ * comodidad). Un aviso que puede confundirse con el fleje equivocado es peor que no avisar.
+ */
+export const STEEL_DENSITY_FACTOR = '7.85';
+
+/**
  * D-344: umbral, en %, del aviso «el kg/pieza declarado se aleja del teórico». Con el ancho del
- * fleje, el largo y el espesor del SKU, y la densidad del acabado galvanizado, el peso de una
- * pieza de drywall es una cuenta: un declarado que se aparta más de esto casi siempre es un dato
- * de relleno (`1.00 / 1.000`) o un espesor mal cargado.
+ * fleje, el largo y el espesor del SKU, y la densidad del acero (`STEEL_DENSITY_FACTOR`), el peso
+ * de una pieza de drywall es una cuenta: un declarado que se aparta más de esto casi siempre es un
+ * dato de relleno (`1.00 / 1.000`) o un espesor mal cargado.
  */
 export const PIECE_WEIGHT_WARN_PCT = '5';
 
 /**
  * D-344: compara el peso declarado de una pieza de drywall contra el teórico
- * (`theoreticalKgPerPiece`, que ya lleva el 1 % de merma de D-165). Devuelve `null` si falta
- * cualquier dato de la cuenta o si el teórico da cero. Nunca bloquea: es un aviso.
+ * (`theoreticalKgPerPiece`, con `STEEL_DENSITY_FACTOR` y el 1 % de merma de D-165). Devuelve
+ * `null` si falta cualquier dato de la cuenta o si el teórico da cero. Nunca bloquea: es un aviso.
  */
 export function drywallPieceWeightCheck(input: {
   widthMm: DecimalInput | null;
   lengthMm: DecimalInput | null;
   thicknessMm: DecimalInput | null;
   pieceWeightKg: DecimalInput | null;
-  densityFactor: DecimalInput | null;
 }): { theoreticalKg: string; deviationPct: string; warn: boolean } | null {
-  const { widthMm, lengthMm, thicknessMm, pieceWeightKg, densityFactor } = input;
-  if (
-    widthMm === null ||
-    lengthMm === null ||
-    thicknessMm === null ||
-    pieceWeightKg === null ||
-    densityFactor === null
-  ) {
+  const { widthMm, lengthMm, thicknessMm, pieceWeightKg } = input;
+  if (widthMm === null || lengthMm === null || thicknessMm === null || pieceWeightKg === null) {
     return null;
   }
   const theoretical = theoreticalKgPerPiece({
     widthMm,
     thicknessMm,
     pieceLengthMm: lengthMm,
-    densityFactor,
+    densityFactor: STEEL_DENSITY_FACTOR,
   });
   if (theoretical.lte(0)) return null;
   const deviation = toDecimal(pieceWeightKg).minus(theoretical).abs().div(theoretical).times(100);
