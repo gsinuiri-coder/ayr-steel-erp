@@ -519,7 +519,7 @@ function CoilsDialog({
             <TableBody>
               {lines.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-muted-foreground">
+                  <TableCell colSpan={view === 'split' ? 6 : 5} className="text-muted-foreground">
                     Sin bobinas.
                   </TableCell>
                 </TableRow>

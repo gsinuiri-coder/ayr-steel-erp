@@ -360,4 +360,27 @@ describe('SalesByMaterialService (D-354)', () => {
     await service.report(SEPT);
     expect(calls).toHaveLength(1);
   });
+
+  it('presupuesto fijo: cuatro consultas con 1 línea y con 60 (sin N+1)', async () => {
+    const seeds = (n: number): Seeds => {
+      const items = Array.from({ length: n }, (_, i) => `soi-${String(i)}`);
+      return {
+        lines: items.map((item, i) => ({
+          doc: String(i + 1),
+          item,
+          qty: '10.000',
+          subtotal: '300.0000',
+        })),
+        invoiced: Object.fromEntries(items.map((id) => [id, '10.000'])),
+        facts: Object.fromEntries(items.map((id) => [id, { produced: '10.000' }])),
+        usage: items.map((item) => ({ item, coil: 'B-1', kg: '24.000', cost: '60.0000' })),
+      };
+    };
+    for (const n of [1, 60]) {
+      const { service, calls } = await build(seeds(n));
+      const report = await service.report(SEPT);
+      expect(calls).toHaveLength(4);
+      expect(report.rows[0]!.lineCount).toBe(n);
+    }
+  });
 });
