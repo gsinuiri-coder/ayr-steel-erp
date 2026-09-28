@@ -412,6 +412,41 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
   `--undo`); y, de solo lectura, `traceLine` (el cuerpo del motor de Ventas por material, extraído) y la
   rentabilidad por comprobante (`document-profitability*`).
 
+## Recorrido de UX — M2 de Correcciones 06 (2026-09-28, solo docs)
+
+Rama `docs/recorrido-ux` desde `origin/main` = `bc0c331` (CI de `main` verde antes de abrirla). Handoff:
+`docs/handoff/correcciones-06-m2.md`. **PR de solo docs, sin mergear.** Sin código de producto ni migración.
+
+- **Entregable:** `docs/analisis/ux-recorrido-2026-09-28.md`: **57 hallazgos de UX** (Alta 0, Media 21, Baja 36)
+  y **3 posibles bugs de lógica** listados aparte sin tocar, con severidad, esfuerzo y D-nnn propuesta
+  (P-01 a P-16, **no** escritas en §0.2). Recorrido con Playwright a 1366×768 y 1920×1080 sobre la base
+  descartable `ayr_local_ux` (no `ayr_local`, que es del dueño), con el flujo completo cotizar → confirmar →
+  producir → despachar → facturar → cobrar por la pantalla, y los menús de VENDEDOR y SUPERVISOR_PLANTA.
+- **D-367 registrada** en §0.2 (regla de producto, sin implementar): «un producto o SKU se crea, de forma
+  interactiva, solo desde Catálogo». Origen: instrucción del dueño en esta sesión; **la razón del cliente no
+  consta en el repo y queda pendiente de que el dueño la dicte**. Excepción acotada a D-156. Conflicto
+  vigente: el «+ Crear» del importador de compras (desplegado el 2026-09-27), que no se tocó.
+- **Lo más importante del informe:** (1) el dolor es de anchura y altura a 1366 (columnas Estado y por ML
+  cortadas; la acción principal bajo el pliegue), no de tipografía; el menú lateral ocupa 256 px y su colapso
+  no se recuerda. (2) **LOG-2:** el valor de la plancha sale 98.0001 y el total interno 3,923.5024: cobrar
+  3,923.50 deja un saldo de 0.0024 en Cobranzas (D-169 permite cobrar 3,923.51, así que cierra con 0.01
+  más). (3) **LOG-3:** `metersReported` es `null` en las OP de plancha: el detalle del pedido dice «0.000 m
+  de 60.000 m» en una orden completa.
+- **Revisiones (estándar de AGENTS §2, regla 2; ninguna vale como pase independiente):**
+  `docs/revision/recorrido-ux-autorrevision.md` (0 P0, 6 P1) y `docs/revision/recorrido-ux-segundo-modelo.md`
+  (Sonnet, contexto limpio: 1 P0, 9 P1). Encontraron **tres hallazgos míos falsos** (DES-1, CAT-1, COT-10),
+  uno mal diagnosticado (PLA-9 era un bug de lógica) y omisiones; todo corregido en el informe y verificado
+  de nuevo. **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-28, motivo: esquema de un solo agente).
+- **Pendiente del dueño:** dictar la razón del cliente de D-367; decidir P-12 (importador de compras y de
+  cotizaciones frente a D-367); decidir PLA-8 (cierre de orden sin confirmación); completar la lista de lo
+  que el cliente validó en UAT (el repo no la registra); verificar `manual_by_default` en producción (solo
+  lectura) antes de asignar FAC-2; aceptar o no las P-01 a P-16.
+- **No se ejerció** (sesión propia): mostrador, corte, drywall, importadores con archivo, anulaciones y
+  reversas, confirmar con faltante, y el resto de roles.
+- **Entorno de la sesión:** worktree `../ayr-ux`, API `:3000` y web `:3001` contra `ayr_local_ux`; los dos
+  servidores se detienen al cerrar. Las capturas y las herramientas de medida quedan en
+  `local-data/c06/ux/` (ignorada por git); antes de borrar el worktree, copiarlas al checkout principal.
+
 ## Ventana de Correcciones 06 (2026-09-28, sin migración)
 
 PR #52 (merge `8adb9cd`). SHA desplegado `3659b24`. Handoff: `docs/handoff/correcciones-06.md`. UAT:
