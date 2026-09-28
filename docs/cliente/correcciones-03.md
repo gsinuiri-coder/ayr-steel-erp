@@ -81,7 +81,7 @@ orden; es la que usan los handoffs y `docs/cliente/revision-2026-09-25.md`.
 | 6     | Entregado: el administrador confirma con faltante, el vendedor sigue bloqueado         | D-341 (y D-188 para el aviso de cotizar sin stock)                                     |
 | 7     | Entregado                                                                              | D-343 (subtipo Accesorio: metros lineales de bobina, sin largos)                       |
 | 8     | Resuelto: el filtro de bobinas es por color comercial; el acabado sigue en el producto | D-270, D-271, D-135                                                                    |
-| 9     | **A validar en demo**                                                                  | reporte «Ventas y margen»                                                              |
+| 9     | Entregado: rentabilidad en el detalle de cada comprobante                              | D-361 (y Ventas por material, D-354, con columnas por ML)                              |
 | 10    | Entregado                                                                              | D-293; los diálogos de acabados, colores y receta y el formulario de compra, en la 03b |
 | 11    | Entregado                                                                              | D-294                                                                                  |
 | 12    | Entregado                                                                              | D-295                                                                                  |
