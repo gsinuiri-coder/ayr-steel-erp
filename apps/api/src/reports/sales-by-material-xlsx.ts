@@ -74,6 +74,15 @@ export function salesByMaterialXlsx(report: SalesByMaterialDto): {
   main.rows.push(['Total', null, '', ...figureCells(report.total)]);
   main.rows.push([]);
   main.rows.push(['Venta no trazable (S/)', num(report.untraceableSalesPen)]);
+  // El cuadre por comprobante, sin filtros (ver la leyenda de la pantalla).
+  main.rows.push([
+    'Venta de Coberturas Aluzinc facturada en el rango (S/)',
+    num(report.reconciliation.roofingSalesPen),
+  ]);
+  main.rows.push([
+    'Venta de bobinas enteras de Coberturas Aluzinc (S/)',
+    num(report.reconciliation.coilSalesPen),
+  ]);
 
   // Modal desglosado: bobina × tipo, sumando las filas del mismo tipo.
   const byCoilKind = new Map<

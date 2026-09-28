@@ -328,9 +328,16 @@ export function VentasMaterialView() {
           )}
 
           <p className="text-xs text-muted-foreground" data-testid="cuadre-ventas-margen">
-            Cuadre con Ventas y margen (sin filtros): Coberturas Aluzinc{' '}
-            {formatMoney(data.reconciliation.roofingSalesPen)}; bobinas enteras de Coberturas
-            Aluzinc (allá en Comercialización) {formatMoney(data.reconciliation.coilSalesPen)}.
+            {/* Lo que se muestra es el cuadre por comprobante, sin filtros: la venta de todas las
+                líneas de Coberturas Aluzinc facturadas en el rango. «Ventas y margen» la suma en
+                su fila de la línea salvo los pedidos que deja fuera de sus totales (no
+                comparables o no rastreables), y las bobinas enteras las cuenta dentro de
+                Comercialización (D-247): la leyenda lo dice para no prometer una cifra que allá
+                no aparece tal cual. */}
+            Cuadre con Ventas y margen (sin filtros): venta de Coberturas Aluzinc facturada en el
+            rango {formatMoney(data.reconciliation.roofingSalesPen)} (allá, en la fila de la línea,
+            más los pedidos que deja fuera de sus totales); bobinas enteras de Coberturas Aluzinc{' '}
+            {formatMoney(data.reconciliation.coilSalesPen)} (allá, dentro de Comercialización).
             {data.reconciliation.unclassifiedSalesPen !== '0.0000' &&
               ` Productos de la línea sin subtipo, fuera de las filas: ${formatMoney(data.reconciliation.unclassifiedSalesPen)}.`}
           </p>

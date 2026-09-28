@@ -186,10 +186,19 @@ describe('dispatchLinksByDocument', () => {
   it('una guía de remisión no busca despachos: el suyo es `dispatchId`', async () => {
     const findMany = jest.fn();
     const out = await dispatchLinksByDocument({ dispatch: { findMany } } as never, [
-      { id: 'g-1', docType: FiscalDocType.GUIA_REMISION_REMITENTE, salesOrderId: 'o-1' },
+      {
+        id: 'g-1',
+        docType: FiscalDocType.GUIA_REMISION_REMITENTE,
+        salesOrderId: 'o-1',
+        dispatchId: 'd-9',
+        dispatchCode: 'DES-000009',
+      },
     ]);
     expect(findMany).not.toHaveBeenCalled();
-    expect(out.get('g-1')).toEqual({ invoicedDispatches: [], orderDispatches: [] });
+    expect(out.get('g-1')).toEqual({
+      invoicedDispatches: [{ id: 'd-9', code: 'DES-000009' }],
+      orderDispatches: [],
+    });
   });
 
   it('sin pedido y sin declarado, no hay nada que mostrar', async () => {

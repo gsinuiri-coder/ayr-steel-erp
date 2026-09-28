@@ -24,6 +24,8 @@ interface LineSeed {
   qty: string;
   subtotal: string;
   lengthMm?: string;
+  /** Unidad de venta; por defecto la del subtipo (MTR, o NIU en una plancha). */
+  unit?: 'MTR' | 'NIU' | 'KGM';
   thickness?: string;
   color?: string | null;
 }
@@ -48,6 +50,7 @@ function lineRow(s: LineSeed): Record<string, unknown> {
     qty: nc ? d(s.qty).negated() : d(s.qty),
     subtotal_pen: nc ? d(s.subtotal).negated() : d(s.subtotal),
     sku: coil ? 'BOBALZROJ030' : 'COB030ROJO',
+    unit: s.unit ?? (coil ? 'KGM' : s.kind === 'PLANCHA' ? 'NIU' : 'MTR'),
     is_coil_sale: coil,
     roofing_kind: coil ? null : s.kind === undefined ? 'A_MEDIDA' : s.kind,
     length_mm: s.lengthMm === undefined ? null : d(s.lengthMm),
@@ -314,6 +317,33 @@ describe('SalesByMaterialService (D-354)', () => {
     expect(report.rows.map((r) => [r.thicknessMm, r.colorLabel])).toEqual([['0.40', 'AZUL']]);
     expect(report.total.salesPen).toBe('500.0000');
     expect(report.reconciliation.roofingSalesPen).toBe('800.0000');
+  });
+
+  it('el ML sale de la unidad: plancha en kilos o en piezas sin largo → «No trazable», nunca un cero', async () => {
+    const { service } = await build({
+      lines: [
+        {
+          doc: '1',
+          item: 'soi-1',
+          kind: 'PLANCHA',
+          unit: 'KGM',
+          lengthMm: '3600',
+          qty: '500.000',
+          subtotal: '1500.0000',
+        },
+        { doc: '2', item: 'soi-2', kind: 'PLANCHA', qty: '4.000', subtotal: '200.0000' },
+      ],
+      invoiced: { 'soi-1': '500.000', 'soi-2': '4.000' },
+      facts: { 'soi-1': { produced: '20.000' }, 'soi-2': { produced: '4.000' } },
+      usage: [{ item: 'soi-1', coil: 'B-1', kg: '500.000', cost: '1250.0000' }],
+    });
+    const report = await service.report(SEPT);
+    expect(report.rows).toEqual([]);
+    expect(report.untraceable.map((u) => [u.reason, u.metersSold, u.salesPen])).toEqual([
+      ['SIN_METRO', '0.000', '1500.0000'],
+      ['SIN_METRO', '0.000', '200.0000'],
+    ]);
+    expect(report.reconciliation.roofingSalesPen).toBe('1700.0000');
   });
 
   it('un producto de la línea sin subtipo cuenta en el cuadre y no en las filas', async () => {

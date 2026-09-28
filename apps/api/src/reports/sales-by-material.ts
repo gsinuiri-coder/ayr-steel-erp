@@ -39,6 +39,8 @@ export interface InvoiceLine {
   sku: string;
   /** `null` = producto de la línea sin subtipo: cuenta en el cuadre y no en las filas. */
   kind: SalesMaterialKind | null;
+  /** Unidad de venta del producto (`MTR`, `NIU`, `KGM`). */
+  unit: string;
   /** Cantidad en la unidad de venta, con signo. */
   qty: string;
   /** Sin IGV, con signo. */
@@ -90,22 +92,26 @@ export function colorLabelOf(colorName: string | null, finishKind: FinishKind | 
   return finishKind === null ? 'Sin color' : FINISH_KIND_LABELS[finishKind];
 }
 
-/** Metros lineales de una cantidad vendida. Null si la geometría no alcanza para decirlo. */
+/**
+ * Metros lineales de una cantidad vendida, **según la unidad de venta** y no según el subtipo
+ * (regla dura 13: «por metro» es una pregunta por la unidad). `null` cuando la unidad no tiene
+ * conversión a metros —una plancha vendida en kilos, una en piezas sin largo en el SKU, una
+ * bobina sin geometría—: esa línea va a «No trazable» en vez de sumar un cero que parece dato.
+ */
 export function metersOf(
-  line: Pick<InvoiceLine, 'kind' | 'qty' | 'lengthMm' | 'geometry'>,
-): Decimal {
+  line: Pick<InvoiceLine, 'kind' | 'unit' | 'qty' | 'lengthMm' | 'geometry'>,
+): Decimal | null {
   const qty = toDecimal(line.qty);
-  switch (line.kind) {
-    case 'PLANCHA':
-      return line.lengthMm === null ? ZERO : qty.times(toDecimal(line.lengthMm)).div(1000);
-    case 'BOBINA': {
-      // Bobina entera: se vende en kilos; su ML es el teórico de esos kilos con su geometría.
-      const perMeter = kgPerMeterOf(line.geometry);
-      return perMeter === null ? ZERO : qty.div(perMeter);
-    }
-    default:
-      return qty;
+  if (line.kind === 'BOBINA') {
+    // Bobina entera: se vende en kilos; su ML es el teórico de esos kilos con su geometría.
+    const perMeter = kgPerMeterOf(line.geometry);
+    return perMeter === null ? null : qty.div(perMeter);
   }
+  if (line.unit === 'MTR') return qty;
+  if (line.unit === 'NIU' && line.lengthMm !== null) {
+    return qty.times(toDecimal(line.lengthMm)).div(1000);
+  }
+  return null;
 }
 
 function kgPerMeterOf(g: Geometry): Decimal | null {
@@ -245,7 +251,8 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
   let untraceableSales = ZERO;
 
   for (const line of visible) {
-    const meters = metersOf(line);
+    const convertible = metersOf(line);
+    const meters = convertible ?? ZERO;
     const perMeter = kgPerMeterOf(line.geometry);
     // En una bobina entera el teórico son sus propios kilos: su ML se sacó de ellos.
     const theoretical =
@@ -274,6 +281,11 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
       });
     };
 
+    // Sin metros no hay ML, teórico ni una base de producción en la misma unidad: se declara.
+    if (convertible === null) {
+      pushUntraceable('SIN_METRO', ONE);
+      continue;
+    }
     if (line.salesOrderItemId === null) {
       pushUntraceable('SIN_PEDIDO', ONE);
       continue;

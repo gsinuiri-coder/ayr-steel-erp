@@ -164,8 +164,13 @@ export class ReportsService {
         from: toDateOnly(from),
         nextFrom: toDateOnly(nextFrom),
       });
-      // Una anulada en el mismo mes de su alta entra y sale: no está en ningún lado.
-      if (presence === 'ANNULLED_SAME_MONTH' || presence === 'ABSENT') continue;
+      // Una anulada en el mismo mes de su alta entra y sale: no está en ningún lado. Sus kilos
+      // son 0 al inicio y al cierre; su valor también, salvo un residuo de redondeo del kardex,
+      // que sigue sumando al valor general para que ese total no cambie respecto de D-340.
+      if (presence === 'ANNULLED_SAME_MONTH' || presence === 'ABSENT') {
+        unlisted.value = unlisted.value.plus(value);
+        continue;
+      }
       entries = entries.plus(monthEntries);
       if (presence !== 'LISTED') {
         unlisted.opening = unlisted.opening.plus(opening);

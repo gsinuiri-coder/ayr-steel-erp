@@ -145,8 +145,10 @@ export function ReporteBobinasView() {
 }
 
 /**
- * D-355: lo que las tablas no listan y el cuadre del mes. Con estas líneas, el inicio de las
- * tablas más lo consumido por las terminadas más el saldo de las anuladas es el inicio general.
+ * D-355: lo que las tablas no listan y el cuadre del mes. El cuadre usa los totales de **todas**
+ * las bobinas del mes (listadas o no): inicio + altas − salidas = cierre. Lo consumido por una
+ * terminada es su saldo al inicio más sus altas del mes (la madre de un partido o de un corte
+ * «consumió» lo que pasó a sus hijas).
  */
 function MonthSummary({ report }: { report: CoilMonthReportDto }) {
   const { finished, annulledWithOpening, flow } = report;

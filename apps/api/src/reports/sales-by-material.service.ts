@@ -30,6 +30,7 @@ interface LineRow {
   qty: Prisma.Decimal;
   subtotal_pen: Prisma.Decimal;
   sku: string;
+  unit: string;
   is_coil_sale: boolean;
   roofing_kind: string | null;
   length_mm: Prisma.Decimal | null;
@@ -159,6 +160,7 @@ export class SalesByMaterialService {
         CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."subtotal_pen" ELSE fdi."subtotal_pen" END
           AS "subtotal_pen",
         p."sku",
+        p."unit",
         (blp."code"::text = 'trading') AS "is_coil_sale",
         p."roofing_kind"::text AS "roofing_kind",
         p."length_mm",
@@ -284,7 +286,7 @@ export class SalesByMaterialService {
         SELECT refs."item_id", m."item_id" AS "coil_id", m."type", m."qty", m."total_cost"
         FROM refs
         JOIN "inventory_movements" m
-          ON m."ref_type"::text = refs."ref_type" AND m."ref_id" = refs."ref_id"
+          ON m."ref_type" = refs."ref_type"::"InventoryRefType" AND m."ref_id" = refs."ref_id"
          AND m."item_type" = 'COIL'
         UNION ALL
         SELECT di."sales_order_item_id", m."item_id", m."type", m."qty", m."total_cost"
@@ -326,6 +328,7 @@ function toInvoiceLine(r: LineRow): InvoiceLine {
     orderSeq: r.order_seq,
     salesOrderItemId: r.sales_order_item_id,
     sku: r.sku,
+    unit: r.unit,
     kind,
     qty: r.qty.toString(),
     salesPen: r.subtotal_pen.toString(),

@@ -354,17 +354,16 @@ describe('ReportsService.coilsByMonth (D-340)', () => {
       exitsKg: '600.000',
       closingKg: '4600.000',
     });
-    // Las tablas más las líneas de abajo explican el inicio entero.
-    const listedOpening = [...sep.sealed.rows, ...sep.opened.rows].reduce(
-      (acc, r) => acc.plus(r.openingKg),
+    // Lo no listado cierra en cero: el cierre del cuadre es la suma de las tablas.
+    const listedClosing = [...sep.sealed.rows, ...sep.opened.rows].reduce(
+      (acc, r) => acc.plus(r.closingKg),
       new Decimal(0),
     );
+    expect(listedClosing.toFixed(3)).toBe(sep.flow.closingKg);
+    // Las salidas son exactamente lo que se resume debajo (la terminada y la anulada).
     expect(
-      listedOpening
-        .plus(sep.finished.consumedKg)
-        .plus(sep.annulledWithOpening.openingKg)
-        .toFixed(3),
-    ).toBe(sep.flow.openingKg);
+      new Decimal(sep.finished.consumedKg).plus(sep.annulledWithOpening.openingKg).toFixed(3),
+    ).toBe(sep.flow.exitsKg);
   });
 
   it('el saldo final de cada mes coincide con el inicial del siguiente (el invariante)', async () => {

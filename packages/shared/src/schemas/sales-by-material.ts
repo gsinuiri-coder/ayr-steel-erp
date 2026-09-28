@@ -30,6 +30,8 @@ export const SALES_MATERIAL_KIND_LABELS: Record<SalesMaterialKind, string> = {
  *   el material de esa corrida no pertenece a ningún pedido.
  * - `SIN_PEDIDO`: la línea del comprobante no apunta a una línea de pedido.
  * - `SIN_DESPACHO`: una bobina vendida entera que todavía no salió del almacén (o solo en parte).
+ * - `SIN_METRO`: la unidad de venta no se convierte a metros (una plancha en kilos, una en piezas
+ *   sin largo en el SKU, una bobina sin geometría): no hay ML ni una base de producción comparable.
  */
 export const SALES_MATERIAL_UNTRACEABLE_REASONS = [
   'SIN_PRODUCCION',
@@ -37,6 +39,7 @@ export const SALES_MATERIAL_UNTRACEABLE_REASONS = [
   'DESDE_STOCK',
   'SIN_PEDIDO',
   'SIN_DESPACHO',
+  'SIN_METRO',
 ] as const;
 export type SalesMaterialUntraceableReason = (typeof SALES_MATERIAL_UNTRACEABLE_REASONS)[number];
 
@@ -46,6 +49,7 @@ export const SALES_MATERIAL_UNTRACEABLE_LABELS: Record<SalesMaterialUntraceableR
   DESDE_STOCK: 'Atendida desde stock (sin OP propia)',
   SIN_PEDIDO: 'Sin línea de pedido vinculada',
   SIN_DESPACHO: 'Bobina sin despachar aún',
+  SIN_METRO: 'Unidad sin conversión a metros lineales',
 };
 
 const thicknessFilterSchema = z.string().regex(/^\d+(\.\d{1,2})?$/, 'Espesor inválido');

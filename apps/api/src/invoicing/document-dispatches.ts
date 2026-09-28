@@ -6,6 +6,9 @@ export interface DocumentDispatchRef {
   id: string;
   docType: FiscalDocType;
   salesOrderId: string | null;
+  /** El despacho de una guía de remisión (`FiscalDocument.dispatchId`), que es el suyo. */
+  dispatchId?: string | null;
+  dispatchCode?: string | null;
 }
 
 export interface DocumentDispatchLinks {
@@ -14,8 +17,6 @@ export interface DocumentDispatchLinks {
   /** Los despachos vivos del pedido, **solo** si no hay ninguno declarado (D-205). */
   orderDispatches: FiscalDocumentDispatchLinkDto[];
 }
-
-const NONE: DocumentDispatchLinks = { invoicedDispatches: [], orderDispatches: [] };
 
 /**
  * Correcciones 05 / M5: a qué despacho está asociado cada comprobante.
@@ -28,7 +29,8 @@ const NONE: DocumentDispatchLinks = { invoicedDispatches: [], orderDispatches: [
  *
  * Sin despacho declarado, los del pedido van en su propio campo para que la pantalla los rotule
  * como del pedido: D-205 prohíbe presentar un enlace inferido como propio (un pedido puede tener
- * varios despachos parciales). La guía de remisión no pasa por acá: su despacho es `dispatchId`.
+ * varios despachos parciales). La guía de remisión no se consulta: su despacho es `dispatchId`, el
+ * que la emitió, y se devuelve como el suyo sin viaje a la base.
  *
  * **Una sola consulta** para toda la página, sin importar cuántos comprobantes traiga
  * (`document-dispatches.spec.ts`).
@@ -39,7 +41,16 @@ export async function dispatchLinksByDocument(
 ): Promise<Map<string, DocumentDispatchLinks>> {
   const out = new Map<string, DocumentDispatchLinks>();
   const payable = documents.filter((d) => d.docType !== FiscalDocType.GUIA_REMISION_REMITENTE);
-  for (const d of documents) out.set(d.id, NONE);
+  for (const d of documents) {
+    const { dispatchId, dispatchCode: code } = d;
+    const ownGuide =
+      d.docType === FiscalDocType.GUIA_REMISION_REMITENTE &&
+      typeof dispatchId === 'string' &&
+      typeof code === 'string'
+        ? [{ id: dispatchId, code }]
+        : [];
+    out.set(d.id, { invoicedDispatches: ownGuide, orderDispatches: [] });
+  }
   if (payable.length === 0) return out;
 
   const documentIds = payable.map((d) => d.id);
