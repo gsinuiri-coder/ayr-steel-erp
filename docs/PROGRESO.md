@@ -218,6 +218,42 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
   prorrateo `traceFraction`; y `monthPresence` del reporte mensual (qué bobina se lista, se resume o
   desaparece; los totales generales no cambian).
 
+- **Hotfix del importador de compras** (2026-09-28, rama `fix/import-compras-totales`, PR #50). D-359. **Dos
+  pases, los dos por subagentes** —autorrevisión y segundo modelo con `model: sonnet` y contexto limpio—, así que
+  **ninguno vale como pase independiente** (`docs/revision/import-compras-totales-autorrevision.md`: 0 P0, 1 P1;
+  `docs/revision/import-compras-totales-segundo-modelo.md`: 0 P0, 2 P1; resueltos antes del deploy —uno de ellos,
+  la auditoría de compras ya confirmadas, verificado en producción sin hallazgos—). **PENDIENTE DE REVISIÓN DEL
+  DUEÑO** (2026-09-28, motivo: esquema de un solo agente). Piezas de riesgo, **tocan kardex**:
+  `InventoryService.record` con `totalCost` (el promedio pondera con él; guarda del unitario), `CoilsService.create`
+  con `totalCost`, `PurchasesService.receive` (toda compra entra ahora por `cents(subtotal × TC)`) y
+  `bumpCoilDocumentCost` (suma el delta). Y los importes del papel del importador (`paperAmounts`).
+
+## Hotfix del importador de compras (2026-09-28, sin migración)
+
+PR #50 (merge `f37fc1a`). SHA desplegado `9cde4c5`. Handoff: `docs/handoff/import-compras-totales.md`. OK del
+dueño comando por comando. Antes, en la misma sesión: PR #49 mergeado (`75d8804`) con todos los checks en SUCCESS y
+diff de runtime contra `63134cc` en exit 0; `origin/feat/correcciones-05` y `origin/docs/cierre-correcciones-05`
+borradas por nombre tras confirmarlas en `--merged origin/main`; `git ls-remote --heads origin` → solo `main`.
+
+- **CI del PR #50 sobre `9cde4c5`:** lint/typecheck/unit, E2E completo del runner (incluido
+  `importar-compras-totales-d359.spec.ts` y los specs que afirman costos exactos de kardex), smoke con Neon `ci` y
+  SonarCloud en SUCCESS. Cobertura de líneas nuevas del API medida contra el lcov: 93,8 % (antes de las
+  correcciones).
+- **Sin migración, sin respaldo.** `migrations-status` al día (81); `db:prod` sin pendientes; `migrate diff` = el
+  drift conocido exacto.
+- **API:** **`ayr-steel-erp-api-00064-7jr`**, 100 % del tráfico, `git-sha=9cde4c5`, `/health` 200, 14 nombres y
+  los 9 secretos con versión explícita. Smoke con la web vieja en verde; merge con `--match-head-commit`; Vercel
+  `success`; smoke contra `v2.mareliac.pe` en verde; `git diff --quiet 9cde4c5 origin/main -- apps packages …` →
+  exit 0.
+- **Verificación en producción, solo preview (no se confirmó nada; admin efímero borrado; salidas en
+  `local-data/fix-import-compras/`):** el archivo del dueño armado en formato plantilla desde su export (un
+  comprobante por serie-número, IMPORTE SIN IGV = VALOR TOTAL, TOTAL COMPROBANTE CON IGV = Σ PRECIO, la tasa como
+  celda de porcentaje `0.18`): **los 5 comprobantes con total igual al del papel y sin aviso de total** (85.00,
+  160.00, 595.00, 1 430.01 y 563.99). Los otros errores del preview son del armado de la verificación (línea de
+  negocio de la cabecera) y «Ya registrada» (las cinco compras ya estaban cargadas y recibidas). **Auditoría:**
+  18 compras vivas, **ninguna** con IGV distinto de 0 o 18 %.
+- **Rollback (no usado):** tráfico a `00063-qwp`; sin migración.
+
 ## Ventana de Correcciones 05 (2026-09-27, sin migración)
 
 PR #48 (merge `9a7208a`). SHA desplegado `63134cc`. UAT: `docs/uat/correcciones-05.md`. Guía del cliente:
