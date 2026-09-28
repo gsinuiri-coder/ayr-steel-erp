@@ -1,8 +1,8 @@
-import { CoilStatus, type Prisma } from '@prisma/client';
-import { Decimal, toDecimal } from '@ayr/shared';
+import { CoilStatus, ReservationStatus, type Prisma } from '@prisma/client';
+import { Decimal, quotationCode, salesOrderCode, toDecimal } from '@ayr/shared';
 import type { AuditService } from '../audit/audit.service';
 import { findLiveStripAssignments } from '../production/production-assignments';
-import { reservedByItem } from '../sales/reserved-ledger';
+import { liveTemporaryWhere, reservedByItem } from '../sales/reserved-ledger';
 
 /**
  * D-360 — **la bobina se termina sola cuando una salida la deja en exactamente 0.**
@@ -77,7 +77,12 @@ export interface PlannedCoil {
 export interface AutoTerminatePlan {
   /** Vigentes en exactamente 0, sin montaje vivo ni reserva: las que se terminan. */
   terminate: PlannedCoil[];
-  skipped: (PlannedCoil & { reason: AutoTerminateSkipReason; detail: string })[];
+  skipped: (PlannedCoil & {
+    reason: AutoTerminateSkipReason;
+    detail: string;
+    /** En una reserva viva: los documentos que la tienen (`PED-…`, `COT-…`). */
+    holders?: string[];
+  })[];
 }
 
 /** Las anomalías se auditan; la montada no, porque se va a terminar sola más adelante. */
@@ -134,22 +139,64 @@ export async function planAutoTerminate(
   for (const m of mounts)
     mountedIn.set(m.coilId, [...(mountedIn.get(m.coilId) ?? []), m.orderCode]);
 
+  // Quién reserva: solo se pregunta si hay anomalía, que es el caso raro (hoy, cero).
+  const reservedIds = zero
+    .filter((c) => !mountedIn.has(c.id) && (reserved.get(c.id) ?? new Decimal(0)).gt(0))
+    .map((c) => c.id);
+  const holders =
+    reservedIds.length === 0
+      ? new Map<string, string[]>()
+      : await reservationHolders(tx, reservedIds);
+
   for (const coil of zero) {
     const orders = mountedIn.get(coil.id);
     const reservedKg = reserved.get(coil.id) ?? new Decimal(0);
     if (orders) {
       plan.skipped.push({ ...coil, reason: 'MOUNTED', detail: `montada en ${orders.join(', ')}` });
     } else if (reservedKg.gt(0)) {
+      const by = holders.get(coil.id) ?? [];
       plan.skipped.push({
         ...coil,
         reason: 'RESERVED',
-        detail: `en 0 kg con ${reservedKg.toFixed(3)} kg reservados sobre el rollo`,
+        detail:
+          `en 0 kg con ${reservedKg.toFixed(3)} kg reservados sobre el rollo` +
+          (by.length === 0 ? '' : ` por ${by.join(', ')}`),
+        holders: by,
       });
     } else {
       plan.terminate.push(coil);
     }
   }
   return plan;
+}
+
+/**
+ * Los documentos que reservan cada rollo (pedido con reserva firme, cotización con reserva
+ * temporal vigente, D-185): lo que la anomalía nombra para que alguien pueda ir a verlo.
+ */
+async function reservationHolders(
+  tx: Prisma.TransactionClient,
+  coilIds: string[],
+): Promise<Map<string, string[]>> {
+  const [firm, temporary] = await Promise.all([
+    tx.reservation.findMany({
+      where: { itemType: 'COIL', itemId: { in: coilIds }, status: ReservationStatus.ACTIVE },
+      select: { itemId: true, salesOrder: { select: { seq: true } } },
+    }),
+    tx.quotationReservation.findMany({
+      where: { itemType: 'COIL', itemId: { in: coilIds }, ...liveTemporaryWhere() },
+      select: { itemId: true, quotation: { select: { seq: true } } },
+    }),
+  ]);
+  const out = new Map<string, string[]>();
+  const add = (id: string, code: string): void => {
+    const list = out.get(id) ?? [];
+    if (!list.includes(code)) list.push(code);
+    out.set(id, list);
+  };
+  for (const r of firm) add(r.itemId, salesOrderCode(r.salesOrder.seq));
+  for (const r of temporary) add(r.itemId, quotationCode(r.quotation.seq));
+  return out;
 }
 
 export interface AutoTerminateInput {
@@ -183,6 +230,7 @@ export async function autoTerminateEmptyCoils(
       after: {
         reason: coil.reason,
         detail: coil.detail,
+        holders: coil.holders ?? [],
         autoTerminated: { kind: input.cause.kind, refId: input.cause.refId },
         operationDate: input.operationDate,
       },

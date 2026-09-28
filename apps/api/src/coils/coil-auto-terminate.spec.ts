@@ -19,6 +19,8 @@ interface CoilSeed {
   qty?: string | null;
   mountedIn?: number[];
   reservedKg?: string;
+  /** Correlativo del pedido que tiene la reserva firme sobre el rollo. */
+  reservedBy?: number;
 }
 
 interface AuditSeed {
@@ -90,8 +92,18 @@ function fakeTx(coils: CoilSeed[], audits: AuditSeed[] = []) {
             })),
         ),
       ),
+      findMany: jest.fn((args: { where: { itemId: { in: string[] } } }) =>
+        Promise.resolve(
+          args.where.itemId.in
+            .filter((id) => byId.get(id)?.reservedBy !== undefined)
+            .map((id) => ({ itemId: id, salesOrder: { seq: byId.get(id)!.reservedBy! } })),
+        ),
+      ),
     },
-    quotationReservation: { groupBy: jest.fn().mockResolvedValue([]) },
+    quotationReservation: {
+      groupBy: jest.fn().mockResolvedValue([]),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     inventoryMovement: {
       findMany: jest.fn((args: { where: { itemId: { in: string[] } } }) =>
         Promise.resolve(
@@ -190,13 +202,16 @@ describe('planAutoTerminate (D-360)', () => {
     expect(raw.coil.findMany).not.toHaveBeenCalled();
   });
 
-  it('presupuesto fijo: cuatro consultas con una bobina o con cincuenta', async () => {
+  it('presupuesto fijo: cinco consultas con una bobina o con cincuenta; sin anomalía no pregunta quién reserva', async () => {
     const count = (raw: ReturnType<typeof fakeTx>['raw']) =>
       raw.coil.findMany.mock.calls.length +
       raw.inventoryBalance.findMany.mock.calls.length +
       raw.productionOrderConsumption.findMany.mock.calls.length +
       raw.reservation.groupBy.mock.calls.length +
-      raw.quotationReservation.groupBy.mock.calls.length;
+      raw.quotationReservation.groupBy.mock.calls.length +
+      // Las dos de `holders`: solo con una bobina en 0 y reserva viva.
+      raw.reservation.findMany.mock.calls.length +
+      raw.quotationReservation.findMany.mock.calls.length;
     const one = fakeTx([{ id: 'a', qty: '0' }]);
     await planAutoTerminate(one.tx, ['a']);
     const many = fakeTx(Array.from({ length: 50 }, (_, i) => ({ id: `c${String(i)}`, qty: '0' })));
@@ -255,6 +270,51 @@ describe('autoTerminateEmptyCoils (D-360)', () => {
     expect(writesOf(audit)[0]!.after).toEqual(
       expect.objectContaining({ closedByDispatch: 'DES-000001' }),
     );
+  });
+
+  it('anomalía: llega a 0 con una reserva COIL viva de OTRO pedido ⇒ no se termina y nombra al pedido', async () => {
+    // El despacho del pedido A agota el rollo que el pedido 12 tiene reservado entero: el
+    // material salió por otro lado. Casos reales hoy: cero; este test es la alarma.
+    const { tx, raw, audit } = fakeTx([
+      { id: 'r', code: 'IMPO-R', qty: '0', reservedKg: '4200.000', reservedBy: 12 },
+    ]);
+    const plan = await autoTerminateEmptyCoils(tx, audit as never, {
+      actorId: 'u1',
+      coilIds: ['r'],
+      cause: {
+        kind: 'DISPATCH',
+        refId: 'des-a',
+        label: 'vendida entera en el despacho DES-000001',
+      },
+      operationDate: '2026-09-28',
+    });
+
+    expect(plan.terminate).toEqual([]);
+    expect(plan.skipped).toEqual([
+      {
+        id: 'r',
+        code: 'IMPO-R',
+        reason: 'RESERVED',
+        detail: 'en 0 kg con 4200.000 kg reservados sobre el rollo por PED-000012',
+        holders: ['PED-000012'],
+      },
+    ]);
+    // Queda vigente: no se escribe su estado, y nunca kardex.
+    expect(raw.coil.updateMany).not.toHaveBeenCalled();
+    expect(raw.inventoryMovement.create).not.toHaveBeenCalled();
+    // La auditoría de la anomalía lleva el mismo pedido.
+    expect(writesOf(audit)).toEqual([
+      expect.objectContaining({
+        action: 'coils.auto-terminate-skipped',
+        entityId: 'r',
+        after: expect.objectContaining({
+          reason: 'RESERVED',
+          holders: ['PED-000012'],
+          detail: 'en 0 kg con 4200.000 kg reservados sobre el rollo por PED-000012',
+          autoTerminated: { kind: 'DISPATCH', refId: 'des-a' },
+        }) as unknown,
+      }),
+    ]);
   });
 
   it('audita las anomalías y no audita la montada', async () => {
