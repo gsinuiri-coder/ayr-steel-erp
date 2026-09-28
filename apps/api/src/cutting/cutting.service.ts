@@ -30,6 +30,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { OperationDateService } from '../common/operation-date.service';
+import { autoTerminateEmptyCoils } from '../coils/coil-auto-terminate';
 import { openFilmIfSealed, resealIfOpenedBy } from '../coils/coil-film';
 import { planCoilSplit } from '../coils/coil-split-math';
 import { CoilsService } from '../coils/coils.service';
@@ -322,12 +323,19 @@ export class CuttingService {
           );
         }
 
-        // La madre vuelve de `IN_THIRD_PARTY`: si no le quedó nada, se cierra (RF-19);
-        // si le sobró material, vuelve a estar `OPEN` y disponible en planta.
-        const remaining = availableKg.minus(plan.splitWeightKg);
-        await tx.coil.update({
-          where: { id: coil.id },
-          data: { status: remaining.lte(0) ? CoilStatus.CLOSED : CoilStatus.OPEN },
+        // La madre vuelve de `IN_THIRD_PARTY` a `OPEN` y, si no le quedó nada, se termina
+        // sola (D-360; antes un `update` directo a `CLOSED` sin auditoría de cierre). Si le
+        // sobró material, queda disponible en planta.
+        await tx.coil.update({ where: { id: coil.id }, data: { status: CoilStatus.OPEN } });
+        await autoTerminateEmptyCoils(tx, this.audit, {
+          actorId: actor.id,
+          coilIds: [coil.id],
+          cause: {
+            kind: 'CUTTING_RECEPTION',
+            refId: row.id,
+            label: `recibida del corte tercerizado en ${plan.children.length} flejes`,
+          },
+          operationDate,
         });
 
         await tx.cuttingOrderCoil.update({

@@ -104,7 +104,9 @@ function service(tx: ReturnType<typeof fakeTx>['tx']) {
     $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
   };
   const dispatches = {
-    addMissingMovementInTx: jest.fn().mockResolvedValue({ movementId: 1n, totalCost: '2161.0150' }),
+    addMissingMovementInTx: jest
+      .fn()
+      .mockResolvedValue({ movementId: 1n, totalCost: '2161.0150', terminatedCoils: ['BOB-X'] }),
   };
   const invoiceDispatch = {
     buildPlan: jest.fn().mockResolvedValue({
@@ -205,7 +207,9 @@ describe('OpeningDateMoveService (D-285)', () => {
     const { tx, updates } = fakeTx();
     const { svc, dispatches, invoiceDispatch, audit } = service(tx);
     const expected = openingPlanSignature(await svc.plan());
-    await svc.execute(ADMIN, expected);
+    const done = await svc.execute(ADMIN, expected);
+    // D-360: las bobinas que la salida faltante dejó en 0 se cuentan aparte.
+    expect(done.terminatedCoils).toEqual(['BOB-X']);
 
     expect(tx.$queryRaw).toHaveBeenCalled(); // set_config('ayr.opening_date_move', 'on', true)
     expect(updates).toEqual([{ id: 7n, date: '2026-08-01' }]);

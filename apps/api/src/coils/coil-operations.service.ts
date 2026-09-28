@@ -43,6 +43,7 @@ import { assertRawMaterialInvariant } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
+import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from './coil-auto-terminate';
 import { openFilmIfSealed } from './coil-film';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
 import { CoilsService } from './coils.service';
@@ -203,15 +204,21 @@ export class CoilOperationsService {
           );
         }
 
-        // La madre se queda con lo que no entró al partido. Si no queda nada, cerrarla
-        // evita que aparezca como disponible en producción con saldo cero (RF-19).
+        // La madre se queda con lo que no entró al partido. Si no queda nada, se termina
+        // sola (D-360; antes, RF-15 con un `update` sin auditoría de cierre): así no aparece
+        // como disponible en producción con saldo cero (RF-19).
         const remaining = availableKg.minus(plan.splitWeightKg);
-        if (remaining.lte(0)) {
-          await tx.coil.update({
-            where: { id: coil.id },
-            data: { status: CoilStatus.CLOSED },
-          });
-        }
+        const terminated = await autoTerminateEmptyCoils(tx, this.audit, {
+          actorId: actor.id,
+          coilIds: [coil.id],
+          cause: {
+            kind: 'SPLIT',
+            refId: split.id,
+            label: `partida en ${plan.children.length} hijas`,
+          },
+          operationDate,
+        });
+        const motherClosed = terminated.terminate.length > 0;
 
         // D-134: el partido se comprueba **una vez, al final**, con madre e hijas ya en
         // su estado definitivo. Movimiento por movimiento la salida de la madre se lee
@@ -237,7 +244,7 @@ export class CoilOperationsService {
             kerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
             children: children.map((c) => c.code),
             remainingKg: remaining.toFixed(3),
-            status: remaining.lte(0) ? CoilStatus.CLOSED : coil.status,
+            status: motherClosed ? CoilStatus.CLOSED : coil.status,
           },
         });
 
@@ -438,6 +445,18 @@ export class CoilOperationsService {
           reason: input.reason,
         },
       });
+
+      // D-360: si la merma la dejó en exactamente 0, se termina sola. Anular la merma la reabre.
+      await autoTerminateEmptyCoils(tx, this.audit, {
+        actorId: actor.id,
+        coilIds: [coil.id],
+        cause: {
+          kind: 'SCRAP',
+          refId: movement.id.toString(),
+          label: `merma de ${movement.qty.toFixed(3)} kg (RF-17)`,
+        },
+        operationDate,
+      });
     });
     return this.coils.findOne(coilId);
   }
@@ -486,6 +505,14 @@ export class CoilOperationsService {
         entityId: movement.itemId,
         before: { movementId: movementId.toString(), qtyKg: movement.qty.toFixed(3) },
         after: { reversalId: reversal.id.toString(), reason, operationDate },
+      });
+      // D-360: la bobina que esta merma había terminado vuelve a quedar vigente con sus kilos.
+      await reopenAutoTerminatedCoils(tx, this.audit, {
+        actorId: actor.id,
+        coilIds: [movement.itemId],
+        cause: { kind: 'SCRAP', refId: movementId.toString() },
+        label: 'anulación de la merma que la había dejado en 0',
+        operationDate,
       });
       return movement.itemId;
     });

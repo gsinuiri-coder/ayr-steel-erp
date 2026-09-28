@@ -39,6 +39,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from '../coils/coil-auto-terminate';
 import { CoilsService } from '../coils/coils.service';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { claimIdempotencyKey } from '../common/idempotency';
@@ -526,6 +527,17 @@ export class ProductionService {
         data: { releasedAt: new Date() },
       });
       await this.recomputeStatus(tx, orderId);
+      // D-360: liberado y en 0 (otra orden lo agotó mientras este lo retenía): se termina.
+      await autoTerminateEmptyCoils(tx, this.audit, {
+        actorId: actor.id,
+        coilIds: [consumption.coilId],
+        cause: {
+          kind: 'COIL_RELEASE',
+          refId: orderId,
+          label: `liberado de ${productionOrderCode(order.seq)}`,
+        },
+        operationDate: this.operationDate.resolve(actor, undefined),
+      });
 
       await this.audit.write(tx, {
         actorId: actor.id,
@@ -1043,6 +1055,20 @@ export class ProductionService {
           });
         }
 
+        // D-360: los flejes que el cierre soltó y quedaron en exactamente 0 se terminan solos
+        // (el reporte y la merma de proceso no los terminan: estaban montados). Reabrir la
+        // orden los reabre.
+        await autoTerminateEmptyCoils(tx, this.audit, {
+          actorId: actor.id,
+          coilIds: rows.map((r) => r.coilId),
+          cause: {
+            kind: 'PRODUCTION_ORDER_CLOSE',
+            refId: orderId,
+            label: `cierre de ${productionOrderCode(order.seq)}`,
+          },
+          operationDate,
+        });
+
         await tx.productionOrder.update({
           where: { id: orderId },
           data: {
@@ -1167,6 +1193,16 @@ export class ProductionService {
           rows.map((r) => r.coilId),
           'reabrir la orden',
         );
+        // D-360: los flejes que el cierre terminó solos vuelven a estar vigentes; los que se
+        // terminaron por otra causa siguen bloqueando la reapertura, como antes.
+        const reopened = await reopenAutoTerminatedCoils(tx, this.audit, {
+          actorId: actor.id,
+          coilIds: rows.map((r) => r.coilId),
+          cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: orderId },
+          label: `reapertura de ${productionOrderCode(order.seq)}`,
+          operationDate,
+        });
+        const reopenedIds = new Set(reopened.reopened.map((c) => c.id));
         const lastOwnByCoil = new Map<string, bigint>();
         for (const movement of own) {
           const current = lastOwnByCoil.get(movement.itemId);
@@ -1179,7 +1215,7 @@ export class ProductionService {
           // Mismo requisito que `consume`: la orden vuelve a quedarse con el fleje, y
           // `report` no revalida su estado. Un fleje que se cerró (RF-19) o se anuló
           // (RF-21) mientras la OP estaba cerrada no puede volver a producción.
-          if (row.coil.status !== CoilStatus.OPEN) {
+          if (row.coil.status !== CoilStatus.OPEN && !reopenedIds.has(row.coilId)) {
             throw new BadRequestException(
               `El fleje ${row.coil.code} ya no está disponible (${row.coil.status}): no se puede reabrir la orden`,
             );
@@ -1303,6 +1339,10 @@ export class ProductionService {
         );
       }
 
+      const held = await tx.productionOrderConsumption.findMany({
+        where: { productionOrderId: orderId, releasedAt: null },
+        select: { coilId: true },
+      });
       const released = await tx.productionOrderConsumption.updateMany({
         where: { productionOrderId: orderId, releasedAt: null },
         data: { releasedAt: new Date() },
@@ -1314,6 +1354,17 @@ export class ProductionService {
           cancelledById: actor.id,
           cancelledAt: new Date(),
         },
+      });
+      // D-360: un fleje liberado que quedó en 0 (lo agotó otra orden) se termina.
+      await autoTerminateEmptyCoils(tx, this.audit, {
+        actorId: actor.id,
+        coilIds: held.map((h) => h.coilId),
+        cause: {
+          kind: 'PRODUCTION_ORDER_CANCEL',
+          refId: orderId,
+          label: `anulación de ${productionOrderCode(order.seq)}`,
+        },
+        operationDate: this.operationDate.resolve(actor, undefined),
       });
 
       // D-066: anular la OP libera los flejes; si nació de un pedido, el material vuelve a

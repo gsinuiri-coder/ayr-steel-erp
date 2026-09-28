@@ -14,6 +14,7 @@ import {
   type InventoryItemType,
 } from '@prisma/client';
 import {
+  businessToday,
   carriesInventory,
   Decimal,
   dispatchCode,
@@ -44,7 +45,8 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
-import { byCodeUnit, reservedByItem } from '../sales/reserved-ledger';
+import { byCodeUnit } from '../sales/reserved-ledger';
+import { autoTerminateEmptyCoils } from '../coils/coil-auto-terminate';
 import { pendingQty, proratedQty } from './invoicing-math';
 import { dispatchOrderBy } from '../common/list-orderings';
 
@@ -424,7 +426,7 @@ export class DispatchesService {
       tx,
       actor,
       coilIds,
-      dispatch.seq,
+      { id: dispatch.id, seq: dispatch.seq },
       dispatchDate,
     );
 
@@ -469,7 +471,7 @@ export class DispatchesService {
     actor: RequestUser,
     dispatchItemId: string,
     reason: string,
-  ): Promise<{ movementId: bigint; totalCost: string }> {
+  ): Promise<{ movementId: bigint; totalCost: string; terminatedCoils: string[] }> {
     const item = await tx.dispatchItem.findUniqueOrThrow({
       where: { id: dispatchItemId },
       include: { dispatch: { include: { salesOrder: { select: { seq: true } } } } },
@@ -521,7 +523,21 @@ export class DispatchesService {
         reason,
       },
     });
-    return { movementId: movement.id, totalCost: movement.totalCost.toFixed(4) };
+    // D-360: si la salida que faltaba deja la bobina en 0, se termina. La auditoría de la
+    // terminación lleva la fecha **real** de ejecución, no la del despacho: es un arreglo de
+    // datos de hoy, y la corrida las cuenta aparte.
+    const terminatedCoils =
+      item.itemType === 'COIL'
+        ? await this.closeEmptySoldCoils(
+            tx,
+            actor,
+            [item.itemId],
+            { id: item.dispatchId, seq: item.dispatch.seq },
+            businessToday(),
+            'DISPATCH_MISSING',
+          )
+        : [];
+    return { movementId: movement.id, totalCost: movement.totalCost.toFixed(4), terminatedCoils };
   }
 
   /** La unidad del saldo del ítem, que es la del kardex; si no tiene saldo, la de la línea. */
@@ -852,64 +868,28 @@ export class DispatchesService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     coilIds: string[],
-    dispatchSeq: number,
+    dispatch: { id: string; seq: number },
     operationDate: string,
+    kind: 'DISPATCH' | 'DISPATCH_MISSING' = 'DISPATCH',
   ): Promise<string[]> {
-    if (coilIds.length === 0) return [];
-
-    const [balances, reserved, coils] = await Promise.all([
-      tx.inventoryBalance.findMany({
-        where: { itemType: 'COIL', itemId: { in: coilIds } },
-        select: { itemId: true, qty: true },
-      }),
-      // D-185: firme más temporal vigente.
-      reservedByItem(tx, 'COIL', coilIds),
-      tx.coil.findMany({
-        where: { id: { in: coilIds }, status: CoilStatus.OPEN },
-        select: { id: true, code: true },
-      }),
-    ]);
-    const qtyById = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-    const reservedIds = new Set(
-      [...reserved].filter(([, qty]) => qty.gt(0)).map(([itemId]) => itemId),
-    );
-
-    const toClose = coils.filter(
-      (c) => !reservedIds.has(c.id) && (qtyById.get(c.id) ?? new Decimal(0)).lte(0),
-    );
-    if (toClose.length === 0) return [];
-
-    await tx.coil.updateMany({
-      where: { id: { in: toClose.map((c) => c.id) } },
-      data: { status: CoilStatus.CLOSED },
+    // D-360: la regla común de «terminada automáticamente» (exactamente 0, sin reserva viva,
+    // sin montaje vivo, sin kardex). `closedByDispatch` se sigue escribiendo: es la marca que
+    // `reopenRevertedCoils` lee, también en los cierres de D-170 grabados antes de D-360.
+    const plan = await autoTerminateEmptyCoils(tx, this.audit, {
+      actorId: actor.id,
+      coilIds,
+      cause: {
+        kind,
+        refId: dispatch.id,
+        label:
+          kind === 'DISPATCH'
+            ? `vendida entera en el despacho ${dispatchCode(dispatch.seq)} (D-170)`
+            : `salida faltante del despacho ${dispatchCode(dispatch.seq)} registrada (D-285)`,
+      },
+      operationDate,
+      extra: { closedByDispatch: dispatchCode(dispatch.seq) },
     });
-    for (const coil of toClose) {
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        // La misma acción que el cierre manual (RF-19): quien audita una bobina quiere ver
-        // todos sus cierres juntos, no dos verbos según quién lo haya hecho.
-        action: 'coils.close',
-        entity: 'coils',
-        entityId: coil.id,
-        before: { status: CoilStatus.OPEN },
-        after: {
-          status: CoilStatus.CLOSED,
-          reason: `Vendida entera en el despacho ${dispatchCode(dispatchSeq)} (D-170)`,
-          // Sin ajuste: el saldo ya estaba en cero cuando se cerró.
-          adjustment: null,
-          // D-124: el cierre manual fecha su auditoría con la fecha de operación, y este
-          // hereda la del despacho que lo provocó. No mueve kardex —el saldo ya estaba en
-          // cero— pero un reporte que agrupe cierres por fecha de negocio tiene que verlos.
-          operationDate,
-          // **La marca que hace reversible este cierre.** Un cierre manual con saldo cero
-          // también escribe `adjustment: null`, así que sin este campo la reversa no puede
-          // distinguir el rollo que cerró un despacho del que ya estaba cerrado cuando se
-          // vendió —caso normal y explícito de D-116— y reabriría el segundo.
-          closedByDispatch: dispatchCode(dispatchSeq),
-        },
-      });
-    }
-    return toClose.map((c) => c.code);
+    return plan.terminate.map((c) => c.code);
   }
 
   /**
