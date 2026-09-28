@@ -409,7 +409,7 @@ export class PurchaseImportService {
               actor,
               { ...v.input, supplierId },
               { rate: new Prisma.Decimal(rate.rate), source: rate.source as ExchangeRateSource },
-              { importBatchId: batchId, externalCodes: v.externalCodes },
+              { importBatchId: batchId, externalCodes: v.externalCodes, paperAmounts: v.amounts },
             );
             await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
           } catch (err) {

@@ -69,6 +69,7 @@ import { parseInvoiceXml } from './invoice-xml';
 import {
   computeDueDate,
   computeTotals,
+  receptionCost,
   daysBetween,
   paidAmount,
   purchaseBalance,
@@ -193,7 +194,15 @@ export class PurchasesService {
     actor: RequestUser,
     input: CreatePurchaseInput,
     exchange: { rate: Decimal; source: ExchangeRateSource },
-    options: { importBatchId?: string; externalCodes?: readonly (string | null)[] } = {},
+    options: {
+      importBatchId?: string;
+      externalCodes?: readonly (string | null)[];
+      /**
+       * D-359: el valor sin IGV y el IGV del papel por línea, que se guardan tal cual. Solo lo
+       * pasa el importador; por HTTP no existe (el formulario siempre deriva de cantidad × precio).
+       */
+      paperAmounts?: readonly { subtotal: string; igv: string }[];
+    } = {},
   ): Promise<Purchase> {
     const [supplier, businessLine] = await Promise.all([
       tx.supplier.findUnique({ where: { id: input.supplierId } }),
@@ -217,7 +226,7 @@ export class PurchasesService {
     await this.assertCuttingOrderLinkIsValid(tx, actor, input, businessLine.id);
 
     const { rate, source } = exchange;
-    const totals = computeTotals(input);
+    const totals = computeTotals(input, options.paperAmounts);
     const dueDate = computeDueDate(input);
 
     try {
@@ -440,6 +449,9 @@ export class PurchasesService {
               currency: purchase.currency,
               exchangeRate: purchase.exchangeRate.toFixed(4),
               unitCostPerKg: item.unitPrice.toFixed(4),
+              // D-359: la bobina entra por el subtotal sin IGV de su línea (el importe del papel),
+              // no por kilos × unitario de cuatro decimales, que no lo reproduce.
+              totalCost: item.subtotal.toFixed(4),
               // D-328 (sustituye el default de D-117): la bobina comprada nace **vigente y
               // sellada**. «Cerrada por defecto» era el proxy de «con el film puesto»; ahora el
               // film es su propio eje y la bobina no nace terminada. Una línea que traiga un
@@ -463,11 +475,9 @@ export class PurchasesService {
               qty: item.qty.toFixed(3),
               unit: item.unit,
               // El kardex se lleva siempre en soles (D-042): una compra en USD y otra en
-              // PEN del mismo producto tienen que promediar sobre la misma escala.
-              unitCost: toFixedString(
-                toDecimal(item.unitPrice.toString()).times(purchase.exchangeRate.toString()),
-                'MONEY',
-              ),
+              // PEN del mismo producto tienen que promediar sobre la misma escala. D-359: entra por
+              // el subtotal sin IGV de la línea × TC, al céntimo; el unitario se deriva de ahí.
+              ...receptionCost(item.subtotal, item.qty, purchase.exchangeRate),
               refType: 'PURCHASE',
               refId: purchase.id,
               actorId: actor.id,

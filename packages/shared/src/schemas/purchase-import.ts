@@ -6,6 +6,7 @@ import {
   type PURCHASE_TYPES,
   type SERVICE_KINDS,
 } from '../enums';
+import { toDecimal } from '../decimal';
 import { idempotencyFields } from './idempotency';
 import { supplierCodeSchema } from './supplier';
 
@@ -31,12 +32,21 @@ export const PURCHASE_IMPORT_COLUMNS = {
   serviceKind: { key: 'serviceKind', header: 'TIPO DE SERVICIO', required: false },
   igvRate: { key: 'igvRate', header: 'TASA IGV', required: false },
   notes: { key: 'notes', header: 'OBSERVACIONES', required: false },
-  documentTotal: { key: 'documentTotal', header: 'TOTAL COMPROBANTE', required: false },
+  // D-359: el total del papel es **con IGV** y el encabezado lo dice; el de la primera
+  // plantilla sigue aceptado para no invalidar los archivos ya llenados.
+  documentTotal: {
+    key: 'documentTotal',
+    header: 'TOTAL COMPROBANTE CON IGV',
+    aliases: ['TOTAL COMPROBANTE'],
+    required: false,
+  },
   sku: { key: 'sku', header: 'SKU', required: false },
   description: { key: 'description', header: 'DESCRIPCIÓN', required: false },
   qty: { key: 'qty', header: 'CANTIDAD', required: false },
   unit: { key: 'unit', header: 'UNIDAD', required: false },
   unitPrice: { key: 'unitPrice', header: 'PRECIO UNITARIO SIN IGV', required: true },
+  // El importe de la línea sin IGV del papel: si viene, manda sobre el precio unitario.
+  lineAmount: { key: 'lineAmount', header: 'IMPORTE SIN IGV', required: false },
   finishCode: { key: 'finishCode', header: 'CÓDIGO DE ACABADO', required: false },
   color: { key: 'color', header: 'COLOR', required: false },
   thicknessMm: { key: 'thicknessMm', header: 'ESPESOR MM', required: false },
@@ -50,12 +60,6 @@ export const MAX_PURCHASE_IMPORT_ROWS = 1000;
 
 /** Líneas de un comprobante: el mismo tope que el alta (`createPurchaseSchema`). */
 export const MAX_PURCHASE_IMPORT_LINES = 200;
-
-/**
- * Diferencia tolerada entre el total que trae el archivo y el que recalcula el sistema con
- * `Decimal` (D-003), en la moneda del comprobante: el redondeo por línea del proveedor.
- */
-export const PURCHASE_IMPORT_TOTAL_TOLERANCE = '0.10';
 
 // --------------------------------------------------------------------------
 // Lo que el navegador manda: el comprobante revisado
@@ -75,6 +79,8 @@ export const purchaseImportLineInputSchema = z.object({
   qty: z.string().trim().max(40).default(''),
   unit: z.string().trim().max(20).default(''),
   unitPrice: z.string().trim().max(40).default(''),
+  /** Importe de la línea sin IGV del papel; vacío = se calcula de cantidad × precio. */
+  lineAmount: z.string().trim().max(40).default(''),
   finishCode: z.string().trim().max(60).default(''),
   /** El acabado elegido en pantalla (sin alta: D-203 lo exige completo). */
   finishId: z.string().uuid().nullable().default(null),
@@ -290,22 +296,56 @@ export function serviceKindOf(raw: string): (typeof SERVICE_KINDS)[number] | nul
 }
 
 /**
- * Un número tipeado por un humano en una planilla peruana: `1.234,56`, `1234,56` o `1234.56` →
- * `1234.56`. `null` si no es un número. Solo normaliza la forma; el rango lo valida quien lo usa.
+ * Un número tipeado por un humano en una planilla peruana: `1.234,56`, `1,234.56`, `1234,56`,
+ * `1234.56`, `1.234.567` o `1,234,567` → sin separadores de miles y con punto decimal. `null` si
+ * no es un número. Solo normaliza la forma; el rango lo valida quien lo usa.
+ *
+ * - Con los dos separadores, el último es el decimal y el otro es de miles (en grupos de tres).
+ * - Un separador **repetido** (`1.234.567`) solo puede ser de miles: exige grupos de tres.
+ * - **Una sola coma es decimal**: `3,745` es el tipo de cambio de la plantilla y `0,980` un precio;
+ *   leerla como miles cambiaría de valor un dato que la plantilla ya pide así (D-359).
  */
 export function normalizeDecimal(raw: string): string | null {
   let v = raw.trim().replace(/\s/g, '');
   if (v === '') return null;
   if (v.includes(',') && v.includes('.')) {
-    // El último separador es el decimal; el otro es de miles.
-    v =
-      v.lastIndexOf(',') > v.lastIndexOf('.')
-        ? v.replace(/\./g, '').replace(',', '.')
-        : v.replace(/,/g, '');
-  } else if (v.includes(',')) {
-    v = v.replace(',', '.');
+    const decimalIsComma = v.lastIndexOf(',') > v.lastIndexOf('.');
+    const decimal = decimalIsComma ? ',' : '.';
+    const thousands = decimalIsComma ? '.' : ',';
+    const parts = v.split(decimal);
+    if (parts.length !== 2 || !thousandsGrouped(parts[0] ?? '', thousands)) return null;
+    v = `${(parts[0] ?? '').split(thousands).join('')}.${parts[1] ?? ''}`;
+  } else {
+    const sep = v.includes(',') ? ',' : v.includes('.') ? '.' : null;
+    if (sep !== null && v.split(sep).length > 2) {
+      if (!thousandsGrouped(v, sep)) return null;
+      v = v.split(sep).join('');
+    } else if (sep === ',') {
+      v = v.replace(',', '.');
+    }
   }
   return /^\d+(\.\d+)?$/.test(v) ? v : null;
+}
+
+/** `1.234.567` con `.`: el primer grupo de 1 a 3 dígitos y los demás de exactamente 3. */
+function thousandsGrouped(intPart: string, sep: string): boolean {
+  if (!intPart.includes(sep)) return /^\d+$/.test(intPart);
+  const [head = '', ...rest] = intPart.split(sep);
+  return /^\d{1,3}$/.test(head) && rest.every((g) => /^\d{3}$/.test(g));
+}
+
+/**
+ * D-359: la tasa de IGV como la escribe una persona o la guarda Excel. `18`, `18%` y `0.18` son la
+ * misma tasa: una celda con formato de porcentaje guarda `0,18`, y se leía como 0,18 %, lo que
+ * dejaba el IGV en céntimos y el total del papel «descuadrado» en todos los comprobantes. Un valor
+ * mayor que 0 y menor que 1 es una fracción; `0` sigue siendo 0 (exonerado). Devuelve la tasa en
+ * puntos porcentuales, o `null` si no es un número.
+ */
+export function normalizeIgvRate(raw: string): string | null {
+  const text = normalizeDecimal(raw.trim().replace(/%$/, ''));
+  if (text === null) return null;
+  const rate = toDecimal(text);
+  return (rate.gt(0) && rate.lt(1) ? rate.times(100) : rate).toFixed();
 }
 
 /** `F001-00012345` → `{ series: 'F001', number: '00012345' }`. */

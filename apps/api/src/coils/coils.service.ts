@@ -22,6 +22,7 @@ import {
   productionOrderCode,
   salesOrderCode,
   toDateOnly,
+  money,
   toDecimal,
   toFixedString,
   toSkipTake,
@@ -63,6 +64,12 @@ export interface CreateCoilInput {
   exchangeRate: string;
   /** Costo por kg SIN IGV (D-038). */
   unitCostPerKg: string;
+  /**
+   * D-359: el costo total SIN IGV en la moneda del documento, cuando es un dato del papel (el
+   * subtotal de la línea de compra) y no `weightKg × unitCostPerKg`. La bobina y su entrada de
+   * kardex quedan en ese total al céntimo; el unitario se deriva. Solo lo pasa la recepción.
+   */
+  totalCost?: string;
   refType: InventoryRefType;
   refId?: string;
   actorId: string;
@@ -146,7 +153,11 @@ export class CoilsService {
     const weightKg = toDecimal(input.weightKg);
     const unitCostPerKg = toDecimal(input.unitCostPerKg);
     const exchangeRate = toDecimal(input.exchangeRate);
-    const totalCost = weightKg.times(unitCostPerKg);
+    const totalCost =
+      input.totalCost === undefined ? weightKg.times(unitCostPerKg) : money(input.totalCost);
+    // D-359: con un total del papel, el kardex entra por ese total en soles y el unitario se deriva.
+    const kardexTotalPen =
+      input.totalCost === undefined ? undefined : money(totalCost.times(exchangeRate));
 
     // El partido reserva los correlativos de golpe y precarga proveedor y acabado: sin
     // eso, cada hija repetía cuatro consultas y otro `UPDATE suppliers`, que retiene el
@@ -219,9 +230,14 @@ export class CoilsService {
       // El kardex se lleva siempre en soles (D-042). La bobina conserva su moneda y su
       // tipo de cambio para el documento; el promedio ponderado necesita una sola escala.
       unitCost: toFixedString(
-        input.kardexUnitCostPen ?? unitCostPerKg.times(exchangeRate),
+        kardexTotalPen === undefined
+          ? (input.kardexUnitCostPen ?? unitCostPerKg.times(exchangeRate))
+          : kardexTotalPen.div(weightKg),
         'MONEY',
       ),
+      ...(kardexTotalPen === undefined
+        ? {}
+        : { totalCost: toFixedString(kardexTotalPen, 'MONEY') }),
       refType: input.refType,
       refId: input.refId,
       // D-206: hasta acá `notes` solo quedaba en la bobina — el movimiento de apertura salía

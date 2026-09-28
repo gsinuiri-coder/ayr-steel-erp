@@ -57,14 +57,25 @@ export interface ComputedItem {
 /**
  * Totales de la compra. Se redondea a escala dinero línea por línea y recién después
  * se suma, para que la cabecera siempre cuadre con el detalle que se muestra.
+ *
+ * D-359: `paperAmounts` (solo el importador) trae el valor sin IGV y el IGV **del papel** por
+ * línea, que se guardan tal cual en vez de recalcularse de `cantidad × unitario`: un unitario de
+ * cuatro decimales no reproduce un importe de dos (D-169/D-255), y el total del papel manda.
  */
-export function computeTotals(input: CreatePurchaseInput): PurchaseTotals {
+export function computeTotals(
+  input: CreatePurchaseInput,
+  paperAmounts?: readonly { subtotal: string; igv: string }[],
+): PurchaseTotals {
+  if (paperAmounts !== undefined && paperAmounts.length !== input.items.length) {
+    throw new Error('Los importes del papel no corresponden a las líneas de la compra');
+  }
   const igvRate = toDecimal(input.igvRate).div(HUNDRED);
-  const items = input.items.map((item) => {
+  const items = input.items.map((item, index) => {
     const qty = toDecimal(item.qty);
     const unitPrice = toDecimal(item.unitPrice);
-    const subtotal = money(qty.times(unitPrice));
-    const igv = money(subtotal.times(igvRate));
+    const paper = paperAmounts?.[index];
+    const subtotal = paper ? money(paper.subtotal) : money(qty.times(unitPrice));
+    const igv = paper ? money(paper.igv) : money(subtotal.times(igvRate));
     return {
       productId: item.productId,
       description: item.description,
@@ -142,4 +153,21 @@ export function startOfDayUtc(date: Date): Date {
 
 export function daysBetween(from: Date, to: Date): number {
   return Math.round((to.getTime() - from.getTime()) / 86_400_000);
+}
+
+/**
+ * D-359: el costo con que una línea de compra entra al kardex, en soles (D-042): el **subtotal sin
+ * IGV** de la línea × TC, al céntimo, y el unitario derivado de ese total (a la escala de la
+ * columna). Es lo que `InventoryService.record` recibe como `totalCost`/`unitCost`.
+ */
+export function receptionCost(
+  subtotal: Prisma.Decimal | Decimal,
+  qty: Prisma.Decimal | Decimal,
+  exchangeRate: Prisma.Decimal | Decimal,
+): { unitCost: string; totalCost: string } {
+  const totalPen = money(toDecimal(subtotal.toString()).times(exchangeRate.toString()));
+  return {
+    unitCost: money(totalPen.div(qty.toString())).toFixed(4),
+    totalCost: totalPen.toFixed(4),
+  };
 }

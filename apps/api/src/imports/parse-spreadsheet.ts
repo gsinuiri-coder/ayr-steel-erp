@@ -57,6 +57,8 @@ export interface ImportColumn {
   /** Encabezado esperado en la planilla (español, coincide con la UI). */
   header: string;
   required: boolean;
+  /** Encabezados anteriores que se siguen aceptando (una plantilla que cambió de rótulo). */
+  aliases?: readonly string[];
 }
 
 // U+0300..U+036F: marcas diacríticas combinantes que deja `normalize('NFD')` (tildes, diéresis).
@@ -118,7 +120,9 @@ const MAX_CELL_CHARS = 512;
  * en español) o de una fila ya normalizada que el usuario editó (claves = `column.key`).
  */
 export function getField(raw: Record<string, unknown>, column: ImportColumn): string {
-  const byHeader = pickRawValue(raw, column.header);
+  const byHeader = [column.header, ...(column.aliases ?? [])]
+    .map((header) => pickRawValue(raw, header))
+    .find((v) => v !== undefined);
   const value = byHeader !== undefined ? rawToString(byHeader) : rawToString(raw[column.key]);
   return value.length > MAX_CELL_CHARS ? value.slice(0, MAX_CELL_CHARS) : value;
 }

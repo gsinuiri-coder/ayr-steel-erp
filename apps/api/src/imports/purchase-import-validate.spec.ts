@@ -1,3 +1,6 @@
+import * as XLSX from 'xlsx';
+import { parseSpreadsheet } from './parse-spreadsheet';
+import { parsePurchaseRows } from './purchase-import-parse';
 import type { PurchaseImportDocumentInput, PurchaseImportLineInput } from '@ayr/shared';
 import {
   colorMatches,
@@ -85,6 +88,7 @@ function line(over: Partial<PurchaseImportLineInput> = {}): PurchaseImportLineIn
     qty: '',
     unit: '',
     unitPrice: '10',
+    lineAmount: '',
     finishCode: '',
     finishId: null,
     color: '',
@@ -438,10 +442,12 @@ describe('validateDocument — cabecera', () => {
     expect(errors(r)[0]).toMatch(/necesita su descripción/);
   });
 
-  it('el total del archivo que no cuadra es un aviso con la diferencia', () => {
+  it('D-359: el total del archivo que no cuadra es un error con las dos cifras con IGV', () => {
     const r = validateDocument(doc({ documentTotal: '17000' }), ctx());
-    expect(errors(r)).toEqual([]);
-    expect(warnings(r)[0]).toMatch(/no cuadra con el recalculado \(16993\.89\): diferencia 6\.11/);
+    expect(r.input).toBeNull();
+    expect(errors(r).join(' ')).toMatch(
+      /con IGV \(17000\.00\) no cuadra con el recalculado con IGV \(16993\.89\): diferencia 6\.11/,
+    );
   });
 
   it('dentro de la tolerancia de redondeo no avisa', () => {
@@ -517,5 +523,161 @@ describe('validateDocument — el alta pasa por createPurchaseSchema (autorrevis
       }),
     );
     expect(errors(r)[0]).toMatch(/Ya registrada/);
+  });
+});
+
+/**
+ * D-359 — el total del papel manda. El caso real del dueño: `F001-00043612`, 500 unidades a
+ * 0.144068 sin IGV, importe 72.03, IGV 12.97, total 85.00. Antes daba «El total del archivo
+ * (85.00) no cuadra con el recalculado (72.18)»: la tasa llegaba como 0.18 (celda de porcentaje)
+ * y el precio se redondeaba a cuatro decimales antes de multiplicar.
+ */
+describe('validateDocument — D-359 el total del papel manda', () => {
+  const goods = (lineOver: Partial<PurchaseImportLineInput>, docOver = {}) =>
+    doc({
+      type: 'Producto terminado',
+      businessLine: 'Reventa',
+      lines: [line({ sku: 'CLAVO1', qty: '500', unit: 'NIU', unitPrice: '', ...lineOver })],
+      ...docOver,
+    });
+
+  it('el archivo del dueño (tasa como 0.18, total 85.00) pasa sin aviso y queda en 85.00 exacto', () => {
+    const r = validateDocument(
+      goods({ unitPrice: '0.144068' }, { igvRate: '0.18', documentTotal: '85' }),
+      ctx(),
+    );
+    expect(errors(r)).toEqual([]);
+    expect(warnings(r)).toEqual([]);
+    expect(r.input?.igvRate).toBe('18.0000');
+    // 500 × 0.144068 = 72.034 con todos los decimales; el IGV absorbe el redondeo.
+    expect(r.amounts).toEqual([{ subtotal: '72.0340', igv: '12.9660' }]);
+    expect(r.dto.total).toBe('85.00');
+    // El unitario guardado es de cuatro decimales, solo para mostrar.
+    expect(r.input?.items[0]?.unitPrice).toBe('0.1441');
+  });
+
+  it('con importe de línea, el importe manda y el unitario se deriva', () => {
+    const r = validateDocument(
+      goods(
+        { unitPrice: '0.144068', lineAmount: '72.03' },
+        { igvRate: '18%', documentTotal: '85.00' },
+      ),
+      ctx(),
+    );
+    expect(errors(r)).toEqual([]);
+    expect(r.amounts).toEqual([{ subtotal: '72.0300', igv: '12.9700' }]);
+    expect(r.input?.items[0]?.unitPrice).toBe('0.1441');
+  });
+
+  it('importe de línea sin precio unitario también alcanza', () => {
+    const r = validateDocument(
+      goods({ lineAmount: '1.234,56' }, { documentTotal: '1456,78' }),
+      ctx(),
+    );
+    expect(errors(r)).toEqual([]);
+    expect(r.amounts[0]?.subtotal).toBe('1234.5600');
+    expect(r.dto.total).toBe('1456.78');
+  });
+
+  it('un precio con más de cuatro decimales se usa entero', () => {
+    const r = validateDocument(goods({ qty: '2500', unitPrice: '3.050847' }), ctx());
+    // 2500 × 3.050847 = 7627.1175; redondeado a cuatro decimales el precio habría dado 7627.25.
+    expect(r.amounts[0]?.subtotal).toBe('7627.1175');
+  });
+
+  it('una diferencia de céntimos se absorbe en el IGV de la última línea', () => {
+    const r = validateDocument(goods({ lineAmount: '100' }, { documentTotal: '118.03' }), ctx());
+    expect(errors(r)).toEqual([]);
+    expect(r.amounts).toEqual([{ subtotal: '100.0000', igv: '18.0300' }]);
+  });
+
+  it('una diferencia grande es error del total con las dos cifras con IGV', () => {
+    const r = validateDocument(goods({ lineAmount: '100' }, { documentTotal: '120' }), ctx());
+    expect(r.input).toBeNull();
+    expect(errors(r).join(' ')).toMatch(
+      /El total del archivo con IGV \(120\.00\) no cuadra con el recalculado con IGV \(118\.00\): diferencia 2\.00/,
+    );
+  });
+
+  it('exonerado (tasa 0): el redondeo va al valor, no hay IGV que inventar', () => {
+    const r = validateDocument(
+      goods({ lineAmount: '5.5' }, { igvRate: '0', documentTotal: '5.52' }),
+      ctx(),
+    );
+    expect(errors(r)).toEqual([]);
+    expect(r.amounts).toEqual([{ subtotal: '5.5200', igv: '0.0000' }]);
+  });
+
+  it('un importe que no se parece a cantidad × precio es error de la línea', () => {
+    const r = validateDocument(goods({ unitPrice: '0.17', lineAmount: '72.03' }), ctx());
+    expect(errors(r).join(' ')).toMatch(
+      /importe sin IGV \(72\.03\) no cuadra con cantidad × precio \(85\.00\)/,
+    );
+  });
+
+  it('una compra en dólares compara en dólares y conserva su TC', () => {
+    const r = validateDocument(
+      goods(
+        { lineAmount: '1000' },
+        { currency: 'USD', exchangeRate: '3,745', documentTotal: '1180' },
+      ),
+      ctx(),
+    );
+    expect(errors(r)).toEqual([]);
+    expect(r.input?.exchangeRate).toBe('3.7450');
+    expect(r.amounts).toEqual([{ subtotal: '1000.0000', igv: '180.0000' }]);
+  });
+});
+
+/**
+ * D-359 — el camino exacto del archivo del dueño: un xlsx cuya columna TASA IGV tiene formato de
+ * porcentaje (la celda guarda 0.18), con números en celdas numéricas. Pasa por el mismo lector que
+ * el preview (`parseSpreadsheet` + `parsePurchaseRows`) y por la misma validación.
+ */
+describe('D-359 — xlsx con la tasa en formato de porcentaje', () => {
+  function xlsxOf(rows: Record<string, string | number>[], percentColumn: string): Buffer {
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1');
+    const header = Object.keys(rows[0] ?? {});
+    const col = header.indexOf(percentColumn);
+    for (let r = 1; r <= range.e.r; r += 1) {
+      const cell = sheet[XLSX.utils.encode_cell({ r, c: col })] as XLSX.CellObject | undefined;
+      if (cell) cell.z = '0%';
+    }
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Compras');
+    return XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  }
+
+  it('F001-00043612: 500 × 0.144068, tasa 18 % y total 85 → sin aviso, total 85.00', () => {
+    const buffer = xlsxOf(
+      [
+        {
+          'TIPO DE COMPRA': 'Producto terminado',
+          'LÍNEA DE NEGOCIO': 'Reventa',
+          'TIPO DE COMPROBANTE': 'Factura',
+          'SERIE-NÚMERO': 'F001-00043612',
+          'FECHA DE EMISIÓN': '12/08/2026',
+          'RUC PROVEEDOR': SUPPLIER.docNumber,
+          MONEDA: 'PEN',
+          'CONDICIÓN DE PAGO': 'Contado',
+          'TASA IGV': 0.18,
+          'TOTAL COMPROBANTE': 85,
+          SKU: 'CLAVO1',
+          CANTIDAD: 500,
+          UNIDAD: 'NIU',
+          'PRECIO UNITARIO SIN IGV': 0.144068,
+        },
+      ],
+      'TASA IGV',
+    );
+    const parsed = parsePurchaseRows(parseSpreadsheet(buffer));
+    const [document] = parsed.documents;
+    expect(document?.igvRate).toBe('0.18');
+    const r = validateDocument(document!, ctx());
+    expect(errors(r)).toEqual([]);
+    expect(warnings(r)).toEqual([]);
+    expect(r.dto.total).toBe('85.00');
+    expect(r.amounts).toEqual([{ subtotal: '72.0340', igv: '12.9660' }]);
   });
 });

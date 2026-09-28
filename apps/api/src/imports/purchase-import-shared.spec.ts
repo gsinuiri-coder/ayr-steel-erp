@@ -3,6 +3,7 @@ import {
   comparableDocument,
   currencyOf,
   normalizeDecimal,
+  normalizeIgvRate,
   paymentTermsOf,
   purchaseDocTypeOf,
   purchaseTypeOf,
@@ -62,6 +63,15 @@ describe('lectores de la planilla de compras (D-351)', () => {
     ['', null],
     ['abc', null],
     ['-5', null],
+    // D-359: separadores de miles repetidos, y una sola coma sigue siendo decimal.
+    ['1.234.567', '1234567'],
+    ['1,234,567', '1234567'],
+    ['1.234.567,89', '1234567.89'],
+    ['3,745', '3.745'],
+    ['0,980', '0.980'],
+    ['1.23.4', null],
+    ['12,34,56', null],
+    ['1,234.5,6', null],
   ])('decimal «%s» → %s (coma decimal normalizada)', (raw, expected) => {
     expect(normalizeDecimal(raw)).toBe(expected);
   });
@@ -92,5 +102,21 @@ describe('lectores de la planilla de compras (D-351)', () => {
     const code = suggestSupplierCode('XY', taken);
     expect(code).toMatch(/^[A-Z]{3,4}$/);
     expect(taken.has(code)).toBe(false);
+  });
+});
+
+describe('normalizeIgvRate (D-359)', () => {
+  it.each([
+    ['18', '18'],
+    ['18%', '18'],
+    ['18 %', '18'],
+    ['0.18', '18'],
+    ['0,18', '18'],
+    ['0.105', '10.5'],
+    ['10', '10'],
+    ['0', '0'],
+    ['abc', null],
+  ])('tasa «%s» → %s', (raw, expected) => {
+    expect(normalizeIgvRate(raw)).toBe(expected);
   });
 });
