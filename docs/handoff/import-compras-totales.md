@@ -44,8 +44,12 @@ desde el export).
   `qty × round4(unitario × TC)`. El E2E completo del runner pasó en verde con el cambio.
 - **Producción:** las 18 compras vivas tienen el IGV en 0 o en 18 %: el código viejo (que solo **avisaba** el
   descuadre) no dejó compras con la tasa 0,18 %. Las cinco del archivo del dueño ya estaban cargadas y recibidas.
-- **Local:** en este worktree `next dev` no resolvió un paquete de Radix (rutas largas de `.pnpm` en Windows);
-  el E2E nuevo se validó en la CI.
+- **Deuda de entorno (anotada por el dueño):** el web no levanta en worktrees en Windows: `next dev` no resuelve
+  un paquete de Radix (`@radix-ui/react-dismissable-layer`), probablemente por el largo de las rutas de `.pnpm`
+  bajo `../ayr-steel-erp-fix-import-compras`. En esta sesión el E2E nuevo se validó solo en la CI. **Propuesta
+  para la próxima sesión:** crear el worktree con un nombre corto (`../ayr-<tarea corta>`, p. ej. `../ayr-fic`) y,
+  si no alcanza, `git config --global core.longpaths true` o mover la raíz de los worktrees a una ruta corta
+  (`C:\w\`).
 
 ## 3. Pendientes (P2 anotados)
 
