@@ -1,13 +1,15 @@
 import PDFDocument from 'pdfkit';
 import {
   BUSINESS_LINE_LABELS,
+  CoilFilmState,
   coilStateLabel,
   INVENTORY_MOVEMENT_TYPE_LABELS,
   INVENTORY_REF_TYPE_LABELS,
   type BusinessLine,
   type CoilConsumptionDto,
   type CoilDto,
-  type CoilFilmState,
+  type CoilMonthReportDto,
+  type CoilMonthReportSectionDto,
   type CoilStatus,
   type InventoryMovementDto,
 } from '@ayr/shared';
@@ -215,7 +217,8 @@ export function buildCoilsReportPdf(input: CoilsReportPdfInput): Promise<Buffer>
  * Las columnas del PDF de la lista de bobinas. D-281: la tabla de la pantalla cambió «Ancho»
  * por «Metro lineal teórico»; el PDF es el archivo de la misma lista, así que **suma** la
  * columna nueva después del disponible y conserva el ancho — en papel no hay detalle al que ir
- * a buscarlo. El metro lineal es el `equivalentMeters` del DTO, la cuenta del dominio.
+ * a buscarlo. D-356: el metro lineal es el del **peso inicial** (`initialMeters` del DTO, la misma
+ * cuenta del dominio que `equivalentMeters`), igual que en la pantalla.
  */
 export function coilsReportTable(rows: CoilDto[]): {
   headers: string[];
@@ -223,7 +226,15 @@ export function coilsReportTable(rows: CoilDto[]): {
   rows: string[][];
 } {
   return {
-    headers: ['Código', 'Línea', 'Color', 'Ancho', 'Disponible (kg)', 'ML teórico (m)', 'Estado'],
+    headers: [
+      'Código',
+      'Línea',
+      'Color',
+      'Ancho',
+      'Disponible (kg)',
+      'ML teórico (peso inicial)',
+      'Estado',
+    ],
     // Suman 495: entran en el ancho útil de un A4 con los márgenes del documento.
     widths: [140, 70, 55, 50, 70, 60, 50],
     rows: rows.map((c) => [
@@ -232,7 +243,7 @@ export function coilsReportTable(rows: CoilDto[]): {
       c.colorName ?? '—',
       `${c.widthMm} mm`,
       c.availableKg,
-      c.equivalentMeters ?? '—',
+      c.initialMeters ?? '—',
       coilStateLabel(c),
     ]),
   };
@@ -311,4 +322,116 @@ function drawHeaderRow(
     .lineWidth(0.5)
     .stroke();
   return y + 6;
+}
+
+/**
+ * D-355 — el reporte mensual de bobinas en PDF, del mismo DTO que la pantalla: «Selladas» y
+ * «Abiertas» (solo las vigentes al último día del mes), cada una con su subtotal, y debajo lo no
+ * listado y el cuadre inicio + altas − salidas = cierre. Costo y valor solo si el rol los ve.
+ */
+export function buildCoilMonthReportPdf(
+  report: CoilMonthReportDto,
+  generatedAt: string,
+): Promise<Buffer> {
+  const doc = newDoc(`Reporte mensual de bobinas ${report.month}`);
+  const result = collect(doc);
+  header(
+    doc,
+    `Reporte mensual de bobinas — del ${report.from} al ${report.to} — generado ${generatedAt}`,
+  );
+  let y = MARGIN + 40;
+  for (const [title, film, section] of [
+    ['Selladas', CoilFilmState.SEALED, report.sealed],
+    ['Abiertas', CoilFilmState.OPENED, report.opened],
+  ] as const) {
+    const columns = coilMonthPdfTable(title, film, section);
+    y = table(
+      doc,
+      y,
+      `${title} (${String(section.rows.length)})`,
+      columns.headers,
+      columns.widths,
+      columns.rows,
+      'Sin bobinas.',
+    );
+    y += 14;
+  }
+  if (y > doc.page.height - MARGIN - 80) {
+    doc.addPage();
+    y = MARGIN;
+  }
+  doc.font('Helvetica').fontSize(9);
+  for (const line of coilMonthPdfSummary(report)) {
+    doc.text(line, MARGIN, y, { width: CONTENT_WIDTH });
+    y = doc.y + 4;
+  }
+  doc.end();
+  return result;
+}
+
+/** Columnas de una tabla del PDF mensual (sin costos si el rol no los ve). */
+export function coilMonthPdfTable(
+  title: string,
+  film: CoilFilmState,
+  section: CoilMonthReportSectionDto,
+): { headers: string[]; widths: number[]; rows: string[][] } {
+  const showsCost = section.totals.closingValuePen !== null;
+  const headers = [
+    'Código',
+    'Tipo',
+    'Color',
+    'Inicio (kg)',
+    'Peso (kg)',
+    'Fin (kg)',
+    ...(showsCost ? ['Valor (S/)'] : []),
+    'Estado',
+  ];
+  // Suman 499 con costo y 499 sin él: entran en el ancho útil de un A4.
+  const widths = showsCost ? [120, 75, 45, 55, 55, 55, 54, 40] : [140, 85, 50, 60, 60, 60, 44];
+  const rows = [
+    ...section.rows.map((r) => [
+      r.code,
+      r.typeKey,
+      r.colorName ?? '—',
+      r.openingKg,
+      r.weightKg,
+      r.closingKg,
+      ...(showsCost ? [r.closingValuePen ?? '—'] : []),
+      coilStateLabel({ status: r.status, film }),
+    ]),
+    [
+      `Subtotal ${title}`,
+      '',
+      '',
+      section.totals.openingKg,
+      section.totals.weightKg,
+      section.totals.closingKg,
+      ...(showsCost ? [section.totals.closingValuePen ?? '—'] : []),
+      '',
+    ],
+  ];
+  return { headers, widths, rows };
+}
+
+/** Las líneas de debajo de las tablas: lo no listado y el cuadre del mes. */
+export function coilMonthPdfSummary(report: CoilMonthReportDto): string[] {
+  const lines: string[] = [];
+  if (report.finished.count > 0) {
+    lines.push(
+      `${String(report.finished.count)} bobinas terminadas o agotadas en el mes, no listadas: ${report.finished.consumedKg} kg consumidos.`,
+    );
+  }
+  if (report.annulledWithOpening.count > 0) {
+    lines.push(
+      `${String(report.annulledWithOpening.count)} anuladas con saldo al inicio: ${report.annulledWithOpening.openingKg} kg.`,
+    );
+  }
+  const f = report.flow;
+  lines.push(
+    `Saldo inicio ${f.openingKg} kg + altas ${f.entriesKg} kg − salidas ${f.exitsKg} kg = saldo fin de mes ${f.closingKg} kg.`,
+  );
+  if (report.totals.closingValuePen !== null) {
+    lines.push(`Valor fin de mes: S/ ${report.totals.closingValuePen}.`);
+  }
+  return lines;
 }

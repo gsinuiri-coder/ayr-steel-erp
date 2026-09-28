@@ -23,7 +23,7 @@ import { PaginationBar } from '@/components/pagination-bar';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { StatusFilter } from '@/components/status-filter';
 import { Badge } from '@/components/ui/badge';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { OverflowPopover } from '@/components/overflow-list';
 import {
   Select,
   SelectContent,
@@ -414,7 +414,6 @@ function UsedCoils({ order }: { order: ProductionOrderListItemDto }) {
         {shown.join(', ')}
         {rest.length > 0 && (
           <CoilOverflow
-            count={rest.length}
             items={rest.map((code) => ({ key: code, label: code, href: null, kg: null }))}
           />
         )}{' '}
@@ -436,7 +435,6 @@ function UsedCoils({ order }: { order: ProductionOrderListItemDto }) {
       ))}
       {rest.length > 0 && (
         <CoilOverflow
-          count={rest.length}
           items={rest.map((c) => ({
             key: c.id,
             label: c.code,
@@ -453,44 +451,25 @@ function UsedCoils({ order }: { order: ProductionOrderListItemDto }) {
 const MAX_INLINE_COILS = 2;
 
 /**
- * D-324: el resto de las bobinas de una orden. Un pedido con muchas bobinas hacía crecer la fila
- * expandida del historial y, con ella, el ancho de toda la página (scroll horizontal): la lista
- * larga vive en un popover y la fila queda del mismo tamaño con dos bobinas o con cincuenta.
+ * D-324: el resto de las bobinas de una orden, en el popover compartido (`OverflowPopover`). El
+ * nombre accesible y el `data-testid` son los de siempre: los miran los E2E de D-324.
  */
 function CoilOverflow({
-  count,
   items,
 }: {
-  count: number;
   items: { key: string; label: string; href: string | null; kg: string | null }[];
 }) {
   return (
-    <Popover>
-      <PopoverTrigger
-        aria-label={`Ver las ${String(count)} bobinas restantes`}
-        className="ml-1 rounded-sm border px-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
-      >
-        +{count}
-      </PopoverTrigger>
-      <PopoverContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
-        <ul className="grid gap-1 text-sm" data-testid="used-coils-more">
-          {items.map((c) => (
-            <li key={c.key} className="flex items-baseline justify-between gap-4">
-              {c.href ? (
-                <Link href={c.href} className={LINK_CLASSNAME}>
-                  {c.label}
-                </Link>
-              ) : (
-                <span>{c.label}</span>
-              )}
-              {c.kg !== null && (
-                <span className="tabular-nums text-muted-foreground">{formatQty(c.kg, 'kg')}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      </PopoverContent>
-    </Popover>
+    <OverflowPopover
+      triggerLabel={`Ver las ${String(items.length)} bobinas restantes`}
+      listTestId="used-coils-more"
+      items={items.map((c) => ({
+        key: c.key,
+        label: c.label,
+        href: c.href,
+        detail: c.kg === null ? null : formatQty(c.kg, 'kg'),
+      }))}
+    />
   );
 }
 

@@ -15,6 +15,7 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney, formatQty } from '@/lib/format';
+import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -44,8 +45,12 @@ import { useSort } from '@/lib/use-sort';
  * sería mezclar dos cortes en la misma fila. En el mes en curso las dos cifras coinciden.
  *
  * D-328: va en **dos tablas** —«Selladas» y «Abiertas»— según el film de cada bobina **al último
- * día del mes**, cada una con su subtotal, y un total general que es su suma. Las terminadas con
- * saldo final 0 van en «Abiertas».
+ * día del mes**, cada una con su subtotal.
+ *
+ * D-355: las tablas listan solo las bobinas **vigentes** al último día del mes. Las terminadas o
+ * agotadas y las anuladas con saldo al inicio se resumen en una línea debajo; una anulada en el
+ * mismo mes de su alta no figura. El total general sigue siendo el de todas, y el cuadre (inicio
+ * + altas − salidas = cierre) va debajo.
  */
 export function ReporteBobinasView() {
   const [month, setMonth] = useState(businessMonth());
@@ -66,16 +71,34 @@ export function ReporteBobinasView() {
               : 'Saldo al inicio del mes y al cierre, por bobina.'}
           </p>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="reporte-mes">Mes</Label>
-          <Input
-            id="reporte-mes"
-            type="month"
-            max={businessMonth()}
-            value={month}
-            onChange={(e) => {
-              if (e.target.value) setMonth(e.target.value);
-            }}
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="reporte-mes">Mes</Label>
+            <Input
+              id="reporte-mes"
+              type="month"
+              max={businessMonth()}
+              value={month}
+              onChange={(e) => {
+                if (e.target.value) setMonth(e.target.value);
+              }}
+            />
+          </div>
+          {/* D-355: descargas directas contra el API (patrón D-149), del mismo mes que se ve. */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: `/api/reports/coils/xlsx?month=${month}`,
+              },
+              {
+                key: 'pdf',
+                label: 'Descargar PDF',
+                download: `/api/reports/coils/pdf?month=${month}`,
+              },
+            ]}
           />
         </div>
       </div>
@@ -113,11 +136,43 @@ export function ReporteBobinasView() {
             film="OPENED"
             section={report.data.opened}
             emptyText="No había bobinas abiertas al final de ese mes."
-            note="Incluye las terminadas, con saldo final 0."
           />
+          <MonthSummary report={report.data} />
         </>
       )}
     </RoleGate>
+  );
+}
+
+/**
+ * D-355: lo que las tablas no listan y el cuadre del mes. El cuadre usa los totales de **todas**
+ * las bobinas del mes (listadas o no): inicio + altas − salidas = cierre. Lo consumido por una
+ * terminada es su saldo al inicio más sus altas del mes (la madre de un partido o de un corte
+ * «consumió» lo que pasó a sus hijas).
+ */
+function MonthSummary({ report }: { report: CoilMonthReportDto }) {
+  const { finished, annulledWithOpening, flow } = report;
+  return (
+    <section aria-label="Resumen del mes" className="space-y-1 text-sm" data-testid="resumen-mes">
+      {finished.count > 0 && (
+        <p>
+          {finished.count}{' '}
+          {finished.count === 1 ? 'bobina terminada o agotada' : 'bobinas terminadas o agotadas'} en
+          el mes, no listadas: {formatQty(finished.consumedKg, 'kg')} consumidos.
+        </p>
+      )}
+      {annulledWithOpening.count > 0 && (
+        <p>
+          {annulledWithOpening.count} {annulledWithOpening.count === 1 ? 'anulada' : 'anuladas'} con
+          saldo al inicio: {formatQty(annulledWithOpening.openingKg, 'kg')}.
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Saldo inicio {formatQty(flow.openingKg, 'kg')} + altas {formatQty(flow.entriesKg, 'kg')} −
+        salidas {formatQty(flow.exitsKg, 'kg')} = saldo fin de mes {formatQty(flow.closingKg, 'kg')}
+        .
+      </p>
+    </section>
   );
 }
 

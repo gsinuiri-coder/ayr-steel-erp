@@ -270,7 +270,7 @@ test.describe('D-328 — film de protección', () => {
     }
   });
 
-  test('el reporte mensual reparte selladas y abiertas; la terminada con saldo 0 va a «Abiertas»; el total es la suma', async ({
+  test('el reporte mensual reparte selladas y abiertas; la terminada con saldo 0 no se lista (D-355); el total cuadra', async ({
     baseURL,
   }) => {
     const api = await adminApi(baseURL!);
@@ -279,7 +279,12 @@ test.describe('D-328 — film de protección', () => {
     const month = today().slice(0, 7);
     type Section = { rows: { id: string; closingKg: string; status: string }[]; totals: Totals };
     type Totals = { closingKg: string; closingValuePen: string | null };
-    type Report = { sealed: Section; opened: Section; totals: Totals };
+    type Report = {
+      sealed: Section;
+      opened: Section;
+      totals: Totals;
+      finished: { count: number; consumedKg: string };
+    };
     const report = () => getJson<Report>(api, `/api/reports/coils?month=${month}`);
     const where = (r: Report) => ({
       sealed: r.sealed.rows.some((x) => x.id === id),
@@ -300,25 +305,57 @@ test.describe('D-328 — film de protección', () => {
       await postJson(api, `/api/coils/${id}/film/reseal`, {});
       expect(where(await report())).toEqual({ sealed: true, opened: false });
 
-      // Terminada con saldo 0 (se declara que no queda nada): «Abiertas», con 0 kg.
+      // D-355: terminada con saldo 0 (se declara que no queda nada): no se lista en ninguna tabla
+      // y se resume debajo como terminada o agotada.
       await postJson(api, `/api/coils/${id}/status`, {
         status: 'CLOSED',
         physicalKg: '0.000',
         reason: 'Liquidación de prueba E2E',
       });
       const finished = await report();
-      expect(where(finished)).toEqual({ sealed: false, opened: true });
-      expect(finished.opened.rows.find((r) => r.id === id)).toMatchObject({
-        closingKg: '0.000',
-        status: 'CLOSED',
-      });
+      expect(where(finished)).toEqual({ sealed: false, opened: false });
+      expect(finished.finished.count).toBeGreaterThanOrEqual(1);
 
-      // El total general es la suma exacta de las dos tablas (kg y valor).
+      // El saldo final general es la suma exacta de las dos tablas: lo no listado cierra en 0.
       const sum = (a: string, b: string) => (Number(a) + Number(b)).toFixed(3);
       expect(finished.totals.closingKg).toBe(
         sum(finished.sealed.totals.closingKg, finished.opened.totals.closingKg),
       );
       expect(finished.totals.closingValuePen).not.toBeNull();
+    } finally {
+      await purgeRoofingTrail(api, trailOf(scenario));
+      await api.dispose();
+    }
+  });
+
+  test('D-355: una bobina anulada en el mismo mes de su alta no figura en ningún lado y el cuadre no cambia', async ({
+    baseURL,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const scenario = await setupRoofingScenario(api, { weightKg: '650' });
+    const id = scenario.coil.id;
+    const month = today().slice(0, 7);
+    type Flow = { openingKg: string; entriesKg: string; exitsKg: string; closingKg: string };
+    type Report = {
+      sealed: { rows: { id: string }[] };
+      opened: { rows: { id: string }[] };
+      flow: Flow;
+    };
+    const report = () => getJson<Report>(api, `/api/reports/coils?month=${month}`);
+    try {
+      const before = await report();
+      expect(before.sealed.rows.some((r) => r.id === id)).toBe(true);
+
+      await postJson(api, `/api/coils/${id}/cancel`, { reason: 'Anulación de prueba E2E' });
+      const after = await report();
+      const listed = [...after.sealed.rows, ...after.opened.rows].some((r) => r.id === id);
+      expect(listed).toBe(false);
+      // Entra y sale en el mes: deja de contar como alta y el cuadre sigue cerrando.
+      expect(Number(after.flow.entriesKg)).toBeCloseTo(Number(before.flow.entriesKg) - 650, 3);
+      const f = after.flow;
+      expect((Number(f.openingKg) + Number(f.entriesKg) - Number(f.exitsKg)).toFixed(3)).toBe(
+        f.closingKg,
+      );
     } finally {
       await purgeRoofingTrail(api, trailOf(scenario));
       await api.dispose();

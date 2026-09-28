@@ -39,6 +39,10 @@ interface CoilMonthRow {
   last_film_event: string | null;
   /** D-340: fecha del primer movimiento de kardex de la bobina (de cualquier mes), o `null`. */
   first_movement_date: Date | null;
+  /** D-355: entradas del mes que no son reversas (altas). */
+  entries_kg: Prisma.Decimal;
+  /** D-355: fecha de la reversa de entrada más reciente (la anulación, si está anulada). */
+  annulled_on: Date | null;
 }
 
 /**
@@ -102,7 +106,18 @@ export class ReportsService {
                ELSE 0 END
         ), 0) AS "closing_value",
         ev."type" AS "last_film_event",
-        MIN(m."operation_date") AS "first_movement_date"
+        MIN(m."operation_date") AS "first_movement_date",
+        -- D-355: altas del mes (entradas que no son reversas) y fecha de la anulación: la reversa
+        -- más reciente de una entrada, que solo se lee cuando la bobina está anulada (RF-21 y la
+        -- reversa de un partido anulan revirtiendo su entrada).
+        COALESCE(SUM(
+          CASE WHEN m."operation_date" >= ${toDateOnly(from)}::date
+                AND m."operation_date" < ${toDateOnly(nextFrom)}::date
+                AND m."type" = 'IN' AND m."reversal_of_id" IS NULL
+               THEN m."qty" ELSE 0 END
+        ), 0) AS "entries_kg",
+        MAX(CASE WHEN m."type" = 'OUT' AND m."reversal_of_id" IS NOT NULL
+                 THEN m."operation_date" END) AS "annulled_on"
       FROM "coils" c
       JOIN "business_lines" bl ON bl."id" = c."business_line_id"
       LEFT JOIN "colors" col ON col."id" = c."color_id"
@@ -127,6 +142,11 @@ export class ReportsService {
     const sealed = emptySection();
     const opened = emptySection();
     const accum = { sealed: emptyTotals(), opened: emptyTotals() };
+    // D-355: lo que no se lista suma igual al total general, para que el cuadre no cambie.
+    const unlisted = emptyTotals();
+    const finished = { count: 0, consumed: new Decimal(0) };
+    const annulled = { count: 0, opening: new Decimal(0) };
+    let entries = new Decimal(0);
 
     for (const r of rows) {
       if (!coilInMonth(r.first_movement_date, toDateOnly(nextFrom))) continue;
@@ -134,6 +154,38 @@ export class ReportsService {
       const closing = toDecimal(r.closing_kg.toString());
       const weight = toDecimal(r.weight_kg.toString());
       const value = toDecimal(r.closing_value.toString());
+      const monthEntries = toDecimal(r.entries_kg.toString());
+      const presence = monthPresence({
+        status: r.status as CoilStatus,
+        openingKg: opening,
+        entriesKg: monthEntries,
+        closingKg: closing,
+        annulledOn: r.annulled_on,
+        from: toDateOnly(from),
+        nextFrom: toDateOnly(nextFrom),
+      });
+      // Una anulada en el mismo mes de su alta entra y sale: no está en ningún lado. Sus kilos
+      // son 0 al inicio y al cierre; su valor también, salvo un residuo de redondeo del kardex,
+      // que sigue sumando al valor general para que ese total no cambie respecto de D-340.
+      if (presence === 'ANNULLED_SAME_MONTH' || presence === 'ABSENT') {
+        unlisted.value = unlisted.value.plus(value);
+        continue;
+      }
+      entries = entries.plus(monthEntries);
+      if (presence !== 'LISTED') {
+        unlisted.opening = unlisted.opening.plus(opening);
+        unlisted.weight = unlisted.weight.plus(weight);
+        unlisted.closing = unlisted.closing.plus(closing);
+        unlisted.value = unlisted.value.plus(value);
+        if (presence === 'FINISHED') {
+          finished.count += 1;
+          finished.consumed = finished.consumed.plus(opening.plus(monthEntries).minus(closing));
+        } else {
+          annulled.count += 1;
+          annulled.opening = annulled.opening.plus(opening);
+        }
+        continue;
+      }
       const table = monthEndTable({
         status: r.status as CoilStatus,
         lastEventType: r.last_film_event as CoilFilmEventType | null,
@@ -151,10 +203,10 @@ export class ReportsService {
     sealed.totals = toTotalsDto(accum.sealed, showCosts);
     opened.totals = toTotalsDto(accum.opened, showCosts);
     const general = {
-      opening: accum.sealed.opening.plus(accum.opened.opening),
-      weight: accum.sealed.weight.plus(accum.opened.weight),
-      closing: accum.sealed.closing.plus(accum.opened.closing),
-      value: accum.sealed.value.plus(accum.opened.value),
+      opening: accum.sealed.opening.plus(accum.opened.opening).plus(unlisted.opening),
+      weight: accum.sealed.weight.plus(accum.opened.weight).plus(unlisted.weight),
+      closing: accum.sealed.closing.plus(accum.opened.closing).plus(unlisted.closing),
+      value: accum.sealed.value.plus(accum.opened.value).plus(unlisted.value),
     };
 
     return {
@@ -164,8 +216,57 @@ export class ReportsService {
       sealed,
       opened,
       totals: toTotalsDto(general, showCosts),
+      finished: { count: finished.count, consumedKg: finished.consumed.toFixed(3) },
+      annulledWithOpening: { count: annulled.count, openingKg: annulled.opening.toFixed(3) },
+      flow: {
+        openingKg: general.opening.toFixed(3),
+        entriesKg: entries.toFixed(3),
+        exitsKg: general.opening.plus(entries).minus(general.closing).toFixed(3),
+        closingKg: general.closing.toFixed(3),
+      },
     };
   }
+}
+
+/** D-355: cómo figura una bobina en el reporte de un mes. */
+export type MonthPresence =
+  /** Vigente al último día del mes (saldo final > 0): va en «Selladas» o «Abiertas». */
+  | 'LISTED'
+  /** Terminó el mes en cero sin ser anulación: terminada o agotada; se resume abajo. */
+  | 'FINISHED'
+  /** Anulada en el mes con saldo al inicio: se resume abajo con ese saldo. */
+  | 'ANNULLED_WITH_OPENING'
+  /** Anulada en el mismo mes de su alta: entra y sale, no figura. */
+  | 'ANNULLED_SAME_MONTH'
+  /** Sin saldo ni movimiento en el mes (terminada o anulada antes): no figura. */
+  | 'ABSENT';
+
+/**
+ * D-355: el reporte lista solo lo vigente al último día del mes, **por el saldo** y no por el
+ * estado de hoy (la bobina no guarda la fecha en que se terminó): una bobina terminada después
+ * figura como vigente en los meses en que tenía saldo, y una con saldo 0 sin terminar se resume
+ * como agotada. La fecha de una anulación es la de la reversa de su entrada.
+ */
+export function monthPresence(facts: {
+  status: CoilStatus;
+  openingKg: Decimal;
+  entriesKg: Decimal;
+  closingKg: Decimal;
+  annulledOn: Date | null;
+  from: Date;
+  nextFrom: Date;
+}): MonthPresence {
+  if (facts.closingKg.gt(0)) return 'LISTED';
+  const annulledInMonth =
+    facts.status === CoilStatus.CANCELLED &&
+    facts.annulledOn !== null &&
+    facts.annulledOn.getTime() >= facts.from.getTime() &&
+    facts.annulledOn.getTime() < facts.nextFrom.getTime();
+  if (annulledInMonth) {
+    return facts.openingKg.gt(0) ? 'ANNULLED_WITH_OPENING' : 'ANNULLED_SAME_MONTH';
+  }
+  if (facts.openingKg.gt(0) || facts.entriesKg.gt(0)) return 'FINISHED';
+  return 'ABSENT';
 }
 
 /**

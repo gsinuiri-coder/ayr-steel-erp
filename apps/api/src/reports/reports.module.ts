@@ -5,6 +5,7 @@ import { KardexPepsService } from './kardex-peps.service';
 import { KardexSheetService } from './kardex-sheet.service';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
+import { SalesByMaterialService } from './sales-by-material.service';
 import { SalesMarginService } from './sales-margin.service';
 
 @Module({
@@ -14,6 +15,7 @@ import { SalesMarginService } from './sales-margin.service';
     ReportsService,
     InventoryValuationService,
     SalesMarginService,
+    SalesByMaterialService,
     KardexPepsService,
     KardexSheetService,
   ],

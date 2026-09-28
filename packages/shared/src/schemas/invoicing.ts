@@ -545,6 +545,14 @@ export const customerPaymentSchema = z.object({
 });
 export type CustomerPaymentDto = z.infer<typeof customerPaymentSchema>;
 
+/** Correcciones 05 / M5: un despacho vivo (no revertido) enlazado desde un comprobante. */
+export const fiscalDocumentDispatchLinkSchema = z.object({
+  id: z.string().uuid(),
+  /** `DES-000123`. */
+  code: z.string(),
+});
+export type FiscalDocumentDispatchLinkDto = z.infer<typeof fiscalDocumentDispatchLinkSchema>;
+
 export const fiscalDocumentSchema = z.object({
   id: z.string().uuid(),
   docType: z.enum(FISCAL_DOC_TYPES),
@@ -561,8 +569,20 @@ export const fiscalDocumentSchema = z.object({
   customerIsGeneric: z.boolean(),
   salesOrderId: z.string().uuid().nullable(),
   salesOrderCode: z.string().nullable(),
+  /** Solo en la guía de remisión: el despacho que documenta. No es el despacho de una factura. */
   dispatchId: z.string().uuid().nullable(),
   dispatchCode: z.string().nullable(),
+  /**
+   * Correcciones 05 / M5: los despachos vivos que **declaran** este comprobante
+   * (`dispatches.invoice_id`: D-205, D-213, mostrador y D-278). Es el único enlace propio.
+   * Opcional: lo llenan la lista y el detalle; ausente no quiere decir «sin despacho».
+   */
+  invoicedDispatches: z.array(fiscalDocumentDispatchLinkSchema).optional(),
+  /**
+   * Los despachos vivos **del pedido**, solo cuando no hay ninguno declarado. D-205: no es un
+   * enlace del comprobante y la pantalla lo rotula como del pedido, nunca como propio.
+   */
+  orderDispatches: z.array(fiscalDocumentDispatchLinkSchema).optional(),
   affectedDocumentId: z.string().uuid().nullable(),
   affectedDocumentNumber: z.string().nullable(),
   creditNoteReason: z.enum(CREDIT_NOTE_REASONS).nullable(),

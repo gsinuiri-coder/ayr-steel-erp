@@ -61,6 +61,7 @@ import {
 } from '@/components/sales/order-edit-dialogs';
 import { usePlantSheetActions } from '@/components/sales/plant-sheet-buttons';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
+import { OrderDocumentLinks } from '@/components/sales/order-documents';
 import { OrderStageBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import { RowActions } from '@/components/row-actions';
@@ -271,6 +272,13 @@ export function PedidoDetalleView({ id }: { id: string }) {
               comprobante importado (D-105).
             */}
             {o.origin === 'IMPORTED' && <Badge variant="outline">Importado</Badge>}
+            {/* Correcciones 05 / M4: los comprobantes vivos del pedido, junto a su estado. */}
+            {o.documents && o.documents.length > 0 && (
+              <span className="text-sm text-muted-foreground" data-testid="order-documents-header">
+                {o.documents.length === 1 ? 'Comprobante' : 'Comprobantes'}:{' '}
+                <OrderDocumentLinks documents={o.documents} max={3} />
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             <Link href={customerSearchHref(o.customerDocNumber)} className={LINK_CLASSNAME}>

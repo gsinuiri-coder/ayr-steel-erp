@@ -1,4 +1,5 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { z } from 'zod';
 import {
   BUSINESS_LINES,
@@ -20,6 +21,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { inventoryCoilTypesXlsx } from './inventory-summary-xlsx';
 import { InventoryService } from './inventory.service';
 
 const summaryQuerySchema = z.object({
@@ -89,6 +91,27 @@ export class InventoryController {
     @Query(new ZodValidationPipe(summaryQuerySchema)) query: { businessLine: BusinessLine },
   ): Promise<InventorySummaryDto> {
     return this.inventory.summary(query.businessLine, canSeeCosts(actor));
+  }
+
+  /**
+   * D-356: «Bobinas por tipo» en Excel, del mismo resumen que la pantalla y con el mismo
+   * enmascarado de costos (los mismos roles que ven la pantalla).
+   */
+  @Get('summary/coils-xlsx')
+  async coilTypesXlsx(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(summaryQuerySchema)) query: { businessLine: BusinessLine },
+    @Res() res: Response,
+  ): Promise<void> {
+    const file = inventoryCoilTypesXlsx(
+      await this.inventory.summary(query.businessLine, canSeeCosts(actor)),
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.send(file.buffer);
   }
 }
 

@@ -1,11 +1,15 @@
 import { Controller, Get, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  businessToday,
   coilMonthReportQuerySchema,
   kardexPepsQuerySchema,
   kardexSheetQuerySchema,
+  salesByMaterialQuerySchema,
   salesMarginQuerySchema,
   Role,
+  type SalesByMaterialDto,
+  type SalesByMaterialQuery,
   type CoilMonthReportDto,
   type CoilMonthReportQuery,
   type InventoryValuationDto,
@@ -18,6 +22,8 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { buildCoilMonthReportPdf } from '../coils/coil-pdf';
+import { coilMonthXlsx } from './coil-month-xlsx';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { kardexPepsToDto } from './kardex-peps-dto';
 import { kardexPepsXlsx } from './kardex-peps-xlsx';
@@ -26,6 +32,8 @@ import { kardexSheetXlsx } from './kardex-sheet-xlsx';
 import { KardexSheetService } from './kardex-sheet.service';
 import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
 import { ReportsService } from './reports.service';
+import { salesByMaterialXlsx } from './sales-by-material-xlsx';
+import { SalesByMaterialService } from './sales-by-material.service';
 import { SalesMarginService } from './sales-margin.service';
 import { Roles } from '../auth/decorators/roles.decorator';
 
@@ -41,6 +49,7 @@ export class ReportsController {
     private readonly reports: ReportsService,
     private readonly inventoryValuation: InventoryValuationService,
     private readonly salesMargin: SalesMarginService,
+    private readonly salesByMaterial: SalesByMaterialService,
     private readonly kardexPeps: KardexPepsService,
     private readonly kardexSheet: KardexSheetService,
   ) {}
@@ -55,6 +64,35 @@ export class ReportsController {
     @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
   ): Promise<CoilMonthReportDto> {
     return this.reports.coilsByMonth(query, canSeeCosts(actor));
+  }
+
+  /** D-355. El Excel del reporte mensual, del mismo DTO y con el mismo enmascarado por rol. */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Get('coils/xlsx')
+  async coilsXlsxFile(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(res, coilMonthXlsx(await this.reports.coilsByMonth(query, canSeeCosts(actor))));
+  }
+
+  /** D-355. El PDF del reporte mensual, del mismo DTO y con el mismo enmascarado por rol. */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Get('coils/pdf')
+  async coilsPdfFile(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const report = await this.reports.coilsByMonth(query, canSeeCosts(actor));
+    const buffer = await buildCoilMonthReportPdf(report, businessToday());
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="reporte-bobinas-${report.month}.pdf"`,
+    );
+    res.send(buffer);
   }
 
   /**
@@ -98,6 +136,25 @@ export class ReportsController {
   ): Promise<void> {
     const report = await this.salesMargin.salesMargin(query);
     sendXlsx(res, salesMarginXlsx(report));
+  }
+
+  /** D-354. Ventas por material de Coberturas Aluzinc. Solo ADMINISTRADOR: lleva costos. */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('sales-by-material')
+  salesByMaterialReport(
+    @Query(new ZodValidationPipe(salesByMaterialQuerySchema)) query: SalesByMaterialQuery,
+  ): Promise<SalesByMaterialDto> {
+    return this.salesByMaterial.report(query);
+  }
+
+  /** D-354. El xlsx sale del mismo DTO que la pantalla, con los mismos filtros. */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('sales-by-material/xlsx')
+  async salesByMaterialXlsxFile(
+    @Query(new ZodValidationPipe(salesByMaterialQuerySchema)) query: SalesByMaterialQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(query)));
   }
 
   /**

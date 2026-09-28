@@ -32,4 +32,5 @@ export * from './schemas/sales';
 export * from './schemas/invoicing';
 export * from './schemas/pos';
 export * from './schemas/report';
+export * from './schemas/sales-by-material';
 export * from './schemas/audit';

@@ -74,8 +74,14 @@ export type CoilMonthReportSectionDto = z.infer<typeof coilMonthReportSectionSch
 
 /**
  * D-328: el reporte mensual va en **dos tablas** según el film de cada bobina **al último día
- * del mes**: «Selladas» (nunca se abrió, o se volvió a sellar) y «Abiertas» (se abrió; incluye
- * las terminadas con saldo final 0). El total general es la suma de las dos.
+ * del mes**: «Selladas» (nunca se abrió, o se volvió a sellar) y «Abiertas» (se abrió).
+ *
+ * D-355: las dos tablas listan **solo las bobinas vigentes** al último día del mes (saldo final
+ * mayor que cero). Las que terminaron el mes en cero no se listan y se resumen en `finished`
+ * (terminadas o agotadas) y `annulledWithOpening` (anuladas en el mes que tenían saldo al
+ * inicio); una anulada en el mismo mes de su alta no aparece en ningún lado (entra y sale). El
+ * total general sigue siendo el de **todas** las bobinas del mes, así que `cierre(M) =
+ * inicio(M+1)` (D-340) no cambia y `flow` cuadra: inicio + altas − salidas = cierre.
  */
 export const coilMonthReportSchema = z.object({
   month: monthSchema,
@@ -85,6 +91,21 @@ export const coilMonthReportSchema = z.object({
   sealed: coilMonthReportSectionSchema,
   opened: coilMonthReportSectionSchema,
   totals: coilMonthReportTotalsSchema,
+  /** D-355: bobinas con saldo final 0 que no son anulaciones, y los kilos que consumieron en el mes. */
+  finished: z.object({ count: z.number().int(), consumedKg: z.string() }),
+  /** D-355: anuladas en el mes que tenían saldo al inicio, y ese saldo. */
+  annulledWithOpening: z.object({ count: z.number().int(), openingKg: z.string() }),
+  /**
+   * D-355: el cuadre del mes. Altas = entradas del mes que no son reversas (compra, carga inicial,
+   * partido, corte, sobrante al terminar); salidas = inicio + altas − cierre. Sin las anuladas en
+   * el mismo mes de su alta.
+   */
+  flow: z.object({
+    openingKg: z.string(),
+    entriesKg: z.string(),
+    exitsKg: z.string(),
+    closingKg: z.string(),
+  }),
 });
 export type CoilMonthReportDto = z.infer<typeof coilMonthReportSchema>;
 

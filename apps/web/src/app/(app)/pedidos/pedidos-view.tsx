@@ -12,6 +12,7 @@ import {
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
+import { OrderDocumentLinks } from '@/components/sales/order-documents';
 import { OrderStageBadge } from '@/components/sales/status-badges';
 import {
   URL_PAGINATION_DEFAULTS,
@@ -200,6 +201,8 @@ export function PedidosView() {
                 Cliente
               </SortableTableHead>
               <TableHead className="hidden md:table-cell">Cotización</TableHead>
+              {/* Correcciones 05 / M4: comprobantes vivos (factura, boleta, NC). */}
+              <TableHead className="hidden md:table-cell">Comprobante</TableHead>
               <SortableTableHead
                 active={sort.key === 'issueDate'}
                 dir={sort.dir}
@@ -238,14 +241,14 @@ export function PedidosView() {
             {orders.isPending &&
               [0, 1, 2].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={7}>
+                  <TableCell colSpan={8}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
             {orders.isError && (
               <TableRow>
-                <TableCell colSpan={7} className="text-destructive">
+                <TableCell colSpan={8} className="text-destructive">
                   No se pudieron cargar los pedidos.
                 </TableCell>
               </TableRow>
@@ -276,6 +279,9 @@ export function PedidosView() {
                     <span className="text-muted-foreground">Directo</span>
                   )}
                 </TableCell>
+                <TableCell className="hidden md:table-cell">
+                  <OrderDocumentLinks documents={o.documents ?? []} />
+                </TableCell>
                 <TableCell className="hidden sm:table-cell">{formatDate(o.issueDate)}</TableCell>
                 <TableCell className="text-right">{formatMoney(o.totalPen)}</TableCell>
                 <TableCell className="hidden text-right lg:table-cell">
@@ -288,7 +294,7 @@ export function PedidosView() {
             ))}
             {orders.isSuccess && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   {search || stages.length > 0
                     ? 'Ningún pedido coincide con el filtro.'
                     : 'No hay pedidos todavía.'}

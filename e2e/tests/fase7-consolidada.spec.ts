@@ -109,6 +109,8 @@ interface CoilMonthReport {
   /** Todas las filas del reporte, sin importar en qué tabla caen (`sealed` + `opened`). */
   rows: CoilReportRow[];
   totals: { openingKg: string; weightKg: string; closingKg: string };
+  /** D-355: las que terminaron el mes en cero no se listan; se resumen acá. */
+  finished: { count: number; consumedKg: string };
 }
 
 interface CoilMonthReportTwoTables extends Omit<CoilMonthReport, 'rows'> {
@@ -390,9 +392,12 @@ test.describe('D-124 — fecha de operación', () => {
       expect(august.from).toBe('2026-08-01');
       expect(august.to).toBe('2026-08-31');
       const augustIds = august.rows.map((r) => r.id);
-      expect(augustIds, 'la bobina madre de agosto sale en agosto').toContain(mother.id);
-      expect(augustIds, 'los flejes de agosto salen en agosto').toContain(strips[0]!.id);
-      expect(augustIds).toContain(strips[1]!.id);
+      // D-355: la madre (enviada entera a corte) y el fleje consumido terminan agosto en cero: no
+      // se listan y se resumen como terminadas o agotadas. El fleje intacto sí se lista.
+      expect(augustIds, 'la madre agotada en agosto no se lista').not.toContain(mother.id);
+      expect(augustIds, 'el fleje consumido en agosto no se lista').not.toContain(strips[0]!.id);
+      expect(august.finished.count).toBeGreaterThanOrEqual(2);
+      expect(augustIds, 'el fleje intacto de agosto sale en agosto').toContain(strips[1]!.id);
 
       // El fleje que nadie tocó: nace en agosto (apertura en cero) y cierra con sus 2 400 kg.
       const idleAugust = august.rows.find((r) => r.id === strips[1]!.id)!;
@@ -401,14 +406,6 @@ test.describe('D-124 — fecha de operación', () => {
         weightKg: '2400.000',
         closingKg: '2400.000',
         operationDate: AUG_CUTTING_RECEIVED,
-      });
-      // La madre entró y salió entera dentro del mes: apertura y cierre en cero, y el peso
-      // nominal con el que se dio de alta intacto (RF-13: no cambia con los consumos).
-      expect(august.rows.find((r) => r.id === mother.id)).toMatchObject({
-        openingKg: '0.000',
-        weightKg: '4800.000',
-        closingKg: '0.000',
-        operationDate: AUG_COIL_IN,
       });
 
       // Julio no las ve: son anteriores al mes en que existen.

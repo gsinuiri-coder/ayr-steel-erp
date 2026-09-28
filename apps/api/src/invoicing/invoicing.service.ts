@@ -82,6 +82,7 @@ import {
   pendingWithDrafts,
 } from './invoicing-math';
 import { invoicedByOrderItem } from './invoicing-net';
+import { dispatchLinksByDocument } from './document-dispatches';
 import {
   ELECTRONIC_INVOICING_PROVIDER,
   type ElectronicInvoicingProvider,
@@ -3038,7 +3039,7 @@ export class InvoicingService {
           take,
         }),
       ]);
-      return paginate(await this.toListDtos(rows), total, query);
+      return paginate(await this.withDispatchLinks(await this.toListDtos(rows)), total, query);
     }
 
     // `pendingOnly` es un filtro derivado (D-075): el saldo no es una columna, así que no
@@ -3052,7 +3053,20 @@ export class InvoicingService {
       take: DERIVED_FILTER_FETCH_CAP,
     });
     const pending = (await this.toListDtos(rows)).filter((d) => toDecimal(d.balancePen).gt(0));
-    return paginateInMemory(pending, query);
+    // Los despachos, recién sobre la página ya cortada: no sobre todo el universo del tope.
+    const page = paginateInMemory(pending, query);
+    return { ...page, items: await this.withDispatchLinks(page.items) };
+  }
+
+  /**
+   * Correcciones 05 / M5: el despacho declarado de cada comprobante y, si no tiene, los del
+   * pedido (rotulados aparte, D-205). Una consulta para toda la lista (`dispatchLinksByDocument`).
+   */
+  private async withDispatchLinks(
+    dtos: FiscalDocumentListItemDto[],
+  ): Promise<FiscalDocumentListItemDto[]> {
+    const links = await dispatchLinksByDocument(this.prisma, dtos);
+    return dtos.map((d) => ({ ...d, ...links.get(d.id) }));
   }
 
   /** El DTO de listado (sin líneas, cobros ni notas) de un lote de comprobantes. */
@@ -3091,7 +3105,10 @@ export class InvoicingService {
     const settings = await this.settingsRow();
     const actors = await this.resolveActorNames(this.actorIdsOf(row));
     const credited = await this.creditedQtyByItem(row.items.map((i) => i.id));
-    return this.toDto(row, settings.alertAfterHours, actors, credited);
+    const dto = this.toDto(row, settings.alertAfterHours, actors, credited);
+    // Correcciones 05 / M5: su despacho declarado o, si no tiene, los del pedido (D-205).
+    const links = await dispatchLinksByDocument(this.prisma, [dto]);
+    return { ...dto, ...links.get(dto.id) };
   }
 
   /**

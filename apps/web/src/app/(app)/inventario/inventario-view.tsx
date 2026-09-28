@@ -16,6 +16,7 @@ import {
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
+import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -115,6 +116,8 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
         rows={coils}
         keyHeader="Tipo (acabado-espesor)"
         showCosts={showCosts}
+        showMeters
+        xlsxHref={`/api/inventory/summary/coils-xlsx?businessLine=${line}`}
       />
       <SummaryTable
         title="Productos de catálogo"
@@ -133,20 +136,32 @@ function SummaryTable({
   emptyLabel,
   rows,
   showCosts,
+  showMeters = false,
+  xlsxHref,
 }: {
   title: string;
   keyHeader: string;
   emptyLabel: string;
   rows: InventorySummaryRowDto[];
   showCosts: boolean;
+  /** D-356: la columna «ML teórico (disponible)», solo en las bobinas. */
+  showMeters?: boolean;
+  /** D-356: descarga directa del Excel de la tabla (patrón D-149). */
+  xlsxHref?: string;
 }) {
   // Físico, reservado y disponible son tres columnas siempre visibles: son cantidades,
   // no costos, así que VENDEDOR también las ve (D-066, §3.4).
-  const columnCount = showCosts ? 8 : 6;
+  const columnCount = (showCosts ? 8 : 6) + (showMeters ? 1 : 0);
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle>{title}</CardTitle>
+        {xlsxHref !== undefined && (
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[{ key: 'xlsx', label: 'Descargar Excel', download: xlsxHref }]}
+          />
+        )}
       </CardHeader>
       <CardContent className="px-0">
         <Table>
@@ -158,6 +173,7 @@ function SummaryTable({
               <TableHead className="text-right">Físico</TableHead>
               <TableHead className="text-right">Reservado</TableHead>
               <TableHead className="text-right">Disponible</TableHead>
+              {showMeters && <TableHead className="text-right">ML teórico (disponible)</TableHead>}
               {showCosts && <TableHead className="text-right">Costo prom.</TableHead>}
               {showCosts && <TableHead className="text-right">Valorizado</TableHead>}
             </TableRow>
@@ -198,6 +214,15 @@ function SummaryTable({
                 <TableCell className="text-right">
                   {formatQty(row.availableQty, unitSymbol(row.unit))}
                 </TableCell>
+                {/* D-356: sumado bobina por bobina en el API (`equivalentMeters`, la misma
+                    conversión que la columna del peso inicial de /bobinas). */}
+                {showMeters && (
+                  <TableCell className="text-right">
+                    {row.theoreticalMeters === null || row.theoreticalMeters === undefined
+                      ? '—'
+                      : formatQty(row.theoreticalMeters, 'm')}
+                  </TableCell>
+                )}
                 {showCosts && (
                   <TableCell className="text-right">
                     {formatMoneyOrDash(row.avgCostPen, 'PEN', 4)}

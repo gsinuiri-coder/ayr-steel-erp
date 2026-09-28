@@ -3,6 +3,7 @@ import {
   Banknote,
   Boxes,
   CalendarRange,
+  ChartColumn,
   ClipboardList,
   Coins,
   FileText,
@@ -218,6 +219,13 @@ export const NAV: NavGroup[] = [
         title: 'Ventas y margen',
         href: '/reportes/ventas-margen',
         icon: TrendingUp,
+        roles: [Role.ADMINISTRADOR],
+      },
+      {
+        // D-354: lleva costos por kilo; solo el administrador.
+        title: 'Ventas por material',
+        href: '/reportes/ventas-material',
+        icon: ChartColumn,
         roles: [Role.ADMINISTRADOR],
       },
       {

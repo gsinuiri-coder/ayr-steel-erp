@@ -98,7 +98,12 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
       Almacén: ['Bobinas', 'Flejes', 'Corte tercerizado', 'Inventario', 'Kardex'],
       Planta: ['Producción', 'Órdenes de producción'],
       Catálogo: ['Productos', 'Líneas', 'Acabados', 'Colores'],
-      Reportes: ['Ventas y margen', 'Inventario valorizado', 'Reporte mensual de bobinas'],
+      Reportes: [
+        'Ventas y margen',
+        'Ventas por material',
+        'Inventario valorizado',
+        'Reporte mensual de bobinas',
+      ],
       Administración: ['Usuarios', 'Márgenes y tipo de cambio', 'Auditoría', 'Configuración'],
     };
     // Los grupos aparecen en este orden, con «Panel» suelto a la cabeza.

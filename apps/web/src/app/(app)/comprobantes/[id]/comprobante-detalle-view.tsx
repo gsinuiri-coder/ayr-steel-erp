@@ -78,6 +78,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Stat, StatStrip } from '@/components/stat-strip';
+import { DocumentDispatchLinks } from '@/components/invoicing/document-dispatches';
 import { DispatchAtIssueDate } from './dispatch-at-issue-date';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
@@ -601,6 +602,20 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               </>
             )}
           </p>
+          {/*
+            Correcciones 05 / M5: el despacho declarado del comprobante o, sin él, los del pedido
+            rotulados como tales (D-205). La guía no: su despacho lo dice el aviso de más abajo.
+          */}
+          {!isDispatchNote && d.invoicedDispatches !== undefined && (
+            <p className="text-sm text-muted-foreground" data-testid="document-dispatch-field">
+              Despacho:{' '}
+              <DocumentDispatchLinks
+                invoicedDispatches={d.invoicedDispatches}
+                orderDispatches={d.orderDispatches}
+                max={3}
+              />
+            </p>
+          )}
         </div>
         {/*
           F8-S3b/M3: principal + «⋯». En el borrador la principal es el terminal que el ajuste
